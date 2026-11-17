@@ -1,10 +1,4 @@
 /**
- * Comments on a reply (#511) on the unmodified app over the demo's fixture transport: a selection
- * in one agent reply offers Comment over the chat without moving it, the comment waits in one chip
- * over the input card, and the next message carries the comments first, as `> quote` lines and
- * the comment, then the typed text, with `agent_only`. A slash command leaves them waiting, and a
- * selection reaching a user message offers nothing. At 1280 with a mouse and at 390 on a touch
- * screen. With UI_EVIDENCE_DIR set, each state is captured in the Codex palette, dark and light.
  * All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
  */
 import assert from "node:assert/strict";
@@ -32,16 +26,13 @@ const SECOND = { quote: "replay the local edit on top of it", comment: "If both 
 
 interface Submit { text: string; agent_only?: true; delivery?: string }
 
-/** Two painted frames: what the page already took has been committed and laid out. */
 const frames = (page: Page): Promise<void> => page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 
-/** The chat scroller's box and place: a selection in progress must leave both as they were (#1922). */
 const layout = (page: Page) => page.evaluate(() => {
   const view = document.querySelector<HTMLElement>(".chat-view")!;
   return { height: view.clientHeight, scrollTop: view.scrollTop, composer: document.querySelector(".composer")!.getBoundingClientRect().top };
 });
 
-/** The text-node range of `phrase` in the last agent reply (or from the user's ask through it), as client rects' ends. */
 const rangeOf = (page: Page, phrase: string, fromAsk = false) => page.evaluate(([words, ask]) => {
   const rows = [...document.querySelectorAll(".chat-turn-agent")];
   const turn = rows[rows.length - 1]!;
@@ -63,7 +54,6 @@ const rangeOf = (page: Page, phrase: string, fromAsk = false) => page.evaluate((
   return { x0: rects[0]!.left + 1, y0: rects[0]!.top + rects[0]!.height / 2, x1: rects.at(-1)!.right - 1, y1: rects.at(-1)!.top + rects.at(-1)!.height / 2 };
 }, [phrase, fromAsk ? ASK : null] as const);
 
-/** Selects as a reader does: a mouse drag on a desktop; on a touch screen the range the handles leave. */
 async function select(page: Page, phrase: string, mouse: boolean, fromAsk = false): Promise<void> {
   if (mouse) {
     const box = await rangeOf(page, phrase, fromAsk);
@@ -101,7 +91,6 @@ async function comment(page: Page, phrase: string, text: string, mouse: boolean,
   await page.locator(".reply-comment-offer").click();
   const field = page.getByRole("textbox", { name: "Comment", exact: true });
   await field.fill(text);
-  // Ctrl+Enter saves, as the form says; the selection goes with it
   await field.press("Control+Enter");
   await page.locator(".reply-comment-form").waitFor({ state: "detached", ...WAIT });
   await page.locator(".reply-comments-open", { hasText: count === 1 ? "1 comment on the reply" : `${count} comments on the reply` }).waitFor(WAIT);
@@ -113,8 +102,6 @@ try {
   const index = join(app, "index.html");
   const html = readFileSync(index, "utf8");
   assert.match(html, /<script type="module"/);
-  // Over the demo's own transport: the pane's transcript reads end in a plan to comment on, and
-  // every submit frame the client sends is recorded (window.replyLab). Everything else is the demo's.
   const gates = `<script>(() => {
     const demo = window.fetch;
     const lab = window.replyLab = { submits: [] };
@@ -158,8 +145,6 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
-      // The chat's timeline chunk arriving after the Comment layer mounted (a cold load on a slow link): its
-      // selection is still offered and saved once the replies are drawn
       {
         const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
         try {
@@ -210,14 +195,12 @@ try {
           assert.deepEqual(await page.evaluate(() => [document.documentElement.dataset["palette"], document.documentElement.dataset["theme"]]), ["codex", theme], `${label}: the Codex palette`);
           const shot = async (step: string) => { if (evidence) await page.screenshot({ path: join(evidence, `${label}-${step}.png`) }); };
 
-          // a selection reaching the user's message offers nothing
           await select(page, "backfill it from", !shape.mobile, true);
           assert.ok((await page.evaluate(() => getSelection()?.toString() ?? "")).includes("backfill it from"), `${label}: the crossing selection holds`);
           assert.equal(await page.locator(".reply-comment-offer").count(), 0, `${label}: no Comment across a user message`);
           await page.evaluate(() => getSelection()?.removeAllRanges());
           await frames(page);
 
-          // the action floats: the chat keeps its size and place while the selection is made and offered
           const before = await layout(page);
           await select(page, FIRST.quote, !shape.mobile);
           await page.locator(".reply-comment-offer").waitFor(WAIT);
@@ -247,7 +230,6 @@ try {
           await shot("3-chip");
           await page.keyboard.press("Escape");
 
-          // a slash command goes alone: the comments wait for the next message
           await composer.fill("/compact");
           await composer.press("Escape");
           await page.locator(".reply-comments-open", { hasText: "2 comments waiting" }).waitFor(WAIT);
@@ -260,7 +242,6 @@ try {
           assert.equal(command.agent_only, undefined, `${label}: a command alone is no agent-only message`);
           await page.locator(".reply-comments-open", { hasText: "2 comments on the reply" }).waitFor(WAIT);
 
-          // the next message carries them, first, then what was typed, for an agent alone
           await composer.fill("Go ahead with step 1.");
           const next = await page.evaluate(() => (window as unknown as { replyLab: { submits: Submit[] } }).replyLab.submits.length);
           await page.getByRole("button", { name: "Send message", exact: true }).click();

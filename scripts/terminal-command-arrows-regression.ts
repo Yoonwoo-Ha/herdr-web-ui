@@ -15,7 +15,6 @@ async function until(check: () => boolean | Promise<boolean>, label: string): Pr
   }
 }
 
-/** Mac keyboard events, then real readline cursor positions in an owned test pane. */
 export async function checkCommandArrows(browser: Browser, origin: string, paneId: string): Promise<void> {
   for (const platform of ["MacIntel", "Linux x86_64", "Win32"]) {
     const context = await browser.newContext({ viewport: { width: 1100, height: 650 } });
@@ -41,7 +40,6 @@ export async function checkCommandArrows(browser: Browser, origin: string, paneI
       await page.goto(`${origin}/?pane=${encodeURIComponent(paneId)}`);
       await until(() => ready, "owned terminal must accept input");
       const input = page.locator(".xterm-helper-textarea");
-      // Let deferred IME sends run, then use a WS marker to bound both positive and negative assertions.
       const check = async (action: () => Promise<unknown>, expected: string[], label: string) => {
         const before = inputs.length;
         await action();
@@ -54,7 +52,6 @@ export async function checkCommandArrows(browser: Browser, origin: string, paneI
       for (const [key, code, sequence] of [["ArrowLeft", 37, "\x01"], ["ArrowRight", 39, "\x05"]] as const) {
         const final = key === "ArrowLeft" ? "D" : "C";
         await check(() => input.press(`Meta+${key}`), mac ? [sequence] : [], `${platform} Cmd+${key}`);
-        // Ctrl+arrow is the pane's own key on every platform: tmux and editors bind it
         await check(() => input.press(`Control+${key}`), [`\x1b[1;5${final}`], `${platform} Ctrl+${key} reaches the pane as itself`);
         if (!mac) continue;
         for (const modifier of ["Shift", "Alt", "Control"]) {
@@ -135,7 +132,6 @@ process.stdin.on("data", (data) => {
           await page.locator(shownRows(), { hasText: "start middle end" }).waitFor();
           await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "macos-command-arrows.png") });
         }
-        // Normal arrows, Option word movement and Ctrl+arrows as xterm sends them work in DECCKM mode.
         await input.press("ArrowLeft"); await probe("start middle end", 15);
         await input.press("ArrowRight"); await probe("start middle end", 16);
         await input.press("Alt+ArrowLeft"); await probe("start middle end", 13);

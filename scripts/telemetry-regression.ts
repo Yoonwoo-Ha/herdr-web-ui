@@ -1,5 +1,4 @@
-/** The real telemetry UI and local API, with a fixture-only transport. Run after `bun run build`. */
-import "./test-herdr.ts"; // a herdr session of its own: the server never reads the user's
+import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -120,7 +119,6 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
     await notice.waitFor({ state: "visible" });
     assert.ok((await notice.locator(".update-notice-text").innerText()).trim().length > 0, "the notice says something, whatever its wording");
     await until(async () => (await statusAt(origin)).notice_seen, "the visible notice is reacknowledged");
-    // the server can hold the acknowledgement a moment before Playwright reports the request that carried it
     await until(async () => changes.some((change) => change.notice_seen === true && change.notice_version === NOTICE_VERSION), "the browser acknowledges exactly the current notice version");
     assert.equal(changes.findIndex((change) => change.settings !== undefined), changes.findIndex((change) => change.notice_seen === true),
       "no settings snapshot leaves the browser before the notice is acknowledged; the first rides with the acknowledgement");
@@ -153,21 +151,18 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
     for (const marker of privateMarkers) {
       assert.equal(previewText.includes(marker), false, `the preview omits private fixture value ${marker}`);
     }
-    // the daily active message, previewed next to the install/update event exactly as it would be sent
     assert.equal(await previews.count(), 3, "the About preview shows the install/update event, the active message and today's counts");
     const activePreview = previews.nth(1);
     await activePreview.waitFor({ state: "visible" });
     const active = JSON.parse(await activePreview.innerText()) as TelemetryActive;
     assert.equal(active.event, "active", "the second preview is the daily active message");
     assert.ok(Array.isArray(active.harnesses), "the active preview carries a harnesses array");
-    // today's button counts, as they would go once the day has ended: the same day and install, and nothing else
     const counts = JSON.parse(await previews.nth(2).innerText()) as TelemetryCounts;
     assert.equal(counts.event, "counts", "the third preview is the day's counts message");
     assert.deepEqual([counts.day, counts.install_id], [active.day, active.install_id], "the counts preview is today's, for this install");
     assert.deepEqual(Object.keys(counts).sort(), ["day", "event", "install_id", "narrow", "version", "wide"], "the counts message carries no country, agent kinds or other field");
 
     await openSettingsPage(page, "Appearance");
-    // the fixture's mode is dark, so the dark side carries its palette and the legacy mirror follows a pick there
     const palette = themeSide(page, "dark");
     assert.equal(await palette.inputValue(), "catppuccin");
     await palette.selectOption("charcoal");
@@ -183,9 +178,7 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
     await telemetrySection.locator("summary").click();
     const updatedPreview = JSON.parse(await preview.innerText()) as TelemetryEvent;
     assert.equal(updatedPreview.settings?.palette, "charcoal", "the preview refreshes with the server's updated snapshot");
-    // a newer app's snapshot, herdr theme ids and both theme sides, is taken as it is; an unknown id is not
     const themed: TelemetrySettings = { ...updatedPreview.settings!, palette: "tokyo-night", darkTheme: "tokyo-night", lightTheme: "tokyo-night-day" };
-    // a page tells its settings with the counting generation it heard: the server keeps none from before an off it missed
     const postSettings = async (settings: unknown) => fetch(`${origin}/api/telemetry`, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify({ settings, generation: (await statusAt(origin)).counts_generation }) });
     assert.equal((await postSettings(themed)).status, 200, "the server takes a snapshot with herdr theme ids and the theme keys");
     assert.deepEqual((await statusAt(origin)).next?.settings, themed);
@@ -200,14 +193,12 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
     await sendSwitch.click();
     await until(async () => (await statusAt(origin)).enabled, "the Settings switch turns the counts on again");
     await dialog.getByRole("button", { name: "Close settings", exact: true }).click();
-    // the line's own off: one tap, and the line leaves
     await notice.getByRole("button", { name: "Turn off", exact: true }).click();
     await until(async () => !(await statusAt(origin)).enabled, "Turn off on the line turns the counts off");
     await notice.waitFor({ state: "hidden" });
     fixtureNow += SEND_GRACE_MS + 1;
     await telemetry.report();
     assert.deepEqual(sent, [], "the grace period and fixture-only transport prevent outgoing telemetry");
-    // turned off, a page keeps its settings to itself: the status is read, nothing is told
     const beforeReload = changes.length;
     const statusRead = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/telemetry" && response.request().method() === "GET");
     await page.reload();

@@ -2,29 +2,11 @@
 # The iOS app paired through the Ovis relay in the iOS Simulator on the test MacBook Air (`ssh eamac`,
 # never the MacBook Pro): todo 21's scenario as a script. Run on this PC from a checkout:
 #
-#   bash scripts/relay-ios-sim.sh [evidence-dir]
-#
-# This PC: dist-shell/ served as Pages serves it (scripts/pages-static.ts), the Bun relay
-# (relay/bun.ts) and a PC (createServer on the isolated herdr test session, a mkdtemp state dir),
-# all on 127.0.0.1, with `tailscale serve` giving the shell and the relay HTTPS/WSS addresses on
-# two free ports for this run only. The PC's relay is that wss: address, as in production: no seam.
+# bash scripts/relay-ios-sim.sh [evidence-dir]
 #
 # eamac: a fresh clone in /tmp from a git bundle of HEAD (nothing is pushed), the app built with
-# OVIS_APP_URL naming this run's shell and signed to run locally (CODE_SIGN_IDENTITY=-: an unsigned
-# build cannot store the relay device key, WebKit's IndexedDB put of a CryptoKey fails with
-# DataCloneError), its own new Simulator, and WebDriverAgent built in that clone. This PC drives
-# WebDriverAgent through an ssh tunnel: it pastes the pairing link on the connect screen, taps Open,
-# then Pair, and opens the workspace list.
-#
-# Nothing waits by sleeping. Each step waits for the event that brings the next screen, read from a
-# FIFO with a deadline: the local stack reports OFFER (the PC synced), SHELL (the shell's first
-# screen asked for the mark it draws beside its heading), PAIRED (the PC enrolled the phone) and
-# WORKSPACES (the PC sent the app's socket a snapshot naming this run's workspace); eamac reports BUILT and WDA (from
-# WebDriverAgent's own "ServerURLHere" line) and LOADED (Capacitor's "WebView loaded" on the app's
-# console). After an event, one WebDriverAgent query finds the element.
-#
-# Everything is undone on exit: the Simulator deleted, the /tmp clone removed, the serve entries
-# turned off (and checked gone), the tunnel and the local servers stopped.
+# CODE_SIGN_IDENTITY=-: an unsigned build cannot store the relay device key, WebKit's IndexedDB put of a
+# CryptoKey fails with DataCloneError.
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -40,12 +22,9 @@ tunnel=""
 
 say() { printf '[relay-ios-sim] %s\n' "$*" >&2; }
 
-# How long a stopped child gets after TERM before KILL; how long eamac's own cleanup may take.
 stop_seconds="${RELAY_IOS_SIM_STOP_SECONDS:-10}"
 remote_cleanup_seconds="${RELAY_IOS_SIM_REMOTE_CLEANUP_SECONDS:-180}"
 
-# Stops child $1: TERM, and KILL once $2 seconds pass without it exiting. The deadline is a timer
-# that fires once; the wait returns as soon as the child exits. Never fails.
 stop_child() {
   local pid="$1" grace="$2" timer
   kill -TERM "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null; return 0; }
@@ -56,16 +35,12 @@ stop_child() {
   return 0
 }
 
-# Runs on every exit, failure or not. Each step is bounded and does not depend on the one before:
-# the run's own processes are stopped before anything waits on them, so a remote half that is
-# blocked anywhere (on the build, on WebDriverAgent's readiness) cannot hold the rest up.
 cleanup() {
   local code=$?
   trap - EXIT INT TERM
   set +e
   say "cleanup (exit $code)"
   [ -n "$tunnel" ] && { timeout 30 ssh -S "$run/tunnel" -O exit eamac >/dev/null 2>&1 || true; }
-  # the ssh carrying eamac's half: stopped, not asked, as that half may not be reading its stdin
   [ -n "$remote_pid" ] && stop_child "$remote_pid" "$stop_seconds"
   if [ -n "$remote" ]; then
     if ! timeout "$remote_cleanup_seconds" ssh -o BatchMode=yes eamac "bash -s -- $(printf '%q' "$remote")" <<'EOF'
@@ -101,8 +76,6 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# Reads lines from fd $1 until one starts with $2, for at most $3 seconds; prints that line.
-# `read -t` blocks on the FIFO until a line arrives or the time is up: nothing is polled.
 await_event() {
   local fd="$1" name="$2" until=$((SECONDS + $3)) line
   while true; do
@@ -136,7 +109,6 @@ tailscale serve --bg --https="$shell_https" "http://127.0.0.1:$shell_local" >/de
 tailscale serve --bg --https="$relay_https" "http://127.0.0.1:$relay_local" >/dev/null
 say "shell $app_url -> 127.0.0.1:$shell_local; relay $relay_url -> 127.0.0.1:$relay_local"
 
-# fd 3: the local stack's events; fd 4: eamac's; fd 5: what eamac waits on before it stops WebDriverAgent.
 # Opened read-write, so neither side's open blocks and no EOF arrives while the run holds them.
 mkfifo "$run/stack.events" "$run/remote.events" "$run/remote.in"
 exec 3<>"$run/stack.events" 4<>"$run/remote.events" 5<>"$run/remote.in"
@@ -221,7 +193,6 @@ say "PC synced with the relay; offer ${offer%%#*}#offer=…"
 git -C "$repo" bundle create "$run/ovis.bundle" HEAD >/dev/null 2>&1
 remote="$(ssh -o BatchMode=yes eamac 'mktemp -d /tmp/ovis-relay-ios.XXXXXX')"
 cat >"$run/remote.sh" <<'EOF'
-# eamac's half: events on stdout, progress on stderr; it holds WebDriverAgent until a line on stdin.
 set -euo pipefail
 export PATH="$HOME/.bun/bin:/opt/homebrew/bin:$PATH"
 r="$1"; app_url="$2"
@@ -249,7 +220,6 @@ xcrun simctl install "$udid" "$r/dd/Build/Products/Debug-iphonesimulator/App.app
 codesign -dv "$r/dd/Build/Products/Debug-iphonesimulator/App.app" 2>&1 | grep -E '^Signature=' >&2 || true
 echo "BUILT $udid"
 
-# WebDriverAgent v16.15.3, pinned to its commit: fetched by that exact id and checked before it builds
 wda_commit=02cb92f0e93c8b021443bcbb8eeb80932c113220
 git init -q "$r/wda"
 git -C "$r/wda" fetch -q --depth 1 https://github.com/appium/WebDriverAgent "$wda_commit"
@@ -257,15 +227,14 @@ git -C "$r/wda" -c advice.detachedHead=false checkout -q FETCH_HEAD
 [ "$(git -C "$r/wda" rev-parse HEAD)" = "$wda_commit" ] || { echo "ENDED WebDriverAgent is not commit $wda_commit"; exit 1; }
 port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
 mkfifo "$r/wda.ready"
-# WebDriverAgent prints ServerURLHere once it listens: awk reports that line (or the end of the run
-# without it) on a FIFO and keeps writing the log
+# WebDriverAgent prints ServerURLHere once it listens
 TEST_RUNNER_USE_PORT="$port" xcodebuild -project "$r/wda/WebDriverAgent.xcodeproj" -scheme WebDriverAgentRunner \
   -destination "id=$udid" -derivedDataPath "$r/wdadd" test 2>&1 \
   | awk -v logfile="$r/wda.log" -v ready="$r/wda.ready" '{ print > logfile; fflush(logfile) } !done && /ServerURLHere->/ { print "READY" > ready; close(ready); done = 1 } END { if (!done) { print "ENDED" > ready; close(ready) } }' &
 read -r state <"$r/wda.ready"
 [ "$state" = READY ] || { tail -40 "$r/wda.log" >&2; echo "ENDED WebDriverAgent did not start"; exit 1; }
 echo "WDA $port"
-# on "launch": the app with its console attached; Capacitor prints "WebView loaded" as each page finishes
+# Capacitor prints "WebView loaded" as each page finishes
 while read -r command; do
   case "$command" in
     launch) xcrun simctl launch --console-pty --terminate-running-process "$udid" sh.ovis.app -AppleLanguages "(en)" -AppleLocale en_US 2>&1 \
@@ -292,7 +261,6 @@ say "WebDriverAgent on eamac:$wda_port, here as $wda"
 
 json() { curl -sf --max-time 120 -H 'content-type: application/json' "$@"; }
 element_of() { python3 -c 'import json,sys; v=json.load(sys.stdin)["value"]; print(v.get("ELEMENT") or v.get("element-6066-11e4-a52e-4f735466ecf0") or "")'; }
-# One query, after the event that brought the screen; on a miss, what is on screen, and the run fails.
 find() {
   local answer element
   answer="$(curl -s --max-time 120 -H 'content-type: application/json' -X POST "$wda/session/$session/element" -d "$1")"
@@ -306,7 +274,6 @@ find() {
 }
 shot() { ssh -o BatchMode=yes eamac "xcrun simctl io $(printf '%q' "$udid") screenshot $(printf '%q' "$remote/$1")" >/dev/null 2>&1; }
 
-# eamac launches the app with its console attached and reports LOADED once the bundled connect page loaded
 launch() {
   echo launch >&5
   await_event 4 LOADED 120 >/dev/null || { ssh -o BatchMode=yes eamac "tail -n 30 $(printf '%q' "$remote/app.log")" >&2; return 1; }

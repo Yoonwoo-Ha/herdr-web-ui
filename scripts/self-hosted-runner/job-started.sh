@@ -1,20 +1,7 @@
 #!/usr/bin/env bash
-# Runner-side guard (ACTIONS_RUNNER_HOOK_JOB_STARTED): runs before every job, outside anything a
-# workflow controls. A pull request's run executes its own workflow files and route script, so a
-# fork could send its job here; this refuses every job whose code comes from another repository
-# (a fork pull request, a deleted head repository, a workflow_run of a fork) before a step runs.
-#
-# Fail closed: every exit before the job is explicitly allowed at the end refuses it, an error of
-# this script included (a missing or unreadable event file, broken JSON, an unset variable).
-# A refusal kills only this hook's own parent, and only once every check below proves that parent
-# is the job's Runner.Worker; when one fails it kills nothing and blocks, so no later step starts,
-# until the parent it started under is gone: then nothing waits on it any more, and it ends.
 # First of all: a write to a closed output (an error message on a stderr nobody reads) must not
 # end this shell with SIGPIPE before the refusal below can run.
 trap '' PIPE
-# the runner starts this with bash; another shell (sh is dash on Debian) cannot run the rest, and
-# need not even set $PPID, so it cannot tell when its parent is gone: it blocks for good, killing
-# nothing. This branch has no exit.
 if [ -z "${BASH_VERSION:-}" ]; then
   set +e
   trap '' HUP INT TERM
@@ -23,18 +10,13 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
-# Where processes are read: Linux's /proc, or, where there is none (macOS), ps by its absolute path.
-# The tests run a copy that differs from this file in this line alone (scripts/self-hosted-runner.test.ts).
 proc=/proc ps=/bin/ps
-# chosen once: a pid that has gone away must never send the Linux checks to ps
 if [[ -r $proc/$$/stat ]]; then os=linux; else os=mac; fi
 
 allowed=0
 reason="the guard failed before it could check the job"
 refusal=""
 
-# The refusal, in the job's log and where it outlives a killed worker: the container's output
-# (the launcher's journal) on Linux, the system log on the Mac, which has no /proc.
 say() {
   echo "::error::$1" 2>/dev/null
   if [[ -d $proc/1 ]]; then
@@ -44,14 +26,6 @@ say() {
   fi
 }
 
-# The worker is not proven: kill nothing. This step stays running (HUP, INT and TERM are ignored,
-# by sleep too), so no other step of the job starts, for as long as the parent this shell started
-# under lives. Once a read of its own parent succeeds and names another process, that parent is gone,
-# and only it waited on this hook. When that parent is the worker itself, as the runner starts the hook,
-# no step can run once it is gone, so ending releases nothing. A process between them that exits while
-# the worker lives lets the worker finish the step itself (5 s later), and the job's always() and
-# failure() steps can then run; the hook cannot prevent that. A failed read keeps blocking. Never
-# returns otherwise, and signals nothing.
 block() {
   local now me
   say "$refusal Its parent is not proven to be the job's Runner.Worker ($1), so nothing was killed; this hook blocks (pid $$) until its parent is gone."
@@ -65,7 +39,6 @@ block() {
   done
 }
 
-# A pid as /proc or ps printed it: digits only, never 0, before any arithmetic on it
 is_pid() { [[ $1 =~ ^[1-9][0-9]{0,9}$ ]]; }
 
 # Linux: the parent and start time of pid $1, from the fields after the last ")" of its stat (the
@@ -82,7 +55,6 @@ stat_of() {
   is_pid "$stat_ppid" && [[ $stat_start =~ ^[0-9]+$ ]]
 }
 
-# macOS: one ps column of pid $2, without the blanks ps pads it with; fails on an empty answer
 ps_of() {
   local value
   value=$("$ps" -o "$1=" -p "$2" 2>/dev/null) || return 1
@@ -108,8 +80,6 @@ refuse() {
   worker=$PPID
   is_pid "$worker" && (( worker > 1 && worker != $$ )) || block "no parent process"
   if [[ $os == linux ]]; then
-    # still this shell's parent: a parent that ended since this shell's start is caught here (an orphan adopted
-    # before the start, a subreaper included, is caught by the executable below)
     stat_of $$ && [[ $stat_ppid == "$worker" ]] || block "it is no longer this hook's parent"
     own_start=$stat_start
     # the kernel's path of its executable, which a process cannot rename, and its name
@@ -124,7 +94,6 @@ refuse() {
     [[ $uid_ok == 1 ]] || block "it runs as another user"
     stat_of "$worker" && (( stat_start <= own_start )) || block "it started after this hook"
     worker_start=$stat_start
-    # once more, right before the kill: still the same process, and, read last, still this shell's parent
     stat_of "$worker" && [[ $stat_start == "$worker_start" ]] && stat_of $$ && [[ $stat_ppid == "$worker" ]] || block "it changed during the checks"
   else
     [[ $(ps_of ppid $$) == "$worker" ]] || block "it is no longer this hook's parent"

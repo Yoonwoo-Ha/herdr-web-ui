@@ -14,7 +14,6 @@ if command -v bun >/dev/null 2>&1; then
       # a Homebrew bun is updated by Homebrew, not by `bun upgrade`: follow the bun on PATH link by
       # link (plain readlink, or ls where there is none) and look at each path on the way
       update="bun upgrade"
-      # Homebrew's default prefixes; tests point this at prefixes under a temporary root
       brew_prefixes=${OVIS_TEST_BREW_PREFIXES:-/opt/homebrew /home/linuxbrew/.linuxbrew}
       bun_path=$(command -v bun)
       case "$bun_path" in */*) ;; *) bun_path=./$bun_path ;; esac
@@ -40,8 +39,6 @@ else
   echo "Install it (https://bun.sh), start herdr from a shell where 'bun --version' works, then install again."
   fail=1
 fi
-# Node is optional: terminals run on the Rust PTY host, which the next build step installs. An old
-# Node is only reported, since the server uses Node only when the Rust host cannot run.
 if command -v node >/dev/null 2>&1; then
   major=$(node --version 2>/dev/null | sed 's/^\([^0-9]*\)\([0-9]*\).*/\2/')
   if [ "${major:-0}" -lt 18 ]; then

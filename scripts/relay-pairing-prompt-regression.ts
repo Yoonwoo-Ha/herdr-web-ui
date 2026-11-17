@@ -42,7 +42,6 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) 
 } });
 
 let asked = 0;
-/** A device asks: the PC's clock is two minutes behind this browser's, so only `left_ms` gives the right seconds. */
 function ask(over: Partial<RelayPairingRequest> = {}): RelayPairingRequest {
   const request: RelayPairingRequest = { id: `p${++asked}`, label: "Hako's iPhone", digits: "725403", expires_at: new Date(Date.now() - 30_000).toISOString(), left_ms: 90_000, ...over };
   waiting = [...waiting, request];
@@ -51,7 +50,6 @@ function ask(over: Partial<RelayPairingRequest> = {}): RelayPairingRequest {
 }
 function withdraw(): void { waiting = []; tell(); }
 
-/** what has the focus: the prompt's surface, one of its buttons, Settings (a field of its own told apart), a field of the page, or something else */
 const focus = (page: Page): Promise<string> => page.evaluate(() => {
   const active = document.activeElement;
   if (active === null || active === document.body) return "nothing";
@@ -62,9 +60,7 @@ const focus = (page: Page): Promise<string> => page.evaluate(() => {
   return "elsewhere";
 });
 
-/** which waiting prompt has the focus, on itself or on a button (0 is the top one); -1 when none has */
 const focusedPrompt = (page: Page): Promise<number> => page.evaluate(() => [...document.querySelectorAll(".relay-pairing-prompt")].findIndex((prompt) => prompt.contains(document.activeElement)));
-/** whether what has the focus can be read: it, and the whole prompt it is in when that fits, lie inside the stack's own box, which is inside the window */
 const focusShown = (page: Page): Promise<boolean> => page.evaluate(() => {
   const active = document.activeElement;
   const prompt = active?.closest(".relay-pairing-prompt");
@@ -76,14 +72,6 @@ const focusShown = (page: Page): Promise<boolean> => page.evaluate(() => {
   const whole = prompt.getBoundingClientRect();
   return inside(active.getBoundingClientRect()) && (whole.height > frame.height || inside(whole));
 });
-/**
- * The page's clock, stopped and moved by hand: Approve's guards count in this window's milliseconds, and
- * the presses below are real ones that take as long as the machine is busy.
- */
-/**
- * What a guard that has just run out is given on top: the guards count to when a key or a click was made, and a
- * real press is a few of the machine's own milliseconds old when the page hears it, which the stopped clock does not pass.
- */
 const PRESS_AGE_MS = 250;
 const clock = {
   stop: (page: Page) => page.evaluate(() => { const qa = (globalThis as unknown as { qaClock: { at: number | null } }).qaClock; qa.at = Date.now(); }),
@@ -107,12 +95,8 @@ try {
   const prompt = page.locator('[data-testid="relay-pairing-prompt"]');
   const sentence = prompt.locator(":scope > span > span").first();
   const settings = page.locator(".settings-dialog");
-  /** a fetch of the page's that the server answers after any decision the page sent before it */
   const settled = () => page.evaluate(() => fetch("/api/health").then(() => undefined));
 
-  // 1. Settings open, the focus on one of its buttons: the prompt takes it on its own surface. A key that
-  //    presses Approve the moment the prompt is there (typed for what was under it) approves nothing:
-  //    a click no pointer made is what Enter or Space on the button gives
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   await settings.waitFor();
   await page.waitForFunction(() => document.querySelector(".settings-dialog")?.getAnimations().length === 0);
@@ -136,17 +120,12 @@ try {
   assert.equal(await focus(page), "prompt", "over Settings the prompt takes the focus on its own surface, not on Approve");
   assert.equal(await prompt.getAttribute("role"), "group");
   assert.equal(await sentence.innerText(), "Hako's iPhone wants to add this PC to your account. Type 725 403 on Hako's iPhone, or check that Hako's iPhone shows the same number, then press Approve here.");
-  // by what the PC said is left, though by this browser's clock the PC's expires_at is past
   const left = Number.parseInt(await prompt.locator('[data-testid="relay-pairing-left"]').innerText(), 10);
   assert.ok(left > 30 && left <= 90, `the seconds left follow left_ms, not this browser's clock: ${left}`);
-  // nothing on the page reads the prompt as a dialog that covers it (ConnectPhoneDialog's and the drawer's
-  // Escape, PANE_COVER_SELECTOR, the web popup's cover)
   assert.equal(await page.locator('[role="alertdialog"]').count(), 0, "the prompt is no alertdialog");
   assert.equal(await page.evaluate(() => document.querySelector(".relay-pairing-layer")?.closest('[role="dialog"], [role="alertdialog"], [aria-modal="true"], [role="menu"], dialog[open]') ?? null), null);
   assert.equal(await page.evaluate(() => document.querySelector('.relay-pairing-layer [role="dialog"], .relay-pairing-layer [role="alertdialog"], .relay-pairing-layer [aria-modal="true"], .relay-pairing-layer [role="menu"]')), null);
 
-  // 2. Tab walks the prompt's two buttons although Settings holds a focus trap, then goes back to Settings:
-  //    the prompt and its buttons follow Settings' own stops in its Tab round
   await page.keyboard.press("Tab");
   assert.equal(await focus(page), "prompt Approve", "Tab goes from the prompt to Approve, past Settings' trap");
   await page.keyboard.press("Tab");
@@ -155,7 +134,6 @@ try {
   assert.ok((await focus(page)).startsWith("settings"), "Tab past Decline goes back to Settings, never nowhere");
   await page.keyboard.press("Shift+Tab");
   assert.equal(await focus(page), "prompt", "Shift+Tab from Settings' first stop goes back into the prompt, on the prompt itself: never onto Decline and then Approve");
-  // a key on Approve within a second of the focus coming into the prompt approves nothing, though the prompt has waited
   await clock.stop(page);
   await clock.pass(page, 5000);
   await page.keyboard.press("Shift+Tab");
@@ -173,9 +151,6 @@ try {
   withdraw();
   await prompt.waitFor({ state: "detached" });
 
-  // 2b. the focus in a field inside Settings: the prompt leaves it there, and Tab still reaches the prompt
-  //     from Settings' round, on the prompt itself. The keys of that walk, pressed the moment the prompt
-  //     is there (typed for the field), end on Approve and approve nothing
   const field = settings.locator("input:visible, select:visible, textarea:visible").first();
   await field.focus();
   assert.equal(await focus(page), "settings field");
@@ -185,7 +160,6 @@ try {
       if (document.querySelector(".relay-pairing-prompt") === null) return;
       watch.disconnect();
       const walk: string[] = [];
-      // Settings' trap moves the focus itself on each Tab it hears, so a key event made here walks as a pressed one
       for (let step = 0; step < 400; step += 1) {
         const active = document.activeElement;
         if (active?.matches(".relay-pairing-prompt .btn-primary")) { (active as HTMLElement).click(); walk.push("pressed Approve"); break; }
@@ -205,7 +179,6 @@ try {
   assert.deepEqual(decided, [], "Tab and Enter typed for a field in Settings approve nothing");
   assert.deepEqual(walk.filter((at) => at !== "settings"), ["prompt", "prompt button", "pressed Approve"], `from a field in Settings, Tab stays in Settings until the prompt, then lands on the prompt before Approve: ${walk.join(", ")}`);
   assert.equal(await focus(page), "prompt Approve");
-  // back in the field, the prompt still waiting: real Tab presses reach it, the last of them from Settings
   await field.focus();
   assert.equal(await focus(page), "settings field", "the waiting prompt does not take the focus back from the field");
   let presses = 0;
@@ -216,7 +189,6 @@ try {
   assert.equal(await focus(page), "prompt", "Tab leaves Settings for the prompt itself, not for Approve or the page beneath");
   await page.keyboard.press("Tab");
   assert.equal(await focus(page), "prompt Approve");
-  // its first second is over by now (the seconds shown have moved), and so is the second after Tab brought the focus in: Enter approves
   await page.waitForFunction(() => Number.parseInt(document.querySelector('[data-testid="relay-pairing-left"]')?.textContent?.trim() ?? "", 10) <= 88);
   await clock.stop(page);
   await clock.pass(page, 1500);
@@ -230,7 +202,6 @@ try {
   await prompt.waitFor();
   assert.equal(await focus(page), "prompt");
 
-  // 3. Escape on the prompt closes Settings as it does from inside it, and the prompt stays to be answered
   await prompt.focus();
   assert.equal(await focus(page), "prompt");
   await page.keyboard.press("Escape");
@@ -238,10 +209,8 @@ try {
   assert.equal(await prompt.count(), 1, "Escape leaves the prompt waiting");
   await settled();
   assert.deepEqual(decided, []);
-  // once its first second is over, a key on Approve approves
   await page.waitForFunction(() => Number.parseInt(document.querySelector('[data-testid="relay-pairing-left"]')?.textContent?.trim() ?? "", 10) <= 88);
   await prompt.getByRole("button", { name: "Approve", exact: true }).focus();
-  // (and the second after the focus came onto its button)
   await clock.stop(page);
   await clock.pass(page, 1500);
   await page.keyboard.press("Enter");
@@ -249,7 +218,6 @@ try {
   await prompt.waitFor({ state: "detached" });
   assert.deepEqual(decided, [{ id: first2.id, decision: "approve" }]);
 
-  // 4. a field the person types in (a terminal's is a textarea) keeps the focus and its keys
   await page.evaluate(() => {
     const field = document.createElement("textarea");
     field.className = "qa-field";
@@ -263,15 +231,12 @@ try {
   assert.equal(await sentence.innerText(), "Hako's iPhone wants to pair through the relay. Approve it only if its screen shows 725 403");
   await page.keyboard.type("cd pro");
   assert.equal(await page.locator(".qa-field").inputValue(), "cd pro", "what is typed still reaches the field");
-  // a shell's Tab goes on from the field in the page's own order, not into the prompt
   await page.keyboard.press("Tab");
   assert.ok(!(await focus(page)).startsWith("prompt"), "Tab typed in a field does not land in the prompt");
-  // a pointer's click is aimed at the prompt: at once
   await prompt.getByRole("button", { name: "Decline", exact: true }).click();
   await prompt.waitFor({ state: "detached" });
   assert.deepEqual(decided.slice(1), [{ id: second.id, decision: "decline" }]);
 
-  // 5. a label the device chose cannot cut the sentence
   await page.evaluate(() => (document.querySelector(".qa-field") as HTMLElement).focus());
   ask({ local_only: true, label: "evil\u0000{digits}" });
   await prompt.waitFor();
@@ -281,9 +246,6 @@ try {
   withdraw();
   await prompt.waitFor({ state: "detached" });
 
-  // 6. two devices wait over Settings, long enough for both. The first is approved by a key; it goes, and the
-  //    second is handed the focus. A Tab and an Enter typed by habit right then approve nothing: the second's
-  //    guard starts again when it is handed the focus, though its own arrival is long past
   await page.evaluate(() => document.querySelector(".qa-field")?.remove());
   decided.length = 0;
   const count = (n: number) => page.waitForFunction((want) => document.querySelectorAll(".relay-pairing-prompt").length === want, n);
@@ -325,9 +287,6 @@ try {
   await page.keyboard.press("Escape");
   await settings.waitFor({ state: "detached" });
 
-  // 7. a double-click on the top prompt's Approve: its first click approves that device, the prompt below
-  //    moves up under the pointer, and the second click lands on that one's Approve. It approves nothing,
-  //    and neither does a single click there until the moved prompt has been in its place for half a second
   const clickedA = ask({ local_only: true });
   await count(1);
   const clickedB = ask({ local_only: true });
@@ -344,7 +303,6 @@ try {
   await count(1);
   assert.deepEqual(decided, [{ id: clickedA.id, decision: "approve" }]);
   assert.equal(await under(), 0, "the prompt below moved up: its Approve is where the first one's was");
-  // the second click of the double-click, as the browser counts it
   await page.mouse.down({ clickCount: 2 });
   await page.mouse.up({ clickCount: 2 });
   await settled();
@@ -355,7 +313,6 @@ try {
   await settled();
   assert.equal(decided.length, 1, "a click in the moved prompt's first half second approves nothing");
   await clock.pass(page, 1 + PRESS_AGE_MS);
-  // a double-click's second click never approves, however long the prompt has been there
   await page.mouse.down({ clickCount: 2 });
   await page.mouse.up({ clickCount: 2 });
   await settled();
@@ -364,8 +321,6 @@ try {
   await count(0);
   assert.deepEqual(decided.splice(0), [{ id: clickedA.id, decision: "approve" }, { id: clickedB.id, decision: "approve" }], "a single click after that half second approves");
 
-  // 8. four devices in a window too short for them: the stack scrolls. Whatever Tab lands on is in view, the
-  //    whole prompt with it, and so is the prompt handed the focus when the one that had it is approved
   await page.setViewportSize({ width: 1280, height: 220 });
   await openSettings();
   const short = [1, 2, 3, 4].map((n) => ask({ local_only: true, label: `Device ${n}` }));

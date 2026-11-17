@@ -11,6 +11,7 @@ const home = join(root, "home");
 // herdr follows XDG_CONFIG_HOME; a value apart from ~/.config proves the bridge follows it too.
 // On Windows it follows APPDATA instead, and the bundle carries no herdr: the one herdr's own
 // installer left (the stable alias under %LOCALAPPDATA%), or OVIS_HERDR_BIN.
+// herdr follows XDG_CONFIG_HOME, and APPDATA on Windows
 const xdg = join(home, "xdg");
 // Claude's store: the bridge reads a pane's Claude transcripts from here, not the runner's own
 const claudeConfig = join(home, ".claude");
@@ -18,9 +19,6 @@ mkdirSync(bundle); mkdirSync(home);
 const server = join(bundle, windows ? "ovis-server.exe" : "ovis-server");
 const herdr = windows ? process.env["OVIS_HERDR_BIN"] || join(process.env["LOCALAPPDATA"] ?? "", "Programs/Herdr/bin/herdr.exe") : join(bundle, "bin/herdr");
 if (windows) assert.ok(existsSync(herdr), `herdr is not installed at ${herdr}`);
-// The PC this stands for has no Node of its own: the terminal attach must run on the Node the
-// bundle carries (#265: looked up on the launch PATH alone, such a PC mirrored instead). So every
-// PATH entry that holds a node is left out; a Windows bundle carries none and mirrors.
 const delimiter = windows ? ";" : ":";
 const path = (process.env["PATH"] ?? "").split(delimiter).filter((dir) => dir && !existsSync(join(dir, windows ? "node.exe" : "node"))).join(delimiter);
 // the pane's shell is a plain one: a login shell with an empty HOME may stop to ask how it should be set up
@@ -30,13 +28,11 @@ let child: ReturnType<typeof Bun.spawn> | undefined;
 try {
   const archive = resolve(`remote-bundles/herdr-web-ui-${process.platform}-${process.arch}.tgz`);
   assert.equal(Bun.spawnSync(["tar", "xzf", archive, "-C", bundle]).exitCode, 0);
-  // a bundle built with the Rust PTY host carries one that runs on this PC (scripts/pty-sidecar.ts)
   if (!windows && process.env["HERDR_BUNDLE_PTY_SIDECAR"]) {
     const host = Bun.spawnSync([join(bundle, "bin/ovis-pty-sidecar")], { stdin: "ignore", stderr: "pipe" });
     assert.equal(host.exitCode, 2, "the bundle's Rust PTY host runs and prints its usage");
     assert.match(host.stderr.toString(), /^pty-sidecar: usage:/);
   }
-  // the bundle carries no server sources: its compiled server runs the bridge
   for (const sources of ["server", "shared"]) assert.equal(existsSync(join(bundle, sources)), false, `the bundle holds no ${sources}/`);
   child = Bun.spawn([server, "remote"], { env, stdout: "inherit", stderr: "inherit" });
   const { createHash } = await import("node:crypto");
@@ -59,9 +55,6 @@ try {
   assert.equal((await fetch(`http://127.0.0.1:${descriptor.port}/api/session`)).status, 401);
   console.log("Remote bundle startup, isolated socket and authentication passed");
 
-  // A live terminal, not only what the bridge says of itself: herdr's own attach where the
-  // bundle carries Node, a mirror of the pane's screen on Windows. Typing reaches the shell
-  // either way, and what it prints comes back.
   const headers = { authorization: `Bearer ${descriptor.token}`, "content-type": "application/json" };
   const created = await fetch(`http://127.0.0.1:${descriptor.port}/api/workspace/create`, { method: "POST", headers, body: JSON.stringify({ cwd: home, label: "herdr-web-ui-test-bundle-smoke" }) });
   assert.equal(created.status, 200, await created.clone().text());
@@ -79,7 +72,6 @@ try {
     await until("the terminal paints", () => frames.some((frame) => frame.type === "pty-data" && frame.pane_id === paneId));
     const mirrored = frames.some((frame) => frame.type === "pane-geometry" && frame.pane_id === paneId && frame.fixed === true);
     assert.equal(mirrored, windows, windows ? "a Windows bridge mirrors the pane's screen" : "the bundle's own Node runs the terminal attach: no mirror");
-    // arithmetic, so the echo of the typed line is not the answer
     ws.send(JSON.stringify({ type: "input", pane_id: paneId, text: windows ? "echo \"smoke-$(40+2)\"\r" : "echo smoke-$((40+2))\r" }));
     await until("typing reaches the shell and its output comes back", () => frames.some((frame) => frame.type === "pty-data" && frame.pane_id === paneId && (frame.data ?? "").includes("smoke-42")));
     console.log(`Remote bundle live terminal passed (${mirrored ? "mirror" : "attach"})`);
@@ -87,9 +79,6 @@ try {
     ws.close();
   }
 
-  // A Claude conversation's picture, as the chat view loads it: the transcript is read by the
-  // bundle's compiled server through the shared transcript reader, on this PC's file system. The pane is
-  // told it runs Claude with that session (as Claude's hook tells herdr), so no Claude is needed.
   const session = randomUUID();
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
   const record = (entry: object) => JSON.stringify({ sessionId: session, cwd: home, timestamp: new Date().toISOString(), ...entry }) + "\n";
@@ -104,7 +93,6 @@ try {
   await herdrRpc("pane.report_agent_session", { pane_id: paneId, source: "herdr:claude", agent: "claude", agent_session_id: session, session_start_source: "new", seq: 1 }, socket);
   const image = `http://127.0.0.1:${descriptor.port}/api/pane/conversation/image?${new URLSearchParams({ pane_id: paneId, ref: `${result}:0:0` })}`;
   let fetched: Response | undefined;
-  // the bridge sees herdr's report on its next look at the session
   for (let i = 0; i < 100; i++) {
     fetched = await fetch(image, { headers: { authorization: `Bearer ${descriptor.token}` } });
     if (fetched.status === 200) break;

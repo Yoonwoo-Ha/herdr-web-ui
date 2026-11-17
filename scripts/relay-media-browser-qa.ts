@@ -1,11 +1,4 @@
-/**
- * Todo 17: two real PCs, a remote bridge, one shell origin, and the real encrypted relay.
- * Run after both builds, with FFMPEG pointing at ffmpeg and an isolated HERDR_TEST_SESSION.
- * Reuses the shell QA's Pages host and WebSocket bridge. All waits name an event; the browser
- * clock is frozen, so a readiness check cannot accidentally win by letting a timer elapse.
- * The browser lane (scripts/ci-browser.sh) runs it as an entry of its own; relay-e2e-regression.ts
- * calls `relayMediaQa` only with another server tree (RELAY_E2E_SERVER_DIR, --skew).
- */
+/** Run after both builds, with FFMPEG pointing at ffmpeg and an isolated HERDR_TEST_SESSION. */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { Database } from "bun:sqlite";
@@ -28,7 +21,6 @@ import { loadPagesSite, pagesResponse } from "./pages-static.ts";
 import { relayBrowserSocket, relayServerTree } from "./relay-browser-bridge.ts";
 import type { RelayServerTree } from "./relay-browser-bridge.ts";
 
-/** Todo 17's two-PC resource proof, against `tree`'s server (relay-e2e-regression.ts runs it against another server tree). */
 export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
   const { createServer, RelayService } = tree;
   const repo = join(import.meta.dir, "..");
@@ -68,7 +60,6 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
     }), `positive Range on ${pc}`);
   }
 
-  // Every full-page read opens a client/data pair, all from the same loopback address.
   const relay = startBunRelay({ port: 0 });
   const relayAddress = (address: string): string => {
     const url = new URL(address);
@@ -100,7 +91,6 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
   mkdirSync(remoteDir);
   let remote: ReturnType<typeof Bun.serve> | undefined;
 
-  /** Three independent blocked operations, reported only after the attempted fetch settles. */
   const attack = (id: string): string => `(async () => {
     if (document.body) document.body.dataset.ran = "1";
     const result = {};
@@ -117,7 +107,6 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
     copyFileSync(join(repo, "public/icons/icon-192.png"), join(dir, "picture.png"));
     copyFileSync(video, join(dir, "seek.mp4"));
     writeFileSync(join(dir, "large.pdf"), Buffer.alloc(70 * 1024 * 1024));
-    // A valid single-page PDF, generated in the same real browser rather than a fake PDF MIME.
     const pdfPage = await browser.newPage();
     await pdfPage.setContent(`<h1>${name}</h1>`);
     await pdfPage.pdf({ path: join(dir, "document.pdf") });
@@ -135,7 +124,6 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
     const workspace = await workspaceCreate({ cwd: dir, label: name });
     workspaces.push(workspace.workspace.workspace_id);
     const pane = workspace.root_pane.pane_id;
-    // A session report is accepted only while the actual foreground process holds the pane.
     const standIn = join(dir, "opencode");
     writeFileSync(standIn, "#!/bin/sh\nwhile read -r line; do :; done\n");
     chmodSync(standIn, 0o755);
@@ -167,12 +155,10 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
     const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, sidecar: false, relay: service, opencodeDb: dbPath });
     const logger = app.context.services.requestLog;
     const handle = logger.handle.bind(logger);
-    // Observe the real dispatcher, without changing any response or endpoint behavior.
     logger.handle = async (request, dispatch) => {
       record(name, request);
       let response = await handle(request, dispatch);
       const path = new URL(request.url).searchParams.get("path") ?? "";
-      // A compromised PC omits all isolation headers, even for files advertised as PDFs.
       if (response && new URL(request.url).pathname.endsWith("/fs/file")
         && /(?:page\.html|evil\.svg|hostile-(?:html|svg)\.pdf)$/.test(path)) {
         const headers = new Headers(response.headers);
@@ -260,7 +246,6 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
     const offer = decodeOffer(p.service.offer().url);
     assert.ok(offer);
     await navigate(page, encodeOffer({ ...offer, name: p.name }, origin));
-    // an admitted pairing enters the app by itself, with no Ready checkpoint before it (lib/relay/shell.tsx)
     const paired = page.waitForEvent("framenavigated", { predicate: (frame) => frame === page.mainFrame() && !frame.url().includes("#offer=") });
     await Promise.all([paired, page.getByRole("button", { name: "Pair", exact: true }).click({ force: true })]);
     await page.locator(".app").waitFor();
@@ -276,17 +261,10 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
   }
   async function read(page: Page, p: typeof pcs[number], name: string, machine = "local"): Promise<void> {
     const path = machine === "local" ? join(p.dir, name) : `/remote/${name}`;
-    // each file is a load of its own, as a tab opened on its link is: the reader's address differs
-    // from the page's only in its fragment (lib/pageQuery.ts), and a reader already up would take
-    // a file of the same PC in place, leaving the last file's elements for a moment
     await page.goto("about:blank");
     await navigate(page, origin + readerHref(machine, path, `/s/${p.id}/`, "relay"));
     await page.locator(".file-reader").waitFor();
   }
-  /**
-   * A page over the relay is drawn without its scripts first: the render host puts it in a frame of its own that
-   * runs none, and nothing in it has run. The press runs it in the render host itself.
-   */
   async function runPageScripts(page: Page, heading: string): Promise<void> {
     const host = page.locator("iframe.file-viewer-page");
     await host.waitFor();
@@ -415,7 +393,6 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
     const manager = first.app.context.services.core.machines;
     assert.ok(manager);
     const endpoint = manager.endpoint.bind(manager);
-    // machine-api selects by the literal path segment; the SW must not decode or re-encode it.
     manager.endpoint = (id) => id === encodeURIComponent(remoteId) ? { url: `http://127.0.0.1:${remote?.port}`, token: "media-remote-token" } : endpoint(id);
     const remoteProbe = await fetch(`http://127.0.0.1:${first.app.port}/api/machines/${encodeURIComponent(remoteId)}/fs/stat?path=%2Fremote%2Fpicture.png`);
     const remoteProbeBody = await remoteProbe.text();
@@ -441,7 +418,6 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
       isolated(await isolation(page));
       assert.equal(await page.frameLocator("iframe.file-viewer-page").locator("body").getAttribute("data-ran"), "1");
       assert.equal(await page.frameLocator("iframe.file-viewer-page").locator("h1").textContent(), `${p.name} rendered`);
-      // document.write has completed but a frozen clock has not painted the child frame yet.
       await page.frameLocator("iframe.file-viewer-page").locator("body").evaluate(() => {
         Object.defineProperty(window, "painted", { value: new Promise<void>((resolve) => requestAnimationFrame(() => resolve())) });
       });
@@ -467,7 +443,6 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
       const paired = blob ? await pair(ctx, first) : tabs[0];
       assert.ok(paired);
       if (blob) await closePage(paired);
-      // Pairing is shared in IndexedDB, but a download/PDF and its teardown own only their page.
       const check = async (run: (page: Page) => Promise<void>): Promise<void> => {
         const page = blob ? await mediaPage(ctx) : paired;
         try { await run(page); }
@@ -484,8 +459,6 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
           await image(page);
           assert.equal(await page.evaluate(() => (window as Window & { isolationResults: unknown[] }).isolationResults.length), 0, "SVG image scripts never run");
         }
-        // Execute the SVG's script inside the same opaque render host, proving its attempted APIs
-        // fail too, rather than counting the image decoder's non-execution as those three attempts.
         const svg = readFileSync(join(first.dir, "evil.svg"), "utf8");
         const rendered = page.waitForEvent("framenavigated", { predicate: (frame) => frame.url().endsWith("~render") });
         await page.evaluate((html) => {
@@ -549,8 +522,6 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
               }
             }, { capture: true });
           });
-          // The whole body may still be downloading at the locator deadline. Observe native
-          // readiness before asserting its source; the command's timeout bounds the whole run.
           await Promise.all([metadata.promise, read(page, first, "seek.mp4")]);
           const video = page.locator('video[src^="blob:"]');
           await video.waitFor();
@@ -578,7 +549,6 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
       }
     }
 
-    // The installed app's Copy link must survive the originating tab closing, in either mode.
     {
       const ctx = await context(true);
       await ctx.addInitScript(() => {
@@ -606,7 +576,6 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
       const opened = await mediaPage(ctx);
       assert.ok(href);
       await navigate(opened, href);
-      // the reader is the same viewer: the page's scripts wait for the press there too
       await runPageScripts(opened, `${first.name} rendered`);
       isolated(await isolation(opened));
       note("copy link: installed blob-mode file viewer copied a stable reader URL; a new tab opened it with its own channel");
@@ -640,8 +609,6 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
       await closeContext(ctx);
     }
 
-    // Removing the SW's CSP must make this negative control fail: no iframe sandbox attribute
-    // here, so only the forwarded response policy is capable of isolating the navigation.
     for (const mutate of [false, true]) {
       workerMode = mutate ? "drop-csp" : "current";
       const ctx = await context();

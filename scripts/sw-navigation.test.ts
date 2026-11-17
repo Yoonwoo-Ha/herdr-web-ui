@@ -11,7 +11,6 @@ const SCOPE = `${ORIGIN}/s/${SERVER_ID}/`;
 
 type Store = Map<string, Response>;
 
-/** sw.js run against in-memory caches and a network that answers `pages` and `files`. */
 function worker(options: { shell: boolean; build: string; caches?: Record<string, Record<string, string>>; network: Record<string, string>; keptAt?: Date; offline?: boolean; brokenCaches?: boolean }) {
   const stores = new Map<string, Store>();
   const key = (request: Request | string) => new URL(typeof request === "string" ? request : request.url, ORIGIN).href;
@@ -63,7 +62,6 @@ function worker(options: { shell: boolean; build: string; caches?: Record<string
   const code = stampServiceWorker(source, options.build, undefined, options.shell);
   new Function("self", "caches", "fetch", code)(self, cacheStorage, fetch);
 
-  /** Navigates to the PC's scope: what the page got, once the worker finished what it keeps. */
   async function navigate(): Promise<string> {
     let responded: Promise<Response> | undefined;
     const pending: Promise<unknown>[] = [];
@@ -147,7 +145,6 @@ describe("service worker navigations", () => {
       network: { [new URL(SCOPE).pathname]: NEW_SHELL, "/assets/index-new.js": "new" },
     });
     expect(await sw.navigate()).toBe(OLD_SHELL);
-    // the page still runs the old shell, and may ask for a chunk of its build later
     expect(sw.stores.get("ovis-v4-sheep-0000000000aa")?.has(`${ORIGIN}/assets/katex-old.js`)).toBe(true);
     expect(await sw.navigate()).toBe(NEW_SHELL);
     expect(sw.stores.has("ovis-v4-sheep-0000000000aa")).toBe(false);

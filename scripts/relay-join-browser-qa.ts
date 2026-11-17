@@ -1,4 +1,3 @@
-/** Explicit dashboard consent starts pairing once; external offers keep their confirmation. */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,7 +55,6 @@ try {
           }
           await route.fulfill({ status: answer.status, headers: { ...Object.fromEntries(answer.headers), ...cors }, body: Buffer.from(await answer.arrayBuffer()) });
         });
-        // A held connection exposes connecting without inventing a PC answer.
         await context.routeWebSocket(/.*/, () => {});
         await context.addInitScript(({ theme, language }) => {
           localStorage.setItem("ovis:settings", JSON.stringify({ theme, language }));

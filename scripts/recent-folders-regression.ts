@@ -9,14 +9,11 @@ import type { WorkspaceCreated } from "../shared/protocol.ts";
 import { sessionSnapshot, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { passingFolder } from "../src/lib/recent-directories.ts";
 import { chromePath } from "./chrome-path.ts";
-// machine events stay on SSE here: these checks hold or watch /api/machines/events (the socket transport has its own checks)
 process.env["OVIS_MACHINE_EVENTS_WS"] = "0";
 
 await import("./test-herdr.ts");
 const { createServer } = await import("../server/index.ts");
 const { UsageService } = await import("../server/usage.ts");
-// not under a folder recent folders leave out: the temporary directory, or this checkout when it
-// is one of herdr's worktrees (`passingFolder`), so the fixtures live under the home's cache
 const cache = join(homedir(), ".cache", "ovis-tests");
 mkdirSync(cache, { recursive: true });
 const root = realpathSync(mkdtempSync(join(cache, "herdr-recent-folders-")));
@@ -29,7 +26,6 @@ try {
     headless: true, args: ["--no-sandbox"],
   });
   try {
-    // the browser lane passes an empty UI_EVIDENCE_DIR when it keeps no evidence (scripts/ci-browser.sh)
     const evidence = process.env["UI_EVIDENCE_DIR"] || join(root, "evidence");
     mkdirSync(evidence, { recursive: true });
     for (const width of [1440, 1920, 390]) {
@@ -58,7 +54,6 @@ try {
             localStorage.setItem("ovis:settings", JSON.stringify({ theme, language: "ko" }));
             localStorage.setItem("ovis:new-session-agent", "codex");
             localStorage.setItem("ovis:recent-directories:remote", '["/remote-only/project"]');
-            // a folder kept from before: the two the snapshot's panes are in go behind it
             if (localStorage.getItem("ovis:recent-directories:local") === null) {
               localStorage.setItem("ovis:recent-directories:local", '["/older/one"]');
             }
@@ -94,7 +89,6 @@ try {
               return;
             }
             await gate.promise;
-            // The real server creates an owned shell; only the agent result is controlled.
             const response = await route.fetch({ postData: JSON.stringify({ ...body, agent: null }) });
             assert.equal(response.ok(), true);
             const result: WorkspaceCreated = await response.json();
@@ -121,8 +115,6 @@ try {
           await betaRow.waitFor({ state: "attached" });
           const openNew = async () => {
             if (width === 390) await page.locator('[aria-controls="workspace-drawer"]').click();
-            // one-line rows (the default): New workspace is the + beside the logo, and in a phone's drawer the row
-            // closing the lone Host's list
             await page.locator(width === 390 ? ".machine-list .machine-new-row" : ".header-side .new-workspace-button").click();
             await page.getByRole("dialog").waitFor();
           };
@@ -134,7 +126,6 @@ try {
           const chips = dialog.locator('[role="group"] .new-session-folder-chip:not(.new-session-folder-more)');
           const more = dialog.locator('[role="group"] .new-session-folder-more');
           const titles = (from: typeof chips) => from.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("title")));
-          // what the dialog offers: its chips, then on a wider screen what "+N" lists, in order
           const offered = async (): Promise<(string | null)[]> => {
             const shown = await titles(chips);
             if (await more.count() === 0) return shown;
@@ -156,13 +147,10 @@ try {
             await page.getByRole("menu", { name: "최근 폴더", exact: true }).getByRole("menuitem").and(page.locator(`[title="${path}"]`)).click();
           };
           const submit = dialog.locator('button[type="submit"]');
-          // folders only seen in panes go behind the one kept, in the order their panes were first seen
-          // (src/lib/recent-directories.ts): either pane's folder can be seen first, so they are compared as a set
           const first = await offered();
           assert.equal(first[0], "/older/one", "the folder kept comes first");
           assert.deepEqual([...first.slice(1)].sort(), [other, project].sort(), "folders only seen in panes come behind the one kept");
           assert.equal(new Set(await chips.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().top))).size, 1, "recent folders stay on one row");
-          // a phone swipes the row sideways; a wider screen has room for it
           if (width === 390) assert.equal(await dialog.locator(".new-session-folder-chips").evaluate((node) => getComputedStyle(node).overflowX), "auto");
           else assert.equal(await dialog.locator(".new-session-folder-chips").evaluate((node) => node.scrollWidth > node.clientWidth), false);
           assert.equal(await dialog.getByRole("button", { name: /remote-only/ }).count(), 0);
@@ -192,7 +180,6 @@ try {
 
           await workspaceClose(created.workspace_id);
           owned.delete(created.workspace_id);
-          // a fourth folder, and kept from before, a herdr worktree and a temporary folder
           await page.evaluate(() => {
             const key = "ovis:recent-directories:local";
             localStorage.setItem(key, JSON.stringify([...JSON.parse(localStorage.getItem(key)!) as string[], "/home/me/.herdr/worktrees/app/feat", "/tmp/scratch", "/older/two"]));
@@ -201,11 +188,9 @@ try {
           await betaRow.waitFor({ state: "attached" });
           await openNew();
           await chip.waitFor();
-          // the folder a workspace was started in is first now; a worktree and a temporary folder are left out
           assert.deepEqual(await offered(), [project, "/older/one", other, "/older/two"]);
           if (width !== 390) assert.equal(new Set(await chips.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().top))).size, 1, "a wider screen keeps one row too, the rest under +N");
           if (width !== 390) assert.equal(await more.count(), 1, "four folders with a long name are more than the row holds: +N lists the rest");
-          // the measuring row behind the chips adds no width the dialog could scroll to
           assert.equal(await dialog.locator(".modal-body").evaluate((node) => node.scrollWidth <= node.clientWidth), true, "the dialog never scrolls sideways");
           if (width === 390) assert.equal(new Set(await chips.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().top))).size, 1, "a phone keeps them on one row");
           failCreate = true;

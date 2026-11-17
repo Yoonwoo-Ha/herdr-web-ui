@@ -1,10 +1,3 @@
-/**
- * Settings → Devices and PCs → My devices on the unmodified app over the demo's fixture transport, the
- * relay on: the same Wi-Fi direct connection row says it is on and who can sign in there, its switch turns
- * it off (the row says so) and on again. At 390 and 1280, light and dark.
- *
- * UI_EVIDENCE_DIR: relay-direct-<390|1280>-<light|dark>.png.
- */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,7 +21,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   await page.locator(".conn-live").waitFor();
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   await openSettingsPage(page, "Devices and PCs");
-  // the switch waits in More settings, under what is connected
   await openSettingsFolds(page);
   const group = page.locator('[data-section="devices-more"]');
   await group.getByText("Same Wi-Fi direct connection on", { exact: true }).waitFor();
@@ -49,7 +41,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   console.log(`PASS relay direct ${tag}`);
 }
 
-/** `?demo_relay_pass=grace` and `=data-limit` each show their relay notice over the pane. */
 async function notices(browser: Browser, origin: string): Promise<void> {
   for (const [fixture, kind] of [["grace", "sign-in-grace"], ["data-limit", "data-limit"]] as const) {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US" });

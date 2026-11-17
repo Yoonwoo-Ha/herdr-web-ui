@@ -98,11 +98,8 @@ try {
     const result: { errors: string[]; disposed: number; disposedBeforeFrames: number; disposedAfterFrames: number; pendingFrames: number; stdinDisabled: boolean; detachedAtCleanup: boolean } = JSON.parse(await page.locator("#result").innerText());
     assert.ok(result.pendingFrames > 0);
     assert.equal(result.disposed, 1);
-    // xterm 5.5 threw "dimensions" from the frame of a terminal disposed at once; 6.0 does not (#1617),
-    // and neither path may
     assert.deepEqual(result.errors, [], JSON.stringify(result));
     if (mode === "deferred") {
-      // ordered after xterm's pending frame and the task it schedules: still alive until both have run
       assert.equal(result.disposedBeforeFrames, 0, "deferred disposal ran before xterm's pending frame");
       assert.equal(result.disposedAfterFrames, 0, "deferred disposal ran before the task after xterm's frame");
       assert.equal(result.stdinDisabled, true);

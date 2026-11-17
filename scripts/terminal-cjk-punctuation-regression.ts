@@ -1,10 +1,3 @@
-/**
- * Fullwidth punctuation keeps every later cell of its row in its column (#739). Chrome trims a
- * run of fullwidth punctuation (text-spacing-trim), and xterm's WidthCache measures a glyph as
- * a run of 32: it measured ，。（） at half width, gave each one half a glyph too much spacing,
- * and the rest of the row drew to the right. OmO's side panel, drawn beside the transcript, then
- * stood in a different column on every row and moved as the transcript scrolled.
- */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -17,7 +10,6 @@ import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/clien
 import { chromePath } from "./chrome-path.ts";
 import { shownRows } from "./shown-rows.ts";
 
-/** the column every row's marker is written to, whatever stands before it */
 const MARK_COLUMN = 100;
 const ROWS = [
   "plain ascii row",
@@ -35,7 +27,6 @@ let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 try {
-  // Given: a pane whose rows hold fullwidth punctuation, each with a marker at one column.
   const program = join(state, "rows.mjs");
   const screen = ROWS.map((row, index) => `${row}\x1b[${MARK_COLUMN}G|MARK${index}`).join("\r\n");
   writeFileSync(program, `process.stdout.write(${JSON.stringify(`\x1b[2J\x1b[H${screen}\r\nROWS_READY\r\n`)});
@@ -65,10 +56,8 @@ setInterval(() => {}, 1 << 30);
   await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(pane)}`);
   await page.locator(".conn-live").waitFor();
   await page.locator(shownRows(), { hasText: `MARK${ROWS.length - 1}` }).waitFor();
-  // fonts settle and xterm measures again: read once the rows stop changing
   await page.evaluate(() => document.fonts.ready.then(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve()))));
 
-  // When: the rows are drawn, each marker is found where the browser put it.
   const drawn = await page.evaluate(([count, shown]) => {
     const rows = document.querySelector<HTMLElement>(shown)!;
     const left = rows.getBoundingClientRect().left;
@@ -86,7 +75,6 @@ setInterval(() => {}, 1 << 30);
       }
     }
     const measure = document.querySelector<HTMLElement>(".pane-terminal .xterm-char-measure-element");
-    // whether this browser trims fullwidth punctuation in the terminal's font at all (a CJK font with the features)
     const probe = document.createElement("span");
     probe.style.whiteSpace = "pre";
     probe.style.setProperty("text-spacing-trim", "normal");
@@ -102,12 +90,10 @@ setInterval(() => {}, 1 << 30);
   console.log(JSON.stringify(drawn));
   await page.screenshot({ path: join(evidence, "terminal-cjk-punctuation.png") });
 
-  // Then: every marker stands where the plain row's does.
   assert.equal(drawn.marks.length, ROWS.length, "every row's marker is drawn");
   const [plain, ...others] = drawn.marks;
   others.forEach((x, index) => assert.ok(Math.abs(x - plain!) < 1,
     `row ${index + 1}'s marker is drawn ${(x - plain!).toFixed(1)}px from its column`));
-  // xterm measures each glyph alone, as it is drawn, whether or not this browser's fonts trim
   assert.equal(drawn.measureTrim, "space-all");
   assert.deepEqual(errors, []);
   console.log(`PASS fullwidth punctuation keeps its row's later cells in their columns${drawn.trims ? "" : " (this browser does not trim punctuation)"}`);

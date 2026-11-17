@@ -6,9 +6,6 @@ import { DEPLOYED_FILE, WORKER_SOURCES, workerFingerprint } from "./release-guar
 const root = resolve(import.meta.dir, "..");
 const read = (path: string) => readFileSync(join(root, path), "utf8");
 
-// release-guards.ts checks the Worker only on a release tree. This holds every tree to it, so a
-// change that widens the Worker's schema cannot merge before the Worker is deployed, and the app
-// cannot send the new values before that (telemetry/README.md#deploy).
 describe("telemetry Worker", () => {
   test("the deployed Worker is this tree's", () => {
     const deployed = (JSON.parse(read(DEPLOYED_FILE)) as { sha256?: string }).sha256;

@@ -1,8 +1,4 @@
 /**
- * libghostty draws every pane over its xterm: on a herdr-core server (`terminal-history`) from every byte
- * xterm was given, the ones before its module loaded included; a Kitty graphics picture is drawn where it
- * was placed and goes when the program deletes it; typing still goes through xterm. herdr's own server is
- * drawn by libghostty too, and so is a device that turned the old Draw with libghostty switch off; xterm
  * draws an iTerm2 picture by itself. Demo fixtures only: no herdr, hc or user state.
  */
 import { deflateSync } from "node:zlib";
@@ -22,14 +18,11 @@ interface GhosttyFixture { inputs: Frame[]; print(data: string): void; geometry(
 interface RulerColumns { latin: number; hangul: number; after: number }
 declare global { interface Window { ghosttyFixture: GhosttyFixture; ghosttyRuler?: () => RulerColumns } }
 
-/** The demo serves the pane; its features and the pane's bytes are the test's. */
 function installGhosttyFixture(): void {
   const core = new URL(location.href).searchParams.get("server") === "core";
-  // printed at attach, before libghostty's module can have loaded: it comes from the held bytes
   const first = "\x1b[H\x1b[2JBEFORE-LOAD\r\n";
   const sockets: Array<WebSocket & { push(frame: Record<string, unknown>): void }> = [];
   let pane: string | null = null;
-  // a server lists its features before any pane's bytes; the demo lists them in its snapshot, after the attach
   let featured = false;
   let waiting: (() => void) | null = null;
   const state: GhosttyFixture = {
@@ -47,7 +40,6 @@ function installGhosttyFixture(): void {
       if ((frame.type === "snapshot" || frame.type === "features") && Array.isArray(frame.features) && core) {
         push({ ...frame, features: [...(frame.features as string[]), "terminal-history"] });
       } else if (frame.type === "pty-data") {
-        // the demo's own recording would move the screen under the test
         if (frame.fixture !== "ghostty") return;
         const { fixture: _, ...output } = frame;
         push(output);
@@ -76,14 +68,12 @@ function installGhosttyFixture(): void {
   window.WebSocket = Recorded as unknown as typeof WebSocket;
 }
 
-/** a 4x4 square of one colour as a Kitty graphics picture, raw RGBA sent in the escape itself, shown 4 columns by 2 rows */
 const kittySquare = (id: number, rgb: [number, number, number]): string => {
   const pixels = Buffer.alloc(4 * 4 * 4);
   for (let i = 0; i < 16; i++) pixels.set([...rgb, 255], i * 4);
   return `\x1b_Ga=T,f=32,s=4,v=4,i=${id},c=4,r=2,q=2;${pixels.toString("base64")}\x1b\\`;
 };
 
-/** an iTerm2 inline picture (OSC 1337): a 24x24 PNG, as terminal-images-demo-regression.ts sends */
 const itermSquare = (): string => {
   const chunk = (type: string, data: Uint8Array) => {
     const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
@@ -109,7 +99,6 @@ const print = async (page: Page, data: string, marker: string) => {
   await page.waitForFunction((marker) => [...document.querySelectorAll(".pane-frame.is-current .ghostty-row")].some((row) => row.textContent?.includes(marker)), marker);
   await settled(page);
 };
-/** the colour at the middle of the pane's one Kitty picture, or null when it draws none */
 const picture = (page: Page) => page.evaluate(() => {
   const canvases = [...document.querySelectorAll<HTMLCanvasElement>(".pane-frame.is-current .ghostty-image")];
   if (canvases.length !== 1) return canvases.length === 0 ? null : { count: canvases.length };
@@ -118,7 +107,6 @@ const picture = (page: Page) => page.evaluate(() => {
   return { rgb: [r, g, b], width: canvas.style.width, top: canvas.style.top };
 });
 
-/** `storedOff`: the old Draw with libghostty switch was turned off on this device; `noModule`: libghostty's module cannot load */
 async function open(browser: Browser, server: number, prefix: string, kind: "core" | "herdr", { storedOff = false, noModule = false, images = false } = {}): Promise<{ page: Page; wasm: string[]; errors: string[] }> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US" });
   await context.addInitScript(([storedOff, images]) => {
@@ -167,19 +155,16 @@ try {
         assert.equal(wasm.length, 1, "core: the module is fetched once");
         assert.equal(await page.locator(".pane-frame.is-current .xterm-rows").evaluate((rows) => getComputedStyle(rows).visibility), "hidden", "core: xterm's own text is hidden under libghostty's");
 
-        // what the pane opened on is read, not announced; what comes after is announced, and xterm's hidden rows are left as they were
         const announced = () => page.evaluate(() => document.querySelector(".pane-frame.is-current .ghostty-layer [aria-live]")?.textContent ?? null);
         assert.equal(await announced(), "", "core: the screen a pane opens on is not announced");
         await print(page, "SPOKEN-LINE\r\n", "SPOKEN-DONE");
         assert.ok((await announced())?.includes("SPOKEN-LINE"), `core: a line the program writes is announced (${JSON.stringify(await announced())})`);
         assert.equal(await page.locator(".pane-frame.is-current .xterm-rows", { hasText: "SPOKEN-LINE" }).count(), 0, "core: xterm no longer redraws its hidden rows");
-        // a full screen that scrolls by one line announces that line, not every row that moved up
         await print(page, Array.from({ length: 60 }, (_, i) => `OLD-${String(i).padStart(2, "0")}`).join("\r\n") + "\r\n", "FILL-DONE");
         await print(page, "NEW-ONLY-LINE\r\n", "NEW-DONE");
         const scrolled = await announced();
         assert.ok(scrolled?.includes("NEW-ONLY-LINE") && !scrolled.includes("OLD-"), `core: a scroll announces only the new line (${JSON.stringify(scrolled)})`);
 
-        // scrolling back through the history writes nothing: the rows it brings in are not announced (#2963)
         const topRow = () => page.evaluate(() => document.querySelector(".pane-frame.is-current .ghostty-row")?.textContent ?? "");
         const screenBox = (await page.locator(".pane-frame.is-current .xterm-screen").boundingBox())!;
         await page.mouse.move(screenBox.x + screenBox.width / 2, screenBox.y + screenBox.height / 3);
@@ -199,21 +184,17 @@ try {
         const cell = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector(".pane-frame.is-current .ghostty-layer")!).getPropertyValue("--ghostty-ch")));
         assert.equal(red?.top, `${4 * cell}px`, "core: at the row it was placed on");
 
-        // Light themes name their ANSI colours; dark themes use xterm's defaults.
         await print(page, "\x1b[31mRED-TEXT\x1b[0m\r\n", "COLOURED");
         const ansiRed = await page.evaluate(() => {
           const span = [...document.querySelectorAll<HTMLElement>(".pane-frame.is-current .ghostty-row span")].find((s) => s.textContent?.includes("RED-TEXT"))!;
           const rgb = (css: string) => `#${(css.match(/\d+/g) ?? []).slice(0, 3).map((n) => Number(n).toString(16).padStart(2, "0")).join("")}`;
           return { color: rgb(getComputedStyle(span).color), background: rgb(getComputedStyle(document.querySelector(".pane-frame.is-current .xterm-viewport")!).backgroundColor), token: getComputedStyle(document.documentElement).getPropertyValue("--term-red").trim() || "#cc0000" };
         });
-        // xterm draws it at its minimum contrast (4.5) against the background, as terminalFold.ts computes it
         assert.equal(ansiRed.color, readableColor(ansiRed.token, ansiRed.background, 4.5), "core: ANSI red follows the theme token (or xterm's default), made readable as xterm makes it");
 
-        // a wide character after a combining accent keeps its two cells: the accent is part of the cell before it
         await print(page, "e\u0301\u754cX\r\n", "COMBINED");
         assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll(".pane-frame.is-current .ghostty-wide")].map((cell) => cell.textContent)), ["\u754c"], "core: the wide cell is the CJK character, not the accent");
 
-        // an emoji ZWJ sequence is one two-column cell, as xterm (the cursor, selection and links) counts it
         await print(page, "ABC\u{1F468}\u200D\u{1F469}\u200D\u{1F467}XYZ\r\n", "ZWJ");
         const zwj = await page.evaluate(() => {
           const layer = document.querySelector(".pane-frame.is-current .ghostty-layer")!;
@@ -228,7 +209,6 @@ try {
         assert.deepEqual(zwj.wide, ["\u{1F468}\u200D\u{1F469}\u200D\u{1F467}"], "core: the ZWJ family is one wide cell");
         assert.ok(Math.abs(zwj.column - 5) < 0.1, `core: the text after a ZWJ family starts at xterm's column 5 (${zwj.column})`);
 
-        // an arrow key moves the cursor and changes no row: the drawn cursor follows it (#3266)
         const cursorLeft = () => page.evaluate(() => parseFloat(document.querySelector<HTMLElement>(".pane-frame.is-current .ghostty-cursor")!.style.left));
         await page.evaluate(() => window.ghosttyFixture.print("ab"));
         await page.waitForFunction(() => parseFloat(document.querySelector<HTMLElement>(".pane-frame.is-current .ghostty-cursor")!.style.left) > 0);
@@ -238,17 +218,13 @@ try {
         assert.ok(Math.abs(await cursorLeft() - afterText / 2) < 0.5, `core: a Left arrow moves the drawn cursor back one cell (${afterText} -> ${await cursorLeft()})`);
         await print(page, "\r\n", "ARROWS");
 
-        // glyphs fit their cells as xterm's rows fit them (terminalGlyphs.ts): an underlined Hangul syllable fills its two
-        // cells and keeps its underline, and a Nerd Font icon stays in its one cell, so the text after both keeps its column
         await print(page, "\x1b[4m\uD55C\x1b[24m\ue0a0Q|\ue0b0\r\nPLAIN-Q\r\n", "GLYPHS");
-        // the icon and Hangul faces load once a row asks for them; the rows are fitted again when they arrive
         await page.evaluate(() => document.fonts.ready);
         await settled(page);
         const glyphs = await page.evaluate(() => {
           const layer = document.querySelector(".pane-frame.is-current .ghostty-layer")!;
           const cw = parseFloat(getComputedStyle(layer).getPropertyValue("--ghostty-cw"));
           const row = [...layer.querySelectorAll<HTMLElement>(".ghostty-row")].find((r) => r.textContent?.includes("Q|"))!;
-          // the box one character of the row is drawn in, wherever its text node starts
           const plain = [...layer.querySelectorAll<HTMLElement>(".ghostty-row")].find((r) => r.textContent?.includes("PLAIN-Q"))!;
           const box = (char: string, within = row) => {
             const walker = document.createTreeWalker(within, NodeFilter.SHOW_TEXT);
@@ -285,7 +261,6 @@ try {
         assert.ok(Math.abs(glyphs.textDrop) < 0.5, `core: the text after an icon stands on the row's baseline (${glyphs.textDrop}px lower)`);
         assert.ok(Math.abs(glyphs.column - 3) < 0.1, `core: the text after them starts at xterm's column 3 (${glyphs.column})`);
 
-        // a bold, coloured, underlined wide cell: bold (xterm's own rule would set its box to normal), and its underline in its colour
         await print(page, "\x1b[1;32;4m\uAC00\x1b[0m|\r\n", "BOLDLINE");
         const boldLine = await page.evaluate(() => {
           const glyph = [...document.querySelectorAll<HTMLElement>(".pane-frame.is-current .ghostty-wide, .pane-frame.is-current .ghostty-fit")].filter((el) => el.textContent === "\uAC00").at(-1)!;
@@ -298,11 +273,7 @@ try {
         await print(page, "\x1b_Ga=d,d=I,i=7,q=2\x1b\\", "RED-DELETED");
         assert.equal(await picture(page), null, "core: a picture the program deletes goes");
 
-        // Latin keeps xterm's cell through a narrower grid and every font size: each fit spaces the layer from the font's
-        // own advance, so a spacing measured while xterm's screen was still the old width is not carried on (Latin drawn
-        // squashed over itself or spread apart, Hangul in its boxes untouched)
         await print(page, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij\uAC00~\r\n", "RULER");
-        // the column each ruler character is drawn at, in xterm's cells: `j` is the 36th Latin letter, then a Hangul syllable and `~`
         await page.evaluate(() => { window.ghosttyRuler = () => {
           const layer = document.querySelector(".pane-frame.is-current .ghostty-layer")!;
           const cw = parseFloat(getComputedStyle(layer).getPropertyValue("--ghostty-cw"));
@@ -321,8 +292,6 @@ try {
           };
           return { latin: at("j"), hangul: at("\uAC00"), after: at("~") };
         }; });
-        // the fits that follow a change land within a few frames: the columns must come right by then. Spaced from what an
-        // earlier fit left, they never do, the error only changing sign at each fit
         const columnsKept = async (when: string) => {
           const kept = await page.waitForFunction(() => {
             const columns = window.ghosttyRuler!();
@@ -330,8 +299,6 @@ try {
           }, undefined, { timeout: 5000 }).then(() => true, () => false);
           assert.ok(kept, `core, ${when}: Latin keeps xterm's cells, and the Hangul and Latin after it their columns (${JSON.stringify(await page.evaluate(() => window.ghosttyRuler!()))})`);
         };
-        // the spacing a fit taken against xterm's old screen leaves behind (the cell read as 928px over 110 columns instead of
-        // 119): the next fit, at the new grid, must space the layer from the font alone, not from what is left
         const staleFit = () => page.evaluate(() => { document.querySelector<HTMLElement>(".pane-frame.is-current .ghostty-layer")!.style.letterSpacing = "0.64px"; });
         for (const width of [1100, 1137, 1174, 1211]) {
           await staleFit();
@@ -345,10 +312,6 @@ try {
             await columnsKept("back from Chat");
           }
         }
-        // the chat lens adopts the pane's grid as another device sizes it. xterm's renderer is paused under it: it tells a resize
-        // at once but resizes its screen from an idle task, and the screen sits in a `content-visibility: hidden` subtree where
-        // no ResizeObserver fires. A grid widened and given back under Chat left a layer sized from the screen measuring the
-        // wide screen against this device's columns, every cell three times its glyph once back (#3366)
         const grid = await page.evaluate(() => {
           const layer = document.querySelector(".pane-frame.is-current .ghostty-layer")!;
           const screen = document.querySelector<HTMLElement>(".pane-frame.is-current .xterm-screen")!;
@@ -356,7 +319,6 @@ try {
           return { cols: Math.round(screen.offsetWidth / cell("--ghostty-cw")), rows: Math.round(screen.offsetHeight / cell("--ghostty-ch")), width: screen.style.width };
         });
         await page.getByRole("radio", { name: "Chat", exact: true }).or(page.getByRole("button", { name: "Chat", exact: true })).first().click();
-        // the grid is hidden under the lens, and xterm has seen it leave view, before another device sizes it
         await page.waitForFunction(() => getComputedStyle(document.querySelector(".pane-frame.is-current .pane-terminal")!).contentVisibility === "hidden", undefined, { timeout: 5000 });
         await settled(page);
         await page.evaluate(({ cols, rows }) => window.ghosttyFixture.geometry(cols * 3, rows), grid);
@@ -382,7 +344,6 @@ try {
         await page.keyboard.press("Escape");
         await page.locator(".settings-dialog").waitFor({ state: "detached" });
 
-        // typing still goes through xterm, to the pane
         await page.locator(".pane-frame.is-current .pane-terminal").click();
         await page.keyboard.type("x");
         await page.waitForFunction(() => window.ghosttyFixture.inputs.some((frame) => frame.type === "input" && frame.text === "x"));
@@ -390,14 +351,10 @@ try {
         await page.context().close();
       }
       {
-        // an iTerm2 picture (Pictures in the terminal): libghostty cannot draw it, xterm's image addon does and moves its
-        // cursor past it, so the text after it must be shown on the row xterm alone shows it on (#2980)
-        // xterm alone: libghostty's module cannot load, and xterm draws the pane by itself, never a blank one
         const shownRow = async (ghostty: boolean) => {
           const { page, errors } = await open(browser, server.port, prefix, "core", { noModule: !ghostty, images: true });
           if (ghostty) await page.locator(".pane-frame.is-current .pane-terminal[data-renderer=ghostty]").waitFor();
           else await page.locator(".pane-frame.is-current .xterm-rows", { hasText: "BEFORE-LOAD" }).waitFor();
-          // the image addon loads on its own; until then xterm passes the picture by
           await page.waitForFunction(() => typeof (document.querySelector(".pane-frame.is-current .xterm") as { imageAt?: unknown } | null)?.imageAt === "function");
           await page.evaluate((data) => window.ghosttyFixture.print(data), `\x1b[2J\x1b[H${itermSquare()}IT2-AFTER\r\n`);
           const row = await page.waitForFunction(() => {
@@ -406,7 +363,6 @@ try {
             const index = rows.findIndex((row) => row.textContent?.includes("IT2-AFTER"));
             return index >= 0 ? { index } : null;
           }).then(async (handle) => (await handle.jsonValue())!.index);
-          // libghostty handed the pane to xterm at the picture; xterm draws it, picture included
           assert.equal(await page.locator(".pane-frame.is-current .pane-terminal[data-renderer]").count(), 0, `core, iTerm2 picture${ghostty ? "" : ", no module"}: xterm draws the pane`);
           const picture = await page.evaluate(() => (document.querySelector(".pane-frame.is-current .xterm") as HTMLElement & { imageAt?: (col: number, row: number) => unknown }).imageAt?.(0, 0) ?? null);
           assert.notEqual(picture, null, `core, iTerm2 picture${ghostty ? "" : ", no module"}: the picture is drawn where it was placed`);
@@ -419,7 +375,6 @@ try {
         assert.equal(await shownRow(true), xtermRow, "core, iTerm2 picture: the text after it is shown on xterm's row");
       }
       {
-        // herdr's own server: libghostty draws its panes too, from the bytes xterm was given before the module loaded
         const { page, wasm, errors } = await open(browser, server.port, prefix, "herdr");
         await page.locator(".pane-frame.is-current .pane-terminal[data-renderer='ghostty']").waitFor();
         await page.waitForFunction(() => [...document.querySelectorAll(".pane-frame.is-current .ghostty-row")].some((row) => row.textContent?.includes("BEFORE-LOAD")));
@@ -433,7 +388,6 @@ try {
         await page.context().close();
       }
       for (const kind of ["herdr", "core"] as const) {
-        // a device that turned the old Draw with libghostty switch off: there is no switch now, libghostty draws
         const { page, wasm, errors } = await open(browser, server.port, prefix, kind, { storedOff: true });
         await page.locator(".pane-frame.is-current .pane-terminal[data-renderer='ghostty']").waitFor();
         await print(page, "STORED-OFF\r\n", "STORED-OFF-DONE");

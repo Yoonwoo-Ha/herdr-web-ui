@@ -25,11 +25,9 @@ firewall() {
   for d in 169.254.0.0/16 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10; do
     ipt -C DOCKER-USER -i docker0 -d "$d" -j DROP 2>/dev/null || ipt -I DOCKER-USER -i docker0 -d "$d" -j DROP || return 1
   done
-  # an any-address port 53 rule from an earlier version of this script goes
   for pr in udp tcp; do
     while ipt -C DOCKER-USER -i docker0 -p "$pr" --dport 53 -j ACCEPT 2>/dev/null; do ipt -D DOCKER-USER -i docker0 -p "$pr" --dport 53 -j ACCEPT || return 1; done
   done
-  # DNS to the resolvers a job container is actually given (read from one), IPv4 ones, port 53 only, above the drops
   local servers
   servers=$(sudo -n docker run --rm --network "$NET" --entrypoint awk "$IMAGE" '/^nameserver/ {print $2}' /etc/resolv.conf | grep -E '^[0-9]+(\.[0-9]+){3}$') || return 1
   [ -n "$servers" ] || return 1
@@ -51,21 +49,17 @@ case "${1:?setup|register|supervise|stop}" in
     sudo -n docker run --rm --network none --user 0:0 -v "$VOL:/cred" --entrypoint sh "$IMAGE" -c 'chown 1001:1001 /cred && chmod 700 /cred' ;;
   register)
     name=${2:?name} labels=${3:?labels}; dockerd_up
-    # the token is the first line of stdin; it reaches config.sh and nothing else
     sudo -n docker run --rm -i --network "$NET" -v "$VOL:/cred" -e NAME="$name" -e LABELS="$labels" --entrypoint bash "$IMAGE" -c '
       IFS= read -r T; ./config.sh --unattended --disableupdate --url https://github.com/devswha/ovis --token "$T" \
         --name "$NAME" --labels "$LABELS" --work /w --replace >/tmp/config.log 2>&1 || { tail -3 /tmp/config.log; exit 1; }
       unset T; cp .runner .credentials .credentials_rsaparams /cred/ && chmod 600 /cred/.runner /cred/.credentials /cred/.credentials_rsaparams && echo "registered $NAME ($LABELS)"' ;;
   supervise)
-    # a job container that ends non-zero (a failed or cancelled job) must not end the loop: no set -e from here on
     set +e
     dockerd_up
     echo "$$" > "$HOME/.ovis-ci/runner.pid"
     while :; do
       dockerd_up || { sleep 30; continue; }
-      # never a job without the firewall
       firewall || { echo "$(date -u +%FT%TZ) firewall could not be applied; no job taken" >> "$LOG"; sleep 30; continue; }
-      # a job container a previous supervisor started finishes first (the name is one per VM)
       sudo -n docker wait ovis-vm-job >/dev/null 2>&1
       started=$SECONDS
       out=$HOME/.ovis-ci/job.out
@@ -79,8 +73,6 @@ case "${1:?setup|register|supervise|stop}" in
       rc=$?
       cat "$out" >> "$LOG"
       echo "$(date -u +%FT%TZ) job container exit $rc" >> "$LOG"
-      # run.sh exits 0 even when its listener gives up, so the output decides: a short run that took no job, or
-      # whose listener ended on an error (a removed registration, a session conflict), waits longer each time
       if (( SECONDS - started < 30 )) && { (( rc != 0 )) || ! grep -q 'Running job:' "$out" \
            || grep -qE 'terminated error|Session Conflict|unknown error code' "$out"; }; then wait_s=$(( ${wait_s:-3} * 2 > 300 ? 300 : ${wait_s:-3} * 2 )); else wait_s=3; fi
       sleep "$wait_s"

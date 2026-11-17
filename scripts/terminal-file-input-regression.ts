@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import type { Page, WebSocket } from "playwright-core";
 
-/** Checks real xterm input frames, clipboard text, and the pane's file upload API. */
 export async function checkTerminalFileInput(page: Page, socket: WebSocket): Promise<void> {
   const input = (): Promise<string> => new Promise((resolve, reject) => {
     const timer = setTimeout(() => { off(); reject(new Error("No terminal input arrived")); }, 10_000);
@@ -53,8 +52,6 @@ export async function checkTerminalFileInput(page: Page, socket: WebSocket): Pro
   }
   console.log("PASS terminal path drop, native path paste and JSON file drop/paste");
 
-  // A raster is named after its bytes (a PNG the browser calls image/jpeg from its name), and
-  // text dressed as a PNG is refused with its reason and puts nothing into the terminal.
   const dropFile = (base64: string, name: string, type: string): Promise<void> => host.evaluate((element, file) => {
     const data = new DataTransfer();
     data.items.add(new File([Uint8Array.from(atob(file.base64), (char) => char.charCodeAt(0))], file.name, { type: file.type }));
@@ -83,7 +80,6 @@ export async function checkTerminalFileInput(page: Page, socket: WebSocket): Pro
   const refusal = await forged.text();
   assert.deepEqual(JSON.parse(refusal), { error: { code: "invalid_image", message: "file does not contain a supported raster image" } });
   assert.ok(!refusal.includes("just some text") && !refusal.includes("forged"), "the refusal echoes neither the content nor the name");
-  // the batch's catch shows the reason; anything it pasted would already have been sent by then
   await page.locator(".terminal-banner", { hasText: "file does not contain a supported raster image" }).waitFor();
   const afterRefusal = input();
   await host.evaluate((element, text) => {
