@@ -140,6 +140,7 @@ describe("codex daemon skills", () => {
       environ: () => [`CODEX_HOME=${first}`, `CODEX_HOME=${last}`, "HOME=/fallback"],
     };
     const home = await paneDaemonHome("any-pane", undefined, "linux", processFiles);
+    // Then it agrees with getenv's first occurrence.
     expect(home).toBe(realpathSync(first));
   });
 
@@ -154,6 +155,7 @@ describe("codex daemon skills", () => {
       cwd: async () => cwd,
     };
     const home = await paneDaemonHome("any-pane", undefined, "linux", processFiles);
+    // Then filesystem traversal selects the target's parent, not the cwd.
     expect(home).toBe(realpathSync(target));
   });
 

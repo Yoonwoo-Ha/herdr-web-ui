@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { createServer } from "./index.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 
+// Real herdr panes running a stand-in `codex` with a CODEX_HOME of its own, and a fake Codex daemon on
+// each home's control socket: the catalog asks the daemon of the pane's own home, never the server's.
 const root = realpathSync(mkdtempSync(join(tmpdir(), "ovis-codex-daemon-contract-")));
 const homes = { pane: join(root, "pane-home"), server: join(root, "server-home") };
 const daemons: { stop(force: boolean): void }[] = [];
@@ -58,6 +60,7 @@ const commands = async (paneId: string) => {
 };
 
 let paneId: string;
+// the pane's Codex home is read from /proc: Linux only (elsewhere a pane without a configured home gets no native rows)
 const linux = process.platform === "linux";
 beforeAll(async () => {
   if (!linux) return;

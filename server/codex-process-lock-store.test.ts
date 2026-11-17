@@ -81,6 +81,8 @@ it.skipIf(process.platform !== "linux").each([
     }
     expect(await processCodexHome(child.pid)).toBe(explicit ? named : found ? homes[0]! : null);
     if (found && !explicit) {
+      // The file stays open throughout: ownership must be rechecked, not inferred
+      // from the pathname or cached from the previous successful lookup.
       child.stdin.write("unlock\n");
       await child.stdin.flush();
       expect(await reply()).toBe("done");

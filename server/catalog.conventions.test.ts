@@ -74,6 +74,7 @@ function forbiddenBoundaryLiterals(source: string, fileName?: string): string[] 
         text.includes("/tui/") ||
         ["service.ensure", "turn/start", "thread/resume", "skill.invoke"].some((method) => text.includes(method)) ||
         /\/api\/session\/[^/]+\/command(?:[/?#]|$)/.test(text) ||
+        // Only the terminal attachment may take over, after an explicit user request.
         (text.includes("--takeover") && fileName !== "server/core/terminal-process.ts")
       ) {
         violations.push(text);

@@ -43,6 +43,7 @@ function bashStreams(content: string): { stream: "stdout" | "stderr"; text: stri
     }
     return [{ stream: "stdout", text: stripTerminalControls(inner) }];
   }
+  // Older records can carry a single stream, but not reordered or partial envelopes.
   const single = /^<bash-(stdout|stderr)>([\s\S]*)<\/bash-\1>$/.exec(envelope);
   const stream = single?.[1], text = single?.[2];
   return (stream === "stdout" || stream === "stderr") && text !== undefined
@@ -52,6 +53,8 @@ function bashStreams(content: string): { stream: "stdout" | "stderr"; text: stri
 function taggedStreams(content: unknown, tag: "local-command" | "bash"): { stream: "stdout" | "stderr"; text: string }[] | null {
   if (typeof content !== "string") return null;
   if (tag === "bash") return bashStreams(content);
+  // the whole entry is the output, one stream after another: a tag quoted inside an echo's
+  // arguments is not an answer
   const streams: { stream: "stdout" | "stderr"; text: string }[] = [];
   let at = 0;
   for (;;) {
@@ -60,6 +63,8 @@ function taggedStreams(content: unknown, tag: "local-command" | "bash"): { strea
     const stream = content.startsWith(`<${tag}-stdout>`, at) ? "stdout" : content.startsWith(`<${tag}-stderr>`, at) ? "stderr" : null;
     if (stream === null) return null;
     const start = at + `<${tag}-${stream}>`.length;
+    // a closing tag the output prints itself ends nothing: the stream's own one is at the end of
+    // the entry or before the next stream.
     const close = `</${tag}-${stream}>`;
     let end = content.indexOf(close, start);
     let next = 0;
@@ -105,6 +110,11 @@ function saidByOtherKind(turn: ConversationTurn | undefined, text: string, ts: s
   return writtenTogether(turn?.ts, ts) && (said.text === text || said.text.split("\n").includes(text));
 }
 
+/**
+ * The text of terminal output without its escape codes (colours, links, cursor moves, charset
+ * switches) and other controls, in one pass: a sequence cut off by the end swallows the rest,
+ * and malformed input never makes it rescan what follows.
+ */
 function stripTerminalControls(input: string): string {
   let out = "";
   let i = 0;
@@ -172,6 +182,10 @@ const isTextBlock = (block: unknown, text?: string): block is { type: "text"; te
   typeof block === "object" && block !== null && (block as { type?: unknown }).type === "text"
   && typeof (block as { text?: unknown }).text === "string" && (text === undefined || (block as { text: string }).text === text);
 
+/**
+ * Only a message's first block can be a header: one quoted inside a message's text, or inside
+ * another result, is that message's words.
+ */
 export function hostToolResults(content: readonly unknown[]): HostToolResult[] {
   const results: HostToolResult[] = [];
   for (let start = 0; start < content.length;) {
@@ -283,6 +297,10 @@ function senpiTaskReport(text: string): { task: OmoTaskResult; length: number } 
 type Notice = Extract<ConversationPart, { kind: "notice" }>;
 type TaskResults = Extract<ConversationPart, { kind: "task_result" }>;
 
+/**
+ * A block made only of senpi's own messages (it can join several with a blank line): the reports and
+ * team members' messages among them, in order, or null when the block holds anything else.
+ */
 function senpiMessages(text: string): (OmoTaskResult | Notice)[] | null {
   const found: (OmoTaskResult | Notice)[] = [];
   let rest = text;
@@ -293,6 +311,7 @@ function senpiMessages(text: string): (OmoTaskResult | Notice)[] | null {
       rest = rest.slice(report.length).replace(/^\n\n/, "");
       continue;
     }
+    // the end of a notification senpi cut short, after its reminder
     const capped = rest !== text ? TAIL_CAPPED.exec(rest) : null;
     if (capped !== null) {
       rest = rest.slice(capped[0].length);
@@ -322,6 +341,7 @@ function replayEnd(content: readonly unknown[]): number {
   const instruction = (at: number): boolean => isTextBlock(content[at]) && HISTORY_INSTRUCTIONS.has(content[at].text);
   if (instruction(0)) return 0;
   if (!isTextBlock(content[0], HISTORY_OPENER)) return -1;
+  // the first closer the instruction follows (a replayed message can hold a closer of its own)
   for (let at = 2; at < content.length; at++) {
     if (!instruction(at)) continue;
     if (isTextBlock(content[at - 1], HISTORY_CLOSER)) return at;
@@ -351,6 +371,7 @@ export function senpiPrompt(entry: { type?: unknown; promptSource?: unknown; ent
     if (messages === null) return block;
     for (const message of messages) {
       if ("kind" in message) { notices.push(message); continue; }
+      // reports sent one after another share one card, as OmO's own wake does
       const last = notices.at(-1);
       if (last?.kind === "task_result") last.tasks.push(message); else notices.push({ kind: "task_result", tasks: [message] });
     }
@@ -390,6 +411,10 @@ export function claudeResultText(output: unknown): string {
 
 export const CLAUDE_IMAGE_REF = /^([0-9a-f-]{8,64}):(\d{1,3})(?::(\d{1,3}))?$/i;
 
+/**
+ * The type of a picture Claude Code holds inline (pasted into a prompt, or a Read of an image
+ * file), by its leading bytes: a raster the chat shows, within the size the image endpoint serves.
+ */
 export function claudeImageType(block: unknown): string | null {
   const image = block as { type?: unknown; source?: { type?: unknown; media_type?: unknown; data?: unknown } } | null | undefined;
   if (image?.type !== "image" || image.source?.type !== "base64") return null;
@@ -504,6 +529,9 @@ function claudeTranscriptParser(options: ClaudeTranscriptOptions, state: ClaudeP
     const peer = claudePeerNotice(entry);
     if (peer !== null) {
       const handback = claudeHandback(entry);
+      // A hand-back and its notification pair only within one turn, as the page reader parses a
+      // settled turn on its own (transcript-turns.ts turnStarts): a record that starts a turn there (a
+      // prompt, any other session's message) ends the wait, so a warm read and a cold one agree (#3658)
       if (handback === null) handbacks.clear();
       const id = claudePeerId(entry);
       if (id !== null) { if (peersSeen.has(id)) return; peersSeen.add(id); }
@@ -556,6 +584,8 @@ function claudeTranscriptParser(options: ClaudeTranscriptOptions, state: ClaudeP
     // writes these here, not as a local_command), a usage limit reached or reset. The message
     // that drew one is not recorded, so without it a refused command just vanished from the chat.
     // Lines written together read as one notice.
+    // Claude Code also writes them while the agent works (a message another session held, a
+    // stopped response): about half of the real ones.
     if (entry.type === "system" && entry.subtype === "informational") {
       const text = typeof entry.content === "string" ? capNotice(stripTerminalControls(entry.content).trim()) : "";
       if (text.length === 0) return;
@@ -576,6 +606,7 @@ function claudeTranscriptParser(options: ClaudeTranscriptOptions, state: ClaudeP
         pushPrompt({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "text", text: invocation.text }, { kind: "skill", skill: invocation.skill }] }, entry);
         return;
       }
+      // bash mode: the command opens a turn like a prompt, and the entry after it holds what it printed
       const own = !("origin" in entry) && !("permissionMode" in entry);
       const command = own ? BASH_INPUT.exec(content)?.[1] : undefined;
       if (command !== undefined) {
@@ -602,6 +633,8 @@ function claudeTranscriptParser(options: ClaudeTranscriptOptions, state: ClaudeP
         let tool: Extract<ConversationPart, { kind: "tool" }>;
         // the call id is Claude Code's own and unique; the header's name is senpi's mapping of it
         if (call !== undefined) tool = call;
+        // a call this read never saw (before the window): still a tool's output by the header, so it
+        // goes in the work, never in the person's seat
         else {
           tool = { kind: "tool", name: host.name, summary: host.name, input: "", output: "", call_id: host.id };
           assistantTurn(entry.timestamp).parts.push(tool);
@@ -619,6 +652,8 @@ function claudeTranscriptParser(options: ClaudeTranscriptOptions, state: ClaudeP
         });
         if (pictures.length > 0) tool.images = pictures; else delete tool.images;
       }
+      // senpi's notices are no one's typing: a task that ended is its card, a team member's message is
+      // theirs, and the rest is what senpi told the model, hidden as Claude Code's own reminders are
       const ts = entry.timestamp ?? null;
       for (const notice of sent.notices) turns.splice(noticeAt(), 0, { role: "user", ts, parts: [notice] });
       const blocks = sent.own;
@@ -707,7 +742,7 @@ function claudeTranscriptParser(options: ClaudeTranscriptOptions, state: ClaudeP
       try {
         entry = JSON.parse(line) as TranscriptEntry;
       } catch {
-        continue;
+        continue; // a torn tail line while Claude is mid-append
       }
       if (entry !== null && typeof entry === "object") fold(entry);
     }
@@ -734,9 +769,21 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
 export type ClaudeTurnEnd = "failed" | "answered" | "running" | null;
 
 const LOCAL_LINE_RE = /^<(?:local-command-(?:stdout|stderr|caveat)|bash-(?:input|stdout|stderr))>/;
+/**
+ * A user entry Claude Code wrote of its own (LOCAL_LINE_RE): bash mode's lines only when they carry no origin and no
+ * permission mode, as parseClaudeTranscript reads them; a person's prompt that opens on such a tag is a prompt.
+ */
 const localLine = (entry: TranscriptEntry, content: unknown): boolean => typeof content === "string" && LOCAL_LINE_RE.test(content)
   && (content.startsWith("<local-command-") || (!("origin" in entry) && !("permissionMode" in entry)));
 
+/**
+ * How a Claude transcript's last turn stands, by the last entry of the session's own that tells it: `failed` when
+ * that is the answer Claude Code wrote for a request the API refused (`isApiErrorMessage`: a rate limit, a cooldown,
+ * an overloaded model), `answered` when it is an answer (one a retry got after such an error included), `running`
+ * when it is a prompt (one sent while Claude worked and taken in from the queue included: a `queued_command` record,
+ * as parseClaudeTranscript reads it), a tool's result or a tool call. A subagent's entries (`isSidechain`), Claude
+ * Code's own records (meta entries, a compaction's summary, a local command's output) and every other entry tell nothing.
+ */
 export function claudeTurnEnd(text: string): ClaudeTurnEnd {
   let end: ClaudeTurnEnd = null;
   for (const line of text.split("\n")) {
@@ -768,6 +815,10 @@ export function claudeLastTurnEnd(path: string, file: { size: number; exact: str
   return text?.endsWith("\n") === true ? claudeTurnEnd(text) : null;
 }
 
+/**
+ * null while no such prompt is written whole, or when that first entry is no prompt: a file that opens on an answer, a
+ * tool call or its result (entries a session continued into it copied, freshly stamped) holds a turn this one did not write.
+ */
 export function claudeTranscriptStart(path: string, file: { size: number; exact: string }, headBytes = 64 * 1024): number | null {
   const head = readBytes(path, file.exact, 0, Math.min(file.size, headBytes))?.toString("utf8") ?? "";
   const stamp = (value: unknown): number | null => {

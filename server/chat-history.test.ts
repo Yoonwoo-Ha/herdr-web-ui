@@ -112,7 +112,7 @@ test("reset scanning crosses chunk boundaries, excludes pre-clear full outputs a
 for (const source of ["omp-transcript", "omo-transcript", "gjc-transcript"] as const) {
   test(`${source}: a thinking-level change between the metadata head and the newest page sets the reasoning shown`, () => {
     const level = (thinkingLevel: string) => ({ type: "thinking_level_change", thinkingLevel });
-    const padding = { type: "padding", text: "x".repeat(70 * 1024) };
+    const padding = { type: "padding", text: "x".repeat(70 * 1024) }; // past the 64 KiB metadata head
     const path = fixture(jsonl([
       { type: "model_change", modelId: "first" }, level("high"), message("user", "start"), padding,
       { type: "model_change", modelId: "second" }, level("medium"),
@@ -141,7 +141,7 @@ for (const via of ["an answer", "/model and /effort"] as const) {
     const answer = (model: string, effort: string) => record({ type: "assistant", effort, message: { role: "assistant", model, content: [{ type: "text", text: "ok" }] } });
     const output = (text: string) => record({ type: "user", message: { role: "user", content: `<local-command-stdout>${text}</local-command-stdout>` } });
     const prompts = (label: string) => Array.from({ length: 130 }, (_, i) => prompt(`${label} ${i}`));
-    const padding = () => record({ type: "system", subtype: "informational", content: "x".repeat(70 * 1024) });
+    const padding = () => record({ type: "system", subtype: "informational", content: "x".repeat(70 * 1024) }); // past the 64 KiB metadata head
     const sonnet = { model: "claude-sonnet-5-5", reasoning_effort: "high" };
     const path = fixture(jsonl([
       prompt("start"), answer("claude-opus-5-5", "medium"), padding(),

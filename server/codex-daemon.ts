@@ -43,6 +43,12 @@ const ORIGINS: Record<string, SlashCommand["origin"]> = { user: "user", repo: "p
 
 const SCOPES = new Set(["user", "repo", "system", "admin"]);
 
+/**
+ * The rows of a `skills/list` answer (SkillsListResponse, SkillsListEntry and SkillMetadata of the
+ * pinned protocol), enabled skills only, as the TUI offers them. An entry that reports errors or a
+ * skill without the protocol's required fields (name, description, path, scope, enabled) makes the
+ * whole answer unusable: null.
+ */
 function skillRows(result: unknown): SlashCommand[] | null {
   if (!isObject(result) || !Array.isArray(result.data) || result.data.length === 0) return null;
   const rows: SlashCommand[] = [];
@@ -102,6 +108,7 @@ class Refused extends Error {}
 const REQUESTS = new Set<string>(["initialize", "skills/list"]);
 const NOTIFICATIONS = new Set<string>(["initialized"]);
 
+/** One connection to the daemon; it speaks only initialize, initialized and skills/list. */
 export class DaemonConnection {
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private next = 1;
@@ -124,6 +131,7 @@ export class DaemonConnection {
     return new DaemonConnection(new WebSocket(`ws+unix://${path}:/`), onChanged, onClose);
   }
 
+  /** The handshake: the upgrade, then initialize (experimentalApi false) and initialized. */
   async handshake(): Promise<void> {
     const timer = setTimeout(() => this.close(), REQUEST_TIMEOUT_MS);
     try {
@@ -200,6 +208,7 @@ export class DaemonConnection {
 export interface CodexDaemonOptions {
   codexHome?: () => string;
   platform?: string;
+  /** the directory the pinned Codex puts rendezvous targets in; defaults to <real /tmp>/codex-daemon-<euid>. */
   daemonRoot?: () => string;
   now?: () => number;
   warn?: (message: string) => void;
@@ -272,6 +281,7 @@ export function createCodexDaemonSource(options: CodexDaemonOptions = {}): Codex
     attempt = own;
     connecting = (async () => {
       stopped(own);
+      // never start one: only a socket that is already there, where Codex puts it, is used
       const path = await controlSocketTarget(home(), async () => options.daemonRoot?.() ?? join(await realpath("/tmp"), `codex-daemon-${process.geteuid?.() ?? 0}`));
       stopped(own);
       const started = DaemonConnection.start(path, () => cache.clear(), () => { if (connection === started) connection = null; cache.clear(); });
@@ -320,6 +330,7 @@ export function createCodexDaemonSource(options: CodexDaemonOptions = {}): Codex
       return rows;
     } catch (error) {
       if (error instanceof Refused) {
+        // skills/list is not accepted without the experimental flag at this version: stop asking it
         disabledFor = connection?.userAgent ?? "";
         failConnection();
         once("refused", `codex daemon refused skills/list without experimentalApi (${error.message}); keeping scanned skills`);
@@ -374,6 +385,7 @@ export function createCodexDaemonSource(options: CodexDaemonOptions = {}): Codex
   };
 }
 
+/** One provider per Codex home: its connection, cache and refusals belong to that home's daemon only. */
 const homeSources = new Map<string, CodexDaemonSource>();
 const HOMES_MAX = 8;
 
@@ -395,6 +407,11 @@ export function closeCodexDaemonSources(): void {
   homeSources.clear();
 }
 
+/**
+ * The Codex home whose daemon serves the pane: the server's configured one, else the pane's own Codex
+ * process's CODEX_HOME, else that process's HOME/.codex. Read from /proc only (no process is started
+ * for it); null when it cannot be read (another platform, no Codex process, an unreadable environment).
+ */
 export async function paneDaemonHome(paneId: string, configured?: string, platform = process.platform, processFiles: {
   readonly lookup: typeof paneCodexProcess;
   readonly environ: (pid: number) => readonly string[] | null;
@@ -428,6 +445,7 @@ registerCatalogSource({
   owns: ["skills"],
   async rows(pane, cwd, signal, context) {
     const home = await paneDaemonHome(pane.pane_id, context?.codexHome);
+    // no home known for this pane: no other home's list stands in for it
     if (!home || signal.aborted) return null;
     return await sourceFor(home).rows(pane, cwd, signal, context);
   },

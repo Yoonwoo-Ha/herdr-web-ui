@@ -82,6 +82,7 @@ describe("senpi's own notices in a Claude Code SDK prompt", () => {
     expect(said(parseClaudeTranscript([
       user([{ type: "text", text: reminder }], { promptSource: "typed", entrypoint: "cli" }),
       user([{ type: "text", text: `${reminder}\nwhy is this here?` }], { promptSource: "sdk", entrypoint: "sdk-ts" }),
+      // a tag senpi does not send
       user([{ type: "text", text: "<details>mine</details>" }], { promptSource: "sdk", entrypoint: "sdk-ts" }),
     ].join("\n")))).toEqual([reminder, `${reminder}\nwhy is this here?`, "<details>mine</details>"]);
   });
@@ -119,6 +120,7 @@ describe("senpi's own notices in a Claude Code SDK prompt", () => {
       const turns = parseClaudeTranscript(sdk(block));
       expect(said(turns)).toEqual([]);
       expect(cards(turns).map(({ id, status, result }) => ({ id, status, result }))).toEqual([{ id: "st_a", status: "completed", result: "cut" }, { id: "st_b", status: "failed", result: "Task runner failed to start." }]);
+      // a notification senpi cut short, between two reports
       const capped = "<system-reminder>long notification excerpt</system-reminder>\n[…notification tail capped…]\nBuffered output overflowed; full output: /tmp/notice.txt";
       const [first, second] = block.split("\n\n");
       const joined = parseClaudeTranscript(sdk([first, capped, second].join("\n\n")));

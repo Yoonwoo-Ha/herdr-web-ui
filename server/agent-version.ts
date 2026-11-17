@@ -2,6 +2,13 @@ import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 
 import { opencodeSessionVersion } from "./opencode.ts";
 
+/**
+ * The version of the agent that wrote a pane's session, read from the agent's own store, never by
+ * running the agent. Claude and Codex keep it in their transcript JSONL, OpenCode in its session
+ * row; every other agent keeps none, so its commands stay unverified (null).
+ */
+
+/** At most this much of a transcript is read: its start for Codex, its end for Claude. */
 export const VERSION_WINDOW_BYTES = 64 * 1024;
 
 export interface ByteReader {
@@ -39,6 +46,7 @@ function parse(line: string): Record<string, unknown> | null {
 
 const versionOf = (value: unknown): string | null => typeof value === "string" && VERSION.test(value) ? value : null;
 
+/** Codex: `payload.cli_version` of the `session_meta` record, the rollout's first line. */
 function codexVersion(path: string, reader: ByteReader): string | null {
   const bytes = reader.read(path, 0, Math.min(VERSION_WINDOW_BYTES, reader.size(path)));
   const text = new TextDecoder().decode(bytes);
@@ -60,6 +68,7 @@ function truncatedCodexVersion(text: string): string | null {
   return versionOf(/"cli_version":"([^"\\]*)"/.exec(text.slice(payload))?.[1]);
 }
 
+/** Claude: the `version` of the last record that carries one, within the transcript's last 64 KiB. */
 function claudeVersion(path: string, reader: ByteReader): string | null {
   const size = reader.size(path);
   const start = Math.max(0, size - VERSION_WINDOW_BYTES);

@@ -17,6 +17,7 @@ interface Pane {
   turnRunning: number;
   endedAt: number | null;
   waiting: boolean;
+  /** held at most WAIT_LIMIT_MS: false for an OmO pane, whose count drops what its dead host left */
   capped: boolean;
 }
 

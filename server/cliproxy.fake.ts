@@ -1,3 +1,4 @@
+/** Deterministic CLIProxyAPI v8 wire fixture; never reads credentials or calls a provider. */
 import { isJsonObject } from "./http.ts";
 
 export function startFakeCLIProxy(key = "test-management-key") {

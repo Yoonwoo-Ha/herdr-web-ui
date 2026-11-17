@@ -514,10 +514,12 @@ it.skipIf(process.platform !== "linux")("follows a `claude attach <job>` pane to
   mkdirSync(join(root, ".claude", "jobs", job), { recursive: true });
   writeFileSync(join(root, ".claude", "jobs", job, "state.json"), JSON.stringify({ sessionId: started, resumeSessionId: resumed, state: "running" }));
   const attach = await attachPane(["attach", job]);
+  // an attach client keeps no PID record of its own: only the job's state names what it shows
   expect(existsSync(join(root, ".claude", "sessions", `${attach.pid}.json`))).toBe(false);
   const conversation = await read(attach.pane);
   expect(conversation.source).toBe("claude-transcript");
   expect(conversation.turns.at(-1)?.parts[0]).toMatchObject({ text: `Answer ${resumed}` });
+  // the job ran before the client attached: the client's start would leave the job's earlier background work lost
   expect(await claudePaneSession({ pane_id: attach.pane, cwd: root, foreground_cwd: root } as HerdrPane))
     .toEqual({ path: join(project, `${resumed}.jsonl`), startedAt: null, pid: attach.pid });
 });
@@ -534,6 +536,7 @@ it.skipIf(process.platform !== "linux")("shows the attached job's conversation, 
       pane_id: paneId, source: "herdr:claude", agent: "claude", seq: 1, agent_session_id: FIRST,
     });
   });
+  // herdr still reports that earlier session once `claude attach` is the foreground process
   const info = await herdrRpc<{ agent: { agent_session?: { value?: unknown } } }>("agent.get", { target: attach.pane });
   expect(info.agent.agent_session?.value).toBe(FIRST);
   const conversation = await read(attach.pane);
@@ -586,6 +589,7 @@ it.skipIf(process.platform !== "linux")("follows a pane attached by the start of
 });
 
 it.skipIf(process.platform !== "linux")("keeps the terminal of a reused pane whose `claude attach` names no one job (#1645)", async () => {
+  // both jobs start with 8e9f: Claude opens neither, and neither does the pane
   jobState("8e9f0a1b", { sessionId: SECOND, state: "working" });
   jobState("8e9f2c3d", { sessionId: NEXT, state: "working" });
   const attach = await attachPane(["attach", "8e9f"], async (paneId) => {

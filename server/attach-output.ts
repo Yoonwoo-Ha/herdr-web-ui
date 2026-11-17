@@ -2,6 +2,7 @@
 const TEARDOWN = "\x1b[?1049l\x1b[?25h\x1b[0 q";
 const TAKEN = TEARDOWN + "herdr: server shut down: terminal attach taken over";
 
+/** The attach's own final diagnostic, not these words in the pane's screen. */
 export function isTakeoverExit(output: string): boolean {
   return output.trimEnd().endsWith(TAKEN);
 }
@@ -19,6 +20,10 @@ export const STARTUP_PROBES: ReadonlyArray<readonly [query: string, reply: strin
 export class AttachStartupProbes {
   private partial = "";
 
+  /**
+   * `startup` says whether output so far is still the attach's setup: from its first real byte on,
+   * the rest of the read is the pane's and passes unchanged, whatever it holds.
+   */
   take(data: string, startup: (output: string) => boolean): { output: string; replies: string } {
     let rest = this.partial + data;
     this.partial = "";
@@ -50,6 +55,12 @@ export class AttachStartupProbes {
   }
 }
 
+/**
+ * Hold only a possible trailing takeover diagnostic's words until exit confirms it. Everything
+ * else passes through unchanged, including the same words in the pane's normal screen output.
+ * herdr's teardown before the words is the terminal's either way: it passes at once, and what
+ * of the diagnostic it began is remembered, so words in a later read still match however late.
+ */
 export class AttachOutputTail {
   private passed = "";
   private tail = "";
@@ -66,6 +77,7 @@ export class AttachOutputTail {
     let start = -1;
     const full = text.lastIndexOf(TAKEN);
     if (full !== -1 && /^[\r\n]{0,4}$/.test(text.slice(full + TAKEN.length))) start = full;
+    // Reads may split at any byte in the teardown or diagnostic, including the first ESC.
     else for (let length = Math.min(text.length, TAKEN.length - 1); length > 0; length--) {
       if (text.endsWith(TAKEN.slice(0, length))) { start = text.length - length; break; }
     }

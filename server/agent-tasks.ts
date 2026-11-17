@@ -29,6 +29,7 @@ import type { HerdrPane } from "../shared/protocol.ts";
  */
 const POLL_MS = 2000;
 const RESOLVE_MS = 30_000;
+/** how long after a lookup that failed the pane is asked again: every snapshot would ask, and two failures in one moment say no more than one */
 const RETRY_MS = 10_000;
 const START_SLACK_MS = 60_000;
 const DUE_GRACE_MS = 120_000;
@@ -140,6 +141,10 @@ export interface AgentTaskDeps {
   now?: () => number;
 }
 
+/**
+ * A grok session is found by the id herdr reports, so another id is another session's file; an agy
+ * one is found by the pane's process, whatever the pane says of a session.
+ */
 const sessionOf = (pane: HerdrPane): string | null => pane.agent === "grok" ? pane.agent_session?.value ?? null : null;
 
 export class AgentTaskStatus {
@@ -209,6 +214,10 @@ export class AgentTaskStatus {
     if (this.lifetimes.get(pane.pane_id) !== lifetime) return;
     const current = this.panes.get(pane.pane_id);
     if (found === null) {
+      // the process is gone or its session cannot be read: what it ran, a timer too, holds nothing. One
+      // failure does not tell that (herdr was busy, a process read timed out), so what the pane holds is
+      // dropped on the second in a row, and at once when it is another agent's or another session's:
+      // what the pane holds was never that one's
       const again = this.missAt(pane.pane_id, agent, session) !== undefined;
       if (current !== undefined && (again || current.agent !== agent || sessionOf(current.pane) !== session)) this.letGo(pane.pane_id);
       else if (current !== undefined) current.pane = { ...pane, agent };
@@ -233,6 +242,8 @@ export class AgentTaskStatus {
       if (only !== undefined && paneId !== only) continue;
       readOn(tracked);
       const count = taskCount(tracked, tracked.started, this.now());
+      // a timer is held past the hold's limit only while its process lasts: no event tells that of a pane at rest.
+      // Nor does any bring the lookup after one that failed, which keeps what the pane holds or lets it go
       if ((!count.capped || this.failed.has(paneId)) && this.now() - tracked.resolvedAt >= RESOLVE_MS) void this.track(tracked.pane).catch(() => undefined);
       const told = `${count.running}:${count.turnRunning}:${count.promptAt}:${count.capped}`;
       if (told === tracked.told) continue;

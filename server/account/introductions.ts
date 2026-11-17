@@ -4,12 +4,14 @@ import { isWssOrigin } from "../../shared/relay-offer.ts";
 import { deriveServerId } from "../../shared/relay-server-proof.ts";
 import { writePrivateState } from "../private-state.ts";
 
+/** How long an introduction waits for its device: a device that is off for weeks still learns of a PC enrolled meanwhile. */
 export const INTRODUCTION_TTL_MS = 30 * 24 * 60 * 60_000;
 const MAX_PCS = 32;
 const MAX_KEYS = 256;
 
 export interface IntroducedPc { server_id: string; server_public_key: string; relay: string; name: string }
 
+/** Null unless `value` is a list of PCs whose ids derive from their keys (docs/account.md, "Introductions"). */
 export function parseIntroducedPcs(value: unknown): IntroducedPc[] | null {
   if (!Array.isArray(value) || value.length > MAX_PCS) return null;
   const pcs: IntroducedPc[] = [];
@@ -26,6 +28,7 @@ export function parseIntroducedPcs(value: unknown): IntroducedPc[] | null {
 
 type Waiting = Map<string, { pcs: IntroducedPc[]; expires: number }>;
 
+/** What `path` holds, or nothing: an introduction is only a hint the member gives again, so an unreadable file is an empty one. */
 function readWaiting(path: string | undefined): Waiting {
   const waiting: Waiting = new Map();
   if (!path) return waiting;

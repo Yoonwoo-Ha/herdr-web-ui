@@ -24,10 +24,12 @@ let foreground: { pid: number; name?: string; argv?: string[] }[];
 let foregrounds: Map<string, { pid: number; name?: string; argv?: string[] }[]>;
 let listener: ReturnType<typeof Bun.listen>;
 let socketBefore: string | undefined;
+/** The terminal title herdr reports for the pane (Codex's [tui].terminal_title), null for none. */
 let title: string | null;
 let unlabelled: boolean;
 let agentFolders: { cwd?: string; foreground_cwd?: string };
 let reportedSession: { source: string; agent: string; kind: string; value: string } | null;
+/** herdr's shell_pid for the pane, when a test says it (a Kiro wrapper is the shell herdr started). */
 let shellPid: number | undefined;
 let processReads: ({ pid: number; name?: string; argv?: string[] }[] | null)[];
 let failedReads: Set<number>;
@@ -122,6 +124,8 @@ function asOnMac() {
   return { mockRestore: () => { for (const spy of spies) spy.mockRestore(); } };
 }
 
+// A Chat poll hands its own process read to the lookup (#1879). The pane can change in between: what decides the
+// store and the Kiro guard is the read made now (#2774).
 const labelledSnapshot = () => ({ panes: [{
   pane_id: root, workspace_id: root, tab_id: root, terminal_id: root,
   agent: "codex", cwd: root, agent_status: "working", focused: false, revision: 0,
@@ -250,6 +254,7 @@ it("reads an unlabelled pane only when the Kiro foreground check proves its nest
   const snapshot = { panes: [{ pane_id: root, cwd: root, agent_status: "unknown" }] } as SessionSnapshot;
   try {
     expect(await paneTranscript(root, home, snapshot)).toMatchObject({ source: "codex-transcript", path });
+    // Without a substantial answer, do not fall through to weaker short-exchange heuristics.
     foreground = [{ pid: 2147483645, argv: ["zsh (kiro-cli-term)"] }];
     shellPid = 2147483645;
     nested.mockResolvedValue({ pid: 2147483644, argv: ["codex"], identity: "10:1,20:1,2147483644:1" });
@@ -288,6 +293,7 @@ it("resolves a foreground Codex launched from continues before herdr sets pane.a
 
 for (const remote of [["--remote", "ws://fixture.invalid:4500"], ["--remote=ws://fixture.invalid:4500"]]) {
   it(`takes no local conversation for an unlabelled pane whose Codex resumed the thread with ${remote[0]}`, async () => {
+    // Given an unlabelled pane resuming a thread on an app server elsewhere, whose id the local store also holds
     unlabelled = true;
     foreground = [{ pid: 2147483640, argv: ["/usr/bin/codex", "resume", thread, ...remote] }];
     const pane = { pane_id: root, workspace_id: root, tab_id: root, terminal_id: root, agent_status: "working" as const, cwd: root, focused: false, revision: 0 };
@@ -299,6 +305,8 @@ for (const remote of [["--remote", "ws://fixture.invalid:4500"], ["--remote=ws:/
 }
 
 it("reads an unlabelled pane whose foreground process herdr reports with a null argv as a pane without Codex", async () => {
+  // Given an unlabelled pane whose one foreground process herdr names with `argv: null` (its schema allows it), and
+  // whose command line cannot be read either
   unlabelled = true;
   const snapshot = { panes: [{ pane_id: root, cwd: root, agent_status: "unknown" }] } as SessionSnapshot;
   foreground = [{ pid: 2147483647, argv: [] }];
@@ -308,6 +316,8 @@ it("reads an unlabelled pane whose foreground process herdr reports with a null 
 });
 
 it("takes no reported thread for an unlabelled pane while another unlabelled Codex pane may have begun it", async () => {
+  // Given two unlabelled Codex panes in one folder, and the thread pane B began after both started, which the
+  // shared daemon reported on pane A (the pane that started it); pane B has no report, and no screen shows anything
   const other = "01a0c7a1-56d9-7e20-9f08-f7a2d973bc02";
   const otherPath = join(home, "sessions", `rollout-${other}.jsonl`);
   writeFileSync(otherPath, [
@@ -502,6 +512,8 @@ it.skipIf(process.platform !== "linux")("reads no conversation from the default 
 });
 
 it("reads no conversation from a fallback store when the Codex proven since cannot say where it writes", async () => {
+  // Given the default store holding the conversation the screen shows, and a nested Codex whose
+  // environment cannot be read (another user's process, or one gone)
   const defaultBefore = process.env["CODEX_HOME"];
   process.env["CODEX_HOME"] = home;
   agentFolders = { cwd: root };
@@ -548,6 +560,7 @@ it("does not reuse a nested conversation binding after a process birth changes w
       screen = "";
       expect(await resolve()).toBe(path);
       expect(await codexOpenRollout(root, root, home)).toBe(path);
+      // Resuming an existing thread need not create a newer database row or change the PID.
       nested.mockResolvedValue({ ...original, identity });
       expect(await codexOpenRollout(root, root, home)).toBeNull();
       expect(await resolve()).toBeNull();
@@ -590,7 +603,10 @@ async function firstLine(stdout: ReadableStream<Uint8Array>): Promise<string> {
   return text;
 }
 
-/** While an exec runs, /proc/<pid>/environ reads empty. */
+/**
+ * READY comes from the process after its exec: while an exec runs, /proc/<pid>/environ reads empty, and a
+ * store read then is cached as none.
+ */
 async function runningCodex(resume = false, env = process.env): Promise<ReturnType<typeof Bun.spawn>> {
   const node = Bun.which("node");
   if (node === null) throw new Error("node is required for the Codex process fixture");
@@ -603,6 +619,7 @@ async function runningCodex(resume = false, env = process.env): Promise<ReturnTy
   return child;
 }
 
+/** As runningCodex, but holding `rollout` open, as a running Codex holds the one it writes. */
 async function codexHolding(rollout: string): Promise<ReturnType<typeof Bun.spawn>> {
   const node = Bun.which("node");
   if (node === null) throw new Error("node is required for the Codex process fixture");
@@ -615,6 +632,7 @@ async function codexHolding(rollout: string): Promise<ReturnType<typeof Bun.spaw
   return child;
 }
 
+// /proc on Linux, lsof -FnDi on macOS: both name the held file itself
 it.skipIf(process.platform === "win32")("records the exact identity of the rollout its Codex holds open, for the file it returns (#3402)", async () => {
   const child = await codexHolding(path);
   // macOS has no /proc to read argv from: herdr's foreground metadata carries it there
@@ -633,6 +651,7 @@ it.skipIf(process.platform === "win32")("does not read a rollout renamed over th
   foreground = [{ pid: child.pid, name: "codex", argv: [join(root, "codex")] }];
   const foreign = join(root, "foreign.jsonl");
   writeFileSync(foreign, JSON.stringify({ type: "session_meta", payload: { id: "foreign", cwd: root } }) + "\n");
+  // the real resolver proves the held rollout; another file is renamed over it before the outcome read's stat
   expect(await conversationModule.readCommandTranscript(root)).not.toBeNull();
   const resolver = codexModule.codexTranscriptPath;
   let swapped = false;
@@ -658,6 +677,7 @@ it("selects the resumed rollout for the observed native executable alias", async
   expect(await resolve()).toBe(path);
 });
 
+// a screen match proves no file (the maintainer's decision): the outcome read keeps the exact stat for it
 it("records no proof for the rollout its screen matched (#3402)", async () => {
   foreground = [{ pid: 2147483647, argv: ["/usr/bin/codex"] }];
   writeFileSync(path, [
@@ -958,6 +978,7 @@ async function loaded(...ids: string[]): Promise<ReturnType<typeof Bun.spawn>> {
   return holding(ids, "readable");
 }
 
+/** As loaded, by a process whose open files no other process may list (not dumpable), as another user's. */
 const loadedUnreadably = (...ids: string[]) => holding(ids, "unreadable");
 
 /**
@@ -1034,6 +1055,8 @@ describe("a thread of another folder Codex has loaded, as a resume through the p
     expect(await resolve()).toBe(rollout);
     screen = `• ${otherAnswer}\n• All tests passed (38s).`;
     expect(await resolve()).toBe(rollout);
+    // nothing binds: a background reader is not told, and the screen is asked again each time,
+    // as after /resume of another, older conversation in the same TUI (the old one stays loaded)
     expect(await codexOpenRollout(root, root, home)).toBeNull();
     screen = `• ${otherAnswer}\nOpenAI Codex (v0.164.0)\n\n› hello\n\n• Ready.\n\n› `;
     expect(await resolve()).toBeNull();
@@ -1052,6 +1075,7 @@ describe("a thread of another folder Codex has loaded, as a resume through the p
     db.query("INSERT INTO threads (id, rollout_path, cwd, archived, agent_role, created_at, updated_at, source) VALUES (?, ?, ?, 0, NULL, 2, 2, 'cli')").run(ghost, join(home, "sessions", "missing.jsonl"), root);
     db.close();
     expect(await resolve()).toBeNull();
+    // a codex exec run is never what a pane shows, but what it said still counts against the others
     const deleted = new Database(join(home, "state_5.sqlite"));
     deleted.query("DELETE FROM threads WHERE id = ?").run(ghost);
     deleted.close();
@@ -1063,6 +1087,8 @@ describe("a thread of another folder Codex has loaded, as a resume through the p
 
   it.skipIf(process.platform !== "linux")("offers nothing while a process holding a thread's lock cannot be read", async () => {
     otherFolderThread();
+    // a conversation that gave the same answer, loaded by a process whose open files cannot be listed
+    // (as root they can: then only that answer counting against the other is tested)
     const peer = "01a16b22-7e1f-7072-8897-eeeeeeeeeeee";
     elsewhereThread(peer, [otherAnswer]);
     foreground = picker;
@@ -1556,6 +1582,7 @@ describe("a thread of another folder Codex has loaded, as a resume through the p
     const peer = "01a16b22-7e1f-7072-8897-dddddddd0b00";
     elsewhereThread(peer, [otherAnswer]);
     const holder = await loaded(other, peer);
+    // the table as the kernel has it for these two locks, built here: a real read may tear too
     const line = (index: number, id: string) => {
       const ino = statSync(join(home, "thread-writer-locks", `${id}.lock`), { bigint: true }).ino.toString();
       return `${index}: FLOCK  ADVISORY  WRITE ${holder.pid} 00:00:${ino} 0 EOF`;
@@ -1906,6 +1933,7 @@ shortIt("resolves a seconds-only schema when creation is provably after process 
 
 shortIt("rejects a thread made before its process could have started, and takes one made as it starts", async () => {
   await shortSession();
+  // Put the start at a second boundary, independently of btime/ps rounding or fixture setup time.
   const started = 1_001_000;
   const bound = spyOn(processStart, "processStartLowerBound").mockReturnValue(started);
   const setCreated = (created: number) => {
@@ -2209,6 +2237,7 @@ shortIt("rejects unavailable process starts and timestamps before the process co
   const created = await shortSession();
   const started = processStartedAt(foreground[0]!.pid)!;
   const db = new Database(join(home, "state_5.sqlite"));
+  // below the start's lower bound on every platform (a tick on Linux, ps's second on macOS)
   db.query("UPDATE threads SET created_at_ms = ?").run(started - 2500);
   db.close();
   expect(await resolve()).toBeNull();
@@ -2330,6 +2359,7 @@ describe("another session's conversation is never shown for a plain Codex pane",
     expect(await resolve()).toBe(path);
   });
 
+  // a herdr report may be stale or the shared daemon's (#2420's review, H2)
   for (const kind of ["path", "id"] as const) {
     it(`binds nothing by a reported ${kind} alone that began before this pane's Codex, while another Codex pane here may run it`, async () => {
       const started = spyOn(processStart, "processStartLowerBound").mockReturnValue(1_000_000);
@@ -2378,6 +2408,7 @@ describe("another session's conversation is never shown for a plain Codex pane",
       expect(await codexTranscriptPath(root, root, home, [fixturePane(root), fixturePane("peer")])).toBeNull();
       foregrounds.set("peer", [{ pid: 900003, argv: ["/usr/bin/codex"] }]);
       expect(await codexTranscriptPath(root, root, home, [fixturePane(root), fixturePane("peer")])).toBe(path);
+      // another Codex pane in another folder, running when it began: `codex -C` or a resume opens a thread of this one
       foregrounds.set("peer", [{ pid: 900002, argv: ["/usr/bin/codex"] }]);
       expect(await codexTranscriptPath(root, root, home, [fixturePane(root), fixturePane("peer", join(root, "elsewhere"))])).toBeNull();
       starts.set(900004, 1_000_500);
@@ -2553,6 +2584,7 @@ describe("a Codex pane whose last answer the screen never shows whole binds only
   };
   const finishedTurn = (asked: string, body: readonly string[]): string[] => [...wrapped("› ", asked), "", ...body, "", footer];
 
+  /** A rollout whose turns all finished, as Codex 0.164 records one: each prompt and each answer both ways. */
   function finishedRollout(file: string, id: string, turns: readonly (readonly [prompt: string, reply: string])[]): void {
     writeFileSync(file, [
       { type: "session_meta", payload: { id, cwd: root } },
@@ -2848,6 +2880,8 @@ describe("a Codex pane whose last answer the screen never shows whole binds only
         ...["east", "west", "north", "south"].flatMap((region, row) => [`Region: ${region}`, `Owner: team ${"abcd"[row]}`, `Status: ${row % 2 ? "late" : "clean"}`, ""])],
       closing: "",
     },
+    // the adversarial review of the follow-up: what Codex draws in parentheses after a link is in no record of the
+    // pane's own (the "mailto:" of a mail autolink, as the mail drawing above models it)
     "a table of mail autolinks drawn as records": {
       written: ["| Name | Reach |", "| --- | --- |", ...["ana", "bo", "cy", "dee", "eli", "fay", "gus", "hal", "ida", "jo", "kit", "lou"].map((name) => `| ${name} | <${name}@ops.example.com> |`)],
       drawn: ["ana", "bo", "cy", "dee", "eli", "fay", "gus", "hal", "ida", "jo", "kit", "lou"].flatMap((name) => [`Name: ${name}`, `Reach: ${name}@ops.example.com (mailto:${name}@ops.example.com)`, ""]),
@@ -2943,6 +2977,7 @@ describe("a Codex pane whose last answer the screen never shows whole binds only
   });
 
   it("binds no scrolled answer whose visible end holds too few letters to tell who else may have said it", async () => {
+    // the pane's own wrote "1." on every row, each a figure with its unit in parentheses; Codex counts the rows.
     const figures = Array.from({ length: 44 }, (_, row) => `${137 + row * 29} (ms)`);
     const heading = "Timings of the forty-four regions, slowest last:";
     const drawn = [heading, ...figures.map((figure, row) => `${row + 1}. ${figure}`)];
@@ -3012,6 +3047,7 @@ describe("a Codex pane whose last answer the screen never shows whole binds only
     expect(await resolve()).toBe(path);
   });
 
+  // the merge pass's review of #3582: a lookup that cannot bind ran every scan again, every 2 s
   for (const refused of ["a scrolled answer beside a turn under way", "a short answer two conversations ended on", "a short answer that ties the pane"] as const) {
     it(`scans no rollout again for a lookup whose screen and rollouts stand as they were (${refused})`, async () => {
       const rows = 400;
@@ -3221,6 +3257,7 @@ describe("a Codex pane whose last answer is shorter than 64 letters and digits b
     expect(got).toEqual([fileB, path, null]);
   });
 
+  // a resume in the same TUI opens another conversation without a new thread (the adversarial review's F3)
   it("drops what a short turn tied once the pane shows another conversation of its TUI that no path reads", async () => {
     foreground = live;
     writeRollout(path, thread, turn("t1", asked, "ok"));
@@ -3228,6 +3265,7 @@ describe("a Codex pane whose last answer is shorter than 64 letters and digits b
     const fileB = folderThread(otherThread, turn("b1", "List the fifty rollout steps.", items.join("\n")));
     screen = footed([`› ${asked}`], ["• ok"]);
     const got = [await resolve()];
+    // /resume opens B: its history is replayed, its last turn footed, the composer idle
     const replayed = [...items.slice(-30).map((item) => `  ${item.replaceAll("**", "")}`), "", "  Worked for 9s • Nov 9 at 7:05 PM"];
     screen = [...replayed, "", "", "", "› Ask Codex to do anything", "", "  GPT-6-Luna low · /tmp/proj", "  ← for agents · ? for shortcuts"].join("\n");
     got.push(await resolve());
@@ -3291,6 +3329,7 @@ describe("a Codex pane whose last answer is shorter than 64 letters and digits b
     foreground = live;
     writeRollout(path, thread, turn("t1", asked, "[ok](/tmp/proj/a)"));
     folderThread(otherThread, turn("t9", asked, "ok (a)"));
+    // When the pane shows its own answer as Codex draws the link: label, then the target relative to the folder
     screen = footed([`› ${asked}`], ["• ok (a)"]);
     expect(await resolve()).toBeNull();
   });
@@ -3305,6 +3344,7 @@ describe("a Codex pane whose last answer is shorter than 64 letters and digits b
 
   it("takes no conversation that finished `ok` while the pane's own shows it and has not recorded its finish yet", async () => {
     foreground = live;
+    // the screen and the rollout are read separately: the pane's own turn is drawn finished, its task_complete not written yet
     writeRollout(path, thread, turn("t1", asked, "ok", false));
     folderThread(otherThread, turn("t9", asked, "ok"));
     screen = footed([`› ${asked}`], ["• ok"]);
@@ -3395,6 +3435,7 @@ describe("a Codex pane whose last answer is shorter than 64 letters and digits b
     const short = footed([`› ${asked}`], ["• ok"]);
     const long = footed(["› Explain which conversation this pane shows"], [`• ${answer}`]);
     const endOn = (index: number) => writeRollout(path, thread, index === 0 ? turn("t1", asked, "ok") : turn("t1", "Explain which conversation this pane shows", answer));
+    // --remote: the conversation shown is in another store
     for (const [index, shown] of [short, long].entries()) {
       endOn(index);
       foreground = [{ pid: 2147483640 - index, argv: ["/usr/bin/codex", "--remote", "ws://127.0.0.1:4500"] }];
@@ -3448,6 +3489,7 @@ describe("a Codex pane whose last answer is shorter than 64 letters and digits b
     expect(await resolve()).toBeNull();
   }, 20_000);
 
+  // the merge pass's review of #3582 (Codex, HIGH): a resume in the same TUI may draw the very screen that bound the pane
   for (const begun of ["before", "after"] as const) {
     it(`answers nothing once another conversation ended on the exchange the pane's standing screen shows (its thread begun ${begun} the pane was tied)`, async () => {
       foreground = live;
@@ -3613,6 +3655,7 @@ describe("a Codex pane keeps its conversation beside a second Codex that only st
   const secondThread = "01a0c7a1-56d9-7e20-9f08-f7a2d973bc60";
   const longPrompt = "Explain which conversation this pane shows";
   const shortPrompt = "Reply with just the word ok.";
+  /** An answer Codex renders its own way (no "**"), which only the footed turn ties to its conversation. */
   const rendered = "The **migration** rewrote every legacy record in place, and all of the remaining verification steps completed successfully.";
   const renderedShown = "The migration rewrote every legacy record in place, and all of the remaining verification steps completed successfully.";
   type RolloutRecord = { type: string; payload: Record<string, unknown> };
@@ -3638,7 +3681,9 @@ describe("a Codex pane keeps its conversation beside a second Codex that only st
     db.close();
     return file;
   };
+  /** A second Codex started in this folder: its thread is made at once, nothing asked yet (`records`: what it was asked since). */
   const startSecondCodex = (records: RolloutRecord[] = [], seconds = 0): string => startThread(secondThread, records, seconds);
+  /** This pane's /new: a thread is made, and the logo replaces the turns. */
   const newThread = "01a0c7a1-56d9-7e20-9f08-f7a2d973bc61";
 
   const header = ["  >_ OpenAI Codex (v0.164.0)", "     /tmp/proj", ""];

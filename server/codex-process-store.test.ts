@@ -95,6 +95,7 @@ it.skipIf(process.platform !== "linux").each([
     expect(await processCodexHome(child.pid)).toBe(explicit ? explicitHome : found ? homes[0]! : null);
     if (inspectFailure || closedDescriptor) expect(injected).toBeGreaterThan(0);
     if (found && !explicit) {
+      // Neither an inferred store nor its absence can survive a descriptor change in the cache.
       child.stdin.write("close\n");
       await child.stdin.flush();
       await reader.read();

@@ -121,6 +121,7 @@ describe("storeAgentVersion", () => {
 
   it("reads the version of the OpenCode session the pane is bound to, and only that one", () => {
     const dir = temp();
+    // the reader's tables in server/opencode.ts, 2.x and 1.x (columns it never touches left out)
     const v2 = join(dir, "v2.db");
     const db2 = new Database(v2);
     db2.exec("CREATE TABLE session_v2 (id text PRIMARY KEY, project_id text NOT NULL, slug text NOT NULL, directory text NOT NULL, title text, version text NOT NULL, revert text, time_created integer NOT NULL, time_updated integer NOT NULL); CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)");

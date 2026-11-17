@@ -27,9 +27,11 @@ describe("POST /api/auth", () => {
 
   it("holds a run of wrong tokens back, one address at a time, and a right token spends the wait", async () => {
     for (let attempt = 0; attempt < 5; attempt += 1) expect((await offer("wrong", "10.0.0.9")).status).toBe(401);
+    // the sixth ask never reaches the comparison: the address is inside its wait
     const held = await offer(TOKEN, "10.0.0.9");
     expect(held.status).toBe(429);
     expect(Number(held.headers.get("retry-after"))).toBeGreaterThan(0);
+    // another address is untouched, and the correct token spends the budget
     expect((await offer(TOKEN, "10.0.0.8")).status).toBe(204);
     forgetAuthAttempts();
     for (let attempt = 0; attempt < 4; attempt += 1) expect((await offer("wrong", "10.0.0.7")).status).toBe(401);
@@ -77,6 +79,7 @@ describe("authClient", () => {
   it("takes the address a proxy on this PC saw, and nobody else's word for it", () => {
     const via = (value: string): Headers => new Headers({ "x-forwarded-for": value });
     expect(authClient("127.0.0.1", via("100.64.0.9"))).toBe("100.64.0.9 via 127.0.0.1");
+    // the proxy appends what it saw: an entry the client wrote in front of it is not believed
     expect(authClient("::1", via("1.2.3.4, 100.64.0.9"))).toBe("100.64.0.9 via ::1");
     expect(authClient("127.0.0.1", new Headers())).toBe("127.0.0.1");
     expect(authClient("192.168.0.20", via("100.64.0.9"))).toBe("192.168.0.20");
@@ -163,11 +166,14 @@ describe("sameOrigin", () => {
 
   it("reads a session cookie with no Origin as cross-site, except the paths such a client must use", () => {
     const session = { cookie: "ovis_token=abc; ovis_device=def" };
+    // the origin check is not a complete control until these are refused
     expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: session }))).toBe(false);
     expect(sameOrigin(new Request("http://host/api/workspace/create", { method: "POST", headers: session }))).toBe(false);
     expect(sameOrigin(new Request("http://host/api/machines/local/workspace/create", { method: "POST", headers: session }))).toBe(false);
+    // either cookie alone marks it session-bearing
     expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: { cookie: "ovis_device=def" } }))).toBe(false);
     expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: { cookie: "ovis_token=abc" } }))).toBe(false);
+    // the custom mutation header is the non-browser client's proof
     expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: { ...session, "x-herdr-machine": "1" } }))).toBe(true);
     expect(sameOrigin(new Request("http://host/api/updates/check", { method: "POST", headers: { ...session, "x-herdr-update": "1" } }))).toBe(true);
     // these carry no header in the cases that need them: the WS handshake (a GET) a
@@ -175,6 +181,7 @@ describe("sameOrigin", () => {
     expect(sameOrigin(new Request("http://host/ws", { headers: session }))).toBe(true);
     expect(sameOrigin(new Request("http://host/api/auth", { method: "DELETE", headers: session }))).toBe(true);
     expect(sameOrigin(new Request("http://host/api/push/subscribe", { method: "POST", headers: session }))).toBe(true);
+    // the exemption is the path, not the method: another mutation on a neighbouring path is refused
     expect(sameOrigin(new Request("http://host/api/push/test", { method: "POST", headers: session }))).toBe(false);
   });
 
@@ -184,6 +191,7 @@ describe("sameOrigin", () => {
     expect(sameOrigin(new Request("http://host/api/machines/events", { headers: page }))).toBe(true);
     expect(sameOrigin(new Request("http://host/api/machines/local/session", { headers: page }))).toBe(true);
     expect(sameOrigin(new Request("http://host/api/machines/local/session", { method: "HEAD", headers: page }))).toBe(true);
+    // a mutation from the same page states its Origin; one that does not is still refused
     expect(sameOrigin(new Request("http://host/api/machines/local/workspace/create", { method: "POST", headers: page }))).toBe(false);
   });
 

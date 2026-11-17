@@ -3,6 +3,7 @@ import { stripVTControlCharacters } from "node:util";
 export interface CodexSteeringContext { agent: string | null; working: boolean; screen: string }
 interface SteeringIO {
   read: () => Promise<CodexSteeringContext>;
+  /** sends Escape; `fresh` is asked again when herdr is reached, and a stale write is withheld */
   escape: (fresh: () => boolean) => Promise<void>;
   restarting: () => void;
   now?: () => number;
@@ -18,6 +19,12 @@ function lastLine<T>(lines: T[], matches: (line: T) => boolean): number {
 /** The rows under the composer: the model and folder (with `fast` after the effort in Fast mode), context left, warnings, and (0.162) the shortcuts hint. */
 export const FOOTER = /^(?:\S+(?:[ \t]+\S+){0,3}[ \t]+(?:default|minimal|none|low|medium|high|xhigh|max|ultra)(?:[ \t]+[Ff]ast)?[ \t]*·|\d+% context left\b|⚠\s*\d+\s*warnings?\b|(?:←[^·]*·\s*)?\?\s*for shortcuts\b|[/\\]|[A-Za-z]:\\)/;
 
+/**
+ * A native steering panel in the live composer, never a hint quoted in scrollback, whose last
+ * entry is `text`: the message just submitted, not one that was already waiting. Codex wraps an
+ * entry over indented rows and cuts a long one with a "…" row, so the entry is compared without
+ * whitespace, and as the start of `text` when it was cut.
+ */
 export function codexSteeringPending(screen: string, text: string): boolean {
   // the indent is kept beside the trimmed text: Codex tells an entry from its continuation rows by it
   const rows = stripVTControlCharacters(screen).split(/\r?\n/).map((raw) => {
@@ -50,6 +57,7 @@ export function codexSteeringPending(screen: string, text: string): boolean {
   return cut ? sent.startsWith(shown) : shown === sent;
 }
 
+/** Enter can leave steering pending until a tool boundary. Only Send now may interrupt it, and only for `text`. */
 export async function interruptCodexSteering(explicit: boolean, text: string, submitted: CodexSteeringContext, io: SteeringIO): Promise<void> {
   if (!explicit || submitted.agent !== "codex" || !submitted.working) return;
   const now = io.now ?? Date.now;
@@ -57,11 +65,13 @@ export async function interruptCodexSteering(explicit: boolean, text: string, su
   const deadline = now() + 1500;
   const unconfirmed = () => new Error("Codex immediate delivery was not confirmed. Check the terminal before sending again.");
   while (now() < deadline) {
+    // The caller rechecks live identity, lease, authority and interactive prompts in this read.
     const current = await io.read();
     if (now() >= deadline || current.agent !== "codex") throw unconfirmed();
     if (!current.working) return;
     if (codexSteeringPending(current.screen, text)) {
       io.restarting();
+      // the RPC's connect is awaited: by the time herdr is written to, the deadline may have passed
       await io.escape(() => now() < deadline);
       return;
     }

@@ -85,6 +85,12 @@ export class DataUrlPictureScan {
 /** A picture omp moved out of its transcript: `blob:sha256:<digest of its bytes>`, its bytes in the agent's blob store. */
 const OMP_BLOB_REF = /^blob:sha256:([a-f0-9]{64})$/;
 
+/**
+ * The digest an omp image block names its picture by, when it is one the chat could show: a raster
+ * declared as one, and a ref in omp's own form. Such a block takes a place among its record's
+ * pictures whatever its blob holds now, so a blob that goes missing leaves its place empty rather
+ * than moving the next picture into it. Null for anything else.
+ */
 export function ompBlobDigest(declared: unknown, data: unknown): string | null {
   if (typeof declared !== "string" || !RASTER_TYPES.has(declared) || typeof data !== "string") return null;
   return OMP_BLOB_REF.exec(data)?.[1] ?? null;
@@ -102,6 +108,10 @@ export function ompBlobPicture(blobs: string, declared: unknown, data: unknown):
   return finish(ompBlobPictureSteps(blobs, declared, data));
 }
 
+/**
+ * `anchor` is the identity the store had when the transcript was authorized
+ * (ompBlobAnchor): the blob is read only from that very directory.
+ */
 export function* ompBlobPictureSteps(blobs: string, declared: unknown, data: unknown, anchor?: string): Steps<{ mediaType: string; bytes: Buffer } | null> {
   const digest = ompBlobDigest(declared, data);
   if (digest === null) return null;
@@ -109,6 +119,12 @@ export function* ompBlobPictureSteps(blobs: string, declared: unknown, data: unk
   return picture?.bytes ? { mediaType: picture.mediaType, bytes: picture.bytes } : null;
 }
 
+/**
+ * The blob store of an omp transcript and its identity, taken once where the transcript is authorized
+ * (the image endpoint, as it resolves the pane's transcript): a blob is then read only from that very
+ * directory, whatever the paths above it come to name later. Null when there is no store, or it is
+ * no real directory.
+ */
 export function ompBlobAnchor(blobs: string | null): { path: string; identity: string } | null {
   if (blobs === null) return null;
   const identity = blobStoreIdentity(blobs);
@@ -144,6 +160,11 @@ export function* awaited<T>(pending: Promise<T>): Steps<T> {
 
 const BLOB_WINDOW = 1024 * 1024;
 
+/**
+ * The blob store `blobs` as it is now: its identity when it is a real directory; null when it is
+ * missing or a link. omp keeps its store as a directory beside its sessions, so a link there (to
+ * another omp's store, or anywhere) names no blob of this one.
+ */
 function blobStoreIdentity(blobs: string): string | null {
   try {
     // exact: Windows' file indexes do not fit a number
@@ -180,12 +201,21 @@ function openBlob(blobs: string, digest: string, checked: string): Held | null {
   let store: Held;
   try { store = opened("store", () => openHeldDirectory(blobs)); } catch { return null; }
   try {
+    // the directory opened must be the one checked, not one moved into its place since
     if (store.stat().identity !== checked) return null;
+    // a link above the store is followed by the open: the directory opened must be the one named
     if (!store.isAt(blobs)) return null;
     return opened("blob", () => store.open(digest, "file"));
   } catch { return null; } finally { store.close(); }
 }
 
+/**
+ * The blob `digest` in the store `blobs`, read a window at a time and hashed as it goes, its type from
+ * its leading bytes, its bytes kept only when `keep`. Null unless it is a regular file of at most
+ * MAX_IMAGE_BYTES whose bytes hash to `digest` and announce a raster, opened without following a link
+ * to it or to its store (openBlob) from the directory `anchor` names (the store as it is now when no
+ * anchor is given), and the same one after it was read.
+ */
 function* ompBlobSteps(blobs: string, digest: string, keep: boolean, anchor?: string): Steps<{ mediaType: string; bytes: Buffer | null } | null> {
   const store = anchor ?? blobStoreIdentity(blobs);
   if (store === null) return null;
@@ -222,6 +252,7 @@ const ompBlobTypes = new Map<string, { file: string; type: string | null }>();
 export function ompBlobImageType(blobs: string, declared: unknown, data: unknown): string | null {
   const digest = ompBlobDigest(declared, data);
   if (digest === null) return null;
+  // a store that is gone or a link names nothing; the answer is kept for this store and this file
   const store = blobStoreIdentity(blobs);
   if (store === null) return null;
   let file: string;
@@ -243,6 +274,11 @@ export function forgetOmpBlobTypes(): void {
   ompBlobTypes.clear();
 }
 
+/**
+ * A picture a Codex tool returned in its output, `{ type: "input_image", image_url }` with the bytes
+ * inline as a data URL, checked as inlineImageType checks any inline picture. Null for anything else:
+ * a remote URL, a path, an svg.
+ */
 export function codexOutputPicture(value: unknown): { mediaType: string; data: string } | null {
   const part = record(value);
   if (part.type !== "input_image" || typeof part.image_url !== "string") return null;
@@ -282,6 +318,7 @@ function imagePart(value: string): ImagePart | null {
   return { kind: "image", media_type: mediaType, ref: `codex-${createHash("sha256").update(value).digest("hex")}` };
 }
 
+/** Hash references keep base64 blobs and filesystem paths out of conversation responses. */
 export function codexImageParts(entry: RecordValue): ImagePart[] {
   return [...new Set(imageValues(entry))].flatMap((value) => {
     const part = imagePart(value);
@@ -308,6 +345,8 @@ async function imageBytes(value: string, cwd: string): Promise<Buffer | null> {
     const bytes = Buffer.from(inline[2]!, "base64");
     return bytes.length <= MAX_IMAGE_BYTES ? bytes : null;
   }
+  // the file the path names as its record is found, opened at once and held to it: another put there around
+  // the open (a folder swapped in) is refused, not read (openBound, non-blocking: a FIFO there is not waited on)
   const target = resolve(cwd, value);
   const identity = statSync(target, { throwIfNoEntry: false });
   if (identity === undefined || !identity.isFile()) return null;
@@ -325,8 +364,12 @@ async function imageBytes(value: string, cwd: string): Promise<Buffer | null> {
   } finally { closeSync(fd); }
 }
 
+/** Scan the bound history only, including inherited rollouts but excluding backtracked bytes. */
 export async function codexTranscriptImage(segments: { path: string; end: number; identity?: FileIdentity }[], ref: string, cwd: string): Promise<{ mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null> {
   if (!CODEX_IMAGE_REF.test(ref)) return null;
+  // each rollout is read as the file it was when its chain was resolved (an earlier one's `identity`), the live
+  // one as its path names it as the lookup begins: an open after an await that finds another file there (a
+  // folder swapped in around it) answers nothing
   let identities: (FileIdentity | undefined)[];
   try { identities = segments.map((segment) => segment.identity ?? statSync(segment.path, { throwIfNoEntry: false })); } catch { return null; }
   for (const [at, segment] of segments.entries()) {

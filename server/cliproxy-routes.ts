@@ -3,6 +3,7 @@ import { CLIProxyError, CLIProxyService, proxyInvalid } from "./cliproxy.ts";
 import { isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
 
 type Session = { readonly provider: CLIProxyProvider; readonly expires: number };
+/** Pending OAuth sessions belong to this app, not arbitrary state values on the proxy. */
 export class CLIProxyRoutes {
   private readonly sessions = new Map<string, Session>();
   constructor(private readonly service: CLIProxyService) {}

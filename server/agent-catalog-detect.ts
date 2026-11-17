@@ -8,8 +8,13 @@ export const VERSION_TIMEOUT_MS = 5_000;
 const VERSION_OUTPUT_BYTES = 4096;
 const PARALLEL_RUNS = 4;
 const EXIT_GRACE_MS = 200;
+/** How long a timed-out read stands before it is tried again: it may have been a slow first start (an npm shim's cold cache). */
 export const TIMEOUT_KEPT_MS = 60_000;
 
+/**
+ * `searchPath`, when the locator has one: the PATH it looks on, the login shell's included once read,
+ * which its version flag is run with too (a script's interpreter, nvm's node, may be on that PATH only).
+ */
 export type Locate = ((binary: string) => Promise<string | null>) & { searchPath?: () => string; refresh?: (interactive?: boolean) => Promise<void>; problem?: () => string | null };
 
 export const LOGIN_PATH_KEPT_MS = 60_000;
@@ -75,6 +80,10 @@ export function catalogLocator(options: { probe: LoginPathProbe | null; serviceP
   return Object.assign(locate, { searchPath: () => [servicePath(), kept?.path ?? ""].filter((part) => part !== "").join(delimiter), refresh, problem: () => options.probe?.problem?.() ?? null });
 }
 
+/**
+ * The login-shell PATH probe of the real entrypoints, as a pane's interactive shell sees it
+ * (agentPathProbe): none on Windows, nor where the user has no login shell.
+ */
 export function defaultLoginProbe(platform: string = process.platform): LoginPathProbe | null {
   if (platform === "win32") return null;
   const shell = loginShell();
@@ -87,8 +96,10 @@ export interface VersionRun {
   exitCode: number | null;
   timedOut: boolean;
 }
+/** `path`: the PATH the flag runs with, instead of this server's own (not on Windows) */
 export type RunVersion = (executable: string, args: readonly string[], timeoutMs: number, path?: string, signal?: AbortSignal) => Promise<VersionRun>;
 
+/** Reads at most VERSION_OUTPUT_BYTES, and nothing more once `stop` settles: a process the timeout ended may have left a child holding the pipe. */
 async function readBounded(stream: ReadableStream<Uint8Array>, stop: Promise<void>): Promise<string> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
@@ -108,6 +119,7 @@ async function readBounded(stream: ReadableStream<Uint8Array>, stop: Promise<voi
   return new TextDecoder().decode(Buffer.concat(chunks).subarray(0, VERSION_OUTPUT_BYTES));
 }
 
+/** Ends `pid` and every process it started: its process group off Windows, its process tree on Windows. */
 function killTree(pid: number): void {
   if (process.platform === "win32") {
     Bun.spawn(["taskkill", "/pid", String(pid), "/T", "/F"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", windowsHide: true });
@@ -142,6 +154,8 @@ export const runVersion: RunVersion = async (executable, args, timeoutMs, path, 
   const abort = () => { killTree(child.pid); stopReading(); };
   signal?.addEventListener("abort", abort, { once: true });
   const timer = setTimeout(() => { timedOut = true; killTree(child.pid); stopReading(); }, timeoutMs);
+  // a flag that answered and exited may have left a child holding its output: what it printed is
+  // read for a moment more, then the reading stops, and the child is ended below
   let grace: ReturnType<typeof setTimeout> | undefined;
   const exited = child.exited.then((code) => { if (!signal?.aborted) grace = setTimeout(stopReading, EXIT_GRACE_MS); return code; });
   try {
@@ -272,6 +286,10 @@ export class AgentDetector {
     return (await this.#locate(binary)) ?? (platform === null ? null : this.#inInstallDirs(binary, dirs, platform));
   }
 
+  /**
+   * Where another program has the binary's name (detect.unreliable_on), nothing is looked up or run;
+   * while a program it needs (detect.needs) is missing, it is not installed and nothing is run either.
+   */
   async state(entry: AgentCatalogEntry, platform: CatalogPlatform | null): Promise<AgentInstallState> {
     const missing: AgentInstallState = { installed: false, binary: null, on_path: null, version: null, version_error: null, meets_min_version: null };
     if (platform !== null && entry.detect.unreliable_on?.[platform] !== undefined) {

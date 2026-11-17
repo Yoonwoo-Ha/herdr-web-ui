@@ -9,6 +9,7 @@ import type { LoginPathResult } from "./shell-agent.ts";
 
 const entry = (id: string): AgentCatalogEntry => AGENT_CATALOG.find((candidate) => candidate.id === id)!;
 
+// Stub agents are real executables run by the real runVersion: POSIX shell scripts, so not on Windows
 describe.skipIf(process.platform === "win32")("AgentDetector", () => {
   let bin: string;
   let runs: string;
@@ -72,6 +73,7 @@ describe.skipIf(process.platform === "win32")("AgentDetector", () => {
   });
 
   it("reports an agent as not installed while a program it needs to run is missing, without running its version flag", async () => {
+    // shaped like DeepSeek Harness: the TUI a pane starts (dsh-tui), and the launcher it needs (dsh)
     const harness: AgentCatalogEntry = { ...entry("codex"), id: "needs-test", detect: { binaries: ["needs-tui"], needs: ["needs-launcher"], version_args: ["--version"] }, min_version: null };
     stub("needs-tui", "echo 'needs-tui 0.17.0 (launcher)'");
     const detector = new AgentDetector({ home: emptyHome, locate });
@@ -104,6 +106,8 @@ describe.skipIf(process.platform === "win32")("AgentDetector", () => {
   });
 
   it("never reads a version out of a flag that fails, or out of what it prints as an error", async () => {
+    // a wrapper whose target is gone, as a removed nvm Node leaves one: the shell's error names the
+    // missing path, Node's version and all, and exits 127
     stub("opencode", `exec '${join(bin, "missing", "node", "v22.17.1", "bin", "opencode")}' "$@"`);
     stub("pi", "echo 'pi 1.2.3' >&2");
     const detector = new AgentDetector({ home: emptyHome, locate });
@@ -167,10 +171,13 @@ describe.skipIf(process.platform === "win32")("AgentDetector", () => {
     const runtime = mkdtempSync(join(tmpdir(), "ovis-catalog-login-runtime-"));
     const script = (path: string, body: string) => { writeFileSync(path, body); chmodSync(path, 0o755); };
     try {
+      // an interpreter only the login shell's PATH has, as nvm's node is for a server run as a service,
+      // and an npm-style agent run by it through env
       script(join(runtime, "ovis-fake-node"), "#!/bin/sh\necho 'cmd 1.88.2'\n");
       script(join(agents, "cmd"), "#!/usr/bin/env ovis-fake-node\n");
       const locateWithLogin = catalogLocator({ probe: async () => ({ path: `${agents}${delimiter}${runtime}` }), servicePath: () => "/usr/bin/nonexistent" });
       expect(await new AgentDetector({ home: emptyHome, locate: locateWithLogin }).state(entry("cmd"), "linux")).toMatchObject({ installed: true, version: "1.88.2", version_error: null });
+      // an interpreter beside the agent, as npm's global folder has node: found whatever the PATH
       script(join(agents, "ovis-fake-node"), "#!/bin/sh\necho 'cmd 1.88.3'\n");
       script(join(agents, "letta"), "#!/usr/bin/env ovis-fake-node\n");
       expect(await new AgentDetector({ home: emptyHome, locate: async (binary) => binary === "letta" ? join(agents, "letta") : null }).state(entry("letta"), "linux")).toMatchObject({ installed: true, version_error: null });
@@ -219,6 +226,7 @@ describe.skipIf(process.platform === "win32")("AgentDetector", () => {
     const state = (await new Response(Bun.spawn(["ps", "-o", "stat=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" }).stdout).text()).trim();
     return state === "" || state.startsWith("Z");
   };
+  /** Waits for `pid` to end, for at most a second: SIGKILL is sent at once, and the kernel ends the process right after. */
   const ends = async (pid: number): Promise<boolean> => {
     const deadline = performance.now() + 1_000;
     while (performance.now() < deadline) if (await gone(pid)) return true;
@@ -236,6 +244,7 @@ describe.skipIf(process.platform === "win32")("AgentDetector", () => {
   it("reads the version of a flag that answers and exits at once, and ends the child it left holding the output", async () => {
     const pidFile = join(bin, "leaver.pid");
     stub("leaver", `sleep 30 &\necho $! > '${pidFile}'\necho 'leaver 1.2.3'\nexit 0`);
+    // a 3 s limit, under the test's own 5 s: a run kept until the limit fails on its answer, not the test timeout
     const run = await runVersion(join(bin, "leaver"), ["--version"], 3_000);
     expect([run.timedOut, run.exitCode]).toEqual([false, 0]);
     expect(run.stdout).toContain("leaver 1.2.3");

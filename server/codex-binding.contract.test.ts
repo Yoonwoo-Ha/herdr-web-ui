@@ -69,6 +69,7 @@ const read = async (paneId: string): Promise<ConversationResponse> => {
   const response = await fetch(`http://127.0.0.1:${server.port}/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`);
   return await response.json() as ConversationResponse;
 };
+/** A thread row begun now in the panes' cwd, as /new starts one (or a subagent, or `codex exec`); returns its removal. */
 let rows = 10;
 const newerThread = (source = "cli", id = `01a0c7a1-56d9-7e20-9f08-f7a2d973bc${rows++}`, path = join(codexHome, "sessions", "missing.jsonl"), first: string | null = null): (() => void) => {
   const db = new Database(join(codexHome, "state_5.sqlite"));
@@ -98,6 +99,7 @@ const floodedAway = async (paneId: string, answer: string): Promise<void> => {
   }
   throw new Error(`the answer is still on screen in ${paneId}`);
 };
+/** What Codex's SessionStart hook tells herdr: the pane (from the hook's environment) runs this thread. */
 const reportThread = (paneId: string, thread: string) =>
   herdrRpc("pane.report_agent_session", { pane_id: paneId, source: "herdr:codex", agent: "codex", seq: Date.now(), agent_session_id: thread });
 const lastAnswer = (conversation: ConversationResponse) =>
@@ -143,6 +145,7 @@ it("reads a resumed thread's rollout only when its header is an interactive thre
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
     return { fixture, id, answer, path };
   });
+  // every row is what the store lists as an interactive thread: only the rollout's own header tells a child
   const db = new Database(join(codexHome, "state_5.sqlite"));
   for (const { fixture, id, path } of cases) db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 1, 'cli', ?)").run(id, path, cwd, `question for ${fixture.name}`);
   db.close();
@@ -154,6 +157,7 @@ it("reads a resumed thread's rollout only when its header is an interactive thre
       if (fixture.interactive) {
         expect([fixture.name, conversation.source, lastAnswer(conversation)]).toEqual([fixture.name, "codex-transcript", answer]);
       } else {
+        // no other rollout stands in for a refused one, its parent's included
         expect([fixture.name, conversation.source]).toEqual([fixture.name, "scrollback"]);
         expect(lastAnswer(conversation)).not.toBe(answer);
       }
@@ -240,6 +244,8 @@ it("reads the thread a Codex TUI was resumed on while none of its answers is on 
   const conversation = await read(paneId);
   expect(conversation.source).toBe("codex-transcript");
   expect(lastAnswer(conversation)).toBe(answers.resumed);
+  // /new in that TUI (or any Codex in this cwd) starts a thread after it: the command
+  // line no longer tells, and the chat says so rather than show the resumed thread
   const remove = newerThread();
   try {
     expect((await read(paneId)).source).toBe("scrollback");
@@ -253,6 +259,7 @@ it("keeps a matched rollout while tool output scrolls the answer away, and drops
   const first = await codexRunning(paneId);
   for (let attempt = 0; attempt < 30 && lastAnswer(await read(paneId)) !== answers.matched; attempt++) await Bun.sleep(100);
   expect(lastAnswer(await read(paneId))).toBe(answers.matched);
+  // 600 lines of output: the answer is past the 400 the match reads
   await flood(paneId);
   await floodedAway(paneId, answers.matched);
   expect(lastAnswer(await read(paneId))).toBe(answers.matched);
@@ -339,6 +346,7 @@ it("drops a matched rollout once a newer interactive thread begins in its cwd, a
   expect(lastAnswer(await read(paneId))).toBe(answers.matched);
   await flood(paneId);
   await floodedAway(paneId, answers.matched);
+  // the pane's own subagent (agent_role NULL, as many are) and a `codex exec` in the repo
   const spawned = [
     newerThread(JSON.stringify({ subagent: { thread_spawn: { parent_thread_id: threads.matched, depth: 1, agent_role: null } } })),
     newerThread("exec"),
@@ -427,6 +435,8 @@ it("takes the thread herdr has for a Codex pane as a hint: the shared daemon rep
   } finally {
     remove();
   }
+  // the id alone ties the pane to nothing, even when no other pane shows that thread: the report
+  // may be stale, or another pane's through the daemon, so the terminal stands in until it shows
   const db = new Database(join(codexHome, "state_5.sqlite"));
   db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 1, 'cli', ?)").run(threads.hinted, rollout("hinted"), root, "question for hinted");
   db.close();

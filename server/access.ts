@@ -49,7 +49,9 @@ import type { DeviceMatch } from "./devices.ts";
 export interface AccessInput {
   /** Authenticated by the relay transport, never derived from request headers or cookies. */
   relayPeer?: DeviceMatch;
+  /** the connection came from this machine: 127/8, ::1 or their IPv4-mapped forms */
   loopback: boolean;
+  /** a proxy in front shows in the request (`cameThroughProxy`): tailscale serve and most reverse proxies do */
   forwarded: boolean;
   /** Tailscale-Funnel-Request: the request came from the public internet through Funnel */
   funnel: boolean;
@@ -57,20 +59,33 @@ export interface AccessInput {
   tailscaleLogin: string | null;
   /** X-Forwarded-For: Serve replaces this with one source address, never a proxy chain */
   forwardedFor?: string | null;
+  /** the request's Host header, as sent */
   host: string | null;
+  /** the shared token matched (cookie or bearer) */
   tokenMatched: boolean;
+  /** the device the cookie belongs to */
   device: DeviceMatch | null;
   owner: string | null;
+  /** this PC's Tailscale node is tagged: Tailscale runs here, and names no person as its owner */
   tagged: boolean;
+  /** the one login `tailscale status` proves owns every node of this tailnet, none tagged (`parseSoleTailnetLogin`), or null */
   soleLogin: string | null;
+  /** this PC's MagicDNS name from `tailscale status`, without its trailing dot */
   dnsName: string | null;
+  /** this PC's IPv4 address on the tailnet from `tailscale status` */
   tailnetIp: string | null;
+  /** the operator declared `tailscale serve` as this install's only ingress (OVIS_TAILSCALE_SERVE_ONLY) */
   serveOnly: boolean;
   tokenConfigured: boolean;
+  /** a device cookie was confirmed by DeviceStore.match: the gate is closed to strangers */
   gated: boolean;
+  /** Portal's sign-in, when this server's Portal runs one; unset is as if it did not */
   portal?: {
+    /** the request's X-Portal-Proof is the proof of the Portal running with a sign-in (`PortalService.vouches`) */
     proven: boolean;
+    /** the request's X-Portal-User, as sent */
     user: string | null;
+    /** the request's X-Portal-Auth, as sent */
     auth: string | null;
     /** the server's stored invitation role, never a request header; absent means watch */
     role?: DeviceRole;
@@ -93,14 +108,29 @@ export function isLoopbackAddress(address: string): boolean {
  */
 export function isLoopbackBind(hostname: string): boolean {
   const name = hostname.trim().toLowerCase().replace(/^\[(.*)\]$/, "$1");
+  // the address tests apply to an address: a DNS name such as 127.devbox.example may point anywhere
   const literal = /^[\d.]+$/.test(name) || name.includes(":");
   return name === "localhost" || name.endsWith(".localhost") || (literal && isLoopbackAddress(name));
 }
 
+/**
+ * Is the server answering beyond this PC and its tailnet while no access token is set and no
+ * device has ever been paired? Every client that can reach that address is let in as `open`
+ * (see `decideAccess`), so this is the state a warning belongs to — told to whoever already
+ * got in, never used to change a default.
+ *
+ * `hostname` is the address the server is bound to, not the one the request arrived on: a
+ * loopback bind is local, and a Tailscale-only bind is reachable only within the tailnet.
+ */
 export function lanExposed(input: { hostname: string; tokenConfigured: boolean; gated: boolean }): boolean {
   return bindScope(input.hostname) === "other" && !input.tokenConfigured && !input.gated;
 }
 
+/**
+ * Where the configured bind address answers, read from the address literal alone: any spelling of
+ * loopback (`isLoopbackBind`), a Tailscale address, or anything else (a LAN address, a wildcard, a
+ * DNS name). A name is never resolved, and nothing here says what a proxy in front forwards.
+ */
 export function bindScope(hostname: string): BindScope {
   if (isLoopbackBind(hostname)) return "loopback";
   const address = hostname.trim().toLowerCase().replace(/^\[(.*)\]$/, "$1");
@@ -108,6 +138,7 @@ export function bindScope(hostname: string): BindScope {
   return (family === 4 ? tailnetIpv4.check(address, "ipv4") : family === 6 && tailnetIpv6.check(address, "ipv6")) ? "tailnet" : "other";
 }
 
+/** Is this one address (never a list) in Tailscale's assigned ranges? */
 export const inTailnet = (address: string | null | undefined): boolean => {
   const family = isIP(address ?? "");
   return family === 4 ? tailnetIpv4.check(address!, "ipv4") : family === 6 && tailnetIpv6.check(address!, "ipv6");
@@ -133,21 +164,30 @@ export function observedIngress(input: Pick<AccessInput, "loopback" | "forwarded
   const fromTailscale = throughServe && inTailnet(input.forwardedFor ?? null);
   if (input.funnel) return throughServe ? "funnel" : "unknown";
   if (input.tailscaleLogin !== null) return fromTailscale ? "tailscale" : "unknown";
+  // a request with no login: a tagged node, or the owner's own grant
   if (fromTailscale && input.forwarded) return "tailscale";
   if (input.forwardingHeaders) return "proxy";
+  // from this PC, a Host that does not name it is a proxy rewriting nothing but the address
   return input.loopback && input.forwarded ? "proxy" : "direct";
 }
 
+/** Is there a forwarding header on the request, whoever sent it? Unlike `cameThroughProxy`, a Host header alone does not count. */
 export function forwardingHeaders(headers: Headers): boolean {
   return PROXY_HEADERS.some((name) => headers.has(name)) || headers.has("tailscale-funnel-request");
 }
 
+/**
+ * forwardingHeaders for the machine profile's owner socket, which also takes the headers a common proxy, tunnel or
+ * CDN adds beyond PROXY_HEADERS for a forwarder in front of it. Only the profile asks, so an ordinary server's
+ * decisions stay as they were.
+ */
 export function machineForwardingHeaders(headers: Headers): boolean {
   return forwardingHeaders(headers) || MACHINE_PROXY_HEADERS.some((name) => headers.has(name));
 }
 const MACHINE_PROXY_HEADERS = ["x-forwarded-port", "x-forwarded-server", "x-forwarded-scheme", "x-original-forwarded-for", "cf-connecting-ip",
   "true-client-ip", "x-client-ip", "fly-client-ip", "x-envoy-external-address", "cdn-loop"];
 
+/** Headers a proxy adds and a browser or CLI on this PC has no reason to send; a Tailscale login is stated by a proxy too. */
 const PROXY_HEADERS = ["x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "forwarded", "via", "tailscale-user-login"];
 
 /**
@@ -158,6 +198,7 @@ const PROXY_HEADERS = ["x-forwarded-for", "x-forwarded-host", "x-forwarded-proto
  */
 export function hostName(host: string): string | null {
   const authority = /^(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::\d{1,5})?$/i.exec(host);
+  // one trailing dot is the DNS root, the same name
   return authority ? authority[1]!.toLowerCase().replace(/\.$/, "") : null;
 }
 
@@ -178,6 +219,7 @@ export function cameThroughProxy(headers: Headers): boolean {
   return host === null || !isLoopbackHost(host);
 }
 
+/** Does the request's Host name this PC on the tailnet, by its MagicDNS name or its IPv4 address? */
 export function addressesNode(input: Pick<AccessInput, "host" | "dnsName" | "tailnetIp">): boolean {
   const name = input.host === null ? null : hostName(input.host);
   if (name === null) return false;
@@ -194,6 +236,7 @@ export function knownAuthority(input: Pick<AccessInput, "host" | "dnsName" | "ta
   return input.host === null || isLoopbackHost(input.host) || addressesNode(input);
 }
 
+/** The request shape of the owner's no-login grant: a serve-only install, a forwarded request from loopback with no login, not Funnel. */
 export function isServeOwnerRequest(input: Pick<AccessInput, "serveOnly" | "loopback" | "forwarded" | "funnel" | "tailscaleLogin">): boolean {
   return input.serveOnly && input.loopback && input.forwarded && !input.funnel && input.tailscaleLogin === null;
 }
@@ -268,16 +311,23 @@ export function decideAccess(input: AccessInput): Access {
     if (!(family === 4 ? tailnetIpv4.check(address, "ipv4") : family === 6 && tailnetIpv6.check(address, "ipv6"))) {
       return { level: "none", reason: "pairing_required" };
     }
+    // A page whose own name was rebound to 127.0.0.1 can type the login and the address too, but its
+    // Host stays its own name (knownAuthority)
     if (!knownAuthority(input)) return { level: "none", reason: "pairing_required" };
     if (input.tailscaleLogin.toLowerCase() === input.owner.toLowerCase()) return { level: "full", via: "tailscale", role: "drive", login: input.tailscaleLogin };
     return { level: "none", reason: "other_user" };
   }
+  // A proxied request with no login is a tagged node, which a tailnet can hold many of. Where the
+  // operator declared tailscale serve the only ingress, Tailscale says one login owns every node on
+  // this tailnet, none tagged, and the request is addressed to this PC, there is nobody for it to be
+  // but the owner. Funnel is the public internet, which that proof says nothing about.
   const sole = input.soleLogin;
   if (sole !== null && input.owner?.toLowerCase() === sole.toLowerCase() && isServeOwnerRequest(input) && addressesNode(input)) {
     return { level: "full", via: "tailscale", role: "drive", login: sole };
   }
   if (input.loopback && !input.forwarded) return { level: "full", via: "local", role: "drive" };
   if (input.loopback && input.forwarded && (input.owner !== null || input.tagged || input.serveOnly)) return { level: "none", reason: "pairing_required" };
+  // nor is the open grant: a rebound page on this PC is not a client of the open LAN
   if (input.loopback && !knownAuthority(input)) return { level: "none", reason: "pairing_required" };
   // the public internet is never "open", whatever is paired
   if (!input.gated && !input.funnel) return { level: "full", via: "open", role: "drive" };

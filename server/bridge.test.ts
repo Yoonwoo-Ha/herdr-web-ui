@@ -26,6 +26,7 @@ function other() {
   return child;
 }
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** Signal 0 to `pid` is refused (EPERM), as another user's or a protected process refuses it; every other PID is probed for real. */
 function refusing(pid: number) {
   const kill = process.kill.bind(process);
   return spyOn(process, "kill").mockImplementation(((target: number, signal?: NodeJS.Signals | number) => {
@@ -97,6 +98,8 @@ describe("bridge registration", () => {
   });
 
   it("keeps a live bridge's descriptor whose recorded birth is malformed", () => {
+    // regression: a missing, numeric or empty birth once read as another process's, and the live
+    // bridge's descriptor and credential were overwritten
     const bridge = other();
     for (const birth of [{ platform: process.platform }, { platform: process.platform, value: 7 }, { platform: process.platform, value: "" }, { platform: process.platform, value: "an earlier process" }, null]) {
       const text = descriptor({ pid: bridge.pid, generation: "live", birth: birth as never });
@@ -134,6 +137,7 @@ describe("bridge registration", () => {
   });
 
   it("fails a registration whose guard was not released, and logs a close that was not clean", () => {
+    // one failing native call: the POSIX unlock, or Windows' UnlockFileEx; the real close still runs
     const fail = () => {
       if (process.platform === "win32") guardLibrary.windows = (calls) => ({ ...calls, UnlockFileEx: (...args: Parameters<typeof calls.UnlockFileEx>) => (calls.UnlockFileEx(...args), 0) });
       else guardLibrary.posix = (calls) => ({ ...calls, flock: (fd, operation) => operation === 8 ? -1 : calls.flock(fd, operation) });
@@ -315,6 +319,7 @@ describe("loopback relay", () => {
 
   it("relays an IP address that does not answer on 127.0.0.1, and never a host name", () => {
     expect(["127.0.0.2", "100.64.0.7", "::1", "[FD7A:115C:A1E0::7]"].map(relayTarget)).toEqual(["127.0.0.2", "100.64.0.7", "::1", "fd7a:115c:a1e0::7"]);
+    // 127.0.0.1 and a wildcard need none; a host name may resolve elsewhere by the next connection
     expect(["127.0.0.1", "0.0.0.0", "::", "[::]", "localhost", "pc.example", "pc.tail1234.ts.net"].map(relayTarget)).toEqual([null, null, null, null, null, null, null]);
   });
 });

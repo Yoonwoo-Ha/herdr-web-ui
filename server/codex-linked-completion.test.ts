@@ -62,10 +62,13 @@ const unfinished = (path: string, text: string, older: boolean) => ({ path, text
 ].join("\n") });
 const spaced = [`${text} Read report (docs/my report.md) for details.`, `${text} Read [report](/repo/docs/my report.md) for details.`] as const;
 const collisions: [string, string, { path: string; text: string }][] = [
+  // a local link whose path has a space, shown relative to the folder
   ["a spaced local link", spaced[0], candidate("rendered", spaced[1])],
+  // a bare URL, shown followed by itself
   ["a bare URL", `${text} Address: ${url} (${url}).`, candidate("rendered", `${text} Address: ${url}.`)],
   // an ordered list Codex numbers on from its first marker
   ["a renumbered list", `${text}\n\n4. Verify the project account.\n5. Submit the supporting documents.`, candidate("rendered", `${text}\n\n4. Verify the project account.\n8. Submit the supporting documents.`)],
+  // a reference link, shown as its label alone
   ["a reference link", `${text} Read report for details.`, candidate("rendered", `${text} Read [report][ref] for details.\n\n[ref]: https://example.com/report`)],
   ["an unfinished turn", spaced[0], unfinished("rendered", spaced[1], false)],
   ["an unfinished turn after an older finished one", spaced[0], unfinished("rendered", spaced[1], true)],

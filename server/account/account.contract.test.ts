@@ -80,6 +80,7 @@ async function member(f: Fixture): Promise<{ device: Device; key: AccountKey; li
   const before = await signedIn(f, legacy);
   expect((await post(before, "/api/account/link", { record: await linkRecord(legacy, key) })).status).toBe(200);
   const device = { keys: key.keys, publicKey: key.spki, id: legacy.id };
+  // a member acts from a session signed in with its account key; the PC's first member enrolls it, which lifts the barrier
   const link = await signedIn(f, device);
   expect((await post(link, "/api/account/enroll", { account: ACCOUNT, records: [] })).status).toBe(200);
   return { device, key, link };
@@ -98,6 +99,7 @@ test("a device links its row to the account over its own session, which gives th
   expect((await status(link)).account).toBeNull();
   expect((await post(link, "/api/account/link", { record: await linkRecord(legacy, key) })).status).toBe(200);
   expect(registryRow(f, legacy.id)).toMatchObject({ relay_public_key: key.spki, account: ACCOUNT });
+  // the same session goes on, and from now on the device signs in with the account key
   expect(await status(link)).toEqual(expect.objectContaining({ account: ACCOUNT, members: 1, unlinked: [] }));
   const again = await relayConnection(f);
   expect((await again.auth({ keys: key.keys, publicKey: key.spki, id: legacy.id })).device_id).toBe(legacy.id);
@@ -165,6 +167,7 @@ test("a member's remove cuts the device off at once and keeps it out: its add re
   expect(await bounded(lostLink.serverError)).toBe("auth_revoked");
   expect((await post(link, "/api/account/records", { records: [replay] })).body.results?.[0]).toMatchObject({ outcome: "refused", code: "tombstoned" });
 
+  // a pairing made on this PC wins over the account's removal
   const again = await relayConnection(f);
   expect((await again.pair(f.app.context.services.devices.startPairing().code, lost.spki)).role).toBe("drive");
   expect(f.app.context.services.devices.isTombstoned(lost.spki)).toBe(false);
@@ -186,6 +189,7 @@ test("a removal's signed record stays with its tombstone and is listed in the st
   const listed = await (await link.open("/api/account/status").response).json() as { removals?: unknown };
   expect(listed.removals).toEqual([removal, secondRemoval]);
   expect(new DeviceStore(f.stateDir).accountRemovals() as unknown[]).toEqual([removal, secondRemoval]);
+  // a record damaged on disk is dropped, never listed altered
   const path = join(f.stateDir, "account-tombstones.json");
   const saved = JSON.parse(readFileSync(path, "utf8")) as { v: 1; tombstones: { records?: Record<string, unknown>[] }[] };
   writeFileSync(path, JSON.stringify({ ...saved, tombstones: saved.tombstones.map((t) => ({ ...t, records: t.records?.map((r) => ({ ...r, signature: undefined })) })) }), { mode: 0o600 });
@@ -242,6 +246,7 @@ test("the first link holds every account add back until its member enrolls the P
   await mailbox.pull();
   const store = f.app.context.services.devices;
   expect(store.hasKey(mailed.spki)).toBe(false);
+  // the barrier is on disk: a restart keeps it
   expect(new AccountHolds({ enrollingPath: join(f.stateDir, "account-enrolling.json") }).enrolling()).toBe(true);
   expect((await status(link) as { enrolling?: boolean }).enrolling).toBe(true);
   expect((await post(link, "/api/account/enroll", { account: ACCOUNT, records: [] })).status).toBe(200);
@@ -267,6 +272,7 @@ test("a remove waiting for its signer keeps that key's adds out on every path; o
   const store = f.app.context.services.devices;
   expect(store.hasKey(mac.spki)).toBe(false);
   expect(((await status(link)) as { blocked?: string[] }).blocked).toContain(mac.spki);
+  // the add that lets the other member in, then the Mac's add again: the remove applies between them
   const results = (await post(link, "/api/account/enroll", { account: ACCOUNT, records: [macAdd, await add(key, other.spki)] })).body.results;
   expect(results?.map(({ outcome, code }) => code ?? outcome)).toEqual(["removal_pending", "applied"]);
   expect(store.hasKey(mac.spki)).toBe(false);
@@ -357,6 +363,7 @@ test("waiting records that cannot be read, or removes pushed out of a full queue
   const broken = new AccountMailbox({ devices: store, identity: () => undefined, service: "https://account.test", pendingPath });
   const joining = await accountKey();
   expect((await applyAccountRecords(store, [await add(key, joining.spki)], SERVER_ID, Date.now(), broken.gates()))[0]).toMatchObject({ outcome: "refused", code: "removal_pending" });
+  // a full queue of removes whose signers never join: one more pushes the oldest out, and from then on no add applies
   const identity = rotateRelayIdentity(f.stateDir);
   const service = new FakeAccountService();
   const token = service.issueToken(ACCOUNT);
@@ -570,6 +577,7 @@ test("a full queue makes room for a relayed remove by dropping a waiting add, ne
   const kept = JSON.parse(readFileSync(pendingPath, "utf8")) as unknown[];
   expect(kept).toHaveLength(PENDING_MAX);
   expect(kept).toContainEqual(relayed);
+  // a full queue of waiting adds does not hold every other add back
   const joining = await accountKey();
   expect((await applyAccountRecords(f.app.context.services.devices, [await add(key, joining.spki)], SERVER_ID, Date.now(), mailbox.gates()))[0]?.outcome).toBe("applied");
 });
@@ -698,6 +706,7 @@ test("a link that keeps the key a row was paired with here leaves it a pairing o
   expect(registryRow(f, paired.id)).toMatchObject({ relay_public_key: own.spki, account: ACCOUNT, link_moved_key: false });
   expect((await post(link, "/api/account/records", { records: [removal] })).body.results?.[0]?.outcome).toBe("unchanged");
   expect(store.hasKey(own.spki)).toBe(true);
+  // and a restart does not take it for a row to sweep
   expect(new DeviceStore(f.stateDir).hasKey(own.spki)).toBe(true);
 });
 
@@ -916,6 +925,7 @@ test("unknown devices make the PC read its mailbox at most once a minute, and ar
   const first = await signInAs(f, identity.server_id, await accountKey());
   expect(pulls(service)).toBeGreaterThan(0);
   const asked = service.requests.length;
+  // an add that arrives now waits for the next pull: another unknown device within the minute asks the service nothing
   const late = await accountKey();
   await leave(await add(signer, late.spki));
   service.requests.length = asked;
@@ -929,12 +939,14 @@ test("a member's own sign-in reads no mailbox, and a signature that does not hol
   const { f, service, identity, member } = await accountPc();
   await (await relayConnection(f, { serverId: identity.server_id })).auth(member);
   expect(service.requests).toEqual([]);
+  // the same way for an id with a row here as for one without, so the refusal's delay does not tell them apart
   const link = await relayConnection(f, { serverId: identity.server_id });
   const other = await accountKey();
   void link.auth({ keys: other.keys, publicKey: other.spki, id: member.id }).catch(() => {});
   expect(await bounded(link.serverError)).toBe("auth_failed");
   expect(pulls(service)).toBeGreaterThan(0);
   const asked = service.requests.length;
+  // and on the same count: an unknown device within the minute asks the service nothing
   expect(await signInAs(f, identity.server_id, await accountKey())).toBe("auth_failed");
   expect(service.requests.length).toBe(asked);
 });
@@ -1037,6 +1049,7 @@ test("a member introduces the account's PCs to a device it added, which reads th
   const joined = await relayConnection(f);
   await joined.auth({ keys: joining.keys, publicKey: joining.spki, id: accountDeviceId(SERVER_ID, joining.spki) });
   expect(await (await joined.open("/api/account/introduction").response).json()).toEqual({ pcs });
+  // the member's own session has no introduction of its own
   expect((await link.open("/api/account/introduction").response).status).toBe(404);
 });
 
@@ -1136,6 +1149,7 @@ test("a link ends the row's other sessions from its former key, and keeps the on
   const key = await accountKey();
   expect((await post(first, "/api/account/link", { record: await linkRecord(legacy, key) })).status).toBe(200);
   expect(await bounded(stale.serverError)).toBe("auth_changed");
+  // the linking session goes on (with the old key's rights until it signs in again)
   expect((await first.open("/api/devices").response).status).toBe(200);
 });
 
@@ -1322,6 +1336,7 @@ test("a relayed removal waiting on its signer is kept beside the mailbox's, neve
   release();
   await pulling;
   expect(JSON.parse(readFileSync(pendingPath, "utf8"))).toEqual([waiting, relayed]);
+  // a full queue takes no more relayed records, and pushes none out
   for (let i = 0; i < 1000; i++) mailbox.wait({ id: String(i) });
   const full = JSON.parse(readFileSync(pendingPath, "utf8")) as unknown[];
   expect(full).toHaveLength(1000);
@@ -1370,6 +1385,7 @@ test("a key paired again in one of two state dirs stays paired, without its tomb
   expect(store.pairRelay(store.startPairing(later).code, "Mac app", gone.spki, later)).not.toBeNull();
   const other = createServer({ port: 0, hostname: "127.0.0.1", stateDir: sibling, siblingStateDir: f.stateDir, token: "t", tailscaleOwner: null, machines: false, sidecar: false });
   try {
+    // the merge brings the other dir's tombstone back, and the start-up repair drops it: the row is newer
     for (const devices of [other.context.services.devices, new DeviceStore(f.stateDir)]) {
       expect(devices.hasKey(gone.spki)).toBe(true);
       expect(devices.isTombstoned(gone.spki)).toBe(false);

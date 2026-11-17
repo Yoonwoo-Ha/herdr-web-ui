@@ -41,6 +41,12 @@ const MAX_SESSIONS = 16;
 const MAX_ENDS = 5000;
 const CHUNK = 1024 * 1024;
 const SLICE_MS = 4;
+/**
+ * A read that has not answered this long after its lease began is given up for now
+ * (TranscriptBusyError) and tried again a second later. Its wait for the lease is not counted: an
+ * image lookup of the same transcript holds it for as long as the lookup takes (seconds on a
+ * network home), and a read given up behind it would only wait behind it again.
+ */
 const READ_MS = 10_000;
 const CHECK_INTERVAL_MS = 5000;
 /**
@@ -106,6 +112,10 @@ export function commandHistory(path: string, limit: number, schedule = true, nee
 function evidence(entry: Entry, limit: number, needed: ReadonlySet<string> | undefined, since: number): HistoryEvidence {
   const wanted = needed === undefined ? entry.ends : entry.ends.filter((end) => needed.has(end.id));
   const checked = entry.checked !== null && entry.checkedThrough >= entry.offset;
+  // a rewrite that also grew the transcript passes sameHistory, and a same-size one within a
+  // timestamp tick keeps the version: only a check of the bytes as they are now vouches for an end,
+  // of them all at this version (once its tick was past, or for the request it was begun after) or
+  // of the end's own line
   const vouched = checked && sameVersion(entry.checked!, entry.version) && (checkedNow(entry) || entry.checkedTick > since);
   const told = vouched ? wanted : vouchLines(entry.path, entry.version.id, wanted);
   if (told === "rewritten") {
@@ -191,6 +201,7 @@ export async function waitCommandHistory(path: string, limit: number, ms = 10_00
     const found = commandHistory(path, limit, false, undefined, since);
     const entry = entries.get(path);
     if (found === null || entry === undefined) return found;
+    // a check begun before this request may have read the bytes before a rewrite: it waits for one begun after
     entry.wanted = entry.checks + 1;
     entry.waiters++;
     enqueue(entry);
@@ -282,6 +293,10 @@ function settle(): void {
   idle.clear();
 }
 
+/**
+ * The first session waiting that can have a slice, taken off the queue. Only the drain takes one:
+ * a session taken off it before its slice starts would answer its waiter at once.
+ */
 function next(): Entry | undefined {
   if (slices >= transcriptReader.capacity) return undefined;
   const index = queue.findIndex(runnable);
@@ -341,6 +356,9 @@ async function step(entry: Entry): Promise<void> {
             const position = entry.offset;
             bytes = await file.window(position, Math.min(CHUNK, end - position));
             known = entry.version;
+            // the next window, from the last whole line of this one, is read while the stat is on its
+            // way and this one is taken in. Not when nobody listens: the read ends with this slice, and
+            // a read ahead left over holds up its close.
             const last = bytes.lastIndexOf(10);
             const linesEnd = position + last + 1;
             if (last >= 0 && position + bytes.length < end && entry.listeners.size > 0) file.ahead(linesEnd, Math.min(CHUNK, end - linesEnd));

@@ -47,6 +47,7 @@ export async function cmdTranscriptPath(
     && typeof session.value === "string") ? session.value : null;
   if (candidate === null) return null;
   // foreground_cwd can belong to a helper when herdr cannot read the group leader's cwd.
+  // Each cwd is only a store candidate; the reported session must validate inside it.
   for (const cwd of new Set([agent.foreground_cwd, agent.cwd])) {
     if (typeof cwd !== "string" || cwd.length === 0) continue;
     const projectDir = defaultCmdProjectDir(cwd);

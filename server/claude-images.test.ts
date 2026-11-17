@@ -107,6 +107,9 @@ describe("cooperative Claude images", () => {
 
   it("serves a record read over several windows, whose shape keeps bytes of its first window", async () => {
     const { path } = fixture(true);
+    // the record's head (its type and uuid, then the start of a long text) is kept from the first
+    // window, read in the lease's own buffer; the next windows are read into that same buffer, so
+    // a shape that held on to the first window instead of copying it would no longer parse
     const text = "y".repeat(2.5 * 1024 * 1024);
     writeFileSync(path, line({ type: "user", uuid: id(7), message: { content: [{ type: "text", text }, picture] } }));
     let reads = 0;
@@ -280,6 +283,7 @@ it("a lookup rejected after an in-place rewrite and growth leaves no stale bound
     expect(await transcriptImageAsync(path, `${uuid}:0`)).toBeNull();
     expect(changed).toBe(true);
   } finally { watch.mockRestore(); }
+  // the picture is now before a /clear: the next lookup must not reuse the rejected scan's boundary
   expect(await transcriptImageAsync(path, `${uuid}:0`)).toBeNull();
 });
 
@@ -314,6 +318,7 @@ it("never serves a picture read from a rewrite the file undid before an append (
   let image: Awaited<ReturnType<typeof transcriptImageAsync>>;
   try { image = await transcriptImageAsync(path, `${id(3)}:0:0`); } finally { watch.mockRestore(); }
   expect(step).toBe(4);
+  // the file holds the first picture: the other one must not be served, whether this read serves or not
   expect(image === null || Buffer.from(image.bytes).equals(png)).toBe(true);
   exact(await transcriptImageAsync(path, `${id(3)}:0:0`));
 });
@@ -373,6 +378,8 @@ it("a lookup that sees the file rewritten drops the boundary it kept, even when 
   }) as typeof fs.readSync);
   try { expect(await transcriptImageAsync(path, `${id(1)}:0`)).toBeNull(); } finally { watch.mockRestore(); }
   expect(changed).toBe(true);
+  // then it names the picture again, a /clear after it hides it, and the file grows: the boundary kept
+  // before the change still matches the tail, and must not be reused
   writeFileSync(path, drawn + clear + padding);
   appendFileSync(path, line({ type: "progress", data: "append" }));
   expect(await transcriptImageAsync(path, `${id(1)}:0`)).toBeNull();
@@ -470,6 +477,8 @@ it("rejects an image when the path's last check sees a same-size rewrite that pu
 // Windows makes a symbolic link only with Developer Mode or the right to make one, which a test
 // run may not have: the reader's `follow` is checked with injected IO there (transcript-reader.test.ts)
 describe.skipIf(process.platform === "win32")("a transcript reached through a link", () => {
+  // a Claude store can be reached through a linked directory (one config directory linked into
+  // another), or name its transcript by a link: the path is checked by the file it names, as statSync does
   it("serves through a link to the file and through a linked directory", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ovis-claude-image-link-"));
     roots.push(dir);
@@ -598,10 +607,15 @@ describe("finding a picture's record", () => {
       return value;
     }) as typeof fs.readSync);
     try { exact(await transcriptImageAsync(path, `${id(3)}:0:0`)); } finally { watch.mockRestore(); }
+    // a forward search for the call reads everything before the result once (and the search for the
+    // record the whole transcript before that). Going back costs a 64 KiB piece past each window of a
+    // MiB, and each of the four shorter windows it starts with can cost the line it cuts: under a fifth more
     expect(bytes).toBeLessThan(result * 1.2);
   });
 
   it("goes back over lines of a MiB to a call far back in a few reads per line", async () => {
+    // every read is a round trip on a network home: a window that cuts a long line finds the line's start
+    // in pieces that grow, not 64 KiB at a time, and the next window is as long as that one turned out
     let text = line({ type: "user", uuid: id(1), parentUuid: null, message: { content: "look" } });
     text += line({ type: "assistant", uuid: id(2), message: { content: [{ type: "tool_use", id: "read", name: "Read" }] } });
     const lines = 20;
@@ -616,6 +630,9 @@ describe("finding a picture's record", () => {
       return read(...args);
     }) as typeof fs.readSync);
     try { exact(await transcriptImageAsync(path, `${id(3)}:0:0`)); } finally { watch.mockRestore(); }
+    // the piece before a window that finds the line's start, and the window of a MiB, which does not read
+    // again what that piece holds: two reads a line, and a few more for the first windows (64 KiB pieces
+    // took 6 a line)
     expect(reads).toBeLessThan(3 * lines);
   });
 
@@ -774,6 +791,8 @@ describe("finding a picture's record", () => {
     const joined = (text: string) => text.slice(0, -1) + " ";
     expect(await rewritten(pad(1000) + drawn(), joined(pad(1000)) + drawn())).toBeNull();
     expect(await rewritten(drawn() + pad(1000), joined(drawn()) + pad(1000))).toBeNull();
+    // once a rewrite is seen, the index is not used again: a second rewrite can put the record the scan
+    // saw back where it was, with another of its uuid before it
     const twice = transcript(pad(500 + size) + drawn() + drawn(otherPicture) + pad(1000) + tail);
     exact(await both(twice, `${id(1)}:0`));
     writeFileSync(twice, pad(500 + size) + drawn(otherPicture) + drawn() + pad(1000) + tail);
@@ -860,6 +879,9 @@ describe("finding a picture's record", () => {
     } finally { restore(); }
   });
   it("reads a kept scan's bytes again when a later lookup would share a read begun before it, while a rewrite kept the file's times", async () => {
+    // A read of the bytes vouches only to lookups that began before it. Here a lookup begins after the
+    // read took its window, and after a same-size rewrite that kept every time the file reports: sharing
+    // that read would serve the picture the bytes no longer hold.
     const old = Date.now() - 1_000 + 0.25;
     const { path, after } = rewritable();
     const restore = holdTimes(path, old, old);
@@ -892,6 +914,8 @@ describe("finding a picture's record", () => {
     expect(await earlierRewritten(unreadable("read"), call + between + result, `${id(3)}:0:0`)).toBeNull();
   });
   it("refuses as the forward search does for a tool's picture past the uuids it keeps, when a line before the call is rewritten in place to one it cannot judge naming the call", async () => {
+    // the result is past MARKS_LIMIT, so no record of it is indexed: a lookup that has not read the bytes
+    // again must not go back from the result by what the kept scan noted, which misses the rewritten line
     const call = line({ type: "assistant", uuid: id(2), message: { content: [{ type: "tool_use", id: "read", name: "Read" }] } });
     const sidechain = (uuid: number) => line({ type: "user", uuid: id(uuid), isSidechain: true, message: { content: [{ type: "text", text: "no picture" }] } });
     let sidechains = "";
@@ -903,6 +927,7 @@ describe("finding a picture's record", () => {
 });
 
 describe("the index against the search, on random transcripts", () => {
+  // a seeded generator (mulberry32): the same transcripts on every run
   function random(seed: number) {
     let state = seed >>> 0;
     const next = () => {

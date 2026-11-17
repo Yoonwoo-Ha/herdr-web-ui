@@ -170,9 +170,12 @@ describe("a claude attach pane's job (#1645)", () => {
     expect(claudeAttachArgs(["claude", "attach", "dc56"])).toEqual(first("dc56"));
     expect(claudeAttachArgs(["claude", "attach", "release notes"])).toEqual(first("release notes"));
     expect(claudeAttachArgs(["claude", "attach", "release", "notes"])).toEqual(first("release", false));
+    // debug options and --setting-sources after a name: Claude still reads it as a name (#1876)
     for (const after of [["--debug"], ["-d"], ["--debug=api"], ["-d2e"], ["--debug-to-stderr", "--setting-sources", "user,project"], ["--setting-sources=user"]]) {
       expect(claudeAttachArgs(["claude", "attach", "release", ...after])).toEqual(first("release"));
     }
+    // anything else after it keeps the terminal, a debug value apart from its option too: Claude (2.1.311) takes it
+    // for an extra argument and looks no name up (#2125)
     for (const after of [["--verbose"], ["--setting-sources"], ["-d", "api,hooks"], ["--debug", "api"], ["--debug", "api", "notes"], ["-d", "--verbose"], ["--model", "opus"]]) {
       expect(claudeAttachArgs(["claude", "attach", "release", ...after])).toEqual(first("release", false));
     }
@@ -185,6 +188,7 @@ describe("a claude attach pane's job (#1645)", () => {
     expect(claudeAttachArgs(["claude", "--debug", "attach", JOB])).toBeNull();
     expect(claudeAttachArgs(["claude", "-r", "attach", JOB])).toBeNull();
     expect(claudeAttachArgs(["claude", "--append-system-prompt", "attach", "deadbeef"])).toBeNull();
+    // behind options, only a whole id, and only after options Claude reads a subcommand behind
     expect(claudeAttachArgs(["claude", "--model", "opus", "attach", "dc56"])).toBeNull();
     for (const option of ["-p", "--bg", "--routine=nightly", "-cp", "--version", "--unknown-option"]) {
       expect(claudeAttachArgs(["claude", option, "attach", JOB])).toBeNull();
@@ -201,6 +205,7 @@ describe("a claude attach pane's job (#1645)", () => {
   });
 
   const CREATED = "2020-01-01T00:00:00.000Z";
+  /** A job's state with the fields Claude requires of it, as Claude writes them. */
   const job = (dir: string, id: string, state: Record<string, unknown> | string): void => {
     mkdirSync(join(dir, "jobs", id), { recursive: true });
     writeFileSync(join(dir, "jobs", id, "state.json"), typeof state === "string" ? state : JSON.stringify({
@@ -241,6 +246,7 @@ describe("a claude attach pane's job (#1645)", () => {
     expect(await opened(dir, "login page")).toBe("aaaa2222");
     expect(await opened(dir, "the page")).toBeNull();
     expect(await opened(dir, "release", false)).toBeNull();
+    // text that can start an id is never part of a name
     job(dir, "cccc4444", { name: "cafe" });
     expect(await opened(dir, "cafe")).toBeNull();
     job(dir, "dddd5555", { name: "Release v2" });
@@ -277,6 +283,7 @@ describe("a claude attach pane's job (#1645)", () => {
     const dir = store();
     const later = "2020-01-20T00:00:00.000Z";
     job(dir, JOB, { name: "Release notes" });
+    // the client cannot have opened a job made after it started: Claude found its job then
     job(dir, "aaaa2222", { name: "Release v2", createdAt: later });
     expect(await opened(dir, "release")).toBe(JOB);
     job(dir, "dc56ffff", { createdAt: later });
@@ -351,6 +358,7 @@ describe("a claude attach pane's job (#1645)", () => {
     const dir = store();
     job(dir, JOB, { name: "Release notes draft" });
     const client = { ref: "release", behindOptions: false, byName: true };
+    // every pid below still takes a signal; only its start tells whether it is the same process
     const starts = new Map<number, number | null>();
     const startOf = async (of: number) => starts.has(of) ? starts.get(of)! : STARTED;
     for (let other = 1; other <= 256; other++) {
@@ -409,6 +417,7 @@ describe("a claude attach pane's job (#1645)", () => {
     expect(await claudeForegroundSession([client, { ...client, pid: process.pid + 1 }], home)).toBeNull();
   });
 
+  // CLAUDE_CODE_SESSION_KIND=bg makes Claude read no subcommand behind options: it runs an interactive Claude
   it.skipIf(!NATIVE)("reads `attach` behind options only from a client whose environment is no background session's", async () => {
     const dir = store();
     job(dir, JOB, { sessionId: SESSION });
@@ -427,7 +436,9 @@ describe("a claude attach pane's job (#1645)", () => {
     try {
       expect(await claudeAttachSession(dir, background.pid, behind)).toBeNull();
       expect(await claudeAttachSession(dir, plain.pid, behind)).toEqual({ session: SESSION });
+      // `attach` first is an attach in any environment
       expect(await claudeAttachSession(dir, background.pid, ["claude", "attach", JOB])).toEqual({ session: SESSION });
+      // an environment that cannot be read tells nothing: maybe an attach client, so no session at all
       expect(await claudeAttachSession(dir, 5_999_999, behind)).toEqual({ session: null });
     } finally {
       background.kill();
@@ -986,6 +997,7 @@ describe("a Claude process's store source", () => {
   });
 
   it("reads the environment in a KERN_PROCARGS2 answer whole", () => {
+    // argc, the executable's path and its padding, the arguments, then the environment, each NUL-terminated
     const answer = (argc: number, words: string[]) => {
       const count = Buffer.alloc(4);
       count.writeInt32LE(argc);
@@ -1008,6 +1020,7 @@ describe("a Claude process's store source", () => {
       const read = async (environ: string | null) => { forgetClaudeSessions(); environments.push(environ); return processClaudeSource(4242, ["claude"], home, "darwin"); };
       expect(await read(`PATH=/usr/bin\0CLAUDE_CONFIG_DIR=${store}\0HOME=${home}`)).toEqual({ state: "override", dir: store });
       expect(await read(`PATH=/usr/bin\0CLAUDE_CONFIG_DIR=\0HOME=${home}`)).toEqual({ state: "override", dir: "" });
+      // NOTE="example CLAUDE_CONFIG_DIR=<store>", which `ps -E` prints as if it were an export: nothing exported
       expect(await read(`PATH=/usr/bin\0NOTE=example CLAUDE_CONFIG_DIR=${store}\0HOME=${home}`)).toEqual({ state: "absent" });
       expect(await read(null)).toEqual({ state: "unreadable" });
     } finally { environment.mockRestore(); spawned.mockRestore(); }
@@ -1023,6 +1036,7 @@ describe("a Claude process's store source", () => {
     };
     await server(join(root, "exported.sock"), { CLAUDE_CONFIG_DIR: store });
     await server(join(root, "none.sock"), {});
+    // the pane's shell may have dropped the variable: herdr's own environment is what a new tab gets
     expect(await herdrLaunchSource(join(root, "exported.sock"))).toEqual({ state: "override", dir: store });
     expect(await herdrLaunchSource(join(root, "none.sock"))).toEqual({ state: "absent" });
     expect(await herdrLaunchSource(join(root, "nobody.sock"))).toEqual({ state: "unreadable" });
@@ -1066,6 +1080,7 @@ describe("a Claude process's store source", () => {
     expect(await herdrLaunchSource(socket, "linux", proc)).toEqual({ state: "absent" });
     rmSync(join(proc, "77"), { recursive: true });
     expect(await herdrLaunchSource(socket, "linux", proc)).toEqual({ state: "absent" });
+    // a restarted herdr listens on a new socket: read again
     writeFileSync(join(proc, "net", "unix"), table(4200));
     expect(await herdrLaunchSource(socket, "linux", proc)).toEqual({ state: "unreadable" });
   });
@@ -1126,6 +1141,8 @@ describe("a Claude process's store source", () => {
 });
 
 describe("a Windows Claude's store", () => {
+  // Windows lets no one read another process's environment: the store is the one holding the
+  // live PID record.
   const PID = 4242;
   const STARTED = 1_791_384_794_216;
   // what Claude writes: FILETIME, 100 ns since 1601, with the part of a millisecond the table drops
@@ -1278,6 +1295,7 @@ describe("a Windows Claude's store", () => {
     for (const id of [null, { dev: 7n, ino: 0n }]) {
       expect(claudeStoreKey(`\\\\?\\${store}`, id, win32)).toBe(claudeStoreKey(store, id, win32));
       expect(claudeStoreKey("\\\\?\\c:\\Users\\u\\.claude", id, win32)).toBe(claudeStoreKey(store, id, win32));
+      // past the drive letter a case-sensitive directory may be another store: both are asked
       expect(claudeStoreKey("C:\\Users\\u\\.Claude", id, win32)).not.toBe(claudeStoreKey(store, id, win32));
       expect(claudeStoreKey("C:\\Users\\u\\.claude-Work", id, win32)).not.toBe(claudeStoreKey("C:\\Users\\u\\.claude-work", id, win32));
       expect(claudeStoreKey("\\\\?\\UNC\\host\\share\\.claude", id, win32)).toBe(claudeStoreKey("\\\\host\\share\\.claude", id, win32));
@@ -1328,6 +1346,7 @@ describe("a Windows Claude's store", () => {
   });
 
   it.skipIf(process.platform === "win32")("takes a record that passes lstat and access but fails to read for one that may be live", async () => {
+    // a link in the record's place: lstat and access see it, the read refuses it (no links followed)
     const dir = home();
     const work = join(dir, ".claude-work");
     record(work);
@@ -1348,6 +1367,7 @@ describe("a Windows Claude's store", () => {
 });
 
 describe("the Claude under a Windows pane's shell", () => {
+  // herdr and herdr-core name only the shell in front on Windows, so the process table answers.
   const SHELL = 6100;
   const LAUNCHER = 6200;
   const INNER = 6300;
@@ -1379,6 +1399,7 @@ describe("the Claude under a Windows pane's shell", () => {
     roots.push(root);
     return root;
   }
+  /** Claude's PID record of `pid`, with its start as Claude writes it: FILETIME, 100 ns since 1601 */
   function record(store: string, pid: number, started = STARTED): void {
     mkdirSync(join(store, "sessions"), { recursive: true });
     writeFileSync(join(store, "sessions", `${pid}.json`), JSON.stringify({
@@ -1528,6 +1549,7 @@ describe("claudeSessionTempDir", () => {
   it.skipIf(uid === undefined)("is null without the folder, for another user's base, or for a name that is not a session", async () => {
     expect(await claudeSessionTempDir(transcript, [root], uid)).toBeNull();
     mkdirSync(join(root, `claude-${uid! + 1}`, "-home-u-project", session), { recursive: true });
+    // the base exists but under another uid's name; and a base this user owns is not that uid's
     expect(await claudeSessionTempDir(transcript, [root], uid! + 1)).toBeNull();
     expect(await claudeSessionTempDir("/home/u/.claude/projects/-home-u-project/notes.jsonl", [root], uid)).toBeNull();
     expect(await claudeSessionTempDir(transcript, [root], undefined)).toBeNull();

@@ -20,6 +20,7 @@ const jsonl = (...records: unknown[]) => records.map((record) => JSON.stringify(
 const CLOCK_THREAD_CPUTIME_ID_LINUX = 3;
 const CLOCK_THREAD_CPUTIME_ID_DARWIN = 16;
 
+/** This thread's CPU time in milliseconds, where the system keeps a clock for it (Linux, macOS), or null. */
 const threadClock = ((): (() => number) | null => {
   const id = process.platform === "linux" ? CLOCK_THREAD_CPUTIME_ID_LINUX : process.platform === "darwin" ? CLOCK_THREAD_CPUTIME_ID_DARWIN : null;
   if (id === null) return null;
@@ -36,7 +37,9 @@ const threadClock = ((): (() => number) | null => {
 /**
  * A budget in wall-clock milliseconds failed on loaded GitHub runners (1,013 to 1,062 ms against
  * 1,000, #2142) with nothing slower in the code: a busy host stretches the clock while the work
- * waits for a core.
+ * waits for a core. CPU time does not stretch that way, but any budget in milliseconds still
+ * depends on the runner's processor, and the growth from a small input to a five times larger one
+ * still moved on a busy runner (3 times as written read 10.8).
  */
 const cpuRatio = <K, T>(make: (input: K) => () => T, reference: K, subject: K): { result: T; ratio: number } => {
   const now = (): number => {
@@ -48,7 +51,11 @@ const cpuRatio = <K, T>(make: (input: K) => () => T, reference: K, subject: K): 
   const runSubject = make(subject);
   runReference();
   const result = runSubject();
-  // the process's clock may count in steps of about 16 ms (Windows)
+  // a run of a fraction of a millisecond is timed over as many runs as take two; a hundred where
+  // the process's clock may count in steps of about 16 ms (Windows), so a step is a small part
+  // of what any reference reads. The least reference of the three is checked too, not only the
+  // first: runs that got faster after it may read less, or none on that clock, so the whole set
+  // is timed again over twice the runs
   const shortest = threadClock === null ? 100 : 2;
   let runs = 1;
   const timed = (run: () => T): number => {
@@ -73,8 +80,10 @@ describe("a Codex process's own store", () => {
     // not a system binary: macOS shows no environment of those (Codex is not one)
     const sleeper = (env: Record<string, string | undefined>) =>
       Bun.spawn([process.execPath, "-e", "console.log('up'); await Bun.sleep(5000)"], { env, stdout: "pipe" });
+    // the stores are directories that are there: a value that names none is no store (macOS reads it from `ps`)
     const withHome = sleeper({ ...process.env, CODEX_HOME: tmpdir() });
     const without = sleeper(Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== "CODEX_HOME")));
+    // a macOS home folder can hold a space; a variable after it ends the value
     const spaced = sleeper({ ...process.env, CODEX_HOME: join(tmpdir(), "harness codex test"), AFTER_CODEX_HOME: "x" });
     mkdirSync(join(tmpdir(), "harness codex test"), { recursive: true });
     try {
@@ -223,6 +232,8 @@ describe("Codex conversation records", () => {
   it("bounds citation parsing with many unmatched backtick lengths", () => {
     const delimiters = (count: number) => "Unmatched delimiters: " + Array.from({ length: count }, (_, i) => "`".repeat(i + 1) + " x ").join("");
     const text = delimiters(1000);
+    // the text against one as long with no backticks: about 1.3 times the CPU time as written, over
+    // 600 when each unmatched delimiter looks for its match in the rest of the text
     const { result, ratio } = cpuRatio((ticks: boolean) => {
       const transcript = jsonl(message("assistant", `${ticks ? text : text.replaceAll("`", "'")}<oai-mem-citation>hidden</oai-mem-citation>`));
       return () => parseCodexTranscript(transcript);
@@ -468,10 +479,12 @@ describe("Codex rollout resolution", () => {
       { id: null }, { id: null, session_id: thread }, { id: thread, session_id: null }, [], "header", null, undefined]) {
       expect([payload, interactive(payload)]).toEqual([payload, false]);
     }
+    // a name without a UUID has nothing to contradict, but the ids still must agree
     expect(interactive({ id: "legacy" }, "rollout-legacy.jsonl")).toBe(true);
     expect(interactive({ id: thread, session_id: thread.toUpperCase() }, "rollout-legacy.jsonl")).toBe(true);
     expect(interactive({ id: thread, session_id: other }, "rollout-legacy.jsonl")).toBe(false);
     expect(interactive({ id: 7 }, "rollout-legacy.jsonl")).toBe(false);
+    // a self-consistent child is still a child: the name proves integrity, not parenthood
     expect(interactive({ id: thread, session_id: thread, parent_thread_id: other })).toBe(false);
     expect(interactive({ id: thread, session_id: thread, agent_role: "" })).toBe(false);
     expect(interactive({ id: thread, session_id: thread, forked_from_id: other, source: "cli", thread_source: "user",
@@ -487,8 +500,10 @@ describe("Codex rollout resolution", () => {
     const header = `${JSON.stringify({ type: "session_meta", payload: { id: thread, session_id: thread, source: "cli" } })}\n`;
     const real = join(day, `rollout-2026-10-20T09-00-00-${thread}.jsonl`);
     writeFileSync(real, header);
+    // the link's own name contradicts the header, the file it resolves to does not
     symlinkSync(real, join(day, `rollout-2026-10-20T09-00-00-${other}.jsonl`));
     expect(codexRolloutPath(join(day, `rollout-2026-10-20T09-00-00-${other}.jsonl`), home)).toBe(real);
+    // and a well-named, self-consistent rollout outside the store stays out
     const outside = join(root, `rollout-2026-10-20T09-00-00-${thread}.jsonl`);
     writeFileSync(outside, header);
     symlinkSync(outside, join(day, "escape.jsonl"));
@@ -512,6 +527,7 @@ describe("Codex rollout resolution", () => {
     expect(codexRolloutPath(path, home)).toBeNull();
     write(256 * 1024, false);
     expect(codexRolloutPath(path, home)).toBeNull();
+    // byte boundaries: whole JSON that fills the read is not proof its line ends there
     const line = `${JSON.stringify({ type: "session_meta", payload: { id: thread, source: "cli" } })}`;
     const exact = (body: string) => { writeFileSync(path, body); return codexRolloutPath(path, home); };
     expect(exact(`${line.padEnd(256 * 1024 - 1, " ")}\n{"type":"event_msg"}\n`)).toBe(path);
@@ -543,6 +559,8 @@ describe("Codex rollout resolution", () => {
     for (const outside of ["D:\\codex\\other.jsonl", "\\\\?\\D:\\codex\\sessions\\..\\other.jsonl", "E:\\codex\\sessions\\x.jsonl", root]) {
       expect(rolloutInsideStore(`\\\\?\\${root}`, outside, win32)).toBe(false);
     }
+    // only the prefix and the drive letter's case are one spelling: past it a case-sensitive
+    // directory may be another one, and a sibling that shares the name's start is outside
     expect(rolloutInsideStore("\\\\?\\c:\\codex\\sessions", "C:\\codex\\sessions\\x.jsonl", win32)).toBe(true);
     for (const outside of ["C:\\codex\\Sessions\\other.jsonl", "C:\\Codex\\sessions\\other.jsonl", "C:\\codex\\sessions2\\x.jsonl"]) {
       expect(rolloutInsideStore("\\\\?\\C:\\codex\\sessions", outside, win32)).toBe(false);
@@ -575,6 +593,8 @@ describe("Codex rollout resolution", () => {
       expect(ids("D:\\work\\app")).toEqual(["a", "b"]);
       expect(ids("\\\\?\\D:\\work\\app")).toEqual(["a", "b"]);
       expect(ids("d:\\work\\app")).toEqual(["a", "b"]);
+      // another letter case past the drive may be another, case-sensitive directory: no answer
+      // rather than its conversation, and its 33 newer threads do not crowd out the 32
       expect(ids("D:\\work\\App")).toHaveLength(32);
       expect(ids("D:\\work\\App").every((id) => id.startsWith("x"))).toBe(true);
       expect(ids("\\\\host\\share\\app")).toEqual(["f"]);
@@ -635,6 +655,7 @@ describe("Codex rollout resolution", () => {
     const forked = rollout("13", `rollout-2026-09-13T18-59-43-${parent}.jsonl`, parent, [message("user", "parent question"), message("assistant", "parent answer")]);
     const original = rollout("15", `rollout-2026-09-15T12-58-12-${thread}.jsonl`, thread,
       [message("user", "첫 질문"), message("assistant", "첫 답"), message("user", "discarded"), message("assistant", "discarded answer")], forked.cutBefore(2));
+    // an unrelated later rollout of the same thread must not be taken for the base
     rollout("24", `rollout-2026-09-24T09-00-00-${thread}_01a0cc00-0000-7000-8000-000000000000.jsonl`, thread, [message("user", "future")]);
     const segment = rollout("23", `rollout-2026-09-23T10-46-43-${thread}_01a0cbf1-9b0e-7383-a345-80974b279c68.jsonl`, thread,
       [message("user", "다시 묻기"), message("assistant", "새 답")], original.cutBefore(2));
@@ -653,6 +674,7 @@ describe("Codex rollout resolution", () => {
     const second = rollout("20", `rollout-2026-09-20T12-00-00-${thread}_01a0c000-0000-7000-8000-000000000001.jsonl`, thread, turns("b", 2), first.cutBefore(8));
     const third = rollout("21", `rollout-2026-09-21T12-00-00-${thread}_01a0c000-0000-7000-8000-000000000002.jsonl`, thread, turns("c", 1), first.cutBefore(4));
     const fourth = rollout("22", `rollout-2026-09-22T12-00-00-${thread}_01a0c000-0000-7000-8000-000000000003.jsonl`, thread, turns("d", 1), second.cutBefore(2));
+    // the second rollout is newer and larger than the third one's cut: a name-and-size guess would take it
     expect(second.size).toBeGreaterThan(first.cutBefore(4).byte);
     const answers = (path: string) => texts(path).filter((text) => text.endsWith("."));
     expect(answers(second.path)).toEqual(["a0.", "a1.", "a2.", "a3.", "b0.", "b1."]);
@@ -991,6 +1013,9 @@ describe("Codex rollout resolution", () => {
 
   it("reads short answers in bounded time however many unclosed links the answers hold", () => {
     const screen = Array.from({ length: 400 }, () => "q".repeat(120)).join("\n");
+    // answers of 8,000 characters, all unclosed "](", against answers as long with one closed link:
+    // about 1.5 times the CPU time as written, over 400 when cutting at /\]\([^)\s]*\)/ rescans from
+    // every unclosed "]("
     const { result, ratio } = cpuRatio((unclosed: boolean) => {
       const text = unclosed ? "](".repeat(4000) : `](${"a".repeat(7997)})`;
       const many = answered(...Array.from({ length: 5 }, () => text));
@@ -1003,6 +1028,8 @@ describe("Codex rollout resolution", () => {
 
   it("reads short answers in bounded time however many links a large answer has", () => {
     const screen = Array.from({ length: 400 }, () => "q".repeat(120)).join("\n");
+    // 40,000 links against an answer as long with one: about 4 times the CPU time as written, over
+    // 200 when the work per link grows with the links before it (an unshift)
     const { result, ratio } = cpuRatio((links: boolean) => {
       const huge = answered(links ? "[abcdefghijklmnop](/a)".repeat(40_000) : `${"[abcdefghijklmnop] /a)".repeat(39_999)}[abcdefghijklmnop](/a)`);
       const candidates = Array.from({ length: 8 }, (_, index) => ({ path: `large-${index}`, text: huge }));
@@ -1285,6 +1312,7 @@ describe("Codex's store, read whether or not a Codex holds it (#2444)", () => {
       const opened = openCodexStore(home);
       try {
         expect(opened.db.query("SELECT id FROM threads").all()).toEqual([{ id: "t1" }]);
+        // a Codex opens the store and writes a thread: its -wal appears beside it
         const writer = new Database(join(home, "state_5.sqlite"));
         try {
           writer.exec("INSERT INTO threads (id) VALUES ('t2')");
@@ -1301,7 +1329,9 @@ describe("Codex's store, read whether or not a Codex holds it (#2444)", () => {
       const opened = openCodexStore(home);
       try {
         expect(opened.db.query("SELECT id FROM threads").all()).toEqual([{ id: "t1" }]);
+        // Codex opens the store, writes, checkpoints and closes it: no side file is left, the file itself moved
         const writer = new Database(join(home, "state_5.sqlite"));
+        // a row larger than a page, so the file surely grows: timestamps alone may not move within one tick
         writer.query("INSERT INTO threads VALUES ('t2', ?)").run("x".repeat(64 * 1024));
         writer.exec("PRAGMA wal_checkpoint(TRUNCATE);");
         writer.close();
@@ -1318,6 +1348,7 @@ describe("Codex's store, read whether or not a Codex holds it (#2444)", () => {
     try {
       symlinkSync(join(target, "state_5.sqlite"), join(home, "state_5.sqlite"));
       writer.exec("PRAGMA wal_autocheckpoint = 0; INSERT INTO threads (id) VALUES ('t2');");
+      // the live -wal lies beside the store, not beside the link to it
       expect(readdirSync(home)).toEqual(["state_5.sqlite"]);
       const { db, immutable, settled } = openCodexStore(home);
       try {
@@ -1513,7 +1544,8 @@ const codexTurnScreen = (asked: string | null, body: readonly string[]): string 
 const finishedOn = (answer: string): string => JSON.stringify({ timestamp: ts, type: "event_msg", payload: { type: "task_complete", last_agent_message: answer } });
 
 describe("a Codex pane whose last answer the screen never shows whole (#3262 case 1)", () => {
-  // a code block Codex draws indented, without its fences and without a bullet
+  // a code block Codex draws indented, without its fences and without a bullet, 60 lines long: the screen read
+  // is 40 rows, so only its tail is on screen when the turn finishes
   const script = Array.from({ length: 60 }, (_, at) => `value_${at} = compute_step(${at}) + carried_${at}`).join("\n");
   const fenced = `\`\`\`python\n${script}\n\`\`\``;
   const tail = script.split("\n").slice(-14).map((line) => `  ${line}`);

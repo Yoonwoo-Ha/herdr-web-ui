@@ -123,6 +123,7 @@ it("serves a native image-only Codex turn through the pane-scoped image API", as
   expect((await fetch(url)).status).toBe(404);
 });
 
+// codex-cli 0.163.0's view_image as recorded (server/fixtures/codex-pictures-0.163.0-rollout.jsonl)
 it("serves a picture a Codex tool returned, named by its call, through the pane-scoped image API", async () => {
   const recorded = readFileSync(new URL("./fixtures/codex-pictures-0.163.0-rollout.jsonl", import.meta.url), "utf8").split("\n").filter(Boolean).slice(1);
   writeFileSync(rollout, [transcript(`${answerPrefix}Answer one`), ...recorded].join("\n") + "\n");

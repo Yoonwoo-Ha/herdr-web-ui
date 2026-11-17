@@ -116,6 +116,7 @@ it("says why the interactive shell's PATH was not read, and has Check again read
     const read = async (query: string, readOnly = false) => (await (await handleAgentCatalogRequest(new Request(`http://ovis/api/agent-catalog${query}`), "/api/agent-catalog", detector, "linux", readOnly))!.json()) as AgentCatalogResponse;
     expect((await read("")).path_problem).toBe("/bin/zsh -l timed out after 2000 ms");
     expect(rereads).toBe(0);
+    // a watching device reads it as kept: it never has the user's shell run again
     expect((await read("?recheck=1", true)).path_problem).toBe("/bin/zsh -l timed out after 2000 ms");
     expect(rereads).toBe(0);
     const again = await read("?recheck=1");

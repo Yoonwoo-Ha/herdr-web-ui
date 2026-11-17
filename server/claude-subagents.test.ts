@@ -118,6 +118,7 @@ describe("claudeSubagents", () => {
     s.agent("bad", { shape: "foreground", toolUseId: "toolu_bad" });
     s.agent("bg", { toolUseId: "toolu_bg" });
     s.parent({ type: "assistant", timestamp: at(1), message: { role: "assistant", content: ["sync", "bad", "bg"].map((id) => ({ type: "tool_use", id: `toolu_${id}`, name: "Agent", input: {} })) } });
+    // the launch of a background agent is answered at once too
     s.parent({ type: "user", timestamp: at(1), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_bg", content: "Async agent launched successfully" }] } });
     expect(ids(s.path).sort()).toEqual(["bad:running", "bg:running", "sync:running"]);
     s.parent({ type: "user", timestamp: at(4), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_sync", content: "answer" }] } });
@@ -182,6 +183,7 @@ describe("claudeSubagents", () => {
     const s = session();
     const file = s.agent("big", { steps: [] });
     const line = json({ type: "assistant", timestamp: at(1), message: { id: "x", model: "claude-opus-5", usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: "tool_use", id: "t", name: "Read", input: {} }], padding: "p".repeat(1000) } });
+    // 10 MB of lines, each a request of its own: more than one read's budget
     writeFileSync(file, Array.from({ length: 10_000 }, (_, n) => line.replace('"id":"x"', `"id":"m${n}"`)).join(""));
     const [task] = runFileTask({ op: "claude-tasks", path: s.path, live: true, since: null }) as OmoTask[];
     expect([task!.turns, task!.tool_calls, task!.tokens, task!.model]).toEqual([10_000, 10_000, 2, "claude-opus-5"]);
@@ -191,6 +193,7 @@ describe("claudeSubagents", () => {
     const s = session();
     s.agent("quiet", { steps: [[1, 1]] });
     s.agent("busy", { steps: [[1, 1]] });
+    // 17 MB of an older conversation is out of reach: only its last 16 MB is read
     writeFileSync(s.path, "");
     const filler = json({ type: "user", timestamp: at(2), message: { role: "user", content: "f".repeat(1000) } });
     writeFileSync(s.path, filler.repeat(17_000));
@@ -367,6 +370,7 @@ describe("backgroundAgentDetail", () => {
     roots.push(outside);
     writeFileSync(join(outside, "agent-l1.meta.json"), JSON.stringify({ agentType: "x", description: "outside" }));
     writeFileSync(join(outside, "agent-l1.jsonl"), json({ type: "user", message: { content: "secret" } }));
+    // an agent whose files are links, to anywhere, is none of this session's
     symlinkSync(join(outside, "agent-l1.meta.json"), join(dir, "agent-l1.meta.json"));
     symlinkSync(join(outside, "agent-l1.jsonl"), join(dir, "agent-l1.jsonl"));
     expect(backgroundAgentDetail(s.path, "l1")).toEqual({ refusal: "not_found" });
@@ -374,20 +378,24 @@ describe("backgroundAgentDetail", () => {
     symlinkSync(join(dir, "agent-a1.jsonl"), join(dir, "agent-l2.jsonl"));
     expect(backgroundAgentDetail(s.path, "l2")).toEqual({ refusal: "not_found" });
     expect(backgroundAgentDetail(s.path, "gone")).toEqual({ refusal: "not_found" });
+    // a transcript that is there but cannot be opened is a store not readable now, never an agent gone (root opens anything)
     if (process.getuid?.() !== 0) {
       chmodSync(join(dir, "agent-a1.jsonl"), 0o000);
       try { expect(backgroundAgentDetail(s.path, "a1")).toEqual({ refusal: "unavailable" }); } finally { chmodSync(join(dir, "agent-a1.jsonl"), 0o644); }
     }
+    // another session's valid id is not this session's
     const other = session();
     other.agent("b1", { description: "theirs" });
     expect(backgroundAgentDetail(s.path, "b1")).toEqual({ refusal: "not_found" });
     expect(detailOf(other.path, "b1").title).toBe("theirs");
+    // a subagents folder that is a link leads out of the store: nothing of it is read, not even the file it points at
     const linkedSession = join(s.path, "..", "22222222-2222-4222-8222-222222222222");
     const linkedParent = `${linkedSession}.jsonl`;
     writeFileSync(linkedParent, json({ type: "user", message: { content: "go" } }));
     mkdirSync(linkedSession);
     symlinkSync(join(other.path, "..", SESSION, "subagents"), join(linkedSession, "subagents"));
     expect(backgroundAgentDetail(linkedParent, "b1")).toEqual({ refusal: "unavailable" });
+    // a parent transcript that is a link is not read through
     const linkedTranscript = join(s.path, "..", "33333333-3333-4333-8333-333333333333.jsonl");
     symlinkSync(s.path, linkedTranscript);
     expect(backgroundAgentDetail(linkedTranscript, "a1")).toEqual({ refusal: "unavailable" });
@@ -435,6 +443,9 @@ describe("backgroundAgentDetail", () => {
       }
     };
     const swap = (folder: string, target: string) => (): void => { renameSync(folder, `${folder}.moved`); symlinkSync(target, folder); };
+    // before the folder's open (where the kernel names a descriptor's file, Linux; elsewhere the folder is not opened, and
+    // the first call after the look is its listing or a title's open), or once it is open and checked: before its listing,
+    // or before a title's file is opened
     const cases: Array<[string, "open" | "read", () => void]> = [
       ["the subagents folder, before its open", "open", swap(subagents, join(outsideSession, "subagents"))],
       ["the session folder, before its open", "open", swap(sessionDir, outsideSession)],
@@ -554,7 +565,9 @@ describe("backgroundAgentDetail", () => {
     writeFileSync(elsewhere, ended);
     const cases: Array<[string, 1 | 2, (file: string) => void]> = [
       ["a link to another file", 1, (file) => { rmSync(file); symlinkSync(elsewhere, file); }],
+      // the same file, so only the refusal to follow a link stops it
       ["a link to the file itself, moved aside", 1, (file) => { renameSync(file, `${file}.aside`); symlinkSync(`${file}.aside`, file); }],
+      // no link, so only the file's identity stops it
       ["another plain file", 1, (file) => { writeFileSync(`${file}.new`, ended); renameSync(`${file}.new`, file); }],
       ["a link to another file, before the tail's read", 2, (file) => { rmSync(file); symlinkSync(elsewhere, file); }],
     ];
@@ -601,6 +614,7 @@ describe("backgroundAgentDetail", () => {
       const cases: Array<[string, () => Hook]> = [
         [`${what}, before the transcript's look`, atLook],
         [`${what}, before the transcript's open`, () => onOpen("agent-a1.jsonl", 1, swap(folder, target))],
+        // and swapped back once it is open: no look after the read can tell, so only a folder held open can
         ...(process.platform === "linux" ? [[`${what}, from the transcript's look until its open`, (): Hook => {
           const looked = atLook();
           const opened = onOpen("agent-a1.jsonl", 1, () => undefined, back(folder));
@@ -651,6 +665,8 @@ describe("backgroundAgentDetail", () => {
     const old = join(outside, "subagents", "agent-a1.jsonl");
     writeFileSync(old, own({ type: "user", timestamp: at(1), message: { role: "user", content: "outside" } }));
     utimesSync(old, (NOW - 48 * 60 * 60 * 1000) / 1000, (NOW - 48 * 60 * 60 * 1000) / 1000);
+    // in a process of its own where no descriptor names its file, as off Linux: the files are read by their path, and
+    // the subagents folder is swapped for a link to the outside one at the first look at a transcript, then put back
     const script = `
       const fs = require("node:fs");
       const look = fs.lstatSync;
@@ -699,6 +715,7 @@ describe("backgroundAgentDetail", () => {
       ["another agent", json({ isSidechain: true, sessionId: SESSION, agentId: "b9", ...dispatch })],
       ["the main thread", json({ isSidechain: false, sessionId: SESSION, agentId: "a1", ...dispatch })],
       ["no identity", json(dispatch)],
+      // one foreign record among the agent's own taints the whole file
       ["a foreign record after its own", own(dispatch) + json({ isSidechain: true, sessionId: SESSION, agentId: "b9", type: "attachment", timestamp: at(3) })],
     ];
     for (const [label, records] of cases) {
@@ -783,12 +800,14 @@ describe("backgroundAgentDetail", () => {
     restore(meta, "moved");
     expect(during("agent-a1.meta.json", () => { throw Object.assign(new Error("EIO: i/o error, read"), { code: "EIO" }); })).toEqual([true, { refusal: "unavailable" }]);
     expect(during("agent-a1.jsonl", () => { throw Object.assign(new Error("EIO: i/o error, read"), { code: "EIO" }); })).toEqual([true, { refusal: "unavailable" }]);
+    // a session folder that cannot be looked into, nor its subagents folder opened (root looks into anything)
     if (process.getuid?.() !== 0) {
       for (const folder of [join(subagents, ".."), subagents]) {
         chmodSync(folder, 0o000);
         try { expect(backgroundAgentDetail(s.path, "a1")).toEqual({ refusal: "unavailable" }); } finally { chmodSync(folder, 0o755); }
       }
     }
+    // a file linked in that claims this session and agent is still no file of this agent's
     const claimed = join(outside, "claimed.jsonl");
     writeFileSync(claimed, own({ type: "user", timestamp: at(1), message: { role: "user", content: "linked secret" } }));
     renameSync(file, `${file}.real`);
@@ -804,6 +823,7 @@ describe("backgroundAgentDetail", () => {
     expect(before).toEqual([["a1", { title: "Review the parser", agent: "reviewer" }]]);
     const detail = detailOf(s.path, "a1");
     expect(detail.events.length).toBeGreaterThan(0);
+    // the chat's card and the list keep what they had: no prompt, no event, no argument
     expect([...subagentDetails(s.path, ["a1"])]).toEqual(before);
     expect(Object.keys(claudeSubagents(s.path, true, NOW)[0]!).sort()).toEqual(["category", "detail_kind", "ended_at", "id", "model", "started_at", "status", "title", "tokens", "tool_calls", "turns"]);
   });
@@ -1828,6 +1848,8 @@ describe("ClaudeSubagentStatus", () => {
         expect(status.loopHolds("p1")).toBe(true);
         rest(s, 4);
         expect(status.loopHoldsNow("p1")).toBe(false);
+        // the task's turn begins at once, and holds from its own prompt on. A known bound: nothing holds between
+        // that rest and this line, which Claude writes some tens of milliseconds into the turn
         resumes(s, 4);
         expect(status.loopHoldsNow("p1")).toBe(true);
         rest(s, 5);
@@ -1979,6 +2001,8 @@ describe("ClaudeSubagentStatus", () => {
           holdsNothing(() => queued(s, 3));
           holdsNothing(() => taken(s, 3));
           holdsNothing(() => s.parent({ type: "attachment", timestamp: at(3), attachment: { type: "queued_command", commandMode: "task-notification", prompt: block() } }));
+          // a notice written as a user entry with no turnOrigin: one of that origin that no answer followed (17 in the
+          // transcripts of this PC), and one an older Claude Code marks as its own
           holdsNothing(() => s.parent({ type: "user", isSidechain: false, origin: { kind: "task-notification" }, permissionMode: "auto", timestamp: at(3), message: { role: "user", content: block() } }));
           holdsNothing(() => s.parent({ type: "user", isMeta: true, timestamp: at(3), message: { role: "user", content: block() } }));
           holdsNothing(() => s.parent({ type: "user", timestamp: at(3), permissionMode: "default", origin: { kind: "human" }, turnOrigin: "human", message: { role: "user", content: 'why "turnOrigin":"task_notification"?' } }));
@@ -2150,6 +2174,7 @@ describe("claudeSubagents reading", () => {
     writeFileSync(file, assistant("m0", "x".repeat(9 * 1024 * 1024)) + assistant("m1"));
     claudeSubagents(s.path, true, NOW);
     expect(claudeSubagents(s.path, true, NOW)[0]?.turns).toBe(1);
+    // the same of the parent: an 9 MB entry (an image) does not swallow the notice after it
     s.parent({ type: "user", timestamp: at(2), message: { role: "user", content: "i".repeat(9 * 1024 * 1024) } });
     s.notify("a1", 3);
     expect(ids(s.path)).toEqual(["a1:completed"]);
@@ -2394,6 +2419,7 @@ describe("claudeSubagents reading, upkeep", () => {
     const s = session();
     s.agent("a1", { steps: [[1, 1]] });
     expect(ids(s.path)).toEqual(["a1:running"]);
+    // a 10 MB entry, then a 7 MB notification that crosses the read after the skipped line's end
     s.parent({ type: "user", timestamp: at(2), message: { role: "user", content: "i".repeat(10 * 1024 * 1024) } });
     const block = `<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n<summary>Agent "task a1" finished</summary>\n<result>${"r".repeat(7 * 1024 * 1024)}</result>\n</task-notification>`;
     s.parent({ type: "queue-operation", operation: "enqueue", timestamp: at(3), content: block });
@@ -2899,6 +2925,7 @@ describe("claudeSubagents, background commands", () => {
 describe("claudeSubagents, before the files are read through", () => {
   const body = (id: string, minute: number, stop: string | null) => json({ type: "assistant", timestamp: at(minute), message: { id, model: "claude-haiku-4-5", stop_reason: stop, usage: { output_tokens: 7 }, content: [{ type: "text", text: "x" }], pad: "p".repeat(1000) } });
   const pastParentWindow = (path: string) => {
+    // Many ordinary records, each below the line limit: the old notice is before the 16 MiB cold window.
     const filler = json({ type: "user", timestamp: at(5), message: { role: "user", content: "x".repeat(1024) } }).repeat(1024);
     for (let mib = 0; mib < 17; mib++) appendFileSync(path, filler);
   };
@@ -3204,6 +3231,7 @@ describe("claudeSubagents, before the files are read through", () => {
   it("reads a whole list on through a transcript appended past what a call reads (#2511)", () => {
     const s = session();
     expect(wholeClaudeSubagents(s.path, true, NOW)).toEqual([]);
+    // more than a call reads of the transcript (its 16 MiB window, in 8 MiB reads: at most 24 MiB), then a command sent to the background
     const filler = json({ type: "user", timestamp: at(1), message: { role: "user", content: "x".repeat(1024) } }).repeat(1024);
     for (let mib = 0; mib < 26; mib++) appendFileSync(s.path, filler);
     s.bash("cmd", 2);
@@ -3212,6 +3240,7 @@ describe("claudeSubagents, before the files are read through", () => {
 
   it("stops reading a whole list on once its time is up, and answers with what it read (#2511)", () => {
     const s = session();
+    // two agents of 5.5 MB each: more than one call reads
     const big = json({ type: "user", timestamp: at(1), message: { role: "user", content: "go" } }) + Array.from({ length: 5000 }, (_, i) => body(`m${i}`, 2, null)).join("");
     for (const id of ["a", "b"]) writeFileSync(s.agent(id, { steps: [] }), big);
     const cut = wholeClaudeSubagents(s.path, true, NOW, null, 1, () => 1);

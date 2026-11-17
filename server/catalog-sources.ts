@@ -1,8 +1,12 @@
+/**
+ * A provider only reads (no process is started here); it gets an abort signal that fires at the budget.
+ */
 import type { CommandForm, SlashCommand } from "../shared/protocol.ts";
 import type { paneContext } from "./pane-context.ts";
 
 export type CatalogPane = Awaited<ReturnType<typeof paneContext>>["pane"];
 
+/** The asking server's own stores: a provider reads these, never a process-wide default, when they are set. */
 export interface CatalogContext {
   codexHome?: string;
   openCodeStateDir?: string;
@@ -51,6 +55,7 @@ async function ask(provider: CatalogSource, pane: CatalogPane, cwd: string, budg
   }
 }
 
+/** Builtin rows are never removed and a provider cannot add one. */
 export async function mergeCatalogSources(agent: string | null, pane: CatalogPane, cwd: string, base: SlashCommand[], budgetMs = CATALOG_SOURCE_BUDGET_MS, context: CatalogContext = {}): Promise<SlashCommand[]> {
   if (!agent) return base;
   const providers = sources.filter((source) => source.agent === agent);

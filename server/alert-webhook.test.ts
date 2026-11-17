@@ -100,11 +100,13 @@ describe("alert webhook presets", () => {
     const hook = webhook();
     const view = hook.save({ preset: "discord", url: "https://discord.com/api/webhooks/1/SECRETabcd" }, undefined);
     expect(view.target).toBe("discord.com/…");
+    // an ntfy topic is the whole secret: no part of it is answered
     expect(hook.save({ preset: "ntfy", url: "https://ntfy.sh/abcd" }, undefined).target).toBe("ntfy.sh/…");
     expect(hook.save({ preset: "telegram", token: "123456:ABCDEFGHIJKLMNOPQRSTUVWXYZ", chat_id: "1" }, undefined).target).toBe("…");
     hook.save({ preset: "discord", url: "https://discord.com/api/webhooks/1/SECRETabcd" }, undefined);
     expect(JSON.stringify(view)).not.toContain("SECRET");
     if (process.platform !== "win32") expect(statSync(join(stateDir, "alert-webhook.json")).mode & 0o777).toBe(0o600);
+    // a save without the URL keeps it: the form never has it to send back
     hook.save({ preset: "discord", alerts: { input: false, done: "always" } }, undefined);
     expect(JSON.parse(readFileSync(join(stateDir, "alert-webhook.json"), "utf8")).secret).toBe("https://discord.com/api/webhooks/1/SECRETabcd");
     expect(webhook().view()).toMatchObject({ configured: true, preset: "discord", alerts: { input: false, done: "always" } });
@@ -185,6 +187,7 @@ describe("alert webhook ownership", () => {
     hook.send(alert);
     await hook.settled();
     expect(destination.received).toHaveLength(1);
+    // the open LAN (no owner) is heard only while it stays open, also after a restart
     hook.save({ preset: "json", url: destination.url() }, undefined, undefined);
     gated = true;
     const restarted = createAlertWebhook({ stateDir, loopbackHttp: true, canDeliver: (owner) => owner === undefined ? !gated : allowed.has(owner) });

@@ -2,10 +2,18 @@ import nodePath from "node:path";
 import { AGENT_CATALOG, CATALOG_PLATFORMS, type CatalogPlatform } from "../shared/agent-catalog.ts";
 import type { AgentSessionInfo, AgentStatus } from "../shared/herdr-api.generated.ts";
 
+/**
+ * Today herdr-core's snapshot names its panes here (herdr's TUI names its own); sessions and status
+ * are to follow.
+ */
 export interface PaneFacts {
+  /** the app the program reported itself as (herdr-core's OSC 7501 `app`), in the runtime's words */
   reported?: string | null;
+  /** the argv of the process in front of the pane; its name alone when the runtime gives no argv */
   foreground?: readonly string[] | null;
+  /** the pid of the process in front, when the runtime tells it (hc's `Foreground.pid`) */
   foregroundPid?: number | null;
+  /** how the pane's terminal was started: the argv it was given, and the pid of the process that ran them (hc's `Terminal.pid`) */
   launcher?: { readonly argv: readonly string[]; readonly pid?: number | null } | null;
 }
 
@@ -18,6 +26,7 @@ function candidatesOf(platform: ProgramPlatform): readonly CatalogPlatform[] {
 
 const REPORTED_NAMES: Readonly<Record<string, string>> = { "claude-code": "claude", antigravity: "agy", "kimi-code": "kimi", "grok-build": "grok" };
 
+/** The interpreters an agent's script runs under when its install is a script (npm's node bin, a Python entry point). */
 const INTERPRETERS = new Set(["node", "bun", "python", "python3"]);
 
 export function programName(word: string): string {
@@ -29,6 +38,7 @@ export function reportedAgent(app: string | null | undefined): string | null {
   return Object.hasOwn(REPORTED_NAMES, app) ? REPORTED_NAMES[app]! : app;
 }
 
+/** A path's last part as `platform` names files: on Windows at either slash and in any case, a program without its `.exe` or `.cmd`. */
 function fileName(word: string, platform: CatalogPlatform, program: boolean): string {
   // a backslash separates a path on Windows alone: elsewhere it is part of the file's name
   if (platform !== "windows") return nodePath.posix.basename(word);
@@ -36,6 +46,7 @@ function fileName(word: string, platform: CatalogPlatform, program: boolean): st
   return program ? name.replace(/\.(?:exe|cmd)$/, "") : name;
 }
 
+/** Interpreter options after which the next word is code or a module, not a script file. */
 const NOT_A_SCRIPT = new Set(["-e", "--eval", "-p", "--print", "-c", "-m", "-"]);
 
 function scriptOf(argv: readonly string[]): string | null {
@@ -69,6 +80,11 @@ function agentOn(argv: readonly string[], platform: CatalogPlatform): string | n
   return entry?.id ?? null;
 }
 
+/**
+ * The status a program's own report says (herdr-core keeps its OSC 7501 word: idle, working, done,
+ * blocked, error, …), in herdr's narrower words: an error says nothing about the turn having
+ * finished, so it shows as no status, like a word neither knows.
+ */
 export function reportedStatus(state: string | null | undefined): AgentStatus {
   switch (state) {
     case "working":
@@ -86,6 +102,11 @@ export const LETTA_BUSY_TITLE = /^[\u2800-\u28FF] /;
 /** Letta Code's title while a tool call waits for the user's approval, blinking between the two marks ("[ ! ] Action Required | Tutor"; letta-code 0.34.44, standard permission mode). */
 export const LETTA_ASKING_TITLE = /^\[ [.!] \] Action Required \| /;
 
+/**
+ * The status an agent's own terminal title says, for an agent known to set one: Letta's spinner
+ * prefix while it works, its "Action Required" mark while it waits for the user's approval. The
+ * program writes the title itself; nothing is read off the screen.
+ */
 export function titleStatus(agent: string | null, title: string | null | undefined): "working" | "idle" | "blocked" | null {
   if (agent !== "letta" || typeof title !== "string" || title === "") return null;
   if (LETTA_ASKING_TITLE.test(title)) return "blocked";
@@ -93,6 +114,7 @@ export function titleStatus(agent: string | null, title: string | null | undefin
 }
 
 export interface SessionFacts {
+  /** the sessions the agent named as busy while it ran here (OpenCode's OSC 7501 records), the newest last */
   named?: readonly string[];
   titled?: readonly string[];
 }
@@ -120,6 +142,7 @@ export function paneSession(agent: string | null, facts: SessionFacts): AgentSes
 export function paneAgent(facts: PaneFacts, platform: ProgramPlatform): string | null {
   const reported = reportedAgent(facts.reported);
   if (reported) return reported;
+  // a foreground the runtime names is the program in front, even as the start's pid (a start that exec()ed a shell)
   if (facts.foreground?.length) return processAgent(facts.foreground, platform);
   const launcher = facts.launcher;
   if (!launcher?.argv.length || !startedInFront(facts.foregroundPid, launcher.pid)) return null;

@@ -49,15 +49,22 @@ function sgrRuns(line: string): [string, boolean, boolean][] {
 }
 
 /**
- * Claude Code draws its suggested prompt grey in its empty input box: the `❯` line between the
+ * The prompt Claude Code suggests next, grey in its empty input box: the `❯` line between the
  * screen's last two rules (the live input box, not an earlier one above a bash-mode input), all
- * of it dim but for Claude's own drawn cursor on its first character.
+ * of it dim but for Claude's own drawn cursor on its first character. None while anything is
+ * typed there (typed text is not dim), for the new-session tip, or for an input box of more than
+ * one line.
  */
 export function parseClaudeSuggestion(ansi: string): string | null {
   const grey = claudeGreyInput(ansi);
   return grey === null || CLAUDE_TIP_RE.test(grey) ? null : grey;
 }
 
+/**
+ * What Claude Code's input box shows in grey while it is empty (a suggested prompt, or the
+ * new-session tip), null when the box holds typed text or nothing. Only an ANSI read tells grey
+ * text from a message: as plain text both are `❯ words`.
+ */
 function claudeGreyInput(ansi: string): string | null {
   const lines = ansi.split("\n").map((line) => line.replace(/\r$/, ""));
   const plain = lines.map((line) => line.replace(ANSI_RE, "").replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, ""));
@@ -68,6 +75,7 @@ function claudeGreyInput(ansi: string): string | null {
   let text = "";
   let seenPrompt = false;
   let cursor = false;
+  // Claude's IDE pill before the grey text is neither typed nor suggested
   let pill = idePillChars(plain[index]!.slice(plain[index]!.indexOf("❯") + 1));
   for (const [run, dim, inverse] of sgrRuns(lines[index]!)) {
     for (const character of run) {
@@ -87,11 +95,17 @@ function claudeGreyInput(ansi: string): string | null {
 }
 
 /**
- * Claude's named session (`──── my-session ─`), and OmO's own box while it works
- * (`── • Running eval (7s • esc to interrupt) ───`), which herdr reports as Claude.
+ * A labeled rule over an input box: Claude's named session (`──── my-session ─`), and OmO's own
+ * box while it works (`── • Running eval (7s • esc to interrupt) ───`), which herdr reports as
+ * Claude.
  */
 const BOX_LABELED_RULE_RE = /^─{2,}\s.*─$/;
 
+/**
+ * Claude Code's input box: the rows between the screen's last two rules (a named session labels
+ * its rule). "clipped" when only the bottom rule is on screen, as under a draft taller than the
+ * pane; null when the screen has no rule at all.
+ */
 function claudeInputBox(screen: string): { plain: string[]; raw: string[] } | "clipped" | null {
   const raw = screen.split("\n").map((line) => line.replace(/\r$/, ""));
   const plain = raw.map((line) => line.replace(ANSI_RE, "").replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "").trimEnd());
@@ -107,6 +121,7 @@ function claudeInputBox(screen: string): { plain: string[]; raw: string[] } | "c
 
 const CLAUDE_TIP_ROW_RE = /^Try "[^"]+"$/;
 
+/** Whether an ANSI read sets no color and no dim anywhere, as Claude Code draws under NO_COLOR. */
 function colorless(ansi: string): boolean {
   for (const match of ansi.matchAll(/\u001b\[([0-9;:]*)m/g)) {
     for (const code of (match[1] || "0").split(/[;:]/).map((value) => Number(value || 0))) {
@@ -116,12 +131,25 @@ function colorless(ansi: string): boolean {
   return true;
 }
 
+/**
+ * Whether Claude Code's input box is not known to be empty, so that a paste would land in what is
+ * there and the Enter after it send both, or run it as a command: typed text, bash mode (`!`), a
+ * box clipped by the pane, or a box that is not a `❯` input. Claude's own grey text (a suggested
+ * prompt, its tip, on any number of rows) and its drawn cursor are not a draft. The box is read
+ * from the live screen (`live`, a detection read, as the other pending checks); only the viewport
+ * read carries colors (`colors`), and the caller passes it only once it is verified to show that
+ * live screen (null otherwise): equal words do not prove it, since an older box in a scrolled
+ * viewport, or a grey suggestion the user then typed out, reads the same. Without verified colors a
+ * box that is not empty is a draft. False when the screen shows no rule at all.
+ */
 export function claudeInputDraft(live: string, colors: string | null): boolean {
   const box = claudeInputBox(live);
   if (box === null) return false;
   if (box === "clipped" || !box.plain[0]?.startsWith("❯")) return true;
+  // Claude's IDE pill after the `❯` is no input (#1096): a box holding only it is empty
   const afterPill = withoutIdePill(box.plain[0]!.slice(1));
   if ([afterPill, ...box.plain.slice(1)].join("\n").replace(/\u00a0/g, " ").trim() === "") return false;
+  // a paste or an image Claude folded into a placeholder is content, however it is colored
   if (foldedPlaceholder(box.plain.join("\n"))) return true;
   if (colors === null) return true;
   const shown = claudeInputBox(colors);
@@ -161,7 +189,10 @@ export function claudeInputEmpty(live: string, colors: string | null): boolean {
 /** What empties a one-row Claude input box: the row after the cursor, then before it (measured on 2.1.295; Ctrl+Y puts it back). */
 export const CLAUDE_CLEAR_INPUT_KEYS = ["ctrl+k", "ctrl+u"];
 
-/** CLAUDE_CLEAR_INPUT_KEYS edit one screen row: a draft on more rows (a long line wraps) is not offered. */
+/**
+ * CLAUDE_CLEAR_INPUT_KEYS edit one screen row, so a draft on more rows (a long line wraps), bash
+ * mode, a pasted or image placeholder and a box read without colors are not offered: null.
+ */
 export function claudeClearableDraft(live: string, colors: string | null): string | null {
   if (colors === null || !claudeInputDraft(live, colors)) return null;
   const box = claudeInputBox(live);
@@ -171,6 +202,7 @@ export function claudeClearableDraft(live: string, colors: string | null): strin
   const row = rowText(box.raw[0]!);
   const shown = claudeInputBox(colors);
   if (shown === null || shown === "clipped" || shown.raw.length !== 1 || rowText(shown.raw[0]!) !== row) return null;
+  // Claude's IDE pill is not the user's text, and the clearing keys leave it
   const afterPrompt = row.slice(1);
   const pill = CLAUDE_IDE_PILL_RE.exec(afterPrompt)?.[0];
   const draft = pill === undefined ? afterPrompt.replace(/^[ \u00a0]/, "") : afterPrompt.slice(pill.length);
@@ -179,6 +211,11 @@ export function claudeClearableDraft(live: string, colors: string | null): strin
 
 export const INPUT_BOX_SHOWN_CHARS = 200;
 
+/**
+ * The live input box (claudeInputBox) as plain text, whole: what a refusal that names no clearable
+ * draft records, so a send anyway goes only over exactly that box. null when no box could be read
+ * whole (none on screen, or clipped by the pane): such a box cannot be compared, so nothing is sent over it.
+ */
 export function claudeInputBoxContent(live: string): string | null {
   const box = claudeInputBox(live);
   if (box === null || box === "clipped") return null;
@@ -189,19 +226,31 @@ export function claudeInputBoxContent(live: string): string | null {
 const FOLDED_WHOLE = /\[(?:Pastedtext#\d+(?:\+\d+lines?)?|Image#\d+)\]|\[\.\.\.Truncatedtext#\d+(?:\+\d+lines?)?\.\.\.\]/;
 const FOLDED_START = /\[(?:Pastedtext#\d+|Image#\d+|(?:\.\.\.)?Truncatedtext#\d+)/;
 
-/** Claude wraps its box at the pane's width, also inside a placeholder, between words or inside one, any number of times. */
+/**
+ * Claude wraps its box at the pane's width, also inside a placeholder, between words or inside one, any number of
+ * times: the text is read with every space and row break taken out, as are the placeholder patterns. Only the whole
+ * placeholder counts (`whole`, for Send anyway: a typed `[Image #1` is not one); the draft checks take its start.
+ */
 export function foldedPlaceholder(text: string, whole = false): boolean {
   return (whole ? FOLDED_WHOLE : FOLDED_START).test(text.replace(/\s+/g, ""));
 }
 
+/**
+ * The box a refusal may offer to send anyway over, and a send anyway may go over (claudeInputBoxContent),
+ * or null where it may not: a paste or an image Claude Code folded into a placeholder (`[Pasted text #1 +12
+ * lines]`, `[Image #1]`) hides what it holds, so the user cannot see what the Enter would send along
+ * with the message (#3563).
+ */
 export function claudeSendAnywayBox(live: string): string | null {
   const content = claudeInputBoxContent(live);
   return content === null || foldedPlaceholder(content, true) ? null : content;
 }
 
 /**
- * Claude Code's rewind dialog takes its input box's place in every recorded state; a reply that
- * draws the panel has the box under it.
+ * Whether Claude Code's rewind dialog is open: the screen ends in its panel and Claude's own input box
+ * is not drawn under it (the dialog takes its place in every recorded state). A reply that draws the
+ * panel has the box under it, and must not hold the pane's sends; rules above the panel (an earlier
+ * reply's) are no box.
  */
 export function claudeRewindOpen(screen: string): boolean {
   const below = claudeRewindPanelBelow(screen);
@@ -216,7 +265,15 @@ export function claudeInputBoxText(live: string): string {
   return shownInputBox(claudeInputBoxContent(live) ?? "");
 }
 
-/** Claude Code puts the message back in its input box as typed text when the send right before is cancelled. */
+/**
+ * The chat's own last message back in Claude Code's input box as typed text, where Claude puts it
+ * when the send right before is cancelled: `sent` when the box is a draft (`claudeInputDraft`, so
+ * typed text on a verified viewport) holding exactly it — the `❯` of the first row dropped, the
+ * wrapped rows joined with nothing (a split word) or one space (a wrap between words), each row's
+ * own spaces as they are (U+00A0 read as a space). Anything else a
+ * draft could be — bash mode, a clipped box, a `[Pasted text #`/`[Image #` placeholder, other or
+ * edited words — and a box that is no known draft, unverified colors or nothing sent answer null.
+ */
 export function claudeRestoredDraft(live: string, colors: string | null, sent: string | null): string | null {
   if (sent === null || sent.trim() === "" || colors === null || !claudeInputDraft(live, colors)) return null;
   const box = claudeInputBox(live);
@@ -251,10 +308,17 @@ const screenLines = (text: string): string => text.replace(ANSI_RE, "").replace(
   .split(/\r?\n/).map((line) => line.trimEnd()).join("\n").trimEnd();
 
 /**
- * herdr's history ends with the live screen whatever the viewport shows, so only a redraw between
- * the reads can tell them apart: a suggestion accepted with Tab keeps its words and changes only its colors.
+ * Whether a colored read of the history's last rows (`recent`, as many as the viewport has) shows
+ * the live screen, so claudeInputDraft may take its colors while the viewport is scrolled into the
+ * history: herdr's history ends with the live screen whatever the viewport shows, so only a redraw
+ * between the reads can tell them apart. Its text equal to the live screen, every live read taken
+ * before and between the colored ones (`lives`) the same, and a second colored read, the last of all,
+ * identical to the first, colors included, rule one out: a suggestion accepted with Tab keeps its words
+ * and changes only its colors.
  */
 export function historyEndShowsLive(colors: string, colorsAfter: string, lives: readonly string[]): boolean {
+  // a read without any color (NO_COLOR, a monochrome terminal) cannot tell Claude's tip from the same
+  // words typed: a scrolled box keeps refusing as a draft, as it did before it was read from the history
   return colors === colorsAfter && !colorless(colors) && lives.length > 0 && lives.every((live) => live === lives[0])
     && screenLines(colors) === screenLines(lives[0]!);
 }
@@ -264,11 +328,14 @@ export function isClaudeHeld(prompt: InteractivePrompt): boolean {
 }
 
 /**
- * Claude's hint outlasts the message for a moment (sent or cleared in the terminal), over a box
- * that is empty again and shows its tip or a suggested prompt: Enter there sends Claude's
- * suggestion and Ctrl+C asks to leave Claude. herdr gives colors for the viewport alone (an ANSI
- * read of "detection" carries no escapes: measured on 0.9.3), and a viewport scrolled into the
- * history can show an older box.
+ * Whether a held-message card was read off Claude's own grey text. Claude's hint outlasts the
+ * message for a moment (sent or cleared in the terminal), over a box that is empty again and shows
+ * its tip or a suggested prompt: Enter there sends Claude's suggestion and Ctrl+C asks to leave
+ * Claude. A read that fails or shows no box says nothing, and the card stays.
+ * herdr gives colors for the viewport alone (an ANSI read of "detection", the live screen the card
+ * is read from, carries no escapes: measured on 0.9.3), and a viewport scrolled into the history
+ * can show an older box. So the grey text counts only when it is the very text the card took for
+ * the message.
  */
 export async function claudeHeldIsGrey(paneId: string, prompt: InteractivePrompt): Promise<boolean> {
   if (!isClaudeHeld(prompt)) return false;

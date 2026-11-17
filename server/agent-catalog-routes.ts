@@ -1,3 +1,8 @@
+/**
+ * GET /api/agent-catalog: every agent Ovis can install, with this PC's own official command for each
+ * and whether it is installed here, at which version (server/agent-catalog-detect.ts). Read only:
+ * nothing here installs, updates or signs in. The dispatcher in index.ts runs the access gate first.
+ */
 import { AGENT_CATALOG, catalogPlatform, catalogRow, type AgentCatalogResponse, type CatalogPlatform } from "../shared/agent-catalog.ts";
 import type { AgentDetector } from "./agent-catalog-detect.ts";
 import { hcMachine } from "./herdr-core/runtime.ts";

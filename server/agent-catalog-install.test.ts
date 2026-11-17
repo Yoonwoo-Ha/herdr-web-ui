@@ -87,6 +87,7 @@ describe("POST /api/agent-catalog/install and /sign-in", () => {
   });
 
   it("on Windows, waits for herdr to name the new tab's shell, and types into it once named", async () => {
+    // a new tab's shell is not in front at once: herdr names nothing, then PowerShell
     const answers: unknown[] = [null, { foreground_processes: [] }];
     info.mockImplementation(async () => (answers.length > 0 ? answers.shift() : await pwsh()) as never);
     const response = await new AgentInstaller(nowhere, "windows", undefined, { shellWaitMs: 5_000 }).handle(post("/api/agent-catalog/install", { agent: "claude" }), "/api/agent-catalog/install");
@@ -212,6 +213,7 @@ describe("POST /api/agent-catalog/install and /sign-in", () => {
     expect(await code(await installer.handle(post("/api/agent-catalog/install", { agent: "rm -rf" }), "/api/agent-catalog/install"))).toEqual([400, "unknown_agent"]);
     expect(await code(await installer.handle(post("/api/agent-catalog/install", { agent: "muse" }), "/api/agent-catalog/install"))).toEqual([409, "no_install_command"]);
     expect(await code(await installer.handle(post("/api/agent-catalog/install", { agent: "claude", alternative: 9 }), "/api/agent-catalog/install"))).toEqual([400, "invalid_alternative"]);
+    // on Windows the new tab runs PowerShell: Claude Code's cmd.exe command does not fit it
     const windows = new AgentInstaller(nowhere, "windows");
     const cmdIndex = claude.install.windows!.alternatives.findIndex((method) => method.shell === "cmd");
     expect(await code(await windows.handle(post("/api/agent-catalog/install", { agent: "claude", alternative: cmdIndex }), "/api/agent-catalog/install"))).toEqual([409, "shell_mismatch"]);

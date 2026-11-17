@@ -6,6 +6,10 @@ import { createServer } from "./index.ts";
 import { herdrRpc } from "./herdr/client.ts";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
 
+/**
+ * Two web bridges on one herdr (a second install beside the first): herdr gives one of them
+ * a terminal's attach.
+ */
 const rootA = mkdtempSync(join(tmpdir(), "herdr-held-a-"));
 const rootB = mkdtempSync(join(tmpdir(), "herdr-held-b-"));
 const first = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: rootA });
@@ -122,9 +126,11 @@ describe("a terminal another web bridge holds", () => {
       expect(b.state.errors).not.toContain("attach_conflict");
       expect(b.state.errorPanes[b.state.errors.indexOf("attach_held")]).toBe(paneId);
       expect(a.state.exits).toBe(0);
+      // nothing is typed through the waiting bridge into a pane the other one has
       b.send({ type: "submit", id: 1, pane_id: paneId, text: "echo held", payload: "echo held" });
       await until(() => b.state.submits.length === 1, "submit answered while held");
       expect(b.state.submits[0]).toEqual({ ok: false, code: "attach_held" });
+      // nor keys or input: A's half-typed command is not run from B
       const marker = join(rootA, "entered-through-b");
       a.send({ type: "input", pane_id: paneId, text: `touch '${marker}'` });
       await Bun.sleep(300);
@@ -160,6 +166,7 @@ describe("a terminal another web bridge holds", () => {
       b.send({ type: "attach", pane_id: paneId, cols: 100, rows: 30 });
       await until(() => b.state.errors.includes("attach_held"), "second bridge told the pane is held");
 
+      // an observer may not take it
       await watcher.open;
       watcher.send({ type: "role", mode: "observe" });
       watcher.send({ type: "take-over", pane_id: paneId });
@@ -274,6 +281,7 @@ describe("an attach classified as held", () => {
         client.send({ type: "attach", pane_id: paneId, cols: 100, rows: 30 });
         await until(() => client.state.errors.includes("attach_held"), "the first refusal holds the pane", 5_000);
         await until(() => herdr.attempts() === 2, "the retry whose exit never comes starts", 5_000);
+        // just past that refusal's exit budget: still held, and a key does not get through
         await Bun.sleep(2_150);
         client.send({ type: "keys", pane_id: paneId, keys: ["Enter"] });
         await until(() => client.state.errors.filter((code) => code === "attach_held").length === 2, "keys refused while held", 5_000);

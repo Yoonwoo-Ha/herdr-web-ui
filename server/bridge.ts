@@ -70,10 +70,16 @@ function liveIn(reading: { text: string } | null): boolean {
   try { return descriptorLive(JSON.parse(reading.text) as BridgeDescriptor); } catch { return false; }
 }
 
+/**
+ * `registered` says whether this server's descriptor was written: it is not while another live
+ * bridge holds the descriptor, when the descriptor changed while this one started, or when its
+ * guard cannot be taken.
+ */
 export function registerBridge(port: number, token = randomBytes(32).toString("hex"), options: { path?: string; sampled?(): void } = {}): { token: string; registered: boolean; close(): void } {
   const path = options.path ?? descriptorPath();
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const unregistered = { token, registered: false, close() {} };
+  // Registration never overwrites a live bridge. Its credential remains reusable.
   const seen = readDescriptor(path);
   if (liveIn(seen)) return unregistered;
   options.sampled?.();
@@ -93,6 +99,7 @@ export function registerBridge(port: number, token = randomBytes(32).toString("h
     // a guard that could not be released (OwnerGuardReleaseFailed) fails the start: this process
     // must not keep serving on a guard it may still hold
     if (!(error instanceof OwnerGuardUnavailable)) throw error;
+    // fails closed: this server runs unregistered and the descriptor is left as it was
     console.error(`This bridge was not registered (descriptor ${path}): ${error.message}`);
     return unregistered;
   }
@@ -126,6 +133,10 @@ export function relayTarget(hostname: string): string | null {
   return name;
 }
 
+/**
+ * How far a client may get ahead of a server that is not reading before the relay cuts both off: the
+ * largest request body the server reads (a picture at the attachment limit), twice over.
+ */
 export const RELAY_CLIENT_AHEAD_BYTES = 2 * MAX_IMAGE_BODY_BYTES;
 interface Relayed { peer?: Socket<Relayed>; queue: Uint8Array[]; queued: number; closed?: boolean; ending?: boolean }
 function send(socket: Socket<Relayed>, chunk: Uint8Array): number {
@@ -189,6 +200,8 @@ export function loopbackRelay(target: string, port: number): { port: number; sto
       if (peer && send(peer, chunk) > RELAY_CLIENT_AHEAD_BYTES) { client.terminate(); peer.terminate(); }
     },
     drain,
+    // nothing a departed client sent still matters, and a server that reads nothing would hold the
+    // queue forever: its side goes at once (a server's own close still lets the client read the rest)
     close(client) { client.data.closed = true; client.data.peer?.terminate(); },
     error(client) { client.data.closed = true; client.data.peer?.terminate(); },
   } });

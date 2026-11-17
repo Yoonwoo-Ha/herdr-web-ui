@@ -126,6 +126,8 @@ describe("Command Code session resolution", () => {
   });
 });
 
+// Command Code's own record shapes: a prompt, an assistant turn whose thinking and prose sit
+// side by side, and the camelCase usage it records.
 const conversation = [
   { type: "message", id: "u1", parentId: null, timestamp: "2026-10-19T00:00:02.000Z", message: { role: "user", content: [{ type: "text", text: "fix the crash" }] } },
   { type: "message", id: "a1", parentId: "u1", timestamp: "2026-10-19T00:00:03.000Z", message: {
@@ -163,6 +165,7 @@ describe("Command Code's context window comes from its catalog", () => {
   });
 });
 
+// The permission prompt, as Command Code's TUI draws it.
 const permission = [
   "─".repeat(40), "",
   "Create File",

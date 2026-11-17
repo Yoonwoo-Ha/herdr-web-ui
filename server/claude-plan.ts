@@ -29,6 +29,7 @@ export async function claudePlanFile(transcript: string): Promise<{ path: string
   }
 }
 
+/** The last `"slug"` in the transcript's tail: the session's current one. */
 async function lastSlug(transcript: string): Promise<string | null> {
   const file = await open(transcript, "r");
   try {

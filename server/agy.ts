@@ -1,3 +1,4 @@
+/** Agy's append-only step ledger, reduced in physical order before shared paging. */
 import { constants as sqliteConstants, Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, mkdtempSync, openSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -60,6 +61,9 @@ export function agyCatalog(path: string, beforeOpen?: () => void): Set<number> {
     const wal = readSync(fd, header, 0, 20, 0) === 20 && header[18] === 2 && header[19] === 2;
     const files = [{ path: dbPath, fd, stat: before }];
     beforeOpen?.();
+    // Every source open is immutable, even if a writer switches journal modes
+    // after the header read. Only the private snapshot may create side files.
+    // An incomplete WAL pair therefore exposes checkpointed rows only.
     let immutable = true;
     const descriptor = process.platform === "linux" || (process.platform === "darwin" && immutable) ? `/dev/fd/${fd}` : null;
     let name = descriptor ?? dbPath;
@@ -145,6 +149,10 @@ function entry(line: string): Record<string, unknown> {
   return value;
 }
 
+/**
+ * `agyCatalog` on a file thread (`file-pool.ts`): copying and opening a long session's catalog takes
+ * up to a second, which on the server's thread stalls every request and terminal (#2706).
+ */
 export async function agyCatalogOffThread(path: string): Promise<Set<number>> {
   let rows: number[];
   try { rows = await fileTask<number[]>({ op: "agy-catalog", path }); }
@@ -235,6 +243,10 @@ function agyReduce(index: Index, catalog: Set<number>): AgyProjection {
 
 const historyReads = new Map<string, Promise<unknown>>();
 
+/**
+ * With `authorized`, only that file is read: another one at the path (renamed over it while this
+ * read waited) is pending, for the next read to authorize afresh.
+ */
 export function withAgyHistory<T>(path: string, read: (projection: AgyProjection, fd: number) => T, authorized?: { dev: number; ino: number }): Promise<T> {
   const run = (historyReads.get(path) ?? Promise.resolve()).then(() => agyHistoryRead(path, read, authorized), () => agyHistoryRead(path, read, authorized));
   const settled = run.then(() => {}, () => {});
@@ -266,6 +278,7 @@ async function agyHistoryRead<T>(path: string, read: (projection: AgyProjection,
   } finally { closeSync(fd); }
 }
 
+/** A USER_INPUT step's request and the metadata Agy appends after it, or null when it is not that envelope. */
 function agyEnvelope(text: string): { request: string; metadata: string } | null {
   if (!text.startsWith("<USER_REQUEST>")) return null;
   const end = text.lastIndexOf("</USER_REQUEST>");
@@ -275,6 +288,7 @@ function agyEnvelope(text: string): { request: string; metadata: string } | null
   return { request: text.slice("<USER_REQUEST>".length, end).replace(/^\n|\n$/g, ""), metadata };
 }
 
+/** A USER_INPUT step's prompt, without the request wrapper Agy adds around it. */
 export function agyUserText(text: string): string {
   return agyEnvelope(text)?.request ?? text;
 }

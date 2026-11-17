@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { AgyUnavailable, agyCatalog, agyDatabasePath, parseAgyTranscript, withAgyHistory } from "./agy.ts";
 
+/** Writes a WAL catalog from a process that then dies without closing it, as agy does when killed:
+ * nothing checkpoints, and no handle stays open, so a test may delete side files on any platform. */
 async function abandonedWal(dbPath: string, sql: string): Promise<void> {
   const writer = Bun.spawn([process.execPath, "-e", `
     import { Database } from "bun:sqlite";

@@ -111,6 +111,7 @@ describe("CLIProxyAPI v8", () => {
     const hidden = new Set(["claude:cliproxy:claude-a.json"]);
     const first = await service.report(false, hidden);
     const reads = () => fake.calls.filter((entry) => entry.path === "/requests/api-call").map((entry) => (entry.body as { auth_index: string }).auth_index);
+    // a hidden account is listed but never read, not even by a fresh server (#3423)
     expect(reads()).toEqual(["b"]);
     const shown = await service.report();
     expect(reads()).toEqual(["b", "a"]);
@@ -133,6 +134,7 @@ describe("CLIProxyAPI v8", () => {
     await service.report();
     fake.setDown(false);
     await service.report();
+    // Then: a fresh server does not read the hidden account; the retry reads only the account shown again
     expect(reads()).toEqual(["b", "a"]);
   });
 
@@ -178,6 +180,7 @@ describe("CLIProxyAPI v8", () => {
     fake.files[0]!.email = "claude-a@example.test";
     service.invalidate();
     await service.report(false, hidden);
+    // Then: neither is read, as nothing says which of them was hidden
     expect(fake.calls.filter((entry) => entry.path === "/requests/api-call").map((entry) => (entry.body as { auth_index: string }).auth_index)).toEqual(["b", "b"]);
   });
 
@@ -293,6 +296,7 @@ describe("CLIProxyAPI v8", () => {
       }, () => readable);
       restarted.hiddenChanged();
       await restarted.report(false, hidden);
+      // Bob's key is neither covered nor known: no Hub account is read at all
       expect(reads().slice(3)).toEqual([]);
     });
 
@@ -432,6 +436,7 @@ describe("CLIProxyAPI v8", () => {
       const restarted = new CLIProxyService(dir);
       restarted.skipAccounts(() => hidden);
       await new CLIProxyRoutes(restarted).handle(new Request("http://localhost/api/cliproxy", { method: "PUT", body: JSON.stringify({ url: fake.server.url.origin, management_key: KEY }) }));
+      // a restart before any report keeps that way out: the shown account is read, the hidden ones are not
       await restart(hidden);
       expect(reads().slice(3)).toEqual(["c"]);
     });
@@ -641,6 +646,7 @@ describe("CLIProxyAPI v8", () => {
       const restarted = new CLIProxyService(dir);
       restarted.skipAccounts(() => hidden);
       await restarted.report(false, hidden);
+      // Bob under her file name is not taken for her: nothing is read at the next report either
       restarted.invalidate();
       await restarted.report(false, hidden);
       expect(reads().slice(before)).toEqual([]);
@@ -708,6 +714,7 @@ describe("CLIProxyAPI v8", () => {
       for (let at = 0; at < 1200; at++) fake.files.push({ ...fake.files[0]!, name: `alice-${at}.json`, auth_index: `alice-${at}-${"x".repeat(60)}` });
       service.invalidate();
       await service.report(false, hidden);
+      // what is saved stays a list the next start reads (#3449), and blind (#3453): no older list knowing less of her is used
       const before = reads().length;
       await restart(hidden);
       expect(reads().slice(before)).toEqual([]);
@@ -730,6 +737,7 @@ describe("CLIProxyAPI v8", () => {
 
     it("never saves a hidden list a restart would refuse, however many hidden accounts grow (#3449)", async () => {
       const { hidden } = await listManyHidden();
+      // a list the next start reads, blind: the listed identities do not fit, and the older list knows less (#3453)
       const before = reads().length;
       await restart(hidden);
       expect(reads().slice(before)).toEqual([]);
@@ -1148,6 +1156,7 @@ describe("CLIProxyAPI v8", () => {
     await service.report(false, hidden);
     service.invalidate();
     await service.report(false, hidden);
+    // Then: with no account to tell it by, the hidden key alone keeps it unread (#3423)
     expect(fake.calls.filter((entry) => entry.path === "/requests/api-call").map((entry) => (entry.body as { auth_index: string }).auth_index)).toEqual(["a", "b"]);
   });
 

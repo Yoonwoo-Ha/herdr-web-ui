@@ -55,6 +55,7 @@ it("strips Codex's native image envelope but keeps user-typed lookalikes", () =>
   expect(regressionUser.parts.filter((part) => part.kind === "image")).toHaveLength(1);
   expect(JSON.stringify(regressionUser)).not.toContain("/tmp/yellow-star.gif");
 
+  // a pasted image's envelope has no path; two of them in one message
   const pasted = parseCodexTranscript(jsonl({
     type: "response_item", timestamp: "2026-09-27T00:00:00Z",
     payload: { type: "message", role: "user", content: [
@@ -93,6 +94,7 @@ it("names a raster by its signature and refuses short or truncated prefixes", ()
   expect(imageType(bytes("RIFF", [4, 0, 0, 0], "WEBP"))).toBe("image/webp");
   expect(imageType(bytes("RIFF", [4, 0, 0, 0], "WEB"))).toBeNull();
   expect(imageType(bytes("RIFF", [4, 0, 0, 0], "WAVE"))).toBeNull();
+  // each letter with its high bit set: an ASCII decode would read these as the signatures
   expect(imageType(bytes([0xc7, 0xc9, 0xc6, 0x38, 0x37, 0xe1]))).toBeNull();
   expect(imageType(bytes([0xc7, 0xc9, 0xc6, 0x38, 0x39, 0xe1]))).toBeNull();
   expect(imageType(bytes([0xd2, 0xc9, 0xc6, 0xc6, 4, 0, 0, 0, 0xd7, 0xc5, 0xc2, 0xd0]))).toBeNull();
@@ -206,6 +208,7 @@ describe("a Codex tool's pictures reach the chat", () => {
 
   it("names the recorded view_image picture by its call, never its bytes, and serves those bytes", async () => {
     const path = rollout(ROLLOUT);
+    // one picture: the ImageView event beside the output is no second copy
     expect(pictures(path)).toEqual([`image/png codex-tool:${VIEWED}:0`]);
     expect(JSON.stringify(transcriptPage("codex-transcript", path, {}, home))).not.toContain("iVBORw0KGgo");
     expect(await sha(path, `codex-tool:${VIEWED}:0`)).toBe(`image/png ${SHOT}`);
@@ -254,6 +257,7 @@ describe("a Codex tool's pictures reach the chat", () => {
   it("counts a picture before the one it serves as the parser does, its text written with escapes", async () => {
     const large = Buffer.alloc(2 * 1024 * 1024, 7);
     png.copy(large);
+    // a JSON writer may escape every `/`, and the first picture's text crosses the endpoint's windows
     const path = rollout(records(started, call("call_a"), output("call_a", [picture(large), picture(Buffer.from("<svg/>"), "image/svg+xml"), picture(gif, "image/gif")])).replaceAll("/", "\\/"));
     expect(pictures(path)).toEqual(["image/png codex-tool:call_a:0", "image/gif codex-tool:call_a:1"]);
     expect(Buffer.from((await codexToolImage(path, "codex-tool:call_a:0", home))!.bytes).equals(large)).toBe(true);
@@ -322,6 +326,8 @@ describe("a Codex tool's pictures reach the chat", () => {
     writeFileSync(join(elsewhere, name), records(started, call("call_a"), output("call_a", [picture(foreign)])));
     expect(Buffer.from((await codexToolImage(path, "codex-tool:call_a:0", home))!.bytes).equals(png)).toBe(true);
     forgetTranscriptState();
+    // the path names the pane's own rollout when the lookup begins and at the scan's first open; every later
+    // open, after the scan's awaits, meets the other folder
     const counts = { opens: 0, swaps: 0 };
     const real = fs.openSync;
     const spy = spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
@@ -371,6 +377,8 @@ it("checks a picture's text a piece at a time exactly as it checks the whole", (
       expect([url, scan.type()]).toEqual([url, codexOutputPicture({ type: "input_image", image_url: url })?.mediaType ?? null]);
     }
   }
+  // at the 8 MiB edge the padding decides: "==" takes exactly the most the endpoint serves, so a
+  // text cut inside its padding must still be read as ending in both
   const edge = `${pngHead}${"A".repeat(11_184_814 - pngHead.length - 2)}==`;
   for (const text of [edge, `${edge.slice(0, -2)}A=`]) {
     for (const at of [text.length - 1, text.length - 2, text.length - 3]) {

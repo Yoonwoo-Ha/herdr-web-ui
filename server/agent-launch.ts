@@ -83,6 +83,7 @@ export async function agentLaunch(paneId: string, agent: AgentPayload, launched?
     const kind = agent.kind as string;
     const args = agent.args as string[] | undefined;
     if (isShellAgentKind(kind)) {
+      // another machine of the core: its path would be this PC's, and its start is never seen there (no pids)
       if (hcMachine() !== null) return { agent_started: false, error: { code: "other_machine", message: `${kind} starts only on the PC that runs Ovis` } };
       const shellOptions = locator ? { locator } : {};
       const pid = kind === "dsh-tui" && args !== undefined
@@ -92,6 +93,7 @@ export async function agentLaunch(paneId: string, agent: AgentPayload, launched?
     }
     else {
       const given = typeof agent.name === "string" && agent.name.length > 0 ? agent.name : null;
+      // on Windows a Claude Code's inline JSON --settings goes as a file's path (server/claude-settings-file.ts)
       const startArgs = args === undefined ? undefined : agentStartArgs(kind, args, { platform: options.platform, dir: options.settingsDir });
       // herdr refuses a name another agent holds. Two creations at once can pick the same
       // free one: the refused one picks again. It also refuses a pane whose shell is not up

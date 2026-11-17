@@ -33,10 +33,12 @@ const TELEGRAM_CHAT = /^(?:-?\d{1,20}|@[A-Za-z0-9_]{4,64})$/;
 
 interface StoredWebhook {
   preset: AlertWebhookPreset;
+  /** the URL, or for Telegram the bot token */
   secret: string;
   chat_id?: string;
   alerts: AlertPrefs;
   link_base?: string;
+  /** who saved it, as a push subscription's `device_id`: a device, null for a local/token sign-in, absent for the open LAN */
   owner?: string | null;
 }
 
@@ -49,6 +51,7 @@ export interface WebhookAlert {
   machine_id?: string;
   workspace_id?: string;
   current?: () => boolean;
+  /** the destination's `generation()` when the alert arose: a destination set since is not told it */
   generation?: number;
 }
 
@@ -71,7 +74,9 @@ export interface AlertWebhookOptions {
   now?: () => number;
   retryDelays?: readonly number[];
   telegramApi?: string;
+  /** accept a plain-http loopback URL for every preset: only for the tests' fake destination */
   loopbackHttp?: boolean;
+  /** whether whoever saved it may still hear alerts (push.ts canDeliver): asked before each try */
   canDeliver?: (owner: string | null | undefined) => boolean;
 }
 
@@ -171,6 +176,7 @@ export function createAlertWebhook(options: AlertWebhookOptions): AlertWebhook {
   let running: Promise<void> | null = null;
   let testing: { at: number; result: Promise<WebhookResult | null> } | null = null;
   let wake: (() => void) | null = null;
+  /** bumped by a save or removal: a post for the destination before it is not retried or recorded */
   let generation = 0;
 
   function current(): StoredWebhook | null {
@@ -299,6 +305,8 @@ export function createAlertWebhook(options: AlertWebhookOptions): AlertWebhook {
         secret = typed || !same ? checkUrl(input.preset, input.url, options.loopbackHttp) : same.secret;
       }
       let base = same?.link_base ?? before?.link_base;
+      // a relay request names no address the app opens at (relay/session.ts RELAY_ORIGIN), and this PC's own loopback
+      // address opens nothing on a phone: a saved base another device can reach stays
       if (linkBase && linkBase !== RELAY_ORIGIN) {
         try {
           const origin = new URL(linkBase).origin;
@@ -328,6 +336,7 @@ export function createAlertWebhook(options: AlertWebhookOptions): AlertWebhook {
   };
 }
 
+/** /api/alerts/webhook routes (shared/alert-webhook.ts). A watching device is refused every change before it gets here (dispatch.ts). */
 export async function handleAlertWebhookRequest(request: Request, pathname: string, webhook: AlertWebhook, owner?: string | null): Promise<Response | null> {
   if (pathname !== "/api/alerts/webhook" && pathname !== "/api/alerts/webhook/test") return null;
   setRequestRoute(pathname);

@@ -10,6 +10,7 @@ import { agyStartScreenUnused } from "./start-screen.ts";
 export interface AgyStore { root: string; session: string; path: string; pid: number; started: string }
 const LOCK = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.lock$/i;
 
+/** Only paths held by the selected process are candidates; directory contents aren't evidence. */
 export function agyStoreFromLocks(paths: readonly string[]): Pick<AgyStore, "root" | "session" | "path"> | null {
   const locks = new Set<string>();
   for (const path of paths) {
@@ -68,6 +69,10 @@ export type RestartManagerApi = {
   };
 };
 
+/**
+ * Every process the Restart Manager names for this file; empty when the file is not held, null when
+ * the query failed (a failed query proves nothing about who holds the file).
+ */
 export function windowsHolders(path: string, api?: RestartManagerApi): number[] | null {
   const restartManager = api ?? windowsApi().restartManager;
   const session = Buffer.alloc(4);
@@ -111,6 +116,7 @@ export function windowsLockCandidates(env: Record<string, string | undefined> = 
   return candidates.length > MAX_WINDOWS_CANDIDATES ? [] : candidates;
 }
 
+/** `complete` is false when a holder query failed: such a pass names no pid's only lock. */
 interface WindowsScan { at: number; candidates: string; owners: Map<number, string[]>; complete: boolean }
 type WindowsHolders = (path: string) => number[] | null;
 const holds = (getHolders: WindowsHolders, path: string, pid: number): boolean => getHolders(path)?.includes(pid) ?? false;
@@ -196,6 +202,7 @@ export async function windowsHeldPaths(
     if (negative && negative.listing === listing && Date.now() < negative.next) return [];
     getCandidates = () => candidates;
   }
+  // Only a fresh, complete scan establishes singleton evidence; confirm it on every refresh.
   const seen = windowsScan?.owners.get(pid);
   if (windowsScan?.complete && Date.now() - windowsScan.at < WINDOWS_SCAN_TTL_MS && seen?.length === 1) {
     if (holds(getHolders, seen[0]!, pid)) { rememberHeld(pid, seen[0]!, windowsScan.at); return seen; }
@@ -204,6 +211,8 @@ export async function windowsHeldPaths(
   const scan = await windowsScanAll(getHolders, getCandidates);
   const scanned = scan.owners.get(pid) ?? [];
   const held = scanned.filter((path) => holds(getHolders, path, pid));
+  // ownership moved during the pass: a lock it never saw may be held too, so nothing is proven,
+  // and the pid backs off like any unresolved one instead of rescanning on every refresh
   const moved = held.length !== scanned.length;
   if (moved) invalidateWindowsScan();
   else if (held.length === 1 && scan.complete) {
@@ -268,7 +277,7 @@ async function heldPaths(pid: number): Promise<string[] | null> {
       let count = 0;
       for (let entry = dir.readSync(); entry; entry = dir.readSync()) {
         if (++count > 4096) return null;
-        try { paths.push(readlinkSync(`/proc/${pid}/fd/${entry.name}`)); } catch {}
+        try { paths.push(readlinkSync(`/proc/${pid}/fd/${entry.name}`)); } catch { /* closed during enumeration */ }
       }
     } finally { dir.closeSync(); }
     return paths;
@@ -295,6 +304,9 @@ export async function resolveAgyStore(pane: HerdrPane): Promise<AgyStore | null>
     const { pid } = owner;
     const before = await processIdentity(pid);
     if (!before) return null;
+    // herdr's first list may predate the process the locks are read from, when the Agy it named exited
+    // and its pid was reused. Ask again before reading them: the locks are then the last evidence
+    // gathered, and that answer and they both lie between two reads of one birth identity.
     const current = await agyPaneProcess(pane.pane_id);
     if (current?.pid !== pid) return null;
     const paths = await heldPaths(pid);
@@ -329,6 +341,8 @@ export async function agyFreshSession(pane: HerdrPane, screen: string): Promise<
     if (!owner || !agyStartedOnNoSession(owner)) return null;
     const before = await processIdentity(owner.pid);
     if (!before) return null;
+    // As in resolveAgyStore: the pane must still name this process, asked before its locks are read,
+    // and its arguments are read again here, inside the same birth identity as the locks.
     const current = await agyPaneProcess(pane.pane_id);
     if (current?.pid !== owner.pid || !agyStartedOnNoSession(current)) return null;
     const paths = await heldPaths(owner.pid);

@@ -62,6 +62,8 @@ it("invalidates completion authority on replacement, truncation and same-size re
 
 it("invalidates completion authority on a same-size rewrite within the timestamp tick of the check", async () => {
   const s = fixture();
+  // one timestamp for both writes, as two writes a millisecond apart keep on Windows; a minute ahead,
+  // so every check of this test begins within its tick however slowly it runs
   const tick = Math.ceil(Date.now() / 1000) + 60;
   writeFileSync(s.path, notice("new"));
   utimesSync(s.path, tick, tick);
@@ -338,6 +340,10 @@ function holdSlices() {
   wrapReads((_, work) => async (file) => { entered.open(); await held.opened; return work(file); });
   return { entered: entered.opened, release: held.open };
 }
+/**
+ * Every window read takes 10 ms of the clock (performance.now), more than a slice, and opening a
+ * transcript `openMs`, though no time passes: storage as slow as an SSHFS home.
+ */
 function slowReads(read: (path: string, reads: number) => void = () => {}, openMs = 0, look?: number) {
   const real = performance.now.bind(performance), base = real();
   let looked = 0;
@@ -355,6 +361,7 @@ function slowReads(read: (path: string, reads: number) => void = () => {}, openM
   } }); });
   return Object.assign((path: string) => reads.get(path) ?? 0, { leases: (path: string) => leases.get(path) ?? 0, elapsed: () => waited });
 }
+/** An open on remote storage: several round trips (open, stat, the path's stat), each slower than a read. */
 const OPEN_MS = 100;
 const took = (reads: number, opens: number) => reads * 10 + opens * OPEN_MS;
 const MIB = 1024 * 1024;
@@ -869,6 +876,7 @@ it("drops a window read across a start over that a request made while the window
 }, 5000);
 
 it("reads another transcript while one on a network filesystem is stuck in its native read", async () => {
+  // every transcript on NFS: read through the thread pool, where a read can wait on the network for good
   const statfs = fsp.statfs;
   const network = spyOn(fsp, "statfs").mockImplementation((async (directory: string) => ({ ...(await statfs(directory)), type: 0x6969 })) as typeof statfs);
   release.push(() => network.mockRestore());

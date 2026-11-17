@@ -77,10 +77,12 @@ async function closeUnstarted(tabId: string): Promise<void> {
 
 const shellUnknown = () => conflictResponse("shell_unknown", "Ovis could not tell which shell the new tab runs, so it typed nothing there");
 
+/** The fields each route takes; any other field is refused, so a request cannot carry a command or a platform. */
 const FIELDS: Record<string, readonly string[]> = { [INSTALL_PATH]: ["agent", "alternative"], [SIGN_IN_PATH]: ["agent"] };
 
 type Running = { paneId: string | null; typedAt: number | null; seenRunning: boolean };
 
+/** Types `text` into the pane's shell and runs it: a newline on POSIX, the Enter key on Windows (see shell-agent.ts). */
 async function typeAndRun(paneId: string, text: string, shell: PaneShell): Promise<void> {
   if (shell === "posix") {
     await paneSendText(paneId, `${text}\n`);
@@ -127,6 +129,7 @@ export class AgentInstaller {
     if (extra.length > 0) return badRequest("unknown_field", `This route does not take ${extra.join(", ")}`);
     const entry = AGENT_CATALOG.find((candidate) => candidate.id === body["agent"]);
     if (!entry) return badRequest("unknown_agent", "Name an agent from GET /api/agent-catalog");
+    // another machine of the core: this PC's commands, paths and home folder are not that machine's
     if (hcMachine() !== null) return conflictResponse("other_machine", "Install and sign in to agents from a terminal on this machine: Ovis cannot run them there for it");
     if (this.platform === null) return conflictResponse("platform_unsupported", "Ovis has no install commands for this operating system");
     try {
@@ -187,6 +190,7 @@ export class AgentInstaller {
     // the catalog's own check again, right before the text is typed: a command that fails it never runs
     if (commandProblems(entry).length > 0) return conflictResponse("command_refused", "This install command is not one of the vendor's own; it was not run");
     const held = this.#running.get(entry.id);
+    // checked again after the wait: two requests that both saw an ended install do not both start one
     if (held !== undefined && (await this.#stillRunning(held, platform) || this.#running.get(entry.id) !== held)) {
       return conflictResponse("install_running", `${entry.name} is already being installed on this PC. Wait for its tab to finish, or close it.`);
     }
@@ -216,6 +220,7 @@ export class AgentInstaller {
     const dirs = entry.detect.install_dirs?.[platform] ?? [];
     const executable = await this.detector.executable(binary!, dirs, platform);
     if (executable === null) return conflictResponse("not_installed", `${entry.name} is not installed on this PC`);
+    // without a program it needs (DeepSeek Harness's dsh) its sign-in cannot start either
     for (const needed of entry.detect.needs ?? []) if ((await this.detector.executable(needed, dirs, platform)) === null) return conflictResponse("not_installed", `${entry.name} is not installed on this PC`);
     const { paneId, tabId, workspaceId } = await openTab(`Sign in to ${entry.name}`, this.home);
     return this.#inNewTab(tabId, async () => {

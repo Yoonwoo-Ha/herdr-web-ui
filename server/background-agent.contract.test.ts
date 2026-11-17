@@ -21,6 +21,7 @@ const FIRST = "8d8f7d39-6788-49f3-b071-e3ba985c163c";
 const SECOND = "f2f55dc4-50ad-478c-a641-bf21268a1bba";
 const WATCH_TOKEN = "test-background-agent-watch";
 const REMOTE_TOKEN = "test-background-agent-remote";
+/** how long a frame the test waits for may take: this PC also runs CI, and a loaded one is slow to look a session up */
 const FRAME_WAIT_MS = 30_000;
 const project = join(root, ".claude", "projects", claudeProjectDir(root));
 const workspaces: string[] = [];
@@ -248,6 +249,7 @@ it("refuses what is not a subagent of a Claude pane: spelled paths, links, comma
   expect(await errorCode(await fetch(`${base()}/api/pane/background-agent?pane_id=${encodeURIComponent(first)}`, { headers: owner }))).toEqual([400, "missing_agent_id"]);
   expect(await errorCode(await fetch(`${base()}/api/pane/background-agent?agent_id=a1`, { headers: owner }))).toEqual([400, "missing_pane_id"]);
   expect(await errorCode(await fetch(detailUrl(first, "a1"), { method: "POST", headers: owner }))).toEqual([400, "method_not_allowed"]);
+  // an agent whose files are links, to a file of this session or of another, is none of this session's
   const dir = join(project, FIRST, "subagents");
   symlinkSync(join(project, SECOND, "subagents", "agent-b1.meta.json"), join(dir, "agent-l1.meta.json"));
   symlinkSync(join(project, SECOND, "subagents", "agent-b1.jsonl"), join(dir, "agent-l1.jsonl"));
@@ -255,6 +257,7 @@ it("refuses what is not a subagent of a Claude pane: spelled paths, links, comma
   const linkedText = await linked.text();
   expect([linked.status, (JSON.parse(linkedText) as ApiError).error.code]).toEqual([404, "background_agent_not_found"]);
   expect(linkedText).not.toContain("dispatch for b1");
+  // the session's background command has a screen, not a transcript, though files bear its id; a shell pane and an unknown pane have neither
   writeFileSync(join(dir, "agent-bsuite.meta.json"), JSON.stringify({ agentType: "reviewer", description: "posing as the command" }));
   writeFileSync(join(dir, "agent-bsuite.jsonl"), json({ isSidechain: true, sessionId: FIRST, agentId: "bsuite", type: "user", timestamp: new Date().toISOString(), message: { role: "user", content: "posed dispatch" } }));
   const command = await detail(first, "bsuite");

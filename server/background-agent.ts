@@ -6,7 +6,9 @@ import { opencodeAgentDetail, type OpencodeSubagentStatus } from "./opencode-sub
 export const BACKGROUND_AGENT_PATH = "/api/pane/background-agent";
 
 export interface BackgroundAgentDeps {
+  /** the pane as herdr has it now; throws herdr's pane_not_found */
   paneGet: (paneId: string) => Promise<HerdrPane>;
+  /** whether the pane is OmO's, whatever herdr names it: its tasks have no transcript to open */
   omoPane: (paneId: string) => boolean;
   claudeAgents: Pick<ClaudeSubagentStatus, "ensure" | "sessionOf">;
   opencodeAgents?: Pick<OpencodeSubagentStatus, "ensure" | "sessionOf" | "beginRead">;
@@ -69,6 +71,7 @@ export async function handleBackgroundAgentRequest(request: Request, url: URL, d
       if (read.refusal === "unavailable") return unavailable("the session's store cannot be read as it is");
       return notFound();
     }
+    // a background command of the session has no transcript of its own: its output is a screen's, which is never read
     if (backgroundCommand(before.path, agentId)) return unsupported("a background command's output is not read");
     const read = await (deps.read ?? backgroundAgentDetail)(before.path, agentId);
     if (!sameSession(before, await session())) return conflictResponse("background_target_changed", "the pane no longer runs the session the agent belongs to");

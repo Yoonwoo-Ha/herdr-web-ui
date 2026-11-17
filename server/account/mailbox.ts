@@ -17,9 +17,13 @@ import type { AccountHolds } from "./holds.ts";
 import { applyAccountRecords, type AddGates, type RecordOutcome } from "./records.ts";
 
 export const MAILBOX_PULL_MS = 5 * 60_000;
+/** How old an admission may be for the PC to take an account join outside the pairing window. */
 export const ADMISSION_TTL_MS = 10 * 60_000;
+/** The least time between two pulls a join that missed asks for. */
 const ASKED_PULL_MS = 10_000;
+/** The least time between two pulls that refused sign-ins ask for, once one of them read the mailbox. */
 export const SIGN_IN_PULL_MS = 60_000;
+/** The same after such a pull could not read the mailbox (the service was down, or did not answer): it found nothing out. */
 export const SIGN_IN_PULL_RETRY_MS = ASKED_PULL_MS;
 export const SIGN_IN_WAIT_MS = 5_000;
 
@@ -50,12 +54,18 @@ export function accountServiceUrl(value = process.env["OVIS_ACCOUNT_SERVICE_URL"
   return url.origin;
 }
 
+/**
+ * Records that wait, across pulls (and restarts), until they apply: a remove whose signer is not a
+ * member yet, and an add held back by the enrollment barrier or a waiting remove. At this many every
+ * add waits too, and a page that would pass it is not acknowledged.
+ */
 export const PENDING_MAX = 1000;
 
 const WAITING = new Set(["signer_not_member", "enrolling", "removal_pending"]);
 
 const waits = (outcome: RecordOutcome | undefined): boolean => outcome?.outcome === "refused" && WAITING.has(outcome.code);
 
+/** Null for a file that exists and will not parse: it is not an empty queue (it may hold the removes that gate adds). */
 function readPending(path: string | undefined): unknown[] | null {
   if (!path) return [];
   let value: unknown;
@@ -93,6 +103,7 @@ export class AccountMailbox {
 
   private pending: unknown[];
   private draining: unknown[] = [];
+  /** Why the waiting records cannot be read: no add applies and nothing is pulled until it is fixed. */
   private readonly pendingError: string | null;
 
   constructor(private readonly options: AccountMailboxOptions) {
@@ -101,6 +112,10 @@ export class AccountMailbox {
     this.pendingError = pending === null ? `Cannot read ${options.pendingPath}: account adds wait until it is restored or fixed.` : null;
   }
 
+  /**
+   * What holds an add back here (docs/account.md, "Enrolling a PC"): the enrollment barrier, a waiting
+   * remove for its key (whatever its signer), a held key, and a queue that is full or cannot be read.
+   */
   gates(): AddGates {
     return {
       enrolling: () => this.options.holds?.enrolling() ?? false,
@@ -109,8 +124,10 @@ export class AccountMailbox {
     };
   }
 
+  /** Every add is held back here, whatever its key: the waiting records cannot be read, or removes were lost to a full queue. */
   holdsEveryAdd(): boolean { return this.pendingError !== null || (this.options.holds?.full() ?? false); }
 
+  /** The keys of the removes waiting here: /api/account/status lists them as `blocked`. */
   waitingRemoveKeys(): string[] {
     return [...new Set(this.waiting().flatMap((record) => removedKey(record) ?? []))];
   }
@@ -122,6 +139,7 @@ export class AccountMailbox {
     return this.pulling;
   }
 
+  /** The waiting records are retried by one run at a time (a pull, or settle), so none of them is ever out of the gate's sight. */
   private turn: Promise<unknown> = Promise.resolve();
 
   private exclusively<T>(run: () => Promise<T>): Promise<T> {
@@ -137,6 +155,11 @@ export class AccountMailbox {
     this.timer.unref?.();
   }
 
+  /**
+   * Whether the account service has an admission at most 10 minutes old naming `key` for this PC's
+   * current account and relay identity. A miss pulls again, at most once every 10 seconds, so refused
+   * requests cannot make the PC call the service at will.
+   */
   async admitted(key: string): Promise<boolean> {
     const fresh = () => {
       const account = this.options.devices.account();
@@ -155,6 +178,15 @@ export class AccountMailbox {
     return fresh();
   }
 
+  /**
+   * A sign-in this PC could not accept: a member may have added the device on another PC a moment ago,
+   * and its signed add then waits in the mailbox (docs/account.md, "Account service API"). On a PC in
+   * an account this joins the pull under way or starts one, and waits for it at most `waitMs`. Such
+   * sign-ins start at most one pull a minute, on a count of their own, so sign-ins nobody can check
+   * yet cannot make the PC call the service at will; a pull that could not read the mailbox found
+   * nothing out, so after it the next may start 10 seconds after it began. What the pull finds is
+   * checked and applied like any other record; the caller checks the sign-in again. Never throws.
+   */
   async pullForRefusedSignIn(waitMs = SIGN_IN_WAIT_MS, now = Date.now()): Promise<void> {
     if (this.options.devices.account() === null) return;
     let pull = this.pulling;
@@ -172,9 +204,16 @@ export class AccountMailbox {
     finally { clearTimeout(timer); }
   }
 
+  /**
+   * A pull a drive member's `?fresh=1` asked for: one that starts after the request. True only when it
+   * read the whole mailbox without an error, so nothing the service holds for this PC is left unread
+   * (docs/account.md, "PC API"); true with no account service at all, as there is no mailbox to read.
+   */
   async freshen(): Promise<boolean> {
     if (this.options.service instanceof AccountServiceOff) return this.pendingError === null;
     const asked = Date.now();
+    // a pull under way may have read the mailbox before this request: the answer waits for one that starts after it,
+    // which every request waiting meanwhile shares (pull)
     if (this.pulling) await this.pulling;
     await this.pull();
     if (this.drainedAt === null || this.drainedAt < asked) return false;
@@ -220,21 +259,31 @@ export class AccountMailbox {
     return applied;
   }
 
+  /**
+   * A `remove` a client relayed (POST /api/account/records) that was refused only because its signer
+   * is not a member here yet: kept with the mailbox's own such records, so it applies on the pull after
+   * its signer joins (#2956). One already waiting is not kept twice, and none is kept once PENDING_MAX
+   * wait: a relayed record never pushes out one that waits already. False when it could not be kept,
+   * so the client hears the outcome is undecided and sends it again.
+   */
   wait(record: unknown): boolean {
     const waiting = this.waiting();
     const text = JSON.stringify(record);
     if (waiting.some((kept) => JSON.stringify(kept) === text)) return true;
     if (this.pendingError !== null) return false;
     const next = [...this.pending, record];
+    // full: a waiting add makes room (it can come again); with none, the remove is undecided and its sender tries again
     if (waiting.length >= PENDING_MAX) {
       const add = next.findIndex((kept) => removedKey(kept) === null);
       if (add === -1) {
+        // nowhere to keep it: its key stays out of every add until a pairing here settles it
         const key = removedKey(record);
         if (key !== null) this.options.holds?.hold([key]);
         return false;
       }
       next.splice(add, 1);
     }
+    // on disk first, with the ones a pull is retrying, so a stop (or a failed write) loses none of them
     if (this.options.pendingPath) writePrivateState(this.options.pendingPath, [...this.draining, ...next]);
     this.pending = next;
     return true;
@@ -254,6 +303,7 @@ export class AccountMailbox {
     }
     if (account === null || !identity) return 0;
     if (this.options.service instanceof Error) { this.error = this.options.service.message; return 0; }
+    // a removal refused for a local reason would be acknowledged and lost: collect nothing until it is fixed
     if (this.options.devices.accountError !== null) { this.error = this.options.devices.accountError; return 0; }
     if (this.pendingError !== null) { this.error = this.pendingError; return 0; }
     let applied = 0;
@@ -261,6 +311,7 @@ export class AccountMailbox {
     const early: unknown[] = this.pending.splice(0);
     this.draining = early;
     const retry = async () => { applied += await this.retry(early, identity.server_id); };
+    /** On disk before any page that put a record here is acknowledged, so a stop never loses one. */
     const save = () => {
       this.trim(early);
       if (this.options.pendingPath) writePrivateState(this.options.pendingPath, [...early, ...this.pending]);
@@ -277,6 +328,7 @@ export class AccountMailbox {
         if (page === MAX_PAGES) break;
         for (let start = 0; start < entries.length; start += ACCOUNT_RECORDS_MAX) {
           const batch = entries.slice(start, start + ACCOUNT_RECORDS_MAX).map(({ record }) => record);
+          // a remove waiting on its signer joins `early` at once, so an add for its key later in the page meets it
           const keep = (record: unknown) => {
             const text = JSON.stringify(record);
             if (!early.some((kept) => JSON.stringify(kept) === text)) early.push(record);
@@ -288,6 +340,7 @@ export class AccountMailbox {
         }
         await retry();
         save();
+        // every record read is acknowledged, refused ones too, so a refused one cannot hold the rest back
         ack = Math.max(...entries.map(({ seq }) => seq));
       }
       save();
@@ -312,6 +365,7 @@ export class AccountMailbox {
       if (removedKey(early[index]) === null) { early.splice(index, 1); over--; } else index++;
     }
     if (over <= 0) return;
+    // the latch is on disk before any remove is dropped: a failed write drops none
     this.options.holds?.overflow();
     early.splice(0, over);
   }
