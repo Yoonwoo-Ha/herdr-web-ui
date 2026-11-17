@@ -9,6 +9,8 @@ import { handleMachineRequest } from "./machine-api.ts";
 import { MachineManager } from "./machines.ts";
 import type { PushService } from "./push.ts";
 
+// Changing what runs on this PC's PCs is the owner's, from any device he paired (relay included): never an open-LAN
+// visitor's, a Portal visitor's or a watching device's.
 const base: AccessInput = { loopback: true, forwarded: false, funnel: false, tailscaleLogin: null, forwardedFor: null, host: null, tokenMatched: false, device: null, owner: null, tagged: false,
   soleLogin: null, dnsName: null, tailnetIp: null, serveOnly: false, tokenConfigured: false, gated: false };
 const drive = { id: "d1", label: "Phone", role: "drive" as const };
@@ -57,6 +59,7 @@ describe("the update routes", () => {
 
   it("refuses an open-LAN visitor through the server, and lets this PC's owner in", async () => {
     const state = mkdtempSync(join(tmpdir(), "ovis-update-open-"));
+    // on loopback only: a visitor of an open install is told by the forwarded address it comes from (access.ts)
     const open = createServer({ port: 0, hostname: "127.0.0.1", stateDir: state, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false });
     cleanups.push(() => { open.stop(); rmSync(state, { recursive: true, force: true }); });
     const post = (headers: Record<string, string>) => fetch(`http://127.0.0.1:${open.port}/api/machines/update-all`, { method: "POST", headers: { "x-herdr-machine": "1", "x-herdr-update": "1", ...headers } });

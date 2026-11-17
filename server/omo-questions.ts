@@ -39,6 +39,7 @@ export function pendingOmoAsk(jsonl: string): OmoAsk | null {
 export const OMO_FORM_RE = /\b1-9\s+select\b|enter\s+save\s+and\s+next|\btab\s+next\s+question\b|\bor\s+just\s+type\s+your\s+reply\b/;
 const omoAskReader = new OmoAskReader();
 
+/** Resolve the live process tree every time: a cached session can outlive its agent. */
 export async function omoAsksFor(paneId: string, cwd: string, panes: HerdrPane[]): Promise<OmoAsk[]> {
   const path = await omoTranscriptForPane(paneId, cwd, panes).catch(() => null);
   if (!path) return [];

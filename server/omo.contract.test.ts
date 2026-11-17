@@ -45,6 +45,10 @@ async function launch(command: string, marker: string): Promise<string> {
 }
 const pane = (id?: string) => launch(`${process.execPath} ${script}${id ? ` --session-id ${id}` : ""}`, script);
 const read = async (paneId: string) => omoTranscriptForPane(paneId, root, (await sessionSnapshot()).panes, root);
+/**
+ * What a pane reads once herdr's process info shows the omo just launched: launch() returns on one process-info
+ * read that has it, and a later snapshot can still omit it, so a read right after a launch may see one omo fewer.
+ */
 const readsAs = async (paneId: string, want: string | null): Promise<string | null> => {
   const deadline = Date.now() + 5_000;
   let got = await read(paneId);
@@ -157,6 +161,7 @@ it("binds each omo pane in a shared cwd to the session its process holds", async
   expect(await omoTranscriptForPane(reportedBefore, root, panes, root)).toBe(heldSinceReport);
 });
 it("tells a held session omo has not written yet from an older one", async () => {
+  // omo writes the file with the first prompt; a launch id can name the session before /new
   const started = await pane();
   const afterNew = await pane("launched-before-new");
   session("launched-before-new");
@@ -275,6 +280,7 @@ it.skipIf(process.platform !== "linux")("recognizes a custom launcher only by ve
   const snapshot = await sessionSnapshot();
   const { process: custom, processes } = await waitForProcess(paneId, launcher);
   expect(readlinkSync(`/proc/${custom.pid}/cwd`)).toBe(root);
+  // Older process-info responses omit cwd; both pane directory fields can be stale.
   const withoutCwd = { process_info: { foreground_processes: processes.map(({ pid, argv }) => ({ pid, argv })) } };
   const stale = snapshot.panes.filter((entry) => entry.pane_id === paneId).map((entry) =>
     ({ ...entry, cwd: join(root, "stale-pane"), foreground_cwd: join(root, "stale-foreground") }));

@@ -1,3 +1,9 @@
+/**
+ * What an OpenCode v2 pane's own service says, read only from a service that already runs and that
+ * /api/info proves is the one service.json names (never started or ensured here): the command and
+ * skill rows for the pane's directory, and the skill-activation and turn-completion events of the
+ * pane's exact session, which settle a Chat send's outcome as native evidence.
+ */
 import type { HerdrPane, SlashCommand } from "../shared/protocol.ts";
 import { resolveAgent, typingRoots } from "./pane-context.ts";
 import { paneProcessRoots } from "./conversation.ts";
@@ -32,9 +38,15 @@ const WATCH_MS = 10 * 60_000;
 const WATCH_MAX = 64;
 const EARLY_MAX = 256;
 export const PANE_VERIFIED_MS = 5_000;
+/**
+ * The panes that keep the shared event stream open: each verified to run OpenCode v2 on the stream's
+ * service with its session there. A pane's end, its agent changing, or a verification that now fails
+ * releases it; the stream closes when no verified pane uses its service.
+ */
 const verifiedPanes = new Map<string, { sessionID: string; key: string; until: number; generation: number; pid: number | null; started: number }>();
 let verificationGeneration = 0;
 export function openCodeVerificationCheckpoint(): number { return verificationGeneration; }
+/** A cancelled verification opens no stream and caches nothing. */
 type Verification = { cancelled: boolean; started: number };
 const inFlight = new Set<Verification>();
 const inFlightByPane = new Map<string, Set<Verification>>();
@@ -224,6 +236,7 @@ export async function openCodePaneService(pane: Pick<HerdrPane, "agent" | "agent
   let pid: number | null = null;
   try {
     const found = paneId ? await paneProcessRoots(paneId, label) : null;
+    // a pid herdr did not report comes back as -1: unknown, not a process
     pid = found?.pid != null && found.pid > 0 ? found.pid : null;
     const roots = found ? typingRoots(found) : null;
     if (verification.cancelled || resolveAgent(pane, roots).agent !== "opencode") return null;
@@ -325,6 +338,7 @@ export async function openCodeSkillsToType(pane: HerdrPane, sent: Sent, text: st
   const { bound, rows } = await boundCatalog(pane, cold ? cwd : null, CATALOG_SOURCE_BUDGET_MS, stateDir);
   if (cold) {
     const native = rows?.filter((row) => row.source !== "builtin").map((row): SlashCommand => ({ ...row, forms: row.forms ?? [...UNKNOWN_FORMS], visibility: row.visibility ?? "offered", provenance: { transport: "native", verified: true } }));
+    // A synchronous scan cannot be interrupted by the lookup timer.
     record = commandSendFrom(pane, "opencode", [...builtinCommands("opencode"), ...(native ?? [])], text, screen);
     if (!native) return { sent: record, skills: [] };
   }

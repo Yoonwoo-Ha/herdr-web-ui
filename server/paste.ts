@@ -1,6 +1,16 @@
 /**
- * Files land in `<pane cwd>/.ovis/`, not /tmp, on purpose: agents ask before reading outside their
- * project directory.
+ * Image paste support: the browser POSTs a pasted or file-picked image, the server
+ * writes it next to the pane and hands back the absolute path. The agent TUI (Claude
+ * Code and friends) reads the path from the prompt text - the one image channel a pty
+ * byte stream can carry; there is no clipboard or sixel hop in between.
+ *
+ * Files land in `<pane cwd>/.ovis/`, not /tmp, on purpose: agents ask before
+ * reading outside their project directory, and a path inside the project keeps the
+ * attachment visible next to the conversation. That folder ignores itself (a `.gitignore`
+ * of `*`), so attachments stay out of Git status while their paths still open. A pane without a
+ * known cwd falls back to the OS temp dir - the path still works, it just may cost
+ * the agent a read-permission prompt. `OVIS_PASTE_DIR` sends every attachment to
+ * one directory instead, for those who would rather keep them out of the working tree.
  */
 
 import { lstatSync, mkdirSync, writeFileSync } from "node:fs";
@@ -59,6 +69,8 @@ function storedName(name: string | undefined): { base: string; extension: string
 export function pasteDirectory(cwd: string | null | undefined): string {
   const override = pasteDirectoryOverride();
   if (override) {
+    // the plugin's env file is not a shell: expand a leading ~ here, before either separator.
+    // The separators are dropped with it: a leading one would make the rest an absolute path
     const home = /^~(?:[\\/]+(.*))?$/s.exec(override);
     return home ? resolve(homedir(), home[1] ?? "") : resolve(override);
   }

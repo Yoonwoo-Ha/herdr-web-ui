@@ -659,6 +659,8 @@ describe("session-scoped command outcomes", () => {
     });
   });
 
+  // herdr keeps a restarted agent's old session id for up to a minute (STALE_SESSION_LAG_MS): within it a session
+  // change typed in the terminal is taken for the agent's own session, past it for a later one
   for (const [lag, kept] of [[59_000, true], [61_000, false]] as const) {
     it(`${kept ? "keeps" : "drops"} a resumed session's send whose session changes in the terminal ${lag / 1000} s after it`, async () => {
       const pane = { ...target(), pid: 2147483645 };
@@ -675,7 +677,8 @@ describe("session-scoped command outcomes", () => {
     });
   }
 
-  // herdr names an OmO pane `pi` (its process cannot be told on native Windows)
+  // herdr names an OmO pane `pi` (its process cannot be told on native Windows): the session herdr reports under
+  // that label is the one the OmO send started, and a later one is not
   it("adopts an unmatched OmO send into the session herdr reports under the pane's label at the send", async () => {
     const pane = { ...target(), agent: "pi", agent_session: null as HerdrPane["agent_session"] };
     await withFakeHerdr(pane, async (paneId) => {

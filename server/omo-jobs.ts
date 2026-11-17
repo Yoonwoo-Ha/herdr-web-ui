@@ -109,6 +109,7 @@ export function omoJobsAfter(jobs: OmoJobs, entry: unknown): OmoJobs {
         if (!Array.isArray(kinds) || !kinds.includes("summary")) continue;
         const id = found?.["id"];
         const description = found?.["description"];
+        // Command-backed notifications carry a process id (bash_N), not the start's mon_X.
         if (typeof id === "string" && next.running.some((job) => job.kind === "monitor" && job.id === id)) {
           next = ended(next, (job) => job.kind === "monitor" && job.id === id, at, endStatus(word ?? "completed"));
         } else {
@@ -179,6 +180,10 @@ export function omoJobsAfter(jobs: OmoJobs, entry: unknown): OmoJobs {
   return next;
 }
 
+/**
+ * One written before the OmO process now holding the session started (`since`) was the
+ * previous process's: it is lost, as OmO's own tasks of a dead host are.
+ */
 export function omoJobTasks(jobs: OmoJobs | undefined, since: number | null): OmoTask[] {
   if (!jobs) return [];
   const task = (job: OmoJob, status: OmoTask["status"], endedAt: number | null): OmoTask => ({

@@ -16,6 +16,11 @@ export interface CommandSend {
   readonly agent: string;
   readonly identity: string;
   readonly screen: string;
+  /**
+   * `screen`'s first row in the pane's history (herdr's max_offset_from_bottom: a detection read is the live screen,
+   * however far a device scrolled): the same row read before and after
+   * `screen`.
+   */
   top?: number;
   readonly form: CommandForm | null;
   readonly invocations: readonly CommandInvocation[];
@@ -220,6 +225,7 @@ function transcriptEvidence(sent: CommandSend, records: readonly CommandTranscri
   echoOffset?: number | null, outputs?: ReadonlyMap<number, number>): { offset: number; at: number } | null {
   const invocation = sent.invocations[0];
   if (sent.agent === "gjc" && invocation?.name.startsWith("skill:")) return gjcSkillTurnEnd(sent, records, until, used, echoOffset);
+  // A reserved byte offset may now contain another command after an in-place rewrite.
   const matchingEchoes = sent.agent === "claude" ? records.filter(({ entry, offset }) => {
     const time = typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : NaN;
     return (echoOffset === undefined || offset === echoOffset)
@@ -269,6 +275,11 @@ function transcriptEvidence(sent: CommandSend, records: readonly CommandTranscri
 }
 
 const screenLines = (screen: string): string[] => screen.replace(ANSI_RE, "").split(/\r?\n/u).map((line) => line.trimEnd());
+/**
+ * Screens read against each other, as lines. Claude's are read on the session's side of a fullscreen side panel, as
+ * parsePrompt reads its cards, only when every one of them shows the panel: a table's divider can pass for the panel's
+ * edge on one screen and not the next, and a cut on one side alone loses the anchor between them.
+ */
 function readAlike(agent: string, ...screens: string[]): { lines: string[][]; cut: boolean } {
   if (agent === "claude") {
     const cut = screens.map(withoutClaudeSidePanel);

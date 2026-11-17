@@ -22,6 +22,7 @@ export const MIRROR_IDLE_MS = 400;
 export const MIRROR_ECHO_MS = 15;
 export const MIRROR_WHOLE_MS = 10_000;
 export const MIRROR_QUIET_MS = 1000;
+/** how often the pane's size is asked for: herdr announces no layout change this server listens to */
 export const MIRROR_SIZE_MS = 2000;
 const MIRROR_FAILURES = 10;
 
@@ -187,6 +188,12 @@ export class MirrorSession {
     return true;
   }
 
+  /**
+   * A client writes
+   * into its own terminal too (an error it was sent), and rows drawn after that sit on a
+   * shifted screen: whatever it holds is whole again when the changes stop, not only at the
+   * next ten-second mark of a screen that keeps changing.
+   */
   private settle(): void {
     if (!this.patched || this.paused || this.sent === null) return;
     this.patched = false;
@@ -204,6 +211,7 @@ export class MirrorSession {
     this.timer = setTimeout(() => void this.tick(), this.options.echoMs ?? MIRROR_ECHO_MS);
   }
 
+  /** The screen last sent, whole, for a client joining now: a stream tail could cut a large one in two. */
   get current(): string | null {
     return this.sent === null ? null : mirrorFrame(this.sent, this.rows);
   }

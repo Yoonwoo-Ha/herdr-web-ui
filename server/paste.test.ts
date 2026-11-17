@@ -204,6 +204,7 @@ describe("preparePasteDirectory", () => {
       expect(lstatSync(join(cwd, ".ovis", ".gitignore")).isSymbolicLink()).toBe(true);
       expect(readlinkSync(join(cwd, ".ovis", ".gitignore"))).toBe(target);
     }
+    // neither the link's file nor a dangling link's target is written through it
     expect(readFileSync(join(outside, "rules"), "utf8")).toBe("shared\n");
     expect(existsSync(join(outside, "missing"))).toBe(false);
   });

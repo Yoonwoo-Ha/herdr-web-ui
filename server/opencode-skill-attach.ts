@@ -86,6 +86,7 @@ function autocomplete(screen: string, id: string): { rows: Cell[][]; panel: stri
   const inputPrefix = inputText.slice(0, inputText.lastIndexOf(`@${id}`)).replace(/\s/gu, "");
   const inputTokens = [...inputText.matchAll(/(?:^|\s)@(\S+)/gu)].map((match) => match[1]!);
   at++;
+  // the prompt's bottom edge spans the box's own width, as in the recordings (39, 74 and 98 columns)
   const bottom = lines[at + 2] ?? "";
   if (lines[at] !== bare || !filled.test(lines[at + 1] ?? "") || !new RegExp(`^${indent}╹▀+$`, "u").test(bottom) || Bun.stringWidth(bottom) !== width) return null;
   return { rows, panel, agent: lines[at + 1]!, inputFg, inputPrefix, inputTokens };
@@ -94,7 +95,10 @@ function autocomplete(screen: string, id: string): { rows: Cell[][]; panel: stri
 /**
  * Whether `@id`'s skill row (`@id [description]` padded to the kind label `skill`, autocomplete.tsx
  * labels[kind]) is the selected row of the recorded autocomplete. The selection is drawn only as the
- * row's background (2.0.32: the accent colour, every other row the panel's).
+ * row's background (2.0.32: the accent colour, every other row the panel's), read from the screen's
+ * colours: exactly one row may differ from the panel, and it must be that skill row. A box of a single
+ * row has nothing else to select. Anything else (no colours, another row selected, another layout)
+ * is not a selection, and nothing is accepted.
  */
 export function skillRowSelected(screen: string, id: string): boolean {
   const box = autocomplete(screen, id);
@@ -127,6 +131,7 @@ function promptState(screen: string, id: string, inputFg?: string): { agent: str
     const match = [...lines[index]!.matchAll(/(?:^|\s)(@\S+)(?=\s|$)/gu)].at(-1);
     if (!match || !/^ *┃ /u.test(lines[index]!)) continue;
     const token = match[1]!;
+    // the match counts UTF-16 units, the cells one code point each: an emoji before the token is two units
     const prefix = lines[index]!.slice(0, match.index + match[0].length - token.length);
     const start = Array.from(prefix).length;
     const width = Array.from(token).length;
@@ -135,6 +140,8 @@ function promptState(screen: string, id: string, inputFg?: string): { agent: str
     const paddingFg = all[index]![indent + 1]?.fg;
     // Tab inserts a space drawn as input text, not panel padding.
     const normalFg = inputFg ?? (next?.ch === " " && next.fg !== paddingFg ? next.fg : undefined);
+    // Nothing after the token is typed yet, so a word starting the next input row is the token's own
+    // wrapped tail (`@effect` + `-two`): the token is the two joined, never the first piece alone.
     const rowEnds = next === undefined || next.ch === " " && next.fg === paddingFg;
     const tail = rowEnds && index + 1 < bottom - 2 ? /^ *┃ +(\S+)/u.exec(lines[index + 1]!)?.[1] : undefined;
     const attached = tail === undefined && token === `@${id}` && tokenCells.length === width && (tokenCells.every((cell) => cell.bold)
@@ -243,7 +250,12 @@ export async function typeWithSkills(text: string, skills: readonly string[], al
           if (state?.token != null && state.token !== id && (state.prefix === box.inputPrefix || !box.inputTokens.includes(state.token))) {
             throw new HerdrError("submit_changed", "OpenCode attached another skill. Your chat text stayed here. Check the terminal before sending again.");
           }
+          // Tab's space is evidence of its own: a text-coloured separator, or the token drawn attached
+          // (accepting the row typed `@id `). Neither waits on the agent check below, so a later blank or
+          // partial read cannot make the rest add a second space.
           if (state?.token === id && !autocomplete(screen, id)) insertedSpace ||= state.space || state.attached;
+          // Two consistent reads confirm a switch. A switch still showing on the last read has had no second
+          // read, but it is not resolved either, and the rest and Enter would go to that other agent.
           if (from !== null && state?.agent != null && state.agent !== from && (state.agent === lastAgent || late)) {
             throw new HerdrError("submit_changed", `Tab switched OpenCode's agent from ${JSON.stringify(from)} to ${JSON.stringify(state.agent)}. Nothing more was typed.`);
           }
@@ -266,7 +278,7 @@ export async function typeWithSkills(text: string, skills: readonly string[], al
     if (!insertedSpace && !/^\s/u.test(rest)) { await write(() => io.sendText(" ", allowed)); prompt.push({ typed: " " }); }
   }
   if (afterAccept) rest = rest.replace(/^ /u, "");
-  // a trailing @mention would leave OpenCode's file box open for the Enter
+  // a trailing @mention would leave OpenCode's file box open for the Enter: closed with a space, as closeMention does for a paste
   if (/(?:^|\s)@\S+$/u.test(rest)) rest += " ";
   if (rest) { await write(() => io.sendText(paste(rest), allowed)); prompt.push({ pasted: rest }); }
   return { attached, missed, prompt };

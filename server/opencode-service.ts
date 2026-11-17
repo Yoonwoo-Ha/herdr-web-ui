@@ -8,6 +8,7 @@ export interface OpenCodeServiceConfig {
   port: number;
   pid: number;
   password: string;
+  /** the version service.json names (OpenCode 2.0.32 writes it), checked against /api/info */
   version?: string;
 }
 
@@ -107,6 +108,7 @@ function openCodeRequest(config: OpenCodeServiceConfig, path: string, signal?: A
       const status = response.statusCode ?? 0;
       response.once("error", () => resolve(null));
       response.once("aborted", () => resolve(null));
+      // Destroy rather than drain a body we will not use, so it cannot hold the request open.
       if (body !== undefined || status < 200 || status >= 300) {
         resolve({ status, body: "" });
         response.destroy();
@@ -177,6 +179,11 @@ async function getJson(config: OpenCodeServiceConfig, path: string, signal?: Abo
   try { return JSON.parse(response.body) as unknown; } catch { return undefined; }
 }
 
+/**
+ * The version of the process that answers at the service's URL, only when that process is the one
+ * service.json names: the same pid and, where the file records one, the same version. Anything else
+ * (a reused port, a stale file, a second service) is no service; nothing is ever started here.
+ */
 export async function verifyOpenCodeService(config: OpenCodeServiceConfig, signal?: AbortSignal): Promise<string | null> {
   const info = object(await getJson(config, "/api/info", signal));
   if (!info || info.pid !== config.pid || typeof info.version !== "string" || !info.version) return null;
@@ -246,6 +253,7 @@ export function forgetOpenCodeService(): void {
   verified = null;
 }
 
+/** Whether the service holds this session: a TUI bound to another service (or none) answers no. */
 export async function openCodeHasSession(config: OpenCodeServiceConfig, sessionID: string, signal?: AbortSignal): Promise<boolean> {
   const session = object(await getJson(config, `/api/session/${encodeURIComponent(sessionID)}`, signal));
   return object(session?.data)?.id === sessionID;
@@ -263,7 +271,8 @@ function listed(body: unknown, directory: string): unknown[] | null {
 }
 
 /**
- * A location the service has not loaded yet answers empty lists at first; the bundled skills are never absent from
+ * GET /api/command and /api/skill for one directory (pinned OpenAPI at 843a6c51). A location the
+ * service has not loaded yet answers empty lists at first; the bundled skills are never absent from
  * a loaded one, so an empty skill list is no answer rather than "no skills".
  */
 export async function listOpenCodeCatalog(config: OpenCodeServiceConfig, directory: string, signal?: AbortSignal): Promise<{ commands: OpenCodeCommandInfo[]; skills: OpenCodeSkillInfo[] } | null> {
@@ -295,6 +304,7 @@ export interface OpenCodeEvent {
   data: Record<string, unknown>;
 }
 
+/** One SSE block of GET /api/event (`data: {json}` lines; `:` heartbeats), or null. */
 export function parseOpenCodeEvent(block: string): OpenCodeEvent | null {
   const data = block.split(/\r?\n/u).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).replace(/^ /u, "")).join("\n");
   if (!data) return null;

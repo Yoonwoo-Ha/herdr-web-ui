@@ -72,6 +72,11 @@ export function omoAsksAfter(open: OmoAsks, entry: Entry): OmoAsks {
 }
 
 
+/**
+ * omp records the call when its
+ * dialog opens and its toolResult when it is answered or cancelled. A user message starts a new
+ * turn, so no call stays open past one.
+ */
 export function ompAsksAfter(open: OmoAsks, entry: Entry): OmoAsks {
   const message = entry.type === "message" ? entry.message : undefined;
   if (message?.role === "user") return open.length > 0 ? [] : open;

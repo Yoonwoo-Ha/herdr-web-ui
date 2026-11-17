@@ -5,6 +5,11 @@ import { SshConnection } from "./ssh.ts";
 type Tunnel = { tunnel(ssh: SshConnection, descriptor: { port: number; token: string }): Promise<{ url: string; token: string }> };
 type Relay = ReturnType<typeof Bun.serve>;
 
+/**
+ * Its stand-in serves the bridge's relay (`serve`, given
+ * the bridge's port, kept in `relays`) on a port of its own (port 0), never on the number freed for it, which another
+ * process on a busy host may take first (machines.ts freePort).
+ */
 export function tunnelRelays(relays: Relay[], serve: (remotePort: number) => Relay): { mockRestore(): void }[] {
   const forwarded = new Map<string, Relay[]>();
   const prototype = MachineManager.prototype as unknown as Tunnel;

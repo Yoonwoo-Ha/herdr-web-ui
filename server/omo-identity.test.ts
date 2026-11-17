@@ -55,6 +55,8 @@ it("keeps a held claim's store when its own file cannot be read as a candidate",
     const infos = new Map([[pane.pane_id, info([{ pid, argv: NEUTRAL, cwd }, { pid: process.ppid, argv: ["node", "/opt/omo/bin/omo.js"], cwd }])]]);
     const envOf = (pid: number) => pid === process.pid ? [`OMO_CODING_AGENT_DIR=${storeA}`] : ["PATH=/bin"];
     const out = omoTranscriptsOfCwd(cwd, [pane], infos, home, envOf).get(pane.pane_id);
+    // the claim still binds store A: B's same-id file is another session, and the pane
+    // reports nothing — not the other store's transcript
     expect(out?.path).toBeNull();
     expect(out?.pending).toBeNull();
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -87,6 +89,7 @@ it("binds a structured claim to its store and a legacy string claim to none", ()
   const scoped = heldRuntime(runtime, [{ id: "same", store: "/store-b" }], [a, b]);
   expect(selectOmoTranscript("p", [a, b], [scoped])).toBe("/b/s.jsonl");
   expect(selectOmoTranscript("p", [a], [heldRuntime(runtime, [{ id: "same", store: "/store-b" }], [a])])).toBeNull();
+  // a claim whose file is gone still binds: it never resolves to another store's file
   expect(selectOmoTranscript("p", [a], [heldRuntime(runtime, [{ id: "same", store: "/store-b" }], [a, b])])).toBeNull();
   const unscoped = heldRuntime(runtime, ["same"], [a]);
   expect(selectOmoTranscript("p", [a], [unscoped])).toBe("/a/s.jsonl");

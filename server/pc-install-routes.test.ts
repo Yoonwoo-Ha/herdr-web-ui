@@ -50,6 +50,7 @@ function fixture() {
 it("starts an install on a PC not added here, tells its job, refuses a watching device and an address already added", async () => {
   const { manager, waiting, reached, call, ended } = fixture();
   expect((await call("install", "POST", { destination: "me@new.invalid" }, true)).status).toBe(403);
+  // running the installer on another PC is the owner's only (access.ts ownerAccess), from this app's own page
   for (const refused of [await call("install", "POST", { destination: "me@new.invalid" }, false, false), await call("install", "POST", { destination: "me@new.invalid" }, false, true, {}), await call("install/any-job", "GET", undefined, false, false)]) {
     expect(refused.status).toBe(403);
     expect((await refused.json() as { error: { code: string } }).error.code).toBe("forbidden");
@@ -134,6 +135,7 @@ it("installs on a PC added here only as its card offers: never one not approved 
   expect(manager.list().find((machine) => machine.id === SAVED)?.ovis_update).toMatchObject({ how: "install", updatable: false, reason: expect.stringContaining("newer than this app") });
   const refused = await call("install", "POST", { machine_id: SAVED });
   expect(refused.status).toBe(409);
+  // a PC this app was not approved to manage: refused through the direct route too, as on its card
   offer("0.5.0");
   spyOn(manager as unknown as { mayManageBridge(runtime: unknown): boolean }, "mayManageBridge").mockReturnValue(false);
   const unapproved = await call("install", "POST", { machine_id: SAVED });

@@ -124,8 +124,10 @@ describe("where OpenCode keeps its store", () => {
   it("follows the paths OpenCode resolves for itself, the same on every platform", () => {
     const home = join(root, "home");
     const data = join(root, "data");
+    // OpenCode has no per-platform data dir: macOS and Windows use ~/.local/share too
     expect(opencodeDatabasePath({}, home)).toBe(join(home, ".local", "share", "opencode", "opencode.db"));
     expect(opencodeDatabasePath({ XDG_DATA_HOME: data }, home)).toBe(join(data, "opencode", "opencode.db"));
+    // OPENCODE_DB names a file relative to the data dir, or anywhere
     expect(opencodeDatabasePath({ OPENCODE_DB: "other.db" }, home)).toBe(join(home, ".local", "share", "opencode", "other.db"));
     const elsewhere = join(root, "elsewhere", "x.db");
     expect(opencodeDatabasePath({ OPENCODE_DB: elsewhere, XDG_DATA_HOME: data }, home)).toBe(resolve(elsewhere));
@@ -182,6 +184,7 @@ describe("OpenCode's rows as a conversation", () => {
       time: { created: T0 }, text: "expanded prompt", metadata: { displayText: "look at [Image 1] @review" },
       files: [
         { data: PNG.toString("base64"), mime: "image/png", source: { type: "inline" }, name: "clipboard" },
+        // a file attached by path is never read from disk, and only image types are shown
         { mime: "image/png", source: { type: "file", path: "/etc/shot.png" }, name: "shot.png" },
         { data: "PGh0bWw+", mime: "text/html", source: { type: "inline" } },
       ],
@@ -337,6 +340,7 @@ describe("OpenCode's rows as a conversation", () => {
       [{ kind: "notice", text: "$ git diff\ndiff --git a/x b/x", source: "shell" }],
       [{ kind: "text", text: "commit it" }],
     ]);
+    // a Windows shell ends its lines with \r\n
     const windows = record("shell", { time: { created: T0 }, command: "dir", output: { output: "a.txt\r\nb.txt\r\n" } });
     expect(windows !== null && windows.role === "user" && windows.parts).toEqual([{ kind: "notice", text: "$ dir\na.txt\r\nb.txt", source: "shell" }]);
   });
@@ -359,6 +363,7 @@ describe("a page of an OpenCode session", () => {
     expect(answer.cursor).toBeNull();
     expect(answer.history_id).toBe("opencode-ses_test1");
     expect(answer.turns.map((turn) => turn.parts)).toEqual([[{ kind: "text", text: "hello" }], [{ kind: "text", text: "hi", phase: "final_answer" }]]);
+    // input + output + reasoning + both cache tiers, as the footer counts them; no window is stated
     expect(answer.metadata).toEqual({ model: "deepseek-v4.1-flash", reasoning_effort: null, context: { used: 116, window: null } });
   });
 
@@ -456,6 +461,8 @@ describe("a page of an OpenCode session", () => {
   });
 
   it("sees a row rewritten twice in one millisecond once anything else is written", () => {
+    // every update moves a row's time_updated, to the millisecond: a second write in the same one
+    // leaves it where it was, and only the row's size says the row changed
     const s = store();
     s.prompt("go");
     const step = s.answer("work", { finish: undefined });
@@ -469,6 +476,8 @@ describe("a page of an OpenCode session", () => {
   });
 
   it("keeps the page it showed while the store is held, and the terminal before it showed one", () => {
+    // OpenCode runs its store in WAL, where a reader waits only while it recovers; a store in
+    // rollback-journal mode is held by any writer, which is the case reproduced here
     const s = store();
     s.prompt("hello"); s.answer("hi"); s.idle();
     s.db.exec("PRAGMA journal_mode = DELETE");
@@ -550,6 +559,7 @@ describe("where a page starts", () => {
   });
 
   it("measures a row in bytes without octet_length too", () => {
+    // macOS's own SQLite, which Bun uses there, can predate octet_length (3.43): the fallback must count bytes
     const s = store();
     s.prompt("ascii");
     s.prompt("multibyte: é ü 한국어 🦀");
@@ -616,6 +626,7 @@ describe("what a page refers to", () => {
   });
 
   it("answers nothing for an output or a picture while the store is held, rather than failing", () => {
+    // as for the page itself: rollback-journal mode is held by any writer, WAL only while it recovers
     const s = store();
     s.prompt("look");
     const step = s.add("assistant", {

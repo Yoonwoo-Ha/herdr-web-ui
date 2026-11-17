@@ -6,6 +6,7 @@ import { paneRead, paneScrollInfo } from "./herdr/client.ts";
  * tokens a request filled but never the window.
  */
 
+/** `◫ 48.1%/1M`: percent filled, then the window's size (`200k`, `1M`) */
 const BAR = /◫\s*(\d+(?:\.\d+)?)\s*%\s*\/\s*(\d+(?:\.\d+)?)\s*([kKmM])\b/u;
 
 export function ompStatusContext(screen: string): { used: number; window: number } | null {
@@ -24,6 +25,10 @@ export function ompStatusContext(screen: string): { used: number; window: number
 const TTL_MS = 5_000;
 const cache = new Map<string, { at: number; history: number; context: { used: number; window: number } | null }>();
 
+/**
+ * The pane's context, from its screen; null when the pane is not omp's or its bar is not drawn
+ * (a dialog over it, the moment before the first status line).
+ */
 export async function ompScreenContext(paneId: string, now: number = Date.now()): Promise<{ used: number; window: number } | null> {
   const before = await paneScrollInfo(paneId).catch(() => null);
   if (before?.offset_from_bottom !== 0) return null;

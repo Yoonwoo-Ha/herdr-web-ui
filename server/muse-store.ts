@@ -19,6 +19,7 @@ const SESSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  */
 const START_SLACK_MS = process.platform === "darwin" ? 3000 : 20;
 const TAIL_BYTES = 64 * 1024;
+/** A lock holds a pid and a host name; only this much of it is read. */
 const LOCK_BYTES = 1024;
 
 /** `muse` itself, or the versioned `muse-bin-<version>` binary its launcher runs. */
@@ -82,6 +83,7 @@ function names(dir: string, pattern: RegExp): string[] | null {
 
 export interface MuseOwner { pid: number; startedAt: number }
 
+/** Until when a scan that bound nothing stands, by store and pids: the monitor resolves such a pane every 2 s. */
 const missed = new Map<string, number>();
 const MISS_MS = 2000;
 
@@ -91,6 +93,12 @@ function remember<T>(map: Map<string, T>, key: string, value: T): void {
   if (map.size > 64) map.delete(map.keys().next().value!);
 }
 
+/**
+ * The log in `dir` when its lock names one of `owners` (with this host, when it names one), the
+ * lock was written since that process started and the log has not ended; else null. A
+ * lock left by an earlier process that had the same pid is older than this one; a session the
+ * process switched away from has ended.
+ */
 function heldLog(dir: string, owners: readonly MuseOwner[], host: string): string | null {
   const lock = join(dir, ".session.lock");
   let held = false;
@@ -109,6 +117,7 @@ function heldLog(dir: string, owners: readonly MuseOwner[], host: string): strin
   return null;
 }
 
+/** The session log this pane's Muse holds is there, and cannot be read (its mode, its owner). */
 export class MuseLogUnreadable extends Error {
   constructor() { super("Muse session log is unreadable"); this.name = "MuseLogUnreadable"; }
 }
@@ -126,6 +135,7 @@ export function museSessionFor(data: string, owners: MuseOwner[], host = hostnam
 }
 
 function scanStore(data: string, owners: readonly MuseOwner[], host: string): string | null {
+  // sessions/YYYY/MM/DD/<id>
   let dirs = [join(data, "sessions")];
   for (const pattern of [/^\d{4}$/, /^\d{2}$/, /^\d{2}$/, SESSION]) {
     const next: string[] = [];

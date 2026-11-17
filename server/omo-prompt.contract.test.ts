@@ -5,6 +5,12 @@ import { join } from "node:path";
 import { createServer } from "./index.ts";
 import { herdrRpc } from "./herdr/client.ts";
 
+/**
+ * The pane runs a
+ * small form drawn as omo 5.1 draws its ask_user_question overlay, reported as `pi` (herdr's name
+ * for an omo pane waiting on the user): arrows move the cursor, Enter picks an option, the last answer
+ * opens the review, and Enter there submits.
+ */
 const root = mkdtempSync(join(tmpdir(), "ovis-omo-prompt-"));
 let server: { port: number; stop: () => void };
 let workspace: string | undefined;
@@ -177,6 +183,7 @@ describe("slash commands follow the pane's process", () => {
     const commands = listed.map((command) => command.name);
     expect(commands).toContain("favorite-models");
     expect(commands).toContain("compact");
+    // /tree opens a browser only the terminal draws: listed as a terminal command
     expect(listed.find((command) => command.name === "tree")?.visibility).toBe("terminal");
     expect(commands).not.toContain("config");
   }, 30_000);
@@ -184,6 +191,8 @@ describe("slash commands follow the pane's process", () => {
   it("keeps Claude commands for a Claude process", async () => {
     const listed = await rows(await waiting("claude", "claude"));
     const commands = listed.map((command) => command.name);
+    // Claude's own list: /model (a picker the chat answers) is offered, /config (a screen only the
+    // terminal draws) is listed as a terminal command
     expect(commands).toContain("model");
     expect(listed.find((command) => command.name === "config")?.visibility).toBe("terminal");
     expect(commands).not.toContain("favorite-models");

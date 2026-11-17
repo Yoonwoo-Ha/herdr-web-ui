@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { NO_JOBS, omoJobCount, omoJobsAfter, omoJobTasks, type OmoJobs } from "./omo-jobs.ts";
 
+// Records as OmO 5.1 writes them in a session file (shapes copied from real sessions).
 const evalResult = (at: string, text: string, toolCalls: unknown[] = [], summary = "run the refit") => ({
   type: "message", timestamp: at,
   message: { role: "toolResult", toolName: "eval", content: [{ type: "text", text }], details: { language: "js", summary, toolCalls } },

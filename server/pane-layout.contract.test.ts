@@ -80,6 +80,7 @@ describe("pane layout routes: validation", () => {
       ["resize", { pane_id: root, direction: "wider" }, "invalid_direction"],
       ["resize", { pane_id: root, direction: "left", amount: 0 }, "invalid_amount"],
       ["resize", { pane_id: root, direction: "left", amount: 1.5 }, "invalid_amount"],
+      // herdr would quietly take half of this: refused instead (shared/protocol.ts)
       ["resize", { pane_id: root, direction: "left", amount: 0.75 }, "invalid_amount"],
       ["resize", { pane_id: root, direction: "left", amount: "0.1" }, "invalid_amount"],
     ] as const) {
@@ -163,6 +164,7 @@ describe("pane layout routes: herdr's layout changes", () => {
     const zoomed = await post("zoom", { pane_id: root });
     expect(zoomed.status).toBe(200);
     expect((await zoomed.json()) as PaneZoomed).toEqual({ ok: true, zoomed: true, changed: true, reason: null });
+    // herdr focuses the pane it zooms: the tab shows that one alone
     await untilLayout((tab) => tab.zoomed && tab.focused_pane_id === root, "the layout zoomed on the root");
     const again = (await (await post("zoom", { pane_id: root, mode: "on" })).json()) as PaneZoomed;
     expect(again).toEqual({ ok: true, zoomed: true, changed: false, reason: "already_zoomed" });
@@ -181,6 +183,7 @@ describe("pane layout routes: herdr's layout changes", () => {
     const other = (await (await post("zoom", { pane_id: right, mode: "on" })).json()) as PaneZoomed;
     expect(other).toEqual({ ok: true, zoomed: true, changed: true, reason: "already_zoomed" });
     await untilLayout((tab) => tab.zoomed && tab.focused_pane_id === right, "the layout zoomed on the right pane");
+    // a toggle on a third pane does not show it alone: it unzooms the tab, which is why no UI sends one
     const toggled = (await (await post("zoom", { pane_id: below, mode: "toggle" })).json()) as PaneZoomed;
     expect(toggled).toEqual({ ok: true, zoomed: false, changed: true, reason: null });
     await untilLayout((tab) => !tab.zoomed && tab.focused_pane_id === below, "the layout unzoomed, the third pane focused");
@@ -207,6 +210,9 @@ describe("pane layout routes: herdr's layout changes", () => {
 
   it("moves a split's border by the share asked, and says when no border can move that way", async () => {
     const before = await layout();
+    // the root now sits in the right column, over or under another pane: the border between
+    // them moves up by a quarter of their split, which spans the tab's height here (the next
+    // case has a split that does not); herdr's own 0.05 when no amount is given
     const response = await post("resize", { pane_id: root, direction: "up", amount: 0.25 });
     expect(response.status).toBe(200);
     expect((await response.json()) as PaneResized).toEqual({ ok: true, changed: true, reason: null });

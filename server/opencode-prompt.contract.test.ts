@@ -36,6 +36,7 @@ beforeAll(async () => {
       const auth = req.headers.get("authorization") ?? "";
       if (req.method === "GET" && url.pathname === "/api/info") return Response.json({ version: "2.0.32", pid: process.pid, urls: [url.origin], paths: { tmp: root } });
 
+      // List forms: GET /api/session/{sessionID}/form
       const listMatch = url.pathname.match(/^\/api\/session\/([^/]+)\/form$/);
       if (req.method === "GET" && listMatch) {
         const sessionID = decodeURIComponent(listMatch[1]!);
@@ -46,6 +47,7 @@ beforeAll(async () => {
         });
       }
 
+      // Reply form: POST /api/session/{sessionID}/form/{formID}/reply
       const replyMatch = url.pathname.match(/^\/api\/session\/([^/]+)\/form\/([^/]+)\/reply$/);
       if (req.method === "POST" && replyMatch) {
         if (replyStatusOverride > 0) {

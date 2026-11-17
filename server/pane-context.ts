@@ -24,6 +24,11 @@ export function versionSourceOf(transcript: NativeTranscript): VersionSource | n
   return null;
 }
 
+/**
+ * For what is typed into a pane, omo outranks herdr's label only when an omo process there holds a
+ * session (omo's own holder record). A script that merely runs from an omo-ai checkout, beside Claude or
+ * in a shell, is no omo: herdr's label keeps its draft checks and its paste mode.
+ */
 export function typingRoots(roots: { omo: { held: boolean } | null }): PaneRoots {
   return roots.omo?.held ? roots : null;
 }

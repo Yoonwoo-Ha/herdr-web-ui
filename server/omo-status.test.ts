@@ -38,10 +38,12 @@ describe("an OmO turn, read from its session file", () => {
   });
 
   it("is over at an answer that ended in an error, and runs again when a retry answers", () => {
+    // seen in real files: an error, OmO's stop record 2 ms later, then a retry 2 to 16 s later all the same
     expect(omoTurnStatus(lines(message("user"), message("assistant", "error")))).toBe("idle");
     expect(omoTurnStatus(lines(message("user"), message("assistant", "error"), bookkeeping("senpi.hooks.stop-state"), message("assistant", "error")))).toBe("idle");
     expect(omoTurnStatus(lines(message("user"), message("assistant", "error"), message("assistant", "toolUse")))).toBe("working");
     expect(omoTurnStatus(lines(message("user"), message("assistant", "error"), bookkeeping("senpi.hooks.stop-state"), runtime("goal-continuation")))).toBe("working");
+    // OmO's stop record says nothing of the turn: it is held back while a background task runs
     expect(omoTurnStatus(lines(message("user"), message("assistant", "toolUse"), bookkeeping("senpi.hooks.stop-state")))).toBe("working");
   });
 
@@ -392,6 +394,9 @@ describe("OmO panes' status in place of herdr's", () => {
     expect(shown).toEqual(["working", "idle", "working", "idle"]);
     for (let i = 0; i < 3; i++) { state.clock += 10_000; expect(statuses(await served())["omo"]).toBe("omo/idle"); }
     expect(completions.current("omo")).toBe("idle");
+    // It
+    // goes straight to DONE: a RUN told just before would make it a turn of no length, which the
+    // default alerts (a finish after a long turn) leave untold; a turn whose start was not seen is told
     append(message("assistant", "stop", LATER));
     omo.poll(); settle();
     expect(shown.slice(4)).toEqual(["done"]);

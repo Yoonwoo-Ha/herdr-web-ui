@@ -77,7 +77,7 @@ beforeAll(async () => {
   }
   turn("Check chat", "Answer one");
 
-  // herdr takes a session report only from an agent holding the pane
+  // herdr takes a session report only from an agent holding the pane: a stand-in OpenCode
   mkdirSync(join(root, "bin"), { recursive: true });
   writeFileSync(fakeOpencode, "#!/bin/sh\nsleep 600\n");
   chmodSync(fakeOpencode, 0o755);
@@ -154,6 +154,7 @@ it("serves a cut tool output and a tool's picture by the refs the page gave them
   expect(tool.output_size).toBe(5000);
   const output = await fetch(url("/api/pane/conversation/tool-output", { ref: tool.output_ref! }));
   expect(output.status).toBe(200);
+  // the ref names a place in a row OpenCode rewrites in place: its output is never pinned
   expect(output.headers.get("cache-control")).toBe("private, no-store");
   expect(await output.text()).toBe("z".repeat(5000));
   expect((await fetch(url("/api/pane/conversation/tool-output", { ref: `${tool.output_ref!.split(":")[0]}:7` }))).status).toBe(404);
@@ -215,7 +216,8 @@ it("keeps the terminal for a session the store does not hold", async () => {
 });
 
 it("greets an OpenCode at its home screen, which reports no session until its first prompt, and then shows that session (#3600)", async () => {
-  // a stand-in that draws OpenCode 2.2.2's recorded home screen
+  // a stand-in that draws OpenCode 2.2.2's recorded home screen (narrow: it fits any pane) on a screen of its own, and
+  // after a line typed, the recorded screen of a session, as when a stored one is opened with nothing reported
   const recorded = (name: string) => `${readFileSync(join(import.meta.dir, "fixtures", `${name}.txt`), "utf8").trim()}\n`.replaceAll("\n", "\r\n");
   writeFileSync(join(root, "home-screen.txt"), recorded("opencode-home-2.2.2-narrow"));
   writeFileSync(join(root, "session-screen.txt"), recorded("opencode-session-2.2.2"));
@@ -277,6 +279,7 @@ it("counts an OpenCode pane's running subagent, holds the turn that ends meanwhi
     const listed = await (await fetch(`${base}/api/pane/omo-tasks?pane_id=${encodeURIComponent(target)}`)).json() as { tasks: { id: string; title: string; category: string | null; status: string }[] };
     expect(listed.tasks.map((task) => [task.id, task.title, task.category, task.status])).toEqual([[CHILD, "Scan the repo", "explore", "running"]]);
 
+    // it ends, and OpenCode wakes the parent with its answer
     from = frames.length;
     add("assistant", { time: { created: Date.now(), completed: Date.now() }, finish: "stop", content: [{ type: "text", text: "Three TODOs." }] }, CHILD);
     add("idle", { time: { created: Date.now() }, outcome: "succeeded" }, CHILD);
@@ -298,7 +301,10 @@ it("counts an OpenCode pane's running subagent, holds the turn that ends meanwhi
 }, 60_000);
 
 
-/** OpenCode v2's own service, faked in the pinned OpenAPI shapes (843a6c51). */
+/**
+ * OpenCode v2's own service, faked in the pinned OpenAPI shapes (843a6c51): /api/info, a session,
+ * /api/command and /api/skill for a directory, and /api/event.
+ */
 describe("OpenCode v2 native service", () => {
   const NATIVE_SESSION = "ses_contractNative01";
   const nativeRoot = join(root, "native");
@@ -699,6 +705,11 @@ process.stdin.on("data", (chunk) => {
     check();
   });
 
+  /**
+   * The stand-in redraws only as it is typed to, so a test that left @effect's row selected (as Tab leaving the skill
+   * unconfirmed does) leaves it on screen for the next. A send reads its autocomplete and the agent named beside it
+   * from the first screen showing that row, which could then be the old one, not the one its own @effect draws.
+   */
   const closedPrompt = async (): Promise<void> => {
     await herdrRpc("pane.send_text", { pane_id: nativePane, text: "\u000c" });
     for (const deadline = Date.now() + 5_000;;) {
@@ -786,6 +797,7 @@ process.stdin.on("data", (chunk) => {
     } finally {
       writeFileSync(selectedPath, selected);
       writeFileSync(acceptedPath, accepted);
+      // an uncertain message holds every later queued send to this shared pane until it is discarded
       if (uncertainId) {
         const discarded = frame((message) => message.type === "pending-result" && message.id === 1495);
         ws.send(JSON.stringify({ type: "pending-action", id: 1495, pane_id: nativePane, pending_id: uncertainId, action: "discard" }));
@@ -958,11 +970,13 @@ process.stdin.on("data", (chunk) => {
     try {
       closeOpenCodeNative();
       forgetOpenCodeService();
+      // a pane whose OpenCode is not this service's (an OpenCode 1.x TUI, say): the service answers 404 for its session
       await reportSession("ses_contractNotHeld01", nativePane);
       ws.send(JSON.stringify({ type: "submit", id: 12, pane_id: nativePane, text: "@effect not this service", payload: "@effect not this service" }));
       expect(await frame((message) => message.type === "submit-result" && message.id === 12)).toMatchObject({ ok: true });
       const sent = await typedSince(before);
       expect(sent.startsWith("@effect\t")).toBe(false);
+      // its '@' names a file there: no skill, so no record and no not-attached note
       expect((await outcomesAt(server.port, nativePane)).find((entry) => entry.text === "@effect not this service")).toBeUndefined();
     } finally {
       ws.close();
@@ -975,6 +989,9 @@ process.stdin.on("data", (chunk) => {
   it("answers the catalog and a cold @ send without opening an opencode.json that is a FIFO", async () => {
     const fifo = join(nativeRoot, "opencode.json");
     expect(await Bun.spawn(["mkfifo", fifo]).exited).toBe(0);
+    // A writer waits at the FIFO from the start: its open returns only once something opens the FIFO to read,
+    // and that first reader is handed its text. A server that read opencode.json would be handed it at once,
+    // so nothing here waits on the FIFO and no time is counted: who got the text is the proof.
     const text = crypto.randomUUID();
     const writer = Bun.spawn(["sh", "-c", 'echo ready; printf %s "$2" > "$1"', "sh", fifo, text], { stdout: "pipe" });
     expect(new TextDecoder().decode((await writer.stdout.getReader().read()).value)).toBe("ready\n");
@@ -999,6 +1016,8 @@ process.stdin.on("data", (chunk) => {
       expect(await typedSince(before)).toContain("@effect past the fifo");
       const outcome = (await outcomesAt(server.port, nativePane)).find((entry) => entry.text === "@effect past the fifo");
       expect(outcome).toBeUndefined();
+      // The first to open the FIFO is this read (O_NONBLOCK: it waits for no writer): the writer was still
+      // waiting, and its text comes here. After any earlier open the writer has left and there is none.
       const fd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
       try {
         await writer.exited;
@@ -1061,6 +1080,7 @@ process.stdin.on("data", (chunk) => {
         }
       }
       console.log(`first-key gaps (ms): ${JSON.stringify(gaps)}`);
+      // the old watcher waited up to 1.5 s for the stream here; the bound leaves room for a loaded host
       expect(Object.entries(gaps).filter(([, gap]) => gap >= 1_000)).toEqual([]);
     } finally {
       eventMode = "ok";
@@ -1077,7 +1097,8 @@ process.stdin.on("data", (chunk) => {
     const sleeper = join(lifecycleRoot, "bin", "opencode");
     writeFileSync(sleeper, "#!/bin/sh\nsleep 600\n");
     chmodSync(sleeper, 0o755);
-    // A ctrl+c typed into its pane is not sure to end it: in a loaded CI run herdr never saw the stand-in go.
+    // A ctrl+c typed into its pane is not sure to end it:
+    // in a loaded CI run herdr never saw the stand-in go, and the pane stayed OpenCode until it closed.
     mkdirSync(join(lifecycleRoot, "leaving"), { recursive: true });
     const leaver = join(lifecycleRoot, "leaving", "opencode");
     const leave = join(lifecycleRoot, "leave.fifo");
@@ -1110,6 +1131,7 @@ process.stdin.on("data", (chunk) => {
     };
     const startPane = async (session: string, program = sleeper): Promise<{ paneId: string; workspaceId: string }> => {
       const created = await workspaceCreate({ cwd: lifecycleRoot, label: `ovis-test-opencode-${session}` });
+      // closed at the end even when its start fails: a stand-in waiting on the FIFO never ends by itself
       started.push(created.workspace.workspace_id);
       const paneId = created.root_pane.pane_id;
       await herdrRpc("pane.send_text", { pane_id: paneId, text: `${program}\n` });

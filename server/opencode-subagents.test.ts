@@ -32,6 +32,10 @@ const NOW = Date.parse("2026-10-24T12:00:00Z");
 const MIN = 60_000;
 let stores = 0;
 let rows = 0;
+/**
+ * A row id as OpenCode names it (Identifier.ascending in @opencode/schema): "msg_", the low 48 bits of the ms it was
+ * named at times 4096 plus a counter, in 12 hex digits, then 14 random characters.
+ */
 const opencodeId = (ms: number): string => `msg_${((BigInt(ms) * 0x1000n + BigInt(++rows)) & 0xffffffffffffn).toString(16).padStart(12, "0")}AbCdEfGhIjKlMn`;
 
 function store(parent = "ses_parent", ids: "plain" | "opencode" = "plain") {
@@ -58,6 +62,10 @@ function store(parent = "ses_parent", ids: "plain" | "opencode" = "plain") {
     tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 1000, write: 0 } }, ...extra,
   });
   const idle = (sessionId: string, at: number, outcome = "succeeded") => add(sessionId, "idle", at, { time: { created: at }, outcome });
+  /**
+   * The parent's step that calls the `subagent` tool for `child`, as OpenCode 2 writes it: running (named by the
+   * progress metadata), answered (`completed`, a background call with `metadata.status: "running"`) or failed.
+   */
   const callData = (child: string, at: number, state: "running" | "completed" | "background" | "error" | "aborted" | "cancelled", input: Record<string, unknown> = {}) => {
     const done = state !== "running";
     const tool = {
@@ -71,9 +79,14 @@ function store(parent = "ses_parent", ids: "plain" | "opencode" = "plain") {
     return { time: { created: at, ...(done ? { completed: at + 1000 } : {}) }, finish: done ? "tool-calls" : undefined, content: [{ type: "text", text: "calling" }, tool] };
   };
   const call = (...args: Parameters<typeof callData>) => add(parent, "assistant", args[1], callData(...args));
+  /** The parent's newest step written again at `updated`, as OpenCode updates a step's row in place when its call is answered. */
   const answer = (updated: number, ...args: Parameters<typeof callData>) => db.query(
     "UPDATE session_message SET data = ?, time_updated = ? WHERE id = (SELECT id FROM session_message WHERE session_id = ? AND type = 'assistant' ORDER BY seq DESC LIMIT 1)",
   ).run(JSON.stringify(callData(...args)), updated, parent);
+  /**
+   * The parent's notice that a background subagent ended (SubagentCompletion.deliver), written at `at`. Its row's id
+   * is the job's notificationID, named when the job went to the background (`named`, Job.markBackground).
+   */
   const notice = (child: string, at: number, state: "completed" | "cancelled" | "error", named = at) => add(parent, "synthetic", at, {
     time: { created: at }, description: "task", metadata: { source: "subagent", childID: child, agent: "explore", state },
     text: `<subagent sessionID="${child}" state="${state}" description="task">\ndone\n</subagent>`,
@@ -520,6 +533,7 @@ describe("an OpenCode session's subagents are its child sessions", () => {
     s.session("ses_child", NOW - 20 * MIN);
     s.call("ses_child", NOW - 20 * MIN, "background");
     s.prompt("ses_child", NOW - 20 * MIN);
+    // called again while that job runs in the background: the call joins it and is answered at once (subagent.ts)
     s.call("ses_child", NOW - 10 * MIN, "background", { sessionID: "ses_child" });
     s.prompt("ses_child", NOW - 10 * MIN);
     s.idle("ses_child", NOW - 9 * MIN);

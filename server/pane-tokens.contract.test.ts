@@ -7,6 +7,9 @@ import { herdrRpc, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import { createServer } from "./index.ts";
 import { authenticatedWebSocket } from "./remote-websocket.ts";
 
+// What a plugin reports on a pane (#1209) reaches the browsers' roster as herdr sends it, and
+// changes there when herdr's events say so: a token through pane.updated, the agent's line
+// through a status event of the same status. herdr's agent rows come on the same stream.
 it("carries a plugin's pane tokens and agent line to the browsers' roster, live, beside herdr's agent rows", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "ovis-test-pane-tokens-"));
   const herdrConfigPath = join(stateDir, "config.toml");
@@ -67,6 +70,9 @@ it("carries a plugin's pane tokens and agent line to the browsers' roster, live,
   }
 }, 60_000);
 
+// The snapshots a browser reads besides the roster (#2160): the session read, its local alias and the
+// /ws snapshot frame leave out the token values herdr's rows hide; another Ovis server reading this PC
+// with its bridge token gets them whole, as it applies its own rows.
 describe("a browser's own snapshots", () => {
   const stateDir = mkdtempSync(join(tmpdir(), "ovis-test-pane-tokens-"));
   const herdrConfigPath = join(stateDir, "config.toml");
@@ -105,6 +111,7 @@ describe("a browser's own snapshots", () => {
   it("leaves them in every snapshot of a bridge this app starts on a PC, whose only client is its connection server", async () => {
     const bridgeState = mkdtempSync(join(tmpdir(), "ovis-test-pane-tokens-bridge-"));
     const managed = createServer({ port: 0, hostname: "127.0.0.1", stateDir: bridgeState, token: "registered-credential", machines: false, bridgeOnly: true, tailscaleOwner: null, herdrConfigPath });
+    // a server without machines that browsers do reach still leaves them out
     const plainState = mkdtempSync(join(tmpdir(), "ovis-test-pane-tokens-plain-"));
     const plain = createServer({ port: 0, hostname: "127.0.0.1", stateDir: plainState, token: "browser-token", machines: false, tailscaleOwner: null, herdrConfigPath });
     try {

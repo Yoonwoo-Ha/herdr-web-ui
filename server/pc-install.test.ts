@@ -465,6 +465,7 @@ describe("installing Ovis on a PC over SSH", () => {
     pc.installer.stop();
     await pc.settled(job);
     expect(pc.commands.some((command) => command.includes('[ -L "$d/exe" ]'))).toBe(false);
+    // no new SSH connection while this app shuts down (an unreachable PC would hold it): the copy's own lease removes it
     expect(pc.challenges.length).toBe(connections);
     expect(pc.commands.some((command) => command.startsWith("rm -rf '/tmp/ovis-restore."))).toBe(false);
   });
@@ -719,6 +720,7 @@ describe("installing Ovis on a PC over SSH", () => {
       const pc = fixture({ descriptors: [descriptor(4242)], reusedAfterReads: after });
       const job = await pc.settled(pc.installer.start({ target, machine_id: "pc-1", plan: { mode: "replace", pid: 4242 } }));
       expect([after, job.phase, job.error_code]).toEqual([after, "failed", "changed"]);
+      // never signalled: the process at that pid is not the one shown
       expect(pc.alive.has(4242)).toBe(true);
       expect(pc.commands.some((command) => command.startsWith("rm -rf '/tmp/ovis-restore."))).toBe(copied);
     }
@@ -889,6 +891,8 @@ describe.skipIf(!existsSync("/proc/self/environ") || !Bun.which("setsid"))("star
     expect(toldPid).toBe(pid);
     expect(token).toBe("tok'en with space");
     expect(where).toBe(realpathSync(work));
+    // exactly its environment and arguments, nothing of the SSH session's; the copy holding its token is gone; its log
+    // is this account's alone
     expect(readFileSync(join("/proc", pid, "environ"))).toEqual(before.environ);
     expect(readFileSync(join("/proc", pid, "cmdline"))).toEqual(before.cmdline);
     expect(existsSync(saved)).toBe(false);
@@ -947,6 +951,7 @@ describe.skipIf(!existsSync("/proc/self/environ") || !Bun.which("setsid"))("star
     finally { replacement.close(); }
     expect(existsSync(taken)).toBe(false);
     expect(readFileSync(mark, "utf8")).toBe("x");
+    // a log anybody could read is made this account's alone; a link in its place is never followed
     mkdirSync(join(state, "ovis"), { recursive: true });
     writeFileSync(join(state, "ovis", "restored-server.log"), "", { mode: 0o644 });
     const pid = (await shell(restoreServer(await copy()), { HOME: home, XDG_STATE_HOME: state })).split(" ")[0]!;
@@ -1052,6 +1057,7 @@ describe.skipIf(!existsSync("/proc/self/environ") || !Bun.which("setsid"))("star
     const reading = readProcessBirth(process.pid);
     if (reading.state !== "identified") throw new Error("no birth here");
     expect(await shell(birthNow(process.pid, "linux"), {})).toBe(reading.birth.value);
+    // a macOS birth is never read on Linux (ps's start time there would differ from it, and prove nothing)
     expect(await shell(birthNow(process.pid, "darwin"), {})).toBe("");
     expect(await shell(birthNow(2 ** 22 + 1, "linux"), {})).toBe("");
   });

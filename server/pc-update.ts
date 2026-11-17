@@ -36,8 +36,10 @@ export async function readOwnStatus(endpoint: Endpoint, signal?: AbortSignal): P
 export interface OwnUpdateOptions {
   endpoint(): Endpoint | undefined;
   refused?(): string | null;
+  /** the release the person was shown (its latest_revision): another one on offer now is refused, not installed */
   revision?: string;
   signal: AbortSignal;
+  /** whether the abort was a cancel asked for here (never this server stopping): only then is that PC asked to stop */
   cancelled?(): boolean;
   onStep(step: string): void;
   pollMs?: number;
@@ -45,7 +47,9 @@ export interface OwnUpdateOptions {
   checkMs?: number;
 }
 
+/** Never followed out of the tunnel, and bounded in time. */
 export async function cancelOwnUpdate(endpoint: Endpoint | undefined, last: Partial<UpdateStatus> | null, installId: string | null, confirmMs = 10_000): Promise<"stopped" | "continues" | "none"> {
+  // only the install this app asked for, by the id its 202 gave: without it (its answer cut off, an older Ovis) nothing is asked
   if (!endpoint || last?.install_cancellable !== true || !installId) return "continues";
   try {
     const response = await fetch(`${endpoint.url}/api/updates/cancel`, { method: "POST", redirect: "manual", body: JSON.stringify({ install_id: installId }),
@@ -107,6 +111,7 @@ async function followOwn(options: OwnUpdateOptions, state: { last: Partial<Updat
   let started = installing(before);
   const offer = offerFromStatus(before);
   const revision = options.revision ?? before.latest_revision;
+  // an install already running there of another release than the one shown is not this update's to follow
   const foreign = () => started && typeof before.latest_revision === "string" && before.latest_revision !== revision;
   if (foreign()) throw new Error(CHANGED);
   for (let attempt = 1; !started; attempt++) {

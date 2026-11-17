@@ -139,6 +139,7 @@ function unrelated() {
   return other;
 }
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** Signal 0 to `pid` is refused (EPERM), as another user's or a protected process refuses it; every other PID is probed for real. */
 function refusing(pid: number) {
   const kill = process.kill.bind(process);
   return spyOn(process, "kill").mockImplementation(((target: number, signal?: NodeJS.Signals | number) => {
@@ -189,7 +190,8 @@ describe("owner guard", () => {
   });
 
   it.skipIf(!windows)("reclaims a lock whose PID a process this user cannot open now holds", () => {
-    // the System process refuses every caller's probe; CIM still reads its creation time
+    // the System process refuses every caller's probe; CIM still reads its creation time, as main's
+    // check did, for a record with a birth and for an older version's PID-only one alike
     const lock = join(root, "supervisor.lock");
     staleLock(lock, 4);
     acquireOwnerDirectory(lock, ERRORS).release();
@@ -276,10 +278,12 @@ describe("owner guard", () => {
   });
 
   it.skipIf(windows)("refuses a guard planted as a link, creating nothing where it points", () => {
+    // Given: the guard's path is a dangling link to a file outside its directory
     const lock = join(root, "links", "usage-logins.json");
     mkdirSync(join(root, "links"));
     const outside = join(root, "outside-guard");
     symlinkSync(outside, guardPath(lock));
+    // When / Then: nothing runs under it, and no file appears where it points
     let ran = false;
     expect(() => withOwnerGuard(lock, () => { ran = true; })).toThrow(OwnerGuardUnavailable);
     expect(ran).toBe(false);
@@ -322,6 +326,7 @@ describe("owner guard", () => {
     await waiter.next("acquiring");
     expect(waiter.has("locked")).toBe(false);
     await holder.kill();
+    // the kernel released the dead holder's lock; the waiter re-proved the untouched stale owner
     const published = await waiter.next("published");
     expect(ownerOf(lock)).toEqual(published["record"] as never);
     expect(identity(guardPath(lock))).toBe(guard);
@@ -380,6 +385,8 @@ describe("owner guard", () => {
   }, 60_000);
 
   it.skipIf(!windows)("serializes interactive and SSH session reclaimers", async () => {
+    // a crashed owner whose PID is free: another logon session's process would refuse the
+    // interactive starter's probe (EPERM), which never proves an owner gone
     const crashed = Bun.spawn([process.execPath, "-e", ""], { stdout: "ignore", stderr: "ignore", windowsHide: true });
     await crashed.exited;
     const other = unrelated();

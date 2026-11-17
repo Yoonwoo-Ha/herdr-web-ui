@@ -60,6 +60,7 @@ function simulatedInput(screen: (now: number) => string, afterTab: string, befor
 
 describe("skillRowSelected", () => {
   it.each(["narrow", "wide"] as const)("finds no selection in the recorded %s box of three rows without its colours", (width) => {
+    // the first row is not assumed selected: the selection is drawn only in colour
     expect(skillRowSelected(fixture(width), "effect")).toBe(false);
   });
 
@@ -102,6 +103,7 @@ describe("skillRowSelected", () => {
   };
 
   it.each(["narrow", "wide"] as const)("refuses a row of another kind with the same @id (%s)", (width) => {
+    // the recorded row ends in the kind label "skill"; a file or agent row names no such kind
     expect(skillRowSelected(mutate(width, (lines, row) => { lines[row] = lines[row]!.replace(/skill ┃/u, " file ┃"); }), "effect")).toBe(false);
     expect(skillRowSelected(mutate(width, (lines, row) => { lines[row] = lines[row]!.replace(/@effect .* ┃$/u, (match) => `${"@effect file".padEnd(match.length - 2)} ┃`); }), "effect")).toBe(false);
   });
@@ -396,6 +398,7 @@ describe("typeWithSkills", () => {
   it("types the token, accepts its recognized row with the recorded key, then types the rest once", async () => {
     const io = pane((writes) => writes.at(-1) === "text:@effect" ? ansi("first-selected") : writes.at(-1) === `keys:${OPENCODE_SKILL_ACCEPT_KEY}` ? ansi("accepted") : "");
     expect(await typeWithSkills("@effect apply it", ["effect"], () => true, io, async () => {})).toEqual({ attached: ["effect"], missed: [], prompt: [{ typed: "@effect " }, { pasted: "apply it" }] });
+    // the accepted row inserts its own space
     expect(io.writes).toEqual(["text:@effect", `keys:${OPENCODE_SKILL_ACCEPT_KEY}`, "text:\u001b[200~apply it\u001b[201~"]);
   });
 

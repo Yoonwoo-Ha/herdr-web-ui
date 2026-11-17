@@ -180,6 +180,7 @@ it.each(["foreign", "fifo"] as const)("does not observe /context from a file swa
   const filler = (row: string) => JSON.stringify({ type: "progress", uuid: "x".repeat(Buffer.byteLength(row) - 30) }) + "\n";
   fs.writeFileSync(path, filler(echo) + filler(stdout));
   expect(fs.statSync(path).size).toBe(Buffer.byteLength(echo + stdout));
+  // a FIFO no one writes to: an open that waits on it would hang the server
   if (swap === "fifo") expect(Bun.spawnSync(["mkfifo", foreign]).exitCode).toBe(0);
   else fs.writeFileSync(foreign, echo + stdout);
   const pane = { pane_id: root, terminal_id: "term", workspace_id: "w", tab_id: "t", focused: false, revision: 0,
@@ -342,6 +343,7 @@ it("does not observe /context from an opened file whose exact identity only roun
   const filler = (row: string) => JSON.stringify({ type: "progress", uuid: "x".repeat(Buffer.byteLength(row) - 30) }) + "\n";
   fs.writeFileSync(path, filler(echo) + filler(stdout));
   fs.writeFileSync(foreign, echo + stdout);
+  // two 64-bit file indexes (as on Windows) a double cannot tell apart: 2^60 and 2^60 + 1
   const own = 2n ** 60n;
   const other = own + 1n;
   expect(Number(other)).toBe(Number(own));

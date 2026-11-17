@@ -145,12 +145,16 @@ async function setup(label: string, agent = "claude", screen = "› Message\n", 
   const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
   const pane = created.root_pane.pane_id;
   let piSeq = 1;
+  /** herdr's omp integration reports the pane's session, as it does once omp takes input */
   const ompReports = () => herdrRpc("pane.report_agent_session", { pane_id: pane, source: "herdr:omp", agent: "omp", seq: Date.now() * 1000,
     agent_session_path: join(root, `${id}-omp-session.jsonl`), session_start_source: "startup" });
   const log = join(root, `${id}.jsonl`);
   const screenFile = join(root, `${id}.screen`);
   writeFileSync(screenFile, "");
   const command = `'${join(root, agent)}' '${join(root, "record.cjs")}' '${log}' '${screen.replace(/\n/g, "\r\n")}' '${screenFile}'${ompStarting ? ` -e '${join(root, "herdr-omp-agent-state.ts")}'`
+    // any other omp loads no integration, also where one is installed (a PC with omp): no send waits for it to report a
+    // session (composer.ts untilOmpReported), and no session is reported, after which herdr drops the manual state
+    // reports `state` makes about half the time, and a queued message never sees its turn end
     : agent === "omp" ? " --no-extensions" : ""}`;
   const replacementLog = join(root, `${id}-replacement.jsonl`);
   await herdrRpc("pane.send_text", { pane_id: pane, text: replaceable === "launcher"
@@ -244,6 +248,7 @@ describe("resumable follow-up receipts (#2421)", () => {
       await f.removed(row.id, expected, browser);
       const bytes = f.bytes(), writes = herdrWrites.slice();
       await browser.disconnect();
+      // A guessed browser UUID cannot recover another authenticated device's receipts.
       for (const [id, cookie] of [[resumeId, other], [resumeId, watcher], [crypto.randomUUID(), owner]] as const) {
         const stranger = await connect(id, cookie);
         stranger.send({ type: "ping", id: 985 });
@@ -318,6 +323,7 @@ describe("resumable follow-up receipts (#2421)", () => {
       expect(heldReplay.held).toContain(row.id);
       expect(heldReplay.held_ms?.[row.id]).toBeGreaterThan(0);
       expect(heldReplay.held_ms?.[row.id]).toBeLessThanOrEqual(10 * 60 * 1000);
+      // and when it ends on the PC's clock, which no page may pass
       expect(heldReplay.held_until?.[row.id]).toBeLessThanOrEqual(Date.now() + 10 * 60 * 1000);
       expect(heldReplay.held_until?.[row.id]).toBeGreaterThan(Date.now());
       resender.send({ type: "ping", id: 987 });
@@ -784,6 +790,7 @@ describe("connection-owned pending input", () => {
     await f.socket.event((frame) => frame.messages.some((row) => row.id === message.id && row.waiting === "omp_starting"));
     f.socket.send({ type: "input", pane_id: f.pane, text: "x" });
     await f.waitBytes("x");
+    // and the message is not pasted behind it, where omp's Enter would send both as one: it is held for its sender
     const held = await f.socket.event((frame) => frame.messages.some((row) => row.id === message.id && row.state === "held"));
     expect(held.messages.find((row) => row.id === message.id)).toMatchObject({ state: "held", error: { code: "typed_while_waiting" } });
     await f.ompReports();
@@ -979,6 +986,7 @@ describe("connection-owned pending input", () => {
       const settled = f.socket.event((frame) => frame.messages.some((entry) => entry.id === message.id && (entry.state === "held" || entry.state === "uncertain"))
         || frame.removed?.some((entry) => entry.id === message.id) === true);
       await f.state("idle");
+      // an Enter could commit the paste in another session: the row is left for the user to check
       expect((await settled).messages).toContainEqual(expect.objectContaining({
         id: message.id, state: "uncertain", error: expect.objectContaining({ code: "submit_changed" }),
       }));
@@ -1333,6 +1341,7 @@ describe("connection-owned pending input", () => {
     await f.queue(1, "first\u200bmessage");
     await f.state("idle");
     await f.waitBytes(`${paste("first\u200bmessage")}\r`);
+    // Claude took the character out and kept the message in its box; its hint has gone
     const rule = "\u2500".repeat(60);
     await f.state("working");
     await f.showScreen(`  \u273b Cooked for 1s\n${rule}\n\u276f firstmessage\n${rule}\n  [Haiku 4.5] \u2502 project\n`, "[Haiku 4.5] \u2502 project");
@@ -1346,6 +1355,7 @@ describe("connection-owned pending input", () => {
 
   it("queues past Claude's hint left over an empty box that shows its grey suggestion", async () => {
     const f = await setup("held-grey");
+    // the held message was sent from the terminal: the hint outlasts it over a box that is empty again
     const rule = "\u2500".repeat(60);
     const hint = `${" ".repeat(20)}Removed 1 invisible character \u00b7 review and press Enter to send`;
     const footer = "[Haiku 4.5] \u2502 project";
@@ -1462,6 +1472,7 @@ describe("connection-owned pending input", () => {
     await f.state("idle"); await f.removed(sent.id);
     await f.waitBytes(`${paste("write a story about a gardener")}\r`);
     await f.state("working");
+    // Stopped: Claude puts the message back in its box, and the page still thinks the agent works
     await f.showScreen(`  \u273b Cooked for 1s\n${rule}\n\u276f write a story about a gardener\n${rule}\n  ${footer}\n`, footer);
     await f.state("idle");
     const before = f.bytes();
@@ -1534,6 +1545,7 @@ describe("connection-owned pending input", () => {
 
   it("sends over Claude's grey suggestion while the viewport is scrolled into the history", async () => {
     const f = await setup("grey-scrolled");
+    // the recording's width: its rules span 119 of 120 columns, and would wrap at the helper's 100
     const from = f.socket.seen.length;
     f.socket.send({ type: "attach", pane_id: f.pane, cols: 120, rows: 30 });
     await f.socket.wait((frame) => frame.type === "input-ready" && frame.pane_id === f.pane && frame.ready !== false, from);
@@ -1542,6 +1554,7 @@ describe("connection-owned pending input", () => {
     const filler = Array.from({ length: 60 }, (_, index) => `  output line ${index + 1}`).join("\n");
     await f.showScreen(`${filler}\n${recorded}`, "Restart to update");
     await f.state("idle");
+    // the user scrolled the terminal up: herdr's viewport, shared by every client, no longer shows the box
     const top = (await paneScrollInfo(f.pane))!.max_offset_from_bottom;
     expect(top).toBeGreaterThan(0);
     await herdrRpc("pane.scroll", { pane_id: f.pane, offset_from_bottom: top });
@@ -1625,11 +1638,14 @@ describe("connection-owned pending input", () => {
     const writes = () => herdrWrites.filter((write) => write.endsWith(` ${f.pane}`)).length;
     const sentinel = "touch /tmp/herdr-web-ui-framing-sentinel";
     const forged = [
+      // its own terminator, then a CR that would run the line after it
       { text: `ok\u001b[201~\r${sentinel}`, payload: `${paste("ok")}\r${sentinel}\u001b[201~` },
       { text: "ok", payload: `${paste("ok")}\r${sentinel}` },
+      // a payload its text does not name, and markers twice over
       { text: "ls", payload: sentinel },
       { text: "ls", payload: paste(paste("ls")) },
       { text: "ls", payload: `\u001b[201~ls\u001b[200~` },
+      // a hidden trailing CR: an Enter of its own besides the bridge's
       { text: "ls", payload: "ls\r" },
     ];
     let id = 100;
@@ -1638,10 +1654,12 @@ describe("connection-owned pending input", () => {
       expect(await socket.result(id), JSON.stringify(frame).slice(0, 120)).toMatchObject({ ok: false, code });
     };
     for (const typed of [false, true]) for (const frame of forged) await refused({ ...frame, ...(typed ? { typed: true } : {}) });
+    // a forged send over a named draft clears nothing; one under a held-copy id reserves nothing
     await refused({ text: "ls", payload: "ls\r", clear_draft: "old draft" });
     await refused({ text: "ls", payload: "ls\r", resend_id: "forged-copy" });
     await refused({ text: "x".repeat(20_001), payload: "x".repeat(20_001) });
     await refused({ text: "x".repeat(32_769), payload: "x".repeat(32_769), typed: true });
+    // an observing connection is refused for its role, forged or not
     const watcher = await f.another();
     watcher.send({ type: "role", mode: "observe" }); await watcher.wait((frame) => frame.type === "role-ack" && frame.mode === "observe");
     await refused({ text: "ls", payload: "ls" }, "read_only", watcher);
@@ -1662,6 +1680,8 @@ describe("connection-owned pending input", () => {
     expect(await f.socket.result(id)).toMatchObject({ ok: true });
     expected += `${paste("첫 줄\tone\rsecond ✓")}\r`; await f.waitBytes(expected);
 
+    // a sender that leaves while its submits wait behind earlier input: the forged one types nothing, the one
+    // the bridge had already taken goes once, and nothing is typed again when another connection comes
     const keeper = await f.another();
     const hold = holdConnect("keys");
     keeper.send({ type: "submit", id: 1, pane_id: f.pane, text: "barrier", payload: "barrier", typed: true });
@@ -1681,6 +1701,11 @@ describe("connection-owned pending input", () => {
 
   for (const stop of [false, true]) it(`checks a new blocked state after the ${stop ? "composer's Stop" : "typed ESC"}'s settling gap, before pasting`, async () => {
     const f = await setup(stop ? "stop-gap-intent" : "stop-gap"); const message = await f.queue(1, "must not paste");
+    // The state comes up as the gap ends. herdr is told at the first status read that starts after the claim and no
+    // sooner than the gap after the ESC, and that read waits for herdr's answer. Every read before it says the agent
+    // works, so a bridge that checks before the gap, or waits out none, pastes. Told to herdr only when the "sending"
+    // frame had arrived here, the state raced the gap, which runs from the ESC: on a busy PC the gap was over first
+    // and the message was pasted.
     const claim = pendingInput.PendingInputs.prototype.claim;
     const snapshot = herdrClient.sessionSnapshot;
     let typedAt = Infinity, claimed = false;
@@ -1833,6 +1858,8 @@ describe("connection-owned pending input", () => {
     expect(codex.bytes()).toBe(`${paste("codex steer")}\r\u001b`);
   }, 45_000);
 
+  // The paste and its key are written only once herdr's connect resolves; the sender's right is asked
+  // again there (#666). Refused before the paste nothing was typed; refused before the key, the paste was.
   it("types nothing when the sender's lease lapses while the paste's connect is awaited", async () => {
     const f = await setup("guard-paste", "claude", "› Message\n");
     const message = await f.queue(1, "never pasted");
@@ -2020,6 +2047,7 @@ describe("a create request's first message", () => {
       const page = await f.another(false);
       const process = (await herdrClient.paneProcessInfo(f.pane))?.foreground_processes?.[0]?.pid;
       const message = await f.server.queueFirstMessage(f.pane, "FIRST-FOR-A", "claude", await page.connection());
+      // /resume in the terminal: Claude's PID record names another session, in the same process
       sessionId = "22222222-2222-4222-8222-222222222222";
       expect((await herdrClient.paneProcessInfo(f.pane))?.foreground_processes?.[0]?.pid).toBe(process);
       const held = listed(f.socket, f.pane, message.id, "held");
@@ -2334,7 +2362,7 @@ describe("a create request's first message", () => {
     const foreground = (await herdrClient.paneProcessInfo(pane))?.foreground_processes ?? [];
     const agent = foreground.find((process) => process.name === "claude");
     if (!agent) throw new Error("the wrapped agent is not in front of the pane");
-    expect(foreground[0]?.pid).not.toBe(agent.pid);
+    expect(foreground[0]?.pid).not.toBe(agent.pid); // control: herdr lists the wrapper before the agent
     await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "claude", state: "working" });
     await herdrNames(page, pane, "claude", before);
     const message = await server.queueFirstMessage(pane, "FIRST-WRAPPED", "claude", await page.connection(), agent.pid);

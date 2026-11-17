@@ -93,7 +93,7 @@ describe("approved bridge replacement", () => {
       }
       expect(approval.phase).toBe("approval");
       expect(approval.installations.join(" ")).toContain("restart this bridge");
-      expect(operations).toEqual([]);
+      expect(operations).toEqual([]); // Even the explicit retry still waits for approval.
       await request(`/${update.id}`, { action: "approve" });
       let result = await until(update.id, ["connected", "failed"]);
       if ((options.reconnect || options.updateAgain) && result.phase === "connected") {

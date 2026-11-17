@@ -85,6 +85,7 @@ async function openCodePane(label: string, session: string | null, cwd: string, 
   const created = await workspaceCreate({ cwd, label: `ovis-test-opencode-first-${label}` });
   workspaces.push(created.workspace.workspace_id);
   const pane = created.root_pane.pane_id;
+  // herdr names the pane's agent from its foreground process: heard as it happens, not polled
   const watching = Promise.withResolvers<void>();
   const detected = Promise.withResolvers<boolean>();
   const subscription = subscribeEvents([{ type: "pane.agent_status_changed", pane_id: pane }], {
@@ -143,6 +144,7 @@ async function firstMessage(label: string, session: string | null, cwd = root) {
   const sent = frame((item) => item.type === "pending-messages" && item.removed?.some((entry: any) => entry.id === message.id && entry.outcome === "sent"), "the first message was not sent");
   await herdrRpc("pane.report_agent", { pane_id: pane, source: "herdr:opencode", agent: "opencode", ...reported, state: "idle" });
   await sent;
+  // the Enter after the message, as the stand-in records it: read its log, as fs.watch can miss the last append
   for (const deadline = Date.now() + 5_000; !typed(label).endsWith("\r");) {
     if (Date.now() > deadline) throw new Error(`no Enter after the message: ${JSON.stringify(typed(label))}`);
     await Bun.sleep(25);
@@ -202,6 +204,7 @@ it("answers a sender that switched to observe while its @skill was on its way wi
   await frame((item) => item.type === "input-ready" && item.pane_id === pane, "the pane's input never became ready", 10_000);
   const originalSend = herdr.paneSendText;
   const written: string[] = [];
+  // every check before the first key has passed; the sender switches to watching before herdr is written to
   const send = spyOn(herdr, "paneSendText").mockImplementation(async (paneId, text, socketPath, guard) => {
     if (paneId === pane && text === "@effect") {
       socket.send(JSON.stringify({ type: "role", mode: "observe" }));

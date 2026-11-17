@@ -194,6 +194,7 @@ describe("terminal output credit", () => {
     expect(window.acknowledge(window.id, replayEnd)).toBe(true);
     expect(window.blocked).toBe(true);
     expect(window.check(0, 4001)).toBe("pause");
+    // the next frame cannot be acknowledged before it has crossed a 32 KiB/s link
     expect(wireBytes(live) * 1000 / OUTPUT_JOIN_BYTES_PER_SECOND).toBeGreaterThan(OUTPUT_STALL_MS);
     expect(window.check(0, 4001 + OUTPUT_STALL_MS + 100)).toBe("pause");
     expect(window.acknowledge(window.id, firstEnd)).toBe(true);
@@ -247,6 +248,8 @@ describe("terminal output credit", () => {
     expect(replay.text()).toBe("\x1b[?1049h\x1b[>4;2m" + "x".repeat(16));
     replay.append("\x1b[>1;2m\x1b[>41m\x1b[>0m" + "y".repeat(40));
     expect(replay.text()).toBe("\x1b[?1049h\x1b[>4;2m" + "y".repeat(16));
+    // herdr turns it off as CSI > 4 ; 0 m; a program may also write CSI > 4 m or CSI > 4 n
+    // and a bare CSI > m or CSI > n resets every resource; CSI > 0 m is another resource
     for (const off of ["\x1b[>4;0m", "\x1b[>4m", "\x1b[>4n", "\x1b[>m", "\x1b[>n"]) {
       replay.append("\x1b[>4;1m" + off + "z".repeat(40));
       expect(replay.text()).toBe("\x1b[?1049h" + "z".repeat(16));

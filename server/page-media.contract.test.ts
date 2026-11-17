@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createServer } from "./index.ts";
 
 const ADDRESS = /src="(https?:\/\/[^"/]+)(\/api\/fs\/page-media\/[A-Za-z0-9_-]{32})"/;
+// as the sandboxed page asks for it: another site (it has no origin), no cookie, no token
 const fromPage = { "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors", "sec-fetch-dest": "video" };
 
 function fixture() {
@@ -37,8 +38,10 @@ it("a rendered page plays its large video by the address it was given, and nothi
     expect(played.headers.get("content-range")).toBe(`bytes 0-9/${bytes}`);
     expect(played.headers.get("content-type")).toBe("video/mp4");
     expect((await fetch(`${base}${address}`, { method: "HEAD", headers: fromPage })).status).toBe(200);
+    // a guessed address, and the same file by its path, stay closed
     expect((await fetch(`${base}/api/fs/page-media/${"A".repeat(32)}`, { headers: fromPage })).status).toBe(404);
     expect((await fetch(`${base}/api/fs/file?path=${encodeURIComponent(join(root, "clip.mp4"))}`, { headers: fromPage })).status).toBe(401);
+    // and the address reads, never writes: another site's POST stops at the origin check before it
     expect((await fetch(`${base}${address}`, { method: "POST", headers: fromPage })).status).toBe(403);
   } finally { close(); }
 });

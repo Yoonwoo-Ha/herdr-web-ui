@@ -16,6 +16,7 @@ export function notificationText(content: unknown): string {
     && "text" in part && typeof part.text === "string" ? [part.text] : []).join("\n");
 }
 
+/** Detached cells outlive an assistant's stop; only their own runtime notice settles them. */
 export function omoDetachedAfter(open: readonly OmoDetachedCell[], entry: unknown): readonly OmoDetachedCell[] {
   if (typeof entry !== "object" || entry === null || !("type" in entry)) return open;
   if (entry.type === "custom_message" && "customType" in entry && entry.customType === "senpi-codemode:notification" && "content" in entry) {

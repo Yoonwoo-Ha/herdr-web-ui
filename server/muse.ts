@@ -75,6 +75,7 @@ function known(entry: Row, session: string): boolean {
   if (entry.retained_frame !== undefined) return entry.retained_frame === "session_permission_transaction" && entry.frame_schema_version === 1;
   if (record(entry.stream).kind !== "session" || record(entry.stream).id !== session || entry.schema_version !== 1) return false;
   if (entry.retained_marker !== undefined) return entry.retained_marker === "omitted_live_only";
+  // a fork's `session.fork.compaction` has no `recorded_at`, and a turn without one has no time
   if (!RECORDS.has(str(entry.payload_type)) || !isRow(entry.payload)) return false;
   if (entry.payload_type === "runtime.user_intent.accepted") {
     return every(entry.payload.model_messages, (message) => every(message.content, (block) =>
@@ -173,6 +174,7 @@ export function parseMuseTranscript(text: string, session: string): Conversation
         if (result.error) part.error = true;
       }
     } else if (event.kind === "terminal" && event.terminal === "completed") {
+      // the run ended on its answer: a run that ends on a tool or on progress prose has none
       const last = turns.at(-1);
       const part = last?.role === "assistant" ? last.parts.at(-1) : undefined;
       if (part?.kind === "text" && part.phase === undefined) part.phase = "final_answer";
@@ -203,6 +205,7 @@ export function museToolOutput(path: string, ref: string): string | null {
   const id = JSON.stringify(ref);
   const session = museSession(path);
   let fd: number;
+  // another file than the one the lookup is bound to (openBound) holds none of its calls
   try { fd = openBound(path); } catch { return null; }
   try {
     const chunk = Buffer.alloc(1024 * 1024);
@@ -215,6 +218,7 @@ export function museToolOutput(path: string, ref: string): string | null {
         if (!line.includes(id) || !line.includes('"tool_result_batch_committed"')) continue;
         let entry: Row;
         try { entry = record(JSON.parse(line)); } catch { continue; }
+        // a log another session's records replaced has none of this session's calls
         if (record(entry.stream).id !== session) continue;
         const event = runEvent(entry);
         const item = list(event?.results).map(record).find((result) => result.tool_call_id === ref);

@@ -1,3 +1,7 @@
+/**
+ * Keep this file small: it is the one piece
+ * an update cannot replace while it runs; only a restart from the source checkout does.
+ */
 import "./adopt-legacy-env.ts";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -22,6 +26,7 @@ export async function runManaged(root = ROOT) {
   root = resolve(root);
   moveLegacyStateDir();
   const stateDir = updateStateDir(root, Number(process.env["PORT"] ?? DEFAULT_PORT));
+  // the compiled binary has no supervisor.ts: there it runs as `ovis-server supervisor`
   const own = entryCommand("supervisor")[1];
   let child: ReturnType<typeof Bun.spawn> | null = null;
   let stopping = false;

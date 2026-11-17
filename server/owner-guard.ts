@@ -34,6 +34,7 @@ export const guardLibrary: { path: string; posix?(calls: PosixGuardCalls): Posix
 };
 
 const LOCK_SH = 1, LOCK_EX = 2, LOCK_NB = 4, LOCK_UN = 8, EINTR = 4;
+/** what flock sets when LOCK_NB finds the lock held (EWOULDBLOCK, which is EAGAIN) */
 const EWOULDBLOCK = process.platform === "darwin" ? 35 : 11;
 const GENERIC_READ_WRITE = 0xc000_0000, FILE_SHARE_READ_WRITE = 3, OPEN_ALWAYS = 4, FILE_ATTRIBUTE_NORMAL = 0x80, LOCKFILE_EXCLUSIVE_LOCK = 2;
 const LOCKFILE_FAIL_IMMEDIATELY = 1, ERROR_LOCK_VIOLATION = 33;
@@ -90,6 +91,7 @@ function lockGuard(path: string, wait = true, shared = false): () => void {
     return () => {
       const failures: string[] = [];
       if (!calls.UnlockFileEx(handle, 0, 1, 0, overlapped)) failures.push(`unlocking failed (error ${calls.GetLastError()})`);
+      // closing releases the byte range even if the unlock failed, so it is always attempted
       if (!calls.CloseHandle(handle)) failures.push(`closing failed (error ${calls.GetLastError()})`);
       if (failures.length) throw new OwnerGuardReleaseFailed(`${path} was not released cleanly: ${failures.join("; ")}`);
     };
@@ -112,6 +114,7 @@ function lockGuard(path: string, wait = true, shared = false): () => void {
   return () => {
     const failures: string[] = [];
     if (calls.flock(fd, LOCK_UN) !== 0) failures.push(`unlocking failed (errno ${calls.errno()})`);
+    // closing releases the lock even if the unlock failed, so it is always attempted
     try { calls.close(fd); } catch (error) { failures.push(`closing failed (${describeError(error)})`); }
     if (failures.length) throw new OwnerGuardReleaseFailed(`${path} was not released cleanly: ${failures.join("; ")}`);
   };
@@ -119,6 +122,11 @@ function lockGuard(path: string, wait = true, shared = false): () => void {
 
 export function guardPath(lockPath: string): string { return `${lockPath}.guard`; }
 
+/**
+ * Holds the file `path` (made 0600 where absent, never through a link) for the rest of this process, POSIX
+ * only: `shared` beside other shared holders, `exclusive` alone. The
+ * kernel drops the hold when the process ends, however it ends, so a killed holder keeps nobody out.
+ */
 export function holdForLife(path: string, kind: "shared" | "exclusive"): () => void {
   return lockGuard(path, false, kind === "shared");
 }
@@ -201,6 +209,7 @@ const RELEASE_WAIT_MS = 5_000;
 export interface OwnerLockHooks { observed?(): void; locked?(): void; validated?(): void; staged?(staging: string): void }
 export interface OwnerLease { record: OwnerRecord; release(): void; amend(write: (directory: string) => void): void }
 
+/** Nothing is signalled beyond signal 0. */
 export function acquireOwnerDirectory(lock: string, errors: { running: string; starting: string }, hooks: OwnerLockHooks = {}, { wait = true }: { wait?: boolean } = {}): OwnerLease {
   const seen = sample(lock);
   if (verdict(seen) === "live") throw new Error(`${errors.running} (${describe(lock, seen)})`);

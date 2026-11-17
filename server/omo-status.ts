@@ -3,13 +3,26 @@
  * herdr's hook never runs in it, and the pane reads `claude/idle` through a whole turn with no
  * status event (#286: three panes watched for three minutes, no frame).
  *
- * OmO appends to the session file of the session the pane holds as a turn goes. Measured over 40
- * session files: each of 492 runtime messages written at rest was followed by an assistant message,
- * a median of 5 s later, so the message itself is the start. After an answer that ended in an error
- * OmO may retry (the next answer followed 2, 4, 8 and 16 s later), but nothing it writes tells a
- * retry from giving up. Its `senpi.hooks.stop-state` record follows 2 ms after an error either way
- * (350 of them were followed by a retry), and is held back while a background task runs, so waiting
- * for it kept a pane at RUN for good.
+ * OmO appends to the session file of the session the pane holds (omo.ts finds it) as a turn
+ * goes: a turn is running after a user message, a tool result, an assistant message that
+ * stopped for a tool, or one of the runtime's own messages that start a turn (a finished
+ * background task, a monitor, a goal continuation); it is over after an assistant message that
+ * stopped for good. Measured over 40 session files: each of 492 such runtime messages written at
+ * rest was followed by an assistant message, a median of 5 s later, so the message itself is the
+ * start. An answer that ended in an error ends the turn too: OmO may retry (the next
+ * answer followed 2, 4, 8 and 16 s later), but nothing it writes tells a retry from giving up.
+ * Its `senpi.hooks.stop-state` record follows 2 ms after an error either way (350 of them were
+ * followed by a retry), and is held back while a background task runs, so waiting for it kept a
+ * pane at RUN for good.
+ *
+ * A question OmO asks the user (omo-ask.ts) holds the pane at INPUT while it is open, whatever the
+ * turn does: one that waits for its answer stopped the turn for a tool (RUN until now), and one
+ * that does not wait lets the turn go on or end (RUN or DONE until now) with the question still
+ * open over the input box.
+ *
+ * The status replaces herdr's for the pane before CompletionTracker sees it, in status events and
+ * in snapshots alike, under the one identity `omo`: herdr has named such a pane `pi` and `claude`
+ * by turns, and a finish is matched by identity.
  */
 import { closeSync, fstatSync, openSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -95,6 +108,7 @@ export function omoBackgroundTasks(cwd: string, alive: (pid: number) => boolean 
   const running = new Map<string, number>();
   let dir: string;
   let names: string[];
+  // a folder that cannot be resolved (permissions) counts nothing, and picks no other store
   try { dir = join(omoStateDir(cwd, options), "tasks"); names = readdirSync(dir); } catch { return running; }
   for (const name of names.slice(0, 2048)) {
     if (!name.startsWith("st_") || !name.endsWith(".json")) continue;
@@ -188,6 +202,7 @@ export class OmoStatus {
     this.staleIsFailure = deps.staleIsFailure ?? false;
   }
 
+  /** Watches with no browser connected too: web push depends on it. */
   start(): void {
     if (this.timer !== null) return;
     const pollMs = this.deps.pollMs ?? 1000;

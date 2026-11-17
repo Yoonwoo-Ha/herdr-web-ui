@@ -16,10 +16,16 @@ afterEach(() => { mock.restore(); for (const root of roots.splice(0)) rmSync(roo
 type Foreground = { pid: number; name: string; argv: string[] };
 /**
  * The pids the fake herdr reports are above any pid_max (Linux allows none over 2 ** 22), so no
- * process or thread of this host is at one.
+ * process or thread of this host is at one. herdr gives these processes no cwd of their own, and
+ * the server then reads /proc/<pid>/cwd: a live one there would place the OmO in its own folder,
+ * not in the pane's, and its holder would not be its.
  */
 const PID = 2 ** 22 + 41000;
 
+/**
+ * An OmO pane whose session holders are `holderPids`, with herdr giving no per-process cwd (macOS), so the pane's
+ * own directory places them.
+ */
 function omoPane(holderPids: number[]) {
   const root = mkdtempSync(join(tmpdir(), "ovis-outcome-omo-holder-")); roots.push(root);
   const cwd = join(root, "project");

@@ -1,7 +1,16 @@
 import { ompComposerPromptRow } from "./dialogs/omp.ts";
 
+/**
+ * One character of a screen row as herdr's ANSI read draws it: its foreground (null for the terminal's own,
+ * `38;2;r;g;b` or `38;5;n` for an extended one, the code for one of the 16 named ones), and whether it is dim,
+ * inverse, blinking and bold.
+ */
 interface Cell { char: string; fg: string | null; dim: boolean; inverse: boolean; blink: boolean; bold: boolean }
 
+/**
+ * An extended color is read in both forms: `38;2;r;g;b` and `38;5;n` take the parameters after it, `38:2::r:g:b`
+ * (its color space slot optional) and `38:5:n` carry theirs as subparameters, so no channel is read as a code.
+ */
 function rowCells(row: string): Cell[] {
   const cells: Cell[] = [];
   let fg: string | null = null;
@@ -142,6 +151,7 @@ const leadingBlanks = (cells: readonly Cell[]): number => {
   return first < 0 ? cells.length : first;
 };
 
+/** gjc's prompt row, `│ > ` before what is typed and ` │` after it, between its box's top and bottom border. */
 const GJC_PROMPT_RE = /^[│|] > /u;
 const GJC_BOX_TOP_RE = /^(?:╭─+╮|\+-+\+)$/u;
 const GJC_BOX_BOTTOM_RE = /^(?:╰─+╯|\+-+\+)$/u;
@@ -152,6 +162,8 @@ const GJC_PLACEHOLDER_RE = /^Type your message/;
 /**
  * The prompt gjc suggests next (its `promptSuggestions` setting): ghost text in the empty box that ends the
  * screen (`╭─╮`, `│ > … │`, `╰─╯`), drawn in the theme's dim color where typed text takes the terminal's own.
+ * None for the placeholder, for a box with anything typed, of more than one row or under anything else (an
+ * autocomplete list), and for a suggestion gjc cut short at the box's edge.
  */
 export function parseGjcSuggestion(ansi: string): string | null {
   const { cells, raw } = screenRows(ansi);
@@ -179,6 +191,9 @@ const OMP_QUEUE_HEADER_RE = /^Queueing\b/u;
 /**
  * The prompt omp predicts next (its `composer.predictions` setting): ghost text in the empty composer that ends
  * the screen, in any built-in `composer.shape`, drawn in a built-in theme's `dim` (OMP_DIM_TRUECOLOR).
+ * Known limit: the theme on screen is not known, so a custom theme whose `text` is exactly one of the built-in
+ * `dim` colors draws typed text that reads as a prediction. Telling it apart would take omp's resolved theme
+ * (its config, a project's, its flags) and its list of built-in names, for a collision on an exact color.
  */
 export function parseOmpSuggestion(ansi: string): string | null {
   const { cells, raw } = screenRows(ansi);
@@ -186,6 +201,11 @@ export function parseOmpSuggestion(ansi: string): string | null {
   for (const row of rows.slice(-4).reverse()) {
     const lead = leadingBlanks(cells[row]!);
     const gutter = Array.from(OMP_GUTTER_RE.exec(raw[row]!)![0]).length;
+    // pi's row has no gutter, so a prediction there may begin like the box's IME-safe gutter (`| `): with that gutter,
+    // read from the row's first character first, and let the empty row of the shape on screen tell which it is (#3643).
+    // Any other gutter is read past first, and from the first character only when that finds nothing (a pi prediction
+    // starting `+ `, `▐ `, `▎ ` or `╰─ `: no shape's empty row is left once those are blanked), except `❯ `: a
+    // claude-shape row with it blanked is pi's empty row, so a dim `❯ ` would come back in the prediction
     const pipe = /^[|│] $/u.test(raw[row]!.slice(lead, gutter));
     const prompt = raw[row]!.slice(lead, gutter) === "❯ ";
     for (const start of gutter <= lead ? [gutter] : pipe ? [lead, gutter] : prompt ? [gutter] : [gutter, lead]) {

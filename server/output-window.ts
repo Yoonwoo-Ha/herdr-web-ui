@@ -1,8 +1,10 @@
+// A fresh subscription id keeps delayed callbacks from acknowledging a later attach.
 export const OUTPUT_HIGH_BYTES = 256 * 1024;
 export const OUTPUT_LOW_BYTES = 64 * 1024;
 export const OUTPUT_HARD_BYTES = 1024 * 1024;
 export const OUTPUT_STALL_MS = 2000;
 const ALT_SCREEN_MODE = "1049";
+/** the slowest link a joiner's replay is given time for: 32 KiB/s, about 256 kbit/s */
 export const OUTPUT_JOIN_BYTES_PER_SECOND = 32 * 1024;
 export const OUTPUT_JOIN_MAX_MS = 15_000;
 /**
@@ -109,6 +111,7 @@ export function crossingMs(wire: number): number {
   return Math.ceil(wire * 1000 / OUTPUT_JOIN_BYTES_PER_SECOND);
 }
 
+/** DEC private mode switches (CSI ? Pm h / CSI ? Pm l): alternate screen, mouse reporting, ... */
 const PRIVATE_MODES = /\x1b\[\?([\d;]+)([hl])/g;
 /** xterm's modifyOtherKeys: CSI > 4 ; level m, off with CSI > 4 m, CSI > 4 n, or a bare CSI > m / CSI > n (every resource reset) */
 const MODIFY_OTHER_KEYS = /\x1b\[>(4(?:;(\d*))?)?([mn])/g;
@@ -127,6 +130,10 @@ export class ReplayBuffer {
   /** order matters: 1016l after 1006h leaves xterm's mouse encoding at the default */
   private readonly modes = new Map<string, "h" | "l">();
   private modifyOtherKeys = 0;
+  /**
+   * Output has fallen out of the tail. Until then the tail is the whole stream, herdr's first
+   * full draw included; after it a diff-based stream's tail may miss what was drawn only once.
+   */
   truncated = false;
 
   constructor(private readonly limit: number) {}

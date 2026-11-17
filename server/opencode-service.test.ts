@@ -330,6 +330,7 @@ describe("opencode-service", () => {
       try {
         forgetOpenCodeService();
         expect((await openCodeService(root))?.version).toBe("2.0.32");
+        // unreadable now, with the same size and mtime (chmod changes neither): a lookup that read it again would find no service
         const { mtime } = statSync(file);
         chmodSync(file, 0o000);
         forgetOpenCodeService();

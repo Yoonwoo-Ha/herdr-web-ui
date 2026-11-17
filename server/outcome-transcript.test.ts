@@ -11,6 +11,8 @@ import { commandInvocations, commandTranscriptRecords, CommandReservations, type
 
 afterEach(() => mock.restore());
 
+// a `claude attach <job>` shows the job's session, not the one herdr's hook last reported: only the pane's processes
+// tell, so a poll whose own read of them failed leaves the lookup to ask herdr itself
 it("keeps a claude attach pane on its job's transcript when the poll's process read fails", async () => {
   const at = Date.parse("2026-10-20T00:00:00Z");
   const root = mkdtempSync(join(tmpdir(), "outcome-attach-read-"));

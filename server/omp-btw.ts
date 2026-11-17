@@ -1,13 +1,21 @@
 /**
- * GET /api/pane/btw: the side conversations an OMP pane's session saved with `/btw`. OMP keeps them
- * out of its transcript, one file per topic in the session's artifacts folder (the session file's path
- * without `.jsonl`): `btw-history/entry-<id>.json`, with an optional `entry-<id>.title` beside it
- * (OMP 18.14, packages/coding-agent/src/session/btw-history.ts). Only the main session's topics are
- * read: `btw-history/sessions/` holds a focused subagent's, which are another conversation. A record
- * is taken only as OMP itself would load it (a regular file, its exact fields, its id matching its
- * name). `more` says a cap left something out. Statuses are shown as saved: a reader cannot tell a
- * topic still being answered from one whose writer stopped. Pictures attached to a question are not
- * sent.
+ * GET /api/pane/btw: the side conversations an OMP pane's session saved with `/btw`, for the
+ * composer's side conversations chip. OMP keeps them out of its transcript, one file per topic in
+ * the session's artifacts folder (the session file's path without `.jsonl`): `btw-history/entry-<id>.json`,
+ * with an optional `entry-<id>.title` beside it (OMP 18.14, packages/coding-agent/src/session/btw-history.ts).
+ * Only the main session's topics are read: `btw-history/sessions/` holds a focused subagent's, which
+ * are another conversation. A record is taken only as OMP itself would load it (a regular file, its
+ * exact fields, its id matching its name); anything else is skipped, and so is a history reached
+ * through a linked folder. A read has hard caps, since the chip asks again every few seconds: the
+ * folder listing stops after 2,000 entries or 200 ms, at most the hundred most recently written
+ * topics are read, a topic file over 16 MiB or of more than 20,000 JSON items is skipped (items are
+ * what a parse costs; a screenshot in a question is one long string, and the answer drops it), one
+ * request reads at most 32 MiB, every byte read counted, a topic keeps its first 200 follow-ups, and the
+ * answer stays under a megabyte. `more` says a cap left something out. Each file is read through one
+ * descriptor, never following a link or opening anything but a regular file, and never past its cap.
+ * A record is kept until its file changes. Statuses are shown as saved:
+ * a reader cannot tell a topic still being answered from one whose writer stopped. Pictures attached
+ * to a question are not sent. The dispatcher in index.ts runs the access gate first.
  */
 import { closeSync, constants, fstatSync, lstatSync, openSync, opendirSync, readSync } from "node:fs";
 import { join } from "node:path";

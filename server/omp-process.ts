@@ -20,6 +20,10 @@ export function ompRoutingEnviron(environ: readonly string[] | null): string[] |
   return environ.filter((word) => ROUTING.test(word));
 }
 
+/**
+ * The helper's first line, written once it runs and before it touches the target: only the read after
+ * it has the read deadline, since starting a bun can take over a second on a loaded PC (#2648).
+ */
 export const PROBE_STARTED = "omp-process-probe: reading";
 
 const SCRIPT = `
@@ -72,6 +76,10 @@ export function isWsl(): boolean {
   return wsl;
 }
 
+/**
+ * A successful answer is kept per pid and start time, so polling one process spawns one helper and
+ * a reused pid misses; a failed one is never kept, so the next poll tries again.
+ */
 export function createOmpProcessProbe({ timeoutMs = 1000, startMs = 10_000, maxProcesses = 4, startTicks = processStartTicks, command = (pid, argv) => [process.execPath, "-e", SCRIPT, String(pid), argv ? "1" : "0"] }: {
   timeoutMs?: number;
   startMs?: number;
@@ -144,6 +152,7 @@ export function createOmpProcessProbe({ timeoutMs = 1000, startMs = 10_000, maxP
           const value: unknown = JSON.parse(output);
           const words = (v: unknown): v is string[] => Array.isArray(v) && v.every((word) => typeof word === "string");
           if (value === null || typeof value !== "object" || !("argv" in value) || !("environ" in value) || !words(value.argv) || !words(value.environ)) { finish(null); return; }
+          // a different start time: the pid was reused, and the helper read another process
           if (!("start" in value) || value.start !== start) { finish(null); return; }
           const memory = { argv: value.argv, environ: value.environ };
           if (cache.size >= MAX_CACHED && !cache.has(pid)) cache.delete(cache.keys().next().value!);

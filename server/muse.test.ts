@@ -37,6 +37,7 @@ describe("Muse session log", () => {
       ["assistant", ["text"]],
     ]);
     const [prompt, work] = turns;
+    // run/started repeats the prompt; only the accepted intent is the user's message
     expect(prompt!.parts).toEqual([{ kind: "text", text: "Count the lines in notes.txt" }]);
     expect(work!.parts[1]).toEqual({ kind: "text", text: "Counting the lines now.", phase: "commentary" });
     expect(work!.parts.at(-1)).toEqual({ kind: "text", text: "notes.txt has 3 lines.", phase: "final_answer" });
@@ -53,6 +54,7 @@ describe("Muse session log", () => {
     expect(tools[4]!.output_ref).toBe("call_05");
     expect(tools[4]!.output_size).toBe(Array.from({ length: 1200 }, (_, n) => `${n + 1}\n`).join("").length);
     expect(turns[3]!.parts[0]).toEqual({ kind: "compact", text: "The user counted the lines of notes.txt: 3." });
+    // recorded_at is in microseconds; the answer starts at its first record, the reasoning
     const reasoning = JSON.parse(fixture.split("\n").find((line) => line.includes("reasoning_summary_committed"))!);
     expect(work!.ts).toBe(new Date(Math.floor(reasoning.recorded_at / 1000)).toISOString());
   });
@@ -183,6 +185,7 @@ describe("Muse session log", () => {
       ["user", ["Start one subagent that counts the lines in notes.txt, wait for it, then tell me its number."]],
       ["assistant", ["text", "tool:subagent_spawn", "text", "tool:subagent_wait", "3"]],
     ]);
+    // `/fork` opened this session in a new tab; the turns before the fork are `session.fork.turn` records, not shown
     const fork = "01a17b27-16af-7d23-b6e3-359822f02bba";
     const forked = parseMuseTranscript(log("fork"), fork);
     expect(brief(forked)).toEqual([
@@ -190,9 +193,11 @@ describe("Muse session log", () => {
       ["assistant", ["text", "tool:read_file", "- water every other day"]],
     ]);
     expect(transcriptPage("muse-transcript", logAt(fork, log("fork"))).turns).toEqual(forked);
+    // a side chat's question is in its `session.side.started` record, which is not read
     expect(brief(parseMuseTranscript(log("side"), "01a17b28-dbc2-7c40-ac12-4284736f2d0f"))).toEqual([
       ["assistant", ["A rake gathers leaves and debris into piles and levels or loosens the soil."]],
     ]);
+    // `/rewind` to the second prompt writes the kept prompt again; its answer is only a `session.fork.turn` record
     expect(brief(parseMuseTranscript(log("rewind"), "01a17b29-b9c6-7f72-ade5-8ccfc373f2f3"))).toEqual([
       ["user", ["[Image #1]  What color is this picture? Answer in one word."]],
       ["user", ["How many items does shed.txt list? Answer with the number only. Then name them."]],
@@ -383,6 +388,7 @@ describe("Muse session binding", () => {
     session("22", id(3), "pid=4242\nhost=fiction\n", ended);
     rmSync(session("22", id(5), "pid=4242\nhost=fiction\n"));
     expect(museSessionFor(root, owner, "fiction")).toBeNull();
+    // after an in-TUI switch, the session left behind ends and the one switched to is live
     const live = session("22", id(4), "pid=4242\nhost=fiction\n");
     expect(museSessionFor(root, owner, "fiction", later())).toBe(live);
   });
@@ -474,6 +480,7 @@ describe("Muse session binding", () => {
     expect(parseMuseLock("")).toBeNull();
     const path = session("22", id(1), null, ended);
     expect(museSessionLive(path)).toBe(false);
+    // a resume writes its records at once, after the end the earlier close left
     appendFileSync(path, '{"payload_type":"session.resumed"');
     expect(museSessionLive(path)).toBe(true);
     expect(museSessionLive(join(root, "missing.jsonl"))).toBe(false);

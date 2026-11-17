@@ -2,13 +2,25 @@
  * OpenCode 2 runs a subagent in a child session of the session that started it: a `session_v2`
  * row whose `parent_id` names that session, with `session_message` rows of its own (the
  * `subagent` tool, packages/core/src/tool/plugin/subagent.ts in 2.0.32; a plugin that starts
- * subagents makes the same child sessions).
+ * subagents makes the same child sessions). With Settings -> Read OpenCode subagent ends from their
+ * session (experimental, off by default; `parentEnds`), whether one still runs is told first by the parent's
+ * own record, as a Claude Code subagent's end is taken from its parent's transcript: the newest
+ * `subagent` call naming the child (`state.metadata.sessionID`) runs it until it is answered
+ * (`completed`, or `error`), and a background call, answered at once with `metadata.status:
+ * "running"`, runs it until the parent's `synthetic` notice (`metadata.childID`, `metadata.state`).
  * A child can go idle while background work of its own still runs, its parent's call answered only
  * once that ends (anomalyco/opencode#57418), so its idle row alone does not end it.
- * When a run of a session ends, OpenCode appends an `idle` row with its outcome (`succeeded`, `failed`,
+ * The child's own rows tell for a child no call names (a plugin's, a migrated 1.x store, a call
+ * that failed before it reached the child) and for one woken after its parent was told it ended: when a
+ * run of a session ends, OpenCode appends an `idle` row with its outcome (`succeeded`, `failed`,
  * `interrupted`; session/projector.ts), and a later prompt starts another run. A store OpenCode
  * 1.x wrote and 2.0 migrated has no idle rows: there a step that finished for anything but its
  * tool calls, or with an error, ended the run.
+ *
+ * A background command is not a child session: the session's own `shell` row carries it
+ * (`metadata.background`, its `shellID`, `command`, `status` and `exit`), the same rows the chat
+ * reads, so the list and the chat agree on it. It never counts for the turn: the parent is woken
+ * by its result, and does not wait on it.
  *
  * The runs belong to OpenCode's background service, not to the TUI in the pane: a service that
  * stopped without an idle row (a crash, a kill) took its runs with it.
@@ -56,6 +68,7 @@ function runEnd(run: ChildRun): End | null {
     const status = run.outcome === "failed" ? "failed" : run.outcome === "interrupted" ? "cancelled" : "completed";
     return { status, at: stamp(run.created_at) ?? run.at };
   }
+  // 1.x wrote no idle row: an answered step ended the run, or one that failed or was stopped
   const completed = stamp(run.completed);
   if (run.type === "assistant" && completed !== null) {
     if (run.error !== null && run.error !== "null") return { status: run.error_type === "aborted" ? "cancelled" : "failed", at: completed };
@@ -84,6 +97,12 @@ const NAMED_SPAN = 2 ** 48;
 /** Whether row `a` was named after row `b`: the 48 bits wrap about every 2.2 years, so the nearer way round is taken. */
 const namedAfter = (a: number, b: number): boolean => a !== b && (a - b + NAMED_SPAN) % NAMED_SPAN < NAMED_SPAN / 2;
 
+/**
+ * A waited call started a job of its own (a call to a child whose job is in the
+ * background joins that job and is answered at once, subagent.ts), which ends with the call's answer: a notice named
+ * before the call's step began answers an older job, however late it was written. Other calls keep the order the rows
+ * were written in: one answered as gone to the background may have joined the job an older-named notice ends.
+ */
 function newer(said: Told, was: Told | undefined): boolean {
   if (was === undefined) return true;
   if (said.named !== null && was.named !== null) {
@@ -436,6 +455,15 @@ function scanResult(scan: Scan): OpencodeSubagentState {
 const DETAIL_RECORD_BYTES = 64 * 1024;
 const DETAIL_ROW_BYTES = 4 * 1024 * 1024;
 
+/**
+ * GET /api/pane/background-agent for an OpenCode pane: what the child session `childId` of the session `sessionId` did,
+ * read-only and bounded as a Claude Code subagent's detail is (claude-subagents.ts backgroundAgentDetail), from one
+ * snapshot of the store. Its work is the text and tool parts of
+ * the `assistant` rows since that prompt, the newest as many as max_events and max_read_bytes allow (no reasoning, no
+ * tool output), taken out in the store so that only they come out of it; a staged `/undo` hides the rows from its
+ * message on, as the chat does (server/opencode.ts sessionView). Only a child of `sessionId` is answered: another
+ * session's is not found.
+ */
 export function opencodeAgentDetail(path: string, sessionId: string, childId: string): { detail: Omit<PaneBackgroundAgentDetail, "server_time"> } | { refusal: DetailRefusal | "command" } {
   try {
     return withStore(path, (db) => db.transaction(() => childDetail(db, sessionId, childId))()) ?? { refusal: "unavailable" };
@@ -471,8 +499,11 @@ function childDetail(db: Database, sessionId: string, childId: string): ReturnTy
     return row as Taken & { shown: string; bytes: number };
   };
   const promptRow = db.query<{ seq: number }, [string, number]>("SELECT seq FROM session_message WHERE session_id = ? AND type = 'user' AND seq < ? ORDER BY seq DESC LIMIT 1").get(childId, end);
+  // the prompt's text alone: a prompt's row also carries the files sent with it
   const dispatch = promptRow === null ? null : kept(db.query<Taken, [string, number]>(take("coalesce(json_extract(data, '$.text'), '')")).get(childId, promptRow.seq));
   const prompt = dispatch !== null && dispatch.shown.trim().length > 0 ? dispatch.shown : null;
+  // the newest steps since, one more than can be shown to tell whether older ones were left; each step's text and tool
+  // calls (name and input) are taken out in the store, its tools' output left there
   const steps = db.query<{ seq: number }, [string, number, number]>(
     `SELECT seq FROM session_message WHERE session_id = ? AND type = 'assistant' AND seq > ? AND seq < ? ORDER BY seq DESC LIMIT ${DETAIL_LIMITS.max_events + 1}`,
   ).all(childId, promptRow?.seq ?? -1, end);
@@ -556,6 +587,10 @@ export interface OpencodeSubagentDeps {
 
 interface Tracked { session: string; live: boolean; running: number; turnRunning: number; promptAt: number | null; reset: boolean; log: ParentLog; parentEnds: boolean | null }
 
+/**
+ * The session is the one
+ * herdr's OpenCode integration reports (opencodeSessionId), never a guess.
+ */
 export class OpencodeSubagentStatus {
   private readonly panes = new Map<string, Tracked>();
   private readonly agents = new Map<string, string | null>();

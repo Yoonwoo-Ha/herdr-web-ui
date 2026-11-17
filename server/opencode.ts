@@ -8,7 +8,8 @@
  * `session_message` rows of its id, ordered by `seq`, each a `type` and a JSON `data`. OpenCode 1.x
  * wrote `session`/`message`/`part` instead (2.0 copies them into `session_v2` when it migrates).
  *
- * herdr's OpenCode integration reports the session the TUI shows (`herdr:opencode`, kind `id`).
+ * herdr's OpenCode integration reports the session the TUI shows (`herdr:opencode`, kind `id`),
+ * so a pane is bound by that id, never by a guess from its cwd.
  *
  * A row is rewritten in place while its step streams (`time_updated` moves). `/undo` hides the
  * rows from a message on (`session_v2.revert`) until the next prompt deletes them. `seq` is never
@@ -152,10 +153,15 @@ function toolText(state: Row, name: string): string {
   return name === "subagent" ? unwrap(output) : output;
 }
 
+/**
+ * A call's `state.status` as the transcript's outcome (shared/protocol.ts): not answered yet (1.x `pending`,
+ * 2.x `streaming` while the model still writes its input, then `running`), answered, or failed.
+ */
 function toolState(status: unknown): Extract<ConversationPart, { kind: "tool" }>["state"] {
   return status === "pending" || status === "streaming" || status === "running" ? "pending" : status === "completed" ? "ok" : status === "error" ? "error" : undefined;
 }
 
+/** OpenCode's `skill` tool names the skill it loads by `id` (1.x: `name`). */
 function toolSkill(name: string, input: Row, status: unknown): SkillActivity | null {
   if (name !== "skill") return null;
   const skill = skillName(input.id) ?? skillName(input.name);
@@ -163,6 +169,7 @@ function toolSkill(name: string, input: Row, status: unknown): SkillActivity | n
   return { name: skill, evidence: "invocation", status: status === "completed" ? "loaded" : status === "error" ? "failed" : "requested" };
 }
 
+/** `<shell …>…</shell>` and `<subagent …>…</subagent>` wrap what OpenCode hands back to its model. */
 function unwrap(body: string): string {
   const match = /^<(shell|subagent)\b[^>]*>\n?([\s\S]*?)\n*<\/\1>\s*$/.exec(body.trim());
   return (match?.[2] ?? body).trim();
@@ -254,7 +261,9 @@ export function opencodeRecord(id: string, type: string, data: Row): OpencodeRec
 }
 
 /**
- * OpenCode marks a turn's end with an `idle` row, and a step that finished with `stop` is the turn's answer.
+ * A model step is a row of its own, so consecutive steps merge
+ * into one assistant turn, until the turn ends: OpenCode marks that with an `idle` row, and a step
+ * that finished with `stop` is the turn's answer.
  */
 export function opencodeTurns(records: readonly (OpencodeRecord | null)[]): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
@@ -389,8 +398,9 @@ export function sessionView(db: Database, sessionId: string): SessionView | null
 const settings = new Map<string, { updated: number; size: number; model: string | null; variant: string | null; tokens: Row | null; completed: boolean }>();
 
 /**
- * JSON1 is not part of every SQLite Bun may run on (on macOS it uses the
- * system's own).
+ * The rows are walked from
+ * the newest and parsed here: JSON1 is not part of every SQLite Bun may run on (on macOS it uses the
+ * system's own), so nothing is asked of SQL beyond the index.
  */
 function sessionMetadata(db: Database, key: string, sessionId: string, end: number, measure: OpencodeRowSize): ConversationMetadata {
   const data = db.query<{ data: string }, [string, string]>("SELECT data FROM session_message WHERE id = ? AND session_id = ?");
@@ -443,6 +453,12 @@ function parseData(data: string): Row {
   try { return record(JSON.parse(data)); } catch { return {}; }
 }
 
+/**
+ * Every cursor is the `seq` of a
+ * page's first row, and a committed `/undo` deletes every row from its message on: a chat whose
+ * pages reach a deleted turn holds a cursor to a deleted row. Reading the store answers that the
+ * same way after a restart, which nothing kept in memory could.
+ */
 function cursorOf(db: Database, sessionId: string, historyId: string, cursor: string, end: number): number | null {
   const separator = cursor.lastIndexOf(":");
   const offset = Number(cursor.slice(separator + 1));
@@ -645,11 +661,20 @@ export function opencodeSessionsTitled(path: string | null, terminalTitle: strin
   }
 }
 
-/**
- * OpenCode 1.x: `message.data.role` is `user` or `assistant`; an assistant step keeps the model (`modelID`) and its
- * usage (`tokens`) on the message and its `text`/`reasoning`/`tool` blocks in `part` rows. There is no `seq`.
- * A `/undo` is `session.revert` (a `{ messageID }`), hiding the rows from it on; the revert commit deletes that suffix.
- */
+/* -------------------------------------------------------------------------------------------------
+ * OpenCode 1.x: session / message / part
+ *
+ * Before the 2.x store (2.0.24), OpenCode kept the same conversation in three tables: `session`, and
+ * one `message` and several `part` rows per step. 2.0 copies them into `session_v2`/`session_message`
+ * when it migrates; a store with no `session_v2` is still 1.x, which the 2.x reader refused (its
+ * `session_v2` queries throw `no such table` and the chat fell back to the terminal).
+ *
+ * `message.data.role` is `user` or `assistant`; an assistant step keeps the model (`modelID`) and its
+ * usage (`tokens`) on the message and its `text`/`reasoning`/`tool` blocks in `part` rows. There is no
+ * `seq`: a message is ordered by `(time_created, id)`, and a page cursor names a message by its place
+ * in that order. A `/undo` is `session.revert` (a `{ messageID }`), hiding the rows from it on; the
+ * revert commit deletes that suffix, leaving the earlier places unchanged. Read-only, per `session_id`.
+ * ----------------------------------------------------------------------------------------------- */
 
 type StoreFlavor = "v2" | "v1" | "unknown";
 const MAX_V1_ROWS = 10_000;
@@ -706,6 +731,7 @@ function adaptMessage1(message: Message1): { type: string; data: Row } | null {
   const role = message.data.role;
   if (role === "user") {
     const prompt = message.parts.filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text as string).join("\n");
+    // a picture pasted in the prompt is a `file` part: its 1.x `url` is the 2.x `uri` `rowImages` reads
     const files = message.parts.filter((part) => part.type === "file" && typeof part.url === "string")
       .map((part) => ({ type: "file", uri: part.url, mime: part.mime }));
     return { type: "user", data: { time: message.data.time, text: prompt, files, skills: [] } };

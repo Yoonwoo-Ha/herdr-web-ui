@@ -56,6 +56,7 @@ function task(record: Row): OmoTask | null {
     turns: count(stats?.["turns"]),
     tool_calls: count(stats?.["tool_calls"]),
     tokens: count(stats?.["total_tokens"]),
+    // the record's prompt and answer stay on the server: nothing of a running task is opened
     detail_kind: null,
   };
 }
@@ -90,6 +91,7 @@ export function omoTasks(cwd: string, sessionId: string, alive: (pid: number) =>
     }
     const { parent, hostPid, task: kept } = cached.kept;
     if (parent !== sessionId || kept === null) continue;
+    // its host died with it running: lost, as OmO itself marks it, and ended when last heard of
     const found: OmoTask = kept.status === "running" && hostPid !== null && !alive(hostPid) ? { ...kept, status: "lost" } : kept.status === "running" ? { ...kept, ended_at: null } : kept;
     const at = time(found.ended_at) || time(found.started_at);
     if (found.status === "running") running.push(found);

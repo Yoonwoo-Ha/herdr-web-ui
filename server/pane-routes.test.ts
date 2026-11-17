@@ -613,6 +613,7 @@ it("asks the share rule about the folder an agent's commands are listed for, as 
     const url = new URL("http://x/api/agent/commands?agent=claude&cwd=%2F%2Fhost%2Fshare");
     const response = (await handlePaneRequest(new Request(url), url, "/api/agent/commands", {}))!;
     expect([response.status, ((await response.json()) as { error: { code: string } }).error.code]).toEqual([400, "invalid_cwd"]);
+    // on a Windows PC a share no pane works on is refused before it is read (directories.ts expandedPath)
     expect(expanded.mock.calls).toEqual([["//host/share"]]);
   } finally { expanded.mockRestore(); }
 });

@@ -71,6 +71,10 @@ async function connect(paneId: string, ack = true, observer = false, port = serv
   return { ws, state, send, acknowledge };
 }
 
+/**
+ * Node's availability is taken first, so a run on the Rust host
+ * does not cache it as missing for the tests after this one.
+ */
 function breakPath(): () => void {
   nodeSidecarAvailable();
   const previous = process.env["PATH"];

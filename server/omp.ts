@@ -104,7 +104,8 @@ export function ompLaunch(argv: readonly string[]): OmpLaunch | null {
 /**
  * The agent directory one omp process keeps its sessions and terminal breadcrumbs in:
  * ~/.omp/agent, or ~/.omp/profiles/<name>/agent under `--profile <name>` or OMP_PROFILE (the flag
- * wins).
+ * wins). null when `--session-dir` moved its sessions anywhere at all, the profile name could
+ * leave ~/.omp/profiles, or omp would not start with this argv.
  */
 export function ompAgentDir(argv: readonly string[], environ: readonly string[] | null, home: string): string | null {
   if (ompLaunch(argv)?.sessionDir) return null;
@@ -259,6 +260,10 @@ function ompAgentDirectory(launch: OmpLaunch, variable: (key: string) => string 
   return { agent, defaultAgent, profile };
 }
 
+/**
+ * The routing words of a process's environment on macOS, from the kernel's argument area, or null
+ * (Linux reads through the bounded helper in ompPaneRoute; Windows shows none).
+ */
 function routingEnviron(pid: number): readonly string[] | null {
   if (process.platform === "darwin") return ompRoutingEnviron(darwinProcess.environment(pid)?.split("\0") ?? null);
   return null;
@@ -269,14 +274,27 @@ export interface OmpRoute {
   pids: number[];
   environOf: (pid: number) => readonly string[] | undefined;
   launchDir: string | null;
+  /**
+   * On macOS herdr-core, the files each process holds open (ompHeldOpen), the only proof there; null for a
+   * process whose listing held a name that could not be read, so nothing is proved for it. Elsewhere /proc is read.
+   */
   openFilesOf?: (pid: number) => readonly string[] | null;
+  /**
+   * On macOS with ompHeldFiles on, each process's start identity, read as herdr's sample that names it is
+   * taken: lsof lists a process only while its start stays this one, so a pid reused since is never read.
+   */
   startsOf?: ReadonlyMap<number, number>;
 }
 
+/** An lsof listing longer than this is not read: nothing is proved from a part of one. */
 const LSOF_MAX_BYTES = 1 << 20;
 const LSOF_DEADLINE_MS = 3000;
 
 const LSOF_FRESH_MS = 2000;
+/**
+ * A name lsof listed, with the `dev:ino` of the file it held (its `D` and `i` fields), or null when lsof
+ * printed neither: such a `.jsonl` proves nothing, since the name may meanwhile name another file.
+ */
 interface HeldName { name: string; id: string | null }
 const listed = new Map<number, { identity: number; files: HeldName[] | null; at: number }>();
 
@@ -306,8 +324,17 @@ function lsofName(field: string): string | null {
 /**
  * The files each process holds open on macOS (`-Fpn`: a `p` line per process, then an `n` line per
  * file). omp keeps its session file open from its first write, which is the only proof of the session
- * an `omp -c` continues: omp leaves an unchanged breadcrumb as it was (#3365). An exit of 1 with the
- * whole listing printed means only that some pid was gone, and the others' listings stand.
+ * an `omp -c` continues: omp leaves an unchanged breadcrumb as it was (#3365). A process listed in the
+ * last LSOF_FRESH_MS under the start it has now is not listed again; the others are, in one lsof run.
+ * That run proves nothing when it fails, runs past its deadline (then it is SIGKILLed) or prints more
+ * than LSOF_MAX_BYTES; an exit of 1 with the whole listing printed means only that some pid was gone,
+ * and the others' listings stand. A process counts only when its start is the same before and after
+ * the run as the one read with herdr's sample (`sampled`): a pid reused meanwhile lists another omp's
+ * session (as #3324 checks); every one, a listing reused too, is checked again after the last wait, just
+ * before the listing is returned. A name holding a control character once decoded is no held path.
+ * Each held `.jsonl` must still name the file lsof saw (its `dev:ino`) when the listing is returned, a
+ * reused one too: a path renamed or replaced since proves nothing, and that listing is forgotten. A
+ * process absent from the result has no listing that proves anything (ompHeldOpen).
  */
 async function darwinOpenFiles(pids: readonly number[], sampled: ReadonlyMap<number, number>): Promise<Map<number, string[] | null>> {
   const open = new Map<number, HeldName[] | null>();
@@ -337,6 +364,7 @@ async function darwinOpenFiles(pids: readonly number[], sampled: ReadonlyMap<num
       if (size > LSOF_MAX_BYTES) { whole = false; child.kill("SIGKILL"); break; }
       chunks.push(chunk);
     }
+    // a listing cut off by its size or its deadline proves nothing, whatever lsof exits with
     const code = whole ? await child.exited : null;
     if (code !== 0 && code !== 1 || !whole) return sameStarts(open, identities);
   } catch { return sameStarts(open, identities); } finally { clearTimeout(deadline); }
@@ -350,6 +378,7 @@ async function darwinOpenFiles(pids: readonly number[], sampled: ReadonlyMap<num
     else if (line.startsWith("D") && /^0x[0-9a-f]+$/i.test(line.slice(1))) device = BigInt(line.slice(1)).toString();
     else if (line.startsWith("i") && /^\d+$/.test(line.slice(1))) inode = line.slice(1);
     else if (line.startsWith("n") && current !== undefined) {
+      // a name that cannot be read may be the very session: nothing is proved for this process then
       const name = lsofName(line.slice(1));
       const files = fresh.get(current);
       if (name === null || /[\x00-\x1f\x7f]/.test(name)) fresh.set(current, null);
@@ -371,6 +400,11 @@ function fileId(path: string): string | null {
   try { const stat = statSync(path, { bigint: true }); return `${stat.dev}:${stat.ino}`; } catch { return null; }
 }
 
+/**
+ * The listings of the processes whose start is still the one read before them, by name; a changed one is
+ * forgotten. A listing one of whose `.jsonl` names no longer names the file lsof saw proves nothing (null),
+ * and is forgotten too.
+ */
 function sameStarts(open: Map<number, HeldName[] | null>, identities: ReadonlyMap<number, number>): Map<number, string[] | null> {
   const names = new Map<number, string[] | null>();
   for (const [pid, files] of open) {
@@ -386,6 +420,7 @@ function sameStarts(open: Map<number, HeldName[] | null>, identities: ReadonlyMa
   return names;
 }
 
+/** The kernel's start of a process on macOS, in microseconds, or null. */
 function sampledStart(pid: number): bigint | null {
   try { return darwinStartTime(pid); } catch { return null; }
 }
@@ -396,13 +431,26 @@ export function readOmpHeldFilesSetting(read: () => boolean): void {
   heldFilesOn = read;
 }
 
+/**
+ * On macOS herdr-core (`core`) there is no /proc and omp's breadcrumb proves nothing (#3365): only the files a
+ * process holds open do, so lsof lists them, and when it proves nothing no file is held and heldTranscript
+ * binds nothing. A process with no listing that proves anything (its start unread or changed, left out by lsof,
+ * lsof failed) may hold another session than the others: it is unreadable, so nothing is bound then.
+ */
 export async function ompHeldOpen(route: OmpRoute, core: boolean): Promise<OmpRoute> {
   if (process.platform !== "darwin" || !core || !heldFilesOn()) return route;
   const open = await darwinOpenFiles(route.pids, route.startsOf ?? new Map());
   return { ...route, openFilesOf: (pid) => open.get(pid) ?? null };
 }
 
+/**
+ * null when herdr shows no live omp process in the pane; "unproved" when one's store cannot be told, two keep
+ * different ones, or a live process whose argv herdr left out could not be read, since nothing then says which
+ * store, or which session, the pane shows.
+ */
 export async function ompPaneRoute(paneId: string, known?: ProcessInfo | null): Promise<OmpRoute | "unproved" | null> {
+  // `known`: herdr's answer the caller's poll already read for this pane. One that named no processes is asked again:
+  // with no omp seen herdr's reported session is trusted, and an omp started since may keep another store
   const sampleStarts = process.platform === "darwin" && heldFilesOn();
   // A process that started at or after herdr was asked is not the one its sample named, but a pid reused
   // since: its start is not taken, so lsof never lists it (ompHeldOpen). `askedAt` is never later than the
@@ -476,6 +524,12 @@ export function ompRouteTranscript(route: OmpRoute, cwd: string): string | null 
   return path !== null && ompSessionVersion(transcriptHeader(path)?.version) ? path : null;
 }
 
+/**
+ * The store of a route that holds `path`, the transcript herdr names, as written: `<cwd>/<id>.jsonl`
+ * in a managed store, `<id>.jsonl` in a session directory of its own, or a subagent's file beside
+ * either. null when it is not there. The caller still follows links and checks the header
+ * (ompRouteOwns).
+ */
 export function ompRouteStore({ layout }: OmpRoute, path: string): string | null {
   if (!path.endsWith(".jsonl") || !isAbsolute(path)) return null;
   const parts = storeRelative(layout.sessions, path);
@@ -483,9 +537,12 @@ export function ompRouteStore({ layout }: OmpRoute, path: string): string | null
 }
 
 /**
- * A session directory of its own holds every directory's sessions side by side, so there the header
- * must also name the pane's live directory. A managed store keeps each directory's sessions in a
- * folder of their own.
+ * Whether a written transcript in a route's store, links followed, is this pane's: of the shape omp
+ * writes there and of a version omp reads. A session directory of its own holds every directory's
+ * sessions side by side, so there the header must also name the pane's live directory (one naming
+ * only the launch directory is left to ompRouteTranscript, which tries that one after the live
+ * one). A managed store keeps each directory's sessions in a folder of their own, and herdr's path
+ * there is taken as before, also for a session of a directory that is gone.
  */
 export function ompRouteOwns({ layout }: OmpRoute, file: string, cwd: string): boolean {
   let parts: string[] | null;
@@ -496,10 +553,15 @@ export function ompRouteOwns({ layout }: OmpRoute, file: string, cwd: string): b
 }
 
 /**
- * omp 18.8.7 keeps its sessions in `<data>/sessions` and their pictures in `<data>/blobs` (`<data>` is
- * the agent directory, or omp's XDG data directory), so a session of a managed store,
- * `<data>/sessions/<cwd>/<id>.jsonl` or a subagent's file a level below it, has its blobs beside the
- * store. A session directory of its own (`--session-dir`) names no data directory.
+ * The blob store holding the pictures of an omp transcript, or null. omp 18.8.7 keeps its sessions in
+ * `<data>/sessions` and their pictures in `<data>/blobs` (`<data>` is the agent directory, or omp's
+ * XDG data directory), so a session of a managed store, `<data>/sessions/<cwd>/<id>.jsonl` or a
+ * subagent's file a level below it, has its blobs beside the store. A session directory of its own
+ * (`--session-dir`) names no data directory, and its pictures stay unnamed. The store is found from
+ * the transcript's real path, by layout alone, whether it exists yet or not: the parser, a page read
+ * live and the image endpoint all ask of the store when they read a blob, and a store that is missing,
+ * or a link (to another omp's store, or anywhere), answers nothing then (ompBlobPicture). A blob is
+ * served only when its bytes hash to the name the transcript gave them, so a wrong guess finds nothing.
  */
 export function ompBlobStore(transcript: string): string | null {
   let real: string;

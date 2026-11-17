@@ -67,6 +67,8 @@ const result = (entry: string, id: string, content: unknown[]) => ({ type: "mess
 const answer = (entry: string, text: string) => ({ type: "message", id: entry, parentId: "r1", timestamp: at, message: { role: "assistant", content: [{ type: "text", text }], stopReason: "stop", timestamp: 4 } });
 const clear = { type: "custom", customType: "context_clear", id: "x1", parentId: "a2", timestamp: at };
 
+// omp's blob pictures are read through a held store (openBlob, held-open.ts), which Linux, macOS and
+// Windows offer; elsewhere they are refused by design, a branch run here with blobPlatformForTests
 describe.skipIf(!heldOpenPlatform(process.platform))("omp's pictures reach the chat", () => {
   it("names the recorded session's prompt and tool pictures by ref only, and serves their exact bytes", async () => {
     const { path } = store("recorded", FIXTURE);
@@ -75,6 +77,7 @@ describe.skipIf(!heldOpenPlatform(process.platform))("omp's pictures reach the c
       [], [`image/webp pi:${CALL}:0`],
       ["image/webp pi-prompt:faaa5772:0"], [],
     ]);
+    // only refs reach the page: no picture bytes, and no blob ref either
     const page = JSON.stringify(transcriptPage("omp-transcript", path));
     expect(page).not.toContain(BLOB.toString("base64").slice(0, 32));
     expect(page).not.toContain("blob:sha256");
@@ -111,6 +114,7 @@ describe.skipIf(!heldOpenPlatform(process.platform))("omp's pictures reach the c
     const tampered = store("blob-tampered", records, { [DIGEST]: Buffer.concat([BLOB, Buffer.from("x")]) });
     expect(refs(tampered.path)).toEqual([[], []]);
     expect(await ompTranscriptImage(tampered.path, "pi-prompt:u1:0")).toBeNull();
+    // a link in the store is not followed, even to the right bytes
     const linked = store("blob-linked", records, {});
     writeFileSync(join(root, "elsewhere.webp"), BLOB);
     symlinkSync(join(root, "elsewhere.webp"), join(linked.blobs, DIGEST));
@@ -190,6 +194,8 @@ describe.skipIf(!heldOpenPlatform(process.platform))("omp's pictures reach the c
       if (moves === 1) { renameSync(own.blobs, other.blobs); renameSync(`${own.blobs}-aside`, own.blobs); }
     }
     expect(moves).toBeGreaterThanOrEqual(1);
+    // the agent directory above the store is a link to the other omp's for the whole read: the store
+    // checks and opens alike go through it, so only where the opened store really is tells them apart
     renameSync(agent, `${agent}-aside`);
     linkDirectory(join(other.blobs, ".."), agent);
     try {
@@ -203,6 +209,7 @@ describe.skipIf(!heldOpenPlatform(process.platform))("omp's pictures reach the c
     const records = jsonl(prompt("u1", [{ type: "text", text: "look" }, picture()]), answer("a1", "a webp"));
     const other = store("anchor-other", records);
     const own = store("anchor-own", records, {});
+    // the store's identity is taken from the objects authorized with the transcript
     const sessions = (blobs: string) => join(blobs, "..", "sessions");
     const authorized = ompAuthorizedTranscript(authorizedTranscript(own.path, sessions(own.blobs))!);
     expect(authorized).toEqual({ path: own.path, blobs: ompBlobAnchor(own.blobs)!.identity });
@@ -212,12 +219,15 @@ describe.skipIf(!heldOpenPlatform(process.platform))("omp's pictures reach the c
     linkDirectory(join(other.blobs, ".."), agent);
     try {
       expect(await ompTranscriptImage(authorized.path, "pi-prompt:u1:0", authorized.blobs)).toBeNull();
+      // the same read with no authorized store serves nothing either
       expect(await ompTranscriptImage(authorized.path, "pi-prompt:u1:0", null)).toBeNull();
     } finally { unlinkSync(agent); renameSync(`${agent}-aside`, agent); }
     expect(await served(other.path, "pi-prompt:u1:0")).toEqual({ mediaType: "image/webp", same: true });
     const bare = store("anchor-bare", records, {});
     rmSync(bare.blobs, { recursive: true });
     expect(ompAuthorizedTranscript(authorizedTranscript(bare.path, sessions(bare.blobs))!)).toEqual({ path: bare.path, blobs: null });
+    // once the data directory is held, this omp's agent directory becomes a link to the other's: the store
+    // is still reached through the held directory, this omp's own
     const checked = authorizedTranscript(own.path, sessions(own.blobs))!;
     const ownIdentity = ompBlobAnchor(own.blobs)!.identity;
     const otherAgent = join(other.blobs, "..");

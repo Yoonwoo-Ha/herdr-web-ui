@@ -36,11 +36,13 @@ it("keeps a process's sessions where its profile puts them, and nowhere it canno
   expect(ompAgentDir(["omp"], ["PATH=/bin", "OMP_PROFILE=personal"], home)).toBe("/home/u/.omp/profiles/personal/agent");
   expect(ompAgentDir(["omp", "--profile", "work"], ["OMP_PROFILE=personal"], home)).toBe("/home/u/.omp/profiles/work/agent");
   expect(ompAgentDir(["omp"], ["OMP_PROFILE="], home)).toBe("/home/u/.omp/agent");
+  // a store moved anywhere, or a name that leaves the profiles folder, is not trusted
   expect(ompAgentDir(["omp", "--session-dir", "/tmp/s"], null, home)).toBeNull();
   expect(ompAgentDir(["omp", "--session-dir=/tmp/s"], null, home)).toBeNull();
   expect(ompAgentDir(["omp", "--profile", ".."], null, home)).toBeNull();
   expect(ompAgentDir(["omp", "--profile", "a/../../x"], null, home)).toBeNull();
   expect(ompAgentDir(["omp", "--profile"], null, home)).toBeNull();
+  // omp ignores a cwd option without its value, so it says nothing about the store
   expect(ompAgentDir(["omp", "--cwd"], null, home)).toBe("/home/u/.omp/agent");
   expect(ompAgentDir(["omp", "--cwd", "--profile", "work"], null, home)).toBe("/home/u/.omp/agent");
 });
@@ -55,6 +57,7 @@ it("sees herdr's omp integration wherever omp loads extensions from, and only th
     const project = join(home, "project");
     const loads = (argv: string[], environ: string[] | null = null, cwd: string | null = project) => ompLoadsIntegration(argv, environ, home, cwd);
     expect(loads(["omp"])).toBe(false);
+    // a file named on the command line loads even when discovery is off
     expect(loads(["omp", "-e", "/opt/herdr/herdr-omp-agent-state.ts"])).toBe(true);
     expect(loads(["omp", "--no-extensions", "--extension=/opt/herdr/herdr-omp-agent-state.ts"])).toBe(true);
     expect(loads(["omp", "--hook", "herdr-omp-agent-state.ts"])).toBe(true);
@@ -77,6 +80,7 @@ it("sees herdr's omp integration wherever omp loads extensions from, and only th
     expect(loads(["omp"], null, home)).toBe(true);
     expect(loads(["omp", "--session-dir", "/tmp/s"], null, home)).toBe(true);
     expect(loads(["omp", "--no-extensions"], null, home)).toBe(false);
+    // a trusted extension is the only one omp loads
     expect(loads(["omp", "--trusted-extension", "/opt/other.ts"], null, home)).toBe(false);
     expect(loads(["omp", "--trusted-extension=/opt/herdr-omp-agent-state.ts"], null, home)).toBe(true);
   } finally {
@@ -207,6 +211,7 @@ it("reads a process's store from its own argv and environment, and nothing it ca
   expect(ompStoreLayout(["omp", "--profile", "work"], env("OMP_PROFILE=Bad!"), "linux")).toEqual(managed("/home/u/.omp/profiles/work/agent"));
   expect(ompStoreLayout(["omp"], env("OMP_PROFILE=", "PI_PROFILE=work"), "linux")).toEqual(managed("/home/u/.omp/agent"));
   for (const name of ["Bad!", "..", "con", "a."]) expect(ompStoreLayout(["omp"], env(`OMP_PROFILE=${name}`), "linux")).toBeNull();
+  // a profile ignores PI_CODING_AGENT_DIR, and so does omp when the environment's profile handed it down
   expect(ompStoreLayout(["omp"], env("PI_CODING_AGENT_DIR=/a/../agent/"), "linux")).toEqual(managed("/agent"));
   expect(ompStoreLayout(["omp", "--profile", "work"], env("PI_CODING_AGENT_DIR=/agent"), "linux")).toEqual(managed("/home/u/.omp/profiles/work/agent"));
   expect(ompStoreLayout(["omp"], env("OMP_PROFILE=", "PI_PROFILE=work", "PI_CODING_AGENT_DIR=/home/u/.omp/profiles/work/agent"), "linux")).toEqual(managed("/home/u/.omp/agent"));
@@ -216,6 +221,7 @@ it("reads a process's store from its own argv and environment, and nothing it ca
   expect(ompStoreLayout(["omp", "--", "--session-dir", "/s"], env("PI_CODING_AGENT_SESSION_DIR="), "linux")).toEqual(managed("/home/u/.omp/agent"));
   for (const argv of [["omp", "--session-dir="], ["omp", "--session-dir"], ["omp", "--session-dir", "rel"]]) expect(ompStoreLayout(argv, env(), "linux")).toBeNull();
   expect(ompStoreLayout(["omp", "--profile"], env(), "linux")).toBeNull();
+  // an environment that could not be read proves nothing, not even the default store
   for (const platform of ["linux", "darwin", "win32"] as const) expect(ompStoreLayout(["omp", "--profile", "work"], null, platform)).toBeNull();
   const root = realpathSync(mkdtempSync(join(tmpdir(), "omp-xdg-")));
   try {
@@ -525,6 +531,7 @@ describe("an omp pane's chat", () => {
   });
 
   // #3365: omp leaves a breadcrumb whose content is unchanged alone, so `omp -c` keeps the earlier run's.
+  // On macOS herdr-core only the files an omp holds open (lsof) prove its session
   describe("on macOS herdr-core", () => {
     const pid = 99_999_999;
     const startedAt = Date.now() - 60_000;
@@ -538,6 +545,7 @@ describe("an omp pane's chat", () => {
     let heldFiles = true;
     let ompHome = "";
     let onEnviron = () => {};
+    /** lsof's `-FpDin` listing of `files` for the omp: each file's device and inode as lsof prints them, when the name stats. */
     const listed = (files: string[]) => `p${pid}\nfcwd\nn${pane.cwd}\n${files.map((file, at) => `f${23 + at}\n${fileFields(file)}n${file}\n`).join("")}`;
     const fileFields = (file: string) => { try { const stat = fs.statSync(file); return `D0x${stat.dev.toString(16)}\ni${stat.ino}\n`; } catch { return ""; } };
     const breadcrumb = (session: string, at: number) => {
@@ -653,6 +661,7 @@ describe("an omp pane's chat", () => {
       const continued = storeTranscript(pane.cwd!);
       const other = pid + 1;
       processes = [{ pid, name: "omp", argv: ["omp", "-c"] }, { pid: other, name: "omp", argv: ["omp"] }];
+      // lsof leaves the other omp out, its start cannot be read, or lsof cannot start: it may hold another session
       for (const [otherStart, run] of [
         [5_000_000n, () => listed([continued])],
         [null, () => listed([continued])],
@@ -903,6 +912,7 @@ describe("an omp pane's chat", () => {
       agentSession = { agent: "omp", kind: "path", value: continued };
       expect(await chat()).toEqual(synthetic);
       expect(lsofCalls).toEqual([]);
+      // a report outside the omp's store is rejected: lsof finds the session the omp holds
       agentSession = { agent: "omp", kind: "path", value: join(home, "elsewhere.jsonl") };
       expect(await chat()).toEqual(synthetic);
       expect(lsofCalls).toHaveLength(1);
@@ -1093,6 +1103,7 @@ describe("an omp pane's chat", () => {
       mkdirSync(join(home, ".omp/agent/terminal-sessions"), { recursive: true });
       writeFileSync(join(home, ".omp/agent/terminal-sessions/tmux-%4261"), `${pane.cwd}\n${path}\n`);
     };
+    // a flat store nested in the default store: a link out of it stays out, though it lands in the default store
     const outside = writeTranscript(join(home, ".omp/agent/sessions", slug(pane.cwd!), "2026-10-01_s1.jsonl"), pane.cwd!);
     const nested = join(home, ".omp/agent/sessions/private");
     mkdirSync(nested, { recursive: true });

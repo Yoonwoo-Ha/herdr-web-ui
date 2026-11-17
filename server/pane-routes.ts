@@ -1,3 +1,4 @@
+/** The dispatcher in index.ts runs the access gate first. */
 import type { AgentRenameRequest, PaneDirection, PaneMoved, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, ReadFormat, ReadSource } from "../shared/protocol.ts";
 import { mergeCatalogSources } from "./catalog-sources.ts";
 import { rememberPaneCommands, scanPaneCommands } from "./commands.ts";
@@ -59,9 +60,12 @@ async function paneReason(paneId: string, reason: ReturnType<typeof unavailableR
 
 export type PaneStores = { codexHome?: string; grokHome?: string; museData?: string; opencodeDb?: string; devinDbPath?: string; hermesHome?: string; openCodeStateDir?: string };
 
+/** the sides herdr's pane.swap and pane.resize take, and a move's side of its target; anything else is refused before the RPC, which would answer invalid_request */
 const isPaneDirection = (value: unknown): value is PaneDirection => value === "left" || value === "right" || value === "up" || value === "down";
+/** pane.read's own enums; a read outside them is refused here rather than sent to herdr as a guess (the generated types are open-ended) */
 const READ_SOURCES = new Set<ReadSource>(["detection", "recent", "recent_unwrapped", "visible"]);
 const READ_FORMATS = new Set<ReadFormat>(["ansi", "text"]);
+/** pane.read's `lines` is a uint32 */
 const UINT32_MAX = 4294967295;
 
 function pagePromptsOf(raw: string | null): number | undefined {
@@ -102,6 +106,9 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
     }
   }
 
+  // No process exists, so nothing is asked
+  // of an agent binary (the catalog's convention), no process roots refine the scan, and no row is
+  // verified against a running version.
   if (pathname === "/api/agent/commands") {
     setRequestRoute(pathname);
     if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
@@ -111,6 +118,7 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
     const cwd = directory === "" ? null : expandedDirectory(directory);
     if (directory !== "" && cwd === null) return badRequest("invalid_cwd", "cwd must be an existing directory");
     try {
+      // OpenCode types its skills one way per version: before any pane runs it, its service file says which
       return jsonResponse({ commands: await scanPaneCommands(agent, cwd, undefined, agent === "opencode" ? openCodeInstalledVersion(options.openCodeStateDir) : undefined, request.signal) });
     } catch (error) {
       return errorResponse(error);
@@ -132,8 +140,13 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
           ? await paneTranscript(paneId, options.codexHome, undefined, options.devinDbPath, options.opencodeDb, options.hermesHome, options.grokHome, options.museData).then(versionSourceOf, () => null)
           : null;
         const { version: stored } = resolveAgent(context.pane, roots, store);
+        // a pane with no session yet has no stored version: OpenCode's service file still says how it types its skills
+        // (syntax only: the catalog's pin stays unverified, since only the store or a verified service may verify it).
+        // A pane with a session whose transcript is unreadable gets none: that session may be an OpenCode 1 one.
+        // A TUI started without the service (--standalone, --server) has no service file: its own flags say v2 (#1551)
         const argv = roots.processes?.foreground_processes?.find((entry) => entry.pid === roots.pid)?.argv;
         const version = stored ?? (agent === "opencode" && !context.pane.agent_session ? openCodeInstalledVersion(options.openCodeStateDir) ?? openCodeFlagVersion(argv) : null);
+        // on a file thread: a skill folder on a slow mount stalls only this request (#2254)
         const scanned = await scanPaneCommands(agent, context.cwd, { ...roots.omo, environ: roots.environ }, version, request.signal, began);
         const commands = await mergeCatalogSources(agent, context.pane, context.cwd, scanned, undefined, { codexHome: options.codexHome, openCodeStateDir: options.openCodeStateDir });
         rememberPaneCommands(context.pane, agent, commands);
@@ -286,6 +299,7 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
     try {
       const output = await toolOutput(paneId, ref, options.codexHome, options.opencodeDb, options.hermesHome, options.grokHome, options.museData);
       if (output === null) return jsonResponse({ error: { code: "output_not_found", message: "no such tool call in this pane's conversation" } }, 404);
+      // a tool call's id names its output for good; OpenCode's ref names a place in a row it rewrites in place
       const cacheControl = (OPENCODE_TOOL_REF.test(ref) || /^grok:/.test(ref)) ? "private, no-store" : "private, max-age=86400, immutable";
       return new Response(output, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": cacheControl, "x-content-type-options": "nosniff" } });
     } catch (error) {
@@ -301,6 +315,8 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
     try {
       const image = await conversationImage(paneId, ref, options.codexHome, options.opencodeDb, options.grokHome);
       if (image === null) return jsonResponse({ error: { code: "image_not_found", message: "no such image in this pane's conversation" } }, 404);
+      // Claude and pi embed immutable bytes, and omp, Grok and Copilot name a picture by its digest; Codex files and
+      // OpenCode tool-image ordinals can change, and a Codex tool's picture (`codex-tool:`) loads with its row.
       const cacheControl = ref.startsWith("codex-") || ref.startsWith("opencode:") ? "private, no-store" : "private, max-age=86400, immutable";
       return new Response(image.bytes, { headers: { "content-type": image.mediaType, "cache-control": cacheControl, "x-content-type-options": "nosniff", "content-security-policy": FILE_POLICY } });
     } catch (error) {
@@ -377,9 +393,12 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
     try {
       const { version, ...conversation } = await paneConversation(paneId, options.codexHome, page, options.devinDbPath, options.opencodeDb, options.hermesHome, options.grokHome, options.museData);
       conversationDiagnostics.recovered(paneId, requestIdContext.getStore()?.id);
+      // omp's transcript counts the tokens a request filled but never names the window; its own
+      // status bar does (server/omp-status.ts), so the chat's ring gets a percent from there
       const screenContext = conversation.source === "omp-transcript" ? await ompScreenContext(paneId) : null;
       const answer = screenContext === null ? conversation
         : { ...conversation, metadata: { ...(conversation.metadata ?? { model: null, reasoning_effort: null }), context: screenContext } };
+      // no-store keeps the browser's own cache out of it, so the chat sees the 304.
       const etag = `W/"${version}${screenContext === null ? "" : `-ctx${screenContext.used}:${screenContext.window}`}"`;
       const serverTime = new Date().toISOString();
       const headers = { etag, "cache-control": "no-store", "x-server-time": serverTime };
@@ -434,6 +453,8 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
     if (payload instanceof Response) return payload;
     if (typeof payload.pane_id !== "string" || !payload.pane_id.trim()) return badRequest("missing_pane_id", "pane_id is required");
     try {
+      // herdr emits pane.closed -> the collector broadcasts session-changed, so
+      // every client refetches and the pane leaves sidebars on its own
       await paneClose(payload.pane_id);
       forgetPaneTranscriptState(payload.pane_id);
       return jsonResponse({ ok: true });
@@ -456,6 +477,8 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
     } catch (error) { return errorResponse(error); }
   }
 
+  // a pane put beside another of its own tab (client.ts `paneMoveBeside`): herdr's focus stays where
+  // it was, and the layout reaches every client as a swap's does, through layout.updated
   if (pathname === "/api/pane/move") {
     setRequestRoute(pathname);
     if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
@@ -472,6 +495,12 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
     }
   }
 
+  // herdr's own layout operations, as its TUI has them: prefix+v and prefix+- (split), prefix+z
+  // (zoom), prefix+shift+hjkl (swap), its resize mode, and pane clear. Explicit swaps also restore
+  // herdr's prior focus; the browser's rearrangement must not select another workspace there. No
+  // answer carries the layout: a new pane reaches every client through the collector's
+  // pane.created subscription and a moved border, zoom or swap through its layout.updated one,
+  // both as session-changed, the same way the TUI's own changes do.
   if (pathname === "/api/pane/split" || pathname === "/api/pane/zoom" || pathname === "/api/pane/swap" || pathname === "/api/pane/resize" || pathname === "/api/pane/clear" || pathname === "/api/pane/focus") {
     setRequestRoute(pathname);
     if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
@@ -510,6 +539,8 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
         return layoutResponse({ ok: true, changed: swap.changed, reason: swap.reason, target_pane_id: swap.target_pane_id } satisfies PaneSwapped);
       }
       if (!isPaneDirection(payload.direction)) return badRequest("invalid_direction", "direction must be left, right, up or down");
+      // a share of the split the border belongs to, as herdr counts it, and no more than the
+      // half herdr would quietly cap it to (shared/protocol.ts); its own default when absent
       if (payload.amount !== undefined && !(typeof payload.amount === "number" && Number.isFinite(payload.amount) && payload.amount > 0 && payload.amount <= 0.5)) {
         return badRequest("invalid_amount", "amount must be a number above 0 and at most 0.5");
       }
