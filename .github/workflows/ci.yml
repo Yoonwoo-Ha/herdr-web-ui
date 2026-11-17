@@ -102,12 +102,12 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD || echo "")
+          CHANGED=$(git diff --no-renames --name-only "$BASE_SHA" HEAD || echo "")
           if [ -z "$CHANGED" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if echo "$CHANGED" | grep -qvE '^docs/|\.(md|txt)$|^LICENSE$|^\.github/ISSUE_TEMPLATE/'; then
+          if grep -q '^server/fixtures/' <<< "$CHANGED" || grep -qvE '^docs/|\.(md|txt)$|^LICENSE$|^\.github/ISSUE_TEMPLATE/' <<< "$CHANGED"; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"

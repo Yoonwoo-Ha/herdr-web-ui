@@ -809,7 +809,7 @@ describe("ci.yml", () => {
     expect(read(".github/actions/setup-ci/action.yml")).not.toMatch(/\bgithub\.event|\bGITHUB_EVENT_/);
   });
 
-  it.skipIf(process.platform === "win32")("decides code=true and draft=false for a push, as for the Release run's own call, even after a docs-only commit", async () => {
+  it.skipIf(process.platform === "win32")("runs CI for pushes and server fixture changes and skips heavy checks for docs-only PRs", async () => {
     const filter = ci.jobs["changes"]!.steps!.find((step) => step.id === "filter")!;
     expect(filter.env).toEqual({ EVENT_NAME: "${{ github.event_name }}", PR_DRAFT: "${{ github.event.pull_request.draft }}", BASE_SHA: "${{ github.event.pull_request.base.sha }}" });
     const dir = mkdtempSync(join(tmpdir(), "release-ci-reuse-filter-"));
@@ -836,6 +836,18 @@ describe("ci.yml", () => {
       for (const event of ["push", "workflow_dispatch"]) expect(await decided({ EVENT_NAME: event, PR_DRAFT: "", BASE_SHA: "" })).toBe("draft=false\ncode=true\n");
       expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: base })).toBe("draft=false\ncode=false\n");
       expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "true", BASE_SHA: base })).toBe("draft=true\ncode=false\n");
+
+      const docsCommit = git("rev-parse", "HEAD");
+      mkdirSync(join(dir, "server/fixtures"), { recursive: true });
+      writeFileSync(join(dir, "server/fixtures/prompt.txt"), "Continue?\n");
+      git("add", "server/fixtures/prompt.txt");
+      git("commit", "-q", "-m", "update prompt fixture");
+      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: docsCommit })).toBe("draft=false\ncode=true\n");
+
+      const fixtureCommit = git("rev-parse", "HEAD");
+      git("mv", "server/fixtures/prompt.txt", "docs/prompt.txt");
+      git("commit", "-q", "-m", "move prompt to docs");
+      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: fixtureCommit })).toBe("draft=false\ncode=true\n");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
