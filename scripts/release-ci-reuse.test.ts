@@ -720,6 +720,17 @@ describe("ci.yml", () => {
     expect(calls[0]!.with?.["hosted_only"]).toBe(true);
   });
 
+  it("fetches the ratchets' base on every run that reaches check fast, and before it", () => {
+    const steps = ci.jobs["fast"]!.steps!;
+    const fetchBase = steps.findIndex((step) => step.name === "Fetch the base the ratchets compare with");
+    const checkFast = steps.findIndex((step) => step.run?.trim() === "bun run check fast");
+    expect(fetchBase, "Name Fast checks' step that fetches the ratchets' base `Fetch the base the ratchets compare with`").not.toBe(-1);
+    expect(checkFast, "Run the check in Fast checks' step `bun run check fast`").not.toBe(-1);
+    // no `if:` at all, as every step of this job but the artifact upload has: `always()` and `success()` run on a push too
+    expect([undefined, "always()", "success()"], "A condition that may be false leaves the ratchets comparing with nothing while the run still passes: the fetch takes no `if:`, or one a push run meets").toContain(steps[fetchBase]!.if);
+    expect(fetchBase, "The fetch hands RATCHET_BASE to check fast, so it has to come before it").toBeLessThan(checkFast);
+  });
+
   it("gives no step a condition on the event, which differs between a push run and Release's own", () => {
     const reading = Object.entries(ci.jobs).flatMap(([id, job]) => (job.steps ?? []).filter((step) => /\b(?:github|inputs)\./.test(step.if ?? "") && !HOSTED_ONLY_READS.includes(step.if!)).map((step) => `${id}: ${step.if}`));
     expect(reading, "A step that runs for some events only makes main's push run check something else than the Release run's own ci.yml: decide in Detect changes instead, as code and draft are").toEqual([]);
@@ -835,7 +846,14 @@ describe("ci.yml", () => {
       };
       const commit = (message: string): string => { git("commit", "-q", "--allow-empty", "-m", message); return git("rev-parse", "HEAD"); };
       git("init", "-q", "-b", "main");
-      const [a, b, head] = [commit("a"), commit("b"), commit("head")];
+      const [a, b] = [commit("a"), commit("b")];
+      // HEAD is a merge commit, as a pull request's checkout is: first parent b, last parent a side commit
+      git("checkout", "-q", "-b", "side", a);
+      const side = commit("side");
+      git("checkout", "-q", "main");
+      git("merge", "-q", "--no-ff", "-m", "head", "side");
+      const head = git("rev-parse", "HEAD");
+      expect(git("rev-list", "--parents", "-n", "1", head).split(" ").slice(1)).toEqual([b, side]);
       git("checkout", "-q", "--orphan", "elsewhere");
       const elsewhere = commit("not in main's history");
       git("checkout", "-q", "main");
@@ -843,7 +861,18 @@ describe("ci.yml", () => {
       // cancelled run of HEAD itself, which only a query that lost one of its filters would see; sleep returns at once
       const bin = join(dir, "bin");
       mkdirSync(bin);
-      writeFileSync(join(bin, "gh"), `#!/bin/sh\necho call >> "$CALLS"\n[ -n "$DOWN" ] && exit 1\ncase "$*" in *"--workflow ci.yml --branch main --event push --status success"*) printf '%s\\n' $PASSED ;; *) printf '%s\\n' $ANY ;; esac\n`, { mode: 0o755 });
+      writeFileSync(join(bin, "gh"), `#!/bin/sh
+echo call >> "$CALLS"
+[ -n "$DOWN" ] && exit 1
+# the step's own query, argument by argument: an argument holding a separator could not pass for one of its neighbours
+asked() {
+  [ "$#" -eq 18 ] || return 1
+  [ "$1" = run ] && [ "$2" = list ] && [ "$3" = --repo ] && [ "$4" = o/r ] && [ "$5" = --workflow ] && [ "$6" = ci.yml ] &&
+  [ "$7" = --branch ] && [ "$8" = main ] && [ "$9" = --event ] && [ "\${10}" = push ] && [ "\${11}" = --status ] && [ "\${12}" = success ] &&
+  [ "\${13}" = --limit ] && [ "\${14}" = 100 ] && [ "\${15}" = --json ] && [ "\${16}" = headSha ] && [ "\${17}" = --jq ] && [ "\${18}" = '.[].headSha' ]
+}
+if asked "$@"; then printf '%s\\n' $PASSED; else printf '%s\\n' $ANY; fi
+`, { mode: 0o755 });
       writeFileSync(join(bin, "sleep"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       const found = async (env: Record<string, string>): Promise<{ base: string; calls: number }> => {
         const [output, calls] = [join(dir, "output"), join(dir, "calls")];
@@ -865,6 +894,26 @@ describe("ci.yml", () => {
       // and a push with no base fails Fast checks' fetch step before it fetches anything
       const fetched = await runScript(fetchBase.run!, dir, { GITHUB_EVENT_NAME: "push", EVENT_BASE: a, LAST_GREEN: "", GITHUB_ENV: join(dir, "env") });
       expect([fetched.code, fetched.output.includes("No passed main commit")]).toEqual([1, true]);
+      // a base it has is fetched into a depth-1 checkout of HEAD and handed on: for a push the passed commit, not the one
+      // before the push; for a pull request its merge commit's first parent, not the event's base
+      git("config", "uploadpack.allowAnySHA1InWant", "true");
+      const shallow = join(dir, "shallow");
+      expect(Bun.spawnSync(["git", "clone", "-q", "--depth", "1", `file://${dir}`, shallow], { env: { PATH: process.env.PATH ?? "", HOME: dir } }).exitCode).toBe(0);
+      const handed = async (env: Record<string, string>): Promise<string> => {
+        const file = join(dir, "env");
+        writeFileSync(file, "");
+        const result = await runScript(fetchBase.run!, shallow, { GITHUB_ENV: file, ...env });
+        expect(result.code).toBe(0);
+        return readFileSync(file, "utf8").trim();
+      };
+      expect(await handed({ GITHUB_EVENT_NAME: "push", EVENT_BASE: b, LAST_GREEN: a })).toBe(`RATCHET_BASE=${a}`);
+      expect(Bun.spawnSync(["git", "cat-file", "-e", `${a}^{commit}`], { cwd: shallow }).exitCode).toBe(0);
+      const has = (sha: string): boolean => Bun.spawnSync(["git", "cat-file", "-e", `${sha}^{commit}`], { cwd: shallow }).exitCode === 0;
+      expect(has(b)).toBe(false);
+      expect(await handed({ GITHUB_EVENT_NAME: "pull_request", EVENT_BASE: a, LAST_GREEN: "" })).toBe(`RATCHET_BASE=${b}`);
+      expect(has(b)).toBe(true);
+      // the base reaches the fetch step from Detect changes' ratchet step
+      expect([ci.jobs["changes"]!.outputs?.["ratchet_base"], fetchBase.env?.["LAST_GREEN"]]).toEqual(["${{ steps.ratchet.outputs.base }}", "${{ needs.changes.outputs.ratchet_base }}"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
