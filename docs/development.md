@@ -773,7 +773,10 @@ verification file, the installers, the favicons and the demo. It writes no sitem
 on `main`, or on manual dispatches from `main`. A completed CI run only builds and deploys when it
 succeeded for a push from this repository; PR runs and forks cannot publish. It builds that CI run's
 head SHA without running validation again. Manual dispatches run reusable CI validation and the site
-build in parallel against the dispatch SHA, and deployment requires both to succeed.
+build in parallel against the dispatch SHA, and deployment requires both to succeed. Every job of the
+run, that validation's included, runs on GitHub's runners and restores no Actions cache
+([Security model](../scripts/self-hosted-runner/README.md#security-model)); a manual run takes about
+as long as a hosted CI run, about 15 minutes.
 Deployments are serialized. A `current` job, with no environment, first checks that the validated SHA
 is still the latest `main` commit: when `main` has moved on, the run deploys nothing, records no
 deployment and ends green with a notice. The deploy job checks again immediately before deploying and
@@ -1350,7 +1353,13 @@ JSON string `"ubuntu-24.04"` to keep every job GitHub-hosted while that PC is of
 stays on `ubuntu-24.04` unless the variable holds labels. The variable routes:
 
 - in `ci.yml`: Fast checks, Integration tests and both Browser regression jobs;
-- in `release.yml`: the preflight and publish jobs.
+- in `release.yml`: the preflight, server-binary, publish and shell-attach jobs, and the gate and
+  attach of the `windows-app.yml` and the gate of the `mac-dmg.yml` it calls. The ones among them that
+  hold a write token or a secret move to GitHub's runners in a second pull request
+  ([Security model](../scripts/self-hosted-runner/README.md#security-model)).
+
+`pages.yml` reads none of them: its run is GitHub-hosted and cacheless as a whole, the `ci.yml` its
+manual validation calls (`hosted_only: true`) included.
 
 `release-validate.yml`'s own three jobs are always GitHub-hosted. The one that asks about main's
 CI run may wait up to 40 minutes for that run, which needs the self-hosted runners itself. Its Fast
@@ -1359,9 +1368,8 @@ verdict runs for seconds.
 
 Light jobs, which wait longest in GitHub's hosted queue for the few seconds they run, take the
 self-hosted runners for every same-repository run: Detect changes, the herdr-core live contract and
-the Integration and browser summary in `ci.yml`, `pr-title.yml`, `remote-bundles.yml`'s Windows
-bundle, and `pages.yml`'s site build and deploy (after successful same-repository main push CI, or
-on a manual dispatch with reusable CI validation). Their `runs-on` sends a fork pull request to
+the Integration and browser summary in `ci.yml`, `pr-title.yml` and `remote-bundles.yml`'s Windows
+bundle. Their `runs-on` sends a fork pull request to
 `ubuntu-24.04` before it reads any variable; a push to main then takes `CI_MAIN_SELF_HOSTED_LABELS`
 when it is set (on a push or a run started from main), so main's Detect changes never waits behind pull requests; otherwise the job takes the repository variable `CI_LIGHT_LABELS`,
 else `CI_SELF_HOSTED_LABELS`, else `["self-hosted","self-hosted-ovis"]`; `"ubuntu-24.04"` in
@@ -1402,7 +1410,8 @@ job's worker before any step, `if: always()` ones included, can run
 (`scripts/self-hosted-runner/job-started.sh`). Otherwise the `self_hosted_labels`
 workflow_dispatch input, when not empty, overrides the variable for that one manual run. A value
 that is not a non-empty array of strings containing `"self-hosted"` fails the job instead of
-falling back. `pages.yml` and `release.yml` read the variable directly.
+falling back. `release.yml` reads the variable directly. A call with `hosted_only: true`
+(`pages.yml`'s validation) gets `ubuntu-24.04` before the route reads anything else.
 
 Only a `pull_request` may skip the heavy jobs as docs-only, and only when every changed file is
 under `docs/`, ends in `.md` or `.txt`, is the root `LICENSE` or sits under
@@ -1432,6 +1441,7 @@ The composite setup action used by `ci.yml`, `pages.yml` and `release.yml` keeps
 cache in `.ci-cache/bun`. Only GitHub-hosted jobs restore/save that cache remotely: on the measured
 self-hosted connection, downloading the archive took longer than a fresh dependency install.
 Self-hosted jobs install directly from the lockfile without transferring a remote dependency cache.
+`cache: none` restores and saves none, for the jobs of the Pages run.
 Hosted browsers use
 `.ci-cache/playwright`; self-hosted browsers come from the image. Neither cache restores a
 home-directory archive across different workspace depths. Tool/browser preparation no longer

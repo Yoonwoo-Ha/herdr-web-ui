@@ -125,9 +125,17 @@ describe("release-validate.yml", () => {
     const theirs = job(ciYml, "fast");
     const UPDATE = "release-validate.yml's `fast` job is ci.yml's Fast checks, which a release that takes main's run runs again on GitHub's runner: make the same change to both, so such a release still checks what every other does";
     const uploads = (candidate: Step): boolean => candidate.uses?.startsWith("actions/upload-artifact@") === true;
-    /** All of a job but where it runs and when, its artifact's name and this workflow's own answer left out. */
+    // ci.yml's setup-ci restores no cache only when pages.yml calls it with hosted_only; otherwise, as here, setup-ci's default
+    const HOSTED_ONLY_CACHE = "${{ inputs.hosted_only && 'none' || 'save' }}";
+    expect(theirs.steps!.find((candidate) => candidate.uses === "./.github/actions/setup-ci")!.with!["cache"]).toBe(HOSTED_ONLY_CACHE);
+    const withoutCache = (candidate: Step): Step => {
+      if (candidate.uses !== "./.github/actions/setup-ci" || candidate.with?.["cache"] !== HOSTED_ONLY_CACHE) return candidate;
+      const { cache: _cache, ...inputs } = candidate.with;
+      return { ...candidate, with: inputs };
+    };
+    /** All of a job but where it runs and when, its artifact's name, ci.yml's hosted_only cache and this workflow's own answer left out. */
     const checks = ({ name: _name, needs: _needs, if: _if, "runs-on": _runner, "continue-on-error": _may, outputs: _outputs, ...rest }: CallJob): object =>
-      ({ ...rest, steps: rest.steps!.filter((candidate) => candidate.id !== "passed").map((candidate) => (uploads(candidate) ? { ...candidate, with: { ...candidate.with, name: "" } } : candidate)) });
+      ({ ...rest, steps: rest.steps!.filter((candidate) => candidate.id !== "passed").map(withoutCache).map((candidate) => (uploads(candidate) ? { ...candidate, with: { ...candidate.with, name: "" } } : candidate)) });
     expect(checks(fast), UPDATE).toEqual(checks(theirs));
     expect(fast["timeout-minutes"], UPDATE).toBe(theirs["timeout-minutes"]!);
     expect(fast.env, UPDATE).toEqual(theirs.env!);

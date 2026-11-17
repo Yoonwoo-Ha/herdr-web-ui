@@ -281,7 +281,7 @@ online. The repository variable overrides the choice:
 
 ```sh
 gh variable set CI_SELF_HOSTED_LABELS --body '"ubuntu-24.04"'   # PC offline: everything GitHub-hosted
-gh variable set CI_SELF_HOSTED_LABELS --body '["self-hosted","self-hosted-ovis"]'   # every pull request, pages.yml and release.yml too
+gh variable set CI_SELF_HOSTED_LABELS --body '["self-hosted","self-hosted-ovis"]'   # every pull request and release.yml too
 gh variable delete CI_SELF_HOSTED_LABELS   # back to the default
 gh variable set CI_SELF_HOSTED_CAPACITY --body 10   # self-hosted-ovis runners online
 ```
@@ -412,7 +412,7 @@ vm-runner.sh supervise                              # forever: one container per
   the Linux jobs go to `ovis-vm` (never to a fork's run); delete it once #3808 is in to move Fast checks too.
 - Routing: `gh variable set CI_LINUX_SELF_HOSTED_LABELS --body '["self-hosted","ovis-vm"]'` moves ci.yml's Linux jobs
   of pull requests and branch pushes to them (main keeps `CI_MAIN_SELF_HOSTED_LABELS`; tag pushes, manual runs and
-  the workflows that call ci.yml, such as release-validate, pages and relay-deploy, keep `CI_SELF_HOSTED_LABELS`). With `ovis-vm` the browser scripts run as five jobs. A manual run takes
+  the workflows that call ci.yml, such as release-validate and relay-deploy, keep `CI_SELF_HOSTED_LABELS`; pages.yml's call is always hosted). With `ovis-vm` the browser scripts run as five jobs. A manual run takes
   `self_hosted_labels`. `gh variable delete CI_LINUX_SELF_HOSTED_LABELS` moves them back.
 - The VM's per-host caps (`CHECK_HOST_*`, 3 browser workers, 3 test shards) keep a job inside 4 vCPUs. A VM that
   sleeps or drops mid-job loses that job (GitHub fails it once the runner stops answering); keep the VMs awake.
@@ -444,6 +444,136 @@ GitHub names as trusted (above), each under the run that built it, which is the 
 restore it: a trusted run's build never reaches another run, main's included. A job can write its
 own outbox (on disk, as its workspace is) and the 16 MiB locks volume, so at worst it makes the jobs
 waiting on a key wait up to five minutes and build themselves.
+
+Anyone who holds a runner registration token can register a runner under any label, and that runner
+then takes the jobs that ask for the label. So a job that holds a write permission (`id-token: write`
+too), an environment or a secret runs on GitHub-hosted runners only: its `runs-on` names a hosted
+label from a fixed list literally, never a self-hosted label or a variable, input, job output or
+matrix value that could carry one, whatever the routing variables above say. Four release-side jobs are
+known and pending: `release.yml`'s publish and shell-attach, `windows-app.yml`'s attach and
+`mac-dmg.yml`'s gate still take `CI_SELF_HOSTED_LABELS` (unset, so they run GitHub-hosted); the test lists
+each with its exact runs-on and privileges, and fails on another job breaking the rule, on a listed job
+whose runs-on or privileges change, on an entry that no longer breaks the rule, and on a duplicate. A
+second pull request moves them and removes the list.
+The Pages run is GitHub-hosted as a whole, and restores no Actions cache: every job of a run can
+write the run's artifacts with its own token, deploy publishes the run's `github-pages` artifact
+by its name, and any job of a main run can write a cache that later runs restore. Its build,
+`current` and deploy jobs name `ubuntu-24.04`, and its manual validation calls `ci.yml` with
+`hosted_only: true`, which puts every job of that call on a hosted label and turns its caches off;
+`ci.yml`'s own runs and its other callers leave it unset and run as before.
+`scripts/privileged-jobs-workflow.test.ts` holds both rules to exact forms and fails on any other: a
+listed label written literally, the `hosted_only` prefix under a call that passes `hosted_only: true`,
+setup-ci's `cache: none` (or its `hosted_only` form), cache steps whose condition has
+`!inputs.hosted_only` as a top-level `&&` term, and reviewed actions at their exact references. It
+also fails on a workflow or action file GitHub loads that does not end in `.yml` (a `.yaml` one), on a
+symlink anywhere in `.github/workflows` or `.github/actions` (never followed), on a job that calls a
+workflow it cannot read (another repository's), on a key it reads written in another case or two keys
+(or two workflow files) that differ only in case, on a key with a character outside ASCII, and on a runner
+label or action reference other than its exact listed form; a character outside ASCII inside an expression
+counts as a secret reference. A trial on 2026-11-17 observed why: GitHub refuses structural keys in another
+case, and matrix axes or job ids that differ only in case, but reads a matrix include key `OS` as the axis
+`os` (a job then waited for a `self-hosted` runner), expression contexts and hosted labels without regard to
+case; the test resolves matrix axes the same way and refuses the rest itself. A permission value other than
+`read`, `none` or `read-all` counts as write. A Pages run is found by the `pages` write permission, by the
+deploy and upload actions (recognised by owner/repo whatever path follows, with `.` and empty pieces
+dropped, in any case), by the `github-pages` environment, and by a job that holds `id-token: write` together
+with a secret. The limit: a Pages run is missed when no job of its workflow, or of
+a workflow it calls, shows any of these signs (a job without them in a workflow where another job shows one
+is covered). The first rule applies to a job that references a secret; a credential that reaches a job
+another way (through an artifact, say) is not seen by it. A credential from `vars.*`, or one fetched at run
+time by a job without `id-token: write`, is not found either, and the first rule does not cover such a job: it
+counts write scopes, environments and secret references only. The second pull request applies the whole-run
+rule to every run that publishes or signs. It reads runner labels, actions and
+their inputs; it does not inspect shell commands or scripts for cache access.
+The hosted labels on the list are the ones the covered jobs use: `ubuntu-24.04`, `ubuntu-24.04-arm`,
+`windows-latest`, `windows-2025`, `macos-15`, `macos-15-intel` and `macos-latest`. For `ubuntu-24.04` the
+boundary is observed: a job that asks only for it (or for `ubuntu-latest`, which no job uses) ran on
+GitHub's own runners even while a self-registered runner carrying that label was online and idle, and
+only a job that also asked for `self-hosted` reached such a runner. That was observed by a trial on
+2026-11-17 (14 of 14 jobs); it is not documented by GitHub. The other six labels are assumed to behave
+the same.
+
+### Every job and its runner
+
+Every job of `.github/workflows` as of this change (2026-11-17). LIGHT is the light runner expression (a
+fork's pull request gets `ubuntu-24.04`; otherwise main takes `CI_MAIN_SELF_HOSTED_LABELS`, then
+`CI_LIGHT_LABELS`, `CI_SELF_HOSTED_LABELS`, `["self-hosted","self-hosted-ovis"]`); ROUTE is
+`scripts/ci-runner-route.sh`'s output; MAC is the macOS job's expression (`CI_MAC_LABELS` in ci.yml's own
+runs off main, else `macos-15`); VAR is `CI_SELF_HOSTED_LABELS`, else `ubuntu-24.04`; HO is the
+`hosted_only` prefix, taken only in `pages.yml`'s call. Write permissions without "(workflow)" are the
+job's own; a call's jobs are listed under its workflow. No test reads this table; the test above holds
+the rules.
+
+| workflow | job | runs-on at this head | hosted? | write permissions / environment / secrets | cache restores |
+| --- | --- | --- | --- | --- | --- |
+| beta.yml | pick | `ubuntu-24.04` | yes | - | none |
+| beta.yml | host-build | calls `pty-sidecar.yml` | (its jobs) | id-token, attestations write | (its jobs) |
+| beta.yml | host-publish | `ubuntu-24.04` | yes | contents write | none |
+| beta.yml | tag | `ubuntu-24.04` | yes | contents write | none |
+| beta.yml | desktop | matrix: ubuntu-24.04, ubuntu-24.04-arm, macos-15 | yes | secrets MAC_NOTARY_KEY_P8, MAC_DEVELOPER_ID_P12, MAC_DEVELOPER_ID_P12_PASSWORD, MAC_NOTARY_KEY_ID, MAC_NOTARY_ISSUER | setup-bun Bun cache |
+| beta.yml | desktop-publish | `ubuntu-24.04` | yes | contents write | none |
+| ci.yml | changes | HO ubuntu-24.04, else LIGHT | yes under hosted_only; else no: self-hosted unless a fork PR | - | none |
+| ci.yml | windows-install | `windows-latest` | yes | - | setup-ci save, none under hosted_only |
+| ci.yml | macos-session | HO macos-15, else MAC | yes under hosted_only; else yes unless CI_MAC_LABELS is set | - | setup-ci save, none under hosted_only |
+| ci.yml | rust-pty-host | `ubuntu-24.04` | yes | - | setup-ci save, none under hosted_only |
+| ci.yml | herdr-core-live | HO ubuntu-24.04, else LIGHT | yes under hosted_only; else no: self-hosted unless a fork PR | - | setup-ci restore, none under hosted_only; actions/cache (Cache hc, off under hosted_only) |
+| ci.yml | fast | HO ubuntu-24.04, else ROUTE fast | yes under hosted_only; else as routed: self-hosted or hosted | - | setup-ci save, none under hosted_only |
+| ci.yml | integration | HO ubuntu-24.04, else ROUTE linux | yes under hosted_only; else as routed: self-hosted or hosted | - | setup-ci save, none under hosted_only |
+| ci.yml | browser-main | HO ubuntu-24.04, else ROUTE linux | yes under hosted_only; else as routed: self-hosted or hosted | - | setup-ci save, none under hosted_only; actions/cache (Cache Playwright browser, hosted runners, off under hosted_only) |
+| ci.yml | browser-other | HO ubuntu-24.04, else ROUTE linux | yes under hosted_only; else as routed: self-hosted or hosted | - | setup-ci save, none under hosted_only; actions/cache (Cache Playwright browser, hosted runners, off under hosted_only) |
+| ci.yml | integration-browser | HO ubuntu-24.04, else LIGHT | yes under hosted_only; else no: self-hosted unless a fork PR | - | none |
+| cla.yml | cla | `ubuntu-24.04` | yes | actions, contents, pull-requests write (workflow) | none |
+| desktop.yml | build | matrix: ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2025 | yes | secrets MAC_NOTARY_KEY_P8, MAC_DEVELOPER_ID_P12, MAC_DEVELOPER_ID_P12_PASSWORD, MAC_NOTARY_KEY_ID, MAC_NOTARY_ISSUER, WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD | setup-bun Bun cache |
+| desktop.yml | feed | `ubuntu-24.04` | yes | - | none |
+| desktop.yml | attach | `ubuntu-24.04` | yes | contents write | none |
+| growth-snapshot.yml | snapshot | `ubuntu-24.04` | yes | secrets GROWTH_METRICS_TOKEN, GROWTH_SNAPSHOT_KEY | setup-ci restore |
+| hook-kill-tests.yml | hook-kill-tests | `ubuntu-24.04` | yes | - | setup-ci restore |
+| mac-dmg.yml | gate | VAR | yes while CI_SELF_HOSTED_LABELS is unset | secrets MAC_DEVELOPER_ID_P12, MAC_DEVELOPER_ID_P12_PASSWORD, MAC_NOTARY_KEY_P8, MAC_NOTARY_KEY_ID, MAC_NOTARY_ISSUER | none |
+| mac-dmg.yml | dmg | `macos-latest` | yes | contents write; secrets MAC_DEVELOPER_ID_P12, MAC_DEVELOPER_ID_P12_PASSWORD, MAC_NOTARY_KEY_P8, MAC_NOTARY_KEY_ID, MAC_NOTARY_ISSUER | none |
+| omp-question-compat.yml | native-questions | `ubuntu-24.04` | yes | - | setup-ci restore |
+| ovis-tui.yml | check | `ubuntu-24.04` | yes | - | none |
+| pages.yml | validate | calls `ci.yml` with hosted_only: true | (its jobs) | - | (its jobs) |
+| pages.yml | build | `ubuntu-24.04` | yes | - | none |
+| pages.yml | current | `ubuntu-24.04` | yes | - | none |
+| pages.yml | deploy | `ubuntu-24.04` | yes | pages, id-token write; environment github-pages | none |
+| pr-title.yml | title | LIGHT | no: self-hosted unless a fork PR | - | none |
+| pty-sidecar-attach.yml | gate | `ubuntu-24.04` | yes | - | none |
+| pty-sidecar-attach.yml | build | calls `pty-sidecar.yml` | (its jobs) | id-token, attestations write | (its jobs) |
+| pty-sidecar-attach.yml | attach | `ubuntu-24.04` | yes | contents write | setup-bun Bun cache |
+| pty-sidecar.yml | build | matrix: ubuntu-24.04, ubuntu-24.04-arm, macos-15 | yes | - | setup-bun Bun cache |
+| pty-sidecar.yml | manifest | `ubuntu-24.04` | yes | - | setup-bun Bun cache |
+| pty-sidecar.yml | attest | `ubuntu-24.04` | yes | id-token, attestations write | none |
+| relay-deploy.yml | validate | calls `ci.yml` | (its jobs) | - | (its jobs) |
+| relay-deploy.yml | deploy | `ubuntu-24.04` | yes | environment production; secrets: a deploy token and an account id for the host it deploys to | setup-ci save |
+| release-validate.yml | reuse | `ubuntu-24.04` | yes | - | none |
+| release-validate.yml | fast | `ubuntu-24.04` | yes | - | setup-ci save |
+| release-validate.yml | ci | calls `ci.yml` | (its jobs) | - | (its jobs) |
+| release-validate.yml | verdict | `ubuntu-24.04` | yes | - | none |
+| release.yml | preflight | VAR | yes while CI_SELF_HOSTED_LABELS is unset | - | setup-ci save |
+| release.yml | validate | calls `release-validate.yml` | (its jobs) | - | (its jobs) |
+| release.yml | pty-sidecar | calls `pty-sidecar.yml` | (its jobs) | id-token, attestations write | (its jobs) |
+| release.yml | server-binary | VAR | yes while CI_SELF_HOSTED_LABELS is unset | - | setup-ci restore |
+| release.yml | server-binary-sign | `ubuntu-24.04` | yes | environment release-signing; secrets OVIS_SERVER_SIGNING_KEY | none |
+| release.yml | server-binary-attest | `ubuntu-24.04` | yes | id-token, attestations write | none |
+| release.yml | publish | VAR | yes while CI_SELF_HOSTED_LABELS is unset | contents write | setup-ci save |
+| release.yml | shell-build | `ubuntu-24.04` | yes | - | setup-ci restore |
+| release.yml | shell-deploy | `ubuntu-24.04` | yes | environment production; secrets: a deploy token and an account id for the host it deploys to | none |
+| release.yml | shell-attach | VAR | yes while CI_SELF_HOSTED_LABELS is unset | contents write | none |
+| release.yml | windows-app | calls `windows-app.yml` | (its jobs) | contents write | (its jobs) |
+| release.yml | desktop | calls `desktop.yml` | (its jobs) | contents write; passes 7 secrets | (its jobs) |
+| release.yml | mac-dmg | calls `mac-dmg.yml` | (its jobs) | contents write; passes secrets: inherit | (its jobs) |
+| remote-bundles.yml | bundle | matrix: ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel | yes | - | setup-bun Bun cache |
+| remote-bundles.yml | bundle-windows | LIGHT | no: self-hosted unless a fork PR | - | setup-bun Bun cache |
+| remote-bundles.yml | smoke-windows | `windows-latest` | yes | - | setup-bun Bun cache |
+| remote-bundles.yml | ssh | `ubuntu-24.04` | yes | - | setup-bun Bun cache |
+| remote-bundles.yml | release | `ubuntu-24.04` | yes | contents write | none |
+| shell-preview.yml | shell-build | `ubuntu-24.04` | yes | - | setup-ci restore |
+| shell-preview.yml | shell-deploy | `ubuntu-24.04` | yes | environment production; secrets: a deploy token and an account id for the host it deploys to | none |
+| windows-app.yml | gate | VAR | yes while CI_SELF_HOSTED_LABELS is unset | - | none |
+| windows-app.yml | build | `windows-latest` | yes | - | none |
+| windows-app.yml | attach | VAR | yes while CI_SELF_HOSTED_LABELS is unset | contents write | none |
+| windows-install.yml | install | `windows-latest` | yes | - | none |
+| windows-terminal-qa.yml | qa | `windows-latest` | yes | - | setup-ci save; actions/cache (Cache Playwright browser) |
 
 ### Mac runner
 
