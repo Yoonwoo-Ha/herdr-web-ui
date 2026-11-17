@@ -1,11 +1,3 @@
-// Neither security rule (scripts/privileged-jobs-workflow.test.ts) uses this helper: it serves light-runner-workflow.test.ts
-// only. It evaluates both sides of && and || before choosing, and does not implement format()'s {{ }} escapes: do not
-// build a guard on it.
-// GitHub Actions expressions, the part of the language the workflows use, evaluated against contexts a test gives:
-// literals, context paths (case-insensitive), `!`, `==`/`!=` (strings compared ignoring case, mixed types as numbers),
-// `&&`/`||` (which return an operand, as GitHub's do), and fromJSON, toJSON, contains, startsWith, endsWith, format and
-// the status functions. light-runner-workflow.test.ts uses it to show where a job runs for each event.
-
 export type Value = null | boolean | number | string | Value[] | { [key: string]: Value };
 export type Contexts = Record<string, Value>;
 
@@ -64,7 +56,6 @@ const FUNCTIONS: Record<string, (...args: Value[]) => Value> = {
   cancelled: () => false,
 };
 
-/** The value of one expression (what stands inside `${{ }}`, or a whole `if:`). */
 export function evaluate(expression: string, contexts: Contexts): Value {
   const tokens = tokenize(expression);
   let at = 0;
@@ -126,7 +117,6 @@ export function evaluate(expression: string, contexts: Contexts): Value {
   return value;
 }
 
-/** A workflow value: one whole `${{ }}` gives its value, text around expressions makes a string; `if:` may omit `${{ }}`. */
 export function evaluateValue(value: unknown, contexts: Contexts, isCondition = false): Value {
   if (typeof value !== "string") return (value ?? null) as Value;
   const whole = /^\s*\$\{\{([\s\S]*)\}\}\s*$/.exec(value);

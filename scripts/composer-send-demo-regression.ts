@@ -10,9 +10,6 @@ import { openSettingsPage } from "./settings-page.ts";
 import { chromePath } from "./chrome-path.ts";
 import { SUPPORTED_ENTRIES } from "../src/lib/themes.ts";
 
-// Sending from the message box, on the demo app as scripts/composer-fit-harness.ts patches it: the
-// send key, an immediate message's paste framing, a held receipt, and Send pressed while the
-// keyboard still composes a word.
 const app = mkdtempSync(join(tmpdir(), "herdr-composer-fit-demo-"));
 try {
   const { server, url, withCard } = await composerFitDemo(app);
@@ -36,7 +33,6 @@ try {
         };
         const phone = width === 390;
         if (phone) {
-          // a touch screen's Return breaks the line until this device chooses otherwise; Send sends
           await box.fill("First line");
           await box.press("Enter");
           await box.pressSequentially("second line");
@@ -45,7 +41,6 @@ try {
           assert.ok(await send.isVisible(), "Send is drawn beside the draft");
           await send.click();
           await sent("First line\nsecond line");
-          // a hardware keyboard on the phone still sends with Mod+Enter
           await box.fill("Phone hardware keyboard sends");
           await box.press("ControlOrMeta+Enter");
           await sent("Phone hardware keyboard sends");
@@ -84,7 +79,6 @@ try {
         }
         await close();
         if (phone) {
-          // chosen: Return sends on this phone
           await box.fill("Return sends once chosen");
           await box.press("Enter");
           await sent("Return sends once chosen");
@@ -105,10 +99,6 @@ try {
       });
       console.log("PASS a phone's Return inserts a new line by default with Send and Mod+Enter sending, a chosen Return sends after reload, desktop Enter and Mod+Enter stay, and native multiline paste reaches chat through Send");
 
-      // An immediate message's paste framing: a whole paste marker in the text is dropped before it is sent, so the
-      // message arrives as written; any other escape byte is refused by the bridge (here the demo's answer), and the
-      // draft stays with the reason. Observe-only and offline keep their own guards. With UI_EVIDENCE_DIR set, every
-      // state is captured as submit-framing-<width>-<theme>[-ko]-<state>.png, and the measured numbers are written.
       // The conversation is frozen: the accepted send's reply never lands mid-capture, so every frame shows the same turns.
       const framingMeasures: Record<string, unknown>[] = [];
       for (const [width, language] of [[390, "en"], [1440, "en"], [390, "ko"]] as const) for (const theme of ["light", "dark"] as const) await withCard(browser, width, { agent: "claude", model: "claude-opus-5-5", status: "idle", freezeConversation: true, language, theme, ...(width === 390 ? { scale: 3 } : {}) }, async (page) => {
@@ -134,7 +124,6 @@ try {
             const canvas = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
             const rgba = (value: string): number[] => { canvas.clearRect(0, 0, 1, 1); canvas.fillStyle = "#000"; canvas.fillStyle = value; canvas.fillRect(0, 0, 1, 1); const [r, g, b, a] = canvas.getImageData(0, 0, 1, 1).data; return [r!, g!, b!, a! / 255]; };
             const over = (top: number[], below: number[]) => [0, 1, 2].map((i) => top[i]! * top[3]! + below[i]! * (1 - top[3]!)).concat(1);
-            // what is painted behind a node: its own and its ancestors' backgrounds, composited from the page down
             const backdrop = (node: HTMLElement): number[] => {
               const layers: number[][] = [];
               for (let at: HTMLElement | null = node; at; at = at.parentElement) layers.push(rgba(getComputedStyle(at).backgroundColor));
@@ -157,39 +146,33 @@ try {
           return numbers;
         };
         await page.locator(".composer-surface").waitFor();
-        // empty: nothing to send yet
         await shot("empty");
         assert.equal(await button.isDisabled(), true, "an empty message box has nothing to send");
         await shot("disabled");
-        // ordinary multiline Unicode content
         const written = language === "ko" ? "첫 단계를 실행해\n그다음 두 번째 단계 ✓" : "Run step one\nthen step two ✓";
         await box.fill(written);
         await box.evaluate((node: HTMLTextAreaElement) => node.blur());
         await shot("multiline");
         await shot("rest");
         if (width === 1440) { await button.hover(); await shot("hover"); }
-        // keyboard focus on Send shows the ring
         await box.focus();
         await page.keyboard.press("End");
         await button.focus();
         assert.equal(await button.evaluate((node) => node.matches(":focus-visible") && getComputedStyle(node).outlineStyle !== "none"), true, `${name}: Send shows a focus ring`);
         await shot("focus");
         const sendBox = (await button.boundingBox())!;
-        // pressed and released away: nothing goes
         await page.mouse.move(sendBox.x + sendBox.width / 2, sendBox.y + sendBox.height / 2);
         await page.mouse.down();
         await shot("pressed");
         await page.mouse.move(0, 0);
         await page.mouse.up();
         assert.equal(await box.inputValue(), written);
-        // loading: the receipt is held
         await page.evaluate(() => { (window as any).fitHoldSend = true; });
         await button.click();
         await page.waitForFunction(() => document.querySelector(".composer-send")?.getAttribute("aria-busy") === "true");
         await shot("loading");
         await page.evaluate(() => { (window as any).fitHoldSend = false; (window as any).fitReply(false); });
         await page.waitForFunction(() => !document.querySelector(".composer-send")?.hasAttribute("aria-busy"));
-        // sent for real with a whole paste marker pasted inside it: the marker is gone, the message is as written
         await note.waitFor();
         await box.fill(written.replace("\n", "\n\u001b[201~"));
         await button.click();
@@ -199,7 +182,6 @@ try {
           return turns.some((turn: { role: string; parts: { kind: string; text?: string }[] }) => turn.role === "user" && turn.parts.some((part) => part.kind === "text" && part.text === text));
         }, { paneId: panes.api, text: written }, { timeout: 5_000 });
         assert.ok(!(await conversation()).includes("\\u001b"), "no escape byte reached the conversation");
-        // error: an escape byte that is no paste marker is refused, typed nowhere, and the draft stays with the reason
         const refused = language === "ko" ? "이 초안은 \u001b[31m남아야 합니다" : "keep \u001b[31mthis draft";
         await box.fill(refused);
         await button.click();
@@ -210,13 +192,11 @@ try {
         await noOverflow("error");
         await measure("error");
         await shot("error");
-        // long unbroken content, scrolled to its end
         await box.fill(`${"unbroken".repeat(120)}END`);
         await box.evaluate((node: HTMLTextAreaElement) => { node.focus(); node.setSelectionRange(node.value.length, node.value.length); node.scrollTop = node.scrollHeight; });
         await noOverflow("long");
         await shot("long-end");
         await measure("long-end");
-        // observe-only: the connection only watches, so it offers no message box; the draft is back once it interacts
         await box.fill(written);
         await page.evaluate(() => (window as any).fitSocket.send(JSON.stringify({ type: "role", mode: "observe" })));
         await box.waitFor({ state: "detached" });
@@ -227,7 +207,6 @@ try {
         await box.waitFor();
         assert.equal(await box.inputValue(), written, "the draft is kept through observing");
         assert.equal((await conversation()).split(written.split("\n")[0]!).length, 2, "and was not sent while observing");
-        // offline: Send waits for the connection, and the draft stays
         await page.evaluate(() => { (window as any).fitOffline = true; (window as any).fitSocket.close(); });
         await page.waitForFunction(() => document.querySelector(".conn-live") === null);
         await page.waitForFunction(() => document.querySelector<HTMLButtonElement>(".composer-send")?.disabled === true);
@@ -235,7 +214,6 @@ try {
         await noOverflow("offline");
         await shot("offline");
         await measure("offline");
-        // the terminal's input line, itself unchanged: the same framing, and the same refusal kept under the line
         await page.evaluate(() => {
           const settings = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}");
           localStorage.setItem("ovis:settings", JSON.stringify({ ...settings, terminalInputMode: "line" }));
@@ -257,7 +235,6 @@ try {
       if (process.env.UI_EVIDENCE_DIR) writeFileSync(join(process.env.UI_EVIDENCE_DIR, "submit-framing-measurements.json"), `${JSON.stringify(framingMeasures, null, 2)}\n`);
       console.log("PASS immediate submit framing: a pasted marker is dropped, any other escape is refused with the draft kept, observe-only and offline keep their guards, and the terminal input line refuses the same, on phone and desktop in both themes and Korean");
 
-      // Only the transport receipt is held: the real composer and draft lifecycle stay intact.
       for (const agent of ["claude", "codex"] as const) for (const width of [390, 1440]) for (const theme of ["dark", "light"] as const) await withCard(browser, width, { agent, model: agent === "claude" ? "claude-opus-5-5" : "gpt-5.6", status: "idle" }, async (page) => {
         await page.evaluate((theme) => {
           document.documentElement.dataset.theme = theme;
@@ -364,8 +341,6 @@ try {
       });
       console.log("PASS Send tapped mid-composition finishes the word and sends");
 
-      // A keyboard that does not commit inside the tap leaves it waiting for the word. A drop inside
-      // that wait withdraws it: the commit after a quick reconnect sends nothing on the new connection.
       await withCard(browser, 390, { status: "idle", model: "claude-opus-5-5" }, async (page) => {
         const box = page.getByRole("textbox", { name: "Message", exact: true });
         await box.tap();
@@ -382,7 +357,6 @@ try {
         await page.getByRole("button", { name: "Send message", exact: true }).tap();
         const note = page.locator(".composer-note");
         await note.filter({ hasText: "Finishing the word…" }).waitFor({ timeout: 5_000 });
-        // drop the connection and wait, a frame at a time, until it went offline and came back
         await page.evaluate(() => new Promise<void>((resolve, reject) => {
           const fixture = window as unknown as { fitSocket: WebSocket };
           const dropped = fixture.fitSocket;
@@ -398,7 +372,6 @@ try {
           dropped.close();
           check();
         }));
-        // count the submits on the new connection, then let the keyboard commit the word
         await page.evaluate(() => {
           const fixture = window as unknown as { fitSocket: WebSocket; fitSubmits: number };
           fixture.fitSubmits = 0;

@@ -8,11 +8,9 @@ const files = readdirSync(dir).filter((name) => /\.ya?ml$/.test(name)).sort();
 
 const STATUS = /\b(always|cancelled|failure|success)\s*\(/i;
 
-/** A job-level `if` as GitHub's expression reads it: without `${{ }}`, and with what it quotes left out (a status function named in a string is not called). */
 const expression = (condition: unknown): string =>
   String(condition ?? "").trim().replace(/^\$\{\{([\s\S]*)\}\}$/, "$1").replace(/'(?:[^']|'')*'/g, "''").trim();
 
-/** The parts an expression's top level joins with `&&`; null when it has an `||` there, or a bracket left open. */
 function conjuncts(text: string): string[] | null {
   const parts: string[] = [];
   let depth = 0;
@@ -38,12 +36,6 @@ function mayRunAfterSkipped(condition: unknown): boolean {
   return STATUS.test(text) && !(conjuncts(text) ?? []).some((part) => /^success\s*\(\s*\)$/i.test(part));
 }
 
-/**
- * Whether a job with this `if` says for itself when it runs: it calls a status function, and no
- * success() that is not negated. With a plain success() anywhere, however it is bracketed or
- * joined, a skipped job before it still keeps the condition false in every way this can read, so
- * such a job counts as not saying: it is named rather than missed.
- */
 function saysWhenItRuns(condition: unknown): boolean {
   const text = expression(condition);
   return STATUS.test(text) && ![...text.matchAll(/\bsuccess\s*\(/gi)].some((call) => !text.slice(0, call.index).trimEnd().endsWith("!"));
@@ -62,7 +54,6 @@ function skippedBehindDecidingJobs(workflow: Workflow): string[] {
   return Object.keys(workflow.jobs).filter((id) => {
     if (saysWhenItRuns(workflow.jobs[id]!.if)) return false;
     const seen = new Set<string>();
-    // true once a job is reached through one that decides for itself
     const reaches = (from: string, behind: boolean): boolean => needs(from).some((need) => {
       if (behind) return true;
       if (seen.has(need)) return false;
@@ -89,15 +80,12 @@ test("a job behind one that decides for itself is found, however far behind, unl
   expect(skippedBehindDecidingJobs(beta("${{ needs.build.result == 'success' && Success() }}"))).toEqual(["publish", "after"]);
   expect(skippedBehindDecidingJobs(beta("${{ !Cancelled() && needs.build.result == 'success' }}"))).toEqual(["after"]);
   expect(skippedBehindDecidingJobs(beta("${{ !cancelled() && needs.build.result == 'success' }}"))).toEqual(["after"]);
-  // a success() this cannot place still keeps the job waiting on every job before it: bracketed, or beside an ||
   expect(skippedBehindDecidingJobs(beta("(success() && needs.build.result == 'success')"))).toEqual(["publish", "after"]);
   expect(skippedBehindDecidingJobs(beta("(inputs.tag != '') && (success())"))).toEqual(["publish", "after"]);
   expect(skippedBehindDecidingJobs(beta("success() && inputs.a || success() && inputs.b"))).toEqual(["publish", "after"]);
   expect(skippedBehindDecidingJobs(beta("always() && success()"))).toEqual(["publish", "after"]);
-  // a status function named in a string is not called
   expect(skippedBehindDecidingJobs(beta("contains(github.event.head_commit.message, 'always()')"))).toEqual(["publish", "after"]);
   expect(skippedBehindDecidingJobs(beta("${{ !cancelled() && needs.build.result == 'it''s success()' }}"))).toEqual(["after"]);
-  // a negated success() decides too: recover runs after the skipped gate, and publish behind it does not
   const recovering = (recover: string) => workflowOf({ gate: { if: "github.event_name != 'pull_request'" }, recover: { needs: "gate", if: recover }, publish: { needs: "recover" } });
   expect(skippedBehindDecidingJobs(recovering("!success()"))).toEqual(["publish"]);
   expect(skippedBehindDecidingJobs(recovering("${{ !success() && inputs.tag != '' }}"))).toEqual(["publish"]);
@@ -106,7 +94,6 @@ test("a job behind one that decides for itself is found, however far behind, unl
   expect(skippedBehindDecidingJobs(recovering("success() && inputs.tag != '||'"))).toEqual([]);
   expect(skippedBehindDecidingJobs(recovering("contains(needs.gate.result, 'success') && success()"))).toEqual([]);
   expect(skippedBehindDecidingJobs(recovering("contains(github.event.head_commit.message, 'failure()')"))).toEqual([]);
-  // a deciding job with nothing before it hides nothing, and a plain chain is GitHub's own rule
   expect(skippedBehindDecidingJobs(workflowOf({ first: { if: "always()" }, second: { needs: "first" }, third: { needs: ["second"] } }))).toEqual([]);
   expect(skippedBehindDecidingJobs(workflowOf({ first: { if: "inputs.tag != ''" }, second: { needs: "first" } }))).toEqual([]);
 });
@@ -114,19 +101,16 @@ test("a job behind one that decides for itself is found, however far behind, unl
 test("no workflow leaves a job to be skipped behind one that ran", () => {
   const found = files.flatMap((file) => skippedBehindDecidingJobs(parseWorkflow(join(dir, file))).map((job) => `${file}: ${job}`));
   expect(found).toEqual([
-    // its own condition leaves out the pull request, the one event that skips the gate before its build
     "windows-app.yml: attach",
   ]);
 });
 
 test("Beta uploads the desktop builds whenever they passed, whatever became of the host's own jobs", () => {
   const beta = parseWorkflow(join(dir, "beta.yml"));
-  // host-publish has no condition: it is skipped with host-build, every time the host was built before
   expect(beta.jobs["host-build"]!.if).toBe("needs.pick.outputs.host == 'build'");
   expect(beta.jobs["host-publish"]!.if).toBeUndefined();
   const publish = beta.jobs["desktop-publish"]!;
   expect(publish.needs).toEqual(["pick", "desktop"]);
   expect(publish.if).toBe("${{ !cancelled() && needs.desktop.result == 'success' }}");
-  // the last job: nothing waits for it
   expect(Object.entries(beta.jobs).filter(([, job]) => [job.needs ?? []].flat().includes("desktop-publish"))).toEqual([]);
 });

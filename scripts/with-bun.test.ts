@@ -99,7 +99,6 @@ describe.skipIf(process.platform === "win32")("Unix Bun discovery", () => {
     expect(result.out.trim()).toBe("1.4.2");
   });
 
-  /** PATH as the launcher leaves it. */
   async function searched(overrides: Record<string, string | undefined> = {}) {
     return (await run(["/bin/sh", "-c", `. "$1" && printf %s "$PATH"`, "sh", join(import.meta.dir, "bun-path.sh")], overrides)).out;
   }
@@ -114,7 +113,6 @@ describe.skipIf(process.platform === "win32")("Unix Bun discovery", () => {
     const dir = join(home, "with space");
     mkdirSync(dir);
     mkdirSync(join(home, "wide"));
-    // a relative name, an empty entry, and a pattern that names both directories if it is expanded
     expect(await searched({ WITH_BUN_EXTRA_DIRS: `scripts::${home}/w*:${dir}` })).toBe(`${tools}:${dir}`);
   });
 
@@ -156,7 +154,6 @@ describe.skipIf(process.platform === "win32")("Unix Bun discovery", () => {
     expect(plain.out).toContain("Update it with: bun upgrade");
   });
 
-  // a bin directory links into the Cellar, as Homebrew does, here through a second link
   it.each(["readlink", "ls"])("preflight follows links into Homebrew's Cellar with only %s to read them", async (reader) => {
     const cellar = join(home, "prefix", "Cellar", "bun", "1.3.14", "bin"), bin = join(home, "prefix", "bin"), outer = join(home, "outer");
     tool(cellar, "bun", "1.3.14");
@@ -185,7 +182,6 @@ describe.skipIf(process.platform === "win32")("Unix Bun discovery", () => {
     const env = { PATH: `${tools}:${utils}`, WITH_BUN_EXTRA_DIRS: outer };
     const brew = await run(["/bin/sh", preflight], { ...env, OVIS_TEST_BREW_PREFIXES: prefix });
     expect(brew.out).toContain("Update it with: brew upgrade bun");
-    // the same link outside every Homebrew prefix keeps Bun's own update
     const other = await run(["/bin/sh", preflight], { ...env, OVIS_TEST_BREW_PREFIXES: join(home, "elsewhere") });
     expect(other.out).toContain("Update it with: bun upgrade");
   });

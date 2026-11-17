@@ -55,7 +55,6 @@ it.skipIf(process.platform !== "win32")("runs the Windows launcher with executab
       ]);
       expect(resolutionCode, resolutionError).toBe(0);
       expect(resolved.trim().split(/\r?\n/)).toEqual(["Application", join(bin, `bun.${installation}`)]);
-      // a command's flags go on with it (link --code); anything that is not a plain flag is refused before Bun runs
       for (const [command, ...rest] of [["start"], ["status"], ["link", "--code", "--google"], ["link", "a&b"], ["link", "--code=%OS%"]] as [string, ...string[]][]) {
         const refused = rest.some((flag) => !/^--[a-z][a-z-]*$/.test(flag));
         rmSync(result, { force: true });
@@ -75,7 +74,6 @@ it.skipIf(process.platform !== "win32")("runs the Windows launcher with executab
             continue;
           }
           expect(code, `${installation} ${command}: ${out}${err}`).toBe(command === "status" ? 7 : 0);
-          // start takes no flags: the launcher starts the server with the command alone
           expect(JSON.parse(readFileSync(result, "utf8"))).toEqual([command, ...rest]);
         } finally {
           clearTimeout(timeout);
@@ -171,7 +169,7 @@ it.skipIf(process.platform !== "win32")("starts after its launcher exits, stops 
   const peer = createServer(connection => {
     let buffer = "";
     connection.on("error", error => {
-      if ((error as NodeJS.ErrnoException).code !== "EPIPE") throw error; // the forced stop can close a reply's pipe
+      if ((error as NodeJS.ErrnoException).code !== "EPIPE") throw error;
     });
     connection.on("data", data => {
       buffer += data.toString();
@@ -193,12 +191,10 @@ it.skipIf(process.platform !== "win32")("starts after its launcher exits, stops 
   mkdirSync(config);
   writeFileSync(join(config, ".env"), `HOST=127.0.0.1\nPORT=${port}\n`);
   const env: Record<string, string | undefined> = { ...process.env, HOME: undefined, USERPROFILE: scratch, APPDATA: join(scratch, "appdata"),
-    // A running Herdr without Bun on PATH: the manifest's real Windows launcher must find it.
     Path: ["taskkill", "powershell", "git"].map(tool => dirname(Bun.which(tool)!)).join(";"),
     HERDR_SOCKET: socket, HERDR_SOCKET_PATH: socket, HERDR_PLUGIN_ROOT: undefined,
     HERDR_PLUGIN_STATE_DIR: state, HERDR_PLUGIN_CONFIG_DIR: config, OVIS_STATE_DIR: join(scratch, "app-state"),
     OVIS_AUTO_UPDATE: "0", OVIS_TOKEN: "", HOST: "127.0.0.1", PORT: String(port),
-    // this checkout's own server: the developer path of scripts/plugin-launch.ts, not a release binary
     OVIS_FROM_SOURCE: "1" };
   delete env["PATH"];
   const run = async (command: string, expectedCode = 0) => {
@@ -211,10 +207,8 @@ it.skipIf(process.platform !== "win32")("starts after its launcher exits, stops 
   };
   try {
     await run("start");
-    // start's process has exited, but the managed server and its children must still answer.
     const health = await (await fetch(`http://127.0.0.1:${port}/api/health`)).json() as { herdr: { terminal_mirror: boolean } };
     expect(health.herdr.terminal_mirror).toBe(true);
-    // The "not built yet" notice is a 200 too: the page itself must come back.
     expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toContain('<div id="root"');
     const history = await (await fetch(`http://127.0.0.1:${port}/api/pane/conversation?pane_id=history`)).json() as { source: string; turns: unknown[] };
     expect(history.source).toBe("omp-transcript");
@@ -229,13 +223,11 @@ it.skipIf(process.platform !== "win32")("starts after its launcher exits, stops 
     const owned = new Set([pid, ...descendantProcesses(rows, pid).map(member => member.pid)]);
     const birth = new Map(rows.map(row => [row.pid, row.started]));
     expect(owned.size).toBeGreaterThanOrEqual(3);
-    for (let attempt = 0; attempt < 3; attempt++) await run("start"); // fast successful exits keep their exit code
+    for (let attempt = 0; attempt < 3; attempt++) await run("start");
     expect(Number(readFileSync(join(state, "server.pid"), "utf8"))).toBe(pid);
     const record = statSync(join(state, "server.pid"));
     const owner = readFileSync(join(state, "server.owner"), "utf8");
     try {
-      // with no creation time recorded, a matching app started after an old PID record is not its owner
-      // (a recorded creation time that matches decides alone: plugin-stop-identity.test.ts)
       writeFileSync(join(state, "server.owner"), `${JSON.stringify({ pid, birth_unknown: true })}\n`);
       utimesSync(join(state, "server.pid"), record.atime, new Date(0));
       await run("stop", 1);
@@ -262,7 +254,7 @@ it.skipIf(process.platform !== "win32")("starts after its launcher exits, stops 
     }
     expect(remaining, "control: wait up to ten seconds for the Windows-owned process tree to disappear").toEqual([]);
     expect(existsSync(join(state, "server.pid"))).toBe(false);
-    await run("start"); // forced Windows shutdown leaves a stale lock; restart must recover it
+    await run("start");
     expect((await fetch(`http://127.0.0.1:${port}/api/health`)).ok).toBe(true);
     await run("stop");
     const unrelated = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 90000)"], { windowsHide: true, stdout: "ignore", stderr: "ignore" });
@@ -276,11 +268,10 @@ it.skipIf(process.platform !== "win32")("starts after its launcher exits, stops 
       expect(existsSync(staleLock)).toBe(true);
       writeFileSync(staleLock, String(unrelated.pid));
       utimesSync(staleLock, new Date(0), new Date(0));
-      await run("start"); // a reused supervisor PID must not block restart or be terminated
+      await run("start");
       expect((await fetch(`http://127.0.0.1:${port}/api/health`)).ok).toBe(true);
       expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
       await run("stop");
-      // Simulate PID reuse after taskkill: the real CLI must leave this live fixture alone.
       const preload = join(scratch, "stop-boundaries.ts");
       for (const missingIdentity of [false, true]) {
         writeFileSync(join(state, "server.pid"), String(unrelated.pid));

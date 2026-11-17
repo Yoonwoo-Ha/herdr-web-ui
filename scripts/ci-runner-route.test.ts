@@ -19,10 +19,6 @@ afterAll(() => {
   for (const dir of created) rmSync(dir, { recursive: true, force: true });
 });
 
-// A fake `gh` that answers the Actions API from the JSON files in $FAKE_GH and logs each call; a
-// missing file makes it fail like an API error, and a `fail-<file>` beside one makes the next call
-// for it print part of its answer and then fail, as a 502 on a later page does; a `refuse-<file>`
-// makes every call for it fail as the API's refusal (HTTP 404) does.
 const bin = tempDir();
 writeFileSync(join(bin, "gh"), `#!/bin/sh
 echo "$*" >> "$FAKE_GH/calls"
@@ -44,7 +40,6 @@ const ovis = ["self-hosted", "self-hosted-ovis"];
 const running = (count: number, labels = ovis): Job[] => Array.from({ length: count }, () => ({ status: "in_progress", labels }));
 const waiting = (count: number, labels = ovis): Job[] => Array.from({ length: count }, () => ({ status: "queued", labels }));
 
-/** Writes the API state: runs by status, each run's id mapped to its jobs. */
 function actions(state: { in_progress?: Record<number, Job[]>; queued?: Record<number, Job[]> }): string {
   const dir = tempDir();
   for (const status of ["in_progress", "queued"] as const) {
@@ -65,7 +60,6 @@ function route(env: Record<string, string>) {
   return result;
 }
 
-/** The two outputs: linux= for the Linux jobs, then fast= for Fast checks. */
 function outputs(env: Record<string, string>): { linux: unknown; fast: unknown } {
   const result = route(env);
   expect(result.status).toBe(0);
@@ -96,14 +90,12 @@ describe.skipIf(process.platform === "win32")("CI runner route", () => {
 
     it("goes to the self-hosted runners while they have room for its jobs", () => {
       expect(routed({ ...pr, FAKE_GH: actions({}) })).toEqual(ovis);
-      // 4 of 10 busy leaves exactly the 6 Linux jobs one run needs
       expect(routed({ ...pr, FAKE_GH: actions({ in_progress: { 1: running(2) }, queued: { 2: waiting(2) } }) })).toEqual(ovis);
     });
 
     it("goes hosted when queued and running jobs leave too little room", () => {
       expect(routed({ ...pr, FAKE_GH: actions({ in_progress: { 1: running(2), 3: [...running(1), ...waiting(1)] }, queued: { 2: waiting(1) } }) }))
         .toBe("ubuntu-24.04");
-      // stops asking once the runners are known to be full: run 2's jobs are never read
       const full = actions({ in_progress: { 1: running(7), 2: running(1) } });
       rmSync(join(full, "jobs-2.json"));
       const result = route({ ...pr, FAKE_GH: full });
@@ -121,7 +113,6 @@ describe.skipIf(process.platform === "win32")("CI runner route", () => {
       expect(routed({ ...pr, FAKE_GH: actions({ in_progress: { 1: [...others, ...running(4, ["Self-Hosted", "self-hosted-ovis"])] } }) }))
         .toEqual(ovis);
       expect(routed({ ...pr, FAKE_GH: actions({ in_progress: { 1: [...others, ...running(7)] } }) })).toBe("ubuntu-24.04");
-      // a job asking for fewer labels can take those runners too
       for (const labels of [["self-hosted"], ["self-hosted", "linux", "x64"]]) {
         expect(routed({ ...pr, FAKE_GH: actions({ in_progress: { 1: running(7, labels) } }) })).toBe("ubuntu-24.04");
       }
@@ -140,7 +131,6 @@ describe.skipIf(process.platform === "win32")("CI runner route", () => {
       const page = (jobs: Job[]) => JSON.stringify({ jobs });
       writeFileSync(join(state, "jobs-1.json"), `${page(running(4))}\n${page(running(3))}\n`);
       writeFileSync(join(state, "in_progress.json"), `{"workflow_runs":[]}\n{"workflow_runs":[{"id":1}]}\n`);
-      // counted, not a failed count falling back to hosted
       const result = route({ ...pr, FAKE_GH: state });
       expect(result.stdout).toBe('linux="ubuntu-24.04"\nfast="ubuntu-24.04"\n');
       expect(result.stderr).toContain("at least 7 of 10");
@@ -172,7 +162,6 @@ describe.skipIf(process.platform === "win32")("CI runner route", () => {
     });
 
     it("asks again when one read fails, and counts what it then reads once", () => {
-      // 10 running of 16 leave room for the run's 6 jobs; each part counted twice would leave none
       const flaky = actions({ in_progress: { 1: running(5) }, queued: { 2: running(5) } });
       for (const file of ["in_progress", "jobs-1", "jobs-2"]) writeFileSync(join(flaky, `fail-${file}`), "");
       expect(routed({ ...pr, SELF_HOSTED_CAPACITY: "16", FAKE_GH: flaky })).toEqual(JSON.parse('["self-hosted","self-hosted-ovis"]'));
@@ -298,7 +287,6 @@ describe.skipIf(process.platform === "win32")("CI runner route", () => {
     expect(routed({ ...push, MAIN_LABELS: main, CONFIGURED_LABELS: labels })).toEqual(["self-hosted", "self-hosted-ovis-main"]);
     expect(routed({ ...push, MAIN_LABELS: '"ubuntu-24.04"' })).toBe("ubuntu-24.04");
     expect(routed({ ...push, MAIN_LABELS: '"ubuntu-24.04"', CONFIGURED_LABELS: labels })).toBe("ubuntu-24.04");
-    // unset or blank: main shares the pull requests' runners, as before
     expect(routed(push)).toEqual(["self-hosted", "self-hosted-ovis"]);
     expect(routed({ ...push, MAIN_LABELS: " " })).toEqual(["self-hosted", "self-hosted-ovis"]);
     expect(routed({ ...push, MAIN_LABELS: " ", CONFIGURED_LABELS: labels })).toEqual(JSON.parse(labels));
@@ -348,7 +336,6 @@ describe.skipIf(process.platform === "win32")("CI runner route", () => {
 
   describe("hosted_only (pages.yml's call of ci.yml)", () => {
     const vm = '["self-hosted","ovis-vm"]';
-    // every routing above: the input unset or false changes none of them, and true sends each to the hosted image
     const scenarios = (): Record<string, string>[] => [
       { EVENT_NAME: "push" },
       { EVENT_NAME: "push", REF: "refs/heads/main", MAIN_LABELS: '["self-hosted","self-hosted-ovis-main"]' },
@@ -374,7 +361,6 @@ describe.skipIf(process.platform === "win32")("CI runner route", () => {
 
     it("sends the Linux jobs and Fast checks to the hosted image when true, before it reads anything else", () => {
       for (const env of scenarios()) expect(outputs({ ...env, HOSTED_ONLY: "true" })).toEqual({ linux: "ubuntu-24.04", fast: "ubuntu-24.04" });
-      // a label list the route would refuse is never read
       expect(outputs({ EVENT_NAME: "workflow_dispatch", REQUESTED_LABELS: '"self-hosted"', HOSTED_ONLY: "true" })).toEqual({ linux: "ubuntu-24.04", fast: "ubuntu-24.04" });
     });
   });

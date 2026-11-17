@@ -1,4 +1,3 @@
-/** Owned, real-browser regression of the sidebar's workspace rows. Run after `bun run build`. */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,7 +22,6 @@ declare global {
   }
 }
 
-/** Register before the action; only DOM mutations, never intervals, drive the wait. */
 async function armState(page: Page, states: readonly State[]): Promise<void> {
   await page.evaluate((conditions) => {
     window.workspaceRowsState = new Promise<boolean>((resolve) => {
@@ -64,23 +62,18 @@ const paneSelector = (paneId: string): string => `.pane-select[title^=${JSON.str
 const itemSelector = (paneId: string): string => `.pane-item:has(${paneSelector(paneId)})`;
 const workspaceSelector = (workspaceId: string): string => `.workspace-group[data-workspace=${JSON.stringify(workspaceId)}]`;
 const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-workspace-rows-regression-")));
-// These accumulators contain only IDs created by this invocation.
 const ownedWorkspaces: string[] = [];
 const errors: string[] = [];
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 let server: ReturnType<typeof createServer> | undefined;
 
 try {
-  // test-herdr has live/unit escape hatches and a no-binary fallback. Never let
-  // any of those silently target the user's current socket.
   assert.notEqual(process.env.HERDR_TEST_LIVE, "1", "Live-session mode is forbidden");
   assert.notEqual(process.env.HERDR_TEST_MODE, "unit", "This regression requires isolated herdr");
   process.env.HERDR_TEST_SESSION ||= "ovis-test";
   const { testSocketPath } = await import("./test-herdr.ts");
   assert.equal(process.env.HERDR_SOCKET, testSocketPath(), "test-herdr must select its isolated socket");
 
-  // Given two independent workspaces at one full cwd, a third whose folder has the same
-  // basename, and a fourth alone in its folder. No agent or shell input is started.
   const sharedCwd = join(root, "left", "project");
   const otherCwd = join(root, "right", "project");
   const loneCwd = join(root, "lone");
@@ -144,13 +137,10 @@ try {
   const screenshot = async (name: string): Promise<void> => {
     if (evidence) await page.screenshot({ path: join(evidence, `workspace-rows-${name}.png`), animations: "disabled" });
   };
-  // the workspace with two panes in one tab: one row, with both panes on the canvas
   const otherWorkspace = workspaceSelector(other.workspaceId);
 
   await navigate(() => page.goto(`${origin}/?pane=${encodeURIComponent(lone.paneId)}`), lone.paneId);
   await page.locator(paneSelector(other.paneId)).waitFor({ state: "attached" });
-  // one row per workspace, as herdr's Spaces sidebar: the split pane has no row of its own, the
-  // workspace's selector follows its current pane while its visible name stays fixed.
   assert.equal(await page.locator(otherWorkspace).count(), 1, "a workspace with two panes is one row");
   assert.equal(await page.locator(paneSelector(split.pane.pane_id)).count(), 0);
   assert.equal(await page.locator(".workspace-toggle").count(), 0, "a legacy workspace fold has nothing to fold");
@@ -169,27 +159,21 @@ try {
     assert.equal(await page.locator(paneSelector(fixture.paneId)).getAttribute("draggable"), "true",
       "the workspace row itself supports dragging");
   }
-  // A fold stored while a single pane had a heading (0.3.44) must not hide a row that has no toggle.
   const singleFoldKey = `ovis:workspace-collapsed:local:${alpha.workspaceId}`;
   await page.evaluate((key) => localStorage.setItem(key, "1"), singleFoldKey);
   await navigate(() => page.reload(), lone.paneId);
   await page.locator(paneSelector(alpha.paneId)).waitFor({ state: "visible" });
   assert.equal(await page.locator(`.workspace:has(${paneSelector(alpha.paneId)}) .workspace-toggle`).count(), 0);
   await page.evaluate((key) => localStorage.removeItem(key), singleFoldKey);
-  // A split tab renders both panes. Selecting the second pane on the canvas changes only the
-  // representative pane of the workspace row; the workspace's visible name remains its own.
   await changeState(page, [{ selector: paneSelector(other.paneId), attribute: ["aria-current", "true"] }, { selector: '.tab-strip [role="tab"]', count: 1 }],
     () => page.locator(paneSelector(other.paneId)).click(), "selecting the split workspace shows its strip");
   assert.equal(await page.locator('.tab-strip [role="tab"]').textContent(), "Tab 1", "a tab herdr named by its number reads as Tab 1");
-  // at this width the header over the pane is the pane's surface, and the strip under it is
-  // the same one, not a band of the panel's colour between header and pane
   const surfaces = await page.evaluate(() => {
     const header = document.querySelector(".app-header")!;
     const column = document.querySelector(".pane-column")!;
     return {
       headerChat: header.classList.contains("is-chat"), columnChat: column.classList.contains("is-chat"),
       header: getComputedStyle(header).backgroundColor, strip: getComputedStyle(document.querySelector(".tab-strip")!).backgroundColor,
-      // from 769px the tabs are the header's row on the panel's surface, and the open tab is a raised pill on it
       tabRow: header.classList.contains("has-tab-row"),
       openTab: getComputedStyle(document.querySelector(".tab-strip-item.is-active")!).backgroundColor,
       elevated: (() => { const probe = document.body.appendChild(document.createElement("div")); probe.style.background = "var(--bg-elevated)"; const color = getComputedStyle(probe).backgroundColor; probe.remove(); return color; })(),
@@ -214,9 +198,7 @@ try {
   assert.equal(await page.locator(otherWorkspace).count(), 1);
   assert.equal(await page.locator(`${otherWorkspace} .workspace-name`).textContent(), other.label,
     "selecting a split pane keeps the workspace label in Spaces");
-  // Both entry points act on the workspace clicked, without changing the selected pane.
   const alphaWorkspace = workspaceSelector(alpha.workspaceId);
-  // a desktop draws no row ⋯: the context-menu key opens the menu at the focused row
   await page.locator(`${alphaWorkspace} .workspace-select`).focus();
   await contextMenuKey(page);
   const workspaceMenu = page.getByRole("menu");
@@ -236,10 +218,8 @@ try {
     "right-clicking another workspace keeps the active pane");
   await page.keyboard.press("Escape");
   await workspaceMenu.waitFor({ state: "detached" });
-  // Renaming a pane is still available on that pane's own menu (a mouse opens it by right-click).
   await page.locator(`[data-layout-pane=${JSON.stringify(split.pane.pane_id)}] .pane-frame-head`).click({ button: "right" });
   await page.getByRole("menuitem", { name: "Rename pane", exact: true }).click();
-  // the dialog's title names the pane it renames: "Rename pane · <pane>"
   const paneRename = page.getByRole("dialog", { name: /^Rename pane · ./ });
   const paneName = paneRename.getByRole("textbox", { name: "Pane name", exact: true });
   await paneName.waitFor();
@@ -273,8 +253,6 @@ try {
   assert.deepEqual(errors, [], "no browser page errors");
   console.log("PASS one row per workspace, identical workspace menu entry points, and pane actions on the canvas");
 } finally {
-  // Attempt every cleanup even if an earlier teardown fails; never close an
-  // unowned resident workspace from test-herdr or any other invocation.
   const cleanupErrors: unknown[] = [];
   try { await browser?.close(); } catch (error) { cleanupErrors.push(error); }
   try { server?.stop(); } catch (error) { cleanupErrors.push(error); }

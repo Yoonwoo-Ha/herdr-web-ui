@@ -6,22 +6,16 @@ import { dirname, join, posix, sep } from "node:path";
 import { fixedSleepCounts, fixedSleeps, sleepFiles } from "./fixed-sleeps.ts";
 import { fail, files, lineOf, read, repo, stripComments } from "./source-scan.ts";
 
-// Repo-wide rules from AGENTS.md that used to be prose only. Each failure says what to change;
-// client rules are in src/conventions.test.ts, server rules in server/conventions.test.ts.
-
 const SOURCES = [...files("{src,server,shared,scripts,site,telemetry,integrations}/**/*.{ts,tsx,mjs,js}"), "vite.config.ts"];
 
-/** Module specifiers of static imports and re-exports, side-effect imports and `import("…")` with a literal. */
 const SPECIFIER = /(?:^|[\s;])(?:import|export)\s[^;]*?\sfrom\s*["']([^"']+)["']|(?:^|[\s;])import\s*["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/gm;
 
-/** Every module specifier in the code, with the line it is written on (a match may start on the line before). */
 const specifiersIn = (code: string): { specifier: string; line: number }[] =>
   [...code.matchAll(SPECIFIER)].map((match) => {
     const specifier = match[1] ?? match[2] ?? match[3]!;
     return { specifier, line: lineOf(code, match.index + match[0].lastIndexOf(specifier)) };
   });
 
-/** Every module specifier in a file's code (comments removed), and where it is written. */
 const specifiers = (file: string): { specifier: string; at: string }[] =>
   specifiersIn(stripComments(read(file))).map(({ specifier, line }) => ({ specifier, at: `${file}:${line}: ${specifier}` }));
 
@@ -49,14 +43,8 @@ describe("the frontend build", () => {
 });
 
 describe("what the browser loads", () => {
-  // src/ and site/ are bundled for the browser, and shared/ is loaded there and by the server both.
-  // An import that leads out of them (server/, relay/, scripts/, app/ …) puts code written for Bun
-  // or Node into that bundle, where the environment it reads is not there. Each directory names the
-  // others it may import from; tests are left out, since a contract test reads both ends.
   const MAY_IMPORT: Readonly<Record<string, readonly string[]>> = { src: ["shared"], site: ["src", "shared"], shared: [] };
-  /** The top-level directory, or the file at the root, that a relative specifier written in `file` leads to. */
   const leadsTo = (file: string, specifier: string): string => posix.normalize(posix.join(posix.dirname(file), specifier)).replace(/\/.*$/, "");
-  /** Every import in those directories' code that leaves its own directory. */
   const crossings = Object.keys(MAY_IMPORT).flatMap((own) =>
     files(`${own}/**/*.{ts,tsx,mjs,js}`).filter((file) => !/\.test\./.test(file)).flatMap((file) =>
       specifiers(file).filter(({ specifier }) => specifier.startsWith(".")).map(({ specifier, at }) => ({ own, to: leadsTo(file, specifier), at })))
@@ -84,12 +72,6 @@ describe("what the browser loads", () => {
 
 const gitIn = (cwd: string, ...args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 
-/**
- * The commit the ratchets below compare with: the one CI names in RATCHET_BASE (ci.yml's Fast checks fetches it into
- * its shallow checkout), else where this branch left origin/main, so a stale branch is compared with its own base, else
- * null (no git or no origin/main here, or a Release run). A named commit that is not in the checkout fails: a ratchet
- * that cannot see its base must not pass.
- */
 function ratchetBase(env: Record<string, string | undefined> = process.env, cwd: string = repo): string | null {
   const named = env["RATCHET_BASE"];
   if (named) {
@@ -102,12 +84,10 @@ function ratchetBase(env: Record<string, string | undefined> = process.env, cwd:
   return null;
 }
 
-/** The files git sees renamed since `base` (committed, or staged as `git mv` does), each new path with its old one. */
 const renamesSince = (base: string): Map<string, string> =>
   new Map(gitIn(repo, "diff", "--name-status", "-M", "--diff-filter=R", base).stdout.split("\n")
     .map((line) => line.split("\t")).filter((parts) => parts.length === 3).map(([, from, to]) => [to!, from!]));
 
-/** `file` as it was at `base`, or null when it was not there. */
 const atBase = (base: string, file: string): string | null => {
   const shown = gitIn(repo, "show", `${base}:${file}`);
   return shown.status === 0 ? shown.stdout : null;
@@ -134,12 +114,8 @@ describe("the ratchets' base", () => {
 });
 
 describe("fixed sleeps", () => {
-  // A ratchet: scripts/fixed-sleeps.json is every file's count of fixed sleeps when this test was
-  // added (see scripts/fixed-sleeps.ts for what counts). A file may lose sleeps, never gain one,
-  // and a file that is not listed has none.
   const baseline = JSON.parse(read("scripts/fixed-sleeps.json")) as Record<string, number>;
 
-  /** scripts/fixed-sleeps.json at the ratchets' base, with the renames since, or null with no base. */
   const committed = (): { counts: Record<string, number>; renames: Map<string, string> } | null => {
     const base = ratchetBase();
     const json = base === null ? null : atBase(base, "scripts/fixed-sleeps.json");
@@ -150,7 +126,6 @@ describe("fixed sleeps", () => {
     const at = committed();
     if (at === null) return;
     const before = at.counts;
-    /** A file's count at the base, under its old path when git sees it renamed. */
     const was = (file: string): number => before[file] ?? before[at.renames.get(file) ?? ""] ?? 0;
     const total = (counts: Record<string, number>) => Object.values(counts).reduce((sum, count) => sum + count, 0);
     fail([
@@ -205,18 +180,12 @@ describe("fixed sleeps", () => {
     expect(found("const wait = io.wait ?? Bun.sleep;\nawait wait(5);")).toBe(1);
     expect(found("const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));\nawait tick();\nawait tick(20);")).toBe(1);
     expect(found("const wait = io.wait ?? Bun.sleep;\nwhile (Date.now() < deadline) await wait(25);")).toBe(0);
-    // a function that starts with a sleep is not a sleep helper: it counts once, where it sleeps
     expect(found("async function flood() {\n  await Bun.sleep(150);\n  send();\n}\nawait flood();\nawait flood();")).toBe(1);
   });
 });
 
 describe("the tools typecheck", () => {
-  // A ratchet: tsconfig.tools.json checks every file under scripts/, integrations/, site/ and app/scripts/ but the ones
-  // its "exclude" lists, which had type errors when the list was made, or import or lean on a declaration of one that
-  // had, and the untracked scripts/*.tmp.ts probes .gitignore allows. A new file is checked without being named
-  // anywhere, and the list may only shrink.
   const ROOTS = ["scripts", "integrations", "site", "app/scripts"];
-  /** The tracked .ts/.tsx files under the roots of the checkout at `cwd` that are hidden or in a hidden folder; `-z`, since git quotes a name with non-ASCII bytes. */
   const hiddenSources = (cwd: string): string[] =>
     gitIn(cwd, "ls-files", "-z", ...ROOTS).stdout.split("\0").filter((file) => /\.tsx?$/.test(file) && /(^|\/)\./.test(file));
   const config = JSON.parse(read("tsconfig.tools.json")) as { extends?: unknown; include?: unknown; exclude?: unknown; files?: unknown; compilerOptions?: unknown };
@@ -224,7 +193,6 @@ describe("the tools typecheck", () => {
     const list = (JSON.parse(json) as { exclude?: unknown }).exclude;
     return Array.isArray(list) ? list as string[] : null;
   };
-  /** The entries `now` has and `before` lacks, but a renamed file's (`renames`: new path to old), which takes its entry along. */
   const added = (now: readonly string[], before: readonly string[], renames: ReadonlyMap<string, string>): string[] =>
     now.filter((file) => !before.includes(file) && !before.includes(renames.get(file) ?? ""));
   /**
@@ -276,7 +244,6 @@ describe("the tools typecheck", () => {
       "Rename these: tsc's folder include skips a hidden file or folder, so this file would never be typechecked.");
     fail(sources.filter((file) => file.endsWith(".tsx") && sources.includes(file.replace(/\.tsx$/, ".ts"))),
       "Rename one of each pair: beside a .ts of the same name, tsc's folder include leaves the .tsx unchecked.");
-    // the directive in a line comment of any number of slashes, or a block comment
     fail(sources.filter((file) => /^\s*(?:\/\/+|\/\*+)\s*@ts-nocheck\b/m.test(read(file))),
       "Fix the type errors in these files instead of `// @ts-nocheck`: a file under the tools typecheck's roots is checked, or listed in its exclude list until it is fixed.");
   });
@@ -302,19 +269,11 @@ describe("the tools typecheck", () => {
 });
 
 describe("demo transport", () => {
-  // Every push to main redeploys the browser demo, whose server is site/demo/transport.ts: an
-  // endpoint or WS frame it does not answer is a 404 or a dropped frame there (AGENTS.md,
-  // Changing a contract).
   const demo = stripComments(read("site/demo/transport.ts"));
   const exact = new Set([...demo.matchAll(/["'](\/api\/[^"'?]*)["']/g)].map((match) => match[1]!));
   const prefixes = [...demo.matchAll(/\.startsWith\(\s*["'](\/api\/[^"']+)["']\s*\)/g)].map((match) => match[1]!).filter((prefix) => prefix !== "/api/");
   const answered = (route: string) => exact.has(route) || prefixes.some((prefix) => route.startsWith(prefix));
 
-  /**
-   * Routes the demo leaves to its catch-all 404, each with its reason. A new route gets an answer in
-   * site/demo/transport.ts; add an entry here only for a route the browser never asks the demo for
-   * (server to server, or behind a state the demo never reaches).
-   */
   const DEMO_404: Record<string, string> = {
     "/api/account/enroll": "account linking: no screen of the app asks for it yet (the account screens come with their own demo answers)",
     "/api/updates/cancel": "a connection server asks a PC's own Ovis to stop its update; the demo's browser never does",
@@ -342,7 +301,6 @@ describe("demo transport", () => {
     "/api/workspace/git/log": "a repository's history, for API clients: no screen of the app asks for it yet",
     "/api/workspace/git/show": "a repository's history, for API clients: no screen of the app asks for it yet",
   };
-  /** Client frames the demo needs no case for, each with its reason; any other frame gets a case in site/demo/transport.ts. */
   const DEMO_IGNORES: Record<string, string> = {
     "pty-ack": "the demo has no output flow control to release; its switch's default branch drops it",
     "prompt-watch": "the demo does not advertise the prompt-watch feature, and the browser never sends it; its switch's default branch drops it",
@@ -372,9 +330,6 @@ describe("demo transport", () => {
 });
 
 describe("names from before Ovis", () => {
-  // Settings are OVIS_*, the sign-in cookies ovis_token and ovis_device, browser storage keys ovis:*,
-  // pasted files <cwd>/.ovis.
-  // The old names stay only where an install from before the rename still hands them in.
   const CARRY_OVER: Record<string, string> = {
     "server/legacy-env.ts": "maps each old setting to its new name",
     "server/legacy-env.test.ts": "tests that mapping",
@@ -418,24 +373,17 @@ describe("raw NUL bytes", () => {
   // a text file with a NUL in it is exactly what git starts calling binary.
   const BINARY_SUFFIXES = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".icns", ".woff", ".woff2", ".ttf", ".otf", ".webm", ".mp4", ".mov", ".mp3", ".wav", ".pdf", ".zip", ".gz", ".tgz", ".jar", ".wasm", ".dmg"]);
 
-  /** Whether a repository-relative path is text: any name without a binary suffix. */
   const isText = (path: string): boolean => {
     const name = path.split("/").at(-1)!;
     const dot = name.lastIndexOf(".");
     return dot < 0 || !BINARY_SUFFIXES.has(name.slice(dot).toLowerCase());
   };
 
-  /** The offender line for a file's bytes: its JSON-escaped path and the zero-based byte offset of the first raw NUL, or null. */
   const nulAt = (path: string, bytes: Uint8Array): string | null => {
     const at = bytes.indexOf(0);
     return at < 0 ? null : `${JSON.stringify(path)}: raw NUL at byte ${at}`;
   };
 
-  /**
-   * Tracked text files of the checkout at `root` holding a raw NUL, and how many were read. A
-   * failed `git ls-files` or an unreadable file is an offender, never an empty scan; a tracked
-   * file deleted from the checkout is skipped, and a symlink is not followed.
-   */
   const scanNul = (root: string, env: Record<string, string | undefined> = process.env): { scanned: number; offenders: string[] } => {
     const listed = spawnSync("git", ["ls-files", "-z", "--cached"], { cwd: root, env, maxBuffer: 256 * 1024 * 1024 });
     if (listed.error || listed.status !== 0) {
@@ -478,7 +426,6 @@ describe("raw NUL bytes", () => {
     expect(scanned).toBeGreaterThan(1000);
   });
 
-  /** A throwaway repository holding `tracked` in its index and `untracked` beside it; `run` gets its root and a git environment that cannot reach another repository. */
   const withRepo = (tracked: Record<string, string | Uint8Array>, untracked: Record<string, string | Uint8Array>, run: (root: string, env: Record<string, string | undefined>) => void) => {
     const dir = mkdtempSync(join(tmpdir(), "tracked-text-"));
     const root = join(dir, "repo");
@@ -504,7 +451,6 @@ describe("raw NUL bytes", () => {
 
   it("tracked text reports first raw NUL byte offset", () => {
     expect(nulAt("a.ts", Buffer.from("\0a\0"))).toBe("\"a.ts\": raw NUL at byte 0");
-    // "é" and "한" are 2 and 3 bytes, so the NUL is at byte 18 though it is character 15
     expect(nulAt("src/new\nline.ts", Buffer.from("const s = \"é한\";\0\0"))).toBe("\"src/new\\nline.ts\": raw NUL at byte 18");
     expect(nulAt("a.ts", Buffer.from("clean"))).toBeNull();
     // Windows forbids a newline in a file name
@@ -514,7 +460,6 @@ describe("raw NUL bytes", () => {
   });
 
   it("reads tracked text in any directory and with any name", () => {
-    // the two misses the allowlist had: a lock file it did not list, and a new top-level directory
     withRepo({ "crates/pty-sidecar/Cargo.lock": "version = 4\n\0", "tools/new.ts": "export {};\0", "Brewfile": "\0" }, {}, (root, env) => {
       expect(scanNul(root, env)).toEqual({ scanned: 3, offenders: ["\"Brewfile\": raw NUL at byte 0", "\"crates/pty-sidecar/Cargo.lock\": raw NUL at byte 12", "\"tools/new.ts\": raw NUL at byte 10"] });
     });

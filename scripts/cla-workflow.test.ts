@@ -11,7 +11,6 @@ const guard = workflow.jobs.cla.steps.find((step) => step.run !== undefined)!;
 
 interface Pr { opener: string; head: { repo: string; owner: string; type: string } | null; authors: string[] }
 
-/** Runs the guard step for PR 7 of devswha/ovis with `gh api` answered from `pr` through jq, like `gh --jq`. */
 function runGuard(pr: Pr): { code: number; output: string } {
   const dir = mkdtempSync(join(tmpdir(), "cla-guard-"));
   try {

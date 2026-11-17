@@ -1,4 +1,3 @@
-/** The actual same-host web panel in a mobile popup and on desktop, without a live herdr session. */
 import assert from "node:assert/strict";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

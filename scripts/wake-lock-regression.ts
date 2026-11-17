@@ -1,4 +1,3 @@
-/** Exercise the real React lifecycle without depending on the test machine's power policy. */
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -6,7 +5,6 @@ import type { Browser, Page } from "playwright-core";
 import { openSettingsPage } from "./settings-page.ts";
 import { rosterRead, rosterStream } from "./drained-route.ts";
 
-/** Keep screen on is in Devices and PCs' More settings: opened unless it already is. */
 async function openMoreSettings(page: Page): Promise<void> {
   const more = page.locator('.settings-body:not([hidden]) .settings-fold[data-fold="more"]');
   if (await more.getAttribute("open") === null) await more.locator(":scope > summary").click();
@@ -81,7 +79,6 @@ export async function checkWakeLock(browser: Browser, origin: string, paneId: st
     await toggle.click();
     assert.equal(await toggle.getAttribute("aria-checked"), "true", "unsupported browsers keep the preference without failing");
 
-    // A saved opt-in alone must not acquire a lock when the roster contains no pane.
     await context.route(rosterStream, (route) => route.abort());
     await context.route(rosterRead, async (route) => {
       // full rows: a compact roster's agent_refs would name the panes emptied below

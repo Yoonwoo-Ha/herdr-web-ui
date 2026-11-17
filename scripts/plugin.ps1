@@ -1,8 +1,6 @@
-# herdr's way into Ovis on Windows: runs scripts/plugin-launch.ts, which installs the release's checked server and runs
-# its plugin command. Herdr may have started before Bun was installed: read the current user PATH at invocation time.
+# Herdr may have started before Bun was installed: read the current user PATH at invocation time.
 param(
     [string]$Command = 'status',
-    # the command's own flags (link --code, add --google), handed on as they are
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest
 )
 $ErrorActionPreference = 'Stop'

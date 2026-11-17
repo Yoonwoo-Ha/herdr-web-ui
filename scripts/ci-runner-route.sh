@@ -1,21 +1,8 @@
 #!/usr/bin/env bash
-# Picks the runner for ci.yml's Linux jobs and prints `linux=<json>` for $GITHUB_OUTPUT, then `fast=<json>` for Fast checks.
-# A fork pull request always gets the GitHub-hosted image: its code must never reach the
-# self-hosted runner. Otherwise the workflow_dispatch input wins over the repository variable
-# CI_SELF_HOSTED_LABELS. With neither, a push goes to the maintainer PC's runners
-# (scripts/self-hosted-runner/, label self-hosted-ovis), a same-repository pull request goes there
-# only while they have room for its Linux jobs and to ubuntu-24.04 otherwise, and any other event
 # stays on ubuntu-24.04. "Room" is counted from the Actions API, since the workflow token cannot
 # list runners: CI_SELF_HOSTED_CAPACITY (default 10) minus the queued and running jobs of every
 # workflow that could take those runners must leave at least the jobs one run needs. When that count
 # fails, the pull request stays hosted. Setting the variable to labels sends every pull request to
-# them, and the value "ubuntu-24.04" (a JSON string, which release.yml also
-# accepts) keeps every job hosted while that PC is offline. A push to main takes the
-# repository variable CI_MAIN_SELF_HOSTED_LABELS over CI_SELF_HOSTED_LABELS when it is set, so main's
-# runs go to runners pull requests never use (run.sh --reserved); "ubuntu-24.04" there keeps only
-# main hosted, and deleting it puts main back on the shared runners. This script runs from the
-# checked-out revision, which a fork pull request controls; the runner itself refuses fork code
-# (scripts/self-hosted-runner/job-started.sh).
 set -euo pipefail
 
 hosted='"ubuntu-24.04"'
@@ -24,18 +11,12 @@ event="${EVENT_NAME:-}"
 requested="${REQUESTED_LABELS:-}"
 configured="${CONFIGURED_LABELS:-}"
 configured_from=CI_SELF_HOSTED_LABELS
-# CI_LINUX_SELF_HOSTED_LABELS moves only the Linux jobs of pull requests and branch pushes; a tag push, a workflow that calls ci.yml
-# without hosted_only (relay-deploy) or a manual run keeps CI_SELF_HOSTED_LABELS' routing. A call with hosted_only (pages.yml's
-# and the Release's validation, HOSTED_ONLY=true) always gets the hosted image, before anything else is read
 if [[ ("$event" == pull_request || ("$event" == push && "${REF:-}" == refs/heads/*)) && -n "${LINUX_LABELS:-}" && -n "${LINUX_LABELS//[[:space:]]/}" ]]; then
   configured=$LINUX_LABELS
   configured_from=CI_LINUX_SELF_HOSTED_LABELS
 fi
 main_configured="${MAIN_LABELS:-}"
 capacity="${SELF_HOSTED_CAPACITY:-}"
-# the ci.yml jobs that run on the chosen Linux runner when it is self-hosted: Fast checks,
-# Integration, Browser regression (ui-regression) and the three parts of Browser regression (other
-# scripts) (scripts/ci-runner-route.test.ts holds this to ci.yml)
 linux_jobs=6
 
 choose_labels() {
@@ -48,19 +29,9 @@ choose_labels() {
   echo "linux=$compact"
 }
 
-# the labels of the pull requests' runners (run.sh registers them with self-hosted, Linux and X64):
-# a job that asks only for labels among these can take one of them
 pool_labels='["self-hosted","linux","x64","self-hosted-ovis"]'
-# the light jobs of a pull request's run that share those runners (scripts/light-runner-workflow.test.ts
-# keeps this list in step): they hold a runner for seconds, so counting them would send heavy jobs
-# hosted whenever a few runs start at once
 light_job_names='["Detect changes","herdr-core live contract","Integration and browser","Pull request title","bundle-windows"]'
 
-# One Actions API read, asked again up to twice when it fails: a single 502 would otherwise send
-# the whole run hosted, where it depends on the Ubuntu mirror the self-hosted image does not need.
-# Only a whole answer is printed: pages a failed attempt got before failing would be counted twice.
-# A refusal (HTTP 4xx: the token or the path) would answer the same again, so only a server error or
-# no answer is asked again. All reads together have API_BUDGET seconds from the script's start, so the
 # hosted fallback is printed well inside Detect changes' five minutes; each attempt is bounded by a
 # minute or what is left, with timeout or gtimeout where there is one (stock macOS has neither: there
 # an attempt is unbounded, and only the shared budget stops further ones).
@@ -84,9 +55,6 @@ api() {
   return 1
 }
 
-# Prints how many unfinished jobs of queued or running workflow runs could take one of those
-# runners, stopping once the count passes $1 (one API call per run adds up while many runs wait);
-# fails when the API does three times in a row.
 busy_jobs() {
   local limit="$1" ids id jobs n total=0
   ids=$(for status in in_progress queued; do
@@ -157,12 +125,9 @@ fi
 
 line=$(route_linux)
 echo "$line"
-# Fast checks can stay on other runners while the Linux jobs go to the cloud VM runners (label ovis-vm):
-# CI_FAST_SELF_HOSTED_LABELS applies only then, so a fork's Fast checks always follow its hosted Linux jobs.
 linux=${line#linux=}
 fast=$linux
 fast_labels="${FAST_LABELS:-}"
-# (a manual run that names ovis-vm itself keeps Fast checks with the rest)
 if [[ ("$event" == pull_request || "$event" == push) && "$linux" == *'"ovis-vm"'* && -n "${fast_labels//[[:space:]]/}" ]]; then
   if chosen=$(jq -ce 'if type == "array" and length > 0 and all(.[]; type == "string") and any(.[]; . == "self-hosted") then . else error("invalid") end' <<<"$fast_labels" 2>/dev/null); then
     echo "Fast checks: self-hosted $chosen (from repository variable CI_FAST_SELF_HOSTED_LABELS)" >&2
