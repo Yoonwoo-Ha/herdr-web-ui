@@ -1,3 +1,11 @@
+/**
+ * Assembles app/www, what the iOS app carries: its own pages (app/web) and the demo, built from
+ * this checkout's client with the demo's fixture transport (scripts/demo-build.ts), so the app
+ * can be tried with no PC, as App Review must. Run `bun run build:web` in app/.
+ *
+ * OVIS_APP_URL names another https origin for the hosted shell than app.ovis.sh (APP_ORIGIN in
+ * web/shell.js), for a test build whose relay pairing links point at a shell served elsewhere.
+ */
 import { cpSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildDemoApp } from "../../scripts/demo-build.ts";

@@ -222,6 +222,7 @@ public class OvisPushPlugin: CAPPlugin, CAPBridgedPlugin, NotificationHandlerPro
         guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision") else {
             return "production"
         }
+        // The signed provisioning envelope contains one XML plist with its entitlements.
         let data = try Data(contentsOf: url)
         guard let start = data.range(of: Data("<?xml".utf8)),
               let end = data.range(of: Data("</plist>".utf8)),

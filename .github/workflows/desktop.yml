@@ -53,6 +53,7 @@ jobs:
           - { target: win32-x64, os: windows-2025 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
+    # the steps are bash on every runner (Git Bash on Windows)
     defaults:
       run:
         shell: bash

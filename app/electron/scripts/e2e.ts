@@ -340,6 +340,7 @@ async function lifecycle(app: string): Promise<void> {
   let first = await launch(app, userData, { label: "1-first-launch" });
   const connect = await until("the first page", () => first.inspector.eval<string | null>("e2e.loads[0] ?? null"), 30_000).catch(() => "");
   check("first launch shows the connection screen first", connect.startsWith("file:") && connect.endsWith("connect.html"), connect);
+  // a screenshot only while it is still up: on a fast PC the server answers before the window is shown
   const stillConnecting = await until("the window shown", () => first.inspector.eval<string | null>("(e2e.window()?.isVisible() && e2e.window().webContents.getURL()) || null"), 30_000).catch(() => "");
   if (stillConnecting.startsWith("file:")) await screenshot(first, "1-connection-screen");
   const origin = await ovisLoaded(first).catch((error) => (check("first launch opens Ovis", false, String(error)), null));

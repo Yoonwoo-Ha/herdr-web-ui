@@ -391,6 +391,7 @@ function announceUpdate(): void {
     title: text("Ovis {version} is ready", { version }),
     body: text("Restart to update."),
     silent: true,
+    // a Linux desktop draws the app's own icon only for an installed package
     ...(process.platform === "linux" ? { icon: nativeImage.createFromPath(iconPath).resize({ width: 128 }) } : {}),
   });
   updateNotification?.close();
@@ -504,11 +505,13 @@ async function startUpdates(): Promise<void> {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  // a second start shows the window, on the pane of the link it was handed (Windows, Linux)
   app.on("second-instance", (_event, argv) => {
     const query = argvLinkQuery(argv);
     if (query !== null) openLink(query);
     else showWindow();
   });
+  // a Mac hands a link to the running app, or to one it starts for it before it is ready
   app.on("open-url", (event, url) => {
     event.preventDefault();
     const query = openLinkQuery(url);

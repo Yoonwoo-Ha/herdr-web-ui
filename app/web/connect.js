@@ -1,7 +1,11 @@
+// The connect screen: the app's first page until a PC is chosen. Opening a PC goes through the
+// native HerdrShell plugin, which makes the PC's address the WebView's first page: navigating
+// there from this page would cost every launch about 1.5 s (docs/native-app.md, Spike results).
 import { ACCOUNT_SIGN_IN, APP_ORIGIN, localize, openFailure, parseAddress, publicHttp, relayLink, shell, t } from "./shell.js";
 
 localize();
 
+// only iOS opens a plain http PC slower (docs/native-app.md, The app); Android shows no such delay
 if (window.Capacitor?.getPlatform?.() !== "ios") document.querySelector(".hint")?.remove();
 
 const form = document.getElementById("connect");
@@ -70,6 +74,8 @@ async function open(text) {
     );
     return;
   }
+  // the Android app first asks the address whether it is Ovis (PCStore.check), for up to 20 s:
+  // until it answers the screen says what it opens, with Cancel. The iOS app opens it at once.
   error.textContent = "";
   const mine = ++attempt;
   showStatus(t(`Opening ${url.host}…`, `${url.host} 여는 중…`));

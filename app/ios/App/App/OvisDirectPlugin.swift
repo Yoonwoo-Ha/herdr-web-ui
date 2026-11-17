@@ -36,6 +36,7 @@ public class OvisDirectPlugin: CAPPlugin, CAPBridgedPlugin {
         sessionMade = true
         let configuration = URLSessionConfiguration.ephemeral
         configuration.waitsForConnectivity = false
+        // the relay channel keeps itself alive and the page gives up on a carrier that does not answer
         configuration.timeoutIntervalForRequest = 24 * 3600
         let delegates = OperationQueue()
         delegates.underlyingQueue = queue
@@ -232,6 +233,8 @@ public class OvisDirectPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /// The bridge let go of the plugin (another PC opened, say) without a new page: its sockets end now, and the
+    /// session, which holds its delegate until invalidated, goes with them.
     deinit {
         if let pageObserver { NotificationCenter.default.removeObserver(pageObserver) }
         if sessionMade { session.invalidateAndCancel() }
@@ -242,6 +245,7 @@ extension Notification.Name {
     static let ovisPageCommitted = Notification.Name("sh.ovis.pageCommitted")
 }
 
+/// The session's callbacks, on the plugin's queue; held weakly, as the session holds its delegate.
 private final class SessionEvents: NSObject, URLSessionWebSocketDelegate {
     weak var plugin: OvisDirectPlugin?
     init(plugin: OvisDirectPlugin) { self.plugin = plugin }
@@ -250,6 +254,7 @@ private final class SessionEvents: NSObject, URLSessionWebSocketDelegate {
         plugin?.finish(task: webSocketTask, code: closeCode.rawValue, reason: reason.flatMap { String(data: $0, encoding: .utf8) } ?? "", error: false)
     }
 
+    /// A carrier is the address the page named and nothing else: a redirect of the upgrade fails it.
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)

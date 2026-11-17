@@ -93,6 +93,10 @@ export interface RelayChannel {
   readonly sessionId: string;
   readonly role: "drive" | "watch";
   readonly server: RelayServerInfo;
+  /**
+   * False once the relay socket has left OPEN, possibly with no close event yet: a socket closed
+   * under the page waits for the relay's answer to its close, and a browser drops what is sent meanwhile.
+   */
   readonly carrierOpen: boolean;
   readonly directCarriers?: readonly string[];
   readonly direct?: string;

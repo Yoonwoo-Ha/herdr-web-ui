@@ -101,6 +101,7 @@ Step 'remove its shortcuts' {
     }
     foreach ($file in $links) {
         if ($shell.CreateShortcut($file.FullName).TargetPath -ieq $exe) {
+            # Explorer may hold a shortcut open for a moment
             for ($try = 1; ; $try++) {
                 try { Remove-Item -LiteralPath $file.FullName -Force; break }
                 catch { if ($try -ge 5) { throw }; Start-Sleep -Milliseconds 500 }

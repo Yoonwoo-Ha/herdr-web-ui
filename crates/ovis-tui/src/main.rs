@@ -35,6 +35,11 @@ fn main() -> ExitCode {
     }
 }
 
+/// Whatever this program starts inherits its environment, and an Ovis token a caller exported must
+/// not reach it.
+///
+/// # Safety
+/// Call it before any thread exists: it changes the process's environment.
 unsafe fn forget_ovis_secrets() {
     for name in ["OVIS_TOKEN", "OVIS_URL", "HERDR_WEB_TOKEN"] {
         // SAFETY: the caller guarantees no other thread reads or writes the environment yet

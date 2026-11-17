@@ -1,5 +1,13 @@
 import Foundation
 
+/// What HerdrBridgeViewController's cover says while a PC opens, as OpeningWatch.java does on
+/// Android. iOS has no count of the bytes the app receives: the web view's estimatedProgress fills
+/// the bar once the PC has answered, but it does not move while one large file arrives (it held at
+/// about 40 % through the client's script on a 10 KB/s link), so it cannot tell a stalled link from a
+/// slow one and the cover never claims a stall. Before the answer nothing is seen, so the open gives
+/// up when the answer limit passes. A PC that answered is never called off: after
+/// `slowAfterSeconds` the cover says the link is slow, with Try again. Times are seconds on one clock
+/// (ProcessInfo.systemUptime in the app).
 struct OpeningWatch {
     enum Stage: Equatable {
         case opening

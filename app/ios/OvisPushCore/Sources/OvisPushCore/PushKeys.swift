@@ -22,6 +22,7 @@ public struct PushKeys {
     }
 }
 
+/// The extension can read after first unlock, but only the app creates keys.
 public struct PushKeyStore {
     public enum Failure: Error {
         case keychain(OSStatus)

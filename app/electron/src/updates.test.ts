@@ -70,6 +70,7 @@ describe("updatePlan", () => {
   });
 });
 
+// the deb's install line is run by a POSIX shell, which a Windows runner does not have at /bin/sh
 describe.skipIf(process.platform === "win32")("debInstallCommand", () => {
   const electronUpdaterEscaped = (path: string) => path.replace(/\\/g, "\\\\").replace(/([`$!" ;|&()<>])/g, "\\$1");
   const printed = (shellLine: string) => Bun.spawnSync(["/bin/sh", "-c", shellLine]).stdout.toString();

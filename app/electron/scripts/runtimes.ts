@@ -11,6 +11,7 @@ export interface Pinned {
   sha256: string;
 }
 
+// releases.herdr.dev/core/0.1.17/manifest.json
 const hcFile = (name: string, ext = "tar.gz") => `https://releases.herdr.dev/core/${HC_VERSION}/herdr-core-${name}.${ext}`;
 export const HC: Record<Target, Pinned> = {
   "linux-x64": { url: hcFile("linux-x86_64"), sha256: "82ec44043f6894bfdb716b979b87cda43fd7fa46b0104e7b7bd93e64d1a9b877" },

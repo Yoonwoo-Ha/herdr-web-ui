@@ -26,6 +26,7 @@ export function pairCommitment(binding: Uint8Array, devicePublicKey: string, pho
   return sha256(concatBytes(COMMIT_DOMAIN, binding, utf8ToBytes(devicePublicKey), phoneNonce));
 }
 
+/** Whether a revealed nonce is the one committed to; compared in constant time. */
 export function commitmentHolds(commitment: Uint8Array, binding: Uint8Array, devicePublicKey: string, phoneNonce: Uint8Array): boolean {
   if (commitment.length !== 32) return false;
   const expected = pairCommitment(binding, devicePublicKey, phoneNonce);

@@ -74,6 +74,12 @@ public class OvisDirectPlugin extends Plugin {
         }
     }
 
+    /**
+     * Whether the page calling is the app's own. Capacitor's listener bridge takes calls only from the main frame of
+     * its origin rules (a PluginCall does not name the caller's frame or origin), and those rules are the hosted
+     * shell's origin and the app's bundled pages only while a relay PC is open; `open` then checks the page on screen.
+     * Without a proven listener bridge (listenerBridge) every call is refused.
+     */
     private boolean allowed(PluginCall call) {
         if (!listenerBridge() || !APP_ORIGIN.equals(bridge.getServerUrl())) {
             call.reject("OvisDirect answers only the app's own page", "not_allowed");

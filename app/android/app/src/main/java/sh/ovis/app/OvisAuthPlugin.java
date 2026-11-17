@@ -9,6 +9,13 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+/**
+ * Signing in to the account from the app (docs/account.md, "Signing in"; src/lib/account/native.ts):
+ * the sign-in opens in the system browser, and the account service sends it back to
+ * ovis://account/callback, which the manifest routes to MainActivity and Capacitor hands here. The
+ * page finishes the sign-in itself; nothing here keeps a token. Sign in with Apple has no native
+ * form on Android, so Apple takes the same browser route. The iOS twin: app/ios/App/App/OvisAuthPlugin.swift.
+ */
 @CapacitorPlugin(name = "OvisAuth")
 public class OvisAuthPlugin extends Plugin {
     private PluginCall waiting;

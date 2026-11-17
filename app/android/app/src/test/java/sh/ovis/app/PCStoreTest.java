@@ -157,6 +157,7 @@ public class PCStoreTest {
     @Test
     public void aConnectionThatFailsAtOnceIsRefusedUnlessTheHostCannotBeReached() {
         long later = System.nanoTime() + 60_000_000_000L;
+        // Android's HttpURLConnection, for a closed port: no errno in the message, no cause
         assertEquals("refused", PCStore.failureKind(new java.net.ConnectException("Failed to connect to /192.168.0.10:7317"), later));
         IOException off = new java.net.ConnectException("Failed to connect to /192.168.0.11:7317");
         off.initCause(new java.net.NoRouteToHostException("connect failed: EHOSTUNREACH (No route to host)"));

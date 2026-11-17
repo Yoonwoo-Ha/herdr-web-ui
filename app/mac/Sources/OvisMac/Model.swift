@@ -500,6 +500,8 @@ enum LaunchAgent {
         try await load(Paths.launchAgent)
     }
 
+    /// Starts herdr for this login only, with no login item: launchd loads the job from a copy that is
+    /// deleted right after, so nothing starts it at the next login. Only Install makes a login item.
     static func startOnce() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ovis-agent-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

@@ -124,6 +124,7 @@ public class OvisPushPlugin extends Plugin {
         String vapidKey = call.getString("applicationServerKey");
         try {
             FirebaseMessaging messaging = FirebaseMessaging.getInstance();
+            // keeps the token fresh from now on; the manifest leaves it off until a PC subscribes
             messaging.setAutoInitEnabled(true);
             String token = Tasks.await(messaging.getToken(), 30, TimeUnit.SECONDS);
             PushStore.Endpoint saved = PushStore.endpoint(getContext(), origin);

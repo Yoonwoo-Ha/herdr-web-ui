@@ -48,6 +48,7 @@ struct State {
 struct Shared {
     state: Mutex<State>,
     changed: Condvar,
+    /// the child's pid, and its process group's id; it is not reaped before `finish`, so neither is reused
     pid: libc::pid_t,
     wake: OwnedFd,
 }

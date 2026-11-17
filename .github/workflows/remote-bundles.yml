@@ -118,6 +118,7 @@ jobs:
         with:
           node-version: '22'
           package-manager-cache: false
+      # the self-hosted image already ships sshd (and has no sudo); a hosted runner installs it
       - name: OpenSSH server
         run: |
           if [ -x /usr/sbin/sshd ] && [ -d /run/sshd ]; then
@@ -126,6 +127,8 @@ jobs:
             sudo bash scripts/ci-bounded-retry.sh 300 bash -c 'apt-get update && apt-get install -y openssh-server' && sudo mkdir -p /run/sshd
           fi
       - run: bun install --frozen-lockfile && bun run build && bun run scripts/build-remote-bundle.ts
+      # password mode creates an account and starts sshd as root; without sudo (the self-hosted image) the
+      # key-only flow runs, with sshd as the runner user on a port of its own
       - name: SSH integration
         run: |
           if sudo -n true 2>/dev/null; then export SSH_TEST_PASSWORD=1; fi

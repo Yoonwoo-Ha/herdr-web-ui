@@ -352,6 +352,7 @@ namespace Ovis
             var program = line[0];
             var words = line.Skip(1).ToArray();
             if (plugin.Id != Links.LegacyPluginId) return await Run.Program(program, words, onLine, keepStderr, limitSeconds);
+            // the child takes this process's environment when it starts; the app's steps run one at a time
             var given = Environment.GetEnvironmentVariable("HERDR_PLUGIN_STATE_DIR");
             Environment.SetEnvironmentVariable("HERDR_PLUGIN_STATE_DIR", Setup.HerdrPluginStateDir(plugin.Id, Environment.GetEnvironmentVariable));
             RunResult result;

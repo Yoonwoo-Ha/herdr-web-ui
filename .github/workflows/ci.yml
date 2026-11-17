@@ -421,6 +421,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ inputs.hosted_only && 'ubuntu-24.04' || fromJSON(needs.changes.outputs.linux) }}
+    # A hosted runner has 4 CPUs: one job running every script there took about 28 minutes, and
+    # frame-timing checks failed under the load. So hosted runs split the scripts over four jobs
+    # (scripts/ci-browser-parallel.ts's BROWSER_SHARD). On the self-hosted PC one job of six workers
+    # took about 20 minutes, the whole run's length; three parts of six workers each end near the
+    # longest single script (sidebar-filter-demo, about 7 minutes). The cloud VM runners (label
+    # ovis-vm, 4 vCPUs each, scripts/self-hosted-runner/vm-runner.sh) are hosted-sized: five jobs
+    # there, so no shard waits past the longest script for long.
     strategy:
       fail-fast: false
       matrix:

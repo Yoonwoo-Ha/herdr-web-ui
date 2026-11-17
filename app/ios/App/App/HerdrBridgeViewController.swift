@@ -330,9 +330,14 @@ private final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
     }
 }
 
+/// Capacitor's view controller with the chosen PC as the WebView's first page. Reaching the PC
+/// by navigating from the bundled connect page instead would cost every launch about 1.5 s
+/// (docs/native-app.md, Spike results), so opening a PC builds a new one of these.
 class HerdrBridgeViewController: CAPBridgeViewController {
     private var failureProxy: NavigationFailureProxy?
     private var openingView: UIView?
+    /// Looks at the open five times a second while the cover is up (tick): gives up on a PC that has not
+    /// answered, instead of WebKit's own wait of a minute or more, and tells a slow page.
     private var ticker: Timer?
     private var watch: OpeningWatch?
     private var openingSpinner: UIActivityIndicatorView?
@@ -399,6 +404,10 @@ class HerdrBridgeViewController: CAPBridgeViewController {
                 self?.firstPageDone = true
                 self?.askPage()
             }
+            // a first page that broke off after it started: the error page; one cancelled on purpose
+            // leaves the cover up, which the timeout turns into Try again. Only the PC's answer or a
+            // finished page takes the cover away: while a PC's connection hangs, WebKit showed
+            // error.html half-loaded, its script not run and its buttons dead.
             proxy.onPageFailed = { [weak self] webView, reason in
                 guard let self, !self.firstPageDone, let reason,
                       ["http", "https"].contains(webView.url?.scheme?.lowercased() ?? "") else { return }
@@ -425,6 +434,8 @@ class HerdrBridgeViewController: CAPBridgeViewController {
         let shown = watch.shownProgress()
         self.watch = watch
         if stage == .noAnswer {
+            // said on the cover itself: while the PC's connection hangs, WebKit did not show the
+            // error page either (it stayed unpainted), in this web view or a new one
             gaveUp = true
             webView.stopLoading()
             showNoAnswer(origin)
@@ -574,10 +585,14 @@ class HerdrBridgeViewController: CAPBridgeViewController {
 
     private func showFailure(in webView: WKWebView, reason: String) {
         guard let local = bridge?.config.localURL else { return }
+        // the timeout stays armed: if WebKit does not get the error page up either, the cover says it
         PCStore.failure = reason
         webView.load(URLRequest(url: local.appendingPathComponent("error.html")))
     }
 
+    /// Replaces the app's view controller, so the next page (a PC, or the connect screen) is a
+    /// first load. The old one goes with its web view and the page in it (the barcode scanner
+    /// plugin, which kept it alive, is patched in app/patches).
     static func reopen() {
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
         guard let window = (scene?.delegate as? SceneDelegate)?.window else { return }
@@ -666,6 +681,7 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
         Task { @MainActor [weak self, weak webView] in
             let probe: (ovis: String?, path: [String]) = tooMany ? (nil, []) : await PCStore.ovisOrigin(leadingTo: target)
             let ovis = probe.ovis
+            // a web view no longer on screen (the user changed PC meanwhile) decides nothing
             guard let self, let webView, webView.window != nil else { return }
             if let ovis, let insecure = PCStore.insecureHop(from: from, path: probe.path) {
                 self.onFailure(webView, "It redirected over plain http to \(insecure), which the app does not follow on its own. If \(ovis) is your PC, open it itself.")

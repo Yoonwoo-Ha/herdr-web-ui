@@ -72,6 +72,12 @@ public class MainActivity extends BridgeActivity {
 
     private boolean pageShown;
 
+    /**
+     * Whether the address being opened led to something in front of the PC, such as a sign-in page:
+     * until a page of the PC loads, main-frame navigations (the sign-in's pages, its identity
+     * provider's, the way back to the PC) stay in the WebView, so the sign-in's cookie lands in the
+     * WebView's store, which onPause flushes, rather than in the browser's.
+     */
     private volatile boolean signingIn;
 
     private volatile String signInAt;
@@ -117,10 +123,16 @@ public class MainActivity extends BridgeActivity {
     private String openingLabel;
     private String openingHost;
 
+    /** Whether the app gave up on the first page: the load it dropped may still report its end. */
     private boolean gaveUp;
 
     private boolean checked;
 
+    /**
+     * Takes Back for the page while the entry behind the one shown is a page of the same place
+     * (syncBack): the page closes what is open, or shows the pane before. While it is off, Back is
+     * the system's: it leaves the app, and draws its own way out (predictive back).
+     */
     private final OnBackPressedCallback pageBack = new OnBackPressedCallback(false) {
         @Override
         public void handleOnBackPressed() {
@@ -227,6 +239,8 @@ public class MainActivity extends BridgeActivity {
                 new BridgeWebViewClient(bridge) {
                     @Override
                     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                        // error.html on a WebView without HerdrErrorPage (no WEB_MESSAGE_LISTENER)
+                        // asks by navigating to one of these app addresses instead
                         Uri url = request.getUrl();
                         if (
                             request.isForMainFrame() &&
@@ -348,6 +362,10 @@ public class MainActivity extends BridgeActivity {
 
                     @Override
                     public void onPageCommitVisible(WebView webView, String url) {
+                        // the main frame's first page is on screen, before its pictures or scripts finish:
+                        // the PC's, a sign-in's or the error page. The PC's own page keeps the cover, with
+                        // its bar, until the client is up (watchOpening): until then it shows only its
+                        // loading spinner, for minutes on a slow link
                         pageShown = true;
                         if (url == null || !PCStore.belongs(url, pc)) hideOpening();
                         else answerTimer.post(MainActivity.this::pollPage);
@@ -591,6 +609,11 @@ public class MainActivity extends BridgeActivity {
         super.onDestroy();
     }
 
+    /**
+     * Gives Back to the page or to the system, by where the WebView's history stands: the page's while
+     * the page shown and the entry behind it are pages of `place`, the PC or the app's own origin
+     * (PCStore.pageTakesBack). Told before the next Back, so the system knows which way out to draw.
+     */
     private void syncBack(String place) {
         WebView view = bridge.getWebView();
         WebBackForwardList entries = view.copyBackForwardList();

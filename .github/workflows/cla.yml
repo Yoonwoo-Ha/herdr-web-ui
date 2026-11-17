@@ -1,4 +1,7 @@
 name: CLA Assistant
+# Asks every commit author of a pull request to sign CLA.md once, by commenting the sign phrase on
+# the PR, and records the signature in signatures/cla.json on the `cla-signatures` branch (the
+# branch must exist; it holds nothing else). The maintainer and bots are allowlisted.
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]

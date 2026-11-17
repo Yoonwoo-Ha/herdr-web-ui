@@ -95,6 +95,11 @@ final class PushStore {
         return null;
     }
 
+    /**
+     * The random value this app's own alert taps carry (AlertProof.EXTRA), made once
+     * and kept only here: MainActivity is exported, so any app can send it an alert's intent, but
+     * none can read this one's preferences or the extras of its notifications' PendingIntents.
+     */
     static synchronized String alertProof(Context context) {
         return alertProof(prefs(context));
     }

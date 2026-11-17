@@ -30,6 +30,7 @@ struct WebPage: View {
         }
     }
 
+    /// Hides the web view's empty white frame, which a dark window would flash.
     private func cover<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content().frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(nsColor: .windowBackgroundColor))
     }
@@ -83,6 +84,7 @@ final class WebPageController: NSObject, ObservableObject {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.underPageBackgroundColor = .windowBackgroundColor
+        // a popup is loaded by WebKit, with the request that opened it
         guard !isPopup else { return }
         model.page = self
         reloads = model.$reloads.dropFirst().sink { [weak self] _ in self?.reload() }
@@ -238,6 +240,8 @@ final class WebPageController: NSObject, ObservableObject {
         self.window = window
     }
 
+    /// Ends a popup: its window closes, or one that never got a window lets go once its downloads end.
+    /// Later, not inside the WebKit callback that asked for it.
     private func closePopup() {
         DispatchQueue.main.async { [self] in
             if let window, !closed {

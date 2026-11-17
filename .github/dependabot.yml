@@ -1,4 +1,11 @@
 # "/" covers .github/workflows only, so the setup-ci composite action is listed as well.
+#
+# A new action release waits seven days before the monthly version-update PR takes it (GitHub
+# waits three by default). `cooldown` delays version updates only: Dependabot security updates
+# do not wait. A tag later moved to other code is covered by the SHA pins, not by the wait.
+# For an urgent fix, read the upstream advisory and fix, pin the patched action to its full
+# commit SHA in a normal PR that names the advisory and where the commit comes from, and let it
+# pass the usual review and checks; the wait does not apply to that PR.
 version: 2
 updates:
   - package-ecosystem: github-actions
