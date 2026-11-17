@@ -36,6 +36,7 @@ jobs:
       draft: ${{ steps.filter.outputs.draft }}
       linux: ${{ steps.route.outputs.linux }}
       fast: ${{ steps.route.outputs.fast }}
+      ratchet_base: ${{ steps.ratchet.outputs.base }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,6 +60,34 @@ jobs:
           FAST_LABELS: ${{ vars.CI_FAST_SELF_HOSTED_LABELS }}
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/ci-runner-route.sh >> "$GITHUB_OUTPUT"
+      # A push to main: the latest main commit in this push's history whose CI push run passed (of the last 100), for Fast checks'
+      # ratchets to compare with. A waiting push run that a newer push replaces (the concurrency group above) never
+      # runs, so the next run takes its change in too; a re-run keeps its old commit, so a later green one is no base
+      # for it. Empty for any other event, and when none is found or the API does not answer after three tries:
+      # Fast checks then fails rather than compare with less.
+      - id: ratchet
+        name: Find the last main commit CI passed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$EVENT_NAME" != push ] || [ "$REF" != refs/heads/main ]; then exit 0; fi
+          for try in 1 2 3; do
+            if passed=$(gh run list --repo "$REPOSITORY" --workflow ci.yml --branch main --event push --status success --limit 100 --json headSha --jq '.[].headSha'); then
+              # the latest in history, not in the list's order: a run's date says nothing of where its commit stands
+              best=
+              for sha in $passed; do
+                git merge-base --is-ancestor "$sha" HEAD || continue
+                if [ -z "$best" ] || git merge-base --is-ancestor "$best" "$sha"; then best=$sha; fi
+              done
+              if [ -n "$best" ]; then echo "base=$best" >> "$GITHUB_OUTPUT"; exit 0; fi
+              echo "::warning::No passed CI push run of main is in this push's history."; exit 0
+            fi
+            sleep $((try * 5))
+          done
+          echo "::warning::The Actions API did not list main's passed CI runs."
       - id: filter
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -255,9 +284,12 @@ jobs:
           cache: ${{ inputs.hosted_only && 'none' || 'save' }}
       - run: bun install --frozen-lockfile
       - name: Fetch the base the ratchets compare with
+        env:
+          LAST_GREEN: ${{ needs.changes.outputs.ratchet_base }}
         run: |
           if [ -z "$EVENT_BASE" ]; then echo "No base in this run: the ratchets compare with nothing."; exit 0; fi
-          if [ "$GITHUB_EVENT_NAME" = push ]; then base=$EVENT_BASE; else base=$(git cat-file -p HEAD | awk '/^parent /{print $2; exit}'); fi
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ -z "$LAST_GREEN" ]; then echo "::error::No passed main commit to compare the ratchets with (see Detect changes)."; exit 1; fi
+          if [ "$GITHUB_EVENT_NAME" = push ]; then base=$LAST_GREEN; else base=$(git cat-file -p HEAD | awk '/^parent /{print $2; exit}'); fi
           git fetch --no-tags --depth=1 origin "$base"
           echo "RATCHET_BASE=$base" >> "$GITHUB_ENV"
       - run: bun run check fast

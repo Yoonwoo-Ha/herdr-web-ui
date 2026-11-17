@@ -228,15 +228,13 @@ describe("the tools typecheck", () => {
   const added = (now: readonly string[], before: readonly string[], renames: ReadonlyMap<string, string>): string[] =>
     now.filter((file) => !before.includes(file) && !before.includes(renames.get(file) ?? ""));
   /**
-   * The exclude entries that take out a file the base checked: against its exclude list, the entries it lacks but a
-   * renamed file's; against the file list the exclude list replaced, the entries that list names. Null when the base
-   * has neither.
+   * The exclude entries that take out a file the base checked: those its exclude list lacks but a renamed file's. Null
+   * when the base has no exclude list: every base since main went green with the list (dad4ce663) has one, and the
+   * file list before it cannot say what the folder include checks now.
    */
   const uncheckedNow = (now: readonly string[], baseJson: string, renames: ReadonlyMap<string, string>): string[] | null => {
-    const base = JSON.parse(baseJson) as { exclude?: unknown; files?: unknown };
-    if (Array.isArray(base.exclude)) return added(now, base.exclude as string[], renames);
-    if (Array.isArray(base.files)) return now.filter((file) => (base.files as string[]).includes(file));
-    return null;
+    const base = JSON.parse(baseJson) as { exclude?: unknown };
+    return Array.isArray(base.exclude) ? added(now, base.exclude as string[], renames) : null;
   };
   const now = excluded(read("tsconfig.tools.json")) ?? [];
 
@@ -249,12 +247,9 @@ describe("the tools typecheck", () => {
     fail(offenders, "The exclude list of tsconfig.tools.json may only shrink: fix the type errors `bun run typecheck` reports in these files instead of excluding them. A renamed file (renamed with `git mv`, or with the rename staged, so git sees it) takes its entry along under the new path.");
   });
 
-  it("against the file list the exclude list replaced, refuses excluding any file that list checked", () => {
-    const files = JSON.stringify({ files: ["scripts/a.ts", "scripts/b.ts"] });
-    expect(uncheckedNow(["scripts/c.ts"], files, new Map())).toEqual([]);
-    expect(uncheckedNow(["scripts/b.ts", "scripts/c.ts"], files, new Map())).toEqual(["scripts/b.ts"]);
+  it("compares only with a base's exclude list: a base with the old file list has none, and fails", () => {
     expect(uncheckedNow(["scripts/c.ts"], JSON.stringify({ exclude: [] }), new Map())).toEqual(["scripts/c.ts"]);
-    expect(uncheckedNow([], JSON.stringify({ include: ["scripts"] }), new Map())).toBeNull();
+    expect(uncheckedNow([], JSON.stringify({ files: ["scripts/a.ts"] }), new Map())).toBeNull();
   });
 
   it("tells a new entry from a renamed file's, whatever the list's length", () => {
