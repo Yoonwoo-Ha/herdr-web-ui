@@ -1,9 +1,4 @@
-/** Custom-runtime OmO identity and exact transcript binding through the real HTTP server
- * and Chromium, on owned herdr panes of the check's own session. Run after bun run build.
- * Two neutral launchers hold the same native session id in distinct OMO_CODING_AGENT_DIR
- * stores, a legacy `omo` launcher covers the argv identity, and a fourth neutral process
- * must stay unrecognized. Every byte of fixture text is synthetic. */
-import "./test-herdr.ts"; // a herdr session of its own: nothing shows in the user's
+import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,9 +14,6 @@ const root = realpathSync(mkdtempSync(join(tmpdir(), "ovis-omo-browser-")));
 const launchers = join(root, "launchers");
 mkdirSync(launchers, { recursive: true });
 
-// A neutral-named launcher that holds a native session the way senpi does: it publishes
-// session-holders/<id>/<pid>.json and, while its control file names another id, releases
-// the old one and holds the new — the pane's /new, with no transcript written.
 const fixture = `import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { processStartedAt } from ${JSON.stringify(pathToFileURL(join(import.meta.dir, "../server/process-start.ts")).href)};
@@ -138,7 +130,6 @@ try {
   await startShellAgent("omo", paneA, [], { command: `export OMO_CODING_AGENT_DIR=${quote(agentDirA)}; ${run(launcherA, dirA, SHARED_ID, controlA)}` });
   await startShellAgent("omo", paneB, [], { command: `export OMO_CODING_AGENT_DIR=${quote(agentDirB)}; ${run(launcherB, dirB, SHARED_ID, controlB)}` });
   await startShellAgent("omo", paneL, [], { command: run(launcherL, dirL, LEGACY_ID, controlL) });
-  // a process with no omo evidence at all is sent raw, never through the agent start
   await herdrRpc("pane.send_text", { pane_id: paneN, text: `cd ${quote(root)} && exec ${quote(process.execPath)} ${quote(neutral)}\n` });
   await until("the neutral fixture runs", async () => {
     const info = await herdrRpc<{ process_info?: { foreground_processes?: { argv?: string[] }[] } }>("pane.process_info", { pane_id: paneN });
@@ -179,7 +170,6 @@ try {
   const labelled = await until("the server's snapshot names the fixture panes omo", apiSession, ({ snapshot }) =>
     [paneA, paneB, paneL].every((id) => snapshot.panes.find((pane) => pane.pane_id === id)?.agent === "omo"));
   assert.notEqual(labelled.snapshot.panes.find((pane) => pane.pane_id === paneN)?.agent, "omo");
-  // a no-evidence process is not omo in discovery either, and HTTP falls back to scrollback
   assert.equal((await omoPanes((await sessionSnapshot()).panes, root)).has(paneN), false);
   const negative = await conversation(paneN);
   assert.equal(negative.status, 200);
@@ -222,8 +212,6 @@ try {
 
   const logReset = await open(paneA);
   await logReset.getByText(textA, { exact: true }).waitFor();
-  // /new through the fixture's own control file: it releases the shared hold and takes
-  // an unwritten one; the open chat watches the conversation go empty, old text and all
   writeFileSync(controlA, `${AFTER_NEW_ID}\n`);
   const pending = await until("pane A holds an unwritten session", () => conversation(paneA), (answer) =>
     answer.body.source === "omo-transcript" && answer.body.history_id === `unwritten:${AFTER_NEW_ID}`);

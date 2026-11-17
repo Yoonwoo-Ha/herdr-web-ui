@@ -1,4 +1,3 @@
-/** More tabs than a browser's HTTP/1.1 connections per host take machine events over their terminal socket; tests use isolated app state. */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -43,7 +42,6 @@ try {
     await page.waitForFunction(() => (window as unknown as { machineEventTest: { documents: number } }).machineEventTest.documents > 0);
   }
   assert.equal(sse, 0, "machine events must not open any HTTP event stream");
-  // every tab can still make a plain request: no long-lived stream holds a connection slot
   const latencies = await Promise.all(pages.map((page) => page.evaluate(async () => {
     const start = performance.now();
     const response = await fetch("/api/health", { signal: AbortSignal.timeout(10_000) });

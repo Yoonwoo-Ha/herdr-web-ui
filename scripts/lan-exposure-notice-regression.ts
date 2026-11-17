@@ -4,33 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 
-import "./test-herdr.ts"; // a herdr session of its own: nothing shows in the user's
+import "./test-herdr.ts";
 import { createServer } from "../server/index.ts";
 
-/**
- * The line that says this server can be reached from the network with no token and nothing
- * paired (#698). It is drawn from `lan_exposure` on `/api/health`, which the server sends only
- * to a request that got in — so the check drives the real server, with a real herdr behind it,
- * rather than a canned answer, and asks two questions:
- *
- *   1. does it appear, name the address, and carry the danger tint, on a server bound past
- *      this PC with no token and nothing paired?
- *   2. does it stay away on the same empty configuration bound to loopback, which is
- *      unreachable from the network however it is addressed?
- *
- * The second half is the one that matters. A notice that renders unconditionally is worse than
- * no notice: it would train the owner to ignore a line that is only true sometimes.
- *
- * Needs `dist/` (`bun run build`), the way the other browser scripts here do.
- */
 const NOTICE = '[data-testid="lan-exposure-notice"]';
 
 type Found = {
   visible: boolean;
   text: string | null;
-  /** the notice's computed background beside the danger token resolved on the same page */
   tint: { actual: string; danger: string } | null;
-  /** the title of the Settings page the notice's button opened */
   settings: string | null;
 };
 
@@ -63,8 +45,6 @@ async function read(browser: Browser, hostname: string): Promise<Found> {
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(String(error)));
-    // the absent case must not pass on a page that never asked: wait for the health answer the
-    // notice is drawn from, and for the session to be live, before looking
     const health = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/health" && response.status() === 200, { timeout: 15_000 });
     await page.goto(`http://127.0.0.1:${server.port}`, { waitUntil: "load" });
     await health;

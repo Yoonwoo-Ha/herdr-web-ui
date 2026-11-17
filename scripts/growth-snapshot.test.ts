@@ -3,11 +3,6 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/**
- * scripts/growth-snapshot.ts against a stand-in gh on a private PATH: nothing reaches GitHub. The
- * stand-in's answers carry a login, a referrer and a path that must never reach the output.
- */
-
 const SCRIPT = join(import.meta.dir, "growth-snapshot.ts");
 const LOGIN = "stand-in-login-7f3a";
 const REFERRER = "stand-in-referrer.example";
@@ -15,7 +10,6 @@ const PATH_SEEN = "/stand-in/secret-path";
 const scratches: string[] = [];
 afterAll(() => { for (const dir of scratches) rmSync(dir, { recursive: true, force: true }); });
 
-/** Later-page failures include a full first page, so incomplete counts must not be published. */
 function standIn(mode: string): string {
   const scratch = mkdtempSync(join(tmpdir(), "growth-snapshot-"));
   scratches.push(scratch);
@@ -133,7 +127,6 @@ describe.skipIf(process.platform === "win32")("growth snapshot", () => {
     mkdirSync(out);
     const preload = join(scratch, "fail-csv.ts");
     if (failure === "replace") {
-      // A directory cannot be replaced by a CSV, regardless of uid or permissions.
       mkdirSync(join(out, "stars-by-day.csv"));
       writeFileSync(preload, "");
     } else {

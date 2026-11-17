@@ -1,16 +1,3 @@
-/**
- * The kit a machine joins the trial from, and the one line to paste there (scripts/join/README.md):
- *
- *   bun scripts/join/kit.ts make --server <ovis-server> --pty <ovis-pty-sidecar> --out <dir> --url <address>
- *     --relay <wss://...> --account <https://...> --app <https://...>
- *   bun scripts/join/kit.ts line --kit <dir> --url <address> --relay <wss://...> --account <https://...> --app <https://...>
- *
- * `make` writes the folder `<dir>`: the compiled server, the Rust terminal host beside it in bin/bin/ with the record the
- * server checks it by (its SHA-256 and the server's version), join.sh, and SHA256SUMS listing exactly those four files.
- * `line` prints the line again for a kit folder that exists, from the folder's own files, after checking them against
- * its SHA256SUMS: the same line `make` printed for the same address and origins. The line carries the SHA-256 of join.sh
- * and of SHA256SUMS, so nothing fetched from the address runs or is installed before it matches. It holds no secret.
- */
 /// <reference path="../sh-text.d.ts" />
 import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
@@ -19,7 +6,6 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { version as serverVersion } from "../../package.json";
 import joinScript from "./join.sh" with { type: "text" };
 
-/** this checkout: a kit is never written into it, where it could be committed */
 const REPO = resolve(import.meta.dir, "..", "..");
 
 const ORIGINS = "--url <https:// or file:// address of the kit folder> --relay <wss://...> --account <https://...> --app <https://...>";
@@ -32,7 +18,6 @@ export class KitError extends Error {
   }
 }
 
-/** Where the machine fetches the kit from, and the three test services the trial server talks to. */
 export interface Origins {
   readonly url: string;
   readonly relay: string;
@@ -41,13 +26,9 @@ export interface Origins {
 }
 
 export interface KitOptions extends Origins {
-  /** the compiled server (scripts/build-server.ts linux-x64), built from this checkout: its version is package.json's */
   readonly server: string;
-  /** the Rust terminal host (crates/pty-sidecar) for linux-x64 */
   readonly pty: string;
   readonly out: string;
-  /** a kit for the join's container tests only: it carries TEST-KIT, listed in SHA256SUMS, without which join.sh ignores its
-   * test switches (OVIS_JOIN_TEST_PLAIN_SERVER, OVIS_JOIN_TEST_ADD_DONE) */
   readonly testKit?: boolean;
 }
 
@@ -58,14 +39,11 @@ export interface Kit {
   readonly line: string;
 }
 
-/** The marker of a kit made for the join's container tests (make --test-kit); join.sh honours its test switches only with it. */
 export const TEST_KIT = "TEST-KIT";
-/** The kit's files, by the names SHA256SUMS lists them under (join.sh refuses any other name but TEST_KIT). */
 export const KIT_FILES = ["bin/bin/ovis-pty-sidecar", "bin/bin/ovis-pty-sidecar.json", "bin/ovis-server", "join.sh"] as const;
 
 const sha256 = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
 
-/** A program that, run with no argument, exits 2 with `usage` at the start of its error output. */
 function answersUsage(path: string, flag: string, usage: string): void {
   if (!existsSync(path) || !statSync(path).isFile()) throw new KitError(`${flag} ${path} is not a file`);
   const child = Bun.spawnSync([path], { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
@@ -87,12 +65,8 @@ function checkedOrigins(origins: Origins): Origins {
 }
 
 /**
- * The line to paste: in a shell of its own, it refuses a system other than Linux (exit 17, as join.sh does), fetches
- * join.sh into a temporary folder within 120 s, runs it only when it has the SHA-256 written here, and hands it the kit's
- * address, the SHA-256 of SHA256SUMS, the three test services and --trial (a trial kit refuses to join without it).
- * Words added after the line (`--session <name>`, `--yes`) go to join.sh as they are. An INT, TERM or HUP before join.sh
- * runs removes the temporary folder (exit 130); `exec` drops that trap, so join.sh keeps the folder it runs from. curl
- * reads no config file of the login's (-q, its first argument).
+ * An INT, TERM or HUP before join.sh runs removes the temporary folder (exit 130); `exec` drops that trap, so join.sh
+ * keeps the folder it runs from. curl reads no config file of the login's (-q, its first argument).
  */
 export function joinLine(origins: Origins, joinSha: string, sumsSha: string): string {
   const program = [
@@ -109,12 +83,10 @@ export function joinLine(origins: Origins, joinSha: string, sumsSha: string): st
   return `sh -c '${program}' ovis-join '${origins.url}' ${joinSha} ${sumsSha} '${origins.relay}' '${origins.account}' '${origins.app}'`;
 }
 
-/** Every file below `dir`, as a path relative to it. */
 function filesIn(dir: string): string[] {
   return readdirSync(dir, { recursive: true, withFileTypes: true }).filter((entry) => !entry.isDirectory()).map((entry) => relative(dir, join(entry.parentPath, entry.name))).sort();
 }
 
-/** The line for a kit folder that exists: its files must be exactly SHA256SUMS and the files it lists, each matching. */
 export function kitLine(dir: string, origins: Origins): Kit {
   const checked = checkedOrigins(origins);
   const at = resolve(dir);
@@ -138,10 +110,7 @@ export function makeKit(options: KitOptions): Kit {
   if (process.platform !== "linux" || process.arch !== "x64") throw new KitError(`a trial kit is made for linux-x64 only (this is ${process.platform}-${process.arch})`);
   const dir = resolve(options.out);
   if (!existsSync(dirname(dir))) throw new KitError(`${dirname(dir)} does not exist: make the kit in a folder whose parent exists`);
-  // the terminal host's record carries this checkout's version, which the server compares with its own built-in one
-  // (server/pty/host.ts): a server built from another version would never attach terminals on the machine
   if (!readFileSync(options.server).includes(Buffer.from(JSON.stringify(serverVersion)))) throw new KitError(`--server ${options.server} was not built from this checkout's version ${serverVersion}: build it here (scripts/build-server.ts linux-x64)`);
-  // compared by real paths: a link to the checkout, or a folder inside it reached through one, is inside it too
   const real = existsSync(dir) ? realpathSync(dir) : join(realpathSync(dirname(dir)), basename(dir));
   const repo = realpathSync(REPO);
   if (real === repo || real.startsWith(`${repo}${sep}`)) throw new KitError(`${dir} is inside this checkout (${REPO}): make the kit in a folder outside it`);
@@ -151,9 +120,6 @@ export function makeKit(options: KitOptions): Kit {
   copyFileSync(options.pty, join(dir, "bin", "bin", "ovis-pty-sidecar"));
   chmodSync(join(dir, "bin", "ovis-server"), 0o755);
   chmodSync(join(dir, "bin", "bin", "ovis-pty-sidecar"), 0o755);
-  // the record the server checks its terminal host by (server/pty/host.ts): the SHA-256 of the host as copied into the
-  // kit (as every digest of the kit is taken from its own copy, never from a source another build may have replaced
-  // since), and the server's version
   writeFileSync(join(dir, "bin", "bin", "ovis-pty-sidecar.json"), `${JSON.stringify({ sha256: sha256(readFileSync(join(dir, "bin", "bin", "ovis-pty-sidecar"))), version: serverVersion })}\n`, { mode: 0o644 });
   writeFileSync(join(dir, "join.sh"), joinScript, { mode: 0o644 });
   if (options.testKit === true) writeFileSync(join(dir, TEST_KIT), "A kit for the join's container tests: join.sh honours its test switches only with this file.\n", { mode: 0o644 });
@@ -169,7 +135,6 @@ function option(args: string[], name: string): string {
   return value;
 }
 
-/** The command: the line on stdout (the only thing there), what to do with the kit on stderr; exit 2 on a refusal. */
 export function kitCommand(argv: readonly string[], out: (text: string) => void, err: (text: string) => void): number {
   const [verb, ...rest] = argv;
   const args = [...rest];

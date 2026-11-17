@@ -1,4 +1,3 @@
-/** Connection-owned pending messages survive navigation, but never a lost connection. */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -40,8 +39,6 @@ try {
   await herdrRpc("pane.send_text", { pane_id: pane, text: `exec '${program}' '${script}' '${log}'\n` });
   await until(() => existsSync(log), "the owned foreground agent records input");
   const bytes = () => readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string).join("");
-  // An explicit observation interval, bounded and checked throughout, proves a negative:
-  // no automatic delivery is permitted after the pane's native status becomes ready.
   const noBytes = async (expected: string, label: string): Promise<void> => {
     const deadline = Date.now() + 500;
     while (Date.now() < deadline) { assert.equal(bytes(), expected, label); await Bun.sleep(25); }
@@ -64,7 +61,6 @@ try {
   let admit = true;
   let routed: WebSocketRoute | undefined;
   let holdDiscard = false, delayedDiscard: (() => void) | undefined;
-  // a Send now that left the page but whose fate the page never learns
   let swallowResend = false, swallowedResend = false;
   await page.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
     if (!admit) { void socket.close(); return; }
@@ -246,21 +242,16 @@ try {
   }
   console.log("PASS delivery winning the Edit race does not duplicate its text in the draft");
 
-  // A held terminal draft blocks Send now on a server-owned row: the server pastes the text and
-  // sends Enter, so keys left in the draft (or a partial line in the pty) would run with it.
   {
     await report("working");
     const pending = await queue("never beside a held draft");
-    // the lens buttons' titles name the shortcut as the platform writes it (⌘⇧J on a Mac, Ctrl+Shift+J elsewhere)
     const toggle = (title: RegExp) => page.getByTitle(title).click();
-    // keys typed while the terminal is not ready for input are held as a draft
     routed!.send(JSON.stringify({ type: "input-ready", pane_id: pane, ready: false }));
     await toggle(/^Live terminal \(.+\)$/);
     const waiting = current(pane).locator(".terminal-banner", { hasText: "Waiting for terminal input…" });
     await waiting.waitFor();
     await current(pane).locator(".xterm-helper-textarea").pressSequentially("abc");
     await until(async () => await current(pane).locator(".draft-text").textContent() === "abc", "the typing is held as a draft");
-    // ready again: the draft still waits for Send or Discard
     routed!.send(JSON.stringify({ type: "input-ready", pane_id: pane, ready: true }));
     await waiting.waitFor({ state: "hidden" });
     await toggle(/^Chat transcript \(.+\)$/);
@@ -270,7 +261,6 @@ try {
     await row.locator(".pending-message-note", { hasText: "Not sent: send or discard the held input first." }).waitFor();
     assert.equal(sent.slice(actionAt).some(({ frame }) => frame.type === "pending-action"), false, "Send now beside a held draft sends no pending action");
     await noBytes(delivered, "Send now beside a held draft types nothing");
-    // the message box is refused beside a held draft too: its Enter would run the pty's partial line
     const heldNote = "Not sent: send or discard the held input first.";
     const submitAt = sent.length;
     await composer().fill("ls");
@@ -280,7 +270,6 @@ try {
     assert.equal(await composer().inputValue(), "ls", "a refused message keeps its text");
     await composer().fill("");
     await noBytes(delivered, "a message box send beside a held draft types nothing");
-    // the row is not marked unconfirmed: once the draft is discarded, Send now delivers it
     await toggle(/^Live terminal \(.+\)$/);
     await current(pane).locator(".draft-discard").click();
     await current(pane).locator(".terminal-banner-draft").waitFor({ state: "detached" });
@@ -293,8 +282,6 @@ try {
   }
   console.log("PASS a held terminal draft refuses Send now on a server-owned row until it is settled");
 
-  // Visible split siblings keep their leases. They still share the same PC connection;
-  // neither the other pane's input-ready nor its output can advance this agent's queue.
   const sibling = await paneSplit(pane, "right", false);
   await frame(sibling.pane_id).waitFor(); await inputReady(sibling.pane_id);
   assert.equal(ready.get(sibling.pane_id), originalSocket, "split panes share their PC connection");
@@ -313,9 +300,6 @@ try {
   await splitRow.waitFor({ state: "detached" });
   assert.equal(bytes(), delivered);
 
-  // A real lost WebSocket is different from component navigation: ownership ends. Only the bridge's
-  // receipt that it holds the message untyped, for this browser, brings the copy back, held for an
-  // explicit Send now; nothing is ever sent without one.
   const lostConnection = async (): Promise<void> => {
     admit = false; await routed!.close();
     await page.locator(".conn-live").waitFor({ state: "hidden" });
@@ -344,7 +328,6 @@ try {
   const unproven = async (text: string, label: string): Promise<void> => {
     const row = rows().filter({ hasText: text });
     await row.waitFor();
-    // checked again after readiness, so a held receipt arriving late would be caught too
     assert.equal(await row.getAttribute("data-state"), "uncertain", `${label}: an unproven copy stays uncertain`);
     assert.equal(await row.locator(".pending-message-send").count(), 0, `${label}: an unproven copy never offers Send now`);
     await report("idle"); await noBytes(delivered, `${label}: readiness never replays an unproven copy`);
@@ -365,13 +348,11 @@ try {
   await reload();
   await provenHeld(reloaded, since, "reload");
 
-  // (a) another browser session: its saved copy, but none of this browser's receipts
   const otherBrowser = await queue("unproven in another browser session");
   await page.evaluate(() => localStorage.setItem("ovis:pi-receipt-resume", crypto.randomUUID()));
   await reload();
   await unproven(otherBrowser.text, "another browser session");
 
-  // (d) a copy proven held on this page proves nothing to another browser session: the proof is never saved
   const provenThenMoved = await queue("proven here, unproven in another browser session");
   await lostConnection();
   await until(async () => await rows().filter({ hasText: provenThenMoved.text }).getAttribute("data-state") === "held", "the copy is proven held on this page first");
@@ -379,8 +360,6 @@ try {
   await reload();
   await unproven(provenThenMoved.text, "proven on another page");
 
-  // (b) past the ten minutes the bridge keeps a held receipt. A witness tab with this browser's resume
-  // ID but storage of its own is told the receipt once the bridge kept it: only then does the clock move.
   const expired = await queue("unproven after the receipt expired");
   const resumeId = await page.evaluate(() => localStorage.getItem("ovis:pi-receipt-resume"));
   assert.ok(resumeId, "this browser has a resume ID");
@@ -402,8 +381,6 @@ try {
   await page.locator(".conn-live").waitFor({ state: "hidden" });
   await until(() => witnessTold, "the bridge kept the held receipt as the connection closed");
   await witness.close();
-  // the bridge times its receipts by the time that passed (a clock that only moves forward), not by the PC's clock:
-  // both move here, as when ten minutes really pass
   const ambient = Date.now, running = performance.now.bind(performance);
   try {
     Date.now = () => ambient() + 10 * 60 * 1000 + 1000;
@@ -413,7 +390,6 @@ try {
     await unproven(expired.text, "expired receipt");
   } finally { Date.now = ambient; performance.now = running; }
 
-  // (c) an ambiguous send: Send now left the page and the connection dropped before any answer
   const ambiguous = await queue("unproven after an ambiguous send");
   await lostConnection();
   const ambiguousRow = rows().filter({ hasText: ambiguous.text });
@@ -425,8 +401,6 @@ try {
   swallowResend = false;
   await unproven(ambiguous.text, "ambiguous send");
 
-  // (e) a page left open past the bridge's receipt window: its proven copy is uncertain again. The page's clock moves
-  // (a tab that slept, or a clock that jumped): no timer has to fire, the next render reads the row past its time.
   const leftOpen = await queue("held, then the page stays open past its window");
   since = received.length;
   await lostConnection();

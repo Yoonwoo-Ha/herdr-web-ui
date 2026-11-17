@@ -24,19 +24,15 @@ import { ompStoreLayout } from "../server/omp.ts";
 import { createOmpProcessProbe } from "../server/omp-process.ts";
 
 const STARTUP_MS = 30_000;
-/** The bridge's 1 s helper bound is for a live pane; a loaded host may need longer to answer here. */
 const ompProcessMemory = createOmpProcessProbe({ timeoutMs: 15_000 });
-/** Directories omp resolves against one nothing records (it changes into its --cwd): the resolver must give nothing. */
 const UNSUPPORTED = new Set(["relative PI_CODING_AGENT_DIR", "relative session-dir", "relative cwd and relative session-dir"]);
 const omp = Bun.which("omp");
 const root = realpathSync(mkdtempSync(join(tmpdir(), "omp-store-layout-")));
 const closed = "http://127.0.0.1:9";
 
 interface Case { name: string; args: string[]; env?: Record<string, string>; mkdirs?: string[] }
-/** What one case did, every temporary path as $CASE: the native truth server/omp.test.ts holds ompStoreLayout to. */
 interface FixtureCase {
   name: string; args: string[]; env: Record<string, string>; mkdirs: string[];
-  /** null when omp wrote no absolute session path */
   observed: { sessions: string | null; depth: 1 | 2 | null; terminalSessions: string | null; cwd: string | null };
 }
 interface Observed {
@@ -44,11 +40,9 @@ interface Observed {
   breadcrumb: string | null; sessionPath: string | null;
   layout: { sessions: string; terminalSessions: string; depth: 1 | 2 } | null; held: string | null;
   fixture: FixtureCase;
-  /** null when the case is proved: the supported resolution found omp's own session, or the unsupported one gave nothing */
   proof: string | null;
 }
 
-/** Every file under a `terminal-sessions` directory below `dir`. */
 function breadcrumbs(dir: string, depth = 0, found: string[] = []): string[] {
   if (depth > 9) return found;
   let entries: import("node:fs").Dirent[] = [];
@@ -77,7 +71,6 @@ async function observe(spec: Case, index: number): Promise<Observed> {
   let output = "";
   let settled!: () => void;
   const ready = new Promise<void>((resolve) => { settled = resolve; });
-  // subscribed before the spawn: every chunk of omp's output rechecks for its breadcrumb
   const child = Bun.spawn([omp!, ...spec.args.map(fill)], {
     cwd: project, env,
     terminal: { cols: 120, rows: 40, data(_terminal, data) { output += new TextDecoder().decode(data); if (breadcrumbs(caseRoot).length > 0) settled(); } },
@@ -101,7 +94,6 @@ async function observe(spec: Case, index: number): Promise<Observed> {
     if (found.length === 1) [breadcrumbCwd = null, sessionPath = null] = readFileSync(found[0]!, "utf8").split("\n");
     const absolute = sessionPath?.startsWith("/") ?? false;
     if (absolute && breadcrumbCwd) {
-      // the header omp writes with its first answer, so the resolver has a transcript to find
       mkdirSync(dirname(sessionPath!), { recursive: true });
       if (!existsSync(sessionPath!) || statSync(sessionPath!).size === 0) writeFileSync(sessionPath!, `${JSON.stringify({ type: "session", version: 3, id: "probe", cwd: breadcrumbCwd })}\n`);
     }

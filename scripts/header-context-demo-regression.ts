@@ -7,10 +7,6 @@ import { appFaces } from "./app-faces.ts";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
-// The existing compact title names its pane's full context without adding a second h1.
-// A desktop split uses this title too; an ordinary desktop uses its tab strip instead.
-// The title's agent mark sits on the header's centre line, and from 769px so do the buttons of
-// the sidebar's own top row beside it, which reaches over the header's bottom hairline.
 const app = mkdtempSync(join(tmpdir(), "ovis-header-context-"));
 const evidence = process.env["UI_EVIDENCE_DIR"];
 try {

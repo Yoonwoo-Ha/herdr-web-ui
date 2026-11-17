@@ -1,7 +1,3 @@
-/** Docker-backed SSH lifecycle test. Build scripts/fixtures/herdr-ssh first.
- * HERDR_SSH_QA_BUNDLE must point to a verified official bundle for the Docker host platform.
- * Uses a temporary container/account, real SSH, real Herdr and no API mocks.
- */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -73,13 +69,11 @@ try {
   command(["docker", "run", "-d", "--name", container, "-p", "127.0.0.1::22", "herdr-profile-ssh-qa"]);
   const port = Number(command(["docker", "port", container, "22/tcp"]).split(":").at(-1));
   command(["docker", "cp", archive, `${container}:/tmp/bundle.tgz`]);
-  // The account already has Herdr; the web runtime is deliberately NOT installed yet.
   command(["docker", "exec", container, "sh", "-c", "mkdir -p /home/fixture/.local/bin; tar xzf /tmp/bundle.tgz -C /tmp ./bin/herdr; cp /tmp/bin/herdr /home/fixture/.local/bin/herdr; chown -R fixture:fixture /home/fixture/.local"]);
   remote("nohup /home/fixture/.local/bin/herdr server >/tmp/herdr-default.log 2>&1 </dev/null &");
   await until(async () => remote("/home/fixture/.local/bin/herdr status server"), (s) => s.includes("status: running"), "existing default Herdr");
   const groundTruth = JSON.parse(remote('/home/fixture/.local/bin/herdr workspace create --label existing-default --cwd /home/fixture'));
   assert.ok(groundTruth);
-  // Save through the real CLI, in the disposable account, then parse its actual catalog.
   remote("mkdir -p /home/fixture/.ssh; chmod 700 /home/fixture/.ssh; ssh-keygen -q -t ed25519 -N '' -f /home/fixture/.ssh/id_ed25519; cat /home/fixture/.ssh/id_ed25519.pub >> /home/fixture/.ssh/authorized_keys; chmod 600 /home/fixture/.ssh/authorized_keys; ssh-keyscan 127.0.0.1 > /home/fixture/.ssh/known_hosts");
   remote("/home/fixture/.local/bin/herdr machine add fixture@127.0.0.1 --label 'Existing default' --remote-session default || { /home/fixture/.local/bin/herdr server stop; /home/fixture/.local/bin/herdr machine add fixture@127.0.0.1 --label 'Existing default' --remote-session default; }");
   const catalog = parseHerdrProfiles(remote("/home/fixture/.local/bin/herdr machine list --json"));
@@ -140,8 +134,6 @@ try {
   await until(machines, (ms) => ms.some((m) => m.id === machine.id && m.state === "connected"), "approved bridge auto-restart");
   assert.ok((await api<{ snapshot: SessionSnapshot }>(path + "/session")).snapshot.panes.some((p) => p.pane_id === created.pane_id));
   console.log("PASS manager restart and approved bridge restart preserve existing panes");
-  // A second, fresh web state connects to the existing bridge with keys only.
-  // That grants reconnection, but not permission to start the bridge after it stops.
   server.stop();
   const connectionState = join(root, "connection-only");
   writeFileSync(config, readFileSync(config, "utf8") + `  IdentityFile ${join(state, "ssh", machine.id)}\n`);
@@ -157,7 +149,6 @@ try {
   await until(machines, (ms) => ms.some((m) => m.id === machine.id && m.action_required === "setup"), "connection-only permission cannot restart the bridge");
   server.stop(); server = start();
   await until(machines, (ms) => ms.some((m) => m.id === machine.id && m.state === "connected"), "approved owner restarts the bridge");
-  // Remove the temporary identity override before testing password approval on a new target.
   writeFileSync(config, readFileSync(config, "utf8").replace(/  IdentityFile .*\n/, ""));
   console.log("PASS connecting to an existing bridge grants no installation or startup authority");
   rows = [{ ...rows[0]!, enabled: false }];

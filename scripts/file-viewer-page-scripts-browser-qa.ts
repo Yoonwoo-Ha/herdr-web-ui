@@ -1,6 +1,4 @@
 /**
- * Browser regression with the real file viewer and the server's real Page renderer: an HTML page is drawn without
- * its scripts until the person asks for them, and beside the pane a page with scripts cannot take the app's keys.
  * `PAGE_SCRIPTS_SHOTS` names a folder for screenshots of each state; `PAGE_SCRIPTS_ENGINE=webkit` runs it on
  * Playwright's WebKit instead of Chrome (CI runs Chrome).
  */
@@ -16,7 +14,6 @@ import { CONTENT_SECURITY_POLICY } from "../server/static.ts";
 
 const root = mkdtempSync(join(tmpdir(), "ovis-page-scripts-qa-"));
 const STATIC = [18, 52, 86], RAN = [20, 120, 60];
-/** A page that shows by its colour and to the app around it whether its script ran, and which keys reached it; `grab` also takes the focus over and over. */
 const probe = (grab: boolean) => `<!doctype html><html><head><meta charset="utf-8"><title>probe</title>
 <style>html,body{margin:0;min-height:100%;background:rgb(${STATIC.join(",")});color:white;font:16px system-ui}h1{margin:0;padding:16px}</style></head>
 <body><h1 id="ran">static</h1><input id="field" autofocus aria-label="field in the page">
@@ -64,7 +61,6 @@ try {
   const composer = page.locator("#composer");
   const messages = (kind: string) => page.evaluate((kind) => window.pageScriptsQa.messages.filter((each) => each["probe"] === kind).map((each) => String(each["key"] ?? "")), kind);
   const forget = () => page.evaluate(() => { window.pageScriptsQa.messages.length = 0; });
-  /** the colour the page draws in the middle of its frame: what a frame without scripts shows can only be seen in a picture of it */
   const drawn = async (): Promise<number[]> => {
     const box = (await frame.boundingBox())!;
     return pngPixel(await page.screenshot(), Math.round(box.x + box.width / 2), Math.round(box.y + box.height / 2));
@@ -97,26 +93,22 @@ try {
     }
   };
 
-  // 1. the popup: the page is drawn, its HTML and CSS, and nothing in it has run
   await open(quiet, false);
   await draws(STATIC, "the page's own HTML and CSS are drawn without its scripts");
   assert.equal(await frame.getAttribute("sandbox"), "", "the frame allows no script");
   assert.equal(await notice.innerText().then((text) => text.replace(/\s+/g, " ").trim()), "Scripts in this page are off. Run scripts");
   assert.deepEqual(await messages("ran"), [], "no script of the page ran");
   await shot("after-popup-scripts-off");
-  // a field with autofocus in the page does not take the keys either
   await composer.focus();
   await page.keyboard.type("abc");
   assert.equal(await composer.inputValue(), "abc");
   await composer.fill("");
-  // the press runs them, in a frame loaded anew, and the line goes
   await run.click();
   await draws(RAN, "the press runs the page's scripts");
   assert.equal(await frame.getAttribute("sandbox"), "allow-scripts");
   assert.deepEqual(await messages("ran"), [""]);
   assert.equal(await notice.count(), 0);
   await shot("after-popup-scripts-on");
-  // another file, and the same file opened again, start without scripts: nothing is remembered
   await open(other, false);
   await draws(STATIC, "another file starts without its scripts");
   assert.deepEqual(await messages("ran"), []);
@@ -126,7 +118,6 @@ try {
   await draws(STATIC, "the file opened again starts without its scripts");
   assert.equal(await run.count(), 1);
   assert.deepEqual(await messages("ran"), []);
-  // in the popup a page that takes the focus keeps its scripts: the dialog holds the focus, and the app under it takes no keys
   await open(grabber, false);
   await run.click();
   await draws(RAN, "the popup runs a page that takes the focus");
@@ -135,7 +126,6 @@ try {
   await page.evaluate(() => window.pageScriptsQa.close());
   await frame.waitFor({ state: "detached" });
 
-  // 2. beside the pane: the same line and button, and the message box takes its keys while the page has no scripts
   await open(grabber, true);
   await draws(STATIC, "beside the pane the page is drawn without its scripts");
   assert.equal(await page.locator("aside.file-panel").count(), 1);
@@ -144,11 +134,9 @@ try {
   assert.equal(await composer.inputValue(), "before");
   await composer.fill("");
   await shot("after-docked-scripts-off");
-  // its scripts run on the press; this page takes the focus by itself, which the press that asked for it allows
   await run.click();
   await draws(RAN, "beside the pane the press runs the page's scripts");
   await shot("after-docked-scripts-on");
-  // back in the message box the keys are the app's: the page takes the focus again, loses its scripts for it, and gets no key
   await forget();
   // the status line is already in the document, clipped and without words: the words it gets next are announced
   assert.equal(await page.locator("div.visually-hidden > span[role=status]").textContent(), "");
@@ -163,7 +151,6 @@ try {
   await composer.fill("");
   await shot("after-docked-took-the-keyboard");
 
-  // 3. beside the pane, a page that leaves the focus alone: a press on it gives it the keys, and so does Tab
   await open(quiet, true);
   await run.click();
   await draws(RAN, "the quiet page runs");
@@ -173,7 +160,6 @@ try {
   await page.keyboard.type("mine");
   assert.equal(await composer.inputValue(), "mine");
   assert.deepEqual(await messages("key"), []);
-  // the press on the page puts the focus in it; the keys after it are the page's
   const box = (await frame.boundingBox())!;
   await overPage(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
@@ -183,7 +169,6 @@ try {
   await page.waitForFunction(() => window.pageScriptsQa.messages.filter((each) => each["probe"] === "key").length === 2);
   assert.equal(await composer.inputValue(), "mine");
   assert.equal(await frame.getAttribute("sandbox"), "allow-scripts", "a page the person pressed keeps its scripts");
-  // back in the app, then Tab from the control before the frame into it: the page keeps its scripts
   await composer.click();
   await shield.waitFor();
   await page.locator("aside.file-panel").getByRole("button", { name: "Source", exact: true }).focus();
@@ -195,7 +180,6 @@ try {
   assert.deepEqual(errors, []);
   console.log(`PASS (${engine} ${browser.version()}) a page draws without its scripts until Run scripts; nothing is remembered across files and closes; the popup keeps a page that takes the focus; beside the pane such a page loses its scripts and gets no key, and a press or Tab gives a page the keys`);
 } catch (error) {
-  // what the page itself said, beside the step that failed
   console.error(`page errors: ${JSON.stringify(pageErrors)}`);
   throw error;
 } finally {

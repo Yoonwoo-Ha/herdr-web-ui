@@ -1,6 +1,4 @@
 /**
- * The raw takes in _film/footage/rec/<name>/ (made by capture.ts), read for the compositor:
- * frame files with their paint times, the hand's cues and the marks, all in seconds from the
  * take's first frame. Screencast takes (R*) paint 20-45 fps, so a moment shows the last frame
  * painted at or before it; stepped takes (S*) are exact 60 fps (frame i at i/60).
  */
@@ -14,7 +12,6 @@ export type Cue = { t: number; kind: "move" | "down" | "up" | "tap"; x: number; 
 
 export interface Take {
   name: string;
-  /** viewport in CSS px, and source px per CSS px */
   vp: { w: number; h: number };
   dpr: number;
   times: number[];
@@ -48,21 +45,18 @@ export function take(name: string): Take {
   return t;
 }
 
-/** A mark's time; `label` matches the start of the mark's label. */
 export function mark(t: Take, label: string): number {
   const m = t.marks.find((m) => m.label.startsWith(label));
   if (!m) throw new Error(`${t.name}: no mark "${label}"`);
   return m.t;
 }
 
-/** The time of the n-th cue of a kind (0-based). */
 export function cue(t: Take, kind: Cue["kind"], n = 0): Cue {
   const c = t.cues.filter((c) => c.kind === kind)[n];
   if (!c) throw new Error(`${t.name}: no ${kind} cue #${n}`);
   return c;
 }
 
-/** Index of the frame on screen at time s (the last painted at or before it). */
 export function frameAt(t: Take, s: number): number {
   let lo = 0, hi = t.times.length - 1;
   if (s <= t.times[0]!) return 0;
@@ -73,13 +67,8 @@ export function frameAt(t: Take, s: number): number {
   return lo;
 }
 
-/** URL path of a frame, as the render server serves the repo. */
 export const frameUrl = (t: Take, i: number): string => `/_film/footage/rec/${t.name}/frames/${t.files[i]}`;
 
-/**
- * The pointer at time s in CSS px: the recorded moves (~30 per second while gliding) joined by a
- * Catmull-Rom curve so it glides at 60 fps. Moves more than 0.25 s apart are a jump, not a glide.
- */
 export function pointerAt(t: Take, s: number): { x: number; y: number } | null {
   const pts = t.cues.filter((c) => c.kind !== "tap");
   if (!pts.length) return null;
@@ -96,15 +85,10 @@ export function pointerAt(t: Take, s: number): { x: number; y: number } | null {
   return { x: cr(p0.x, p1.x, p2.x, p3.x), y: cr(p0.y, p1.y, p2.y, p3.y) };
 }
 
-/** Presses (mouse downs, or taps) within `window` s before s, with their age. */
 export function pressesAt(t: Take, s: number, kind: "down" | "tap", window = 0.42): { x: number; y: number; age: number }[] {
   return t.cues.filter((c) => c.kind === kind && c.t <= s && s - c.t < window).map((c) => ({ x: c.x, y: c.y, age: s - c.t }));
 }
 
-/**
- * The first trough (opacity 0.35, 800 ms into the 1.6 s CSS `pulse`) of a status dot at or after
- * `after` s, from the take's "pulse <dot> <ms>" marks (capture.ts reads each dot's animation time).
- */
 export function trough(t: Take, after: number, dot = "badge"): number {
   const m = t.marks.find((m) => m.label.startsWith(`pulse ${dot} `));
   if (!m) throw new Error(`${t.name}: no pulse mark for ${dot}`);

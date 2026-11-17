@@ -1,4 +1,3 @@
-/** Paging only: the production client over fictional demo transcripts; no live panes. */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,7 +9,6 @@ import { openSettingsPage } from "./settings-page.ts";
 import { appFaces } from "./app-faces.ts";
 
 const app = mkdtempSync(join(tmpdir(), "herdr-pane-paging-demo-"));
-// Capture only fictional paging fixtures for PR evidence.
 const evidence = process.env.UI_EVIDENCE_DIR;
 const settled = (page: Page) => page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
 const returnControl = (page: Page) => page.locator(".pane-frame.is-current .chat-new-messages");
@@ -26,9 +24,6 @@ const scrollGeometry = (page: Page) => page.evaluate(() => {
     returnControls: [...document.querySelectorAll<HTMLElement>(".pane-frame.is-current .chat-new-messages")].map((button) => ({ label: button.getAttribute("aria-label"), text: button.textContent, className: button.className, height: button.getBoundingClientRect().height })),
     loading: node.querySelector(".chat-inline-state")?.textContent ?? null };
 });
-// The demo's api pane opens mid-turn and ends that turn 4.5 s later (site/demo/transport.ts): the
-// answer lands and the work block folds, so the transcript's height changes under the reader. Paging
-// asserts exact scroll positions, so it starts only once that turn has ended and its fold has settled.
 async function demoTurnEnded(page: Page): Promise<void> {
   await page.waitForFunction(() => {
     const transcript = document.querySelector(".pane-frame.is-current .chat-view");
@@ -87,7 +82,6 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? chromium.executablePath(), headless: true, args: ["--no-sandbox"] });
     try {
-      // Rounded DOM heights must not trap explicit paging at a fractional physical end.
       const fractionalBrowser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? chromium.executablePath(), headless: true, args: ["--no-sandbox", "--force-device-scale-factor=1.25"] });
       const fractional = await fractionalBrowser.newContext({ viewport: { width: 1024, height: 600 }, deviceScaleFactor: 1.25, locale: "en-US" });
       try {
@@ -112,7 +106,6 @@ try {
           const content = node.firstElementChild as HTMLElement;
           content.style.minHeight = "0"; content.style.height = "200.75px"; content.style.overflow = "hidden";
           const style = document.createElement("style");
-          // a line taller than the view leaves each page one pixel
           style.textContent = "[data-fractional-paging]::before { display: none; } [data-fractional-paging] :is(.chat-turn-agent > .markdown, .chat-bubble) { line-height: 1000px; }";
           document.head.append(style);
           node.scrollTop = node.scrollHeight;
@@ -133,7 +126,6 @@ try {
         assert.ok(Math.abs(await transcript.evaluate((node) => node.scrollTop) - paged) < 0.5, "one-pixel upward intent survives deferred scroll and fractional resize");
         await transcript.evaluate((node: HTMLElement) => { node.style.height = "100.25px"; });
         await settled(page);
-        // Reach the physical end and ask PageDown before its deferred scroll event arrives.
         const clamped = await transcript.evaluate((node) => {
           node.scrollTop = node.scrollHeight;
           const before = node.scrollTop;
@@ -221,7 +213,6 @@ try {
           });
           await settled(page);
           assert.equal(await page.evaluate(() => document.activeElement?.id), "owned-paging-editable");
-          // The extra field changes the pane's flex layout before the key is pressed.
           const editableBottom = await transcript.evaluate((node) => node.scrollTop);
           await page.keyboard.press("PageUp");
           await settled(page);
@@ -237,7 +228,6 @@ try {
             const bottom = await transcript.evaluate((node) => node.scrollTop);
             const step = await transcript.evaluate((node) => Math.max(1, node.clientHeight - parseFloat(getComputedStyle(node.querySelector(".chat-turn-agent > .markdown, .chat-bubble") ?? node).lineHeight)));
             await page.keyboard.press("Meta+Shift+PageUp");
-            // The first frame already has the new position and has stopped following output.
             assert.ok(Math.abs(bottom - await transcript.evaluate((node) => node.scrollTop) - step) <= 1, "chat instantly pages, keeping one line");
             await settled(page);
             assert.ok(Math.abs(bottom - await transcript.evaluate((node) => node.scrollTop) - step) <= 1, "the bottom-pinning effect leaves paged history in place");
@@ -278,7 +268,6 @@ try {
           await page.reload();
           await page.locator(".conn-live").waitFor();
           await composer.waitFor();
-          // the reload starts the demo's turn over
           await demoTurnEnded(page);
           await page.keyboard.press("Meta+Shift+Comma");
           await openSettingsPage(page, "Shortcuts");

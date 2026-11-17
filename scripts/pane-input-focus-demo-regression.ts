@@ -1,4 +1,3 @@
-/** Keyboard-only input focus on the real client against fictional demo panes. */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -46,7 +45,6 @@ try {
           await page.locator(".composer-text").first().waitFor();
           await page.keyboard.press("Meta+Shift+Digit2");
           await page.waitForFunction(previous => document.querySelector(".pane-frame.is-current")?.getAttribute("data-layout-pane") !== previous, panes.api);
-          // selecting a pane still focuses chat on a desktop and leaves a touch screen alone
           const wanted = !touch;
           await page.waitForFunction(wanted => !!document.querySelector(".pane-frame.is-current .composer-text:focus") === wanted, wanted);
           assert.equal(await page.evaluate(() => matchMedia("(pointer: coarse)").matches), touch);

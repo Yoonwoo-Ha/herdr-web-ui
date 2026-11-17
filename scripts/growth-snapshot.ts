@@ -1,30 +1,15 @@
 /**
- * A snapshot of the repository's stars and traffic, for the weekly growth record
- * (.github/workflows/growth-snapshot.yml; docs/development.md, "Growth snapshot").
- *
  *   bun scripts/growth-snapshot.ts --out <dir> [--repo owner/name]
  *
- * Reads, through the gh CLI on PATH (its own sign-in, or GH_TOKEN): the repository's counts,
- * traffic/views, traffic/clones, traffic/popular/referrers, traffic/popular/paths, and every
  * stargazer's star date. Writes <dir>/snapshot-<day>.json and <dir>/stars-by-day.csv. The traffic
  * endpoints need push access to the repository; GitHub keeps them for 14 days only, which is why
  * they are saved every week.
- *
- * Who starred is never kept: only the day of each star. Nothing about the traffic (referrers,
- * paths) goes to the output either, so a workflow log shows only totals.
- *
- * Exit codes: 0 when counts and star dates were read (a traffic endpoint that failed is recorded as
- * {"error": "<status>"}), 2 when every traffic endpoint failed (a token without access, which
- * should turn a scheduled run red), 1 when the repository itself could not be read (nothing is
- * written), 3 when any stargazer page failed (no new output; a previous snapshot is left intact).
- * Files are staged before publication; an output failure exits 1.
  */
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 type Answer = { ok: true; body: unknown } | { ok: false; status: string };
 
-/** One gh api call: its JSON body, or the HTTP status (or "failed") it ended with. */
 async function gh(path: string, headers: string[] = []): Promise<Answer> {
   const child = Bun.spawn(["gh", "api", ...headers.flatMap((header) => ["-H", header]), path], { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
   const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
@@ -69,7 +54,6 @@ for (const name of TRAFFIC) {
   }
 }
 
-// every page of stargazers with their star dates; only the day is kept
 const starsByDay: Record<string, number> = {};
 let starsRead = 0;
 let starsError: string | null = null;
@@ -89,8 +73,6 @@ for (let page = 1; ; page += 1) {
   if (answer.body.length < 100) break;
 }
 
-// Do not publish partial dates or pair a new snapshot with a previous run's CSV.
-// Star history can be fetched again; leave any previous complete output intact.
 if (starsError !== null) process.exit(3);
 
 const takenAt = new Date().toISOString();
@@ -114,7 +96,6 @@ const snapshotName = `snapshot-${takenAt.slice(0, 10)}.json`;
 try {
   writeFileSync(join(staging, snapshotName), JSON.stringify(snapshot, null, 1) + "\n");
   writeFileSync(join(staging, "stars-by-day.csv"), csv);
-  // Publish CSV first: a failed CSV write or replacement must not leave new JSON.
   renameSync(join(staging, "stars-by-day.csv"), join(out, "stars-by-day.csv"));
   renameSync(join(staging, snapshotName), join(out, snapshotName));
 } finally {

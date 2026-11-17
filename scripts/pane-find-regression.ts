@@ -10,7 +10,6 @@ import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/clien
 import { chromePath } from "./chrome-path.ts";
 import { shownRows } from "./shown-rows.ts";
 
-/** GUI searches stay in herdr's history, never in browser scrollback or terminal input. */
 export async function checkPaneFind(browser: Browser, origin: string): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "herdr-find-browser-"));
   const created = await workspaceCreate({ cwd: root, label: "ovis-test-find-browser" });
@@ -111,9 +110,6 @@ export async function checkPaneFind(browser: Browser, origin: string): Promise<v
     };
     const staleNavigation = async (name: string) => {
       const value = `find_browser_changed_${name}`;
-      // The deferred upload leaves cat's input line unfinished. On a phone this
-      // sentinel can soft-wrap after the path; recent waits unwrap logical lines,
-      // unlike detection reads, and still see new output while Find is scrolled.
       const output = herdrRpc("pane.wait_for_output", {
         pane_id: pane, source: "recent", match: { type: "substring", value }, timeout_ms: 10000,
       }, undefined, 12000);
@@ -151,12 +147,9 @@ export async function checkPaneFind(browser: Browser, origin: string): Promise<v
     await page.getByRole("button", { name: "Previous match", exact: true }).focus();
     await page.keyboard.press("Escape");
     await closedGeometry;
-    // the find bar is gone; the sidebar's label filter is a search landmark of its own and stays
     assert.equal(await page.getByRole("search", { name: "Find in terminal", exact: true }).count(), 0);
     assert.deepEqual(inputFrames, [], "find keys and query must never be sent to the terminal");
 
-    // Delay, then forward a real upload. Its old drop intent may paste the path, but its
-    // completion must not take keyboard focus from the newer Find request.
     const upload = Promise.withResolvers<void>();
     const delayUpload = async (route: import("playwright-core").Route) => { await upload.promise; await route.continue(); };
     await page.route("**/api/pane/image", delayUpload);
@@ -194,9 +187,6 @@ export async function checkPaneFind(browser: Browser, origin: string): Promise<v
     await page.keyboard.press("Escape");
     await uploadClosedGeometry;
 
-    // Let the narrow viewport's own resize land first: a phone's More sheet rises (styles.css) for
-    // longer than the terminal waits for a size to settle (PaneTerminal.tsx), so phoneGeometry would
-    // otherwise answer to that resize, and the search below would race the find bar's.
     const phoneViewport = resized();
     await page.setViewportSize({ width: 320, height: 844 });
     await phoneViewport;
@@ -211,7 +201,6 @@ export async function checkPaneFind(browser: Browser, origin: string): Promise<v
     await staleNavigation("phone");
     console.log("PASS pane find: history jump, count, next/previous, stale range clearing and retry, no match, Escape, touch menu, no find input, deferred-upload focus");
   } catch (error) {
-    // evidence only: a closed pane, a gone herdr or a crashed page must not replace the failure itself
     const evidence = async (label: string, read: () => Promise<unknown>) => {
       try { console.error(label, await read()); } catch (cause) { console.error(`${label} unavailable:`, cause); }
     };

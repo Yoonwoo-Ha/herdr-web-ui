@@ -117,7 +117,6 @@ function agentRow(paneId: string) {
   assert.ok(page);
   return page.locator(`.agents-sidebar .agent-item[data-machine="local"][data-pane="${paneId}"]`);
 }
-// the pane on screen was looked at: its row draws herdr's DONE as ready, as herdr's own client does (#1279)
 let onScreen: string | null = null;
 const drawn = (paneId: string, status: Status): Status => status === "done" && paneId === onScreen ? "idle" : status;
 async function settled(paneId: string, status: Status, start?: number): Promise<void> {
@@ -176,8 +175,6 @@ try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   await context.addInitScript((ids) => {
     localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
-    // Waiting first (the default Agents order) folds the resting rows, idle and an unread finish alike, under one
-    // line: this device keeps that line open, so every row's drawn state stays in sight for the checks below
     localStorage.setItem("ovis:agents-resting-open", "1");
     for (const id of ids) localStorage.setItem(`ovis:view:${id}`, "chat");
   }, [paneId, delayedPaneId]);

@@ -1,9 +1,4 @@
 /**
- * Renders the brand film and the hero loop from the raw takes (capture.ts) — every output frame
- * drawn deterministically by the compositor page (stage.ts) in headless Chrome from the timeline
- * (timeline.ts), screenshotted, and piped to ffmpeg. Frames render in parallel chunks, one Chrome
- * per chunk, each into a lossless segment; the segments are joined, grained and encoded once.
- *
  *   bun scripts/film/render.ts report                      shot table: source ranges, rates, max magnification
  *   bun scripts/film/render.ts stills 0.8 8 13.6 [--scale 0.5] [--loop]   PNG frames + a contact sheet (_film/renders/stills/)
  *     (with --loop the times are path times: the delivered file's frame 0 is path time LOOP_START, 2.4 s)
@@ -15,17 +10,7 @@
  * (CRF 19, preset veryslow, no grain, ≤ 20 MB): at a web bitrate x264 freezes per-frame grain into blocky
  * mottle that only refreshes on I-frames (a visible 2 s pulse), and even a static grain field costs ~3 MB
  * that the UI text needs more; the site draws its own static grain over the stage.
- * and the poster site/media/ovis-film.jpg (the frame at 34.40 s). A full render takes a few
- * minutes on 32 cores. Needs /usr/bin/google-chrome (CHROME_PATH) and ffmpeg; the brand mark comes
- * from _film/brand/mark-paper.png, made by the brief's ffmpeg derivation from docs/brand/icon-source.png
- * (`render.ts` runs it when the file is missing).
- *
- * Decisions (see timeline.ts for the numbers): every take is 2x, so no desktop framing is tighter
- * than 960 CSS px (the brief's 3x macro framings are re-blocked at <= 2.0 output px per CSS px);
- * continuity comes from capture.ts's `story` staging: S1/S2 use R12 (the first task running), S3 R2,
- * S4/S5 R10, S9-S11 the "after" takes, S12 R13 (the next ask running); the hero loop is R11 (the demo's
- * own opening state, recorded 1280x1064 so nothing scrolls under the plan bar). Grain is ffmpeg's
- * luma noise (deterministic seed): temporal in the master, static in the web file and the loop.
+ * and the poster site/media/ovis-film.jpg (the frame at 34.40 s).
  *
  * After a re-capture, re-check what was measured by hand on the frames: the S8 status/Pushed times
  * (R3_DONE… in timeline.ts), the per-shot camera anchors (fx/fy/ax/ay) and the type positions against
@@ -58,7 +43,6 @@ const args = process.argv.slice(2);
 const opt = (name: string, dflt: number): number => { const i = args.indexOf("--" + name); return i >= 0 ? Number(args[i + 1]) : dflt; };
 const flag = (name: string): boolean => args.includes("--" + name);
 
-// ---- serving the repo's _film/ to the compositor page ----
 function serve(): { url: string; stop: () => void } {
   const server = Bun.serve({
     port: 0,
@@ -113,7 +97,6 @@ function ensureMark(): Promise<void> | void {
   return ffmpeg(["-i", join(REPO, "docs/brand/icon-source.png"), "-vf", "crop=1040:1040:145:127,scale=512:512:flags=lanczos,format=rgba,geq=r=242:g=235:b=223:a='clip((200-r(X,Y))*2.5,0,255)'", MARK]);
 }
 
-/** Renders frames [a, b) of a builder into a lossless RGB segment. */
 async function segment(url: string, scale: number, build: (i: number) => FrameDesc, fps: number, a: number, b: number, out: string, onFrame: () => void): Promise<void> {
   const s = await stage(url, scale);
   try {
@@ -122,7 +105,6 @@ async function segment(url: string, scale: number, build: (i: number) => FrameDe
   } finally { await s.browser.close(); }
 }
 
-/** All frames of a builder in parallel chunks, joined into one lossless file. */
 async function renderAll(name: string, build: (i: number) => FrameDesc, fps: number, first: number, last: number, workers: number, scale: number): Promise<string> {
   const dir = join(RENDERS, "seg", name);
   rmSync(dir, { recursive: true, force: true });
@@ -168,12 +150,10 @@ async function film(): Promise<void> {
   console.log(`master ${master} ${mb(master)}`);
 }
 
-/** The web file and its poster from the lossless render. */
 async function deliver(lossless: string): Promise<void> {
   mkdirSync(join(REPO, "site/media"), { recursive: true });
   await ffmpeg(["-i", lossless, "-vf", `${TO_YUV},format=yuv420p`, "-c:v", "libx264", "-profile:v", "high", "-preset", "veryslow", "-crf", String(CRF), "-g", "120", "-r", String(FPS), ...COLOR, "-an", "-movflags", "+faststart", FILM_MP4]);
   if (statSync(FILM_MP4).size > 20e6) console.warn(`film is ${mb(FILM_MP4)}: over the 20 MB cap, raise FILM_CRF`);
-  // the poster from the lossless render (grain-free, like the web file), not from the delivery encode
   await poster(lossless, POSTER_T, FILM_JPG, 85, 250_000, 0);
   console.log(`film ${FILM_MP4} ${mb(FILM_MP4)}\nposter ${FILM_JPG} ${mb(FILM_JPG)}`);
 }
@@ -196,7 +176,6 @@ const loopShift = (): number => Math.round(opt("start", LOOP_START) * LOOP_FPS);
 async function loop(): Promise<void> {
   const n = Math.round(LOOP_LEN * LOOP_FPS), s = loopShift();
   const lossless = await renderAll("loop", (i) => loopFrame(((i + s) % n) / LOOP_FPS), LOOP_FPS, 0, n, opt("workers", 12), 1);
-  // static grain (no temporal flag: one fixed noise field), so the seam stays invisible
   const vf = `${TO_YUV},format=yuv420p,noise=c0s=${GRAIN}:c0f=u`;
   mkdirSync(join(REPO, "site/media"), { recursive: true });
   mkdirSync(join(REPO, "docs/media"), { recursive: true });
@@ -206,7 +185,6 @@ async function loop(): Promise<void> {
   console.log(`loop ${LOOP_MP4} ${mb(LOOP_MP4)}\nposter ${LOOP_JPG} ${mb(LOOP_JPG)}\ngif ${LOOP_GIF} ${mb(LOOP_GIF)}`);
 }
 
-/** README GIF: the brief's 880 px / 15 fps first; while over 5 MB, 12 fps, then a 128-colour palette, then 800 px. */
 async function gif(src: string): Promise<void> {
   const tries = [[15, 880, 256, 3], [12, 880, 256, 3], [12, 880, 128, 4], [12, 800, 128, 4]] as const;
   for (const [fps, width, colors, bayer] of tries) {
@@ -252,9 +230,6 @@ async function check(): Promise<void> {
   console.log(await run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,profile,width,height,r_frame_rate,pix_fmt,nb_frames,color_space:format=duration,size", "-of", "compact", FILM_MP4]));
   for (const f of [FILM_MP4, FILM_JPG, LOOP_MP4, LOOP_JPG, LOOP_GIF]) console.log(f.replace(REPO + "/", ""), existsSync(f) ? mb(f) : "MISSING");
   console.log(await run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height,r_frame_rate,nb_frames:format=duration", "-of", "compact", LOOP_MP4]));
-  // the loop's seam: path frame 0 against path frame 192 (t = 6.4 s, one past the last), both rendered
-  // fresh; in the rotated file that wrap is between output frames n - s - 1 and n - s. Then the file's
-  // frame 0 against a fresh render of the start, to prove the rotation is the one asked for.
   const lossless = join(RENDERS, "loop-lossless.mkv");
   if (existsSync(lossless)) {
     const n = Math.round(LOOP_LEN * LOOP_FPS), sh = loopShift();
@@ -269,7 +244,6 @@ async function check(): Promise<void> {
     console.log(`seam PSNR path frame 0 vs ${n} (output frames ${n - sh - 1}|${n - sh}):`, await psnr(p0, p192));
     console.log(`start: output frame 0 = path frame ${sh} (${(sh / LOOP_FPS).toFixed(2)} s), PSNR vs fresh render:`, await psnr(out0, start));
   }
-  // duplicate frames in the grain-free render (camera moves must never hold a frame)
   const fl = join(RENDERS, "film-lossless.mkv");
   if (existsSync(fl)) {
     const md = await run(["ffmpeg", "-hide_banner", "-i", fl, "-f", "framemd5", "-"]);

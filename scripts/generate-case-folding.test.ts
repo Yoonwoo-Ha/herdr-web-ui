@@ -3,7 +3,6 @@ import { describe, expect, it } from "bun:test";
 import { caseFoldingEntries, UNICODE_VERSION } from "./generate-case-folding.ts";
 import { confusableEntries, CONFUSABLES_VERSION } from "./generate-confusables.ts";
 
-// a file with the pinned file's header and enough entries of the right shape, but other bytes (#2233)
 const lines = (count: number, line: (index: number) => string) => Array.from({ length: count }, (_, index) => line(index)).join("\n");
 const hex = (code: number) => code.toString(16).toUpperCase().padStart(4, "0");
 

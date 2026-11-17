@@ -1,11 +1,5 @@
 #!/usr/bin/env bun
 /**
- * Generate src/lib/confusables.generated.ts: the letters, marks and digits Unicode's confusables.txt (UTS #39,
- * for the Unicode version generate-case-folding.ts pins) draws like one ASCII letter or digit, Cyrillic `о` and
- * Greek `ο` like `o`, `0` like `O`. src/lib/promptAnswer.ts puts them in an option name's skeleton, so two rows
- * that look alike across scripts name neither (#2233). Only that subset: a confusion between two non-Latin
- * letters, or one drawn like several letters (`m` and `rn`), is not in the table.
- *
  *   bun run scripts/generate-confusables.ts                   # download the pinned confusables.txt, write the table
  *   bun run scripts/generate-confusables.ts --source <file>   # read a local copy of that file instead
  *   bun run scripts/generate-confusables.ts --check           # fail if the committed table is stale; never writes
@@ -17,14 +11,12 @@ import { join } from "node:path";
 import { pinnedText, sourceBytes, UNICODE_VERSION, writeOrCheck } from "./generate-case-folding.ts";
 
 export const CONFUSABLES_VERSION = UNICODE_VERSION;
-/** SHA-256 of the reviewed confusables.txt of CONFUSABLES_VERSION: a download or `--source` file with other bytes is refused */
 const SOURCE_SHA256 = "091c7f82fc39ef208faf8f94d29c244de99254675e09de163160c810d13ef22a";
 const SOURCE_URL = `https://www.unicode.org/Public/${CONFUSABLES_VERSION}/security/confusables.txt`;
 const OUTPUT = join(import.meta.dir, "..", "src", "lib", "confusables.generated.ts");
 
 const char = (hex: string): string => String.fromCodePoint(...hex.trim().split(/\s+/).map((code) => parseInt(code, 16)));
 
-/** `<code point>=<ASCII letter or digit>` entries, hex, from the pinned confusables.txt; throws on any other file */
 export function confusableEntries(bytes: Uint8Array): string[] {
   const text = pinnedText(bytes, SOURCE_SHA256, "confusables.txt");
   const version = /^# Version: (\d+\.\d+\.\d+)$/m.exec(text)?.[1];

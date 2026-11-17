@@ -1,8 +1,4 @@
-/**
- * Real xterm + real herdr; only delays outgoing ACKs to exercise a suspended consumer, and fakes
- * the page's visibility to put it away and bring it back.
- */
-import "./test-herdr.ts"; // a herdr session of its own: nothing shows in the user's
+import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -78,7 +74,7 @@ try {
   mkdirSync(".omo/evidence/output-flow", { recursive: true });
   await page.screenshot({ path: ".omo/evidence/output-flow/stopped.png" });
   await page.setViewportSize({ width: 390, height: 844 });
-  await Bun.sleep(350); // finish the sidebar's responsive transition before visual QA
+  await Bun.sleep(350);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.screenshot({ path: ".omo/evidence/output-flow/stopped-mobile.png" });
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -95,8 +91,6 @@ try {
   await until(() => (acks.get(paneA) ?? 0) > previousAcks, "reopened pane ACK");
   assert.equal(await page.getByText("Terminal output stopped because this device could not keep up.", { exact: false }).count(), 0);
 
-  // put away with the pane still attached (desktop, release-when-away off): the stop belongs to the
-  // frozen page, so showing it again attaches again in place, with no click
   await page.evaluate(() => {
     (window as unknown as { fakeHidden: boolean; holdAcks: boolean }).fakeHidden = true;
     (window as unknown as { holdAcks: boolean }).holdAcks = true;

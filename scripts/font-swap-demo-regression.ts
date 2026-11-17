@@ -8,12 +8,6 @@ import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
-// The late arrival of the app's faces (src/fonts/fonts.css, font-display: swap), on the unmodified
-// app over the demo's fixture transport: the font files are held back here as a slow link holds
-// them, so the conversation is first drawn in this machine's fallback and rewraps when a face
-// comes. Each case holds them until it has measured that first drawing and then lets them go, so
-// no clock decides which drawing was measured. All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session
-// is opened.
 const repo = join(import.meta.dir, "..");
 const app = mkdtempSync(join(tmpdir(), "herdr-font-swap-demo-"));
 
@@ -55,10 +49,8 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
-      /** A phone on a slow link: every font file is held until `release`. `stall` names files that never come at all. */
       const open = async (stall: RegExp | null, height = 844, width = 390): Promise<{ page: Page; errors: string[]; held: () => number; release: () => void; close: () => Promise<void> }> => {
         const context = await browser.newContext({ viewport: { width, height }, locale: "en-US", hasTouch: true, isMobile: true });
-        // the monospace fallback is also the Interface font: the app writes --font-ui on <html> from it (lib/typography.ts)
         await context.addInitScript(() => {
           localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
           localStorage.setItem("ovis:ui-font", JSON.stringify('"Pretendard Variable", monospace'));
@@ -100,7 +92,6 @@ try {
       };
 
       {
-        // a short window: a conversation that fits its window has no end to be kept at
         const { page, errors, held, release, close } = await open(null, 480);
         try {
           assert.ok(held() > 0, "the first drawing asked for a face");
@@ -151,7 +142,6 @@ try {
       }
 
       {
-        // a short window, so that the top of this conversation is well away from its end
         const { page, errors, release, close } = await open(null, 480);
         try {
           await page.evaluate(() => { document.querySelector(".chat-view")!.scrollTop = 0; });
@@ -169,9 +159,6 @@ try {
         } finally { await close(); }
       }
 
-      // the tab strip: a workspace given more tabs than a touch screen's strip shows (a tablet's: a
-      // phone's title lists the tabs instead). The reader scrolls to the last one and opens it, all
-      // in the first drawing; `scrolled` is what they do next.
       const labels = ["second", "a long tab name for review", "deploy", "release notes draft", "perf investigation", "docs"];
       for (const scrolled of [false, true]) {
         const { page, errors, release, close } = await open(null, 900, 700);
@@ -190,7 +177,6 @@ try {
           });
           const tabs = strip.locator('[role="tab"]');
           await tabs.nth(labels.length).waitFor();
-          // a scroll the strip did not make, as each one below: the app sees only the scroll event
           await strip.evaluate((node) => { node.scrollLeft = node.scrollWidth; });
           await frames(page);
           await tabs.nth(labels.length).tap();

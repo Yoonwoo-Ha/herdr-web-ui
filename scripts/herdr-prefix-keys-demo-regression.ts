@@ -1,4 +1,3 @@
-/** herdr's prefix keys (Settings → Shortcuts, off by default) on the real client against fictional demo panes. */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,7 +11,6 @@ const screenshotDir = process.env.HERDR_KEYS_SCREENSHOT_DIR;
 if (screenshotDir) mkdirSync(screenshotDir, { recursive: true });
 const app = mkdtempSync(join(tmpdir(), "herdr-prefix-keys-demo-"));
 
-/** Two frames after a key: whatever it was going to open has rendered by then. */
 async function settled(page: Page): Promise<void> {
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
@@ -58,7 +56,6 @@ try {
         await page.locator(".conn-live").waitFor();
         const dialog = page.locator(".settings-dialog");
 
-        // off by default: Ctrl+B and its key stay the terminal's
         await focusTerminal(page);
         await page.keyboard.press("Control+KeyB");
         await page.keyboard.press("KeyS");
@@ -66,10 +63,8 @@ try {
         assert.equal(await dialog.count(), 0, "off: the prefix runs nothing");
         assert.equal(await waiting(page).count(), 0, "off: the header says nothing");
 
-        // turned on: the Settings row lists the bindings read from this PC's herdr config
         await page.keyboard.press("Control+Shift+Comma");
         await openSettingsPage(page, "Shortcuts");
-        // the opt-in sits under More settings
         await openSettingsFolds(page);
         const toggle = page.getByRole("switch", { name: "Use herdr's prefix keys", exact: true });
         assert.equal(await toggle.getAttribute("aria-checked"), "false");
@@ -87,7 +82,6 @@ try {
         await page.getByRole("button", { name: "Close settings", exact: true }).click();
         await dialog.waitFor({ state: "detached" });
 
-        // the prefix waits for its key, said in the header; Escape leaves it
         await focusTerminal(page);
         await page.keyboard.press("Control+KeyB");
         await waiting(page).waitFor();
@@ -98,7 +92,6 @@ try {
         await settled(page);
         assert.equal(await dialog.count(), 0, "after Escape a key is the terminal's again");
 
-        // prefix, then a bound key: s opens Settings, ? the palette
         await page.keyboard.press("Control+KeyB");
         await page.keyboard.press("KeyS");
         await dialog.waitFor();
@@ -112,7 +105,6 @@ try {
         await page.keyboard.press("Escape");
         await palette.waitFor({ state: "detached" });
 
-        // armed, the app's own shortcut stays the app's: the palette opens, the prefix is left
         await focusTerminal(page);
         await page.keyboard.press("Control+KeyB");
         await waiting(page).waitFor();
@@ -122,7 +114,6 @@ try {
         await page.keyboard.press("Escape");
         await palette.waitFor({ state: "detached" });
 
-        // c opens a terminal tab at once; 1 goes back to the first tab in the strip
         await focusTerminal(page);
         const tabs = page.locator(".tab-strip-item");
         const before = await tabs.count();
@@ -137,7 +128,6 @@ try {
         await page.waitForFunction(() => document.querySelector(".tab-strip-item.is-active") === document.querySelectorAll(".tab-strip-item")[0]);
         assert.equal(await active(), 0);
 
-        // a field keeps its keys: Ctrl+B in the chat's message box arms nothing
         await page.goto(`${origin}?pane=${encodeURIComponent(panes.api)}&view=chat`);
         await page.locator(".conn-live").waitFor();
         const box = page.locator(".pane-frame.is-current .composer-text");
@@ -152,7 +142,6 @@ try {
         assert.deepEqual(errors, []);
       } finally { await context.close(); }
 
-      // the Settings rows, at a desk's and a phone's width, light and dark
       if (screenshotDir) {
         for (const theme of ["light", "dark"] as const) {
           for (const width of [1280, 390]) {
@@ -162,7 +151,6 @@ try {
                 localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", alertsOn: false, theme, herdrPrefixKeys: true }));
               }, theme);
               const page = await shot.newPage();
-              // a link to the group opens the More settings fold it sits in
               await page.goto(`${origin}?pane=${encodeURIComponent(panes.api)}&view=terminal&settings=shortcuts&section=herdr-keys`);
               await page.locator(".settings-dialog").waitFor();
               const section = page.locator('[data-section="herdr-keys"]');
