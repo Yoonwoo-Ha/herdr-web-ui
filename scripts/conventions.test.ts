@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, sep } from "node:path";
+import { dirname, join, posix, sep } from "node:path";
 import { fixedSleepCounts, fixedSleeps, sleepFiles } from "./fixed-sleeps.ts";
 import { fail, files, lineOf, read, repo, stripComments } from "./source-scan.ts";
 
@@ -14,23 +14,28 @@ const SOURCES = [...files("{src,server,shared,scripts,site,telemetry,integration
 /** Module specifiers of static imports and re-exports, side-effect imports and `import("…")` with a literal. */
 const SPECIFIER = /(?:^|[\s;])(?:import|export)\s[^;]*?\sfrom\s*["']([^"']+)["']|(?:^|[\s;])import\s*["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/gm;
 
+/** Every module specifier in the code, with the line it is written on (a match may start on the line before). */
+const specifiersIn = (code: string): { specifier: string; line: number }[] =>
+  [...code.matchAll(SPECIFIER)].map((match) => {
+    const specifier = match[1] ?? match[2] ?? match[3]!;
+    return { specifier, line: lineOf(code, match.index + match[0].lastIndexOf(specifier)) };
+  });
+
+/** Every module specifier in a file's code (comments removed), and where it is written. */
+const specifiers = (file: string): { specifier: string; at: string }[] =>
+  specifiersIn(stripComments(read(file))).map(({ specifier, line }) => ({ specifier, at: `${file}:${line}: ${specifier}` }));
+
 describe("imports", () => {
   it("name relative modules with their extension and never use the @shared alias", () => {
-    const offenders = SOURCES.flatMap((file) => {
-      const code = stripComments(read(file));
-      return [...code.matchAll(SPECIFIER)].flatMap((match) => {
-        const specifier = match[1] ?? match[2] ?? match[3]!;
-        const bad = specifier.startsWith("@shared/") || (specifier.startsWith(".") && !/\.(?:ts|tsx|mjs|js|css|json|md|svg|png|woff2|html|txt|sh)(?:\?[\w&=-]*)?$/.test(specifier));
-        return bad ? [`${file}:${lineOf(code, match.index)}: ${specifier}`] : [];
-      });
-    });
+    const offenders = SOURCES.flatMap((file) => specifiers(file)
+      .filter(({ specifier }) => specifier.startsWith("@shared/") || (specifier.startsWith(".") && !/\.(?:ts|tsx|mjs|js|css|json|md|svg|png|woff2|html|txt|sh)(?:\?[\w&=-]*)?$/.test(specifier)))
+      .map(({ at }) => at));
     fail(offenders, "Imports carry explicit .ts/.tsx extensions and relative paths (AGENTS.md, Code conventions): write \"./x.ts\" or \"../shared/x.ts\", never \"./x\" or \"@shared/x\".");
   });
 
-  it("finds the specifiers", () => {
-    const found = (code: string) => [...code.matchAll(SPECIFIER)].map((match) => match[1] ?? match[2] ?? match[3]);
-    expect(found("import { a } from \"./a.ts\";\nimport type {\n  B,\n} from '../b';\nimport \"./side.css\";\nconst c = await import(\"./c.tsx\");\nexport * from \"./d.ts\";"))
-      .toEqual(["./a.ts", "../b", "./side.css", "./c.tsx", "./d.ts"]);
+  it("finds the specifiers and the line each is on", () => {
+    expect(specifiersIn("import { a } from \"./a.ts\";\nimport type {\n  B,\n} from '../b';\nimport \"./side.css\";\nconst c = await import(\"./c.tsx\");\nexport * from \"./d.ts\";"))
+      .toEqual([{ specifier: "./a.ts", line: 1 }, { specifier: "../b", line: 4 }, { specifier: "./side.css", line: 5 }, { specifier: "./c.tsx", line: 6 }, { specifier: "./d.ts", line: 7 }]);
   });
 });
 
@@ -38,14 +43,42 @@ describe("the frontend build", () => {
   const BUILD_SCRIPTS = ["vite.config.ts", "scripts/build-xterm.ts", "scripts/compressed-assets.ts", "scripts/service-worker-build.ts", "scripts/theme-bootstrap-build.ts", "scripts/shell-build.ts", "scripts/build-cache.ts"];
 
   it("imports nothing from server/ or relay/", () => {
-    const offenders = BUILD_SCRIPTS.flatMap((file) => {
-      const code = stripComments(read(file));
-      return [...code.matchAll(SPECIFIER)].flatMap((match) => {
-        const specifier = match[1] ?? match[2] ?? match[3]!;
-        return /(?:^|\/)(?:server|relay)\//.test(specifier) ? [`${file}:${lineOf(code, match.index)}: ${specifier}`] : [];
-      });
-    });
+    const offenders = BUILD_SCRIPTS.flatMap((file) => specifiers(file).filter(({ specifier }) => /(?:^|\/)(?:server|relay)\//.test(specifier)).map(({ at }) => at));
     fail(offenders, "The frontend build scripts import nothing from server/ or relay/ (they would load the server's environment): put what both need in shared/ (shared/web-policy.ts) and import it from there.");
+  });
+});
+
+describe("what the browser loads", () => {
+  // src/ and site/ are bundled for the browser, and shared/ is loaded there and by the server both.
+  // An import that leads out of them (server/, relay/, scripts/, app/ …) puts code written for Bun
+  // or Node into that bundle, where the environment it reads is not there. Each directory names the
+  // others it may import from; tests are left out, since a contract test reads both ends.
+  const MAY_IMPORT: Readonly<Record<string, readonly string[]>> = { src: ["shared"], site: ["src", "shared"], shared: [] };
+  /** The top-level directory, or the file at the root, that a relative specifier written in `file` leads to. */
+  const leadsTo = (file: string, specifier: string): string => posix.normalize(posix.join(posix.dirname(file), specifier)).replace(/\/.*$/, "");
+  /** Every import in those directories' code that leaves its own directory. */
+  const crossings = Object.keys(MAY_IMPORT).flatMap((own) =>
+    files(`${own}/**/*.{ts,tsx,mjs,js}`).filter((file) => !/\.test\./.test(file)).flatMap((file) =>
+      specifiers(file).filter(({ specifier }) => specifier.startsWith(".")).map(({ specifier, at }) => ({ own, to: leadsTo(file, specifier), at })))
+      .filter(({ to }) => to !== own));
+
+  it("imports only from its own directory and the ones it may", () => {
+    fail(crossings.filter(({ own, to }) => !MAY_IMPORT[own]?.includes(to)).map(({ at }) => at),
+      "Code the browser loads imports only from the browser's side: src/ from src/ and shared/, site/ from site/, src/ and shared/, and shared/ from shared/ alone, since the server loads it too. Move what both sides need into shared/ (as shared/web-policy.ts and shared/markdown.ts were) and import it from there; a type that describes the wire goes in shared/protocol.ts.");
+  });
+
+  it("lists no import that nothing makes any more", () => {
+    const made = new Set(crossings.map(({ own, to }) => `${own}/ from ${to}/`));
+    fail(Object.entries(MAY_IMPORT).flatMap(([own, others]) => others.map((to) => `${own}/ from ${to}/`)).filter((allowed) => !made.has(allowed)),
+      "MAY_IMPORT in scripts/conventions.test.ts allows these imports, and no code makes them any more: take them out.");
+  });
+
+  it("knows the directory an import leads to", () => {
+    expect(leadsTo("src/lib/api.ts", "../../shared/protocol.ts")).toBe("shared");
+    expect(leadsTo("src/lib/api.ts", "../../server/http.ts")).toBe("server");
+    expect(leadsTo("src/server/list.ts", "./server/row.ts")).toBe("src");
+    expect(leadsTo("site/demo/transport.ts", "../../src/lib/phone.ts")).toBe("src");
+    expect(leadsTo("shared/web-policy.ts", "../package.json")).toBe("package.json");
   });
 });
 
