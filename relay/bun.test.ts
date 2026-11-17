@@ -11,7 +11,6 @@ let relay: BunRelay;
 let base: string;
 let http: string;
 beforeAll(() => {
-  // This suite deliberately opens more than a minute's default budget in one run.
   relay = startBunRelay({ port: 0, limits: { perAddressPerMinute: 10_000, globalPerMinute: 10_000 } });
   base = `ws://127.0.0.1:${relay.port}`;
   http = `http://127.0.0.1:${relay.port}`;
@@ -45,7 +44,6 @@ describe("relay over HTTP", () => {
       [`/v1/ws?server_id=${id}&v=1`, 400],
       [`/v1/ws?server_id=${id}&role=client&connection_id=${id}&v=1`, 400],
       [`/v1/ws?server_id=${id}&role=server&connection_id=xyz&v=1`, 400],
-      // a valid request that is not a WebSocket upgrade
       [`/v1/ws?server_id=${id}&role=server&v=1`, 426],
     ];
     for (const [path, status] of cases) expect([path, (await fetch(`${http}${path}`)).status]).toEqual([path, status]);
@@ -74,7 +72,6 @@ describe("relay over HTTP", () => {
       const refused = await fetch(url.replace("ws://", "http://"), upgrade);
       expect(refused.status).toBe(429);
       expect(refused.headers.get("retry-after")).toBe("60");
-      // one address over its limit never uses up the cap every address shares
       expect(asked).toEqual(["address:127.0.0.1"]);
 
       perAddress.allow = true;
@@ -119,7 +116,6 @@ describe("relay sockets", () => {
     expect(await control.next("pong")).toBe(KEEPALIVE_PONG);
     client.socket.send(KEEPALIVE_PING);
     expect(await client.next("pong")).toBe(KEEPALIVE_PONG);
-    // the next frame the data socket sees is the one after the ping
     client.socket.send("after");
     expect(await data.next()).toBe("after");
   });
@@ -134,7 +130,6 @@ describe("relay sockets", () => {
     await control.json("connected");
     const sent = Array.from({ length: BUFFER_FRAMES }, (_, index) => index % 2 ? randomBytes(1 + index) : `frame ${index}`);
     for (const frame of sent) client.socket.send(frame);
-    // a ping round trip after them: the relay has taken every frame before the data socket asks
     client.socket.send(KEEPALIVE_PING);
     expect(await client.next("pong")).toBe(KEEPALIVE_PONG);
     const data = await openServer(urls.data(connection_id), id, connection_id);
@@ -156,7 +151,6 @@ describe("relay sockets", () => {
 
     const big = await Peer.open(urls.client);
     await big.json("assigned");
-    // 17 frames of 60 KiB fit in 1 MiB, the 18th does not
     for (let index = 0; index < 18; index++) big.socket.send(randomBytes(60 * 1024));
     expect(await big.closeCode("too many bytes")).toBe(CLOSE.TRY_AGAIN);
   });
@@ -173,7 +167,6 @@ describe("relay sockets", () => {
     const second = await openServer(urls.control, id);
     expect(await first.closeCode("replaced control")).toBe(CLOSE.POLICY);
     expect(await second.json("sync")).toEqual({ type: "sync", connection_ids: [connection_id], warm: expect.stringMatching(/^[0-9a-f]{32}$/) });
-    // the pair already attached keeps working without its control socket
     paired.client.socket.send("still");
     expect(await paired.data.next()).toBe("still");
   });
@@ -227,7 +220,6 @@ describe("relay sockets", () => {
     for (let index = 0; index < MAX_CLIENTS; index++) await establish(await openPair(base, id, control));
     const ninth = await Peer.open(urls.client);
     expect(await ninth.closeCode("9th client")).toBe(CLOSE.TRY_AGAIN);
-    // another server_id is not affected
     const other = await openPair(base, newServer());
     expect(other.connectionId).toMatch(/^[0-9a-f]{32}$/);
   });
@@ -247,7 +239,6 @@ describe("relay admission over real sockets", () => {
     const live = await openServer(urls.control, pc);
     await live.json("sync");
     const other = newServer();
-    // no proof; another key; the right public key with a wrong answer; a replayed answer; not JSON
     const bare = await Peer.open(`${base}/v1/ws?server_id=${pc.serverId}&role=server&v=1`);
     expect(await bare.closeCode("no proof")).toBe(SERVER_PROOF_CLOSE);
     const wrongKey = await Peer.open(urls.control.replace(pc.publicKey, other.publicKey));
@@ -259,7 +250,6 @@ describe("relay admission over real sockets", () => {
     await garbage.next("challenge");
     garbage.socket.send(new Uint8Array([0, 255]));
     expect(await garbage.closeCode("binary answer")).toBe(SERVER_PROOF_CLOSE);
-    // the live PC was never replaced and still hears its clients
     live.socket.send(KEEPALIVE_PING);
     expect(await live.next("pong")).toBe(KEEPALIVE_PONG);
     const pair = await openPair(base, pc, live);
@@ -296,12 +286,10 @@ describe("relay admission over real sockets", () => {
     expect(await pairs[0]!.data.closeCode("its data socket")).toBe(CLOSE.GOING_AWAY);
     expect(await control.json("disconnected")).toEqual({ type: "disconnected", connection_id: pairs[0]!.connectionId });
     expect(await control.json("connected")).toEqual({ type: "connected", connection_id });
-    // the newcomer is served
     const data = await openServer(urls.data(connection_id), pc, connection_id);
     await establish({ client: phone, data });
   });
 });
-
 
 describe("relay pass on the Bun relay", () => {
   test("enforced from flags: a PC socket without a pass closes 4402, one with its pass is let in and told so", async () => {
@@ -337,7 +325,6 @@ describe("relay pass on the Bun relay", () => {
       for (let index = 0; index < 2; index++) opened.push(await Peer.open(phones.client));
       const upgrade = { headers: { upgrade: "websocket", connection: "Upgrade", "sec-websocket-version": "13", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==" } };
       expect((await fetch(phones.client.replace("ws://", "http://"), upgrade)).status).toBe(429);
-      // as many PCs as the address's budget of pass checks, each on a budget of its own
       for (let index = 0; index < 2; index++) {
         const server = newServer();
         const token = await signRelayPass(pair.privateKey, "0badc0de", server.serverId, Math.floor(Date.now() / 1000));
@@ -366,7 +353,6 @@ describe("relay pass on the Bun relay", () => {
       const withPass = (key: string, header: string) => new Peer(new WebSocket(pairUrl(key), { headers: { [RELAY_PASS_HEADER]: header } } as unknown as string[]));
       expect(await (await Peer.open(pairUrl("role=host"))).closed).toEqual({ code: 4402, reason: "relay pass required" });
       expect(await (await Peer.open(pairUrl(keyed))).closed).toEqual({ code: 4402, reason: "relay pass required" });
-      // a pass alone, for a key the host does not offer, opens nothing
       expect(await withPass("role=host", token).closed).toEqual({ code: 4402, reason: "relay pass required" });
       const other = newServer();
       expect(await withPass(`role=host&server_id=${other.serverId}&public_key=${other.publicKey}`, token).closed).toEqual({ code: 4402, reason: "relay pass invalid" });

@@ -6,10 +6,8 @@ export const DEFAULT_RELAY_LIMITS = {
   globalPerMinute: 600,
   maxSockets: 1024,
   maxRooms: 256,
-  /** pairing rooms (pair-room.ts), counted apart so typed codes never take a PC's place */
   maxPairRooms: 256,
   maxAddresses: 4096,
-  /** open sockets (waiting, connected or still upgrading) one address may hold at once */
   maxSocketsPerAddress: 64,
 } as const;
 
@@ -23,7 +21,6 @@ export function relayLimits(overrides: Partial<BunRelayLimits> = {}): BunRelayLi
   return limits;
 }
 
-/** CLI flags override environment; invalid or missing values fail closed at startup. */
 export function relayLimitsFromArgs(args: readonly string[], env: Readonly<Record<string, string | undefined>>): BunRelayLimits {
   const value = (flag: string, variable: string, fallback: number) => {
     const index = args.indexOf(`--${flag}`);
@@ -42,7 +39,6 @@ export function relayLimitsFromArgs(args: readonly string[], env: Readonly<Recor
   });
 }
 
-/** The relay pass settings (pass.ts) from `--pass-mode`, `--pass-enforce-at`, `--pass-keys` and `--pass-revoked`, else the environment. */
 export function relayPassFromArgs(args: readonly string[], env: Readonly<Record<string, string | undefined>>): PassSettings {
   const value = (flag: string, variable: keyof PassSettings) => {
     const index = args.indexOf(`--${flag}`);
@@ -57,7 +53,6 @@ export function relayPassFromArgs(args: readonly string[], env: Readonly<Record<
   };
 }
 
-/** Token buckets refill continuously; full idle buckets are forgotten, active ones never evicted. */
 export function memoryLimiters(limits: BunRelayLimits, now: () => number = Date.now): Limiters {
   const bucket = (capacity: number, maxKeys: number): RateLimiter => {
     const entries = new Map<string, { tokens: number; at: number }>();
@@ -79,7 +74,6 @@ export function memoryLimiters(limits: BunRelayLimits, now: () => number = Date.
   return {
     perAddress: bucket(limits.perAddressPerMinute, limits.maxAddresses),
     global: bucket(limits.globalPerMinute, 1),
-    // once its address's budget is spent, a PC whose relay pass holds gets one of its own (core.ts Limiters.perPc)
     perPc: bucket(limits.perAddressPerMinute, limits.maxAddresses),
     passChecks: bucket(limits.perAddressPerMinute, limits.maxAddresses),
   };

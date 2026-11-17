@@ -15,7 +15,6 @@ afterEach(async () => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-/** pi's event bus (core/event-bus.js): a node EventEmitter behind on/emit. */
 function bus(): PiEventBus & { emitted: { channel: string; data: unknown }[] } {
   const emitter = new EventEmitter();
   const emitted: { channel: string; data: unknown }[] = [];
@@ -118,7 +117,6 @@ describe("pi-ask bridge extension", () => {
     const bridge = createPiAskBridge({ events, socketPath: path, pid: 4242 });
     bridges.push(bridge);
     await bridge.start({ hasUI: true, sessionManager: { getSessionFile: () => file } });
-    // pi-ask reopened the call's form: same flowId, a later createdAt
     events.emit(PI_ASK_EVENTS.started, { ...started, createdAt: 2 });
 
     expect((await submit(path, { flowId: "tool:call-1", createdAt: 1, sessionFile: file, response: { kind: "cancel" } })).body).toMatchObject({ ok: false, error: "flow_not_found" });
@@ -148,7 +146,6 @@ describe("pi-ask bridge extension", () => {
   it("reports the ask_user calls open on pi's live branch, which a /tree move changes", async () => {
     if (!posix) return;
     const path = socketPath();
-    // the recorded session: the call, then pi-ask's dismissal once answered
     const entries = fixture.transcript.slice(1);
     let leaf = 2;
     const bridge = createPiAskBridge({ events: bus(), socketPath: path, pid: 4242 });
@@ -158,7 +155,6 @@ describe("pi-ask bridge extension", () => {
     expect((await state(path)).openCalls).toEqual(["toolu_feat1202ask"]);
     leaf = entries.length - 1;
     expect((await state(path)).openCalls).toEqual([]);
-    // back before the dismissal, as /tree does without writing to the file
     leaf = 2;
     expect((await state(path)).openCalls).toEqual(["toolu_feat1202ask"]);
   });
@@ -229,7 +225,6 @@ describe("pi-ask bridge extension", () => {
     commands = () => { throw new Error("Extension runtime not initialized"); };
     expect((await listed(path)).commands).toBeNull();
 
-    // a pi without getCommands
     const older = socketPath();
     const bare = createPiAskBridge({ events: bus(), socketPath: older, pid: 4242 });
     bridges.push(bare);

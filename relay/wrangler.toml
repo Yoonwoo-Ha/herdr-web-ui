@@ -1,7 +1,6 @@
 name = "ovis-relay"
 main = "worker.ts"
 compatibility_date = "2026-10-01"
-# PCs and apps dial relay.ovis.sh (the ovis.sh zone must be on the deploying account): no second address.
 workers_dev = false
 routes = [{ pattern = "relay.ovis.sh", custom_domain = true }]
 
@@ -9,14 +8,10 @@ routes = [{ pattern = "relay.ovis.sh", custom_domain = true }]
 [observability]
 enabled = false
 
-# One Durable Object per server_id holds that PC's sockets (worker.ts RelayRoom). It keeps them in
-# memory and in each socket's attachment only; its SQLite storage stays empty.
 [[durable_objects.bindings]]
 name = "RELAY"
 class_name = "RelayRoom"
 
-# Usage counters (worker.ts usagePoint): per PC, bytes each way, time connected and sessions; no
-# frame, address or connection_id. Analytics Engine keeps each data point three months.
 [[analytics_engine_datasets]]
 binding = "USAGE"
 dataset = "ovis_relay_usage"
@@ -25,8 +20,7 @@ dataset = "ovis_relay_usage"
 tag = "v1"
 new_sqlite_classes = ["RelayRoom"]
 
-# Socket connections per address and minute, per Cloudflare location, before any Durable Object
-# wakes (README.md). namespace_id is any integer unique to the account (push-relay has 1695, 1696).
+# namespace_id is any integer unique to the account (push-relay has 1695, 1696).
 [[ratelimits]]
 name = "RELAY_LIMITER"
 namespace_id = "1697"
@@ -35,8 +29,6 @@ namespace_id = "1697"
   limit = 30
   period = 60
 
-# The backstop: connections per minute from all addresses together, per Cloudflare location.
-# Asked only after an address's own limit lets a connection through.
 [[ratelimits]]
 name = "RELAY_GLOBAL_LIMITER"
 namespace_id = "1698"
@@ -45,9 +37,6 @@ namespace_id = "1698"
   limit = 600
   period = 60
 
-# While passes are on, a PC whose relay pass holds gets this budget of its own, keyed by its
-# server_id, once its address's 30 a minute are spent: PCs behind one address (an office's NAT) are
-# not held to that address's budget.
 [[ratelimits]]
 name = "RELAY_PC_LIMITER"
 namespace_id = "1703"
@@ -56,8 +45,6 @@ namespace_id = "1703"
   limit = 30
   period = 60
 
-# Passes an address past its own budget may have checked a minute (each also takes a place of the
-# backstop's): roughly what bounds the signature checks (about 150 us each) forged passes can cost.
 [[ratelimits]]
 name = "RELAY_PASS_CHECK_LIMITER"
 namespace_id = "1704"
@@ -66,16 +53,13 @@ namespace_id = "1704"
   limit = 30
   period = 60
 
-# A staging copy for end-to-end checks, deployed by hand with `--env staging` (README.md, "Staging").
-# It takes its workers.dev address only: an environment inherits the routes above unless it names
-# its own. No binding is inherited, so each is named again, with limiters and a usage dataset apart
-# from production's: nothing it carries counts toward relay.ovis.sh's limits or usage.
+# An environment inherits the routes above unless it names its own, and no binding is inherited,
+# so each is named again.
 [env.staging]
 name = "ovis-relay-staging"
 workers_dev = true
 routes = []
 
-# RELAY_PASS_KEYS, the staging account service's public key, is added before the first deploy.
 [env.staging.vars]
 RELAY_PASS_MODE = "enforce"
 

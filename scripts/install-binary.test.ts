@@ -72,8 +72,8 @@ function pc({ lockWait }: { lockWait?: number } = {}) {
   mkdirSync(home);
   mkdirSync(stand);
   const key = generateKeyPair();
-  const copy = lockWait === undefined ? testCopy(key.publicKey) : testCopy(key.publicKey).replace("\nINSTALL_LOCK_WAIT=600\n", `\nINSTALL_LOCK_WAIT=${lockWait}\n`);
-  if (lockWait !== undefined) expect(copy).toContain(`\nINSTALL_LOCK_WAIT=${lockWait}\n`);
+  const copy = lockWait === undefined ? testCopy(key.publicKey) : testCopy(key.publicKey).replace("\nINSTALL_LOCK_WAIT_SECONDS=600\n", `\nINSTALL_LOCK_WAIT_SECONDS=${lockWait}\n`);
+  if (lockWait !== undefined) expect(copy).toContain(`\nINSTALL_LOCK_WAIT_SECONDS=${lockWait}\n`);
   const argv = (call: string) => ["/bin/sh", "-c", `set -eu\nos=${PLATFORM.split("-")[0]}; arch=${PLATFORM.split("-")[1]}; platform=${PLATFORM}\n${copy}\n${call}`];
   const environment = (env: Record<string, string>) => ({ HOME: home, PATH: `${stand}:${process.env["PATH"]}`, OVIS_RELEASES_URL: `file://${releases}`, ...env });
   const run = (call: string, env: Record<string, string> = {}) => {

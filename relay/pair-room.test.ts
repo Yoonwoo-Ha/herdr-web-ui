@@ -16,7 +16,6 @@ beforeAll(() => {
 afterAll(() => relay.stop());
 
 let counter = 0;
-/** a nameplate no other test uses */
 const nameplate = () => { counter++; return `${"0123456789ABCDEFGHJKMNPQRSTVWXYZ"[counter >> 5]}${"0123456789ABCDEFGHJKMNPQRSTVWXYZ"[counter & 31]}Q`; };
 const open = (plate: string, role: "host" | "guest") => Peer.open(`${base}/v1/pair?nameplate=${plate}&role=${role}&v=1`);
 const hex = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -154,7 +153,6 @@ describe("a pairing host's PC key", () => {
     const plate = nameplate();
     const pc = newServer();
     const host = await hostOf(plate, pc);
-    // while it proves, no device finds the code and no other host takes it
     expect(await (await open(plate, "guest")).closeCode()).toBe(PAIR_CLOSE.NO_HOST);
     expect(await (await open(plate, "host")).closeCode()).toBe(PAIR_CLOSE.TAKEN);
     await answer(host, pc, { connection_id: plate });

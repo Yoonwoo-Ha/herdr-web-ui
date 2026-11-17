@@ -1,8 +1,3 @@
-// The links that let a tester join the phone app tests on the beta pages (/beta/, /zh/beta/,
-// /ja/beta/, /ko/beta/). The phone apps are on the App Store and Google Play, so their sections are
-// shown as shipped; each page ships its TestFlight line (upcoming iPhone builds) hidden, and this
-// shows it once its link is set below, so no tester meets a link that leads nowhere. scripts/ovis-site.test.ts checks each link's shape. It also runs the install commands'
-// Copy buttons and the language picker in the header.
 (() => {
   const BETA_LINKS = {
     // iPhone: the public link of the "Ovis Beta" TestFlight group,
@@ -23,7 +18,6 @@
 
   const COPIED = { "zh-CN": ["已复制", "复制失败"], ja: ["コピーしました", "コピーできませんでした"], ko: ["복사됨", "복사 실패"] };
   const [copied, failed] = COPIED[document.documentElement.lang] ?? ["Copied", "Copy failed"];
-  // the buttons' aria-labels hide their changed text from a screen reader, so the result is also said here
   const status = document.createElement("p");
   status.className = "visually-hidden";
   status.setAttribute("role", "status");
@@ -37,7 +31,6 @@
         await navigator.clipboard.writeText(button.dataset.copy);
         ok = true;
       } catch {
-        // no async clipboard (plain http, an older browser): copy from a hidden text field
         const field = document.createElement("textarea");
         field.value = button.dataset.copy;
         field.setAttribute("readonly", "");
@@ -50,7 +43,6 @@
       }
       button.textContent = status.textContent = ok ? copied : failed;
       clearTimeout(timer);
-      // emptied with the button, so the next copy is announced again
       timer = setTimeout(() => { button.textContent = label; status.textContent = ""; }, 2000);
     });
   }

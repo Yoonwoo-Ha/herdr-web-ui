@@ -3,28 +3,6 @@
 #
 #   curl -fsSL https://ovis.sh/install.sh | sh
 #
-# 1. Installs what is missing, for this user only and without sudo: herdr (its own installer, into
-#    ~/.local/bin), and the release's compiled server into ~/.local/share/ovis: ovis-server for this
-#    platform and the built client (ovis-dist.tar.gz), taken only once the release's ovis-server.json
-#    carries a valid signature by the key pinned below (RELEASE_PUBLIC_KEY) and each file has the size
-#    and SHA-256 it names, then made the one that runs by a single rename (install_binary). No Bun or
-#    Node is installed or needed. Terminals run on the release's Rust PTY host, checked against its
-#    SHA-256; where it cannot run, they are mirrored.
-# 2. Installs Ovis as a herdr plugin (a small plugin folder, ~/.local/share/ovis/plugin, that herdr
-#    links and that runs the binary), so it starts with herdr, and starts it now when herdr is running.
-#
-# A release from before the compiled server, a branch (OVIS_REF), an install from source that is
-# already here, or OVIS_FROM_SOURCE=1 keep the earlier way instead: Bun (its own installer, into
-# ~/.bun), herdr's plugin checkout built from source, which Settings → Updates keeps current, and Node
-# 22 (the official build, checked against its published SHA-256) only where the Rust PTY host cannot
-# be installed.
-# 3. When Tailscale runs on this PC, serves the app to your tailnet (`tailscale serve`, on the first
-#    free HTTPS port, or only the one OVIS_TAILSCALE_HTTPS_PORT names) and prints the address
-#    a phone opens as a QR code (scripts/plugin.ts phone).
-# 4. On a first install, mentions a GitHub star once. When the gh CLI is signed in and has not
-#    starred the repository, it asks at the terminal, for 20 seconds, and stars only on "y"; it
-#    never stars by itself.
-#
 # It also puts an `ovis` command into ~/.local/bin, which runs the installed Ovis's own command line
 # (scripts/plugin.ts): `ovis add` adds this PC to your Ovis account from its terminal, `ovis pair` shows
 # a pairing code, `ovis status` says whether the app runs. To end the install with `ovis add`:
@@ -33,12 +11,6 @@
 #
 # That step needs a terminal to sign in and answer at; without one the installer says what to run.
 #
-# On a PC with herdr-core (hc, the core the Herdr app runs on) and no herdr, steps 1 and 2 are instead:
-# the compiled server alone (from source: Bun, and Ovis in its own checkout, ~/.local/share/ovis/app),
-# started on herdr-core (OVIS_RUNTIME=herdr-core) as a user service that starts again at login
-# (systemd's on Linux, launchd's on macOS).
-#
-# Run it again at any time: what is already there is kept, and step 3 is repeated.
 #   OVIS_REF=<branch or tag>   install that ref instead of the latest release (a branch: from source)
 #   OVIS_RELEASES_URL=<https:// address or file:// folder>   where releases are downloaded from,
 #     laid out as GitHub's (<url>/v<version>/<file>); the pinned key checks the server, its client and the
@@ -51,40 +23,29 @@ set -eu
 
 REPO="devswha/ovis"
 PLUGIN="devswha.ovis"
-# the id before the rename: an install under it moves to PLUGIN, keeping its config
 LEGACY_PLUGIN="devswha.herdr-web-ui"
 BIN_DIR="$HOME/.local/bin"
 NODE_DIR="$HOME/.local/share/ovis/node"
-# where an install from before the rename put it
 LEGACY_NODE_DIR="$HOME/.local/share/herdr-web-ui/node"
-# Ovis on herdr-core: its checkout, and the user service that starts it at login
 APP_DIR="$HOME/.local/share/ovis/app"
 SERVICE="ovis"
 AGENT_LABEL="sh.ovis.server"
-# Official digests from nodejs.org/dist/v22.23.2/SHASUMS256.txt, as scripts/build-remote-bundle.ts pins them
 NODE_VERSION="v22.23.2"
-# the second line of the `ovis` launcher this installer writes: a file of that name without it is not ours
 LAUNCHER_MARK="# ovis launcher, written by install.sh"
 USAGE="usage: curl -fsSL https://ovis.sh/install.sh | sh -s -- [--add]"
-# The release's compiled server (install_binary): bin is a link to the release that runs, under releases/
 OVIS_HOME="$HOME/.local/share/ovis"
-# The public half of the key every release's ovis-server.json is signed with: scripts/server-manifest.ts
-# RELEASE_PUBLIC_KEY, which the release jobs check against too. Nothing else can stand in for it.
 RELEASE_PUBLIC_KEY="C8+dOD0gpFHoy008ZqHO89vXutaLqlt5uWyIh250OiY="
 # RFC 8032's Ed25519 test vector 2 (the message "r"): a signature checker is used only once it accepts this
 # and refuses the same signature over another message, so one that says yes to everything is never trusted
 VECTOR_KEY="PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw="
 VECTOR_SIG="kqAJqfDUyrhyDoILX2QlQKKye1QWUD+Ps3YiI+vbadoIWsHkPhWZbkWPNhPQ8R2MOHsurrQwKu6wDSkWErsMAA=="
-# seconds one install waits for another's lock on OVIS_HOME before it gives up (install_lock)
-INSTALL_LOCK_WAIT=600
+INSTALL_LOCK_WAIT_SECONDS=600
 
 say() { printf '%s\n' "Ovis: $*"; }
 
 # shellcheck disable=SC2016 # JavaScript, not shell
 plugin_root() { herdr plugin list --json | bun -e 'const d = JSON.parse(await Bun.stdin.text()); console.log(d.result.plugins.find((p) => p.plugin_id === process.argv[1])?.plugin_root ?? "")' "$1"; }
 
-# herdr keeps a plugin's config by its id: the old id's env files (the token among them) go to
-# the new id's dir unless it has its own, with their owner-only mode
 adopt_legacy_config() {
   old=$(herdr plugin config-dir "$LEGACY_PLUGIN" 2>/dev/null </dev/null) || return 0
   new=$(herdr plugin config-dir "$PLUGIN" 2>/dev/null </dev/null) || return 0
@@ -95,13 +56,10 @@ adopt_legacy_config() {
     cp -p "$old/$name" "$new/$name"
   done
 }
-# a clickable address in a terminal (OSC 8); $terminal is set once, since $(link …) runs in a pipe
 # shellcheck disable=SC1003 # the backslashes end OSC 8 escapes (ESC \\), no quote is escaped
 link() { if [ "$terminal" = 1 ]; then printf '\033]8;;%s\033\\%s\033]8;;\033\\' "$1" "$1"; else printf '%s' "$1"; fi; }
 fail() { printf '%s\n' "Ovis: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "needs '$1', which is not installed. Install it and run this again."; }
-# The highest vX.Y.Z tag, as the updater picks it: a new install gets what existing ones run,
-# never the commits merged to main since the last release.
 latest_release() {
   git ls-remote --tags --refs "https://github.com/$REPO.git" 'v*' 2>/dev/null |
     sed -n 's|.*refs/tags/\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' |
@@ -118,15 +76,12 @@ ref_plugin_id() {
   fi
   printf '%s' "$ref_id"
 }
-# at_least 1.4.0 1.10.2: is the second dotted version the first or newer
 at_least() {
   awk -v want="$1" -v have="$2" 'BEGIN { split(want, w, "."); split(have, h, ".");
     for (i = 1; i <= 3; i++) { if (h[i] + 0 > w[i] + 0) exit 0; if (h[i] + 0 < w[i] + 0) exit 1 } exit 0 }'
 }
 sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | awk '{ print $1 }'; }
 
-# gh api, given 10 seconds: a gh that does not answer must not hold up an install that is done.
-# The watcher looks once a second, so it is gone soon after gh is; a gh that ignores TERM is killed.
 gh_api() {
   gh api --hostname github.com "$@" </dev/null &
   gh_pid=$!
@@ -144,8 +99,6 @@ gh_api() {
   wait "$watch_pid" 2>/dev/null || true
   return "$gh_status"
 }
-# Whether the account the gh CLI is signed in to has starred the repository, by the status GitHub
-# answers with: yes (204), no (404), or unknown (no gh, no sign-in, no answer, or any other status).
 starred() {
   command -v gh >/dev/null 2>&1 || { echo unknown; return 0; }
   # into a file, not a pipe: a gh that left a child holding its output would hold a pipe's reader
@@ -167,15 +120,12 @@ starred() {
 offer_star() {
   [ "$terminal" = 1 ] && [ -z "${CI:-}" ] || return 0
   command -v bash >/dev/null 2>&1 || return 0
-  # perl is what checks the terminal is this install's to ask at, and empties what was typed before
   command -v perl >/dev/null 2>&1 || return 0
   (exec </dev/tty) 2>/dev/null || return 0
   # Only in the foreground: a background job that reached for the terminal would be stopped, with no
   # 20 seconds to end that. Then what was typed before the question is not an answer to it: it is
   # discarded, and when it cannot be, there is no question (tcflush is "0 but true", undef on failure).
   perl -MPOSIX -e 'exit 1 unless POSIX::tcgetpgrp(0) == POSIX::getpgrp(); POSIX::tcflush(0, POSIX::TCIFLUSH) or exit 1' </dev/tty >/dev/null 2>&1 || return 0
-  # the question and its answer go through the terminal itself, not stdout: under `curl | sh` stdin
-  # is the script, and a stdout sent elsewhere must not leave the question unseen where it is read
   # the install is done: leaving the question with Ctrl-C is an answer, not a failure. The trap
   # comes before the question: a Ctrl-C the moment it shows must not end the script with 130
   trap 'echo; exit 0' INT
@@ -194,9 +144,6 @@ offer_star() {
   fi
 }
 
-# After a first install, on a PC with a desktop: opens the app in the browser, which is where its
-# Install button is. Over SSH, or with no desktop, it says how to reach the app instead of opening
-# one nobody sees. Nothing here can fail the install, and nothing reads stdin.
 open_app() {
   [ "$new_install" = 1 ] || return 0
   if [ "${binary:-0}" = 1 ]; then
@@ -235,20 +182,6 @@ open_app() {
   fi
 }
 
-# The folder of the code that runs for the checkout $1 (bun -e "$(release_js)" <checkout>): the release
-# Settings → Updates installed for it, or the checkout itself. JavaScript, with no single quote in it,
-# since the launcher keeps it in one. It finds what scripts/plugin.ts finds, the same way:
-# - the settings: the shell's own, then the plugin's `env` and `.env` files (KEY=value lines, read and
-#   never run; `.env` wins, and a file wins over the shell), each with its names from before the rename
-#   (readEnvFile, mergeEnvLayers). The files are in HERDR_PLUGIN_CONFIG_DIR, else the folder herdr
-#   names for the plugin, else ~/.config/ovis;
-# - the state dir: OVIS_STATE_DIR, else ovis under XDG_CONFIG_HOME or ~/.config, or herdr-web-ui there
-#   while that still holds state of its own (defaultStateDir);
-# - the port: PORT, else the one a start settled on (<state>/plugin-port), else 7317;
-# - the release: updates/<the first 16 of sha256("<checkout>:<port>")>/current.json and no other
-#   folder, taken only while it names the checkout's commit and a release-* folder of its own
-#   (updateStateDir, activePluginScript). Another port's folder, or another checkout's at the same
-#   commit, is some other server's release.
 release_js() {
   cat <<'EOF'
   const { createHash } = await import("node:crypto");
@@ -332,17 +265,6 @@ release_js() {
 EOF
 }
 
-# The `ovis` launcher, as written into BIN_DIR. It holds no path of this install: where Ovis is, it
-# looks up each time it runs, so an update, a reinstall or a move to herdr-core needs no new launcher.
-# First the herdr plugin, under its id or the one before the rename; then Ovis on herdr-core (its
-# checkout, with the settings and state dirs its service gives it). The plugin first, as the installer
-# has it: with a plugin listed it installs herdr-core's Ovis nowhere, so a checkout found beside a
-# plugin is an earlier install the plugin took over from. scripts/plugin.ts itself hands `add` on
-# to the release that runs, so the launcher picks no version; a checkout from before `add` and `login`
-# gets the name it knows, `link`. herdr's checkout stays at the version first installed, so one from
-# before `link` cannot hand on at all: for it the launcher finds the release that runs, as
-# running_code does below (release_js, which the launcher carries), and runs that; where that one has
-# no `link` either, it says to update. `tui` is handed on the same way.
 launcher_text() {
   printf '%s\n' '#!/bin/sh' "$LAUNCHER_MARK"
   cat <<'EOF'
@@ -439,9 +361,6 @@ exec bun "$code/scripts/plugin.ts" "$@"
 EOF
 }
 
-# Another program called ovis on the user's own PATH, outside BIN_DIR: its path in $other_ovis (empty:
-# none), and in $other_ovis_hidden whether BIN_DIR comes before it there, so that a launcher in BIN_DIR
-# would take its name.
 find_other_ovis() {
   other_ovis=""
   other_ovis_hidden=0
@@ -462,12 +381,6 @@ find_other_ovis() {
   [ -n "$other_ovis" ] || other_ovis_hidden=0
 }
 
-# Writes the launcher, and says in $launcher_ours whether BIN_DIR/ovis is it. A file of that name the
-# installer did not write (no mark on its second line, or a link) is someone's own: it stays, and the
-# installer says so. So does another ovis elsewhere on the PATH: where BIN_DIR comes first, a new
-# launcher would take its name, so none is written; where it comes first, the launcher is written and
-# the installer says which one the name runs, and that it is the launcher's once BIN_DIR comes first (a
-# profile that puts ~/.local/bin first does that at the next login). Nothing here can fail the install.
 write_launcher() {
   launcher="$BIN_DIR/ovis"
   launcher_ours=0
@@ -484,8 +397,6 @@ write_launcher() {
     say "$other_ovis is another ovis on your PATH, and $BIN_DIR comes before it there: an ovis command of this installer's would take its name, so none was installed"
     return 0
   fi
-  # written beside it under a name of its own (mktemp never follows a link or reuses a file that is
-  # there) and moved over it: an interrupted run leaves no half-written command
   launcher_new=""
   if mkdir -p "$BIN_DIR" 2>/dev/null && launcher_new=$(mktemp "$BIN_DIR/.ovis.XXXXXX" 2>/dev/null) \
     && launcher_text >"$launcher_new" && chmod 755 "$launcher_new" && mv -f "$launcher_new" "$launcher"; then
@@ -502,8 +413,6 @@ write_launcher() {
   fi
 }
 
-# A path as a command line takes it: as it is, or in single quotes where it holds a space or anything
-# else a shell reads (a home directory called "John Smith").
 quoted() {
   case $1 in
     *[!A-Za-z0-9_./+:@%,=-]*) printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")" ;;
@@ -511,9 +420,6 @@ quoted() {
   esac
 }
 
-# How to call the launcher, in what the installer prints: by its name where the user's own PATH finds
-# it, by its path where it does not (or finds another ovis first), and without a launcher of ours, the
-# script it would run ($add_code, as find_add_name picks it), which is what the launcher itself ends at.
 ovis_command() {
   if [ "$launcher_ours" != 1 ] && [ "${binary:-0}" = 1 ]; then
     printf '%s plugin' "$(quoted "$OVIS_HOME/bin/ovis-server")"
@@ -526,11 +432,6 @@ ovis_command() {
   fi
 }
 
-# The script that adds this PC, by its folder in $add_code, and the name it knows the add step by in
-# $add_name: `add`, `link` for one from before `add`, or nothing for one from before both, which cannot
-# add a PC from its terminal. The checkout's own script where it knows `link`: it hands on to the
-# release that runs by itself, with settings the installer does not read. Only a checkout from before
-# `link` cannot, so for it the release that runs ($code) is the script.
 find_add_name() {
   if [ "${binary:-0}" = 1 ]; then
     add_code=$OVIS_HOME
@@ -548,20 +449,11 @@ find_add_name() {
   fi
 }
 
-# Whether the add step that would run tells a line typed ahead from an answer. A release up to v0.5.2
-# asks about a device with [y/N] and takes the next line the terminal hands it, so a "y" and Enter
-# typed during the minutes of its sign-in would approve the first device that asks: nothing this
-# installer discards before the add starts covers those. The reader that takes a line only when it
-# was typed under the request shown, and approves only with that request's own digits, is `answerOf`
-# (scripts/plugin-link.ts), a name only releases with that reader have. Looked for in the release that
-# runs ($code): the checkout's own script hands the add on to it (find_add_name).
 add_reads_answers() {
   [ "${binary:-0}" != 1 ] || return 0
   grep -qs 'export function answerOf' "${code:-$root}/scripts/plugin-link.ts"
 }
 
-# The command that adds this PC, as the closing lines print it: `ovis add` through the launcher, which
-# finds the name the release knows by itself; without a launcher of ours, the script under that name.
 add_command() {
   if [ "$launcher_ours" = 1 ]; then
     printf '%s' "$(ovis_command) add"
@@ -570,25 +462,16 @@ add_command() {
   fi
 }
 
-# Whether this install holds the terminal's foreground: a background job that read from the terminal
-# would be stopped by it (SIGTTIN) until someone brought it forward.
 in_foreground() {
   if command -v perl >/dev/null 2>&1; then
     perl -MPOSIX -e 'exit 1 unless POSIX::tcgetpgrp(0) == POSIX::getpgrp()' </dev/tty >/dev/null 2>&1
   else
-    # the terminal's foreground process group and this shell's own, as ps has them
     foreground_ids=$(ps -o tpgid= -o pgid= -p $$ 2>/dev/null) || return 1
-    # shellcheck disable=SC2086 # two numbers, split on purpose
     set -- $foreground_ids
     [ $# = 2 ] && [ "$1" = "$2" ]
   fi
 }
 
-# Discards what is typed at the terminal and not read yet: lines typed while the installer worked, or
-# pasted after its command, would otherwise be read by the add step as the answer to what it asks
-# later (a "y" and Enter would approve the next device that asks). With perl, as the star question
-# does it; else with stty and dd: with no line editing and no waiting, a read takes what is there
-# and ends when nothing is. Fails where neither can, and the caller then reads nothing from the terminal.
 discard_typed() {
   if command -v perl >/dev/null 2>&1; then
     # tcflush is "0 but true", undef on failure
@@ -600,26 +483,10 @@ discard_typed() {
   stty -icanon min 0 time 0 </dev/tty 2>/dev/null || return 1
   typed_discarded=0
   dd bs=4096 of=/dev/null </dev/tty 2>/dev/null || typed_discarded=1
-  # the terminal is given back as it was, whatever the read came to
   stty "$typed_settings" </dev/tty 2>/dev/null || return 1
   return "$typed_discarded"
 }
 
-# --add (or OVIS_ADD=1): ends the install by adding this PC to the account, as `ovis add` does, and
-# says in $add_result how that went (none: it did not run; done; failed). It signs in and asks y/N, so it runs only with someone to answer: at a
-# terminal that shows what it prints and can be read from (under `curl | sh` stdin is the script, so
-# the answers come from /dev/tty itself), and never under OVIS_NO_OPEN, which an install run for
-# someone else sets (the app's own SSH installer), and only in the terminal's foreground: the add reads
-# its answer there, and a background job that did would be stopped. What was typed at the terminal
-# before the add starts is discarded first (discard_typed), and where it cannot be, the add does not
-# run: nothing typed for something else answers it. A release from before `add` knows
-# it as `link`; one from before that has neither. It asks the running app, so it runs only while the
-# app does ($add_waits says it does not: a fresh PC whose herdr this install could not start). Wherever
-# it does not run, the closing lines say what to run instead. Nor does it run on a release whose add step
-# would take a line typed ahead for its answer (add_reads_answers; $add_old says so): the closing lines
-# then say to update first.
-# Who counts as this PC is said before it starts, while the token can still be set first ($token_said).
-# Ctrl+C ends the add, not the install: what follows it is still printed.
 add_pc() {
   add_result=none
   token_said=0
@@ -640,7 +507,6 @@ add_pc() {
   (exec 3<>/dev/tty) 2>/dev/null || return 0
   in_foreground || return 0
   trap ':' INT
-  # what is typed from here on is the add step's own to tell from an answer (scripts/plugin-link.ts)
   if ! discard_typed; then
     trap - INT
     return 0
@@ -657,14 +523,10 @@ add_pc() {
   trap - INT
 }
 
-# Who counts as this PC while it has no token: said before the PC is added, by whichever adds it.
 token_line() {
   say "on a PC other people log in to, set OVIS_TOKEN first: without it any local user counts as this PC ($(link "https://github.com/$REPO/blob/main/docs/relay.md#a-pc-with-no-screen"))"
 }
 
-# The installer's last words before the star: how this PC gets into the account (unless --add just put
-# it there), by a command that can run here: a release from before the add step is told to update
-# instead. Then who counts as this PC while it has no token (unless the add step said it as it began).
 closing_lines() {
   echo
   if [ "$add_result" = done ]; then
@@ -691,8 +553,6 @@ kill_tree() {
   kill -KILL "$1" 2>/dev/null || true
 }
 
-# runs "$@" for at most $1 seconds: past that it is killed with all it started (and fails), so a
-# command that hangs cannot hold the install. The watcher looks once a second, as gh_api's does.
 bounded() {
   bounded_limit=$1
   shift
@@ -701,8 +561,6 @@ bounded() {
   (
     waited=0
     while [ "$waited" -lt "$bounded_limit" ]; do sleep 1; kill -0 "$bounded_pid" 2>/dev/null || exit 0; waited=$((waited + 1)); done
-    # past the bound: the kill of the tree is not cut short by the stop below, and says it timed out, so a
-    # command that still exits 0 meanwhile (a host waiting on the child killed first) is not taken as finished
     trap '' TERM
     kill_tree "$bounded_pid"
     exit 124
@@ -717,8 +575,6 @@ bounded() {
   return "$bounded_status"
 }
 
-# the server's own check of the Rust PTY host (server/pty/host.ts), with its deadlines: its usage
-# line with exit 2, then a pty; a host that hangs on either counts as one that does not run here
 rust_host_runs() {
   [ -x "$1" ] || return 1
   probe_err=$(mktemp) || return 1
@@ -731,7 +587,6 @@ rust_host_runs() {
   bounded 3 "$1" 1 1 true </dev/null >/dev/null 2>&1
 }
 
-# the published SHA-256 of the official Node build for $platform, in $node_sha
 node_sha_for() {
   case "$platform" in
     linux-x64) node_sha=b294a556e639d64338823920e5866c21c02741742d2e1529ee1a225c1ec9252a ;;
@@ -749,8 +604,6 @@ install_node() {
   archive="$tmp/node.tar.gz"
   curl -fsSL --retry 3 "https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-$platform.tar.gz" -o "$archive" || { rm -rf "$tmp"; return 1; }
   [ "$(sha256 "$archive")" = "$node_sha" ] || { rm -rf "$tmp"; say "the Node download does not match its published SHA-256; nothing was installed"; return 1; }
-  # unpacked beside the old one and swapped in only once it holds a node: a failed unpack leaves an
-  # existing install as it was
   mkdir -p "$tmp/node" || { rm -rf "$tmp"; return 1; }
   tar -xzf "$archive" -C "$tmp/node" --strip-components=1 || { rm -rf "$tmp"; return 1; }
   [ -x "$tmp/node/bin/node" ] || { rm -rf "$tmp"; say "the Node download holds no bin/node; nothing was installed"; return 1; }
@@ -769,7 +622,6 @@ server_arch() {
   # past the bound, where a file is read once bounded has returned (as in starred)
   server_file=$(mktemp 2>/dev/null) || return 0
   bounded 5 bun -p process.arch </dev/null >"$server_file" 2>/dev/null || true
-  # all of it, not a first line: a preload that prints before Bun's answer must not stand in for it
   server=$(cat "$server_file" 2>/dev/null || true)
   rm -f "$server_file"
   case "$server" in
@@ -777,12 +629,7 @@ server_arch() {
   esac
 }
 
-# Whether the node $1 (a path, or a name on PATH) is one the Node sidecar takes (server/pty/sidecar.ts
-# isRealNode): Node 18 or newer, not Bun, built for the server's architecture ($arch, server_arch).
-# Bounded, as the server's probe is: a node that keeps running (a NODE_OPTIONS preload) cannot hold
-# the install.
 node_fits() {
-  # into a file for the same reason as server_arch's
   fit_file=$(mktemp 2>/dev/null) || return 1
   fit_status=0
   bounded 3 "$1" -p '(process.versions.bun ? "bun" : process.versions.node.split(".")[0]) + " " + process.arch' </dev/null >"$fit_file" 2>/dev/null || fit_status=$?
@@ -794,20 +641,12 @@ node_fits() {
   [ "$fit_major" -ge 18 ] && [ "${fit#* }" = "$arch" ]
 }
 
-# The Node install_node puts in NODE_DIR stays out of the user's PATH: linked into BIN_DIR, it went
-# first there and overrode the user's own Node (#596). A release whose server looks for it in
-# NODE_DIR itself (server/pty/sidecar.ts, in the code at $1) needs no link, so a link of ours goes
-# and anything else there stays. An older release finds Node on the PATH only, so our Node is linked
-# for it as before, the one from before the rename too: where it needs one ($2 = needed: no Rust PTY
-# host) and the user's PATH has no Node 18 or newer, or always once herdr's build said its own PATH
-# has none ($2 = installed), since herdr's PATH need not be the user's (nvm in .bashrc).
 node_link() {
   if grep -qs 'share/ovis/node' "$1/server/pty/sidecar.ts"; then
     [ -L "$BIN_DIR/node" ] || return 0
     case "$(readlink "$BIN_DIR/node")" in
       "$NODE_DIR/bin/node" | "$LEGACY_NODE_DIR/bin/node")
         rm -f "$BIN_DIR/node"
-        # it may have been the only node on the user's PATH, so say so
         say "removed $BIN_DIR/node, the link to Ovis's own Node that an earlier install made: Ovis finds that Node itself now, and your shells use your own Node (install one if you need node outside Ovis)"
         ;;
     esac
@@ -815,7 +654,6 @@ node_link() {
     case "${2:-}" in
       installed) ;;
       needed)
-        # only node runs on the user's PATH: sed may not be on it
         user_version=$(PATH="${original_path:-}"; export PATH; node --version 2>/dev/null) || user_version=""
         user_major=$(printf '%s\n' "$user_version" | sed -n 's/^v\([0-9][0-9]*\).*/\1/p')
         [ "${user_major:-0}" -lt 18 ] || return 0
@@ -834,18 +672,11 @@ node_link() {
   fi
 }
 
-# herdr's checkout stays at the version first installed: Settings → Updates builds each newer release
-# in the app's state dir and runs it from there (server/updater.ts, current.json). The directory of the
-# code that runs now, so the phone step is the running version's, not the first install's: the release
-# kept for this checkout and the port its server has, as release_js finds it, and never another folder's.
 running_code() {
   running_found=$(bun -e "$(release_js)" "$1" 2>/dev/null </dev/null) || running_found=""
   printf '%s\n' "${running_found:-$1}"
 }
 
-# Where releases come from, in $releases: OVIS_RELEASES_URL (an https:// address, or a file:// folder for
-# tests), else GitHub's downloads; each version's files are in <releases>/v<version>/. Plain http, or
-# anything else, is refused before anything is downloaded.
 releases_base() {
   releases=${OVIS_RELEASES_URL:-https://github.com/$REPO/releases/download}
   while :; do case "$releases" in */) releases=${releases%/} ;; *) break ;; esac; done
@@ -873,16 +704,12 @@ verify_node() {
   # shellcheck disable=SC2016 # JavaScript, not shell
   "$node_bin" -e 'const c = require("crypto"), f = require("fs"); const key = c.createPublicKey({ key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(process.argv[1], "base64")]), format: "der", type: "spki" }); process.exit(c.verify(null, f.readFileSync(process.argv[2]), key, Buffer.from(f.readFileSync(process.argv[3], "utf8").trim(), "base64")) ? 0 : 1)' "$1" "$2" "$3" </dev/null >/dev/null 2>&1
 }
-# Whether checker $1 tells RFC 8032's vector from the same signature over another message
 checker_works() {
   printf r >"$verify_dir/vector-good"
   printf s >"$verify_dir/vector-bad"
   printf '%s\n' "$VECTOR_SIG" >"$verify_dir/vector.sig"
   "$1" "$VECTOR_KEY" "$verify_dir/vector-good" "$verify_dir/vector.sig" && ! "$1" "$VECTOR_KEY" "$verify_dir/vector-bad" "$verify_dir/vector.sig"
 }
-# The signature checker for this run, in $checker and $checker_name: openssl where it can, else the
-# node on the PATH, else the official Node build fetched into the run's own folder (checked against its
-# published SHA-256, and deleted with that folder: nothing of it stays installed).
 pick_checker() {
   checker=""
   if command -v openssl >/dev/null 2>&1 && checker_works verify_openssl; then
@@ -909,10 +736,7 @@ pick_checker() {
   checker_name="Node $NODE_VERSION, fetched for this check"
 }
 
-# The entry for $2 (a platform, or dist for the client) in the checked manifest $1, as scripts/server-manifest.ts
-# writes it (two-space JSON, which the signature vouches for byte for byte): $entry_file, $entry_sha, $entry_size.
 manifest_entry() {
-  # by section: the PTY hosts' keys repeat platform names
   case "$2" in
     dist) entry=$(sed -n '/^  "dist": {$/,/^  }/p' "$1") ;;
     pty-*) entry=$(sed -n '/^  "pty": {$/,/^  }/p' "$1" | sed -n "/^    \"${2#pty-}\": {\$/,/^    }/p") ;;
@@ -923,14 +747,11 @@ manifest_entry() {
   entry_size=$(printf '%s\n' "$entry" | sed -n 's/^ *"size": \([0-9]\{1,15\}\)$/\1/p')
 }
 
-# Refuses this install: the folder it downloaded into goes, and the one that runs was never touched
 refuse() {
   [ -z "${stage:-}" ] || rm -rf "$stage"
   fail "$*; nothing was changed"
 }
 
-# take <name> <file in stage> <section of the manifest>: the release's file, downloaded into the stage
-# and kept only with the name, size and SHA-256 the checked manifest gives it
 take() {
   manifest_entry "$stage/ovis-server.json" "$3"
   [ "$entry_file" = "$1" ] && [ -n "$entry_sha" ] && [ -n "$entry_size" ] || refuse "ovis-server.json names no $1 with its SHA-256 and size"
@@ -945,9 +766,6 @@ take() {
   [ "$got_sha" = "$entry_sha" ] || refuse "$1 does not match its SHA-256 in ovis-server.json (got $got_sha)"
 }
 
-# The release's Rust PTY host into $stage/bin, only the one the signed ovis-server.json names (its SHA-256 and size
-# there, never another file's word for it), run once here; the record beside it is what the server checks before it
-# runs it (server/pty/host.ts). Without one that runs, terminals are mirrored: nothing here fails the install.
 binary_pty_host() {
   case "$platform" in
     linux-x64 | linux-arm64) pty_asset=$platform ;;
@@ -976,11 +794,6 @@ binary_pty_host() {
   printf '{"sha256":"%s","version":"%s"}\n' "$pty_sha" "$version" >"$stage/bin/ovis-pty-sidecar.json"
 }
 
-# One install at a time in OVIS_HOME: $OVIS_HOME/.install.lock, made by mkdir (atomic) and holding this
-# shell's pid. Another run waits for it, at most INSTALL_LOCK_WAIT seconds, and then fails, saying who holds
-# it. A lock whose holder is gone (its pid does not run, or it never wrote one more than a minute ago) is
-# broken under .install.lock.break, one breaker at a time. Released on every exit, a signal's included; only
-# kill -9 leaves it, stale.
 install_lock() {
   lock="$OVIS_HOME/.install.lock"
   mkdir -p "$OVIS_HOME"
@@ -988,7 +801,6 @@ install_lock() {
   # The claim is the pid file, created only where none is (noclobber opens it O_EXCL in the shell itself): mkdir's
   # exit alone does not exclude, as some mkdir commands report success to two callers at once (uutils coreutils)
   while ! { mkdir "$lock" 2>/dev/null; (set -C; printf '%s\n' "$$" >"$lock/pid") 2>/dev/null; }; do
-    # the breaker is claimed as the lock is, by a file created only where none is
     if (set -C; printf '%s\n' "$$" >"$lock.break") 2>/dev/null; then
       lock_holder=$(cat "$lock/pid" 2>/dev/null || true)
       lock_stale=0
@@ -997,14 +809,13 @@ install_lock() {
       elif [ -z "$lock_holder" ] && [ -n "$(find "$lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
         lock_stale=1
       fi
-      # removed only while it still holds the record judged stale: a fresh holder's lock is never taken
       if [ "$lock_stale" = 1 ] && [ "$(cat "$lock/pid" 2>/dev/null || true)" = "$lock_holder" ]; then install_lock_drop || true; fi
       rm -rf "$lock.break" 2>/dev/null || true
       [ -e "$lock" ] || continue
     elif [ -n "$(find "$lock.break" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
       rm -rf "$lock.break" 2>/dev/null || true
     fi
-    if [ "$lock_waited" -ge "$INSTALL_LOCK_WAIT" ]; then
+    if [ "$lock_waited" -ge "$INSTALL_LOCK_WAIT_SECONDS" ]; then
       fail "another install is running in $OVIS_HOME (pid $(cat "$lock/pid" 2>/dev/null || echo unknown)); run this again once it ends. Nothing was changed"
     fi
     [ "$lock_waited" != 0 ] || say "another install is running in $OVIS_HOME; waiting for it"
@@ -1025,31 +836,17 @@ install_unlock() {
   if [ -n "${lock:-}" ] && [ "$(cat "$lock/pid" 2>/dev/null || true)" = "$$" ]; then install_lock_drop; fi
   trap - EXIT HUP INT TERM
 }
-# The lock folder leaves in one rename, to a name of this run's own, and is removed there. rm -rf in place unlinks
-# the pid a moment before the folder: a waiter could claim the lock in that moment (its pid file is created wherever
-# none is), and the folder it holds would then not be removed (Directory not empty), failing the run that let it go
 install_lock_drop() {
   mv "$lock" "$lock.gone-$$" && { rm -rf "$lock.gone-$$" 2>/dev/null || true; }
 }
 
-# Whether the release of $version runs in OVIS_HOME already: its manifest there names it, and the binary
-# has the SHA-256 that manifest gives it
 binary_current() {
   [ "$(sed -n 's/^  "version": "\([^"]*\)",$/\1/p' "$OVIS_HOME/bin/ovis-server.json" 2>/dev/null)" = "$version" ] || return 1
   manifest_entry "$OVIS_HOME/bin/ovis-server.json" "$platform"
   [ -n "$entry_sha" ] && [ -f "$OVIS_HOME/bin/ovis-server" ] && [ "$(sha256 "$OVIS_HOME/bin/ovis-server")" = "$entry_sha" ] &&
-    [ -f "$OVIS_HOME/bin/dist/index.html" ] # the client it serves too: one gone missing is installed again
+    [ -f "$OVIS_HOME/bin/dist/index.html" ]
 }
 
-# install_binary <version>: the release's server for $platform into OVIS_HOME, unless that version runs
-# there already ($binary_changed says which). In order, and nothing in OVIS_HOME changes before the last
-# step: the manifest and its signature, checked against RELEASE_PUBLIC_KEY and for this very version (a
-# valid signature alone would let an older release through); the binary and the client archive, each with
-# the size and SHA-256 the manifest names; the archive's listing, only plain files and folders inside it;
-# then releases/<version>-<id> takes its name and bin, a link to it, is swapped by one rename. A run that
-# is cut off leaves a .stage folder, which the next run removes, beside the install that ran before.
-# It holds the install lock from its first download to the swap: a run that waited for it finds the version
-# the other run installed and has nothing to do, or installs its own.
 install_binary() {
   version=$1
   binary_changed=0
@@ -1069,7 +866,6 @@ install_binary() {
     return 0
   fi
   mkdir -p "$OVIS_HOME/releases"
-  # only the lock's holder makes a stage or a link: one found now was left by a run that died
   rm -rf "$OVIS_HOME"/releases/.stage-* "$OVIS_HOME"/.bin-*
   stage=$(mktemp -d "$OVIS_HOME/releases/.stage-XXXXXX") || fail "could not make a folder in $OVIS_HOME/releases"
   verify_dir="$stage/.check"
@@ -1102,14 +898,12 @@ install_binary() {
   release_name="$version-${stage##*.stage-}"
   mv "$stage" "$OVIS_HOME/releases/$release_name" || refuse "could not move the checked release into place"
   stage=""
-  # the release bin names now: a server started from it may still run, so it stays until the next install
   previous="$OVIS_HOME/$(readlink "$OVIS_HOME/bin" 2>/dev/null || true)"
   link="$OVIS_HOME/.bin-$$"
   ln -s "releases/$release_name" "$link" || fail "could not link $OVIS_HOME/bin; nothing was changed"
   # one rename over the old link: -T (GNU) and -h (BSD) keep mv from moving the link into the folder bin names
   if [ "$os" = darwin ]; then swap_flag=-fh; else swap_flag=-fT; fi
   mv "$swap_flag" "$link" "$OVIS_HOME/bin" || { rm -f "$link"; fail "could not swap $OVIS_HOME/bin; nothing was changed"; }
-  # the releases no server can run from: never the new one, nor the one bin named before this install
   for old in "$OVIS_HOME"/releases/*; do
     case "$old" in "$OVIS_HOME/releases/$release_name" | "$previous") ;; *) rm -rf "$old" ;; esac
   done
@@ -1122,7 +916,6 @@ install_binary() {
 # Only `--version` is run: any other hc command starts a core, and other programs are called hc too.
 is_core() {
   [ -n "$1" ] && [ -f "$1" ] && [ -x "$1" ] || return 1
-  # into a file for the same reason as server_arch's
   core_file=$(mktemp 2>/dev/null) || return 1
   core_status=0
   bounded 5 "$1" --version </dev/null >"$core_file" 2>/dev/null || core_status=$?
@@ -1131,8 +924,6 @@ is_core() {
   [ "$core_status" = 0 ] && [ "$core_answer" = yes ]
 }
 
-# The folders of Ovis on herdr-core, in $settings_dir and $state_dir: under the Ovis name, or the name
-# before the rename while only that one exists (as scripts/plugin.ts picks them).
 core_dirs() {
   settings_dir="$HOME/.config/ovis"
   [ -d "$settings_dir" ] || [ ! -d "$HOME/.config/herdr-web-ui" ] || settings_dir="$HOME/.config/herdr-web-ui"
@@ -1140,16 +931,12 @@ core_dirs() {
   [ -d "$state_dir" ] || [ ! -d "$HOME/.local/state/herdr-web-ui" ] || state_dir="$HOME/.local/state/herdr-web-ui"
 }
 
-# The value the settings files give $1, .env's over env's and unquoted, as scripts/plugin.ts reads them.
 saved_setting() {
   core_dirs
   sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$settings_dir/env" "$settings_dir/.env" 2>/dev/null \
     | tail -n 1 | sed -e 's/[[:space:]]*$//' -e "s/^[\"']//" -e "s/[\"']\$//"
 }
 
-# The herdr-core (hc) on this PC, in $core, looked for as the server looks (server/herdr-core/discovery.ts):
-# OVIS_HC_BIN, the one an earlier run saved, the PATH, then the usual install places, herdr-core before
-# hc in each.
 find_core() {
   core=""
   for core_candidate in "${OVIS_HC_BIN:-}" "$(saved_setting OVIS_HC_BIN)" "$(command -v herdr-core 2>/dev/null || true)" "$(command -v hc 2>/dev/null || true)"; do
@@ -1163,10 +950,6 @@ find_core() {
   return 1
 }
 
-# The runtime to install for, in $runtime: OVIS_RUNTIME when set; else herdr-core where an earlier run
-# installed Ovis on it, or where there is no herdr but herdr-core answers; else herdr, installed if
-# missing. herdr-core needs an hc that answers, and no herdr plugin already running Ovis here: one
-# Ovis per PC, and the plugin's own settings are where it moves to herdr-core.
 pick_runtime() {
   case "${OVIS_RUNTIME:-}" in
     herdr) runtime=herdr; return 0 ;;
@@ -1190,12 +973,6 @@ pick_runtime() {
   fi
 }
 
-# The settings file of Ovis on herdr-core (core_dirs), which its service hands scripts/plugin.ts as
-# HERDR_PLUGIN_CONFIG_DIR, so a herdr plugin's settings found later are not read in its place; owner-only,
-# as the token in it needs. The installer owns two lines, written anew each run in place of any either
-# file had (under their names from before the rename too): OVIS_RUNTIME=herdr-core, and OVIS_HC_BIN, the hc find_core checked (a release before the
-# server's own search runs only that or `hc` on the PATH). It adds the hc session the installer ran with
-# (HC_SESSION, HC_SOCKET), which a service would not otherwise have, unless a file names one.
 core_settings() {
   core_dirs
   mkdir -p "$settings_dir"
@@ -1204,12 +981,10 @@ core_settings() {
     if grep -Es '^[[:space:]]*(OVIS_RUNTIME|HERDR_WEB_RUNTIME)[[:space:]]*=' "$settings_file" | grep -qv '=[[:space:]]*["'\'']*herdr-core["'\'']*[[:space:]]*$'; then
       say "$settings_file named another runtime; Ovis runs on herdr-core now"
     fi
-    # a copy with the file's own mode, then moved over it: an interrupted run leaves the file whole
     cp -p "$settings_file" "$settings_file.new" || fail "could not write $settings_file"
     grep -Ev '^[[:space:]]*(OVIS_RUNTIME|OVIS_HC_BIN|HERDR_WEB_RUNTIME|HERDR_WEB_HC_BIN)[[:space:]]*=' "$settings_file" >"$settings_file.new" || true
     mv -f "$settings_file.new" "$settings_file" || fail "could not write $settings_file"
   done
-  # a last line without its newline would run into the new one
   if [ -s "$settings_dir/env" ] && [ -n "$(tail -c 1 "$settings_dir/env")" ]; then echo >>"$settings_dir/env"; fi
   (umask 077 && printf '%s\n' "OVIS_RUNTIME=herdr-core" >>"$settings_dir/env")
   [ -z "${core:-}" ] || printf '%s\n' "OVIS_HC_BIN=$core" >>"$settings_dir/env"
@@ -1221,7 +996,6 @@ core_settings() {
   done
 }
 
-# A value for a plist <string>, with &, < and > as XML entities.
 xml_text() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
 # A value inside a double-quoted systemd unit word: \ and " escaped, % (its specifier sign) doubled, and
 # for an Exec line ($2 = exec) $ doubled too, since systemd expands $NAME there.
@@ -1233,15 +1007,9 @@ unit_text() {
   fi
 }
 
-# Registers the user service that runs `scripts/plugin.ts start` at login, with core_settings' dirs:
-# launchd's on macOS, systemd's on Linux. That start runs the server in the background and records it, as the plugin's start does,
-# so `plugin.ts stop` and `status` work on it as on the plugin's. Where there is neither, it says how
-# to start the app by hand.
 core_service() {
-  # one line each in the unit: a newline in a value would start a directive of its own
   case "$PATH$settings_dir$state_dir$APP_DIR$OVIS_HOME" in *'
 '*) fail "a newline in PATH or HOME cannot go into a service file; remove it and run this again" ;; esac
-  # what the service runs: bun and the checkout's script, or the binary and its plugin entry ($1 $2)
   bun_bin=${1:-$(command -v bun)}
   service_entry=${2:-$APP_DIR/scripts/plugin.ts}
   start_line="HERDR_PLUGIN_CONFIG_DIR=$settings_dir HERDR_PLUGIN_STATE_DIR=$state_dir ${1:-bun} $service_entry start"
@@ -1308,8 +1076,6 @@ EOF
   fi
 }
 
-# OVIS_REF names what a fresh install takes: an Ovis already installed in the checkout $1 is not moved by it, which is
-# said with its commit, without asking GitHub
 ref_not_moved() {
   [ -n "${OVIS_REF:-${HERDR_WEB_UI_REF:-}}" ] || return 0
   # What git answers, by the rule scripts/plugin-launch.ts (checkoutCommit) and install.ps1 read the installed commit
@@ -1338,9 +1104,6 @@ ref_not_moved() {
   say "${ref_not_moved_at}OVIS_REF does not move an installed Ovis (INSTALL.md, Update)"
 }
 
-# Ovis on herdr-core, without herdr or its plugin: its own checkout in APP_DIR, built with herdr-plugin.toml's
-# [[build]] steps as herdr builds the plugin (the Rust PTY host aside: herdr-core's terminals need none),
-# its settings, its service, and a start now.
 install_core() {
   if [ -d "$APP_DIR/.git" ]; then
     say "already installed in $APP_DIR, on herdr-core; Settings → Updates keeps it current"
@@ -1352,13 +1115,10 @@ install_core() {
     [ -n "$ref" ] || fail "could not look up the latest release on github.com. Check the connection and run this again."
     say "found herdr-core ($core), so Ovis runs on it: no herdr or herdr plugin needed"
     say "installing Ovis $ref into $APP_DIR (about a minute)"
-    # built beside it and moved in once built, so a failed or cut-short run leaves no half-built app to keep
     rm -rf "$APP_DIR.new"
     mkdir -p "$(dirname "$APP_DIR")"
     git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$ref" "https://github.com/$REPO.git" "$APP_DIR.new" </dev/null \
       || { rm -rf "$APP_DIR.new"; fail "could not download Ovis $ref from github.com. Check the connection and run this again."; }
-    # on a branch named main at that release: Settings → Updates updates a source checkout from main only,
-    # and takes a detached one only as herdr's plugin checkout (server/updater.ts sourceBlock)
     git -C "$APP_DIR.new" checkout --quiet -B main </dev/null || { rm -rf "$APP_DIR.new"; fail "could not set up the checkout in $APP_DIR.new"; }
     log=$(mktemp)
     if ! (cd "$APP_DIR.new" && sh scripts/preflight.sh && sh scripts/with-bun.sh install && sh scripts/with-bun.sh run build) </dev/null >"$log" 2>&1; then
@@ -1372,22 +1132,16 @@ install_core() {
   fi
   root=$APP_DIR
   core_settings
-  # every scripts/plugin.ts this run starts (the start below, the phone step, open_app) reads what the service does
   HERDR_PLUGIN_CONFIG_DIR=$settings_dir
   HERDR_PLUGIN_STATE_DIR=$state_dir
   export HERDR_PLUGIN_CONFIG_DIR HERDR_PLUGIN_STATE_DIR
-  # after them: the release that runs is found with the settings the service reads
   code=$(running_code "$root")
   core_service
   bun "$root/scripts/plugin.ts" start </dev/null \
     || say "Ovis did not start; what it said is above. Start it again with: $start_line"
 }
 
-# Ovis as a herdr plugin: installed (or moved from its id before the rename) by herdr, with the Rust
-# PTY host or Node for its terminals, and started now when herdr runs.
 install_plugin() {
-  # The ref to install is settled before anything moves: a release from before the rename still
-  # names the plugin by its old id, and installing it cannot move an install to the new one
   ref=""
   move=1
   if ! herdr plugin list 2>/dev/null | grep -q "$PLUGIN "; then
@@ -1395,11 +1149,7 @@ install_plugin() {
     ref=${OVIS_REF:-${HERDR_WEB_UI_REF:-$(latest_release)}}
     [ -n "$ref" ] || fail "could not look up the latest release on github.com. Check the connection and run this again."
     case "$(ref_plugin_id "$ref")" in
-      # that release installs, runs and updates under the old id: the move waits for a release
-      # that names the new one, which Settings → Updates or this script brings
       "$LEGACY_PLUGIN") PLUGIN=$LEGACY_PLUGIN ;;
-      # a branch whose manifest cannot be read: an install under the old id is left running, since
-      # the ref may not be able to move it
       "") move=0 ;;
     esac
   fi
@@ -1410,8 +1160,6 @@ install_plugin() {
   elif [ "$PLUGIN" != "$LEGACY_PLUGIN" ] && herdr plugin list 2>/dev/null | grep -q "$LEGACY_PLUGIN "; then
     legacy_root=$(plugin_root "$LEGACY_PLUGIN")
     say "moving the installed plugin to its Ovis id; its settings and token come along"
-    # stopped first: removed with its server up, the old checkout would keep serving, and the new
-    # id's start would find the port answering and leave it
     if [ -n "$legacy_root" ] && ! bun "$legacy_root/scripts/plugin.ts" stop </dev/null >/dev/null 2>&1; then
       fail "could not stop the server of the old id, so nothing was moved. Stop it (herdr plugin action invoke $LEGACY_PLUGIN.stop, or restart herdr), then run this again."
     fi
@@ -1422,18 +1170,13 @@ install_plugin() {
     ref_not_moved "$(plugin_root "$PLUGIN")"
   else
     say "installing the herdr plugin at $ref (herdr clones and builds it: about a minute)"
-    # a branch builds its own sources: the plugin's launcher (scripts/plugin-launch.ts) would otherwise run the
-    # release binary of the branch's package.json version; a release tag takes its binary, or its sources without one
     plugin_source=${OVIS_FROM_SOURCE:-}
     case "$ref" in v[0-9]*.[0-9]*.[0-9]*) ;; *) plugin_source=1 ;; esac
-    # herdr previews the whole manifest first; on success its last word is enough, on failure all of it
     log=$(mktemp)
     installed=0
     if OVIS_FROM_SOURCE=$plugin_source herdr plugin install "$REPO" --ref "$ref" --yes </dev/null >"$log" 2>&1; then
       installed=1
     elif grep -q "Ovis needs Node 18 or newer" "$log" && ( install_node ); then
-      # a release from before the Rust PTY host was the default still asks for Node in its first build
-      # step, on herdr's PATH
       node_link "" installed
       OVIS_FROM_SOURCE=$plugin_source herdr plugin install "$REPO" --ref "$ref" --yes </dev/null >"$log" 2>&1 && installed=1
     fi
@@ -1449,7 +1192,6 @@ install_plugin() {
   fi
 
   root=$(plugin_root "$PLUGIN")
-  # the id unknown before the install: the ref may have named the old one
   if [ -z "$root" ] && [ "$move" = 0 ]; then
     PLUGIN=$LEGACY_PLUGIN
     root=$(plugin_root "$PLUGIN")
@@ -1461,18 +1203,11 @@ install_plugin() {
     herdr plugin uninstall "$LEGACY_PLUGIN" </dev/null >/dev/null || fail "could not remove the plugin's old id; run: herdr plugin uninstall $LEGACY_PLUGIN"
   fi
 
-  # the Rust PTY host of the release that runs, checked against its SHA-256: herdr's build step and
-  # Settings → Updates fetch it too, so this is for an install from before it shipped, or one whose
-  # download failed. Without it, terminals use the Node sidecar where there is Node, or a mirror.
   code=$(running_code "$root")
   [ ! -f "$code/scripts/pty-sidecar.ts" ] || (cd "$code" && bun scripts/pty-sidecar.ts install </dev/null) || true
-  # Node only where terminals would otherwise have no PTY host: a release without the Rust host (one
-  # from before it, or a branch), or one whose host failed its checks here
   needs_node=""
   if ! rust_host_runs "$code/bin/ovis-pty-sidecar"; then
     needs_node=needed
-    # the app's own Node first, as the server looks (server/pty/sidecar.ts realNode), then the PATH's.
-    # Optional now: a Node that cannot be installed leaves the panes mirrored, never the install unfinished
     if ! node_fits "$NODE_DIR/bin/node" && ! node_fits "$LEGACY_NODE_DIR/bin/node" && ! node_fits node && ! ( install_node ); then
       say "could not install Node, so this PC's panes are mirrored until the Rust PTY host can be installed (run this again later)"
     fi
@@ -1487,7 +1222,6 @@ install_plugin() {
       tries=$((tries + 1))
       [ "$tries" -lt 25 ] || {
         say "did not start within 25 s; see: herdr plugin log list"
-        # the start ran inside herdr, so what it said is in herdr's plugin log, not on this terminal
         # shellcheck disable=SC2016 # JavaScript, not shell
         herdr plugin log list 2>/dev/null </dev/null | bun -e 'const logs = JSON.parse(await Bun.stdin.text()).result.logs.filter((log) => log.plugin_id === process.argv[1] && log.stderr); if (logs.length > 0) console.error(logs.at(-1).stderr.trim())' "$PLUGIN" || true
         break
@@ -1499,13 +1233,6 @@ install_plugin() {
   fi
 }
 
-# Whether this run installs the release's compiled server ($binary=1) or builds from source ($binary=0),
-# and of which version ($version, $ref). From source: OVIS_FROM_SOURCE=1, a ref that is not a release tag
-# (a branch has no release to fetch), an install from source that is here already (herdr's plugin checkout,
-# or herdr-core's in APP_DIR: Settings → Updates keeps those current), or a release that ships no
-# ovis-server.json yet (one from before the compiled server). Nothing is installed here.
-# old_shape_valid <manifest>: the release's ovis-server.json.sig is a valid signature of it by RELEASE_PUBLIC_KEY, and
-# it names $version (a checker needs a folder of its own: made and removed here)
 old_shape_valid() {
   verify_dir=$(mktemp -d) || return 1
   old_ok=1
@@ -1520,8 +1247,6 @@ old_shape_valid() {
   return "$old_ok"
 }
 
-# A source install asked for over the release's binary would find the plugin this installer linked "already
-# installed", build nothing and report a start that never came: say before anything is installed how to move instead.
 refuse_source_over_binary() {
   fail "$1, but Ovis is installed here as the release's binary ($OVIS_HOME). To move it to source, remove that first: ovis stop; herdr plugin uninstall $PLUGIN; rm -rf $OVIS_HOME/bin $OVIS_HOME/releases $OVIS_HOME/plugin; then run this again"
 }
@@ -1537,7 +1262,6 @@ pick_install() {
   fi
   [ ! -d "$APP_DIR/.git" ] || return 0
   if command -v herdr >/dev/null 2>&1 && herdr plugin list 2>/dev/null </dev/null | grep -q -e "$PLUGIN " -e "$LEGACY_PLUGIN "; then
-    # the plugin this installer links runs the binary; any other is a checkout from source
     [ -f "$OVIS_HOME/plugin/herdr-plugin.toml" ] || return 0
   fi
   releases_base
@@ -1560,20 +1284,15 @@ pick_install() {
   fetch "$releases/$ref/ovis-server.json" "$probe" 65536 2>/dev/null || probe_status=$?
   old_shape=0
   if [ "$probe_status" = 0 ] && ! grep -q '^  "schema": ' "$probe"; then
-    # a manifest without a schema is of the shape releases had before this installer (todo 5's): signed, for this
-    # version, it ships no compiled server this installer runs, as a release without one; the signature comes first
     old_shape_valid "$probe" || { rm -f "$probe"; fail "$releases/$ref/ovis-server.json is not signed by the key $RELEASE_PUBLIC_KEY for version $version; nothing was changed"; }
     old_shape=1 probe_status=37
   fi
   rm -f "$probe"
   case "$probe_status" in
     0) binary=1 ;;
-    # any HTTP error (curl -f's 22) or no such file (37) reads as a release from before the compiled server: the source
-    # of the same tag over TLS. Todo 7 (the updater) narrows this to 404 only, as scripts/plugin-launch.ts has it
     22 | 37)
       [ "$old_shape" = 0 ] || say "Ovis $ref's signed ovis-server.json has the shape from before this installer"
       if [ "$binary_home" = 1 ]; then
-        # an explicit tag without the binary asks for source; the latest release unreachable keeps what runs
         [ -z "${OVIS_REF:-${HERDR_WEB_UI_REF:-}}" ] || refuse_source_over_binary "Ovis $ref ships no compiled server, so it would be a source install"
         say "could not check the release $ref ($releases, curl exit $probe_status); the installed Ovis stays as it is, nothing was changed"
         exit 0
@@ -1591,13 +1310,10 @@ binary_platform() {
   platform="$os-$arch"
 }
 
-# scripts/plugin.ts's commands as this install runs them: the installed binary, or Bun and the source
 ovis_cli() {
   if [ "${binary:-0}" = 1 ]; then "$OVIS_HOME/bin/ovis-server" plugin "$@"; else bun "$code/scripts/plugin.ts" "$@"; fi
 }
 
-# The plugin herdr links for the binary: its manifest, with the commands of herdr-plugin.toml, each run
-# through run.sh, which hands it to bin/ovis-server. Written beside the old ones and moved over them.
 write_plugin() {
   mkdir -p "$OVIS_HOME/plugin"
   cat >"$OVIS_HOME/plugin/.run.sh.new" <<'EOF'
@@ -1622,9 +1338,6 @@ EOF
   mv -f "$OVIS_HOME/plugin/.herdr-plugin.toml.new" "$OVIS_HOME/plugin/herdr-plugin.toml"
 }
 
-# Ovis as the release's binary under herdr: installed and checked (install_binary), the plugin folder
-# linked into herdr once, and started now when herdr runs. A new version stops the server the old one
-# started, so the start runs the new one.
 install_plugin_binary() {
   install_binary "$version"
   write_plugin
@@ -1655,8 +1368,6 @@ install_plugin_binary() {
   fi
 }
 
-# Ovis as the release's binary on herdr-core: installed and checked, its settings, the user service that
-# runs `ovis-server plugin start` at login, and a start now
 install_core_binary() {
   say "found herdr-core ($core), so Ovis runs on it: no herdr or herdr plugin needed"
   install_binary "$version"
@@ -1674,7 +1385,6 @@ install_core_binary() {
 }
 
 main() {
-  # before anything is installed: a misspelt option must not install without what it asked for
   add=0
   [ "${OVIS_ADD:-}" != 1 ] || add=1
   for option in "$@"; do
@@ -1762,14 +1472,12 @@ main() {
   elif grep -q '"phone"' "$code/scripts/plugin.ts" 2>/dev/null; then
     bun "$code/scripts/plugin.ts" phone </dev/null || true
   else
-    # a release from before the phone step: the address the running app already knows, as a QR code
     origin=$(bun "$root/scripts/plugin.ts" status </dev/null | awk '$1 == "running" { print $2 }')
     url=""
     [ -z "$origin" ] || url=$(curl -fsS --max-time 5 "$origin/api/access" 2>/dev/null | bun -e 'try { console.log(JSON.parse(await Bun.stdin.text()).tailscale?.serving_url ?? "") } catch { console.log("") }')
     [ -z "$origin" ] || say "on this PC: $(link "$origin")"
     if [ -n "$url" ]; then
       say "on your phone: $(link "$url")"
-      # the app's own QR library, there since 0.3.11 for Settings → Phone
       if [ -d "$code/node_modules/qrcode-generator" ]; then
         # shellcheck disable=SC2016 # JavaScript, not shell
         (cd "$code" && bun -e 'const { default: qr } = await import("qrcode-generator"); const c = qr(0, "M"); c.addData(process.argv[1]); c.make(); console.log(c.createASCII(1, 1))' "$url") || true
@@ -1785,7 +1493,6 @@ main() {
   case ":$original_path:" in
     *":$BIN_DIR:"*) ;;
     *)
-      # on herdr-core the service runs with the PATH this install had, so no shell needs it
       if [ -z "$installed_here" ] || [ "$runtime" = herdr-core ]; then
         :
       elif grep -qs '\.local/bin' "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.zprofile" "$HOME/.zshrc"; then
@@ -1803,8 +1510,6 @@ main() {
 
   closing_lines
 
-  # once, on the first install, and not to someone who already starred it; a rerun for the phone
-  # address stays quiet. Last, so that leaving the question unanswered loses nothing above it.
   if [ "$new_install" = 1 ]; then
     star=$(starred)
     if [ "$star" != yes ]; then
