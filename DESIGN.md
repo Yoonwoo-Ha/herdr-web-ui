@@ -3767,12 +3767,17 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   verb (Read, Edited, Wrote, Ran; `lib/toolVerbs.ts`, by exact tool id) is in the interface face,
   `--fs-sm`, `--text-dim`; the object is mono `--fs-xs`. A tool the table does not know, a call
   with no object, or a call summed up by something other than its own command or path (omp's
-  `intent`: `bash Checking ports`) keeps its id in mono `--text` in the verb's place. A failed row
+  `intent`: `bash Checking ports`) keeps its id in mono `--text` in the verb's place; an MCP tool's
+  id (`mcp__claude_ai_HomeAssistant__get_entity_state`) reads as its server and tool, as Claude
+  Code splits it, without a claude.ai connector's or a plugin's prefix (`HomeAssistant
+  get_entity_state`; `lib/toolVerbs.ts`), and so do a picture's preview bar and viewer caption. A
+  failed row
   turns the verb or id `--status-blocked` and adds the word "failed": after the object under a
   verb (`▸ Ran pnpm test [failed]`), after the id otherwise.
 - A row expands to the typed input (command, diff, file, checklist, raw) and an Output pane. Under
-  a verb the tool's own id (`exec`, `Bash`, `apply_patch`) is the first line of that detail
-  (`.work-row-tool`, mono, dim) and the row's title.
+  a verb, or under an MCP tool's server and tool, the tool's own id (`exec`, `Bash`,
+  `apply_patch`, `mcp__claude_ai_HomeAssistant__get_entity_state`) is the first line of that
+  detail (`.work-row-tool`, mono, dim) and the row's title.
 - A file the detail names (`.chat-tool-file`: an edit's or a read's file, each file of a patch,
   a sent file) reads from the pane's folder as the file browser does, with the folder's name
   first: `/work/app/src/a.ts` in a pane on `/work/app` is `app/src/a.ts`. Only a folder herdr

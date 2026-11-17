@@ -14,14 +14,15 @@ const tool = (command: string): ConversationPart => ({ kind: "tool", name: "Bash
 /** what Settings → Chat says about the chat's folds: off unless a test turns it on */
 type Folds = { showThinking?: boolean; expandThinking?: boolean; foldWork?: boolean; requestDetails?: boolean };
 
-const render = (parts: ConversationPart[], state: { live: boolean; waiting?: boolean }, role: ConversationTurn["role"] = "assistant", folds: Folds = {}): string => {
+const render = (parts: ConversationPart[], state: { live: boolean; waiting?: boolean }, role: ConversationTurn["role"] = "assistant", folds: Folds = {}, memory?: ChatRowMemory): string => {
   const turn: ConversationTurn = { role, ts: "2026-01-01T12:00:00Z", end_ts: "2026-01-01T12:01:00Z", parts };
   const languages = Object.getOwnPropertyDescriptor(navigator, "languages");
   Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
   try {
-    return renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(Turn, {
+    const chat = createElement(SettingsProvider, { children: createElement(Turn, {
       paneId: "w1:p1", turn, rowKey: "turn:1", live: state.live, waiting: state.waiting ?? false, showThinking: false, ...folds,
-    }) }));
+    }) });
+    return renderToStaticMarkup(memory === undefined ? chat : createElement(ChatRowMemoryContext.Provider, { value: memory, children: chat }));
   } finally {
     if (languages) Object.defineProperty(navigator, "languages", languages);
     else Reflect.deleteProperty(navigator, "languages");
@@ -65,6 +66,18 @@ describe("an agent turn's work blocks", () => {
     expect(titles(live)).toEqual(["Worked", "Working…"]);
     expect(expanded(live)).toEqual([false, true]);
     expect(titles(render(parts, { live: true, waiting: true }))).toEqual(["Worked", "Needs you"]);
+  });
+
+  it("names an MCP tool's row by its server and tool, keeping its id in the title (#3875)", () => {
+    const id = "mcp__claude_ai_HomeAssistant__get_entity_state";
+    const part: ConversationPart = { kind: "tool", name: id, summary: "light.kitchen", input: JSON.stringify({ entity_id: "light.kitchen" }), output: "on" };
+    const html = render([part], { live: true });
+    expect(html).toContain('<span class="work-row-name">HomeAssistant get_entity_state</span>');
+    expect(html).toContain(`title="${id} · light.kitchen"`);
+    expect(html).not.toContain(`>${id}<`);
+    // opened, the detail's first line is the id as the agent named it
+    const memory: ChatRowMemory = { toggles: new Map([["tool:0", true]]), outputs: new Map(), runs: new Map(), dormant: new Map() };
+    expect(render([part], { live: true }, "assistant", {}, memory)).toContain(`<p class="work-row-tool">${id}</p>`);
   });
 
   it("keeps one block for tools followed by the answer", () => {
