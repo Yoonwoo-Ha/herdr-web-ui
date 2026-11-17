@@ -194,9 +194,12 @@ function toolText(state: Row, name: string): string {
   return name === "subagent" ? unwrap(output) : output;
 }
 
-/** A call's `state.status` as the transcript's outcome (shared/protocol.ts): not answered yet, answered, or failed. */
+/**
+ * A call's `state.status` as the transcript's outcome (shared/protocol.ts): not answered yet (1.x `pending`,
+ * 2.x `streaming` while the model still writes its input, then `running`), answered, or failed.
+ */
 function toolState(status: unknown): Extract<ConversationPart, { kind: "tool" }>["state"] {
-  return status === "pending" || status === "running" ? "pending" : status === "completed" ? "ok" : status === "error" ? "error" : undefined;
+  return status === "pending" || status === "streaming" || status === "running" ? "pending" : status === "completed" ? "ok" : status === "error" ? "error" : undefined;
 }
 
 /** OpenCode's `skill` tool names the skill it loads by `id` (1.x: `name`). */

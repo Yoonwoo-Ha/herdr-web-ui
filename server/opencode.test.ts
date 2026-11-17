@@ -243,6 +243,19 @@ describe("OpenCode's rows as a conversation", () => {
     expect(parts.map((part) => part.state)).toEqual(["ok", "pending", "pending", "error"]);
   });
 
+  it("reads a call whose input OpenCode 2 is still streaming as not answered yet, so it never stands for the list", () => {
+    // as opencode 2.2.2 stored a held session: a completed `todowrite`, then the next one while the model still wrote it
+    const step = record("assistant", {
+      time: { created: T0 }, finish: "tool-calls",
+      content: [
+        tool("todowrite", { status: "completed", input: { todos: [{ content: "a", status: "in_progress" }] }, content: [{ type: "text", text: "Todos updated: 0/1 completed, 1 in progress." }] }, "call_todo_0"),
+        { type: "tool", id: "call_todo_1", name: "todowrite", state: { status: "streaming", input: "" }, time: { created: T0 } },
+      ],
+    });
+    const parts = step !== null && step.role === "assistant" ? step.parts as Extract<ConversationPart, { kind: "tool" }>[] : [];
+    expect(parts.map((part) => part.state)).toEqual(["ok", "pending"]);
+  });
+
   it("offers a tool's pictures by their place among the message's images", () => {
     const step = record("assistant", {
       time: { created: T0 }, finish: "tool-calls",

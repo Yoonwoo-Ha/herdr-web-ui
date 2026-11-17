@@ -196,6 +196,28 @@ describe("a run of todo updates, opened", () => {
       expect(attempts).toContain(`Overall: ${done}/2 done.`);
     }
   });
+
+  it("shows a lone whole-list update opened as its list by status, a cancelled item as dropped", () => {
+    // one opencode `todowrite`, as opencode 2.2.2 stored it: the list is the input, the answer only counts
+    const part: ConversationPart = {
+      kind: "tool", name: "todowrite", summary: "todowrite", call_id: "call_todo_1", state: "ok",
+      input: JSON.stringify({ todos: [{ content: "Reproduce", status: "completed" }, { content: "Fix", status: "in_progress" }, { content: "Add a test", status: "cancelled" }] }, null, 2),
+      output: "Todos updated: 1/3 completed, 1 in progress, 1 cancelled. In progress: \"Fix\"",
+    };
+    const memory: ChatRowMemory = { toggles: new Map([["tool:0", true]]), outputs: new Map(), runs: new Map(), dormant: new Map() };
+    const languages = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    let html: string;
+    try {
+      html = renderToStaticMarkup(createElement(ChatRowMemoryContext.Provider, { value: memory, children: createElement(SettingsProvider, { children: createElement(Turn, {
+        paneId: "w1:p1", turn: { role: "assistant", ts: "2026-01-01T12:00:00Z", parts: [part] }, rowKey: "turn:1", live: true, waiting: false, showThinking: false,
+      }) }) }));
+    } finally {
+      if (languages) Object.defineProperty(navigator, "languages", languages);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+    expect([...html.matchAll(/class="todo-item is-([a-z_]+)"/g)].map((match) => match[1])).toEqual(["completed", "in_progress", "dropped"]);
+  });
 });
 
 describe("an agent turn's folded work, drawn again", () => {

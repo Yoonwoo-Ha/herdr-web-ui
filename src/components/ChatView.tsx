@@ -36,7 +36,7 @@ import { useMachineApi } from "../lib/machineContext.tsx";
 import { toTranscriptMessages, type TranscriptMessage } from "../lib/transcript.ts";
 import { answerItems, endedOnAnswer, foldedRequestsMatch, isLiveWorkTurn, isWaitingWorkTurn, formatWorkDuration, runNames, splitTurn, turnSegments, type WorkSegment, todoGroups, visibleWorkParts, workBlockStartsOpen, workFailed, workSummary, type TodoAttempt, type TodoGroup, type ToolPart as ToolPartType } from "../lib/workBlocks.ts";
 import { phaseRows, planRows, taskRows, todoRows, type ChecklistRow } from "../lib/checklist.ts";
-import { isTodoTool, parseTodoAnswer, todoCallSummary, type TodoItem, type TodoStatus } from "../lib/todos.ts";
+import { isTodoTool, parseTodoAnswer, todoCallSummary, todoSnapshot, type TodoItem, type TodoStatus } from "../lib/todos.ts";
 import { formatGoalTime, goalWaitSources, goalWaitUntil, turnGoal, type GoalState, type GoalStatus } from "../lib/goals.ts";
 import { publishSessionStats, sessionStats } from "../lib/sessionStats.ts";
 import { HISTORY_PROMPTS, useSettings } from "../lib/settings.ts";
@@ -453,8 +453,8 @@ function ToolInputView({ part }: { part: ToolPartType }) {
   const open = useContext(OpenFileContext);
   const t = useT();
   if (part.arguments_omitted) return <pre className="chat-tool-io">{t("Arguments omitted (too large)")}</pre>;
-  // a todo call shows the list as it stood after it, when the agent answered with it
-  const after = isTodoTool(part.name) ? parseTodoAnswer(part.output) : null;
+  // a todo call shows the list as it stood after it: the agent's answer, or the whole list it sent
+  const after = isTodoTool(part.name) ? parseTodoAnswer(part.output) ?? todoSnapshot(part) : null;
   if (after !== null && after.length > 0) return <TodoList items={after} />;
   const patch = patchText(part.input);
   if (patch !== null) return <PatchView patch={patch} />;
