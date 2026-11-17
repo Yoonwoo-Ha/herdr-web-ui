@@ -16,7 +16,6 @@ export const ISSUE_AUTHOR = "github-actions[bot]";
 export const MAX_ROWS = 50;
 const MAX_CELL = 200;
 
-/** Text as a code span inside a table cell: one line, no backtick, its pipes escaped, then at most MAX_CELL characters. */
 function code(text: string | null): string {
   if (text === null) return "-";
   const line = text.replace(/\s+/g, " ").replaceAll("`", "'").trim().replaceAll("|", "\\|");
@@ -60,7 +59,6 @@ export interface ListedIssue {
 
 export type IssueAction = { readonly kind: "create" } | { readonly kind: "update"; readonly number: number };
 
-/** Update the oldest open issue titled ISSUE_TITLE exactly that ISSUE_AUTHOR opened, or create one when there is none. */
 export function issueAction(open: readonly ListedIssue[]): IssueAction {
   const [number] = open
     .filter((issue) => issue.pull_request === undefined && issue.title === ISSUE_TITLE && issue.user?.login === ISSUE_AUTHOR)
@@ -86,7 +84,6 @@ async function main(): Promise<void> {
     console.log(body);
     return;
   }
-  // a write is not repeated on a server error: it may have been done
   switch (action.kind) {
     case "create": {
       const created: { html_url: string } = JSON.parse(await gh(["api", "-X", "POST", `repos/${result.repo}/issues`, "--input", "-"], { attempts: 1, input: JSON.stringify({ title: ISSUE_TITLE, body }) }));

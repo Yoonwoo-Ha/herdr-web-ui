@@ -16,10 +16,6 @@ export interface InstallGjcIntegrationResult {
   path: string;
 }
 
-/**
- * Bundles one integrations/ entry into a standalone file, as the agent loads it. Beside a compiled server
- * (scripts/server-artifact.ts) there are no sources: the integration was built with it, as integrations/<name>.js.
- */
 export async function buildIntegration(name: string, target: "bun" | "node"): Promise<string> {
   const built = join(import.meta.dir, "..", "integrations", `${name}.js`);
   if (existsSync(built)) return readFileSync(built, "utf8");
@@ -81,11 +77,10 @@ function replaceAtomically(path: string, content: string, banner: string): void 
       linkSync(temporary, path);
     }
   } finally {
-    try { rmSync(temporary, { force: true }); } catch { /* best-effort removal of our temporary file */ }
+    try { rmSync(temporary, { force: true }); } catch {}
   }
 }
 
-/** Install or remove only the one file at `extensionPath`, and only while it carries `banner`. */
 export async function installExtensionFile(
   extensionPath: string,
   banner: string,
@@ -102,7 +97,6 @@ export async function installExtensionFile(
   return { action: "installed", path: extensionPath };
 }
 
-/** Install or remove only herdr-web-ui.js under a selected GJC agent directory. */
 export default async function installGjcIntegration(
   options: InstallGjcIntegrationOptions = {},
 ): Promise<InstallGjcIntegrationResult> {

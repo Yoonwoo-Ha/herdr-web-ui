@@ -3,17 +3,10 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
-/**
- * install.sh's last step, the GitHub star: the whole script, run as `curl … | sh` runs it, on a
- * PATH that holds only what it needs. herdr, node, curl and gh are stand-ins, so nothing is
- * installed, no herdr is touched, nothing is fetched, and no star is read or given.
- */
-
 const ROOT = join(import.meta.dir, "..");
 const MENTION = "a GitHub star helps other herdr users find it";
 const QUESTION = "star it now with the GitHub account gh is signed in to? [y/N]";
 const CTRL_C = "\x03";
-/** the read install.sh asks its question with, which the bash stand-in recognises (see Pc.answerRead) */
 const QUESTION_READ = "read -r -t 20";
 /**
  * When a run of install.sh counts as hung: it ends in about a second alone, in many on a PC busy
@@ -21,16 +14,13 @@ const QUESTION_READ = "read -r -t 20";
  * for the installer's own end (and for its question before typing), bounded by this.
  */
 const RUN_ENDS_WITHIN_MS = 45_000;
-// only a backstop, above the bound: what a test waits for is the installer, not a set time
 setDefaultTimeout(RUN_ENDS_WITHIN_MS + 15_000);
 
-/** Ends `child` once it has run RUN_ENDS_WITHIN_MS. The function it returns stops that clock and tells whether it ran out. */
 function deadline(child: { kill: (signal?: NodeJS.Signals) => void }): () => boolean {
   let hung = false;
   const timer = setTimeout(() => { hung = true; child.kill("SIGKILL"); }, RUN_ENDS_WITHIN_MS);
   return () => { clearTimeout(timer); return hung; };
 }
-/** what the stand-in gh answers: the status line `gh api --include` prints, what it says on stderr, and its exit code */
 type Gh = "starred" | "not" | "refuses" | "denied" | "upstream" | "signed-out" | "hangs" | "stubborn" | "lingering";
 const STAND_INS: Record<string, string> = {
   herdr: `case "$*" in
@@ -60,9 +50,7 @@ const STAND_INS: Record<string, string> = {
   "plugin action invoke "*) ;;
   *) echo "unexpected herdr $*" >&2; exit 1 ;;
 esac`,
-  // a Node 22 for this PC: --version, and the probe install.sh's node_fits makes (version and architecture)
   node: `case "$1" in -p) case "$(uname -m)" in aarch64 | arm64) echo "22 arm64" ;; *) echo "22 x64" ;; esac ;; *) echo v22.0.0 ;; esac`,
-  // only the manifest of the ref being installed: what its id is, or a network that blocks the host
   curl: `echo "$*" >> "$SCRATCH/curl.calls"
 case "$*" in
   *" https://raw.githubusercontent.com/devswha/ovis/$OVIS_REF/herdr-plugin.toml")
@@ -72,7 +60,6 @@ case "$*" in
   *" https://github.com/devswha/ovis/releases/download/$OVIS_REF/ovis-server.json") echo "curl: (22) The requested URL returned error: 404" >&2; exit 22 ;;
   *) echo "unexpected curl $*" >&2; exit 1 ;;
 esac`,
-  // a desktop's openers, which only write down what they were asked to open (renamed into place: a reader never sees half a line)
   "xdg-open": `echo "$*" > "$SCRATCH/open.tmp" && mv "$SCRATCH/open.tmp" "$SCRATCH/open.calls"`,
   open: `echo "$*" > "$SCRATCH/open.tmp" && mv "$SCRATCH/open.tmp" "$SCRATCH/open.calls"`,
   gh: `echo "$*" >> "$SCRATCH/gh.calls"
@@ -94,14 +81,9 @@ case "$mode" in
 esac`,
 };
 
-/**
- * One PC per test, since the tests run side by side: a home directory, and a PATH that holds only
- * what install.sh runs, so that a gh the real PC has is not on it.
- */
 class Pc {
   readonly scratch = mkdtempSync(join(tmpdir(), "herdr-install-star-"));
 
-  /** `perl: false`: a PC without perl, which the question needs to empty the typed-ahead input */
   constructor(gh?: Gh, options: { perl?: boolean } = {}) {
     pcs.push(this.scratch);
     const bin = join(this.scratch, "bin");
@@ -136,9 +118,7 @@ exec '${real}' "$@"
     if (gh) writeFileSync(join(this.scratch, "gh.mode"), gh);
   }
 
-  /** herdr is running, so the app starts and says where it is */
   running(): this { writeFileSync(join(this.scratch, "running"), ""); return this; }
-  /** the plugin installed under its id from before the rename, with a token in its config */
   legacy(options: { stopFails?: boolean } = {}): this {
     writeFileSync(join(this.scratch, "legacy"), "");
     mkdirSync(join(this.scratch, "legacy-plugin", "scripts"), { recursive: true });
@@ -150,9 +130,6 @@ exec '${real}' "$@"
     writeFileSync(join(config, "env"), "OVIS_TOKEN=kept-secret\n", { mode: 0o600 });
     return this;
   }
-  /**
-   * What the browser opener was asked to open, or null when it never was.
-   */
   async opened(wait: boolean): Promise<string | null> {
     const calls = join(this.scratch, "open.calls");
     const readCalls = (): string | null => {
@@ -161,7 +138,6 @@ exec '${real}' "$@"
       return value || null;
     };
     const existing = readCalls();
-    // The script backgrounds the opener only when it opens.
     if (existing !== null || !wait) return existing;
 
     // polled, not watched: a PC busy with other checks can be out of inotify instances (EMFILE)
@@ -171,18 +147,14 @@ exec '${real}' "$@"
       await Bun.sleep(25);
     }
   }
-  /** the plugin id the manifest at the ref names, and herdr installs it under */
   refNames(id: string): this { writeFileSync(join(this.scratch, "ref-id"), id); return this; }
-  /** raw.githubusercontent.com does not answer, while github.com (git, herdr) does */
   manifestBlocked(): this { writeFileSync(join(this.scratch, "manifest-blocked"), ""); return this; }
-  /** the plugin is there already: this run is a rerun */
   installed(): this { writeFileSync(join(this.scratch, "installed"), ""); return this; }
   ghCalls(): string[] {
     const log = join(this.scratch, "gh.calls");
     return existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [];
   }
   stars(): number { return this.ghCalls().filter((call) => call.includes("--method PUT")).length; }
-  /** whether the process whose pid the stand-in gh left in `file` still runs */
   alive(file: "gh.pid" | "gh-child.pid"): boolean {
     const pid = Number(readFileSync(join(this.scratch, file), "utf8"));
     try { process.kill(pid, 0); return true; } catch { return false; }
@@ -200,7 +172,6 @@ exec '${real}' "$@"
     return { PATH: join(this.scratch, "bin"), HOME: this.scratch, SCRATCH: this.scratch, SHELL: "/bin/sh", TERM: "xterm", OVIS_REF: "v0.0.0", OVIS_FROM_SOURCE: "1", ...extra };
   }
 
-  /** as a script or an agent runs it: the script on stdin, and no terminal */
   async unattended(extra?: Record<string, string>): Promise<{ out: string; exitCode: number }> {
     const child = Bun.spawn(["sh"], { cwd: this.scratch, env: this.environment(extra), stdin: Bun.file(join(ROOT, "install.sh")), stdout: "pipe", stderr: "pipe" });
     const ended = deadline(child);
@@ -209,12 +180,6 @@ exec '${real}' "$@"
     return { out: out + err, exitCode };
   }
 
-  /**
-   * At a terminal (script(1) gives one), the script on stdin as under `curl … | sh`. `typed` goes
-   * to the terminal once the question is on it; without `typed` nobody is there. `typedAhead` is
-   * typed as the install starts, long before the question. The wrapping shell survives Ctrl-C as
-   * the user's own shell does, and reports the installer's exit code.
-   */
   async atTerminal(typed: string | null, extra?: Record<string, string>, typedAhead?: string, background = false, observeAfterExit = false): Promise<{ out: string; exitCode: number; asked: boolean; readDuration: number | null }> {
     // a background job of a shell with job control: its own process group, not the terminal's foreground
     const install = background ? `bash -c 'set -m; (cat "${join(ROOT, "install.sh")}" | sh) & wait %1'` : `cat "${join(ROOT, "install.sh")}" | sh`;
@@ -239,7 +204,6 @@ exec '${real}' "$@"
     const decoder = new TextDecoder();
     try {
       if (observeAfterExit) await child.exited;
-      // the terminal's output ends with the installer (or when deadline() ends script(1))
       for await (const chunk of child.stdout) {
         out += decoder.decode(chunk, { stream: true });
         if (answered || typed === null || !out.includes(QUESTION)) continue;
@@ -266,7 +230,6 @@ const pcs: string[] = [];
 afterAll(() => { for (const scratch of pcs) rmSync(scratch, { recursive: true, force: true }); });
 
 it("asks its question with the read the tests' bash stand-in records", () => {
-  // otherwise every answered test would read a null status, with nothing to say why
   expect(readFileSync(join(ROOT, "install.sh"), "utf8")).toContain(`bash -c '${QUESTION_READ} answer </dev/tty`);
 });
 
@@ -282,7 +245,6 @@ it("extracts only the URL from a PID-bearing Windows status line", () => {
   expect(origin).toBe("http://127.0.0.1:7317");
 });
 
-// install.sh is the Linux and macOS installer: Windows has install.ps1 and scripts/windows-install.test.ps1
 describe.skipIf(platform() === "win32")("install.sh over an install under the old plugin id", () => {
   it.concurrent("stops it, brings its token to the new id and removes it", async () => {
     const pc = new Pc().legacy();
@@ -297,7 +259,6 @@ describe.skipIf(platform() === "win32")("install.sh over an install under the ol
   });
 
   it.concurrent("moves nothing while the old id's server will not stop", async () => {
-    // removed with its server still up, the old checkout would keep serving: the new start finds the port answering
     const pc = new Pc().legacy({ stopFails: true });
     const { out, exitCode } = await pc.unattended();
     expect(exitCode, out).not.toBe(0);
@@ -308,7 +269,6 @@ describe.skipIf(platform() === "win32")("install.sh over an install under the ol
   });
 });
 
-// releases up to 0.4.13 name the plugin by its old id, and installing one cannot move an install to the new one
 describe.skipIf(platform() === "win32")("install.sh with a release from before the rename", () => {
   const LEGACY = "devswha.herdr-web-ui";
   const OLD_RELEASE = { OVIS_REF: "v0.4.13" };
@@ -384,7 +344,6 @@ describe.skipIf(platform() === "win32")("install.sh without a terminal", () => {
     expect(out).toContain("Installed devswha.ovis");
     expect(out).toContain(MENTION);
     expect(out).not.toContain(QUESTION);
-    // the last thing said, so that a question after it can be left without losing a line
     expect(out.trimEnd().split("\n").at(-1)).toContain(MENTION);
   });
 
@@ -434,21 +393,18 @@ describe.skipIf(platform() === "win32")("install.sh without a terminal", () => {
       expect(await Bun.spawn(["git", "-C", plugin, ...args], { stdout: "ignore", stderr: "inherit" }).exited).toBe(0);
     }
     const head = (await new Response(Bun.spawn(["git", "-C", plugin, "rev-parse", "HEAD"], { stdout: "pipe" }).stdout).text()).trim();
-    // a mktemp that fails, as on a full or read-only temporary folder
     const mktemp = join(pc.scratch, "bin", "mktemp");
     rmSync(mktemp);
     writeFileSync(mktemp, "#!/bin/sh\necho 'mktemp: failed to create file' >&2\nexit 1\n");
     chmodSync(mktemp, 0o755);
     const { out, exitCode } = await pc.unattended({ OVIS_REF: "feat/x" });
     expect(exitCode, out).toBe(0);
-    // regression (fails on main: without the file the commit was not read at all)
     expect(out).toContain(`the installed checkout is at commit ${head.slice(0, 12)}; OVIS_REF does not move`);
   });
 
   it.concurrent("says no commit when herdr names no plugin root, rather than the one of the directory it runs in", async () => {
     const pc = new Pc().installed();
     writeFileSync(join(pc.scratch, "no-json"), "");
-    // the installer runs in pc.scratch: a git checkout of its own here
     for (const args of [["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "x"]]) {
       expect(await Bun.spawn(["git", "-C", pc.scratch, ...args], { stdout: "ignore", stderr: "inherit" }).exited).toBe(0);
     }
@@ -460,7 +416,6 @@ describe.skipIf(platform() === "win32")("install.sh without a terminal", () => {
 
   it.concurrent("says no commit for a plugin folder that is not a checkout itself but sits inside another repository", async () => {
     const pc = new Pc().installed();
-    // the plugin's folder is pc.scratch/plugin: the repository is around it
     for (const args of [["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "x"]]) {
       expect(await Bun.spawn(["git", "-C", pc.scratch, ...args], { stdout: "ignore", stderr: "inherit" }).exited).toBe(0);
     }
@@ -478,7 +433,6 @@ describe.skipIf(platform() === "win32")("install.sh without a terminal", () => {
       expect(await Bun.spawn(["git", "-C", plugin, ...args], { stdout: "ignore", stderr: "inherit" }).exited).toBe(0);
     }
     const head = (await new Response(Bun.spawn(["git", "-C", plugin, "rev-parse", "HEAD"], { stdout: "pipe" }).stdout).text()).trim();
-    // git refusing a repository it takes for another user's, with no config of this PC's that trusts every folder
     const { out, exitCode } = await pc.unattended({ OVIS_REF: "feat/x", GIT_TEST_ASSUME_DIFFERENT_OWNER: "1", GIT_CONFIG_GLOBAL: join(pc.scratch, "no-config"), GIT_CONFIG_NOSYSTEM: "1" });
     expect(exitCode, out).toBe(0);
     expect(out).toContain("git could not read the installed checkout's commit (fatal: detected dubious ownership");
@@ -492,28 +446,24 @@ describe.skipIf(platform() === "win32")("install.sh without a terminal", () => {
       expect(await Bun.spawn(["git", "-C", plugin, ...args], { stdout: "ignore", stderr: "inherit" }).exited).toBe(0);
     }
     const head = (await new Response(Bun.spawn(["git", "-C", plugin, "rev-parse", "HEAD"], { stdout: "pipe" }).stdout).text()).trim();
-    // git answering, and warning on stderr as it does about a config file it cannot read
     const git = join(pc.scratch, "bin", "git");
     rmSync(git);
     writeFileSync(git, `#!/bin/sh\necho "warning: unable to access '/nowhere/.config/git/config': Permission denied" >&2\nexec '${Bun.which("git")}' "$@"\n`);
     chmodSync(git, 0o755);
     const { out, exitCode } = await pc.unattended({ OVIS_REF: "feat/x" });
     expect(exitCode, out).toBe(0);
-    // regression (fails on main): the warning was read as the prefix of a folder inside another repository, so no commit was said
     expect(out).toContain(`the installed checkout is at commit ${head.slice(0, 12)}; OVIS_REF does not move`);
     expect(out).not.toContain("unable to access");
   });
 
   it.concurrent("says nothing of git for a plugin folder git says is no repository", async () => {
     const pc = new Pc().installed();
-    // nothing above the scratch folder is read as the repository around it
     const { out, exitCode } = await pc.unattended({ OVIS_REF: "feat/x", GIT_CEILING_DIRECTORIES: pc.scratch });
     expect(exitCode, out).toBe(0);
     expect(out).toContain("OVIS_REF does not move an installed Ovis");
     expect(out).not.toContain("git could not read");
   });
 
-  // gh sleeps 60 seconds: the installer ended within RUN_ENDS_WITHIN_MS, so it did not wait for gh, and gh is gone
   it.concurrent("goes on with the link when gh does not answer", async () => {
     const pc = new Pc("hangs");
     const { out, exitCode } = await pc.unattended();
@@ -527,7 +477,6 @@ describe.skipIf(platform() === "win32")("install.sh without a terminal", () => {
     const { out, exitCode } = await pc.unattended();
     expect(exitCode).toBe(0);
     expect(out).toContain(MENTION);
-    // the installer ended while that child still held gh's output
     expect(pc.alive("gh-child.pid")).toBe(true);
     process.kill(Number(readFileSync(join(pc.scratch, "gh-child.pid"), "utf8")));
   });
@@ -537,12 +486,10 @@ describe.skipIf(platform() === "win32")("install.sh without a terminal", () => {
     const { out, exitCode } = await pc.unattended();
     expect(exitCode).toBe(0);
     expect(out).toContain(MENTION);
-    // 10 seconds for gh, then TERM, which it ignores, and KILL 2 seconds later: the installer waited for gh, and gh is gone long before its 60
     expect(pc.alive("gh.pid")).toBe(false);
   });
 });
 
-// the browser: opened once, after a first install, on a desktop that has someone at it
 describe.skipIf(platform() === "win32")("install.sh and the browser", () => {
   it.concurrent("opens the app after a new install on a desktop", async () => {
     const pc = new Pc().running();
@@ -606,7 +553,6 @@ describe.skipIf(platform() !== "linux" || !Bun.which("script"))("install.sh at a
     expect(pc.stars()).toBe(1);
   });
 
-  // the read's status tells the answer apart from the 20 seconds running out, which stars nothing either
   for (const [name, typed, read] of [["Enter alone", "\n", 0], ["n", "n\n", 0], ["anything but y or yes", "yy\n", 0], ["the end of input", "\x04", 1]] as const) {
     it.concurrent(`does not star on ${name}`, async () => {
       const pc = new Pc("not");
@@ -623,7 +569,6 @@ describe.skipIf(platform() !== "linux" || !Bun.which("script"))("install.sh at a
     const { asked, exitCode } = await pc.atTerminal("\n", {}, "y\n");
     expect(asked).toBe(true);
     expect(exitCode).toBe(0);
-    // the Enter typed after the question was read, not the y before it
     expect(pc.answerRead()).toBe(0);
     expect(pc.stars()).toBe(0);
   });
@@ -643,7 +588,6 @@ describe.skipIf(platform() !== "linux" || !Bun.which("script"))("install.sh at a
     expect(exitCode).toBe(0);
     expect(out).toContain(MENTION);
     expect(asked).toBe(false);
-    // nor did it wait on the terminal without asking
     expect(pc.answerRead()).toBeNull();
     expect(pc.stars()).toBe(0);
   });
@@ -653,8 +597,6 @@ describe.skipIf(platform() !== "linux" || !Bun.which("script"))("install.sh at a
     const { asked, exitCode } = await pc.atTerminal(CTRL_C);
     expect(asked).toBe(true);
     expect(exitCode).toBe(0);
-    // Ctrl-C ended the read (130, SIGINT) or the shell around it first (no status); a question that
-    // only ran out its 20 seconds, as when the Ctrl-C never reached the installer, records 142
     expect([null, 130]).toContain(pc.answerRead());
     expect(pc.stars()).toBe(0);
   });
@@ -666,7 +608,6 @@ describe.skipIf(platform() !== "linux" || !Bun.which("script"))("install.sh at a
     expect(out).toContain("gh could not star it");
   });
 
-  // only GitHub's own "not starred" is a reason to ask: its text in another failure is not
   for (const mode of ["denied", "upstream", "signed-out"] as const) {
     it.concurrent(`asks nothing when gh's answer is ${mode}`, async () => {
       const pc = new Pc(mode);

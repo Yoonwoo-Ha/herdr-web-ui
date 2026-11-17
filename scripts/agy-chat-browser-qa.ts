@@ -1,4 +1,3 @@
-/** Fictional Agy steps -> real reader/API -> desktop and mobile activity feedback. */
 import "./test-herdr.ts";
 import { Database } from "bun:sqlite";
 import assert from "node:assert/strict";
@@ -63,7 +62,6 @@ try {
     add("PLANNER_RESPONSE", "", { tool_calls: [{ name: "view_file", args: { AbsolutePath: "/fiction.txt" } }] });
     await log.locator(".work-block.is-live .work-row-head").last().waitFor({ state: "visible" });
     add("GENERIC", "Fictional tool result");
-    // the open work block's head says Working now: the line under it goes
     await log.locator(".work-block.is-live .work-block-title", { hasText: "Working…" }).waitFor();
     await activity.waitFor({ state: "detached" });
     if (viewport.width === 390 && process.env.UI_EVIDENCE_DIR) {
@@ -85,7 +83,6 @@ try {
   await activity.waitFor({ state: "detached" });
   assert.equal(await log.getByText("Remove this active prompt", { exact: true }).count(), 0);
   db.exec("DROP TABLE steps");
-  // the store gone: the reason the PC knows, in place of the general line
   await log.locator(".chat-unavailable-reason").getByText(/couldn't find or read the file .* keeps this conversation in/u).waitFor();
   assert.equal(await log.getByText("Antigravity chat is unavailable. Open Terminal to see activity and tool calls.", { exact: true }).count(), 0);
   assert.deepEqual(errors, []);

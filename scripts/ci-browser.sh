@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# The browser lane of CI: the lockfile's Playwright Chromium, then the scripts that drive it.
-# BROWSER_PARALLEL=1: run scripts concurrently (see ci-browser-parallel.ts)
-# BROWSER_WORKERS: worker count for parallel mode (default: min(cores/2, 6))
 set -euo pipefail
 
-# The relay scripts drive the hosted shell, a build of its own (dist-shell/).
 bun run build:shell
 if [ "${BROWSER_PARALLEL:-}" = "1" ]; then
   exec bun scripts/ci-browser-parallel.ts
@@ -13,7 +9,6 @@ timings=""
 HERDR_DEMO_BUILD=""
 finish() {
   local code=$?
-  # Reporting or cleanup must not replace the lane's exit code.
   set +e
   printf '\nBrowser script summary\n%-60s %7s %5s\n' "script" "seconds" "exit"
   printf '%s' "$timings"
@@ -50,11 +45,8 @@ if [ -n "${CI:-}${CHECK_DIR:-}" ]; then
 fi
 CHROME_PATH="$(bash scripts/ci-chromium.sh)"
 export CHROME_PATH
-# the relay media run encodes its test video with the pinned ffmpeg
 FFMPEG="${FFMPEG:-$(bash scripts/ci-ffmpeg.sh)}"
 export FFMPEG
-# The demo scripts below all show the same client: it is built once here and each copies it
-# (scripts/demo-build.ts), instead of each building it again.
 HERDR_DEMO_BUILD="$(mktemp -d)"
 export HERDR_DEMO_BUILD
 run_script scripts/demo-build.ts "$HERDR_DEMO_BUILD"

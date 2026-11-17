@@ -8,13 +8,6 @@ import { appFaces } from "./app-faces.ts";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
-// Math in a reply (#2407): `$…$` inline, `$$…$$` and a ```math fence as display math, beside
-// `\(…\)` and `\[…\]`, while prices (`$5 and $10`) stay text. On the unmodified app over the
-// demo's fixture transport, at 1280 and 390, Codex palette dark and light: every formula is drawn
-// by KaTeX in the theme's text color, the prices read as written, and the reply's MD copy keeps the
-// source. The omp pane's conversation answers TURNS; all files and HTTP traffic stay in this
-// disposable, loopback-only app and no herdr session is opened. Screenshots go to UI_EVIDENCE_DIR
-// when it is set.
 const app = mkdtempSync(join(tmpdir(), "herdr-chat-math-demo-"));
 const evidence = process.env["UI_EVIDENCE_DIR"] || null;
 if (evidence !== null) mkdirSync(evidence, { recursive: true });
@@ -49,7 +42,6 @@ async function prepareDemo(): Promise<void> {
   const index = join(app, "index.html");
   const html = readFileSync(index, "utf8");
   assert.match(html, /<script type="module"/);
-  // over the demo's own fetch: only this pane's conversation read is answered here
   const override = `<script>(() => {
     const demo = window.fetch;
     const turns = ${JSON.stringify(TURNS).replaceAll("<", "\\u003c")};
@@ -101,7 +93,6 @@ async function check(browser: Browser, origin: string, width: number, theme: "da
 
     await scope.locator(".markdown-math-display").first().scrollIntoViewIfNeeded();
     if (evidence !== null) await page.screenshot({ path: join(evidence, `chat-math-codex-${theme}-${width}.png`) });
-    // the reply's MD copy is its source, dollars and all
     const reply = scope.locator("article.chat-turn-agent").last();
     await reply.scrollIntoViewIfNeeded();
     await reply.hover();

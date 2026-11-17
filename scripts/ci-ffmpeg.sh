@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# Prints the path of the ffmpeg the relay media run encodes its test video with (FFMPEG in
-# scripts/relay-media-browser-qa.ts): a static Linux x64 build pinned by release and SHA-256, as
-# scripts/check.ts pins actionlint. An ffmpeg on PATH that reports the pinned version is used as it
-# is; otherwise the pinned archive is fetched once, checked and kept in node_modules/.cache.
 set -euo pipefail
 
 release="b6.1.1"

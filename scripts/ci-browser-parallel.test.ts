@@ -14,7 +14,6 @@ const alive = (pid: number): boolean => {
   try { return readFileSync(`/proc/${pid}/stat`, "utf8").replace(/^.*\) /s, "")[0] !== "Z"; } catch { return true; }
 };
 
-/** The command every stand-in the stub starts runs. */
 const STAND_IN = ["sleep", "1000"];
 
 const commandLine = (pid: number): string[] | null => {
@@ -25,14 +24,6 @@ const commandLine = (pid: number): string[] | null => {
   return ps.status === 0 ? ps.stdout.trim().split(/\s+/) : null;
 };
 
-/**
- * The stand-in a record names, while that very process still runs, else null. The stub writes the
- * record, "<pid> <start>", as soon as it has started the stand-in: its own child, which it has not
- * reaped, so that pid cannot belong to anything else yet. A pid alone proves nothing later: once the
- * stand-in has ended, its number may be given to any other process of this user. So the process
- * must still have started when the record says (processStart: the boot and clock tick on Linux),
- * not be a zombie, and run the stand-in's command.
- */
 function standIn(record: string): number | null {
   const match = /^(\d+) (.+)\n$/.exec(record);
   if (!match) throw new Error(`not a stand-in record: ${JSON.stringify(record)}`);
@@ -41,17 +32,11 @@ function standIn(record: string): number | null {
   return alive(pid) && commandLine(pid)?.join(" ") === STAND_IN.join(" ") && processStart(pid) === match[2] ? pid : null;
 }
 
-/** Ends the stand-in a record names, only when standIn proves it is still that process. */
 function stopStandIn(record: string): void {
   const pid = standIn(record);
   if (pid !== null) process.kill(pid, "SIGKILL");
 }
 
-/**
- * The stub's shell function that prints what processStart says of pid $1 (here a child of the
- * stub's own): on Linux the boot id and the start in clock ticks, /proc/<pid>/stat's field 22,
- * read after the command name in parentheses; on macOS ps's start, in its clock and words.
- */
 const STARTED = [
   "started() {",
   "  if [ -r /proc/$1/stat ]; then printf '%s:%s\\n' \"$(cat /proc/sys/kernel/random/boot_id)\" \"$(sed 's/.*) //' /proc/$1/stat | cut -d' ' -f20)\"",
@@ -59,11 +44,6 @@ const STARTED = [
   "}",
 ].join("\n");
 
-/**
- * Runs the lane on one stub script whose last step is `end`, after it has started a process that
- * keeps the script's output open (as a stray server would) and one that ignores SIGTERM and writes
- * nowhere, and returns what the lane printed and wrote.
- */
 async function runStub(end: string, timeoutSeconds: string) {
   const dir = mkdtempSync(join(tmpdir(), "browser-parallel-test-"));
   const bin = join(dir, "bin");
@@ -94,14 +74,12 @@ async function runStub(end: string, timeoutSeconds: string) {
       text, code, signal: child.signalCode,
       retried: existsSync(join(logs, "ui-regression.attempt-1.log")),
       summary: JSON.parse(readFileSync(join(logs, "summary.json"), "utf8")),
-      // both stand-ins were recorded, and neither still runs
       leftAlive: [leftover, stubborn].map((file) => standIn(readFileSync(file, "utf8"))).filter((pid) => pid !== null),
     };
   } finally {
     try {
       for (const file of [leftover, stubborn]) {
-        // a record that cannot be read proves nothing: it is left alone, and the error the run raised for it stands
-        try { if (existsSync(file)) stopStandIn(readFileSync(file, "utf8")); } catch { /* unproven: left alone */ }
+        try { if (existsSync(file)) stopStandIn(readFileSync(file, "utf8")); } catch {}
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -109,10 +87,8 @@ async function runStub(end: string, timeoutSeconds: string) {
   }
 }
 
-/** The run has ended: stopRun does not wait out a grace in real time. */
 const ran = Promise.resolve();
 
-/** A stand-in for the process table whose clock moves by hand: each read of the table takes 10 ms of it, so a grace ends after a counted number of reads. */
 function stubIo(parts: Omit<StopIo, "marked" | "now" | "graceMs"> & { marked?: StopIo["marked"] }, graceMs: number): StopIo {
   let clock = 0;
   return { ...parts, processes: async () => { clock += 10; return parts.processes(); }, marked: parts.marked ?? (() => true), now: () => clock, graceMs };
@@ -131,9 +107,7 @@ describe("parallel browser script deadline", () => {
     expect(run.leftAlive).toEqual([]);
   }, 20_000);
 
-  // A process whose parent has exited is found through /proc: Linux only, as CI's runners are.
   it.skipIf(process.platform !== "linux")("fails a script that exits but leaves a process holding its output, without waiting for the bound", async () => {
-    // the bound is past the stub run's own 15 s limit: only the exit can end this run in time
     const run = await runStub("exit 0", "60");
     expect(run.signal).toBeNull();
     expect(run.code).toBe(1);
@@ -145,7 +119,6 @@ describe("parallel browser script deadline", () => {
   }, 20_000);
 
   it("names what SIGKILL did not end within the grace, and says it was NOT stopped", async () => {
-    // a process table: 11 ends on SIGTERM, 12 on SIGKILL, 13 on neither (a process no signal ends)
     const alive = new Set([11, 12, 13]);
     const sent: string[] = [];
     const io = stubIo({
@@ -160,18 +133,15 @@ describe("parallel browser script deadline", () => {
       running: (pid) => alive.has(pid),
       command: (pid) => `stub-${pid}`,
     }, 50);
-    // the run never finishes: its output stays held
     const stop = await stopRun(io, ran);
     expect(sent).toEqual(["SIGTERM 11", "SIGTERM 12", "SIGTERM 13", "SIGKILL 12", "SIGKILL 13"]);
     expect(stop).toEqual({ stopped: 2, survivors: ["13 (stub-13)"], unsure: false });
     expect(stopReport("Timed out after 5s", stop)).toBe("Timed out after 5s; stopped 2 processes; could NOT stop: 13 (stub-13).");
-    // one that ends on SIGKILL only once the kernel runs it again: waited for, and not named
     const late = new Set([21]);
     let killed = false;
     const lateIo = stubIo({
       processes: async () => [...late],
       signal: (_pids, name) => { if (name === "SIGKILL") killed = true; return []; },
-      // gone at the second look after SIGKILL
       running: (() => { let looks = 0; return (pid: number) => !(killed && ++looks > 1) && late.has(pid); })(),
       command: () => "slow",
     }, 50);
@@ -181,7 +151,6 @@ describe("parallel browser script deadline", () => {
   });
 
   it("kills and names a process the run forks after the first look, and not a pid that was reused", async () => {
-    // 12 ignores SIGTERM and forks 14 when SIGKILL lands; 14 ends on SIGKILL, and it forks 15, which no signal ends
     const alive = new Set([12]);
     const marked = new Set([12]);
     const sent: string[] = [];
@@ -202,7 +171,6 @@ describe("parallel browser script deadline", () => {
     const stop = await stopRun(io, ran);
     expect(sent).toEqual(["SIGTERM 12", "SIGKILL 12", "SIGKILL 14", "SIGKILL 15"]);
     expect(stop).toEqual({ stopped: 2, survivors: ["15 (stub-15)"], unsure: false });
-    // 31 ends on SIGKILL and its pid is taken by an unrelated process, which is not the run's (no mark)
     let ended = false;
     const reuseIo = stubIo({
       processes: async () => (ended ? [] : [31]),
@@ -214,7 +182,6 @@ describe("parallel browser script deadline", () => {
   });
 
   it("does not take a signal the system refused (EPERM) for a stop", async () => {
-    // 41 is refused every signal and its liveness check is refused too, so it reads as not running; 42 ends on SIGTERM
     const alive = new Set([41, 42]);
     const io = stubIo({
       processes: async () => [...alive],
@@ -229,7 +196,6 @@ describe("parallel browser script deadline", () => {
   });
 
   it("does not signal a process whose mark is gone by the signal, and names it as not stopped", async () => {
-    // 12 forks 14 on SIGKILL; by the next signal 14's pid belongs to an unrelated process (its mark is gone)
     const alive = new Set([12]);
     const found = new Set([12]);
     const sent: string[] = [];
@@ -252,7 +218,6 @@ describe("parallel browser script deadline", () => {
   });
 
   it("does not name a process that ended by itself between the scan and the mark check", async () => {
-    // 12 forks 14 and 15 on SIGKILL; both have no mark by the check. 14 has ended by itself, 15 still runs
     const alive = new Set([12]);
     const found = new Set([12]);
     const sent: string[] = [];
@@ -269,7 +234,6 @@ describe("parallel browser script deadline", () => {
       marked: () => false,
       command: (pid) => `stub-${pid}`,
     }, 50);
-    // marked() is false for the first ones too, but 12 is signalled in the first rounds, which do not check it
     const stop = await stopRun(io, ran);
     expect(sent).toEqual(["SIGTERM 12", "SIGKILL 12"]);
     expect(stop.survivors).toEqual(["15 (stub-15)"]);
@@ -301,7 +265,6 @@ describe("parallel browser script deadline", () => {
   });
 
   it.skipIf(process.platform !== "linux")("takes a process's name from its executable, never from the argv[0] it sets", async () => {
-    // a process this test starts, which calls itself by a credential
     for (const argv0 of ["user:SECRET@host", "curl https://user:SECRET@h", "https://x-access-token:SECRET@h/x"]) {
       const child = Bun.spawn(["sleep", "1000"], { argv0, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
       try {
@@ -313,7 +276,6 @@ describe("parallel browser script deadline", () => {
         await child.exited;
       }
     }
-    // no /proc/<pid>/exe to read (no such process): the pid stands alone
     expect(processName(2 ** 22 + 1)).toBe("");
   });
 
@@ -330,7 +292,6 @@ describe("parallel browser script deadline", () => {
   });
 
   it("lets no command text reach the flake issue's parser, so a stopped row keeps its own failure", () => {
-    // hostile program names: the words the parser reads a timeout from, a FAILED header, a path in a stack frame
     const hostile = ["Timed out after 600s", "(exit 124", "FAILED scripts/injected.ts (exit 1)", "x\nFAILED scripts/injected.ts (exit 124)", "/w/ovis/scripts/other.ts:9:1"];
     for (const name of hostile) {
       const detail = stopReport("Exited 1, but a process it started still held its output", { stopped: 1, survivors: [`9 (${programName(`/bin/${name}`)})`], unsure: false });
@@ -343,7 +304,6 @@ TypeError: closed
   });
 
   it("keeps naming a process that refused a signal after a later scan no longer finds it", async () => {
-    // 61 is another user's and refuses SIGTERM; 62 ends on it. The script then ends, and no scan finds 61's tree again
     let found = [61, 62];
     const io = stubIo({
       processes: async () => found,
@@ -360,7 +320,6 @@ TypeError: closed
   });
 
   it("does not say a run was stopped cleanly when a process was forked as the last kill landed", async () => {
-    // 12 forks 14 on SIGKILL and 14 forks 15 on it; the grace is over by the last read, so 15 is never read
     const alive = new Set([12]);
     const marked = new Set([12]);
     const io = stubIo({
@@ -382,20 +341,16 @@ TypeError: closed
     expect(stopReport("Timed out after 5s", stop)).toBe("Timed out after 5s; stopped 2 processes; processes started at the last moment may not be listed.");
   });
 
-  // A stand-in the stub records that standIn could never prove would read as gone, and leftAlive would pass unchecked.
   it.skipIf(process.platform !== "linux" && process.platform !== "darwin")("records a start exactly as processStart names it", () => {
     const own = processStart(process.pid);
     expect(own).not.toBeNull();
     expect(spawnSync("sh", ["-c", `${STARTED}\nstarted ${process.pid}`], { encoding: "utf8" }).stdout).toBe(`${own}\n`);
   });
 
-  // Every process here is one this test started for the purpose, its handle kept: nothing else is signalled.
   it.skipIf(process.platform !== "linux" && process.platform !== "darwin")("ends a recorded stand-in only, never another process its pid names", async () => {
     const start = (command: string[]) => Bun.spawn(command, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
     const recorded = start(STAND_IN);
-    // the same command, but the record is of an earlier process that had its pid
     const later = start(STAND_IN);
-    // started when the record says, but another command
     const other = start(["sleep", "999"]);
     const startOf = (pid: number) => processStart(pid) ?? "";
     const records = [
@@ -432,15 +387,11 @@ describe("parallel browser script order", () => {
     expect(longestFirst(["a.ts", "b.ts"], {})).toEqual(["a.ts", "b.ts"]);
   });
 
-  // Nobody has measured it: counted as a typical script, relay-e2e (300 s) started 124th of 184
-  // and ran on alone for four minutes after every other script had ended.
   it("starts a script the table does not hold before the longest one it does", () => {
     const timings = { "a.ts": 10, "b.ts": 300, "c.ts": 50 };
     expect(longestFirst(["a.ts", "new.ts", "c.ts", "b.ts"], timings)).toEqual(["new.ts", "b.ts", "c.ts", "a.ts"]);
-    // several of them keep the listed order among themselves, wherever the list holds them
     expect(longestFirst(["a.ts", "new-1.ts", "b.ts", "new-2.ts", "c.ts", "new-3.ts"], timings))
       .toEqual(["new-1.ts", "new-2.ts", "new-3.ts", "b.ts", "c.ts", "a.ts"]);
-    // seconds that are not a number time nothing
     expect(longestFirst(["a.ts", "odd.ts", "b.ts"], { ...timings, "odd.ts": Number.NaN })).toEqual(["odd.ts", "b.ts", "a.ts"]);
   });
 
@@ -456,8 +407,6 @@ describe("parallel browser shards", () => {
   it("splits the scripts by estimated time into disjoint shards that together hold every script once", () => {
     const scripts = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"];
     const timings = { "a.ts": 200, "b.ts": 100, "c.ts": 100, "d.ts": 90, "e.ts": 10 };
-    // longest first to the least-loaded shard: a -> 1; b -> 2; c -> 2 (100 < 200); d -> 1 (a tie goes to
-    // the first); e -> 2 (200 < 290)
     expect(shardScripts(scripts, timings, "1/2")).toEqual(["a.ts", "d.ts"]);
     expect(shardScripts(scripts, timings, "2/2")).toEqual(["b.ts", "c.ts", "e.ts"]);
     const listed = serialBrowserScripts();
@@ -467,12 +416,9 @@ describe("parallel browser shards", () => {
   });
 
   it("counts a script the table does not hold as the median in a shard's load, and deals it out in that place", () => {
-    // median 100. Longest first: a -> 1; new (100, listed before b) -> 2; b -> 2 (100 < 300); c -> 2.
-    // Dealt out first, as the workers start it, new would take shard 1 and a shard 2.
     const timings = { "a.ts": 300, "b.ts": 100, "c.ts": 20 };
     expect(shardScripts(["new.ts", "a.ts", "b.ts", "c.ts"], timings, "1/2")).toEqual(["a.ts"]);
     expect(shardScripts(["new.ts", "a.ts", "b.ts", "c.ts"], timings, "2/2")).toEqual(["new.ts", "b.ts", "c.ts"]);
-    // every script 100: new-1 -> 1; new-2 -> 2; a -> 1. Counted as nothing, a would go first and both of them to shard 2.
     const even = { "a.ts": 100, "b.ts": 100, "c.ts": 100 };
     expect(shardScripts(["new-1.ts", "new-2.ts", "a.ts"], even, "1/2")).toEqual(["new-1.ts", "a.ts"]);
     expect(shardScripts(["new-1.ts", "new-2.ts", "a.ts"], even, "2/2")).toEqual(["new-2.ts"]);
@@ -486,7 +432,6 @@ describe("parallel browser shards", () => {
       const shards = Array.from({ length: total }, (_, k) => shardScripts(listed, half, `${k + 1}/${total}`));
       expect(shards.flat().sort()).toEqual([...listed].sort());
       for (const shard of shards) expect(shard).toEqual(listed.filter((script) => shard.includes(script)));
-      // the same split every time it is computed, as each job computes it for itself
       expect(shards).toEqual(Array.from({ length: total }, (_, k) => shardScripts(listed, half, `${k + 1}/${total}`)));
     }
   });

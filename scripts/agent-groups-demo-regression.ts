@@ -1,14 +1,3 @@
-/**
- * Named agent groups (#2431), on the unmodified app over the demo's fixture transport: a row's
- * menu moves it into a group, which the Agents list draws under its own heading with its count;
- * the heading folds the group; New workspace offers the groups. At 390 and 1280, light and dark.
- * No live session is read.
- *
- * Settings -> Experimental -> Named agent groups is on, with the groups Agents and Tasks.
- *
- * UI_EVIDENCE_DIR: agent-groups-<390|1280>-<light|dark>.png (the grouped list),
- * agent-groups-dialog-<...>.png (New workspace's Group field) and agent-groups-setting-<...>.png.
- */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,8 +15,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   const tag = `${width} ${theme}`;
   const context = await browser.newContext({ viewport: { width, height: phone ? 844 : 900 }, ...(phone ? { deviceScaleFactor: 3, isMobile: true, hasTouch: true } : {}), locale: "en-US", colorScheme: theme });
   await context.addInitScript((settings) => localStorage.setItem("ovis:settings", settings), JSON.stringify({ language: "en", theme, agentNamedGroups: true, agentGroupNames: ["Agents", "Tasks"] }));
-  // the Claude pane's row is the one moved: its turn stays at work, or on a slow runner the end the
-  // demo times 4.5s in changes the row while its menu is open
   await context.addInitScript(() => Reflect.set(window, "__ovisDemoHoldTurn", true));
   const page = await context.newPage();
   const errors: string[] = [];

@@ -1,13 +1,3 @@
-/**
- * The add-to-home-screen line (components/InstallHint.tsx) on the unmodified app over the demo's
- * fixture transport, as each browser it is for sees it: an iPhone's Safari tab names the steps
- * with the share glyph, an Android tab installs in one tap once Chrome offers its prompt and names
- * the menu item before that, and a dismissal or an install keeps it away after a reload. The
- * installed iPhone app and a desktop browser never show it. No prompt reaches a real browser; all
- * files and HTTP traffic stay in this disposable, loopback-only app, and no herdr session is opened.
- *
- * UI_EVIDENCE_DIR: install-hint-<390|1440>-<light|dark>[-ko]-<state>.png and manifest.json.
- */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -32,7 +22,6 @@ const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebK
 const ANDROID = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36";
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
-/** The demo transport ends its opening turn on a 4500 ms timer; held, so every frame shows the same turn. */
 const HOLD_DEMO_TURN = `<script>(() => { const later = window.setTimeout; window.__laterTimeout = later; window.setTimeout = (callback, ms, ...args) => ms === 4500 ? (window.__heldDemoTurn = callback, 0) : later(callback, ms, ...args); })();</script>`;
 const RELEASE_TIMERS = `<script>window.setTimeout = window.__laterTimeout;</script>`;
 
@@ -51,7 +40,6 @@ async function capture(page: Page, theme: Theme, language: Language, state: stri
   manifest.push({ file, width: viewport.width, height: viewport.height, theme, language, state, sha256: sha256(path), capturedAt: new Date().toISOString() });
 }
 
-/** Chrome's prompt, as the page receives it: prompt() is counted and the choice is accepted. */
 const offerPrompt = (page: Page): Promise<void> => page.evaluate(() => {
   window.__prompted = 0;
   const event = Object.assign(new Event("beforeinstallprompt", { cancelable: true }), {
@@ -93,7 +81,6 @@ async function run(browser: Browser, origin: string, theme: Theme, language: Lan
     && [...document.querySelectorAll<HTMLElement>('[data-testid="install-hint"]')].every((el) => el.scrollWidth <= el.clientWidth + 0.5));
   const [iosBefore, iosAfter] = label("Add to Home Screen for alerts: {glyph} Share → Add to Home Screen").split("{glyph}");
   try {
-    // ---- iPhone Safari: the steps with the share glyph; dismissed, gone for good ----------------
     {
       const { context, page, errors } = await open(IPHONE);
       await hint(page).waitFor();
@@ -113,14 +100,12 @@ async function run(browser: Browser, origin: string, theme: Theme, language: Lan
       assert.deepEqual([...errors, ...again.errors], []);
     }
 
-    // ---- the iPhone home-screen app: nothing to say --------------------------------------------
     {
       const { page, errors } = await open(IPHONE, { standalone: true });
       assert.equal(await hint(page).count(), 0, `${tag}: the installed iPhone app shows no line`);
       assert.deepEqual(errors, []);
     }
 
-    // ---- Android Chrome: the menu item, then one tap once Chrome offers its prompt ---------------
     {
       const { context, page, errors } = await open(ANDROID);
       await hint(page).waitFor();
@@ -148,7 +133,6 @@ async function run(browser: Browser, origin: string, theme: Theme, language: Lan
       assert.deepEqual([...errors, ...again.errors], []);
     }
 
-    // ---- a desktop browser: never ----------------------------------------------------------------
     {
       const { page, errors } = await open(DESKTOP_UA, { desktop: true });
       await offerPrompt(page);

@@ -1,4 +1,3 @@
-/** Real React + browser regressions with controlled HTTP timing. No herdr panes are touched. */
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,7 +33,6 @@ try {
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
     const path = new URL(request.url).pathname;
     if (path === "/ws") return new Response(null, { status: 404 });
-    // Product connection failures report only metadata; this fictional server consumes it locally.
     if (path === "/api/connection-diagnostics") return new Response(null, { status: 204 });
     // the terminal reads herdr's copy_on_select as it mounts
     if (path === "/api/herdr-ui") return Response.json({ copy_on_select: true } satisfies HerdrUiConfig, { headers: { "cache-control": "no-store" } });
@@ -59,18 +57,14 @@ try {
   let epoch = "one", newest = "old newest", before: string | null = "one:100";
   let holdOlder = false;
   let holdResume = false, resumeRevision = 0;
-  /** a notice Claude Code wrote before the turn at work (server/claude-transcript.ts noticeAt) */
   let notice = false;
-  /** the cursor an older page answers with: null ends the history there */
   let olderNext: string | null = null;
   let product = false;
-  /** the session herdr has the "local/switch" pane on: its history and the turn it shows */
   let switchSession = "A";
   let unavailable = false, terminalFails = false;
   let readPending = false, gapPending = false;
   let holdTerminal = false;
   let terminalText = "Fictional terminal fallback";
-  /** product panes ("machine/pane") whose conversation requests wait for the script, and those that fail */
   const held = new Set<string>(), failing = new Set<string>();
   const pending: Array<{ key: string; answer: (status: number) => Promise<void> }> = [];
   const user = (text: string) => ({ role: "user", ts: text, parts: [{ kind: "text", text }] });
@@ -150,7 +144,6 @@ try {
       if (holdOlder) await new Promise<void>((resolve) => releases.push(resolve));
       await route.fulfill({ json: { source: "omp-transcript", history_id: captured, cursor: olderNext ?? url.searchParams.get("since"), turns: [user("old earlier")] } });
     } else {
-      // with the notice, the tool's result changes too: what names the turn's row stays the same
       const tool = { role: "assistant", ts: "reused", parts: [{ kind: "tool", name: "Read", summary: "same", input: "{}", output: notice ? "preview, read again" : "preview", output_ref: "reused", output_size: 9000 }] };
       const held = { role: "user", ts: "held", parts: [{ kind: "notice", text: "Message held", source: "informational" }] };
       await route.fulfill({ json: { source: "omp-transcript", history_id: epoch, cursor: before, turns: newest ? [user(newest), ...(notice ? [held] : []), tool] : [] } });
@@ -178,7 +171,6 @@ try {
     await page.getByText("Couldn't load the conversation", { exact: true }).waitFor({ state: "hidden" });
     assert.equal(await page.getByText("old newest", { exact: true }).isVisible(), true);
   }
-  // A session switched before an unpaged read fails: retrying it must not retain the old session.
   await page.evaluate(() => window.qa.chat("switched-before-read"));
   await page.waitForFunction(() => window.qa.answered.includes("local/switched-before-read"));
   await page.getByText("old newest", { exact: true }).waitFor();
@@ -192,7 +184,6 @@ try {
   assert.equal(await switchedTurn!.evaluate((node) => node.isConnected), false, "an unpaged history mismatch clears old turns even when its fresh retry fails");
   assert.equal(await page.getByText("old newest", { exact: true }).count(), 0);
   readPending = false;
-  // Restore the original single-page fixture before the existing history-change cases.
   epoch = "one-reset"; before = "one-reset:100";
   await refresh();
   await page.getByText("old newest", { exact: true }).waitFor();
@@ -216,7 +207,6 @@ try {
   assert.equal(await output.textContent(), "idle:");
   console.log("PASS duplicate requests, pane/ref/history changes, abort, late success and late failure");
 
-  // Start an older-page request, then observe clear before it completes.
   holdOlder = true;
   const olderStarted = nextRoute("older");
   await page.locator(".chat-older").click();
@@ -235,7 +225,6 @@ try {
   newest = "new newest";
   await refresh();
   await page.getByText(newest, { exact: true }).waitFor();
-  // a settled turn's work is folded: open the block, then its row
   await page.locator(".work-block-head").click();
   await page.locator(".work-row-head").click();
   await page.locator(".chat-tool-more").click();
@@ -245,13 +234,11 @@ try {
   await page.getByText(newest, { exact: true }).waitFor();
   await page.waitForFunction((i) => window.qa.requests[i].signal.aborted, requestIndex);
   await page.evaluate((i) => window.qa.requests[i].resolve("STALE TOOL OUTPUT"), requestIndex);
-  // the cleared history brought a new turn, folded like any settled one
   assert.equal(await page.locator(".work-block-head").getAttribute("aria-expanded"), "false");
   await page.locator(".work-block-head").click();
   await page.locator(".work-row-head").click();
   assert.equal(await page.getByText("STALE TOOL OUTPUT", { exact: true }).count(), 0);
   assert.equal(await page.locator(".chat-tool-more").count(), 1);
-  // A remote PC with the same pane/tool id is a distinct target too.
   await page.locator(".chat-tool-more").click();
   const remoteIndex = await page.evaluate(() => window.qa.requests.length - 1);
   await page.evaluate(() => window.qa.chat("a", "remote-pc"));
@@ -259,8 +246,6 @@ try {
   await page.evaluate((i) => window.qa.requests[i].reject(), remoteIndex);
   await page.getByText(newest, { exact: true }).waitFor();
   assert.equal(await page.getByText("Couldn't load the whole output — retry", { exact: true }).count(), 0);
-  // A notice written before the last turn takes a row of its own: that turn keeps its row, and
-  // what the reader opened in it stays open.
   epoch = "notice"; newest = "before a notice"; before = null;
   await page.evaluate(() => window.qa.chat("notice"));
   await page.getByText(newest, { exact: true }).waitFor();
@@ -274,14 +259,12 @@ try {
   assert.equal(await page.locator(".work-row-head").getAttribute("aria-expanded"), "true", "a notice before the last turn keeps its opened tool details");
   notice = false;
   console.log("PASS a notice written before the last turn keeps that turn's row and what the reader opened");
-  // Already loaded older history must be discarded when a held cursor gets 409.
   epoch = "four"; newest = "loaded history newest"; before = "four:100"; holdOlder = false;
   await page.evaluate(() => window.qa.chat("b"));
   await page.getByText(newest, { exact: true }).waitFor();
   await page.locator(".chat-older").click();
   await page.getByText("old earlier", { exact: true }).waitFor();
   epoch = "five"; newest = "after held cursor reset"; before = null;
-  // every commit until the new history shows: the old turns stay until it replaces them (a /clear)
   const between = await page.evaluate((text) => new Promise<string[]>((resolve) => {
     const seen: string[] = [];
     const observer = new MutationObserver(() => {
@@ -298,7 +281,6 @@ try {
   assert.equal(await page.getByText("old earlier", { exact: true }).count(), 0);
   assert.equal(await page.locator(".chat-older").count(), 0);
 
-  // A stale cursor discovered by the Earlier button also triggers a fresh poll.
   epoch = "six"; newest = "before older cursor reset"; before = "six:100";
   await refresh();
   await page.getByText(newest, { exact: true }).waitFor();
@@ -308,7 +290,6 @@ try {
   assert.equal(await page.locator(".chat-older").count(), 0);
   console.log("PASS held-cursor and older-page 409 recovery discard history and immediately reload");
 
-  // Older pages are asked for at the chat's page size, not only the newest.
   epoch = "eight"; newest = "paged newest"; before = "eight:100"; olderNext = "eight:50";
   await refresh();
   await page.getByText(newest, { exact: true }).waitFor();
@@ -325,8 +306,6 @@ try {
   assert.deepEqual(errors, []);
   console.log("PASS reused tool ids after clear, machine switch and unmount cancellation; no browser errors");
 
-  // An authoritative refusal must hide stale history even if the second, terminal read fails.
-  // This is the DB/export mismatch path: the reader returns scrollback, not a transport error.
   for (const terminalFailure of [false, true]) {
     epoch = `refusal-${terminalFailure}`; newest = `discarded newest ${terminalFailure}`; before = `${epoch}:100`;
     await refresh();
@@ -360,8 +339,6 @@ try {
   }
   console.log("PASS refusal clears latest/older history and late whole output, including failed terminal fallback; recovery reloads");
 
-  // The same mounted ChatView survives hidden→visible. Its prior held request must not
-  // hold the serialized reader until the local/remote 15/30 s transport deadline.
   const priorViewport = page.viewportSize()!;
   for (const width of [390, 1440]) {
     await page.setViewportSize({ width, height: 844 });
@@ -397,8 +374,6 @@ try {
   await page.getByText(newest, { exact: true }).waitFor();
   console.log("PASS hidden chat cancels its held read; visible return paints a fresh answer before the abandoned read is released");
 
-  // Keep the existing scrollback change detector: clearing the signature on every fallback
-  // poll would suppress the New messages chip while the reader is scrolled up.
   unavailable = true;
   terminalText = Array.from({ length: 100 }, (_, i) => `Fictional terminal line ${i}`).join("\n");
   await refresh();
@@ -411,13 +386,11 @@ try {
   unavailable = false;
   console.log("PASS changing terminal fallback retains the New messages indicator while scrolled up");
 
-  // Exercise the actual product owner. A profiler observes every committed DOM, not just the final frame.
   const select = async (pane: string, machine: string, agent?: string) => {
     product = true;
     // the log is cleared in the task that switches: no commit of the pane being left slips in between
     await page.evaluate(([p, m, a]) => { window.qa.commits.length = 0; window.qa.select(p!, m!, a); }, [pane, machine, agent]);
   };
-  /** The expected chat is up, and no commit since the switch showed the other pane's. */
   const shows = async (expected: string, forbidden: string) => {
     await page.getByText(`history ${expected}`, { exact: true }).waitFor();
     const commits = await page.evaluate(() => window.qa.commits);
@@ -432,7 +405,6 @@ try {
   await shows("local/a", "local/b");
   await select("a", "remote-pc");
   await shows("remote-pc/a", "local/a");
-  // A late success and a late error from B must neither replace nor erase A's chat.
   for (const status of [200, 503]) {
     held.add("remote-pc/b");
     const ended = await page.evaluate(() => window.qa.answered.filter((key) => key === "remote-pc/b").length);
@@ -483,8 +455,6 @@ try {
   await page.getByText("Fictional commit log", { exact: true }).waitFor();
   assert.equal(await page.getByText("Synthetic Claude prompt", { exact: true }).count(), 0);
   console.log("PASS Agy native parser output renders user/assistant text and independent expandable tool results");
-  // A press reads a chat before its pick renders (#2562). herdr moves the pane to another session after
-  // that read answered and before the click lands: the chat opened shows the new session, never the old one.
   await page.evaluate(() => { window.qa.session("switch", "a"); window.qa.press("switch"); });
   await page.waitForFunction(() => window.qa.answered.includes("local/switch"));
   switchSession = "B";
@@ -493,8 +463,6 @@ try {
   await page.getByText("session B", { exact: true }).waitFor();
   assert.ok((await page.evaluate(() => window.qa.commits)).every((turns) => !turns.some((turn) => turn.includes("session A"))), "a chat opened on session B never drew the press read of session A");
   console.log("PASS a press read of the session herdr left is neither drawn nor taken by the chat it opens");
-  // The usual timing: the roster naming the new session comes after the click, so the chat opened on the
-  // press read of the old one; once the roster names the new one, the chat reads it without waiting for a push.
   await select("a", "local");
   await page.getByText("history local/a", { exact: true }).waitFor();
   switchSession = "C";

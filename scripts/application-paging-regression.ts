@@ -1,4 +1,3 @@
-/** An owned alternate-screen application receives plain paging keys from app shortcuts; the shell behind it does not. */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdtempSync, realpathSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -52,15 +51,14 @@ sys.stdout.flush()
   const page = await context.newPage();
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
-  // every keystroke the page writes to the pane
   const inputs: string[] = [];
-  let outputs = 0; // pty-data frames the page received: what it knows of the pane's screen
+  let outputs = 0;
   page.on("websocket", (socket) => {
     socket.on("framesent", ({ payload }) => {
-      try { const message = JSON.parse(String(payload)) as { type?: string; text?: string }; if (message.type === "input" && typeof message.text === "string") inputs.push(message.text); } catch { /* not JSON */ }
+      try { const message = JSON.parse(String(payload)) as { type?: string; text?: string }; if (message.type === "input" && typeof message.text === "string") inputs.push(message.text); } catch {}
     });
     socket.on("framereceived", ({ payload }) => {
-      try { if ((JSON.parse(String(payload)) as { type?: string }).type === "pty-data") outputs++; } catch { /* not JSON */ }
+      try { if ((JSON.parse(String(payload)) as { type?: string }).type === "pty-data") outputs++; } catch {}
     });
   });
   const nativeMetrics = page.waitForResponse((response) => response.url().includes("/api/pane/scroll") && response.request().method() === "GET");
@@ -107,7 +105,6 @@ sys.stdout.flush()
   await page.keyboard.press("q");
   await until(async () => read().endsWith("q"), "the program read its quit key");
   await until(async () => ((await paneScrollInfo(paneId))?.max_offset_from_bottom ?? 0) > 0, "the shell's history is back once the program left its screen");
-  // the page has drawn the shell's return (what a user sees before pressing), but its metrics read is still on the way
   await until(async () => outputs > seenBefore, "the page received the program's exit and the shell's prompt");
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.keyboard.press("ControlOrMeta+Shift+U");

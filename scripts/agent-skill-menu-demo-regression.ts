@@ -10,20 +10,6 @@ import { chromePath } from "./chrome-path.ts";
 import { caseRun, type ColorScheme, type SkillMenuCase } from "./skill-menu-case.ts";
 import { openLens } from "./header-lens.ts";
 
-// Usage: bun scripts/agent-skill-menu-demo-regression.ts [case …]
-//
-// Each agent's `/` (and `$`) skill menu, its origin groups and its skill chips, on the unmodified
-// app over the demo's fixture transport, one case file per agent in scripts/skill-menu-cases/
-// (every one of them when none is named; a file named `<agent>-<what>` is one more case for that
-// agent, as claude-terminal.ts and opencode-at.ts are). The demo's docs pane answers Claude's
-// command list and its chat names no skill, so the page's data is patched here, in the test only:
-// the pane's agent is the case's, its command list is the case's (the agent's own builtins and a
-// few skills), and its conversation ends with the case's user turn. Every scenario runs in a
-// 1280×800 window and on a 390×844 phone, in the light scheme; a case may name other widths and
-// run in the light theme too. The screenshots and run.log go to agent-skill-menu/<case>/ under
-// UI_EVIDENCE_DIR (CI's uploaded folder) or else evidence/. Every submit frame the page's sockets
-// send is recorded, so a case can say nothing was sent. All files and HTTP traffic stay in this
-// disposable, loopback-only app; no herdr session is opened.
 const repo = join(import.meta.dir, "..");
 const caseDir = join(import.meta.dir, "skill-menu-cases");
 const app = mkdtempSync(join(tmpdir(), "herdr-agent-skill-menu-demo-"));
@@ -48,7 +34,6 @@ try {
   const index = join(app, "index.html");
   const html = readFileSync(index, "utf8");
   assert.match(html, /<script type="module"/);
-  // What the demo answers, rewritten as it is read (`window.skillCase` is set per browser context).
   const patch = `<script>(() => {
     const TARGET = ${JSON.stringify(TARGET)};
     const fix = (value) => {
@@ -90,18 +75,15 @@ try {
   } });
   const url = `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(TARGET)}`;
 
-  /** The pane's chat, in a mouse-driven window of `width` or on a phone (480px and under, touch), in `scheme`, with the case's agent, commands and last turn. */
   const withPane = async (browser: Browser, width: number, scheme: ColorScheme, skillCase: SkillMenuCase, run: (page: Page) => Promise<void>): Promise<void> => {
     const touch = width <= 480;
     const context = await browser.newContext({ viewport: { width, height: touch ? 844 : 800 }, hasTouch: touch, isMobile: touch, colorScheme: scheme, locale: "en-US" });
     try {
       await context.addInitScript((patched) => {
         if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme: patched.scheme }));
-        // Enter sends, chosen on this phone (ENTER_SENDS_STORAGE_KEY in src/lib/settings.ts)
         if (patched.enterSends && localStorage.getItem("ovis:enter-sends") === null) localStorage.setItem("ovis:enter-sends", "true");
         const sentSubmits: string[] = [];
         Object.assign(window, { skillCase: patched, sentSubmits });
-        // every socket the page opens, the demo's stand-in included, records the text of each submit frame it sends
         let current = window.WebSocket;
         Object.defineProperty(window, "WebSocket", {
           configurable: true,
@@ -111,7 +93,7 @@ try {
               const socket = new next(url, protocols);
               const send = socket.send.bind(socket);
               socket.send = (data) => {
-                try { const frame = JSON.parse(String(data)) as { type?: unknown; text?: unknown }; if (frame.type === "submit") sentSubmits.push(String(frame.text)); } catch { /* not a JSON frame */ }
+                try { const frame = JSON.parse(String(data)) as { type?: unknown; text?: unknown }; if (frame.type === "submit") sentSubmits.push(String(frame.text)); } catch {}
                 send(data);
               };
               return socket;

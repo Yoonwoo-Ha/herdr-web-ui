@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serialBrowserScripts } from "./ci-browser-parallel.ts";
 
-// Exercise the whole lane without installing Chromium, building, or opening a browser.
 const stub = `
 bun() {
   case "$1" in
@@ -45,7 +44,6 @@ const inheritedEnv = () => Object.fromEntries(
   ["HOME", "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"].flatMap((key) => process.env[key] ? [[key, process.env[key]]] : []),
 );
 
-/** Ends `pid` and every process under it, read from the process table before any is ended. */
 async function endTree(pid: number): Promise<void> {
   if (process.platform === "win32") {
     await Bun.spawn(["taskkill", "/pid", String(pid), "/T", "/F"], { stdout: "ignore", stderr: "ignore" }).exited;
@@ -63,7 +61,7 @@ async function endTree(pid: number): Promise<void> {
     tree.push(next);
     pending.push(...(children.get(next) ?? []));
   }
-  for (const member of tree) try { process.kill(member, "SIGKILL"); } catch { /* already gone */ }
+  for (const member of tree) try { process.kill(member, "SIGKILL"); } catch {}
 }
 
 async function lane(fail = "", kept = false, ci = "") {
@@ -74,7 +72,6 @@ async function lane(fail = "", kept = false, ci = "") {
       env: { ...inheritedEnv(), BROWSER_PARALLEL: "", CI: ci, CHECK_DIR: kept ? dir : "", UI_EVIDENCE_DIR: "", FAIL_SCRIPT: fail, TMPDIR: dir },
       stdin: "ignore", stdout: "pipe", stderr: "pipe",
     });
-    // read as it comes, so what the lane printed is there even when the guard stops reading
     const readers = [child.stdout.getReader(), child.stderr.getReader()];
     const printed = ["", ""];
     const drained = Promise.all(readers.map(async (reader, index) => {
@@ -197,28 +194,20 @@ describe("browser lane", () => {
   }, LANE_TEST_MS);
 });
 
-// Browser scripts that CI does not run: they are run by hand. A new browser script belongs in
-// scripts/ci-browser.sh, or here when CI cannot run it.
 const MANUAL_BROWSER_SCRIPTS = [
-  "scripts/android-ime-regression.ts", // an Android emulator over ADB (docs/terminal-input.md)
-  "scripts/chat-browser-qa.ts", // docs/development.md
-  "scripts/font-swap-demo-regression.ts", // docs/development.md
-  "scripts/keyboard-viewport-demo-regression.ts", // docs/development.md
-  "scripts/machines-browser-qa.ts", // an SSH_TEST_KEEP=1 fixture (docs/remote-pcs.md)
-  "scripts/output-browser-qa.ts", // docs/terminal-flow-control.md
-  "scripts/skill-activity-browser-qa.ts", // docs/chat-skill-activity.md
+  "scripts/android-ime-regression.ts",
+  "scripts/chat-browser-qa.ts",
+  "scripts/font-swap-demo-regression.ts",
+  "scripts/keyboard-viewport-demo-regression.ts",
+  "scripts/machines-browser-qa.ts",
+  "scripts/output-browser-qa.ts",
+  "scripts/skill-activity-browser-qa.ts",
   "scripts/terminal-file-links-regression.ts",
-  "scripts/update-browser-qa.ts", // a private Git remote and install (docs/app-updates.md)
+  "scripts/update-browser-qa.ts",
   "scripts/windows-lens-browser-qa.ts",
-  "scripts/windows-terminal-browser-qa.ts", // native Windows: .github/workflows/windows-terminal-qa.yml
+  "scripts/windows-terminal-browser-qa.ts",
 ];
 
-/**
- * Every script the lane runs, plus every script those import (`from "./x.ts"`, `import("./x.ts")`)
- * or spawn (`spawn([..., join(import.meta.dir, "x.ts")`), transitively. A path built anywhere else
- * (a Bun.build entry, say) is not a run. A spawn counts only from a file that runs as a script: an
- * imported helper's spawn usually sits under `import.meta.main`.
- */
 function laneReach(lane: string[]): Set<string> {
   const reached = new Set<string>();
   const ran = new Set<string>();
@@ -226,7 +215,6 @@ function laneReach(lane: string[]): Set<string> {
   for (let next = pending.pop(); next; next = pending.pop()) {
     const { script, runs } = next;
     const path = join(import.meta.dir, "..", script);
-    // A name with no file behind it (terminal-dispose-fixture.ts is an in-memory Bun.build entry) has nothing to read.
     if ((runs ? ran : reached).has(script) || !existsSync(path)) continue;
     reached.add(script);
     if (runs) ran.add(script);
@@ -256,9 +244,6 @@ describe("browser lane assignment", () => {
     expect(onDisk.filter((script) => !reached.has(script) && !MANUAL_BROWSER_SCRIPTS.includes(script))).toEqual([]);
   });
 
-  // With no CHECK_DIR or CI, both runners hand every script an empty UI_EVIDENCE_DIR, and the
-  // parallel one an empty CHECK_BROWSER_EVIDENCE_DIR too. `??` keeps that empty path, so the script
-  // writes into the checkout or fails to create it (#1554).
   it("takes an empty evidence folder as unset in every script the lane runs", () => {
     const keepsEmpty = /(?:UI|CHECK_BROWSER)_EVIDENCE_DIR["']?\]?\s*\?\?/;
     expect([...laneReach(lane)].filter((script) => keepsEmpty.test(readFileSync(join(import.meta.dir, "..", script), "utf8")))).toEqual([]);

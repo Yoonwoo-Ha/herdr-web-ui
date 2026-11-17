@@ -8,14 +8,6 @@ import { appFaces } from "./app-faces.ts";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
-// A ```svg fence in a reply (#2441) is drawn as an <img> from a data: URL in the theme's colors,
-// and one that could run or load something stays the code block it is. On the unmodified app over
-// the demo's fixture transport, at 1280 and 390, Codex palette dark and light: the themed figure
-// decodes as an image with its tokens resolved to the theme, the unsafe fence is a code block, its
-// script never runs, nothing is fetched from outside the app, and the enlarge view shows the same
-// image. The omp pane's conversation answers TURNS; all files and HTTP traffic stay in this
-// disposable, loopback-only app and no herdr session is opened. Screenshots go to UI_EVIDENCE_DIR
-// when it is set.
 const app = mkdtempSync(join(tmpdir(), "herdr-chat-svg-figures-demo-"));
 const evidence = process.env["UI_EVIDENCE_DIR"] || null;
 if (evidence !== null) mkdirSync(evidence, { recursive: true });
@@ -55,7 +47,6 @@ async function prepareDemo(): Promise<void> {
   const index = join(app, "index.html");
   const html = readFileSync(index, "utf8");
   assert.match(html, /<script type="module"/);
-  // over the demo's own fetch: only this pane's conversation read is answered here
   const override = `<script>(() => {
     const demo = window.fetch;
     const turns = ${JSON.stringify(TURNS).replaceAll("<", "\\u003c")};
@@ -107,7 +98,6 @@ async function check(browser: Browser, origin: string, width: number, theme: "da
     assert.ok(markup.includes(`stroke="${drawn.accent}"`), `${width} ${theme}: --accent is the theme's accent ${drawn.accent}`);
     assert.ok(markup.includes(`color="${drawn.text}"`), `${width} ${theme}: currentColor is the theme's text ${drawn.text}`);
 
-    // each fence holds one unsafe part, so each is judged on its own
     for (const marker of ["<script>", "onload=", "example.invalid", "é:script", "é:style", "é:href", "u\\72l", "u<!--x-->", "@im<!--x-->", "xml:base"]) {
       assert.equal(await scope.locator("pre", { hasText: marker }).count(), 1, `${width} ${theme}: the fence with ${marker} stays a code block`);
     }
@@ -124,7 +114,6 @@ async function check(browser: Browser, origin: string, width: number, theme: "da
     if (evidence !== null) await page.screenshot({ path: join(evidence, `chat-svg-figures-codex-${theme}-${width}-enlarged.png`) });
     await page.keyboard.press("Escape");
     await zoomed.waitFor({ state: "detached" });
-    // a theme change on a live page redraws the figure in the new colors
     const other = theme === "dark" ? "light" : "dark";
     await page.evaluate((next) => { document.documentElement.dataset.theme = next; }, other);
     await page.waitForFunction((before) => document.querySelector(".markdown-mermaid img")?.getAttribute("src") !== before, drawn.src);

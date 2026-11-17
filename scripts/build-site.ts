@@ -1,16 +1,3 @@
-/**
- * Assembles herdrweb.dev into _site/ for GitHub Pages (.github/workflows/pages.yml) and for a local
- * look (`bun run build:site`, then serve _site/ under /herdr-web-ui/).
- *
- * The project's site is ovis.sh (ovis-site/). herdrweb.dev keeps only what installed users and CI
- * fetch from it: the one-line installers, the browser demo, and site/index.html and
- * site/zh/index.html, which forward to https://ovis.sh/ (their canonical link is ovis.sh, so no sitemap lists them).
- *
- * demo/ is the app itself, built by Vite with relative asset paths into demo/app/, loaded behind
- * site/demo/transport.ts (bundled to demo-transport.js and injected before the app's scripts) so it
- * runs on the fixtures in site/demo/ instead of a server; site/demo/index.html frames it with a
- * banner. Building it needs node_modules (`bun install`).
- */
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +9,6 @@ const copies: Array<[from: string, to: string]> = [
   ["site/index.html", "index.html"],
   ["site/zh/index.html", "zh/index.html"],
   ["site/googlec8861932279eca6b.html", "googlec8861932279eca6b.html"],
-  // the one-line installer: curl -fsSL https://herdrweb.dev/install.sh | sh
   ["install.sh", "install.sh"],
   ["install.ps1", "install.ps1"],
   ["public/favicon.ico", "favicon.ico"],
@@ -47,7 +33,6 @@ writeFileSync(join(out, ".nojekyll"), "");
 
 const version = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version;
 
-// the demo: the real client, relative paths, the transport in front of it
 const demoApp = join(out, "demo", "app");
 if (!(await run([process.execPath, "--bun", join(root, "node_modules/.bin/vite"), "build", "--base", "./", "--outDir", demoApp, "--emptyOutDir", "--logLevel", "warn"]))) throw new Error("vite build for the demo failed");
 
@@ -71,8 +56,6 @@ html = html.replace("</head>", '  <meta name="robots" content="noindex" />\n  </
 if (!/<script type="module"/.test(html)) throw new Error("the built app has no module script to load the demo transport before");
 html = html.replace(/<script type="module"/, '<script src="./demo-transport.js"></script>\n    <script type="module"');
 writeFileSync(appPage, html);
-// the brand mark is <img src="/icons/…"> in the client (src/App.tsx, AccessGate.tsx): root-absolute,
-// which is right for the app at its own origin and wrong under demo/app/
 for (const script of new Bun.Glob("assets/*.js").scanSync({ cwd: demoApp })) {
   const file = join(demoApp, script);
   writeFileSync(file, readFileSync(file, "utf8").replaceAll('"/icons/', '"./icons/'));

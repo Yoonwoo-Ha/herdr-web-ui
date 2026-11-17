@@ -1,14 +1,3 @@
-/**
- * Lock agent on a pinned Agents row (#2432), on the unmodified app over the demo's fixture transport:
- * an unpinned row offers no lock; pinned, Lock agent hides Unpin agent and draws a lock on the row;
- * the open tab then offers no Close tab, and Unlock agent brings Unpin back. At 390 and 1280, light
- * and dark. No live session is read.
- *
- * The Agents list offers the lock only while Settings -> Experimental -> Lock pinned agents is on.
- *
- * UI_EVIDENCE_DIR: agent-lock-<390|1280>-<light|dark>.png (the row's menu while locked) and
- * agent-lock-setting-<390|1280>-<light|dark>.png (the setting's row).
- */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -40,7 +29,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   await openList();
   const row = page.locator(`.agents-sidebar .agent-item[data-pane="${panes.api}"]`);
   const item = (name: string) => page.getByRole(phone ? "button" : "menuitem", { name, exact: true });
-  // a phone's row has its ⋯; a desktop's opens the same menu by a right-click
   const menu = async (): Promise<void> => { await (phone ? row.locator(".row-menu-toggle").click() : row.locator(".agent-select").click({ button: "right" })); };
   const dismiss = async (): Promise<void> => {
     if (phone) { await page.locator(".row-sheet-cancel").click(); await page.locator(".row-sheet").waitFor({ state: "detached" }); }
@@ -54,7 +42,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   await menu();
   await item("Lock agent").click();
   await row.locator('[data-testid="agent-locked"]').waitFor({ state: "attached" });
-  // drawn at rest on a phone, under the pointer on a desktop (the compact rows)
   if (!phone) await row.hover();
   await row.locator('[data-testid="agent-locked"]').waitFor({ state: "visible" });
   await menu();

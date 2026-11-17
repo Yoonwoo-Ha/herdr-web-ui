@@ -1,27 +1,3 @@
-/**
- * A state group's fold and each row's time in its state (#3505), on the unmodified app over the
- * demo's fixture transport, at 390 and 1280, light and dark. No live session is read.
- *
- * Settings → Group agents by state and the sidebar's filter are on. Two stamps are stored as this
- * device would have kept them, so their ages are known: the waiting agent's two hours and a
- * resting agent's 3 days (ages a slow run cannot carry over a unit's edge), each with the counter herdr gives its agent
- * and the server's count of its finishes (read from the demo's own session on a first load), which is what lets a
- * later load trust it. Every load names the same fictional server (`demo_finish_epoch`, site/demo/transport.ts): a
- * page that is loaded again finds the server it left, as a real one does. A third is stored with no
- * counter of herdr's and proves nothing. A row says its time only where a stamp tells of it; the agent that
- * finishes as the demo opens is stamped in sight and keeps its time when its finish is read. Idle
- * starts folded and the other groups open; a heading folds and opens its group by click, Enter and
- * Space and says the same count either way; a folded group keeps the selected agent in sight; what
- * the reader chose is kept across a reload; the filter opens every group for its time; a watching
- * device folds its own groups too; and a row with the keyboard's focus that moves under a folded
- * group hands the focus to that group's heading, while a focus the reader put elsewhere is never taken. A change
- * that reaches a page that was not running (the device slept) says no time, and a time herdr's counter proves
- * stands through the sleep. On Two lines a row's time stands in the second line and sizes
- * nothing: a row with a time is drawn as a row without one.
- *
- * UI_EVIDENCE_DIR: agent-state-groups-<390|1280>-<light|dark>.png (the list as it starts, Idle
- * folded) and agent-state-groups-open-<...>.png (every group open).
- */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,7 +8,6 @@ import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
 const EVIDENCE = process.env.UI_EVIDENCE_DIR;
-/** one fictional server for every load of a run: the count of finishes a kept stamp goes by is that server's (site/demo/transport.ts) */
 const SERVER = "&demo_finish_epoch=kept";
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -44,7 +19,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   const device = { viewport: { width, height: phone ? 844 : 900 }, ...(phone ? { deviceScaleFactor: 3, isMobile: true, hasTouch: true } : {}), locale: "en-US", colorScheme: theme } as const;
   const context = await browser.newContext(device);
   await context.addInitScript(({ settings }) => {
-    // seeded once, so a reload keeps what the page itself stored
     if (localStorage.getItem("ovis:settings") !== null) return;
     localStorage.setItem("ovis:settings", settings);
     localStorage.setItem("ovis:agent-groups", "true");
@@ -60,7 +34,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   const since = (pane: string): Promise<string[]> => row(pane).locator(".agent-since").allTextContents();
   const heading = (group: string) => page.locator(`.agents-sidebar .agent-group-label[data-group="${group}"] button`);
   const expanded = (group: string): Promise<string | null> => heading(group).getAttribute("aria-expanded");
-  /** the list in sight: a phone's drawer is opened for it */
   const list = async (shown: string = panes.web): Promise<void> => {
     const toggle = page.locator("#drawer-toggle");
     if (phone && await toggle.getAttribute("aria-expanded") === "false") await toggle.click();
@@ -72,10 +45,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
     await list();
   };
 
-  // A first load only to read the demo's one PC, its herdr and its server (site/demo/transport.ts): the stamps are stored
-  // as the app stores them (lib/agentStateSince.ts), each with the counter herdr gives its agent now and the server's
-  // count of its finishes. The same two numbers on the next load prove that the state did not change meanwhile; the
-  // third stamp has no counter of herdr's, so nothing proves it.
   await open();
   const counters = await page.evaluate(async ({ waiting, resting, uncounted, waited, rested }) => {
     const { snapshot } = await (await fetch("/api/session")).json() as { snapshot: { herdr_lifetime?: string | null; finish_epoch?: string; panes: Array<{ pane_id: string; terminal_id: string; finish_id?: number }>; agents: Array<{ pane_id: string; state_change_seq?: number }> } };
@@ -95,7 +64,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   assert.equal(counters.epoch, "kept", `${tag}: every load of this check is under the one server it names`);
 
   await open();
-  // a device that kept no fold: Idle starts folded, the other groups open, and a time shows where a stamp tells of it
   assert.equal(await expanded("idle"), "false", `${tag}: Idle starts folded`);
   assert.equal(await expanded("blocked"), "true", `${tag}: Needs you starts open`);
   await row(panes.omp).waitFor({ state: "hidden" });
@@ -113,7 +81,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   assert.deepEqual(await since(panes.cli), [], `${tag}: a stamp with no counter proves nothing, so its row says no time`);
   assert.deepEqual(await since(panes.flaky), [], `${tag}: a state this device did not see begin says no time`);
 
-  // the demo's own agent is mid-turn as it opens and finishes a few seconds in: a change in sight
   await state(panes.api, "done").waitFor({ state: "attached" });
   assert.deepEqual(await since(panes.api), ["<1m"], `${tag}: a state that begins in sight is stamped`);
   await row(panes.api).locator(".agent-select").click();
@@ -122,7 +89,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   assert.deepEqual(await since(panes.api), ["<1m"], `${tag}: reading a finished agent keeps its time`);
   if (EVIDENCE) await page.screenshot({ path: join(EVIDENCE, `agent-state-groups-open-${width}-${theme}.png`) });
 
-  // folded again, the group keeps the selected agent in sight and hides the rest; no other group folds with it
   await heading("idle").click();
   assert.equal(await expanded("idle"), "false", `${tag}: its heading folds it`);
   await row(panes.omp).waitFor({ state: "hidden" });
@@ -136,7 +102,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   assert.equal(await expanded("idle"), "false", `${tag}: Space folds it`);
   assert.equal(await heading("idle").evaluate((node) => node === document.activeElement), true, `${tag}: the focus stays on the heading`);
 
-  // what the reader chose is kept across a reload, where it differs from how the list starts: Idle open, Needs you folded
   await page.keyboard.press("Enter");
   await heading("blocked").click();
   await row(panes.web).waitFor({ state: "hidden" });
@@ -149,7 +114,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   await row(panes.web).waitFor({ state: "visible" });
   assert.deepEqual(await since(panes.web), ["2h"], `${tag}: a stamp is kept across a reload`);
 
-  // the filter shows what it kept: a match under a folded heading is in sight, and the heading does not fold
   await heading("idle").click();
   await row(panes.omp).waitFor({ state: "hidden" });
   await page.locator(".sidebar-filter-input").fill("config");
@@ -161,8 +125,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   assert.equal(await expanded("idle"), "false", `${tag}: the fold is back once the filter is cleared`);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${tag}: no sideways scroll`);
 
-  // Settings → Sidebar rows → Two lines: the time ends the second line, beside the place, and sizes neither line. Under
-  // Idle one row says its time and one has none: both are as tall, and draw their title and their place at one height
   await heading("idle").click();
   await row(panes.omp).waitFor({ state: "visible" });
   const oneLine = await page.evaluate(() => localStorage.getItem("ovis:settings") ?? "{}");
@@ -186,7 +148,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   await row(panes.omp).waitFor({ state: "hidden" });
   await page.evaluate((stored) => localStorage.setItem("ovis:settings", stored), oneLine);
 
-  // a device that only watches (`?demo_devices=watch`) sends nothing, and a fold is its own
   await open("&demo_devices=watch");
   await heading("idle").click();
   assert.equal(await expanded("idle"), "true", `${tag}: a watching device opens a group`);
@@ -194,10 +155,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   await heading("idle").click();
   await row(panes.omp).waitFor({ state: "hidden" });
 
-  // a row with the keyboard's focus whose new state files it under a folded group hands the focus to that group's
-  // heading. On a device of its own, with Done folded: the device above has read this agent's first finish under the
-  // server every load names, and a finish that was read files its row under Idle at once. This page's clock is held
-  // from its first moment, so the demo agent's turn ends when the check runs it
   const other = await browser.newContext(device);
   await other.addInitScript(({ settings }) => {
     localStorage.setItem("ovis:settings", settings);
@@ -224,18 +181,12 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   assert.equal(await held.evaluate(() => document.activeElement?.closest("li")?.getAttribute("data-group") ?? null), "done", `${tag}: a focused row that moves under a folded group hands its focus to the heading`);
   await other.close();
 
-  // The focus the list places is only one a row held as the row went out of sight. A row moved lower in the list (its
-  // new state files it under an open group) is taken out and put back: its main control gets the focus back, but its
-  // `⋯`, which a desktop draws only while the row holds the focus or the pointer, cannot, so that focus falls to the
-  // page with no word to the list (a touch screen always draws the `⋯`, and it keeps the focus there). Wherever the
-  // reader's focus goes next is theirs: the row going under a folded group later moves no focus
   await page.evaluate(() => localStorage.setItem("ovis:agent-state-folds", JSON.stringify(["idle"])));
   const away = await context.newPage();
   away.on("pageerror", (error) => errors.push(error.message));
   await away.clock.install({ time: new Date() });
   await away.clock.pauseAt(new Date(Date.now() + 1000));
   await away.goto(`${origin}?pane=${encodeURIComponent(panes.web)}${SERVER}`);
-  // past the demo's own end of this agent's turn (site/demo/transport.ts): from here its state is what this check says
   await away.clock.runFor(6000);
   await away.locator(".conn-live").waitFor({ state: "attached" });
   if (phone) {
@@ -243,7 +194,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
     await away.clock.runFor(500);
   }
   const moved = away.locator(`.agents-sidebar .agent-item[data-pane="${panes.api}"]`);
-  // herdr's own word for the pane, as the demo's transport sends it; the row is then drawn under that state's heading
   const becomes = async (status: "working" | "blocked" | "done" | "idle", pane: string = panes.api): Promise<void> => {
     await away.evaluate(([id, next]) => (window as unknown as { __herdrDemoOrder: { status(pane: string, status: string): void } }).__herdrDemoOrder.status(id!, next!), [pane, status]);
     await away.clock.runFor(200);
@@ -253,8 +203,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
       return false;
     }, [pane, status]);
   };
-  // another agent already rests under Done, so the row lands below a heading that stays: React takes the row's own
-  // element out and puts it back there, where a row alone under a new heading would be left in place with its focus
   await becomes("done", panes.cli);
   const focusNow = (): Promise<string> => away.evaluate(() => {
     const active = document.activeElement;
@@ -275,10 +223,6 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
     assert.equal(await elsewhere.evaluate((node) => node === document.activeElement), true, `${tag}: a row that goes under a folded group takes no focus from where the reader put it after its ${control} lost it: the focus is on ${await focusNow()}`);
   }
 
-  // A change is dated only while the page was being told of its PCs (lib/agentStateWatch.ts). Here the device sleeps
-  // for an hour: the clock moves and no timer of the page fires. The wait that reaches the page as it wakes began at
-  // no time the page can say, so its row says none; the waiting agent's two hours, which herdr's counter proves, are
-  // three; and once the page has read its roster again, a change is dated as it is seen
   const timeOf = (pane: string): Promise<string[]> => away.locator(`.agents-sidebar .agent-item[data-pane="${pane}"] .agent-since`).allTextContents();
   await becomes("working");
   assert.deepEqual(await timeOf(panes.api), ["<1m"], `${tag}: a change the page sees as it happens is dated`);

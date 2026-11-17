@@ -5,11 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DIST_ARCHIVE, generateKeyPair, RELEASE_PUBLIC_KEY, releaseFile, PTY_ASSETS, ptyFile, SERVER_PLATFORMS, signManifest, writeManifest } from "./server-manifest.ts";
 
-/**
- * install.sh's binary install (install_binary), run under /bin/sh from a copy of the script whose one pinned key line
- * names a key made for the test: the shipped script reads no key from anywhere else, so only a copy can trust another.
- * The release is a file:// folder laid out as GitHub's downloads are (<base>/v<version>/<file>).
- */
 const ROOT = join(import.meta.dir, "..");
 const INSTALLER = readFileSync(join(ROOT, "install.sh"), "utf8");
 const KEY_LINE = `\nRELEASE_PUBLIC_KEY="${RELEASE_PUBLIC_KEY}"\n`;
@@ -22,7 +17,6 @@ afterEach(() => {
 });
 const sha256 = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
-/** install.sh with its key line naming `publicKey`, and without the last line that runs main */
 function testCopy(publicKey: string): string {
   expect(INSTALLER).toContain(KEY_LINE);
   expect(INSTALLER.endsWith('\nmain "$@"\n')).toBe(true);
@@ -44,9 +38,6 @@ function release(base: string, version: string, privateKeyPem: string, host?: st
   return dir;
 }
 
-/** One PC: a HOME, a release folder, and a bin of stand-ins put before the system's on PATH */
-/** `<base>/v<version>/` as main's release step (todo 5) writes it: ovis-server.json holds only version, sources and
- * assets, signed by `privateKeyPem`; `edit` changes the manifest before it is signed */
 function oldShape(base: string, version: string, privateKeyPem: string, edit: (manifest: Record<string, unknown>) => void = () => {}): string {
   const dir = join(base, `v${version}`);
   mkdirSync(dir, { recursive: true });
@@ -80,7 +71,6 @@ function pc({ lockWait }: { lockWait?: number } = {}) {
     const result = Bun.spawnSync(argv(call), { env: environment(env), stdout: "pipe", stderr: "pipe", timeout: 60_000 });
     return { code: result.exitCode, signal: result.signalCode, out: result.stdout.toString() + result.stderr.toString() };
   };
-  /** the same run, started now and awaited later: two of them overlap */
   const start = async (call: string, env: Record<string, string> = {}) => {
     const child = Bun.spawn(argv(call), { env: environment(env), stdout: "pipe", stderr: "pipe" });
     const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
@@ -94,7 +84,6 @@ function pc({ lockWait }: { lockWait?: number } = {}) {
   return { home, releases, key, run, start, standIn, dropStandIn, binary: join(home, ".local/share/ovis/bin/ovis-server"), ovis: join(home, ".local/share/ovis") };
 }
 
-/** every file and link under `dir`, with its SHA-256 or target */
 function snapshot(dir: string): Record<string, string> {
   const files: Record<string, string> = {};
   for (const entry of readdirSync(dir, { recursive: true, withFileTypes: true })) {
@@ -212,7 +201,6 @@ describe.skipIf(process.platform === "win32")("install.sh installs the release's
     const { releases, key, start, ovis, home } = pc();
     const shas = new Map(["1.2.3", "1.2.4"].map((version) => [sha256(join(release(releases, version, key.privateKeyPem), releaseFile(PLATFORM))), version]));
     for (let pair = 0; pair < 20; pair++) {
-      // both start, then both wait for the barrier, so their installs begin together
       const barrier = join(home, `barrier-${pair}`);
       const wait = `while [ ! -e "${barrier}" ]; do sleep 0.01; done; `;
       const [first, second] = [pair % 2 ? "1.2.3" : "1.2.4", pair % 2 ? "1.2.4" : "1.2.3"];
@@ -239,8 +227,6 @@ describe.skipIf(process.platform === "win32")("install.sh installs the release's
     release(releases, "1.2.4", key.privateKeyPem);
     const sync = join(home, "sync");
     mkdirSync(sync);
-    // the first run, in its window (both files checked, nothing moved yet), goes on only once the second run says it
-    // waits for the lock, or has reached that window itself, which only a missing lock allows
     standIn("tar", `if [ "$RUN" = first ] && [ "$1" = -tzf ]; then
   : > "${sync}/first-in"
   n=0; until [ -e "${sync}/second-in" ] || grep -qs "waiting for it" "${sync}/second.out"; do n=$((n + 1)); [ "$n" -lt 3000 ] || break; sleep 0.01; done
@@ -265,7 +251,6 @@ exec "${Bun.which("tar")}" "$@"`);
     standIn("mkdir", `exec "${Bun.which("mkdir")}" -p "$@"`);
     const sync = join(home, "sync");
     mkdirSync(sync);
-    // inside the locked section (the archive is read there): a second run inside at once marks an overlap
     standIn("tar", `if [ "$1" = -tzf ]; then
   if (set -C; : > "${sync}/inside") 2>/dev/null; then sleep 0.05; rm -f "${sync}/inside"; else : > "${sync}/overlap"; fi
 fi
@@ -292,11 +277,8 @@ exec "${Bun.which("tar")}" "$@"`);
     const sync = join(home, "sync");
     mkdirSync(sync);
     const lock = join(ovis, ".install.lock");
-    // the first run reads the archive only while it holds the lock: the mark stays, so the second run cannot miss it
     standIn("tar", `[ "$RUN" != first ] || [ "$1" != -tzf ] || : > "${sync}/first-holds"
 exec "${Bun.which("tar")}" "$@"`);
-    // the first removal of a lock folder pauses where rm -rf does, between the pid it unlinks and the folder it
-    // removes, until another run holds the lock; then, as rm -f, it takes a folder already gone as removed
     standIn("rm", `case "$*" in "-rf ${lock}"*) if [ -d "$2" ] && (set -C; : > "${sync}/paused") 2>/dev/null; then
   "${Bun.which("rm")}" -f "$2/pid"
   end=$(($(date +%s) + 20)); until [ -s "${lock}/pid" ] || [ "$(date +%s)" -ge "$end" ]; do sleep 0.01; done
@@ -315,7 +297,6 @@ done; install_binary 1.2.4`);
     expect(one.code, one.out).toBe(0);
     expect(readFileSync(join(ovis, "bin", "ovis-server.json"), "utf8")).toContain('"version": "1.2.4"');
     expect(readdirSync(ovis).filter((name) => name.startsWith(".install.lock"))).toEqual([]);
-    // its two 20 s waits may follow one another, each install around them
   }, 90_000);
 
   for (const paused of ["release", "sweep"] as const) it(`fails no run when the holder's sweep and a release remove the same folder at once, with an rm that refuses a folder removed meanwhile (busybox), the ${paused} inside it first`, async () => {
@@ -328,9 +309,6 @@ done; install_binary 1.2.4`);
     const rm = Bun.which("rm");
     standIn("tar", `[ "$RUN" != first ] || [ "$1" != -tzf ] || : > "${sync}/first-holds"
 exec "${Bun.which("tar")}" "$@"`);
-    // the first run's release, or the second's sweep, removes its folder as busybox rm -rf does: it unlinks what is
-    // inside, then fails on the folder if the other run removed it meanwhile. The other removes it only once that one
-    // is inside it, so the two meet
     const inside = paused === "release" ? "first" : "second";
     standIn("rm", `case "$*" in "-rf ${lock}.gone-"*) if [ -d "$2" ]; then
   end=$(($(date +%s) + 20))
@@ -356,16 +334,13 @@ done; install_binary 1.2.4`, { RUN: "second" });
     expect(existsSync(join(sync, "refused")), "the two removals never met in the same folder").toBe(true);
     expect(readFileSync(join(ovis, "bin", "ovis-server.json"), "utf8")).toContain('"version": "1.2.4"');
     expect(readdirSync(ovis).filter((name) => name.startsWith(".install.lock"))).toEqual([]);
-    // the second's 20 s wait, then the first's, each install around them
   }, 90_000);
 
   it("removes the lock folder a run cut off while it released the lock left, and fails no run whose pid it names", () => {
     const { releases, key, run, ovis } = pc();
     release(releases, "1.2.3", key.privateKeyPem);
-    // a run killed between its lock's rename and its removal, long ago
     mkdirSync(join(ovis, ".install.lock.gone-1"), { recursive: true });
     writeFileSync(join(ovis, ".install.lock.gone-1", "pid"), "1\n");
-    // one that had this run's pid, with a lock inside it that the rename of this run's lock could not replace
     const result = run(`mkdir -p "${ovis}/.install.lock.gone-$$/.install.lock" && echo 1 > "${ovis}/.install.lock.gone-$$/.install.lock/pid" && install_binary 1.2.3`);
     expect(result.code, result.out).toBe(0);
     expect(result.out).toContain("installed Ovis 1.2.3");
@@ -379,12 +354,10 @@ done; install_binary 1.2.4`, { RUN: "second" });
     const sync = join(home, "sync");
     mkdirSync(sync);
     const lock = join(ovis, ".install.lock");
-    // a lock naming no holder, older than a minute: the breaker asks find its age, so a second breaker at once shows there
     standIn("find", `if [ "$1" = "${lock}" ]; then
   if (set -C; : > "${sync}/breaking") 2>/dev/null; then sleep 0.1; rm -f "${sync}/breaking"; else : > "${sync}/two-breakers"; fi
 fi
 exec "${Bun.which("find")}" "$@"`);
-    // an empty pid file: nobody can claim the lock, and nobody is named as its holder, so only breaking it frees it
     mkdirSync(lock, { recursive: true });
     writeFileSync(join(lock, "pid"), "");
     utimesSync(lock, new Date(Date.now() - 300_000), new Date(Date.now() - 300_000));
@@ -403,7 +376,6 @@ exec "${Bun.which("find")}" "$@"`);
     const sync = join(home, "sync");
     mkdirSync(sync);
     const lockPid = join(ovis, ".install.lock", "pid");
-    // the breaker's first read of the holder pauses, after it, until the test has put a fresh holder in place
     standIn("cat", `if [ "$1" = "${lockPid}" ] && [ ! -e "${sync}/judged" ]; then
   "${Bun.which("cat")}" "$1"; : > "${sync}/judged"
   until [ -e "${sync}/fresh" ]; do sleep 0.01; done; exit 0
@@ -465,7 +437,6 @@ exec "${Bun.which("cat")}" "$@"`);
     expect(run("install_binary 1.2.3").code).toBe(0);
     const kept = sha256(binary);
     release(releases, "1.2.4", key.privateKeyPem);
-    // tar unpacks the client once both downloads have been checked: killed there, nothing has been renamed yet
     standIn("tar", 'kill -9 "$INSTALLER_PID"; exit 1');
     const killed = run("INSTALLER_PID=$$; export INSTALLER_PID; install_binary 1.2.4");
     expect(killed.signal).toBe("SIGKILL");
@@ -484,7 +455,6 @@ exec "${Bun.which("cat")}" "$@"`);
     standIn("openssl", 'case "$1" in pkeyutl) echo "Signature Verified Successfully"; exit 0 ;; *) exec /usr/bin/openssl "$@" ;; esac');
     const result = run("install_binary 1.2.3");
     expect(result.code).toBe(0);
-    // node on the PATH, or (a PC with none, such as macOS out of the box) the official Node build fetched for the check
     expect(result.out).toMatch(/checked the signature with (node|Node v\d)/);
     const corrupt = pc();
     const dir = release(corrupt.releases, "1.2.3", corrupt.key.privateKeyPem);
@@ -538,7 +508,6 @@ exec "${Bun.which("cat")}" "$@"`);
     expect(run("install_binary 1.2.3").code).toBe(0);
     mkdirSync(join(home, ".local", "bin"), { recursive: true });
     writeFileSync(join(home, ".local", "bin", "herdr"), "#!/bin/sh\n", { mode: 0o755 });
-    // the binary the launcher runs reports the herdr it finds, as herdrConfigDir() asks Bun.which
     const binary = realpathSync(join(ovis, "bin", "ovis-server"));
     rmSync(binary);
     writeFileSync(binary, "#!/bin/sh\ncommand -v herdr || echo none\n", { mode: 0o755 });
@@ -553,7 +522,6 @@ exec "${Bun.which("cat")}" "$@"`);
     const ranAt = join(home, "host-ran");
     const dir = release(releases, "1.2.3", key.privateKeyPem, `#!/bin/sh\n: > "${ranAt}"\n[ $# -gt 0 ] && exit 0\necho "pty-sidecar: usage: ovis-pty-sidecar" >&2\nexit 2\n`);
     const host = join(dir, ptyFile(PLATFORM.startsWith("darwin") ? "darwin-universal" : PLATFORM as "linux-x64"));
-    // the unsigned manifest of the hosts names another file's hash: it is not read
     writeFileSync(join(dir, "ovis-pty-sidecar.json"), JSON.stringify({ version: "1.2.3", crate: "c".repeat(40), assets: {} }));
     const result = run("install_binary 1.2.3");
     expect(result.code, result.out).toBe(0);
@@ -567,7 +535,6 @@ exec "${Bun.which("cat")}" "$@"`);
     const ranAt = join(home, "host-ran");
     const signed = (marker: string) => `#!/bin/sh\n: > "${marker}"\n[ $# -gt 0 ] && exit 0\necho "pty-sidecar: usage: ovis-pty-sidecar" >&2\nexit 2\n`;
     const dir = release(releases, "1.2.3", key.privateKeyPem, signed(join(home, "host-RAN")));
-    // a mirror's host of the very same size: it would run, and say so, were it taken
     for (const build of PTY_ASSETS) writeFileSync(join(dir, ptyFile(build)), signed(ranAt), { mode: 0o755 });
     expect(signed(ranAt).length).toBe(signed(join(home, "host-RAN")).length);
     const result = run("install_binary 1.2.3");
@@ -618,7 +585,6 @@ exec "${Bun.which("cat")}" "$@"`);
     release(releases, "1.2.3", key.privateKeyPem);
     expect(run("install_binary 1.2.3").code).toBe(0);
     const before = snapshot(ovis);
-    // the newest release folder answers no manifest: a failed probe, not a request for source
     mkdirSync(join(releases, "v1.2.9"), { recursive: true });
     const result = run("pick_install; echo picked");
     expect(result.code, result.out).toBe(0);

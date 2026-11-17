@@ -1,4 +1,3 @@
-/** Isolated real-component geometry regression: no herdr or user state. */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
