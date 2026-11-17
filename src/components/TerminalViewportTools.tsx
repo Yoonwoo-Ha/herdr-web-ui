@@ -29,6 +29,8 @@ interface Props {
 /** UI over the attach stream. History belongs to herdr; xterm still has zero scrollback. */
 /** how long a page asked for on stale metrics waits for the read that tells history from a program's screen */
 const HELD_PAGE_MS = 1000;
+/** how late that read may answer: a slow read still serves a key pressed in time, but never seconds after the user stopped expecting it */
+const HELD_PAGE_RETURN_MS = 3 * HELD_PAGE_MS;
 
 export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageScroll, lineScroll, onApplicationPage, enabled, interactive, search, onError }: Props) {
   const t = useT();
@@ -162,12 +164,13 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
         data = output === outputVersion ? found : null;
         // also the box: a pane shown again by its visibility style, not its size, gets no ResizeObserver call
         paint();
-        // a page held on stale metrics runs on the first read after the latest output, while it is recent;
-        // one held only for a fresh read runs on a read that began soon after it, however long that read took
+        // a page held on stale metrics runs on the first read after the latest output, one held only for a
+        // fresh read on a read that began after it; either while that read began soon after the press and
+        // answered within HELD_PAGE_RETURN_MS (a slow herdr or relay must not lose the key)
         if (heldPage && validScroll(metrics) && (output === outputVersion || (!heldPage.strict && heldPage.at <= startedAt))) {
           const held = heldPage;
           heldPage = null;
-          if (held.strict ? Date.now() - held.at < HELD_PAGE_MS : startedAt - held.at < HELD_PAGE_MS) {
+          if (startedAt - held.at < HELD_PAGE_MS && Date.now() - held.at < HELD_PAGE_RETURN_MS) {
             for (let step = 0; step < Math.abs(held.steps); step++) scrollPage(held.steps > 0 ? 1 : -1, true);
           }
         }
