@@ -1,3 +1,7 @@
+/**
+ * The server runs in a child process (`createServer`, port 0, a mkdtemp state folder, no token)
+ * against a stand-in herdr socket that answers `pane.get` alone, so nothing touches a real herdr.
+ */
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -153,6 +157,7 @@ function makeFixtures(root: string) {
   writeFileSync(big, Buffer.alloc(512 * 1024 * 1024, 7));
   const small = join(root, "notes");
   writeFileSync(small, "hello\n");
+  // 50 folders of 100 files: the walk's whole budget of 5,000 entries
   const tree = join(root, "tree");
   for (let folder = 0; folder < 50; folder++) {
     mkdirSync(join(tree, `dir-${folder}`), { recursive: true });

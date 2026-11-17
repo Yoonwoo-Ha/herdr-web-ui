@@ -1,3 +1,4 @@
+/** Owned, synthetic visualization fixture: no user session or files are read. */
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Markdown } from "../src/components/Markdown.tsx";

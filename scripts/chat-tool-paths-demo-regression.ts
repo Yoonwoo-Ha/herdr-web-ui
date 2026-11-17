@@ -8,6 +8,7 @@ import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
+// All files and HTTP traffic stay in this disposable, loopback-only app; no herdr is opened.
 const repo = join(import.meta.dir, "..");
 const app = mkdtempSync(join(tmpdir(), "herdr-chat-tool-paths-demo-"));
 const bare = mkdtempSync(join(tmpdir(), "herdr-chat-tool-paths-bare-"));
@@ -398,6 +399,7 @@ async function demoChecks(browser: Browser, base: string): Promise<void> {
     record("unknown-or-outside-root", "a sibling folder's file and a file outside the folder read as written", { sibling, outside });
     for (const path of ["src/relative.ts", "C:\\work\\app\\win.ts", "\\\\server\\share\\app\\unc.ts", "//server/share/app/fwd.ts"]) assert.equal((await shownFiles(pane))[ORDER.indexOf(path)]!.text, path);
     record("unknown-or-outside-root", "a relative path, a Windows drive path and a UNC path read as written", ORDER.filter((path) => !path.startsWith("/")));
+    // `..` under the folder resolves outside it: never a label that looks inside
     assert.equal((await shownFiles(pane))[ORDER.indexOf("/work/app/../etc/passwd")]!.text, "/work/app/../etc/passwd");
     record("unknown-or-outside-root", "a path whose .. leaves the folder reads as written", "/work/app/../etc/passwd");
     assert.equal((await shownFiles(pane))[ORDER.indexOf("/work/app/문서/설계 노트.md")]!.text, "app/문서/설계 노트.md");

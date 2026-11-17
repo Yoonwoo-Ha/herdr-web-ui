@@ -25,6 +25,7 @@ function entry(message: Record<string, unknown>): string {
 const lines = (label: string, count: number) => Array.from({ length: count }, (_, index) => `${label} line ${index + 1}: const value${index} = compute(${index});`).join("\n");
 const call = (id: string, path: string) => entry({ role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", id, name: "read", arguments: { path } }] });
 const result = (id: string, label: string, count: number) => entry({ role: "toolResult", toolCallId: id, toolName: "read", isError: false, content: [{ type: "text", text: lines(label, count) }] });
+// gjc's todo_write: operations on one list, answered with the whole list as it now stands
 const TODO = ["Read the fixture files", "Patch the parser", "Run the tests"];
 const todoCall = (id: string, ops: unknown[]) => entry({ role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", id, name: "todo_write", arguments: { ops } }] });
 const todoResult = (id: string, done: number) => entry({ role: "toolResult", toolCallId: id, toolName: "todo_write", isError: false, content: [{ type: "text", text:
@@ -45,6 +46,7 @@ function reset(earlier: number): void {
   writeFileSync(transcript, text);
 }
 
+/** gjc's full rewrite (`#rewriteFile`): every record again plus the new one, written beside the file and renamed over it. */
 function write(record: string, rewrite: boolean): number {
   if (rewrite) {
     const temporary = join(root, ".session.jsonl.tmp");

@@ -1,3 +1,4 @@
+/** Synthetic long-task benchmark, no agent/store access. */
 import assert from "node:assert/strict";
 import { createCodexTranscriptParser, parseCodexTranscript } from "../server/codex.ts";
 

@@ -124,6 +124,9 @@ async function agentListed(origin: string, paneId: string): Promise<void> {
 // `nth` one is in, that attach has done whatever it does to the grid
 const attached = (page: Page, nth = 1) => page.waitForFunction((count) => (window as unknown as { frames_: { dir: string; type: string }[] }).frames_.filter((f) => f.dir === "in" && f.type === "input-ready").length >= count, nth, { timeout: 15_000 });
 
+/**
+ * The size is the one the pane's own shell reports (`stty size`), not what either browser thinks.
+ */
 export async function checkChatKeepsTerminalSize(browser: Browser, origin: string): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "ovis-chat-size-"));
   const cwd = join(root, "pane");
@@ -175,6 +178,7 @@ export async function checkChatKeepsTerminalSize(browser: Browser, origin: strin
     await desktop.evaluate(([rows, cols]) => {
       const socket = (window as unknown as { socket_: WebSocket }).socket_;
       let finish: (time: number) => void;
+      // A deadline resolves to Infinity so a late delivery fails without an unhandled rejection.
       const restored = new Promise<number>((resolve) => { finish = resolve; });
       Object.assign(window, { gridRestored_: restored });
       const timer = window.setTimeout(() => {
@@ -274,6 +278,17 @@ function attachRunning(terminalId: string): boolean {
   return Bun.spawnSync(["ps", "-axo", "command"]).stdout.toString().split("\n").some((line) => line.includes(`terminal attach ${terminalId}`));
 }
 
+/**
+ * With "Use alongside herdr's own window" (`releasePaneAway`), a tab the user is not in leaves the
+ * shared terminal's size alone, and lets go of the pane; by default a desktop window out of use
+ * keeps its pane and its output, and a phone put away lets go at once either way. A desktop window
+ * left open behind another app (herdr's own TUI in a terminal) turned visible when the screen woke,
+ * or reconnected, reloaded or moved on to the next pane in the background, and fitted the pane to
+ * itself. And for as long as the bridge's attach stayed, herdr held the pane at that window's size:
+ * its TUI drew the pane cut off at its split's edge, the bottom rows out of reach. Out of use, such a
+ * window detaches, the attach ends with the pane's last client, and herdr gives the pane back to its
+ * TUI. The window attaches again, at its own size, when it takes the focus.
+ */
 export async function checkBackgroundTabKeepsTerminalSize(browser: Browser, origin: string): Promise<void> {
   await checkInactiveAttachLifecycle(browser, origin);
   const root = mkdtempSync(join(tmpdir(), "ovis-background-size-"));
@@ -410,6 +425,8 @@ export async function checkBackgroundTabKeepsTerminalSize(browser: Browser, orig
     assert.equal(await size(), phoneSize, "a background reload leaves the phone's grid");
     console.log("PASS a desktop window reloading in the background watches without joining the shared attach");
 
+    // the phone leaves too: no tab uses the pane, and the bridge lets go of herdr's attach,
+    // which is what gives the pane back to herdr's own TUI
     assert.ok(attachRunning(terminalId), "the phone still holds the attach");
     await phone.context().close();
     const gone = Date.now() + 10_000;
@@ -624,7 +641,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
                   const receipt = JSON.stringify({ type: "submit-result", id: frame.id, pane_id: first, ok: true,
                     pending: { id: "lifecycle-queue", request_id: frame.id, text: frame.text, state: "queued", created_at: new Date().toISOString() } });
                   record(receipt, "in"); socket.send(receipt);
-                } else releaseSubmit = () => upstream.send(raw);
+                } else releaseSubmit = () => upstream.send(raw); // validation/acceptance still runs on the real server
               } else upstream.send(raw);
             });
           });
@@ -681,8 +698,13 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
           await page.waitForFunction((from) => (window as unknown as { frames_: Frame[] }).frames_.slice(from)
             .some((f) => f.dir === "out" && f.type === "input" && f.text === "z"), typedFrom, { timeout: 10_000 });
           await page.clock.resume();
+          // a masked prompt may have come while the pane was held: until the new screen is read, a key goes as a password
+          // would. The connection ends before its receipt: the terminal says a key may not have arrived, and holds
+          // nothing of it, where a key typed as usual would come back in a draft
           await page.evaluate(() => (window as unknown as { socket_: WebSocket }).socket_.close());
           await page.getByText("A key may not have reached the terminal", { exact: false }).first().waitFor();
+          // nor is it held: no draft keeps it on disk, and none is drawn once the connection is back and the pane takes
+          // input again (a draft is drawn only while connected)
           await attached(page, 2);
           assert.equal(await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("ovis:terminal-draft:"))
             .some((key) => { try { return (JSON.parse(localStorage.getItem(key) ?? "{}") as { text?: string }).text?.includes("z") === true; } catch { return false; } })), false,
@@ -692,6 +714,10 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
           continue;
         }
         if (scenario.startsWith("idle")) {
+          // #712: a tab in use holds herdr's attach, and herdr keeps the pane at the tab's size, so its own TUI
+          // draws the pane cut off and takes clicks in the wrong place. With Settings → Use alongside herdr's own
+          // window on, the tab lets go of the pane after 10 s without typing or a click in it, and the key that
+          // takes it back reaches the pane, once, through the new attach. Off, nothing changes.
           await attached(page);
           await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 1_000);
           await page.clock.runFor(6_000);
@@ -710,6 +736,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
           await waitDetach(page);
           await page.locator(".terminal-banner", { hasText: "View only while you are not typing here" }).waitFor();
           await page.waitForFunction(() => (window as unknown as { frames_: Frame[] }).frames_.some((frame) => frame.type === "watch-data"));
+          // the bridge's attach ends with the tab's: herdr gives the pane back to its own window
           const gone = Date.now() + 10_000;
           while (attachRunning(firstTerminal) && Date.now() < gone) await Bun.sleep(100);
           assert.ok(!attachRunning(firstTerminal), "an idle tab holds no attach on the pane");
@@ -727,6 +754,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
             await waitWire("in", "input-ready", readies + 1);
           };
           if (scenario === "idle-secret") {
+            // the command line does not spell the prompt: only the prompt itself puts "Password:" on screen
             await paneSendText(first, "read -s -p \"$(printf 'Pass%s: ' word)\" x");
             await paneSendKeys(first, ["Enter"]);
             const drawn = (): Promise<boolean> => idlePage.evaluate((shown) => document.querySelector(shown)?.textContent?.includes("Password:") ?? false, shownRows());
@@ -756,6 +784,9 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
             console.log("PASS inactive attach lifecycle: idle");
             continue;
           }
+          // The attach does not take the keys: another app holds the pane, the connection drops, or it takes longer than
+          // the keys may wait. They are held for review (before the wait could run out, but for idle-expired), and the
+          // attach that takes input later sends none of them.
           if (scenario === "idle-held" || scenario === "idle-secret") {
             assert.ok(injectFrame);
             injectFrame({ type: "error", code: "attach_held", pane_id: first, message: "Another app has this pane open." });
@@ -781,6 +812,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
           await Bun.sleep(NO_RESIZE_WAIT_MS);
           assert.deepEqual(await typedOut(), [], "keys held for review are never sent by an attach that takes input later");
           if (scenario === "idle-secret") {
+            // what was typed at the masked prompt is in no draft, on screen or on disk
             assert.equal(await page.locator(".draft-text").count(), 0, "a password is never held in a draft");
             assert.equal(await page.evaluate(() => Object.keys(localStorage).some((key) => (localStorage.getItem(key) ?? "").includes("hunter2"))), false,
               "a password is never kept on disk");
@@ -788,6 +820,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
             console.log("PASS inactive attach lifecycle: idle-secret");
             continue;
           }
+          // the connection takes input: the held keys go when the user sends them, and only then
           await page.getByRole("button", { name: "Send held input" }).first().click();
           await page.waitForFunction((from) => (window as unknown as { frames_: Frame[] }).frames_.slice(from)
             .some((f) => f.dir === "out" && f.type === "input"), start, { timeout: 10_000 });
@@ -1148,6 +1181,10 @@ if (import.meta.main) {
 }
 
 
+/**
+ * A window that keeps its focus gets no focus event when another device sized the pane meanwhile
+ * (a phone used beside a PC left in front): a click or a key in its terminal takes the pane back.
+ */
 export async function checkFocusedWindowReclaimsTerminalSize(browser: Browser, origin: string): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "ovis-reclaim-size-"));
   const contexts: BrowserContext[] = [];

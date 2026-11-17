@@ -1,4 +1,5 @@
-import "./test-herdr.ts";
+/** No live user's terminal is attached or written. */
+import "./test-herdr.ts"; // a herdr session of its own unless HERDR_TEST_LIVE=1: nothing shows in the user's
 import assert from "node:assert/strict";
 import { Database } from "bun:sqlite";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -58,11 +59,15 @@ try {
     await Bun.sleep(50);
   }
   await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "codex", state: "idle" });
+  // The plain-HTTP page below reaches the server under a name that is not loopback, which is
+  // asked to pair while nothing is paired. Pair one device in the server's state dir first; the
+  // page carries its cookie.
   const stateDir = join(root, "push");
   const devices = new DeviceStore(stateDir);
   const paired = devices.pair(devices.startPairing().code, "Chat QA", "drive");
   assert.ok(paired, "the QA device pairs");
   devices.match(paired.token);
+  // tailscaleOwner null: no Tailscale login stands in for the paired device
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir, codexHome, tailscaleOwner: null });
   browser = await chromium.launch({ executablePath: chromePath(), headless: process.env["HEADED"] !== "1", args: ["--no-sandbox", "--host-resolver-rules=MAP clipboard.test 127.0.0.1", "--no-proxy-server"] });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
@@ -267,6 +272,8 @@ try {
   await insecureLog.getByRole("button", { name: "Copy code", exact: true }).click();
   await insecureLog.getByRole("button", { name: "Code copied", exact: true }).waitFor();
   assert.equal(await clipboard(), code);
+  // A rejected secure API still gets the copy-command path. Neither failure may be
+  // advertised as success if the browser refuses both mechanisms.
   const secureCopy = page.getByRole("button", { name: "Copy as markdown", exact: true }).first();
   await secureCopy.focus();
   await secureCopy.click();

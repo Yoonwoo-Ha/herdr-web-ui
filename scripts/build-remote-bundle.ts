@@ -23,6 +23,7 @@ const herdrPins: Record<string, [string, string]> = {
   "darwin-x64": ["herdr-macos-x86_64", "db62d548ff3e832b087a96b1894a08d26be3905f1830309cd556783f215d4054"],
   "darwin-arm64": ["herdr-macos-aarch64", "5173a3e0ae42d5d1ab7ebfa5d5e6329f7c3d23f8e1a3677c7ce3231da2884157"],
 };
+// Official release digests: nodejs.org/dist/v22.23.2/SHASUMS256.txt.
 const nodePins: Record<string, string> = {
   "linux-x64": "b294a556e639d64338823920e5866c21c02741742d2e1529ee1a225c1ec9252a",
   "linux-arm64": "013b59cfd2819703a6f4a14ab891fc46fc2a4e3f5bcd92de3fb4929b43e35b30",

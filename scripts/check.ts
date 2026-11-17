@@ -1,3 +1,13 @@
+/**
+ * Whatever needs herdr runs on a herdr of its own. Its config, its plugin state and the web UI's
+ * state live in a directory made for this run (XDG_CONFIG_HOME, XDG_STATE_HOME,
+ * OVIS_STATE_DIR), under a session name made for this run. Nothing reads the user's herdr
+ * config, so no plugin installed there starts with the test servers, and two runs on one PC
+ * share no socket and no file.
+ *
+ * `fast` takes no slot, but it claims its checkout all the same: it rewrites the generated types file
+ * while it checks it and builds into dist/, so it and any other mode refuse each other in one checkout.
+ */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { dlopen, FFIType } from "bun:ffi";
@@ -51,6 +61,7 @@ export function needsLock(todo: ReturnType<typeof plan>): boolean {
   return todo.lanes.length > 0 || todo.command !== null || todo.concurrent;
 }
 
+/** Keep command arguments useful without persisting common inline credentials. Environment values are never serialized. */
 export function sanitizeCommand(command: readonly string[]): string[] {
   const sensitive = /token|secret|password|passwd|api[-_]?key|auth|cookie|credential|bearer/i;
   let redactNext = false;
@@ -76,11 +87,16 @@ export function sanitizeCommand(command: readonly string[]): string[] {
   return bounded;
 }
 
+/** actionlint as CI pins it. The archive is checked against its SHA-256 before it is unpacked. */
 const ACTIONLINT = { version: "1.7.12", sha256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8" };
 
 /** A unix socket's path holds about 104 bytes on macOS and 108 on Linux. */
 export const SOCKET_PATH_MAX = 100;
 
+/**
+ * What a shell inside a herdr pane carries of that herdr, and what names the user's own herdr
+ * config: nothing in a run may reach either by these.
+ */
 const LIVE_HERDR = ["HERDR_SOCKET", "HERDR_SOCKET_PATH", "HERDR_ENV", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_CONFIG_PATH"];
 
 export interface Isolation {
@@ -90,8 +106,13 @@ export interface Isolation {
   remove: () => void;
 }
 
+/**
+ * A herdr of the run's own: the environment that points herdr, its plugins and the web UI at one
+ * directory, and a session name no other run has.
+ */
 export function isolate(base: Record<string, string | undefined>, kept: string | undefined = base["CHECK_DIR"]): Isolation {
   if (base["HERDR_TEST_LIVE"] === "1") throw new Error("HERDR_TEST_LIVE=1 runs tests in the herdr you work in; unset it for `bun run check`");
+  // short on purpose: the session's socket path has to fit a unix socket address
   const dir = kept ? resolve(kept) : mkdtempSync(join(existsSync("/tmp") ? "/tmp" : tmpdir(), "hwc-"));
   const session = `check-${randomBytes(3).toString("hex")}`;
   const config = join(dir, "config");
@@ -101,6 +122,7 @@ export function isolate(base: Record<string, string | undefined>, kept: string |
     if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`isolated state path is not a real directory: ${path}`);
     if (process.platform !== "win32") chmodSync(path, 0o700);
   }
+  // what lets a test write to herdr's per-user plugin registry: this one is the run's own
   writeFileSync(join(config, DISPOSABLE_CONFIG_FILE), "", { mode: 0o600 });
   const sessions = join(config, "herdr", "sessions");
   const socket = join(sessions, `${session}-9`, "herdr.sock");
@@ -109,6 +131,8 @@ export function isolate(base: Record<string, string | undefined>, kept: string |
     throw new Error(`${socket} is too long for a unix socket (${socket.length} > ${SOCKET_PATH_MAX}); set CHECK_DIR to a shorter path`);
   }
   const env: Record<string, string> = {};
+  // not what names the herdr this was started from (a pane of the user's): its socket, its pane,
+  // and the user's own herdr config
   for (const [name, value] of Object.entries(base)) if (value !== undefined && !LIVE_HERDR.includes(name)) env[name] = value;
   Object.assign(env, {
     ...testShellEnv(dir),
@@ -117,6 +141,8 @@ export function isolate(base: Record<string, string | undefined>, kept: string |
     LANGUAGE: "en_US:en",
     XDG_CONFIG_HOME: config,
     [DISPOSABLE_CONFIG_ENV]: config,
+    // the run's own session (where scripts/test-herdr.ts starts it), so a server started by hand
+    // inside `check run` never falls back to the herdr the user works in
     HERDR_SOCKET: join(sessions, session, "herdr.sock"),
     XDG_STATE_HOME: join(dir, "state"),
     OVIS_STATE_DIR: join(dir, "web-state"),
@@ -128,6 +154,11 @@ export function isolate(base: Record<string, string | undefined>, kept: string |
   return { env, dir, sessions, remove: () => { if (!kept) rmSync(dir, { recursive: true, force: true }); } };
 }
 
+/**
+ * Stops every herdr server the run's sessions directory holds, trying each one even after another
+ * failed, and throws what failed. A crash or SIGKILL can leave a stale socket behind: after a
+ * failed stop, only a missing socket or a refused connection proves the session stopped.
+ */
 export async function stopSessions(
   sessions: string,
   stop: (session: string) => { error?: Error; status: number | null; signal: NodeJS.Signals | null; stderr?: string | null },
@@ -201,6 +232,13 @@ export function maxRuns(env: Record<string, string | undefined>, cores = availab
   return count;
 }
 
+/**
+ * What a CI host says it can take, each over the workflow's own value: a self-hosted runner's launcher
+ * puts these in its containers' environment (scripts/self-hosted-runner/run.sh --env-file), which the
+ * workflow's expressions cannot read. Every runner of a host shares its slots, so the host, not a job,
+ * knows how many fit. Unset or empty leaves the workflow's value; the named variable's own check
+ * still applies.
+ */
 export const HOST_LIMITS = {
   CHECK_HOST_MAX_RUNS: "CHECK_MAX_RUNS",
   CHECK_HOST_TEST_SHARDS: "HERDR_TEST_SHARDS",
@@ -214,6 +252,12 @@ export function applyHostLimits(env: Record<string, string | undefined>): void {
   }
 }
 
+/**
+ * What a run calls its checkout to the runs that share its slots. A self-hosted CI runner shares its
+ * slots with the other runner containers of its PC (scripts/self-hosted-runner/run.sh), and every
+ * one of them checks out to the same path, so there the runner's name (RUNNER_NAME, set by the
+ * Actions runner) is part of it: two runners are two checkouts.
+ */
 export function checkoutIdentity(checkout: string, env: Record<string, string | undefined> = process.env): string {
   const runner = env["RUNNER_NAME"];
   return runner ? `${runner}:${checkout}` : checkout;
@@ -240,6 +284,18 @@ export function warnNodeVersionMismatch(version: string | null, warn: (message: 
 
 export type Holder = { heldBy: number; checkout?: string };
 
+/**
+ * Where the PC's slots are when its runs share no loopback: CHECK_SLOTS_DIR, a directory with one
+ * lock file for each port a run would listen on, named after it (41737 and the ones after it). The
+ * launcher of a self-hosted CI runner gives every runner container a network of its own, so that no
+ * job reaches a server another job's tests keep on their loopback, and mounts this directory in all
+ * of them (scripts/self-hosted-runner/run.sh). A run holds a file with flock(2), which the kernel
+ * alone arbitrates and lets go of however the holder ends, as it does a listening port, and writes in
+ * it what a port's holder answers. The launcher makes the files: a run creates none, and one it
+ * cannot open fails the run, which never falls back to ports that would count only its own
+ * container. A run that names a lock range of its own (CHECK_LOCK_PORT) keeps its ports: that range
+ * was never the PC's.
+ */
 export function slotsDir(env: Record<string, string | undefined>): string | undefined {
   const dir = env["CHECK_SLOTS_DIR"];
   return dir && !env["CHECK_LOCK_PORT"] ? dir : undefined;
@@ -249,6 +305,7 @@ const LOCK_SH = 1, LOCK_EX = 2, LOCK_NB = 4;
 /** O_CLOEXEC on Linux, which node:fs does not name and Bun does not add: a program the run starts never holds a lock file open. */
 const O_CLOEXEC = 0o2000000;
 let flock: ((fd: number, operation: number) => number) | undefined;
+/** flock(2) on `fd` without waiting, from the C library: whether the lock was granted. Where that library cannot be loaded, this throws. */
 function tryFlock(fd: number, operation: number): boolean {
   flock ??= dlopen("libc.so.6", { flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 } }).symbols.flock as (fd: number, operation: number) => number;
   return flock(fd, operation | LOCK_NB) === 0;
@@ -256,6 +313,12 @@ function tryFlock(fd: number, operation: number): boolean {
 
 const noRoom = (error: unknown): boolean => (error as NodeJS.ErrnoException).code === "ENOSPC";
 
+/**
+ * The files share one small volume, any job may write in them, and what a job wrote stays when the
+ * job is gone. So a run that finds no room for its answer empties every file no run holds
+ * (emptyUnheld) and writes once more: what a job left behind keeps no run out, only what a job
+ * that still holds a file wrote.
+ */
 export function holdFile(
   dir: string, port: number, answer: string,
   write: (fd: number, text: string) => void = (fd, text) => { writeSync(fd, text, 0); },
@@ -285,6 +348,13 @@ export function holdFile(
   return held ? { release: () => { if (held) { held = false; closeSync(fd); } } } : null;
 }
 
+/**
+ * Empties every lock file of `dir` that no run holds. What is written there is no holder's (fileSaid
+ * never reads it), and it takes room from the runs that are here. Under a shared lock, as fileSaid
+ * asks: granted, no run holds the file, and none takes it before the lock is given back. A run that
+ * asks who holds the file meanwhile is granted its own shared lock, so it never reads what is being
+ * emptied as a holder's. A file that cannot be opened is left as it is.
+ */
 function emptyUnheld(dir: string): void {
   for (const name of readdirSync(dir)) {
     if (!/^\d+$/.test(name)) continue;
@@ -298,6 +368,11 @@ function emptyUnheld(dir: string): void {
   }
 }
 
+/**
+ * What the holder of `port`'s lock file wrote in it; null when no run holds it, whatever a run that
+ * is gone left written there. A shared lock is granted unless a run holds the file: granted, it is
+ * given back at once.
+ */
 function fileSaid(dir: string, port: number): string | null {
   const fd = openSync(join(dir, String(port)), constants.O_RDONLY | O_CLOEXEC);
   try {
@@ -333,6 +408,13 @@ function ask(port: number, dir?: string): Promise<Holder | null> {
   });
 }
 
+/**
+ * One slot. The lock is a listening loopback port: taking it is one step, and it is free again the
+ * moment its run is gone, however it ended, so there is no lock left behind to take over. Whoever
+ * holds it answers a connection with its pid and checkout. Resolves with the release, or with who
+ * holds it (NaN when something else listens there). With `dir` the lock is the port's file there
+ * (slotsDir), held and asked the same way.
+ */
 export function lock(port = DEFAULT_LOCK_PORT, pid = process.pid, checkout?: string, dir?: string): Promise<{ release: () => void } | Holder> {
   const answer = checkout === undefined ? String(pid) : `${pid}\n${checkout}`;
   if (dir !== undefined) return lockFile(dir, port, answer);
@@ -343,6 +425,7 @@ export function lock(port = DEFAULT_LOCK_PORT, pid = process.pid, checkout?: str
       void ask(port).then((holder) => resolve(holder ?? { heldBy: Number.NaN }));
     });
     server.listen(port, "127.0.0.1", () => {
+      // the lock must not keep the run alive once its work is done
       server.unref();
       resolve({ release: () => { server.close(); } });
     });
@@ -370,6 +453,11 @@ export function ticketPorts(base: number, slots: number, scan: number): number[]
 const TICKET_LOOKUP_MS = 1_500;
 export const DESK_WAIT_MS = 2 * TICKET_LOOKUP_MS;
 
+/**
+ * Who waits on a ticket port: null when nothing listens there, or when what listens is no ticket. A
+ * ticket answers with one short message and closes; a listener that says anything else is dropped at
+ * once, and none is waited on past TICKET_LOOKUP_MS, however it keeps talking.
+ */
 function askTicket(port: number, dir?: string): Promise<(SlotHolder & { queuedAt: number }) | null> {
   if (dir !== undefined) {
     const said = fileSaid(dir, port);
@@ -399,11 +487,20 @@ function ticketOf(port: number, said: string): (SlotHolder & { queuedAt: number 
 export async function takeTicket(
   { base, slots, scan = MAX_RUNS_LIMIT, at, pid = process.pid, checkout, deskWaitMs = DESK_WAIT_MS, dir }: { base: number; slots: number; scan?: number; at: number; pid?: number; checkout: string; deskWaitMs?: number; dir?: string },
 ): Promise<{ ticket: Ticket; release: () => void } | null> {
+  // One run at a time looks at the places taken and takes its own: two that looked at once could
+  // each miss the other, and the later one rank ahead on a clock stepped back between them.
+  // Bound directly: whoever holds it is never asked who it is, so nothing on that port can keep
+  // this run talking.
   const bindDesk = (): Promise<{ release: () => void } | null> => dir !== undefined ? Promise.resolve(holdFile(dir, ticketDesk(base, slots, scan), "")) : new Promise((resolve, reject) => {
     const server = createServer((socket) => { socket.destroy(); });
     server.once("error", (error: NodeJS.ErrnoException) => { if (error.code === "EADDRINUSE") resolve(null); else reject(error); });
     server.listen(ticketDesk(base, slots, scan), "127.0.0.1", () => { server.unref(); resolve({ release: () => { server.close(); } }); });
   });
+  // A run at the desk holds it for one look at the tickets: wait for it, not for a whole round, in
+  // which a run that came later could take its place first and so rank ahead of this one. Runs that
+  // reach a free desk within one retry of each other (10 ms) may still swap places: their order is
+  // that of the desk, not of when they first found the PC busy.
+  // on the monotonic clock: a wall clock stepped back would stretch the wait by the step
   const deadline = performance.now() + deskWaitMs;
   let desk = await bindDesk();
   while (desk === null && performance.now() < deadline) {
@@ -439,6 +536,7 @@ async function queuedAhead(base: number, slots: number, scan: number, ticket: Ti
     .sort((a, b) => a.queuedAt - b.queuedAt || a.port - b.port);
 }
 
+/** Whether a pid names a live process. Any error but ESRCH (a pid this run may not signal) is thrown. */
 function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
   catch (error) {
@@ -455,6 +553,7 @@ function readBootId(path: string): string | null {
   catch { return null; }
 }
 
+/** A Linux process's state letter and start in clock ticks since boot (/proc/<pid>/stat, fields 3 and 22), or null when it cannot be read. */
 function procStat(pid: number): { state: string; ticks: string } | null {
   let stat: string;
   try { stat = readFileSync(`/proc/${pid}/stat`, "utf8"); }
@@ -464,6 +563,12 @@ function procStat(pid: number): { state: string; ticks: string } | null {
   return fields[0] && fields[19] ? { state: fields[0], ticks: fields[19] } : null;
 }
 
+/**
+ * When a process started, as this system names it, or null when that cannot be read (the process is
+ * gone, /proc hides it, or the system has no way to say). With the pid it tells a claim's run from a
+ * process that was given the same pid later, after a crash or a reboot. Linux: the boot id and the
+ * start time in clock ticks since boot (/proc/<pid>/stat, field 22). macOS: ps's start time.
+ */
 export function processStart(pid: number, platform: NodeJS.Platform = process.platform, bootIdPath = BOOT_ID): string | null {
   if (platform === "linux") {
     const boot = bootIdPath === BOOT_ID ? (bootId ??= readBootId(BOOT_ID)) : readBootId(bootIdPath);
@@ -479,6 +584,11 @@ export function processStart(pid: number, platform: NodeJS.Platform = process.pl
   return null;
 }
 
+/**
+ * Whether a claim's run still runs: its pid is alive and has not exited (a zombie on Linux), and, when
+ * the claim recorded when it started and that can be read now, it is the same process, not a later one
+ * given the same pid.
+ */
 function ownerAlive(owner: MarkerOwner): boolean {
   // a run that has exited and waits for its parent to reap it holds nothing, whatever its claim says
   if (process.platform === "linux" && /^[ZX]$/.test(procStat(owner.pid)?.state ?? "")) return false;
@@ -489,6 +599,11 @@ function ownerAlive(owner: MarkerOwner): boolean {
   return pidAlive(owner.pid);
 }
 
+/**
+ * Where a claim's marker is. A report is written by renaming over its name (check-report.ts), which
+ * replaces a symlink there whatever it points to: its lock is the name in its real directory, never
+ * the target. Null when the claim's directory does not exist yet (nothing can hold it).
+ */
 function claimTarget(path: string, report: boolean): { canonical: string; marker: string } | null {
   const absolute = resolve(path);
   if (!existsSync(dirname(absolute))) return null;
@@ -503,6 +618,15 @@ function liveMarkerOwner(marker: string): MarkerOwner | null {
   return owner !== null && typeof owner === "object" && Number.isSafeInteger(owner.pid) && owner.pid > 0 && ownerAlive(owner) ? owner : null;
 }
 
+/**
+ * The lock a run holds on Linux while it takes over a dead run's claim at `marker`: an abstract socket
+ * named after the marker. The kernel lets go of it however its holder ends, as it does the slots'
+ * loopback ports, so a run killed while taking over leaves nothing behind; like them it is shared by
+ * the processes of one network namespace. Its holder answers a connection with `owner` (its claim)
+ * once its event loop turns, which a run taking over (synchronous work) mostly does only after it has
+ * let go: then the asker hears nothing and tries again. Resolves with the release, with the run that
+ * holds it, or with "again" when no claim came back within the wait.
+ */
 export function takeoverLock(marker: string, owner: string): Promise<{ release: () => void } | { holder: MarkerOwner } | "again"> {
   const name = `\0ovis-check-takeover-${createHash("sha256").update(marker).digest("hex").slice(0, 40)}`;
   return new Promise((resolve, reject) => {
@@ -527,6 +651,15 @@ export function takeoverLock(marker: string, owner: string): Promise<{ release: 
   });
 }
 
+/**
+ * Claims `marker` for this run, or names the live run that holds it. A marker a dead run left, or one
+ * an older check cut short, is taken over only by the run holding the takeover lock, which reads the
+ * marker again under it: runs on other CHECK_LOCK_PORT bases are not serialized by this run's
+ * admission port. That lock is takeoverLock on Linux; elsewhere (`fileTakeover`) the file
+ * `<marker>.reclaim`, which a run killed while holding it leaves behind and the next run clears. A
+ * marker that is gone is created again. Files are written beside and linked into place, so a reader
+ * never sees one half written, and each names its run's pid, its start (processStart) and a nonce.
+ */
 async function claimMarker(marker: string, pid: number, checkout: string, alive: (owner: MarkerOwner) => boolean, fileTakeover: boolean): Promise<MarkerOwner | null> {
   const start = processStart(pid);
   // beside the claim under a short name of its own: one named after the claim would not fit beside a
@@ -534,6 +667,8 @@ async function claimMarker(marker: string, pid: number, checkout: string, alive:
   const workingFile = (path: string, nonce: string, kind: string): string => join(dirname(path), `.check-${pid}-${nonce}.${kind}`);
   const create = (path: string): string | null => {
     const nonce = randomBytes(8).toString("hex");
+    // a name of its own, made new: a draft a killed run left may still be the claim's file under
+    // another name, and writing through it would rewrite that claim
     const draft = workingFile(path, nonce, "draft");
     const text = JSON.stringify({ pid, checkout, ...(start === null ? {} : { start }), nonce });
     try {
@@ -545,6 +680,8 @@ async function claimMarker(marker: string, pid: number, checkout: string, alive:
       throw error;
     } finally { rmSync(draft, { force: true }); }
   };
+  // who a file names: gone, a live run, or a dead run (a write cut short counts as dead). A file that
+  // cannot be read may be a live holder's, so that error is not swallowed
   const state = (path: string): { gone: true } | { owner: MarkerOwner } | { dead: true; text: string } => {
     let text: string;
     try { text = readFileSync(path, "utf8"); }
@@ -581,6 +718,7 @@ async function claimMarker(marker: string, pid: number, checkout: string, alive:
     }
     return {
       release: () => {
+        // only this run's own: removing by name could take a claim another run has made since
         let now: string | null = null;
         try { now = readFileSync(reclaim, "utf8"); }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
@@ -618,6 +756,11 @@ export async function acquire(
   const admissionPort = base + Math.max(slots, scan);
   const claims = [...resources.map((path) => ({ path, report: false, checkout: false })), ...reports.map((path) => ({ path, report: true, checkout: false }))];
   if (checkoutLock) claims.push({ path: checkoutLock, report: true, checkout: true });
+  // A waiting run (`retry`, with a ticket or without one when every ticket was held) with an older
+  // run ahead of it does not take the admission port at all: holding it only to find the queue would
+  // keep the head of the queue out of it, round after round. Its checkout and resources come first
+  // all the same, read without claiming them: a second run in its checkout, or a held resource, is
+  // told so at once, not after a turn in the queue. A run's first try claims them below.
   if (slots > 0 && (retry || ticket !== undefined)) {
     for (const { path, report, checkout: checkoutClaim } of claims) {
       const target = claimTarget(path, report);
@@ -704,6 +847,11 @@ export async function acquireWaiting(
   }
 }
 
+/**
+ * What another run wrote, made one line of text that says nothing to the CI log: any job may write in
+ * the slots' shared files, and a line break there would let it start a line of a workflow command in
+ * another job's log. Control characters are written as escapes.
+ */
 const printable = (text: string): string => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, (char) => `\\x${char.charCodeAt(0).toString(16).padStart(2, "0")}`);
 
 export function describeHolders(holders: readonly SlotHolder[]): string {
@@ -909,6 +1057,9 @@ export async function main(groupSeams: GroupSeams & {
   report.browserArtifact.provenance = report.browserArtifact.identity ? "pre-existing-unknown" : "unavailable";
   saveReport();
 
+  // Every step's process group, from its start until it is proved empty. A step's processes can
+  // outlive it (a command that exits while something it started runs on, with or without the
+  // output pipes): what is left is ended when the step ends, and again before the teardown.
   const owned = new Set<number>();
   const endingGroups = new Map<number, Promise<GroupOutcome>>();
   const endTracked = (group: number, signal: NodeJS.Signals): Promise<GroupOutcome> => {
@@ -1015,7 +1166,11 @@ export async function main(groupSeams: GroupSeams & {
         try {
           const outcomes = await Promise.all([...owned].map((group) => endTracked(group, signal)));
           const stuck = outcomes.filter((outcome) => outcome.result !== "gone");
+          // A step whose group ended settles at once. One that could not be stopped may never
+          // settle: its failure is recorded, and the run ends without it, keeping its state.
           if (stuck.length === 0) {
+            // Even a gone group can leave output held outside it. Never wait indefinitely for
+            // step/log completion after interruption; keep evidence if draining cannot finish.
             let cancelTimeout: (() => void) | undefined;
             try {
               await Promise.race([
@@ -1314,6 +1469,7 @@ export async function main(groupSeams: GroupSeams & {
       const shardCount = /^\d+$/.test(shards) ? Number(shards) : Number.NaN;
       report.toolchain.herdrTestShards = Number.isSafeInteger(shardCount) ? shardCount : null;
       saveReport();
+      // every session in the run's own config directory is the run's: the browser scripts leave theirs running
       stops.push(() => stopSessions(isolation.sessions, (session) => spawnSync(herdr, ["--session", session, "server", "stop"], { env, stdio: ["ignore", "ignore", "pipe"], encoding: "utf8", timeout: 10_000 }), groupSeams.probeSession));
       console.log(`\ncheck: herdr session ${env["HERDR_TEST_SESSION"]}, config and state in ${isolation.dir}`);
       if (todo.command) {
@@ -1373,6 +1529,10 @@ export async function main(groupSeams: GroupSeams & {
       console.log(`${result} ${step.name}${step.durationMs === null ? "" : ` (${(step.durationMs / 1000).toFixed(1)}s)`}`);
     }
   }
+  // why a failed run failed: a step's exit code or signal, which its FAILED line does not show, and
+  // what no step line shows at all (a source or dist that changed mid-run, a report that could not
+  // be saved, ...), which would otherwise end the run with every step ok (#1921); a run that passed
+  // says nothing more
   const reasons = code === 0 ? [] : report.errors;
   for (const reason of reasons) console.error(`check: ${reason}`);
   if (reasons.length > 0) console.error(`check: report ${paths.reportPath}`);
@@ -1385,6 +1545,12 @@ const OUTPUT_DRAIN_GRACE_MS = 2_000;
 const KILL_GRACE_MS = 2_000;
 const GROUP_POLL_MS = 50;
 
+/**
+ * What ending a step's process group found. `gone` is proved only by "no such process" (ESRCH);
+ * `surviving` is a group with a process left after SIGKILL and its grace, or one that could not be
+ * asked (EPERM: a process that may not be signalled is still there); `error` is a signal that could
+ * not be sent.
+ */
 export interface GroupOutcome {
   pgid: number;
   result: "gone" | "surviving" | "error";
@@ -1485,4 +1651,5 @@ async function actionlint(
   return run("workflow syntax", [binary, "-shellcheck="], env);
 }
 
+// last: main() uses every constant above
 if (import.meta.main) await main();

@@ -4,6 +4,12 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, 
 import { platform, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { activePluginScript } from "./plugin-runtime.ts";
+/**
+ * install.sh's `ovis` command and its `--add` step. The launcher's functions are cut out of install.sh
+ * itself and run under /bin/sh with a HOME of their own; the whole script is run as `curl … | sh` runs
+ * it, on a PATH that holds only what it needs. herdr, node, curl and the plugin's script are stand-ins,
+ * so nothing is installed, no herdr is touched, nothing is fetched and no account is asked.
+ */
 
 const ROOT = join(import.meta.dir, "..");
 const INSTALLER = readFileSync(join(ROOT, "install.sh"), "utf8");
@@ -54,6 +60,11 @@ else console.log(JSON.stringify({ root: import.meta.dir, command, rest, config: 
 `;
 }
 
+/**
+ * scripts/plugin-link.ts, as a stand-in: the code that asks about the device that adds the PC. `new` tells a line
+ * typed ahead from an answer, by the function install.sh knows such a release by; `old` is v0.5.2's, which asks
+ * [y/N] and takes the next line the terminal hands it (the words are its own).
+ */
 function readerScript(reader: "new" | "old"): string {
   return reader === "new"
     ? `export function answerOf(line: string, digits: string, whole = false): "approve" | "decline" | null { return null; }\n`
@@ -174,6 +185,11 @@ class Pc {
     return { out: out + err, exitCode };
   }
 
+  /**
+   * The whole installer at a terminal (script(1) gives one), the script on stdin as under `curl … | sh`.
+   * `typed` goes to the terminal once `after` is on it, again and again until the run ends, or `once`.
+   * The wrapping shell survives Ctrl-C as the user's own shell does, and reports the installer's exit code.
+   */
   async atTerminal(args: string, extra?: Record<string, string>, typed?: { after: string; text: string; once?: boolean }, background = false): Promise<{ out: string; exitCode: number }> {
     const install = `cat "${join(ROOT, "install.sh")}" | sh -s -- ${args}`;
     // in the background as an interactive shell runs `… &`: with job control, so in a process group that is not the terminal's
@@ -207,6 +223,7 @@ class Pc {
   }
 }
 
+// install.sh is the Linux and macOS installer: Windows has install.ps1, and no launcher yet
 describe.skipIf(platform() === "win32")("the ovis launcher install.sh writes", () => {
   it("is an executable sh script with the installer's mark on its second line", () => {
     const pc = new Pc().written();
@@ -266,6 +283,8 @@ describe.skipIf(platform() === "win32")("the ovis launcher install.sh writes", (
   });
 
   it("tells a release by words the real scripts/plugin.ts has", () => {
+    // install.sh and the launcher grep the installed script for these: a refactor that drops them would
+    // make --add print its hint, and the launcher say link, with every stand-in here still passing
     const real = readFileSync(join(ROOT, "scripts", "plugin.ts"), "utf8");
     expect(real).toContain("COMMAND_ALIASES");
     expect(real).toContain('"link"');
@@ -340,6 +359,7 @@ describe.skipIf(platform() === "win32")("the ovis launcher install.sh writes", (
     const file = new Pc();
     mkdirSync(join(file.scratch, ".local", "bin"), { recursive: true });
     writeFileSync(file.launcher, own, { mode: 0o755 });
+    // a link is never followed: what it points at is not the installer's to replace, mark or not
     const linked = new Pc();
     mkdirSync(join(linked.scratch, ".local", "bin"), { recursive: true });
     writeFileSync(join(linked.scratch, "elsewhere"), `#!/bin/sh\n${MARK}\n`, { mode: 0o755 });
@@ -475,6 +495,7 @@ describe.skipIf(platform() === "win32")("the ovis launcher install.sh writes", (
     const write = (pc: Pc, path: string) => pc.sh(`root=/plugin/root; original_path='${path}'; write_launcher; echo "ours=$launcher_ours"; echo "command=$(ovis_command)"`).out;
     const local = (pc: Pc) => join(pc.scratch, ".local", "bin");
 
+    // ~/.local/bin first: a launcher there would hide the other program, so none is written
     const hidden = new Pc();
     const theirs = other(hidden);
     const refused = write(hidden, `${hidden.bin}:${local(hidden)}:${join(hidden.scratch, "elsewhere")}`);
@@ -483,10 +504,12 @@ describe.skipIf(platform() === "win32")("the ovis launcher install.sh writes", (
     expect(refused).toContain("command=bun /plugin/root/scripts/plugin.ts");
     expect(existsSync(hidden.launcher)).toBe(false);
 
+    // the other one first, or ~/.local/bin not on the PATH: the launcher is written, and named by its path
     for (const path of [(pc: Pc) => `${pc.bin}:${join(pc.scratch, "elsewhere")}:${local(pc)}`, (pc: Pc) => `${pc.bin}:${join(pc.scratch, "elsewhere")}`]) {
       const pc = new Pc();
       const first = other(pc);
       const out = write(pc, path(pc));
+      // theirs keeps the name only while it comes first: the line says what putting ~/.local/bin before it does
       expect(out).toContain(`Ovis: ovis on your PATH runs ${first}, another program: this installer's is ${pc.launcher}, which takes the name once ${local(pc)} comes before it on your PATH`);
       expect(out).toContain("ours=1");
       expect(out).toContain(`command=${pc.launcher}`);
@@ -604,6 +627,7 @@ describe.skipIf(platform() === "win32")("the ovis launcher install.sh writes", (
     mkdirSync(join(named.pc.scratch, ".config", "herdr-web-ui", "bridges"));
     expect(ran(named.pc, named.root)).toBe("new name");
 
+    // a settings file is read, never run
     const inert = pc();
     inert.pc.release(inert.root, "add", { label: "default" });
     inert.pc.settings("env", `OVIS_TOKEN=$(touch "${join(inert.pc.scratch, "ran")}")\ntouch "${join(inert.pc.scratch, "ran")}"\nX=\`touch "${join(inert.pc.scratch, "ran")}"\`\n`);
@@ -641,6 +665,7 @@ describe.skipIf(platform() === "win32")("the ovis launcher install.sh writes", (
     expect(said).toContain("result=none old=1");
     expect(said).toContain(`${OLD_READER_LINE}bun ${root}/scripts/plugin.ts link`);
     expect(stale.addCalls()).toEqual([]);
+    // the word in a comment is not the function
     expect(readerScript("old")).toContain("answerOf");
     expect(readFileSync(join(ROOT, "scripts", "plugin-link.ts"), "utf8")).toContain("\nexport function answerOf(");
   });
@@ -676,6 +701,7 @@ describe.skipIf(platform() === "win32")("the ovis launcher install.sh writes", (
     const ours = new Pc().written();
     expect(pasted(ours).stderr.toString()).toBe("");
     expect(existsSync(ours.launcher)).toBe(false);
+    // an ovis of the user's own stays: a file, and a link (which the installer never takes for its own, mark or not)
     const own = new Pc();
     mkdirSync(join(own.scratch, ".local", "bin"), { recursive: true });
     writeFileSync(own.launcher, "#!/bin/sh\necho \"someone's own ovis\"\n", { mode: 0o755 });
@@ -755,14 +781,18 @@ describe.skipIf(platform() === "win32")("install.sh --add", () => {
       const pc = new Pc().flag("running");
       const { out, exitCode } = await pc.atTerminal("--add");
       expect(exitCode, out).toBe(0);
+      // under `curl | sh` stdin is the script: the add step's input is the terminal all the same
       expect(pc.addCalls()).toEqual([{ command: "add", rest: [], terminal: true }]);
       expect(out.indexOf("the phone step")).toBeLessThan(out.indexOf("the add step"));
       expect(out).not.toContain("to add this PC to your Ovis account");
+      // who counts as this PC is said once, before the add starts: "set OVIS_TOKEN first" can still be done
       expect(out.split(TOKEN_LINE)).toHaveLength(2);
       expect(out.indexOf(TOKEN_LINE)).toBeGreaterThan(out.indexOf("the phone step"));
       expect(out.indexOf(TOKEN_LINE)).toBeLessThan(out.indexOf("the add step"));
     });
 
+    // What was typed while the installer worked, or pasted after its command, is still in the terminal when the
+    // add step starts: it must not be there to answer what the add asks later (a device's approval, y/N).
     for (const how of ["perl", "stty and dd"] as const) {
       it.concurrent(`discards what was typed before the add step starts (${how})`, async () => {
         const pc = new Pc().flag("running").flag("add-reads");
@@ -782,6 +812,7 @@ describe.skipIf(platform() === "win32")("install.sh --add", () => {
     });
 
     it.concurrent("does not run the add step where what was typed cannot be discarded, and says what to run", async () => {
+      // neither perl nor stty: nothing here can empty the terminal, so nothing typed before is taken for an answer
       const pc = new Pc().flag("running").flag("add-reads");
       rmSync(join(pc.bin, "stty"));
       const { out, exitCode } = await pc.atTerminal("--add", {}, { after: "Ovis", text: "y\n", once: true });
@@ -806,6 +837,7 @@ describe.skipIf(platform() === "win32")("install.sh --add", () => {
     });
 
     it.concurrent("never runs the add step under OVIS_NO_OPEN=1, and says what to run", async () => {
+      // the app's own SSH installer sets it: that terminal is not the person's to answer at
       const pc = new Pc().flag("running");
       const { out, exitCode } = await pc.atTerminal("--add", { OVIS_NO_OPEN: "1" });
       expect(exitCode, out).toBe(0);
@@ -821,6 +853,8 @@ describe.skipIf(platform() === "win32")("install.sh --add", () => {
       expect(pc.addCalls()).toEqual([{ command: "link", rest: [], terminal: true }]);
     });
 
+    // install.sh is served from main, and installs the latest release: until that one has the reader that tells a
+    // line typed ahead from an answer, a "y" and Enter typed during its sign-in would approve the first device that asks
     it.concurrent("does not run the add step of a release whose reader takes a line typed ahead (v0.5.2), and says to update first", async () => {
       const pc = new Pc().flag("running").flag("add-reads");
       pc.plugin("plugin", "link", "devswha.ovis", "old");

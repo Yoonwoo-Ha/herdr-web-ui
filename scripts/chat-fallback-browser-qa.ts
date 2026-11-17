@@ -12,6 +12,7 @@ import type {} from "./chat-fallback-fixture.tsx";
 import { parseInteractivePrompt } from "../server/prompt.ts";
 import { parseOmpTranscript } from "../server/transcript-records.ts";
 import piNavigation from "../server/fixtures/pi-ask-navigation.json";
+/** `until`, or a failure naming `what` after 10 s: a callback the chat never makes fails the script, not the runner's timeout */
 const bounded = async (what: string, until: Promise<unknown>): Promise<void> => {
   let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -209,6 +210,7 @@ try {
     assert.deepEqual(piRows, ["I read this as: bring the test server up to date.", "work Worked \u00b7 3 commands", "The test server runs the latest main."], "words before the tool calls stay above their one work block");
     if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "pi-words-before-tools.png") });
     source = "claude-transcript";
+    // the turn, ended (Claude's end_turn makes its last words the final answer) or still at work on them
     const catalog = (stop: "end_turn" | null): ConversationTurn[] => parseClaudeTranscript(jsonl(
       { type: "user", message: { content: "Check the catalog." } },
       { type: "assistant", message: { content: [{ type: "text", text: "Checking the catalog first." }, { type: "tool_use", id: "a", name: "Bash", input: { command: "ls" } }], stop_reason: "tool_use" } },
@@ -252,6 +254,8 @@ try {
     assert.deepEqual(await opened(), [false, false, false], "a run that splits moves no fold to another block: the folded run stays folded");
     await headRows.waitFor({ state: "hidden" });
     if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "claude-run-split.png") });
+    // Words before a run's tools join it later (a Codex record marks them commentary): the run
+    // keeps the fold the reader gave it (#2063).
     const sorting = (words: { kind: "text"; text: string; phase?: "commentary" }): ConversationTurn[] => [
       ...shelves("Shelf a is empty."),
       { role: "user", ts: null, parts: [said("Sort the shelves.")] },

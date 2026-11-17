@@ -1,3 +1,4 @@
+/** Real ChatView over controlled HTTP; no live panes or provider calls. */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,6 +31,7 @@ let streamedParagraphs: number | null = null;
 const STREAMED_PARAGRAPHS = 40;
 let longRead = { asked: Promise.withResolvers<void>(), answer: Promise.withResolvers<void>() };
 const WHOLE_OUTPUT = `FULL TOOL OUTPUT\n${Array.from({ length: 98 }, (_, n) => `detail line ${n + 1} ${"detail ".repeat(20)}`).join("\n")}\nFULL OUTPUT END`;
+/** few lines but very long ones (one 100 KB line of JSON): no line count folds it, its length does */
 const LONG_LINE_OUTPUT = JSON.stringify({ items: Array.from({ length: 2500 }, (_, n) => ({ id: n, name: `item-${n}` })) }).padEnd(100_000, " ");
 function foldChat(): ConversationTurn[] {
   const say = (role: ConversationTurn["role"], text: string): ConversationTurn => ({ role, ts: "2026-10-12T00:00:00.000Z", parts: [{ kind: "text", text }] });
@@ -413,6 +415,8 @@ try {
     const folded = { away: await page.locator(".chat-view").evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop > 1), jump: await jump.count() > 0 };
     assert.deepEqual(folded, { away: false, jump: false }, "a following reader who folds an output stays at the end, following");
     console.log(`PASS ${width}: folding an output while following the end keeps the reader at the end, following`);
+    // the folded tail stays in the page, drawn as nothing, so the browser's find reaches it; a match
+    // there (the browser's beforematch) unfolds the output
     const testOutput = testRow.locator(".chat-tool-result");
     const tail = testOutput.locator(".chat-tool-result-tail");
     assert.equal(await tail.getAttribute("hidden"), "until-found");
@@ -492,6 +496,7 @@ try {
         } else if (input.startsWith("scrollbar-")) {
           node.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, buttons: 1, ...pressed }));
           if (input === "scrollbar-released") letGo(false);
+          // released outside the window: no pointerup, and the next pointer event has no button down
           if (input === "scrollbar-unseen-release") document.body.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, buttons: 0 }));
           if (input === "scrollbar-blurred") window.dispatchEvent(new Event("blur"));
         } else {
@@ -503,6 +508,7 @@ try {
         const now = performance.now.bind(performance);
         if (input.startsWith("scrollbar-")) Object.defineProperty(performance, "now", { configurable: true, value: () => now() + 600 });
         node.scrollTop -= 20;
+        // the thumb let go before the browser delivered the scroll its drag made
         if (input === "scrollbar-held-released-first") letGo(true);
         node.dispatchEvent(new Event("scroll"));
         // the chat reads the clock when the scroll reaches it: the rest lasts until then
@@ -618,6 +624,9 @@ try {
     }
     console.log(`PASS ${width} ${theme}: a grown last row is followed; a row above folding or growing then keeps following, as does a fold at the end; an upward wheel stops it`);
 
+    // A scroll that sends no input this page sees (a screen reader's, a Firefox scrollbar's), in small
+    // steps over a transcript that does not shrink: past the layout allowance from the end, following
+    // stops however small each step was (#1902).
     await page.locator(".chat-view").evaluate(async (node) => {
       const delivered = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       for (const step of [30, 30]) {
@@ -641,11 +650,14 @@ try {
     await settleBottom(page);
     await page.evaluate((height) => window.chatQa.resize(height), height);
     await settleBottom(page);
+    // #1205: a composer that grows a line shrinks the view; the frame painted next is already at
+    // the end. An observer made after ChatView's runs after it, before that paint.
     const painted = await page.evaluate(async (height) => {
       const node = document.querySelector(".chat-view")!;
       const offsets: number[] = [];
       const observer = new ResizeObserver(() => offsets.push(Math.round(node.scrollHeight - node.clientHeight - node.scrollTop)));
       observer.observe(node);
+      // waits until the observer has delivered `count` sizes; its first is the size it started with
       const observed = async (count: number) => {
         const deadline = performance.now() + 5_000;
         while (offsets.length < count) {

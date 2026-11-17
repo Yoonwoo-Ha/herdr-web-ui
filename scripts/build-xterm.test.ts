@@ -141,6 +141,7 @@ describe("buildXtermSource", () => {
     staging(dead, "Ab12Cd", 30);
     staging("", "Xy98Zw", 30);
     const running = staging(process.pid, "Ef34Gh", 30);
+    // a dead-looking pid may be a build in another pid namespace: a fresh directory is still in use
     const fresh = staging(dead, "Ij56Kl", 1);
     const output = buildXtermSource(root);
     expect(readdirSync(cache).sort()).toEqual([basename(output), fresh, running].sort());

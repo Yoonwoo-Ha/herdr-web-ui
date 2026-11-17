@@ -1,3 +1,9 @@
+/**
+ * Settings → Alerts → Also send to on the unmodified app over the demo's fixture transport: a Discord
+ * webhook saved, its URL gone from the field and shown only masked, a test sent, Telegram asking for a
+ * chat id too, and Off removing the destination; at 390 and 1280, light and dark. Nothing is posted
+ * anywhere: the demo keeps the destination in the page.
+ */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -40,6 +46,7 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   assert.equal(await url.inputValue(), "", `${tag}: the URL leaves the field once saved`);
   assert.equal(await url.getAttribute("placeholder"), "discord.com/…", `${tag}: shown masked`);
   assert.equal((await group.innerText()).includes("demo-secret"), false, `${tag}: the secret is nowhere on the page`);
+  // saved from this PC's localhost: the form says messages carry no link a phone opens yet
   await group.getByText("Messages have no link a phone can open yet.", { exact: false }).waitFor();
 
   await group.getByRole("button", { name: "Send a test", exact: true }).click();

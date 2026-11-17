@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DIST_ARCHIVE, generateKeyPair, RELEASE_PUBLIC_KEY, releaseFile, PTY_ASSETS, ptyFile, SERVER_PLATFORMS, signManifest, writeManifest } from "./server-manifest.ts";
 
+/**
+ * install.sh's binary install (install_binary), run under /bin/sh from a copy of the script whose one pinned key line
+ * names a key made for the test: the shipped script reads no key from anywhere else, so only a copy can trust another.
+ * The release is a file:// folder laid out as GitHub's downloads are (<base>/v<version>/<file>).
+ */
 const ROOT = join(import.meta.dir, "..");
 const INSTALLER = readFileSync(join(ROOT, "install.sh"), "utf8");
 const KEY_LINE = `\nRELEASE_PUBLIC_KEY="${RELEASE_PUBLIC_KEY}"\n`;
@@ -17,6 +22,7 @@ afterEach(() => {
 });
 const sha256 = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
+/** install.sh with its key line naming `publicKey`, and without the last line that runs main */
 function testCopy(publicKey: string): string {
   expect(INSTALLER).toContain(KEY_LINE);
   expect(INSTALLER.endsWith('\nmain "$@"\n')).toBe(true);
@@ -38,6 +44,8 @@ function release(base: string, version: string, privateKeyPem: string, host?: st
   return dir;
 }
 
+/** `<base>/v<version>/` as main's release step (todo 5) writes it: ovis-server.json holds only version, sources and
+ * assets, signed by `privateKeyPem`; `edit` changes the manifest before it is signed */
 function oldShape(base: string, version: string, privateKeyPem: string, edit: (manifest: Record<string, unknown>) => void = () => {}): string {
   const dir = join(base, `v${version}`);
   mkdirSync(dir, { recursive: true });
@@ -279,6 +287,8 @@ exec "${Bun.which("tar")}" "$@"`);
     const lock = join(ovis, ".install.lock");
     standIn("tar", `[ "$RUN" != first ] || [ "$1" != -tzf ] || : > "${sync}/first-holds"
 exec "${Bun.which("tar")}" "$@"`);
+    // the first removal of a lock folder pauses where rm -rf does, between the pid it unlinks and the folder it
+    // removes, until another run holds the lock; then, as rm -f, it takes a folder already gone as removed
     standIn("rm", `case "$*" in "-rf ${lock}"*) if [ -d "$2" ] && (set -C; : > "${sync}/paused") 2>/dev/null; then
   "${Bun.which("rm")}" -f "$2/pid"
   end=$(($(date +%s) + 20)); until [ -s "${lock}/pid" ] || [ "$(date +%s)" -ge "$end" ]; do sleep 0.01; done
@@ -309,6 +319,9 @@ done; install_binary 1.2.4`);
     const rm = Bun.which("rm");
     standIn("tar", `[ "$RUN" != first ] || [ "$1" != -tzf ] || : > "${sync}/first-holds"
 exec "${Bun.which("tar")}" "$@"`);
+    // the first run's release, or the second's sweep, removes its folder as busybox rm -rf does: it unlinks what is
+    // inside, then fails on the folder if the other run removed it meanwhile. The other removes it only once that one
+    // is inside it, so the two meet
     const inside = paused === "release" ? "first" : "second";
     standIn("rm", `case "$*" in "-rf ${lock}.gone-"*) if [ -d "$2" ]; then
   end=$(($(date +%s) + 20))
@@ -437,6 +450,7 @@ exec "${Bun.which("cat")}" "$@"`);
     expect(run("install_binary 1.2.3").code).toBe(0);
     const kept = sha256(binary);
     release(releases, "1.2.4", key.privateKeyPem);
+    // tar unpacks the client once both downloads have been checked: killed there, nothing has been renamed yet
     standIn("tar", 'kill -9 "$INSTALLER_PID"; exit 1');
     const killed = run("INSTALLER_PID=$$; export INSTALLER_PID; install_binary 1.2.4");
     expect(killed.signal).toBe("SIGKILL");
@@ -455,6 +469,7 @@ exec "${Bun.which("cat")}" "$@"`);
     standIn("openssl", 'case "$1" in pkeyutl) echo "Signature Verified Successfully"; exit 0 ;; *) exec /usr/bin/openssl "$@" ;; esac');
     const result = run("install_binary 1.2.3");
     expect(result.code).toBe(0);
+    // node on the PATH, or (a PC with none, such as macOS out of the box) the official Node build fetched for the check
     expect(result.out).toMatch(/checked the signature with (node|Node v\d)/);
     const corrupt = pc();
     const dir = release(corrupt.releases, "1.2.3", corrupt.key.privateKeyPem);
@@ -522,6 +537,7 @@ exec "${Bun.which("cat")}" "$@"`);
     const ranAt = join(home, "host-ran");
     const dir = release(releases, "1.2.3", key.privateKeyPem, `#!/bin/sh\n: > "${ranAt}"\n[ $# -gt 0 ] && exit 0\necho "pty-sidecar: usage: ovis-pty-sidecar" >&2\nexit 2\n`);
     const host = join(dir, ptyFile(PLATFORM.startsWith("darwin") ? "darwin-universal" : PLATFORM as "linux-x64"));
+    // the unsigned manifest of the hosts names another file's hash: it is not read
     writeFileSync(join(dir, "ovis-pty-sidecar.json"), JSON.stringify({ version: "1.2.3", crate: "c".repeat(40), assets: {} }));
     const result = run("install_binary 1.2.3");
     expect(result.code, result.out).toBe(0);
@@ -535,6 +551,7 @@ exec "${Bun.which("cat")}" "$@"`);
     const ranAt = join(home, "host-ran");
     const signed = (marker: string) => `#!/bin/sh\n: > "${marker}"\n[ $# -gt 0 ] && exit 0\necho "pty-sidecar: usage: ovis-pty-sidecar" >&2\nexit 2\n`;
     const dir = release(releases, "1.2.3", key.privateKeyPem, signed(join(home, "host-RAN")));
+    // a mirror's host of the very same size: it would run, and say so, were it taken
     for (const build of PTY_ASSETS) writeFileSync(join(dir, ptyFile(build)), signed(ranAt), { mode: 0o755 });
     expect(signed(ranAt).length).toBe(signed(join(home, "host-RAN")).length);
     const result = run("install_binary 1.2.3");
@@ -585,6 +602,7 @@ exec "${Bun.which("cat")}" "$@"`);
     release(releases, "1.2.3", key.privateKeyPem);
     expect(run("install_binary 1.2.3").code).toBe(0);
     const before = snapshot(ovis);
+    // the newest release folder answers no manifest: a failed probe, not a request for source
     mkdirSync(join(releases, "v1.2.9"), { recursive: true });
     const result = run("pick_install; echo picked");
     expect(result.code, result.out).toBe(0);

@@ -90,6 +90,7 @@ describe("check environment", () => {
     const held = await acquireWaiting({ ...top, base }, { waitMs: 10_000, pollMs: 20 });
     if (!("release" in held)) throw new Error(`the top lock range is held on this PC: ${describeHolders(held.holders)}`);
     held.release();
+    // one port higher and the last ticket port would be past 65535: that base is refused
     expect(ticketPorts(MAX_LOCK_PORT + 1, MAX_RUNS_LIMIT, MAX_RUNS_LIMIT).at(-1)).toBe(65536);
     expect(() => lockPort({ CHECK_LOCK_PORT: String(MAX_LOCK_PORT + 1) })).toThrow("CHECK_LOCK_PORT");
   });
@@ -179,8 +180,11 @@ describe("isolate", () => {
 
   it("refuses to run in the herdr the user works in, and hands on nothing that names it", () => {
     expect(() => isolate({ HERDR_TEST_LIVE: "1" }, scratch())).toThrow("HERDR_TEST_LIVE");
+    // as a shell inside one of the user's panes has them, and a herdr config of the user's own,
+    // which the run's herdr and every server it starts would otherwise read
     const { env } = isolate({ HERDR_SOCKET: "/live.sock", HERDR_SOCKET_PATH: "/live.sock", HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_TAB_ID: "w1:t1", HERDR_WORKSPACE_ID: "w1", HERDR_CONFIG_PATH: "/home/me/herdr.toml", OVIS_HERDR_BIN: "/bin/herdr" }, scratch());
     expect(Object.keys(env).filter((name) => name.startsWith("HERDR_") || name.startsWith("OVIS_")).sort()).toEqual(["HERDR_SOCKET", "HERDR_TEST_DISPOSABLE_CONFIG", "HERDR_TEST_SESSION", "HERDR_TEST_SHARDS", "OVIS_HERDR_BIN", "OVIS_STATE_DIR"]);
+    // the socket it hands on is the run's own session's, where scripts/test-herdr.ts starts it
     expect(env["HERDR_SOCKET"]).toBe(join(env["XDG_CONFIG_HOME"]!, "herdr", "sessions", env["HERDR_TEST_SESSION"]!, "herdr.sock"));
   });
 });
@@ -682,6 +686,8 @@ describe("slots", () => {
     const admission = await lock(admissionPort, 201, "/head");
     const behind = await takeTicket({ base, slots: 1, scan: 3, at: 2_000, pid: 202, checkout: "/behind" });
     try {
+      // the run behind finds its place without reaching for the port: refused by the head's ticket,
+      // not by the port; were it to hold the port while it looked, the head could not get in
       expect(await acquire({ slots: 1, scan: 3, base, pid: 202, checkout: "/behind", ticket: behind!.ticket }))
         .toEqual({ refused: "busy", holders: [{ port: head!.ticket.port, heldBy: 201, checkout: "/head", queuedAt: 1_000 }] });
       expect(await acquire({ slots: 1, scan: 3, base, pid: 203, checkout: "/new" }))
@@ -777,6 +783,9 @@ describe("slots", () => {
     const holder = await lock(base, 111, "/a");
     const desk = await lock(ticketDesk(base, 1, 3), 501, "/other");
     let clock = 1_000;
+    // The desk is waited for on the monotonic clock: here one of the test's own, a thirtieth of the
+    // desk's wait further on at every look, so a run that waits out the desk's own wait shows by the
+    // clock and not by how fast this host is (#1939).
     let monotonic = 0;
     const looks = spyOn(performance, "now").mockImplementation(() => (monotonic += DESK_WAIT_MS / 30));
     try {
@@ -1037,6 +1046,7 @@ describe("slots", () => {
     try {
       expect("release" in first).toBe(true);
       expect(existsSync(join(target, ".check-lock"))).toBe(false);
+      // persistReport's rename puts a regular file where the symlink was
       rmSync(link);
       writeFileSync(link, '{"replaced": true}');
       const second = await acquire({ slots: 0, scan: 3, base, checkout: "/second", reports: [link] });
@@ -1049,6 +1059,8 @@ describe("slots", () => {
     const base = await freeRange(3);
     const dir = scratch();
     const marker = join(dir, ".check-lock");
+    // a read that fails for a reason other than its content, whoever runs the test: the name
+    // exists and can be unlinked, but reading it answers EISDIR
     mkdirSync(join(dir, "elsewhere"));
     symlinkSync(join(dir, "elsewhere"), marker);
     await expect(acquire({ slots: 0, scan: 3, base, checkout: "/mine", resources: [dir] })).rejects.toThrow();
@@ -1126,6 +1138,7 @@ describe.skipIf(process.platform !== "linux")("slots in a directory (CHECK_SLOTS
     expect("release" in port).toBe(true);
     release(port);
     release(first);
+    // a second release is none: it must never close a file the run opened since
     release(first);
     const next = await lock(base, 22, "/b", dir);
     expect("release" in next).toBe(true);
@@ -1139,6 +1152,8 @@ describe.skipIf(process.platform !== "linux")("slots in a directory (CHECK_SLOTS
 
   it("is free again once the run that held it is killed, also while a program that run started lives on", async () => {
     const { dir, base } = slotFiles();
+    // the run starts a program that outlives it, as a herdr server or a test's process may: what the
+    // run's lock file is open in would go on holding the lock
     const holder = Bun.spawn([process.execPath, "-e", `const { lock } = await import(${JSON.stringify(checkScript)}); await lock(${base}, 111, "/a", ${JSON.stringify(dir)}); const child = Bun.spawn(["sleep", "120"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }); console.log("HELD " + child.pid + " "); setInterval(() => {}, 1000);`], { stdout: "pipe" });
     let child = 0;
     try {
@@ -1195,6 +1210,7 @@ describe.skipIf(process.platform !== "linux")("slots in a directory (CHECK_SLOTS
     try {
       const open = readdirSync("/proc/self/fd").filter((fd) => { try { return readlinkSync(`/proc/self/fd/${fd}`) === file; } catch { return false; } });
       expect(open).toHaveLength(1);
+      // close-on-exec, by the file's own flags: not by how this Bun starts a program
       const flags = Number.parseInt(/^flags:\s*(\d+)/m.exec(readFileSync(`/proc/self/fdinfo/${open[0]}`, "utf8"))![1]!, 8);
       expect(flags & 0o2000000).toBe(0o2000000);
     } finally {
@@ -1315,6 +1331,7 @@ describe.skipIf(process.platform !== "linux")("slots in a directory (CHECK_SLOTS
       now: () => 1_000,
       onWait: (holders) => { told = holders; },
       sleep: async () => {
+        // this clock stands still: a run still waiting once the slot is free would wait for ever, and no test timeout ends that
         if (++rounds > 1) throw new Error("the run still waits after the holder let go");
         seen = await acquire({ slots: 1, scan: 3, base, pid: 333, checkout: "/c", dir });
         release(holder);
@@ -1341,6 +1358,7 @@ describe.skipIf(process.platform !== "linux")("slots in a directory (CHECK_SLOTS
     expect(fast).toEqual({ release: expect.any(Function), port: null });
   });
 
+  /** The write of an answer in a volume with room for `room` bytes in all, as the runners' has for 1 MiB: where the files hold more, nothing is written. */
   const volume = (dir: string, room: number) => (fd: number, text: string): void => {
     const used = readdirSync(dir).reduce((sum, name) => sum + statSync(join(dir, name)).size, 0);
     if (used + Buffer.byteLength(text) > room) throw Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" });
@@ -1435,6 +1453,7 @@ describe("endGroup", () => {
     const parent = spawn(process.execPath, ["-e", leader], { detached: true, stdio: ["pipe", "pipe", "inherit"] });
     const group = parent.pid!;
     const leaderExited = new Promise<void>((resolve) => parent.once("exit", () => resolve()));
+    // the descendant holds the pipe's last writer once the leader is gone: its end is the descendant's exit
     const outputEnded = new Promise<void>((resolve) => { parent.stdout!.once("end", () => resolve()); parent.stdout!.once("close", () => resolve()); });
     let said = "";
     parent.stdout!.on("data", (chunk: Buffer) => { said += chunk.toString(); });
@@ -1494,14 +1513,17 @@ describe("endGroup", () => {
   it("treats EPERM as unproved death", async () => {
     let clock = 0;
     const seams = (kill: (signal: NodeJS.Signals | 0) => void) => ({ kill: (_pid: number, signal: NodeJS.Signals | 0) => kill(signal), now: () => clock, wait: async (ms: number) => { clock += ms; } });
+    // a probe answered EPERM is a process still there: escalate, then fail
     const unprovable = await endGroup(7, "SIGINT", seams((signal) => { if (signal === 0) throw errno("EPERM"); }));
     expect(unprovable).toMatchObject({ result: "surviving", signals: ["SIGINT", "SIGKILL"] });
     expect(unprovable.cause).toContain("EPERM");
+    // a signal that may not be sent proves nothing either, and SIGKILL would not be allowed
     const sent: (NodeJS.Signals | 0)[] = [];
     const refused = await endGroup(7, "SIGTERM", seams((signal) => { sent.push(signal); throw errno("EPERM"); }));
     expect(refused).toMatchObject({ result: "error", signals: ["SIGTERM"] });
     expect(refused.cause).toContain("EPERM");
     expect(sent).toEqual(["SIGTERM"]);
+    // only ESRCH is proof: at once, or after a few probes, and without SIGKILL
     expect(await endGroup(7, "SIGTERM", seams(() => { throw errno("ESRCH"); }))).toEqual({ pgid: 7, result: "gone", signals: ["SIGTERM"], cause: null });
     let probes = 0;
     expect(await endGroup(7, "SIGTERM", seams((signal) => { if (signal === 0 && ++probes > 1) throw errno(probes > 2 ? "ESRCH" : "EPERM"); })))
@@ -1607,6 +1629,9 @@ describe("check CLI teardown", () => {
       STUB_LOG: join(root, "stops.log"),
       STUB_STOP_FAIL: stopFails ? "1" : "",
     };
+    // A runner host's own limits (CHECK_HOST_*, from its env file) outrank CHECK_MAX_RUNS in the
+    // check: left in, they would set these throwaway runs' slot count to the host's, not the 8 asked
+    // for here (#1875).
     for (const name of ["CHECK_DIR", "GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "HERDR_TEST_LIVE", ...Object.keys(HOST_LIMITS), ...SLOTS_DIR_ENV]) delete env[name];
     const stops = (): string[] => existsSync(join(root, "stops.log")) ? readFileSync(join(root, "stops.log"), "utf8").split("\n").filter(Boolean).sort() : [];
     const report = (path = join(cwd, ".check", "report.json")): Report => JSON.parse(readFileSync(path, "utf8")) as Report;
@@ -1723,6 +1748,7 @@ describe("check CLI teardown", () => {
     const { cwd, env, report, isolated } = fixture(false);
     const deny = join(cwd, "..", "deny-groups.ts");
     writeFileSync(deny, `import { main } from ${JSON.stringify(checkScript)};\nawait main({ kill() { throw Object.assign(new Error("EPERM (fixture)"), { code: "EPERM" }); } });\n`);
+    // A listener survives even when the checker closes stdin; only our explicit cleanup ends it.
     const command = 'Bun.serve({ port: 0, hostname: "127.0.0.1", fetch() { return new Response(); } }); console.log("GRO" + "UP " + process.pid);';
     const check = spawn(process.execPath, [deny, "run", process.execPath, "-e", command], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
     const exited = new Promise<number | null>((resolve) => check.once("exit", (exitCode) => resolve(exitCode)));

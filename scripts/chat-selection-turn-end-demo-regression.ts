@@ -1,3 +1,4 @@
+/** All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened. */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

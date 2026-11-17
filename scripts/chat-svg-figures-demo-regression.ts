@@ -8,6 +8,9 @@ import { appFaces } from "./app-faces.ts";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
+// A ```svg fence in a reply (#2441) is drawn as an <img> from a data: URL in the theme's colors,
+// and one that could run or load something stays the code block it is. All files and HTTP traffic
+// stay in this disposable, loopback-only app and no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-chat-svg-figures-demo-"));
 const evidence = process.env["UI_EVIDENCE_DIR"] || null;
 if (evidence !== null) mkdirSync(evidence, { recursive: true });

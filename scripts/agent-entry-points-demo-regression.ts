@@ -1,3 +1,7 @@
+/**
+ * A device that only watches (`?demo_devices=watch`) gets no Add another agent…, no Install and no
+ * Open setup guide: an install types into a terminal on the PC, which it may not do.
+ */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -129,6 +133,8 @@ try {
           console.log(`PASS New worktree's picker ends with ${ADD_ROW} (${at})`);
         }
 
+        // a device that turns into a watching one (its pairing changed) loses what was already open:
+        // the next health answer says role "watch" (site/demo/transport.ts demoSecurity)
         const becomeWatching = () => page.evaluate(() => { sessionStorage.setItem("ovis:demo-security", "watch"); document.dispatchEvent(new Event("visibilitychange")); });
         const driveAgain = () => page.evaluate(() => sessionStorage.removeItem("ovis:demo-security"));
         await page.goto(`${base}&settings=agents`);
@@ -155,6 +161,7 @@ try {
         await page.keyboard.press("Escape");
         await driveAgain();
         if (width === 1280) {
+          // New worktree is not offered to a watching device: an open one closes
           await page.goto(base);
           const row = page.locator(`.workspace-group[data-workspace="${panes.api.split(":")[0]}"] > .workspace-header .workspace-select`);
           const bounds = (await row.boundingBox())!;
@@ -172,6 +179,7 @@ try {
         }
         console.log(`PASS turning into a watching device takes away the tiles to install, Open setup guide, the Add another agent… panel${width === 1280 ? " and New worktree" : ""} (${at})`);
 
+        // a device that only watches may not type into the PC's terminal: no install anywhere
         await page.goto(`${root}&demo_devices=watch&new=workspace`);
         const watched = page.getByRole("dialog", { name: /^New workspace · / });
         await watched.waitFor();

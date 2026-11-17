@@ -11,6 +11,7 @@ import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { openMoreGroup } from "./header-more.ts";
 
+// All files and HTTP traffic stay in this disposable, loopback-only app and no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-chat-request-details-demo-"));
 const evidence = process.env["UI_EVIDENCE_DIR"] || null;
 if (evidence !== null) mkdirSync(evidence, { recursive: true });

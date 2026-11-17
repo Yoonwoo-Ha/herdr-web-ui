@@ -9,6 +9,7 @@ import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { openLens } from "./header-lens.ts";
 
+// All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const repo = join(import.meta.dir, "..");
 const app = mkdtempSync(join(tmpdir(), "herdr-greeting-demo-"));
 const LONG_FOLDER = "a-very-long-folder-name-that-never-breaks_with_underscores_and_more_text_2026";

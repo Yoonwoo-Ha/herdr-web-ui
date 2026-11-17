@@ -11,6 +11,11 @@ import { chromePath } from "./chrome-path.ts";
 // (the socket transport has its own checks), also when this script runs on its own
 process.env["OVIS_MACHINE_EVENTS_WS"] = "0";
 
+/**
+ * The alert sound: real herdr status changes make the open tab chime, once a tap let the page
+ * play audio, and never for the pane already open. The page's AudioContext is a recorder that
+ * starts suspended like a real one, so what would have sounded is the notes it was asked for.
+ */
 export async function checkAlertSound(browser: Browser, origin: string): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "ovis-alert-sound-"));
   const workspaces: string[] = [];
@@ -125,6 +130,7 @@ export async function checkAlertSound(browser: Browser, origin: string): Promise
       await report(otherPane, "working");
       await received;
     }
+    // no tap yet: the page may not play, and nothing is kept to sound later
     await block(otherPane);
     await page.locator(".droplet-card").waitFor({ state: "visible" });
     assert.deepEqual(await chimes(), [], "no chime before a gesture");
@@ -177,6 +183,7 @@ export async function checkAlertSound(browser: Browser, origin: string): Promise
 
     await quiet(page);
     await report(thirdPane, "idle");
+    // at rest again, as the app heard it (a finish after work is told as `done`)
     await page.waitForFunction((pane) => !["working", "blocked"].includes((window as unknown as { soundStatuses: Record<string, string> }).soundStatuses[pane]!), thirdPane);
     const told = (await chimes()).length;
     await page.evaluate(() => { (window as unknown as { rosterFirst: boolean }).rosterFirst = true; });
@@ -186,10 +193,12 @@ export async function checkAlertSound(browser: Browser, origin: string): Promise
     await page.evaluate(() => { (window as unknown as { rosterFirst: boolean }).rosterFirst = false; });
     console.log("PASS a wait the roster showed before its event still chimes");
 
+    // Both pages share the origin and BroadcastChannel, not just the same browser process.
     const second = await context.newPage();
     second.on("pageerror", (error) => errors.push(error.message));
     await second.goto(`${origin}/?pane=${encodeURIComponent(openPane)}`);
     await second.locator(".conn-live").waitFor();
+    // A header gesture unlocks audio without typing into any terminal.
     await second.getByRole("button", { name: "Settings", exact: true }).click();
     await second.keyboard.press("Escape");
     await second.getByRole("dialog", { name: "Settings" }).waitFor({ state: "detached" });

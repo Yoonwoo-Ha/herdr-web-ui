@@ -1,3 +1,12 @@
+/**
+ * On the runner the cache is read-only: a build goes to OVIS_BUILD_CACHE_OUTBOX, and the launcher
+ * moves it in only for a trusted run (build-cache-promote.sh), writing the manifest of every file's
+ * sha256 that a restore checks. An entry there belongs to the run that built it: the launcher files
+ * it under the run GitHub confirmed, `<run id>/<key>`, and a job reads only under its own
+ * GITHUB_RUN_ID. The key is only the job's word for what it built, so no build one run hands in may
+ * reach another's jobs: a pull request's under the key of a commit of main, say. Without an outbox
+ * (a cache of one's own) the build is stored directly, by its key alone. Any cache failure builds.
+ */
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
@@ -14,6 +23,7 @@ const git = (root: string, args: string[]): string | null => {
   return result.status === 0 ? result.stdout : null;
 };
 
+/** The variables that change what Vite writes: its VITE_* (import.meta.env), NODE_ENV, and vite.config.ts's own. */
 const buildVariable = (name: string): boolean => name.startsWith("VITE_") || name === "NODE_ENV" || name === "HERDR_TEST_HOOKS";
 
 export function cacheKey(root: string, env: Record<string, string | undefined>, args: readonly string[]): Key {
@@ -25,6 +35,7 @@ export function cacheKey(root: string, env: Record<string, string | undefined>, 
   const status = git(root, ["status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"]);
   if (status === null) return { bypass: "git status failed" };
   if (status !== "") return { bypass: "the checkout has uncommitted changes" };
+  // files git ignores where Vite reads (public/ is copied whole): not the commit's either
   const read = ["index.html", "vite.config.ts", "public", "scripts", "src", "shared"];
   // a link git tracks is unchanged to git when what it points at changes, and Vite follows it
   const staged = git(root, ["ls-files", "-s", "--", ...read]);
@@ -32,6 +43,7 @@ export function cacheKey(root: string, env: Record<string, string | undefined>, 
   if (staged.split("\n").some((line) => line.startsWith("120000 "))) return { bypass: "a tracked link where the build reads" };
   const ignored = git(root, ["ls-files", "--others", "--ignored", "--exclude-standard", "--", ...read]);
   if (ignored === null) return { bypass: "git ls-files failed" };
+  // the type declarations typecheck emits (shared/vendor/paseo-e2ee/dist) are never bundled
   if (ignored.split("\n").some((path) => path !== "" && !/^shared\/vendor\/[^/]+\/dist\/.+(?:\.d\.ts(?:\.map)?|\.tsbuildinfo)$/.test(path))) return { bypass: "ignored files where the build reads" };
   const hash = createHash("sha256");
   const part = (label: string, value: string | Buffer): void => { hash.update(`${label}\0${value.length}\0`).update(value); };
@@ -63,6 +75,7 @@ function hashes(dir: string, at = "."): Map<string, string> {
   return found;
 }
 
+/** The manifest's lines, as `sha256sum` writes them: `<sha256>  ./path`. */
 const manifestOf = (sums: Map<string, string>): string => [...sums].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([path, sum]) => `${sum}  ${path}\n`).join("");
 
 function parseManifest(text: string): Map<string, string> {
@@ -76,11 +89,20 @@ function parseManifest(text: string): Map<string, string> {
   return sums;
 }
 
+/**
+ * Where a job's entries are: with an outbox (the runner's cache) its own run's directory, the only
+ * one the launcher fills with that run's builds; without one, the cache itself. Null on the runner
+ * when `run` is no run id the launcher would name a directory after.
+ */
 export function entriesOf(cacheDir: string, outbox: string | undefined, run: string | undefined): string | null {
   if (!outbox) return cacheDir;
   return run !== undefined && /^[0-9]{1,20}$/.test(run) ? join(cacheDir, run) : null;
 }
 
+/**
+ * Puts the entry's files at `dist`, replacing what is there, once every file matches its manifest
+ * (and nothing else is there: no link, no file it does not name). False when there is no entry.
+ */
 export function restore(cacheDir: string, key: string, dist: string, outbox?: string): boolean {
   const entry = join(cacheDir, key);
   if (!existsSync(join(entry, MANIFEST))) return false;
@@ -101,6 +123,8 @@ export function restore(cacheDir: string, key: string, dist: string, outbox?: st
     rmSync(staging, { recursive: true, force: true });
     throw error;
   }
+  // its last use, which eviction goes by: a read-only cache hears of it through the job's own outbox,
+  // never a directory other jobs write (a link planted there would be written through)
   const now = new Date();
   try {
     if (outbox) writeFileSync(join(outbox, `used-${key}`), "");
@@ -117,6 +141,7 @@ const treeBytes = (dir: string): number => readdirSync(dir).reduce((total, name)
 export function store(cacheDir: string, key: string, dist: string, maxBytes: number): void {
   mkdirSync(cacheDir, { recursive: true });
   const entry = join(cacheDir, key);
+  // its own file of that name would be taken for the manifest: such a build is not cached
   if (existsSync(join(dist, MANIFEST))) return;
   if (!existsSync(entry)) {
     const staging = mkdtempSync(join(cacheDir, `.new-${process.pid}-`));
@@ -131,6 +156,10 @@ export function store(cacheDir: string, key: string, dist: string, maxBytes: num
   evict(cacheDir, maxBytes);
 }
 
+/**
+ * Leaves `dist` in `outbox` for the launcher to take in for `key`: `<key>.tar`, then `<key>.claim`
+ * naming the run, which the launcher checks with GitHub before it trusts the build.
+ */
 export function deliver(outbox: string, key: string, dist: string, run: string, attempt: string): void {
   const tar = join(outbox, `${key}.tar`);
   const partial = join(outbox, `.${key}.tar-${process.pid}`);
@@ -163,6 +192,7 @@ export function evict(cacheDir: string, maxBytes: number): void {
   }
 }
 
+/** Longer than a build under load takes, shorter than a waiter's default wait (300 s); the holder refreshes it. */
 export const STALE_LOCK_MS = 240_000;
 const OWNER = "owner";
 
@@ -203,6 +233,9 @@ export function releaseLock(lockDir: string, key: string, token: string): void {
 export async function awaitBuild(cacheDir: string, key: string, ms: number, until: { lock?: string; verdict?: string; staleMs?: number }): Promise<void> {
   const { lock, verdict, staleMs = STALE_LOCK_MS } = until;
   const holder = (): string | null => { try { return readFileSync(join(lock!, OWNER), "utf8") || null; } catch { return null; } };
+  // The job whose build this waits for. Once another job holds the lock, that one let go with no
+  // entry (its build was not taken in), and the next one's would end the same way: each job waiting
+  // for the one before would build one after another, where building together takes one build's time.
   let awaited = lock === undefined ? null : holder();
   const unlocked = (): boolean => {
     try { if (Date.now() - statSync(lock!).mtimeMs > staleMs) return true; } catch { return true; }
@@ -215,6 +248,11 @@ export async function awaitBuild(cacheDir: string, key: string, ms: number, unti
   while (!settled() && Date.now() < deadline) await Bun.sleep(200);
 }
 
+/**
+ * Whether the launcher could take in this job's build: a push to main, or a pull request of this
+ * repository that `writer` opened and started (build-cache-promote.sh decides; this only spares an
+ * untrusted run the wait for a build that would be refused). Outside GitHub Actions: yes.
+ */
 export function mayWrite(env: Record<string, string | undefined>, writer: string | undefined): boolean {
   if (env["GITHUB_ACTIONS"] !== "true") return true;
   if (env["GITHUB_EVENT_NAME"] === "push") return env["GITHUB_REF"] === "refs/heads/main";
@@ -232,6 +270,7 @@ function viteBuild(args: readonly string[]): number {
   return result.status ?? 1;
 }
 
+/** `vite build` without blocking this process, so the lock's heartbeat keeps running meanwhile. */
 async function viteBuildAsync(args: readonly string[]): Promise<number> {
   return Bun.spawn([process.execPath, "--bun", "vite", "build", ...args], { stdio: ["inherit", "inherit", "inherit"] }).exited;
 }
@@ -292,6 +331,7 @@ if (import.meta.main) {
   console.log(`build cache: miss ${name}; building`);
   const heartbeat = owner ? setInterval(() => refreshLock(lockDir, lock, owner!), 30_000) : undefined;
   const code = await viteBuildAsync(args);
+  // the checkout changed while Vite read it: this dist/ may not be the key's
   const after = code === 0 ? keyNow() : key;
   if (code === 0 && (!("key" in after) || after.key !== key.key)) console.log("build cache: the checkout changed during the build; not stored");
   else if (code === 0 && outbox) {

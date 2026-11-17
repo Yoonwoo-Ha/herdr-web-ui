@@ -10,6 +10,7 @@ import { chromePath } from "./chrome-path.ts";
 import { caseRun, type ColorScheme, type SkillMenuCase } from "./skill-menu-case.ts";
 import { openLens } from "./header-lens.ts";
 
+// All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const repo = join(import.meta.dir, "..");
 const caseDir = join(import.meta.dir, "skill-menu-cases");
 const app = mkdtempSync(join(tmpdir(), "herdr-agent-skill-menu-demo-"));

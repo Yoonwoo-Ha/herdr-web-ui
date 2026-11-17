@@ -1,3 +1,4 @@
+/** All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened. */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -192,6 +193,7 @@ try {
           await page.locator(".reply-comment-form").waitFor({ state: "detached", ...WAIT });
           assert.equal(await composer.inputValue(), stacked, `${label}: Comment leaves the message box alone`);
 
+          // the message goes as written, for an agent alone: a shell would read its `>` lines as redirects
           await composer.press("End");
           await composer.pressSequentially("Go ahead.");
           const answers = await page.evaluate(() => (window as unknown as { quoteLab: { answers: number } }).quoteLab.answers);

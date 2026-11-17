@@ -9,6 +9,7 @@ timings=""
 HERDR_DEMO_BUILD=""
 finish() {
   local code=$?
+  # Reporting or cleanup must not replace the lane's exit code.
   set +e
   printf '\nBrowser script summary\n%-60s %7s %5s\n' "script" "seconds" "exit"
   printf '%s' "$timings"

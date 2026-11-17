@@ -8,6 +8,7 @@ export const FRAGMENT_NAME = /^[a-z0-9][a-z0-9.-]*\.md$/;
 export const SECTIONS = ["Added", "Changed", "Removed", "Fixed", "Maintenance"] as const;
 
 const REPO = "https://github.com/devswha/ovis";
+/** the repository before its rename: the links CHANGELOG.md already has keep it, and GitHub redirects them */
 const LEGACY_REPO = "https://github.com/devswha/herdr-web-ui";
 const UNRELEASED = "## [Unreleased]";
 const HINT = `see ${FRAGMENTS_DIR}/${FRAGMENTS_README}`;
@@ -51,6 +52,7 @@ function readSections(text: string, where: string, { allowed, firstLine = 1, hin
 export function parseFragment(text: string, name: string): Sections {
   if (!FRAGMENT_NAME.test(name)) throw new Error(`${FRAGMENTS_DIR}/${name}: rename it to lowercase words joined by "-" ending in .md, e.g. composer-attach-limit.md`);
   if (/^#{1,2} /m.test(text)) throw new Error(`${FRAGMENTS_DIR}/${name}: a fragment has no "#" or "##" heading, only ### sections (${HINT})`);
+  // an editor's byte order mark would otherwise read as text before the first heading
   const sections = readSections(text.replace(/^\uFEFF/, ""), `${FRAGMENTS_DIR}/${name}`, { allowed: SECTIONS });
   if (sections.size === 0) throw new Error(`${FRAGMENTS_DIR}/${name}: empty; write a ### section and a "- " entry, or delete the file`);
   return sections;

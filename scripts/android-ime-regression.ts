@@ -102,6 +102,7 @@ try {
   if (evidence) { mkdirSync(evidence, { recursive: true }); await device.screenshot({ path: join(evidence, "android-gboard-line.png") }); }
   await page.reload(); await line.waitFor();
   assert.equal(await line.inputValue(), "한글 ");
+  // Send tapped while Gboard still composes the last syllable: it sends after the commit, never silently drops.
   await line.fill(""); await line.tap(); await keyboardReady();
   writeFileSync(received, "");
   await tap("gksrmf");

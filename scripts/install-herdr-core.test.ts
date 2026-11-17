@@ -3,6 +3,13 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+/**
+ * install.sh on a PC with herdr-core (hc) and no herdr: which runtime it picks, the settings file it
+ * writes and the user service it registers. The functions are cut out of install.sh itself and run
+ * under /bin/sh with a HOME of their own and stand-in hc, systemctl, loginctl and launchctl, so
+ * nothing on this PC is installed, started or registered.
+ */
+
 const ROOT = join(import.meta.dir, "..");
 const INSTALLER = readFileSync(join(ROOT, "install.sh"), "utf8");
 function fn(name: string): string {

@@ -115,6 +115,8 @@ describe("why an address did not open", () => {
   });
 
   it("keeps the loading spinner the native apps wait on in index.html's root", () => {
+    // MainActivity (PAGE_SCRIPT) lifts its cover once #root no longer holds .boot: a page whose
+    // root starts without it would lift the cover before the client is up
     const page = readFileSync(join(import.meta.dir, "../index.html"), "utf8");
     expect(page).toMatch(/<div id="root">\s*<div class="boot"/);
   });

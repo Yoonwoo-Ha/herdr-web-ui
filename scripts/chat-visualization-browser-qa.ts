@@ -12,6 +12,7 @@ const reference = (data: unknown) => `\uE200visualize\uE202${JSON.stringify(data
 const directive = reference({ path, mode: "wide", title: "Transmission comparison" });
 const build = await Bun.build({ entrypoints: ["scripts/chat-visualization-fixture.tsx"], outdir: root, target: "browser", define: { "process.env.NODE_ENV": '"production"' } });
 assert.ok(build.success, String(build.logs));
+/** every request for anything but the fixture's own page: the card must make none */
 const asked: string[] = [];
 const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
   const url = new URL(request.url);
@@ -51,9 +52,11 @@ try {
   assert.ok(await page.locator("#elsewhere").innerText().then((text) => text.includes("visualize") && text.includes("before-after.html")), "the reference stays text outside an answer");
   mkdirSync(".ci/visualization", { recursive: true });
   await page.screenshot({ path: ".ci/visualization/desktop.png" });
+  // a press opens the file viewer on exactly that path; the card itself draws no frame and asks the PC for nothing
   await preview.click();
   assert.deepEqual(await page.evaluate(() => window.visualizationQa.opened), [path]);
   assert.equal(await page.locator("iframe").count(), 0, "the card draws no frame");
+  // a name with a right-to-left override, and a title that pretends to be another file: the name shown is the file's own
   await page.evaluate((text) => window.visualizationQa.update(text), reference({ path: join(root, "report\u202Efdp.html"), title: "\u202Einvoice.pdf" }));
   await page.waitForFunction(() => document.querySelector("#answer .markdown-visualization-name")?.textContent === "reportfdp.html");
   assert.equal(await card.locator(".markdown-visualization-title").innerText(), "invoice.pdf");

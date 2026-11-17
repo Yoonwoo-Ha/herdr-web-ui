@@ -17,6 +17,7 @@ declare global {
     inboxFixture: {
       rosters: number;
       publish(): Promise<void>;
+      /** sets a pane's state as herdr would: its pane-status event, then the roster */
       set(paneId: string, status: AgentStatus, finish?: number): Promise<void>;
       resizes: { pane: string; cols: number; rows: number }[];
       frames: { type: string; pane: string; cols?: number; rows?: number }[];
@@ -159,6 +160,7 @@ function installInboxFixture(): void {
   };
 }
 
+// All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const BLOCKED = "w1D:p1";
 const WORKING = "w1C:p1";
 const DONE = "w1H:p1";
@@ -1534,6 +1536,7 @@ try {
               const [a, b] = [channels(one), channels(other)];
               return Math.round(Math.max(...a.map((value, at) => Math.abs(value - b[at]!))));
             };
+            // a press reads as a press: well past the 7 of 255 a row's press once stood from its hover in light
             for (const [press, over, what] of [[rowPress, sideHover, "a row's"], [strong, hover, "a round control's"]] as const) {
               assert.ok(apart(press, over) >= 15, `${what} press stands ${apart(press, over)} of 255 from its hover (${press} against ${over})`);
             }
@@ -1635,6 +1638,9 @@ try {
           }, desktop);
         } finally { await withBars.close(); }
 
+        // herdr tells no time of a state change: a wait is timed from when this device saw it begin (the stamps the
+        // Agents list reads, lib/agentStateSince.ts), and one no page of the device saw begin from the agent's last
+        // message (the summary's time of its last words).
         const lastMessageAt = (page: Page, pane: string): Promise<string | null> => page.evaluate(async (id) => {
           const answer = await (await fetch(`/api/pane/summary?pane_id=${encodeURIComponent(id)}`)).json() as { summaries: Record<string, { at: string | null } | null> };
           return answer.summaries[id]?.at ?? null;
@@ -2047,6 +2053,10 @@ try {
           console.log(`PASS classic and the mode are one place: entering opens the classic pane's thread with its draft; Back to Ovis shows the thread's pane with its draft; entering again keeps the thread, its draft, its scroll (${threadTop}px), the filter and the list's scroll (${listTop}px); a reload keeps the thread, its draft and the filter`);
         }, { width: 1440, height: 480 });
 
+        // ---- a chat pane not drawn alone, or under a peek: the way in opens the list and sends nothing ----
+        // Its thread alone would hide or unmount what else the classic app draws (a herdr split's sibling, the app's own
+        // split's other half), or end a terminal peek: each gives up or asks a pty's size. So the way in opens the list,
+        // as the mode always did, and nothing is sent for any pane from before it through an untouched Back to Ovis.
         const FLAKY = "w1H:p1";
         const drawnScreens = (page: Page): Promise<Record<string, Box>> => page.evaluate(() => Object.fromEntries([...document.querySelectorAll("[data-layout-pane]")].flatMap((frame) => {
           const screen = frame.querySelector(".xterm-screen");
@@ -2193,12 +2203,15 @@ try {
             const top = await topRow(page);
             assert.deepEqual([top.rail.x, top.rail.w], [0, control + 24], "the rail is cut out of the column");
             near(top.list.x, top.rail.right, 0.5, "the list begins where the rail ends"); near(top.list.right, column.right, 1, "the list ends at the column's seam");
+            // the list's top controls are whole, inside it, and reached by the keyboard after the rail: its search field where
+            // the list has the room for it (256px and more), else the Search button that opens it
             topRowFits(top, `in a ${Math.round(top.list.w)}px list`);
             const roomy = top.list.w >= 256;
             assert.deepEqual(top.controls.map((each) => each.kind === "inbox-search" ? [each.kind] : [each.kind, each.box.w, each.box.h]),
               [roomy ? ["inbox-search"] : ["inbox-search-toggle", control, control], ["inbox-filter-toggle", control, control], ["inbox-add", control, control]],
               `in a ${Math.round(top.list.w)}px list the top row is ${roomy ? "the search field" : "Search"}, the filter and New workspace, the round ones at their ${control}px`);
             if (roomy) {
+              // the reason for the list's least width for an always-shown field: the field holds its own placeholder
               const [room, words] = await page.evaluate(() => {
                 const input = document.querySelector<HTMLInputElement>(".mode-inbox .inbox-search-input")!;
                 const style = getComputedStyle(input);
@@ -2529,6 +2542,7 @@ try {
         }, desktop);
 
         await withPage(browser, base, light, "/?app=inbox", "the rail's presses: the palette, alerts, Settings and the list of PCs", async (page) => {
+          // this device has answered the browser's question about notifications, with no: Alerts is then a plain switch
           await page.context().addInitScript(() => { Object.defineProperty(Notification, "permission", { configurable: true, get: () => "denied" }); });
           await page.reload();
           await page.locator(".inbox-column .mode-inbox").waitFor();
@@ -2677,6 +2691,10 @@ try {
           console.log(`PASS the rail's count is the app's waiting pill under a name that says the number: 1 on the list alone, gone once its press has opened that agent's thread, back at 1 and then 2 as other agents begin to wait, still 2 from the thread its press opened (${opened}), and gone when nobody waits; Alerts, Settings and the PC never move`);
         }, desktop);
 
+        // ---- the rail's count, and an agent that waits behind a tab's zoom ----
+        // The rail counts the agents its press can open. One that waits in a pane its tab's zoom hides keeps its row,
+        // which says that it waits, but no jump reaches it: it is not counted, and with no other one waiting the rail
+        // draws no count. The demo's herdr splits the waiting agent's tab and zooms it onto the new pane, as herdr does.
         await withPage(browser, base, light, "/?app=inbox", "the rail's count and an agent that waits behind a tab's zoom", async (page) => {
           await page.locator(".inbox-column .mode-inbox").waitFor();
           await rowCount(page, 6);
@@ -2709,6 +2727,8 @@ try {
           await addressIs(page, { app: "inbox", pane: WORKING }, "the count's press opens the agent in reach");
           await waiting.waitFor({ state: "detached" });
           assert.equal(await waits(BLOCKED), true, "the agent behind the zoom still waits in its row, and is not counted");
+          // a press on that agent's own row opens the pane its tab is zoomed onto, the one herdr shows, as every pick of a
+          // pane a zoom hides does; the thread that was open is one row away
           await row(page, BLOCKED).click();
           await addressIs(page, { app: "inbox", pane: made }, "the hidden agent's row opens the pane its tab is zoomed onto");
           await row(page, WORKING).click();

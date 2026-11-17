@@ -1,3 +1,13 @@
+/**
+ * The in-browser sign-in on the demo build (`?demo_sign_in=1`, site/demo/transport.ts), which plays
+ * the flows recorded from Claude Code 2.1.312 and codex-cli 0.163.0, at 1280 and 390, dark and light:
+ *
+ * - Settings → Agents: Claude Code has no account, so its row offers Sign in. The dialog shows the
+ *   sign-in page as a link on claude.com and a box for the code that page shows; a sent code signs it
+ *   in, and the dialog names the account. Open terminal is there until it ends.
+ * - Codex's Add account → On this PC → Start sign-in follows the login in the browser: its device page
+ *   on auth.openai.com and its one-time code, then the account it signed in.
+ */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -96,6 +106,7 @@ try {
         await page.locator(".usage-account-dialog").first().waitFor({ state: "detached" });
         console.log(`PASS Codex's Add account follows its device code in the browser, then names the account (${at})`);
 
+        // the dialog that just closed steps off its history entry first: a page load asked for before that is dropped
         await sheetEntryLeft(page);
         await page.goto(`${root}&demo_usage=refused&settings=agents`);
         const expired = page.locator(".agents-item[data-agent='claude']");
@@ -115,6 +126,8 @@ try {
         await renewing.waitFor({ state: "detached" });
         console.log(`PASS Sign in again on a shut row stays open through clicks and the end of the expiry, to its outcome (${at})`);
 
+        // closing the dialog stops the sign-in: Escape while Claude's waits for its code cancels it by its id
+        // the dialog that just closed steps off its history entry first: a page load asked for before that is dropped
         await sheetEntryLeft(page);
         await page.goto(`${root}&settings=agents`);
         await page.evaluate(() => {
@@ -136,6 +149,9 @@ try {
         assert.match((await page.evaluate(() => (window as unknown as { cancels: string[] }).cancels))[0]!, /"login":"demo-login-\d+"/, `Escape cancels the running sign-in ${at}`);
         console.log(`PASS closing the dialog stops the sign-in it was following (${at})`);
 
+        // the setup guide offers the first sign-in beside its tiles, for the agent picked, once it knows the sign-ins:
+        // it reads them only after the user's own Continue on the agent step (#3962), so Continue, then Back to it
+        // the dialog that just closed steps off its history entry first: a page load asked for before that is dropped
         await sheetEntryLeft(page);
         await page.goto(`${root}&settings=agents`);
         await page.locator(".agents-item").first().waitFor();

@@ -40,6 +40,7 @@ describe("changelog fold", () => {
     expect(releaseNotes("1.2.3", "1.2.3", 'version = "1.2.3"', folded, summaries)).toEndWith(
       `<details><summary>Full changelog</summary>\n\n### Added\n- Old feature. ([#1](${pull(1)}))\n\n### Fixed\n- Old fix.\n  Continued.\n- New fix.\n\n</details>`);
     expect(folded).toContain("## [Unreleased]\n\n## [1.2.3]");
+    // a fragment merged after the fold would ship unnoted, so the pre-tag gate refuses it
     expect(() => releaseNotes("1.2.3", "1.2.3", 'version = "1.2.3"', folded, summaries, ["late.md"])).toThrow("changelog.d/ still holds late.md");
   });
 

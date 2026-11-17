@@ -8,6 +8,7 @@ import type { ConversationTurn } from "../shared/protocol.ts";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
+// All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-working-line-demo-"));
 
 interface Frame {
@@ -110,6 +111,8 @@ try {
         localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
         for (const id of ids) localStorage.setItem(`ovis:view:${id}`, "chat");
       }, [panes.api, panes.flaky, panes.omp]);
+      // the first check reads the Claude pane's running turn: it stays at work, or on a slow runner the
+      // demo ends it (4.5s in) before the check comes
       await context.addInitScript(() => Reflect.set(window, "__ovisDemoHoldTurn", true));
       const page = await context.newPage();
       const errors: string[] = [];
@@ -134,6 +137,8 @@ try {
       assert.ok(settled.lastBlocks.some((block) => block.startsWith("live/open:Working…")), `the running turn's block is open and working: ${JSON.stringify(settled.lastBlocks)}`);
       console.log("PASS a working pane's first read shows Loading conversation…, then the running turn's own Working head");
 
+      // Claude starts a turn by itself (a background task ended): herdr says working before the
+      // transcript has the new turn. The finished turn stays finished; the Working head is the new one's.
       await page.goto(url(panes.flaky));
       const flaky = page.locator(`.pane-frame[data-layout-pane="${panes.flaky}"]`);
       await flaky.locator("[data-chat-row] .work-block-title", { hasText: "Worked for" }).last().waitFor();

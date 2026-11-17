@@ -3,6 +3,12 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+/**
+ * install.sh's Rust PTY host check and its Node fallback, as the script defines them: the functions are
+ * cut out of install.sh itself and run under /bin/sh with stand-in hosts, curl and tar, so nothing is
+ * downloaded or installed.
+ */
+
 const INSTALLER = readFileSync(join(import.meta.dir, "..", "install.sh"), "utf8");
 function fn(name: string): string {
   const match = new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}$`, "m").exec(INSTALLER);
@@ -31,6 +37,8 @@ const USAGE = `if [ "$#" -eq 0 ]; then echo "pty-sidecar: usage: fixture" >&2; e
 
 describe("bounded", () => {
   it("reports a command it timed out as failed, even one that exits 0 as its tree is killed", () => {
+    // a host that forks and waits exits 0 once its child is killed, and can do so before its own kill comes:
+    // here the tree's kill only tells the command to end, which it does with 0, as such a host would on a slow PC
     const result = sh(`fifo=$(mktemp -u); mkfifo "$fifo"
 kill_tree() { echo end > "$fifo"; }
 if bounded 1 sh -c 'read line < "$0"; exit 0' "$fifo"; then echo PASSED; else echo "TIMED OUT"; fi
@@ -92,6 +100,7 @@ describe("install_node", () => {
   const attempt = (env: Record<string, string>) => sh(`if ( install_node ); then echo INSTALLED; else echo FAILED; fi`, env);
 
   it("fails when tar fails, and leaves no half-made Node behind", () => {
+    // a platform install_node has no digest for keeps the node_sha given here: the download passes its check, tar fails
     const env = { ...pc(download("x"), "exit 42"), platform: "fixture", node_sha: new Bun.CryptoHasher("sha256").update("x").digest("hex") };
     const result = attempt(env);
     expect(result.out).toContain("FAILED");
@@ -143,6 +152,7 @@ describe("node_fits", () => {
     // an x64 Node from a Rosetta shell on an arm64 Mac, which the server's node-pty cannot load (#2100 review)
     expect(fits("22 x64")).toBe("NO");
     expect(fits("")).toBe("NO");
+    // a preload's line before the real answer, an x64 Node's on an arm64 PC: never the preload's line alone (#2100 review)
     expect(fits("22 arm64\n24 x64")).toBe("NO");
     expect(fits("preload says hi\n22 arm64")).toBe("NO");
     expect(sh(`if node_fits /nonexistent/node; then echo FITS; else echo NO; fi`, { arch: "arm64" }).out.trim()).toBe("NO");
@@ -188,6 +198,7 @@ describe("server_arch", () => {
   it("keeps uname's when Bun does not answer with one it knows", () => {
     expect(after("ia32")).toBe("x64 darwin-x64");
     expect(after("")).toBe("x64 darwin-x64");
+    // a preload that prints a line before Bun's own answer (#2100 review)
     expect(after("arm64\nx64")).toBe("x64 darwin-x64");
   });
 
@@ -254,6 +265,7 @@ describe("node_link", () => {
       const result = link(env);
       expect(result.code).toBe(0);
       expect(lstatSync(node(env), { throwIfNoEntry: false })).toBeUndefined();
+      // never silently: it may have been the user's only node
       expect(result.out).toContain(`Ovis: removed ${node(env)}`);
     }
   });
@@ -304,6 +316,7 @@ describe("node_link", () => {
   });
 
   it("links the Node it installed after herdr's build found none, whatever Node the user's own PATH has", () => {
+    // herdr started outside the user's shell (nvm in .bashrc) has none on its PATH, and the build retries on the link (#596 review)
     const env = pc(false, undefined, "NODE_DIR", "v20.11.0");
     expect(link(env, "installed").out).toContain("[ node]");
     expect(readFileSync(node(env), "utf8")).toBe("app node");

@@ -81,6 +81,7 @@ function replaceAtomically(path: string, content: string, banner: string): void 
   }
 }
 
+/** Install or remove only the one file at `extensionPath`, and only while it carries `banner`. */
 export async function installExtensionFile(
   extensionPath: string,
   banner: string,
@@ -97,6 +98,7 @@ export async function installExtensionFile(
   return { action: "installed", path: extensionPath };
 }
 
+/** Install or remove only herdr-web-ui.js under a selected GJC agent directory. */
 export default async function installGjcIntegration(
   options: InstallGjcIntegrationOptions = {},
 ): Promise<InstallGjcIntegrationResult> {

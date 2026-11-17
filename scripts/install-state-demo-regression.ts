@@ -103,6 +103,7 @@ try {
       const errors: string[] = [];
       const watch = (page: Page): Page => { page.on("pageerror", (error) => errors.push(`${page.url()}: ${error.message}`)); return page; };
 
+      // spike: the PWA domain installs and uninstalls in this mode at all
       await send(cdp, "PWA.install", { manifestId, installUrlOrBundleUrl: manifestId });
       await send(cdp, "PWA.uninstall", { manifestId });
       console.log(`PASS spike: PWA.install and PWA.uninstall accepted in ${headless ? "headless" : "headed"} Chromium ${browser.version()}`);
@@ -148,6 +149,7 @@ try {
       await shot(appWindow, "app-window");
       console.log("PASS (b) the installed app window: display-mode standalone, no Install app, Settings > Install says Installed");
 
+      // (c) a normal tab of the same origin knows the app is installed (related_applications)
       const related = watch(await nextPage(context, () => send(cdp, "Target.createTarget", { url: manifestId })));
       await ready(related);
       assert.equal(await related.evaluate(() => matchMedia("(display-mode: browser)").matches), true, "this is a browser tab, not the app window");

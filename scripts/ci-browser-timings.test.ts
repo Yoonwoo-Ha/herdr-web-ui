@@ -26,6 +26,7 @@ describe("browser timings refresh", () => {
   });
 
   it("reads each job's logs of a run's last attempt only", () => {
+    // a run whose ui-regression job failed once and was run again keeps both attempts' artifacts
     expect(lastAttemptArtifacts([
       "browser-main-42754144490-1", "browser-main-42754144490-2", "browser-other-1-42754144490-1",
       "check-fast-42754144490-1", "integration-logs-42754144490-1",

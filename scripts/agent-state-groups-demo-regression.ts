@@ -1,3 +1,9 @@
+/**
+ * Two stamps are stored as this device would have kept them, so their ages are known: the waiting
+ * agent's two hours and a resting agent's 3 days (ages a slow run cannot carry over a unit's edge),
+ * each with the counter herdr gives its agent and the server's count of its finishes (read from the
+ * demo's own session on a first load), which is what lets a later load trust it.
+ */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -45,6 +51,10 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
     await list();
   };
 
+  // A first load only to read the demo's one PC, its herdr and its server (site/demo/transport.ts): the stamps are stored
+  // as the app stores them (lib/agentStateSince.ts), each with the counter herdr gives its agent now and the server's
+  // count of its finishes. The same two numbers on the next load prove that the state did not change meanwhile; the
+  // third stamp has no counter of herdr's, so nothing proves it.
   await open();
   const counters = await page.evaluate(async ({ waiting, resting, uncounted, waited, rested }) => {
     const { snapshot } = await (await fetch("/api/session")).json() as { snapshot: { herdr_lifetime?: string | null; finish_epoch?: string; panes: Array<{ pane_id: string; terminal_id: string; finish_id?: number }>; agents: Array<{ pane_id: string; state_change_seq?: number }> } };
@@ -148,6 +158,7 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   await row(panes.omp).waitFor({ state: "hidden" });
   await page.evaluate((stored) => localStorage.setItem("ovis:settings", stored), oneLine);
 
+  // a device that only watches (`?demo_devices=watch`) sends nothing, and a fold is its own
   await open("&demo_devices=watch");
   await heading("idle").click();
   assert.equal(await expanded("idle"), "true", `${tag}: a watching device opens a group`);
@@ -203,6 +214,8 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
       return false;
     }, [pane, status]);
   };
+  // another agent already rests under Done, so the row lands below a heading that stays: React takes the row's own
+  // element out and puts it back there, where a row alone under a new heading would be left in place with its focus
   await becomes("done", panes.cli);
   const focusNow = (): Promise<string> => away.evaluate(() => {
     const active = document.activeElement;

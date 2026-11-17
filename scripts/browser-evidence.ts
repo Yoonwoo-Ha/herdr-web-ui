@@ -83,6 +83,7 @@ const withTimeout = async <T>(operation: Promise<T>, name: string, timeoutMs: nu
   }
 };
 
+/** Trace snapshots/network are deliberately off. */
 export async function startBrowserEvidence(options: BrowserEvidenceOptions): Promise<BrowserEvidenceSession> {
   const directory = options.directory;
   const enabled = directory !== undefined && directory.length > 0;

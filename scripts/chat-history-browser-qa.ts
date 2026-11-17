@@ -1,3 +1,4 @@
+/** No herdr panes are touched. */
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,6 +34,7 @@ try {
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
     const path = new URL(request.url).pathname;
     if (path === "/ws") return new Response(null, { status: 404 });
+    // Product connection failures report only metadata; this fictional server consumes it locally.
     if (path === "/api/connection-diagnostics") return new Response(null, { status: 204 });
     // the terminal reads herdr's copy_on_select as it mounts
     if (path === "/api/herdr-ui") return Response.json({ copy_on_select: true } satisfies HerdrUiConfig, { headers: { "cache-control": "no-store" } });
@@ -239,6 +241,7 @@ try {
   await page.locator(".work-row-head").click();
   assert.equal(await page.getByText("STALE TOOL OUTPUT", { exact: true }).count(), 0);
   assert.equal(await page.locator(".chat-tool-more").count(), 1);
+  // A remote PC with the same pane/tool id is a distinct target too.
   await page.locator(".chat-tool-more").click();
   const remoteIndex = await page.evaluate(() => window.qa.requests.length - 1);
   await page.evaluate(() => window.qa.chat("a", "remote-pc"));
@@ -306,6 +309,8 @@ try {
   assert.deepEqual(errors, []);
   console.log("PASS reused tool ids after clear, machine switch and unmount cancellation; no browser errors");
 
+  // An authoritative refusal must hide stale history even if the second, terminal read fails.
+  // This is the DB/export mismatch path: the reader returns scrollback, not a transport error.
   for (const terminalFailure of [false, true]) {
     epoch = `refusal-${terminalFailure}`; newest = `discarded newest ${terminalFailure}`; before = `${epoch}:100`;
     await refresh();
@@ -374,6 +379,8 @@ try {
   await page.getByText(newest, { exact: true }).waitFor();
   console.log("PASS hidden chat cancels its held read; visible return paints a fresh answer before the abandoned read is released");
 
+  // Keep the existing scrollback change detector: clearing the signature on every fallback
+  // poll would suppress the New messages chip while the reader is scrolled up.
   unavailable = true;
   terminalText = Array.from({ length: 100 }, (_, i) => `Fictional terminal line ${i}`).join("\n");
   await refresh();
@@ -455,6 +462,8 @@ try {
   await page.getByText("Fictional commit log", { exact: true }).waitFor();
   assert.equal(await page.getByText("Synthetic Claude prompt", { exact: true }).count(), 0);
   console.log("PASS Agy native parser output renders user/assistant text and independent expandable tool results");
+  // A press reads a chat before its pick renders (#2562). herdr moves the pane to another session after
+  // that read answered and before the click lands: the chat opened shows the new session, never the old one.
   await page.evaluate(() => { window.qa.session("switch", "a"); window.qa.press("switch"); });
   await page.waitForFunction(() => window.qa.answered.includes("local/switch"));
   switchSession = "B";

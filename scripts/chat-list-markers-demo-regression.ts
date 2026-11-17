@@ -8,6 +8,10 @@ import { appFaces } from "./app-faces.ts";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
+// A list's markers sit outside its items, in the list's indent, and are drawn in the Chat font: in
+// a monospace face each digit and the ". " after it take a whole cell, so "1. " outgrew the old
+// fixed 20px and was cut off at the transcript's left edge (#1993), and "10." or "100." need more.
+// All files and HTTP traffic stay in this disposable, loopback-only app and no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-chat-list-markers-demo-"));
 const evidence = process.env["UI_EVIDENCE_DIR"] || null;
 if (evidence !== null) mkdirSync(evidence, { recursive: true });

@@ -63,6 +63,8 @@ try {
           : { viewport: { width: 1280, height: 900 }, locale: "en-US", colorScheme: theme });
         try {
           await context.addInitScript((value) => { localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme: value })); localStorage.setItem("ovis:sidebar-filter-shown", "true"); }, theme);
+          // the helpers' agent is the Claude pane: its turn stays at work, or on a slow runner the end the
+          // demo times 4.5s in redraws its family mid-check
           await context.addInitScript(() => Reflect.set(window, "__ovisDemoHoldTurn", true));
           const page = await context.newPage();
           const errors: string[] = [];

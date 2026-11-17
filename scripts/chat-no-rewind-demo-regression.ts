@@ -1,3 +1,4 @@
+/** Chat offers no Rewind: the real client over owned demo fixtures, as Claude Code, grok, Antigravity and Codex; no live herdr session. */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

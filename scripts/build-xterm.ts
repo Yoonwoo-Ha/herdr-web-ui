@@ -6,6 +6,14 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
+/**
+ * A finished directory is never written again: builds running at once in one checkout (the browser
+ * lane's workers) read it while another may be emitting, and a module rewritten in place reads as
+ * missing its exports (#2021).
+ *
+ * TypeScript compiles the very bytes that were hashed, never the files as they are on disk by then: a
+ * source changed in between would otherwise be published under the old source's key (#2148).
+ */
 export function buildXtermSource(root: string): string {
   // the package's own path: through a symlink TypeScript would resolve imports out of it, to disk
   const source = join(realpathSync(join(root, "node_modules/@xterm/xterm")), "src");
@@ -30,6 +38,7 @@ export function buildXtermSource(root: string): string {
     skipLibCheck: true, types: [], noEmitOnError: true,
   };
   const key = createHash("sha256").update(`${ts.version}\0${JSON.stringify(options)}\0`);
+  // the manifest's `types` picks the typings that `@xterm/xterm` imports resolve to
   const hashed = new Map<string, string>();
   for (const file of [...files, ...typings, manifest]) {
     const content = readFileSync(file);
@@ -55,12 +64,14 @@ export function buildXtermSource(root: string): string {
     host.writeFile = (path, ...rest) => { written.push(path); writeFile(path, ...rest); };
     const program = ts.createProgram(files, { ...options, outDir: staging }, host);
     const emitted = program.emit();
+    // a file TypeScript could not write is only a diagnostic: never publish a build missing it
     if (emitted.emitSkipped || emitted.diagnostics.some(({ category }) => category === ts.DiagnosticCategory.Error)) {
       const diagnostics = ts.getPreEmitDiagnostics(program).concat(emitted.diagnostics);
       throw new Error(ts.formatDiagnosticsWithColorAndContext(diagnostics, {
         getCanonicalFileName: (name) => name, getCurrentDirectory: () => root, getNewLine: () => "\n",
       }));
     }
+    // a staging directory another build took for abandoned loses files TypeScript never reports
     const lost = written.filter((path) => !existsSync(path));
     if (lost.length) throw new Error(`The xterm build lost ${lost.length} emitted files before publishing, ${lost[0]} first`);
     // mkdtemp's 0700 would lock other users of this checkout out of the published build
@@ -72,6 +83,11 @@ export function buildXtermSource(root: string): string {
   return output;
 }
 
+/**
+ * Bun.build's resolution of the source `buildXtermSource` emitted, as vite.config.ts aliases it:
+ * `@xterm/xterm` to its public Terminal, its own `browser/`, `common/` and `vs/` imports to their
+ * files, and `vs/nls` to xterm 6's stub.
+ */
 export function xtermSourcePlugin(xterm: string): BunPlugin {
   return {
     name: "xterm-source",

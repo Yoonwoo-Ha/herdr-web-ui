@@ -56,6 +56,8 @@ html = html.replace("</head>", '  <meta name="robots" content="noindex" />\n  </
 if (!/<script type="module"/.test(html)) throw new Error("the built app has no module script to load the demo transport before");
 html = html.replace(/<script type="module"/, '<script src="./demo-transport.js"></script>\n    <script type="module"');
 writeFileSync(appPage, html);
+// the brand mark is <img src="/icons/…"> in the client (src/App.tsx, AccessGate.tsx): root-absolute,
+// which is right for the app at its own origin and wrong under demo/app/
 for (const script of new Bun.Glob("assets/*.js").scanSync({ cwd: demoApp })) {
   const file = join(demoApp, script);
   writeFileSync(file, readFileSync(file, "utf8").replaceAll('"/icons/', '"./icons/'));

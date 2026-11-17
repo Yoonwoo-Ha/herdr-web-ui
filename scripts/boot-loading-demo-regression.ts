@@ -1,3 +1,10 @@
+/**
+ * Per case the entry module is held by a request gate, as a slow link holds it: a loading status
+ * must show in the page (index.html's own markup, under the app's Content-Security-Policy), turn
+ * once a step, keep still under reduced motion, and be gone once the app has drawn. No herdr
+ * session and no user state: the demo build on a loopback server on port 0 and a temporary
+ * directory, removed at the end.
+ */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
