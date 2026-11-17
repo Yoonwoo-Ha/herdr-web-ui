@@ -5894,8 +5894,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   Open it to try again." on a `paired` or `unchecked` row where **Open** retries setup, or "Account
   setup is incomplete." otherwise, and a dim subline for a fresh Add countdown "new · {n} min
   left", "Update Ovis on it", or this device's check result after **Check now**; on a phone row a
-  closed Add window also shows "Join · a device of your account connected to it approves", which is the
-  state word's `title` in the table), **Relay** (how this device reaches a paired PC right now and
+  closed Add window also shows "Join · approve on a connected device of your account, or type the
+  number the PC shows", which is the state word's `title` in the table), **Relay** (how this device
+  reaches a paired PC right now and
   the measured round trip: "Same network · 4 ms", "Tailscale · 18 ms", the answering relay host as
   a mono chip followed by " · 62 ms", or "Checking…" / "No answer" / "Not checked", or the assigned
   host as a mono chip for a PC it isn't paired with), **Last seen**, and the one action its state
@@ -5927,21 +5928,24 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   phase in `data-add-pc-phase`: `start`, `confirm`, `connecting`, `compare` (six digits to type
   or match), `wrong` (a wrong number, with Try again), `approving`, `ready` and `failed`. **Add**
   types the six digits the new PC shows, then approves on that PC; **Join** asks through the
-  account, shows this device's digits, and an account member approves on another device. Pressing
+  account, shows this device's digits, and a device of the account connected to the PC, or the PC
+  itself when it shows the request, approves; a typed comparison whose PC shows no number offers
+  **Ask to join**, which carries the same request on as a join. Pressing
   **Add this PC** or **Ask to join** in the sheet records the consent once (`keepConfirmedPc`) and
   starts pairing at once on `/s/<id>/` (`start` -> `connecting` -> `compare`) without a second
   "Pair with {name}?" step; "Pair with {name}?" with **Pair** remains only for pairing links and QR
   codes opened from outside the dashboard (or when `sessionStorage` is blocked). **Add a
   PC** with no PC says how one is added ("On the PC, open Settings → Devices and PCs → Account, sign
-  in, then choose Add this PC to my account. It then shows here with Add.") and leads to the QR and code
+  in, then choose Add this PC to my account. It then shows here.") and leads to the QR and code
   modal sheet (`PairQrDialog`, over the scrimmed inert dashboard), whose QR and code screens name
   only the current path ("On the PC, open Settings → Devices and PCs → Add a connection → Ovis relay
   and scan the QR code." and "On the PC, open Settings → Devices and PCs → Add a connection → Ovis
   relay and type the code it shows."). The sheet drives the
   shell's existing join, Pair, match and Cancel; failure stays in the sheet, in words of the sheet's
   own flow where the cause differs from a pairing link's (a new PC that is no longer waiting says
-  to keep its Account screen open; a join nobody approved says to open the PC on a device that
-  already uses it, or to pair with a QR or code), each with **Try again**, and in the shell's own
+  to keep its Account screen open; a join nobody approved says to approve it on a device of the
+  account connected to the PC, or on the PC itself if it shows the request, or to pair with a QR
+  or code), each with **Try again**, and in the shell's own
   words otherwise, except a new identity, which keeps the shell's screen with its ids and Forget. Ready shows
   at once when local pairing finishes ("{name} is ready to open on this device." with **Open PC**),
   without waiting on account enrollment. While account enrollment runs (`enrollment: "pending"`),

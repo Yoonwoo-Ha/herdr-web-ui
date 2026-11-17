@@ -1897,6 +1897,8 @@ describe("ovis link, on the PC itself", () => {
       // --approve: the app it names is app.ovis.sh
       const approve = await approving(names);
       expect(approve.text).toContain("(the Ovis app or app.ovis.sh), choose Add on");
+      // a PC listed again soon after it was seen shows Join, not Add, on the dashboard
+      expect(approve.text).toContain("If it shows Join there instead, choose Join, then Ask to join or Type the number.");
     }
   });
 
