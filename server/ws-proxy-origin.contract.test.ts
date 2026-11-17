@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type ServerInstance } from "./index.ts";
 
-/** An isolated bridge with the request headers Traefik forwards after TLS termination. */
 describe("secure WebSocket proxy origin contract", () => {
   const stateDir = mkdtempSync(join(tmpdir(), "herdr-wss-origin-"));
   let bridge: ServerInstance;

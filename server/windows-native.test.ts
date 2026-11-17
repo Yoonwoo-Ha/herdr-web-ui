@@ -31,7 +31,6 @@ import ts from "typescript-api";
 
 const onWindows = process.platform === "win32";
 
-/** The JSON in `path` once it is whole; a file still being written reads as not there yet (#2165). */
 function completeJson<T>(path: string): T | undefined {
   let text: string;
   try { text = readFileSync(path, "utf8"); }
@@ -41,17 +40,11 @@ function completeJson<T>(path: string): T | undefined {
   catch (error) { if (error instanceof SyntaxError) return undefined; throw error; }
 }
 
-/**
- * Waits for the whole JSON in `path`, looking once when the watch starts (it may be there already), again on every
- * change in `dir`, and a last time when `ms` runs out: a change whose event was merged or missed, or a look while the
- * file was busy with no change after it, still counts. It fails only on a file not whole at that last look.
- */
 function watchJson<T>(dir: string, path: string, ms: number): { result: Promise<T>; looked: () => Promise<void>; close: () => Promise<void> } {
   const watcher = watch(dir);
   let deadline: ReturnType<typeof setTimeout> | undefined;
   const lookers: (() => void)[] = [];
   const result = new Promise<T>((resolve, reject) => {
-    // whether this look settled the result
     const look = (): boolean => {
       try {
         const value = completeJson<T>(path);
@@ -68,11 +61,9 @@ function watchJson<T>(dir: string, path: string, ms: number): { result: Promise<
     });
     look();
   });
-  // A waiting host has no child and therefore no result; still observe a later rejection on failure.
   void result.catch(() => {});
   return {
     result,
-    // the next look at the file, or the result's failure if that comes first
     looked: () => Promise.race([new Promise<void>((resolve) => lookers.push(resolve)), result.then(() => {})]),
     close: async () => {
       clearTimeout(deadline);
@@ -90,11 +81,9 @@ it("waits past a half-written result until the whole file is renamed into place 
   try {
     let settled = false;
     void waiting.result.then(() => { settled = true; }, () => { settled = true; });
-    // what the hosted runner saw: the name already there, its content not yet
     const looked = waiting.looked();
     writeFileSync(path, "{\"pid\":");
     await looked;
-    // the watcher has seen the half-written file and is still waiting
     await Promise.resolve();
     expect(settled).toBe(false);
     writeFileSync(`${path}.tmp`, JSON.stringify({ pid: 7 }));
@@ -130,14 +119,11 @@ it.skipIf(!onWindows)("waits when Windows accepts an interactive task without ru
   const spawn = Bun.spawn.bind(Bun);
   let failedResult = false;
   const failures: unknown[] = [];
-  // Replay Run returning no instance while the real, fresh task remains Ready/never-run.
-  // Registration, status queries, private payload creation and cleanup still run natively.
   const intercepted = spyOn(Bun, "spawn").mockImplementation(((command: string[], options: Parameters<typeof Bun.spawn>[1]) => {
     const args = [...command];
     const encoded = args.indexOf("-EncodedCommand") + 1;
     let source = Buffer.from(args[encoded]!, "base64").toString("utf16le");
     source = source.replace("try { $running = $registered.Run($null) }", "try { $running = $null }");
-    // A completed launcher error must not be mistaken for a never-run task.
     if (failedResult) source = source.replace("$deadline = [DateTime]::UtcNow.AddSeconds(30)", "$registered = [pscustomobject]@{ State = 3; LastTaskResult = 1 }; $deadline = [DateTime]::UtcNow.AddSeconds(30)");
     args[encoded] = Buffer.from(source, "utf16le").toString("base64");
     return spawn(args, options);
@@ -186,7 +172,6 @@ renameSync(${JSON.stringify(`${resultPath}.tmp`)}, ${JSON.stringify(resultPath)}
 `);
   process.env["OVIS_START_TEST_SECRET"] = sentinel;
   const failures: unknown[] = [];
-  // none: the launcher started no child; running: its result came; unknown: a child may still start or run
   let child: "none" | "running" | "unknown" = "unknown";
   try {
     const started = await startInteractiveWindowsHerdr(process.execPath, [script, "argument with spaces & 한글"], join(legacy, "herdr.log"));
@@ -194,7 +179,6 @@ renameSync(${JSON.stringify(`${resultPath}.tmp`)}, ${JSON.stringify(resultPath)}
       child = "none";
       expect(existsSync(resultPath)).toBe(false);
     } else {
-      // The launcher already exited, but this child's watch still runs in the desktop session.
       const result = await waiting.result;
       child = "running";
       expect(result.session).toBeGreaterThan(0);
@@ -207,17 +191,12 @@ renameSync(${JSON.stringify(`${resultPath}.tmp`)}, ${JSON.stringify(resultPath)}
   try {
     await waiting.close();
     if (previous === undefined) delete process.env["OVIS_START_TEST_SECRET"]; else process.env["OVIS_START_TEST_SECRET"] = previous;
-    // The child ends itself on its stop file: nothing is signalled by the pid it wrote, which by now may be another
-    // process's. The fixture is removed only once no child can still need the file: none was started, or the running
-    // one said it saw it. Otherwise the file and the fixture stay, so a child that runs or starts later still finds it
-    // (at once, right after its watch is in place). Its watch keeps root busy until it exits, which the removal waits out.
     const acknowledged = child === "running" ? watchJson<Record<string, never>>(root, stoppedPath, 20_000) : undefined;
     writeFileSync(stopPath, "");
     if (acknowledged) {
       try { await acknowledged.result; child = "none"; } finally { await acknowledged.close(); }
     }
     if (child !== "none") throw new Error(`${root} is kept with its stop file: a child that did not say it stopped may still run or start`);
-    // Remove the junction itself before recursively cleaning its target fixture.
     await rm(legacy, { force: true, recursive: true });
     // the child exits by itself now, in the desktop session: a slow hosted runner gets more than the 5 s a kill needed
     const cleanupBy = Date.now() + 20_000;
@@ -238,13 +217,11 @@ it.skipIf(!onWindows)("stops skill discovery at the user's home whatever its let
   const before = process.env["USERPROFILE"];
   try {
     process.env["USERPROFILE"] = home.toLowerCase();
-    // home is itself a repository: a folder under it with no .git of its own must not reach it
     mkdirSync(join(home, ".git"));
     const cwd = join(home.toUpperCase(), "work", "sub");
     mkdirSync(cwd, { recursive: true });
     expect(ancestorsToRepoRoot(cwd)).toEqual([cwd]);
     expect(ancestorsToRepoRoot(home.toUpperCase())).toEqual([]);
-    // and a folder above home in another case is not a project of its own either
     expect(ancestorsToRepoRoot(dirname(home).toUpperCase())).toEqual([]);
   } finally {
     if (before === undefined) delete process.env["USERPROFILE"]; else process.env["USERPROFILE"] = before;
@@ -284,7 +261,6 @@ it.skipIf(!onWindows)("keeps the bridges in the migration junction's target, rea
   const legacy = join(home, ".config", "herdr-web-ui");
   try {
     process.env["USERPROFILE"] = home;
-    // not migrated: the legacy folder, made or not
     expect(bridgeRegistry()).toBe(join(legacy, "bridges"));
     const target = join(home, ".config", "ovis");
     mkdirSync(target, { recursive: true });
@@ -350,18 +326,14 @@ for (const migrated of [false, true]) {
       const inspection = await windowsHost.inspect(ssh, session);
       expect(inspection.registryDir).toBe(join(legacy, "bridges"));
       const descriptor = { pid: 2147483647, port: 1, token: "fixture", socket_path: "C:\\Users\\홍길동\\herdr.sock", bridge_protocol: 1, bundle_version: REMOTE_BUNDLE_VERSION };
-      // UTF-8 without a BOM, as the bridge writes it: a non-ASCII profile must read back unchanged (#3852)
       writeFileSync(join(registry, "fixture[1].json"), JSON.stringify(descriptor));
       expect(await windowsHost.descriptors(ssh)).toEqual([descriptor]);
       expect((await windowsHost.inspect(ssh, session)).descriptors).toEqual([descriptor]);
       await windowsHost.stop(ssh, descriptor.pid);
       expect(existsSync(join(registry, "fixture[1].json"))).toBe(false);
-      // the bundle's server, compiled as the bundle's is: the launcher runs `ovis-server.exe remote`
       mkdirSync(inspection.runtimeDir, { recursive: true });
       const standIn = join(home, "stand-in.ts");
       const startedPath = join(home, "started.json");
-      // the log line (the launcher makes stdout the log) is written before started.json, and started.json appears whole
-      // under its name (#2165): once it can be read, both are there
       writeFileSync(standIn, `import { renameSync, writeFileSync, writeSync } from "node:fs";
 writeSync(1, "bridge log line\\n");
 writeFileSync(${JSON.stringify(`${startedPath}.tmp`)}, JSON.stringify({ session: process.env.HERDR_REMOTE_SESSION ?? "", cwd: process.cwd(), entry: process.argv[2] }));
@@ -369,13 +341,10 @@ renameSync(${JSON.stringify(`${startedPath}.tmp`)}, ${JSON.stringify(startedPath
 `);
       expect(Bun.spawnSync([process.execPath, "build", "--compile", standIn, "--outfile", join(inspection.runtimeDir, "ovis-server.exe")], { stdout: "ignore", stderr: "inherit" }).exitCode).toBe(0);
       writeFileSync(join(registry, files.status), "interactive_failed: stale attempt");
-      // what the started bridge leaves, watched before the start; not its launcher's process, which can be gone before
-      // anything looks it up
       const started = watchJson<{ session: string; cwd: string; entry: string }>(home, startedPath, 30_000);
       try {
         await windowsHost.start(ssh, { session, herdrPath: "C:\\herdr.exe", inspection });
         const result = await started.result.catch((error: unknown) => {
-          // a stand-in that failed said why in the log (the launcher sends its stderr there too)
           let log: string;
           try { log = readFileSync(join(registry, files.log), "utf8"); } catch (readError) { log = `not read: ${(readError as Error).message}`; }
           throw new Error(`${(error as Error).message}\nbridge log: ${log}`, { cause: error });
@@ -393,7 +362,6 @@ renameSync(${JSON.stringify(`${startedPath}.tmp`)}, ${JSON.stringify(startedPath
       writeFileSync(join(registry, files.status), "interactive_failed: this attempt");
       expect(await windowsHost.startupNotice!(ssh, session)).toBe("this attempt");
     } catch (error) { failures.push(error); }
-    // after the test's own error, never in its place
     try {
       if (migrated && existsSync(legacy)) await runPowerShell(`[IO.Directory]::Delete(${psQuote(legacy)})`);
       // The launcher and the stand-in may still be exiting once started.json is there, holding the log or the
@@ -414,8 +382,6 @@ it.skipIf(!onWindows)("installs with native tar when PATH shadows tar, and prese
     (await windowsPowerShell(`$env:LOCALAPPDATA=${psQuote(home)}; $env:PATH=${psQuote(join(home, "shadow"))}+';'+$env:PATH; ${script}`)).trim();
   const ssh = { runPowerShell, upload: async (source: string, destination: string) => copyFileSync(source, destination) } as unknown as SshConnection;
   try {
-    // the bundle's server, compiled as the bundle's is: the install runs `ovis-server.exe remote --help` and refuses a
-    // runtime it does not answer with exit 0; any other command fails
     mkdirSync(join(home, "input"), { recursive: true });
     const standIn = join(home, "stand-in.ts");
     writeFileSync(standIn, `process.exit(process.argv[2] === "remote" && process.argv[3] === "--help" && process.argv.length === 4 ? 0 : 2);`);
@@ -439,7 +405,6 @@ it.skipIf(!onWindows)("installs with native tar when PATH shadows tar, and prese
     expect(existsSync(join(home, "herdr-web-ui", `install.${process.pid}`))).toBe(false);
   } finally {
     if (before === undefined) delete process.env["OVIS_BUNDLE_MANIFEST"]; else process.env["OVIS_BUNDLE_MANIFEST"] = before;
-    // Remove the junction separately: the immutable release is cleaned with the fixture.
     if (existsSync(runtime)) await runPowerShell(`[IO.Directory]::Delete(${psQuote(runtime)})`);
     rmSync(home, { recursive: true, force: true });
   }
@@ -450,12 +415,10 @@ it.skipIf(!onWindows)("reads this PC's process table: this process, its parent, 
   const self = rows.find((row) => row.pid === process.pid);
   expect(self).toBeDefined();
   expect(self!.parent).toBe(process.ppid);
-  // ms since 1970, as Date.now() counts: started before now, and not a day ago
   expect(typeof self!.started).toBe("number");
   expect(self!.started!).toBeLessThanOrEqual(Date.now() + 2000);
   expect(self!.started!).toBeGreaterThan(Date.now() - 24 * 60 * 60 * 1000);
   expect((self!.path ?? "").toLowerCase()).toContain("bun");
-  // found from its parent the way a pane's program is found from the pane's shell
   expect(descendantArgv(rows, process.ppid).some((argv) => (argv[0] ?? "").toLowerCase() === (self!.path ?? "").toLowerCase())).toBe(true);
 }, 40_000);
 
@@ -470,7 +433,6 @@ it.skipIf(!onWindows)("keeps a session file inside its store on a real Windows f
     writeFileSync(join(store, "2026-10-01_session", "task.jsonl"), "{}\n");
     expect(root).toContain("\\");
     expect(gjcSessionFile(root, session)).toBe(session);
-    // the drive letter's case is not another place, and a subagent's file stands for its session
     const lower = session[0]!.toLowerCase() + session.slice(1);
     const upper = session[0]!.toUpperCase() + session.slice(1);
     expect(gjcSessionFile(root, lower)).toBe(lower);
@@ -498,7 +460,6 @@ it.skipIf(!onWindows)("reads a Codex rollout path stored with the \\\\?\\ prefix
     expect(codexRolloutPath(`\\\\?\\${path}`, home)).toBe(path);
     expect(codexRolloutPath(path, home)).toBe(path);
     expect(codexRolloutPath(`\\\\?\\${outside}`, home)).toBeNull();
-    // raw `..` segments (join would fold them) that climb from the store to `outside`, which exists
     expect(codexRolloutPath(`\\\\?\\${home}\\sessions\\..\\..\\..\\other.jsonl`, home)).toBeNull();
   } finally { rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
@@ -510,7 +471,6 @@ it.skipIf(!onWindows)("finds Codex's thread under the on-disk casing when herdr 
   const canonical = realpathSync.native(reported);
   const db = new Database(":memory:");
   try {
-    // the two spellings are only one directory to the file system, not to directoryKey
     expect(directoryKey(reported)).not.toBe(directoryKey(canonical));
     db.run("CREATE TABLE threads (id TEXT, cwd TEXT)");
     db.run("INSERT INTO threads VALUES (?, ?)", ["own", `\\\\?\\${canonical}`]);
@@ -537,7 +497,6 @@ it.skipIf(!onWindows)("finds a Claude's own store from the start it records, whi
     mkdirSync(join(store, "sessions"), { recursive: true });
     mkdirSync(join(user, ".claude", "sessions"), { recursive: true });
     const record = (start: string) => writeFileSync(join(store, "sessions", `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: session, procStart: start, kind: "interactive" }));
-    // a millisecond off is another process that had this PID
     record(String(BigInt(procStart) + 10_000n));
     expect(await claudeProcessSession(user, process.pid, store)).toBeNull();
     record(procStart);
@@ -554,7 +513,6 @@ it.skipIf(!onWindows)("gives Claude Code a settings file whose path an npm insta
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ovis-claude-settings-native-")));
   try {
     const json = JSON.stringify({ ultracode: true });
-    // a space in the folder, as a profile's %LOCALAPPDATA% can have
     const dir = join(root, "claude settings");
     const started = agentStartArgs("claude", ["--settings", json], { platform: "win32", dir });
     expect(started[0]).toBe("--settings");
@@ -570,7 +528,6 @@ it.skipIf(!onWindows)("gives Claude Code a settings file whose path an npm insta
     const shim = join(root, "claude.ps1");
     // with a BOM, or Windows PowerShell reads a path outside ASCII in the ANSI code page
     writeFileSync(shim, `\uFEFF& ${psQuote(process.execPath)} ${psQuote(program)} $args\n`);
-    // herdr's launch of a PowerShell script, once with the file's path and once with the JSON itself
     const script = [path, json].map((value) => `& ${psQuote(shim)} '--settings' ${psQuote(value)}`).join("\n");
     // as in the bundle install case: started from PowerShell 7, its module path would come along
     const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toLowerCase() !== "psmodulepath"));
@@ -621,18 +578,15 @@ it.skipIf(!onWindows)("runs nothing an argument holds when herdr-core's PowerShe
           started.push(args);
         }
         rmSync(seen, { force: true });
-        // typed as the start types it: `& 'claude' …`, the name found on the PATH
         const child = Bun.spawn([`${shell}.exe`, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(lines.join("\n"), "utf16le").toString("base64")],
           { cwd: root, stdout: "ignore", stderr: "pipe", env: { ...env, Q: '"', Path: `${dir};${process.env["Path"] ?? process.env["PATH"] ?? ""}` } });
         const [stderr] = await Promise.all([new Response(child.stderr).text(), child.exited]);
         const runs = existsSync(seen) ? readFileSync(seen, "utf8").trim().split(/\r?\n/).map((text) => JSON.parse(text) as string[]) : [];
-        // nothing ran but the agent, which got each argument as it was
         expect({ shell, dir, ran: readdirSync(root).filter((name) => name.startsWith("pwned")) }).toEqual({ shell, dir, ran: [] });
         expect({ shell, dir, runs, stderr: runs.length === started.length ? "" : stderr }).toEqual({ shell, dir, runs: started, stderr: "" });
         if (dir === npm) letThrough.push({ shell, started });
       }
     }
-    // the start lets through each one cmd reads as text, and no other
     expect(letThrough).toEqual(shells.map((shell) => ({ shell, started: passed })));
   } finally { rmSync(root, { recursive: true, force: true }); }
 }, 120_000);

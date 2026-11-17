@@ -23,7 +23,6 @@ function shareOf(path: string): string | null | undefined {
   return host === "?" || host === "." ? null : `${host}\\${share}`.toLowerCase();
 }
 
-/** The shares the PC's panes work on, as herdr's last snapshot named their folders (notePaneFolders). */
 let paneShares: ReadonlySet<string> = new Set();
 
 /**

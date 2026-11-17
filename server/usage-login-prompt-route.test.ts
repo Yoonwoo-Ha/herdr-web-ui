@@ -65,7 +65,6 @@ describe("a first sign-in, in the agent's own home", () => {
       expect(refused.status).toBe(409);
       expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("account_confirmation_required");
       expect((await ask({ provider: "codex", default: true, name: "work" })).status).toBe(400);
-      // a sign-in it cannot read is still one: unreadable, it is asked about all the same
       rmSync(join(root, ".codex", "auth.json"));
       writeFileSync(join(root, ".codex", "auth.json"), "{}", { mode: 0o000 });
       const unreadable = await ask({ provider: "codex", default: true });

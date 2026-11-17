@@ -12,7 +12,6 @@ import { extname, join } from "node:path";
 import { USER_FONTS_PATH, type UserFont, type UserFontList } from "../shared/user-fonts.ts";
 import { errorResponse, jsonResponse, setRequestRoute } from "./http.ts";
 
-/** A CJK font as woff2 is a few MB, as ttf about 20: past this a phone would wait on every font change. */
 export const USER_FONT_MAX_BYTES = 32 * 1024 * 1024;
 const USER_FONTS_MAX = 64;
 
@@ -43,7 +42,6 @@ async function listUserFonts(dir: string): Promise<UserFont[]> {
   try {
     names = await readdir(dir);
   } catch (error) {
-    // no folder is the default: nothing to serve
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
@@ -63,7 +61,6 @@ function fileOf(pathname: string): string | null | undefined {
   try {
     return decodeURIComponent(pathname.slice(USER_FONTS_PATH.length + 1));
   } catch {
-    // a malformed escape names no file of the list
     return undefined;
   }
 }
@@ -78,7 +75,6 @@ export async function handleUserFontsRequest(request: Request, pathname: string,
     const font = fonts.find((candidate) => candidate.file === file);
     const missing = () => jsonResponse({ error: { code: "not_found", message: "no such font" } }, 404);
     if (!font) return missing();
-    // opened without following a link and checked again as opened: a link swapped in after the listing is refused
     const handle = await open(join(dir, font.file), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ELOOP" || error.code === "ENOENT") return null;
       throw error;
@@ -87,7 +83,6 @@ export async function handleUserFontsRequest(request: Request, pathname: string,
     try {
       const stat = await handle.stat();
       if (!stat.isFile() || stat.size > USER_FONT_MAX_BYTES) return missing();
-      // kept for good only under the font's version, which the client puts in the address: a changed file is a new address
       const versioned = new URLSearchParams(search).get("v") === font.version;
       return new Response(await handle.readFile(), {
         headers: { "content-type": FONT_TYPES[extname(font.file).toLowerCase()]!, "cache-control": versioned ? "private, max-age=31536000, immutable" : "private, no-cache" },

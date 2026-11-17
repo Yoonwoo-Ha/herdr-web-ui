@@ -27,6 +27,7 @@ function rgb(body: string): string | undefined {
   return `#${parts.slice(1).map((part) => part.slice(0, 2).padEnd(2, part[0]!)).join("").toLowerCase()}`;
 }
 
+/** Ported from `hc attach`'s take_replies. */
 export function takeReplies(input: string, display: Display): { rest: string; focus: boolean[] } {
   let rest = "";
   const focus: boolean[] = [];

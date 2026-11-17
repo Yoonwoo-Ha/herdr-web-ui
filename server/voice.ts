@@ -18,7 +18,6 @@ const FIELDS = ["api_key", "base_url", "transcribe_model", "polish_model"] as co
 type Field = typeof FIELDS[number];
 type VoiceFile = Partial<Record<Field, string>>;
 
-/** without a language from the client: the app's first users dictate Korean with English code terms */
 const DEFAULT_LANGUAGE = "ko";
 /** OpenAI-compatible servers may cap a multipart body's fields (codex-lb refuses more than 32) */
 const PROVIDER_FORM_FIELDS_MAX = 32;
@@ -49,7 +48,6 @@ const TYPE_EXTENSIONS: Record<string, string> = {
   "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav", "audio/mpeg": "mp3", "audio/flac": "flac",
 };
 const CONTAINER_TYPES = new Set(["video/webm", "video/mp4", "application/octet-stream", ""]);
-/** multipart framing around the clip */
 const FORM_SLACK_BYTES = 64 * 1024;
 const MESSAGE_MAX_CHARS = 300;
 
@@ -64,12 +62,10 @@ const text = (value: unknown): string | null => typeof value === "string" && val
 
 export interface VoiceClip {
   audio: Blob;
-  /** `audio.<ext>` with the browser's container */
   filename: string;
   mode: VoiceMode;
   polish: boolean;
   keywords: string[];
-  /** the speaker's language and English, for the code terms said in it */
   languages: string[];
 }
 
@@ -122,7 +118,7 @@ function scrub(message: string, key: string): string {
 async function providerFailure(response: Response, key: string): Promise<VoiceError> {
   const raw = await response.text();
   let detail = raw.trim();
-  try { detail = text(record(record(JSON.parse(raw))["error"])["message"]) ?? detail; } catch { /* not JSON: the raw text is the detail */ }
+  try { detail = text(record(record(JSON.parse(raw))["error"])["message"]) ?? detail; } catch {}
   const message = scrub(`The provider answered ${response.status}${detail ? `: ${detail}` : ""}`, key);
   return new VoiceError(response.status === 401 || response.status === 403 ? "provider_auth" : "provider_error", 502, message);
 }
@@ -131,10 +127,6 @@ function record(value: unknown): Record<string, unknown> {
   return isJsonObject(value) ? value : {};
 }
 
-/**
- * The transcript from the provider's SSE answer, calling `onDelta` per piece as it arrives. A
- * line may be split across chunks. The `done` event's text wins over the joined pieces.
- */
 async function readTranscript(body: ReadableStream<Uint8Array> | null, onDelta: (delta: string) => void): Promise<string> {
   if (!body) return "";
   const reader = body.getReader();
@@ -171,7 +163,6 @@ async function readTranscript(body: ReadableStream<Uint8Array> | null, onDelta: 
   return final ?? joined;
 }
 
-/** The checked multipart body of POST /api/voice/transcribe. */
 export function parseClip(form: FormData): VoiceClip {
   const audio = form.get(VOICE_FORM.audio);
   if (audio === null || typeof audio === "string") throw new VoiceError("invalid_audio", 400, "Send the recording as the audio part");
@@ -196,7 +187,6 @@ export function parseClip(form: FormData): VoiceClip {
     try { parsed = JSON.parse(rawKeywords); } catch { throw invalid("keywords must be a JSON array of strings"); }
   }
   if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === "string")) throw invalid("keywords must be a JSON array of strings");
-  // an overlong term is dropped, not cut: half a path would steer the transcript wrong
   const keywords = [...new Set((parsed as string[]).map((item) => item.trim()).filter((item) => item && item.length <= VOICE_KEYWORD_MAX_CHARS))]
     .slice(0, VOICE_KEYWORDS_MAX);
 
@@ -264,7 +254,6 @@ export class VoiceService {
     };
   }
 
-  /** `change` is a VoiceConfigUpdate off the wire, checked here; a missing field stays, null removes it. */
   update(change: unknown): VoiceStatus {
     if (!isJsonObject(change)) throw invalid("Send a JSON object");
     const extra = Object.keys(change).find((field) => !(FIELDS as readonly string[]).includes(field));
@@ -289,11 +278,6 @@ export class VoiceService {
     return this.status();
   }
 
-  /**
-   * Starts the transcription and answers once the provider accepted it: a refusal before that
-   * throws a VoiceError, anything after is an `error` line. `signal` is the client's: when it goes,
-   * the provider's requests are dropped too.
-   */
   async transcribe(clip: VoiceClip, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
     const { key, base, transcribeModel, polishModel } = this.settings(this.read());
     if (!key) throw new VoiceError("voice_not_configured", 409, "Set an OpenAI API key for voice input");
@@ -394,7 +378,6 @@ export async function handleVoiceRequest(request: Request, pathname: string, ser
       if (!service.status().configured) throw new VoiceError("voice_not_configured", 409, "Set an OpenAI API key for voice input");
       const limit = VOICE_MAX_AUDIO_BYTES + FORM_SLACK_BYTES;
       if (Number(request.headers.get("content-length") ?? 0) > limit) throw tooLarge();
-      // a chunked body names no length: it is counted as it arrives and dropped past the limit
       const body = await readLimited(request, limit);
       let form: FormData;
       try { form = await new Response(body, { headers: { "content-type": request.headers.get("content-type") ?? "" } }).formData(); }

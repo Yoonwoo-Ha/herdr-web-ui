@@ -6,10 +6,8 @@ import * as directories from "./directories.ts";
 import * as herdr from "./herdr/client.ts";
 import { handleWorkspaceRequest, INVENTORY_BUDGET_MS, MAX_ENV_BYTES, MAX_ENV_VARS } from "./workspace-routes.ts";
 
-/** each herdr create, launch, queued message and broadcast a create makes, in the order made */
 const calls: string[] = [];
 const made = (workspace: string) => ({ workspace: { workspace_id: workspace }, tab: { workspace_id: workspace, tab_id: `${workspace}:t1` }, root_pane: { pane_id: `${workspace}:p1` } });
-// no herdr answers here: the create calls stand in for it, and the launch starts nothing
 beforeEach(() => {
   calls.length = 0;
   spyOn(herdr, "tabCreate").mockImplementation(async () => { calls.push("tab.create"); return made("w1") as never; });
@@ -55,7 +53,6 @@ describe("GET /api/worktree/inventory reads several workspaces' checkouts in one
   it("stops asking herdr once the read's budget is spent, answering the rest as timed out", async () => {
     let now = 1_000_000;
     spyOn(Date, "now").mockImplementation(() => now);
-    // a herdr that answers, slowly: each call takes most of the budget
     const list = spyOn(herdr, "worktreeList").mockImplementation(async (workspaceId) => { now += INVENTORY_BUDGET_MS * 0.6; return { source: { repo_key: workspaceId }, worktrees: [] } as never; });
     const body = (await (await inventory(["w1", "w2", "w3"])).json()) as { entries: { workspace_id: string; listing?: unknown; error?: { status: number; code: string } }[] };
     expect(body.entries.map((entry) => [entry.workspace_id, entry.listing ? "listing" : `${entry.error?.status} ${entry.error?.code}`])).toEqual([["w1", "listing"], ["w2", "listing"], ["w3", "502 timeout"]]);
@@ -75,7 +72,6 @@ describe("GET /api/worktree/inventory reads several workspaces' checkouts in one
 });
 
 describe("a create passes the request's env to the new pane (#2745)", () => {
-  /** what each herdr create was asked for */
   const asked = () => [herdr.tabCreate, herdr.workspaceCreate].flatMap((create) => (create as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((call) => call[0]));
 
   it.each([
@@ -119,8 +115,6 @@ describe("a create passes the request's env to the new pane (#2745)", () => {
 });
 
 describe("a create answers after the roster is told", () => {
-  // the page draws a new pane only once the roster lists it: without this push, the roster is read
-  // only after the collector's debounced pane.created, about 500 ms after herdr made the pane
   it.each([
     ["/api/tab/create", { workspace_id: "w1" }, ["tab.create", "session-changed", "answer"]],
     ["/api/tab/create", { workspace_id: "w1", agent: { kind: "claude" } }, ["tab.create", "launch", "session-changed", "answer"]],
@@ -132,7 +126,6 @@ describe("a create answers after the roster is told", () => {
   ] as const)("%s %j", async (path, body, order) => {
     const response = await post(path, body);
     expect(response.status).toBe(200);
-    // once, and after the launch: a roster read beside the launch's own herdr calls slows both
     expect(calls).toEqual([...order]);
   });
 });

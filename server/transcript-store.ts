@@ -33,8 +33,7 @@ export function authorizedTranscript(path: string, sessionDir: string): { path: 
 const absent = (error: unknown): boolean => error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT";
 
 /**
- * A reported session not written yet. pi and omp write the session file only after the first
- * answer (pi's SessionManager waits for an assistant message). Only an absent JSONL file whose
+ * Only an absent JSONL file whose
  * nearest existing ancestor is a directory inside the resolved store counts; dangling links never do.
  */
 export function unwrittenSession(path: string, sessionDir: string): { id: string; path: string } | null {
@@ -54,7 +53,6 @@ export function unwrittenSession(path: string, sessionDir: string): { id: string
       return { id: basename(path, ".jsonl"), path: join(real, relative(dir, path)) };
     } catch (error) {
       if (!absent(error) || dirname(dir) === dir) return null;
-      // A dangling link is not a directory still to come: the agent cannot write through it.
       try { lstatSync(dir); return null; } catch (missing) { if (!absent(missing)) return null; }
     }
   }

@@ -18,7 +18,6 @@ const KEY = `oauth|account:${ACCOUNT}|email:me@example.com|org:org-1`;
 const SIGN_IN_SECRET = "sentinel-access-token-of-oh-my-pi";
 const CLAUDE_USAGE = "https://api.anthropic.com/api/oauth/usage";
 
-/** `usage_history` as Oh My Pi 18.14 to 18.19 create it, beside the table that holds its sign-ins. */
 const SCHEMA = `
   CREATE TABLE usage_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at INTEGER NOT NULL, provider TEXT NOT NULL, account_key TEXT NOT NULL,
@@ -67,7 +66,6 @@ function insert(db: Database, rows: readonly Row[]): void {
   statement.finalize();
 }
 
-/** A store Oh My Pi has closed: only its database file is left in the folder. */
 function store(rows: readonly Row[], path = join(home, ".omp", "agent", "agent.db"), schema = SCHEMA): string {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true });
@@ -151,7 +149,6 @@ describe("Oh My Pi's record of Claude's limits", () => {
 
   it("gives an account by its other key when the latest report under the key read last holds no limit the meters show", () => {
     store([
-      // read last, under the account's second sign-in: extra usage only
       { at: NOW - 2 * MINUTE, limit: "anthropic:extra", label: "Claude Extra Usage", used: 0.5, key: `oauth|account:${ACCOUNT}|org:org-2` },
       { at: NOW - 9 * MINUTE, limit: "anthropic:5h", used: 0.4 },
     ]);
@@ -172,7 +169,6 @@ describe("Oh My Pi's record of Claude's limits", () => {
   it("skips a row whose values are not what Oh My Pi writes", () => {
     store([
       latest("anthropic:5h", 0.4, { account: OTHER, key: `oauth|account:${OTHER}` }),
-      // epoch seconds, a time still to come, no account, a number that is text, a name past any real one
       { at: Math.floor(NOW / 1000), limit: "anthropic:5h" },
       { at: NOW + 2 * MINUTE, limit: "anthropic:5h" },
       latest("anthropic:5h", 0.4, { account: null }),
@@ -204,7 +200,6 @@ describe("where Oh My Pi keeps its store", () => {
     store([latest("anthropic:5h", 0.4, { account: OTHER, key: `oauth|account:${OTHER}` })], join(home, ".omp-work", "agent", "agent.db"));
     expect(found({ PI_CONFIG_DIR: ".omp-work" })).toEqual([OTHER]);
     expect(found({ PI_CONFIG_DIR: "" })).toEqual([ACCOUNT]);
-    // the agent folder, when it is named, still decides alone
     expect(found({ PI_CONFIG_DIR: ".omp-work", PI_CODING_AGENT_DIR: join(home, "nothing-here") })).toEqual([]);
   });
 

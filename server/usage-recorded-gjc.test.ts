@@ -16,12 +16,10 @@ const ACCOUNT = "11111111-2222-4333-8444-555555555555";
 const OTHER = "99999999-8888-4777-8666-555555555555";
 const ORG = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const PREFIX = "usage_cache:report:anthropic:default:";
-/** the key Gajae Code keeps a sign-in's report under: its kind, then the account, email and organization it signed in to */
 const KEY = `${PREFIX}oauth|account:${ACCOUNT}|email:me@example.com|org:${ORG}`;
 const SIGN_IN_SECRET = "sentinel-access-token-of-gajae-code";
 const CLAUDE_USAGE = "https://api.anthropic.com/api/oauth/usage";
 
-/** `cache` as Gajae Code 0.18 to 0.20 create it (packages/ai/src/auth-storage.ts), beside the table that holds its sign-ins. */
 const SCHEMA = `
   CREATE TABLE cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER NOT NULL);
   CREATE INDEX idx_cache_expires ON cache(expires_at);
@@ -59,7 +57,6 @@ function recordedContext(env: Record<string, string | undefined> = {}): Recorded
   return { home, env, platform: "linux", now: () => now };
 }
 
-/** One limit as Gajae Code's Claude reader writes it (packages/ai/src/usage/claude.ts). */
 function limit({ id, label = "Claude", used = 0.5, resets = NOW + 3 * HOUR }: Limit): unknown {
   const week = id.startsWith("anthropic:7d");
   return {
@@ -71,7 +68,6 @@ function limit({ id, label = "Claude", used = 0.5, resets = NOW + 3 * HOUR }: Li
   };
 }
 
-/** A report as Gajae Code keeps it: its own account id names the organization the limits belong to. */
 function report(at: number, limits: readonly Limit[], metadata: Record<string, unknown> = { endpoint: CLAUDE_USAGE, accountId: ORG, email: "me@example.com", orgId: ORG }): unknown {
   return { provider: "anthropic", fetchedAt: at, limits: limits.map(limit), metadata };
 }
@@ -87,7 +83,6 @@ function put(db: Database, entries: readonly Entry[]): void {
   statement.finalize();
 }
 
-/** A store Gajae Code has closed: only its database file is left in the folder. */
 function store(entries: readonly Entry[], path = join(home, ".gjc", "agent", "agent.db"), schema = SCHEMA): string {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true });
@@ -103,7 +98,6 @@ function store(entries: readonly Entry[], path = join(home, ".gjc", "agent", "ag
 
 const read = () => gjcRecorded.read(recordedContext());
 
-/** Oh My Pi's record of an account's session limit, read at `readAt` */
 function ompStoreOf(account: string, email: string, readAt: number, used: number): void {
   const path = join(home, ".omp", "agent", "agent.db");
   mkdirSync(dirname(path), { recursive: true });
@@ -210,7 +204,6 @@ describe("Gajae Code's record of Claude's limits", () => {
     store([{ readAt: NOW - 30 * HOUR }]);
     expect(read()).toEqual([]);
     rmSync(join(home, ".gjc"), { recursive: true });
-    // kept on: Gajae Code stores its last good report again each time a later read fails
     store([{ readAt: NOW - 30 * HOUR, expiresAtSeconds: Math.floor((NOW + HOUR) / 1000) }]);
     expect(read().map((reading) => reading.readAt)).toEqual([NOW - 30 * HOUR]);
   });
@@ -229,11 +222,9 @@ describe("where Gajae Code keeps its store", () => {
     const at = (env: Record<string, string>) => gjcRecorded.read(recordedContext(env)).map((reading) => reading.accountId);
     expect(at({ GJC_CONFIG_DIR: "team", PI_CONFIG_DIR: ".pi-config" })).toEqual(["renamed"]);
     expect(at({ PI_CONFIG_DIR: ".pi-config" })).toEqual(["older-name"]);
-    // as Gajae Code joins it: trimmed, and beneath the home even where it looks absolute
     expect(at({ GJC_CONFIG_DIR: " /team " })).toEqual(["renamed"]);
     expect(at({ GJC_CONFIG_DIR: "../elsewhere" })).toEqual(["default"]);
     expect(at({ GJC_CONFIG_DIR: "../elsewhere", PI_CONFIG_DIR: ".pi-config" })).toEqual(["older-name"]);
-    // the agent folder, when it is named, still decides alone
     expect(at({ GJC_CONFIG_DIR: "team", GJC_CODING_AGENT_DIR: join(home, "nothing-here") })).toEqual([]);
   });
 
@@ -352,7 +343,6 @@ describe("Claude's meter with Gajae Code's record", () => {
 });
 
 describe("the report gjc 0.18.12 wrote itself", () => {
-  // captured from the real binary (`gjc accounts check anthropic --json`), signed in to a made-up account, a stand-in answering for Anthropic
   const row = JSON.parse(readFileSync(new URL("./fixtures/gjc-0.18.12-usage-cache-row.json", import.meta.url), "utf8")) as { key: string; value: string; expires_at: number };
   const wrote = (JSON.parse(row.value) as { value: { fetchedAt: number; limits: { window: { resetsAt: number } }[] } }).value;
   const OWN = "0b0b0b0b-1111-4222-8333-444444444444";

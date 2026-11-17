@@ -19,7 +19,6 @@ const withDevices = (dir: string): string => {
   writeFileSync(join(dir, "devices.json"), "{\"paired\":1}");
   return dir;
 };
-/** What every bridge start leaves under the old name (bridge.ts registerBridge), a remote bridge's own state included. */
 const withRegistry = (dir: string): string => {
   mkdirSync(join(dir, "bridges", "remote.json.state"), { recursive: true });
   writeFileSync(join(dir, "bridges", "local.json"), "{\"port\":7317}");
@@ -33,7 +32,6 @@ describe("the state dir from before the rename", () => {
     const config = configHome();
     const root = join(config, "checkout");
     const next = withDevices(join(config, "ovis"));
-    // its own state: not a copy of the new dir's file, which the merge leaves there (linkable)
     const legacy = withDevices(join(config, "herdr-web-ui"));
     writeFileSync(join(legacy, "devices.json"), "{\"paired\":2}");
     const port = 7317;
@@ -54,10 +52,8 @@ describe("the state dir from before the rename", () => {
     const next = withDevices(join(config, "ovis"));
     const legacy = withRegistry(join(config, "herdr-web-ui"));
     expect(defaultStateDir({ XDG_CONFIG_HOME: config })).toBe(next);
-    // a bridge is told its dir (OVIS_STATE_DIR) and links it all the same
     moveLegacyStateDir({ XDG_CONFIG_HOME: config, OVIS_STATE_DIR: next });
     expect(lstatSync(legacy).isSymbolicLink()).toBe(true);
-    // what a launcher from before the fix compares: the old name is the new dir, so it takes the new one
     expect(realpathSync(legacy)).toBe(realpathSync(next));
     expect(readFileSync(join(legacy, "bridges", "local.json"), "utf8")).toBe("{\"port\":7317}");
     expect(readFileSync(join(next, "bridges", "remote.json.state", "devices.json"), "utf8")).toBe("{\"remote\":1}");
@@ -93,7 +89,6 @@ describe("the state dir from before the rename", () => {
     const denied = spyOn(fs, "symlinkSync").mockImplementation(() => { throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" }); });
     const said = spyOn(console, "error").mockImplementation(() => {});
     try { linkLegacyRegistry(legacy, next); } finally { denied.mockRestore(); said.mockRestore(); }
-    // the old dir is still there with its registry, where the server merge leaves a closed copy of the devices
     expect(lstatSync(legacy).isDirectory()).toBe(true);
     expect(readFileSync(join(legacy, "bridges", "local.json"), "utf8")).toBe("{\"port\":7317}");
     expect(existsSync(join(next, "bridges"))).toBe(false);
@@ -110,12 +105,10 @@ describe("the state dir from before the rename", () => {
     });
     const said = spyOn(console, "error").mockImplementation(() => {});
     try { linkLegacyRegistry(legacy, next); } finally { denied.mockRestore(); said.mockRestore(); }
-    // still there, empty, so the server's merge finds it (and leaves its closed copy of the devices in it)
     expect(lstatSync(legacy).isDirectory()).toBe(true);
     expect(fs.readdirSync(legacy)).toEqual([]);
     expect(defaultStateDir({ XDG_CONFIG_HOME: config })).toBe(next);
     expect(fs.readdirSync(config).filter((entry) => entry.includes(".link-"))).toEqual([]);
-    // the server's merge then finds it, and a bridge registering there after it leaves it gated
     const sibling = siblingStateDir(next, { XDG_CONFIG_HOME: config });
     expect(sibling).toBe(legacy);
     writeFileSync(join(next, "devices.json"), JSON.stringify({ gate_closed_at: "2026-10-25T05:20:00.000Z", devices: [] }));
@@ -129,7 +122,6 @@ describe("the state dir from before the rename", () => {
     const next = withDevices(join(config, "ovis"));
     mkdirSync(join(next, "bridges"));
     const legacy = join(config, "herdr-web-ui");
-    // left by a process that is gone: no pid that high runs
     symlinkSync(next, `${legacy}.link-999999999`);
     linkLegacyRegistry(legacy, next);
     expect(lstatSync(legacy).isSymbolicLink()).toBe(true);
@@ -143,7 +135,6 @@ describe("the state dir from before the rename", () => {
     writeFileSync(join(next, "devices.json"), JSON.stringify({ gate_closed_at: "2026-10-25T05:20:00.000Z", devices: [] }));
     mkdirSync(join(next, "bridges"));
     const legacy = join(config, "herdr-web-ui");
-    // a process stopped between removing the old dir and putting its link in its place
     symlinkSync(next, `${legacy}.link-999999999`);
     const rename = fs.renameSync;
     const denied = spyOn(fs, "renameSync").mockImplementation((from, to) => {
@@ -154,7 +145,6 @@ describe("the state dir from before the rename", () => {
     try { linkLegacyRegistry(legacy, next); } finally { denied.mockRestore(); said.mockRestore(); }
     expect(lstatSync(legacy).isDirectory()).toBe(true);
     expect(defaultStateDir({ XDG_CONFIG_HOME: config })).toBe(next);
-    // the server's merge finds it, and a bridge registering there after it leaves it gated
     const sibling = siblingStateDir(next, { XDG_CONFIG_HOME: config });
     expect(sibling).toBe(legacy);
     mergeSiblingState(next, sibling!);
@@ -166,7 +156,6 @@ describe("the state dir from before the rename", () => {
     const config = configHome();
     const next = withDevices(join(config, "ovis"));
     const legacy = withRegistry(join(config, "herdr-web-ui"));
-    // the parent of this test runs: a pid that answers, and is not this process
     writeFileSync(join(legacy, "bridges", "remote.json"), JSON.stringify({ pid: process.ppid }));
     linkLegacyRegistry(legacy, next);
     expect(lstatSync(legacy).isDirectory()).toBe(true);
@@ -181,7 +170,6 @@ describe("the state dir from before the rename", () => {
     const writer = spyOn(fs, "renameSync").mockImplementation((from, to) => {
       rename(from, to);
       if (from === join(legacy, "bridges") && to === join(next, "bridges")) {
-        // a remote bridge saves its registry by path, right after the move
         mkdirSync(join(legacy, "bridges", "remote.json.state"), { recursive: true });
         writeFileSync(join(legacy, "bridges", "remote.json.state", "devices.json"), "{\"renamed\":1}");
       }
@@ -255,7 +243,6 @@ describe("the state dir from before the rename", () => {
     expect(defaultStateDir({ XDG_CONFIG_HOME: config })).toBe(join(config, "ovis"));
     expect(readFileSync(join(config, "ovis", "devices.json"), "utf8")).toBe("{\"paired\":1}");
     expect(lstatSync(join(config, "herdr-web-ui")).isSymbolicLink()).toBe(true);
-    // through the link, an older release still finds the same files
     expect(readFileSync(join(config, "herdr-web-ui", "devices.json"), "utf8")).toBe("{\"paired\":1}");
   });
 
@@ -319,7 +306,6 @@ describe("the state dir from before the rename", () => {
 
 describe("a state dir reached through a symlink", () => {
   // $HOME as /home/<user> -> /data00/home/<user>: the launcher names the state dir through the
-  // link, and Bun runs the installed release's supervisor from the real path (#2029)
   it("is named by an installed release's supervisor as the launcher names it", () => {
     const base = realpathSync(configHome());
     const volume = join(base, "volume", "home");
@@ -354,10 +340,8 @@ describe("a state dir reached through a symlink", () => {
     const state = join(base, "state");
     const outside = join(base, "outside");
     for (const dir of [join(state, "release-good"), join(outside, "release-good"), join(outside, "child"), join(`${state}-other`, "release-x")]) mkdirSync(dir, { recursive: true });
-    // a release-* name that links outside
     symlinkSync(join(outside, "release-good"), join(state, "release-link"));
     expect(releaseIn(state, join(state, "release-link"))).toBeNull();
-    // a link and then `..`: a process started there runs in outside/release-good, not state/release-good
     symlinkSync(join(outside, "child"), join(state, "alias"));
     expect(releaseIn(state, [state, "alias", "..", "release-good"].join(sep))).toBeNull();
     expect(releaseIn(state, [state, ".", "release-good"].join(sep))).toBeNull();
