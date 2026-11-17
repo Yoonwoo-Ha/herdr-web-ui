@@ -12,20 +12,9 @@ const record = (value: unknown): RecordValue => value !== null && typeof value =
 const label = (value: unknown): string | null => typeof value === "string" && value.trim() && !value.startsWith("<") ? value.trim() : null;
 const count = (value: unknown): number => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 
-/** Claude's standard window; a request past it can only have run in the 1M one. */
 const CLAUDE_STANDARD_WINDOW = 200_000;
 const CLAUDE_LONG_WINDOW = 1_000_000;
 
-/**
- * The context a request filled, and the window when the transcript leaves no doubt. Only
- * Codex records its window; a Claude model is known to run in the 1M one once a request
- * went past 200k (and keeps it: a compaction shrinks the use, not the window). A pi model
- * states no window either, so it is looked up in the catalog pi reads its own providers from
- * (`piContextWindow`); unresolved, no ring is drawn rather than one drawn on a guess.
- *
- * `piProvider` is passed only for pi, and its presence is what asks the catalog: the one in
- * `piAgentDir`, the pane's own, or the bridge's when it is not given. A null dir resolves nothing.
- */
 export function contextOf(used: number, model: string | null, window: number | null, before: ConversationMetadata["context"], piProvider?: string | null, piAgentDir?: string | null): ConversationMetadata["context"] {
   if (used === 0) return before;
   if (window !== null) return { used, window };
@@ -40,11 +29,7 @@ export function contextOf(used: number, model: string | null, window: number | n
 // Claude Code's /model answer names the model by its display name: in backticks (2.1.3xx), or bare
 // before "and saved" / "for this session" in older versions (bold ones lose the bold to the strip)
 const CLAUDE_MODEL_SET = /^Set model to (?:`([^`]+)`|(.+?)(?= and saved | for this session|$))/u;
-// only the plain "<Family> <major>[.<minor>]" maps back to an id, the inverse of modelLabel's
-// rule (src/lib/modelName.ts) and of the start screen's (start-screen.ts); its answers name the
-// same id in a 1M window or as the default
 const CLAUDE_MODEL_NAME = new RegExp(`^(${CLAUDE_FAMILY}) (${VERSION})(?:\\.(0|${VERSION}))?(?: \\(1M context\\))?(?: \\(default\\))?$`, "iu");
-// the efforts Claude Code records on its answers (`entry.effort`)
 const CLAUDE_EFFORT = "(low|medium|high|xhigh|max)";
 const CLAUDE_EFFORT_SET = new RegExp(`^Set effort level to ${CLAUDE_EFFORT}(?= |$)`, "u");
 const CLAUDE_MODEL_EFFORT = new RegExp(` with \`${CLAUDE_EFFORT}\` effort$`, "u");
@@ -68,7 +53,6 @@ function claudeCommandSetting(entry: RecordValue): { model: string | null; effor
   const set = CLAUDE_MODEL_SET.exec(said);
   if (set && (command === null || command === "model")) {
     const name = CLAUDE_MODEL_NAME.exec(set[1] ?? set[2] ?? "");
-    // a model it cannot name keeps the pill whole: no new effort beside the old model
     if (!name) return none;
     return { model: `claude-${name[1]!.toLowerCase()}-${name[2]}${name[3] === undefined ? "" : `-${name[3]}`}`, effort: CLAUDE_MODEL_EFFORT.exec(said)?.[1] ?? null };
   }
@@ -76,12 +60,6 @@ function claudeCommandSetting(entry: RecordValue): { model: string | null; effor
   return effort && (command === null || command === "effort") ? { model: null, effort: effort[1]! } : none;
 }
 
-/**
- * The model and effort one Claude record sets, as parseConversationMetadata reads it: an answer names
- * what it ran at (any answer names its model; one that records an effort names that too, even an
- * empty one), and a /model or /effort answer what it set (claudeCommandSetting). An absent field
- * leaves the value as it was.
- */
 export function claudeSetting(value: unknown): { model?: string; effort?: string | null } {
   const entry = record(value);
   const set: { model?: string; effort?: string | null } = {};
@@ -94,11 +72,7 @@ export function claudeSetting(value: unknown): { model?: string; effort?: string
   return set;
 }
 
-/** Read recorded settings, never infer effort from the presence of thinking text.
- * Codex turn_context is a snapshot; omp/omo setting changes are separate events.
- * `piAgentDir` is the agent directory of the pi process that writes the transcript (contextOf). */
 export function parseConversationMetadata(text: string, source: ConversationResponse["source"], before?: ConversationMetadata, piAgentDir?: string | null): ConversationMetadata {
-  // `before` is what the text preceding this one said: the fold picks up where it stopped
   const metadata: ConversationMetadata = before ? { ...before } : { model: null, reasoning_effort: null };
   // Agy's exported rows do not attest the selected model or reasoning effort.
   if (source === "agy-transcript") return metadata;
@@ -132,8 +106,6 @@ export function parseConversationMetadata(text: string, source: ConversationResp
   }
   // Muse names its model, but no effort or context window; most of its lines are skipped unparsed
   if (source === "muse-transcript") return { ...metadata, model: museModel(text, metadata.model) };
-  // pi states the provider on the same records that state usage, so the window is asked for
-  // from what this line says rather than remembered across sources
   let piProvider: string | null = null;
   for (const line of text.split("\n")) {
     let entry: RecordValue;
@@ -148,7 +120,6 @@ export function parseConversationMetadata(text: string, source: ConversationResp
     } else if (source === "codex-transcript") {
       const event = record(entry.payload);
       if (entry.type === "event_msg" && event.type === "token_count") {
-        // what the last request filled, against the window Codex itself states
         const info = record(event.info);
         const window = count(info.model_context_window);
         metadata.context = contextOf(count(record(info.last_token_usage).total_tokens), metadata.model, window || null, metadata.context);
@@ -161,7 +132,6 @@ export function parseConversationMetadata(text: string, source: ConversationResp
       const effort = "effort" in payload ? payload.effort
         : "reasoning_effort" in payload ? payload.reasoning_effort : settings.reasoning_effort;
       if (model) metadata.model = model;
-      // A new complete context without effort must not retain an older value.
       if (model || effort !== undefined) metadata.reasoning_effort = label(effort);
     } else if (source === "omp-transcript" || source === "omo-transcript" || source === "gjc-transcript" || source === "pi-transcript" || source === "cmd-transcript") {
       if (entry.type === "model_change") {
@@ -177,12 +147,10 @@ export function parseConversationMetadata(text: string, source: ConversationResp
       }
       if (entry.type === "thinking_level_change") metadata.reasoning_effort = label(entry.thinkingLevel);
       const message = piMessage(entry) ?? {};
-      // a turn answers at whatever model it ran at, and that is the one the window belongs to
       if (entry.type === "message" && message.role === "assistant" && label(message.model)) {
         metadata.model = label(message.model);
         if (source === "cmd-transcript") piProvider = "commandcode";
         else if (label(message.provider)) piProvider = metadata.provider = label(message.provider)!;
-        // a model this answer names without its provider: the plan it ran on is not known
         else delete metadata.provider;
       }
       if (entry.type === "message" && message.role === "assistant") {
@@ -195,8 +163,6 @@ export function parseConversationMetadata(text: string, source: ConversationResp
           const window = metadata.model === null ? null : cmdContextWindow(metadata.model);
           metadata.context = contextOf(filled, metadata.model, window, metadata.context);
         } else if (source !== "pi-transcript") {
-          // omp, omo and gjc are read the same way but resolve no window, so their figure
-          // stays as it was rather than moving to a rule only pi states
           metadata.context = contextOf(count(usage.input) + count(usage.cacheRead) + count(usage.cacheWrite), metadata.model, null, metadata.context);
           continue;
         } else {
@@ -212,7 +178,6 @@ export function parseConversationMetadata(text: string, source: ConversationResp
       const set = claudeSetting(entry);
       if (set.model !== undefined) metadata.model = set.model;
       if (set.effort !== undefined) metadata.reasoning_effort = set.effort;
-      // a subagent's request fills its own context, not this one's
       if (entry.type === "assistant" && entry.isSidechain !== true && label(message.model)) {
         const usage = record(message.usage);
         metadata.context = contextOf(count(usage.input_tokens) + count(usage.cache_creation_input_tokens) + count(usage.cache_read_input_tokens), metadata.model, null, metadata.context);

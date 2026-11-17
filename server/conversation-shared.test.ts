@@ -11,13 +11,11 @@ it("keeps two interleaved lookups' bindings of one path apart, through their awa
     const path = join(root, "transcript.jsonl");
     writeFileSync(path, "the pane's own\n");
     const own = statSync(path);
-    // an identity no file at the path has: a lookup bound to it is refused at every open
     const other: FileIdentity = { dev: own.dev, ino: own.ino + 1 };
     const opened = (): string => {
       try { closeSync(openBound(path)); return "open"; }
       catch (error) { return error instanceof ConversationReadPending ? "refused" : "error"; }
     };
-    // each step opens the path after an await in which the other lookup's step ran
     function* lookup(rejecting: boolean): Steps<string> {
       const seen: string[] = [];
       for (let step = 0; step < 3; step++) {
@@ -34,9 +32,7 @@ it("keeps two interleaved lookups' bindings of one path apart, through their awa
     ]);
     expect(mine).toBe("open,open,open");
     expect(theirs).toBe("refused,rejected,refused,refused");
-    // nothing stays bound once they answer
     expect(opened()).toBe("open");
-    // nor once a lookup fails
     const failing = function* (): Steps<never> { yield; throw new Error("broken"); };
     await expect(finishAsync(boundSteps([[path, other]], failing()))).rejects.toThrow("broken");
     expect(opened()).toBe("open");

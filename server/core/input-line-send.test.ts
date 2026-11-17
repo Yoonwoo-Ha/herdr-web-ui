@@ -10,7 +10,6 @@ const submitter = () => createSubmitText({
   SUBMIT_DEADLINE_MS: 1000, TYPED_SETTLE_MS: 0, DRAFT_CLEAR_WAIT_MS: 0, DRAFT_CLEAR_POLL_MS: 0, SUBMIT_DELAY_MS: 0,
 });
 
-/** #1174's example: one line of 24 sentences, which typed raw reached Claude Code as only its tail */
 const LONG = Array.from({ length: 24 }, (_, i) => `This is sentence number ${i + 1} of a long dictated message.`).join(" ");
 
 const herdr = () => ({
@@ -49,7 +48,6 @@ it("writes and types nothing of a long input line whose sender may no longer typ
   const { prompt, typed, keys } = herdr();
   let watching = false;
   const authorize = () => { if (watching) throw new client.HerdrError("read_only", "this connection can only watch"); };
-  // herdrRpc asks the guard once connected, right before the prompt is written
   prompt.mockImplementation(async (_target, _text, _socketPath, guard) => {
     watching = true;
     if (guard && !guard()) throw new client.HerdrError("cancelled", "herdr agent.prompt was not sent");
@@ -73,7 +71,6 @@ it("never types a long input line after its prompt failed in a way that may have
 it("sends chat text through the guarded terminal path when a custom dsh agent has no prompt adapter", async () => {
   const { prompt, typed, keys } = herdr();
   spyOn(client, "paneGet").mockResolvedValue({ pane_id: "w:p1", agent: "dsh", agent_status: "idle", cwd: "/tmp", terminal_id: "dsh-test" } as Awaited<ReturnType<typeof client.paneGet>>);
-  // read for a picker of the agent's own (freeAgentPicker): dsh's prompt line is none
   spyOn(client, "paneRead").mockResolvedValue({ text: "dsh> " } as Awaited<ReturnType<typeof client.paneRead>>);
   prompt.mockRejectedValue(new client.HerdrError("agent_not_ready", "custom dsh agent"));
   await submitter()("w:p1", "hello dsh", "hello dsh", Date.now(), false);
@@ -96,8 +93,6 @@ it("refuses a chat message over Devin's folder trust and writes nothing", async 
   expect(keys).not.toHaveBeenCalled();
 });
 
-// the trust can come up after the read before agent.prompt: once herdr refuses the prompt, the paste typed instead
-// would land in it, so the screen is read for a picker again right before that paste
 it("types no chat message after a refused prompt once Devin's folder trust came up", async () => {
   const { prompt, typed, keys } = herdr();
   spyOn(client, "paneGet").mockResolvedValue({ pane_id: "w:p1", agent: "devin", agent_status: "idle", cwd: "/tmp", terminal_id: "devin-test" } as Awaited<ReturnType<typeof client.paneGet>>);

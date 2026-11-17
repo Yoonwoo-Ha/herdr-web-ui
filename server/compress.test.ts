@@ -9,7 +9,6 @@ const json = (size: number) => new Response(JSON.stringify({ turns: "x".repeat(s
 test("gzips a large JSON answer for a browser that takes it, keeping its headers", async () => {
   const response = (await compressResponse(asks(), json(50_000)))!;
   expect(response.headers.get("content-encoding")).toBe("gzip");
-  // the gzipped bytes are another representation: the tag goes weak
   expect(response.headers.get("etag")).toBe('W/"v1"');
   expect(response.headers.get("vary")).toContain("accept-encoding");
   const body = new Uint8Array(await response.arrayBuffer());

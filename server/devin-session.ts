@@ -3,16 +3,13 @@ import { lstatSync, readFileSync, readdirSync, readlinkSync, realpathSync, statS
 import { basename, dirname, join, resolve } from "node:path";
 import { ConversationUnavailable } from "./conversation-shared.ts";
 
-/** A live Devin executable, not a command line which happens to mention one. */
 export function isDevinProcess(argv: readonly string[]): boolean {
   const executable = argv[0] ?? "";
   const exact = /(?:^|[\\/])devin(?:\.exe)?$/;
   return process.platform === "win32" ? exact.test(executable.toLowerCase()) : exact.test(executable);
 }
 
-// Devin's native CLI holds an exclusive flock on session_locks/<session-id>.lock in
-// its ACP child. Read the kernel's lock record, not merely the open descriptor.
-// All of these operations are injectable so races and PID reuse can be exercised.
+// Devin's native CLI holds an exclusive flock on session_locks/<session-id>.lock in its ACP child.
 export interface DevinProc {
   read(path: string): string;
   list(path: string): string[];
@@ -33,16 +30,10 @@ const localProc: DevinProc = {
 export interface DevinLockProof { session: string; binding: string }
 const LOCK_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-/**
- * No lock to read: no session_locks (an older Devin), a store reached through a symlink, no ACP
- * child, or no lock held yet. A caller may then read a session the pane names explicitly; any
- * other failure (two locks, a foreign owner, a replaced file) contradicts one and refuses.
- */
 export class DevinLockMissing extends ConversationUnavailable {
   constructor() { super("no_session_id"); }
 }
 
-/** A stable proof from one pane's outer process and its direct ACP children only. */
 export function devinLockProof(pid: number, dbPath: string, proc: DevinProc = localProc): DevinLockProof {
   const unavailable = () => new ConversationUnavailable("no_session_id");
   const missing = () => new DevinLockMissing();
@@ -86,7 +77,6 @@ export function devinLockProof(pid: number, dbPath: string, proc: DevinProc = lo
       }
     }
     const proofs: DevinLockProof[] = [];
-    // a child that could not be read may hold a lock of its own: the proof is then inconclusive
     let unread = false;
     for (const child of children) {
       let info: ReturnType<typeof processInfo>;
@@ -110,7 +100,6 @@ export function devinLockProof(pid: number, dbPath: string, proc: DevinProc = lo
         const lockLines = fdinfo.split("\n").filter((line) => line.startsWith("lock:"));
         const lock = new RegExp(`^lock:\\s+\\d+: FLOCK\\s+ADVISORY\\s+WRITE\\s+${child}\\s+[0-9a-fA-F]+:[0-9a-fA-F]+:${file.ino}\\s+0\\s+EOF\\s*$`);
         if (lockLines.length !== 1 || !lock.test(lockLines[0]!)) throw unavailable();
-        // the store's own inode too: a database replaced between two proofs changes the binding
         proofs.push({ session, binding: JSON.stringify([pid, outer.start, outer.exe, child, info.start, file.dev, file.ino, fd, db.dev, db.ino]) });
       }
     }
@@ -126,7 +115,6 @@ export function devinLockProof(pid: number, dbPath: string, proc: DevinProc = lo
   }
 }
 
-/** Resolves the live lock or a non-conflicting explicit identity, never by directory recency. */
 export function devinSessionForPane(pane: HerdrPane, panes: HerdrPane[], argv: string[], live?: string): string {
   if (pane.agent !== "devin") throw new ConversationUnavailable("no_session_id");
   const reported = pane.agent_session?.agent === "devin" && pane.agent_session.kind === "id"
@@ -154,7 +142,6 @@ export function devinSessionForPane(pane: HerdrPane, panes: HerdrPane[], argv: s
   const explicit = reported ?? named;
   if (live !== undefined && explicit !== null && explicit !== live) throw new ConversationUnavailable("no_session_id");
   const selected = live ?? explicit;
-  // no lock and no id the pane names: nothing proves which session the terminal shows, so none is guessed
   if (selected === null) throw new ConversationUnavailable("no_session_id", undefined, "devin_current_session_unverified");
   if (panes.some((other) => other.pane_id !== pane.pane_id && other.agent === "devin"
     && other.agent_session?.agent === "devin" && other.agent_session.kind === "id" && other.agent_session.value === selected)) {
