@@ -79,7 +79,6 @@ const forms: NonNullable<AgentCommandSource["forms"]> = {
   "mode:plan": [{ match: "bare", interaction: "none" }],
   "plan-review": [{ match: "bare", interaction: "terminal" }],
   "pr-comments": [{ match: "bare", interaction: "terminal" }],
-  // bare opens the add-dir modal, the compact mode or language selector, or the full-screen context view (dist/cli.mjs dispatchCommand)
   "add-dir": [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
   agents: [{ match: "bare", interaction: "terminal" }],
   changelog: [{ match: "bare", interaction: "terminal" }, { match: { sub: "all" }, interaction: "terminal" }],
@@ -172,7 +171,7 @@ function* skillsAt(root: string, origin: NonNullable<SlashCommand["origin"]>, di
       if (skill.fields["user-invocable"] === false || disabled.has(skill.name)) { yield null; continue; }
       yield { name: skill.name, description: skill.description, source: "skill", origin, id: skill.id };
     }
-  } catch { return; /* a configured root that is not a readable folder lists nothing */ }
+  } catch { return; }
 }
 
 function* commandsAt(root: string, origin: SlashCommand["source"], budget: WalkBudget): Generator<SlashCommand | null> {
@@ -186,7 +185,7 @@ function* commandsAt(root: string, origin: SlashCommand["source"], budget: WalkB
         description: folder ? `${folder} · ${command.description}` : command.description,
       };
     }
-  } catch { return; /* an unreadable command root lists nothing, as Command Code's own loader skips it */ }
+  } catch { return; }
 }
 
 function discover(ctx: AgentCommandContext): SlashCommand[] {
@@ -221,7 +220,6 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
     ...personalRoots,
     ...[...extraRoots].map((path) => ({ path, origin: projectDefinesSkills ? "project" as const : "user" as const })),
   ];
-  // Preserve dispatch precedence in the result, independently of when each root is walked.
   const commandRoots = [
     { path: join(agentDir, "commands"), origin: "user" as const },
     ...directories.map((directory) => ({ path: join(directory, ".commandcode", "commands"), origin: "project" as const })),
@@ -238,25 +236,15 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
   const spent = (): boolean => budget.folders <= 0 || budget.entries <= 0 || budget.reads <= 0;
   const advance = (walks: typeof candidates): typeof candidates => walks.filter((candidate) => {
     const step = candidate.walk.next();
-    // A walk that ends with the bound spent may have stopped short of names it never listed.
     if (step.done) { candidate.cut = spent(); return false; }
-    // Only a command found before the bound was spent is safe: after that the walk may have skipped a
-    // folder or entries holding a same-name command that Command Code reaches first. The bound only
-    // shrinks, so the rows kept are a prefix of the walk with nothing skipped before them.
     if (step.value && !(candidate.command && spent())) candidate.rows.push(step.value);
     return true;
   });
-  // Personal roots get first use of half the work bound, even with thousands of project roots.
-  // Walkers retain their position: unfinished personal roots rejoin the others, and finished or
-  // absent roots retain no capacity. Round-robin checkpoints prevent one large root spending it all.
   const reserved = { folders: budget.folders / 2, entries: budget.entries / 2, reads: budget.reads / 2 };
   let personal = candidates.filter((candidate) => candidate.personal);
-  // Equality still leaves buffered entries to process; stop only when charged work crosses a half.
   while (personal.length && budget.folders >= reserved.folders && budget.entries >= reserved.entries && budget.reads >= reserved.reads) personal = advance(personal);
   let pending = candidates;
   while (pending.length) pending = advance(pending);
-  // Once a command root is cut short, any name may be one of its unlisted commands, which Command Code
-  // runs first: lower-priority command roots list nothing, and skills keep only their /skill: form.
   let unresolved = false;
   const discovered = candidates.flatMap((candidate, index) => {
     if (index >= commandRoots.length) return candidate.rows;

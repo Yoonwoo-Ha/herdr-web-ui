@@ -7,12 +7,10 @@
  */
 import { dlopen, FFIType, toArrayBuffer } from "bun:ffi";
 
-/** openat(2) of a path relative to an open folder, close-on-exec: the descriptor, or minus errno */
 export type OpenAt = (dir: number, path: string, flags: number) => number;
 /** O_CLOEXEC on Linux, which node:fs does not name */
 const CLOEXEC = 0x80000;
 
-/** glibc's getdents64(2), which reads a folder's entries from its descriptor a buffer at a time; null without glibc */
 export function glibcGetdents(): Getdents | null {
   if (process.platform !== "linux") return null;
   try { return dlopen("libc.so.6", { getdents64: { args: [FFIType.i32, FFIType.ptr, FFIType.u64], returns: FFIType.i64 } }).symbols.getdents64; } catch { return null; }
@@ -43,14 +41,8 @@ export function glibcOpenAt(): OpenAt | null {
   };
 }
 
-/** getdents64(2): fills `buffer` with a folder's entries from its descriptor and answers the bytes written, or -1 */
 export type Getdents = (fd: number, buffer: Buffer, length: number) => number | bigint;
 
-/**
- * The names in a folder open at `fd`, each one charged to `budget.entries`; "unread" once it runs out, when getdents64
- * fails, or when what it answers is not well formed (a byte count past the buffer, a record that is empty, runs past
- * the bytes answered, or holds no terminated name)
- */
 export function entriesOf(fd: number, read: Getdents, budget: { entries: number }): string[] | "unread" {
   const buffer = Buffer.alloc(32 * 1024);
   const names: string[] = [];
@@ -65,10 +57,8 @@ export function entriesOf(fd: number, read: Getdents, budget: { entries: number 
       const end = buffer.indexOf(0, at + 19);
       if (length < 20 || at + length > got || end <= at + 19 || end >= at + length) return "unread";
       const name = buffer.toString("utf8", at + 19, end);
-      // a name whose bytes are not UTF-8 cannot be opened by the name decoded: what that file sets is unknown
       if (!Buffer.from(name).equals(buffer.subarray(at + 19, end))) return "unread";
       at += length;
-      // every record counts against the budget, `.` and `..` too
       if (budget.entries-- <= 0) return "unread";
       if (name === "." || name === "..") continue;
       names.push(name);

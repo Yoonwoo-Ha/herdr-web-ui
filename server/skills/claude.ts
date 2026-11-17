@@ -31,7 +31,6 @@ export const terminalBound = [
 /** The reference's menu section: these four are typed in full and never shown in the `/` menu. */
 const agentHidden = ["agents", "heapdump", "setup-bedrock", "setup-vertex"] as const;
 
-/** Every row of the reference table but the removed ones, alphabetical. */
 const REFERENCE: readonly string[] = [
     "add-dir", "advisor", "agents", "artifact-capabilities", "artifact-diagramming", "artifacts", "auto-mode-setup",
     "autocompact", "autofix-pr", "background", "batch", "branch", "btw", "bug", "cd", "chrome", "claude-api",
@@ -59,10 +58,8 @@ const BUNDLED: ReadonlySet<string> = new Set([
   "run-skill-generator", "schedule", "simplify", "slides", "update-config", "verify", "workflow-authoring",
 ]);
 
-/** Claude's own commands, without the bundled skills: an echo of one of these is a command, not a skill. */
 export const claudeCommandNames = (): string[] => REFERENCE.filter((name) => !BUNDLED.has(name));
 
-/** Whitespace and the Unicode default-ignorable code points (soft hyphen, joiners, variation selectors, BOM...). */
 const IGNORED = /[\s\p{Default_Ignorable_Code_Point}]/gu;
 
 /**
@@ -94,7 +91,6 @@ export function comparableName(name: string): string {
 }
 
 const PIN = "2.1.301";
-/** `/review` is the reference's alias of `/code-review`, so both are typed the same way. */
 const reviewForms: CommandForm[] = [{ match: "bare", interaction: "unknown" }];
 const forms: Record<string, CommandForm[]> = {
   model: [{ match: "bare", interaction: "dialog", dialog: "claude-model" }, { match: "other", interaction: "none" }],
@@ -102,23 +98,19 @@ const forms: Record<string, CommandForm[]> = {
   goal: [{ match: "bare", interaction: "dialog", dialog: "claude-goal" }, { match: { sub: "clear" }, interaction: "none" }, { match: "other", interaction: "none" }],
   btw: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }],
   rewind: [{ match: "bare", interaction: "terminal" }],
-  // bare opens a picker; given a value they set it and return
   fast: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
   autocompact: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
   advisor: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
   export: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
-  // `/plan open` opens the plan in the PC's editor
   plan: [{ match: "bare", interaction: "unknown" }, { match: { sub: "open" }, interaction: "terminal" }, { match: "other", interaction: "unknown" }],
   "code-review": reviewForms,
   review: reviewForms,
 };
 
-/** Skills docs: boolean frontmatter takes yes, no, on, off, 1 and 0 in any letter case. */
 function isOff(value: unknown): boolean {
   return value === false || value === 0 || (typeof value === "string" && ["false", "no", "off", "0"].includes(value.trim().toLowerCase()));
 }
 
-/** The canonical file path is the row's identity, so one file reached through links is one row. */
 function canonical(path: string): string {
   try { return realpathSync(path); } catch { return path; }
 }
@@ -135,23 +127,16 @@ const notSynced = (directory: string): boolean => directory.toLowerCase() === "s
 function claudeSkills(root: string, origin: SlashCommand["origin"], budget: WalkBudget, prefix?: string): SlashCommand[] {
   return walkSkills(root, { depth: "one", looseMarkdown: "none", ignoreFiles: false, requireDescription: false, skipNames: origin === "plugin" ? undefined : notSynced, budget })
     .filter(({ fields }) => !isOff(fields["user-invocable"]))
-    // the folder name is reserved whatever the frontmatter `name` says (a plugin's names are namespaced)
     .filter(({ path }) => origin === "plugin" || !reservedName(basename(dirname(path))))
     .map(({ name, description, path }) => ({ name: prefix ? `${prefix}:${name}` : name, description, source: "skill", origin, id: canonical(path) }));
 }
 
-/** A command file's name is its path under the root with `/` as `:`, so the path follows from the name. */
 function claudeCommands(root: string, source: SlashCommand["source"], budget: WalkBudget, prefix?: string): SlashCommand[] {
-  // Command files take the same visibility metadata as skills, checked from the original read.
   return customCommands(root, source, budget, (fields) => !isOff(fields["user-invocable"]))
     .map((command) => ({ command, path: join(root, `${command.name.split(":").join("/")}.md`) }))
     .map(({ command, path }) => ({ ...command, id: canonical(path), name: prefix ? `${prefix}:${command.name}` : command.name }));
 }
 
-/**
- * `skillOverrides` from settings, lowest scope first so a later scope wins: user, project, local, managed.
- * "off" hides a skill from the `/` menu; the other three states still list it.
- */
 function skillOverrides(config: string, ancestors: readonly string[], managed: string): Map<string, string> {
   const read = (path: string): Record<string, unknown> => { try { return plainObject(plainObject(JSON.parse(readFileSync(path, "utf8"))).skillOverrides); } catch { return {}; } };
   const near = [...ancestors].reverse();
@@ -183,10 +168,6 @@ function managedSettingsDir(serverEnv: Readonly<Record<string, string | undefine
   return "/etc/claude-code";
 }
 
-/**
- * The skills and commands of the Claude plugins turned on in settings.json, as Claude
- * offers them: `/<plugin>:<name>`.
- */
 function pluginCommands(config: string, budget: WalkBudget): SlashCommand[] {
   const read = (path: string): unknown => { try { return JSON.parse(readFileSync(path, "utf8")); } catch { return null; } };
   const enabled = (read(join(config, "settings.json")) as { enabledPlugins?: Record<string, unknown> } | null)?.enabledPlugins ?? {};
@@ -205,13 +186,11 @@ function pluginCommands(config: string, budget: WalkBudget): SlashCommand[] {
 
 
 export const source: AgentCommandSource = {
-  // The reference's rows that are not bundled skills; the bundled ones come from discover so that skillOverrides can hide them.
   builtins: REFERENCE.filter((name) => !BUNDLED.has(name)),
   forms,
   terminalBound,
   agentHidden,
   pin: PIN,
-  // Skills docs, "Resolve skills that share a name": a skill replaces a built-in command of the same name in a local session.
   skillsOverrideBuiltins: true,
   descriptions: {
     "add-dir": "Add a new working directory", advisor: "Let Claude consult a stronger model",
@@ -295,7 +274,6 @@ export const source: AgentCommandSource = {
       candidates.push(seen.has(comparableName(command.name)) ? { ...command, name: `anthropic-skills:${command.name}` } : command);
       seen.add(comparableName(command.name));
     }
-    // A skill of the same name replaces a bundled one (Skills docs, "Resolve skills that share a name").
     const pinned = PIN.split(".").slice(0, 2).join(".");
     const verified = (version ?? "").split(".").slice(0, 2).join(".") === pinned;
     for (const name of BUNDLED) {

@@ -42,30 +42,19 @@ const TERMINAL_BOUND = [
   "live", "record", "pause", "quit", "seance",
   "changelog", "context", "tools", "usage", "stats", "session", "dirs",
   "mcp", "plugins", "effort",
-  // the MoveOverlay path picker, and a "Create directory?" confirmation for a path that does not exist
-  // (modes/controllers/command-controller.ts:1633-1675)
   "move",
 ] as const;
 const TERMINAL_FORMS: CommandForm[] = [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }];
 const FORMS: Record<string, CommandForm[]> = {
   ...Object.fromEntries(TERMINAL_BOUND.map((name) => [name, TERMINAL_FORMS])),
-  // The chat sends a bare /model as /switch (server/core/composer.ts): omp's own /model opens its
-  // Models hub, which saves the default role for later sessions, and /switch its session-only
-  // picker, which the omp-model card answers. /model <args> sets the model and is stored as a model change.
   model: [{ match: "bare", interaction: "dialog", dialog: "omp-model" }, { match: "other", interaction: "none" }],
-  // /switch typed by hand opens that same session-only picker (slash-commands/builtin-modes.ts:534-548)
   switch: [{ match: "bare", interaction: "dialog", dialog: "omp-model" }, { match: "other", interaction: "none" }],
   // omp compacts in place since 17.4.0, and with or without focus instructions shows only the
   // "Generating handoff" status, cancelled with Esc (recorded on 18.8.7): no $EDITOR step.
   handoff: [{ match: "bare", interaction: "dialog", dialog: "omp-handoff" }, { match: "other", interaction: "dialog", dialog: "omp-handoff" }],
-  // bare opens the BTW history overlay, which keeps focus until Esc (modes/controllers/btw-controller.ts:394-401);
-  // a question is answered in a panel while the editor keeps focus
   btw: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
-  // bare opens a selector (builtin-modes.ts:857-880, slash-commands/builtin-marketplace.ts:246); the subcommands report a status
   modelpreset: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
   marketplace: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "unknown" }],
-  // `/advisor configure` and `/todo edit` open the PC's editor (slash-commands/builtin-collaboration.ts:171,
-  // modes/controllers/todo-command-controller.ts:166)
   advisor: [{ match: "bare", interaction: "unknown" }, { match: { sub: "configure" }, interaction: "terminal" }, { match: "other", interaction: "unknown" }],
   todo: [{ match: "bare", interaction: "unknown" }, { match: { sub: "edit" }, interaction: "terminal" }, { match: "other", interaction: "unknown" }],
 };
@@ -73,7 +62,7 @@ const FORMS: Record<string, CommandForm[]> = {
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 function config(path: string): Record<string, unknown> {
   try { return plainObject(path.endsWith(".json") ? JSON.parse(readFileSync(path, "utf8")) : Bun.YAML.parse(readFileSync(path, "utf8"))); }
-  catch { return {}; /* optional config, including malformed YAML, does not gate discovery */ }
+  catch { return {}; }
 }
 function files(directory: string, recursive = false): string[] {
   const ignore = new SkillIgnore();
@@ -84,7 +73,7 @@ function files(directory: string, recursive = false): string[] {
   }
   for (const dir of ancestors) {
     try { ignore.add(readFileSync(join(dir, ".gitignore"), "utf8"), relative(ancestors[0] ?? directory, dir).split(sep).filter(Boolean).join("/") + (dir === ancestors[0] ? "" : "/")); }
-    catch { /* optional gitignore */ }
+    catch {}
   }
   try {
     return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -95,13 +84,11 @@ function files(directory: string, recursive = false): string[] {
       if (!entry.name.endsWith(".md")) return [];
       if (entry.isFile()) return [path];
       try { return entry.isSymbolicLink() && statSync(path).isFile() ? [path] : []; }
-      catch { return []; /* dangling link */ }
+      catch { return []; }
     });
-  } catch { return []; /* absent or unreadable provider */ }
+  } catch { return []; }
 }
-// Foreign tools whose ~/ config omp treats as opt-in (capability/index.ts FOREIGN_USER_PROVIDERS).
 const FOREIGN_USER_PROVIDERS: ReadonlySet<string> = new Set(["cursor", "codex", "claude", "claude-plugins", "gemini", "opencode", "windsurf", "github"]);
-// only blanks after the opening `---`: `\s*` there made an unclosed header quadratic (walk.ts)
 const FRONTMATTER = /^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n---(?:\s*\r?\n|$)/;
 
 /** extensibility/skills.ts skillNamespace: the plugin, else the directory owning `skills/`, else the provider. */
@@ -123,12 +110,11 @@ interface Admitted { readonly raw: string; readonly path: string; readonly field
 function identical(left: Admitted, right: Admitted): boolean {
   try {
     return Bun.deepEquals(left.fields, right.fields) && readSkillText(left.path).replace(FRONTMATTER, "") === readSkillText(right.path).replace(FRONTMATTER, "");
-  } catch { return false; /* unreadable skill */ }
+  } catch { return false; }
 }
 
-/** Stable row identity: the canonical path of the file, the path itself when it cannot be resolved. */
 function canonicalPath(path: string): string {
-  try { return realpathSync(path); } catch { return path; /* vanished between listing and reading */ }
+  try { return realpathSync(path); } catch { return path; }
 }
 
 type Level = "user" | "project";
@@ -150,7 +136,6 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
   const profile = env.OMP_PROFILE ?? env.PI_PROFILE ?? (typeof baseConfig.profile === "string" ? baseConfig.profile : "");
   const named = profile && profile !== "default" && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(profile) && profile !== "." && profile !== "..";
   const agentDir = ctx.roots.agentDir || (named ? join(configRoot, "profiles", profile, "agent") : env.PI_CODING_AGENT_DIR ? expand(env.PI_CODING_AGENT_DIR) : join(configRoot, "agent"));
-  // Settings belong to the active profile; cwd config overrides user config.
   const settings = config(join(agentDir, "config.yml"));
   const projectSettings = config(join(cwd, ".omp", "config.yml"));
   const skillsSettings = { ...plainObject(settings.skills), ...plainObject(projectSettings.skills) };
@@ -175,7 +160,6 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
   const opencode = [root(join(home, ".config", "opencode"), "user", "opencode"), root(join(cwd, ".opencode"), "project", "opencode")];
   const github = root(join(cwd, ".github"), "project", "github");
 
-  // omp reads `extensions` from its effective config.yml: the project's array replaces the user's.
   const extensions: Root[] = [];
   const projectExtensions = Array.isArray(projectSettings.extensions);
   for (const path of strings(projectExtensions ? projectSettings.extensions : settings.extensions)) {
@@ -197,7 +181,6 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
     }
   }
   extensions.push(...installed.values());
-  // Installed registries, not arbitrary cache versions, determine active marketplace plugins.
   const marketplaces = new Map<string, Root[]>();
   const enabledPlugins = Object.assign({}, plainObject(config(join(claudeDir, "settings.json")).enabledPlugins),
     ...[...ancestors].reverse().flatMap((dir) => ["settings.json", "settings.local.json"].map((name) => plainObject(config(join(dir, ".claude", name)).enabledPlugins))));
@@ -241,8 +224,6 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
   const legacyMarketplaces = marketplaceRoots.filter((scope) => !targetsPortable(scope));
   const skillRoots = [...nativeSkills, ...legacyExtensions, ...claude, ...portable,
     ...legacyMarketplaces, ...agents, ...codex, ...opencode, github];
-  // capability/index.ts: `disabledProviders` switches a whole provider off; `enabledProviders` opts a foreign
-  // user source in. The project's array replaces the user's, as for every omp setting.
   const providerSet = (key: string): Set<string> => new Set(strings(Array.isArray(projectSettings[key]) ? projectSettings[key] : settings[key]));
   const disabledProviders = providerSet("disabledProviders");
   const enabledProviders = providerSet("enabledProviders");
@@ -271,7 +252,6 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
           ignored.some((glob) => glob.match(name))) continue;
       const canonical = skill.id ?? canonicalPath(skill.path);
       if (portable.some((item) => item.path === scope.path)) {
-        // Portable packages require spec names and contained skills, unlike legacy providers.
         const declared = skill.fields.name;
         const allowed = ["name", "description", "license", "allowed-tools", "metadata", "compatibility"];
         if (typeof declared !== "string" || declared !== basename(dirname(skill.path)) ||
@@ -283,11 +263,9 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
             relative(realpathSync(scope.path), canonical).startsWith("..")) continue;
       }
       if (seenPaths.has(canonical)) continue;
-      // A same-name skill with identical content collapses into the first; a different one is `<namespace>/<name>`.
       const candidate: Admitted = { raw: name, path: skill.path, fields: skill.fields };
       const same = [...admitted.entries()].filter(([, entry]) => entry.raw === name);
       let final = name;
-      // extensibility/skills.ts: managed skills resolve last and defer to any authored skill of the same name.
       if (scope.provider === "managed" && same.length > 0) continue;
       if (same.length > 0) {
         if (same.some(([, entry]) => identical(entry, candidate))) continue;
@@ -301,11 +279,9 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
     }
   };
   if (skillsSettings.enabled !== false && skillsSettings.enableSkillCommands !== false) {
-    // Explicit custom roots override defaults; same-source custom duplicates keep first wins.
     for (const directory of strings(skillsSettings.customDirectories)) addSkills(root(expand(directory), "user", "custom"), [expand(directory)]);
     for (const scope of skillRoots.filter(enabled)) addSkills(scope, scope.plugin && !portable.includes(scope) ? pluginDirectories(scope, "skills") : undefined);
     addSkills(root(agentDir, "user", "managed"), [join(agentDir, "managed-skills")]);
-    // Include patterns match the final name once every name is settled, so a namespaced copy cannot bypass them.
     if (included.length > 0) commands.splice(0, commands.length, ...commands.filter((command) => included.some((glob) => glob.match(command.name.slice("skill:".length)))));
   }
   const allBuiltinNames = new Set<string>([...names, ...ALIASES]);
@@ -313,7 +289,6 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
     if (allBuiltinNames.has(command.name)) return;
     allBuiltinNames.add(command.name); commands.push(command);
   };
-  // File capabilities are provider-prioritized independently of the skill toggles.
   const claudeCommands = [root(claudeDir, "user", "claude"), root(join(cwd, ".claude"), "project", "claude")];
   for (const scope of [...native, ...legacyExtensions, ...claudeCommands, ...legacyMarketplaces, ...agents, ...codex, ...opencode]) {
     if (!providerOn(scope)) continue;
@@ -323,7 +298,7 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
       const fields = readFrontmatter(path);
       const name = (scope.provider === "codex" || scope.provider === "opencode") && typeof fields?.name === "string" ? fields.name : basename(path, ".md");
       let text: string;
-      try { text = readSkillText(path); } catch { continue; /* unreadable command file */ }
+      try { text = readSkillText(path); } catch { continue; }
       const fallback = description(text);
       const desc = typeof fields?.description === "string" ? fields.description.trim() : fallback.length > 60 ? `${fallback.slice(0, 60)}...` : fallback;
       const command = { name: scope.plugin ? `${scope.plugin}:${name}` : name, description: desc, source: scope.level, id: canonicalPath(path) };
@@ -331,7 +306,6 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
       if (scope.provider === "claude" && relative(directory, path).includes(sep)) addCommand({ ...command, name: relative(directory, path).slice(0, -3).split(sep).join(":") });
     }
   }
-  // Native templates are recursive and user-first, with the runtime's source suffix.
   for (const scope of [nativeUser, nativeProject, ...legacyExtensions, ...agents, ...codex, github]) {
     if (!providerOn(scope)) continue;
     const directory = join(scope.path, "prompts");
@@ -341,7 +315,7 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
       const suffix = `(${scope.level}${subdir === "." ? "" : `:${subdir}`})`;
       const fields = readFrontmatter(path);
       let markdown: string;
-      try { markdown = readSkillText(path); } catch { continue; /* unreadable prompt file */ }
+      try { markdown = readSkillText(path); } catch { continue; }
       const fallback = description(markdown);
       const desc = typeof fields?.description === "string" ? fields.description : fallback.length > 60 ? `${fallback.slice(0, 60)}...` : fallback;
       const name = (scope.provider === "github" || scope.provider === "codex") && typeof fields?.name === "string" ? fields.name : basename(path, scope.provider === "github" ? ".prompt.md" : ".md");

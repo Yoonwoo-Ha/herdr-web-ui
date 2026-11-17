@@ -27,13 +27,11 @@ it("turns Claude's status-line reading on and off from a boolean only, and a wat
     fetch(`${base}/api/${path}`, { method: "POST", headers, body: JSON.stringify(body) });
   try {
     expect(await (await fetch(`${base}/api/usage/statusline`, { headers: watching })).json()).toEqual({ installed: false, supported: true });
-    // a watching device reads the switch and cannot turn it, on this PC or through a PC's route
     for (const path of ["usage/statusline", "machines/pc1/usage/statusline"]) {
       const refused = await post(watching, { enabled: true }, path);
       expect([refused.status, ((await refused.json()) as { error: { code: string } }).error.code]).toEqual([403, "read_only"]);
     }
     expect(readFileSync(settings, "utf8")).toBe(original);
-    // the body is on or off and nothing else: no path, no command
     for (const body of [{ enabled: true, command: "touch /tmp/x" }, { enabled: "yes" }, { path: "/tmp" }, null]) {
       expect((await post(owner, body)).status).toBe(400);
     }

@@ -1,22 +1,12 @@
-/**
- * ssh's host patterns (`*` any run, `?` one character) for the ssh config reader (server/ssh-config.ts), at a cost
- * bounded by the pattern and the text: a match that would take more is left unknown (null), never guessed.
- */
 
-/** steps a pattern part holding a `?` may take on top of a few per character of pattern and text */
 const MIN_STEPS = 10_000;
 const STEPS_PER_CHAR = 4;
 
-/** whether `part` (`?` standing for any one character) matches `text` at `at` */
 const fitsAt = (part: string, text: string, at: number): boolean => {
   for (let index = 0; index < part.length; index++) if (part[index] !== "?" && part[index] !== text[at + index]) return false;
   return true;
 };
 
-/**
- * Where `part` first matches `text` from `from` on, ending by `end`, or -1: one pass (Knuth-Morris-Pratt) for a part
- * without `?`, else tried at each place while `budget` lasts, and null once it runs out
- */
 function findPart(part: string, text: string, from: number, end: number, budget: { steps: number }): number | null {
   if (part.includes("?")) {
     for (let at = from; at + part.length <= end; at++) {
@@ -67,10 +57,6 @@ export function globMatch(glob: string, text: string): boolean | null {
   return true;
 }
 
-/**
- * ssh's pattern list (`a,b,!c`): a negated pattern that matches says no, else one other pattern matching says yes;
- * null when a pattern that could change the answer is unknown
- */
 export function listMatches(patterns: readonly string[], text: string): boolean | null {
   const negated = patterns.filter((pattern) => pattern.startsWith("!")).map((pattern) => globMatch(pattern.slice(1), text));
   if (negated.includes(true)) return false;

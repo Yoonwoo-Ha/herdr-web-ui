@@ -132,9 +132,8 @@ function disabledSkills(home: string, cwd: string | null | undefined, env: reado
   const disabled = new Set<string>();
   const load = (path: string): Record<string, unknown> => {
     try {
-      // bounded and regular files only: project configs are looked up above the pane's folder
       return plainObject(parseJsonc(readSkillText(path)));
-    } catch { return {}; /* upstream drops a source layer on read or parse errors */ }
+    } catch { return {}; }
   };
   const configPath = (directory: string): string => {
     const jsonc = join(directory, ".omo", "omo.jsonc");
@@ -161,7 +160,6 @@ function disabledSkills(home: string, cwd: string | null | undefined, env: reado
 export const source: AgentCommandSource = {
   builtins: ["settings", "model", "thinking", "scoped-models", "favorite-models", "export", "import", "share", "copy", "rename", "name", "session", "changelog", "hotkeys", "fork", "clone", "trust", "login", "logout", "new", "compact", "resume", "sessions", "reload", "quit", "exit"],
   descriptions: OMO_DESCRIPTIONS,
-  // The Senpi pin verifies only this static core table; discovered extension rows stay unverified.
   pin: "2026.10.19",
   forms: {
     model: [{ match: "bare", interaction: "dialog", dialog: "omo-model" }],
@@ -171,9 +169,7 @@ export const source: AgentCommandSource = {
     login: [...terminalForm], logout: [...terminalForm], fork: [...terminalForm],
     resume: [...terminalForm], sessions: [...terminalForm],
     share: [...terminalForm], trust: [...terminalForm],
-    // bare /import prints its usage; /import <path> asks "Replace current session with …?" (interactive-mode.js 8034-8040)
     import: [{ match: "bare", interaction: "unknown" }, { match: "other", interaction: "terminal" }],
-    // bare opens an inline "Rename session" text input; given a name it is stored in the session (interactive-mode.js 8173-8194)
     rename: [...terminalForm, { match: "other", interaction: "none" }], name: [...terminalForm, { match: "other", interaction: "none" }],
   },
   terminalBound: terminalCommands,

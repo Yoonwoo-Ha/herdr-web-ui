@@ -21,7 +21,6 @@ export function file(name = "s.jsonl"): { path: string; add: (entry: unknown) =>
   return { path, add: (entry) => appendFileSync(path, json(entry)) };
 }
 
-/** A Claude transcript: each task call is an assistant tool_use, answered by a user tool_result as Claude Code 2.1.28x writes them. */
 export function claude() {
   const f = file();
   let call = 0;

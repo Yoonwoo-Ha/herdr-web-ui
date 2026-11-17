@@ -9,7 +9,6 @@ import { source } from "./cmd.ts";
 import { createWalkBudget } from "./walk.ts";
 
 // Copied from Command Code 1.84.0, dist/bundled/command-code-knowledge/reference/custom-slash-commands.md:
-// Canonical names and descriptions are checked against the pinned reference; the wire catalog has no alias field.
 // `/clear` (`/new`): Start a new session with empty context; previous stays on disk, resumable with `/resume`
 // `/resume` (`/sessions`): Resume a past conversation
 // `/exit` (`/quit`): Exit Command Code
@@ -24,7 +23,6 @@ const PINNED_SLASH_COMMANDS = [
   "mode:plan", "plans", "plan-review", "review", "pr-comments", "add-dir", "status", "statusline", "usage",
   "upgrade", "extra", "update", "reload", "mods", "help", "exit",
 ];
-// Separate alias rows preserve typed names: /new, /sessions, /quit, /issue, /courses.
 
 const roots: string[] = [];
 afterEach(() => {
@@ -260,7 +258,6 @@ describe("Command Code command catalog", () => {
     const repo = temp();
     put(join(repo, ".git"), "");
     const userCommands = join(home, ".commandcode", "commands");
-    // Command Code runs the user's /zdeploy; the bound runs out before the walk reaches it.
     for (let i = 0; i < createWalkBudget().reads; i++) put(join(userCommands, `a-${String(i).padStart(4, "0")}.md`), `User ${i}`);
     put(join(userCommands, "zdeploy.md"), "User deploy");
     put(join(repo, ".commandcode", "commands", "zdeploy.md"), "Project deploy");
@@ -269,7 +266,6 @@ describe("Command Code command catalog", () => {
     const names = rows.map(({ name }) => name);
     expect(rows.filter(({ description }) => description === "Project deploy")).toEqual([]);
     expect(names).not.toContain("zdeploy");
-    // a skill's plain name could be an unlisted command's, so it is offered as /skill:<name>, which always runs the skill
     expect(names).toContain("skill:personal");
     expect(names).not.toContain("personal");
     expect(names).toContain("help");
@@ -278,8 +274,6 @@ describe("Command Code command catalog", () => {
   it("lists no row a cut-short command root found after the folder it skipped", () => {
     const home = temp();
     const userCommands = join(home, ".commandcode", "commands");
-    // The folder bound runs out inside a-empty, so the walk skips b-skipped, whose deploy.md Command Code
-    // reaches first (depth-first, byte order), and then still reads the root's own deploy.md.
     for (let i = 0; i < createWalkBudget().folders; i++) mkdirSync(join(userCommands, "a-empty", String(i).padStart(4, "0")), { recursive: true });
     put(join(userCommands, "b-skipped", "deploy.md"), "Skipped deploy");
     put(join(userCommands, "deploy.md"), "Root deploy");
@@ -364,7 +358,6 @@ describe("Command Code command catalog", () => {
     skill(join(repo, "extra"), "configured");
     put(join(repo, ".commandcode", "settings.json"), JSON.stringify({ skills: ["./extra"] }));
     const names = source.discover(context(home, repo)).map(({ name }) => name);
-    // the command root was cut short, so a plain /personal could be one of its unlisted commands
     expect(names).toContain("skill:personal");
     expect(names).toContain("skill:configured");
   });
@@ -459,7 +452,6 @@ describe("Command Code command catalog", () => {
     expect(source.forms?.["worktree"]).toContainEqual({ match: { sub: "list" }, interaction: "terminal" });
     expect(source.forms?.["rc"]).toContainEqual({ match: { sub: "status" }, interaction: "terminal" });
     expect(source.forms?.["memory"]).toEqual([{ match: "bare", interaction: "terminal" }]);
-    // a modal, a selector or a full-screen view bare
     for (const name of ["add-dir", "compact-mode", "context", "language"]) expect(source.forms?.[name]?.[0]).toEqual({ match: "bare", interaction: "terminal" });
     expect(source.forms?.["language"]?.[1]).toEqual({ match: "other", interaction: "none" });
     expect(source.forms?.["design"]?.find(({ match }) => match === "bare")?.interaction).toBe("terminal");

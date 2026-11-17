@@ -9,21 +9,14 @@
 import { HTTPS_PORTS, tailscaleBinary } from "./tailscale.ts";
 
 const PROBE_MS = 2500;
-/** an address the list found stays addable this long */
 const FOUND_MS = 10 * 60_000;
-/** peers asked at most, so a large tailnet costs a bounded number of requests */
 const MAX_PEERS = 32;
-/** systems that never run an Ovis server */
 const PHONE_OS = new Set(["ios", "android"]);
-/** a health or code answer is a few hundred bytes; anything past this is not one */
 const MAX_BODY_BYTES = 64 * 1024;
 
 export interface TailnetPcsOptions {
-  /** `tailscale status --json`; null when Tailscale is not here */
   readStatus?: () => Promise<string | null>;
-  /** the HTTPS ports `tailscale serve` may publish Ovis on */
   ports?: readonly number[];
-  /** the address a peer's port is reached at; tests point it at a local server */
   origin?: (dnsName: string, port: number) => string;
 }
 
@@ -39,7 +32,6 @@ export interface TailnetPc {
 interface PeerJson { DNSName?: string; UserID?: string; Online?: boolean; OS?: string; Tags?: string[]; TailscaleIPs?: string[] }
 interface StatusJson { BackendState?: string; Self?: PeerJson; Peer?: Record<string, PeerJson> }
 
-/** Online, untagged peers of this PC's own login, phones aside, from `tailscale status --json`. */
 export function tailnetPeers(status: string | null): { name: string; dnsName: string; ips: string[] }[] {
   if (status === null) return [];
   let parsed: StatusJson;
@@ -58,7 +50,6 @@ export function tailnetPeers(status: string | null): { name: string; dnsName: st
     });
 }
 
-/** `tailscale status --json` from this PC's own CLI, or null when Tailscale is not here or does not answer in time */
 export const readTailscaleStatus = async (): Promise<string | null> => {
   const binary = tailscaleBinary();
   if (binary === null) return null;
@@ -72,7 +63,6 @@ export const readTailscaleStatus = async (): Promise<string | null> => {
 
 const httpsOrigin = (dnsName: string, port: number) => `https://${dnsName}${port === 443 ? "" : `:${port}`}`;
 
-/** The body as JSON, or null when it is not JSON or runs past MAX_BODY_BYTES; reading stops there. */
 async function boundedJson(response: Response): Promise<unknown> {
   if (response.body === null) return null;
   const reader = response.body.getReader();
@@ -94,7 +84,6 @@ interface Health { web_ui?: { server_id?: string }; auth?: { authenticated?: boo
 
 export class TailnetPcs {
   private found = new Map<string, { name: string; dnsName: string; at: number }>();
-  /** the list in flight: windows asking at once share one round of probes */
   private listing: Promise<(TailnetPc & { server_id: string | null })[]> | null = null;
   private readonly readStatus: () => Promise<string | null>;
   private readonly ports: readonly number[];
@@ -128,10 +117,8 @@ export class TailnetPcs {
     } catch { return null; }
   }
 
-  /** The PCs found now, each at the first port its Ovis answers on, leaving out those whose relay ID is in `added`. */
   async list(added: ReadonlySet<string>): Promise<TailnetPc[]> {
     this.listing ??= this.discover().finally(() => { this.listing = null; });
-    // filtered after the shared round: a PC added while it ran is left out for every window
     return (await this.listing).filter((pc) => pc.server_id === null || !added.has(pc.server_id)).map(({ name, url, relay, outdated }) => ({ name, url, relay, outdated }));
   }
 
@@ -144,20 +131,15 @@ export class TailnetPcs {
         return health !== null && TailnetPcs.drivable(health)
           ? { name, dnsName, url, relay: health.relay?.phase ?? null, outdated: TailnetPcs.outdated(health), server_id: health.web_ui?.server_id ?? null } : null;
       }));
-      // a PC may run an older Ovis on one port and a current one on another: a current one (it names its relay ID)
-      // is the one to add, one whose relay is online first; then one whose relay is off, which may be a current one
-      // that never started its relay; an Ovis known to be older last
       const found = answers.filter((answer) => answer !== null);
       return found.find((answer) => answer.server_id !== null && answer.relay === "online") ?? found.find((answer) => answer.server_id !== null)
         ?? found.find((answer) => !answer.outdated) ?? found[0] ?? null;
     }));
     const listed = pcs.filter((pc) => pc !== null);
-    // a fresh list replaces the last: a PC gone from it is no longer addable
     this.found = new Map(listed.map((pc) => [pc.url, { name: pc.name, dnsName: pc.dnsName, at: Date.now() }]));
     return listed.map(({ name, url, relay, outdated, server_id }) => ({ name, url, relay, outdated, server_id }));
   }
 
-  /** the name a recent list found at this address, or null: no other address is ever asked for a code */
   foundAt(url: unknown): string | null {
     if (typeof url !== "string") return null;
     const held = this.found.get(url);
@@ -190,7 +172,6 @@ export class TailnetPcs {
       const refusal = body?.error?.code;
       if (refusal === "relay_off") throw new TailnetPcError("relay_off", "Turn the relay on on that PC first, under Add a connection.");
       if (refusal === "relay_offline") throw new TailnetPcError("relay_offline", "That PC's relay cannot be reached right now. Try again in a moment.");
-      // that PC uses a relay of its own, where typed codes do not work: asking again never changes that
       if (refusal === "code_unavailable") throw new TailnetPcError("code_unavailable", "That PC uses its own relay, which cannot give a code. Add it with its QR code instead.");
       throw new TailnetPcError("no_code", "That PC could not give a code just now. Try again in a moment.");
     }

@@ -22,7 +22,6 @@ const bigIds = (peer: string) => `{"BackendState":"Running","Self":{"UserID":${B
 
 describe("parseSoleTailnetLogin", () => {
   it("names the login a tailnet one login owns, phones and offline peers included", () => {
-    // the shape of the reported tailnet: this Mac plus six of the owner's own untagged devices
     expect(parseSoleTailnetLogin(tailnet([7511875822626835, undefined], Array.from({ length: 6 }, () => [7511875822626835, undefined] as [number, undefined])))).toBe("user7511875822626835@example.com");
     expect(parseSoleTailnetLogin(tailnet([42, undefined]))).toBe("user42@example.com");
     // an id past 2^53 names its login by the digits written, not by the double they round to
@@ -33,9 +32,7 @@ describe("parseSoleTailnetLogin", () => {
     expect(parseSoleTailnetLogin(tailnet([42, undefined], [[42, undefined], [43, undefined]]))).toBeNull();
     expect(parseSoleTailnetLogin(tailnet([42, undefined], [[42, undefined], [42, ["tag:ci"]]]))).toBeNull();
     expect(parseSoleTailnetLogin(tailnet([42, ["tag:server"]], [[42, undefined]]))).toBeNull();
-    // two logins whose ids round to the same double are still two logins
     expect(parseSoleTailnetLogin(bigIds(NEXT_ID))).toBeNull();
-    // a peer the status names no owner for is not proof of anything
     expect(parseSoleTailnetLogin(JSON.stringify({ BackendState: "Running", Self: { UserID: 42 }, Peer: { k: { DNSName: "p.example.ts.net." } } }))).toBeNull();
   });
 
@@ -49,7 +46,6 @@ describe("parseSoleTailnetLogin", () => {
   });
 });
 
-/** the access decision for a no-login request that `tailscale serve` forwarded, with the operator's serve-only switch on */
 const HOST = "pc.example.ts.net";
 const serveRequest = (identity: TailnetIdentity, host: string | null = HOST) => {
   const input: AccessInput = { loopback: true, forwarded: true, funnel: false, tailscaleLogin: null, host, tokenMatched: false, device: null, ...identity, serveOnly: true, tokenConfigured: false, gated: false };
@@ -57,7 +53,6 @@ const serveRequest = (identity: TailnetIdentity, host: string | null = HOST) => 
   return access.level === "full" ? access.via : `refused:${access.reason}`;
 };
 
-/** a source whose cache holds `status` (none, when undefined) as read `minutesAgo` minutes ago, and whose reads from then on answer `read` */
 async function withCachedStatus(status: string | null | undefined, minutesAgo: number, read: () => Promise<string | null>, body: (source: TailnetIdentitySource) => Promise<void>): Promise<void> {
   let warm = status !== undefined ? status : null;
   const source = new TailnetIdentitySource(async () => {
@@ -155,7 +150,6 @@ describe("the owner's grant read, by Host and by outcome", () => {
 });
 
 describe("loginIdentity", () => {
-  /** a source whose reads answer `reads` in turn (the last one from then on), on a clock the test moves */
   function source(reads: (string | null)[]) {
     let now = 1_000_000;
     let count = 0;
@@ -169,7 +163,6 @@ describe("loginIdentity", () => {
     const s = source([booting, booting, tailnet([42, undefined])]);
     try {
       expect((await s.identities.loginIdentity()).owner).toBeNull();
-      // within two seconds of a read, requests answer from it: nothing can keep the CLI spawning
       for (let i = 0; i < 20; i++) await s.identities.loginIdentity();
       expect(s.reads()).toBe(1);
       s.later(2_000);
@@ -177,7 +170,6 @@ describe("loginIdentity", () => {
       s.later(2_000);
       expect((await s.identities.loginIdentity()).owner).toBe("user42@example.com");
       expect(s.reads()).toBe(3);
-      // known, it stands for the cache's life
       s.later(2_000);
       await s.identities.loginIdentity();
       expect(s.reads()).toBe(3);

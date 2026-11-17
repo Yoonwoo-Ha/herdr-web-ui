@@ -1,6 +1,4 @@
 /**
- * Serves the built client out of dist/.
- *
  * Cache-Control is decided per file on purpose: Vite fingerprints everything under
  * /assets/, so those are safe to pin for a year, while the service worker, the web
  * manifest and the index.html shell must revalidate on every load - a cached sw.js
@@ -50,17 +48,10 @@ function cacheControlFor(pathname: string): string {
   return SHORT_CACHE;
 }
 
-/**
- * The policy both headers carry, before contentSecurityPolicy() adds the request's host to `frame-src`
- * and the account service to `connect-src`. A browser script that serves a build of its own sends it as it is:
- * serveStatic reads only this checkout's dist/, and sends no policy before that is built.
- */
 export const CONTENT_SECURITY_POLICY = CSP_DIRECTIVES.join("; ");
 
-/** A host name or bracketed IPv6 address, nothing that could end or add a directive. */
 const FRAMEABLE_HOST = /^(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])$/i;
 
-/** The policy for a request from `origin` (requestOrigin): its host's other ports may be framed. */
 export function contentSecurityPolicy(origin?: string): string {
   let host: string | null = null;
   try {
@@ -77,11 +68,6 @@ export function contentSecurityPolicy(origin?: string): string {
   }).join("; ");
 }
 
-/**
- * OVIS_CSP=report-only measures the policy above without enforcing it: the browser
- *   logs what the policy would have blocked and the app keeps working. `report-only` is the
- *   measurement mode; anything else enforces.
- */
 function cspHeader(origin?: string): Record<string, string> {
   const mode = process.env["OVIS_CSP"];
   const policy = contentSecurityPolicy(origin);
@@ -90,18 +76,11 @@ function cspHeader(origin?: string): Record<string, string> {
     : { "content-security-policy": policy };
 }
 
-/**
- * OVIS_APP_NAME names the installed app. Each PC is its own origin, so two PCs installed
- * on one phone are two apps, and both would be called "Ovis" (#476). Unset or blank, every
- * file is served as built. Read on every request, like OVIS_CSP; the manifest and the
- * shell revalidate on every load, so an installed app learns a new name without a reinstall.
- */
 export function appName(): string | null {
   const name = process.env["OVIS_APP_NAME"]?.trim();
   return name ? name : null;
 }
 
-/** The manifest under another name: `short_name` is the home-screen label, `name` the rest. */
 export function renameManifest(manifest: string, name: string): string {
   return JSON.stringify({ ...JSON.parse(manifest), name, short_name: name }, null, 2);
 }
@@ -116,16 +95,11 @@ export function relateManifest(text: string, origin: string): string {
   return JSON.stringify({ ...JSON.parse(text), related_applications: [{ platform: "webapp", id: `${origin}/` }] }, null, 2);
 }
 
-/** What /manifest.webmanifest answers: renamed under OVIS_APP_NAME, then related to its origin. */
 export function manifestBody(text: string, origin: string): string {
   const name = appName();
   return relateManifest(name ? renameManifest(text, name) : text, origin);
 }
 
-/**
- * The origin a browser used to reach this request: the scheme from X-Forwarded-Proto when a
- * proxy states one (http or https), else the request URL's, and the host from the Host header.
- */
 export function requestOrigin(request: Request): string {
   const url = new URL(request.url);
   const forwarded = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
@@ -151,7 +125,6 @@ export function accountShell(html: string): string {
   return origin === null ? html : html.replace("</head>", `<meta name="ovis-pc-account-service" content="${origin}" />\n</head>`);
 }
 
-/** The file as built, or the manifest under OVIS_APP_NAME, and the shell with its account service and name. */
 async function body(file: BunFile, kind: "manifest" | "shell" | null, origin?: string): Promise<BunFile | string> {
   if (kind === "manifest" && origin !== undefined) return manifestBody(await file.text(), origin);
   const name = appName();
@@ -160,8 +133,6 @@ async function body(file: BunFile, kind: "manifest" | "shell" | null, origin?: s
   return renameManifest(await file.text(), name);
 }
 
-/** Accepted representations, with a server preference for br over gzip on ties.
- * An implicit identity is the fallback; explicit identity quality participates. */
 function encodings(header: string | null | undefined): Array<"br" | "gzip" | "identity"> {
   if (!header?.trim()) return ["identity"];
   const weights = new Map<string, number>();
@@ -174,7 +145,6 @@ function encodings(header: string | null | undefined): Array<"br" | "gzip" | "id
   return (["br", "gzip", "identity"] as const).filter(coding => weight(coding) > 0).sort((a, b) => weight(b) - weight(a));
 }
 
-/** `origin` is what requestOrigin answers; a caller that has no request (a QA script) may leave it out. */
 export async function serveStatic(pathname: string, acceptEncoding?: string | null, origin?: string): Promise<Response> {
   const indexPath = join(DIST_DIR, "index.html");
   if (!existsSync(indexPath)) {
@@ -205,8 +175,6 @@ export async function serveStatic(pathname: string, acceptEncoding?: string | nu
       });
     }
   }
-  // a missing file is not a page: the shell under a bundle's URL fails as a script anyway, and a
-  // service worker would keep it there. An old tab asks for its own build's chunks after an update.
   if (pathname.startsWith("/assets/") || pathname.startsWith("/icons/")) {
     return new Response(null, { status: 404, headers: { "cache-control": REVALIDATE, ...cspHeader() } });
   }

@@ -26,7 +26,6 @@ function alive(pid: number): boolean {
 type Step = { kind: "held" | "read-race" | "real" | "failed" | "taken"; gate?: string };
 type Event = { type: string; attempt: number; pid: number; host: number; args: string[] };
 
-/** A real server/socket/sidecar with file gates at the attach CLI boundary. */
 async function fixture(steps: Step[], attachHoldMs?: number) {
   const root = mkdtempSync(join(tmpdir(), "herdr-takeover-race-"));
   const executable = join(root, "herdr.mjs");
@@ -48,7 +47,6 @@ async function fixture(steps: Step[], attachHoldMs?: number) {
   ws.addEventListener("message", (e) => frames.push(JSON.parse(String(e.data))));
   cleanups.push(async () => {
     ws.close(); server.stop();
-    // A failing pre-fix test can orphan an attach: clean up every PID this fixture recorded.
     const pids = events().filter((e) => e.type === "start" || e.type === "child").map((e) => e.pid);
     for (const pid of pids) if (alive(pid)) { try { process.kill(pid, "SIGTERM"); } catch {} }
     await until(() => pids.every((pid) => !alive(pid)), "owned attach processes stopped");
@@ -74,8 +72,6 @@ async function fixture(steps: Step[], attachHoldMs?: number) {
 
 describe("explicit take-over intent", () => {
   it("consumes a click when the running ordinary retry succeeds, before later displacement", async () => {
-    // displaced, the attach prints herdr's "taken over" and then exits: a hold far longer than that
-    // exit keeps a busy runner from passing the line on before the exit comes
     const f = await fixture([{ kind: "held" }, { kind: "real", gate: "attach" }, { kind: "held" }], 2_000);
     await until(() => f.starts().length === 2, "ordinary retry held at its gate");
     f.send({ type: "take-over", pane_id: f.paneId });
@@ -93,7 +89,6 @@ describe("explicit take-over intent", () => {
   }, 20_000);
 
   it("drops a click when the attempt it waited on attaches and is displaced before it settles", async () => {
-    // a hold far longer than the fixture's exit: the attach is displaced before it settles, every run
     const f = await fixture([{ kind: "held" }, { kind: "taken", gate: "attach" }, { kind: "real" }], 5_000);
     await until(() => f.starts().length === 2, "ordinary retry held at its gate");
     f.send({ type: "take-over", pane_id: f.paneId });
@@ -210,8 +205,6 @@ describe("explicit take-over intent", () => {
   }, 20_000);
 
   it("recovers an ordinary failure without turning a click during its terminal lookup into takeover", async () => {
-    // a hold far longer than the fixture's exit: a busy runner must not take the failing attempt's
-    // last line for an attach before its exit comes (the recovered attach waits it out as well)
     const f = await fixture([{ kind: "held" }, { kind: "failed", gate: "fail" }, { kind: "real" }], 2_000);
     await until(() => f.starts().length === 2, "retry running");
     f.send({ type: "take-over", pane_id: f.paneId });

@@ -10,7 +10,6 @@ import { entryCommand } from "./entries.ts";
 import { shellQuote } from "./machine-security.ts";
 import { chunksOf } from "./remote-bundle.ts";
 
-/** A file streamed to a remote command's stdin, with how much of it went so far. */
 export interface StreamInput { path: string; onProgress?(done: number): void; onUploaded?(): void }
 
 const WINDOWS = process.platform === "win32";
@@ -37,7 +36,7 @@ export async function sweepSshDirs(root = SSH_DIR_ROOT, maxAgeMs = 60 * 60_000, 
       if (process.getuid && info.uid !== process.getuid()) continue;
       await rmdir(path);
       removed++;
-    } catch {} // not empty, gone already, or not ours: left as it is
+    } catch {}
   }
   return removed;
 }
@@ -48,17 +47,12 @@ export async function sweepSshDirs(root = SSH_DIR_ROOT, maxAgeMs = 60 * 60_000, 
  */
 function sshPath(path: string): string { return WINDOWS ? path.replaceAll("\\", "/") : path; }
 
-/** The OpenSSH programs a connection runs, all from one install. */
 export interface SshClient {
   ssh: string; sftp: string; keygen: string;
   /** Git for Windows' build, found where its installer put it, which does not read Windows' ssh-agent service */
   git?: true;
 }
 
-/**
- * A line ssh -v writes that is not ssh's word on what went wrong: its debug lines, and the few it writes
- * unprefixed (its version banner, "Authenticated to", and the transfer totals it writes at exit).
- */
 export function sshVerboseLine(line: string): boolean {
   return /^(?:debug\d: |OpenSSH_|Authenticated to |Transferred: sent |Bytes per second: )/u.test(line);
 }
@@ -96,11 +90,8 @@ export function sshClient({ env = process.env, platform = process.platform, exis
   };
   // a value pasted with its quotes; it is a path, never evaluated by a shell
   const override = env["OVIS_SSH"]?.trim().replace(/^"(.*)"$/, "$1");
-  // a bare name is looked up on PATH, so its sftp and ssh-keygen come from the same folder
   if (override) return beside(override.includes("/") || override.includes("\\") ? override : which(override) ?? override);
   if (platform !== "win32") return plain;
-  // a machine-wide install (the registry and Program Files take an administrator to change),
-  // then one inside this account's own profile, which only the account itself can write
   const roots: string[] = [];
   const installed = registry();
   if (installed) roots.push(installed);
@@ -142,10 +133,8 @@ function gitInstallPath(): string | null {
  * ("REMOTE HOST IDENTIFICATION HAS CHANGED") and never reaches the fingerprint question.
  */
 const UNKNOWN_HOST = /No \S+ host key is known for /;
-/** what a forward of the account's own SSH config would add next to ours */
 const CONFIG_FORWARD = /^(localforward|remoteforward|dynamicforward) /m;
 
-/** Whether something accepts connections on this loopback port yet. */
 function listening(port: number): Promise<boolean> {
   const { promise, resolve } = Promise.withResolvers<boolean>();
   const socket = tcpConnect({ host: "127.0.0.1", port });
@@ -156,11 +145,6 @@ function listening(port: number): Promise<boolean> {
   return promise;
 }
 
-/**
- * What ssh said last, for the setup dialog: some messages ask the user to act while ssh keeps
- * waiting (Tailscale SSH's browser check URL), and the exit error is too late for those.
- * Control characters go (a terminal's colours and cursor moves mean nothing in a dialog).
- */
 export function recentSshOutput(text: string, maxLines = 8, maxBytes = 2048): string {
   const lines = text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\r\n?/g, "\n").replace(/[\x00-\x09\x0b-\x1f\x7f]/g, "").split("\n").map((line) => line.trimEnd()).filter((line) => line !== "");
   const tail = lines.slice(-maxLines).join("\n");
@@ -199,15 +183,12 @@ export function decodeClixml(stderr: string): string {
  * receives a prompt's first line, not the fingerprint below it.
  */
 export class SshConnection {
-  /** made by start(), removed by close(): a connection that never starts leaves nothing behind */
   private dir = "";
   private get control(): string { return join(this.dir, "control"); }
   private client = sshClient();
   private master: Subprocess | null = null;
   private children = new Set<Subprocess>();
-  /** direct mode's forwards; one ending is the connection ending */
   private tunnels = new Set<Subprocess>();
-  /** forwards still waiting for ssh's word: close() ends each at once, not when ssh's stderr closes */
   private pending = new Set<(error: Error) => void>();
   private broken = false;
   private closed = false;
@@ -216,7 +197,6 @@ export class SshConnection {
   private askServer = createServer();
   private askPath = "";
   private askHelper = "";
-  /** only a helper started by this connection's ssh knows it */
   private askToken = randomBytes(32).toString("hex");
   /** direct mode: answers typed during start(), kept once start() authenticated with them */
   private typed = new Map<string, string>();
@@ -224,7 +204,6 @@ export class SshConnection {
   private stderr = "";
   usedSecret = false;
   onExit: (() => void) | null = null;
-  /** ssh's recent stderr while the master connection is still being established */
   onOutput: ((text: string) => void) | null = null;
 
   constructor(readonly target: SshTarget, readonly stateDir: string, readonly keyPath?: string, readonly keyOnly = false, readonly multiplexed = !WINDOWS) {
@@ -363,7 +342,6 @@ export class SshConnection {
     const keepalive = this.master = Bun.spawn([...this.direct(), "-N", "-T", this.target.destination], { stdin: "ignore", stdout: "ignore", stderr: "ignore", env: this.askEnv() });
     void keepalive.exited.then(() => { if (!this.closed) this.onExit?.(); });
   }
-  /** One ssh run to its end, its stderr reaching the dialog as it comes. */
   private async attempt(args: string[], until: number, report = true): Promise<{ code: number; stderr: string }> {
     const proc = Bun.spawn(args, { stdin: "ignore", stdout: "ignore", stderr: "pipe", env: this.askEnv() });
     this.children.add(proc);
@@ -408,7 +386,6 @@ export class SshConnection {
     if (answer !== "yes") throw new Error("Host key verification failed.");
     appendFileSync(this.knownHosts(), learned + "\n", { mode: 0o600 });
   }
-  /** `maxOutput`: bytes its stdout and its stderr may each send; past that the command is stopped and fails */
   async run(script: string, input?: Uint8Array | StreamInput, timeout = 90_000, maxOutput?: number): Promise<string> {
     if (this.closed) throw new Error("SSH connection closed");
     // BatchMode prevents an expired master from unexpectedly opening a new password prompt.
@@ -530,8 +507,6 @@ export class SshConnection {
     const proc = Bun.spawn(args, { stdin: stream ? "pipe" : input ? new Blob([new Uint8Array(input as Uint8Array)]) : "ignore", stdout: "pipe", stderr: "pipe", env: this.askEnv() });
     this.children.add(proc);
     const timer = setTimeout(() => proc.kill(), timeout);
-    // a file goes over in chunks, each written once ssh has taken the last one, so what was
-    // written tracks what was sent to within ssh's own buffer
     const feed = stream ? (async () => {
       const sink = proc.stdin as FileSink;
       let done = 0;
@@ -544,7 +519,6 @@ export class SshConnection {
       stream.onUploaded?.();
     })().then(() => null, (error: unknown) => error) : Promise.resolve(null);
     try {
-      // a capped stream is read only up to its cap: past it the command is stopped, and nothing it sent is taken
       const read = async (stream: ReadableStream<Uint8Array>): Promise<string> => {
         if (maxOutput === undefined) return new Response(stream).text();
         const chunks: Uint8Array[] = [];
@@ -558,7 +532,6 @@ export class SshConnection {
       };
       const [out, err, code, fed] = await Promise.all([read(proc.stdout), read(proc.stderr), proc.exited, feed]);
       if (this.closed) throw new Error("Connection cancelled");
-      // the remote side's own words say more than a broken pipe on this side
       if (code !== 0) throw new Error(err.trim().slice(-4096) || `SSH command failed (${code})`);
       if (fed) throw fed instanceof Error ? fed : new Error(String(fed));
       return out;

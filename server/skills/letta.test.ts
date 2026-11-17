@@ -32,16 +32,11 @@ it("lists the rows of Letta Code 0.34.44's own menu, with its hidden commands ke
 it("puts only the commands that open one of Letta's own screens under Terminal commands", () => {
   const byName = new Map(paneCommands("letta", null, temp()).map((command) => [command.name, command]));
   for (const name of ["agents", "skills", "memory", "resume", "connect", "login", "mcp", "pin", "feedback"]) expect(terminalCommand(byName.get(name)!), name).toBeTrue();
-  // Chat answers Letta's model picker from a card
   expect(terminalCommand(byName.get("model")!)).toBeFalse();
   expect(byName.get("model")!.forms).toEqual([{ match: "bare", interaction: "dialog", dialog: "letta-model" }]);
-  // these print their answer rather than open a screen
   for (const name of ["new", "clear", "compact", "init", "fork", "usage", "context", "doctor", "bg", "workflows", "terminal"]) expect(terminalCommand(byName.get(name)!), name).toBeFalse();
-  // hidden from the menu, typed /help still opens Letta's help screen
   expect(byName.get("help")!.forms![0]).toEqual({ match: "bare", interaction: "terminal" });
-  // /feedback opens its dialog with or without a message to prefill it
   expect(byName.get("feedback")!.forms).toEqual([{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }]);
-  // a value given to a picker command is not the picker: /resume <id> resumes
   expect(byName.get("resume")!.forms).toEqual([{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "unknown" }]);
 });
 
@@ -50,18 +45,15 @@ it("lists the user's and the project's skills by Letta's names, the project's wi
   skill(join(home, ".letta", "skills", "review"), "name: review\ndescription: user review");
   skill(join(home, ".letta", "skills", "web", "scraper"), "description: nested, named by its folder");
   skill(join(home, ".letta", "skills", "quiet"), "name: quiet\ndescription: model only\nuser-invocable: false");
-  // Letta reads the flag without case or quotes
   skill(join(home, ".letta", "skills", "shout"), "name: shout\ndescription: model only\nuser-invocable: \"FALSE\"");
   skill(join(home, ".letta", "skills", "clash"), "name: model\ndescription: named like a builtin");
   skill(join(cwd, ".agents", "skills", "review"), "name: review\ndescription: project review");
-  // nested below another skill's folder, and one right in the root with no name: Letta lists both
   skill(join(home, ".letta", "skills", "review", "deeper"), "description: below a skill");
   mkdirSync(join(home, ".letta", "skills"), { recursive: true });
   writeFileSync(join(home, ".letta", "skills", "SKILL.md"), "---\ndescription: right in the root\n---\nBody\n");
   const found = skills(cwd, home);
   expect(found.map(({ name, origin }) => `${name}:${origin}`).sort()).toEqual(["review/deeper:user", "review:project", "root:user", "web/scraper:user"]);
   expect(found.find(({ name }) => name === "review")!.description).toBe("project review");
-  // LETTA_CONFIG_DIR moves the user's folder
   const config = join(home, "elsewhere");
   skill(join(config, "skills", "moved"), "name: moved\ndescription: from the config dir");
   expect(skills(null, home, [`LETTA_CONFIG_DIR=${config}`]).map(({ name }) => name)).toEqual(["moved"]);

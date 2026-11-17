@@ -315,7 +315,6 @@ describe("gjc discovery", () => {
   });
 
   it("matches the active pinned v0.18.12 builtin registry", () => {
-    // The upstream active registry removes quarantined agents and non-Linux import-session.
     expect([...source.builtins].sort()).toEqual([...PINNED_GJC_ACTIVE_BUILTINS].sort());
     expect(source.builtins).not.toContain("agents");
     expect(source.builtins.includes("import-session")).toBe(process.platform === "linux");
@@ -329,7 +328,6 @@ describe("gjc discovery", () => {
     expect(commands.every((command) => command.provenance?.verified === true)).toBe(true);
   });
 
-  // a selector, the OAuth selector or a confirmation only some typed forms open
   const SELECTOR_FORMS: Record<string, CommandForm[]> = {
     routing: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
     provider: [{ match: "bare", interaction: "terminal" }, { match: { sub: "login" }, interaction: "terminal" }, { match: "other", interaction: "unknown" }],

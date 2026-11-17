@@ -136,14 +136,11 @@ const CORE_NAMES = new Set([...Object.keys(BUILTINS), "start", "topic", "pause",
 const TERMINAL_BOUND = ["model", "resume", "sessions", "config", "agents", "plugins", "skills", "skin",
   "reload-mcp", "reload_mcp", "update", "undo", "prompt", "compose", "palette", "tasks", "journey", "learning", "memory-graph",
   "subscription", "upgrade", "topup", "login", "debug"] as const;
-// new, reset and clear confirm first unless told now, --yes or -y (approvals.destructive_slash_confirm,
-// cli_loops_mixin.py:93-100, 191-202); curator's destructive subcommands ask on a stdin the CLI does not read
 const CONFIRMED: CommandForm[] = [
   { match: "bare", interaction: "terminal" },
   ...["now", "--yes", "-y"].map((sub): CommandForm => ({ match: { sub }, interaction: "none" })),
   { match: "other", interaction: "terminal" },
 ];
-// printed inline by the classic CLI and read by the result readers in server/dialogs/hermes.ts
 const RESULT_FORMS: Record<string, CommandForm[]> = {
   ...Object.fromEntries(
     [["help", "help"], ["status", "status"], ["version", "version"], ["v", "version"], ["profile", "profile"], ["reload-skills", "reload-skills"], ["reload_skills", "reload-skills"]]
@@ -159,7 +156,6 @@ const RESULT_FORMS: Record<string, CommandForm[]> = {
 const SKIP_DIRS = new Set([".git", ".github", ".hub", ".archive", ".curator_backups", ".locks", ".venv", "venv", "node_modules", "site-packages", "__pycache__", ".tox", ".nox"]);
 const SUPPORT_DIRS = new Set(["references", "templates", "assets", "scripts"]);
 
-/** Hermes continues beneath a skill root, pruning only its support directories. */
 function skillFiles(root: string): { path: string; fields: Readonly<Record<string, unknown>> }[] {
   const result: { path: string; fields: Readonly<Record<string, unknown>> }[] = [];
   const ancestors = new Set<string>();
@@ -170,19 +166,19 @@ function skillFiles(root: string): { path: string; fields: Readonly<Record<strin
       canonical = realpathSync(directory);
       if (ancestors.has(canonical)) return;
       entries = readdirSync(directory).sort();
-    } catch { return; /* absent, unreadable or broken root */ }
+    } catch { return; }
     ancestors.add(canonical);
     const hasSkill = entries.includes("SKILL.md");
     if (hasSkill) {
       const path = join(directory, "SKILL.md");
       try {
         if (statSync(path).isFile()) result.push({ path, fields: readFrontmatter(path) ?? {} });
-      } catch { /* unreadable skill does not hide its children */ }
+      } catch {}
     }
     for (const name of entries) {
       if (SKIP_DIRS.has(name) || (hasSkill && SUPPORT_DIRS.has(name))) continue;
       const path = join(directory, name);
-      try { if (statSync(path).isDirectory()) visit(path); } catch { /* broken or unreadable child */ }
+      try { if (statSync(path).isDirectory()) visit(path); } catch {}
     }
     ancestors.delete(canonical);
   };
@@ -192,7 +188,7 @@ function skillFiles(root: string): { path: string; fields: Readonly<Record<strin
 
 function yaml(path: string): Record<string, unknown> {
   try { return plainObject(Bun.YAML.parse(readFileSync(path, "utf8"))); }
-  catch { return {}; /* optional or malformed user configuration */ }
+  catch { return {}; }
 }
 function strings(value: unknown): string[] {
   if (typeof value === "string") {
@@ -264,7 +260,7 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
         try {
           const body = readSkillText(skill.path).replace(/^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n---(?:\s*\r?\n|$)/, "");
           description = body.split(/\r?\n/).find((line) => line.trim() && !line.trim().startsWith("#"))?.trim().slice(0, 80) ?? "";
-        } catch { continue; /* unreadable skill */ }
+        } catch { continue; }
       }
       const previous = entries.get(name) ?? [];
       previous.push({ tier: directory.tier, root: directoryPath, origin: directory.origin, path: skill.path, description: description || `Invoke the ${name} skill` });
@@ -277,7 +273,6 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
     const contenders = candidates.filter((entry) => entry.tier === topTier);
     const first = contenders[0];
     if (!first) continue;
-    // Same-tier duplicates are ambiguous, except identical copies in one root at different depths.
     if (contenders.length > 1) {
       if (!contenders.every((entry) => entry.root === first.root && readFileSync(entry.path, "utf8") === readFileSync(first.path, "utf8"))) continue;
       contenders.sort((left, right) => relative(left.root, left.path).split(/[\\/]/).length - relative(right.root, right.path).split(/[\\/]/).length);

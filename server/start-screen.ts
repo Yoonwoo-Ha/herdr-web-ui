@@ -8,7 +8,6 @@ import type { ConversationMetadata, ConversationResponse } from "../shared/proto
 type Screen = Pick<ConversationMetadata, "model" | "reasoning_effort">;
 const NOTHING: Screen = { model: null, reasoning_effort: null };
 
-/** Claude's model families and a version part, as its ids and display names write them (also conversation-metadata.ts) */
 export const CLAUDE_FAMILY = "opus|sonnet|haiku|fable|mythos";
 export const VERSION = "[1-9]\\d?";
 const EFFORT = "none|minimal|low|medium|high|xhigh|max";
@@ -33,11 +32,8 @@ function claudeScreen(lines: string[]): Screen {
 /** A prompt line of Codex's: one sent (`›`), or its composer, which it marks `»` at Ultra reasoning effort (0.164 on, its `prompt_glyph`). */
 const CODEX_PROMPT = /^\s*[›»](?:\s|$)/u;
 
-/** The lines under the last Codex session header down to its composer footer, the model and
- * effort that footer states, or null when the screen does not show both. */
 function codexLayout(lines: string[]): { header: number; visible: string[]; end: number; model: RegExpExecArray } | null {
   let header = lines.length - 1;
-  // the banner's own line, boxed or not: an answer that only mentions it is no header
   while (header >= 0 && !/^[\s\u2502|]*>_ OpenAI Codex \(v\d[^)]*\)[\s\u2502|]*$/u.test(lines[header]!)) header--;
   if (header < 0) return null;
   const visible = lines.slice(header + 1);
@@ -60,17 +56,8 @@ function codexScreen(lines: string[]): Screen {
   return { model: /^GPT-/u.test(found[1]!) ? found[1]!.toLowerCase() : found[1]!, reasoning_effort: found[2]! };
 }
 
-/** A cell Codex draws for something said or done: an answer or a tool call, a warning, an error. */
 const CODEX_CELL = /^\s*[•⚠■]/u;
 
-/**
- * Whether a Codex screen is its start screen with nothing said in it yet: under the last session
- * header, its card and start tips, then the composer (the first prompt line, `›`) with what it
- * holds, then the footer. A message sent or a resumed conversation puts a prompt or an answer
- * above the composer, and a long one pushes the header off the screen; either way this says no.
- * So does one said above the header: the header may be a card a command drew (`/status`) after
- * a conversation, or a session started after another one in the same terminal.
- */
 export function codexStartScreenUnused(screen: string): boolean {
   const all = screen.split("\n");
   const layout = codexLayout(all);
@@ -86,12 +73,6 @@ const AGY_RULE = /^\s*─{10,}\s*$/u;
 const AGY_PROMPT = /^\s*>(?:\s|$)/u;
 const AGY_CELL = /^\s*[✦●•■](?:\s|$)/u;
 
-/**
- * Whether an Agy screen is its start screen with nothing said in it yet: under the last session
- * header, its banner and optional startup warning, then the composer (`>` between two full-width
- * rules) and its `? for shortcuts` footer, with no prompt, command, answer, or panel above or
- * below the composer.
- */
 export function agyStartScreenUnused(screen: string): boolean {
   const all = screen.split("\n");
   let header = all.length - 1;
@@ -115,19 +96,9 @@ export function agyStartScreenUnused(screen: string): boolean {
 const OPENCODE_OPEN = ["█▀▀█ █▀▀█ █▀▀█ █▀▀▄", "█  █ █  █ █▀▀▀ █  █", "▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀"];
 const OPENCODE_CODE = ["█▀▀▀ █▀▀█ █▀▀█ █▀▀█", "█    █  █ █  █ █▀▀▀", "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"];
 const OPENCODE_LOGO = OPENCODE_OPEN.map((row, index) => `${row} ${OPENCODE_CODE[index]}`);
-/** The dot over the logo's "d". */
 const OPENCODE_DOT = "▄";
-/** A line of a box (OpenCode's composer, a dialog) or of a panel's frame. */
 const OPENCODE_FRAME = /[┃╹│┌┐└┘╭╮╰╯]/u;
 
-/**
- * Whether an OpenCode screen is its home screen, which shows no session: OpenCode draws it while it
- * has none open, and opens a session (and with it a screen of turns, with no logo) on the first
- * prompt. From the top, only the logo (and the dot over its "d"), then notices under it (an update),
- * then the composer (rows behind `┃`, closed by `╹▀▀…`) with whatever draft it holds, then the footer
- * (folder, key hints) and the version. A dialog or an autocomplete drawn over it, a toast, or any
- * text above the logo leaves the screen unknown, and this says no.
- */
 export function opencodeStartScreenUnused(screen: string): boolean {
   const lines = screen.split("\n").map((line) => line.trim());
   const top = lines.findIndex((line) => line !== "" && line !== OPENCODE_DOT);

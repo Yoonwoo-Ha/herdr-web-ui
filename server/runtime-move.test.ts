@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import type { PaneInfo, PaneLayoutSnapshot, SessionSnapshot } from "../shared/herdr-api.generated.ts";
 import { moveUnavailable, planMove, tabTree, type MoveFacts } from "./runtime-move.ts";
 
-// herdr 0.9.5's answer for a tab split right, then its right pane split down (isolated test session)
 const layout: PaneLayoutSnapshot = {
   workspace_id: "w1", tab_id: "w1:t1", focused_pane_id: "w1:p1", zoomed: false,
   area: { x: 0, y: 0, width: 120, height: 40 },
@@ -49,7 +48,6 @@ const snapshot = (panes: PaneInfo[]): SessionSnapshot => ({
   tabs: [{ tab_id: "w1:t1", workspace_id: "w1", label: "1", number: 1, pane_count: panes.length, focused: false, agent_status: "unknown" }],
   workspaces: [{ workspace_id: "w1", label: "ovis", number: 1, active_tab_id: "w1:t1", focused: false, agent_status: "unknown", pane_count: panes.length, tab_count: 1 }],
 });
-// a shell in front is its own process group; "vim" runs in front of pane "editing"; "typed" has text in its input line
 const facts: MoveFacts = {
   findResume: async (agent, id) => id === "listed" ? [agent, "--resume", id] : null,
   processInfo: async (id) => id === "editing"
@@ -78,7 +76,6 @@ describe("planMove", () => {
     ]), facts);
     expect(Object.fromEntries(plan.panes.map((entry) => [entry.pane_id, entry.verdict]))).toEqual({
       claude: { kind: "resume", agent: "claude", session_id: "listed", argv: ["claude", "--resume", "listed"], ended: false },
-      // its input line cannot be read: the exit could send what is typed there
       codex: { kind: "needs_you", agent: "codex" },
       shell: { kind: "shell" },
       editing: { kind: "busy", reason: "command_running", agent: null, command: "vim" },
@@ -88,7 +85,6 @@ describe("planMove", () => {
       queued: { kind: "busy", reason: "agent_working", agent: "claude", command: null },
       typed: { kind: "needs_you", agent: "claude" },
       copilot: { kind: "needs_you", agent: "copilot" },
-      // ended by the person: reopened, nothing typed
       ended: { kind: "resume", agent: "pi", session_id: "listed", argv: ["pi", "--resume", "listed"], ended: true },
       "ended-elsewhere": { kind: "shell" },
       live: { kind: "busy", reason: "agent_working", agent: "codex", command: null },

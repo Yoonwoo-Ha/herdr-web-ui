@@ -11,7 +11,6 @@ import type { SlashCommand } from "../../shared/protocol.ts";
 // always; the settings.json `skills` list adds paths; a project's .pi/skills, .agents/skills and
 // .pi/prompts load only where project trust says so.
 
-/** pi states what each command opens or does, in its own words, read off its palette. */
 const PI_DESCRIPTIONS: Record<string, string> = {
   settings: "Open settings menu", model: "Select model (opens selector UI)", thinking: "Set thinking level",
   "scoped-models": "Enable/disable models for Ctrl+P cycling", login: "Configure provider authentication",
@@ -47,7 +46,6 @@ const PI_FORMS: NonNullable<AgentCommandSource["forms"]> = {
   settings: [{ match: "bare", interaction: "terminal" }],
   "scoped-models": [{ match: "bare", interaction: "terminal" }],
   login: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }],
-  // `/compact <instructions>` focuses the summary
   compact: [{ match: "bare", interaction: "none" }, { match: "other", interaction: "none" }],
   session: [{ match: "bare", interaction: "terminal" }],
   hotkeys: [{ match: "bare", interaction: "terminal" }],
@@ -70,10 +68,9 @@ const PI_FORMS: NonNullable<AgentCommandSource["forms"]> = {
 };
 
 
-const readJson = (path: string): unknown => { try { return JSON.parse(readFileSync(path, "utf8")); } catch { return null; /* absent or not JSON */ } };
+const readJson = (path: string): unknown => { try { return JSON.parse(readFileSync(path, "utf8")); } catch { return null; } };
 const canonical = (path: string): string => { try { return realpathSync(path); } catch { return resolve(path); } };
 
-/** PI_CODING_AGENT_DIR from the pane's own environ first, then the server's, else ~/.pi/agent. */
 function agentDirectory(home: string, env: readonly string[] | null, serverEnv: AgentCommandContext["serverEnv"]): string {
   const own = environValue(env, "PI_CODING_AGENT_DIR");
   const dir = own || (serverEnv ?? process.env)["PI_CODING_AGENT_DIR"];
@@ -111,7 +108,6 @@ const asCommands = (found: ReturnType<typeof walkSkills>, origin: NonNullable<Sl
   found.map(({ name, description, path, id }) => ({ name: `skill:${name}`, description, source: "skill", origin, id: id ?? canonical(path) }));
 const recursive = (root: string): ReturnType<typeof walkSkills> => walkSkills(root, { depth: "recursive", looseMarkdown: "root", ignoreFiles: false, requireDescription: true });
 
-/** One settings entry's skills: a directory is walked, a .md file is one skill. */
 function entrySkills(path: string): ReturnType<typeof walkSkills> {
   let target;
   try { target = statSync(path); } catch { return []; }
@@ -123,7 +119,6 @@ function entrySkills(path: string): ReturnType<typeof walkSkills> {
   return [{ name, description: fields["description"], path, fields, id: canonical(path) }];
 }
 
-/** The settings `skills` array: plain paths add, `+path` forces in, `-path` and `!glob` exclude. */
 function settingsSkills(home: string, agentDir: string, settings: Record<string, unknown>): { added: ReturnType<typeof walkSkills>; forced: ReturnType<typeof walkSkills>; excluded: (path: string) => boolean } {
   const entries = Array.isArray(settings["skills"]) ? settings["skills"].filter((entry): entry is string => typeof entry === "string") : [];
   const location = (entry: string): string => resolve(agentDir, entry === "~" || entry.startsWith("~/") ? join(home, entry.slice(2)) : entry);
@@ -164,9 +159,6 @@ function discoverSkills({ home, cwd, env, serverEnv }: AgentCommandContext): Sla
 }
 
 export const source: AgentCommandSource = {
-  // Extension and package commands are runtime-only: only the running pi lists them, through the web
-  // UI's extension (piExtensionCommands in ../pi.ts). Typed without it, they still send.
-  // The upstream quit description uses `${APP_NAME}`; its pinned app name is "pi".
   pin: "1.3.0",
   builtins: PI_BUILTINS,
   descriptions: PI_DESCRIPTIONS,
@@ -174,7 +166,6 @@ export const source: AgentCommandSource = {
   terminalBound: PI_TERMINAL_BOUND,
   agentHidden: PI_AGENT_HIDDEN,
   discover(ctx) {
-    // pi's packages and extension commands stay out: no file scan can know them
     const { home, cwd } = ctx;
     const agentDir = agentDirectory(home, ctx.env, ctx.serverEnv);
     const trusted = cwd !== null && cwd !== undefined && projectTrusted(agentDir, plainObject(readJson(join(agentDir, "settings.json"))), cwd);
