@@ -734,9 +734,8 @@ describe("ci.yml", () => {
     expect(ci.jobs["changes"]!.outputs).toMatchObject({ code: "${{ steps.filter.outputs.code }}", draft: "${{ steps.filter.outputs.draft }}" });
   });
 
-  // hosted_only is set only by pages.yml's call (scripts/light-runner-workflow.test.ts): main's push run and a Release
-  // run's own ci.yml both leave it unset, and each of these exact expressions then gives what it gave before the input
-  // existed (the old runner, setup-ci's mode, the old condition). The scans below accept these, and any other read of
+  // hosted_only is set by pages.yml's and the Release's calls (scripts/light-runner-workflow.test.ts), not in main's push run.
+  // Each of these exact expressions decides only a runner, a cache mode or whether a cache step runs; any other read of
   // the input (`toJSON(inputs.hosted_only) == 'false'`, say) is one more place where the two runs could differ.
   const HOSTED_ONLY_READS = [
     "${{ inputs.hosted_only && 'ubuntu-24.04' || fromJSON(needs.changes.outputs.fast) }}",
@@ -748,11 +747,14 @@ describe("ci.yml", () => {
     "${{ inputs.hosted_only }}",
   ];
 
-  it("leaves hosted_only unset in a Release run's call, as main's push run has it", () => {
+  // The Release's own call passes hosted_only: true (the Release run is hosted and cacheless as a whole). Each expression
+  // above decides only where a job runs, a cache mode or whether a cache step runs, never which check runs, so main's
+  // push run (input unset) checks what the Release run's own ci.yml checks, and the Release may still take it.
+  it("passes hosted_only: true in a Release run's call, which moves runners and caches only", () => {
     const validate = Bun.YAML.parse(readFileSync(join(root, ".github/workflows/release-validate.yml"), "utf8")) as { jobs: Record<string, { uses?: string; with?: Record<string, unknown> }> };
     const calls = Object.values(validate.jobs).filter((job) => job.uses === "./.github/workflows/ci.yml");
     expect(calls.length).toBe(1);
-    expect(calls[0]!.with?.["hosted_only"]).toBeUndefined();
+    expect(calls[0]!.with?.["hosted_only"]).toBe(true);
   });
 
   it("gives no step a condition on the event, which differs between a push run and Release's own", () => {

@@ -18,7 +18,7 @@ const ROUTED_FAST = "${{ fromJSON(needs.changes.outputs.fast) }}";
 const MAC_FORK_GUARD = "github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository && 'macos-15'";
 const MAC = `\${{ ${MAC_FORK_GUARD} || fromJSON(github.workflow == 'CI' && github.ref != 'refs/heads/main' && vars.CI_MAC_LABELS || '"macos-15"') }}`;
 const HOSTED = /^(ubuntu|windows|macos)-[\w.-]+$/;
-// ci.yml's runner expressions behind the hosted_only prefix: a call with hosted_only: true (pages.yml's validation) takes
+// ci.yml's runner expressions behind the hosted_only prefix: a call with hosted_only: true (pages.yml's and the Release's validation) takes
 // `label`, and every other run, where the input is unset or false, reads `expression` as before (the test below)
 const hostedOnly = (label: string, expression: string): string => `\${{ inputs.hosted_only && '${label}' || ${expression.slice("${{ ".length)}`;
 const HOSTED_ONLY_LIGHT = hostedOnly("ubuntu-24.04", LIGHT);
@@ -93,13 +93,17 @@ describe("self-hosted runners and fork pull requests", () => {
     expect(changes.steps?.find((step) => step.id === "route")?.run).toBe('bash scripts/ci-runner-route.sh >> "$GITHUB_OUTPUT"');
   });
 
-  test("ci-runner-route.sh leaves out of its busy count exactly the light jobs a pull request runs", () => {
+  // remote-bundles.yml's bundle-windows now runs GitHub-hosted, but a pull request on an older revision still runs it on
+  // the self-hosted pool, so the route keeps leaving it out of the busy count
+  const FORMER_LIGHT = ["bundle-windows"];
+  test("ci-runner-route.sh leaves out of its busy count exactly the light jobs a pull request runs, and the former ones", () => {
     const names = workflows
       .filter(({ name }) => pullRequestWorkflows.has(name))
       .flatMap(({ workflow }) => Object.entries(workflow.jobs).filter(([, job]) => job["runs-on"] === LIGHT || job["runs-on"] === HOSTED_ONLY_LIGHT).map(([id, job]) => (job as Job & { name?: string }).name ?? id));
     const route = readFileSync(join(root, "scripts/ci-runner-route.sh"), "utf8");
     const listed = JSON.parse(/^light_job_names='(.+)'$/m.exec(route)![1]!) as string[];
-    expect(listed.toSorted()).toEqual(names.toSorted());
+    expect(listed.toSorted()).toEqual([...names, ...FORMER_LIGHT].toSorted());
+    expect(names).not.toContain("bundle-windows");
   });
 
   test("some job uses the light runner expression", () => {
@@ -242,10 +246,10 @@ describe("ci.yml's hosted_only input", () => {
     ].sort());
   });
 
-  test("is a boolean that only pages.yml passes, as true, and the route reads it", () => {
+  test("is a boolean that only pages.yml and the Release's validation pass, as true, and the route reads it", () => {
     expect(ci.on["workflow_call"]!.inputs!["hosted_only"]).toMatchObject({ type: "boolean", default: false });
     const passed = workflows.flatMap(({ name, workflow }) => Object.entries(workflow.jobs).filter(([, job]) => job.uses === "./.github/workflows/ci.yml").map(([id, job]) => [name, id, (job as { with?: Record<string, unknown> }).with?.["hosted_only"]]));
-    expect(passed.sort()).toEqual([["pages.yml", "validate", true], ["relay-deploy.yml", "validate", undefined], ["release-validate.yml", "ci", undefined]]);
+    expect(passed.sort()).toEqual([["pages.yml", "validate", true], ["relay-deploy.yml", "validate", undefined], ["release-validate.yml", "ci", true]]);
     const route = ci.jobs["changes"]!.steps!.find((step) => (step as { id?: string }).id === "route")!;
     expect(route.env?.["HOSTED_ONLY"]).toBe("${{ inputs.hosted_only }}");
   });

@@ -40,8 +40,8 @@ export function topLevelTerms(condition: string): string[] {
 export function unreadWorkflowFiles(paths: string[]): string[] {
   return paths.filter((path) => {
     const name = path.slice(path.lastIndexOf("/") + 1);
-    if (/^\.github\/workflows\/[^/]+$/.test(path)) return /\.ya?ml$/iu.test(name) && !name.endsWith(".yml");
-    if (path.startsWith(".github/actions/")) return /^action\.ya?ml$/iu.test(name) && name !== "action.yml";
+    if (/^\.github\/workflows\/[^/]+$/.test(path)) return /\.ya?ml$/i.test(name) && !name.endsWith(".yml");
+    if (path.startsWith(".github/actions/")) return /^action\.ya?ml$/i.test(name) && name !== "action.yml";
     return false;
   });
 }
@@ -134,12 +134,12 @@ export function secretProblems(workflow: Workflow, deployJob: string, deployStep
   return problems;
 }
 
-/** Jobs that install packages (and so run their install scripts) without restoring the cache read-only. */
+/** Jobs that install packages (and so run their install scripts) with a setup-ci that may save the dependency cache. */
 export function cacheProblems(workflow: Workflow): string[] {
   const problems: string[] = [];
   for (const [name, job] of Object.entries(workflow.jobs)) {
     const setup = steps(job).filter((step) => step.uses === "./.github/actions/setup-ci");
-    if (steps(job).some((step) => /\bbun (install|i)\b/.test(step.run ?? "")) && setup.length > 0 && setup.some((step) => step.with?.cache !== "restore")) {
+    if (steps(job).some((step) => /\bbun (install|i)\b/.test(step.run ?? "")) && setup.length > 0 && setup.some((step) => step.with?.cache !== "restore" && step.with?.cache !== "none")) {
       problems.push(`${name}: setup-ci may save the dependency cache`);
     }
   }

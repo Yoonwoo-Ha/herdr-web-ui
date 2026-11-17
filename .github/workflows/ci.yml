@@ -12,9 +12,10 @@ on:
         required: false
         default: ''
         type: string
-  # hosted_only (pages.yml's validation): every job GitHub-hosted and no Actions cache restored, since every job of the
-  # caller's run can write the artifacts it publishes (scripts/privileged-jobs-workflow.test.ts). ci.yml's own runs and the
-  # other callers leave it unset, and run as before (scripts/light-runner-workflow.test.ts)
+  # hosted_only (pages.yml's validation and the Release's, through release-validate.yml): every job GitHub-hosted and no
+  # Actions cache restored, since every job of the caller's run can write the artifacts it publishes
+  # (scripts/privileged-jobs-workflow.test.ts). ci.yml's own runs and relay-deploy leave it unset, and run as before
+  # (scripts/light-runner-workflow.test.ts)
   workflow_call:
     inputs:
       hosted_only:

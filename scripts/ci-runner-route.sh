@@ -25,8 +25,8 @@ requested="${REQUESTED_LABELS:-}"
 configured="${CONFIGURED_LABELS:-}"
 configured_from=CI_SELF_HOSTED_LABELS
 # CI_LINUX_SELF_HOSTED_LABELS moves only the Linux jobs of pull requests and branch pushes; a tag push, a workflow that calls ci.yml
-# (release-validate, relay-deploy) or a manual run keeps CI_SELF_HOSTED_LABELS' routing. A call with hosted_only (pages.yml's
-# validation, HOSTED_ONLY=true) always gets the hosted image, before anything else is read
+# without hosted_only (relay-deploy) or a manual run keeps CI_SELF_HOSTED_LABELS' routing. A call with hosted_only (pages.yml's
+# and the Release's validation, HOSTED_ONLY=true) always gets the hosted image, before anything else is read
 if [[ ("$event" == pull_request || ("$event" == push && "${REF:-}" == refs/heads/*)) && -n "${LINUX_LABELS:-}" && -n "${LINUX_LABELS//[[:space:]]/}" ]]; then
   configured=$LINUX_LABELS
   configured_from=CI_LINUX_SELF_HOSTED_LABELS
