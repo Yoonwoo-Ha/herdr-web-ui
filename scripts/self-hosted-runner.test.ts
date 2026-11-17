@@ -51,7 +51,11 @@ function runJobStarted(eventName: string, payload: unknown) {
  * subreaper first, so the orphans of its subtree come to it.
  */
 const HARNESS_LAUNCH = {
-  namespace: () => ["unshare", "--user", "--map-root-user", "--pid", "--fork", "--mount-proc", "--kill-child", "bash", hookHarness, randomBytes(16).toString("hex")],
+  // The hook writes its refusal to PID 1's stderr by opening /proc/1/fd/2, which works for a pipe or a file but not for a
+  // socket (ENXIO), and Bun's "pipe" is a socket: so PID 1 (the harness) gets a real pipe, which a cat started before
+  // the namespace, outside it, copies to the stderr the test reads.
+  namespace: () => ["bash", "-c", 'exec "$@" 2> >(exec cat >&2)', "bash",
+    "unshare", "--user", "--map-root-user", "--pid", "--fork", "--mount-proc", "--kill-child", "bash", hookHarness, randomBytes(16).toString("hex")],
   container: () => ["python3", "-c", "import ctypes, os, sys\nif ctypes.CDLL(None).prctl(36, 1, 0, 0, 0) != 0: sys.exit(97)\nos.execv('/bin/bash', ['bash', *sys.argv[1:]])", hookHarness, "container"],
 } as const;
 type Isolation = keyof typeof HARNESS_LAUNCH;
