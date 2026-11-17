@@ -588,10 +588,10 @@ it("types a secret for a prompt only a newer bridge takes as direct input to a b
     client.close();
   }
   // a released bridge gives typing an id and keeps it until the bridge has read it, to hold it for review when the
-  // connection ends first: a typed secret gets no id and is never kept
+  // connection ends first: a typed secret gets an id too, for its receipt, and is never kept
   const { client, socket } = liveClient(["submit", "secret-input", "ping", "input-receipt"]);
   expect(await client.sendSecret("w1:p1", git, "hunter2", () => true)).toEqual({ ok: true });
-  expect(typed(socket)).toEqual(asTyped);
+  expect(typed(socket)).toEqual([{ type: "input", pane_id: "w1:p1", text: "hunter2", id: 1 }, { type: "input", pane_id: "w1:p1", text: "\r", id: 2 }]);
   socket.disconnect();
   expect(client.takeUnconfirmedInput("w1:p1")).toEqual([]);
   client.close();
@@ -1815,6 +1815,28 @@ it("holds typing the socket took when its connection ends before the server conf
   }
 });
 
+it("counts keys sent as a password that a connection ended with before the server confirmed them, keeping nothing of them", () => {
+  const { client, socket } = liveClient(["submit", "ping"]);
+  try {
+    // a bridge without receipts: a ping fences a password as it fences typing
+    expect(client.sendInput("w1:p1", "a", false, false, true)).toBe(true);
+    expect(submissions(socket)).toEqual([{ type: "input", pane_id: "w1:p1", text: "a" }]);
+    expect(pings(socket)).toEqual([{ type: "ping", id: 1 }]);
+    socket.receive({ type: "pong", id: 1 });
+    expect(client.sendInput("w1:p1", "b", false, false, true)).toBe(true);
+    expect(pings(socket)).toEqual([{ type: "ping", id: 1 }, { type: "ping", id: 2 }]);
+    socket.disconnect();
+    // "a" was confirmed by its pong, "b" was not: one key may not have arrived, and neither is held
+    expect(client.takeUnconfirmedSecrets("w1:p1")).toBe(1);
+    expect(client.takeUnconfirmedInput("w1:p1")).toEqual([]);
+    // given once, and only for its pane
+    expect(client.takeUnconfirmedSecrets("w1:p1")).toBe(0);
+    expect(client.takeUnconfirmedSecrets("w1:p2")).toBe(0);
+  } finally {
+    client.close();
+  }
+});
+
 it("holds typing a bridge with input-receipt read but did not confirm typing when its connection ends (#2677)", () => {
   const { client, socket } = liveClient(["submit", "ping", "input-receipt"]);
   try {
@@ -1953,6 +1975,75 @@ it("never offers typing lost on one herdr to a pane of another that reuses its I
   try {
     proven(same.again, "herdr-a");
     expect(same.client.takeUnconfirmedInput("w1:p1")).toEqual(["rm -rf build"]);
+  } finally { same.client.close(); }
+});
+
+it("confirms a key sent as a password by its receipt, not by a pong, where the bridge gives receipts", () => {
+  const { client, socket } = liveClient(["submit", "ping", "input-receipt"]);
+  try {
+    expect(client.sendInput("w1:p1", "a", false, false, true)).toBe(true);
+    expect(client.sendInput("w1:p1", "b", false, false, true)).toBe(true);
+    expect(submissions(socket)).toEqual([{ type: "input", pane_id: "w1:p1", text: "a", id: 1 }, { type: "input", pane_id: "w1:p1", text: "b", id: 2 }]);
+    // a receipt needs no fence, and a pong proves only that the bridge read the frame: a key it queued is not taken yet
+    expect(pings(socket)).toEqual([]);
+    socket.receive({ type: "pong", id: 1 });
+    socket.receive({ type: "input-result", id: 1, pane_id: "w1:p1", ok: true });
+    socket.disconnect();
+    // "a" was taken, "b" only read: one key may not have arrived, and neither is held
+    expect(client.takeUnconfirmedSecrets("w1:p1")).toBe(1);
+    expect(client.takeUnconfirmedInput("w1:p1")).toEqual([]);
+  } finally {
+    client.close();
+  }
+});
+
+it("fences a key sent as a password with a ping once the bridge says it gives no receipts", () => {
+  for (const pongs of [true, false]) {
+    const { client, socket } = liveClient(["submit", "ping", "input-receipt"]);
+    try {
+      expect(client.sendInput("w1:p1", "a", false, false, true)).toBe(true);
+      expect(pings(socket)).toEqual([]);
+      socket.receive(snapshot(["input-ready", "ping"]));
+      // its id gets no receipt now: a ping fences it instead, and the old id confirms nothing
+      expect(pings(socket)).toHaveLength(1);
+      socket.receive({ type: "input-result", id: 1, pane_id: "w1:p1", ok: true });
+      if (pongs) socket.receive({ type: "pong", id: pings(socket)[0]!["id"] as number });
+      socket.disconnect();
+      expect(client.takeUnconfirmedSecrets("w1:p1")).toBe(pongs ? 0 : 1);
+    } finally {
+      client.close();
+    }
+  }
+});
+
+it("never says a key sent as a password on one herdr may not have arrived to a pane of another that reuses its ID", () => {
+  const proven = (socket: FakeSocket, lifetime: string) => socket.receive({ type: "snapshot", snapshot: { workspaces: [], panes: [], agents: [], layouts: [], herdr_lifetime: lifetime }, features: ["input-ready", "ping"] });
+  const lostOn = (lifetime: string) => {
+    const client = new HerdrSocket("ws://test/ws");
+    client.attach("w1:p1", 80, 24);
+    client.connect();
+    const socket = FakeSocket.last;
+    socket.open();
+    proven(socket, lifetime);
+    socket.receive({ type: "input-ready", pane_id: "w1:p1" });
+    expect(client.sendInput("w1:p1", "hunter2", false, false, true)).toBe(true);
+    socket.disconnect();
+    client.wake();
+    const again = FakeSocket.last;
+    again.open();
+    // a new connection that has not said which herdr it reads keeps the count back
+    expect(client.takeUnconfirmedSecrets("w1:p1")).toBe(0);
+    return { client, again };
+  };
+  const replaced = lostOn("herdr-a");
+  try {
+    proven(replaced.again, "herdr-b");
+    expect(replaced.client.takeUnconfirmedSecrets("w1:p1")).toBe(0);
+  } finally { replaced.client.close(); }
+  const same = lostOn("herdr-a");
+  try {
+    proven(same.again, "herdr-a");
+    expect(same.client.takeUnconfirmedSecrets("w1:p1")).toBe(1);
   } finally { same.client.close(); }
 });
 

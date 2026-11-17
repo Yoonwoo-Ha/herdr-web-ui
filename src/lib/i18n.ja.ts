@@ -33,6 +33,7 @@ import { RUNTIME_MOVE_JA } from "./i18n/runtime-move.ja.ts";
  * in English. Placeholders in braces keep their English names.
  */
 const BASE: Record<string, string> = {
+  "A key may not have reached the terminal: the connection ended before it was confirmed.": "キーがターミナルに届いていない可能性があります: 確認される前に接続が切れました。",
   "Open PC": "PC を開く",
   "View only": "表示のみ",
   "Not pasted: the file's path holds a line break, which the terminal would take as Enter.": "貼り付けていません: ファイルのパスに改行があり、ターミナルが Enter として受け取ります。",

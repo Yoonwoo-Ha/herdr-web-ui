@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Browser, Page, Route } from "playwright-core";
+import type { Browser, Page, Route, WebSocketRoute } from "playwright-core";
 import { paneRead, sessionSnapshot, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { chromePath } from "./chrome-path.ts";
 
@@ -284,7 +284,8 @@ async function composingAcrossHandOver(browser: Browser, origin: string): Promis
   }
 }
 
-async function ownedPage(browser: Browser, origin: string, label: string) {
+/** `receipts`: the page's socket goes through the test, which can hold back the bridge's input receipts and drop the connection */
+async function ownedPage(browser: Browser, origin: string, label: string, receipts?: { held: boolean; socket: WebSocketRoute | null }) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ovis-newtab-typeahead-")));
   const created = await workspaceCreate({ cwd: root, label });
   const context = await browser.newContext({ viewport: desktop, locale: "en-US" });
@@ -296,6 +297,14 @@ async function ownedPage(browser: Browser, origin: string, label: string) {
   const { sent, ready } = await watch(page);
   const held: Route[] = [];
   await page.route("**/api/**tab/create", (route) => { held.push(route); });
+  if (receipts) await page.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
+    receipts.socket = socket;
+    const server = socket.connectToServer();
+    server.onMessage((raw) => {
+      try { if (receipts.held && (JSON.parse(String(raw)) as { type?: string }).type === "input-result") return; } catch { /* not JSON */ }
+      socket.send(raw);
+    });
+  });
   const first = created.root_pane.pane_id;
   await page.goto(`${origin}/?pane=${encodeURIComponent(first)}`);
   await page.locator(".conn-live").waitFor();
@@ -346,7 +355,8 @@ async function twoCatches(browser: Browser, origin: string): Promise<void> {
 
 /** What an open composition commits after the new tab shows a masked prompt goes as a secret: no receipt keeps it. */
 async function secretAfterComposition(browser: Browser, origin: string): Promise<void> {
-  const owned = await ownedPage(browser, origin, "ovis-test-newtab-secret");
+  const receipts: { held: boolean; socket: WebSocketRoute | null } = { held: false, socket: null };
+  const owned = await ownedPage(browser, origin, "ovis-test-newtab-secret", receipts);
   const { page, context, sent, ready, held, first, added, errors } = owned;
   try {
     await screenOf(page, first).click();
@@ -363,10 +373,20 @@ async function secretAfterComposition(browser: Browser, origin: string): Promise
     await until(() => ready.has(second!), "the new tab accepts input");
     await until(async () => /Password:\s*$/.test((await paneRead({ paneId: second!, source: "visible", stripAnsi: true })).text.trimEnd()), "the new tab shows the masked prompt");
     await page.locator(`[data-layout-pane=${JSON.stringify(second!)}] .secret-input`).waitFor();
+    // the bridge's receipt for what is typed from here never reaches the page
+    receipts.held = true;
     if (await page.evaluate(() => document.activeElement?.className) === "type-ahead") await cdp.send("Input.insertText", { text: "한" });
     let composed: Sent | undefined;
     await until(() => (composed = sent.find((message) => message.pane_id === second && /[하한]/.test(message.text ?? ""))) !== undefined, "the composed text reaches the prompt");
-    assert.equal((composed as { id?: number }).id, undefined, "typed into a masked prompt, it is sent as a secret: no receipt keeps it");
+    // typed into a masked prompt it goes as a password: the connection ends before its receipt, and the terminal says a
+    // key may not have arrived and keeps nothing of it, where a key typed as usual would come back in a draft
+    await receipts.socket!.close();
+    await page.getByText("A key may not have reached the terminal", { exact: false }).first().waitFor();
+    await page.locator(".conn-live").waitFor();
+    assert.equal(await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("ovis:terminal-draft:"))
+      .some((key) => { try { return /[하한]/.test((JSON.parse(localStorage.getItem(key) ?? "{}") as { text?: string }).text ?? ""); } catch { return false; } })), false,
+    "typed into a masked prompt, it is kept in no draft");
+    assert.equal(await page.locator(".draft-text").count(), 0, "typed into a masked prompt, it is never held in a draft");
     assert.equal(textOf(sent, first), "", "no key goes to the old tab");
     assert.deepEqual(errors, []);
   } finally { await owned.close(); }

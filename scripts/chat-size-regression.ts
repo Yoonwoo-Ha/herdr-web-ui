@@ -16,7 +16,7 @@ import { openLens } from "./header-lens.ts";
 /** how long a resize that should not happen gets to show up */
 const NO_RESIZE_WAIT_MS = 400;
 
-type Frame = { dir: "in" | "out"; type: string; keep_size?: boolean; pane_id?: string; cols?: number; rows?: number; text?: string; receipt?: boolean };
+type Frame = { dir: "in" | "out"; type: string; keep_size?: boolean; pane_id?: string; cols?: number; rows?: number; text?: string };
 const framesOf = (page: Page) => page.evaluate(() => (window as unknown as { frames_: Frame[] }).frames_);
 
 /**
@@ -83,7 +83,7 @@ async function openRecording(browser: Browser, contexts: BrowserContext[], origi
   await context.addInitScript((stored) => {
     localStorage.setItem("ovis:settings", JSON.stringify(stored));
     // every frame this page's socket sends and receives, to wait on the server's answers
-    const frames: { dir: "in" | "out"; type: string; keep_size?: boolean; pane_id?: string; cols?: number; rows?: number; text?: string; receipt?: boolean }[] = [];
+    const frames: { dir: "in" | "out"; type: string; keep_size?: boolean; pane_id?: string; cols?: number; rows?: number; text?: string }[] = [];
     (window as unknown as { frames_: typeof frames }).frames_ = frames;
     const Native = window.WebSocket;
     class Recording extends Native {
@@ -96,7 +96,7 @@ async function openRecording(browser: Browser, contexts: BrowserContext[], origi
         // Physical closes remain separate evidence for the explicit reconnect scenarios.
         this.addEventListener("close", () => frames.push({ dir: "in", type: "socket-closed" }));
       }
-      override send(data: string): void { try { const frame = JSON.parse(data); frames.push({ dir: "out", type: frame.type, keep_size: frame.keep_size, ...(frame.type === "detach" ? { pane_id: frame.pane_id } : {}), ...(frame.type === "resize" ? { cols: frame.cols, rows: frame.rows } : {}), ...(frame.type === "input" ? { text: frame.text, receipt: frame.id !== undefined } : {}) }); } catch {} super.send(data); }
+      override send(data: string): void { try { const frame = JSON.parse(data); frames.push({ dir: "out", type: frame.type, keep_size: frame.keep_size, ...(frame.type === "detach" ? { pane_id: frame.pane_id } : {}), ...(frame.type === "resize" ? { cols: frame.cols, rows: frame.rows } : {}), ...(frame.type === "input" ? { text: frame.text } : {}) }); } catch {} super.send(data); }
     }
     Object.assign(window, { WebSocket: Recording });
   }, settings);
@@ -583,6 +583,8 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
         let holdOutput = false;
         // idle-held / idle-offline: the input-ready of the attach that takes an idle pane back waits here
         let holdReady = false;
+        // held: the bridge's receipts for what is typed from then on never reach the page
+        let dropInputResults = false;
         const heldReady: Array<() => void> = [];
         let injectFrame: ((frame: object) => void) | undefined;
         let injectOutput: (() => void) | undefined;
@@ -602,7 +604,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
           };
           listeners.add(check); check();
         });
-        const routed = queueScenario || scenario === "writes" || scenario === "background-cache" || scenario === "mirrored-cache" || legacy
+        const routed = queueScenario || scenario === "writes" || scenario === "background-cache" || scenario === "mirrored-cache" || legacy || scenario === "held"
           || (scenario.startsWith("idle") && scenario !== "idle-off");
         const recorded = async (): Promise<Frame[]> => {
           if (routed) return [...wire];
@@ -651,6 +653,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
             const upstream = socket.connectToServer();
             upstream.onMessage((raw) => {
               const frame = JSON.parse(String(raw));
+              if (dropInputResults && frame.type === "input-result") return;
               if (holdReady && frame.type === "input-ready" && frame.pane_id === first) {
                 heldReady.push(() => { record(raw, "in"); socket.send(raw); });
                 return;
@@ -733,15 +736,24 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
           // typed with the page clock still paused, so before the new attach's first output is drawn: the terminal
           // takes keys from the resume on, not only once that output has cleared what the hold closed
           const typedFrom = (await framesOf(page)).length;
+          dropInputResults = true;
           await page.locator(".xterm-helper-textarea").focus();
           await page.keyboard.type("z");
           await page.waitForFunction((from) => (window as unknown as { frames_: Frame[] }).frames_.slice(from)
             .some((f) => f.dir === "out" && f.type === "input" && f.text === "z"), typedFrom, { timeout: 10_000 });
-          // a masked prompt may have come while the pane was held: until the new screen is read, a key goes as a password
-          // would, with no receipt that keeps it
-          const typedZ = (await framesOf(page)).slice(typedFrom).find((f) => f.dir === "out" && f.type === "input" && f.text === "z");
-          assert.equal(typedZ?.receipt, false, "typed before the taken-back pane's screen is read, a key is sent as a password");
           await page.clock.resume();
+          // a masked prompt may have come while the pane was held: until the new screen is read, a key goes as a password
+          // would. The connection ends before its receipt: the terminal says a key may not have arrived, and holds
+          // nothing of it, where a key typed as usual would come back in a draft
+          await page.evaluate(() => (window as unknown as { socket_: WebSocket }).socket_.close());
+          await page.getByText("A key may not have reached the terminal", { exact: false }).first().waitFor();
+          // nor is it held: no draft keeps it on disk, and none is drawn once the connection is back and the pane takes
+          // input again (a draft is drawn only while connected)
+          await attached(page, 2);
+          assert.equal(await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("ovis:terminal-draft:"))
+            .some((key) => { try { return (JSON.parse(localStorage.getItem(key) ?? "{}") as { text?: string }).text?.includes("z") === true; } catch { return false; } })), false,
+          "a key typed before the taken-back pane's screen is read is kept in no draft");
+          assert.equal(await page.locator(".draft-text").count(), 0, "a key typed before the taken-back pane's screen is read is never held in a draft");
           console.log("PASS inactive attach lifecycle: held");
           continue;
         }

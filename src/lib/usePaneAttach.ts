@@ -10,6 +10,7 @@ import { modalOpen } from "./focus.ts";
 import type { PendingMessageView } from "./pendingMessages.ts";
 import { FONT_LOAD_TIMEOUT_MS, type FontSettled } from "./fontFamily.ts";
 import { typeAheadFocused } from "./typeAhead.ts";
+import { t } from "./i18n.ts";
 
 export interface PaneAttachDeps {
   activeRef: RefObject<boolean>;
@@ -105,6 +106,8 @@ export function usePaneAttach(deps: PaneAttachDeps): void {
     } catch {}
     // typing a connection ended with unconfirmed while no terminal of this pane was mounted (#2587)
     setDraft(holdBefore(paneId ? socket.takeUnconfirmedInput(paneId) : [], saved));
+    // and a key sent to it as a password that such a connection never confirmed: said, as nothing of it is kept
+    if (paneId && socket.takeUnconfirmedSecrets(paneId) > 0) setInputError(t("A key may not have reached the terminal: the connection ended before it was confirmed."));
     draftPaneRef.current = paneId;
     term.reset();
     retireOutputRef.current();

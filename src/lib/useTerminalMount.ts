@@ -1635,6 +1635,11 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         // anything typed since, never in a draft while a masked prompt is on screen (#2587)
         const current = paneRef.current;
         const lost = current === null ? [] : socket.takeUnconfirmedInput(current);
+        // a key sent as a password that the server never confirmed may not have arrived: said, as nothing of it is kept
+        if (current !== null && socket.takeUnconfirmedSecrets(current) > 0) {
+          const t = tRef.current;
+          setInputError(t("A key may not have reached the terminal: the connection ended before it was confirmed."));
+        }
         if (current !== null && secretRef.current === null && !draftIsEmpty(holdBefore(lost, EMPTY_DRAFT))) {
           const samePane = draftPaneRef.current === current;
           draftPaneRef.current = current;

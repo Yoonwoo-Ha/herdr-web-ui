@@ -31,6 +31,7 @@ import { RUNTIME_MOVE_KO } from "./i18n/runtime-move.ko.ts";
  * braces keep their English names.
  */
 const BASE: Record<string, string> = {
+  "A key may not have reached the terminal: the connection ended before it was confirmed.": "키가 터미널에 닿지 않았을 수 있습니다: 확인되기 전에 연결이 끊겼습니다.",
   "Open PC": "PC 열기",
   "View only": "보기 전용",
   "Not pasted: the file's path holds a line break, which the terminal would take as Enter.": "붙여넣지 않았습니다: 파일 경로에 줄바꿈이 있어 터미널이 Enter로 받아들입니다.",
