@@ -9,7 +9,6 @@ export interface OmoDetachedCell {
 export const DETACHED = /^Eval cell (\S+) (?:detached and is (?:still )?running in the (?:js|py) kernel|is detached and waiting for the (?:js|py) kernel to be ready|is queued behind [^\n]*? in the (?:js|py) kernel and detached)/;
 const ENDED = /(?:^|\n)(?:<system-reminder>)?Detached eval cell (\S+) \((?:js|py)\) (?:completed|failed|cancelled|was killed[^\n]*)\./g;
 
-/** A notification's text: a string, or the text parts of a list that also carries images. */
 export function notificationText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -17,7 +16,6 @@ export function notificationText(content: unknown): string {
     && "text" in part && typeof part.text === "string" ? [part.text] : []).join("\n");
 }
 
-/** Detached cells outlive an assistant's stop; only their own runtime notice settles them. */
 export function omoDetachedAfter(open: readonly OmoDetachedCell[], entry: unknown): readonly OmoDetachedCell[] {
   if (typeof entry !== "object" || entry === null || !("type" in entry)) return open;
   if (entry.type === "custom_message" && "customType" in entry && entry.customType === "senpi-codemode:notification" && "content" in entry) {

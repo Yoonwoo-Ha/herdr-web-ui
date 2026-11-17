@@ -96,7 +96,6 @@ for (const source of SOURCES) {
   test(`${source}: an evicted session reconnects delayed results without borrowing another session's state`, () => {
     const first = fixture(jsonl(prompt(source, "first"), call(source, "shared-id")));
     const original = transcriptPage(source, first);
-    // ten of each budget's sources: more than its eight entries
     for (let i = 0; i < 20; i++) {
       const otherSource = SOURCES[i % SOURCES.length]!;
       const other = fixture(jsonl(prompt(otherSource, `other ${i}`), call(otherSource, "shared-id"), result(otherSource, "shared-id", `other result ${i}`)));
@@ -149,8 +148,6 @@ for (const source of ["omp-transcript", "omo-transcript", "gjc-transcript"] as c
       const grown = transcriptPage(source, path);
       expect(textParts(grown.turns)).toEqual(["Run every check", "All checks passed"]);
       expect(toolParts(grown.turns)).toHaveLength(50);
-      // the fold and the metadata parse the new record once each, plus two tries on an empty line
-      // (4 calls in all); reparsing the live task parses its 101 records for both again (205)
       expect(parse.mock.calls.length).toBeLessThan(20);
     } finally {
       parse.mockRestore();
@@ -158,7 +155,6 @@ for (const source of ["omp-transcript", "omo-transcript", "gjc-transcript"] as c
   });
 }
 
-/** How many records one read parses: a few for a cached live task, all of it again for a reparse. */
 const parses = (read: () => unknown) => {
   const parse = spyOn(JSON, "parse");
   try {
@@ -171,7 +167,6 @@ const parses = (read: () => unknown) => {
 const busyTask = (source: Source) => jsonl(prompt(source, "Run every check"), ...Array.from({ length: 50 }, (_, i) => [call(source, `call-${i}`), result(source, `call-${i}`, `output ${i}`)]).flat());
 
 test("OMO and GJC chats never take the live cache entries of OMP and Claude chats read in turn", () => {
-  // eight chats fill the Codex/OMP/Claude budget; two more of OMO and GJC would make ten in one
   const chats = Array.from({ length: 10 }, (_, i) => ({ source: (i < 8 ? SOURCES[i % 2 ? 3 : 0] : SOURCES[i - 7])!, path: "" }));
   for (const chat of chats) chat.path = fixture(busyTask(chat.source));
   for (const { source, path } of chats) transcriptPage(source, path);
@@ -185,7 +180,6 @@ test("OMO and GJC chats never take the live cache entries of OMP and Claude chat
 });
 
 test("large OMO and GJC live tasks make room among themselves, never by evicting OMP's", () => {
-  // live tasks of about 11 MiB: two fit in a budget's 32 MiB, a third does not
   const output = "x".repeat(1024 * 1024);
   const large = (source: Source) => ({ source, path: fixture(jsonl(prompt(source, "Read the logs"), ...Array.from({ length: 11 }, (_, i) => [call(source, `log-${i}`), result(source, `log-${i}`, output)]).flat())) });
   const chats = (["omp-transcript", "omp-transcript", "omo-transcript", "gjc-transcript"] as const).map(large);
@@ -196,7 +190,6 @@ test("large OMO and GJC live tasks make room among themselves, never by evicting
       expect(parses(() => expect(toolParts(transcriptPage(source, path).turns)).toHaveLength(11))).toBeLessThan(20);
     }
   }
-  // the OMO chat grows and is read again, so a third large OMO task evicts the GJC entry, read least recently
   appendFileSync(chats[2]!.path, jsonl(answer("omo-transcript", "once more")));
   transcriptPage(chats[2]!.source, chats[2]!.path);
   const third = large("omo-transcript");
@@ -217,7 +210,6 @@ for (const source of ["omo-transcript", "gjc-transcript"] as const) {
     appendFileSync(path, jsonl(prompt(source, "Next")));
     const settled = transcriptPage(source, path).turns;
     expect(settled.slice(0, live.length)).toEqual(live);
-    // omo's pictures are answered from its file (#3420); gjc's would name pictures nothing answers, so it names none
     const pictured = source === "omo-transcript";
     for (const turns of [live, settled]) {
       expect(turns.flatMap(turn => turn.parts).filter(part => part.kind === "image")).toEqual(pictured ? [{ kind: "image", media_type: "image/png", ref: "pi-prompt:look:0" }] : []);
@@ -235,7 +227,6 @@ test("OMO: a growing rewrite of the live task forgets a task title only the old 
   const head = jsonl(prompt(source, "first"), answer(source, "done"), prompt(source, "second"), spawn);
   const path = fixture(head + jsonl(started({ task_id: "x", task_summary: "Old title" })));
   transcriptPage(source, path);
-  // same inode and a longer file: the settled turns stay, and only the live task is read again
   const wake = { type: "custom_message", customType: "omo-senpi:wake", display: false,
     details: [{ customType: "senpi-task.completion", details: [{ task_id: "x", status: "completed", agent_type: "explorer", final_response: "Nothing left" }] }] };
   writeFileSync(path, head + jsonl(started({ task_id: "x", note: "no title this time, and longer" }), wake));
@@ -254,7 +245,6 @@ test("OMO task completions ignore a discarded title preview and retain the commi
   const title = (id: string, summary: string) => ({
     type: "message", message: { role: "toolResult", toolName: "task", toolCallId: "spawn", content: "Started", details: { task_id: id, task_summary: summary } },
   });
-  // the preview names its own task, so a title that leaked from it could not be overwritten below
   appendFileSync(path, JSON.stringify(title("preview", "Discarded title")));
   const preview = transcriptPage(source, path);
   expect(toolParts(preview.turns)[0]?.output).toBe("Started");

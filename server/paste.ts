@@ -1,16 +1,6 @@
 /**
- * Image paste support: the browser POSTs a pasted or file-picked image, the server
- * writes it next to the pane and hands back the absolute path. The agent TUI (Claude
- * Code and friends) reads the path from the prompt text - the one image channel a pty
- * byte stream can carry; there is no clipboard or sixel hop in between.
- *
- * Files land in `<pane cwd>/.ovis/`, not /tmp, on purpose: agents ask before
- * reading outside their project directory, and a path inside the project keeps the
- * attachment visible next to the conversation. That folder ignores itself (a `.gitignore`
- * of `*`), so attachments stay out of Git status while their paths still open. A pane without a
- * known cwd falls back to the OS temp dir - the path still works, it just may cost
- * the agent a read-permission prompt. `OVIS_PASTE_DIR` sends every attachment to
- * one directory instead, for those who would rather keep them out of the working tree.
+ * Files land in `<pane cwd>/.ovis/`, not /tmp, on purpose: agents ask before reading outside their
+ * project directory.
  */
 
 import { lstatSync, mkdirSync, writeFileSync } from "node:fs";
@@ -20,27 +10,19 @@ import { imageType } from "./codex-images.ts";
 import { paneGet } from "./herdr/client.ts";
 import { MAX_ATTACHMENT_BYTES } from "../shared/attachments.ts";
 
-/** Decode ceiling: the limit the browser checks a file against before it uploads. */
 export const MAX_IMAGE_BYTES = MAX_ATTACHMENT_BYTES;
 
-/** The base64 text of a file at the ceiling, with the one padding group a decoder may add. */
 const MAX_ENCODED_BYTES = Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 4;
 
-/** What the JSON around the data may add: pane_id, content_type and a file name. */
 const ENVELOPE_ALLOWANCE = 1024 * 1024;
 
-/** The largest request body the image route reads; Bun.serve's `maxRequestBodySize` sits well above it. */
 export const MAX_IMAGE_BODY_BYTES = MAX_ENCODED_BYTES + ENVELOPE_ALLOWANCE;
 
 function tooLarge(): PasteImageError {
   return new PasteImageError("image_too_large", `file exceeds ${MAX_IMAGE_BYTES} bytes`, 413);
 }
 
-/**
- * The request body as text, refused past `MAX_IMAGE_BODY_BYTES`: by its announced length before any
- * of it is read, and by a running byte count for a body that announces none (chunked). Bun's own
- * limit answers an empty 413 the browser cannot explain, so this one answers first with the reason.
- */
+/** Bun's own limit answers an empty 413 the browser cannot explain, so this one answers first with the reason. */
 export async function readImageBody(request: Request): Promise<string> {
   const announced = Number(request.headers.get("content-length"));
   if (Number.isFinite(announced) && announced > MAX_IMAGE_BODY_BYTES) {
@@ -64,10 +46,6 @@ export async function readImageBody(request: Request): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/**
- * A file that is not one of the image types keeps its own name (sanitised), so the agent
- * reading the path sees what it is: an icon.svg, a notes.pdf, a data.csv.
- */
 function storedName(name: string | undefined): { base: string; extension: string } {
   const clean = (name ?? "").normalize("NFC").replace(/[^\p{L}\p{N}._-]+/gu, "_").replace(/^[._]+/, "").slice(-80);
   const dot = clean.lastIndexOf(".");
@@ -78,19 +56,15 @@ function storedName(name: string | undefined): { base: string; extension: string
   };
 }
 
-/** Where a pane's attachments go: `OVIS_PASTE_DIR` when set, else `<cwd>/.ovis`. */
 export function pasteDirectory(cwd: string | null | undefined): string {
   const override = pasteDirectoryOverride();
   if (override) {
-    // the plugin's env file is not a shell: expand a leading ~ here, before either separator.
-    // The separators are dropped with it: a leading one would make the rest an absolute path
     const home = /^~(?:[\\/]+(.*))?$/s.exec(override);
     return home ? resolve(homedir(), home[1] ?? "") : resolve(override);
   }
   return join(cwd ?? join(tmpdir(), "ovis"), ".ovis");
 }
 
-/** The folder `OVIS_PASTE_DIR` sends every pane's attachments to, absolute; undefined when each pane's `.ovis` takes them. */
 export function pasteDirectoryForAll(): string | undefined {
   return pasteDirectoryOverride() === "" ? undefined : pasteDirectory(null);
 }
@@ -125,7 +99,6 @@ const EXTENSIONS: Record<string, string> = {
   "image/webp": "webp",
 };
 
-/** A validation failure the /api/pane/image route answers with this status + code. */
 export class PasteImageError extends Error {
   constructor(
     readonly code: string,
@@ -151,7 +124,6 @@ export async function savePaneImage(options: {
   paneId: string;
   contentType: string;
   dataBase64: string;
-  /** the file's own name: any type is accepted, and one that is not a pasted image keeps it */
   name?: string;
 }): Promise<string> {
   const rasterClaim = EXTENSIONS[options.contentType] !== undefined;

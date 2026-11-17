@@ -11,10 +11,7 @@
  * - a compaction: `context_compaction_installed` with a `summary_text` replacement;
  * - a run's end: `terminal`, whose `completed` makes the answer before it final.
  * Every other record is bookkeeping, and so are the `retained_marker` / `retained_frame` lines.
- * The shapes are the same from Muse 1.4.2 to 1.4.13. A whole line that does not parse, names a
- * record or run event those builds do not write, belongs to another session, or is a record the
- * reader takes in another shape, throws MuseUnavailable: Chat then uses Terminal rather than show
- * part of the conversation.
+ * The shapes are the same from Muse 1.4.2 to 1.4.13.
  */
 import { closeSync, readSync } from "node:fs";
 import { basename, dirname } from "node:path";
@@ -74,15 +71,10 @@ const optionalText = (value: unknown): boolean => value === undefined || typeof 
 /** The session a log belongs to: Muse names its folder after it. */
 export const museSession = (path: string): string => basename(dirname(path));
 
-/**
- * Whether a line is one Muse writes to `session`'s log, and a record the reader takes has the
- * shape it reads, so that nothing in it is dropped and no other session's turns are shown.
- */
 function known(entry: Row, session: string): boolean {
   if (entry.retained_frame !== undefined) return entry.retained_frame === "session_permission_transaction" && entry.frame_schema_version === 1;
   if (record(entry.stream).kind !== "session" || record(entry.stream).id !== session || entry.schema_version !== 1) return false;
   if (entry.retained_marker !== undefined) return entry.retained_marker === "omitted_live_only";
-  // a fork's `session.fork.compaction` has no `recorded_at`, and a turn without one has no time
   if (!RECORDS.has(str(entry.payload_type)) || !isRow(entry.payload)) return false;
   if (entry.payload_type === "runtime.user_intent.accepted") {
     return every(entry.payload.model_messages, (message) => every(message.content, (block) =>
@@ -104,7 +96,6 @@ function iso(value: unknown): string | null {
   return typeof value === "number" && Number.isFinite(value) ? new Date(Math.floor(value / 1000)).toISOString() : null;
 }
 
-/** The words of an accepted intent, or null when the record is none or carries nothing. */
 export function musePrompt(entry: Row): string | null {
   if (entry.payload_type !== "runtime.user_intent.accepted") return null;
   const blocks = list(record(entry.payload).model_messages).flatMap((message) => list(record(message).content)).map(record);
@@ -114,7 +105,6 @@ export function musePrompt(entry: Row): string | null {
   return texts.length > 0 ? texts.join("\n\n") : pictures || null;
 }
 
-/** A run event: `{ kind: "run", event }` inside a `runtime.session` payload. */
 function runEvent(entry: Row): Row | null {
   const payload = record(entry.payload);
   return entry.payload_type === "runtime.session" && payload.kind === "run" ? record(payload.event) : null;
@@ -133,7 +123,6 @@ export function museResult(text: string): { text: string; error: boolean } {
   return { text, error: false };
 }
 
-/** The turns of `session`'s log (museSession). */
 export function parseMuseTranscript(text: string, session: string): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
   const calls = new Map<string, Tool>();
@@ -164,7 +153,7 @@ export function parseMuseTranscript(text: string, session: string): Conversation
         const name = str(call.name) || "tool";
         const input = typeof call.args === "string" ? call.args : JSON.stringify(call.args ?? {});
         let args: Row = {};
-        try { args = record(JSON.parse(input)); } catch { /* summarized by name */ }
+        try { args = record(JSON.parse(input)); } catch {}
         const part: Tool = { kind: "tool", name, summary: toolSummary(name, args), input, output: "" };
         if (str(call.call_id) !== "") calls.set(str(call.call_id), part);
         parts.push(part);
@@ -175,18 +164,15 @@ export function parseMuseTranscript(text: string, session: string): Conversation
         const id = str(item.tool_call_id);
         let part = calls.get(id);
         if (part === undefined) {
-          // its call is on an earlier page: the output still shows, on its own row
           part = { kind: "tool", name: "Tool output", summary: "", input: "", output: "" };
           answer(ts, [part]);
         }
         const result = museResult(str(item.text));
         trimOutput(part, result.text, id);
-        // a result without an id has no ref to fetch the rest by
         if (id === "") { delete part.output_ref; delete part.output_size; }
         if (result.error) part.error = true;
       }
     } else if (event.kind === "terminal" && event.terminal === "completed") {
-      // the run ended on its answer: a run that ends on a tool or on progress prose has none
       const last = turns.at(-1);
       const part = last?.role === "assistant" ? last.parts.at(-1) : undefined;
       if (part?.kind === "text" && part.phase === undefined) part.phase = "final_answer";
@@ -200,7 +186,6 @@ export function parseMuseTranscript(text: string, session: string): Conversation
   return turns;
 }
 
-/** The model a Muse log names last: its configured model, then each response's own. */
 export function museModel(text: string, model: string | null): string | null {
   for (const line of text.split("\n")) {
     if (!line.includes('"run.model.configured"') && !line.includes('"model_completed"')) continue;
@@ -214,15 +199,10 @@ export function museModel(text: string, model: string | null): string | null {
   return model;
 }
 
-/**
- * The whole result of one call, by its id, unwrapped as the page unwraps it. ponytail: reads the
- * log from the start on each request; read backwards from the end if logs grow past a few hundred MB.
- */
 export function museToolOutput(path: string, ref: string): string | null {
   const id = JSON.stringify(ref);
   const session = museSession(path);
   let fd: number;
-  // another file than the one the lookup is bound to (openBound) holds none of its calls
   try { fd = openBound(path); } catch { return null; }
   try {
     const chunk = Buffer.alloc(1024 * 1024);
@@ -235,7 +215,6 @@ export function museToolOutput(path: string, ref: string): string | null {
         if (!line.includes(id) || !line.includes('"tool_result_batch_committed"')) continue;
         let entry: Row;
         try { entry = record(JSON.parse(line)); } catch { continue; }
-        // a log another session's records replaced has none of this session's calls
         if (record(entry.stream).id !== session) continue;
         const event = runEvent(entry);
         const item = list(event?.results).map(record).find((result) => result.tool_call_id === ref);
