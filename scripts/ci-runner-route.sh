@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# stays on ubuntu-24.04. "Room" is counted from the Actions API, since the workflow token cannot
-# list runners: CI_SELF_HOSTED_CAPACITY (default 10) minus the queued and running jobs of every
-# workflow that could take those runners must leave at least the jobs one run needs. When that count
-# fails, the pull request stays hosted. Setting the variable to labels sends every pull request to
+# A same-repository pull request goes to the self-hosted runners unless jobs already wait for them:
+# the workflow token cannot list runners, so the Actions API's queued and running jobs stand in.
 set -euo pipefail
 
 hosted='"ubuntu-24.04"'
@@ -16,8 +14,10 @@ if [[ ("$event" == pull_request || ("$event" == push && "${REF:-}" == refs/heads
   configured_from=CI_LINUX_SELF_HOSTED_LABELS
 fi
 main_configured="${MAIN_LABELS:-}"
-capacity="${SELF_HOSTED_CAPACITY:-}"
-linux_jobs=6
+# a part takes about 8 min on our runners and 12.5 on a hosted one, so up to about 4 min of waiting still wins
+queue_limit=240
+offline_wait=60
+live_job=3600
 
 choose_labels() {
   local source="$1" value="$2" compact
@@ -30,7 +30,6 @@ choose_labels() {
 }
 
 pool_labels='["self-hosted","linux","x64","self-hosted-ovis"]'
-light_job_names='["Detect changes","herdr-core live contract","Integration and browser","Pull request title","bundle-windows"]'
 
 # hosted fallback is printed well inside Detect changes' five minutes; each attempt is bounded by a
 # minute or what is left, with timeout or gtimeout where there is one (stock macOS has neither: there
@@ -55,40 +54,48 @@ api() {
   return 1
 }
 
-busy_jobs() {
-  local limit="$1" ids id jobs n total=0
+# Prints "<longest wait> <live>": the seconds the longest-waiting queued job of the pool has waited for a
+# runner (a day at most: GitHub drops it then), and how many jobs that can only run on the pool's
+# label and started within the last hour are running. A job "in progress" for longer is a stale record
+# (some stay so for days), not a runner; so is a run nothing has updated for a day, which is not read.
+pool_jobs() {
+  local ids id jobs counts wait live longest=0 running=0
   ids=$(for status in in_progress queued; do
-    api "repos/$REPOSITORY/actions/runs?status=$status&per_page=100" | jq '.workflow_runs[].id' || exit 1
+    api "repos/$REPOSITORY/actions/runs?status=$status&per_page=100" | jq '.workflow_runs[] | select(now - (.updated_at | fromdateiso8601) < 86400) | .id' || exit 1
   done) || return 1
   for id in $ids; do
     jobs=$(api "repos/$REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100") || return 1
-    n=$(jq -s -e --argjson pool "$pool_labels" --argjson light "$light_job_names" '[.[].jobs[] | select(.status != "completed" and (.name as $name | $light | index($name)) == null)
-      | [.labels[] | ascii_downcase] | select(index("self-hosted") != null and all(.[]; . as $x | $pool | index($x) != null))]
-      | length' <<<"$jobs") || return 1
-    total=$((total + n))
-    if (( total > limit )); then break; fi
+    counts=$(jq -s -r -e --argjson pool "$pool_labels" --argjson live "$live_job" '[.[].jobs[]
+      | select([.labels[] | ascii_downcase] | length > 0 and all(.[]; . as $x | $pool | index($x) != null))] as $ours
+      | ([$ours[] | select(.status == "queued") | now - (.created_at | fromdateiso8601) | select(. < 86400)] | max // 0 | floor) as $wait
+      | ([$ours[] | select(.status == "in_progress" and ([.labels[] | ascii_downcase] | index("self-hosted-ovis") != null)
+          and now - (.started_at | fromdateiso8601) < $live)] | length) as $running
+      | "\($wait) \($running)"' <<<"$jobs") || return 1
+    read -r wait live <<<"$counts"
+    if (( wait > longest )); then longest=$wait; fi
+    running=$((running + live))
+    if (( longest > queue_limit )); then break; fi
   done
-  echo "$total"
+  echo "$longest $running"
 }
 
 route_pull_request() {
-  local busy
-  if [[ -z "${capacity//[[:space:]]/}" ]]; then
-    capacity=10
-  elif ! [[ "$capacity" =~ ^[0-9]{1,4}$ ]]; then
-    echo "::error::repository variable CI_SELF_HOSTED_CAPACITY must be a whole number, got: $capacity" >&2
-    exit 1
+  local counts waited running
+  if ! counts=$(pool_jobs); then
+    echo "::warning::could not read the self-hosted runners' jobs; using ubuntu-24.04" >&2
+    echo "linux=$hosted"
+    return
   fi
-  capacity=$((10#$capacity))
-  if ! busy=$(busy_jobs $((capacity - linux_jobs))); then
-    echo "::warning::could not count the self-hosted runners' jobs; using ubuntu-24.04" >&2
+  read -r waited running <<<"$counts"
+  if (( waited > queue_limit )); then
+    echo "Runner: ubuntu-24.04 (a self-hosted job has waited ${waited}s for a runner, pull request)" >&2
     echo "linux=$hosted"
-  elif (( capacity - busy >= linux_jobs )); then
-    echo "Runner: self-hosted $default_labels ($busy of $capacity busy, pull request)" >&2
-    echo "linux=$default_labels"
+  elif (( running == 0 && waited > offline_wait )); then
+    echo "Runner: ubuntu-24.04 (no self-hosted job is running and one has waited ${waited}s: no runner looks online, pull request)" >&2
+    echo "linux=$hosted"
   else
-    echo "Runner: ubuntu-24.04 (at least $busy of $capacity self-hosted busy, pull request)" >&2
-    echo "linux=$hosted"
+    echo "Runner: self-hosted $default_labels (longest self-hosted wait ${waited}s, $running running, pull request)" >&2
+    echo "linux=$default_labels"
   fi
 }
 

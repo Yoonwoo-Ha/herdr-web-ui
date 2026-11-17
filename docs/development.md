@@ -1355,13 +1355,15 @@ pages or credentials.
 ### Self-hosted runner
 
 `ci.yml`'s Linux jobs of a push run on the maintainer PC's runners (labels
-`["self-hosted","self-hosted-ovis"]`) by default. A same-repository pull request goes there too
-while those runners have room for its six Linux jobs, and to `ubuntu-24.04` (with the browser
-checks sharded) when they do not, so neither pool queues while the other sits idle. The workflow
-token cannot list runners, so Detect changes counts room from the Actions API: the repository
-variable `CI_SELF_HOSTED_CAPACITY` (default 10, the PC's `self-hosted-ovis` runners) minus the
-queued and running jobs of every workflow that target those labels. When that count fails, the
-pull request stays hosted. Other events stay on `ubuntu-24.04`. The repository variable
+`["self-hosted","self-hosted-ovis"]`) by default. A same-repository pull request goes there too,
+and to `ubuntu-24.04` (with the browser checks sharded) only when jobs already wait for those
+runners. The workflow token cannot list runners, so Detect changes reads the queued and running
+jobs of every workflow that target those labels from the Actions API: one queued for more than
+four minutes (a browser part takes about 8 minutes there and 12.5 hosted, so a wait that long
+still wins), or one queued for more than a minute while no job that only those runners can take,
+started within the last hour, is running (no runner looks online), sends the run hosted. When the
+jobs cannot be read, the pull request stays hosted. Detect changes itself runs on those runners
+unless `CI_LIGHT_LABELS` says otherwise, so with every runner gone a run waits there instead. Other events stay on `ubuntu-24.04`. The repository variable
 `CI_SELF_HOSTED_LABELS` overrides that (labels send every same-repository pull request to the
 self-hosted runners) with another JSON array of runner labels that contains `"self-hosted"`, or with the
 JSON string `"ubuntu-24.04"` to keep every job GitHub-hosted while that PC is offline (unless
@@ -1386,8 +1388,8 @@ the Integration and browser summary in `ci.yml` and `pr-title.yml`. Their `runs-
 `ubuntu-24.04` before it reads any variable; a push to main then takes `CI_MAIN_SELF_HOSTED_LABELS`
 when it is set (on a push or a run started from main), so main's Detect changes never waits behind pull requests; otherwise the job takes the repository variable `CI_LIGHT_LABELS`,
 else `CI_SELF_HOSTED_LABELS`, else `["self-hosted","self-hosted-ovis"]`; `"ubuntu-24.04"` in
-either variable keeps them hosted. They ignore the `self_hosted_labels` dispatch input, and
-`scripts/ci-runner-route.sh` leaves them out of the busy count, since each holds a runner for seconds. `scripts/light-runner-workflow.test.ts` fails when a job a pull
+either variable keeps them hosted. They ignore the `self_hosted_labels` dispatch input; one that
+waits for a runner counts in `scripts/ci-runner-route.sh`'s queue like any other. `scripts/light-runner-workflow.test.ts` fails when a job a pull
 request runs can reach a self-hosted runner without that guard or the route below.
 
 A push to main takes the repository variable `CI_MAIN_SELF_HOSTED_LABELS` over

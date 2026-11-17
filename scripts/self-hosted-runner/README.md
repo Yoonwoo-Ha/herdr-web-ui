@@ -301,17 +301,17 @@ old; one it cannot even move is emptied where it is, and logged once a day while
 ## Routing jobs to it
 
 `ci.yml`'s Linux jobs of a push go to `["self-hosted","self-hosted-ovis"]` by default, the launcher's
-default label. A same-repository pull request goes there only while at most
-`CI_SELF_HOSTED_CAPACITY` (default 10) minus its six Linux jobs (Fast checks, Integration tests and the
-browser jobs: ui-regression and the three parts of the other scripts) are queued or running on that label,
-and GitHub-hosted otherwise. Set the capacity to the number of `self-hosted-ovis` runners you keep
-online. The repository variable overrides the choice:
+default label. A same-repository pull request goes there too, and GitHub-hosted only when a job has
+waited more than four minutes for that label, or more than a minute while none of its jobs runs (no
+runner looks online). There is no runner count to keep up to date: a host that takes no more work
+simply leaves jobs queued, and the next run overflows. Detect changes, which makes that choice, runs on
+the same label unless `CI_LIGHT_LABELS` names others, so with every runner gone a run waits there:
+then set `CI_SELF_HOSTED_LABELS` to `"ubuntu-24.04"`, and `CI_LIGHT_LABELS` too when it holds labels. The repository variable overrides the choice:
 
 ```sh
 gh variable set CI_SELF_HOSTED_LABELS --body '"ubuntu-24.04"'   # PC offline: everything GitHub-hosted
 gh variable set CI_SELF_HOSTED_LABELS --body '["self-hosted","self-hosted-ovis"]'   # every pull request and release.yml too
 gh variable delete CI_SELF_HOSTED_LABELS   # back to the default
-gh variable set CI_SELF_HOSTED_CAPACITY --body 10   # self-hosted-ovis runners online
 ```
 
 Pushes to main can have runners of their own, so a merge's CI never queues behind pull request runs.

@@ -78,17 +78,6 @@ describe("self-hosted runners and fork pull requests", () => {
     expect(changes.steps?.find((step) => step.id === "route")?.run).toBe('bash scripts/ci-runner-route.sh >> "$GITHUB_OUTPUT"');
   });
 
-  const FORMER_LIGHT = ["bundle-windows"];
-  test("ci-runner-route.sh leaves out of its busy count exactly the light jobs a pull request runs, and the former ones", () => {
-    const names = workflows
-      .filter(({ name }) => pullRequestWorkflows.has(name))
-      .flatMap(({ workflow }) => Object.entries(workflow.jobs).filter(([, job]) => job["runs-on"] === LIGHT || job["runs-on"] === HOSTED_ONLY_LIGHT).map(([id, job]) => (job as Job & { name?: string }).name ?? id));
-    const route = readFileSync(join(root, "scripts/ci-runner-route.sh"), "utf8");
-    const listed = JSON.parse(/^light_job_names='(.+)'$/m.exec(route)![1]!) as string[];
-    expect(listed.toSorted()).toEqual([...names, ...FORMER_LIGHT].toSorted());
-    expect(names).not.toContain("bundle-windows");
-  });
-
   test("some job uses the light runner expression", () => {
     const light = workflows.flatMap(({ workflow }) => Object.values(workflow.jobs).filter((job) => job["runs-on"] === LIGHT || job["runs-on"] === HOSTED_ONLY_LIGHT));
     expect(light.length).toBeGreaterThan(0);

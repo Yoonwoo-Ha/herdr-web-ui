@@ -56,7 +56,6 @@ jobs:
           # only in ci.yml's own runs: a workflow that calls ci.yml (relay-deploy on a push to main, say) is named otherwise
           LINUX_LABELS: ${{ github.workflow == 'CI' && vars.CI_LINUX_SELF_HOSTED_LABELS || '' }}
           MAIN_LABELS: ${{ vars.CI_MAIN_SELF_HOSTED_LABELS }}
-          SELF_HOSTED_CAPACITY: ${{ vars.CI_SELF_HOSTED_CAPACITY }}
           FAST_LABELS: ${{ vars.CI_FAST_SELF_HOSTED_LABELS }}
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/ci-runner-route.sh >> "$GITHUB_OUTPUT"
