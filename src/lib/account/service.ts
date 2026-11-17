@@ -59,33 +59,21 @@ export function pcAccountServiceOf(document: { querySelector(selector: string): 
   }
 }
 
-/**
- * The sign-ins this page offers, from `<meta name="ovis-account-providers" content="github,apple">`:
- * GitHub alone without it, and Apple only once the service is set up for it, so no button leads
- * to a sign-in the service would refuse.
- */
 export function accountProvidersOf(document: { querySelector(selector: string): { getAttribute(name: string): string | null } | null }): AccountProvider[] {
   const named = new Set((document.querySelector('meta[name="ovis-account-providers"]')?.getAttribute("content") ?? "").split(",").map((name) => name.trim()));
   const offered = ACCOUNT_PROVIDERS.filter((provider) => named.has(provider));
   return offered.length > 0 ? offered : ["github"];
 }
 
-/** The providers with a device flow a PC's own page can start (lib/account/deviceSignIn.ts). */
 export const DEVICE_PROVIDERS = ["github", "google"] as const;
 export type DeviceProvider = (typeof DEVICE_PROVIDERS)[number];
 
 export interface OfferedProviders {
   readonly providers: AccountProvider[];
   readonly device: DeviceProvider[];
-  /** the sign-ins the Ovis link page finishes (`device_page`); empty when the service has no link page */
   readonly page: DeviceProvider[];
 }
 
-/**
- * The sign-ins the service is set up for (`GET /v1/providers`), so a Google button shows only where
- * Google can finish. A service that cannot say leaves the build's own list (`fallback`), and a PC's
- * page GitHub alone, as before the service could be asked.
- */
 export async function offeredProviders(service: string, fallback: readonly AccountProvider[], options: { fetch?: Fetch } = {}): Promise<OfferedProviders> {
   const before: OfferedProviders = { providers: [...fallback], device: ["github"], page: [] };
   let body: unknown;
@@ -135,10 +123,8 @@ export class SignedOutError extends Error {
   }
 }
 
-/** The name an admission is shown and signed under when its own has nothing left once made plain. */
 export const UNNAMED_DEVICE = "Device";
 
-/** A device of the account waiting at a PC (`GET /v1/admissions`), and who is asking. */
 export interface Admission extends AccountAsker { readonly key: string; readonly label: string; readonly server_id: string; readonly at: string }
 
 export interface DirectoryPc {
@@ -183,7 +169,6 @@ export function parseAccountLimits(value: unknown): AccountLimits | null {
   if (until !== undefined && until !== null && (typeof until !== "number" || !Number.isFinite(until))) return null;
   const metered = data_metering === undefined || data_metering === "on";
   return {
-    // a long name is shortened, never a reason to drop the limits
     plan: plan.trim().length > 32 ? `${plan.trim().slice(0, 31)}…` : plan.trim(),
     pcs_max,
     ...(typeof pcs_used === "number" ? { pcs_used } : {}),
@@ -218,7 +203,6 @@ function legacySignInId(refreshToken: string): string {
   return `saved-${bytesToHex(sha256(utf8ToBytes(refreshToken)).subarray(0, 16))}`;
 }
 
-/** Whether `a` is `b`'s sign-in, or one of its refreshes. */
 export function sameSignIn(a: AccountSession, b: AccountSession): boolean {
   return a.refresh_token === b.refresh_token || (a.sign_in_id !== undefined && a.sign_in_id === b.sign_in_id);
 }
@@ -237,9 +221,7 @@ export interface AccountServiceOptions {
   readonly store: AccountStore;
   readonly fetch?: Fetch;
   readonly now?: () => number;
-  /** serializes refresh and sign-out between tabs; the browser's Web Locks by default */
   readonly lock?: AccountLock;
-  /** the one sign-in this service acts for (forSignIn) */
   readonly signIn?: AccountSession;
 }
 
@@ -282,7 +264,6 @@ export class AccountService {
         return seen;
       });
     } catch {
-      // a store that takes no write (storage full) is still read, as before sign-ins were named
       return this.options.store.get("session");
     }
     return seen;
@@ -309,7 +290,6 @@ export class AccountService {
     await this.call("PUT", `/v1/pcs/${serverId}`, entry);
   }
 
-  /** Takes a PC out of the account's directory (it rings nobody and admits nothing either way). */
   async deletePc(serverId: string): Promise<void> {
     await this.call("DELETE", `/v1/pcs/${serverId}`);
   }
@@ -342,13 +322,11 @@ export class AccountService {
     });
   }
 
-  /** The account's plan and limits (`GET /v1/account/limits`); null when the service does not report them. */
   async limits(): Promise<AccountLimits | null> {
     const body = await this.call("GET", "/v1/account/limits");
     return parseAccountLimits(body);
   }
 
-  /** The account's sign-in methods, one per provider. */
   async identities(): Promise<AccountIdentity[]> {
     const body = await this.call("GET", "/v1/identities");
     const list = isRecord(body) && Array.isArray(body.identities) ? body.identities : [];
@@ -424,7 +402,6 @@ export class AccountService {
     await this.call("DELETE", "/v1/account");
   }
 
-  /** Leaves a signed record in the mailbox of each listed PC of the account (at most 32 at a time). */
   async postRecord(serverIds: readonly string[], record: AccountRecord): Promise<number> {
     if (serverIds.length === 0) return 0;
     const body = await this.call("POST", "/v1/records", { server_ids: serverIds, record });
@@ -451,7 +428,6 @@ export class AccountService {
         const response = await this.fetch(new URL("/v1/signout", live.service), { method: "POST", headers: { authorization: `Bearer ${live.access_token}` } });
         if (!response.ok) throw await failure(response);
       } catch (error) {
-        // a refresh the service refused: the sign-in had already ended there
         if (!(error instanceof SignedOutError)) throw error;
       } finally {
         if (!replaced) await this.options.store.update("session", (current) => current?.refresh_token === session.refresh_token || current?.refresh_token === live.refresh_token ? undefined : current);
@@ -474,7 +450,6 @@ export class AccountService {
       if (error instanceof AccountServiceError && (error.status === 400 || error.status === 401)) return this.signedOut(from);
       throw error;
     }
-    // the same sign-in, refreshed
     const carried: AccountSession = from.sign_in_id === undefined ? next : { ...next, sign_in_id: from.sign_in_id };
     let kept = false;
     await this.options.store.update("session", (current) => {
