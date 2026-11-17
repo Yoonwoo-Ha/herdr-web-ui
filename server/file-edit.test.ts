@@ -17,7 +17,6 @@ import { MAX_EDITABLE_TEXT_BYTES, type EditableText } from "../shared/files.ts";
 
 const sha = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
-// Linux's own calls and outcomes (libc.so.6, /proc/self/fd): macOS saves by its own proof, Windows not at all
 describe.skipIf(process.platform !== "linux")("editing a text file (#771)", () => {
   let server: ReturnType<typeof createServer>;
   let stateDir: string;
@@ -32,7 +31,6 @@ describe.skipIf(process.platform !== "linux")("editing a text file (#771)", () =
     method: "PUT", headers: { origin: url(""), "content-type": "application/json", ...headers },
     body: JSON.stringify({ pane_id: "w1:p1", path, revision, text }),
   });
-  /** a file under the pane's folder, written fresh for one test */
   const file = (relative: string, content: string | Uint8Array, mode?: number): string => {
     const path = join(folder, relative);
     mkdirSync(join(path, ".."), { recursive: true });
@@ -51,7 +49,6 @@ describe.skipIf(process.platform !== "linux")("editing a text file (#771)", () =
     paneCwd = folder;
     paneGet = spyOn(herdr, "paneGet").mockImplementation(async (paneId) => ({ pane_id: paneId, workspace_id: "w1", tab_id: "w1:t1", cwd: paneCwd, agent_status: "idle" }) as unknown as Awaited<ReturnType<typeof herdr.paneGet>>);
     server = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", machines: false, sidecar: false });
-    // on this thread, where the hooks are seen; one test below runs on the file threads
     setFilePoolOptions({ inline: runFileTask });
   });
   afterEach(() => {
@@ -111,7 +108,6 @@ describe.skipIf(process.platform !== "linux")("editing a text file (#771)", () =
     expect(symbols.setxattr(cstring(tagged), cstring("user.ovis"), Buffer.from("kept"), 4, 0)).toBe(0);
     expect((await save(tagged, sha("tagged\n"), "still tagged\n")).status).toBe(200);
     expect(read(tagged, "user.ovis")).toBe(Buffer.from("kept").toString("hex"));
-    // an access list that narrows the group and names a user
     if (Bun.which("setfacl") === null) return;
     const listed = file("listed.md", "listed\n", 0o640);
     expect(Bun.spawnSync(["setfacl", "-m", "u:nobody:r--,g::---,o::---,m::r--", listed]).exitCode).toBe(0);
@@ -119,7 +115,6 @@ describe.skipIf(process.platform !== "linux")("editing a text file (#771)", () =
     expect(before).not.toBeNull();
     expect((await save(listed, sha("listed\n"), "x\n")).status).toBe(200);
     expect(read(listed, "system.posix_acl_access")).toBe(before);
-    // a folder that passes an access list on to new files: the saved file takes none the file did not have
     mkdirSync(join(folder, "shared"));
     expect(Bun.spawnSync(["setfacl", "-d", "-m", "u:nobody:r--", join(folder, "shared")]).exitCode).toBe(0);
     const plain = file("shared/plain.md", "plain\n");
@@ -181,7 +176,6 @@ describe.skipIf(process.platform !== "linux")("editing a text file (#771)", () =
     }
     expect(readFileSync(secret, "utf8")).toBe("secret\n");
     expect(readFileSync(join(outside, "docs", "x.md"), "utf8")).toBe("x\n");
-    // a pane at a filesystem's root opens nothing for editing
     paneCwd = "/";
     expect(await error(await open(secret.slice(1)))).toEqual([403, "outside_pane"]);
     paneCwd = folder;
@@ -196,17 +190,14 @@ describe.skipIf(process.platform !== "linux")("editing a text file (#771)", () =
       symlinkSync(outside, join(folder, "swap"));
     };
     const saved = await save(note, sha("before\n"), "after\n");
-    // the rename went through the folder that was opened, wherever it now is
     expect(saved.status).toBe(200);
     expect(readFileSync(join(folder, "swap-moved", "note.md"), "utf8")).toBe("after\n");
     expect(readFileSync(join(outside, "note.md"), "utf8")).toBe("outside\n");
-    // and a folder moved out of the pane's folder meanwhile is not written in at all
     const kept = file("away/kept.md", "kept\n");
     textSaveHooks.beforeRename = () => renameSync(join(folder, "away"), join(outside, "away"));
     expect(await error(await save(kept, sha("kept\n"), "after\n"))).toEqual([409, "stale_revision"]);
     expect(readFileSync(join(outside, "away", "kept.md"), "utf8")).toBe("kept\n");
     expect(readdirSync(join(outside, "away"))).toEqual(["kept.md"]);
-    // and a folder removed meanwhile is a conflict, not a failure
     file("gone/note.md", "gone\n");
     textSaveHooks.beforeRename = () => rmSync(join(folder, "gone"), { recursive: true, force: true });
     expect(await error(await save(join(folder, "gone", "note.md"), sha("gone\n"), "after\n"))).toEqual([409, "stale_revision"]);
@@ -260,7 +251,6 @@ describe.skipIf(process.platform !== "linux")("editing a text file (#771)", () =
     });
     for (const method of ["GET", "PUT"]) expect(await error((await handleRequest(request(method), through("watch")))!)).toEqual([403, "read_only"]);
     expect((await handleRequest(request("GET"), through("drive")))?.status).toBe(200);
-    // an open LAN install's window signed in as nobody
     const lan: ServerContext = { ...server.context, requestIP: () => ({ address: "192.168.1.20" }), timeout: () => {}, upgrade: () => false };
     const fromLan = new Request(`http://192.168.1.10:${server.port}/api/fs/text?pane_id=w1:p1&path=${q(note)}`, { headers: { host: `192.168.1.10:${server.port}` } });
     expect(await error((await handleRequest(fromLan, lan))!)).toEqual([403, "drive_only"]);

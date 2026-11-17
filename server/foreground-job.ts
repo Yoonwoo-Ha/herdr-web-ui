@@ -11,7 +11,6 @@ import { darwinArgv, darwinProcessGroup } from "./darwin-process.ts";
 
 export interface JobProcess { pid: number; name: string; argv: string[] }
 
-/** the most processes one lookup follows: a terminal's foreground job, not a whole PC */
 const JOB_MAX = 256;
 
 /** A Linux process's parent, group and command name from /proc/<pid>/stat; the name may hold spaces and parentheses. */
@@ -40,7 +39,6 @@ async function linuxBelow(pid: number): Promise<JobProcess[]> {
       for (const child of await linuxChildren(parent).catch(() => [])) {
         if (seen.has(child)) continue;
         seen.add(child);
-        // a process that ended meanwhile, or left the job for a group of its own, is not in it
         const stat = await linuxStat(child).catch(() => null);
         if (stat === null || stat.group !== group) continue;
         const argv = (await readFile(`/proc/${child}/cmdline`, "utf8").catch(() => "")).split("\0");
@@ -67,15 +65,11 @@ function darwinBelow(pid: number): JobProcess[] | null {
   return found;
 }
 
-/**
- * The processes below `pid` in its foreground job, nearest first; null when they cannot be read
- * (`pid` gone, a platform without a foreground job), which is no proof that none runs there.
- */
 export async function jobProcessesBelow(pid: number, platform: string = process.platform): Promise<JobProcess[] | null> {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   try {
     if (platform === "linux") return await linuxBelow(pid);
     if (platform === "darwin") return darwinBelow(pid);
-  } catch { /* the process ended, or its /proc entry is not ours to read */ }
+  } catch { }
   return null;
 }

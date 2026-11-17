@@ -19,20 +19,14 @@ export const CLEAR_HISTORY = "\x1b[?1049l\x1b[3J\x1b[H\x1b[2J";
  */
 export const CLEAR_JOINER_HISTORY = "\x1b[?1049l\x1b[3J";
 
-/** What the viewer's terminal said about itself (hc's `Display`). */
 type Display = { fg?: string; bg?: string; cursor?: string; cell?: [number, number] };
 
-/** `rgb:RRRR/GGGG/BBBB` (any hex width) as `#rrggbb`. */
 function rgb(body: string): string | undefined {
   const parts = /^rgb:([0-9a-f]+)\/([0-9a-f]+)\/([0-9a-f]+)$/i.exec(body);
   if (!parts) return undefined;
   return `#${parts.slice(1).map((part) => part.slice(0, 2).padEnd(2, part[0]!)).join("").toLowerCase()}`;
 }
 
-/**
- * Takes the replies to ASK_DISPLAY and focus reports out of what the viewer typed (the program
- * never asked for them); what is left goes to the program. Ported from `hc attach`'s take_replies.
- */
 export function takeReplies(input: string, display: Display): { rest: string; focus: boolean[] } {
   let rest = "";
   const focus: boolean[] = [];
@@ -79,29 +73,15 @@ export interface CoreAttachOptions {
   onExit: (code: number | null) => void;
 }
 
-/**
- * A live herdr-core terminal for the server's attach (server/core/terminal-process.ts), in place of
- * a PtySession running `hc attach`: the terminal's stream on the server's own hc connection, so no
- * process and no PTY host per viewer. It answers the calls the server makes on a PtySession:
- * keystrokes are DATA, a size is hc's RESIZE, and pausing holds back hc's credit, which stops the
- * stream once hc's window is spent.
- *
- * The viewer keeps the scrollback (`terminal-history`): each attach starts with the terminal's last
- * TERMINAL_HISTORY_LINES lines, main screen only, as `hc attach --history` shows them.
- */
 export class CoreAttachSession {
-  /** goes ahead of a joiner's cut main-screen replay, which lost the first attach's CLEAR_HISTORY */
   readonly replayPrefix = CLEAR_JOINER_HISTORY;
   readonly exited: Promise<void>;
   private channel: Channel | null = null;
   private closed = false;
   private paused = false;
-  /** stream bytes taken but not credited yet: while paused, or before the channel's id is known */
   private owed = 0;
-  /** keystrokes (and whether the viewer's terminal made them itself) sent before hc answered the attach */
   private typed: { data: string; automatic: boolean }[] = [];
   private display: Display = {};
-  /** the display facts hc has, as JSON: sent again only when they change */
   private sentDisplay = "{}";
   /**
    * Asks ASK_DISPLAY, and turns focus reports on with it only on attach: xterm.js answers every
@@ -156,10 +136,8 @@ export class CoreAttachSession {
       this.typed = [];
       this.settle();
       this.report();
-      // the viewer's terminal answers through write(), as it answered `hc attach`
       this.ask(true);
     }, (error: unknown) => {
-      // the old `hc attach` printed why in the pane; the server log is where it goes now
       console.error(`herdr-core attach for ${options.terminal} failed: ${error instanceof Error ? error.message : String(error)}`);
       this.end(null);
     });
@@ -177,7 +155,6 @@ export class CoreAttachSession {
     this.report();
     for (const focused of focus) {
       this.channel?.focus(focused);
-      // the theme may have changed while the viewer was away
       if (focused) this.ask();
     }
     if (!rest) return true;
@@ -212,15 +189,12 @@ export class CoreAttachSession {
     this.settle();
   }
 
-  /** Detaches; `exited` settles once hc answered the detach, so a next attach never overlaps this one. */
   kill(): void {
     if (this.closed) return;
     this.closed = true;
-    // before hc answered the attach, the open's own continuation detaches it
     if (this.channel) void this.channel.close().then(() => this.end(null));
   }
 
-  /** Sends hc the viewer's display facts when they changed. */
   private report(): void {
     const json = JSON.stringify(this.display);
     if (!this.channel || json === this.sentDisplay) return;

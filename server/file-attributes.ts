@@ -20,19 +20,16 @@ const UNSUPPORTED: Record<string, readonly number[]> = { linux: [95], darwin: [4
 const NO_ACL = 2;
 
 type Calls = {
-  /** the calling thread's errno, read right after a call that failed */
   errno: () => number;
   list: (fd: number, buffer: Buffer | null, size: number) => number;
   remove: (fd: number, name: Buffer) => number;
   get: (fd: number, name: Buffer, buffer: Buffer | null, size: number) => number;
   set: (fd: number, name: Buffer, value: Buffer) => number;
-  /** macOS only: the descriptor's access list copied to another; false when it could not be */
   copyAcl?: (from: number, to: number) => boolean;
 };
 
 let loaded: Calls | null | undefined;
 
-/** The C library's calls for this platform, or null where they cannot be loaded. */
 function calls(platform: NodeJS.Platform): Calls | null {
   if (loaded !== undefined) return loaded;
   try {
@@ -71,9 +68,7 @@ function calls(platform: NodeJS.Platform): Calls | null {
         set: (fd, name, value) => symbols.fsetxattr(fd, name, value, value.length, 0, 0),
         copyAcl: (from, to) => {
           let acl = symbols.acl_get_fd_np(from, MACOS_EXTENDED_ACL) as Pointer | null;
-          // a read that failed for another reason than "none" may hide one: nothing is assumed
           if (acl === null && read.i32(symbols.__error() as Pointer, 0) !== NO_ACL) return false;
-          // none on the file: the new file gets none either, not one its folder would pass on
           acl ??= symbols.acl_init(0) as Pointer | null;
           if (acl === null) return false;
           try { return symbols.acl_set_fd_np(to, acl, MACOS_EXTENDED_ACL) === 0; } finally { symbols.acl_free(acl); }
@@ -84,7 +79,6 @@ function calls(platform: NodeJS.Platform): Calls | null {
   return loaded;
 }
 
-/** The names of the attributes of the file open at `fd`; none where the filesystem keeps none. A listing that failed otherwise throws. */
 function names(call: Calls, fd: number, platform: NodeJS.Platform): string[] {
   const size = call.list(fd, null, 0);
   if (size < 0 && (UNSUPPORTED[platform] ?? []).includes(call.errno())) return [];
@@ -96,7 +90,6 @@ function names(call: Calls, fd: number, platform: NodeJS.Platform): string[] {
   return buffer.subarray(0, got).toString("utf8").split("\0").filter(Boolean);
 }
 
-/** The value of one attribute, or null when it went away meanwhile. */
 function value(call: Calls, fd: number, name: Buffer): Buffer | null {
   const size = call.get(fd, name, null, 0);
   if (size < 0) return null;
@@ -105,18 +98,12 @@ function value(call: Calls, fd: number, name: Buffer): Buffer | null {
   return got < 0 ? null : buffer.subarray(0, got);
 }
 
-/**
- * Carries the attributes and the access list of the file open at `from` to the one open at `to`.
- * False when an access list (or the calls to read one) could not be carried over: the caller
- * refuses the save. `platform` stands in for the process's own in tests.
- */
 export function copyFileAttributes(from: number, to: number, platform: NodeJS.Platform = process.platform): boolean {
   const call = calls(platform);
   if (call === null) return false;
   let found: string[];
   let inherited: string[];
   try { found = names(call, from, platform); inherited = names(call, to, platform); } catch { return false; }
-  // what the new file took from its folder (a default access list) and the file did not have goes
   for (const name of inherited.filter((name) => !found.includes(name))) {
     if (call.remove(to, Buffer.from(`${name}\0`)) !== 0 && name === LINUX_ACCESS_LIST) return false;
   }

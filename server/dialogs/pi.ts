@@ -32,31 +32,24 @@ const uncounted = (words: string[]): string[] => {
   return last ? [...words.slice(0, -1), last] : words.slice(0, -1);
 };
 
-/** the first line is the dialog's own; what follows is a confirm's message, or more of a wrapped line */
 const ownLine = (words: string[]): string => words[0] ?? "";
 const restOf = (words: string[]): string | undefined => words.length > 1 ? words.slice(1).join(" ") : undefined;
 
-/** the line pi types an answer into */
 const PI_INPUT_LINE_RE = /^[\u203a>\u276f]+\s*(.*)$/;
 
-/** `/model` types a filter into this line, then lists what is left under it */
 const PI_MODEL_FILTER_RE = /^[\u203a>\u276f]\s*$/;
 
 const PI_MODEL_DEFAULT_RE = /\s*\u00b7\s*default$/;
 
 /**
- * The rows a dialog takes its answer from, and its own words over them. pi separates the two
- * with a blank line and ends the block with its hint, so the run of lines directly above the
- * hint is what its arrow keys move through, and what sits above the blank over it is what the
- * dialog asks. The rule over the dialog is no use for this: it stands over the whole thing,
- * title included, and a confirm indents its message level with its own options.
+ * pi separates a dialog's rows from its own words with a blank line and ends the block with its hint.
+ * The rule over the dialog stands over the whole thing, title included, and a confirm indents its
+ * message level with its own options.
  *
  * A pane narrower than an option wraps it, and the rest of the label lands on a line of its own.
  * pi sets a row three columns in (` → ` on the cursor's, three spaces on the others) and the
- * wrapped rest one column in, which is all that tells them apart: read as a row of its own, the
- * rest became one more option, and tapping it pressed Down once more than pi has rows, onto the
- * option after it (measured on pi 0.87.1 at 46 columns). The title and a confirm's message wrap
- * the same way, so they are read as one run of lines, the title first.
+ * wrapped rest one column in (measured on pi 0.87.1 at 46 columns). The title and a confirm's
+ * message wrap the same way.
  */
 const PI_WRAPPED_REST_RE = /^ (?![\u2192\u276f\u279c])\S/;
 
@@ -64,7 +57,6 @@ function piDialogRows(lines: string[], hintIndex: number): { rows: { line: strin
   const rows: { line: string; cursor: boolean }[] = [];
   let index = hintIndex - 1;
   while (index >= 0 && !cleanLine(lines[index]!)) index -= 1;
-  // read upwards, so the wrapped rest of a row is met before the row it belongs to
   let rest: string[] = [];
   for (; index >= 0; index -= 1) {
     const raw = lines[index]!.replace(ANSI_RE, "");
@@ -74,11 +66,8 @@ function piDialogRows(lines: string[], hintIndex: number): { rows: { line: strin
     rows.unshift({ line: [line, ...rest].join(" "), cursor: /^[\u2192\u276f\u279c]\s*\S/.test(line) });
     rest = [];
   }
-  // lines one column in with no row over them are not a wrapped option: they stand as they are,
-  // for the caller to refuse (the slash palette's own first line, for one)
   rows.unshift(...rest.map((line) => ({ line, cursor: false })));
   const title: string[] = [];
-  // the run of lines right over the rows' blank: past the next blank is whatever the pane showed before
   for (; index >= 0 && title.length < 8; index -= 1) {
     if (isDivider(lines[index]!)) break;
     const line = cleanLine(lines[index]!);
@@ -95,16 +84,12 @@ function parsePiModel(screen: string): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
   const hintIndex = findLastIndex(lines, (_, index) => PI_MODEL_HINT_RE.test(wrapped(lines, index)));
   if (hintIndex < 0) return null;
-  // the filter line is the anchor: the catalogue is what sits under it, and anything above
-  // belongs to whatever the pane showed before `/model` was typed
   const filterIndex = findLastIndex(lines.slice(0, hintIndex), (line) => PI_MODEL_FILTER_RE.test(cleanLine(line)));
   if (filterIndex < 0) return null;
   const rows = piModelRows(lines, filterIndex + 1);
   if (rows === null) return null;
   const selectedIndex = rows.findIndex((row) => row.cursor);
   const labels = rows.map((row) => row.label);
-  // the card names the model answering now, because the answer switches it and whoever taps
-  // should know what they are switching from; pi's tick is the only mark that says so
   const current = rows.find((row) => row.current);
   const question = current
     ? own("Select model (currently {model})", { model: current.label.replace(PI_MODEL_DEFAULT_RE, "") })
@@ -125,7 +110,6 @@ function parsePiModel(screen: string): ParsedPrompt | null {
 
 export const PI_THINKING_HINT_LINES = 6;
 
-/** Thinking uses the model selector's footer, but only visibly offered level rows are choices. */
 function parsePiThinking(screen: string): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
   const hintIndex = findLastIndex(lines, (_, index) => PI_MODEL_HINT_RE.test(wrapped(lines, index, PI_THINKING_HINT_LINES)));
@@ -161,7 +145,6 @@ export function parsePiDialog(screen: string, moved = false): ParsedPrompt | nul
   if (hintIndex < 0) return null;
   const block = piDialogRows(lines, hintIndex);
   if (block.rows.length === 0) return null;
-  // pi wants text on a `>` line: there is nothing to pick, and the answer is typed into it
   if (PI_INPUT_HINT_RE.test(wrapped(lines, hintIndex))) {
     if (!block.rows.every((row) => PI_INPUT_LINE_RE.test(row.line))) return null;
     const text = (words: string[]) => ({ title: restOf(words) ?? "", question: ownLine(words) });
@@ -171,9 +154,7 @@ export function parsePiDialog(screen: string, moved = false): ParsedPrompt | nul
     }, { responder: "pi-input", menuLabels: [], selectedIndex: 0, checkedOptionIndices: [], customMenuIndex: 0, rejectWithEscapeIndex: null },
     text(uncounted(block.title)));
   }
-  // every line of the block must be a row, and a row must be a single label: pi sets its
-  // command palette out in two columns, and offering those as options would run a slash
-  // command on a click. The palette ends in a row count of its own, not this hint.
+  // pi sets its command palette out in two columns, and ends it in a row count of its own, not this hint
   const rows = block.rows.map((row) => row.line.match(PI_ROW_RE)).filter((row): row is RegExpMatchArray => row !== null && row[2] !== undefined);
   if (rows.length !== block.rows.length || rows.length < 2) return null;
   if (rows.some((row) => /\s{2,}/.test(row[2]!))) return null;
@@ -182,10 +163,8 @@ export function parsePiDialog(screen: string, moved = false): ParsedPrompt | nul
   // and the read before its Enter looks where it stands (the answer route)
   const cursor = block.rows.findIndex((row) => row.cursor);
   if (moved ? cursor < 0 : cursor !== 0) return null;
-  // Yes/No reads as a confirmation; anything else is a question asked among its options
   const labels = rows.map((row) => row[2]!.trim());
   const confirming = labels.length === 2 && /^yes\b/i.test(labels[0]!) && /^no\b/i.test(labels[1]!);
-  // a select has a title alone: a second line is the rest of it, wrapped
   const text = (words: string[]) => confirming
     ? { title: ownLine(words), question: restOf(words) ?? ownLine(words) }
     : { title: "", question: words.join(" ") };

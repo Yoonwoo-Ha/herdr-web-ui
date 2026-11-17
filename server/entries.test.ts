@@ -44,8 +44,6 @@ describe("server entries", () => {
   });
 
   it("keeps the supervisor's own code to what it runs: no other entry's", () => {
-    // an update copies and runs a release's supervisor by what it imports (the updater tests' copySupervisor); a table
-    // that imported every entry would pull the whole server, package.json included, into the supervisor
     const transpiler = new Bun.Transpiler({ loader: "ts" });
     const reached = [join(import.meta.dir, "supervisor.ts")];
     for (const file of reached) {
@@ -65,7 +63,6 @@ describe("server entries", () => {
   });
 
   it("serves every entry the installers, bundles and Windows task name", () => {
-    // the binary's command line: `ovis-server <name>` is what launchers and other processes run
     expect(Object.keys(ENTRIES).sort()).toEqual(["askpass", "machine", "managed", "plugin", "remote", "serve", "supervisor", "windows-launch"]);
   });
 
@@ -127,7 +124,6 @@ process.stdout.write(JSON.parse(readFileSync(fileURLToPath(new URL("./launch.jso
   });
 
   it("names the Windows task's program as from source, and the launcher entry only when compiled", () => {
-    // from source the payload is what it always was: Bun, and no prefix before the launcher's quoted path
     expect(launcherAction(false)).toEqual({ bun: process.execPath });
     expect(launcherAction(true)).toEqual({ bun: process.execPath, prefix: "windows-launch " });
   });

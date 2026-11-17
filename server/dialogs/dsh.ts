@@ -28,28 +28,21 @@ import { ANSI_RE, KEY, cleanLine, findLastIndex, finishPrompt, joinWrapped, keyS
  * boundary (`\b`) never follows Chinese text, so the hints' words end at a space or the line's end.
  */
 const DSH_HEADER_RE = /▾\s+📋\s*(?:Question\s+(\d+)\/(\d+)|提问\s*·\s*第\s*(\d+)\/(\d+)\s*题)/;
-/** the option list's hint: its select key first, its cancel or previous-question key later */
 const DSH_HINT_RE = /^(?:↑\/↓ select|↑\/↓ 选择)(?=\s|$).*(?:Esc (?:cancel|previous question)|Esc (?:中断|上一题))/;
-/** the free-text row's own hint, with the cursor on it */
 const DSH_TYPING_HINT_RE = /^(?:Type answer|输入回答)(?=\s|$).*(?:Esc (?:cancel|previous question)|Esc (?:中断|上一题))/;
 const DSH_MULTI_RE = /\bSpace (?:multi-select|多选)(?=\s|$)/;
 const DSH_SWITCH_RE = /←\/→ (?:switch question|换题)|行首←\/行尾→ 换题|←\/→ at the text edge switches question/;
-/** rows, from the free-text row's column: dsh sets the panel in two columns past the chat's own margin */
 const DSH_ROW_RE = /^( *)([❯ ])([●○◉])\s(.+)$/;
 /**
  * The free-text row: `✎`, its label, `：`, then what is typed. A typed text longer than the row squeezes the label into a
  * column of its own, its words on lines of their own (`✎ Custom     ：Use the…` over `   answer       runs…`).
  */
 const DSH_CUSTOM_RE = /^( *)([❯ ])✎\s([^：]*)：(.*)$/;
-/** the same row once a long typed text squeezes the `：` out of it: its label's first word, then the text */
 const DSH_SQUEEZED_RE = /^( *)([❯ ])✎\s(\S+)\s{2,}(\S.*)$/;
-/** the label, its spaces dropped: alone, or with an option's label attached (`(attached: …)`, `（附加：…）`) */
 const DSH_LABEL_RE = /^(?:Customanswer|自定义回答)$/;
 const DSH_ATTACHED_LABEL_RE = /^(?:Customanswer\(attached:.*|自定义回答（附加)$/;
-/** what the free-text row shows with nothing typed and the cursor elsewhere */
 const DSH_PLACEHOLDER_RE = /^\s*(?:Type directly…|直接输入…)$/;
 const DSH_HINT_LINES = 4;
-/** the panel hint's last part (`question-fold-hint`), which ends both hints */
 const DSH_HINT_END_RE = /(?:click the header|点标题行收起)$/;
 /**
  * dsh-tui's own footer under the panel (screens/StatusLine.js): at most three rows, the context meter, the status fields
@@ -61,7 +54,6 @@ const DSH_FOOTER_ROWS = 3;
  * background-jobs chip (`● 1 · high · …` with the model field off)
  */
 const DSH_TRANSCRIPT_RE = /^(?!● \d+(?: ·|$))[╭╰│⌸●❯!⎿▾▴◈✎·]/;
-/** the line saying how much of a long question dsh-tui folds out of view (i18n `question-detail-scroll`) */
 const DSH_FOLD_RE = /^…\s+\d+\s+(?:lines?\s+outside view|行未显示)/;
 
 /** What an answer types into the free-text row: one line (dsh-tui submits the row on Enter). */
@@ -69,7 +61,6 @@ export function dshTypedText(text: string): string {
   return text.replace(/\s*\r?\n\s*/g, " ").trim();
 }
 
-/** A line cut where the terminal's `column` starts (wide characters take two). */
 function atColumn(line: string, column: number): [string, string] {
   let width = 0;
   let at = 0;
@@ -81,16 +72,13 @@ function atColumn(line: string, column: number): [string, string] {
   return [line.slice(0, at), line.slice(at)];
 }
 
-/** The hint with whatever a narrow pane wrapped onto the lines under it. */
 function hintAt(lines: string[], index: number): string {
   return lines.slice(index, index + DSH_HINT_LINES).map(cleanLine).filter(Boolean).join(" ");
 }
 
 interface DshPanel {
   prompt: ParsedPrompt;
-  /** the free-text row's text, a piece per line the pane wrapped it onto; null with an option's label attached */
   typed: string[] | null;
-  /** for each of those lines, whether it is full: the next line's first character would not have fitted after it */
   typedFull: boolean[];
   /**
    * The cursor on the free-text row of a question no mark says is a multiple choice: a single choice marks no row
@@ -102,22 +90,14 @@ interface DshPanel {
 
 export function parseDshQuestion(screen: string): ParsedPrompt | null {
   const panel = readDshPanel(screen);
-  // text typed in the terminal (or an option's label it attached) would go out with any answer the card sends:
-  // the terminal finishes what it began there
   if (!panel || panel.modeUnknown || panel.typed?.join("") !== "") return null;
   return panel.prompt;
 }
 
-/**
- * The free-text row of the card's own single choice, with the cursor on it, as a typed answer leaves it: "typed"
- * when it holds exactly `text`, "typing" while it holds only the start of it (dsh-tui draws the text as it comes),
- * null on any other screen (another question, the panel gone, another option's label attached, other words in the row).
- */
 export function dshFreeTextRow(screen: string, expected: ParsedPrompt, text: string): "typed" | "typing" | null {
   const panel = readDshPanel(screen);
   if (!panel?.typed || expected.multi_select || panel.prompt.multi_select || panel.prompt.id !== expected.id
     || panel.prompt.selectedIndex !== panel.prompt.options.length || !dshQuestionActive(screen)) return null;
-  // a wrapped line may drop or keep the space it broke at
   // dsh wraps at a space and drops it: exactly one space between two lines, but none or one under a line that
   // reaches the row's end (a word broken there, or one that ends right there)
   let pieces = "";
@@ -147,7 +127,6 @@ function readDshPanel(screen: string): DshPanel | null {
   const custom = colon ?? DSH_SQUEEZED_RE.exec(lines[customIndex]!)!;
   const indent = custom[1]!;
   const customCursor = custom[2] === "❯";
-  // typed text the pane wraps goes on under the row's text, from the column after `：`, the label's words under the label
   const textColumn = Bun.stringWidth(lines[customIndex]!) - Bun.stringWidth(custom[4]!);
   let typedEnd = customIndex + 1;
   while (typedEnd < lines.length && lines[typedEnd]!.startsWith(`${indent}   `) && lines[typedEnd]!.trim()) typedEnd += 1;
@@ -170,8 +149,6 @@ function readDshPanel(screen: string): DshPanel | null {
     const next = typed?.slice(at + 1).find(Boolean);
     return next !== undefined && Bun.stringWidth(line) + Bun.stringWidth([...next][0]!) > rowEnd;
   });
-  // the options: the run of rows right over the free-text row, each with its continuation lines
-  // (a wrapped label or a description, set past the row's mark), read upwards from it
   const rows: { cursor: boolean; checked: boolean; ticked: boolean; head: string; rest: string[] }[] = [];
   let firstRow = -1;
   let rest: string[] = [];
@@ -195,8 +172,6 @@ function readDshPanel(screen: string): DshPanel | null {
   // each row has its own hint: the option list's, or the free-text row's with the cursor on it
   if (customCursor !== DSH_TYPING_HINT_RE.test(hint)) return null;
 
-  // the free-text row's hint names no Space: a multiple choice is told by its ticks there, in the rows' mark column (an
-  // option's words may hold a `◉` of their own)
   const multi = DSH_MULTI_RE.test(hint) || rows.some((row) => row.ticked || (row.checked && !row.cursor));
   const modeUnknown = customCursor && !multi;
   // a single choice marks the cursor's row alone, and none while the cursor is on the free-text row
@@ -204,7 +179,7 @@ function readDshPanel(screen: string): DshPanel | null {
 
   // the header chip (`◈ Platforms`), the question, then a blank line and the question's detail; a long question and
   // detail fold into a window with a line saying how much of them is hidden (`… 16 lines outside view · Alt+Up/Alt+Down
-  // to scroll`): the card would ask it cut short, so the terminal, which scrolls it, answers it
+  // to scroll`)
   const paragraphs: string[][] = [];
   let chip: string | null = null;
   let blank = true;
@@ -223,9 +198,7 @@ function readDshPanel(screen: string): DshPanel | null {
   const detail = paragraphs.slice(1).map((lines) => joinWrapped(lines, width)).filter(Boolean).join("\n");
   const body = [chip, detail].filter(Boolean).join("\n") || null;
 
-  // Plain text cannot tell a label's wrapped rest from a description (only dsh's dim colour does):
-  // what follows a row's first line is read as its description. The answer is the row's place,
-  // never its words, so a misread split changes only how the card shows it.
+  // Plain text cannot tell a label's wrapped rest from a description (only dsh's dim colour does).
   const options = rows.map((row) => {
     if (row.rest.length === 0) return { label: row.head, description: null };
     return { label: row.head, description: joinWrapped(row.rest, width) || null };
@@ -283,14 +256,8 @@ function readDshPanel(screen: string): DshPanel | null {
   return { prompt, typed, typedFull, modeUnknown };
 }
 
-/**
- * Whether the panel's hint is the last thing on the screen but dsh-tui's own footer: a panel-shaped text with
- * anything else under it (later output, dsh's input box) asks nothing.
- */
 export function dshQuestionActive(screen: string): boolean {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map(cleanLine).filter(Boolean);
-  // the hint, as many lines as the pane wrapped it onto, ends with its own last words right over the footer: dsh's
-  // input box and its conversation, under a panel already answered, are more rows than the footer has and start apart
   for (let end = lines.length - 1; end >= Math.max(0, lines.length - 1 - DSH_FOOTER_ROWS); end -= 1) {
     if (lines.slice(end + 1).some((line) => DSH_TRANSCRIPT_RE.test(line))) return false;
     for (let start = end; start >= Math.max(0, end - DSH_HINT_LINES + 1); start -= 1) {
@@ -305,7 +272,6 @@ export const readers: readonly DialogReader[] = [{
   id: "dsh-question",
   agents: ["dsh-tui"],
   priority: 10,
-  // the cursor is read off the screen: a row moved to in the terminal since the card was drawn is looked at again before Enter
   reread: "before-commit",
   list: "none",
   parse: (screen) => parseDshQuestion(screen),

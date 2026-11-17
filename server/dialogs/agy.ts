@@ -42,12 +42,9 @@ const AGY_WRITE_IN_HINT_RE = /\benter\s+Submit(?:\s+All)?\s*·\s*esc\s+Back\b/i;
 
 /**
  * Whether the key hint found at `hintIndex` ends the screen: under it Antigravity draws one row at most, its status row
- * (`esc to cancel` at the left while a turn runs, the model at the right, alone on the row at rest). Anything else under the hint is later
- * output, a shell's prompt after Antigravity exited among it: the question above is then an old one, and its keys
- * would go to whatever has the pane now.
+ * (`esc to cancel` at the left while a turn runs, the model at the right, alone on the row at rest).
  */
 function agyHintEndsScreen(lines: string[], hintIndex: number, hint: RegExp): boolean {
-  // a narrow pane wraps the hint: its rows are the fewest from hintIndex on that hold all of it
   const span = [1, 2, 3].find((rows) => hint.test(lines.slice(hintIndex, hintIndex + rows).join(" "))) ?? 1;
   const below = lines.slice(hintIndex + span).filter((line) => cleanLine(line) !== "");
   return below.length === 0 || (below.length === 1 && /^(?:esc to cancel\b|\s{20,}\S)/.test(below[0]!.replace(ANSI_RE, "")));
@@ -59,16 +56,12 @@ const AGY_WRITE_IN = "Write-in...";
 /**
  * Whether `agy`'s inline `Write-in...` text input owns the keyboard (`Your answer:` over
  * `enter Submit · esc Back`). While open, arrows and Enter go to that text input rather than
- * the option rows, so no fallback menu card may guess keys into it.
+ * the option rows.
  */
 export function agyWriteInWaits(screen: string): boolean {
   return agyWriteInEditor(screen) !== null;
 }
 
-/**
- * The open `Write-in...` editor: its `Your answer:` label (the nearest above the hint, however many rows a long answer
- * wraps onto) and the text it holds, the rows under the label joined with their `> ` taken off.
- */
 function agyWriteInEditor(screen: string): { lines: string[]; answerIndex: number; text: string } | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
   const shown = lines.map(cleanLine).filter(Boolean);
@@ -82,12 +75,6 @@ function agyWriteInEditor(screen: string): { lines: string[]; answerIndex: numbe
   return { lines, answerIndex, text: [rows[0]!.slice(1), ...rows.slice(1)].join(" ") };
 }
 
-/**
- * Whether `screen` still shows `expected`'s inline `Write-in...` editor (`Your answer:` over
- * `enter Submit · esc Back`) with the cursor on `Write-in...`, the expected multi-select checks, and
- * `draft` in it: nothing before the answer is typed, the answer before the Enter that submits it. The
- * editor wraps a long answer onto rows of its own, so the two are compared without their whitespace.
- */
 export function agyCustomEditorMatches(screen: string, expected: ParsedPrompt, checked: ReadonlySet<number>, draft: string): boolean {
   if (expected.responder !== "agy-question" || expected.customMenuIndex === null) return false;
   const editor = agyWriteInEditor(screen);
@@ -109,10 +96,6 @@ export function agyCustomEditorMatches(screen: string, expected: ParsedPrompt, c
     && parsed.checkedOptionIndices.every((index) => checked.has(index));
 }
 
-/**
- * Parses `agy`'s live `ask_question` prompt screen into an `InteractivePrompt`, or returns null
- * when the screen does not show a complete, unambiguous `ask_question` menu.
- */
 export function parseAgyQuestion(screen: string): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
   const shown = lines.map(cleanLine).filter(Boolean);
@@ -255,18 +238,14 @@ export function parseAgyQuestion(screen: string): ParsedPrompt | null {
       },
     } : {}),
   };
-  // the card's id reads the ticks the terminal shows, so a card shown with other ticks is asked anew; the answer's own
-  // Spaces change them under it, so its checks compare the question without them (agySameQuestion) and the ticks apart
   const hashed = { can_step_back: undefined, can_step_next: undefined, default_option_index: undefined };
   const parsed = finishPrompt("agy", draft, internal, hashed);
   questionIds.set(parsed, finishPrompt("agy", draft, internal, { ...hashed, default_option_indices: undefined }).id);
   return parsed;
 }
 
-/** each card's id as it would be without its ticks */
 const questionIds = new WeakMap<ParsedPrompt, string>();
 
-/** Whether two reads show the same Antigravity question, whatever is ticked on it. */
 export function agySameQuestion(shown: ParsedPrompt | null | undefined, expected: ParsedPrompt): shown is ParsedPrompt {
   const id = shown ? questionIds.get(shown) : undefined;
   return id !== undefined && id === questionIds.get(expected);

@@ -15,41 +15,18 @@ import { readMarkdownDocuments, walkFiles } from "./files.ts";
 import { readEditableText, TextEditRefused } from "./file-edit.ts";
 import type { EditableText } from "../shared/files.ts";
 
-/**
- * How long a Claude task list reads on before it answers with what it read so far: well inside the
- * long-task deadline (`FILE_LONG_TASK_DEADLINE_MS`, 15 s), so its one scan thread is free by then.
- */
 const CLAUDE_TASKS_READ_MS = 10_000;
-/**
- * How long a Letta transcript is scanned for one call's output: under the pool's long deadline, so a
- * scan on a slow disk gives its thread back about when its request is refused, not at the end of
- * the file. Scans run one at a time, and the next waits for this thread. A scan this cut short says
- * so (`LettaScanCutAnswer`): its request is answered "try again", not "no such call".
- */
 const LETTA_OUTPUT_READ_MS = 10_000;
 
-/**
- * What a file thread (`file-pool.ts`) does: each synchronous filesystem step of the file routes,
- * named so that a request can ask for it and wait without holding the server's thread.
- */
 export type FileTask =
   | { op: "info"; path: string }
   | { op: "named"; path: string }
   | { op: "within"; paths: string[]; folder: string }
-  /** a file the scratch fallback found, described from what was opened in `folder` (`describeWithin`); `opened` as for `open` */
   | { op: "describe"; path: string; folder: string; opened?: Int32Array<SharedArrayBuffer> }
   | { op: "walk"; cwd: string }
-  /** the Markdown files of `paths` (relative to `cwd`), or of a Markdown walk of `cwd` when null, with their sizes and times (GET /api/pane/docs); `budgetMs`: how long it reads (tests) */
   | { op: "documents"; cwd: string; paths: string[] | null; budgetMs?: number }
-  /** an Agy ledger's catalog (`agyCatalogOffThread`): its active step indices */
   | { op: "agy-catalog"; path: string }
-  /**
-   * The whole output of the call `ref` names in a Letta transcript (`lettaToolOutputOffThread`), read
-   * only from the file `file` names at `path` and cut to `max` characters before it is answered;
-   * `budgetMs`: how long it reads (tests).
-   */
   | { op: "letta-output"; path: string; ref: string; file: FileIdentity; max: number; budgetMs?: number }
-  /** A Claude agent session's background-task list, read whole with the thread's own parser caches (`wholeClaudeSubagents`). */
   | { op: "claude-tasks"; path: string; live: boolean; since: number | null; history?: HistoryEvidence | null }
   /**
    * The commands `agent` offers in `cwd`: its skill and command folders scanned (`paneCommands`,
@@ -57,20 +34,10 @@ export type FileTask =
    * thread does not see what the server's environment became after the process started.
    */
   | { op: "commands"; agent: string; cwd: string | null; home: string; roots: ProcessRoots; version: string | null | undefined; serverEnv: Record<string, string | undefined> }
-  /** `within`: the folder a page found in it must have been opened in (`pageWithLocalFiles`) */
   | { op: "render"; path: string; media: PageMedia | null; within?: string | null }
-  /**
-   * `get`: a GET's Range and whether it came with If-Range (null for a HEAD, which reads nothing);
-   * `opened`: where the thread names the descriptor as soon as it has it (`file-pool.ts`);
-   * `fastDiskMs`: how quickly the disk must answer for a large body to be sent whole (tests);
-   * `within`: the folder the file must be opened in (`openAuthorized`), for a file the scratch
-   * fallback found
-   */
   | { op: "open"; path: string; get: { range: string | null; ifRange: boolean } | null; opened?: Int32Array<SharedArrayBuffer>; fastDiskMs?: number; within?: string | null }
-  /** a text file in the pane's folder `cwd` read to edit (`file-edit.ts`; its save runs on the server's thread) */
   | { op: "text-read"; path: string; cwd: string };
 
-/** A text file read to edit, or why not: a refusal crosses the thread as plain fields, not as the error. */
 export type TextTaskResult = { done: EditableText } | { refused: { status: number; code: string; message: string; revision?: string } };
 
 function textTask(run: () => EditableText): TextTaskResult {
@@ -80,21 +47,9 @@ function textTask(run: () => EditableText): TextTaskResult {
   }
 }
 
-/** A page drawn with its own files put into it (null when it cannot be), and the media addresses that render gave out. */
 export interface RenderedPage { html: Uint8Array<ArrayBuffer> | null; grants: PageMediaGrant[] }
-/**
- * A file opened to serve: its size, the range a GET asked for (`byteRange`), and its bytes when
- * they fit in one read; for a larger body, either `fast` (its disk answered at once: send it whole
- * from the path, with its length) or its descriptor to stream it from (a slow disk). None of these
- * for a HEAD or an unsatisfiable range.
- */
 export interface OpenedFile { size: number; range: [number, number] | "unsatisfiable" | null; bytes: Uint8Array<ArrayBuffer> | null; fd: number | null; fast: boolean }
 
-/**
- * How quickly opening, describing and reading the start of a large file must go for its disk to
- * count as fast (a local disk takes a few milliseconds; a FUSE or network share that waits on each
- * call takes far longer).
- */
 export const FAST_DISK_MS = 50;
 const PROBE_BYTES = 64 * 1024;
 
@@ -118,14 +73,12 @@ export function runFileTask(task: FileTask): FileTaskResult {
   }
 }
 
-/** What a thread hands over rather than copies: a rendered page's or a small file's bytes. */
 export function transferablesOf(result: FileTaskResult): ArrayBuffer[] {
   if (result !== null && typeof result === "object" && "html" in result && result.html !== null) return [result.html.buffer];
   if (result !== null && typeof result === "object" && "bytes" in result && result.bytes !== null) return [result.bytes.buffer];
   return [];
 }
 
-/** Every path, symlinks followed, lies in `folder`; false for a missing or unreadable one. */
 function within(paths: string[], folder: string): boolean {
   try {
     const root = realpathSync(folder) + sep;
@@ -162,7 +115,6 @@ function open(path: string, get: { range: string | null; ifRange: boolean } | nu
     if (opened !== undefined) Atomics.store(opened, 0, fd);
     pageFileHooks.opened?.(fd);
   }
-  // not handed over: closed by whoever takes it from the cell first, here or `abandon` (file-pool.ts)
   const close = () => { if (opened === undefined || Atomics.compareExchange(opened, 0, fd, -1) === fd) release(fd); };
   let size: number;
   try {
@@ -193,6 +145,5 @@ function open(path: string, get: { range: string | null; ifRange: boolean } | nu
     }
   } catch { got = -1; }
   close();
-  // shorter than it was when opened, or unreadable: gone, as a file that vanished
   return got === length ? { size, range, bytes, fd: null, fast: false } : null;
 }

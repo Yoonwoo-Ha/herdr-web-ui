@@ -3,18 +3,8 @@ import { type InteractivePrompt } from "../../shared/protocol.ts";
 import { createHash } from "node:crypto";
 import { ANSI_RE, type AnswerStep, type CardWords, KEY, type MenuRow, NUMBERED_OPTION_RE, type NumberedRow, type ParsedPrompt, SELECTED_RE, cleanLine, englishOf, findLastIndex, finishPrompt, isDivider, keySteps, navigationKeys, normalizeText, own, parseNumberedRows, publicPrompt, sequentialRows, parsedByPublicPrompt } from "./shared.ts";
 
-/**
- * The last resort, for a pane herdr reports blocked that none of the readers above know (a
- * menu a new agent version draws differently, an agent without a reader): the chat must never
- * leave the user without a way to answer. It guesses as little as it can: a numbered menu that
- * still owns the screen's end becomes options answered by number, and GJC's exact unnumbered
- * selector becomes options answered by its cursor keys. Anything else shows the screen's last
- * lines with the keys its hint lines name, plus Enter and Esc.
- */
-/** a question, allowing a trailing choice hint such as "(y/n)" */
 const ASKED_RE = /\?\s*(?:[([][^)\]]*[)\]])?\s*$/;
 
-/** a (y/n) hint ending its line, as a prompt does; a mention mid-sentence or quoted does not */
 const YES_NO_RE = /[([]\s*y(?:es)?\s*\/\s*n(?:o)?\s*[)\]]\s*[:?]?\s*$/i;
 
 const ARROWS_RE = /[↑↓]|\barrow keys\b/i;
@@ -31,16 +21,12 @@ const GJC_SELECT_HINT_RE = /^(?:\[↑↓ to navigate, enter to select, esc to (?
 /** GJC also uses the Nerd Font chevron for its active question row. */
 const GJC_SELECTED_RE = /^[❯›>]\s*/;
 
-/** an input field waiting at a line's end ("Password:", "Choice: 2") */
 const INPUT_FIELD_RE = /:\s*\S{0,3}$/;
 
-/** a line that reads as a hint of its own, not a label's wrapped words ("…the selected number", "choose one") */
 const HINT_LINE_RE = /^(?:[↵⏎]|(?:Press|Enter|Select|Choose|Pick|Type|Esc|ESC)\b)/;
 
-/** how many lines the last row of a menu wraps onto, at most: more reads as output under it */
 const MENU_WRAP_LINES = 2;
 
-/** a line that is an input box or quoted output rather than a prompt's own text */
 const NOT_PROMPT_TEXT_RE = /^(?:[❯›>"'“]|\$ )/;
 
 /**
@@ -53,8 +39,8 @@ const WORKING_LINE_RE = /^[·✢✳✶✻✽*] (\S(?:.*\S)?…) \((?:\d+h )?(?:\
 /**
  * The ticking start of omp's status row under its panel while a question waits, in every status-line preset its fixtures
  * hold (omp 18.12-18.13): a spinner frame, braille or the ascii preset's `/-\|`, and the elapsed time, or `π` at rest.
- * The separator and segments after it are the user's choice (" · ⬢ …", " > ⬢ … ▶──6%", " > [M] …", Nerd Font gaps)
- * and stay in the id, as do the model, folder and context they name (#3412, #3416). It may follow the Nerd Font
+ * The separator and segments after it are the user's choice (" · ⬢ …", " > ⬢ … ▶──6%", " > [M] …", Nerd Font gaps).
+ * It may follow the Nerd Font
  * band's powerline cap or the box shape's top border (`╭── `). A braille frame and a time is omp's alone and needs nothing
  * more, as the user may have turned the context segment off; the ascii preset's frame or the resting `π` also needs
  * the context gauge every preset draws (`◫ 5.7%`, `▶──6%`, `>--6%`, `──6%`), so a question's "- 5s delay" or
@@ -79,8 +65,6 @@ function steadyReader(agent: string, shown: string[]): SteadyReader {
   const waiting = agent === "claude" || agent === "omp" ? undefined : WAITING_LINES[agent];
   if (waiting) return waitingReader(waiting, shown);
   const pattern = agent === "claude" ? WORKING_LINE_RE : agent === "omp" ? OMP_STATUS_ROW_RE : null;
-  // omp draws its status row last, under the panel: a status-shaped line anywhere else is read as written, and a
-  // row whose exact text another shown line also has is not blanked at all, as `read` goes by the text (#3412)
   const last = shown.at(-1);
   const working = pattern === null ? []
     : agent === "omp" ? (last !== undefined && pattern.test(last) && shown.indexOf(last) === shown.length - 1 ? [shown.length - 1] : [])
@@ -89,23 +73,19 @@ function steadyReader(agent: string, shown: string[]): SteadyReader {
   if (working.length !== 1 || at === undefined) return { read: (other) => other, working: null };
   const line = shown[at]!;
   const steady = agent === "omp"
-    // the spinner and the elapsed time, or the resting π, are omp's ticking part; the model, folder and context stay (#3412)
     ? line.replace(OMP_STATUS_ROW_RE, (_all, lead: string, braille: string | undefined, gauged: string | undefined) => `${lead}<status>${braille ?? gauged}`)
     : line.replace(WORKING_LINE_RE, (_all, doing: string, hint: string | undefined) => `* ${doing} (<time> · <tokens>${hint ?? ""})`);
   return { read: (other) => other === line ? steady : other, working: at };
 }
 
-/** A spinner of braille frames as maki and kimi draw it at the start of a row: one frame and a space. */
 const BRAILLE_SPINNER = "[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]";
 
-/** an elapsed time as agents draw it: "7.4s", "59s", "1m 06s", "01m05s", "1h 2m 3s" */
 const ELAPSED = String.raw`(?:\d+h ?)?(?:\d+m ?)?\d+(?:\.\d+)?s`;
 
 /**
  * The lines agents with no reader of their own (and Hermes, for its generic card) redraw while a prompt of theirs
  * waits, each to the letter, and what it reads as in the id: the clock, countdown, spinner frame or token count
- * blanked, every word kept. A rule is applied only when exactly one shown line has its shape, so two rows of a menu
- * that happen to look alike are read as written; `each` (a spinner frame that starts a row) applies to every row with
+ * blanked, every word kept. `each` (a spinner frame that starts a row) applies to every row with
  * it, as maki draws one on its tool row and its status bar at once. Recorded from Copilot 1.0.109, Grok 1.0.77,
  * Hermes 0.21.5, Muse 1.4.14, maki, kimi and dsh-tui as the agent lab runs them (2026-11-12).
  */
@@ -149,15 +129,11 @@ function waitingReader(rules: readonly WaitingLine[], shown: string[]): SteadyRe
     }
   }
   return working.length === 0 ? { read: (other) => other, working: null }
-    // one line read so stays a number, as the id has always held it (Copilot's and Grok's cards keep their ids)
     : { read: (other) => steadied.get(other) ?? other, working: working.length === 1 ? working[0]! : working.sort((a, b) => a - b) };
 }
 
 interface SteadyReader {
   read(line: string): string;
-  /** which of the shown lines was read as the working line; it goes into the id beside the text, so
-   * that a screen holding the blanked form as its own text ("* Tempering… (<time> · <tokens>)") is
-   * another card */
   working: number | number[] | null;
 }
 
@@ -165,14 +141,11 @@ export function parseFallbackPrompt(agent: string, screen: string): InteractiveP
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
   const shown = lines.flatMap((line, index) => cleanLine(line) && !isDivider(line) ? [index] : []);
   const steady = steadyReader(agent, shown.map((index) => cleanLine(lines[index]!)));
-  // GJC's exact selector first: a label of its that starts with a number is still moved to, never typed
   const selectionMenu = fallbackGjcSelectionMenu(agent, lines, shown);
   const menu = selectionMenu ? null : fallbackMenu(lines.map(unboxed), shown);
   if (menu) {
     const above = shown.filter((index) => index < menu.start).map((index) => cleanLine(lines[index]!));
     const question = [...above].reverse().find((line) => ASKED_RE.test(line)) ?? above.at(-1);
-    // a row's number is typed alone, as a menu reading keys takes it; a program reading a whole
-    // line ("Enter a number >") still waits for the Enter after it, and Esc backs out
     const choices: { label: string; steps: AnswerStep[] }[] = [
       ...menu.rows.map((row) => ({ label: row.label, steps: [{ text: String(row.number) }] })),
       { label: "Enter", steps: keySteps([KEY.enter]) },
@@ -180,8 +153,6 @@ export function parseFallbackPrompt(agent: string, screen: string): InteractiveP
     ];
     const body = withoutLine(above, question);
     return screenCard(lines, shown, steady, finishPrompt(agent, {
-      // the body is every other line above the rows, so a changed command above a same-looking
-      // menu is another card; the display cap applies after the hash
       kind: "menu", fallback: true, title: own("Waiting for your answer"), question: question ?? own("The agent is waiting for your answer."),
       body,
       options: choices.map(({ label }) => ({ label, description: null })),
@@ -193,13 +164,10 @@ export function parseFallbackPrompt(agent: string, screen: string): InteractiveP
     }, steadyFields(agent, question, body, steady.read)));
   }
   if (selectionMenu) {
-    // the selector's own heading: the block of lines right above its rows, never an earlier question
     let headEnd = selectionMenu.start;
     while (headEnd > 0 && (!cleanLine(lines[headEnd - 1]!) || isDivider(lines[headEnd - 1]!))) headEnd -= 1;
-    // GJC's question dialog has its own opening border before the title. The transcript and
-    // ticking status above it do not belong to this asking. Its outer borders are unindented
-    // and identical; Markdown title rules have left padding. Keep every title paragraph inside,
-    // including approval details; without the matching frame keep the whole screen.
+    // GJC's question dialog has its own opening border before the title. Its outer borders are unindented
+    // and identical; Markdown title rules have left padding.
     const closing = lines[findLastIndex(lines, (line) => Boolean(line.trim()))]?.trimEnd();
     const border = closing && isDivider(closing) && !/^\s/.test(closing)
       ? findLastIndex(lines.slice(0, headEnd), (line) => line.trimEnd() === closing)
@@ -259,7 +227,6 @@ export function parseFallbackPrompt(agent: string, screen: string): InteractiveP
   }, steadyFields(agent, question, body, steady.read)));
 }
 
-/** A fallback card's question and body as its id reads them: with the working line's ticking parts blanked. */
 function steadyFields(agent: string, question: string | undefined, body: string | null, steady: (line: string) => string): Partial<Pick<InteractivePrompt, "question" | "body">> {
   return { ...(question === undefined ? {} : { question: steady(question) }), body: body === null ? null : body.split("\n").map((line) => tickless(agent, steady(line))).join("\n") };
 }
@@ -267,13 +234,9 @@ function steadyFields(agent: string, question: string | undefined, body: string 
 /**
  * Copilot's banner logo (Copilot 1.0.109), which it animates while a prompt of its waits: a drawing at the start of a
  * banner row, before the row's own words and the panel's `│` ("╰─╯╰─╯  Copilot v1.0.109 uses AI.  │  Use the tabs…").
- * Only that drawing, on a row whose words are the banner's own (each of its four rows, as recorded), reads as one mark; the words after it stay. Drawing glyphs anywhere else are
- * read as written: a glyph may mark a menu's selected row ("██ Delete" against "░░ Keep"), and no rule tells it from a
- * drawing, so only an animation known to the letter is read as steady.
  */
 const COPILOT_LOGO_ROW_RE = /^[\u2500-\u259f\u2800-\u28ff](?:[\u2500-\u259f\u2800-\u28ff ]*[\u2500-\u259f\u2800-\u28ff])?(\s+(?:(?:Copilot v\S+ uses AI\.|Check for mistakes\.)\s+)?│(?:\s+(?:Getting started|Use the tabs above to explore your sessions and pull requests|\/model — Switch models across providers, or use Copilot Fusion))?)\s*$/u;
 
-/** A line as a fallback card's id reads it, apart from its question: Copilot's animated banner logo as one mark. */
 function tickless(agent: string, line: string): string {
   return agent === "copilot" ? line.replace(COPILOT_LOGO_ROW_RE, (_all, rest: string) => `<logo>${rest.replace(/\s+/g, " ")}`) : line;
 }
@@ -286,34 +249,21 @@ const gjcMenuIdentities = new WeakMap<ParsedPrompt, string>();
  * line's spinner, time and token count are the one thing it leaves out (steadyReader).
  */
 function screenCard(lines: string[], shown: number[], steady: SteadyReader, parsed: ParsedPrompt, cursorRows?: ReadonlySet<number>): InteractivePrompt {
-  // Preserve the card hash before adding the selector footer's screen hash. The inline editor
-  // has a different footer, but must retain the full question body hashed before its display cap.
   if (parsed.responder === "fallback-gjc-menu") gjcMenuIdentities.set(parsed, parsed.id);
-  // A cmd heredoc's indentation and separators can change which text is executable.
   const screen = parsed.agent === "cmd" ? lines.join("\n") : shown.map((index) => {
     const line = cleanLine(lines[index]!);
-    // GJC moves its cursor within the same menu; the selectedIndex is checked separately on reread.
     const read = steady.read(cursorRows?.has(index) ? line.replace(GJC_SELECTED_RE, "") : line);
-    // the question is kept as it is asked; every other line without what ticks (tickless)
     return read === parsed.question ? read : tickless(parsed.agent, read);
   }).join("\n");
   parsed.id = createHash("sha256").update(JSON.stringify({ card: parsed.id, screen, ...(steady.working === null ? {} : { working: steady.working }) })).digest("hex").slice(0, 12);
   return publicPrompt(parsed);
 }
 
-/** the screen lines shown under the card's question, without the question itself */
 function withoutLine(lines: string[], question: string | undefined): string | null {
   const at = question === undefined ? -1 : lines.lastIndexOf(question);
   return lines.filter((_, index) => index !== at).join("\n") || null;
 }
 
-/**
- * A numbered menu (`1.` … `n.`, 2 to 9 rows, at most one marked) that still owns the screen's
- * end: its hint, a line that says to choose, is the screen's last, and between the last row and
- * it are only the lines that row wraps onto (right under it, indented past its number). Anything
- * else there (another hint, a new prompt, an input box) may be what takes the keys now, so it is
- * no menu. A wrapped label is no guess here, since every row starts with its own number.
- */
 function fallbackMenu(lines: string[], shown: number[]): { start: number; rows: NumberedRow[] } | null {
   const lastRow = [...shown].reverse().find((index) => NUMBERED_OPTION_RE.test(cleanLine(lines[index]!)));
   const hintIndex = shown.at(-1);
@@ -326,7 +276,6 @@ function fallbackMenu(lines: string[], shown: number[]): { start: number; rows: 
   const numberAt = lines[lastRow]!.search(/\d/);
   while (end < hintIndex && cleanLine(lines[end]!) && !isDivider(lines[end]!) && lines[end]!.search(/\S/) > numberAt) end += 1;
   if (shown.some((index) => index >= end && index < hintIndex) || end - lastRow - 1 > MENU_WRAP_LINES) return null;
-  // up from the last row, through rows and the lines they wrap onto, to a blank line or a rule
   let start = lastRow;
   while (start > 0 && cleanLine(lines[start - 1]!) && !isDivider(lines[start - 1]!)) start -= 1;
   while (start < lastRow && !NUMBERED_OPTION_RE.test(cleanLine(lines[start]!))) start += 1;
@@ -336,16 +285,13 @@ function fallbackMenu(lines: string[], shown: number[]): { start: number; rows: 
   // row with its own letter key ("Read only (r)"), means the number may not be the key
   for (const [at, row] of rows.entries()) {
     const wrapped = lines.slice(row.lineIndex + 1, rows[at + 1]?.lineIndex ?? end).map(cleanLine).filter(Boolean);
-    // a hint or an input field inside the last row's wrap may be an older prompt, with a new one under it
     if (wrapped.some((line) => NOT_PROMPT_TEXT_RE.test(line) || (at === rows.length - 1 && (HINT_LINE_RE.test(line) || /:\s*$/.test(line))))) return null;
-    // the key may end the row's first line, with a description wrapped under it
     if ([row.label, ...wrapped].some((line) => /\(\w\)$/.test(line))) return null;
     row.label = [row.label, ...wrapped].join(" ");
   }
   return { start, rows };
 }
 
-/** GJC's unnumbered selector: a cursor-marked row, two-space rows, and its own selection footer. */
 function fallbackGjcSelectionMenu(agent: string, lines: string[], shown: number[]): { start: number; rows: MenuRow[]; selectedIndex: number } | null {
   if (agent !== "gjc" || shown.length === 0) return null;
   let hintStart = -1;
@@ -370,7 +316,6 @@ function fallbackGjcSelectionMenu(agent: string, lines: string[], shown: number[
     const text = cleanLine(lines[index]!);
     const selected = GJC_SELECTED_RE.test(text);
     const label = normalizeText(text.replace(GJC_SELECTED_RE, ""));
-    // A windowed/truncated list is not a complete set of choices. Keep its manual keys.
     if (!label || /^\(\d+\/\d+\)$/.test(label) || /…|\.\.\./.test(label)) return null;
     rows.push({ label, selected, checked: false, lineIndex: index });
   }
@@ -379,24 +324,19 @@ function fallbackGjcSelectionMenu(agent: string, lines: string[], shown: number[
   return { start, rows, selectedIndex };
 }
 
-/** a picker's key hint: a way to move ("↑↓", "↑/↓", "up/down") and a way to choose with Enter ("↵ confirm", "enter to select") */
 const PICKER_MOVE_RE = /↑\s*\/?\s*↓|\bup\/down\b/i;
 const PICKER_CHOOSE_RE = /[↵⏎]|\benter\b/i;
 
-/** a picker's row under its cursor: a marker, then the row's words ("❭ 1 Yes, trust", "❯ 1. Yes", "> Yes, I trust this folder") */
 const PICKER_CURSOR_ROW_RE = /^[❯›>❭]\s*\S/;
 
 /**
- * Whether a picker of the agent's own owns its input: a key hint that moves and chooses with Enter among the screen's
- * last two lines, and a row under a cursor marker in the few lines above it. Agents no reader knows draw their folder
+ * Agents no reader knows draw their folder
  * trust this way at start (Devin 2026.7, Copilot 1.0.109, Antigravity 1.5.6), and herdr reports them at rest under it,
  * so a chat message's paste and Enter would pick the row under the cursor ("Yes, trust") and the message would be lost.
- * A narrow pane wraps the hint onto a second row, so two rows joined (where the wrap fell inside a word or not) count too.
  */
 export function agentPickerOwnsScreen(screen: string): boolean {
   const shown = screen.replace(ANSI_RE, "").split(/\r?\n/).filter((line) => cleanLine(line) && !isDivider(line)).map(cleanLine);
   const isHint = (line: string): boolean => PICKER_MOVE_RE.test(line) && PICKER_CHOOSE_RE.test(line);
-  // where the hint starts: one row of the last two, or two rows wrapped, ending on the last row or the one before it
   const starts = [shown.length - 2, shown.length - 1].filter((start) => start >= 0 && isHint(shown[start]!));
   for (const start of [shown.length - 2, shown.length - 3]) {
     const [head, tail] = [shown[start], shown[start + 1]];
@@ -405,11 +345,6 @@ export function agentPickerOwnsScreen(screen: string): boolean {
   return starts.some((end) => shown.slice(Math.max(0, end - 8), end).some((line) => PICKER_CURSOR_ROW_RE.test(line)));
 }
 
-/**
- * A line with the side borders of the boxes it is drawn in taken off, the indentation inside kept ("│   2. No  │" is
- * "  2. No"): a numbered menu Copilot draws in a box (its folder trust, its command and edit approvals) reads as the
- * same menu drawn bare, its rows' numbers and the lines they wrap onto where they are.
- */
 function unboxed(line: string): string {
   for (let inner = line; ;) {
     const box = inner.match(/^(\s*)│ ?(.*?)\s*│\s*$/);
@@ -418,7 +353,6 @@ function unboxed(line: string): string {
   }
 }
 
-/** The same framed question must still own the inline Other editor before any text is sent. */
 export function gjcCustomEditorMatches(screen: string, expected: ParsedPrompt, draft: string): boolean {
   if (expected.responder !== "fallback-gjc-menu" || expected.customMenuIndex === null) return false;
   const identity = gjcMenuIdentities.get(expected);
@@ -439,23 +373,17 @@ export function gjcCustomEditorMatches(screen: string, expected: ParsedPrompt, d
   if (footerStart < 0) return false;
   const text = draft.normalize("NFC").replace(/\t/g, "    ");
   const draftCharacters = text.replace(/\s/g, "").length;
-  // Normalize the rows once, not the entire suffix again for every quoted body row.
   const editorLines = lines.slice(0, footerStart).map((line) => line.normalize("NFC").replace(/\t/g, "    ").trimEnd());
   while (editorLines.at(-1) === "") editorLines.pop();
   let characters = 0;
-  // A wrapped draft can itself start a row with "> ". Only the start that restores the
-  // original selector identity belongs to its editor, rather than to the draft or transcript.
   for (let input = editorLines.length - 1; input >= 0; input--) {
     characters += editorLines[input]!.replace(/\s/g, "").length;
-    // The editor marker adds exactly one non-whitespace character to the draft. Once the
-    // suffix has more, no earlier start can spell it; each "> " candidate adds another.
     if (characters > draftCharacters + 1) break;
     if (characters !== draftCharacters + 1 || !/^>(?:\s|$)/.test(cleanLine(editorLines[input]!))) continue;
     // Like claudeRestoredDraft, walk exact row contents: a soft wrap can split a word or
     // consume one separating space. Do not flatten internal whitespace or accept missing text.
     let positions = new Set([0]);
     for (let index = input; index < editorLines.length; index++) {
-      // Keep leading spaces in continuation rows: a wrap can split two adjacent spaces.
       const row = index === input ? editorLines[index]!.replace(/^\s*> ?/, "") : editorLines[index]!;
       const next = new Set<number>();
       for (const from of positions) {
@@ -466,8 +394,6 @@ export function gjcCustomEditorMatches(screen: string, expected: ParsedPrompt, d
       if (positions.size === 0) break;
     }
     if (!positions.has(text.length)) continue;
-    // At most one candidate has the draft's character count. Check its spelling before
-    // rebuilding and parsing the uncapped question, so quoted bodies cost one parse, not N.
     const restored = [...lines.slice(0, input), "↑/↓ select enter esc PgUp/PgDn/Ctrl+u/d: question · Wheel: transcript", ...lines.slice(footerEnd + 1)].join("\n");
     const parsed = parsedByPublicPrompt.get(parseFallbackPrompt("gjc", restored));
     return parsed?.responder === expected.responder && parsed.selectedIndex === expected.customMenuIndex
@@ -476,11 +402,6 @@ export function gjcCustomEditorMatches(screen: string, expected: ParsedPrompt, d
   return false;
 }
 
-/**
- * The fallback cards' answer behaviour, found by their responder when one is answered. They read no
- * screen here: parseFallbackPrompt draws a fallback card only once herdr reports the pane blocked
- * and no reader knows its screen (prompt.ts).
- */
 export const readers: readonly DialogReader[] = [
   { id: "fallback-menu", agents: ["*"], priority: 1000, reread: "none", list: "none", parse: () => null },
   { id: "fallback-gjc-menu", agents: ["*"], priority: 1000, reread: "before-commit", list: "none", parse: () => null },

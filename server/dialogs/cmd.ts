@@ -15,13 +15,11 @@ import { ANSI_RE, type CardWords, type ParsedPrompt, cleanLine, findLastIndex, f
  *   ↑/↓ navigate · enter select · ctrl+e explain · Run cmd --yolo to
  *   bypass all permissions (Docs ↗)
  *
- * The rows are numbered and the cursor is marked with `❯`; the footer names the keys. Only the
- * rows directly above the footer are the dialog's: a numbered list in the conversation above it
- * (or in the agent's own output) is not an option, and a command's own text is not one either.
+ * The rows are numbered and the cursor is marked with `❯`; the footer names the keys.
  */
 /**
  * command-code@1.88.0's PermissionFooter (dist/cli.mjs). Ink wraps its Text at word or
- * character boundaries. Match the entire footer, not a bag of words that also accepts later output.
+ * character boundaries.
  * MainView hides its normal input/status chrome while permissionPanel is present.
  */
 export function cmdFooterStart(lines: string[]): number {
@@ -35,15 +33,12 @@ function parseCmdQuestion(screen: string): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
   const hintIndex = cmdFooterStart(lines);
   if (hintIndex < 0) return null;
-  // the dialog block: the rows directly above the footer, and their wrapped continuation lines.
-  // The blank line between the last row and the footer is skipped; anything else ends the block.
   let blockStart = hintIndex;
   while (blockStart > 0 && lines[blockStart - 1]!.trim() === "") blockStart -= 1;
   while (blockStart > 0) {
     const prev = lines[blockStart - 1]!;
     if (isDivider(prev) || prev.trim() === "") break;
     if (/^\s*[❯›>]?\s*\d+\.\s+/.test(prev)) { blockStart -= 1; continue; }
-    // a wrapped continuation of the row above (indented, not numbered)
     if (/^\s+\S/.test(prev) && !/^\s*[❯›>]?\s*\d+\.\s+/.test(prev)) { blockStart -= 1; continue; }
     break;
   }
@@ -60,18 +55,13 @@ function parseCmdQuestion(screen: string): ParsedPrompt | null {
     rows.push(row);
   }
   if (rows.length < 2) return null;
-  // the rows are numbered from 1, in order: anything else is another program's list
   if (!rows.every((row, index) => row.number === index + 1)) return null;
-  // the cursor must be marked on exactly one row: without it the chat cannot tell which option
-  // an answer would land on, and Command Code may mark the cursor by colour alone
   if (rows.filter((row) => row.selected).length !== 1) return null;
   // The source-defined permission choices begin with Yes and end with No, not arbitrary menu labels.
   if (rows[0]?.label !== "Yes" || !/^No(?:,|$)/.test(rows.at(-1)?.label ?? "")) return null;
   const selectedIndex = rows.findIndex((row) => row.selected);
   const firstRowIndex = lines.findIndex((line, index) => index >= blockStart && /^\s*[❯›>]?\s*1\.\s+/.test(line));
-  // the heading: the first line of the dialog above the question (e.g. "Create File")
   let title: CardWords = own("Permission request");
-  // where the dialog's text starts: just below the title, else below whatever ended the search
   let titleIndex = -1;
   if (firstRowIndex >= 0) {
     let index = firstRowIndex - 1;
@@ -88,7 +78,6 @@ function parseCmdQuestion(screen: string): ParsedPrompt | null {
     }
     titleIndex = index;
   }
-  // the question: the line asking for approval, the last one above the rows
   let question = title;
   if (firstRowIndex >= 0) {
     for (let index = firstRowIndex - 1; index >= 0; index -= 1) {
@@ -103,10 +92,6 @@ function parseCmdQuestion(screen: string): ParsedPrompt | null {
   // id too: a command replaced under the card makes it stale instead of approving the new one
   const bodyLines = firstRowIndex >= 0 ? lines.slice(titleIndex + 1, firstRowIndex) : [];
   const body = bodyLines.map(cleanLine).filter((line) => line && line !== question && !isDivider(line) && !/ctrl\+e/i.test(line)).join("\n") || null;
-  // The id hashes the whole screen above the rows as drawn, not only the title and body the card
-  // shows: where the dialog starts is a guess (a heredoc can hold a rule; its indentation is part of
-  // the command), so any change above the rows makes the card stale. Output that changes there while
-  // the dialog is open makes it stale too, and the answer goes to the terminal instead.
   const dialog = lines.slice(0, firstRowIndex).join("\n");
   return finishPrompt("cmd", {
     kind: "approval", title, question, body,

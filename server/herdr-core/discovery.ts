@@ -1,4 +1,7 @@
 /**
+ * Finding herdr-core (`hc`) on this PC, the way the Herdr app does (herdr-app src/core_bin.rs),
+ * and whether its core runs, without ever starting one.
+ *
  * Every hc command but `--version` starts a core when none runs (`hc connect` and
  * `hc server status` included), which would leave a core and its systemd unit on a PC that only
  * uses herdr's TUI. So a candidate is only ever asked `--version`, and the core counts as running
@@ -15,7 +18,9 @@ import { userHome } from "../user-home.ts";
 type Env = Record<string, string | undefined>;
 
 export interface FoundHc {
+  /** the executable, as found */
   bin: string;
+  /** what its `--version` says after `hc ` */
   version: string;
 }
 
@@ -23,15 +28,23 @@ export interface FindHcOptions {
   env?: Env;
   home?: string;
   platform?: NodeJS.Platform;
+  /** the PATH the user's login shell sets up, or null; the default asks `$SHELL -lc` */
   loginShellPath?: () => Promise<string | null>;
+  /** where hc gets installed; the default is usualHcDirs */
   usualDirs?: readonly string[];
+  /** how long one --version may take; PROBE_TIMEOUT_MS unset */
   timeoutMs?: number;
+  /** getfacl's path, or null when it is not installed; the default looks in /usr/bin and /bin */
   getfacl?: string | null;
+  /** told each candidate the trust check refuses, and why */
   onRefused?: (bin: string, reason: string) => void;
 }
 
-const PROBE_TIMEOUT_MS = 3_000;
+/** a slow or interactive shell profile, or a hanging binary, must not hold the server up */
+export const PROBE_TIMEOUT_MS = 3_000;
+/** how long output is still read after the probe exits: what it left behind holding stdout is not waited on */
 const EXIT_GRACE_MS = 500;
+/** a version line, and a PATH, are short: anything longer is not what was asked for */
 const PROBE_OUTPUT_LIMIT = 64 * 1024;
 
 /**
@@ -56,6 +69,7 @@ export async function findHc(options: FindHcOptions = {}): Promise<FoundHc | nul
   const dirsOn = (path: string | undefined) => (path ?? "").split(platform === "win32" ? ";" : delimiter).filter((dir) => dir !== "");
   const seen = new Set<string>();
   const harmless = platform === "win32" ? null : harmlessGroups(platform);
+  // one look reads each ACL once
   const acl = aclReader({ platform, ...(options.getfacl !== undefined ? { getfacl: options.getfacl } : {}) });
   // what the candidate runs by name (`#!/usr/bin/env python3`, a wrapper's commands) comes only from
   // PATH folders that pass the same check, resolved (a wrapper may change folder first); none passing
@@ -88,6 +102,8 @@ export async function findHc(options: FindHcOptions = {}): Promise<FoundHc | nul
     }
     return null;
   };
+  // a bare name is looked up on the PATH, as a shell would run it, and checked like anything found
+  // there: one refused leaves the next PATH folder to look in
   const configured = env["OVIS_HC_BIN"];
   const bare = configured !== undefined && !/[\\/]/.test(configured);
   const named = !configured ? [] : !bare ? [configured]
@@ -116,6 +132,7 @@ function insideProfile(bin: string, home: string): string | null {
   }
 }
 
+/** the PATH a probe gets when no PATH folder passes the check */
 const SYSTEM_PATH = ["/usr/bin", "/bin"];
 
 /** the most links followed to reach one candidate, as the kernel allows (Linux's MAXSYMLINKS) */
@@ -134,6 +151,7 @@ export function ownedByUser(path: string, harmless: (gid: number, path: string) 
   return trustRefusal(path, harmless, asFolder, acl) === null;
 }
 
+/** why ownedByUser refuses `path`, naming the entry and the rule it fails; null when it does not */
 export function trustRefusal(path: string, harmless: (gid: number, path: string) => boolean, asFolder = false, acl: AclReader = aclReader()): string | null {
   const uid = process.getuid?.();
   if (uid === undefined) return "no user id to check against";
@@ -151,6 +169,7 @@ export function trustRefusal(path: string, harmless: (gid: number, path: string)
   };
   const parts = (path: string) => path.split("/").filter((part) => part !== "" && part !== ".");
   try {
+    // `folder` is always a real path whose every folder has been checked on the way to it
     let folder = "/";
     let here = statSync("/");
     const rest = parts(path);
@@ -257,11 +276,13 @@ export function privateGroup(user: string, gid: number, groups: string, passwd: 
 
 /** how long reading one ACL may take: one that does not answer counts as granting */
 const ACL_READ_TIMEOUT_MS = 2_000;
+/** how long a macOS ACL read stands: the walk from `/` asks the same folders on every look */
 const MAC_ACL_TTL_MS = 60_000;
 const macAcls = new Map<string, { at: number; grants: boolean }>();
 
 export interface AclReader {
   darwin: boolean;
+  /** whether an ACL lets anybody else write `path` (a file or folder, never a link) */
   grantsWrite(path: string, uid: number, harmless: (gid: number, path: string) => boolean): boolean;
 }
 
@@ -316,6 +337,7 @@ export function aclReader(options: { platform?: NodeJS.Platform; getfacl?: strin
   };
 }
 
+/** a Linux `getfacl -cpn` listing: whether an entry the mask lets through gives anybody else write */
 export function linuxAclGrantsWrite(acl: string, uid: number, harmless: (gid: number) => boolean, owningGroup: number): boolean {
   const entries = acl.split("\n").map((line) => line.replace(/#.*$/, "").trim()).filter((line) => line !== "").map((line) => line.split(":"));
   if (entries.some((fields) => fields.length !== 3)) return true;
@@ -329,6 +351,7 @@ export function linuxAclGrantsWrite(acl: string, uid: number, harmless: (gid: nu
   });
 }
 
+/** what a macOS ACL entry may allow that lets its holder change what is there */
 const MAC_WRITE_RIGHTS = new Set(["write", "append", "add_file", "add_subdirectory", "delete", "delete_child", "writeattr", "writeextattr", "writesecurity", "chown"]);
 
 /**
@@ -346,6 +369,7 @@ export function macAclGrantsWrite(listing: string, user: string): boolean {
   });
 }
 
+/** Where herdr-core gets installed: its own installer (~/.local/bin), Homebrew, mise, Nix, cargo. */
 export function usualHcDirs(home: string, platform: NodeJS.Platform = process.platform, env: Env = process.env): string[] {
   if (platform === "win32") {
     return [join(env["LOCALAPPDATA"] || join(home, "AppData", "Local"), "Programs", "herdr-core"), join(home, ".cargo", "bin")];
@@ -365,12 +389,14 @@ function isFile(path: string): boolean {
   try { return statSync(path).isFile(); } catch { return false; }
 }
 
+/** `0.1.17` when `bin --version` exits 0 and its output starts `hc 0.1.17`; null for anything else. The only hc command run here. */
 export async function hcVersion(bin: string, env: Env, timeoutMs: number): Promise<string | null> {
   const text = await probe([bin, "--version"], env, timeoutMs);
   const match = text === null ? null : /^hc (\d+\.\d+\.\d+[0-9A-Za-z.+-]*)(?:\s|$)/.exec(text);
   return match ? match[1]! : null;
 }
 
+/** the login shell's PATH through the probe Agents uses too (server/shell-agent.ts): marked, bounded, its group killed */
 async function loginShellPath(env: Env, platform: NodeJS.Platform): Promise<string | null> {
   if (platform === "win32") return null;
   const shell = loginShell(env);
@@ -404,6 +430,7 @@ async function probe(argv: string[], env: Env, timeoutMs: number): Promise<strin
       chunks.push(value);
     }
   })().catch(() => false);
+  // one deadline for the whole probe: the output, then the exit
   const deadline = after(timeoutMs).then(() => "late" as const);
   try {
     const outcome = await Promise.race([
@@ -417,7 +444,7 @@ async function probe(argv: string[], env: Env, timeoutMs: number): Promise<strin
   } finally {
     for (const timer of timers) clearTimeout(timer);
     if (process.platform !== "win32") {
-      try { process.kill(-child.pid, "SIGKILL"); } catch {}
+      try { process.kill(-child.pid, "SIGKILL"); } catch { /* the group has ended */ }
     }
     child.kill("SIGKILL");
     void reader.cancel().catch(() => {});
@@ -428,12 +455,14 @@ export interface CoreSocketOptions {
   env?: Env;
   home?: string;
   platform?: NodeJS.Platform;
+  /** `/run/user/<uid>` when that folder exists, else null: hc's runtime dir without XDG_RUNTIME_DIR */
   userRuntimeDir?: string | null;
 }
 
 export interface CoreSocket {
   session: string;
   path: string;
+  /** the socket file is there; it is never connected to, so a core that died may leave one */
   running: boolean;
 }
 
@@ -469,6 +498,7 @@ function runtimeDir(env: Env, options: CoreSocketOptions): string | null {
   try { return statSync(dir).isDirectory() ? dir : null; } catch { return null; }
 }
 
+/** `socket` in hc's config.toml, when it sets one */
 function configuredSocket(config: string): string | null {
   // read as herdr's own config is: a regular file of a config's size, never a FIFO a health poll would block on
   const parsed = readHerdrConfig(config);
@@ -481,6 +511,7 @@ function exists(path: string): boolean {
   try { statSync(path); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EBUSY"; }
 }
 
+/** how long one look for hc stands: it runs a login shell and each candidate's --version */
 const FIND_TTL_MS = 5 * 60_000;
 let found: { at: number; hc: FoundHc | null } | null = null;
 let finding: Promise<FoundHc | null> | null = null;
@@ -498,11 +529,16 @@ export function discoverHc(options: Omit<FindHcOptions, "loginShellPath"> = {}):
   return finding;
 }
 
+/** Looks for hc afresh once any look under way has ended: one started before an install would miss it. */
 export async function rediscoverHc(options: Omit<FindHcOptions, "loginShellPath"> = {}): Promise<FoundHc | null> {
   await finding?.catch(() => null);
   return discoverHc(options);
 }
 
+/**
+ * What this PC has of herdr-core, for Settings: never waits. Undefined until the first look for hc
+ * has ended; a look older than FIND_TTL_MS starts another, and this answer stays meanwhile.
+ */
 export function herdrCoreFacts(): HerdrCoreFacts | undefined {
   if (finding === null && (found === null || Date.now() - found.at > FIND_TTL_MS)) void discoverHc();
   if (found === null) return undefined;

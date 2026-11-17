@@ -7,8 +7,7 @@ import type { InteractivePrompt } from "../shared/protocol.ts";
 import { agentPickerOwnsScreen } from "./dialogs/fallback.ts";
 import { handlePromptRequest, parseFallbackPrompt } from "./prompt.ts";
 
-/** A herdr holding one pane whose screen the test sets; every key the answer route sends is kept. */
-interface Pane { agent: string; screen: string; sent: string[]; /** called as each screen read arrives, before its text is taken */ onRead?: () => void }
+interface Pane { agent: string; screen: string; sent: string[]; onRead?: () => void }
 
 async function withPane(agent: string, status: string, screen: string, run: (pane: Pane) => Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "herdr-fallback-answer-"));
@@ -61,10 +60,6 @@ async function answer(promptId: string, choice: { option_index: number }, signal
 
 const labels = (prompt: InteractivePrompt) => prompt.options.map((option) => option.label);
 
-// Agents with no reader of their own get the fallback card, and its answer was always refused: the read before the
-// key had no screen to compare (readKnownPrompt reads none for them), and what they redraw while the prompt waits
-// (Copilot's logo and timer, Grok's status line) changed the id every second. Recorded on Copilot 1.0.109, Grok
-// 1.0.77 and Antigravity 1.5.6.
 const recorded = (name: string): string => readFileSync(new URL(`./fixtures/${name}.txt`, import.meta.url), "utf8");
 
 test.each([
@@ -82,7 +77,6 @@ test.each([
   });
 });
 
-// Antigravity's question has a reader of its own since (dialogs/agy.ts): its rows are the card's options, not "Enter"
 test("answers agy's question through its reader, as a card of its options", async () => {
   await withPane("agy", "blocked", recorded("agy-1.5.6-ask"), async (pane) => {
     const prompt = (await card())!;
@@ -131,8 +125,6 @@ test("reads drawing glyphs outside Copilot's banner logo as written", () => {
   expect(id("blue \u2588")).not.toBe(id("blue \u2591"));
 });
 
-// a menu that marks its selection with a filled block against a hollow one: the mark moving is another card, so an
-// Enter read for one row never lands on the other (merge-pass review of #3730)
 test.each([["\u2591", "\u2588"], ["\u2591\u2591", "\u2588\u2588"], ["\u28c0", "\u28ff"]])("still refuses an answer once a menu marked %s / %s moved its selection", async (hollow, filled) => {
   const menu = (marks: [string, string]) => `Remove the staging database?\n\n${marks[0]} Delete\n${marks[1]} Keep\n\n↑/↓ to move · enter to choose\n`;
   await withPane("copilot", "blocked", menu([hollow, filled]), async (pane) => {
@@ -144,8 +136,6 @@ test.each([["\u2591", "\u2588"], ["\u2591\u2591", "\u2588\u2588"], ["\u28c0", "\
   });
 });
 
-// selection marks beside a border or guide glyph, at a row's end, or two glyphs wide (merge-pass review of #3730): the
-// mark moving is another card for any agent, so an Enter read for one row never lands on the other
 const SWAPPED_MARKS: [string, [string, string], [string, string]][] = [
   ["a heavy rule", ["\u2503 \u2588 Delete", "\u2503 \u2591 Keep"], ["\u2503 \u2591 Delete", "\u2503 \u2588 Keep"]],
   ["a double frame", ["\u2551 \u2588 Delete \u2551", "\u2551 \u2591 Keep \u2551"], ["\u2551 \u2591 Delete \u2551", "\u2551 \u2588 Keep \u2551"]],
@@ -165,14 +155,11 @@ test.each(SWAPPED_MARKS.flatMap(([shape, before, after]) => ["copilot", "claude"
     });
   });
 
-// The read right before the key, not only the answer's first read, must still show the card: the screen changes after
-// the answer has read it, between that read and the key (merge-pass review of #3730)
 test("refuses the key when the question changed after the answer's first read", async () => {
   const screen = recorded("copilot-1.0.109-ask-32s");
   await withPane("copilot", "blocked", screen, async (pane) => {
     const prompt = (await card())!;
     let reads = 0;
-    // the answer's first read draws the card as shown; every read after it shows another question
     pane.onRead = () => { if (++reads === 2) pane.screen = screen.replace("Which color?", "Which size?"); };
     expect(await answer(prompt.id, { option_index: labels(prompt).indexOf("Enter") })).toEqual({ status: 409, code: "prompt_changed" });
     expect(reads).toBeGreaterThanOrEqual(2);
@@ -186,17 +173,13 @@ test("sends nothing for an answer given up during the read before its key", asyn
     const prompt = (await card())!;
     const given = new AbortController();
     let reads = 0;
-    // the screen stays the card's; the request is given up while the read before the key is answered
     pane.onRead = () => { if (++reads === 2) given.abort(); };
     expect(await answer(prompt.id, { option_index: labels(prompt).indexOf("Enter") }, given.signal)).toEqual({ status: 409, code: "prompt_changed" });
     expect(pane.sent).toEqual([]);
   });
 });
 
-// The agent lab's agents whose generic cards changed id every second (agent-lab audit, 2026-11-12): each recorded twice,
-// a few seconds apart, while its question or approval waited, then a change of words that must still be another card
 test.each([
-  // the waiting line's own words, each found once on the screen, so the change is to that line and nothing else
   ["hermes", "\u2753 Which color?", "\u2753 Which size?"],
   ["muse", "Request user input Color", "Request user input Size"],
   ["maki", "bash> List directory contents", "bash> Remove directory contents"],
@@ -206,7 +189,6 @@ test.each([
   const [before, after] = ["a", "b"].map((frame) => recorded(`lab-${agent}-waiting-${frame}`)) as [string, string];
   expect(after).not.toBe(before);
   expect(parseFallbackPrompt(agent, after).id).toBe(parseFallbackPrompt(agent, before).id);
-  // Muse turns its glyph through three frames
   if (agent === "muse") expect(parseFallbackPrompt(agent, after.replace("\u25c7 Request", "\u25c6 Request")).id).toBe(parseFallbackPrompt(agent, before).id);
   expect(after.split(from).length).toBe(2);
   expect(parseFallbackPrompt(agent, after.replace(from, to)).id).not.toBe(parseFallbackPrompt(agent, before).id);
@@ -218,7 +200,6 @@ test("keeps Hermes's card in its first ten seconds, where the timer is padded wi
   const at = (time: string) => parseFallbackPrompt("hermes", screen.replace("( 57.9s", time)).id;
   expect(at("(  5.3s")).toBe(at("(  5.2s"));
   expect(at("(  5.2s")).toBe(at("( 57.9s"));
-  // a token count past a thousand is drawn with a K
   expect(screen.split("\u2193 34 tok)").length).toBe(2);
   expect(parseFallbackPrompt("hermes", screen.replace("\u2193 34 tok)", "\u2193 1.2K tok)")).id).toBe(at("( 57.9s"));
 });
@@ -229,13 +210,11 @@ test("keeps the words Hermes's status bar echoes, blanking only its ticking segm
   expect(after.split(echo).length).toBe(2);
   expect(parseFallbackPrompt("hermes", after).id).toBe(parseFallbackPrompt("hermes", before).id);
   expect(parseFallbackPrompt("hermes", after.replace(echo, "\u2500 Delete the staging data...")).id).not.toBe(parseFallbackPrompt("hermes", before).id);
-  // the model's name does not tick either: it stays in the id
   expect(after.split("\u2624 gpt-6-luna \u2502").length).toBe(2);
   expect(parseFallbackPrompt("hermes", after.replace("\u2624 gpt-6-luna \u2502", "\u2624 gpt-6-sol \u2502")).id).not.toBe(parseFallbackPrompt("hermes", before).id);
 });
 
 test("keeps the ids of Copilot's and Grok's cards as #3730 gave them", () => {
-  // their one waiting line is still read as one index, so a card already on screen keeps its id across this change
   expect(parseFallbackPrompt("copilot", recorded("copilot-1.0.109-ask-32s")).id).toBe("2af485654211");
   expect(parseFallbackPrompt("grok", recorded("grok-1.0.77-ask")).id).toBe("09168e691891");
 });
@@ -253,7 +232,6 @@ test.each([
   expect(agentPickerOwnsScreen(recorded(name))).toBe(picker);
 });
 
-// a narrow pane wraps the key hint onto a second row: neither row alone both moves and chooses
 test.each(["↑↓ sel", "↑↓ select ·", "↑↓ select · "])("tells Devin's folder trust with its key hint wrapped after %p", (head) => {
   const lines = recorded("devin-3000.12.43-trust").split("\n");
   const at = lines.findIndex((line) => line.includes("↑↓ select"));
@@ -280,7 +258,6 @@ test("offers and answers Devin's folder trust while herdr reports Devin at rest"
 
 test.each([
   ["devin", "idle", recorded("devin-3000.12.43-composer")],
-  // a reader knows Claude's screens: a picker-shaped screen of its at rest is left to that reader
   ["claude", "idle", recorded("devin-3000.12.43-trust")],
 ])("offers no card for %s at rest without a picker of its own", async (agent, status, screen) => {
   await withPane(agent, status, screen, async () => {

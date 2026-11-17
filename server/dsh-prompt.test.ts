@@ -127,7 +127,6 @@ describe("dsh-tui's question through the answer route", () => {
 
   test("sends no Enter when the question closes during the look right before it", async () => {
     const panel = newPanel();
-    // the look before each key (beforeKey) is where another device's Esc lands, once the answer's text is in
     const beforeKey = async (): Promise<void> => { if (panel.text) panel.open = false; };
     await withDsh(panel, async () => {
       expect(await answer({ prompt_id: (await card())!.id, custom_text: "card words" }, { beforeKey })).toBe(409);
@@ -181,7 +180,6 @@ describe("dsh-tui's question through the answer route", () => {
   test("sends no key once herdr stops reporting the pane's dsh-tui as waiting, its panel still on the screen", async () => {
     const panel = newPanel();
     let answering = false;
-    // dsh killed right after the answer's first read: its panel stays, the shell's prompt on the footer's last row
     const killed = (drawn: Panel): string => {
       if (answering) drawn.status = "unknown";
       return screen(drawn).replace(/   esc to interrupt\s*$/, "bash-5.3$ ");

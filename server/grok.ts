@@ -1,4 +1,3 @@
-/** Grok's native update log, projected onto active history before the shared pager reads it. */
 import { createHash } from "node:crypto";
 import { constants, closeSync, fstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname } from "node:path";
@@ -22,7 +21,6 @@ export class GrokUnavailable extends Error {
 }
 
 export interface GrokEvent { update: RecordValue; session: string; ts: string | null }
-/** Validate the envelope, not a substring that could also occur inside tool output. */
 export function grokEvent(line: string, expectedSession?: string): GrokEvent | null {
   if (!line.trim()) return null;
   let value: RecordValue;
@@ -59,7 +57,6 @@ function apply(index: Index, event: GrokEvent | null, start: number, end: number
       const removed = index.prompts.pop()!;
       for (const id of removed.calls) index.calls.delete(id);
     }
-    // Marker-only rewinds can shorten the sole range without changing its start.
     index.revision = end;
     return;
   }
@@ -67,8 +64,6 @@ function apply(index: Index, event: GrokEvent | null, start: number, end: number
     const number = record(u._meta).promptIndex;
     if (!Number.isSafeInteger(number) || (number as number) < 0) throw new GrokUnavailable();
     if (current && current.index === number) {
-      // Multiple chunks of one prompt precede its answer. Reused indices after an answer
-      // require an explicit rewind; otherwise their boundaries cannot be established.
       if (current.answered) throw new GrokUnavailable();
     } else {
       if (current && (number as number) <= current.index) throw new GrokUnavailable();
@@ -94,9 +89,6 @@ function apply(index: Index, event: GrokEvent | null, start: number, end: number
     if (u?.sessionUpdate === "turn_completed") current.activity = "idle";
     else if (u?.sessionUpdate === "agent_thought_chunk") current.activity = "thinking";
     else if (u && ["agent_message_chunk", "tool_call"].includes(String(u.sessionUpdate))) current.activity = "working";
-    // Background tool updates after completion must not reopen a finished turn.
-    // A retained prompt ends before a rewind marker, not at the following replacement.
-    // Only physically adjacent records extend its segment.
     if (current.end === start || current.start === start) current.end = end;
     else if (u && ["agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "turn_completed"].includes(String(u.sessionUpdate))) throw new GrokUnavailable();
     if (u && ["agent_message_chunk", "agent_thought_chunk", "tool_call", "turn_completed"].includes(String(u.sessionUpdate))) current.answered = true;
@@ -111,10 +103,6 @@ export interface GrokProjection {
   revision: string;
 }
 
-/** Scan complete records once in bounded chunks. An unfinished catch-up is unavailable,
- * never a partially validated history. The next poll continues the same scan. Size,
- * identity and change all come from the caller's one stat, so an append between two
- * stats cannot reset a finished scan. */
 export function grokProjection(path: string, stat: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number }): GrokProjection {
   const { size } = stat;
   const identity = `${stat.dev}:${stat.ino}`;
@@ -126,8 +114,6 @@ export function grokProjection(path: string, stat: { dev: number; ino: number; s
   index.size = size; index.changed = changed;
   indexes.delete(path); indexes.set(path, index);
   if (indexes.size > 16) indexes.delete(indexes.keys().next().value!);
-  // Known limitation: one malformed or unreconstructable record keeps this file on the
-  // terminal view until it is replaced or shrinks. Skipping the line could misplace a rewind.
   if (index.failed) throw new GrokUnavailable();
   // the file a page read is bound to, never another a folder swapped in around this open puts there; and,
   // bound or not, the file `stat` saw: another file's bytes never mark this one's index failed
@@ -183,7 +169,6 @@ function outputText(value: unknown): string {
     const content = record(block.content);
     if (block.type === "content" && content.type === "text" && typeof content.text === "string") return content.text;
     if (block.type === "diff") return `--- ${typeof block.path === "string" ? block.path : ""}\n${typeof block.oldText === "string" ? block.oldText : ""}\n+++ ${typeof block.path === "string" ? block.path : ""}\n${typeof block.newText === "string" ? block.newText : ""}`;
-    // This is a native reference, not terminal output we have fetched via ACP.
     if (block.type === "terminal" && typeof block.terminalId === "string") return JSON.stringify(block);
     return "";
   }).filter(Boolean).join("\n");
@@ -197,15 +182,12 @@ function outputRef(path: string, id: string): string {
 }
 
 type Tool = Extract<ConversationPart, { kind: "tool" }>;
-/** Pages contain complete prompts. A bounded mid-prompt page without its call seed fails
- * rather than manufacturing tool metadata or silently dropping native updates. */
 export function parseGrokTranscript(text: string, path?: string, wholeCall?: string): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
   let user: ConversationTurn | undefined;
   let assistant: ConversationTurn | undefined;
   let prompt: number | undefined;
   const calls = new Map<string, { fields: RecordValue; part: Tool; diffs: Map<string, RecordValue> }>();
-  // after every chunk's text, so a later chunk still extends the prompt's text part
   const promptSkills = new Map<ConversationTurn, SkillActivity>();
   const appendText = (turn: ConversationTurn, value: unknown) => {
     if (typeof value !== "string" || !value) return;
@@ -303,12 +285,11 @@ export function grokToolOutput(path: string, ref: string): string | null {
         const bytes = Buffer.alloc(length);
         if (readSync(fd, bytes, 0, length, call.owner.start) !== length) return null;
         const turns = parseGrokTranscript(bytes.toString("utf8"), path, id);
-        // Tool order follows first tool_call records, including calls with no output yet.
         const at = [...call.owner.calls].indexOf(id);
         return turns.flatMap((turn) => turn.parts).filter((part): part is Tool => part.kind === "tool")[at]?.output ?? null;
       } finally { closeSync(fd); }
     }
-  } catch { /* changed, incomplete or unavailable history */ }
+  } catch { }
   return null;
 }
 
@@ -319,7 +300,6 @@ export function grokToolOutput(path: string, ref: string): string | null {
  */
 export const GROK_IMAGE_REF = /^grok-image:([a-f0-9]{64})$/;
 
-/** The pictures `blocks` carry that the chat shows: a raster declared as one, within MAX_IMAGE_BYTES (inlineImageType). */
 function pictures(blocks: unknown[]): { mediaType: string; data: string }[] {
   return blocks.flatMap((block) => {
     const image = record(block);
@@ -328,7 +308,6 @@ function pictures(blocks: unknown[]): { mediaType: string; data: string }[] {
   });
 }
 
-/** The pictures one update carries: a visible prompt chunk's, or a tool update's content blocks'. */
 function updatePictures(u: RecordValue): { mediaType: string; data: string }[] {
   if (u.sessionUpdate === "user_message_chunk") return record(u._meta).hideFromScrollback === true ? [] : pictures([u.content]);
   if (u.sessionUpdate !== "tool_call" && u.sessionUpdate !== "tool_call_update" || !Array.isArray(u.content)) return [];
@@ -337,10 +316,8 @@ function updatePictures(u: RecordValue): { mediaType: string; data: string }[] {
 
 const digestOf = (data: string): string => createHash("sha256").update(Buffer.from(data, "base64")).digest("hex");
 
-/** How much of the update log the image lookup reads at a time, the event loop running between windows. */
 const IMAGE_WINDOW = 1024 * 1024;
 
-/** The lines in [start, end) of the file open at `fd`, each with its byte offset, read a window at a time. */
 async function* segmentLines(fd: number, start: number, end: number): AsyncGenerator<{ line: string; at: number }> {
   const window = Buffer.alloc(IMAGE_WINDOW);
   let pieces: Buffer[] = [];
@@ -352,7 +329,6 @@ async function* segmentLines(fd: number, start: number, end: number): AsyncGener
     for (let offset = 0; offset < read;) {
       const newline = window.subarray(0, read).indexOf(10, offset);
       const stop = newline === -1 ? read : newline;
-      // the projection holds every record to MAX_LINE: a longer one means the file changed under it
       if (length + stop - offset > MAX_LINE) throw new GrokUnavailable();
       pieces.push(Buffer.from(window.subarray(offset, stop)));
       length += stop - offset;
@@ -367,12 +343,6 @@ async function* segmentLines(fd: number, start: number, end: number): AsyncGener
   }
 }
 
-/**
- * The picture `ref` names in the Grok update log `path`, read only from the prompts its active
- * history keeps (grokProjection: a prompt rewound away serves nothing, also when it is rewound while
- * the lookup reads), and only when its bytes are a raster within MAX_IMAGE_BYTES that hash to the
- * digest the ref names. The log is read a window at a time. Null for anything else.
- */
 export async function grokImage(path: string, ref: string): Promise<{ mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null> {
   const digest = GROK_IMAGE_REF.exec(ref)?.[1];
   if (digest === undefined) return null;
@@ -381,20 +351,17 @@ export async function grokImage(path: string, ref: string): Promise<{ mediaType:
     const fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0));
     try {
       const { segments, revision } = grokProjection(path, statSync(path));
-      // the file read is the one the projection checked, not one moved into its path since
       const opened = fstatSync(fd);
       const named = statSync(path);
       if (opened.dev !== named.dev || opened.ino !== named.ino) return null;
       for (const segment of segments) {
         for await (const { line, at } of segmentLines(fd, segment.start, segment.end)) {
-          // a picture's type is written "image", or with JSON escapes in it
           if (!line.includes('"image"') && !line.includes("\\u")) continue;
           const event = grokEvent(line, basename(dirname(path)));
           for (const picture of event === null ? [] : updatePictures(event.update)) {
             if (digestOf(picture.data) !== digest) continue;
             const data = Buffer.from(picture.data, "base64");
             if (imageType(data) !== picture.mediaType) return null;
-            // the history may have moved while the lookup read: the record must still be active
             const current = statSync(path);
             if (current.dev !== opened.dev || current.ino !== opened.ino) return null;
             const now = grokProjection(path, current);
@@ -404,6 +371,6 @@ export async function grokImage(path: string, ref: string): Promise<{ mediaType:
         }
       }
     } finally { closeSync(fd); }
-  } catch { /* changed, incomplete or unavailable history */ }
+  } catch { }
   return null;
 }

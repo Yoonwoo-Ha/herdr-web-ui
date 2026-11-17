@@ -1,25 +1,14 @@
 import type { PromptAnswer } from "../../shared/protocol.ts";
 import type { ParsedPrompt } from "./shared.ts";
 
-/**
- * A form whose own keys move between its questions without answering one (omo's Tab and Shift+Tab,
- * Codex's ←/→, Hermes's Tab and Shift+Tab), as read off its screen: the question shown, by its
- * place among the form's `count` stops (omo's Submit tab is the last of them).
- */
 export interface NativeSteps {
-  /** the form: the same questions in the same order, whichever one is shown */
   identity: string;
   index: number;
   count: number;
-  /** the keys to the next and the previous stop */
   next: string;
   previous: string;
 }
 
-/**
- * Where a navigation answer goes, or why it goes nowhere: Back and Next only where the card offers
- * them, a step only where it is a step to tap, never with an answer, and never two at once.
- */
 export function nativeStepTarget(prompt: ParsedPrompt, body: PromptAnswer): number | string {
   const form = prompt.nativeSteps!;
   const actions = [body.step_back === true, body.step_next === true, body.step_index !== undefined].filter(Boolean).length;
@@ -33,10 +22,6 @@ export function nativeStepTarget(prompt: ParsedPrompt, body: PromptAnswer): numb
     ? target : "Invalid question to navigate to.";
 }
 
-/**
- * The card's edits sent with a move must be the ones the form already shows: the agent's keys
- * carry none of the card's own over, so a move never drops a choice the user made in the card.
- */
 export function draftKept(prompt: ParsedPrompt, draft: PromptAnswer["draft"]): boolean {
   if (draft === undefined) return true;
   const shown = prompt.multi_select ? prompt.default_option_indices ?? []
@@ -47,15 +32,8 @@ export function draftKept(prompt: ParsedPrompt, draft: PromptAnswer["draft"]): b
     && draft.custom_text === (prompt.default_custom_text ?? "");
 }
 
-/**
- * Moves the form to `target` one key at a time: before each key the screen must still show the
- * stop the last one reached, and after it the next stop, on the same form. A read that shows
- * neither (a frame mid-redraw) is looked at again until the deadline; anything else stops, and
- * no further key goes out. This path sends nothing but the form's two keys.
- */
 export async function navigateNativeSteps(initial: ParsedPrompt, target: number, io: {
   read(): Promise<ParsedPrompt | null>;
-  /** sends the key once the read right before it still shows `from`, the stop it moves from */
   send(key: string, from: (shown: ParsedPrompt) => boolean): Promise<void>;
   active(): boolean;
   deadline: number;
@@ -84,15 +62,12 @@ export async function navigateNativeSteps(initial: ParsedPrompt, target: number,
         moved = true;
         break;
       }
-      // the stop it left, still drawn, waits; another form or another stop ends the move
       if (shown && steps !== undefined && (steps.identity !== form.identity || steps.index !== index || shown.id !== previous.id)) return null;
-      // omp's strip unbound by what cannot be a frame half drawn: another call bound, or other labels on the strip
       if (shown && steps === undefined && shown.agent === "omp" && ((shown.ompCall !== undefined && shown.ompCall !== initial.ompCall)
         || (shown.steps !== undefined && JSON.stringify(shown.steps.map(step => step.label)) !== JSON.stringify(initial.steps?.map(step => step.label))))) return null;
       await Bun.sleep(Math.min(50, Math.max(0, io.deadline - Date.now())));
     }
     if (!moved) return null;
   }
-  // the card the move ended on, which the asking now stands for
   return io.active() ? previous : null;
 }

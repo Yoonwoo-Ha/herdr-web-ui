@@ -152,7 +152,6 @@ function ownedProcesses(home: string): number[] {
       const environment = readFileSync(`/proc/${entry}/environ`, "utf8");
       if (environment.split("\0").includes(marker)) pids.push(pid);
     } catch {
-      // Exited processes and processes owned by another user are not candidates.
     }
   }
   return pids;
@@ -161,7 +160,7 @@ function ownedProcesses(home: string): number[] {
 async function stopOwnedProcesses(home: string): Promise<void> {
   const signal = (pids: number[], value: NodeJS.Signals) => {
     for (const pid of pids) {
-      try { process.kill(pid, value); } catch { /* exited between enumeration and signal */ }
+      try { process.kill(pid, value); } catch { }
     }
   };
   const waitGone = async (deadline: number): Promise<number[]> => {

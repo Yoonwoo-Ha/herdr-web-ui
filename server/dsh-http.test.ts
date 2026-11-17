@@ -11,7 +11,6 @@ import * as herdr from "./herdr/client.ts";
 import { handlePaneRequest } from "./pane-routes.ts";
 
 const linuxTest = process.platform === "linux" ? test : test.skip;
-/** What herdr reports for a TUI launched through the npm-installed launcher. */
 const DSH_ARGV = ["node", "/usr/lib/node_modules/@deepseek-ai/dsh/lib/bin.js", "--profile", "tui"];
 
 for (const mode of ["mixed", "gjc-only", "gjc-under-shell", "dsh-only"] as const) linuxTest(`preserves the unlabeled pane route for ${mode}`, async () => {
@@ -35,7 +34,6 @@ for (const mode of ["mixed", "gjc-only", "gjc-under-shell", "dsh-only"] as const
     throw new Error(`unexpected herdr RPC ${method}`);
   }) as typeof herdr.herdrRpc);
   const memory = spyOn(processProbe, "ompProcessMemory").mockResolvedValue({ argv: [], environ: [`DSH_HOME=${root}`] });
-  // Keep real routing and dsh binding; isolate only GJC's separate native-record resolver.
   const nativeGjc = spyOn(gjc, "gjcTranscriptFileForPane").mockResolvedValue({ path: gjcPath, identity: "fixture" });
   const underShell = spyOn(gjc, "gjcPidUnderShell").mockResolvedValue(mode === "gjc-under-shell" ? { pid: process.ppid, started: null } : null);
   try {
@@ -146,7 +144,6 @@ for (const [label, agent, argv, source] of [
     const body = await response.json();
     expect(body.source).toBe(source);
     if (source === "dsh-transcript") expect(body.turns[0].parts[0]).toEqual({ kind: "text", text: "Hello" });
-    // a dsh pane costs one process_info per lookup, asked by pane_id, whichever path found its processes
     const asked = calls.filter(([method]) => method === "pane.process_info").length + processInfo.mock.calls.length;
     if (source === "dsh-transcript") expect(asked).toBe(1);
     for (const [, params] of calls) expect(params).toEqual({ pane_id: pane.pane_id });

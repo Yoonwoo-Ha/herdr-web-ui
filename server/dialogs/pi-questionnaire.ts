@@ -3,8 +3,6 @@ import { piActiveTab } from "./pi-ask-tabs.ts";
 import { ANSI_RE, KEY, PROMPT_LINE_RE, type ParsedPrompt, finishPrompt, keySteps, navigationKeys } from "./shared.ts";
 
 // Installed questionnaire.ts uses ui.custom, not native Pi dialogs or rpiv's widget.
-// Bind to a pending call: visible prose alone cannot distinguish an ordinary option
-// named "Type something." from the synthetic editor row, or recover hard-wrapped words.
 interface Question {
   id: string; label: string; prompt: string;
   options: { value: string; label: string; description?: string }[]; allowOther: boolean;
@@ -26,7 +24,6 @@ const piFolder = (line: string): boolean => /^(?:[A-Za-z]:[\\/]|[~\/])/.test(lin
 const piStatus = (lines: string[], at: number): boolean => process.platform !== "win32" && at >= 2 && !piStats(lines[at] ?? "")
   && !PROMPT_LINE_RE.test(lines[at]!.trim()) && piStats(lines[at - 1] ?? "") && piFolder(lines[at - 2] ?? "");
 
-/** Also reserves malformed/clipped active drawings, never old hints above a newer prompt. */
 export function isPiQuestionnaireScreen(screen: string): boolean {
   const lines = screen.slice(-8192).replace(ANSI_RE, "").split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   if (piStatus(lines, lines.length - 1)) lines.pop();
@@ -44,7 +41,6 @@ export function isPiQuestionnaireScreen(screen: string): boolean {
 export const MAX_QUESTIONNAIRE_SCREEN_CHARS = 64 * 1024;
 const MAX_QUESTIONNAIRE_SCREEN_LINES = 512;
 
-/** Compare a wrapped suffix one line at a time, without copying growing screen suffixes. */
 function suffixStart(lines: string[], text: string): number {
   const wanted = compact(text);
   let end = wanted.length;
@@ -85,8 +81,6 @@ export function parsePiQuestionnaire(screen: string, source?: PiQuestionnaire): 
   const lines = raw.map(line => line.replace(ANSI_RE, ""));
   let bottom = lines.length - 1;
   while (bottom >= 0 && !lines[bottom]) bottom--;
-  // Pi's own two-line footer is allowed, and an extension's status under it, never a composer or
-  // output below an old form.
   if (!rule(lines[bottom] ?? "") && piStatus(lines, bottom)) bottom--;
   if (!rule(lines[bottom] ?? "")) {
     if (!/\d+(?:\.\d+)?%\/\d/.test(lines[bottom] ?? "") || /^[>›❯]/.test(lines[bottom]?.trim() ?? "")
@@ -107,7 +101,6 @@ export function parsePiQuestionnaire(screen: string, source?: PiQuestionnaire): 
   if (multi) {
     const end = body.findIndex(line => !line.trim());
     if (end < 1) return null;
-    // Keep SGR even when pane.read reserializes it before the line's padding.
     const bar = raw.slice(top + 1, top + 1 + end).join(" ");
     const plain = bar.replace(ANSI_RE, "");
     const marks = [...plain.matchAll(/[□■✓]/g)];
@@ -128,7 +121,6 @@ export function parsePiQuestionnaire(screen: string, source?: PiQuestionnaire): 
   const joined = compact(content.join(" "));
   const inputMode = joined.endsWith(compact(INPUT));
   if (!joined.endsWith(compact(inputMode ? INPUT : hint))) return null;
-  // Strip the complete wrapped hint, preserving all content before its leading blank.
   const hintStart = suffixStart(content, inputMode ? INPUT : hint);
   if (hintStart <= 0) return null;
   let own = content.slice(0, hintStart);
@@ -145,8 +137,6 @@ export function parsePiQuestionnaire(screen: string, source?: PiQuestionnaire): 
     const caption = missing.length ? `Unanswered: ${missing.map(tab => tab.label).join(", ")}` : "Press Enter to submit";
     const captionStart = suffixStart(own, caption);
     if (captionStart < 0) return null;
-    // Keep row boundaries: joining a hard wrap with a space can turn "Savefile"
-    // into the distinct option "Save file". Only unwrapped text is exact evidence.
     const summary = own.slice(0, captionStart).map(line => line.trim()).filter(Boolean).join("\n");
     const dense = compact(summary);
     const positions = [...summary.matchAll(/\S/g)].map(match => match.index!);
@@ -160,7 +150,6 @@ export function parsePiQuestionnaire(screen: string, source?: PiQuestionnaire): 
       const next = answered.slice(questionIndex + 1).find(tab => tab.answered);
       const nextPrefix = next ? `${compact(next.label)}:` : null;
       const end = nextPrefix ? dense.indexOf(nextPrefix, at) : dense.length;
-      // A header inside an answer is ambiguous, not a guessed summary boundary.
       if (end <= at || nextPrefix && dense.indexOf(nextPrefix, end + 1) !== -1) return null;
       const rendered = summary.slice(positions[at], positions[end] ?? summary.length).trim();
       let answer = rendered.replace(/\n/g, " ");
@@ -173,7 +162,7 @@ export function parsePiQuestionnaire(screen: string, source?: PiQuestionnaire): 
         const exact = rendered.includes("\n") ? [] : q.options.filter(option => option.label === rendered);
         const candidates = exact.length ? exact : q.options.filter(option => same(option.label, answer));
         if (candidates.length !== 1) return null;
-        answer = candidates[0]!.label; // recover only unambiguous hard-wrapped words
+        answer = candidates[0]!.label;
       }
       answers.push({ question: tab.label, answer });
       at = end;
@@ -194,7 +183,7 @@ export function parsePiQuestionnaire(screen: string, source?: PiQuestionnaire): 
     const answerAt = own.findIndex(line => line.trim() === "Your answer:");
     if (!q.allowOther || answerAt < first) return null;
     const editor = own.slice(answerAt + 1).filter(line => line.trim());
-    // An empty editor still has its blank cursor row. Inspect the full slice instead.
+    // An empty editor still has its blank cursor row.
     const drawing = own.slice(answerAt + 1);
     while (!drawing[0]?.trim() && drawing.length) drawing.shift();
     if (editor.length < 2 || !/^ ─{6,}$/.test(drawing[0] ?? "") || drawing.at(-1) !== drawing[0]) return null;
@@ -238,7 +227,6 @@ export function parsePiQuestionnaire(screen: string, source?: PiQuestionnaire): 
 
 export const readers: readonly DialogReader[] = ["pi-questionnaire-question", "pi-questionnaire-submit"].map(id => ({
   id, agents: ["pi"], priority: 84, reread: "each-move", list: "none",
-  // Only readKnownPrompt can supply the pane's verified pending call.
   parse: () => null,
 }));
 
