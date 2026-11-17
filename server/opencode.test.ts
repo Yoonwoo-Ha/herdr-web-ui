@@ -175,8 +175,8 @@ describe("OpenCode's rows as a conversation", () => {
       {
         role: "assistant", ts: new Date(T0 + 10).toISOString(), end_ts: new Date(T0 + 60).toISOString(), parts: [
           { kind: "thinking", text: "Write it, then read it." },
-          { kind: "tool", name: "write", summary: "hello.txt", input: JSON.stringify({ path: "hello.txt", content: "hi\n" }, null, 2), output: "Created file successfully: hello.txt" },
-          { kind: "tool", name: "shell", summary: "cat hello.txt", input: JSON.stringify({ command: "cat hello.txt" }, null, 2), output: "hi\n" },
+          { kind: "tool", name: "write", summary: "hello.txt", input: JSON.stringify({ path: "hello.txt", content: "hi\n" }, null, 2), output: "Created file successfully: hello.txt", state: "ok" },
+          { kind: "tool", name: "shell", summary: "cat hello.txt", input: JSON.stringify({ command: "cat hello.txt" }, null, 2), output: "hi\n", state: "ok" },
           { kind: "text", text: "It says hi.", phase: "final_answer" },
         ],
       },
@@ -225,6 +225,21 @@ describe("OpenCode's rows as a conversation", () => {
     expect(parts[2]!.skill).toEqual({ name: "opencode", evidence: "invocation", status: "loaded" });
     expect(parts[4]!.output_ref).toBe("msg_step1:4");
     expect(parts[4]!.output_size).toBe(5000);
+  });
+
+  it("records each call's outcome as OpenCode does: waiting or running, completed, failed", () => {
+    const todos = (done: number) => ({ todos: ["a", "b"].map((content, index) => ({ content, status: index < done ? "completed" : "pending", priority: "medium" })) });
+    const step = record("assistant", {
+      time: { created: T0 }, finish: "tool-calls",
+      content: [
+        tool("todowrite", { status: "completed", input: todos(1), content: [{ type: "text", text: "[]" }] }, "call_a"),
+        tool("todowrite", { status: "running", input: todos(2), content: [] }, "call_b"),
+        tool("todowrite", { status: "pending", input: {}, content: [] }, "call_c"),
+        tool("todowrite", { status: "error", input: todos(2), error: { type: "unknown", message: "invalid" } }, "call_d"),
+      ],
+    });
+    const parts = step !== null && step.role === "assistant" ? step.parts as Extract<ConversationPart, { kind: "tool" }>[] : [];
+    expect(parts.map((part) => part.state)).toEqual(["ok", "pending", "pending", "error"]);
   });
 
   it("offers a tool's pictures by their place among the message's images", () => {
@@ -656,7 +671,7 @@ describe("an OpenCode 1.x session (session/message/part)", () => {
     expect(answer.turns[0]!.parts).toEqual([{ kind: "text", text: "first prompt" }]);
     expect(answer.turns[1]!.parts).toEqual([
       { kind: "thinking", text: "think it through" },
-      { kind: "tool", name: "bash", summary: "echo hi", input: JSON.stringify({ command: "echo hi" }, null, 2), output: "hi" },
+      { kind: "tool", name: "bash", summary: "echo hi", input: JSON.stringify({ command: "echo hi" }, null, 2), output: "hi", state: "ok" },
       { kind: "text", text: "done", phase: "final_answer" },
     ]);
     expect(answer.metadata).toEqual({ model: "deepseek-v4.1-flash", reasoning_effort: null, context: { used: 116, window: null } });

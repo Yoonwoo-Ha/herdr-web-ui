@@ -111,6 +111,11 @@ function toolText(state: Row, name: string): string {
   return name === "subagent" ? unwrap(output) : output;
 }
 
+/** A call's `state.status` as the transcript's outcome (shared/protocol.ts): not answered yet, answered, or failed. */
+function toolState(status: unknown): Extract<ConversationPart, { kind: "tool" }>["state"] {
+  return status === "pending" || status === "running" ? "pending" : status === "completed" ? "ok" : status === "error" ? "error" : undefined;
+}
+
 /** OpenCode's `skill` tool names the skill it loads by `id` (1.x: `name`). */
 function toolSkill(name: string, input: Row, status: unknown): SkillActivity | null {
   if (name !== "skill") return null;
@@ -162,6 +167,8 @@ export function opencodeRecord(id: string, type: string, data: Row): OpencodeRec
           output: "",
         };
         if (skill !== null) part.skill = skill;
+        const outcome = toolState(state.status);
+        if (outcome !== undefined) part.state = outcome;
         trimOutput(part, toolText(state, block.name), `${id}:${index}`);
         const exit = record(state.metadata).exit;
         if (state.status === "error" || (typeof exit === "number" && exit !== 0)) part.error = true;

@@ -703,7 +703,8 @@ export type ConversationPart =
      * What the transcript itself records of the call's outcome, never guessed from its output text.
      * Claude: `pending` until its tool_result, then `ok`, or `error` when the result is flagged so.
      * Codex: `pending` until its output record, then absent (it records no failure flag: done, outcome
-     * unknown). Absent for other agents and older servers.
+     * unknown). OpenCode: `pending` while waiting or running, then `ok` or `error` as it records the call.
+     * Absent for other agents and older servers.
      */
     state?: "pending" | "ok" | "error";
   }
