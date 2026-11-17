@@ -1,3 +1,7 @@
+/**
+ * libghostty's layer (src/lib/ghostty/overlay.ts) draws each run's background over xterm's screen, and xterm's
+ * selection boxes sat under that layer: over a coloured cell the selection was copied but never shown.
+ */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -64,6 +68,7 @@ setInterval(() => {}, 1 << 30);
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(pane)}`);
   await page.locator(".conn-live").waitFor();
+  // libghostty's layer attaches after xterm's first rows: measured before it, xterm's own selection was measured
   await page.locator(".pane-terminal[data-renderer='ghostty']").waitFor();
   await page.locator(shownRows(), { hasText: "ROWS_READY" }).waitFor();
   await page.evaluate(() => document.fonts.ready.then(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))));
@@ -88,8 +93,10 @@ setInterval(() => {}, 1 << 30);
     return { x: first.left + width * (at + 0.5), y: first.top + first.height / 2, width };
   }, [row, column, shownRow()] as const);
 
+  // the app's CSP refuses a data: URL, so the screenshot is decoded in a blank page of its own
   const decoder = await context.newPage();
   const pixels = async (points: readonly { x: number; y: number }[]): Promise<Rgb[]> => {
+    // xterm's own renderer highlights coloured cells: measured after a fallback to it, the test would prove nothing
     assert.equal(await page.evaluate(() => document.querySelector<HTMLElement>(".pane-terminal")?.dataset["renderer"]), "ghostty",
       "libghostty draws the pane at every measurement");
     const shot = (await page.screenshot()).toString("base64");
@@ -108,6 +115,7 @@ setInterval(() => {}, 1 << 30);
   const centres = await Promise.all(PROBES.map((probe) => cellCentre(probe.row, probe.column)));
   const outside = await cellCentre("COLORED-TEST-TEXT", 17);
   const before = await pixels([...centres, outside]);
+  /** two frames: libghostty's layer draws on the frame after xterm's change */
   const drawn = () => page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 
   const selectionShown = () => page.waitForFunction(() => document.querySelector(".pane-terminal .xterm-selection div") !== null);
@@ -155,6 +163,7 @@ setInterval(() => {}, 1 << 30);
   const [cleared] = await pixels([centres[truecolor]!]);
   check(near(cleared!, PROBES[truecolor]!.own!), `the truecolor cell is its own colour once the selection is gone (${cleared})`);
 
+  // an Alt drag selects a column (xterm's column select): the same columns on every row, and no others
   const [colTop, colBottom] = [await cellCentre("COLORED-TEST-TEXT", 18), await cellCentre("PALETTE-TEST-TEXT", 20)];
   const columnProbes = [
     { name: "first row's selected cell", at: await cellCentre("COLORED-TEST-TEXT", 19), selected: true },
@@ -179,6 +188,7 @@ setInterval(() => {}, 1 << 30);
   });
 
   // a column whose edge falls inside a wide glyph: xterm tells a wide cell selected by its first column alone
+  // (DomRendererRowFactory) and copies only that, so a glyph whose first column is left of the column stays unselected
   await page.mouse.click(bottom.x, bottom.y + bottom.width * 6);
   await page.waitForFunction(() => document.querySelector(".pane-terminal .xterm-selection div") === null);
   await drawn();
@@ -192,6 +202,7 @@ setInterval(() => {}, 1 << 30);
   wideProbes.forEach((probe, index) => check(near(wideBefore[index]!, PROBES[truecolor]!.own!),
     `the ${probe.name} is drawn in its own colour before the drag (${wideBefore[index]})`));
   // the column starts a row up, on text: a column of blanks alone copies nothing, and xterm takes it for an Alt click
+  // that moves the cursor (altClickMovesCursor)
   const [wideFrom, wideTo] = [await cellCentre("DARK-ON-LIGHT-TEXT", 15), wideProbes[3]!.at];
   await page.keyboard.down("Alt");
   await page.mouse.move(wideFrom.x - wideFrom.width / 2 + 1, wideFrom.y);

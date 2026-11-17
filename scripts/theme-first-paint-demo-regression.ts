@@ -1,3 +1,9 @@
+/**
+ * Two builds, each served with the app's own Content-Security-Policy (server/static.ts): the
+ * production build at the root, and the demo's relative build under /herdr-web-ui/demo/app/.
+ * No herdr session and no user state: loopback servers on port 0 and temporary directories, all
+ * removed at the end.
+ */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -128,6 +134,8 @@ function pageSetup({ main, themes, blocked, keys }: { main: Stored; themes: Stor
   const observer = new MutationObserver(record);
   observer.observe(document, { subtree: true, attributes: true, attributeFilter: ["data-theme", "data-palette", "data-density"] });
   // the parser's end, which held modules and a held stylesheet do not delay: latches whether the boot
+  // script had set the theme by then (its pending records taken first), so the order is the page's own
+  // and not when a check happens to ask
   document.addEventListener("readystatechange", () => {
     if (seen.parsedAt >= 0) return;
     record(observer.takeRecords());
@@ -256,6 +264,9 @@ async function runCase(item: Case, base: "root" | "demo", url: string, width: "3
       cdp.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => undefined);
     });
     await page.goto(url, { waitUntil: "commit" });
+    // the boot script has run (a classic script the parser waits for), the stylesheet is still held;
+    // a page without one sets nothing until the app runs, which is held: that is a failure, and the
+    // frames are still recorded to show what it painted instead
     const atCommit = await bootOrder(page);
     if (!atCommit.booted) failures.push("nothing set the theme before the stylesheet: the page was parsed without it");
     await cdp.send("Page.startScreencast", { format: "png", everyNthFrame: 1 });
@@ -389,6 +400,8 @@ async function warmServiceWorker(url: string): Promise<Record<string, unknown>> 
     const onDisk = file ? createHash("sha256").update(readFileSync(join(rootDir, file))).digest("hex") : null;
     const worker = readFileSync(join(rootDir, "sw.js"), "utf8");
     const cacheName = workerCache(worker);
+    // what the worker's cache holds: keepShell runs after the page has its answer (waitUntil), so
+    // read until the shell is in, bounded; with "/" kept, every file the shell starts with is too
     const inCache = (): Promise<{ shell: boolean; sha256: string | null }> => page.evaluate(async ({ name, path }) => {
       if (!name || !path || !(await caches.has(name))) return { shell: false, sha256: null };
       const cache = await caches.open(name);
@@ -405,6 +418,8 @@ async function warmServiceWorker(url: string): Promise<Record<string, unknown>> 
       cached = await inCache();
     }
     // the browser's HTTP cache emptied (the server marks /assets/ immutable, and a worker's fetch()
+    // that missed its own cache would be answered from there even offline), then the network cut,
+    // for the worker too: a file no cache holds, asked for through it, cannot be fetched
     const cdp = await context.newCDPSession(page);
     await cdp.send("Network.clearBrowserCache");
     await cdp.detach();
@@ -425,6 +440,7 @@ async function warmServiceWorker(url: string): Promise<Record<string, unknown>> 
     cutFailure.catch(() => undefined);
     await page.reload({ waitUntil: "commit" });
     const offline = await Promise.race([cutAnswer, cutFailure]);
+    // the theme set before the parser ended, which only the classic boot script can do (modules wait for it)
     const offlineOrder = await bootOrder(page);
     const offlineSeen = await page.evaluate(() => (window as unknown as { __boot: { values: string[]; violations: string[] } }).__boot);
     await context.setOffline(false);
@@ -459,6 +475,7 @@ async function warmServiceWorker(url: string): Promise<Record<string, unknown>> 
 }
 
 try {
+  // one after the other: both builds write the same xterm source cache (vite.config.ts)
   await buildDemoApp(demoDir);
   const vite = Bun.spawn([process.execPath, "--bun", join(repo, "node_modules/.bin/vite"), "build", "--outDir", rootDir, "--emptyOutDir", "--logLevel", "warn"], { cwd: repo, stdout: "ignore", stderr: "pipe" });
   if ((await vite.exited) !== 0) throw new Error(`the production build failed:\n${await new Response(vite.stderr).text()}`);

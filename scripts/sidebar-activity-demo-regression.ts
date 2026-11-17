@@ -222,6 +222,7 @@ function installSidebarFixture(): void {
   };
 }
 
+// All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-sidebar-activity-demo-"));
 
 const API = "Idempotent payments";
@@ -573,6 +574,8 @@ try {
           await input.fill(kind === "composer" ? "/" : "@missing");
           await page.locator(".menu.composer-menu").waitFor();
           await page.evaluate((id) => window.sidebarFixture.finish(id, "done", 101), panes.omp);
+          // The answer has actually arrived for this finish. Otherwise readiness alone could
+          // keep the dot briefly and let this test pass without the popup coverage gate.
           await page.waitForFunction((id) => [...document.querySelectorAll("[data-pane-content]")].some((node) => {
             const key = JSON.parse(node.getAttribute("data-pane-content") ?? "null");
             return key?.[1] === id && key[5] === 101;
@@ -617,6 +620,7 @@ try {
           await page.goto(`${url}?pane=${encodeURIComponent(panes.omp)}`);
           await page.getByRole("textbox", { name: "Message", exact: true }).fill("/");
           await page.locator(".menu.composer-menu").waitFor();
+          // Selecting through its real sidebar handler avoids navigating/reloading, which would silently discard the popup.
           await agent(page, API).locator(".agent-select").evaluate((button: HTMLElement) => button.click());
           const hidden = page.locator(`[data-layout-pane="${panes.omp}"].is-hidden`);
           await hidden.waitFor({ state: "attached" });
@@ -765,6 +769,8 @@ try {
                 if (event.target === node) event.stopImmediatePropagation();
               }, true);
               node.addEventListener("scroll", () => { node.dataset.unexpectedScroll = "true"; });
+              // Virtual rows not drawn yet still have estimates; leave enough room for
+              // their actual wrapped heights when the enlarged viewport renders them all.
               return node.scrollHeight * 3 + 2000;
             });
             await page.setViewportSize({ width: 390, height });
@@ -1036,6 +1042,7 @@ try {
         await waitAgentAt(page, 1, API);
 
         await agent(page, INFRA).locator(".agent-select").click();
+        // Rows keep their order while the pointer is over Agents; leave it before checking activity order.
         await page.locator(".composer-text").click();
         await page.locator(".composer-text").fill("Check the plan again");
         await page.locator(".composer-text").press("Enter");

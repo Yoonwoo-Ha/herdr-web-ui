@@ -65,6 +65,7 @@ const observedPc = (page: Page, observer: number, want: { name?: string; enabled
   if (fields === null) return roster !== null && roster !== undefined && pc === undefined;
   return pc !== undefined && Object.entries(fields as Record<string, unknown>).every(([key, value]) => (pc as unknown as Record<string, unknown>)[key] === value);
 }, [observer, want] as const);
+// an item by its whole label: "Connect" is also in "Disconnect" and "Reconnect / setup"
 const item = (page: Page, label: string): Locator => items(page).filter({ hasText: new RegExp(`^\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`) });
 
 async function press(locator: Locator, scenario: Scenario): Promise<void> {
@@ -205,6 +206,7 @@ async function withScenario(browser: Awaited<ReturnType<typeof chromium.launch>>
     assert.equal(await host.locator(".machine-manage").count(), 0, `${scenario.name} local host has no Manage button`);
     assert.ok((await host.locator(".machine-kind").textContent() ?? "").trim().length > 0, `${scenario.name} local host has a localized kind label`);
 
+    // a PC herdr manages keeps herdr's limits: its setup, its bridge update and its place here, and the hint says where the rest is
     const managed = machineGroup(page, MANAGED_NAME);
     const managedManage = await openMenu(page, managed, scenario);
     assert.ok((await surface(page).locator(".machine-menu-note").textContent() ?? "").trim().length > 0, `${scenario.name} herdr-managed restriction is explained in the active locale`);

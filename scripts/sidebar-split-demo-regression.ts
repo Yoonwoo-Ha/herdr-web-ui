@@ -1,3 +1,8 @@
+/**
+ * The PCs/Agents height divider on the real demo, never a live herdr session: default, drag,
+ * persistence, reset, keyboard, snap-fold (Agents only: the PCs have no head to fold to), scrolling, a short
+ * window and both section orders.
+ */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

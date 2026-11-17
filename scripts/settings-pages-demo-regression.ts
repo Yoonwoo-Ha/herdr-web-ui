@@ -17,6 +17,7 @@ import baseline from "../src/lib/themes.legacy-baseline.json";
 import { comboKey, LEGACY_COMBOS } from "./theme-baseline.ts";
 import { openLens } from "./header-lens.ts";
 
+// All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-settings-demo-"));
 
 const entryOf = (page: Page): Promise<{ page: string | null; keyBar: boolean; depth: number } | null> =>
@@ -37,6 +38,11 @@ const cutOff = (page: Page): Promise<string[]> => page.locator(".settings-body:n
 
 interface HeldSteps { holdSteps: (timers?: boolean) => void; releaseSteps: () => void; releaseTimers: () => void; heldSteps: () => number; landed: number }
 
+/**
+ * The step is held here until Settings is open again, and the timers the page sets meanwhile start
+ * only once it has landed: a step that lands after Settings' landing deadline is no longer known for
+ * its own, and a slow runner must not reach that deadline before the step lands.
+ */
 async function lateCloseStep(browser: import("playwright-core").Browser, url: string): Promise<void> {
   for (const width of [1440, 390] as const) {
     const context = await browser.newContext(width === 390 ? { viewport: { width, height: 844 }, isMobile: true, hasTouch: true } : { viewport: { width, height: 900 } });
@@ -493,6 +499,9 @@ try {
         await openSettings(page);
         await list.waitFor();
         await historyHolds(page, "a new opening", () => (history.state as Record<string, { depth: number }> | null)?.["ovis:settings"]?.depth === 1);
+        // a reload keeps the history but not the dialog: its entries are stepped out of. The step lands
+        // when the browser gets to it, which on a slow device is after the app has drawn itself from an
+        // address that still names Settings: held back until then here, it must not show the dialog
         await openSettingsPage(page, "Alerts");
         await page.waitForFunction(() => new URLSearchParams(window.location.search).get("settings") === "alerts");
         await page.evaluate(() => sessionStorage.setItem("hold-steps-back", "1"));
@@ -594,6 +603,8 @@ try {
         await checkSelectArrows(page);
         await page.keyboard.press("Escape");
         await page.locator(".settings-dialog").waitFor({ state: "detached" });
+        // Settings is opened again below: its close's step back lands first, or, landing over a second late,
+        // it is taken for a Back and closes the Settings opened meanwhile (settingsHistory's landing deadline)
         await page.waitForFunction(() => (history.state as Record<string, unknown> | null)?.["ovis:settings"] === undefined);
         for (const id of ["dracula", "nord", "vesper", "black"]) {
           await openSettings(page);

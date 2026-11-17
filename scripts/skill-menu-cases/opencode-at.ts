@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import type { SlashCommand } from "../../shared/protocol.ts";
 import { agentBuiltins, type CaseRun } from "../skill-menu-case.ts";
 
+// An OpenCode v2 pane whose skills are `@skill-id` attachments: the rows carry the `@` trigger,
+// so the `@` menu lists them under a Skills heading beside the files, a pick inserts the id, a
+// path never matches a skill, and the `/` menu keeps them out.
 export const agent = "opencode";
 export const commands: SlashCommand[] = [
   ...agentBuiltins(agent),

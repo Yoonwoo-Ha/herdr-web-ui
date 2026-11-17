@@ -8,6 +8,7 @@ import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { openSettingsPage } from "./settings-page.ts";
 
+// No herdr session is opened, and nothing leaves the loopback.
 const app = mkdtempSync(join(tmpdir(), "herdr-sidebar-declutter-"));
 const evidence = process.env["UI_EVIDENCE_DIR"];
 const patch = `(() => {
@@ -105,6 +106,12 @@ const filterFocused = (page: Page) => page.evaluate(() => document.activeElement
 const focusHeld = (page: Page) => page.evaluate(() => { const active = document.activeElement; return active !== null && active !== document.body && active.isConnected ? active.className || active.tagName : null; });
 const shownWorkspaces = (page: Page) => page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".machine-list .workspace-group")].filter((row) => !row.closest("[hidden]")).map((row) => row.querySelector(".workspace-name")?.textContent ?? "").sort());
 
+/**
+ * The phone's open drawer and the keyboard: it opens with the focus on its first control, never the filter's field,
+ * which would raise the phone's keyboard on every open; Tab goes round the drawer and the header's toggle drawn
+ * over its top row, so Shift+Tab reaches it and Tab still reaches the field; no + is found up there; Escape closes
+ * it, the focus on its toggle.
+ */
 async function drawerKeyboard(page: Page): Promise<void> {
   const focused = () => page.evaluate(() => {
     const active = document.activeElement as HTMLElement | null;
@@ -132,6 +139,7 @@ async function drawerKeyboard(page: Page): Promise<void> {
 }
 
 async function loneHost(browser: Browser, scene: Scene): Promise<void> {
+  // a fold stored while the Host had a header must not hide its workspaces now that nothing can open them
   const { context, page, errors } = await newPage(browser, scene, "", { "ovis:pc-collapsed:local": "1", "ovis:sidebar-filter-shown": "true" });
   try {
     assert.equal(await headers(page).count(), 0, `${sceneName(scene)}: a lone Host is drawn without its header`);
@@ -177,6 +185,7 @@ async function loneHost(browser: Browser, scene: Scene): Promise<void> {
   } finally { await context.close(); }
 }
 
+/** A device that only watches, in a phone's drawer: the lone Host keeps its New workspace row, off, its + dimmed, and the header over the drawer says why. */
 async function loneHostWatching(browser: Browser, scene: Scene): Promise<void> {
   const { context, page, errors } = await newPage(browser, scene, "demo_devices=watch");
   try {

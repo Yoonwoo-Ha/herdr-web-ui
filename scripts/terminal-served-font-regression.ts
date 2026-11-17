@@ -164,6 +164,8 @@ setInterval(() => {}, 1 << 30);
     await context.close();
   }
 
+  // When: the device must sign in first, with the chat font naming FAMILY: the list asked while signed out is
+  // refused, and the face joins the page once the token is in, with no reload.
   {
     const lockedDir = join(state, "locked");
     mkdirSync(join(lockedDir, "fonts"), { recursive: true });

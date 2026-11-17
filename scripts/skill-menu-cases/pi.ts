@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import type { SlashCommand } from "../../shared/protocol.ts";
 import { agentBuiltins, type CaseRun } from "../skill-menu-case.ts";
 
+// pi's `/` menu and its skill chips: pi's own builtins, one of the person's prompt templates and
+// three of their skills, named `skill:<name>` as pi types them, and a chat that ends with a user
+// turn invoking two of them. pi has no `$` syntax: "x $" opens nothing.
 export const agent = "pi";
 
+/** the person's own skills, as pi loads them from ~/.pi/agent/skills and ~/.agents/skills */
 const SKILLS: Record<string, { description: string; origin: "user" }> = {
   "pdf-tools": { origin: "user", description: "Extracts text and tables from PDF files with pdftotext and pdfplumber. Use when a PDF is attached or named; never for scanned pages, which need OCR first." },
   "docs-release": { origin: "user", description: "Writes the docs site's release notes from merged PRs. Use when cutting a docs release; never for the app's own changelog." },
@@ -11,6 +15,7 @@ const SKILLS: Record<string, { description: string; origin: "user" }> = {
 };
 export const commands: SlashCommand[] = [
   ...agentBuiltins("pi"),
+  // a prompt template from ~/.pi/agent/prompts: a command of the person's own, listed under User with no origin icon
   { name: "review", description: "Review staged git changes", source: "user" },
   ...Object.entries(SKILLS).map(([name, { description, origin }]) => ({ name: `skill:${name}`, description, source: "skill" as const, origin })),
 ];
@@ -29,6 +34,7 @@ export const expect = async ({ page, width, box, menu, scenario, log, clear, row
     assert.equal(await box.getAttribute("aria-expanded"), "true", "the same pane's own / menu opens");
     const rows = await rowNames();
     assert.ok(rows.includes("tree"), `the menu lists tree, a terminal command: ${rows.join(" ")}`);
+    // /debug and the other builtins pi's own menu hides stay out of it, though pi runs them when typed
     assert.deepEqual([...rows].sort(), commands.filter((command) => command.visibility !== "agent-hidden").map((command) => command.name).sort(), "every pi command but those pi hides is offered, once");
     assert.ok(commands.some((command) => command.name === "debug" && command.visibility === "agent-hidden"), "pi's hidden builtins are still in its command list");
     const headings = await menu.locator(".menu-heading").allTextContents();

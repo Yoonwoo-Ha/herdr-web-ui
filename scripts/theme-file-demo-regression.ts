@@ -9,6 +9,7 @@ import { deriveTheme } from "../src/lib/themeDerive.ts";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
+// All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const repo = join(import.meta.dir, "..");
 const app = mkdtempSync(join(tmpdir(), "herdr-theme-file-demo-"));
 const evidence = process.env.UI_EVIDENCE_DIR;
@@ -50,6 +51,7 @@ async function open(browser: Browser, width: number, scheme: Scheme): Promise<{ 
 async function waitDrawn<Arg>(page: Page, predicate: (arg: Arg) => unknown, arg?: Arg, step?: string): Promise<void> {
   try { await page.waitForFunction(predicate, arg as Arg); }
   catch (error) {
+    // a page that no longer answers leaves the snapshot pending: it gets two seconds, then the timeout is thrown with none
     let deadline: ReturnType<typeof setTimeout> | undefined;
     const snapshot = page.evaluate(() => ({ palette: document.documentElement.dataset["palette"] ?? null, bg: getComputedStyle(document.documentElement).getPropertyValue("--bg").trim(), rows: localStorage.getItem("ovis:custom-theme-rows") !== null, cards: document.querySelectorAll('.settings-dialog [data-theme-card^="custom:"]').length })).catch(() => null);
     const state = await Promise.race([snapshot, new Promise<null>((resolve) => { deadline = setTimeout(() => resolve(null), 2_000); })]).finally(() => clearTimeout(deadline));

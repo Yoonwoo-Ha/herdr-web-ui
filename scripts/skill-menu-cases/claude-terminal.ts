@@ -116,6 +116,7 @@ export const expect = async ({ page, width, scheme, box, menu, scenario, clear, 
     await box.fill("/config");
     await send.click();
     await hint.waitFor();
+    // shown, not only laid out: under the chat the grid keeps its box with content-visibility hidden
     assert.ok(await page.locator(".terminal-stack.is-peek .xterm-screen").isVisible(), "the terminal grid shows over the chat");
     await hint.getByRole("button", { name: "Keep Terminal", exact: true }).click();
     await page.locator(".terminal-stack:not(.is-chat) .xterm-screen").waitFor();

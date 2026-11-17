@@ -1,3 +1,8 @@
+/**
+ * A pane let go of while the window is out of use (Settings → Use alongside herdr's own window) keeps
+ * its last screen on a bridge that offers no read-only view (herdr-core lists no `watch`): there is
+ * no view to start the screen again from, so nothing resets it.
+ */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -76,6 +81,8 @@ try {
       const probe = (document.querySelector(".pane-frame.is-current .pane-terminal") as unknown as { outputProbe?: () => Probe } | null)?.outputProbe?.();
       return probe !== undefined && probe.inFlight === 0 && probe.queued === 0;
     }, undefined, { timeout: 10_000 });
+    // the demo's shell replays a recording on attach, frame by frame: a mark pushed before its last
+    // frame would be drawn over by the rest of it, so the mark waits until that frame was written
     const lastFrame = terminalFixture.frames.at(-1)!.data.slice(-512);
     await page.waitForFunction((tail) => {
       const probe = (document.querySelector(".pane-frame.is-current .pane-terminal") as unknown as { outputProbe?: () => Probe & { written: string } } | null)?.outputProbe?.();

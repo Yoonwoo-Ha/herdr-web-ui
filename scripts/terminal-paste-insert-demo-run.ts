@@ -1,3 +1,11 @@
+/**
+ * The phone's Paste key and the input line's Insert, on the real client over the demo's fictional
+ * shell: Paste reads the clipboard from its tap alone, into the line at the caret, and drops a read
+ * that answers for another pane, connection, mode or an edited line; Insert types the line without
+ * Enter and clears only what the bridge confirmed, while the shell runs nothing until an explicit
+ * Enter.
+ * Everything stays in this disposable, loopback-only app; no herdr session is opened.
+ */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -119,6 +127,10 @@ const hook = (page: Page) => ({
 const lineValue = (page: Page, expected: string) => page.waitForFunction((value) => document.querySelector<HTMLTextAreaElement>(".pane-frame.is-current .terminal-input-text")?.value === value, expected, { timeout: 10_000 });
 const noteText = (page: Page, expected: string) => page.waitForFunction((value) => document.querySelector(".pane-frame.is-current .terminal-input-note")?.textContent === value, expected, { timeout: 10_000 });
 const screenShows = (page: Page, text: string) => page.waitForFunction(({ value, shown }) => document.querySelector(shown)?.textContent?.includes(value) === true, { value: text, shown: shownRows(".pane-frame.is-current") }, { timeout: 10_000 });
+/**
+ * A reconnect's attach plays the shell's recording again from a cleared screen, while the old screen
+ * still shows its end: output pushed before the last frame lands is wiped by the replay (#3335).
+ */
 const replayed = (page: Page) => page.waitForFunction(() => window.pasteInsertTest.replayed());
 const screenText = (page: Page) => page.locator(shownRows(".pane-frame.is-current")).evaluate((rows) => rows.textContent ?? "");
 const drafts = (page: Page) => page.evaluate(() => Object.fromEntries(Object.keys(localStorage).filter((key) => key.startsWith("ovis:terminal-line:")).map((key) => [key, localStorage.getItem(key)])));
@@ -308,6 +320,7 @@ async function checkAcknowledgedInsert(page: Page): Promise<void> {
   await screenShows(page, "On branch main");
   check("the shell ran the inserted line only after the explicit Enter", await line.inputValue() === " -b", await line.inputValue());
   check("the insert frame went once", (await h.inserts()).length === before + 1, (await h.inserts()).length - before);
+  // another device's grid on the pane: Insert takes nothing back from it, no resize, focus or take-over
   await h.set({ holdInsert: false });
   await setLine(page, "git status");
   await h.push({ type: "pane-geometry", pane_id: panes.shell, cols: 120, rows: 40 });
@@ -464,6 +477,7 @@ async function checkOlderBridgeAndUncertainty(page: Page): Promise<void> {
   await page.locator(".conn-live").waitFor({ state: "attached" });
   await ready(page);
   await replayed(page);
+  // the connection drops while the bridge's answer is on its way: not confirmed, kept, never sent again
   await h.set({ holdInsert: true });
   const before = (await h.inserts()).length;
   await setLine(page, "git log");
@@ -639,11 +653,13 @@ async function captureStates(page: Page, variant: Variant, phone: boolean): Prom
   await page.locator(".conn-live").waitFor({ state: "attached" });
   await ready(page);
   await replayed(page);
+  // a password prompt on screen: the masked input stands in, no Paste or Insert
   await h.push({ type: "pty-data", pane_id: panes.shell, data: "\r\nPassword:" });
   await page.locator(".pane-frame.is-current .secret-input").waitFor();
   await capture(page, variant, "secret-hidden");
   await h.push({ type: "pty-data", pane_id: panes.shell, data: "\r\n\x1b[38;5;214mrelease\x1b[0m $ " });
   await line.waitFor();
+  // a view-only connection: neither control
   await h.push({ type: "role-ack", mode: "observe" });
   await page.locator(".pane-frame.is-current .terminal-banner-observe").waitFor();
   await capture(page, variant, "observe");

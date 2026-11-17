@@ -1,4 +1,4 @@
-import { TEST_SESSION } from "./test-herdr.ts";
+import { TEST_SESSION } from "./test-herdr.ts"; // a herdr session of its own: nothing shows in the user's
 import assert from "node:assert/strict";
 import { copyFileSync, chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmdirSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -50,6 +50,16 @@ let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 const evidenceSessions: BrowserEvidenceSession[] = [];
 const evidenceDirectory = process.env.CHECK_BROWSER_EVIDENCE_DIR;
 const evidenceTrace = process.env.CHECK_BROWSER_EVIDENCE_TRACE === "1";
+/**
+ * The part of the script that runs, so each part fits the browser lane's limit for one script (600 s), each from its
+ * own server and browser: `main` (this file: the desktop page's stateful flow and the phone pages that follow it),
+ * `terminal` (scripts/ui-terminal-regression.ts: the terminal's keys, input line, held drafts and attach), `ime`
+ * (scripts/ui-ime-regression.ts: the Safari, iPad and Linux IME replays) and `access` (scripts/ui-access-regression.ts:
+ * sign out on a server with a token, and the relay panel). This file run itself is always `main`, on the session the
+ * environment names (the lane's), so an inherited UI_REGRESSION_PART cannot skip the main flow; each other part's
+ * entry file sets it and imports this one on a herdr session of its own (scripts/own-herdr.ts), so two parts side by
+ * side in the lane share no session, workspace label or socket.
+ */
 const part = import.meta.main ? "main" : process.env["UI_REGRESSION_PART"] ?? "";
 if (!["main", "terminal", "ime", "access"].includes(part)) throw new Error(`UI_REGRESSION_PART is terminal, ime or access when a part's entry file imports this script, not "${part}"`);
 console.log(`ui-regression part ${part}: herdr session ${TEST_SESSION}, socket ${process.env["HERDR_SOCKET"]}`);
@@ -67,6 +77,12 @@ async function watchBrowserEvidence(context: BrowserContext, page: Page, scenari
   return evidence;
 }
 /** WebKit's IME commit: an Enter keydown after compositionend, isComposing false, key code 229 */
+/**
+ * A hook for a check that changes the roster on a page already loaded: a route cannot reach the
+ * machine events the page already receives (its /api/machines/events stream or its terminal
+ * socket), so `window.__rewriteMachinesFrame`, while set, rewrites each event's data before the
+ * app reads it (the background-tasks and plan checks below).
+ */
 function rewriteMachinesFrames(): void {
   const rewrite = () => (window as unknown as { __rewriteMachinesFrame?: (data: string) => string }).__rewriteMachinesFrame;
   const Native = window.EventSource;
@@ -112,6 +128,7 @@ try {
     panes.push(result.root_pane.pane_id);
   }
   const [paneA, paneB] = panes as [string, string];
+  // no provider is asked with the test machine's own sign-ins
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), usage: new UsageService({ ...systemUsageContext(), home: root, env: {} }, []), tailnetPcs: { readStatus: async () => null }, sshCandidates: { sshDir: join(root, "no-ssh"), readStatus: async () => null } });
   const origin = `http://127.0.0.1:${server.port}`;
   browser = await chromium.launch({
@@ -122,6 +139,7 @@ try {
   if (part === "main") {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     await context.addInitScript((ids) => {
+      // The pending-input cases exercise automatic queue delivery, which is opt-in.
       if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", autoSendQueued: true }));
       for (const id of ids) localStorage.setItem(`ovis:view:${id}`, "chat");
     }, panes);
@@ -132,6 +150,8 @@ try {
     const workspaceGroup = (workspaceId: string) => page.locator(`.workspace-group[data-workspace="${workspaceId}"]`);
     const workspaceHeader = (workspaceId: string) => workspaceGroup(workspaceId).locator(":scope > .workspace-header");
     const agentRow = (paneId: string) => page.locator(`.agents-sidebar .agent-item[data-machine="local"][data-pane="${paneId}"]`);
+    // the header under test is the app's own (server/static.ts), so this is where a broken
+    // directive shows up: every page below loads through this same server
     csp.push(await watchCsp(page));
     let holdSubmitResult = false;
     let releaseSubmitResult: (() => void) | null = null;
@@ -221,6 +241,9 @@ try {
     await palette.waitFor({ state: "hidden" });
     assert.equal(await selectedPane(), paneA, "Enter on Close leaves the pane selection alone");
 
+    // A reopened palette starts from an empty search in its first render, the DOM its opening commit
+    // leaves (sampled by the observer before any later task): a render of the last search's results lets
+    // a Tab that lands before the next one focus a row at an index the full list then gives to another (#608).
     await page.evaluate(() => {
       const frames: string[] = [];
       (window as unknown as { paletteFirstFrame: string[] }).paletteFirstFrame = frames;
@@ -296,6 +319,8 @@ try {
       await palette.waitFor({ state: "hidden" });
     }
     // A pointer resting over the list keeps still while the arrow scrolls rows under it: the
+    // browser's hover update after the scroll must not take the keyboard selection, and a real
+    // pointer move still does.
     await page.setViewportSize({ width: 1280, height: 400 });
     const pluginsAnswer = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/plugins/actions"));
     await openPalette();
@@ -590,6 +615,8 @@ try {
     await page.keyboard.press("Escape");
     await planList.waitFor({ state: "detached" });
     assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("bg-tasks-toggle")), true, "the focus goes back to the chip");
+    // the plan is done with and emptied (Claude Code clears its task list) while the list is open:
+    // nothing is left to list, so the list closes and the chip goes instead of standing empty
     await planChip.click();
     await until(async () => await planList.locator(".bg-step").count() === 4, "the plan's steps again");
     await unroutePlanned();
@@ -601,6 +628,7 @@ try {
     console.log("PASS a pane's plan opens from the composer's chip as a list of its steps");
 
     // Use a real browser paste: keydown must not send Ctrl+V (0x16) to the agent,
+    // where it can trigger image paste against the server's unrelated clipboard.
     await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
     await page.locator(".view-switch").getByRole("button", { name: "Terminal", exact: true }).click();
     await pendingReady(paneA);
@@ -654,6 +682,7 @@ try {
       assert.deepEqual(inputs.slice(beforeEnter).map(({ pane_id, text }) => ({ pane_id, text })),
         [{ pane_id: paneA, text: expected }], `${shortcut} must send its sequence exactly once`);
     }
+    // A composition commit belongs to xterm/IME; the custom binding must not replace it.
     for (const composition of [{ isComposing: true, keyCode: 13 }, { isComposing: false, keyCode: 229 }]) {
       const beforeIme = inputs.length;
       await terminalInput.dispatchEvent("keydown", {
@@ -664,6 +693,7 @@ try {
         "IME commits must not receive the custom Shift+Enter sequence");
     }
     // compositionend queues its send for the next timer. A following non-composing
+    // Shift+Enter must let xterm flush that commit before sending the newline.
     await terminalInput.focus();
     const beforeCommittedIme = inputs.length;
     await terminalInput.evaluate(async (element) => {
@@ -686,7 +716,10 @@ try {
       "a pending IME commit must precede Shift+Enter without a delayed duplicate");
     console.log("PASS terminal Shift+Enter sends a newline chord once and preserves Enter, Alt+Enter and IME");
     console.log("PASS pending IME commit precedes Shift+Enter without duplicate text");
+    // a pane shortcut switches panes and types nothing: xterm used to send ESC[1;6B / ESC[1;6A too
     const selectedTitle = () => page.locator(".pane-item.is-selected .pane-select").getAttribute("title");
+    // A pane just picked shows the lens of the pane before it for a moment, and the message box
+    // of that lens can take the focus back: the key waits until the terminal still has it two frames on.
     const focusTerminal = () => until(async () => {
       await terminalInput.focus();
       return page.evaluate(() => new Promise<boolean>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() =>
@@ -845,6 +878,7 @@ try {
     await page.getByRole("dialog", { name: "Files", exact: true }).waitFor();
     await page.getByRole("button", { name: "Close files", exact: true }).click();
     await page.getByRole("dialog", { name: "Files", exact: true }).waitFor({ state: "detached" });
+    // before the permission question is answered the item already reads as on: in-app alerts show
     assert.equal(await alertsState(page), "On in the app");
     assert.equal(await alertsOffMarked(page), false, "alerts that are on leave the More button unmarked");
     await context.grantPermissions(["notifications"], { origin });
@@ -885,6 +919,8 @@ try {
     await blocked.close();
     console.log("PASS a device that blocks notifications keeps the Alerts item as the switch for in-app alerts");
 
+    // The pending protocol has a real foreground agent and an owned byte recorder: merely
+    // reporting an idle shell as working would not prove that server-side queueing happened.
     const pendingCwd = join(root, "pending"); mkdirSync(pendingCwd);
     const pendingWorkspace = await workspaceCreate({ cwd: pendingCwd, label: "ovis-test-browser-pending" });
     workspaces.push(pendingWorkspace.workspace.workspace_id);
@@ -950,6 +986,8 @@ try {
     holdSnapshot = true;
     await routed.at(-1)!.close();
     await until(() => releaseFeatures !== null && releaseSnapshot !== null, "the reconnect's features and snapshot were held back");
+    // the server can send its snapshot before the page has even sent its attach: the pane is
+    // ready only once the new connection says so, not by the closed one's last word
     await until(() => sockets.length > socketsBeforeReconnect, "the page opened its new connection");
     await pendingReady(pendingPane);
     assert.equal(await page.locator('.pending-message[data-state="uncertain"]').count(), 2, "the lost connection's rows are no longer its own");
@@ -969,6 +1007,7 @@ try {
     await page.reload(); await page.locator(".conn-live").waitFor();
     await until(async () => await pendingRows.count() === 2, "saved pending copies restored");
     assert.deepEqual(await pendingRows.locator(".pending-message-bubble").allTextContents(), queuedTexts.slice(1));
+    // the bridge holds both untyped and tells this browser so: they come back held, for an explicit Send now only
     await until(async () => await page.locator('.pending-message[data-state="held"]').count() === 2, "reload brings the proven copies back held");
     assert.equal(await page.locator('.pending-message[data-state="uncertain"]').count(), 0, "a proven copy is not left uncertain");
     assert.equal(await page.locator(".pending-message-send").count(), 2, "a proven held copy offers Send now");
@@ -1125,6 +1164,7 @@ try {
     console.log("PASS quick replies send as typed, queue mid-turn, and leave the draft");
 
     // the Enter that commits an IME candidate is not a send: WebKit can deliver it after
+    // compositionend, with isComposing false and key code 229
     await composer.fill("한글 조합");
     const imeInputs = inputs.length;
     await composer.dispatchEvent("keydown", IME_ENTER);
@@ -1342,7 +1382,7 @@ try {
     await composer.fill("");
     console.log("PASS paths wait for a /command, typed or dictated, or an IME composition to finish, and selections keep their direction");
 
-    const MAX_COMPOSER_CHARS = 20_000;
+    const MAX_COMPOSER_CHARS = 20_000; // src/lib/compose.ts; importing it would load the app's modules here
     const statusHint = page.locator(".composer-status-hint");
     const sendButton = page.getByRole("button", { name: "Send message", exact: true });
     held.clear();
@@ -1397,6 +1437,7 @@ try {
     assert.equal(await page.getByRole("alert").filter({ hasText: /the first \d+ of \d+ files/ }).count(), 0, "nothing was left out");
     limitedUploads.length = 0;
     // Paths let Chromium pick the real files. A buffer sends 32 MB through Playwright's injected
+    // base64 decoder on the page before the app can reject it by size, timing out on a busy runner.
     const hugeFile = join(root, "huge.bin");
     writeFileSync(hugeFile, "");
     truncateSync(hugeFile, MAX_ATTACHMENT_BYTES + 1);
@@ -1594,6 +1635,8 @@ try {
     await initialRow.waitFor({ state: "detached" });
     worktreeWorkspaces.splice(worktreeWorkspaces.indexOf(initialWorktree.workspace_id), 1);
 
+    // The worktree's row sits under its repository's, as herdr packs them.
+    // Its menu deletes the checkout: a dirty one is refused in git's words first, then deleted anyway.
     const repoHeader = repoRow;
     await childRow.waitFor();
     assert.equal(await page.locator(".worktree-children").count(), 1, "one group of worktrees, under the repository's row");
@@ -1613,6 +1656,9 @@ try {
     await childHeader.locator('.workspace-select[aria-current="true"]').waitFor();
     assert.equal(await repoToggle.getAttribute("aria-expanded"), "false", "an explicitly selected child remains visible within a folded group");
     await repoToggle.click();
+    // reorder is group-aware: the repository's row moves up past the workspace above it with its
+    // worktree (herdr moves only the workspace named), and its lone worktree has no sibling to move
+    // among, so nothing is sent for it
     const moves: number[] = [];
     await page.route("**/api/workspace/move", async (route) => { moves.push(route.request().postDataJSON().insert_index as number); await route.continue(); });
     const herdrOrder = async () => (await herdrRpc<{ snapshot: { workspaces: { workspace_id: string }[] } }>("session.snapshot", {})).snapshot.workspaces.map((workspace) => workspace.workspace_id);
@@ -1670,6 +1716,7 @@ try {
     worktreeWorkspaces.splice(worktreeWorkspaces.indexOf(worktree.workspace_id), 1);
     console.log("PASS a worktree row sits under its repository's row, and its menu deletes the checkout, asking twice for a dirty one");
 
+    // The new pane's terminal takes the focus once it paints, which would close a menu opened before.
     await until(() => painted.has(created.pane_id), "created pane paint");
     await page.locator(`.pane-select[title^="${created.pane_id} —"]`).click();
     await until(async () => (await page.locator(`.pane-select[title^="${created.pane_id} —"]`).getAttribute("aria-current")) === "true", "the created workspace is selected again");
@@ -1802,6 +1849,7 @@ try {
     await until(async () => (await strip.getByRole("tab").count()) === 2, "the shell tab is gone from the strip");
     console.log("PASS the strip's + opens a shell tab at once, with no dialog");
 
+    // A tab is renamed and closed from the strip, as herdr's prefix+shift+t and prefix+shift+x.
     const tabsInHerdr = async () => (await sessionSnapshot()).tabs.filter((tab) => tab.workspace_id === created.workspace_id).map((tab) => tab.label);
     await strip.getByRole("tab", { name: "Tab 1", exact: true }).dblclick();
     const tabName = strip.getByLabel("Tab name", { exact: true });
@@ -1898,6 +1946,7 @@ try {
     console.log("PASS a tab is renamed by a double-click, F2 and its menu, and closed from its menu and Delete, asking first while its agent works");
 
     // herdr 0.9.0 reports Codex's first directory-trust menu as idle. Exercise a
+    // live, owned PTY menu so the chat controls cannot depend on a blocked badge.
     await selectPane(paneB);
     const paintStartupMenu = async (): Promise<void> => {
       await herdrRpc("pane.send_text", {
@@ -1928,6 +1977,8 @@ try {
     await startupPrompt.waitFor({ state: "hidden" });
     console.log("PASS startup prompt appears and accepts an answer while the agent status is idle");
 
+    // A pick typed in the composer waits in the card for Confirm. Answered in the terminal
+    // instead, it must not come back when the same menu (the same prompt id) is asked again.
     await paintStartupMenu();
     await startupPrompt.getByRole("button", { name: "1. Yes, continue", exact: true }).waitFor();
     await composer.fill("1");
@@ -2005,6 +2056,8 @@ try {
     await composer.fill("# queued before the suggestion");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await until(async () => await pendingRows.count() === 1, "suggestion test pending input accepted");
+    // Explicit hold keeps the suggestion beside a server-owned item without dispatching it.
+    // Navigation preserves its held state and the same PC connection's recovery actions.
     await selectPane(paneA); await selectPane(pendingPane);
     await page.locator('.pending-message[data-state="held"]').waitFor();
     await pendingReady(pendingPane);
@@ -2038,6 +2091,11 @@ try {
     {
       await selectPane(paneA);
       // The drag goes in steps, each waited on, as split-view-regression.ts drags. One dragTo jumps
+      // from the row to the drop point in a single move and drops at once: the drop then rests on the
+      // one dragover sent as the drag starts, and nothing checks that the page took it (on a busy
+      // runner it left no split). Here the row crosses the native drag threshold, App shows its guide
+      // (it saw the dragstart), the area is measured after that, and the drop waits for a dragover on
+      // the drop point to take the pane for the right half.
       const area = page.locator(".pane-split");
       const source = page.locator(`.pane-select[title^="${paneB} —"]`);
       await source.scrollIntoViewIfNeeded();
@@ -2105,6 +2163,8 @@ try {
     await planPhone.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat" })));
     const phone = await planPhone.newPage();
     phone.on("pageerror", (error) => errors.push(error.message));
+    // the phone's machine events come over its terminal socket, which a route cannot reach: its
+    // frames carry the plan too, or the next pushed roster takes the chip away
     await planPhone.addInitScript(rewriteMachinesFrames);
     await planPhone.addInitScript(([pane, plan]) => {
       (window as unknown as { __rewriteMachinesFrame?: (data: string) => string }).__rewriteMachinesFrame = (data) => {
@@ -2188,6 +2248,7 @@ try {
     assertCspClean(csp, "the suggestion chip loads with no CSP violation");
     console.log("PASS a phone offers Claude's suggestion as a chip once Settings turns it on");
 
+    // Local access is automatic, so it must not offer a sign-out action that cannot lock the app.
     assert.equal(await page.getByRole("button", { name: "Sign out", exact: true }).count(), 0);
     await page.locator(`.pane-select[title^="${created.pane_id} —"]`).click();
     const selectedRow = page.locator(".pane-item.is-selected .pane-select");
@@ -2232,6 +2293,8 @@ try {
       const selected = JSON.parse(await page.evaluate(() => sessionStorage.getItem("ovis:selection") ?? "null"));
       return selected?.pane_id && selected.pane_id !== created.pane_id;
     }, "closed pane selection recovered");
+    // the pane selected in its place must not take the keyboard: a phone would raise it over
+    // the drawer, in the way of closing the next pane.
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await page.evaluate(() => document.activeElement?.matches("textarea, input, [contenteditable]") ?? false), false,
       "a pane selected after a close must not focus its input");
@@ -2365,6 +2428,7 @@ try {
     await signOutConfirm.getByRole("button", { name: "Cancel", exact: true }).click();
     assert.equal((await securedContext.request.get(`${securedOrigin}/api/session`)).status(), 200, "cancel keeps the session");
     await settingsSignOut.click();
+    // Fail only the sign-out request: health must still see the real authenticated cookie.
     await securedPage.route("**/api/auth", (route) => route.request().method() === "DELETE"
       ? route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "Sign-out test failure" } } })
       : route.continue());
@@ -2406,6 +2470,8 @@ try {
   for (const release of releases) release();
   await browser?.close();
   server?.stop();
+  // a worktree checkout the run made goes with it: herdr removes the checkout, then its workspace.
+  // The roster says what was made, so a create whose answer never arrived is removed too.
   if (repo) {
     const repoRoot = realpathSync(repo);
     const snapshot = await sessionSnapshot().catch(() => null);

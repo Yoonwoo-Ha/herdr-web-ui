@@ -10,10 +10,12 @@ import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
+// Everything stays in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-todo-snapshots-demo-"));
 const evidence = process.env["UI_EVIDENCE_DIR"] || null;
 
 // playwright-core's bundle lazily requires packages the lockfile does not carry (chromium-bidi):
+// fine at run time, unresolvable to `bun build` — so it is imported past the bundler's analysis
 const playwrightCore = "playwright-core";
 const { chromium, devices } = (await import(playwrightCore)) as typeof import("playwright-core");
 

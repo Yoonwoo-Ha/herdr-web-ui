@@ -1,3 +1,9 @@
+/**
+ * The repair contract asserted here: every derived step arrives, in order, at most six reports
+ * per animation frame, at most 64 waiting, a two-screen swipe drained within 300 ms of its last move,
+ * only travel beyond 64 waiting reports dropped (the terminal's `data-touch-wheel-dropped` counts
+ * them), nothing sent after any boundary, no observer input and no takeover.
+ */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -39,6 +45,7 @@ interface Probe {
   ptyFrames: number;
   lastPaint: number;
   hidden: boolean;
+  /** the timestamp of the animation frame whose callback is running, shared by every callback of that frame */
   frameTime: number | null;
 }
 interface FrameHold { hold: boolean; step(): Promise<number>; release(): void }
@@ -60,6 +67,7 @@ function derive(ys: number[], stepPixels: number): { steps: number[]; cumulative
   return { steps, cumulative };
 }
 
+/** SGR wheel reports in a byte log, as signed steps: 64 (up, older) is -1, 65 is +1. */
 function reported(log: string): number[] {
   return [...log.matchAll(/\x1b\[<(64|65);\d+;\d+M/g)].map((match) => (match[1] === "64" ? -1 : 1));
 }
@@ -135,6 +143,7 @@ async function instrument(context: BrowserContext): Promise<void> {
     window.addEventListener("keydown", (event) => { probe.events.push({ k: "keydown", t: now(), frame: event.key }); }, { capture: true });
     document.addEventListener("wheel", (event) => { if (!event.isTrusted) probe.events.push({ k: "wheel", t: now(), ft: probe.frameTime ?? undefined }); }, { capture: true });
     new MutationObserver((records) => {
+      // the rows the user sees: libghostty's while it draws the pane (xterm's are hidden and not redrawn), else xterm's
       const painted = ".xterm-rows, .ghostty-text";
       if (records.some((record) => (record.target as Element).closest?.(painted) || record.target.parentElement?.closest(painted))) probe.lastPaint = now();
     }).observe(document, { subtree: true, childList: true, characterData: true });
@@ -244,15 +253,19 @@ process.stdout.write(Array.from({ length: 400 }, (_, n) => "app history " + n + 
     await open(target.pane);
     const screen = page.locator(".xterm-screen").first();
     if (target.kind === "native-history") {
+      // away from both native edges, so clamping cannot look like a lost step
       const moved = await page.request.post(`${origin}/api/pane/scroll`, { data: { pane_id: target.pane, offset_from_bottom: 1500 } });
       assert.equal(moved.status(), 200);
     }
+    // REPS measured passes, then one recorded pass whose screencast frames are kept but never measured:
+    // the screencast itself costs frames
     for (let rep = 0; rep <= REPS; rep++) for (const gesture of gestures) {
       const recorded = rep === REPS;
       const box = (await screen.boundingBox())!;
       const rows = await page.locator(shownRow()).count();
       const cell = box.height / rows;
       const stepPixels = cell * HERDR_MOUSE_SCROLL_LINES;
+      // a screen of travel, plus a quarter step so finalStep's half-step rounding never sits on an edge
       const travel = box.height * gesture.screens + stepPixels / 4;
       const x = box.x + box.width / 2;
       const top = box.y + 4;
@@ -291,6 +304,7 @@ process.stdout.write(Array.from({ length: 400 }, (_, n) => "app history " + n + 
           if (offsetAfter === want || Date.now() > deadline) break;
           await nextFrame(page);
         }
+        // herdr redraws the moved history down the attach: the client has parsed and painted it
         await page.waitForFunction(() => window.__burst.ptyFrames > 0 && window.__burst.lastPaint >= window.__burst.lastPtyData);
         parsedAt = await page.evaluate(() => window.__burst.lastPaint);
       }
@@ -331,6 +345,7 @@ process.stdout.write(Array.from({ length: 400 }, (_, n) => "app history " + n + 
         nativeLinesMoved: offsetAfter === null ? null : offsetAfter - offsetBefore,
         expectedNativeLines: target.kind === "native-history" ? -expectedSum * HERDR_MOUSE_SCROLL_LINES : null,
         perFrameDispatches: [...perFrame.values()], maxDispatchesPerFrame: Math.max(0, ...perFrame.values()),
+        // a report sent outside any frame callback (from the touch handler itself) escapes the per-frame count
         wheelsOutsideFrames: wheels.filter((event) => event.ft === undefined).length,
         peakQueue, droppedReports: expected.length - wheels.length,
         drainAfterLastMoveMs: Math.max(0, lastWheel - lastMove),
@@ -359,6 +374,7 @@ process.stdout.write(Array.from({ length: 400 }, (_, n) => "app history " + n + 
     const ys = Array.from({ length: 7 }, (_, n) => top + (box.height / 2) * (n / 6));
     const gliding = () => page.evaluate(() => document.querySelector("[data-touch-fling]") !== null);
     // a glide needs the lift within FLING_STOPPED_MS of the last move, by the events' own timestamps; a slow
+    // CDP round trip on a loaded host can miss that, so such a lift is waited out and the swipe made again
     const swipe = async () => {
       for (let attempt = 1; ; attempt++) {
         await page.waitForFunction(() => document.querySelector("[data-touch-fling]") === null, undefined, { polling: 10, timeout: 10000 });
@@ -445,6 +461,8 @@ process.stdout.write(Array.from({ length: 400 }, (_, n) => "app history " + n + 
     return record;
   })();
 
+  // Each boundary is then established from its own event or acknowledgement, the clock released and
+  // the finger lifted; nothing of the swipe may be sent after it, to either pane.
   const boundaries: Record<string, unknown>[] = [];
   const switchTo = async (pane: string) => {
     await page.evaluate((id) => {
@@ -454,6 +472,7 @@ process.stdout.write(Array.from({ length: 400 }, (_, n) => "app history " + n + 
     }, pane);
   };
   const lastEvent = (kind: string, pane?: string) => page.evaluate(({ kind, pane }) => window.__burst.events.filter((event) => event.k === kind && (pane === undefined || event.pane === pane)).at(-1) ?? null, { kind, pane });
+  // polled on a timer, not on frames: the frame clock may be held
   const waitEvent = async (kind: string, after: number, pane?: string, wheels?: number) => {
     const want = { kind, after, pane: pane ?? null, wheels: wheels ?? null };
     await page.waitForFunction((want) => window.__burst.events.some((event) => event.k === want.kind && event.t > want.after
@@ -541,6 +560,8 @@ process.stdout.write(Array.from({ length: 400 }, (_, n) => "app history " + n + 
     boundaries.push(record);
   }
 
+  // A second phone watches the same pane while this one is attached: its swipe pans its own copy
+  // of the grid and sends the pane nothing.
   let concurrent: { observerInputFrames: number; applicationReceivedSteps: number } | null = null;
   if (part === "history") {
     const observerContext = await browser.newContext(phone);
@@ -616,6 +637,7 @@ process.stdout.write(Array.from({ length: 400 }, (_, n) => "app history " + n + 
     assert.equal(result.wheelsOutsideFrames, 0, `${result.kind} ${result.gesture} rep ${result.rep}: every report goes out from an animation frame`);
     assert.ok((result.maxDispatchesPerFrame as number) <= TOUCH_WHEEL_REPORTS_PER_FRAME, `${result.kind} ${result.gesture} rep ${result.rep}: at most ${TOUCH_WHEEL_REPORTS_PER_FRAME} reports per frame, saw ${result.maxDispatchesPerFrame}`);
     assert.ok((result.peakQueue as number) <= TOUCH_WHEEL_QUEUE_LIMIT, `${result.gesture}: at most ${TOUCH_WHEEL_QUEUE_LIMIT} reports waiting, saw ${result.peakQueue}`);
+    // the recorded pass runs under the screencast, which costs frames: its drain time is not measured
     if (result.screens === 2 && !result.recorded) assert.ok((result.drainAfterLastMoveMs as number) <= DRAIN_LIMIT_MS, `${result.kind} ${result.gesture} rep ${result.rep}: drained ${result.drainAfterLastMoveMs} ms after the last move`);
   }
   for (const result of measured.filter((result) => result.speed === "fast" && result.screens === 2)) {

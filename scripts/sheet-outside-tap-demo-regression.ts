@@ -153,6 +153,7 @@ try {
         await page.locator(".settings-dialog").waitFor({ state: "detached", timeout: 5_000 });
         const at = await address(page);
         assert.ok(await page.locator(".mode-inbox").count() === 1 && at.app === "inbox" && at.pane === null, `the list stays: the address says ${JSON.stringify(at)}`);
+        // its scrim goes on the mousedown, so the mouseup after it is hit-tested onto the list: no click follows it there
         assert.deepEqual(seen.filter((event) => event.type === "click" && event.inList).map((event) => event.target), [], "the tap's click reaches nothing in the list");
       });
 

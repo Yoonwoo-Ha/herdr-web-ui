@@ -1,6 +1,8 @@
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+// Match CI's runner shell, including on macOS; use POSIX sh where bash is absent.
+// Windows keeps herdr's native shell selection rather than receiving a Unix path.
 export function testShellEnv(dir: string): Record<string, string> {
   if (process.platform === "win32") return {};
   if (!existsSync("/bin/bash")) return { SHELL: "/bin/sh" };

@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { normalizeThemeValue } from "../src/lib/themeCss.ts";
 import { terminalTheme, themeColor } from "../src/lib/settings.ts";
 
+// Freezes the six legacy palette-modes (amber, charcoal, catppuccin in dark and light) as
+// src/lib/themes.legacy-baseline.json, the permanent parity oracle src/lib/themes.parity.test.ts
+// checks the current src/styles.css against. One shot: it ran once on the pre-refactor tree and
+// refuses to overwrite the baseline, which is never regenerated.
 
 export type LegacyMode = "dark" | "light";
 export type LegacyPalette = "amber" | "charcoal" | "catppuccin";

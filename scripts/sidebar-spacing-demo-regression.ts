@@ -9,6 +9,8 @@ import { buildDemoApp } from "./demo-build.ts";
 const app = mkdtempSync(join(tmpdir(), "herdr-sidebar-spacing-demo-"));
 const spacing = 16;
 
+// the demo's one PC as two, each with the demo's own roster: only this disposable fixture rewrites it (as
+// scripts/hide-pc-demo-regression.ts does)
 const twoPcs = `(() => {
   const fetchDemo = window.fetch.bind(window), EventSourceDemo = window.EventSource;
   const json = (value) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });

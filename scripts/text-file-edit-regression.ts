@@ -1,3 +1,9 @@
+/**
+ * Settings → File viewer → Edit text files (#771) at 1280 and 390, light and dark, on an owned herdr
+ * pane: off by default no Edit; on, a file in the pane's folder is edited, Save asks once more and
+ * writes it, Cancel leaves it, a file changed on the PC meanwhile is not overwritten (the typed
+ * text stays, Reload file shows the PC's), and a read-only file says it cannot be written.
+ */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

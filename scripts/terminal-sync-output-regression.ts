@@ -92,6 +92,7 @@ interface HopSummary {
   bytes: number;
   opens: number;
   closes: number;
+  /** blocks opened and closed (an open inside an open block is herdr's, counted once) */
   blocks: number;
   split: number;
   maxSpan: number;
@@ -152,6 +153,7 @@ interface PageTap {
 }
 
 function installSyncTap({ rowSource, shown }: { rowSource: string; shown: string }): void {
+  // the one generator the producer draws with; the context bypasses the app's CSP for it
   const rowText = new Function(`return ${rowSource}`)() as (variant: string, n: number, r: number, cols: number) => string;
   const sync = /\x1b\[\?2026([hl])/g;
   const tap: PageTap = { messages: [], acks: [], renders: [], expect: null, keepRows: true, last: null };
@@ -212,6 +214,9 @@ function installSyncTap({ rowSource, shown }: { rowSource: string; shown: string
     const container = (target.target instanceof Element ? target.target : target.target.parentElement)!.closest(shown)!;
     const ack = tap.acks.at(-1);
     const rows = [...container.children].map((row) => (row.textContent ?? "").trimEnd());
+    // a render of the same text drew nothing of an open block: libghostty redraws the shown rows when a late font
+    // face (the first Hangul) loads, whenever that is. Every cell changes from frame to frame, so a block's rows never
+    // come out as the text already shown
     const text = rows.join("\n");
     const torn = text !== shownText && (ack ? openAfter.get(`${ack.stream}:${ack.offset}`) === true : false);
     shownText = text;
@@ -348,6 +353,7 @@ async function run(): Promise<void> {
 
     const tap = await page.evaluate(() => (window as unknown as { __syncTap: PageTap }).__syncTap);
     const attachText = reads.map((read) => read.data).join("");
+    // herdr's startup questions: the server answers them and keeps them off hop B
     const strip = (text: string) => STARTUP_PROBES.reduce((rest, [query]) => rest.replace(query, ""), text);
     const hopB = tap.messages.map((message) => message.data).join("");
     const judged = tap.renders.slice(armed);
@@ -373,14 +379,18 @@ async function run(): Promise<void> {
     if (evidence) writeFileSync(join(evidence, "terminal-sync-output.json"), JSON.stringify(report, null, 1));
 
     assert.equal(strip(attachText), hopB, "the browser's bytes are not the attach stream's");
+    // a frame over a pty read (64 KiB) always comes in pieces: without blocks, or without one split, nothing was tested
     assert.ok(hops.B.blocks >= frameCount, `the browser saw ${hops.B.blocks} blocks for ${frameCount} frames`);
     assert.ok(hops.B.split > 0, "no block was split over frames");
     assert.equal(hops.Ball.opens, hops.Aall.opens, "a block open was lost between herdr and the browser");
     assert.equal(hops.Ball.closes, hops.Aall.closes, "a block close was lost between herdr and the browser");
     assert.equal(hops.Ball.openAtEnd, false, "the browser's stream ends inside a block");
+    // each frame acked by its flow identity, once: a count alone would let one ack stand in for another
     const identities = (rows: ReadonlyArray<{ stream: string; offset: number }>) => rows.map(({ stream, offset }) => `${stream}:${offset}`).sort();
     assert.deepEqual(identities(tap.acks), identities(tap.messages), "each frame was acked, once");
+    // Then: herdr draws a pane's block only once it closes, and a block left open ends at the next frame.
     assert.equal(hops.A.opens, hops.A.closes, "herdr left one of its own blocks open");
+    // Then: xterm draws no frame from a block it has not seen close.
     assert.equal(hops.D.torn, 0, `${hops.D.torn} of ${hops.D.renders} renders were drawn inside an open block`);
     assert.equal(hops.D.mixed, 0, `${hops.D.mixed} of ${hops.D.renders} renders mixed two frames`);
     console.log(`PASS synchronized output: ${hops.B.blocks} herdr blocks reached the browser intact, ${hops.B.split} split over frames; ${hops.D.mixed} of ${hops.D.renders} renders mixed, ${hops.D.torn} drawn inside an open block`);

@@ -7,6 +7,7 @@ import type { UpdateStatus } from "../shared/update.ts";
 import { openSettingsPage } from "./settings-page.ts";
 import { rosterRead, rosterStream } from "./drained-route.ts";
 
+/** The update status and the waiting PC are answered here; nothing is installed. */
 export async function checkUpdateNotice(browser: Browser, origin: string, shots?: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
   try {
@@ -38,6 +39,7 @@ export async function checkUpdateNotice(browser: Browser, origin: string, shots?
     });
     const pc: Machine = { id: "qa-pc", name: "QA PC", kind: "ssh", target: { destination: "qa@example.invalid" }, enabled: true, state: "error", error: null, action_required: "update_bridge", snapshot: null };
     let remote: Machine | null = null;
+    // The real SSE roster would remove the synthetic PC between these polled snapshots.
     await context.route(rosterStream, (route) => route.abort());
     await page.route(rosterRead, async (route) => {
       const body = await (await route.fetch()).json() as { machines: Machine[] };

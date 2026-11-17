@@ -7,6 +7,9 @@ import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
+// Chromium runs with its scrollbars drawn (Playwright's headless default hides them), as a desktop
+// browser draws them: a press on the list's scrollbar drags that scrollbar, a press on the strip
+// beside it resizes the sidebar, and nothing moves meanwhile.
 const app = mkdtempSync(join(tmpdir(), "herdr-sidebar-scrollbar-grip-"));
 const evidence = process.env["UI_EVIDENCE_DIR"] || null;
 

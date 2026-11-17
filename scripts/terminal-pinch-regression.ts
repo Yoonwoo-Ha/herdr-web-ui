@@ -92,6 +92,8 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
       }
     };
     const release = () => cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    // a wheel report per three rows of travel: 150 px is more than that even at the largest cell the 22 px font makes;
+    // the drag ends at cy, where a following pinch puts this finger, so that jump is no vertical travel
     const dragOne = async (): Promise<void> => {
       await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: cy - 150, id: 1 }] });
       for (let step = 1; step <= 5; step++) {
@@ -105,6 +107,8 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
       for (let step = 1; step <= moves; step++) {
         await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx, y: cy - distance / 2 + distance * step / moves, id: 1 }] });
       }
+      // the finger holds still before it lifts, so the swipe ends where it is: a lift while it moves fast
+      // would glide on (lib/touchFling.ts), which terminal-touch-burst-run.ts measures apart
       const lastMove = await page.evaluate(() => performance.now());
       await page.waitForFunction(([at, still]) => performance.now() - at > still, [lastMove, FLING_STOPPED_MS * 2] as const, { polling: 10 });
       await release();
@@ -212,6 +216,7 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
     assert.equal((await probe()).fontPx, 20, "partial release keeps the live 20 px font");
     assert.equal((await probe()).saved, 20, "partial release saves 20 px");
     assert(!(await badge.isVisible()), "the first lifted finger hides the size badge");
+    // three wheel steps of travel at the 20 px cell: a broken pinch-stroke guard would send wheels here
     const leftover = 3 * 3 * (await probe()).cell;
     for (let step = 1; step <= 5; step++) {
       await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx - 77, y: cy + leftover * step / 5, id: 1 }] });

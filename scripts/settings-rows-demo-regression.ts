@@ -10,6 +10,7 @@ import { openSettingsFolds, openSettingsPage, themeSide } from "./settings-page.
 import { SETTINGS, closeSettings, dialogOf, historyHolds, openPalette, openSettings } from "./settings-pages-harness.ts";
 import { DEFAULT_SETTINGS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN } from "../src/lib/settings.ts";
 
+// All files and HTTP traffic stay in these disposable, loopback-only apps; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-settings-demo-"));
 const devApp = mkdtempSync(join(tmpdir(), "herdr-settings-dev-"));
 
@@ -34,6 +35,11 @@ const HOLD_VOICE = `(() => {
 `;
 interface HeldVoice { voiceAsked: () => number; releaseVoice: () => void; groupObservers: () => { made: number; live: number } }
 
+/**
+ * The OpenAI key's group, whose form waits for the server's answer, on React's development build:
+ * StrictMode runs the landing's effect, its cleanup and the effect again, and the group is still
+ * followed into view when the held answer comes.
+ */
 async function heldGroupLanding(browser: import("playwright-core").Browser, url: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 390, height: 480 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, locale: "en" });
   try {
@@ -429,6 +435,10 @@ async function alertChipsReset(browser: import("playwright-core").Browser, url: 
   console.log("PASS Alerts' chips: every turn lights the long turns, and ↺ restores all five");
 }
 
+/**
+ * The sign-in is a fixture in this page's IndexedDB and the account service a route of this
+ * context: nothing reaches GitHub or account.ovis.sh.
+ */
 async function accountPcList(browser: import("playwright-core").Browser, url: string): Promise<void> {
   const service = "https://account.ovis.sh";
   for (const [width, theme] of [[390, "light"], [390, "dark"], [1280, "light"], [1280, "dark"]] as const) {
@@ -436,6 +446,7 @@ async function accountPcList(browser: import("playwright-core").Browser, url: st
     const removed: string[] = [];
     try {
       await context.addInitScript((settings) => localStorage.setItem("ovis:settings", settings), JSON.stringify({ ...SETTINGS, theme }));
+      // the PC's server names the account service its page signs in with (server/static.ts)
       await context.route((address) => address.href.startsWith(url) && (address.pathname.endsWith("/") || address.pathname.endsWith("/index.html")), async (route) => {
         const response = await route.fetch();
         await route.fulfill({ response, body: (await response.text()).replace("</head>", `<meta name="ovis-pc-account-service" content="${service}" />\n</head>`) });
@@ -482,11 +493,13 @@ async function accountPcList(browser: import("playwright-core").Browser, url: st
       });
       assert.deepEqual(style, { listStyle: "none", display: "flex", border: "solid" }, `the account's PCs are styled rows in My devices (${width}px, ${theme})`);
       assert.equal(await page.locator("[data-section='account'] .relay-shell-pcs").count(), 0, "the Account group does not list the PCs a second time");
+      // no row claims to open its PC: this page cannot tell whether the browser is paired with it at app.ovis.sh.
       assert.equal(await list.getByRole("link", { name: "Open in browser" }).count(), 0, `no account PC row has an Open of its own (${width}px, ${theme})`);
       const open = list.locator(".account-pcs-open");
       assert.deepEqual(await open.getByRole("link").evaluateAll((links) => links.map((link) => [link.textContent, link.getAttribute("href"), link.getAttribute("target")])),
         [["Open app.ovis.sh", "https://app.ovis.sh/", "_blank"]], `one link under the account's PCs goes to the hosted app (${width}px, ${theme})`);
       assert.equal(await open.locator(".settings-description").textContent(), "To open a PC of your account in a browser, sign in to this account at app.ovis.sh.");
+      // Remove only on the PC the account has not heard from for two days: one in use would be listed again
       assert.deepEqual(await accountRows.getByRole("button").evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label"))), ["Remove office-mac from the list"], `only the PC not heard from is offered for removal (${width}px, ${theme})`);
       const fit = await list.locator(".devices-row").filter({ hasText: /home-server|office-mac|app\.ovis\.sh/ }).evaluateAll((rows) => rows.map((row) => {
         const box = row.getBoundingClientRect();
@@ -527,6 +540,12 @@ async function accountPcList(browser: import("playwright-core").Browser, url: st
   console.log("PASS the account's PCs are styled rows of My devices at 390 and 1280px, light and dark: one link to the hosted app, Remove only on a PC not heard from, behind a confirm");
 }
 
+/**
+ * Continue with Google on a PC's own page: the button shows under GitHub's only while the account
+ * service lists Google for a PC's page (`GET /v1/providers`), and once signed in the Account group
+ * lists the account's ways to sign in, with Remove on every one but the one this page signed in
+ * with. The account service is a route of this context: nothing reaches Google, GitHub or account.ovis.sh.
+ */
 async function accountGoogle(browser: import("playwright-core").Browser, url: string): Promise<void> {
   const service = "https://account.ovis.sh";
   for (const width of [390, 1280] as const) {
@@ -802,6 +821,8 @@ async function rowSentences(browser: import("playwright-core").Browser, url: str
     await page.mouse.move(2, 2);
     await sentence.waitFor({ state: "detached" });
 
+    // a search hides a row while its sentence shows: the row is removed under a still pointer, which sends no
+    // leave, and the sentence does not come back with the row once the pointer is elsewhere
     const search = page.getByRole("searchbox", { name: "Search settings", exact: true });
     await search.fill("densit");
     await control.waitFor();
@@ -869,6 +890,7 @@ async function rowSentences(browser: import("playwright-core").Browser, url: str
     assert.equal(await size.evaluate((field) => field === document.activeElement), true);
     assert.equal(await sentence.count(), 0, "a click into a field shows no sentence");
 
+    // a pen that cannot hover has only its tap: on the name it opens the sentence in the row, as a finger's does.
     // The events such a pen sends, dispatched: the browser's own pen input gives a page no click here
     await appearance(page);
     await density.locator(".settings-label").evaluate((name) => {
@@ -906,6 +928,8 @@ async function rowSentences(browser: import("playwright-core").Browser, url: str
     await appearance(page);
     assert.equal(await describes(page.getByRole("textbox", { name: "Terminal font", exact: true })), await sentenceOf("Terminal font"), "the font field is described by its row's sentence");
 
+    // a stepper's button at its end keeps the keyboard's focus: it says it goes no further (aria-disabled) and reads as
+    // a disabled one, where a disabled button would drop the focus out of Settings to the page; a press there does nothing
     const typedSize = page.getByRole("textbox", { name: "Terminal font size", exact: true });
     const larger = page.getByRole("button", { name: "Increase terminal font size", exact: true });
     const smaller = page.getByRole("button", { name: "Decrease terminal font size", exact: true });

@@ -1,3 +1,7 @@
+/**
+ * A hidden recent tab's view, parsed on its return, is history: a query in it is not answered into
+ * the pane and a copy request in it does not write the clipboard.
+ */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -106,6 +110,7 @@ try {
       await pickTab(page, tabA!);
       await page.waitForFunction((pane) => document.querySelector(`[data-layout-pane="${pane}"] .xterm`)?.classList.contains("enable-mouse-events"), a, { timeout: 10_000 });
       await page.waitForFunction(({ pane, start }) => window.viewFixture.sent.slice(start).some((sent) => sent.type === "attach" && sent.pane_id === pane), { pane: a, start: back }, { timeout: 10_000 });
+      // the reply xterm would type is sent as the view parses: the attach's own output, parsed after it, settles that
       await frame(a).locator("[data-pane-content]").waitFor();
       const after = await sentSince(back);
       const replies = after.filter((sent) => (sent.type === "input" || sent.type === "keys") && /\x1b\[\d+;\d+R/.test(String(sent.text ?? "")));
@@ -119,6 +124,9 @@ try {
       console.log(`PASS ${width}: a hidden tab's view is drawn on return without answering its queries or copying`);
       if (phone) continue;
 
+      // A hidden page drops a recent tab's view, and the terminal reset it began with. Back on that
+      // tab before its next view frame, the attach starts from a reset, as any tab's does: a mode the
+      // old screen set (mouse tracking, which the replay's clear keeps) does not outlive it.
       await page.evaluate((pane) => {
         for (const socket of window.viewFixture.sockets) socket.push({ type: "pty-data", pane_id: pane, data: "\x1b[?1000h" });
       }, a);

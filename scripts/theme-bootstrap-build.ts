@@ -1,3 +1,9 @@
+/**
+ * The theme boot script (src/theme-bootstrap.ts) as the page loads it: one classic, blocking
+ * <script src> in <head>, ahead of the stylesheet and the app's modules, so the saved theme is on
+ * the document before anything is painted. A module, async or deferred script could run after the
+ * first paint, and an inline one is refused by the app's `script-src 'self'`.
+ */
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "vite";
@@ -25,6 +31,10 @@ export function bootstrapUrl(base: string, file: string): string {
 
 const TITLE_END = "</title>";
 
+/**
+ * The page with the script right after its <title>: below the theme-color meta it updates, above
+ * the stylesheet and the module scripts Vite adds at the end of <head>.
+ */
 export function injectBootstrap(html: string, src: string): string {
   const at = html.indexOf(TITLE_END);
   if (at === -1) return html;

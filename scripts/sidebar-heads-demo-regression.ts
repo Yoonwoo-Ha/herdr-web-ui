@@ -8,6 +8,8 @@ import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { SUPPORTED_ENTRIES } from "../src/lib/themes.ts";
 
+// the demo's one PC as two, each with the demo's own roster: only this disposable fixture rewrites it (as
+// scripts/sidebar-spacing-demo-regression.ts does)
 const TWO_PCS = String.raw`(() => {
   if (localStorage.getItem("heads-fixture:two-pcs") !== "1") return;
   const fetchDemo = window.fetch.bind(window), EventSourceDemo = window.EventSource;

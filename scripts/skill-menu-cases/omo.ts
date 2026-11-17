@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import type { SlashCommand } from "../../shared/protocol.ts";
 import { agentBuiltins, type CaseRun } from "../skill-menu-case.ts";
 
+// omo's `/` and `$` skill menu and its skill chips: its own builtins with three of its skills and
+// two of the person's own, and a chat that ends with a user turn invoking two of them.
 export const agent = "omo";
 
+/** omo's own descriptions, as long as omo 5.1.34 ships them, and one of the person's own skills */
 const SKILLS: Record<string, { description: string; origin: "bundled" | "user" }> = {
   "ulw-plan": { origin: "bundled", description: "Explore-first planning consultant that writes one decision-complete work plan before coding. Use only on an explicit user request for the ulw-plan workflow or a plan before implementation; it never self-activates on a bare ulw run." },
   "mass-ulw": { origin: "bundled", description: "Drives dependency-ordered child work through the native workflow tool, each phase's stages defined up front in one run, with retry/amend/send recovery. Use when the user asks for mass-ulw, a DAG of tasks, or fan-out work where some tasks must wait on others." },
@@ -15,6 +18,7 @@ export const commands: SlashCommand[] = [
   ...agentBuiltins("omo"),
   ...Object.entries(SKILLS).map(([name, { description, origin }]) => ({ name: `skill:${name}`, description, source: "skill" as const, origin })),
 ];
+/** the user turn the omo chat ends with: one skill typed inline, one recorded by omo as its placeholder */
 export const turnText = "please run $skill:mass-ulw now, then [skill: ulw-plan] for what is left";
 export const chips = ["$skill:mass-ulw", "[skill: ulw-plan]"];
 

@@ -1,4 +1,11 @@
-/** Usage: UI_EVIDENCE_DIR=<dir> bun scripts/sidebar-filter-demo-regression.ts   (SIDEBAR_FILTER_CASE=en|ko runs one half) */
+/**
+ * Purpose: the sidebar's label filter on the real client over the demo's fixture transport, with two
+ * connected PCs: what a query keeps (matches, their ancestors and descendants, the selection as context),
+ * in the roster's order with its pins and folds; that nothing is typed into a terminal, focused in herdr,
+ * moved, stored or sent; that a live roster change and an offline PC show through it; and the screenshots
+ * of every state at 390 and 1440, light and dark, Korean at 390 (UI_EVIDENCE_DIR).
+ * Usage: UI_EVIDENCE_DIR=<dir> bun scripts/sidebar-filter-demo-regression.ts   (SIDEBAR_FILTER_CASE=en|ko runs one half)
+ */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +15,7 @@ import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
+// No live session is read, and nothing leaves the loopback server below.
 const app = mkdtempSync(join(tmpdir(), "herdr-sidebar-filter-"));
 const evidence = process.env["UI_EVIDENCE_DIR"];
 const LONG_LABEL = "release-candidate-verification-pipeline-with-an-unbroken-name-that-keeps-going";
@@ -165,6 +173,7 @@ async function rosterView(page: Page) {
   });
 }
 
+/** Everything this page keeps: folds, pins and the rest, to prove a filter writes none of it and the query is nowhere. */
 const storageView = (page: Page) => page.evaluate(() => {
   const apart = new Set(["ovis:chat-positions", "ovis:agent-state-since"]);
   const read = (store: Storage) => Object.fromEntries(Object.keys(store).filter((key) => !apart.has(key)).sort().map((key) => [key, store.getItem(key)]));
@@ -214,6 +223,11 @@ async function waitWorkspaceIds(page: Page, predicate: string): Promise<void> {
 }
 
 interface Scene { phone: boolean; theme: Theme; language: Language }
+/**
+ * The demo ends the api pane's turn 4.5 s after each load (site/demo/transport.ts), on both PCs' rows (the fixture
+ * passes its status to the build PC's copy too) or already in the first roster when that comes later, and both rows
+ * leave for the resting part. Every roster a step compares with another is taken after that, never across it.
+ */
 async function turnEnded(page: Page): Promise<void> {
   await page.waitForFunction((api) => ["local", "build"].every((machine) =>
     document.querySelector(`.agents-sidebar .agent-item[data-machine="${machine}"][data-pane="${api}"] [data-status="done"]`) !== null), panes.api);
@@ -255,6 +269,8 @@ async function capture(page: Page, scene: Scene, state: string): Promise<void> {
   const path = join(evidence, file);
   await page.evaluate(() => document.fonts.ready);
   await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation.effect?.getComputedTiming().endTime !== Infinity).map((animation) => animation.finished.catch(() => undefined))));
+  // a touch device's emulated pointer is drawn into the screenshot where the last tap left it: it leaves the page first
+  // (a held button keeps its :active state), and the shot waits for the frame that draws it gone
   if (scene.phone) {
     await page.mouse.move(-50, -50);
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -330,6 +346,10 @@ async function measure(page: Page): Promise<Record<string, unknown>> {
   });
 }
 
+/**
+ * Whether the browser draws its suggestions picker arrow in the focused field: the arrow is an element of the
+ * input's user-agent shadow tree (pierced by CDP), and a box model exists only for one that is drawn.
+ */
 async function pickerArrowDrawn(page: Page): Promise<boolean> {
   const session = await page.context().newCDPSession(page);
   try {
@@ -352,6 +372,7 @@ async function pickerArrowDrawn(page: Page): Promise<boolean> {
   } finally { await session.detach(); }
 }
 
+/** AA for the filter's own words (4.5:1 for text, 3:1 for the clear's glyph) and a finger's 44 px clear on a phone */
 function assertMeasured(m: Record<string, any>, phone: boolean, name: string): void {
   const texts = [m["input"], m["input"]?.placeholder, ...m["selectedNote"], ...m["contextWorkspace"], ...m["contextAgent"], m["noMatch"]].filter(Boolean);
   for (const t of texts) assert.ok(t.contrast >= 4.5, `${name}: "${t.text}" has contrast ${t.contrast}, below 4.5:1`);
@@ -391,6 +412,11 @@ const repoKeyOf = (page: Page, workspaceId: string) => page.evaluate((id) => {
   return roster[0]!.snapshot.workspaces.find((workspace) => workspace.workspace_id === id)?.worktree?.repo_key ?? null;
 }, workspaceId);
 
+/**
+ * A phone is a touch screen: its shot hides the pointer by moving it away, and a held pointer moved over a list
+ * that scrolls is a pan, which a touch screen never turns into a tap; so the pressed look is the browser's own
+ * :active, forced on the clear for the shot, and the clear is then tapped.
+ */
 async function pressClear(page: Page, scene: Scene): Promise<void> {
   const box = (await clearButton(page).boundingBox())!;
   if (!scene.phone) {

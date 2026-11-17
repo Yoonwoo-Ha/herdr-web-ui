@@ -9,6 +9,7 @@ import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { openSettingsPage } from "./settings-page.ts";
 
+// Only the disposable demo build is served; no live session is read.
 const app = mkdtempSync(join(tmpdir(), "herdr-sidebar-peek-"));
 const evidence = process.env["UI_EVIDENCE_DIR"];
 
@@ -55,6 +56,8 @@ try {
             page.on("pageerror", (error) => errors.push(error.message));
             await page.clock.install();
             await context.addInitScript((value) => { if (localStorage.getItem("ovis:settings") === null) { localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme: value })); localStorage.setItem("ovis:sidebar-filter-shown", "true"); } }, theme);
+            // the row opened from the peek is the Claude pane's: its turn stays at work, or on a slow runner
+            // the end the demo times 4.5s in folds that row away first
             await context.addInitScript(() => Reflect.set(window, "__ovisDemoHoldTurn", true));
 
             await page.goto(url("&sidebar=hidden"));

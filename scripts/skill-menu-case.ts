@@ -6,8 +6,10 @@ import { paneCommands } from "../server/commands.ts";
 import type { SlashCommand } from "../shared/protocol.ts";
 
 
+/** the demo's docs pane's folder: no agent's loader finds anything of this machine's there */
 const DEMO_CWD = "/home/demo/.herdr/worktrees/cli-tools/changelog";
 
+/** An agent's own builtins, as its loader answers over a home that does not exist: none of this machine's skills. */
 export function agentBuiltins(agent: string): SlashCommand[] {
   return paneCommands(agent, DEMO_CWD, join(tmpdir(), "herdr-skill-menu-demo-no-home"), {}).filter((command) => command.source === "builtin");
 }

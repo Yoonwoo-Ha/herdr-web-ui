@@ -1,5 +1,10 @@
 import type { Page } from "playwright-core";
 
+/**
+ * Waits for a sheet (Settings by default, or the palette) to finish rising: on a phone it rises from
+ * the bottom edge, and a click aimed at it while it rises lands where its control was, not where it
+ * is (on a loaded runner, the X's click landed on Settings' header under it, and Settings stayed open).
+ */
 export async function sheetRisen(page: Page, selector = ".settings-dialog"): Promise<void> {
   await page.waitForFunction((selector) => document.querySelector(selector)?.getAnimations().length === 0, selector);
 }

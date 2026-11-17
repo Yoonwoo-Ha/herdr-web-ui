@@ -31,6 +31,7 @@ const ROWS = [
   "|가나다라마바사|",
   `|${ICONS.join(" ")} abcdefghi|`,
 ];
+// JetBrains Mono Web gives every machine the same 0.6em cell
 const TERMINAL_FONT = "Ovis Hangul Mono, Late Stand-in, JetBrains Mono Web";
 const LATE_FACES = [/\/SymbolsNerdFontMono-Regular[^/]*\.woff2$/, /\/OvisHangulMono-Regular[^/]*\.woff2$/];
 // the stand-ins, as narrow as WebKit's: an icon inside its one cell, Hangul at Apple SD Gothic Neo's width
@@ -115,6 +116,7 @@ setInterval(() => {}, 1 << 30);
   await Promise.race([asked, page.waitForTimeout(15000).then(() => {
     throw new Error(`the late faces were not both asked for: ${JSON.stringify(fetched)}`);
   })]);
+  // xterm draws the rows with the stand-ins in the frame after the font is set
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
   type Gate = { hold: () => void; open: () => void; arrived: (face: FontFace) => Promise<FontFace> };

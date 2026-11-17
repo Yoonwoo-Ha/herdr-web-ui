@@ -20,6 +20,10 @@ const focusedName = (page: Page) => page.evaluate(() => {
 });
 
 
+/**
+ * A stand-in push service, put in after the demo transport as push-health-demo-regression.ts puts its own: Turn on
+ * alerts makes a subscription the demo's server takes, unless `pushStandIn.fails` is set (Brave with push off).
+ */
 const PUSH_STAND_IN = `<script>(() => {
   const push = { fails: false };
   window.pushStandIn = push;
@@ -76,9 +80,11 @@ try {
         localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme: value, palette: "codex", darkTheme: "codex", lightTheme: "codex" }));
         if (sessionStorage.getItem("seeded") === null) { localStorage.setItem("ovis:setup-guide", guide); sessionStorage.setItem("seeded", "1"); }
       }, [theme, WELCOME] as const);
+      // notifications allowed, and every one shown is recorded instead of reaching the desktop
       await context.addInitScript(() => {
         const shown: string[] = [];
         (window as unknown as { shownAlerts: string[] }).shownAlerts = shown;
+        // not yet asked: the guide asks only on Turn on alerts, and each ask is counted
         const asked = { count: 0 };
         (window as unknown as { permissionAsks: typeof asked }).permissionAsks = asked;
         class RecordedNotification { static permission: NotificationPermission = "default"; static requestPermission = () => { asked.count += 1; RecordedNotification.permission = "granted"; return Promise.resolve("granted" as NotificationPermission); }; constructor(title: string) { shown.push(title); } addEventListener() {} close() {} }
@@ -156,6 +162,7 @@ try {
         await settled(page);
         assert.equal(await focusedName(page), "Stay in touch", `the phone and alerts step's title takes the keyboard ${at}`);
         assert.equal((await steps.locator('[aria-current="step"]').textContent())?.replace(/\s+/g, ""), "Phoneandalerts", `the head marks Phone and alerts as the current step ${at}`);
+        // nothing asked the browser for permission on the way here; Turn on alerts asks it once
         const asks = () => page.evaluate(() => (window as unknown as { permissionAsks: { count: number } }).permissionAsks.count);
         assert.equal(await asks(), 0, `no permission asked before Turn on alerts ${at}`);
         await dialog.getByRole("button", { name: "Turn on alerts", exact: true }).click();
@@ -333,6 +340,9 @@ try {
     }
   }
 
+  // The usage-counts notice in the guide is the consent counts wait for (components/TelemetryControls.tsx): it is
+  // recorded only once its line is wholly in view and nothing covers it, and the page's own copy is not drawn under
+  // the guide. The demo sends no counts, so this page's /api/telemetry is a recorder that says they are on and unseen.
   {
     const context = await browser.newContext({ viewport: { width: 1280, height: 420 }, locale: "en-US", colorScheme: "dark" });
     await context.addInitScript((guide) => {
@@ -377,6 +387,7 @@ try {
       await frames(4);
       assert.equal(await seen(), 0, "a line below the fold is not recorded as seen");
       assert.equal(await page.locator(".update-notice.is-telemetry").count(), 0, "the page's own line is not drawn under the guide");
+      // a native showModal() dialog over the guide (as Add PC opens) covers the line too, though it has no aria-modal (#3882)
       await page.evaluate(() => { const native = document.createElement("dialog"); native.id = "native-over"; native.textContent = "native"; document.body.append(native); native.showModal(); });
       await line.evaluate((node) => node.scrollIntoView({ block: "nearest" }));
       await frames(4);
@@ -390,6 +401,7 @@ try {
       await line.evaluate((node) => node.scrollIntoView({ block: "nearest" }));
       await frames(4);
       assert.equal(await seen(), 0, "a line under Settings is not recorded as seen");
+      // not even tried: a covered line makes no acknowledgement attempt, failed or not (#3894 CodeRabbit)
       assert.equal(await page.evaluate(() => (window as unknown as { counts: { failed: number } }).counts.failed), 0, "no acknowledgement is attempted while Settings covers the line");
       await page.keyboard.press("Escape");
       await settings.waitFor({ state: "detached" });
@@ -399,6 +411,8 @@ try {
       await page.waitForFunction(() => (window as unknown as { counts: { seen: unknown[] } }).counts.seen.length === 1);
       await dialog.locator(".setup-note-usage").getByRole("button", { name: "Turn off", exact: true }).waitFor({ state: "attached" });
       assert.equal(await seen(), 1, "the next step's copy does not record it again");
+      // Turn off in the guide's copy is every copy's: the guide closed, the page's own line does not come back and
+      // no settings snapshot is told while counts are off
       await dialog.locator(".setup-note-usage").getByRole("button", { name: "Turn off", exact: true }).click();
       await page.waitForFunction(() => !(window as unknown as { counts: { on: boolean } }).counts.on);
       await dialog.locator(".setup-note-usage").waitFor({ state: "detached" });
@@ -485,6 +499,9 @@ try {
     }
     console.log(`PASS the phone and alerts step's body does not scroll in any state (${at})`);
   }
+  // Opening the guide reads nothing, sends nothing and turns nothing on: open then Set up later leaves no usage read, no
+  // shared-settings write, and this browser's settings byte for byte as they were. Only Continue on the agent step (the
+  // user's own press) reads the plan usage
   {
     const context = await browser!.newContext({ viewport: { width: 1920, height: 1080 }, locale: "en-US", colorScheme: "dark" });
     await context.addInitScript(([guide]) => {
@@ -537,6 +554,8 @@ try {
     console.log("PASS opening the guide and Set up later read no usage, write no shared setting and leave the settings as they were; Continue reads the usage");
   }
 
+  // Anywhere's QR code, then Tailscale (a new pairing code: the PC keeps one), then Anywhere again: the relay asks for a
+  // fresh offer carrying the PC's current code, never shows the old one.
   {
     const context = await browser!.newContext({ viewport: { width: 1920, height: 1080 }, locale: "en-US", colorScheme: "dark" });
     await context.addInitScript(([guide]) => {
@@ -588,6 +607,8 @@ try {
     console.log("PASS back to Anywhere after Tailscale asks for a fresh relay offer; turning plan usage off forgets the remembered Continue");
   }
 
+  // While the relay starts (Turn on pressed, its answer not in), the other ways wait: picking one could let the start
+  // close the device gate and spend that way's pairing code (#3962 CodeRabbit)
   {
     const context = await browser!.newContext({ viewport: { width: 1920, height: 1080 }, locale: "en-US", colorScheme: "dark" });
     await context.addInitScript(([guide]) => {
@@ -657,6 +678,7 @@ try {
     console.log("PASS on a phone the phone step opens at its top, and Tailscale and Same Wi-Fi work for a browser on the PC (390x844)");
   }
 
+  // A pairing code runs out: the QR code goes back to the plain address, and New code asks for another on a press
   {
     const context = await browser!.newContext({ viewport: { width: 1920, height: 1080 }, locale: "en-US", colorScheme: "dark" });
     await context.addInitScript(([guide]) => {
@@ -683,11 +705,14 @@ try {
     assert.equal(await coded.count(), 0, "a code that ran out leaves the QR code");
     await side.getByRole("button", { name: "New code", exact: true }).click();
     await coded.waitFor();
+    // a store's QR code uses no pairing code: the way under it keeps its own
     await side.getByRole("button", { name: "Download on the App Store" }).click();
     await side.getByRole("img", { name: /^QR code that opens App Store/ }).waitFor();
     await side.getByRole("tab", { name: /Tailscale/ }).click();
     await coded.waitFor();
     assert.equal(await side.getByRole("button", { name: "New code", exact: true }).count(), 0, "a store badge leaves the way's code as it was");
+    // the PC keeps one pairing code: another way's tab (here Anywhere's) may replace it, so a way left drops its code,
+    // and back in view it shows New code, never a code the PC no longer takes
     await coded.waitFor();
     await side.getByRole("tab", { name: /^Anywhere/ }).click();
     await side.getByRole("tab", { name: /Tailscale/ }).click();

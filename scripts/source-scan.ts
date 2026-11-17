@@ -12,6 +12,10 @@ export function fail(offenders: string[], instruction: string): void {
   if (offenders.length) throw new Error(`${instruction}\n  ${offenders.join("\n  ")}`);
 }
 
+/**
+ * A `/` that starts a regular expression literal is not told apart from division, which only
+ * matters for a regex holding a quote or `//`; the files these tests read have none that matter.
+ */
 export function stripComments(text: string, { strings = false } = {}): string {
   let out = "";
   for (let i = 0; i < text.length;) {

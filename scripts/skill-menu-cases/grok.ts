@@ -2,8 +2,13 @@ import assert from "node:assert/strict";
 import type { SlashCommand } from "../../shared/protocol.ts";
 import { agentBuiltins, type CaseRun } from "../skill-menu-case.ts";
 
+// Grok's `/` skill menu and its skill chips, from the upstream docs only (grok is not installed
+// here): its README's slash table, one skill of the person's own, two of the project's and one
+// from a plugin, each named `name` as grok types it, and a chat that ends with a user turn invoking
+// two of them. Grok has no `$` syntax: "x $" opens nothing.
 export const agent = "grok";
 
+/** skills as grok loads them from ~/.grok/skills, ./.grok/skills and a plugin's skills directory */
 const SKILLS: Record<string, { description: string; origin: "user" | "project" | "plugin" }> = {
   commit: { origin: "user", description: "Create well-formatted git commits following conventional commit standards. Use when the user wants to commit changes or asks for /commit." },
   "pdf-tools": { origin: "project", description: "Extracts text and tables from PDF files with pdftotext and pdfplumber. Use when a PDF is attached or named; never for scanned pages, which need OCR first." },

@@ -1,3 +1,11 @@
+/**
+ * Typing the socket accepted just before its connection closes (#2587), on the real client over the
+ * demo's fixture transport: the frames leave the page but never reach the server (a relay carrier that
+ * stopped before the mux wrote them, or a socket gone half-open), then the connection closes. Nothing
+ * confirmed them, so the text comes back as held input for the user to send or discard, and nothing is
+ * sent on its own after the reconnect. Held text that looks like a key stays on screen but is never
+ * written to storage.
+ */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

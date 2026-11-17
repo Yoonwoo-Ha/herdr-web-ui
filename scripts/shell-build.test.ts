@@ -56,6 +56,7 @@ describe("the shell's page", () => {
   });
 
   it("draws a page whose scripts were not asked for in a frame of its own that runs none, and never writes it into its own document", () => {
+    // anything but `scripts: true` is a page without its scripts: a message that says nothing about them too
     for (const scripts of [false, undefined, "true", 1]) {
       const { parent, calls, frames, listeners, fire } = renderHost();
       fire({}, { type: "ovis-render", html: "foreign", scripts });
@@ -73,6 +74,7 @@ describe("the shell's page", () => {
     expect(html).toContain(SHELL_META);
     expect(indexHtml).not.toContain('name="ovis-shell"');
     expect(html.indexOf(SHELL_META)).toBeLessThan(html.indexOf("</head>"));
+    // the blocking theme boot script reads the mode where it stands, whichever plugin writes first
     const script = '<script src="/boot.js">';
     for (const page of [injectBootstrap(html, "/boot.js"), shellIndexHtml(injectBootstrap(indexHtml, "/boot.js"))]) {
       expect(page.indexOf(SHELL_META)).toBeGreaterThan(-1);

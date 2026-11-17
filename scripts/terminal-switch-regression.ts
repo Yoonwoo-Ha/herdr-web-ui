@@ -111,12 +111,14 @@ try {
       const warm = frames.slice(start);
       console.log(JSON.stringify({ width, theme, baseline, samples, attaches: warm.filter((frame) => frame.type === "attach").length, detaches: warm.filter((frame) => frame.type === "detach").length }));
       if (!baseline) {
+        // A hidden tab holds no attach, and so no input: only the tab on screen is attached.
         const attached = new Set<string>();
         for (const sent of frames) {
           if (sent.type === "attach" && sent.pane_id) attached.add(sent.pane_id);
           if (sent.type === "detach" && sent.pane_id) attached.delete(sent.pane_id);
         }
         assert.deepEqual([...attached], [panes[0]], "only the tab on screen holds the pane's attach");
+        // its screen stays current through herdr's read-only view instead
         assert.ok(warm.some((sent) => sent.type === "watch" && sent.pane_id === panes[1]), "a hidden recent tab watches its pane");
       }
       if (evidence) await page.screenshot({ path: join(evidence, `terminal-switch-${width}-${theme}.png`) });
