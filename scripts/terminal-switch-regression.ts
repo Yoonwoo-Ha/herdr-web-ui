@@ -1,4 +1,3 @@
-/** Recent terminal switches against owned panes, with click-to-painted-content measurements. */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
@@ -62,7 +61,6 @@ try {
         await ready(id);
       };
       await ready(panes[0]!);
-      // A cold switch: the tab left behind starts its view only after the selected pane's attach
       const cold = frames.length;
       const viewStarted = Promise.withResolvers<void>();
       const viewTimeout = setTimeout(() => viewStarted.reject(new Error("the tab left behind never watched its pane")), 10_000);
@@ -113,19 +111,16 @@ try {
       const warm = frames.slice(start);
       console.log(JSON.stringify({ width, theme, baseline, samples, attaches: warm.filter((frame) => frame.type === "attach").length, detaches: warm.filter((frame) => frame.type === "detach").length }));
       if (!baseline) {
-        // A hidden tab holds no attach, and so no input: only the tab on screen is attached.
         const attached = new Set<string>();
         for (const sent of frames) {
           if (sent.type === "attach" && sent.pane_id) attached.add(sent.pane_id);
           if (sent.type === "detach" && sent.pane_id) attached.delete(sent.pane_id);
         }
         assert.deepEqual([...attached], [panes[0]], "only the tab on screen holds the pane's attach");
-        // its screen stays current through herdr's read-only view instead
         assert.ok(warm.some((sent) => sent.type === "watch" && sent.pane_id === panes[1]), "a hidden recent tab watches its pane");
       }
       if (evidence) await page.screenshot({ path: join(evidence, `terminal-switch-${width}-${theme}.png`) });
       if (!baseline) {
-        // Output a hidden tab's view receives is kept unparsed while hidden and is on screen on its return.
         const hidden = `OVIS-HIDDEN-${width}-${theme}`;
         const delivered = Promise.withResolvers<void>();
         const deliveredTimeout = setTimeout(() => delivered.reject(new Error("the hidden tab's view never received the output")), 10_000);
@@ -150,7 +145,6 @@ try {
         await frame(panes[1]!).waitFor({ state: "detached" });
         assert.ok(frames.slice(evicting).some((frame) => frame.type === "unwatch" && frame.pane_id === panes[1]), "eviction stops the tab's view");
         assert.equal(await page.locator("[data-layout-pane]").count(), 4, "the existing four-tab bound holds");
-        // every recent tab keeps its screen, but a phone watches only the tab before the current one
         const watching = new Set<string>();
         for (const sent of frames) {
           if (sent.type === "watch" && sent.pane_id) watching.add(sent.pane_id);
@@ -158,7 +152,6 @@ try {
         }
         const phone = width === 390;
         assert.deepEqual([...watching].sort(), (phone ? [panes[3]!] : [panes[0]!, panes[2]!, panes[3]!]).sort(), "only the most recent hidden tabs watch");
-        // Leaving the window stops the cached tabs' views even with releasePaneAway off.
         const away = new Set(panes.slice(phone ? 3 : 2, 4));
         const released = Promise.withResolvers<void>();
         const timeout = setTimeout(() => released.reject(new Error("cached views were not stopped")), 5000);
@@ -167,7 +160,6 @@ try {
           if (message.type === "unwatch") away.delete(message.pane_id);
           if (away.size === 0) released.resolve();
         };
-        // Subscribe before blur, including already-open sockets.
         for (const socket of sockets) socket.on("framesent", observe);
         try {
           await page.evaluate(() => {
@@ -179,7 +171,6 @@ try {
           clearTimeout(timeout);
           for (const socket of sockets) socket.off("framesent", observe);
         }
-        // Coming back to the window watches the recent tabs again.
         const watched = new Set(panes.slice(phone ? 3 : 2, 4));
         const rewatched = Promise.withResolvers<void>();
         const rewatchTimeout = setTimeout(() => rewatched.reject(new Error("cached views did not start again on focus")), 5000);

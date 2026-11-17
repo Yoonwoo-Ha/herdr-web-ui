@@ -1,7 +1,3 @@
-/**
- * A recent tab kept live off-screen while another viewer drives the pane at another size: once the
- * tab is selected again its screen must match what a fresh attach at the same size shows.
- */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -18,7 +14,6 @@ import { pickTab } from "./tab-pick.ts";
 const root = realpathSync(mkdtempSync(join(tmpdir(), "ovis-switch-resize-")));
 const evidence = process.env["UI_EVIDENCE_DIR"];
 if (evidence) mkdirSync(evidence, { recursive: true });
-// Draws a screen for the pty's current width: a right-edge marker per row and a line long enough to wrap.
 const draw = join(root, "draw.sh");
 writeFileSync(draw, [
   "label=$1; set -- $(stty size); c=$2",
@@ -75,27 +70,21 @@ try {
     await page.locator(`[data-layout-pane="${id}"] [data-pane-content]`).waitFor();
   };
   const failures: string[] = [];
-  // Each direction: the viewer whose tab is cached, then the one that drives the pty meanwhile.
   for (const [cachedWidth, driverWidth] of [[1280, 390], [390, 1280]] as const) {
     const round = `${cachedWidth}-${driverWidth}`;
     const cached = await viewer(cachedWidth, target, panes);
     await paneSendText(target, `sh ${draw} before-${round}\n`);
     await shows(cached.page, target, `DRAWN-before-${round}`);
     await select(cached.page, panes[1]!);
-    // The other device drives the pane at its own size and the program draws for it.
     const driver = await viewer(driverWidth, target, panes);
     await paneSendText(target, `sh ${draw} hidden-${round}\n`);
     await shows(driver.page, target, `DRAWN-hidden-${round}`);
     await driver.close();
-    // Back on the tab: whatever it paints on the way (the screen it left, the pane as herdr shows it
-    // now, the pane at its own size) is drawn for one grid, never output for another grid parsed
-    // into its own (a row with two edge markers, the long line twice), and it ends as a fresh attach.
     await cached.page.evaluate(({ pane, row }) => {
       const frames: string[][] = [];
       const matched = Promise.withResolvers<void>();
       const state: { frames: string[][]; expected?: string; matched: Promise<void> } = { frames, matched: matched.promise };
       Object.assign(window, { switchState: state });
-      // armed before the switch: every frame painted from the press on, until one is the fresh attach's screen
       document.addEventListener("pointerdown", () => {
         const grab = () => {
           const frame = document.querySelector(`[data-layout-pane="${pane}"]`);
@@ -115,7 +104,6 @@ try {
     const settled = await cached.page.evaluate(async (expected) => {
       const state = (window as unknown as { switchState: { frames: string[][]; expected?: string; matched: Promise<void> } }).switchState;
       state.expected = expected;
-      // the screen may already match from an earlier frame; the next frame resolves it
       const bound = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000));
       return { matched: await Promise.race([state.matched.then(() => true), bound]), painted: state.frames };
     }, expected.join("\n"));
@@ -125,7 +113,6 @@ try {
       failures.push(`${round}: the returned tab differs from a fresh attach\n--- returned\n${actual.join("\n")}\n--- fresh attach\n${expected.join("\n")}`);
     } else {
       // a frame drawn for a wider grid is shown cut at this one's edge (herdr's own view of it), so only
-      // what no single grid draws marks a torn frame: two edge markers on one row, or the long line twice
       const torn = settled.painted.find((lines) => lines.some((line) => line.split("#").length > 2) || lines.join("\n").split("LONG0014").length > 2);
       if (torn) failures.push(`${round}: a frame painted on return mixes two grids\n${torn.join("\n")}`);
     }

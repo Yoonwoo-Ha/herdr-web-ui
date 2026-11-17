@@ -1,8 +1,3 @@
-/**
- * A herdr-core of a test's own: its session, state, config and runtime folders under `root`, and the
- * environment hc runs in holds nothing of this process's (no inherited HC_*, HOME or XDG_*), so no
- * hc call of the test can reach the user's own core.
- */
 export function isolatedHcEnv(root: string, extra: Record<string, string> = {}): Record<string, string> {
   return {
     PATH: process.env["PATH"] ?? "/usr/bin:/bin",
@@ -17,7 +12,6 @@ export function isolatedHcEnv(root: string, extra: Record<string, string> = {}):
   };
 }
 
-/** Stops the core `env` names, only when it names one of its own (an HC_SOCKET); run in that environment alone. */
 export async function stopIsolatedCore(bin: string, env: Record<string, string>): Promise<void> {
   if (!env["HC_SOCKET"] || !env["HC_SESSION"]) return;
   await Bun.spawn([bin, "server", "stop"], { env, stdout: "ignore", stderr: "ignore" }).exited;

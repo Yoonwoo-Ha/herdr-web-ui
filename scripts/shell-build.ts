@@ -1,18 +1,6 @@
 /**
- * The hosted shell: the same client, built for a static host (Cloudflare Pages, app.ovis.sh)
- * instead of a PC's own server, `vite build --mode shell` -> dist-shell/. A phone that scanned a
- * pairing code opens it and reaches its PC through the Ovis relay (src/lib/relay/boot.ts).
- *
- * Each PC is its own app on that one origin, under `/s/<server_id>/`: an installed app's scope,
- * its service worker and so its push subscription are per PC (one PushSubscription per service
- * worker scope and VAPID key), so a second PC never takes the first one's alerts. The host has
- * no code of its own: `_redirects` answers every such path with the one index.html, the manifest
- * and the worker (200 rewrites, the address stays), and `_headers` carries the policy the PC's
- * server would send, derived from it (server/static.ts `shellContentSecurityPolicy`).
- *
- * The shell is told apart from the server-served build by one meta, `<meta name="ovis-shell"
- * content="relay">`, which only this mode writes: without it the client is the native one and
- * nothing here runs (src/lib/shellMode.ts).
+ * Each PC is its own app under `/s/<server_id>/`: one PushSubscription per service worker scope and VAPID key, so a
+ * second PC sharing a scope would take the first one's alerts.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -20,7 +8,6 @@ import type { Plugin } from "vite";
 import { REGIONAL_APPS } from "../shared/relay-regions.ts";
 import { accountServiceOrigin, DEFAULT_ACCOUNT_SERVICE, IMMUTABLE_CACHE, pagePolicy, REVALIDATE, shellContentSecurityPolicy } from "../shared/web-policy.ts";
 
-/** Vite's `--mode` that builds the shell; the build's output directory. */
 export const SHELL_MODE = "shell";
 export const SHELL_OUT_DIR = "dist-shell";
 
@@ -28,17 +15,6 @@ export const SHELL_META = '<meta name="ovis-shell" content="relay" />';
 
 const MANIFEST_LINK = /<link rel="manifest" href="\/manifest\.webmanifest(\?[^"]*)?"/;
 
-/**
- * index.html as the shell: the meta that names the mode, and the manifest named relative to the
- * page, so a PC's page at `/s/<id>/` installs from `/s/<id>/manifest.webmanifest` (its own scope)
- * and the front page from `/manifest.webmanifest`.
- */
-/**
- * The account metas the shell is built with: `ovis-account-service`, account.ovis.sh unless
- * OVIS_ACCOUNT_SERVICE_URL names another https origin (none when it is `off` or not https, and the
- * shell offers no sign-in), as on the PC's own pages; and `ovis-account-providers` from
- * OVIS_ACCOUNT_PROVIDERS (GitHub alone without it, until the service's own list answers).
- */
 export function accountMetas(env: Record<string, string | undefined>): string[] {
   const origin = accountServiceOrigin(env["OVIS_ACCOUNT_SERVICE_URL"] ?? DEFAULT_ACCOUNT_SERVICE);
   if (origin === null) return [];
@@ -49,23 +25,16 @@ export function accountMetas(env: Record<string, string | undefined>): string[] 
 export function shellIndexHtml(html: string, env: Record<string, string | undefined> = {}): string {
   if (!MANIFEST_LINK.test(html)) throw new Error("index.html must link /manifest.webmanifest for the shell to make it relative");
   const linked = html.replace(MANIFEST_LINK, (_, query: string | undefined) => `<link rel="manifest" href="manifest.webmanifest${query ?? ""}"`);
-  // first in <head>: the theme boot script (scripts/theme-bootstrap-build.ts) runs where it stands and reads the mode
   const head = /<head>\n?/.exec(linked);
   if (head === null) throw new Error("index.html must hold a <head>");
   const at = head.index + head[0].length;
   return `${linked.slice(0, at)}${[SHELL_META, ...accountMetas(env)].map((meta) => `    ${meta}\n`).join("")}${linked.slice(at)}`;
 }
 
-/**
- * The shell's manifest, from the app's: `id`, `start_url` and `scope` relative to the manifest's
- * own address, so at `/s/<id>/manifest.webmanifest` every PC is an app of its own scope (and the
- * front page, at `/manifest.webmanifest`, the origin's). Everything else, icons included, stays.
- */
 export function shellManifest(manifest: string): string {
   return `${JSON.stringify({ ...JSON.parse(manifest) as Record<string, unknown>, id: "./", start_url: "./", scope: "./" }, null, 2)}\n`;
 }
 
-/** The phone apps' id: the Android package and the iOS bundle (app/capacitor.config.json). */
 export const APP_ID = "sh.ovis.app";
 
 /**
@@ -79,8 +48,8 @@ export const ANDROID_APP_FINGERPRINTS = [
   "BD:49:0B:C8:3D:3F:22:C8:55:9E:57:60:C4:7D:71:63:7D:34:22:92:95:82:C9:B4:05:E3:E6:79:AD:8E:29:C6",
 ];
 
-/** The iOS app as Apple names it in a Universal Link: the Apple team, then the bundle id. */
-export const IOS_APP_ID = `5987KT43TJ.${APP_ID}`;
+const APPLE_TEAM_ID = "5987KT43TJ";
+export const IOS_APP_ID = `${APPLE_TEAM_ID}.${APP_ID}`;
 
 /**
  * The files that let the phone apps open a PC's page on app.ovis.sh (a pairing link tapped in a
@@ -99,14 +68,9 @@ export function appLinkFiles(): Record<string, string> {
   };
 }
 
-/** Where the hosted shell's render host for a PC's rendered pages answers (todo 17's page); only its policy is reserved here. */
 export const RENDER_PATH = "/s/:id/~render";
 
-/**
- * Pages `_redirects`: a PC's scope is the shell, its manifest and its worker under its own path.
- * The first matching rule wins, so the files come before the scope's catch-all; a scope named
- * without its slash is sent to it, so the page's relative manifest resolves inside the scope.
- */
+/** Pages `_redirects`: the first matching rule wins, so the files come before the scope's catch-all. */
 export function shellRedirects(): string {
   return [
     "# Each PC's app lives under its own scope, /s/<server_id>/ (scripts/shell-build.ts)",
@@ -119,12 +83,7 @@ export function shellRedirects(): string {
   ].join("\n");
 }
 
-/**
- * Pages `_headers`: the shell's policy on everything, the render host's own policy on its path
- * (the first is detached there: Pages joins a header set twice with a comma), and the caching
- * rules the PC's server applies (server/static.ts): hashed assets for good, the shell, the worker
- * and the manifest revalidated on every load, under a PC's scope too.
- */
+/** Pages joins a header set twice with a comma, so the shell's policy is detached on the render host's path. */
 export function shellHeaders(): string {
   return [
     "# Derived from the PC server's policy: server/static.ts shellContentSecurityPolicy(Object.values(REGIONAL_APPS)) (scripts/shell-build.ts)",
@@ -146,11 +105,6 @@ export function shellHeaders(): string {
   ].join("\n");
 }
 
-/**
- * The same site for Caddy, for a copy of the shell served beside a regional relay
- * (relay/shell-mirror.ts keeps `<root>` current): the rewrites of shellRedirects() and the headers
- * of shellHeaders(), from the same sources. `bun scripts/shell-caddy.ts <site> [root]` prints it.
- */
 export function shellCaddyfile(site: string, root = "/opt/ovis-shell/current"): string {
   if (!/^[a-z0-9.-]+$/.test(site) || !/^\/[\w./-]+$/.test(root)) throw new Error("not a site address or a folder");
   const scope = "^/s/[0-9a-f]{32}";
@@ -169,7 +123,6 @@ export function shellCaddyfile(site: string, root = "/opt/ovis-shell/current"): 
     `\theader @render Content-Security-Policy "${pagePolicy(null)}"`,
     `\theader /assets/* Cache-Control "${IMMUTABLE_CACHE}"`,
     `\theader @revalidate Cache-Control "${REVALIDATE}"`,
-    // as Pages answers it: the first script on app.ovis.sh compares this copy's build with its own
     `\theader /build.json Access-Control-Allow-Origin "*"`,
     `\trespond @hidden 404`,
     `\thandle @render {\n\t\trewrite * /render.html\n\t}`,
@@ -184,7 +137,6 @@ export function shellCaddyfile(site: string, root = "/opt/ovis-shell/current"): 
   ].join("\n");
 }
 
-/** The files the shell build writes beside Vite's output. */
 export function shellFiles(manifest: string): Record<string, string> {
   return {
     "render.html": `<!doctype html><html><head><meta charset="utf-8"><title>Ovis</title></head><body><script>
@@ -216,7 +168,6 @@ parent.postMessage({ type: "ovis-render-ready" }, "*");
   };
 }
 
-/** The Vite plugin for `--mode shell`: the meta in the page, the relative manifest, and the Pages files in the output. */
 export function shellBuild(): Plugin {
   let manifest = "";
   return {

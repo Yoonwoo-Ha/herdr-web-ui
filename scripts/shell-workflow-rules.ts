@@ -1,5 +1,3 @@
-// Rules shared by release.yml's and shell-preview.yml's hosted-shell jobs and their tests
-// (scripts/shell-deploy-workflow.test.ts, scripts/shell-preview-workflow.test.ts).
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, linkSync, writeFileSync, type Dirent } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -9,7 +7,6 @@ export interface Job { needs?: string | string[]; if?: string; env?: Record<stri
 export interface Workflow { on: Record<string, unknown>; env?: Record<string, string>; permissions?: Record<string, string>; jobs: Record<string, Job> }
 
 export const root = join(dirname(new URL(import.meta.url).pathname), "..");
-/** The terms of a condition's top-level `&&`, or none when its top level is an `||`: a term inside `||` does not hold alone. */
 export function topLevelTerms(condition: string): string[] {
   const text = condition.trim().replace(/^\$\{\{([\s\S]*)\}\}$/, "$1").trim();
   const terms: string[] = [];
@@ -46,7 +43,6 @@ export function unreadWorkflowFiles(paths: string[]): string[] {
   });
 }
 
-/** The entries at the top of .github/workflows and under .github/actions (symlinks listed, not followed), as paths from `base`. */
 function workflowEntries(base: string): [string, Dirent][] {
   const top = readdirSync(join(base, ".github/workflows"), { withFileTypes: true }).map((entry): [string, Dirent] => [`.github/workflows/${entry.name}`, entry]);
   const actions = (readdirSync(join(base, ".github/actions"), { recursive: true, withFileTypes: true }) as Dirent[])
@@ -54,12 +50,10 @@ function workflowEntries(base: string): [string, Dirent][] {
   return [...top, ...actions];
 }
 
-/** Every regular file at the top of .github/workflows and under .github/actions, as paths from the repository's root. */
 export function workflowAndActionFiles(): string[] {
   return workflowEntries(root).filter(([, entry]) => entry.isFile()).map(([path]) => path).sort();
 }
 
-/** Why the workflow tests cannot be sure they read every workflow and action: a symlink there (never followed), a file GitHub loads under another spelling, or two names that differ only in case. */
 export function workflowFileProblems(base = root): string[] {
   const entries = workflowEntries(base);
   return entries
@@ -86,7 +80,6 @@ export const DEPLOY_ACTIONS = [
 const steps = (job: Job): Step[] => job.steps ?? [];
 const label = (job: string, step: Step, index: number): string => `${job}.steps[${index}] (${step.name ?? step.uses ?? step.run?.split("\n")[0]})`;
 
-/** Steps of any job that interpolate an expression into a script or hand a later step env or PATH entries. */
 export function scriptProblems(workflow: Workflow): string[] {
   const problems: string[] = [];
   for (const [name, job] of Object.entries(workflow.jobs)) {
@@ -98,7 +91,6 @@ export function scriptProblems(workflow: Workflow): string[] {
   return problems;
 }
 
-/** Scripts of `job` that leave a process running past their step: a `&` job, nohup, setsid or disown. */
 export function backgroundProblems(name: string, job: Job): string[] {
   const problems: string[] = [];
   steps(job).forEach((step, index) => {
@@ -120,7 +112,6 @@ export function actionProblems(name: string, job: Job, allowed: string[]): strin
   return problems;
 }
 
-/** Where the Cloudflare secrets reach in `workflow`, other than the given step of `deployJob`; `!= ''` presence checks are fine. */
 export function secretProblems(workflow: Workflow, deployJob: string, deployStep: number): string[] {
   const problems: string[] = [];
   const holds = (value: unknown): boolean => JSON.stringify(value ?? {}).replace(/secrets\.CLOUDFLARE_\w+ != ''/g, "").includes("secrets.CLOUDFLARE_");
@@ -134,7 +125,6 @@ export function secretProblems(workflow: Workflow, deployJob: string, deployStep
   return problems;
 }
 
-/** Jobs that install packages (and so run their install scripts) with a setup-ci that may save the dependency cache. */
 export function cacheProblems(workflow: Workflow): string[] {
   const problems: string[] = [];
   for (const [name, job] of Object.entries(workflow.jobs)) {
@@ -146,7 +136,6 @@ export function cacheProblems(workflow: Workflow): string[] {
   return problems;
 }
 
-/** What identifies each step of a job: its name, else its action without the SHA, else its script. */
 export const stepList = (job: Job): string[] => steps(job).map((step) => step.name ?? step.uses?.replace(/@.*/, "") ?? step.run!);
 
 /** Runs `script` as GitHub runs a `run:` (`bash -e -o pipefail`) in `cwd` with `env` added to a minimal environment. */
@@ -159,7 +148,6 @@ export async function runScript(script: string, cwd: string, env: Record<string,
   return { code, output: stdout + stderr };
 }
 
-/** What the deploy's unpack step must refuse: a complete shell plus these files, this setup or these tar arguments. */
 const REFUSED: Record<string, { files?: Record<string, string>; setup?: (src: string) => void; args?: string[] }> = {
   "a symlink": { setup: (src) => symlinkSync("/proc/self/environ", join(src, "environ.txt")) },
   "a hardlink": { setup: (src) => linkSync(join(src, "index.html"), join(src, "copy.html")) },
@@ -175,10 +163,6 @@ const REFUSED: Record<string, { files?: Record<string, string>; setup?: (src: st
   "/abs": { files: { "x": "x" }, args: ["-P", "--transform", "s,^\\./x$,/abs,"] },
 };
 
-/**
- * Runs the deploy's unpack step (`script`) against a clean dist-shell tarball and one per refused entry,
- * each with its right SHA-256, and returns each case's exit code and output.
- */
 export async function unpackOutcomes(script: string): Promise<Record<string, { code: number; output: string }>> {
   const outcomes: Record<string, { code: number; output: string }> = {};
   for (const [name, refused] of [["a clean shell", {}], ...Object.entries(REFUSED)] as Array<[string, (typeof REFUSED)[string]]>) {

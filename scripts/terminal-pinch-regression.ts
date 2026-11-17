@@ -20,11 +20,9 @@ async function until(check: () => boolean | Promise<boolean>, label: string): Pr
   }
 }
 
-/** Real phone touch events: live font and badge while pinching, one resize and saved size on release, restore on cancel. */
 export async function checkTerminalPinch(browser: Browser, origin: string, paneId: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
   await context.addInitScript(({ paneId }) => {
-    // Keep the size saved by the gesture when this same page reloads.
     if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
     localStorage.setItem(`ovis:view:${paneId}`, "terminal");
     const touchWindow = window as Window & { wheels_: number; wheelModes_: number[]; remaining_: number[] };
@@ -94,8 +92,6 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
       }
     };
     const release = () => cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-    // a wheel report per three rows of travel: 150 px is more than that even at the largest cell the 22 px font makes;
-    // the drag ends at cy, where a following pinch puts this finger, so that jump is no vertical travel
     const dragOne = async (): Promise<void> => {
       await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: cy - 150, id: 1 }] });
       for (let step = 1; step <= 5; step++) {
@@ -103,20 +99,15 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
       }
     };
 
-    /** one finger drags `distance` px down in `moves` touchmoves; resolves to the wheels it sent, each line mode (1) */
     const swipe = async (distance: number, moves: number): Promise<number> => {
       const before = await probe();
       await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: cy - distance / 2, id: 1 }] });
       for (let step = 1; step <= moves; step++) {
         await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx, y: cy - distance / 2 + distance * step / moves, id: 1 }] });
       }
-      // the finger holds still before it lifts, so the swipe ends where it is: a lift while it moves fast
-      // would glide on (lib/touchFling.ts), which terminal-touch-burst-run.ts measures apart
       const lastMove = await page.evaluate(() => performance.now());
       await page.waitForFunction(([at, still]) => performance.now() - at > still, [lastMove, FLING_STOPPED_MS * 2] as const, { polling: 10 });
       await release();
-      // an attached swipe's reports go out a few per animation frame (lib/touchWheelPacer.ts), and the
-      // pacer sends in every frame while any wait: a frame that sends none means the swipe has drained
       await page.evaluate(() => new Promise<void>((resolve) => {
         const sent = () => (window as Window & { wheels_: number }).wheels_;
         let last = sent();
@@ -136,13 +127,11 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
     const baseline = await probe();
     assert.equal(baseline.fontPx, 13, "baseline font is 13 px");
     assert(!(await badge.isVisible()), "badge is hidden before pinching");
-    // a quick swipe held still before the lift scrolls as far as a slow drag over the same travel: one wheel report per three rows
     const fast = await swipe(300, 2);
     const slow = await swipe(300, 30);
     const expected = 300 / (3 * baseline.cell);
     assert(fast >= Math.floor(expected) - 1 && fast <= Math.ceil(expected), `a 300 px swipe sends about ${expected.toFixed(1)} wheels (sent ${fast})`);
     assert.equal(fast, slow, "a 2-move swipe and a 30-move drag over 300 px send the same wheel count");
-    // a flick shorter than one step still scrolls once it reaches half a step when the finger lifts
     const step = 3 * baseline.cell;
     assert.equal(await swipe(Math.round(step * 0.7), 4), 1, `a flick of 0.7 step (${Math.round(step * 0.7)} px) sends one wheel`);
     assert.equal(await swipe(Math.round(step * 0.3), 4), 0, `a flick of 0.3 step (${Math.round(step * 0.3)} px) sends none`);
@@ -223,7 +212,6 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
     assert.equal((await probe()).fontPx, 20, "partial release keeps the live 20 px font");
     assert.equal((await probe()).saved, 20, "partial release saves 20 px");
     assert(!(await badge.isVisible()), "the first lifted finger hides the size badge");
-    // three wheel steps of travel at the 20 px cell: a broken pinch-stroke guard would send wheels here
     const leftover = 3 * 3 * (await probe()).cell;
     for (let step = 1; step <= 5; step++) {
       await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx - 77, y: cy + leftover * step / 5, id: 1 }] });
@@ -234,8 +222,6 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
     assert((await probe()).wheels > w1, "a fresh one-finger drag scrolls again");
     await release();
 
-    // Settings can restore the size that led to the previous announcement: the next pinch must
-    // clear and restore the same words, rather than silently assigning unchanged text.
     await page.keyboard.press("ControlOrMeta+Shift+Comma");
     await openSettingsPage(page, "Appearance");
     await page.getByRole("button", { name: "Decrease terminal font size", exact: true }).click();
@@ -257,8 +243,6 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
     const repeated = await page.evaluate(() => JSON.parse(document.querySelector(".terminal-font-size")!.nextElementSibling!.getAttribute("data-announcements") ?? "[]"));
     assert.deepEqual(repeated, ["", "Terminal text size 20 px"], "an identical pinch result changes the live region twice");
 
-    // Dispatch both gestures in one task, so the newer one necessarily starts before the old
-    // announcement's animation frame. No clock race or artificial delay can make this pass.
     await page.evaluate(async () => {
       const host = document.querySelector(".pane-terminal")!;
       const status = document.querySelector(".terminal-font-size")!.nextElementSibling!;

@@ -7,9 +7,6 @@ import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
-// A long press on a pane on a touch screen is the phone's own (select text, copy): it does not
-// open the pane menu. A right-click still does. On the unmodified app over the demo's fixture
-// transport: no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-touch-long-press-demo-"));
 
 /**

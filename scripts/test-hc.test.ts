@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isolatedHcEnv, stopIsolatedCore } from "./test-hc.ts";
 
-// A stand-in hc that writes down how it was run: no real core is started or stopped.
 const root = mkdtempSync(join(tmpdir(), "ovis-test-hc-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 const record = join(root, "ran");
@@ -13,7 +12,6 @@ writeFileSync(bin, `#!/bin/sh\nprintf '%s|%s|%s\\n' "$*" "$HC_SOCKET" "$OVIS_CAN
 chmodSync(bin, 0o755);
 
 it("never stops a core when the test's own core was never set up", async () => {
-  // a setup that threw before its environment was made leaves it empty
   await stopIsolatedCore(bin, {});
   expect(existsSync(record)).toBe(false);
 });

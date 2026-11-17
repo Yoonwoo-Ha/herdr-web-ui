@@ -1,12 +1,4 @@
 /**
- * Tests talk to their own herdr: a headless server for the named session
- * `ovis-test` (HERDR_TEST_SESSION overrides), started on first use and left
- * running for the next run. The workspaces, panes and agents the tests create never
- * show in the herdr the user works in.
- *
- * `bun test` loads this first (bunfig.toml); the browser and SSH scripts import it.
- * HERDR_TEST_LIVE=1 keeps the old behaviour: tests use HERDR_SOCKET, else the default
- * session. Without a herdr binary nothing changes, so CI runs as before.
  * HERDR_TEST_MODE=unit points HERDR_SOCKET at a socket that does not exist, so a test that
  * reaches for herdr in a unit run fails instead of working in the user's herdr.
  */
@@ -24,8 +16,6 @@ process.env["TMPDIR"] = realpathSync(tmpdir());
 // herdr socket, in this process and the children tests spawn, whatever XDG_CONFIG_HOME a test sets later
 process.env["OVIS_TEST_USER_XDG_CONFIG_HOME"] ??= process.env["XDG_CONFIG_HOME"] ?? "";
 
-// under bun test, no test runs the account's ssh -G or reads its SSH config: addresses resolve as written, and a test that
-// needs another answer replaces the resolver itself (server/ssh-address.ts)
 if (process.env["NODE_ENV"] === "test") {
   const { literalAddress, sshAddresses } = await import("../server/ssh-address.ts");
   sshAddresses.resolve = async (target) => literalAddress(target);
@@ -70,14 +60,8 @@ export function agentStandIns(dir: string): string {
   return dir;
 }
 
-/** where HERDR_TEST_MODE=unit points HERDR_SOCKET: a socket that does not exist */
 const UNIT_SOCKET = (): string => join(tmpdir(), "ovis-unit-tests-have-no-herdr.sock");
 
-/**
- * HERDR_TEST_MODE=unit for one server-backed unit test file, however it is run: a file run alone
- * (`bun test <file>`) shares this process with the test herdr the preload started, so its servers would
- * reach it. Until the returned call, no herdr answers; that call puts back what was there.
- */
 export function unitHerdrOnly(): () => void {
   const before = { mode: process.env["HERDR_TEST_MODE"], socket: process.env["HERDR_SOCKET"] };
   process.env["HERDR_TEST_MODE"] = "unit";
@@ -89,7 +73,6 @@ export function unitHerdrOnly(): () => void {
   };
 }
 
-/** Point this process (and what it spawns) at the test session, starting its server if needed. */
 export async function useTestHerdr(): Promise<string | null> {
   // Unit tests must not discover or start herdr, even on a developer's PC. Nor may they fall back
   // to the default socket: a bare `HERDR_TEST_MODE=unit bun test` also loads the contract files,
@@ -112,8 +95,6 @@ export async function useTestHerdr(): Promise<string | null> {
   const zdotdir = join(dirname(socket), "zdotdir");
   // Windows panes cannot run the stand-ins (and keep their own PATH)
   const standIns = process.platform === "win32" ? null : join(dirname(socket), "agent-stand-ins");
-  // a server left running from before either directory existed has panes reading those files, or
-  // the user's agents on their PATH: it is stopped once, and started again below
   if ((!existsSync(zdotdir) || (standIns !== null && !existsSync(join(standIns, "muse")))) && await answers(socket)) {
     Bun.spawnSync([herdr, "--session", TEST_SESSION, "server", "stop"]);
     for (const deadline = Date.now() + 15_000; await answers(socket);) {
@@ -144,8 +125,6 @@ export async function useTestHerdr(): Promise<string | null> {
       await Bun.sleep(100);
     }
   }
-  // some tests read "a live workspace" without owning one: keep one resident, as a
-  // session in use always has
   if ((await sessionSnapshot(socket)).workspaces.length === 0) {
     await workspaceCreate({ cwd: homedir(), label: "ovis-test-resident" }, socket);
   }

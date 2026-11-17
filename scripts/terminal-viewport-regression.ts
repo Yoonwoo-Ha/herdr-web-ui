@@ -1,4 +1,3 @@
-/** Search decoration and shared-history paging, with no history scrollbar, against panes owned by this script. */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -52,7 +51,6 @@ try {
     }
   };
   page.on("pageerror", (error) => errors.push(error.message));
-  // Native history moves the way a user moves it: the paging shortcut, one acknowledged page at a time.
   const pageToEdge = async (direction: -1 | 1) => {
     const deadline = Date.now() + 10000;
     await page.locator(".xterm-helper-textarea").evaluate((node: HTMLTextAreaElement) => node.focus());
@@ -73,17 +71,14 @@ try {
     host: getComputedStyle(document.querySelector(".terminal-host")!).backgroundColor,
   }));
   assert.equal(backgrounds.viewport, backgrounds.host, "the terminal gutter follows the light theme instead of showing a black frame");
-  // equal backgrounds prove nothing if both stayed dark: the light theme must actually be on
   const [r, g, b] = (backgrounds.host.match(/\d+(\.\d+)?/g) ?? []).map(Number);
   assert.ok((0.2126 * r! + 0.7152 * g! + 0.0722 * b!) / 255 > 0.5, `the light theme paints a light terminal background (got ${backgrounds.host})`);
   assert.ok((await paneScrollInfo(paneId))!.max_offset_from_bottom > 100, "herdr holds the full history");
   const widths = await page.evaluate(() => ({ grid: document.querySelector(".pane-terminal")!.getBoundingClientRect().width, surface: document.querySelector(".terminal-surface")!.getBoundingClientRect().width }));
   assert.equal(widths.grid, widths.surface, "the grid takes the full width, with no column reserved beside it");
-  // Paging moves native history without reaching the program’s input.
   await page.locator(".xterm-helper-textarea").evaluate((node: HTMLTextAreaElement) => node.focus());
   const inputsBeforePaging = terminalInput.length;
   const pageRows = (await paneScrollInfo(paneId))!.viewport_rows - 1;
-  // a page asked for before the client's first metrics read only asks for that read: press until one is sent
   for (let attempt = 0; ; attempt++) {
     assert.ok(attempt < 10, "the client pages once it has read the pane's metrics");
     const sent = page.waitForRequest((request) => request.url().endsWith("/api/pane/scroll") && request.method() === "POST", { timeout: 3000 }).then(() => true, () => false);
@@ -94,7 +89,6 @@ try {
   await page.keyboard.press("ControlOrMeta+Shift+PageDown");
   await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === 0, "the opposite shortcut returns to the native bottom");
 
-  // Repeated pages accumulate while the first request is held.
   const pagingRelease = Promise.withResolvers<void>();
   let holdFirstPage = true;
   const holdPaging = async (route: import("playwright-core").Route) => {
@@ -124,14 +118,12 @@ try {
     assert.equal((await paneScrollInfo(paneId))!.offset_from_bottom, 0, "Settings blocks the pane's paging control");
     await page.keyboard.press("Escape");
     await page.locator(".xterm-helper-textarea").evaluate((node: HTMLTextAreaElement) => node.focus());
-    // one line stays between pages
     const expected = Math.max(1, (await paneScrollInfo(paneId))!.viewport_rows - 1);
     await page.keyboard.press("ControlOrMeta+Shift+PageUp");
     await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === expected, "native paging keeps one overlap row");
     await page.keyboard.press("ControlOrMeta+Shift+PageDown");
     await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === 0, "native paging down reaches the bottom");
   }
-  // A rebound global PageDown pages up, once; then the defaults come back for the rest of the script.
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   await openSettingsPage(page, "Shortcuts");
   await page.getByRole("combobox", { name: "Scroll pane down", exact: true }).selectOption("off");
@@ -152,11 +144,7 @@ try {
   assert.ok((await paneScrollInfo(paneId))!.offset_from_bottom > 100, "paging reaches the top of native history");
   await pageToEdge(-1);
 
-  // The jump button: absent at the bottom, shown above it, and a click returns to the bottom without
-  // taking the terminal's focus or sending input to the program.
   const jump = page.getByRole("button", { name: "Jump to bottom", exact: true });
-  // herdr is at the bottom once paging returns; the page drops the button only after it reads that
-  // page's answer and draws it, so its going is waited for, not sampled
   await jump.waitFor({ state: "detached" });
   await pageToEdge(1);
   await jump.waitFor();
@@ -171,8 +159,6 @@ try {
   assert.equal(await page.evaluate(() => document.activeElement?.className), "xterm-helper-textarea", "the jump button leaves focus in the terminal");
   assert.equal(terminalInput.length, inputsBeforeJump, "the jump button sends no input to the program");
 
-  // A switch to the chat and back leaves herdr's view where it was: herdr shares it with its TUI and its other
-  // clients, so only a press on the jump button moves it, and back on the terminal that button is shown over it
   await pageToEdge(1);
   await jump.waitFor();
   const shared = (await paneScrollInfo(paneId))!.offset_from_bottom;
@@ -186,8 +172,6 @@ try {
   await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === 0, "the jump button takes the shared view to the bottom");
   await jump.waitFor({ state: "detached" });
 
-  // The metrics poll: a quiet pane at the bottom backs off, output brings it back, and a view scrolled
-  // up into history keeps reading every second, since growing history there may send no output.
   const metricsReads: number[] = [];
   const countRead = (request: import("playwright-core").Request) => {
     if (request.method() === "GET" && request.url().includes("/api/pane/scroll?")) metricsReads.push(Date.now());
@@ -200,7 +184,6 @@ try {
     await Bun.sleep(8000);
     const quietReads = metricsReads.filter((at) => at > quietFrom).length;
     assert.ok(quietReads <= 4, `a quiet pane backs its metrics poll off, read ${quietReads} times in 8 s`);
-    // A failed read on the backed-off poll leaves page keys without metrics; the retry must not wait out the idle backoff.
     let failedAt = 0;
     const failOnce = async (route: import("playwright-core").Route) => {
       if (failedAt || route.request().method() !== "GET") return route.continue();
@@ -223,7 +206,6 @@ try {
     await until(async () => metricsReads.length > beforeOutput, "output wakes the backed-off poll");
     assert.ok(metricsReads[beforeOutput]! - outputAt < 1500, `output brings the next read back within about 1 s, took ${metricsReads[beforeOutput]! - outputAt} ms`);
 
-    // Output alone at the bottom: after its first second a burst reads at the 2 s follow pace, not every 250 ms.
     let streaming = true;
     const stream = (async () => {
       for (let line = 0; streaming; line++) {
@@ -239,9 +221,7 @@ try {
       // fixed wait: proving the follow pace over a window the busy cadence would fill with 16 reads
       await Bun.sleep(4000);
       const followReads = metricsReads.filter((at) => at > followFrom).length;
-      // the follow pace is 2 s, and a read that saw no output in flight backs off by 1 s instead
       assert.ok(followReads <= 6, `a view following output at the bottom reads metrics at the follow pace, read ${followReads} times in 4 s`);
-      // A page on metrics that output has overtaken reads them again first: the program may have entered its alternate screen.
       await until(async () => Date.now() - metricsReads.at(-1)! > 400, "the follow pace leaves the metrics older than the busy cadence");
       const sent: string[] = [];
       const track = (request: import("playwright-core").Request) => { if (new URL(request.url()).pathname === "/api/pane/scroll") sent.push(request.method()); };
@@ -276,8 +256,6 @@ try {
   await page.keyboard.press("ControlOrMeta+Shift+f");
   const find = page.getByRole("search", { name: "Find in terminal", exact: true });
   const input = find.getByRole("searchbox");
-  // Opening Find changes the shared native grid. Search after that geometry reaches herdr,
-  // as pane-find-regression does, rather than racing an attach resize with pane.scroll.
   await until(async () => {
     const native = await paneScrollInfo(paneId);
     return !!native && native.viewport_rows < beforeFindRows
@@ -304,9 +282,6 @@ try {
   const screen = (await page.locator(".xterm-screen").boundingBox())!;
   const wide = await page.evaluate(() => { const row = document.querySelector(".xterm-rows > div"); return row?.getBoundingClientRect().height ?? 0; });
   assert.ok(hit.width > 20 && hit.height > 0 && wide > 0 && hit.x >= screen.x, "wide and combining text has visible cell-aligned emphasis");
-  // An older page write must finish before a newer explicit search moves the pane.
-  // The fetch observer records dispatch synchronously; no timing sleep is needed to prove
-  // Find is waiting while its UI already says Searching… and the POST is held below.
   await page.evaluate((owner) => {
     const original = window.fetch;
     const probe = { released: false, calls: [] as Array<{ path: string; released: boolean }>, restore: () => { window.fetch = original; } };
@@ -341,14 +316,12 @@ try {
       const signal = AbortSignal.timeout(10000);
       signal.addEventListener("abort", () => reject(new Error("scroll POST was not intercepted")), { once: true });
     })]);
-    // A second queued target is obsolete once the user asks Find to choose the viewport.
     await page.keyboard.press("ControlOrMeta+Shift+PageDown");
     await input.fill("history 090: record");
     const explicitResponse = page.waitForResponse((response) => response.url().endsWith("/api/pane/find")
       && response.request().postDataJSON()?.query === "history 090: record" && response.request().postDataJSON()?.jump !== false);
     const refreshedResponse = page.waitForResponse((response) => response.url().endsWith("/api/pane/find")
       && response.request().postDataJSON()?.query === "history 090: record" && response.request().postDataJSON()?.jump === false);
-    // These listeners still terminate quietly if an earlier assertion fails.
     void explicitResponse.catch(() => {}); void refreshedResponse.catch(() => {});
     await input.press("Enter");
     await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".find-bar input")?.readOnly === true);
@@ -385,7 +358,6 @@ try {
   await page.getByRole("button", { name: "Close search", exact: true }).click();
   await page.locator(".terminal-find-hit").waitFor({ state: "detached" });
 
-  // Exercise an old bridge: no-jump refresh must never be sent if the response lacks fields.
   let automatic = 0;
   await page.route("**/api/pane/find", async (route) => {
     const body = route.request().postDataJSON();

@@ -16,7 +16,6 @@ const app = mkdtempSync(join(tmpdir(), "ovis-sheet-outside-tap-"));
 const PHONE = { width: 390, height: 844 };
 const ANDROID_WEBVIEW = "Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UP1A.231005.007; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/131.0.6778.135 Mobile Safari/537.36";
 const errors: string[] = [];
-/** the steps that failed: each says where it failed, and the steps after it still run */
 const failures: string[] = [];
 
 interface Seen { type: string; target: string; onScrim: boolean; inList: boolean }
@@ -26,7 +25,6 @@ declare global {
   interface Window { tapSeen: Seen[] }
 }
 
-/** Notes every event of a tap on the document, in its capture phase: before the app's own handlers see it. */
 function recordTaps(): void {
   window.tapSeen = [];
   const describe = (node: Element): string => `${node.tagName.toLowerCase()}${typeof node.className === "string" && node.className ? `.${node.className.trim().split(/\s+/).join(".")}` : ""}`;
@@ -44,7 +42,6 @@ const address = (page: Page) => page.evaluate(() => {
   return { app: query.get("app"), pane: query.get("pane") };
 });
 
-/** The centre of the first of `selector`'s elements that lies wholly above `top`: outside a sheet risen to there. */
 const pointAbove = (page: Page, selector: string, top: number): Promise<Point | null> => page.locator(selector).evaluateAll((nodes, top) => {
   for (const node of nodes) {
     const box = node.getBoundingClientRect();
@@ -54,7 +51,6 @@ const pointAbove = (page: Page, selector: string, top: number): Promise<Point | 
 }, top);
 const topOf = (page: Page, selector: string): Promise<number> => page.locator(selector).first().evaluate((node) => node.getBoundingClientRect().top);
 
-/** a finger on a touch screen, or a mouse on a narrow window: both see the sheet */
 type Pointer = "touch" | "mouse";
 
 /**
@@ -71,7 +67,6 @@ async function tap(page: Page, point: Point, pointer: Pointer = "touch"): Promis
   await frames(page);
   return page.evaluate(() => window.tapSeen);
 }
-/** what of the tap landed anywhere but on the scrim, in words */
 const behind = (seen: Seen[]): string[] => seen.filter((event) => !event.onScrim).map((event) => `${event.type} on ${event.target}`);
 
 async function withPhone(browser: Browser, base: string, path: string, what: string, run: (page: Page) => Promise<void>, pointer: Pointer = "touch"): Promise<void> {
@@ -101,7 +96,6 @@ async function withPhone(browser: Browser, base: string, path: string, what: str
   }
 }
 
-/** A sheet of the mode's list, opened from `button`, then a tap on a row above it: the sheet goes and the list stays. */
 async function listSheet(page: Page, button: string, name: string, pointer: Pointer = "touch"): Promise<void> {
   await page.locator(".mode-inbox .inbox-item").first().waitFor({ timeout: 20_000 });
   if (pointer === "touch") await page.locator(button).tap();
@@ -138,14 +132,11 @@ try {
       await withPhone(browser, base, "/?app=inbox", "(b) the state filter's sheet: a tap on a row outside it closes it alone", (page) => listSheet(page, ".mode-inbox .inbox-filter-toggle", "filter sheet"));
       await withPhone(browser, base, "/?app=inbox", "(e) the list's More sheet under a mouse on a narrow window: a click on a row outside it closes it alone", (page) => listSheet(page, ".mode-inbox .inbox-more", "More sheet", "mouse"), "mouse");
 
-      // Settings closes on its scrim's mousedown, after the touch has ended: the guard that a dialog's close leaves
-      // the list alone too
       await withPhone(browser, base, "/?app=inbox", "(c) Settings from the list's More: a tap above it closes it alone", async (page) => {
         await page.locator(".mode-inbox .inbox-item").first().waitFor({ timeout: 20_000 });
         await page.locator(".mode-inbox .inbox-more").tap();
         await page.locator('.row-sheet [data-item="settings"]').tap();
         await page.locator(".settings-dialog").waitFor();
-        // a user taps what has risen: the dialog and its scrim have ended their entrance
         await page.waitForFunction(() => {
           const dialog = document.querySelector(".settings-dialog");
           return dialog !== null && dialog.getAnimations().length === 0 && dialog.parentElement?.getAnimations().length === 0;
@@ -153,7 +144,6 @@ try {
         const top = await topOf(page, ".settings-dialog");
         assert.ok(top >= 8, `Settings leaves a gap above it to tap: its top is at ${top}`);
         const point = { x: PHONE.width / 2, y: Math.round(top / 2) };
-        // Settings closes on a press on its scrim alone: nothing else may be over the point
         const under = await page.evaluate(({ x, y }) => {
           const nodes = document.elementsFromPoint(x, y);
           return { scrim: nodes[0] === document.querySelector(".settings-dialog")?.parentElement, names: nodes.slice(0, 3).map((node) => `${node.tagName.toLowerCase()}.${node.className}`) };
@@ -163,11 +153,9 @@ try {
         await page.locator(".settings-dialog").waitFor({ state: "detached", timeout: 5_000 });
         const at = await address(page);
         assert.ok(await page.locator(".mode-inbox").count() === 1 && at.app === "inbox" && at.pane === null, `the list stays: the address says ${JSON.stringify(at)}`);
-        // its scrim goes on the mousedown, so the mouseup after it is hit-tested onto the list: no click follows it there
         assert.deepEqual(seen.filter((event) => event.type === "click" && event.inList).map((event) => event.target), [], "the tap's click reaches nothing in the list");
       });
 
-      // older than the mode: the classic app's More over a pane
       await withPhone(browser, base, `/?pane=${encodeURIComponent(panes.omp)}&view=chat`, "(d) the classic More sheet over a pane: a tap above it lands on its scrim alone", async (page) => {
         await page.locator(".pane-frame.is-current").waitFor({ timeout: 20_000 });
         await page.locator(".header-more-button").tap();

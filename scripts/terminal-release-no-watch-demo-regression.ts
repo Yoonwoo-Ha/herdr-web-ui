@@ -1,9 +1,3 @@
-/**
- * A pane let go of while the window is out of use (Settings → Use alongside herdr's own window) keeps
- * its last screen on a bridge that offers no read-only view (herdr-core lists no `watch`): there is
- * no view to start the screen again from, so nothing resets it. Coming back attaches again. Real
- * client and xterm on the demo's transport, whose features list no `watch`.
- */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,7 +15,6 @@ interface Fixture {
 interface Probe { inFlight: number; queued: number }
 declare global { interface Window { releaseFixture: Fixture } }
 
-/** Installed after the demo's transport: records what the client sends, and lets the test push frames. */
 function installReleaseFixture(): void {
   const state: Fixture = { sent: [], sockets: [] };
   window.releaseFixture = state;
@@ -71,7 +64,6 @@ try {
     await page.goto(url);
     const pane = await page.evaluate(async () => {
       const roster = await (await fetch("/api/machines")).json() as { machines: Array<{ id: string; snapshot?: { panes: Array<{ pane_id: string; agent?: string | null }> } }> };
-      // a plain shell: an agent's pane opens in its chat, where the terminal draws nothing
       return roster.machines.find((machine) => machine.id === "local")?.snapshot?.panes.find((pane) => !pane.agent)?.pane_id ?? null;
     });
     assert.ok(pane, "the demo has a shell pane");
@@ -80,36 +72,29 @@ try {
     await frame.locator("[data-pane-content]").waitFor();
     const sentOf = (type: string) => page.evaluate(({ pane, type }) => window.releaseFixture.sent.filter((sent) => sent.type === type && sent.pane_id === pane).length, { pane, type });
     await page.waitForFunction((pane) => window.releaseFixture.sent.some((sent) => sent.type === "attach" && sent.pane_id === pane), pane, { timeout: 10_000 });
-    // every write queued so far is parsed, and xterm drew the result
     const settled = () => page.waitForFunction(() => {
       const probe = (document.querySelector(".pane-frame.is-current .pane-terminal") as unknown as { outputProbe?: () => Probe } | null)?.outputProbe?.();
       return probe !== undefined && probe.inFlight === 0 && probe.queued === 0;
     }, undefined, { timeout: 10_000 });
-    // the demo's shell replays a recording on attach, frame by frame: a mark pushed before its last
-    // frame would be drawn over by the rest of it, so the mark waits until that frame was written
     const lastFrame = terminalFixture.frames.at(-1)!.data.slice(-512);
     await page.waitForFunction((tail) => {
       const probe = (document.querySelector(".pane-frame.is-current .pane-terminal") as unknown as { outputProbe?: () => Probe & { written: string } } | null)?.outputProbe?.();
       return probe !== undefined && probe.written.endsWith(tail);
     }, lastFrame, { timeout: 10_000 });
     await settled();
-    // the attach draws a screen the test can recognise
     await page.evaluate(({ pane, data }) => {
       for (const socket of window.releaseFixture.sockets) socket.push({ type: "pty-data", pane_id: pane, data });
     }, { pane, data: `\x1b[2J\x1b[H${MARK}` });
     await frame.locator(shownRows(), { hasText: MARK }).waitFor({ state: "attached" });
-    // the window is left: after RELEASE_AFTER_MS the tab lets go of the pane
     await page.evaluate(() => {
       Object.defineProperty(document, "hasFocus", { configurable: true, value: () => false });
       window.dispatchEvent(new Event("blur"));
     });
     await page.waitForFunction((pane) => window.releaseFixture.sent.some((sent) => sent.type === "detach" && sent.pane_id === pane), pane, { timeout: 10_000 });
-    // every write the release queued is parsed, and xterm drew the result
     await settled();
     await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
     assert.equal(await sentOf("watch"), 0, "a bridge without watch is never asked for a view");
     assert.equal(await frame.locator(shownRows(), { hasText: MARK }).count(), 1, "the released pane keeps its last screen");
-    // back in use: the pane is attached again
     const attaches = await sentOf("attach");
     await page.evaluate(() => {
       Object.defineProperty(document, "hasFocus", { configurable: true, value: () => true });

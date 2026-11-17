@@ -1,8 +1,3 @@
-/**
- * A hidden recent tab's view, parsed on its return, is history: a query in it is not answered into
- * the pane and a copy request in it does not write the clipboard. Real client and xterm on the demo's
- * transport, which a fixture gives the `watch` feature and a view that only it feeds.
- */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,7 +14,6 @@ interface Fixture {
 }
 declare global { interface Window { viewFixture: Fixture } }
 
-/** Installed after the demo's transport: records what the client sends and copies, and keeps views open. */
 function installViewFixture(): void {
   const state: Fixture = { copies: [], sent: [], sockets: [] };
   window.viewFixture = state;
@@ -33,7 +27,6 @@ function installViewFixture(): void {
     state.sockets.push(socket);
     const push = socket.push.bind(socket);
     socket.push = (frame) => {
-      // the demo has no herdr to watch: the bridge offers views here, and the fixture feeds them
       if (frame.type === "snapshot" && Array.isArray(frame.features)) return push({ ...frame, features: [...frame.features, "watch"] });
       if (frame.type === "watch-end") return;
       return push(frame);
@@ -86,7 +79,6 @@ try {
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
       await page.goto(url);
-      // two tabs of one workspace on the demo's PC
       const pick = await page.evaluate(async () => {
         const roster = await (await fetch("/api/machines")).json() as { machines: Array<{ id: string; snapshot?: { panes: Array<{ pane_id: string; tab_id: string; workspace_id: string }> } }> };
         const panes = roster.machines.find((machine) => machine.id === "local")?.snapshot?.panes ?? [];
@@ -103,7 +95,6 @@ try {
       await frame(a).locator("[data-pane-content]").waitFor();
       const mouseMode = () => frame(a).locator(".xterm").evaluate((element) => element.classList.contains("enable-mouse-events"));
       const sentSince = (start: number) => page.evaluate((start) => window.viewFixture.sent.slice(start), start);
-      // left for the other tab, the first tab watches its pane
       await pickTab(page, tabB!);
       await frame(b).locator("[data-pane-content]").waitFor();
       await page.waitForFunction((pane) => window.viewFixture.sent.some((sent) => sent.type === "watch" && sent.pane_id === pane), a, { timeout: 10_000 });
@@ -111,12 +102,10 @@ try {
         for (const socket of window.viewFixture.sockets) socket.push({ type: "watch-data", pane_id: pane, data });
       }, { pane: a, data: VIEW });
       assert.equal(await mouseMode(), false, "a hidden tab keeps its view unparsed");
-      // back on the first tab: the view is parsed, its query unanswered and its copy request not run
       const back = await page.evaluate(() => window.viewFixture.sent.length);
       await pickTab(page, tabA!);
       await page.waitForFunction((pane) => document.querySelector(`[data-layout-pane="${pane}"] .xterm`)?.classList.contains("enable-mouse-events"), a, { timeout: 10_000 });
       await page.waitForFunction(({ pane, start }) => window.viewFixture.sent.slice(start).some((sent) => sent.type === "attach" && sent.pane_id === pane), { pane: a, start: back }, { timeout: 10_000 });
-      // the reply xterm would type is sent as the view parses: the attach's own output, parsed after it, settles that
       await frame(a).locator("[data-pane-content]").waitFor();
       const after = await sentSince(back);
       const replies = after.filter((sent) => (sent.type === "input" || sent.type === "keys") && /\x1b\[\d+;\d+R/.test(String(sent.text ?? "")));
@@ -130,9 +119,6 @@ try {
       console.log(`PASS ${width}: a hidden tab's view is drawn on return without answering its queries or copying`);
       if (phone) continue;
 
-      // A hidden page drops a recent tab's view, and the terminal reset it began with. Back on that
-      // tab before its next view frame, the attach starts from a reset, as any tab's does: a mode the
-      // old screen set (mouse tracking, which the replay's clear keeps) does not outlive it.
       await page.evaluate((pane) => {
         for (const socket of window.viewFixture.sockets) socket.push({ type: "pty-data", pane_id: pane, data: "\x1b[?1000h" });
       }, a);
@@ -160,8 +146,6 @@ try {
       assert.deepEqual(errors, [], "no browser errors");
       console.log(`PASS ${width}: a recent tab whose view a hidden page dropped attaches from a reset`);
 
-      // The same holds for a view past its bound (dropped with its reset), and for a view started
-      // again (the window left and back) whose first frame has not come by the return
       const returnsFromReset = async (label: string, away: () => Promise<void>) => {
         await page.evaluate((pane) => {
           for (const socket of window.viewFixture.sockets) socket.push({ type: "pty-data", pane_id: pane, data: "\x1b[?1000h" });

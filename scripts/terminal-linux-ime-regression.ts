@@ -4,7 +4,6 @@ import { EventEmitter, once } from "node:events";
 import type { Browser } from "playwright-core";
 import { chromePath } from "./chrome-path.ts";
 
-/** Replay candidate picks of an input method with no in-app preedit and assert the bytes the pane gets. */
 export async function checkLinuxIme(browser: Browser, origin: string, pane: string): Promise<void> {
   const context = await browser.newContext({
     userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",

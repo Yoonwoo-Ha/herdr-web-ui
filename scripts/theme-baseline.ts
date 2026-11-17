@@ -3,23 +3,17 @@ import { join } from "node:path";
 import { normalizeThemeValue } from "../src/lib/themeCss.ts";
 import { terminalTheme, themeColor } from "../src/lib/settings.ts";
 
-// Freezes the six legacy palette-modes (amber, charcoal, catppuccin in dark and light) as
-// src/lib/themes.legacy-baseline.json, the permanent parity oracle src/lib/themes.parity.test.ts
-// checks the current src/styles.css against. One shot: it ran once on the pre-refactor tree and
-// refuses to overwrite the baseline, which is never regenerated.
 
 export type LegacyMode = "dark" | "light";
 export type LegacyPalette = "amber" | "charcoal" | "catppuccin";
 export const LEGACY_COMBOS = (["amber", "charcoal", "catppuccin"] as const).flatMap((palette) => (["dark", "light"] as const).map((mode) => ({ palette, mode })));
 export const comboKey = (palette: LegacyPalette, mode: LegacyMode): string => `${palette}/${mode}`;
 
-/** The blocks of src/styles.css that style a combo, most specific first: the first one declaring a property wins. */
 function layers(palette: LegacyPalette, mode: LegacyMode): string[] {
   const base = mode === "light" ? ['[data-theme="light"]', ":root"] : [":root"];
   return palette === "amber" ? base : [`[data-theme="${mode}"][data-palette="${palette}"]`, ...base];
 }
 
-/** Custom properties of the top-level rules whose selector list holds `selector`, later rules winning; rules in @media are skipped. */
 function declarations(css: string, selector: string): Map<string, string> {
   const found = new Map<string, string>();
   const text = css.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -36,10 +30,6 @@ function declarations(css: string, selector: string): Map<string, string> {
   return found;
 }
 
-/**
- * Every custom property a combo ends up with: `declared` is the winning declaration's text, `resolved`
- * the same after substituting var() within the combo, both through the one normalizer.
- */
 export function legacyCascade(css: string, palette: LegacyPalette, mode: LegacyMode): { declared: Record<string, string>; resolved: Record<string, string> } {
   const declared: Record<string, string> = {};
   for (const selector of layers(palette, mode).reverse()) {
@@ -57,7 +47,6 @@ export function legacyCascade(css: string, palette: LegacyPalette, mode: LegacyM
   return { declared, resolved };
 }
 
-/** A property is a theme color when, in some combo, its used value carries a color literal. */
 const COLOR = /#[0-9a-f]{3,8}\b|\brgba?\(|\btransparent\b/i;
 
 const sorted = (value: unknown): unknown =>

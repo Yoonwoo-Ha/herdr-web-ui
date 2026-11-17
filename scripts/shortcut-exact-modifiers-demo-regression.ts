@@ -1,4 +1,3 @@
-/** Recording exact-modifier shortcut chords on the real client against fictional demo panes. */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -57,14 +56,12 @@ try {
         await page.keyboard.press("Meta+Shift+Comma");
         await openSettingsPage(page, "Shortcuts");
 
-        // a safe exact chord is saved at once and listed as itself
         await record(page, "Scroll pane up", "Meta+PageUp");
         assert.equal((await stored(page))["scroll-up"], "meta+PageUp");
         const scrollUp = page.getByRole("combobox", { name: "Scroll pane up", exact: true });
         assert.equal(await scrollUp.inputValue(), "meta+PageUp");
         assert.equal(await scrollUp.locator("option:checked").textContent(), "⌘+PageUp");
 
-        // the list offers Mod+Shift letters, digits and arrows; End is recorded, and then listed as itself
         const nextPane = page.getByRole("combobox", { name: "Next pane", exact: true });
         assert.equal(await nextPane.locator("option[value='End']").count(), 0, "the list does not offer End");
         await record(page, "Next pane", "Meta+Shift+End");
@@ -76,7 +73,6 @@ try {
         await record(page, "Toggle sidebar", "Meta+Alt+KeyB");
         assert.equal((await stored(page))["toggle-sidebar"], "alt+meta+b");
 
-        // a terminal key waits for Save anyway; Cancel keeps the old binding
         const warning = await record(page, "Command palette", "Control+KeyK");
         assert.match(warning, /⌃\+K is a terminal key/);
         assert.equal(await page.getByRole("combobox", { name: "Command palette", exact: true }).count(), 0, "the list gives way to the confirmation");
@@ -89,7 +85,6 @@ try {
         const paletteRow = await page.locator(".settings-row", { has: page.getByRole("button", { name: "Record shortcut for Command palette", exact: true }) }).locator(".settings-description").textContent();
         assert.match(paletteRow ?? "", /⌃\+K is a terminal key/, "a saved terminal key keeps its note");
 
-        // refused: a chord the browser keeps, one already assigned, and one without Ctrl, Alt or ⌘
         assert.match(await record(page, "Find in terminal", "Meta+KeyW"), /keeps that shortcut/);
         await page.keyboard.press("Control+KeyK");
         assert.equal(await page.locator(".settings-row", { has: page.getByRole("button", { name: "Record shortcut for Find in terminal", exact: true }) }).locator(".settings-description").textContent(), "Already assigned");
@@ -99,16 +94,13 @@ try {
         assert.equal(Object.hasOwn(await stored(page), "find"), false);
         if (screenshotDir) await page.locator(".settings-dialog").screenshot({ path: join(screenshotDir, "exact-shortcut-list.png") });
 
-        // a Hungarian É is read by the key it sits on (Semicolon), so the binding works on any layout
         const hungarianE = () => page.evaluate(() => (document.activeElement ?? window).dispatchEvent(new KeyboardEvent("keydown", { key: "É", code: "Semicolon", metaKey: true, shiftKey: true, bubbles: true, cancelable: true })));
         await page.getByRole("button", { name: "Record shortcut for Settings", exact: true }).click();
         await hungarianE();
         assert.equal((await stored(page)).settings, ";");
 
-        // the exact chord runs the action; the default Mod+Shift+K is released
         await page.getByRole("button", { name: "Close settings", exact: true }).click();
         const palette = page.locator(".command-palette");
-        // dispatched in the page: a shortcut that ran has already prevented it when dispatchEvent returns
         const chord = (key: string, code: string) => page.evaluate(([key, code]) => (document.activeElement ?? document.body).dispatchEvent(
           new KeyboardEvent("keydown", { key, code, metaKey: true, shiftKey: true, bubbles: true, cancelable: true })), [key, code] as const);
         assert.equal(await chord("K", "KeyK"), true, "the moved palette no longer answers Mod+Shift+K");
@@ -122,7 +114,6 @@ try {
         await page.locator(".settings-dialog").waitFor();
         await page.getByRole("button", { name: "Close settings", exact: true }).click();
 
-        // Rename tab has no default key: a recorded chord opens the open tab's name field, Escape cancels, Enter renames
         await hungarianE();
         await openSettingsPage(page, "Shortcuts");
         const recorded = await record(page, "Rename tab", "Meta+Shift+KeyY");
@@ -137,7 +128,6 @@ try {
         await page.keyboard.press("Escape");
         await tabName.waitFor({ state: "detached" });
         assert.equal(await page.locator('.tab-strip-item.is-active [role="tab"]').textContent(), tabLabel, "Escape keeps the name");
-        // the request is one-shot: leaving the pane and coming back does not open the field again
         const openTab = () => document.querySelector<HTMLElement>('.tab-strip-item.is-active [role="tab"]')?.dataset["tabId"] ?? null;
         const firstTab = await page.evaluate(openTab);
         await page.keyboard.press("Meta+Shift+End");
@@ -148,14 +138,11 @@ try {
         await page.keyboard.press("Meta+Shift+KeyY");
         await tabName.waitFor();
         await page.keyboard.type("Renamed by shortcut");
-        // a second press while the field is open keeps what was typed
         await page.keyboard.press("Meta+Shift+KeyY");
         await page.keyboard.press("Enter");
         await tabName.waitFor({ state: "detached" });
         assert.match((await page.locator('.tab-strip-item.is-active [role="tab"]').textContent()) ?? "", /Renamed by shortcut/, "Enter renames the tab");
-        // the demo's authoritative snapshot carries the name, so herdr was sent the rename
         await page.waitForFunction(async () => (await (await fetch("/api/session")).json()).snapshot.tabs.some((tab: { label: string }) => tab.label === "Renamed by shortcut"));
-        // the palette offers the same action
         await page.keyboard.press("Control+KeyK");
         await palette.waitFor();
         await page.keyboard.type("rename tab");
@@ -164,7 +151,6 @@ try {
         assert.equal(await tabName.evaluate((input) => input === document.activeElement), true, "the palette action focuses the name field");
         await page.keyboard.press("Escape");
 
-        // a binding on End gives way to a message box with text after the caret, as the arrows do; an empty box lets it run
         const composer = page.locator(".composer-text").first();
         await composer.fill("draft");
         await composer.evaluate((box: HTMLTextAreaElement) => box.setSelectionRange(0, 0));
@@ -172,7 +158,6 @@ try {
         await composer.fill("");
         assert.equal(await chord("End", "End"), false, "with the box empty, \u2318\u21e7End runs Next pane");
 
-        // from the message box too, and after a reload
         await page.reload();
         await page.locator(".conn-live").waitFor();
         await page.locator(".composer-text").first().focus();

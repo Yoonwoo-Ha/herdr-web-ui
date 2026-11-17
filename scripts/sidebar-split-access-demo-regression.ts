@@ -1,4 +1,3 @@
-/** Review regressions for the sidebar divider, using synthetic demo data only. */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -31,7 +30,6 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
-      /** Each check gets a fresh device's preferences, with no shared browser state. */
       const check = async (name: string, scene: Scene, run: (page: Page) => Promise<void>) => {
         const context = await browser.newContext({ viewport: scene.viewport ?? { width: 1280, height: 844 }, hasTouch: scene.touch, isMobile: scene.touch, forcedColors: scene.forcedColors ? "active" : "none", locale: "en-US" });
         try {
@@ -135,7 +133,6 @@ try {
         await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
         assert.notEqual(await page.evaluate(() => localStorage.getItem("ovis:sidebar-split")), null);
       });
-      // the PCs have no head to fold to: a drag to their top stops at their minimum and never snaps or folds them
       await check("a drag to the PCs' top never folds the PCs", {}, async (page) => {
         const line = page.getByRole("separator", { name: "Resize PCs and Agents", exact: true });
         const box = (await line.boundingBox())!;
@@ -204,7 +201,6 @@ try {
         const appearance = page.locator(".settings-dialog").getByRole("tab", { name: "Appearance", exact: true });
         await appearance.focus();
         await page.keyboard.press("Enter");
-        // Agents order's By state groups the list, picked from the keyboard
         const grouping = page.getByRole("group", { name: "Agents order", exact: true }).getByRole("button", { name: "By state", exact: true });
         await grouping.focus();
         await page.keyboard.press("Space");
@@ -215,7 +211,6 @@ try {
         assert.equal(await page.locator(".sidebar-shell.is-splitting").count(), 0);
         await page.waitForFunction(() => getComputedStyle(document.querySelector(".agents-sidebar")!).opacity === "1");
       });
-      // the PCs have no heading: their minimum is the section's top padding and their first row, whole, also two lines tall
       for (const grouped of [false, true]) {
         await check(`the PCs minimum holds their first row whole (${grouped ? "agents" : "pcs"} first)`, { settings: { sidebarRows: "two" }, storage: { "ovis:agent-groups": String(grouped) } }, async (page) => {
           const line = page.getByRole("separator", { name: "Resize PCs and Agents", exact: true });

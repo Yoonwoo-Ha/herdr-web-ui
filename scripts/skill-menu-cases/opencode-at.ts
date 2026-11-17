@@ -2,9 +2,6 @@ import assert from "node:assert/strict";
 import type { SlashCommand } from "../../shared/protocol.ts";
 import { agentBuiltins, type CaseRun } from "../skill-menu-case.ts";
 
-// An OpenCode v2 pane whose skills are `@skill-id` attachments: the rows carry the `@` trigger,
-// so the `@` menu lists them under a Skills heading beside the files, a pick inserts the id, a
-// path never matches a skill, and the `/` menu keeps them out.
 export const agent = "opencode";
 export const commands: SlashCommand[] = [
   ...agentBuiltins(agent),
@@ -25,7 +22,6 @@ export const expect = async ({ page, width, scheme, box, menu, scenario, clear, 
     await menu.locator(".menu-item").first().waitFor();
     assert.deepEqual(await rowLabels(), ["@docs-release", "@pdf-tools"]);
     assert.equal(await page.getByRole("listbox", { name: "Skills and files", exact: true }).count(), 1);
-    // the pane's files follow, under their own heading
     await menu.locator(".menu-item").nth(2).waitFor();
     assert.deepEqual(await menu.locator(".menu-heading").allTextContents(), ["Skills", "Files"]);
     assert.deepEqual((await rowLabels()).slice(0, 2), ["@docs-release", "@pdf-tools"]);
