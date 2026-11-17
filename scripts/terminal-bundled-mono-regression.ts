@@ -1,3 +1,10 @@
+/**
+ * xterm measures its cell, and lib/terminalLineHeight.ts its row, when the family is set,
+ * so a terminal opened with the face still loading would keep a fallback's cell and draw the face in
+ * it. It opens without the face (lib/fontFamily.ts, openingFontStack), the font effect sets the face
+ * once it has loaded, and the pane is attached only then (usePaneAttach.ts): its pty is sized once,
+ * for the face's grid, not for a fallback's and then again (a reflow every program on it would see).
+ */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -116,6 +123,9 @@ setInterval(() => {}, 1 << 30);
     await page.locator(".conn-live").waitFor();
     await within(faceAsked, "the page to ask for the face");
     assert.ok(!(await rowsFamily(page)).includes(FAMILY), "the terminal opens without the face it has not loaded");
+    // a slow face is let go only once the font effect gave up waiting for it, waits for its arrival
+    // instead, and the pane has been attached without it: the attach must not wait for the face, and a
+    // face let go any earlier can arrive before the attach and leave it nothing to resize
     let attach: Frame | undefined;
     if (slow) {
       await page.waitForFunction(() => (window as unknown as { fontLoadsAsked: string[] }).fontLoadsAsked.includes("M"));
@@ -156,6 +166,7 @@ setInterval(() => {}, 1 << 30);
         cols,
         gridRows: rows.children.length,
         width: Number.parseFloat(screen.style.width),
+        // xterm sets each row's height inline; libghostty's rows take theirs from --ghostty-ch
         rowHeight: Number.parseFloat((rows.children[0] as HTMLElement).style.height) || rows.children[0]!.getBoundingClientRect().height,
         hostWidth: screen.closest(".xterm")!.parentElement!.clientWidth,
         glyph: metrics.width,

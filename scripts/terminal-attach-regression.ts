@@ -138,6 +138,7 @@ export async function checkTerminalAttach(browser: Browser, origin: string, pane
   await context.close();
   console.log("PASS the input line's Attach button puts picked files' paths at the caret and sends nothing, and a stale pick or upload types nothing");
 
+  // a pane whose folder holds a line break: its stored path would reach the program as Enter, so nothing is typed
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ovis-attach-")));
   const cwd = join(root, "two\nlines");
   mkdirSync(cwd);

@@ -9,6 +9,10 @@ export const SESSION_ROWS: SessionHistoryRow[] = [
   { id: OLDER_SESSION, title: "Flaky export test", firstMessage: "Why does the export test fail one run in ten?", startedAt: at(0), updatedAt: at(3), resume: { argv: ["codex", "resume", OLDER_SESSION] } },
   { id: UNVERIFIED_SESSION, title: null, firstMessage: "A session whose resume syntax is not verified.", startedAt: null, updatedAt: at(1), resume: null },
 ];
+/**
+ * CLAUDE_SHARED is also the id a pane on another store reports: the same
+ * UUID in two stores is two sessions, so that pane does not show this row's session.
+ */
 export const CLAUDE_SHARED = "22222222-2222-4222-8222-222222222222";
 export const CLAUDE_OTHER = "22222222-2222-4222-8222-222222222221";
 export const CLAUDE_STORE_KEY = "a1".repeat(12);

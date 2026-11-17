@@ -60,6 +60,11 @@ const HARNESS_LAUNCH = {
 } as const;
 type Isolation = keyof typeof HARNESS_LAUNCH;
 
+/**
+ * Where the hook's kill tests may run here: the first guard hook-test-harness.sh proves from inside, starting
+ * nothing before it. Any failure (no unshare, a namespace refused, no marker) only moves to the next guard
+ * or skips them, with every reason: never a reason to run them anywhere else.
+ */
 function probeIsolation(): { ok: true; mode: Isolation } | { ok: false; reason: string } {
   if (process.platform !== "linux") return { ok: false, reason: `no PID namespace or runner container on ${process.platform}` };
   const reasons: string[] = [];
@@ -79,11 +84,19 @@ function probeIsolation(): { ok: true; mode: Isolation } | { ok: false; reason: 
 
 type HookParent = "worker" | "nested" | "renamed" | "posing" | "gone" | "leaves" | `named:${string}`;
 
+/**
+ * What answers the hook's ps where it finds no /proc, as on macOS: procps itself, or a stub that fails, prints
+ * nothing, or names the parent like the worker but not quite.
+ */
 type HookPs = "procps" | "fails" | "silent" | "lookalike";
 
 /**
+ * Runs the hook under hook-test-harness.sh behind the guard `mode`, which reports what happened: the
+ * parent's exit status (137: SIGKILL) or whether it still runs, whether the hook ended or blocks, whether the
+ * step after it ran, whether the decoys (another Runner.Worker, a Runner.Worker2) live, and whether every process
  * above the harness still runs. `output` is what the hook wrote; `pidOne` what it wrote to PID 1's stderr (in a
  * namespace, the harness's own; in a container, the container's output, which the test cannot see); `logged` what it sent to
+ * `logger` (the Mac's system log); `psCalls` every ps it ran.
  */
 async function runHookIsolated(
   mode: Isolation,
@@ -193,8 +206,10 @@ function runRunner(options: {
 
 type RunnerOptions = NonNullable<Parameters<typeof runRunner>[0]>;
 
+/** The hung stub (120 s) outlasts it, so a launcher that waits for the hang still ends late. */
 const LOADED_BOUND_MS = 30_000;
 const HUNG_RUN_MS = 3 * LOADED_BOUND_MS;
+/** A stop "at once": under the 5 s after which run.sh's timeouts kill what ignored the stop. */
 const STOP_AT_ONCE_MS = 4_000;
 
 async function endsWithin(argv: string[], ms: number) {
@@ -613,6 +628,7 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
         const name = /--name (\S+)/.exec(call)![1]!;
         expect(call).toContain(`-v ${root}/entries:/build-cache:ro -v ${locks}:/build-cache-locks -v ${outboxes}/${name}:/build-cache-outbox `);
         expect(call).toContain("-e OVIS_BUILD_CACHE_DIR=/build-cache -e OVIS_BUILD_CACHE_LOCKS=/build-cache-locks -e OVIS_BUILD_CACHE_OUTBOX=/build-cache-outbox -e OVIS_BUILD_CACHE_WRITER=devswha ");
+        // the cache itself is never mounted writable, nor anything under it
         expect(call).not.toMatch(/entries:\/build-cache(?!:ro)/);
         expect(call).not.toContain(`-v ${root}/used`);
       }
@@ -628,6 +644,8 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
       const again = runRunner({ stateHome, args: ["--build-cache", join(home, "shm")] });
       expect(again.calls.split("\n").filter((call) => call.includes(`-v ${first}:/outbox `) && call.includes("--user 1001:1001"))).toHaveLength(1);
       expect(again.calls.split("\n").filter((call) => call.includes(`--cap-add DAC_OVERRIDE --user 0:0 -v ${outboxes}/.taken:/taken `)).length).toBeGreaterThanOrEqual(1);
+      // an outbox that cannot be emptied (here: one this user may not write) still holds the earlier job's claim:
+      // its runner starts without the build cache, so nothing reads that claim as the new job's
       writeFileSync(join(first, `${"a".repeat(64)}.claim`), "7 1\n");
       chmodSync(first, 0o555);
       try {
@@ -805,6 +823,7 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
     expect(runners).toHaveLength(2);
     const networks = runners.map(({ call, index }) => {
       const network = `${call.match(/--name (\S+)/)![1]!}-net`;
+      // its own, and no other: not the host's, not another container's namespace
       expect(call.match(/--network \S+/g)).toEqual([`--network ${network}`]);
       const slot = Number(network.match(/-(\d+)-net$/)![1]);
       const made = lines.indexOf(`docker network create --driver bridge --subnet 10.213.0.${16 * (slot - 1)}/28 ${network}`);
@@ -920,6 +939,7 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
   }, HUNG_RUN_MS);
 
   it("removes and makes no network while the kernel has no route to the internet, by its own answer", async () => {
+    // none, as at boot before the LAN is up (an unreachable, prohibit or blackhole route fails the lookup the same way): a network from before the block stays too
     const none = runRunner({ routeGet: "none", network: "0 172.18.0.0/16" });
     expect(none.result.status).toBe(1);
     expect(none.result.stderr).toMatch(/\[herdr-ci-\S+-1\] this host has no default route yet.*; retrying in 30s/);
@@ -971,6 +991,7 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
         expect(result.stderr).toMatch(/\[herdr-ci-\S+-1\] .*herdr-ci-\S+-1-net \(\S.*; retrying in 30s/);
         const calls = readFileSync(logPath, "utf8");
         expect(calls).not.toContain("docker network create");
+        // the launcher's stop alone asks docker to remove it, and docker keeps it while a container is on it
         expect(changesBeforeStop(calls)).toEqual([]);
         expect(calls).toMatch(/^docker network rm herdr-ci-\S+-1-net$/m);
         expect(readdirSync(tempDir).filter((file) => file.includes(".network-rm-"))).toEqual([]);
@@ -1014,6 +1035,7 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
     const lines = calls.split("\n");
     const host = spawnSync("hostname", ["-s"], { encoding: "utf8" }).stdout.trim();
     const slots = `herdr-ci-${host}-check-slots`;
+    // RAM, small, and root's directory: a job cannot remove or replace a file in it
     const volume = lines.indexOf(`docker volume create --driver local --opt type=tmpfs --opt device=tmpfs --opt o=size=1m,mode=0755,uid=0,gid=0 ${slots}`);
     expect(volume).toBeGreaterThanOrEqual(0);
     const keepers = lines.map((call, index) => ({ call, index })).filter(({ call }) => call.startsWith("docker run -d "));
@@ -1064,6 +1086,8 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
   });
 
   it("makes the check slots' files in the keeper another slot's loop started in the same moment, once it runs", () => {
+    // This launcher's own start fails on the name, and the keeper that holds it does not run yet at the first two
+    // looks: docker refuses to make the files in it until it does.
     const { result, calls } = runRunner({ slots: "started-elsewhere" });
     expect(result.status).toBe(0);
     const lines = calls.split("\n");
@@ -1154,6 +1178,7 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
       const setup = lines.find((call) => call.includes(" config remote.origin.url "))!.match(/^git -C (\S+) /)![1]!;
       expect(setup).toStartWith(join(cacheDir, "git/.new-"));
       expect(lines).toContain(`git -C ${setup} config remote.origin.url https://github.com/owner/repo.git`);
+      // a job reads the mirror's objects in place: git never collects one on its own
       for (const setting of ["gc.pruneExpire never", "gc.auto 0", "maintenance.auto false", "fetch.unpackLimit 1"]) expect(lines).toContain(`git -C ${setup} config ${setting}`);
       expect(existsSync(join(mirror, "objects"))).toBe(true);
       expect(existsSync(setup)).toBe(false);
@@ -1167,6 +1192,7 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
         expect(fetched).toBeGreaterThanOrEqual(0);
         expect(call).toContain(`-v ${cacheDir}:/cache:ro `);
         expect(call).toContain("-e GIT_ALTERNATE_OBJECT_DIRECTORIES=/cache/git/repo.git/objects ");
+        // no other mount of the host's: the check slots are a docker volume
         expect(call.match(/-v \S+/g)).toEqual([expect.stringMatching(/^-v herdr-ci-\S+-check-slots:\/check-slots$/), `-v ${cacheDir}:/cache:ro`]);
         expect(call).toContain("--security-opt no-new-privileges --cap-drop ALL --pids-limit 8192 ");
         expect(call).toEndWith(" herdr-ci-runner:local");
@@ -1282,6 +1308,7 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
       expect(mount(first.calls)).toBe(join(cacheHome, "ovis-ci-runner/owner/repo"));
       expect(mount(second.calls)).toBe(join(cacheHome, "ovis-ci-runner/other/repo"));
       expect(second.calls).toContain("config remote.origin.url https://github.com/other/repo.git");
+      // a mirror whose origin is another repository's is not reused
       const mirror = join(cacheHome, "ovis-ci-runner/owner/repo/git/repo.git");
       writeFileSync(join(mirror, "config.remote.origin.url"), "https://github.com/someone/else.git\n");
       const again = runRunner({ cacheHome });
@@ -1374,6 +1401,9 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
   });
 });
 
+// The hook as the runner runs it. Only a job it allows runs on the host: every refusal may kill, so every test that
+// can reach one runs isolated (runHookIsolated: a PID namespace of its own or a container of an image that carries the
+// marker, hook-test.Dockerfile's), or not at all.
 describe.skipIf(process.platform === "win32")("self-hosted runner job-started hook", () => {
   it("runs a job from this repository", () => {
     // without jq the hook would refuse (and, under runJobStarted's parent, block): fail before it starts
@@ -1398,6 +1428,8 @@ describe.skipIf(process.platform === "win32")("self-hosted runner job-started ho
 const isolation = probeIsolation();
 if (!isolation.ok) console.warn(`job-started hook kill tests skipped, as they run only in a PID namespace of their own or a container of an image that carries the marker (hook-test.Dockerfile): ${isolation.reason}`);
 
+// The runner image is Linux, where the hook proves its parent through /proc; the Mac runner (README "Mac runner")
+// runs the same file, which asks ps there: the copies with { ps } run that path here, on Linux.
 describe.skipIf(!isolation.ok)("self-hosted runner job-started hook, isolated", () => {
   const mode = isolation.ok ? isolation.mode : "namespace";
   const runHook = (eventName: string, payload: unknown, event?: Parameters<typeof runHookIsolated>[3]) => runHookIsolated(mode, eventName, payload, event);
@@ -1412,6 +1444,7 @@ describe.skipIf(!isolation.ok)("self-hosted runner job-started hook, isolated", 
     expect(run.above).toBe("alive");
     if (output === "said") {
       expect(run.output).toContain("::error::");
+      // Linux writes it to PID 1's output (a container's), never to logger
       if (mode === "namespace") expect(run.pidOne).toContain("[job-started] ");
       expect(run.logged).toBe("");
     }
@@ -1436,6 +1469,7 @@ describe.skipIf(!isolation.ok)("self-hosted runner job-started hook, isolated", 
       ["pull_request", { pull_request: { head: { repo: null } } }],
       ["workflow_run", { workflow_run: { head_repository: { full_name: "someone/ovis" } } }],
       ["workflow_run", { workflow_run: { head_repository: null } }],
+      // only this repository's name, exactly: no other case, space, look-alike letter or character
       ["pull_request", named("Devswha/Ovis")],
       ["pull_request", named("devswha/ovis ")],
       ["pull_request", named("devswha/\u043evis")],
@@ -1504,10 +1538,13 @@ describe.skipIf(!isolation.ok)("self-hosted runner job-started hook, isolated", 
     const runs = await Promise.all(
       (
         [
+          // a live parent that is not the worker, as when a user's systemd manager adopted an earlier version of the hook
           { parent: "named:systemd" },
           { parent: "named:Runner.Worker2" },
           { parent: "named:Runner.Worke" },
+          // the worker is an ancestor, not the parent: never walked to
           { parent: "nested" },
+          // a name is not an executable: both must be Runner.Worker
           { parent: "renamed" },
           { parent: "posing" },
           { ps: "fails" },
@@ -1564,6 +1601,7 @@ describe.skipIf(process.platform === "win32")("build cache promotion", () => {
         chmodSync(join(dist, "assets"), 0o755);
       }
       writeFileSync(join(outbox, `${key}.claim`), claim);
+      // more claims in the same outbox: a job flooding the launcher's GitHub quota
       for (let i = 0; i < extraClaims; i++) {
         const other = String(i).padStart(64, "e");
         spawnSync("tar", ["-cf", join(outbox, `${other}.tar`), "-C", dist, "."]);
@@ -1794,6 +1832,7 @@ PATH="\${PATH#*:}" exec stat "$@"
     expect(moved.stderr).toContain("the container that built it is no longer the slot's");
     expect(moved.callsBefore[0]).toBeGreaterThan(0);
     expect(moved.entries).toEqual([`7/${"0".padStart(64, "f")}`]);
+    // a slot without a running container: nothing GitHub says could be about the claim's job, so it is not asked
     for (const container of ["none", "created", "stopped"] as const) {
       const none = promote({ container });
       expect(none.status).toBe(0);
@@ -1818,11 +1857,13 @@ PATH="\${PATH#*:}" exec stat "$@"
   });
 
   it("is not told a leftover is new by a second name of it: removing one changes the file's time", () => {
+    // the earlier job gave its claim and its build a second name each, as restore markers, which the promoter removes
     const marked = promote({ linked: "marker" });
     expect(marked.status).toBe(0);
     expect(marked.runs).toEqual([]);
     expect(marked.ghCalls).toEqual([]);
     expect(marked.outbox).toEqual([`judged-${key}`]);
+    // and a claim or a build with a second name is not taken at all, whenever it was written
     for (const linked of ["claim", "tar"] as const) {
       const spare = promote({ linked });
       expect(spare.runs).toEqual([]);
@@ -1832,11 +1873,15 @@ PATH="\${PATH#*:}" exec stat "$@"
   });
 
   it("refuses a claim naming the run of a killed container's job, which GitHub still lists as running on the runner the next container took over", () => {
+    // the container before was killed 13.5 minutes ago with its job running; this one registered over its
+    // runner and kept the id (config.sh --replace), so the name, the status and the runner all fit
     const dead = promote({ jobStarted: -810 }, "files", "devswha", false, false, "7 1\n", 0, false, ["8 1\n"]);
     expect(dead.stderr).toContain("started before the slot's container did");
     expect(dead.runs).toEqual([]);
     expect(dead.callsBefore[0]).toBe(1);
     expect(dead.ghCalls).toHaveLength(1);
+    // to the second: run.sh waits two before a slot's next container, so a job even one second older than
+    // this container is the one before's, and one that started in the container's own second is its own
     expect(promote({ jobStarted: -2 }).runs).toEqual([]);
     expect(promote({ jobStarted: -1 }).runs).toEqual([]);
     expect(promote({ jobStarted: 0 }).entries).toEqual([`7/${key}`]);

@@ -40,6 +40,7 @@ const VIEWPORTS = {
 type Kind = "cold" | "recent" | "8th";
 type Sample = { viewport: keyof typeof VIEWPORTS; kind: Kind; round: number; text: number | null; ready: number | null };
 
+/** Busy CPU share over an interval, from /proc/stat (Linux only; null elsewhere). */
 function cpuTimes(): { busy: number; total: number } | null {
   try {
     const fields = readFileSync("/proc/stat", "utf8").split("\n")[0]!.trim().split(/\s+/).slice(1).map(Number);

@@ -1,4 +1,5 @@
 /**
+ * Native IME trace on an owned pane. Open the printed URL in Safari and type with
  * the OS input method; WebDriver text insertion is not a native IME reproduction.
  * No tracing is added to the normal app build. Ctrl+C closes the owned workspace.
  */

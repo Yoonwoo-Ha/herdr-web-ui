@@ -1,3 +1,12 @@
+/**
+ * lib/terminalGlyphs.ts fits
+ * a wide glyph to its two cells (centered, enlarged or widened with scaleX), and did it in the span
+ * xterm drew, which also paints the cells' background, clipping that span's trailing half at its
+ * last cell. The clipped (and stretched) edge fell inside a device pixel, drawn half-covered, while
+ * the next span's background starts on a whole one: in a dark block (Claude Code's prompt, an
+ * inverse line) a light line stood after every Korean word, in Chromium and in WebKit (Ovis for
+ * Mac, Safari), at 1x and 2x.
+ */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -22,6 +31,7 @@ const ROWS = [
   "|가나다라마바사|",
   `\x1b[4m밑줄 친 한글\x1b[24m|`,
 ];
+// the bundled faces, so every machine draws the same: the Latin's 0.6em cell beside 1em Hangul, as Menlo on a Mac
 const TERMINAL_FONT = "Ovis Hangul Mono, JetBrains Mono Web";
 const TOLERANCE = 24;
 

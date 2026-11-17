@@ -1,3 +1,8 @@
+/**
+ * herdr's `[ui] copy_on_select = false` (#1559): a plain drag in the desktop terminal selects without
+ * copying, a buttonless move over the grid keeps the selection (herdr reports no hover to a pane that
+ * holds one), and Ctrl+C then copies it instead of interrupting the program.
+ */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -67,6 +72,7 @@ setInterval(() => {}, 1000);
       await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
       const page = await context.newPage();
       page.setDefaultTimeout(10_000);
+      // the preference is read as the terminal mounts: a drag before its answer would copy nothing either way
       const preference = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/herdr-ui");
       await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
       await page.locator(shownRows()).first().waitFor();
@@ -88,6 +94,7 @@ setInterval(() => {}, 1000);
       assert.equal(await clipboard(), "UNCHANGED", "with copy_on_select off, letting go of a drag copies nothing");
       assert.equal(await page.locator(".terminal-banner", { hasText: "copied to clipboard" }).count(), 0, "nothing says it was copied");
 
+      // a buttonless move over the grid keeps the selection: xterm would clear it on the hover report
       for (const x of [box.x + 100, box.x + 300, box.x + 500, box.x + 150]) await page.mouse.move(x, y + box.height, { steps: 3 });
       await page.keyboard.press("Control+c");
       assert.match(await clipboard(), /^COPYOFF-first-line/, "Ctrl+C copies the selection the hover kept");

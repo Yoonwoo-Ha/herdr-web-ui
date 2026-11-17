@@ -154,6 +154,7 @@ describe("the run's jobs", () => {
     expect(why(jobsFinding(passed([...SELF_HOSTED, "Fast checks"]), completed, commit))).toBe(`run ${RUN}: the jobs are not ci.yml's (not ci.yml's, or there twice: "Fast checks")`);
     expect(why(jobsFinding(passed(SELF_HOSTED.map((name) => (name === "Fast checks" ? "fast checks" : name))), completed, commit)))
       .toBe(`run ${RUN}: the jobs are not ci.yml's (missing "Fast checks"; not ci.yml's, or there twice: "fast checks")`);
+    // a job of a called workflow is listed under its caller's name
     expect(jobsFinding(passed(SELF_HOSTED.map((name) => `validate / ${name}`)), completed, commit).answer).toBe("no");
   });
 
@@ -613,6 +614,7 @@ describe("the script as the reuse job runs it", () => {
       expect([result.stdout, result.code]).toEqual(["green=false\nrun=\n", 0]);
       expect(result.stderr).toBe(`::${level} title=Release validation::${message}\n`);
       expect(result.summary).toBe(`### Release validation\n\n${message}\n`);
+      // the same as a rule: the message is one line, and the annotation's own is the only command
       expect(message).not.toMatch(/[\r\n]/);
       expect(result.stderr.match(/^\s*::/gm)).toEqual(["::"]);
       expect(result.summary.match(/^\s*::/gm)).toBeNull();
@@ -795,6 +797,10 @@ describe("ci.yml", () => {
   });
 
   const EVENT_VARIABLE_READS = [
+    // A release that takes main's run takes that restored build for
+    // the Integration and Browser jobs (docs/development.md#releasing); an entry is one a job of
+    // that same run built, named after the commit and everything else the build reads, and a
+    // restore checks every file's sha256
     "scripts/build-cache.ts",
     "scripts/check-report.ts", "scripts/check.ts",
     "scripts/self-hosted-runner/job-started.sh",

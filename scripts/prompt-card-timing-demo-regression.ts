@@ -1,4 +1,6 @@
 /**
+ * On the unmodified app over the demo's fixture
+ * transport, whose "web" pane has an approval open; the screen read (GET /api/pane/prompt) takes
  * PROMPT_READ_MS, as the server's does. Loopback only; no herdr session is opened.
  */
 import assert from "node:assert/strict";

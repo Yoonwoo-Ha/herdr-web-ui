@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { GITHUB_HOSTED_LABELS, parseWorkflow, root, topLevelTerms, unreadWorkflowFiles, workflowFileProblems, type Job, type Step } from "./shell-workflow-rules.ts";
 
 const SECRET = /(?<![\w.-])secrets\b(?!\s*\.\s*GITHUB_TOKEN\b)(?:\s*\.\s*(?:\w+|\*)|\s*\[[^\]]*\])?/giu;
+/**
+ * The actions a privileged job, or any job of a whole-run run, may use, each at the exact reference reviewed, and whether
+ * it fetches an artifact (a privileged job that uses one makes its run whole-run).
+ */
 const REVIEWED_ACTIONS: Record<string, { fetchesArtifact: boolean }> = {
   "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1": { fetchesArtifact: false },
   "./.github/actions/setup-ci": { fetchesArtifact: false },
@@ -19,12 +23,14 @@ const REVIEWED_ACTIONS: Record<string, { fetchesArtifact: boolean }> = {
   "contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08": { fetchesArtifact: false },
 };
 const reviewed = (uses: string): boolean => Object.hasOwn(REVIEWED_ACTIONS, uses);
+/** The actions setup-ci's own steps may use, each at the exact reference reviewed. */
 const SETUP_CI_ACTIONS = [
   "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
   "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
   "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
   "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
 ];
+// the whole value is one expression with the reviewed prefix: no second `${{ }}` and no text around it
 const LABEL_FORM = /^\$\{\{ inputs\.hosted_only && '([^']+)' \|\| (?:(?!\$\{\{|\}\}).)+ \}\}$/s;
 const NO_CACHE_FORM = /^\$\{\{ inputs\.hosted_only && 'none' \|\| (?:(?!\$\{\{|\}\}).)+ \}\}$/s;
 const MAC_PULL_REQUEST = "${{ fromJSON(matrix.os == 'macos-15' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_MAC_LABELS || toJSON(matrix.os)) }}";
@@ -52,7 +58,9 @@ const action = (uses: string): string => {
 };
 const actionRepo = (uses: string): string => action(uses).split("/").slice(0, 2).join("/");
 const PAGES_ACTIONS = ["actions/deploy-pages", "actions/upload-pages-artifact"];
+/** The actions that fetch an artifact, by the identity GitHub resolves, so another spelling of one is still found (and then refused as unreviewed). */
 const FETCHING = Object.entries(REVIEWED_ACTIONS).filter(([, { fetchesArtifact }]) => fetchesArtifact).map(([uses]) => actionRepo(uses));
+/** The write scopes a permissions value grants: anything but an exact read-only form (`read-all`, `{}`, a scope's `read` or `none`) counts as write, so `Write`, `WRITE-ALL`, a typo or an expression do. */
 const writes = (permissions: Permissions): string[] => {
   const value: unknown = permissions;
   if (value === "read-all") return [];
@@ -82,6 +90,13 @@ function writeScopes(workflows: Workflows, file: string, job: AnyJob): string[] 
   return [...scopes];
 }
 
+/**
+ * The secrets-context references `value` makes where GitHub evaluates expressions: in a string with `${{`, everything from
+ * its first `${{` to its last `}}` (a `run:` script's included), and a whole brace-free `if:` value, which is an
+ * expression. The span is greedy so that a `}}` inside a quoted string (`${{ format('}}', secrets.X) }}`) cannot end it
+ * early; prose between two expressions of one value then counts too, which errs on the safe side. A string without `${{`
+ * (a step's name) is prose, not a reference.
+ */
 function secretReferences(value: unknown, key = ""): string[] {
   if (typeof value === "string") {
     const start = value.indexOf("${{");
@@ -162,6 +177,7 @@ function labelsOf(job: AnyJob): string[] {
   return ((axis === undefined ? null : matrixValues(job.strategy?.matrix, axis)) ?? []).filter((value): value is string => typeof value === "string");
 }
 
+/** GitHub reads many keys and contexts without regard to case; these tests do not. */
 const READ_KEYS = [
   "on", "jobs", "permissions", "actions", "attestations", "checks", "contents", "deployments", "discussions", "id-token", "issues", "models", "packages",
   "pages", "pull-requests", "repository-projects", "security-events", "statuses", "runs-on", "environment", "secrets", "uses", "with", "env", "if",
@@ -171,6 +187,11 @@ const READ_KEYS = [
 
 const READ_INPUTS = ["cache", "no-cache", "package-manager-cache", "hosted_only", "artifact-ids", "run-id", "github-token", "repository"];
 
+/**
+ * A map of the user's own names (a job id, an environment variable, an output, an input or secret definition, a
+ * service, a matrix axis) is decided by its full place in the file, never by its parent's name alone: a job whose id
+ * is `env` is still a job.
+ */
 function readKeysAt(path: string[]): string[] {
   const shape = path.map((part) => (/^\d+$/.test(part) ? "#" : part));
   const at = (...pattern: string[]): boolean => pattern.length === shape.length && pattern.every((part, index) => part === "*" || part === shape[index]);
@@ -184,6 +205,10 @@ function readKeysAt(path: string[]): string[] {
   return names.some((pattern) => at(...pattern)) ? [] : READ_KEYS;
 }
 
+/**
+ * Keys these tests would misread, whatever GitHub makes of them: a key they read written in another case (`Runs-On`,
+ * `Permissions`, `ID-Token`, an input `Hosted_Only`), and two sibling keys that differ only in case (job ids included).
+ */
 const matrixAxes = new Map<string, string[]>();
 function keyProblems(file: string, value: unknown, path: string[] = []): string[] {
   if (Array.isArray(value)) return value.flatMap((entry, index) => keyProblems(file, entry, [...path, String(index)]));
@@ -245,6 +270,7 @@ function stepInputs(step: AnyStep): Record<string, unknown> | null {
   return new Set(entries.map(([key]) => key)).size === entries.length ? Object.fromEntries(entries) : null;
 }
 
+/** Why the conditions of `job` and its steps are not each one expression or plain text: a mixed `if` is always true. */
 function conditionProblems(job: AnyJob): string[] {
   return [
     ...(job.if !== undefined && mixedCondition(job.if) ? [`job if ${JSON.stringify(job.if)} ${MIXED}`] : []),
@@ -269,6 +295,10 @@ function cacheStepProblems(step: AnyStep, hostedOnly: boolean): string[] {
   return cache === undefined ? [] : [`${name} has a cache input`];
 }
 
+/**
+ * A job that calls another workflow has no steps and is not passed to conditionProblems here or in runJobs: its own
+ * `if` is held by the repository-wide test "no if in any workflow or in setup-ci mixes an expression with text".
+ */
 function privilegedJobProblems(workflows: Workflows): string[] {
   return Object.entries(workflows).flatMap(([file, workflow]) =>
     Object.entries(workflow.jobs)
@@ -307,6 +337,7 @@ function runProblems(workflows: Workflows, root: string): string[] {
       if (step.uses === undefined) continue;
       if (!reviewed(step.uses)) problems.add(`${where}: uses ${step.uses}, which is not a reviewed action reference`);
       for (const problem of cacheStepProblems(step, hostedOnly)) problems.add(`${where}: ${problem}`);
+      // a whole-run run takes its own artifacts: a download by id, or from another run or repository, is a form it does not use
       if (action(step.uses) === "actions/download-artifact") {
         for (const input of ["artifact-ids", "run-id", "github-token", "repository"]) {
           if (stepInputs(step)?.[input] !== undefined) problems.add(`${where}: actions/download-artifact with ${input}, a form these runs do not use`);
@@ -317,6 +348,7 @@ function runProblems(workflows: Workflows, root: string): string[] {
   return [...problems];
 }
 
+/** setup-ci's cache steps that can run under `cache: none`: each needs `inputs.cache == 'save'` or `'restore'` as a top-level `&&` term of a condition that is one expression. */
 function setupCiCacheProblems(steps: AnyStep[]): string[] {
   return steps
     .filter((step) => step.uses !== undefined && action(step.uses).startsWith("actions/cache"))
@@ -331,6 +363,12 @@ function setupCiCacheProblems(steps: AnyStep[]): string[] {
 const writesPages = (scopes: string[]): boolean =>
   scopes.some((scope) => scope.toLowerCase().startsWith("pages:") || scope === "write-all" || scope.startsWith("default permissions") || scope.startsWith("permissions "));
 
+/**
+ * The workflows whose runs contain a job that deploys Pages, found by any of four signs, so none rests on another: a job
+ * that can write Pages (a deployment through Pages' own permission needs it, however it deploys), a job in the
+ * `github-pages` environment, a job that holds id-token write together with a secret (a deploy with a supplied token),
+ * and a job that uses deploy-pages or upload-pages-artifact (recognised by owner/repo, whatever path follows).
+ */
 function pagesRoots(workflows: Workflows): string[] {
   const environment = (job: AnyJob): string | undefined => (typeof job.environment === "object" && job.environment !== null ? job.environment.name : job.environment);
   const deploys = (file: string, job: AnyJob): boolean => {
@@ -355,6 +393,7 @@ function consumerRoots(workflows: Workflows): string[] {
 
 const wholeRunRoots = (workflows: Workflows): string[] => [...new Set([...pagesRoots(workflows), ...consumerRoots(workflows)])].sort();
 
+/** The problems of every whole-run run; each of `deploying` must still deploy Pages, or that check would pass on nothing. */
 function wholeRunProblems(workflows: Workflows, deploying: string[] = []): string[] {
   const missing = deploying.filter((file) => !Object.values(workflows[file]?.jobs ?? {}).some((job) => (job.steps ?? []).some((step) => step.uses !== undefined && actionRepo(step.uses) === "actions/deploy-pages")));
   return [
@@ -471,6 +510,7 @@ describe("jobs that hold a write permission, an environment or a secret", () => 
   test("the Pages deploy, the release's publish job and the Mac app's gate count as privileged", () => {
     expect(privileges(repository, "pages.yml", repository["pages.yml"]!.jobs.deploy!)).toEqual(["pages: write", "id-token: write", "environment"]);
     expect(privileges(repository, "release.yml", repository["release.yml"]!.jobs.publish!)).toEqual(["contents: write"]);
+    // Release hands the Mac app workflow every secret; its gate reads whether the signing ones are set
     expect(repository["release.yml"]!.jobs["mac-dmg"]!).toMatchObject({ secrets: "inherit" });
     const gate = privileges(repository, "mac-dmg.yml", repository["mac-dmg.yml"]!.jobs.gate!);
     expect(gate).toEqual(["secrets.MAC_DEVELOPER_ID_P12", "secrets.MAC_DEVELOPER_ID_P12_PASSWORD", "secrets.MAC_NOTARY_KEY_P8", "secrets.MAC_NOTARY_KEY_ID", "secrets.MAC_NOTARY_ISSUER"]);

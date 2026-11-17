@@ -36,6 +36,7 @@ function releaseRepo(dir: string) {
   sh("git commit -q --allow-empty -m 'chore(release): 1.4.0' && git tag v1.4.0");
 }
 
+/** An empty repository with one commit, so herdr can add worktrees to it. */
 function gitRepo(dir: string) {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -50,6 +51,7 @@ export async function stage() {
   const panes: DemoPane[] = [];
   const byKey = (key: string | undefined) => panes.find((p) => p.key === key);
   // a worktree is herdr's own (under the demo root, so no home path shows), and a tab joins its
+  // repository's workspace
   for (const spec of SPECS) {
     const parent = byKey(spec.worktreeOf ?? spec.tabOf);
     let pane: string, workspace: string, cwd: string;

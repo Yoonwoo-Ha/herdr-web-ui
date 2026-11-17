@@ -1,3 +1,9 @@
+/**
+ * Chrome trims a
+ * run of fullwidth punctuation (text-spacing-trim), and xterm's WidthCache measures a glyph as
+ * a run of 32: it measured ，。（） at half width, gave each one half a glyph too much spacing,
+ * and the rest of the row drew to the right.
+ */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -94,6 +100,7 @@ setInterval(() => {}, 1 << 30);
   const [plain, ...others] = drawn.marks;
   others.forEach((x, index) => assert.ok(Math.abs(x - plain!) < 1,
     `row ${index + 1}'s marker is drawn ${(x - plain!).toFixed(1)}px from its column`));
+  // xterm measures each glyph alone, as it is drawn, whether or not this browser's fonts trim
   assert.equal(drawn.measureTrim, "space-all");
   assert.deepEqual(errors, []);
   console.log(`PASS fullwidth punctuation keeps its row's later cells in their columns${drawn.trims ? "" : " (this browser does not trim punctuation)"}`);

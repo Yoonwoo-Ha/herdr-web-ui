@@ -8,6 +8,9 @@ import { appFaces } from "./app-faces.ts";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
+// On the
+// unmodified app over the demo's fixture transport, at a desktop's width and a touch tablet's
+// (the header row starts at 769px), every tab's mark is centred on its tab, and an agent's mark
 // box is as tall as its logo. All files and HTTP traffic stay in this disposable, loopback-only
 // app and no herdr session is opened. Screenshots go to UI_EVIDENCE_DIR when it is set.
 const app = mkdtempSync(join(tmpdir(), "herdr-tab-agent-mark-demo-"));

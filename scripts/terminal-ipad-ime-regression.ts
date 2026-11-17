@@ -24,6 +24,7 @@ export async function checkIpadIme(browser: Browser, origin: string, pane: strin
     userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Mobile/15E148 Safari/604.1",
     viewport: { width: 1100, height: 700 },
   });
+  // the Ovis iOS app's web view, as recorded: WebKit, but no Version/ or Safari/ in its user agent
   const iphoneApp = await browser.newContext({
     userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
     viewport: { width: 1100, height: 700 },
@@ -125,6 +126,8 @@ export async function checkIpadIme(browser: Browser, origin: string, pane: strin
       box.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data }));
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     }, data);
+    // One key of the recorded order: keydown (jamo, real keyCode), keypress, then the editor's
+    // edits. A cancelled keydown means a browser makes no edit, which is the failure this guards.
     const KEYCODES: Record<string, number> = { "ㅎ": 71, "ㅏ": 75, "ㄴ": 83, "ㄱ": 82, "ㅡ": 77, "ㄹ": 70, "ㅇ": 68, "ㅁ": 65 };
     const key = async (jamo: string, edits: Array<["delete"] | ["insert", string]>, moveCaret = false) => {
       return input.evaluate(async (element, { jamo, keyCode, edits, moveCaret }) => {
@@ -247,6 +250,7 @@ export async function checkIpadIme(browser: Browser, origin: string, pane: strin
         await check("한" + expected, `iPad commit precedes ${press}`);
       }
 
+      // the key bar's keys reach xterm through term.input, not a keydown: they follow the syllable too
       await reset(); await fresh("ㅎ"); await replace("ㅏ", "하"); await replace("ㄴ", "한");
       const escape = page.locator('.key-bar .key[data-key="Escape"]');
       await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('.key-bar .key[data-key="Escape"]')?.disabled === false);

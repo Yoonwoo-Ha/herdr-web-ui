@@ -1,4 +1,5 @@
 /**
+ * OSC 52 in replayed output (the screen a new attach is handed, `pty-data` with `replay: true`)
  * never writes the clipboard; live copies still do, once each. Runs the real client and its
  * patched xterm on the demo's fixture transport: no herdr, no user state, loopback only.
  * Every frame carries an ACK offset, and each step waits for its frame's ACK, which the client
@@ -144,6 +145,7 @@ async function frames(page: Page, steps: Step[], pane = panes.shell): Promise<{ 
   return page.evaluate(([paneId, list]) => window.replayFixture.frames(paneId, list), [pane, steps] as const);
 }
 
+/** A clean terminal and clipboard between cases: CAN ends whatever OSC is open without dispatching it. */
 async function resetCase(page: Page, pane = panes.shell): Promise<void> {
   await frames(page, [{ data: `${CAN}${ESC}c` }], pane);
   const probe = await probeOf(page);
@@ -273,11 +275,13 @@ try {
         await runCase(page, test);
         console.log(`PASS ${test.group}: ${test.name}`);
       }
+      // an older bridge sends no replay origin: its replay cannot be told from live output
       await resetCase(page);
       await frames(page, [L(`${ESC}]52;c;${HISTORY}${BEL}`)]);
       const omitted = await fixture(page, (state) => [...state.copies]);
       assert.deepEqual(omitted, ["history"], "an unmarked frame is live output (the documented limit for older bridges)");
       report["reconnect-replay"]!.push({ name: "older bridge omits replay: treated as live (documented limit)", copies: omitted });
+      // permission off: no copy at all, live or replayed; on again, the next live copy works
       await page.evaluate(() => localStorage.setItem("ovis:settings", JSON.stringify({ ...JSON.parse(localStorage.getItem("ovis:settings")!), paneClipboard: false })));
       await page.reload();
       await page.waitForFunction(() => window.replayFixture?.sent.some((frame) => frame.type === "attach"));
@@ -315,6 +319,7 @@ try {
       await fixture(page, (state) => state.sockets.at(-1)!.close());
       await page.waitForFunction((count) => window.replayFixture.sent.some((frame) => frame.type === "attach" && frame.socket >= count), sockets);
       const reopened = await probeOf(page);
+      // the reconnect's replay closes the old OSC under its own flag; neither part copies
       const { acks } = await frames(page, [R(`${ESC}\\${ESC}[2J${ESC}[Hrestored after reconnect${ESC}]52;c;${HISTORY}${BEL}`), L(LIVE_COPY)]);
       const reconnect = await fixture(page, (state) => ({ copies: [...state.copies], acks: state.acks.map((ack) => `${ack.socket}:${ack.offset}`) }));
       assert.deepEqual(reconnect.copies, ["live"], "reconnect: no historical copy, the live one once");
@@ -331,6 +336,8 @@ try {
       await second.close();
       console.log("PASS second tab");
 
+      // whole frames queued in the client when the pane switches: none of the old pane's history copies,
+      // no frame is acknowledged twice, and the next pane starts clean
       await resetCase(page);
       const oldHost = await page.locator(".pane-frame.is-current .pane-terminal").evaluateHandle((host) => host);
       const switched = await page.evaluate(([shell, web]) => {
@@ -360,6 +367,7 @@ try {
       report["reconnect-replay"]!.push({ name: "pane switch with whole writes queued", acksBeforeSwitch: switched, oldTerminal: { mounted: old.connected, reusedForNextPane: old.current, replayOscOpen: old.probe.replayOscOpen, queued: old.probe.queued, peakInFlight: old.probe.peakInFlight }, copies: switchCopies, acks: lateAcks, nextPane: afterSwitch });
       console.log(`PASS pane switch (${old.current ? "same terminal, reset" : old.connected ? "old terminal kept as a cached tab" : "old terminal disposed"})`);
 
+      // an observer: history replayed to it copies nothing, and it sends no input of its own
       const sentBefore = await fixture(page, (state) => state.sent.length);
       await fixture(page, (state) => state.sockets.at(-1)!.send(JSON.stringify({ type: "role", mode: "observe" })));
       await page.locator(".pane-frame.is-current .terminal-banner").filter({ has: page.locator("svg.lucide-eye") }).waitFor();
@@ -401,6 +409,9 @@ try {
     } finally { await context.close(); }
   }
 
+  // A write still pending when its output ends: xterm holds the first frame unparsed and the rest
+  // wait in the client. After a reconnect, a reset or a dispose, nothing from before copies, no frame
+  // is acknowledged again, and the new output is not marked ready by an old callback.
   {
     const STALE_COPY = `${ESC}]52;c;${btoa("stale")}${BEL}`;
     const PENDING = [

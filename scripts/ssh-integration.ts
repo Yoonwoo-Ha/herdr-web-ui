@@ -1,3 +1,7 @@
+/** Real OpenSSH, real isolated herdr, real bundle install. No remote API mocks.
+ * SSH_TEST_PASSWORD=1 uses a temporary system account (CI sudo required).
+ * Otherwise an encrypted key exercises the askpass + dedicated-key flow.
+ */
 import assert from "node:assert/strict";
 import { createServer as tcpServer } from "node:net";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -97,6 +101,7 @@ function remoteExists(path: string): boolean {
 }
 async function startSshd(): Promise<void> {
   sshd = Bun.spawn([...(passwordMode ? ["sudo", "-n"] : []), "/usr/sbin/sshd", "-D", "-e", "-f", join(root, "sshd_config")], { stdout: "ignore", stderr: Bun.file(join(root, "sshd.log")) });
+  // sshd listens a moment after it starts, later on a loaded runner: wait for its port, not a guessed time
   const accepts = () => Bun.connect({ hostname: "127.0.0.1", port, socket: { data() {}, open(socket) { socket.end(); } } }).then(() => true, () => false);
   const deadline = Date.now() + 15_000;
   while (!(await accepts())) {

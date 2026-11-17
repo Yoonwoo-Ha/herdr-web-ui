@@ -6,6 +6,10 @@ import { RELAY_RESOURCE_TARGET, REQUEST_HEADERS, RESPONSE_HEADERS } from "../sha
 
 const UNSTAMPED = 'const BUILD = "";';
 
+/**
+ * Vite names every file under assets/ after its
+ * contents, so two builds that serve the same files share it and any changed file moves it.
+ */
 export function buildId(fileNames: Iterable<string>): string {
   const hash = createHash("sha256");
   for (const name of [...fileNames].filter((name) => name.startsWith("assets/")).sort()) hash.update(`${name}\0`);
@@ -30,6 +34,7 @@ export function buildFiles(fileNames: Iterable<string>): string[] {
 export function stampServiceWorker(source: string, build: string, files?: readonly string[], shell = false): string {
   if (!/^[0-9a-f]+$/.test(build)) throw new Error(`not a build id: ${build}`);
   for (const file of files ?? []) if (!/^\/assets\/[\w.@~/-]+$/.test(file) || file.includes("..")) throw new Error(`not a build file: ${file}`);
+  // both lines must be there, so a build never ships a worker with only one of them stamped
   stampLine(source, UNLISTED, UNLISTED);
   let named = stampLine(source, UNSTAMPED, `const BUILD = "${build}";`);
   if (shell) named = stampLine(named, "const RELAY_RESOURCES = null;",

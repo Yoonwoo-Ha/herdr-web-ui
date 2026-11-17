@@ -52,6 +52,7 @@ export async function checkCommandArrows(browser: Browser, origin: string, paneI
       for (const [key, code, sequence] of [["ArrowLeft", 37, "\x01"], ["ArrowRight", 39, "\x05"]] as const) {
         const final = key === "ArrowLeft" ? "D" : "C";
         await check(() => input.press(`Meta+${key}`), mac ? [sequence] : [], `${platform} Cmd+${key}`);
+        // Ctrl+arrow is the pane's own key on every platform: tmux and editors bind it
         await check(() => input.press(`Control+${key}`), [`\x1b[1;5${final}`], `${platform} Ctrl+${key} reaches the pane as itself`);
         if (!mac) continue;
         for (const modifier of ["Shift", "Alt", "Control"]) {

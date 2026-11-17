@@ -1,3 +1,10 @@
+/**
+ * At 412 and 720 wide, DPR 2.625, in Input line and Direct typing modes, with the
+ * default font and with the bundled "JetBrains Mono Web": a long composition (CDP
+ * Input.imeSetComposition, as Gboard's voice typing sends one) leaves the page and the terminal host
+ * at scroll 0, keeps xterm's composition box inside the grid, and the grid is the pane's width less
+ * its padding and less than one cell.
+ */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

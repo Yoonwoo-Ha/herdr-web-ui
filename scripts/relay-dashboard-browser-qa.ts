@@ -53,6 +53,7 @@ export async function relayDashboardQa({ browser, origin, evidence }: DashboardQ
   const failed: string[] = [];
   const csp: CspWatch[] = [];
   const contexts: BrowserContext[] = [];
+  /** the pages the running check opened: each must end with no page error and no request off app.ovis.sh and account.ovis.sh */
   const opened: Opened[] = [];
 
   const open = async (options: OpenOptions): Promise<Opened> => {
@@ -1264,6 +1265,8 @@ export async function relayDashboardQa({ browser, origin, evidence }: DashboardQ
 
   await check("map-long-host-390", async () => {
     const host = "relay-eu-west-dedicated-instance-for-the-studio-team.customer-internal.example.com";
+    // the fleet by name, not the one `open` returns: the directory is asked while `open` is still awaited, and its
+    // answer read that binding before it was set (a ReferenceError on a runner slow enough to ask that early)
     const fleet = fleetOf("F4");
     const { page } = await open({ fleet: "F4", width: 390, directory: async (route) => {
       const pcs = directoryOf(fleet, Date.now()).map((pc) => ({ ...pc, relay: `wss://${host}` }));

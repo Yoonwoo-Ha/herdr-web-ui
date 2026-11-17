@@ -1,3 +1,9 @@
+/**
+ * Keys typed into a terminal whose attach is still opening (connected, the bridge has not yet said
+ * the pane takes input) are never lost in silence: text is held in the draft for review, and a key the
+ * draft cannot hold (Escape) says it was not sent. None of it goes by itself once the pane takes input:
+ * it was typed blind, and what the screen shows then may be a password or a y/n prompt.
+ */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

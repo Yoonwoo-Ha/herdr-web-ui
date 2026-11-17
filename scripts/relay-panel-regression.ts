@@ -1,10 +1,16 @@
 /**
+ * Its QR code waits for a press, tells the PC what it is for, and
+ * is for a PC in no account only: once the PC joins one the PC takes its code back, the QR code leaves, and the tab
+ * says to sign in to that account on the device instead. A Portal visitor gets no SSH tab, no switch,
+ * no sign-in, no reset, no code and no relay group; a serve-only install shows Blocked with no switch and no
+ * reset; a failed start says why; on a tailnet the relay's tab keeps its switch and Phones and devices shows
  * the Tailscale address; a device paired through the relay wears the via relay pill. GET /api/access is pinned
  * per context, and the account service is a route of the context with the sign-in an IndexedDB fixture, so
  * neither what Tailscale does on the PC running this nor account.ovis.sh changes the outcome.
  * All on pages the PC serves: that the hosted shell's Settings has no relay group is checked where the app
  * really runs under the shell, in relay-shell-browser-qa.ts (a page of the PC's own build given the shell's
  * meta boots the shell, not the app). Imported by ui-regression.ts; `startRelayFixture` also serves the
+ * manual QA script.
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -81,7 +87,8 @@ const englishContext = async (browser: Browser, access: RemoteAccess = NO_TAILSC
   if (account) {
     const service = new FakeAccountService();
     service.offerLinkPage(["github", "google"]);
-    // Chrome treats a page a route fulfilled as public, and its local-network check then blocks the app's WebSocket to 127.0.0.1
+    // added by an init script, not by rewriting the page in a route: Chrome treats a page a route fulfilled as public,
+    // and its local-network check then blocks the app's WebSocket to 127.0.0.1.
     await context.addInitScript((service) => document.addEventListener("DOMContentLoaded", () => {
       const meta = document.createElement("meta");
       meta.name = "ovis-pc-account-service";
@@ -157,6 +164,7 @@ function relayUi(page: Page) {
     relayTab,
     devicesTab,
     toggle: relayTab.getByRole("switch", { name: "Ovis relay", exact: true }),
+    /** the switch's tooltip that turning the relay on closes the device gate */
     gateNote: relayTab.locator(".connect-relay-switch[title]"),
     wifiCode: devicesTab.locator(".connect-phone-code .compact-pair-code"),
     async closeSheet(): Promise<void> { await page.keyboard.press("Escape"); await sheet.waitFor({ state: "detached" }); },
@@ -277,7 +285,10 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     assert.equal((await offered).request().headers()["x-ovis-no-account-only"], "1", "and says it is for a PC in no account, so the PC makes none once it is in one");
     await relayQr.waitFor();
     assert.equal(await sheet.isVisible(), true, "the sheet stays open under its QR code");
+    // the QR code alone: no code to type that could be read off the screen and typed on another device
     assert.equal(await accountQr.getByLabel("Code to type", { exact: true }).count(), 0, "the account QR code shows no code to type");
+    // a device that pairs while the QR code may still put this PC in an account does not close the sheet: it stays
+    // to say which account and by which device, and to ask about a device nobody vouched for
     const qrCode = decodeOffer(((await (await offered).json()) as { url: string }).url)?.code;
     const codeEnded = answered(page, "/api/devices/pair/cancel");
     const scanned = await fetch(`${fixture.origin}/api/devices/pair`, {
@@ -310,6 +321,9 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     await accountQr.getByRole("button", { name: "Show a new code", exact: true }).waitFor();
     assert.equal(await relayQr.count(), 0, "the QR code is down until it is asked for again");
 
+    // the PC joins an account while its QR code is up, by a sign-in on the PC and an approval and not by a scan: the
+    // PC takes the QR code's code back, the QR code leaves, and the tab says which account. A PC that is in an
+    // account gets no QR code: the tab says to sign in to that account on the device instead
     const offeredLast = answered(page, "/api/relay/offer");
     await accountQr.getByRole("button", { name: "Show a new code", exact: true }).click();
     const lastCode = decodeOffer(((await (await offeredLast).json()) as { url: string }).url)?.code;
@@ -331,6 +345,7 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     assert.equal(await accountQr.getByRole("button").count(), 0, "a PC that is in an account offers no QR code");
     assert.equal(await relayTab.getByRole("button", { name: "Open the account", exact: true }).count(), 0, "and nothing says to add this PC to the account any more");
     assert.equal(await accountQr.evaluate((node) => node.contains(document.activeElement)), true, "the answered notice hands the focus to what the part says now");
+    // the PC itself makes no such code any more, whatever page asks for it
     const refused = await page.evaluate(async () => {
       const response = await fetch("/api/relay/offer", { method: "POST", headers: { "x-herdr-update": "1", "x-ovis-no-account-only": "1" } });
       return [response.status, ((await response.json()) as { error: { code: string } }).error.code];
@@ -397,6 +412,7 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     await sheet.waitFor({ state: "detached" });
     await dialog.locator('[data-section="devices"]').getByText("Paired: Wi-Fi phone.", { exact: true }).waitFor();
 
+    // Even a Portal visitor with a saved drive role cannot control the relay (owner_only).
     const visitorContext = await englishContext(browser);
     contexts.push(visitorContext);
     const visitor = await visitorContext.newPage();
@@ -413,6 +429,8 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     });
     await openPhoneSettings(visitor, fixture.origin);
     const seen = relayUi(visitor);
+    // the visitor's sheet holds only what it can use: Phones and devices, with no pairing code, no SSH and no relay
+    // tab; More settings has no relay group for it
     await seen.connect.click();
     await seen.devicesTab.getByText("Open Ovis on the PC itself to add a connection.", { exact: true }).waitFor();
     assert.equal(await seen.sheet.locator(".connect-tabs").count(), 0, "a Portal visitor gets one way, so no tabs");
@@ -496,6 +514,7 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     assert.equal(await accountGroup.evaluate((group) => group.closest("details") === null), true, "the account is on the page itself, not folded into More settings");
     await page.unroute("**/api/devices");
 
+    // serve-only: no switch anywhere, the reason in More settings, and no reset
     const serveOnly = startRelayFixture({ serveOnly: true });
     fixtures.push(serveOnly);
     const blockedContext = await englishContext(browser, NO_TAILSCALE, { account: true });

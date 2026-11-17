@@ -18,6 +18,7 @@ async function open(browser: Browser, search: string, { phone = false, clipboard
     ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" }
     : { viewport: { width: 1280, height: 800 }, locale: "en-US" });
   await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", fileOpen: "panel" })));
+  // a plain-HTTP LAN address: no clipboard API, and the old copy command refused too
   if (clipboardRefused) await context.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
     document.execCommand = () => false;
@@ -197,6 +198,9 @@ try {
         await dialog.getByText("Density", { exact: true }).waitFor();
         await page.waitForFunction(() => (window.history.state as Record<string, { depth?: number } | undefined> | null)?.["ovis:settings"]?.depth === 2, undefined, { timeout: 5000 });
         const compact = dialog.getByText("Compact", { exact: true });
+        // Arm the failure on the actual tap, before React handles the density change.
+        // Setting the URL earlier lets a content-readiness or roster render replace the
+        // button with the crash fallback before Playwright can dispatch that tap.
         await compact.evaluate((button) => button.addEventListener("click", () => {
           const url = new URL(window.location.href);
           url.searchParams.set("crash", "settings");

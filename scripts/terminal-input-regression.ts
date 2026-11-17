@@ -72,6 +72,7 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
     await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
     await page.locator(".view-switch").getByRole("button", { name: "Terminal", exact: true }).click();
     assert.equal(await page.locator(".key-bar").isVisible(), false, "a desktop shows no key bar under the terminal");
+    // a phone keyboard's autocorrect would swap a flag or path for a dictionary word before Send
     assert.deepEqual(await line.evaluate((box) => [box.getAttribute("autocorrect"), box.getAttribute("spellcheck"), box.getAttribute("autocapitalize")]), ["off", "false", "off"]);
     assert.equal(await page.getByRole("button", { name: "Input line", exact: true }).count(), 0);
     await page.locator(".pane-frame.is-current").focus();
@@ -228,6 +229,8 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
 
     const noteText = () => note.evaluateAll((elements) => elements[0]?.textContent ?? null);
     const sendButton = page.getByRole("button", { name: "Send to the terminal", exact: true });
+    // A real composition (Chrome's IME path, as Gboard composes every word): the Send keeps focus,
+    // so the tap itself must finish the word, and it sends the committed line at once.
     await line.fill("real 한");
     await line.focus();
     const cdp = await page.context().newCDPSession(page);
@@ -269,6 +272,8 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
     acknowledge!();
     await until(async () => (await line.inputValue()) === "");
     acknowledge = undefined;
+    // The preedit is deleted (or the keyboard cancels it) before it commits: the text Send sends
+    // nothing, and above all no bare Enter that could accept a prompt's default.
     await line.fill("한");
     await line.dispatchEvent("compositionstart", { data: "" });
     await sendButton.click();
@@ -294,6 +299,7 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
       });
       await page.waitForTimeout(40);
     }
+    // already withdrawn when the chain ends: a wait re-armed per composition would still be open
     assert.equal(await noteText(), "Finish the word, then send.", "the tap's deadline holds through a chain of compositions");
     await line.dispatchEvent("compositionend", { data: "한" });
     await page.waitForTimeout(100); // fixed wait: a chain of compositions past the deadline may send nothing
@@ -387,6 +393,7 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
     await page.getByRole("dialog", { name: "Command palette", exact: true }).waitFor();
     await page.keyboard.press("Escape");
 
+    // A screen can arrive before attachment readiness; do not send or auto-replay typing.
     delayReady = true;
     await setMode("direct");
     await page.reload();
@@ -422,6 +429,8 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
     ready!();
     await page.waitForTimeout(150); // fixed wait: ready may not replay the draft
     assert.equal(sent.length, before, "ready does not replay the draft");
+    // Held input keeps later typing until Send or Discard, on a ready terminal too: a key sent beside
+    // it would reach the pty without the held start, and an Enter would run that partial line.
     await page.locator(".xterm-helper-textarea").press("Enter");
     await page.locator(".xterm-helper-textarea").press("b");
     await until(async () => (await page.locator(".draft-text").textContent()) === "a b");
@@ -434,6 +443,8 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
     const banner = page.locator(".terminal-banner", { hasText: heldNote });
     const dismissBanner = async () => { await banner.getByRole("button", { name: "Dismiss", exact: true }).click(); await banner.waitFor({ state: "hidden" }); };
     const afterEscape = sent.length;
+    // Ctrl+Enter under modifyOtherKeys (Claude Code's "send now") carries no line break once encoded:
+    // it must still be refused, not run the pty's partial line
     toPage!({ type: "pty-data", pane_id: pane, data: "\x1b[>4;1m" });
     await page.waitForTimeout(100);
     await page.locator(".xterm-helper-textarea").press("Control+Enter");
@@ -441,6 +452,8 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
     assert.equal(sent.length, afterEscape, "Ctrl+Enter beside a held draft reaches nothing");
     await dismissBanner();
     toPage!({ type: "pty-data", pane_id: pane, data: "\x1b[>4;0m" });
+    // a paste beside a held draft is never sent ahead of the held start: one the draft cannot take is
+    // refused with the note, a bracketed one (the shell asks for it) holds its tab as a space
     const pasteIntoTerminal = (text: string) => page.locator(".xterm-helper-textarea").evaluate((element, value) => {
       const data = new DataTransfer();
       data.setData("text/plain", value);
@@ -574,6 +587,10 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
   await checkCanonicalSubmit(browser);
 }
 
+/**
+ * An image pasted into the phone's input line (#801): the long-press Paste hands the line a
+ * file-only clipboard, and the key bar's Paste reads one with clipboard.read().
+ */
 export async function checkLineImagePaste(browser: Browser, origin: string, pane: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
@@ -591,6 +608,10 @@ export async function checkLineImagePaste(browser: Browser, origin: string, pane
   const uploaded = () => page.waitForResponse((response) => new URL(response.url()).pathname === "/api/pane/image")
     .then(async (response) => { assert.equal(response.status(), 200, "the upload is stored"); return ((await response.json()) as { path: string }).path; });
   const quoted = (path: string) => `'${path.replaceAll("'", "'\\''")}' `;
+  // a paste lands in two steps: the path is written, then the next frame puts the caret behind it
+  // (TerminalInput's place). The line's frame was asked for before the path showed, so one frame
+  // asked for after it runs later: past it, the next fill's select-all is not collapsed to the end
+  // (under load the fill then added to the line instead of replacing it)
   const landed = async (value: string): Promise<void> => {
     await page.waitForFunction((expected) => document.querySelector<HTMLTextAreaElement>(".terminal-input-text")?.value === expected, value);
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
@@ -695,6 +716,12 @@ export async function checkLineImagePaste(browser: Browser, origin: string, pane
   } finally { await context.close(); }
 }
 
+/**
+ * The terminal input line's multiline Unicode text, sent for real to a program that records its raw input: with
+ * bracketed paste on it gets one paste, with it off only the lines, and on a mirror (no PTY sidecar, so the browser
+ * never learns the mode) an agent's pane gets one paste the bridge adds, a plain one the lines; each time exactly
+ * one Enter of the bridge's own after them.
+ */
 async function checkCanonicalSubmit(browser: Browser): Promise<void> {
   const { createServer } = await import("../server/index.ts");
   const { herdrRpc, workspaceCreate, workspaceClose } = await import("../server/herdr/client.ts");
@@ -862,6 +889,7 @@ async function checkKeyBarWhileLineComposes(browser: Browser, origin: string, pa
     await until(() => frames.length > before + 1, "^C frame");
     assert.deepEqual(frames.slice(before).map((frame) => [frame.type, frame.text ?? frame.keys]), [["input", "\x1b"], ["input", "\x03"]]);
     assert.equal(await line.inputValue(), "fix the", "the composing line keeps its text");
+    // the switch to direct typing would unmount the line mid-composition: it waits
     const direct = page.locator('.key-bar [data-key="direct"]');
     assert.equal(await direct.isDisabled(), true, "the direct-typing toggle waits for the line's composition");
     const sent = frames.length;

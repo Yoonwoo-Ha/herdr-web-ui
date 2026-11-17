@@ -14,6 +14,7 @@ if command -v bun >/dev/null 2>&1; then
       # a Homebrew bun is updated by Homebrew, not by `bun upgrade`: follow the bun on PATH link by
       # link (plain readlink, or ls where there is none) and look at each path on the way
       update="bun upgrade"
+      # Homebrew's default prefixes; tests point this at prefixes under a temporary root
       brew_prefixes=${OVIS_TEST_BREW_PREFIXES:-/opt/homebrew /home/linuxbrew/.linuxbrew}
       bun_path=$(command -v bun)
       case "$bun_path" in */*) ;; *) bun_path=./$bun_path ;; esac

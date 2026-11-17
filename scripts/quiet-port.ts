@@ -9,10 +9,11 @@ function handedOut(): [number, number] {
   try {
     const [first, last] = readFileSync("/proc/sys/net/ipv4/ip_local_port_range", "utf8").trim().split(/\s+/).map(Number);
     if (Number.isInteger(first) && Number.isInteger(last) && first! >= 1 && first! <= last! && last! <= 65535) return [first!, last!];
-  } catch {}
+  } catch { /* not Linux, or not to be read */ }
   return [32768, 65535];
 }
 
+/** From 20000 up when that fits: server/updater.test.ts picks its own below it. */
 export function quietRange(first: number, last: number): [number, number] | null {
   const stretches: [number, number][] = [[20_000, first - 1], [last + 1, 65_535], [1024, Math.min(first - 1, 19_999)]];
   return stretches.find(([from, to]) => to - from + 1 >= 1000) ?? null;

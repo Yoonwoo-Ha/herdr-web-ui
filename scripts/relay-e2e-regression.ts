@@ -145,6 +145,10 @@ async function main(): Promise<void> {
 
   interface Opened { context: BrowserContext; page: Page }
 
+  /**
+   * `blob` takes the service worker away, as a
+   * native WebView has none, so resources load as blobs.
+   */
   async function open(options: { width?: number; blob?: boolean; trace?: boolean } = {}): Promise<Opened> {
     assert.ok(browser);
     const width = options.width ?? 1440;
@@ -336,6 +340,7 @@ async function main(): Promise<void> {
     {
       const removed = await fetch(`${desk.base}/api/devices/${deskDevice.device_id}`, { method: "DELETE", headers: { origin: desk.base, "x-herdr-machine": "1" } });
       assert.equal(removed.status, 204, await removed.text());
+      // the session ends; the app's next sign-in, a page timer away, is refused for good
       await frames(page, "the revoked screen", async () => await state(page, "revoked").count() === 1, 60_000);
       await page.getByRole("heading", { name: "This device was removed from Desk PC" }).waitFor();
       assert.equal(await page.locator(".app").count(), 0, "the app is gone once the PC turned the phone away");

@@ -1,4 +1,7 @@
 /**
+ * The sighting does not prove the machine is in the
+ * account still (after Revoke all and a listing again its row keeps it), so the join sheet keeps Type the number, which
+ * turns it into the typed-number sheet. The shell is the real build on
  * https://app.ovis.sh (routed here), the account service the in-memory fake with the directory answered here; no
  * relay or PC takes part (every WebSocket is closed at once), so nothing is paired.
  *
@@ -126,6 +129,7 @@ try {
         if (sheet !== "join") fail(`${name}: the details action opened the ${sheet} sheet, want join`);
         await page.locator('[role=dialog][data-add-pc-mode="join"][data-add-pc-phase="start"]').waitFor();
         await shot("sheet-join");
+        // the number on the machine's own screen stays a way in: the directory cannot say the machine is in the account now
         await page.locator('[role=dialog][data-add-pc-mode="join"] [data-action="type-number"]').click();
         const typing = page.locator('[role=dialog][data-add-pc-mode="new"][data-add-pc-phase="start"]');
         await typing.waitFor();

@@ -5,6 +5,10 @@ import { FRAGMENTS_DIR, fragmentFiles } from "./changelog-fold.ts";
 
 const GROUP_HEADINGS: Record<SummaryGroup, string> = { new: "New features", improved: "Improvements", fixed: "Bug fixes" };
 
+/**
+ * `fragments` are the files left in changelog.d/: a fragment merged after the release PR folded
+ * them would ship without a line in these notes, so the release refuses until it is placed.
+ */
 export function releaseNotes(version: string, packageVersion: string, manifest: string, changelog: string, summaries: string, fragments: string[] = []): string {
   if (version !== version.trim() || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) throw new Error("Expected version X.Y.Z without v");
   if (fragments.length > 0) {
@@ -26,6 +30,7 @@ export function releaseNotes(version: string, packageVersion: string, manifest: 
   const english = summary!.en!;
   const lists = SUMMARY_GROUPS.flatMap((group) => {
     const written = english[group];
+    // plain text, as the app shows it: no `<` may open a tag or a comment that hides the fold
     return written ? [`### ${GROUP_HEADINGS[group]}\n\n${written.map((line) => `- ${line.replaceAll("<", "&lt;")}`).join("\n")}`] : [];
   });
   // the blank lines inside <details> are what make GitHub render the markdown there

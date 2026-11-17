@@ -1,4 +1,6 @@
 /**
+ * herdr's own server is
+ * drawn by libghostty too, and so is a device that turned the old Draw with libghostty switch off; xterm
  * draws an iTerm2 picture by itself. Demo fixtures only: no herdr, hc or user state.
  */
 import { deflateSync } from "node:zlib";
@@ -195,6 +197,7 @@ try {
         await print(page, "e\u0301\u754cX\r\n", "COMBINED");
         assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll(".pane-frame.is-current .ghostty-wide")].map((cell) => cell.textContent)), ["\u754c"], "core: the wide cell is the CJK character, not the accent");
 
+        // an emoji ZWJ sequence is one two-column cell, as xterm (the cursor, selection and links) counts it
         await print(page, "ABC\u{1F468}\u200D\u{1F469}\u200D\u{1F467}XYZ\r\n", "ZWJ");
         const zwj = await page.evaluate(() => {
           const layer = document.querySelector(".pane-frame.is-current .ghostty-layer")!;
@@ -261,6 +264,7 @@ try {
         assert.ok(Math.abs(glyphs.textDrop) < 0.5, `core: the text after an icon stands on the row's baseline (${glyphs.textDrop}px lower)`);
         assert.ok(Math.abs(glyphs.column - 3) < 0.1, `core: the text after them starts at xterm's column 3 (${glyphs.column})`);
 
+        // a bold, coloured, underlined wide cell: bold (xterm's own rule would set its box to normal), and its underline in its colour
         await print(page, "\x1b[1;32;4m\uAC00\x1b[0m|\r\n", "BOLDLINE");
         const boldLine = await page.evaluate(() => {
           const glyph = [...document.querySelectorAll<HTMLElement>(".pane-frame.is-current .ghostty-wide, .pane-frame.is-current .ghostty-fit")].filter((el) => el.textContent === "\uAC00").at(-1)!;
@@ -299,6 +303,8 @@ try {
           }, undefined, { timeout: 5000 }).then(() => true, () => false);
           assert.ok(kept, `core, ${when}: Latin keeps xterm's cells, and the Hangul and Latin after it their columns (${JSON.stringify(await page.evaluate(() => window.ghosttyRuler!()))})`);
         };
+        // the spacing a fit taken against xterm's old screen leaves behind (the cell read as 928px over 110 columns instead of
+        // 119): the next fit, at the new grid, must space the layer from the font alone, not from what is left
         const staleFit = () => page.evaluate(() => { document.querySelector<HTMLElement>(".pane-frame.is-current .ghostty-layer")!.style.letterSpacing = "0.64px"; });
         for (const width of [1100, 1137, 1174, 1211]) {
           await staleFit();
@@ -312,6 +318,10 @@ try {
             await columnsKept("back from Chat");
           }
         }
+        // the chat lens adopts the pane's grid as another device sizes it. xterm's renderer is paused under it: it tells a resize
+        // at once but resizes its screen from an idle task, and the screen sits in a `content-visibility: hidden` subtree where
+        // no ResizeObserver fires. A grid widened and given back under Chat left a layer sized from the screen measuring the
+        // wide screen against this device's columns, every cell three times its glyph once back (#3366)
         const grid = await page.evaluate(() => {
           const layer = document.querySelector(".pane-frame.is-current .ghostty-layer")!;
           const screen = document.querySelector<HTMLElement>(".pane-frame.is-current .xterm-screen")!;
@@ -351,6 +361,8 @@ try {
         await page.context().close();
       }
       {
+        // an iTerm2 picture (Pictures in the terminal): libghostty cannot draw it, xterm's image addon does and moves its
+        // cursor past it, so the text after it must be shown on the row xterm alone shows it on (#2980)
         const shownRow = async (ghostty: boolean) => {
           const { page, errors } = await open(browser, server.port, prefix, "core", { noModule: !ghostty, images: true });
           if (ghostty) await page.locator(".pane-frame.is-current .pane-terminal[data-renderer=ghostty]").waitFor();

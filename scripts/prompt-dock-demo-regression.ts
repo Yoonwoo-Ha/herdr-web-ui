@@ -10,6 +10,8 @@ import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
+// A second, tall form (steps, reference text, descriptions, a
+// custom answer) is answered by this script in the transport's place, for the "web" pane, and a
 // prompt of another pane the same way (window.panePrompts). All files and HTTP traffic stay in
 // this disposable, loopback-only app; no herdr session is opened.
 // PROMPT_DOCK_SHOTS=<dir> also saves a screenshot of each state there.
@@ -168,6 +170,8 @@ try {
   const index = join(app, "index.html");
   const html = readFileSync(index, "utf8");
   assert.match(html, /<script type="module"/);
+  // Each pane has its own prompt, as on the server: one pane's read
+  // or answer never touches another's.
   const form = `<script>(() => {
     const demo = window.fetch;
     const web = ${JSON.stringify(panes.web)};

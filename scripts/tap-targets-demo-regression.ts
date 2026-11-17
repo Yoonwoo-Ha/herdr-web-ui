@@ -1,9 +1,20 @@
 /**
+ * A finger's hit areas on a phone (mobile UX review item 2): on a coarse pointer every control the
+ * review named, and the ones beside them, takes taps over at least --touch-target (44 px) both ways,
  * while it is drawn as before. The real client over the demo's fixture transport, in a disposable
  * loopback copy; no herdr session is opened. Each case is a phone (390x844 and 412x915, touch, 3x,
+ * Codex dark).
+ *
+ * A hit area is measured where the page answers taps: from the control's drawn centre,
+ * document.elementFromPoint walks out along the centre row and column while it still lands on the
+ * control, and every point of the rectangle those runs span (and of the drawn box) must land on it too.
  * So a neighbour's expander that took a corner of it fails. elementFromPoint sees only the topmost
  * element, so an expander buried under a later sibling is caught from the CSS instead: each control's
  * reach (its box and its ::before, from getComputedStyle) must share no point with another's. On a desktop window (1280, a mouse) the same controls take taps over
+ * their drawn box and nothing more: the expanders are for fingers only.
+ * The five controls of #3406 are held to the floor of their pointer (floors, below): a finger's 44 px on a
+ * short phone (360x780), a mouse's --pointer-target (24 px) at 1280.
+ * Captures go to UI_EVIDENCE_DIR as tap-targets-<width>-<state>.png when it is set.
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

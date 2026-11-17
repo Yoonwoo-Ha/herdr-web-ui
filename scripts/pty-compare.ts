@@ -1,3 +1,4 @@
+/** Isolated comparison, never a production backend. Owns and closes its herdr workspace. */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { stripVTControlCharacters } from "node:util";

@@ -1,4 +1,7 @@
 /**
+ * Claude's store-bound Resume: the list asked for from a pane of the workspace, one POST sessions/resume
+ * per double click (never tab/create), the same UUID reported by a pane on another store left to Resume, a
+ * store that changed read again, and a bridge from before store-bound Resume (rows without a source, no
  * resume route) offering no Resume rather than an unbound one. No herdr pane is touched; every request
  * stays on this loopback server.
  */
@@ -391,6 +394,8 @@ try {
   await agentList.waitFor({ state: "detached" });
   await page.keyboard.press("Escape");
   await dialog.waitFor({ state: "detached" });
+  // Claude: the list is asked for from a pane of the workspace (its store's), and the same UUID reported by a
+  // pane on another store is not that row's session: Resume, not Open
   await openHistory("w3");
   assert.equal(await picker.locator(".agent-picker-label").textContent(), "Claude Code");
   assert.ok(claudeLists.length >= 1 && claudeLists.every((query) => new URLSearchParams(query).get("pane_id") === "p3"), `the list names its source pane: ${JSON.stringify(claudeLists)}`);
@@ -453,6 +458,7 @@ try {
   await dialog.getByRole("button", { name: /^Resume / }).last().click();
   await dialog.waitFor({ state: "detached" });
   await page.waitForFunction(() => window.qa.selected === "p4");
+  // a bridge with source rows but no resume route: said so, and never an unbound tab/create instead
   resumeAnswer = "missing";
   await openHistory("w3");
   await dialog.getByRole("button", { name: /^Resume / }).last().click();
@@ -519,6 +525,7 @@ try {
   await page.screenshot({ path: join(evidence, "remote-404.png") });
   await page.keyboard.press("Escape");
   console.log("PASS a bridge answering 404 hides the menu item");
+  // a device that only watches is refused the list on its own PC too: the menu does not offer it
   await page.evaluate(() => { window.qa.machine("local"); window.qa.watch(true); });
   await row("w1").waitFor();
   const watchMenu = await openMenu("w1");

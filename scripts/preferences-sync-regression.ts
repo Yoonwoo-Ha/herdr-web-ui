@@ -56,6 +56,7 @@ async function browserAt(browser: Awaited<ReturnType<typeof chromium.launch>>, o
 
 function storageHolds(page: Page, key: string, expected: Record<string, unknown> | string[]): Promise<void> {
   return page.evaluate(({ key, expected }) => {
+    // Keep the observed promise rooted while Chromium's virtual clock is paused.
     const waits: Set<Promise<void>> = Reflect.get(window, "__preferencesTestWaits") ?? new Set();
     Reflect.set(window, "__preferencesTestWaits", waits);
     const waiting = new Promise<void>((resolve, reject) => {
@@ -437,6 +438,9 @@ try {
       if (qaDir) writeFileSync(join(qaDir, "retry-during-automatic-send.json"), JSON.stringify(used, null, 2));
       console.log(`PASS retry-during-automatic-send ${JSON.stringify(used)}`);
 
+      // closed-stream: the server restarts behind a proxy, whose 502 answers the browser's reconnect, so
+      // the browser closes the stream for good; a change made then still goes out, and the app opens a
+      // new stream that brings other browsers' changes again
       let streamRefused = true;
       let streamHold: PromiseWithResolvers<void> | null = null;
       const streamAsked = Promise.withResolvers<void>();

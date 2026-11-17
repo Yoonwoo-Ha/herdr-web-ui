@@ -19,6 +19,11 @@ async function until(check: () => boolean, label: string): Promise<void> {
 
 type Sent = { type: "input"; pane_id: string; text: string } | { type: "keys"; pane_id: string; keys: string[] };
 
+/**
+ * A mirrored pane (no terminal attach on its PC, #924) never shows the browser the program's
+ * request, so there Ctrl+Enter goes as herdr's `ctrl+enter` key, which herdr encodes in the
+ * program's own mode: the program reads the same bytes either way.
+ */
 export async function checkCtrlEnter(browser: Browser, origin: string, paneId: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 1100, height: 650 } });
   await context.addInitScript((id) => {

@@ -146,6 +146,7 @@ export async function checkTabOverflow(browser: Browser, origin: string): Promis
       await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 2, null, { timeout: 15_000 });
       await overflowing();
       await wheelScrolls("split half");
+      // a wheel that counts in lines (Firefox's) or pages moves the strip as far as one in pixels would
       for (const [mode, delta, least] of [[1, 3, 30], [2, 1, 200]] as const) {
         const moved = await strip.evaluate((node, [deltaMode, deltaY]) => {
           node.scrollLeft = 0;
@@ -155,6 +156,8 @@ export async function checkTabOverflow(browser: Browser, origin: string): Promis
         assert.ok(moved.moved >= Math.min(least, moved.room - 1), `a wheel in ${mode === 1 ? "lines" : "pages"} scrolls the strip (${moved.moved}px of ${moved.room})`);
       }
       assert.equal(await leftAlone(HALF, { deltaX: 120, deltaY: 10 }), true, "a sideways wheel or trackpad swipe is the browser's");
+      // mostly down, a little sideways either way: turned into sideways scroll from deltaY alone, the
+      // strip would move against the swipe's own sideways part (#2103)
       for (const deltaX of [20, -20]) assert.equal(await leftAlone(HALF, { deltaX, deltaY: 40 }), true, `a diagonal trackpad swipe (deltaX ${deltaX}) is the browser's`);
       assert.equal(await leftAlone(HALF, { deltaY: 120, ctrlKey: true }), true, "a pinch is the browser's");
       const fewStrip = '.pane-slot[data-side="right"] .tab-strip';

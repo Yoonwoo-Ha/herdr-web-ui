@@ -1,4 +1,7 @@
 /**
+ * Then the states around it: a
+ * refusal (no repair, Alerts opens Settings), a key mismatch, a denied permission, no push
+ * support, the PC out of reach, a look still under way, and a test refused to a watching
  * device. No notification is sent to any real device; all files and HTTP traffic stay in this
  * disposable, loopback-only app, and no herdr session is opened.
  */
@@ -240,6 +243,8 @@ async function run(browser: Browser, origin: string, width: number, theme: Theme
       }
       results[`${tag} retired-device-repair`] = { notices: 1, subscribeCalls: 3, testCalls: 1, cleared: true };
 
+      // a watching device: it may receive alerts, but its test is refused (403 read_only); the line says it can only
+      // watch, Send test becomes unavailable, nothing is registered and no banner appears
       await page.evaluate(() => window.__push.refuse("POST /api/push/test", 403, "read_only"));
       const registered = await count(page, "POST /api/push/subscribe");
       await dialog.getByRole("button", { name: label("Send test"), exact: true }).click();

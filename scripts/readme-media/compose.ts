@@ -223,12 +223,14 @@ export async function composeVideo(rec: Recording, frame: Frame, out: { mp4: str
     }
   }
   await ffmpeg(["-f", "image2pipe", "-framerate", String(FPS), "-i", "-", "-c:v", "libx264", "-preset", "slow", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out.mp4], images());
+  // a README GIF stays under a few MB: 12 fps, and a palette per clip
   const gifFilter = `fps=12,scale=${out.gifWidth}:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=160:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`;
   await ffmpeg(["-i", out.mp4, "-vf", gifFilter, out.gif]);
   await page.close();
 }
 
 export async function composeStill(png: Buffer, frame: Frame, content: { w: number; h: number }, out: string): Promise<void> {
+  // drawn at 2 canvas px per CSS px, so the screenshot keeps its 2x pixels
   const L = layout(frame, content, { scale: 2, margin: frame === "window" ? 72 : 64, backdrop: false });
   const page = await compositor();
   await page.evaluate(([w, h]) => (window as any).setup(w, h), [L.canvas.w, L.canvas.h]);

@@ -104,6 +104,7 @@ export async function checkPushSettings(browser: Browser, origin: string): Promi
     assert.equal(registrations, beforeRepair + 1, "the repair registers this device once");
     assert.equal(await page.locator(".update-notice.is-alerts").count(), 0);
 
+    // A browser can lose its local subscription while the server still has the endpoint.
     await page.evaluate(async () => (await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription())?.unsubscribe());
     const beforeMissing = tests.length;
     await send.click();

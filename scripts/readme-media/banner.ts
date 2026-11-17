@@ -1,3 +1,8 @@
+/**
+ * Every image is an opaque rectangle (the README loop GIF
+ * cannot carry soft alpha, so nothing next to it is rounded either). Each PNG is then quantized to
+ * 256 colours with ffmpeg, since the README must stay light.
+ */
 import { chromium } from "playwright-core";
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,10 +28,12 @@ ffmpeg(["-f", "lavfi", "-i", "nullsrc=s=256x256,geq=random(1)*255:128:128,format
 
 const windowObject = (still: string) => `<div class="window"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">localhost:7317</span></div><img src="${url(join(stills, still))}" alt=""></div>`;
 const phoneObject = (still: string) => `<div class="phone"><img src="${url(join(stills, still))}" alt=""></div>`;
+// no install command in the art: at the README's display size it would be ~8px; the README has it as text
 const copy = `<div class="copy"><img class="mark" src="${url(icon)}" alt=""><div class="word">Ovis</div><div class="tag">Anyharness, <span class="accent">Anywhere, Anytime.</span></div></div>`;
 const hero = `${copy}<div class="scene">${windowObject("01-desktop-chat-claude.png")}${phoneObject("14-phone-codex-approval.png")}</div>`;
 
 interface Job { out: string; kind: "banner" | "look"; w: number; h: number; content: string; look?: { w: number; anchor: "whole" | "detail" }; maxBytes: number }
+// the stills are 2x, so 1.25 px per CSS px is still below 1 output px per source px
 const looks = [
   { name: "chat", still: "02-desktop-chat-worked-open", look: { w: 1540, anchor: "whole" } },
   { name: "prompt", still: "04-desktop-codex-approval", look: { w: 1440 * 1.25, anchor: "detail" } },

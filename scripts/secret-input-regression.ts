@@ -81,6 +81,7 @@ process.stdin.on("data", chunk => {
     assert.equal(await page.evaluate(() => JSON.stringify({ ...localStorage }).includes("fixture-secret")), false);
     await openLens(page, "chat");
     await field.waitFor();
+    // the same field across the lens switch: a remount would have dropped what was typed
     assert.equal(await field.inputValue(), "fixture-secret", "switching lenses keeps the masked input mounted");
     await page.getByText("Loading conversation…", { exact: true }).waitFor({ state: "hidden" });
     assert.equal(await page.getByRole("textbox", { name: "Message", exact: true }).count(), 0);
@@ -88,6 +89,7 @@ process.stdin.on("data", chunk => {
       mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
       await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "secret-input-mobile.png") });
     }
+    // A dropped connection must discard the DOM value even if it reconnects before the 1s poll.
     await page.evaluate(() => (window as any).dropTestSockets());
     await page.waitForFunction(() => (document.querySelector('.secret-input input') as HTMLInputElement | null)?.value === "");
     assert.deepEqual(sent, []);
@@ -122,6 +124,8 @@ process.stdin.on("data", chunk => {
     await page.locator(".secret-input").getByRole("button", { name: "Send", exact: true }).click();
     await field.waitFor({ state: "detached" });
     assert.deepEqual(sent, ["secret", "secret"]);
+    // git's HTTPS password, a prompt of the wider set (the server says secret-prompts-2): masked like the others,
+    // the input line gone, and sent as a secret
     rmSync(result, { force: true });
     await paneSendText(pane, "\u000e");
     await field.waitFor();
@@ -132,6 +136,7 @@ process.stdin.on("data", chunk => {
     await accepted("git-token-secret");
     assert.deepEqual(sent, ["secret", "secret", "secret"]);
     assert.equal(await page.evaluate(() => JSON.stringify({ ...localStorage }).includes("git-token-secret")), false);
+    // ssh-keygen's offer of no passphrase: the empty field is an answer there, and the program gets Enter alone
     rmSync(result, { force: true });
     await paneSendText(pane, "\u000f");
     await field.waitFor();
@@ -140,6 +145,8 @@ process.stdin.on("data", chunk => {
     await field.waitFor({ state: "detached" });
     await accepted("");
     assert.deepEqual(sent, ["secret", "secret", "secret", "secret"]);
+    // A program that read its answer and works on, its prompt still the last text on the screen, asks no more: the
+    // field leaves, so a second Send cannot wait in the terminal for what comes next
     rmSync(result, { force: true });
     await paneSendText(pane, "\u0014");
     await field.waitFor();
@@ -149,6 +156,8 @@ process.stdin.on("data", chunk => {
     await field.waitFor({ state: "detached" });
     assert.match((await paneRead({ paneId: pane, source: "visible", format: "text" })).text.trimEnd(), /Password for 'https:\/\/alice@github\.com':$/, "the prompt is still the last text");
     assert.deepEqual(sent, ["secret", "secret", "secret", "secret", "secret"]);
+    // A prompt as wide as the pane, its last space wrapped onto the next row: herdr draws the two rows apart, and
+    // the cursor past that space is still the prompt asking
     rmSync(result, { force: true });
     await paneSendText(pane, "\u0015");
     await field.waitFor();
@@ -215,9 +224,12 @@ process.stdin.on("data", chunk => {
           await view.keyboard.press("Enter");
           await accepted("typed-secret", "regression: the grid did not take the typed secret while the masked input was up");
           await masked.waitFor({ state: "detached" });
+          // control: typed into the pty only, never into a draft or the page
           assert.equal(await view.evaluate(() => JSON.stringify({ ...localStorage }).includes("typed-secret")), false);
           assert.equal(await view.locator("body").innerText().then((text) => text.includes("typed-secret")), false);
           assert.equal(await view.locator(".terminal-banner-draft").count(), 0);
+          // Offline, a secret keystroke is refused with a note, never held for later like other
+          // typing (regression: the note; control: nothing held, nothing delivered afterwards).
           await paneSendText(pane, "\u0010");
           await masked.waitFor();
           await desktop.setOffline(true);

@@ -1,6 +1,7 @@
 /**
  * context.close() first disposes the context's fetched responses and only then closes its pages; the proxy's fetched
- * response is held until that disposal is done, so its fulfill always lands in that window.
+ * response is held until that disposal is done, so its fulfill always lands in that window, as it did by chance in
+ * relay-dashboard-browser-qa ("Fetch response has been disposed").
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";

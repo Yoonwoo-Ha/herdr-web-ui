@@ -24,6 +24,7 @@ const environmentOf = (candidate: unknown): unknown => {
 
 test("only the sign job names the environment release-signing or reads its key", () => {
   expect(allJobs.filter(({ job: candidate }) => environmentOf(candidate) === "release-signing").map(({ where }) => where)).toEqual(["release.yml:server-binary-sign"]);
+  // a job that deploys reads its own environment, never the key's
   expect(allJobs.filter(({ job: candidate }) => JSON.stringify(candidate).includes("OVIS_SERVER_SIGNING_KEY")).map(({ where }) => where)).toEqual(["release.yml:server-binary-sign"]);
 });
 
@@ -116,6 +117,7 @@ test("publish attaches no PTY host but the one ovis-server.json signed", () => {
 
 
 test("publish refuses server files signed for another version than the one it releases", () => {
+  // signed again by the same key: the signature holds, only the version check can refuse it
   const { code, err, attached } = runAttach((dir, privateKeyPem) => {
     writeManifest(dir, { version: "1.2.2", sources });
     signManifest(dir, privateKeyPem);
@@ -171,6 +173,7 @@ test("with the key it expects, the sign step writes a signature that key verifie
   try {
     expect(code).toBe(0);
     expect(verifyRelease(dir, publicKey, { version: "1.2.3" })).toEqual({ ok: true, problems: [] });
+    // no file the step leaves behind, in the uploaded folder or beside it, holds any line of the private key
     const keyLines = privateKeyPem.split("\n").filter((line) => line.length > 20 && !line.startsWith("-----"));
     for (const file of filesUnder(join(dir, ".."))) for (const line of keyLines) expect(readFileSync(file, "utf8")).not.toContain(line);
   } finally {

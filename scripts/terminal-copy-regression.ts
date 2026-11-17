@@ -73,6 +73,7 @@ setInterval(() => {}, 1000);
       const message = JSON.parse(String(payload));
       if (message.type === "input") inputs.push(message.text);
     }));
+    // letting go copies once herdr's copy_on_select is known: on here, as herdr's default with no config
     const preference = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/herdr-ui");
     await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
     await page.locator(shownRows()).first().waitFor();
@@ -196,6 +197,8 @@ setInterval(() => {}, 1000);
       await page.unroute("**/api/pane/selection?*");
     }
 
+    // Output can erase the server range before it is read; the visible snapshot
+    // must not be replaced by an empty clipboard.
     await page.route("**/api/pane/selection?*", (route) => route.fulfill({ json: { text: "" } }));
     await drag({ x: box.x + 1, y: box.y + box.height / 2 }, { x: box.x + 400, y: box.y + box.height / 2 });
     await settled();
@@ -210,6 +213,7 @@ setInterval(() => {}, 1000);
     await page.waitForTimeout(300);
     assert.equal(await clipboard(page), `LONG-${"x".repeat(300)}-END`, "a soft-wrapped line must copy without line breaks");
 
+    // plain HTTP (no navigator.clipboard): the copy command takes over
     const insecure = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     try {
       await insecure.addInitScript((id) => {
@@ -283,7 +287,7 @@ setInterval(() => {}, 1000);
     await page.mouse.up();
     assert.equal(lines(await filled()).at(-1), 299, "a drag past the bottom edge takes the last line");
     await page.mouse.wheel(0, lineHeight);
-    await page.waitForTimeout(2600);
+    await page.waitForTimeout(2600); // the copy note fades before the evidence below
 
     const herdrTop = async (): Promise<number> => Number((await paneRead({ paneId: pane, source: "visible", stripAnsi: true })).text.split("\n")[0]!.trim().slice(1));
     const syncedTop = async (): Promise<number> => {

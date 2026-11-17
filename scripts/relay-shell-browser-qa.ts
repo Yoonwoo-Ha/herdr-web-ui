@@ -1,6 +1,21 @@
 /**
- * Headless Chrome has no push service: each PC's server pushes to a fake one (server/push.fake.ts), and the
- * page's PushManager hands over that fake's subscription for its PC's scope.
+ * The hosted shell in a real browser against a real PC: dist-shell/ served as Cloudflare Pages
+ * would serve it (pages-static.ts) under its enforced policy, a real `createServer` on the
+ * isolated herdr test session with its relay turned on, and the Bun relay (relay/bun.ts) between
+ * them.
+ *
+ * The shell accepts only a wss: relay, and the PC's server only a wss: relay origin, so both name
+ * `wss://relay.test`: the server's outbound sockets reach the local relay through the service's
+ * `connect` seam, and the browser's through Playwright's WebSocket routing, bridged here frame by
+ * frame to the same relay.
+ *
+ * The sign-in screen and the dashboard need the account service, which the shell offers on app.ovis.sh alone
+ * (lib/account/service.ts shellAccountServiceOf): that part routes https://app.ovis.sh to the same built shell and
+ * https://account.ovis.sh to the in-memory account service (shared/account-service-fake.ts), which its PCs use too.
+ *
+ * Headless Chrome has no push service: each PC's server pushes to a fake one (server/push.fake.ts,
+ * which decrypts what it gets as a browser would), and the page's PushManager hands over that
+ * fake's subscription for its PC's scope.
  */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
@@ -64,6 +79,7 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
     try { return await Promise.race([promise, late.promise]); } finally { clearTimeout(timer); }
   }
 
+  // Many reconnect scenarios share one loopback address and deliberately exceed production's minute budget.
   const relayOptions = { port: 0, limits: { perAddressPerMinute: 10_000, globalPerMinute: 10_000 } };
   let relay: BunRelay | null = startBunRelay(relayOptions);
   let relayPort = relay.port;
@@ -282,6 +298,7 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
   const note = (line: string): void => { report.push(`[${((Date.now() - started) / 1000).toFixed(1)}s] ${line}`); };
 
   interface Seeded { server_id: string; server_public_key: string; name: string; device_id?: string }
+  /** Saved PCs, written as lib/relay/device.ts writes them, with a real non-extractable key. */
   const seed = async (page: Page, entries: Seeded[]): Promise<void> => {
     await page.evaluate(async (entries) => {
       const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
@@ -834,6 +851,7 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
     const ID = identity.server_id;
     const scope = scopeOf(ID);
 
+    // The terminal's own preference read must reach the PC, not the static shell host.
     {
       const workspace = await workspaceCreate({ cwd: stateDir, label: "relay-transport-parity" });
       const { context, page } = await open({ width: 1440, height: 900 });
@@ -889,6 +907,10 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
       }
     }
 
+    // A PC's files, folders and names stay on the phone (#2599): a file opened in the app, in a tab
+    // of its own and as a raw file, a link followed in that tab, and a reload of each, while the
+    // shell host hears of nothing but the PC's id in the path. Only the page's fragment, which no
+    // request carries, says what is open.
     {
       const folder = mkdtempSync(join(tmpdir(), "ovis-relay-private-folder-"));
       writeFileSync(join(folder, "private-notes.md"), "# Private notes\n\nSee [the other notes](other-notes.md).\n");
@@ -964,6 +986,7 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
     }
     note("empty: front page without a saved PC at 390 and 1440, light and dark");
 
+    // (b) a damaged offer: the damaged screen, and not one request beyond this origin, not one socket
     {
       const { context, page, bridge } = await open();
       const requests: string[] = [];
@@ -1031,6 +1054,9 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
       await page.keyboard.press("ControlOrMeta+Shift+Comma");
       await openSettingsPage(page, "Devices and PCs");
       await page.getByRole("button", { name: "Rename Renamed QA phone", exact: true }).waitFor();
+      // the hosted shell offers no relay at all (a relayed phone can neither pair nor reset there:
+      // relayOffered in components/ConnectPhoneDialog.tsx): no Ovis relay group in More settings, checked once the page consumed the relay status the group would follow,
+      // plus two frames for its render
       await page.waitForFunction((seen) => ((window as unknown as { qaRelayStatuses?: number }).qaRelayStatuses ?? 0) > seen, statusesBefore);
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       const settings = page.locator(".settings-dialog");
@@ -1044,6 +1070,7 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
       assert.equal((await saved(page, ID))?.device_id, paired[0]!.id, "renaming keeps the paired identity");
       await shot(page, "renamed");
       note("rename: real PATCH /api/devices/:id -> app stays mounted, one admitted session, same carrier and saved device; no identity-changed");
+      // revoked on the PC: the session ends with auth_revoked, the app gives way to the screen, the key is gone
       devices.revoke(paired[0]!.id);
       await state(page, "revoked").waitFor();
       await page.getByRole("heading", { name: "This device was removed from Desk PC" }).waitFor();
@@ -1063,6 +1090,7 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
       await pairedStraightIn(page);
       await inApp(page);
       await bounded(bridge.next(), "the pairing socket");
+      // Unload the paired app before stopping the PC, so it cannot race this visit with a reconnect.
       await page.goto("about:blank");
       await stopPcRelay();
       await page.goto(scope);
@@ -1099,6 +1127,7 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
       await closeMarked(context);
     }
     {
+      // the offer first: a PC whose relay is gone gives none (409 relay_offline), and its code outlives the relay
       const offer = await serverOffer();
       await relay!.stop();
       relay = null;
@@ -1162,6 +1191,8 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
       await closeMarked(context);
     }
 
+    // (g2) a forged link: this PC's id with another key (an attacker's link). Refused before any
+    // socket, every time it is opened, and the key saved from the PC's own pairing is left alone
     {
       const { context, page, bridge } = await open({ theme: "light" });
       const forged: RelayOffer = { ...(await serverOffer()), server_public_key: exportPublicKey(generateKeyPair().publicKey) };
@@ -1187,6 +1218,7 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
       await page.goto(offerUrl(forged));
       await refused("with the PC's key saved", listed);
       assert.notEqual(await saved(page, ID), null, "the key saved from the PC's own pairing stays");
+      // a key saved from a forged link by an earlier build: this PC's page warns instead of connecting, and Forget removes it
       await seed(page, [{ server_id: ID, server_public_key: forged.server_public_key, name: "Desk PC", device_id: "forged-device" }]);
       await page.goto(scope);
       await state(page, "identity-changed").waitFor();
@@ -1278,6 +1310,8 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
       await closeMarked(context);
     }
 
+    // (l) push alerts: two PCs paired in one shell origin, each subscribed in its own scope, each
+    // PC's test push reaching only its own device's (fake) push service
     const push: string[] = [];
     const say = (line: string): void => { push.push(line); note(line); };
     const pushOf = (server: typeof app) => server.context.services.core.push;

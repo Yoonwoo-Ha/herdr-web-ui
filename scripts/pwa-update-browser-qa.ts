@@ -188,6 +188,8 @@ try {
         } catch (error) { return error instanceof TypeError; }
       }), true, "uncached API requests really fail while offline");
       await page.reload();
+      // App intentionally waits for the server's auth state before mounting any terminal
+      // or composer. Offline boot must show that shell, not bypass the auth boundary.
       await page.locator(".app-header").waitFor();
       const placeholder = page.locator(".terminal-placeholder-inner span");
       await placeholder.waitFor();

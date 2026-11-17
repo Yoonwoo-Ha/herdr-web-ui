@@ -56,6 +56,11 @@ export const manifestUrl = (version: number): string => `https://github.com/devs
 export const BUNDLE_PLATFORMS = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64"];
 export type Get = (url: string, init: RequestInit) => Promise<Response>;
 
+/**
+ * Why remote-v<version>, tagged, is not published yet: the Remote PC bundles workflow uploads the
+ * manifest and the archives only after building and testing them, so a Release run started in
+ * between would ship an app whose remote PCs find no bundle.
+ */
 export async function publishedProblems(version: number, get: Get = fetch): Promise<string[]> {
   const url = manifestUrl(version);
   const wait = `Wait for the Remote PC bundles workflow of the tag remote-v${version} to publish it (rerun it if it failed), then run Release again (docs/development.md#releasing).`;
@@ -86,9 +91,12 @@ export async function publishedProblems(version: number, get: Get = fetch): Prom
     else missing.push(platform);
   }
   if (missing.length > 0) return [`remote-v${version} is not published for every platform: ${url} has no bundle for ${missing.join(", ")}. ${wait}`];
+  // the GET remote PCs download with, for its first byte only: the archive answers, says it is not
+  // empty and delivers that byte (headers alone are not a download)
   const unreachable = (await Promise.all(assets.map(async (asset) => {
     const response = await read(asset, { range: "bytes=0-0" });
     if (typeof response === "string") return response;
+    // the size the answer declares; null when it declares none (a chunked 200 from a host without ranges)
     const declared = /\/(\d+)$/.exec(response.headers.get("content-range") ?? "")?.[1] ?? (response.status === 200 ? response.headers.get("content-length") : null);
     const size = declared === null ? null : Number(declared);
     let received = 0;
@@ -117,6 +125,7 @@ export const workerFingerprint = (sources: string[]): string => {
   return hash.digest("hex");
 };
 
+/** The strict Worker refuses a settings snapshot whose keys or values it does not know, so an app that sends a newer one loses its events. */
 export function workerProblems(current: string, deployed: string | undefined): string[] {
   if (current === deployed) return [];
   return [`${WORKER_SOURCES.join(" or ")} changed since the Worker was last deployed (${DEPLOYED_FILE}). The deployed Worker refuses a settings snapshot with a key or value it does not know, so this release's events would be lost. Any edit to those files counts, comments and client-only exports included; a redeploy that changes nothing is the expected cost. Deploy the Worker first (telemetry/README.md: database columns, then \`bunx wrangler deploy\` from telemetry/), then run \`bun scripts/release-guards.ts --worker-deployed\` and commit ${DEPLOYED_FILE} in the release PR (or a follow-up PR when it already merged).`];

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 
-import "./test-herdr.ts";
+import "./test-herdr.ts"; // check run gives the server its own herdr session, not the user's
 import { DEVICE_COOKIE } from "../server/auth.ts";
 import { createServer, type ServerInstance } from "../server/index.ts";
 import { PortalService } from "../server/portal.ts";
@@ -85,6 +85,7 @@ try {
     "    [ \"$2\" = --help ] && exit 0",
     "    trap 'exit 0' TERM",
     "    trap 'exit 3' USR1",
+    // Portal writes its identity file before it serves; a relaunch requires it unchanged
     "    id=''; previous=''; for arg in \"$@\"; do [ \"$previous\" = --identity-path ] && id=\"$arg\"; previous=\"$arg\"; done",
     "    [ -f \"$id\" ] || echo '{\"fixture\":true}' > \"$id\"",
     `    echo $$ >> '${exposeLog}'`,

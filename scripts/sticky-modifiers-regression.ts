@@ -65,6 +65,7 @@ try {
       ? "Meta+Shift+Comma" : "Control+Shift+Comma";
     const ctrl = page.locator('[data-key="Control"]');
     await until(async () => !(await ctrl.isDisabled()), "terminal input ready");
+    // Herdr's screen stream enables bracketed paste; exercise xterm with it disabled too.
     ws!.send(JSON.stringify({ type: "pty-data", pane_id: pane, data: BRACKETED_PASTE_OFF }));
     const input = page.locator(".xterm-helper-textarea");
     await input.focus();
@@ -89,7 +90,7 @@ try {
         const frameCount = frames.length;
         if (key!.startsWith("Arrow") || key === "Tab" || key === "Enter") await page.locator(`[data-key="${key}"]`).tap();
         else if (key === "Backspace") await input.press("Backspace");
-        else await page.keyboard.insertText(key!);
+        else await page.keyboard.insertText(key!); // soft-keyboard input without keydown
         await until(() => frames.length > frameCount, "modified key frame");
         assert.equal(frames.at(-1).type, "keys");
         assert.deepEqual(frames.at(-1).keys, [`${prefix}+${name}`]);
@@ -179,6 +180,8 @@ try {
     await until(() => read().length > hardwareBefore.length, "hardware/touch combination received");
     assert.deepEqual(frames.at(-1).keys, ["ctrl+alt+shift+d"]);
     if (mode === "kitty") assert.equal(Buffer.from(read().slice(hardwareBefore.length), "hex").toString(), "\x1b[100;8u");
+    // A physical key on a non-Latin layout names the chord by its position: Korean ㅊ on KeyC
+    // with a held Ctrl is Ctrl+C (an interrupt herdr encodes), not ctrl+ㅊ (a letter it types).
     const layoutBefore = read();
     const layoutFrames = frames.length;
     // keydown and keyup both: xterm waits for the keypress of a key still down and ignores typed text
@@ -189,6 +192,9 @@ try {
     assert.deepEqual(frames.at(-1).keys, ["ctrl+alt+c"], "a Korean-layout Ctrl+C with a held Alt");
     await until(() => read().length > layoutBefore.length, "non-Latin layout chord received by PTY");
     if (mode === "kitty") assert.equal(Buffer.from(read().slice(layoutBefore.length), "hex").toString(), "\x1b[99;7u");
+    // A chord the terminal cannot take now is told, not dropped in silence: the page loses
+    // input readiness, the key bar greys out, and a held-modifier key typed meanwhile is
+    // answered with the not-sent banner. Nothing is queued for later.
     ws!.send(JSON.stringify({ type: "input-ready", pane_id: pane, ready: false }));
     await until(() => ctrl.isDisabled(), "key bar disabled while input is not ready");
     const notReadyFrames = frames.length;

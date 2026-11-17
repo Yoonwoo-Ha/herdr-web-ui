@@ -6,6 +6,10 @@ import { join } from "node:path";
 import { DIST_ARCHIVE, generateKeyPair, MANIFEST, releaseFile, PTY_ASSETS, ptyFile, SERVER_PLATFORMS, signManifest, writeManifest } from "./server-manifest.ts";
 import { download, installServer, NoBinaryRelease, releasesBase, verifiedInstall } from "./server-install.ts";
 
+/**
+ * The key reaches the installer only as the
+ * option a test passes; the launcher passes none, so it checks the committed key.
+ */
 const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -352,6 +356,7 @@ describe("downloading a release file", () => {
     const plain = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => { plainHits++; return new Response("x"); } });
     try {
       const target = `http://127.0.0.1:${plain.port}/ovis-server.json`;
+      // as fetch does: a redirect it is not told to hand back is followed at once
       const fetchFile = (async (url: string | URL | Request, init?: RequestInit) => !String(url).startsWith("https://") ? fetch(url, init)
         : init?.redirect === "manual" ? new Response(null, { status: 302, headers: { location: target } })
         : fetch(target)) as typeof fetch;

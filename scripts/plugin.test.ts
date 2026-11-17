@@ -85,6 +85,7 @@ describe("plugin settings files", () => {
   });
 });
 
+/** Ovis for Windows reads this line to tell a server older than the app from one that updated itself. */
 describe("the version status names", () => {
   function checkout(version: string): string {
     const root = join(scratch, "checkout");
@@ -670,6 +671,7 @@ describe("stop", () => {
       const deadline = Date.now() + 5_000;
       while (state() !== "Z" && Date.now() < deadline) await Bun.sleep(20);
       expect(state()).toBe("Z");
+      // what `stop` waited on: the zombie's group still answers signal 0
       expect(() => process.kill(-pid, 0)).not.toThrow();
       mkdirSync(join(scratch, "state"));
       writeFileSync(join(scratch, "state", "server.pid"), `${pid}\n`);
@@ -835,6 +837,7 @@ describe.skipIf(platform() === "win32")("a machine profile, under the fleet prev
   };
   const homes: string[] = [];
   afterEach(() => { for (const home of homes.splice(0)) { chmodSync(home, 0o700); rmSync(home, { recursive: true, force: true }); } });
+  /** OVIS_TOKEN of every run here: the profile ignores it, and no output names it */
   const TOKEN = "plugin-profile-test-token";
   function profilePc(record: Record<string, unknown> | string = { door: 1 }, more: { owner?: (path: string) => Response | undefined; at?: string; named?: string; tcp?: true | Record<string, unknown>; linked?: true; folderMode?: number; parentMode?: number } = {}) {
     const calls: Call[] = [];
@@ -876,6 +879,7 @@ describe.skipIf(platform() === "win32")("a machine profile, under the fleet prev
     const env: Record<string, string | undefined> = { HOST: "127.0.0.1", HERDR_PLUGIN_ROOT: ROOT, HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_STATE_DIR: state, OVIS_TOKEN: TOKEN, OVIS_PROFILE: "machine", OVIS_PREVIEW: "fleet" };
     return { calls, bearers, port: tcp.port!, socket, state, home, env, settings, stop: async () => { await owner.stop(true); await tcp.stop(true); } };
   }
+  /** What a run printed, which names neither the token nor the socket's path */
   const printed = (pc: { socket: string }, ...runs: { out: string; err: string }[]): string => {
     const text = runs.map((one) => one.out + one.err).join("");
     expect(text).not.toContain(TOKEN);
@@ -951,6 +955,7 @@ describe.skipIf(platform() === "win32")("a machine profile, under the fleet prev
         expect([label, status.out.split("\n")[0], add.err, add.exitCode]).toEqual([label, `down http://127.0.0.1:${pc.port}`, `Ovis is not running at http://127.0.0.1:${pc.port}; start it first\n`, 1]);
         printed(pc, status, add);
       } finally { await pc.stop(); }
+      // with both switches the health check goes to the owner socket only: none here, so nothing is asked
       const both = !("OVIS_PREVIEW" in change) && !("OVIS_PROFILE" in change);
       expect([label, pc.calls]).toEqual([label, !both ? [
         { door: "tcp", call: "GET /api/health", host: `127.0.0.1:${pc.port}`, origin: null },
@@ -1064,6 +1069,7 @@ describe.skipIf(platform() === "win32")("a machine profile, under the fleet prev
       expect(pc.bearers.filter((call) => call.includes(" with "))).toEqual([]);
       expect(pc.bearers).toContain("socket GET /api/account/status without authorization");
       expect(pc.bearers).toContain("socket GET /api/relay/pairings without authorization");
+      // control: no profile, so TCP, where the token goes as before
       pc.bearers.length = 0;
       for (const command of ["add", "pair"]) printed(pc, await run(command, { ...pc.env, OVIS_PROFILE: undefined }));
       expect(pc.bearers).toEqual([
@@ -1111,6 +1117,8 @@ describe.skipIf(platform() === "win32")("a machine profile, under the fleet prev
 
   it("finds its record and socket where the profile takes a state folder named through a link and `..`", async () => {
     const pc = profilePc();
+    // `<link>/..` names the folder that holds the link, as the profile resolves its state folder (realpathSync), not
+    // the parent of the link's target
     mkdirSync(join(pc.home, "sub", "deeper"), { recursive: true });
     symlinkSync(join(pc.home, "sub", "deeper"), join(pc.home, "via"));
     try {
@@ -1286,6 +1294,7 @@ describe("pair --approve", () => {
       await Bun.sleep(1_700);
       child.stdin.write("\n");
       child.stdin.flush();
+      // kept, the digits would head the line this Enter sends and approve the request; discarded, the line is empty
       await shows("Declined.");
       expect(decisions).toEqual([{ id: "p1", decision: "decline" }]);
       expect(screen).not.toContain("That line answered nothing");
@@ -1409,6 +1418,7 @@ describe("a command handed on to the release the app updated to", () => {
   }
 
   /**
+   * With `group`, it leads a process group of its own, as a command
    * in a terminal does. Its stderr goes into a file: a release left running would hold a pipe open.
    */
   function handOn(command: string, { fail = false, group = false } = {}) {
@@ -1546,6 +1556,8 @@ esac
         const { err, code } = await runIn(copy, args, server.port!);
         expect({ args, failed: code !== 0, missing: /Cannot find (package|module)/.test(err) }, err).toEqual({ args, failed: true, missing: true });
       }
+      // regression (fails at 69ebe4b1: pair and phone-setup asked for a pairing code, which replaces the one another
+      // device may be using, and phone published the app, before each failed at the package)
       const published = existsSync(calls) ? readFileSync(calls, "utf8").split("\n").filter((line) => line.startsWith("serve --yes")) : [];
       expect({ changes, published }).toEqual({ changes: [], published: [] });
     } finally {

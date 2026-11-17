@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paneRead, paneSendKeys, paneSendText } from "../server/herdr/client.ts";
 
+/**
+ * The returned wait settles once that frame has come (at once if it already has), or fails
+ * after 15 s; only the wait makes a promise and a timer, so nothing is left to reject when the page fails to load
+ * first.
+ */
 function watchInputReady(page: Page, paneId: string): () => Promise<void> {
   let ready = false;
   let settle: (() => void) | null = null;

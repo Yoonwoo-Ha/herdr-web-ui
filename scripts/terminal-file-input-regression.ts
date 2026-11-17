@@ -52,6 +52,8 @@ export async function checkTerminalFileInput(page: Page, socket: WebSocket): Pro
   }
   console.log("PASS terminal path drop, native path paste and JSON file drop/paste");
 
+  // A raster is named after its bytes (a PNG the browser calls image/jpeg from its name), and
+  // text dressed as a PNG is refused with its reason and puts nothing into the terminal.
   const dropFile = (base64: string, name: string, type: string): Promise<void> => host.evaluate((element, file) => {
     const data = new DataTransfer();
     data.items.add(new File([Uint8Array.from(atob(file.base64), (char) => char.charCodeAt(0))], file.name, { type: file.type }));

@@ -1,4 +1,13 @@
 /**
+ * The answer is yes only for the one push run of ci.yml on main for that exact commit, in this
+ * repository, completed with success on its first or second attempt, with every job of ci.yml in
+ * it and passed. Anything else is a no, and release-validate.yml then runs ci.yml as it always
+ * did: no such run or several, another event, branch, commit or repository, a job that failed, was
+ * cancelled or skipped, a job this file does not list, a run waiting behind another run of main, or
+ * an answer from GitHub that cannot be read. A run still going is waited for until
+ * RELEASE_CI_WAIT_SECONDS have passed or one of its jobs ends without passing. A no only costs a
+ * second CI run: it never fails a release.
+ *
  *   GITHUB_REPOSITORY, GITHUB_SHA   the commit the Release run publishes
  *   GH_TOKEN                        reads the Actions API (actions: read)
  *   GITHUB_API_URL                  that API, as the runner names it (default https://api.github.com)
@@ -58,6 +67,10 @@ export const runsPath = ({ repository, sha }: Commit): string =>
 export const jobsPath = ({ repository }: Commit, run: number): string =>
   `/repos/${repository}/actions/runs/${run}/jobs?filter=latest&per_page=100`;
 
+/**
+ * The request already filters by commit, event and branch; every field is
+ * checked again here, so a filter GitHub ignored is a no rather than another run taken on trust.
+ */
 export function pushRun(answer: unknown, commit: Commit): Run | string {
   const list = record(answer);
   const runs = list?.["workflow_runs"];
@@ -109,6 +122,11 @@ export function namesProblem(names: string[]): string | null {
   return `the jobs are not ci.yml's (${parts.join("; ")})`;
 }
 
+/**
+ * A run still going is waited for while none of its jobs
+ * has ended without passing; a completed one is a yes only when every job belongs to that attempt
+ * of that run, passed, and the names are ci.yml's. A skipped job is not a passed one.
+ */
 export function jobsFinding(answer: unknown, run: Run, commit: Commit): Finding {
   const list = record(answer);
   const entries = list?.["jobs"];
@@ -143,6 +161,10 @@ export async function observe(commit: Commit, read: (path: string) => Promise<un
   return runProblem(run) ?? jobsFinding(await read(jobsPath(commit, run.id)), run, commit);
 }
 
+/**
+ * Every call carries a signal that ends it after CALL_TIMEOUT_MS, so a GitHub
+ * that accepts the request and never answers is a failed read, not a job that hangs.
+ */
 export const reader = (api: string, token: string | undefined, get: Get = fetch, timeout: (ms: number) => AbortSignal = (ms) => AbortSignal.timeout(ms)) => async (path: string): Promise<unknown> => {
   const response = await get(`${api}${path}`, {
     headers: { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "user-agent": "ovis-release-ci-reuse", ...(token ? { authorization: `Bearer ${token}` } : {}) },

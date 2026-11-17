@@ -170,6 +170,7 @@ describe.skipIf(process.platform === "win32")("telemetry report", () => {
       ...[COUNTS_INSTALLS, COUNTS_BUCKETS, COUNTS_SHOWN, COUNTS_PER_INSTALL, SWITCHES_BY_AGENT, SWITCH_DAYS_BY_VERSION].map((title) => QUERIES.find((query) => query.title === title)!.sql),
     ]);
     expect(QUERIES).toHaveLength(16);
+    // from telemetry/, where wrangler finds wrangler.toml and the database's id
     const telemetry = join(import.meta.dir, "..", "telemetry");
     expect(new Set(result.dirs)).toEqual(new Set([telemetry]));
     expect(existsSync(join(telemetry, "wrangler.toml"))).toBe(true);

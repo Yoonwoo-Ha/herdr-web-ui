@@ -405,6 +405,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       assert.equal(await page.locator("[data-move-side]").count(), 0, "the mark is cleared");
       assert.equal(await page.locator(".pane-slot").count(), 1, "a move opens no split view");
       assert.equal(await page.locator(".pane-frame.is-current").getAttribute("data-layout-pane"), beside, "the moved pane stays selected");
+      // left of it: herdr puts a moved pane right of its target, and a swap then puts it first
       await dragOver(first, "left");
       moved = page.waitForResponse((response) => response.url().endsWith("/api/pane/move") && response.request().method() === "POST");
       await page.mouse.up();
@@ -830,6 +831,8 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       assert.deepEqual(await page.evaluate((ids) => ids.map((id) => localStorage.getItem(`ovis:view:${id}`)), [left, right, movedLeft, movedRight]),
         [null, null, "terminal", "terminal"]);
 
+      // herdr can drop the old ID from a roster before the move answers: until it does, neither half
+      // falls back from its pane, and then each follows it.
       const report = (pane: string, state: string) => herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "claude", state });
       for (const [side, pane] of [["left", movedLeft], ["right", movedRight]] as const) {
         let release = (): void => undefined;
@@ -856,6 +859,9 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
     {
       const [left, right, , ] = await panesFor("tui-left", "tui-right", "tui-target") as [string, string, string];
       const target = workspaces.at(-1)!;
+      // herdr tells this server of the move on its event stream, while the roster is read on another connection and can
+      // show the move first: the page is told the pane-moved only after a roster without the old ID, so the half follows
+      // the pane from that roster alone (its terminal stays the same)
       const { page, errors } = await open([left, right], "chat", (context) => context.addInitScript((pane) => {
         type Data = { type?: string; message?: { type?: string; from?: string }; machines?: Array<{ snapshot?: { panes: Array<{ pane_id: string }> } | null }> };
         const held: MessageEvent<string>[] = [];

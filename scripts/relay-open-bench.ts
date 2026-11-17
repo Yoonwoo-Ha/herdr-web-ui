@@ -1,5 +1,8 @@
 /**
+ * How long a phone takes to open a PC through the relay: the phone's own code (src/lib/relay/channel.ts) in
+ * Bun, against a PC (`createServer` + RelayService) in a child process with its own mkdtemp state dir and HOME,
  * port 0, and HERDR_SOCKET at a path that does not exist (no herdr is touched). The relay is the real one
+ * (wss://relay.ovis.sh) unless --relay names another.
  *
  *   bun scripts/relay-open-bench.ts --arms A,B,B,A --rounds 8 [--a-dir <tree with the A files>] [--files a,b] [--relay wss://...]
  *
@@ -52,6 +55,7 @@ async function bench(): Promise<void> {
   let localWs = "";
   if (EMULATE > 0) {
     const { startBunRelay } = await import("../relay/bun.ts");
+    // every socket comes from 127.0.0.1: a long run would pass production's per-address budget
     const relayed = startBunRelay({ port: 0, limits: { perAddressPerMinute: 10_000, globalPerMinute: 10_000 } });
     type Pipe = { peer?: import("bun").Socket<Pipe>; queue: { at: number; data: Uint8Array }[]; timer?: ReturnType<typeof setTimeout>; early: Uint8Array[] };
     const forward = (from: Pipe, data: Uint8Array) => {

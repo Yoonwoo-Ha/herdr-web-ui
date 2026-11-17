@@ -1,4 +1,4 @@
-/**
+/** Password authentication + key-only recovery in a disposable real Linux PC.
  * Requires Docker. No host accounts or SSH settings are changed.
  */
 import assert from "node:assert/strict";
@@ -86,6 +86,8 @@ try {
   let text = "";
   for (let i = 0; i < 100 && !text.includes("PASSWORD_PC_OK"); i++) { await Bun.sleep(100); text = (await api<{ read: { text: string } }>(prefix + `/pane/read?pane_id=${encodeURIComponent(created.pane_id)}&source=recent&format=text`)).read.text; }
   assert.ok(text.includes("PASSWORD_PC_OK"));
+  // Permanently disable password authentication in this throwaway account. The
+  // manager must now reconnect with the key that the app actually installed.
   await docker(["exec", name, "sh", "-c", "printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' > /etc/ssh/sshd_config.d/00-key-only.conf; kill -HUP $(cat /run/sshd.pid)"]);
   await api(prefix, "PATCH", { enabled: false });
   await api(prefix, "PATCH", { enabled: true });

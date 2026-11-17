@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const script = join(import.meta.dir, "relay-ios-sim.sh");
+/** The whole run's bound: the WDA deadline (2 s) and at most two stop graces (2 s each), with room. */
 const RUN_BOUND_MS = 30_000;
 
 const stubs: Record<string, string> = {

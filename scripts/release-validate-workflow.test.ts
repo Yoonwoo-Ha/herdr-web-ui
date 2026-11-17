@@ -58,6 +58,8 @@ describe("release-validate.yml", () => {
   });
 
   test("lets only the two jobs whose answer the verdict reads as an output fail without failing the run", () => {
+    // on any other job or step, a failure there would no longer fail validate or publish; these two
+    // report success when they fail, so the verdict reads what their last step wrote, never their result
     expect(carrying(wrapper)).toEqual(["reuse", "fast"]);
     expect(reuse["continue-on-error"]).toBe(true);
     expect(fast["continue-on-error"]).toBe(true);
@@ -94,6 +96,7 @@ describe("release-validate.yml", () => {
     expect(fast.name).toBe("Fast checks (GitHub-hosted)");
     expect(fast.needs).toBeUndefined();
     expect(fast.if).toBe("${{ !inputs.revalidate }}");
+    // never a runner variable: the self-hosted runner skips the tests this job is here for
     expect(fast["runs-on"]).toBe("ubuntu-24.04");
     expect(fast.outputs).toEqual({ passed: "${{ steps.passed.outputs.passed }}" });
     const passed = step(fast, (candidate) => candidate.id === "passed");
@@ -109,6 +112,7 @@ describe("release-validate.yml", () => {
     const theirs = job(ciYml, "fast");
     const UPDATE = "release-validate.yml's `fast` job is ci.yml's Fast checks, which a release that takes main's run runs again on GitHub's runner: make the same change to both, so such a release still checks what every other does";
     const uploads = (candidate: Step): boolean => candidate.uses?.startsWith("actions/upload-artifact@") === true;
+    // the Release run restores no cache: this copy says `none`, ci.yml's says it under hosted_only, which the Release passes
     const HOSTED_ONLY_CACHE = "${{ inputs.hosted_only && 'none' || 'save' }}";
     expect(theirs.steps!.find((candidate) => candidate.uses === "./.github/actions/setup-ci")!.with!["cache"]).toBe(HOSTED_ONLY_CACHE);
     expect(fast.steps!.find((candidate) => candidate.uses === "./.github/actions/setup-ci")!.with!["cache"]).toBe("none");
@@ -205,6 +209,7 @@ describe("release.yml", () => {
   });
 
   test("gives a token that can tag only to publish and the jobs after it", () => {
+    /** What `candidate`'s token may write: by its own permissions, else by the workflow's. */
     const writes = (candidate: Job, workflow: Pick<typeof release, "permissions"> = release): string[] => {
       const granted: unknown = candidate.permissions ?? workflow.permissions;
       if (granted === "read-all") return [];
@@ -215,6 +220,9 @@ describe("release.yml", () => {
     expect(release.permissions).toEqual({ contents: "read" });
     const published = ["publish", ...after("publish")];
     const before = Object.entries(release.jobs).filter(([id]) => !published.includes(id)).map(([id, candidate]) => [id, writes(candidate)] as const);
+    // pty-sidecar runs beside validate, before the verdict: its two scopes sign the binaries' build
+    // provenance (pty-sidecar.yml's attest job) and can create neither a tag nor a release, which
+    // take contents: write; so does server-binary-attest, for the server binaries and their signed manifest
     expect(before).toEqual([["preflight", []], ["validate", []], ["pty-sidecar", ["id-token", "attestations"]], ["server-binary", []], ["server-binary-sign", []], ["server-binary-attest", ["id-token", "attestations"]]]);
     expect(release.jobs["pty-sidecar"]!.permissions).toEqual({ contents: "read", "id-token": "write", attestations: "write" });
     expect(writes(publish)).toEqual(["contents"]);
@@ -228,6 +236,7 @@ describe("release.yml", () => {
   test("publish and every job after it run on success alone: none carries a status function", () => {
     const later = after("publish");
     expect(later.sort()).toEqual(["desktop", "mac-dmg", "shell-attach", "shell-build", "shell-deploy", "windows-app"]);
+    // with one, a job would run although publish was skipped or had refused
     expect(["publish", ...later].filter((id) => STATUS_FUNCTION.test(release.jobs[id]!.if ?? ""))).toEqual([]);
     expect(STATUS_FUNCTION.test("always() && x")).toBe(true);
     expect(STATUS_FUNCTION.test("${{ !cancelled() }}")).toBe(true);
@@ -258,6 +267,7 @@ describe.skipIf(process.platform === "win32")("the reuse job's answer", () => {
       ["green=true\n", 0], ["green=true\nrun=\n", 0], ["run=42426987381\n", 0], ["run=42426987381\ngreen=true\n", 0],
       ["green=true\nrun=0\n", 0], ["green=true\nrun=042\n", 0], ["green=true\nrun=42a\n", 0], ["green=true\nrun=-1\n", 0], ["green=true\nrun=4 2\n", 0],
       ["green=True\nrun=42\n", 0], ["green=true \nrun=42\n", 0], [" green=true\nrun=42\n", 0], ["green=true\r\nrun=42\r\n", 0],
+      // more than the two lines: another output, or a delimiter that would swallow what follows
       ["green=true\nrun=42\nvalidated_by=ci\n", 0], ["x=1\ngreen=true\nrun=42\n", 0], ["green=true\nrun=42\n\ngreen=true\n", 0], ["green<<EOF\ntrue\nEOF\nrun=42\n", 0],
       ["green=true\nrun=42\ngreen=false\n", 0],
     ] as const) {

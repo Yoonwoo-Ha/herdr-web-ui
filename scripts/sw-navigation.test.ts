@@ -145,6 +145,7 @@ describe("service worker navigations", () => {
       network: { [new URL(SCOPE).pathname]: NEW_SHELL, "/assets/index-new.js": "new" },
     });
     expect(await sw.navigate()).toBe(OLD_SHELL);
+    // the page still runs the old shell, and may ask for a chunk of its build later
     expect(sw.stores.get("ovis-v4-sheep-0000000000aa")?.has(`${ORIGIN}/assets/katex-old.js`)).toBe(true);
     expect(await sw.navigate()).toBe(NEW_SHELL);
     expect(sw.stores.has("ovis-v4-sheep-0000000000aa")).toBe(false);

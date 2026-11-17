@@ -1,4 +1,7 @@
 /**
+ * The image addon keeps a picture's id in its cells and a new addon
+ * numbers from 1 again: one loaded anew drew its first picture into the cells an old picture 1 had
+ * left.
  * Demo fixtures only: no herdr, hc or user state.
  */
 import assert from "node:assert/strict";
@@ -210,6 +213,7 @@ try {
       assert.notEqual(held, undefined, "the demo build's probe answers");
       assert.equal(held, null, `on again: the top left cell holds no picture (${JSON.stringify(held)})`);
 
+      // imgcat's multipart form and chafa's TIFF without a size, which the addon takes neither of by itself (#3147)
       await print(page, `\x1b[H\x1b[2J${multipart([0, 255, 0])}`, "IMGCAT-PRINTED");
       assert.deepEqual(await pixel(page, 4, 4), [0, 255, 0], "imgcat's multipart picture is drawn");
       await print(page, `\x1b[H\x1b[2J${chafaTiff([255, 0, 255])}`, "CHAFA-PRINTED");

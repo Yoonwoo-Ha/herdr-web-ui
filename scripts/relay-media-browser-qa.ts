@@ -124,6 +124,7 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
     const workspace = await workspaceCreate({ cwd: dir, label: name });
     workspaces.push(workspace.workspace.workspace_id);
     const pane = workspace.root_pane.pane_id;
+    // A session report is accepted only while the actual foreground process holds the pane.
     const standIn = join(dir, "opencode");
     writeFileSync(standIn, "#!/bin/sh\nwhile read -r line; do :; done\n");
     chmodSync(standIn, 0o755);
@@ -159,6 +160,7 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
       record(name, request);
       let response = await handle(request, dispatch);
       const path = new URL(request.url).searchParams.get("path") ?? "";
+      // A compromised PC omits all isolation headers, even for files advertised as PDFs.
       if (response && new URL(request.url).pathname.endsWith("/fs/file")
         && /(?:page\.html|evil\.svg|hostile-(?:html|svg)\.pdf)$/.test(path)) {
         const headers = new Headers(response.headers);
@@ -265,6 +267,10 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
     await navigate(page, origin + readerHref(machine, path, `/s/${p.id}/`, "relay"));
     await page.locator(".file-reader").waitFor();
   }
+  /**
+   * A page over the relay is drawn without its scripts first: the render host puts it in a frame of its own that
+   * runs none, and nothing in it has run. The press runs it in the render host itself.
+   */
   async function runPageScripts(page: Page, heading: string): Promise<void> {
     const host = page.locator("iframe.file-viewer-page");
     await host.waitFor();
@@ -393,6 +399,7 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
     const manager = first.app.context.services.core.machines;
     assert.ok(manager);
     const endpoint = manager.endpoint.bind(manager);
+    // machine-api selects by the literal path segment; the SW must not decode or re-encode it.
     manager.endpoint = (id) => id === encodeURIComponent(remoteId) ? { url: `http://127.0.0.1:${remote?.port}`, token: "media-remote-token" } : endpoint(id);
     const remoteProbe = await fetch(`http://127.0.0.1:${first.app.port}/api/machines/${encodeURIComponent(remoteId)}/fs/stat?path=%2Fremote%2Fpicture.png`);
     const remoteProbeBody = await remoteProbe.text();
@@ -459,6 +466,8 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
           await image(page);
           assert.equal(await page.evaluate(() => (window as Window & { isolationResults: unknown[] }).isolationResults.length), 0, "SVG image scripts never run");
         }
+        // Execute the SVG's script inside the same opaque render host, proving its attempted APIs
+        // fail too, rather than counting the image decoder's non-execution as those three attempts.
         const svg = readFileSync(join(first.dir, "evil.svg"), "utf8");
         const rendered = page.waitForEvent("framenavigated", { predicate: (frame) => frame.url().endsWith("~render") });
         await page.evaluate((html) => {
@@ -609,6 +618,8 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
       await closeContext(ctx);
     }
 
+    // Removing the SW's CSP must make this negative control fail: no iframe sandbox attribute
+    // here, so only the forwarded response policy is capable of isolating the navigation.
     for (const mutate of [false, true]) {
       workerMode = mutate ? "drop-csp" : "current";
       const ctx = await context();

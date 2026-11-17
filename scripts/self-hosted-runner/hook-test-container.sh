@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# The hook kill tests (the isolated tests of scripts/self-hosted-runner.test.ts) in one throwaway, confined container of
+# the image hook-test.Dockerfile builds.
+# The container starts detached, prints its proofs of confinement first, and waits for a go file that this script
+# writes only after `docker inspect` shows the confining settings; it bounds itself (timeouts inside it, --rm). This
+# script signals nothing and removes nothing: a container still there at its end is reported by its name.
 set -euo pipefail
 usage="usage: hook-test-container.sh <image> <checkout with node_modules> <empty output directory>"
 image=${1:?$usage}
@@ -53,6 +58,7 @@ echo "$mounts"
 if [ "$cfg" != "Privileged=false CapDrop=[ALL] CapAdd=[] NetworkMode=none PidMode= SecurityOpt=[no-new-privileges]" ]; then echo "STOP: unexpected HostConfig: $cfg (the container ends itself within 60 s)"; exit 1; fi
 want=$(printf '%s\n' "$out -> /out RW=true" "$src -> /src RW=false" | LC_ALL=C sort)
 if [ "$mounts" != "$want" ]; then echo "STOP: unexpected mounts (the container ends itself within 60 s)"; exit 1; fi
+# the container's own proofs, printed and checked here before any test starts: at most 120 polls of 0.5 s for them
 for _ in $(seq 1 120); do
   if grep -q '^PROOFS-DONE$' "$out/log.txt" 2>/dev/null || [ -e "$out/status" ]; then break; fi
   sleep 0.5
@@ -73,6 +79,7 @@ printf '%s\n' "$proofs" | grep -Eq '^net: lo ?$' || fail "a network interface ot
 printf '%s\n' "$proofs" | grep -Eq ' /src [^ ]+ ro[ ,]' || fail "/src is not mounted read-only"
 touch "$out/go"
 echo "go given: every proof checked"
+# the container's own bound is 60 + 120 + 300 s: wait for its status file, at most 600 polls of 1 s
 for _ in $(seq 1 600); do [ -e "$out/status" ] && break; sleep 1; done
 [ -e "$out/status" ] || { echo "STOP: no status from $name after 600 s; it ends itself, nothing was done to it"; exit 1; }
 removed=no

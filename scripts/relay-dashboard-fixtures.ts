@@ -1,3 +1,7 @@
+/**
+ * the pairings are written into the page's IndexedDB as lib/relay/device.ts writes
+ * them, with a real non-extractable key.
+ */
 import type { Page } from "playwright-core";
 import type { FakePc } from "../shared/account-service-fake.ts";
 import { exportPublicKey, generateKeyPair } from "../shared/relay-e2ee.ts";
@@ -93,6 +97,10 @@ export function directoryOf(fleet: Fleet, now: number): FakePc[] {
   }));
 }
 
+/**
+ * Signed in (`account`), under the account's own key, the listed ones linked to the account; signed out, under a
+ * fresh non-extractable key of their own.
+ */
 export async function seedPairings(page: Page, seeds: readonly Seed[], account: string | null): Promise<void> {
   if (account !== null) await page.waitForFunction(() => new Promise<boolean>((resolve) => {
     const request = indexedDB.open("ovis-account", 1);

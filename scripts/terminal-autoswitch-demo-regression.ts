@@ -269,6 +269,8 @@ try {
       await capture(page, `${tag}-reading-position`);
       console.log(`PASS ${tag}: delayed acceptance opens a peek over the same chat; Back to Chat keeps the reading position`);
 
+      // Claude Code records the closed panel: Escape in the grid (or the key bar) reaches the pty,
+      // and the chat comes back by itself once the note of it is read.
       await page.evaluate("window.receiptMode = 'normal'");
       const latest = chat(page).getByRole("button", { name: "Jump to latest", exact: true });
       if (await latest.count() > 0) {
@@ -291,6 +293,7 @@ try {
       await capture(page, `${tag}-peek-auto-returned`);
       console.log(`PASS ${tag}: Escape reaches the pty and Claude's closed panel brings the chat back by itself`);
 
+      // a command whose close Claude does not record: Escape reaches the pty and the peek stays
       await send(page, "/doctor");
       await expectPeek(false, "/doctor");
       await pressEscape();
@@ -385,6 +388,8 @@ try {
       console.log(`PASS ${tag}: Keep Terminal and the header's Terminal end the peek and keep the terminal lens`);
 
       if (!touch) {
+        // a find bar left open under the Terminal lens is not the peek's: it would take the focus,
+        // the first Escape (the agent's) and a grid row
         await openLens(page, "terminal");
         await chat(page).waitFor({ state: "detached" });
         await page.keyboard.press("Control+Shift+F");
@@ -492,6 +497,8 @@ try {
       assert.deepEqual(await page.evaluate("window.focusCalls"), [], "no peek moves herdr's focus");
 
       if (touch) {
+        // an IME composition in the input line leaves the return to the reader: the chat coming
+        // back would unmount the line mid-word
         await send(page, "/config");
         await expectPeek(true, "/config");
         const direct = stack(page).locator('.key-bar .key[data-key="direct"]');
@@ -518,6 +525,8 @@ try {
       assert.equal((await lens(page)).stored, "chat");
       console.log(`PASS ${tag}: a reload lands on Chat`);
 
+      // The server's confirmed role controls input. A command outcome published to this reader
+      // still cannot open a peek; no composer remains from which it could submit one.
       await page.evaluate("window.demoSocket.send(JSON.stringify({type:'role', mode:'observe'}))");
       await chat(page).locator(".composer").waitFor({ state: "detached" });
       assert.equal(await chat(page).count(), 1);
@@ -580,6 +589,7 @@ try {
       };
       const screen = (pane: string, text: string) => of(pane).stack.locator(shownRows(), { hasText: text });
 
+      // omp's /settings: the panel hides the editor's row, Escape draws it back, and the chat comes back by itself
       await open(panes.omp, "/sett");
       await sendIn(panes.omp, "/settings");
       await of(panes.omp).peek.waitFor();
@@ -594,6 +604,8 @@ try {
       assert.equal(await page.evaluate((pane) => localStorage.getItem(`ovis:view:${pane}`), panes.omp), "chat");
       console.log(`PASS ${tag}: omp's /settings comes back to Chat by itself once its editor's row is drawn again`);
 
+      // omp's /copy is not on omp's list (the head promises nothing) and only prints above the row,
+      // which stays drawn: no frame arms the return, so the peek stays until the reader leaves it
       await sendIn(panes.omp, "/copy");
       await of(panes.omp).peek.waitFor();
       await hint(page).getByText("/copy ran", { exact: true }).waitFor();
@@ -606,6 +618,7 @@ try {
       assert.equal(await page.locator(".composer-notice", { hasText: "is still open in the terminal" }).count(), 0, "the row is back: no still-open notice");
       console.log(`PASS ${tag}: omp's /copy, off the list, stays until the reader leaves it`);
 
+      // Claude's /btw answer left open: the peek ended by hand, the next message would be typed into it
       await open(owner, "/conf");
       await sendIn(owner, "/btw what changed?");
       await of(owner).peek.waitFor();
@@ -646,6 +659,8 @@ try {
       await finish(page);
       console.log(`PASS ${tag}: Claude's /btw left open holds Send behind the notice; Send anyway sends once; its close clears the notice`);
 
+      // #1552: a screen left open by any other way back to Chat (Keep Terminal, then the header's Chat)
+      // would take the next message just the same: Send holds it behind the same notice
       const ANY_OPEN = "A screen is still open in the terminal";
       await of(owner).chat.locator(".composer-status[data-status='done'], .composer-status[data-status='idle']").waitFor();
       await sendIn(owner, "/btw and the retry?");

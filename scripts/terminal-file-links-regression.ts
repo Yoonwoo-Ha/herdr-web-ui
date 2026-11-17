@@ -37,6 +37,7 @@ try {
     const span = row.locator("span").filter({ hasText: "file://" }).first();
     const box = await span.boundingBox();
     assert.ok(box);
+    // The output's prefix is nine cells; xterm links use character-cell coordinates.
     const rowBox = await row.boundingBox();
     assert.ok(rowBox);
     const cols = await row.evaluate((el) => el.textContent?.length ?? 0);
@@ -95,6 +96,8 @@ try {
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)))));
       assert.equal(await page.locator(".file-viewer").count(), 0, "a bare file name in the terminal opened the file viewer");
       console.log("PASS a path with a folder is a link and a bare name beside it stays text");
+      // Cmd (Ctrl off a Mac) makes it one, as in VS Code's terminal: drawn while the key is held,
+      // text again when it goes up, and opened by a click with the key
       const key = process.platform === "darwin" ? "Meta" : "Control";
       await page.keyboard.down(key);
       await pointer(true);

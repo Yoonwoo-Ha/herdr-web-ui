@@ -20,6 +20,7 @@ export const isFile = (path: string): boolean => existsSync(path) && statSync(pa
 export function findTui(settings: Env, where: { readonly root: string; readonly home: string; readonly onPath?: (name: string) => string | null }, fileAt: (path: string) => boolean = isFile): TuiLookup {
   const configured = settings[TUI_BIN_VARIABLE] ?? "";
   if (configured !== "") {
+    // a bare name is what spawning it would run: the PATH's, so the file checked is the file run
     const bare = !configured.includes("/");
     const path = configured.startsWith("~/") ? join(where.home, configured.slice(2)) : bare ? ((where.onPath ?? Bun.which)(configured) ?? configured) : configured;
     return fileAt(path) ? { kind: "found", path } : { kind: "configured-missing", path };
@@ -29,8 +30,10 @@ export function findTui(settings: Env, where: { readonly root: string; readonly 
   return path === undefined ? { kind: "missing", looked: paths } : { kind: "found", path };
 }
 
+/** What the program never gets: it talks to herdr-core alone, and whatever it starts inherits its environment. */
 export const WITHHELD = ["OVIS_TOKEN", "OVIS_URL", "HERDR_WEB_TOKEN"] as const;
 
+/** The program's environment: the caller's, without the Ovis server's token or address. */
 export function tuiEnv(caller: Env): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(caller)) if (value !== undefined && !(WITHHELD as readonly string[]).includes(key)) env[key] = value;
@@ -83,6 +86,8 @@ export async function runTui(args: readonly string[], options: TuiOptions): Prom
   // process under it, from the program's first instant: ignored before it starts, not once it already runs
   const offs = [options.on("SIGINT", () => undefined)];
   let child: Bun.Subprocess<"inherit", "inherit", "inherit"> | undefined;
+  // a SIGTERM or SIGHUP sent to this process alone is passed on, so both end; listened for before the program starts,
+  // so one that comes while it starts cannot end this process under it: Bun runs the listener after `child` is set.
   for (const signal of ["SIGTERM", "SIGHUP"] as const) offs.push(options.on(signal, () => child?.kill(signal)));
   try {
     try {

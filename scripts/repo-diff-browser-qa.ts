@@ -204,6 +204,7 @@ async function api(request: Request, url: URL): Promise<Response | null> {
     diffQueries.push(`${url.pathname}?${url.searchParams}`);
     const paneId = url.searchParams.get("pane_id");
     const kind = diff[2] as "files" | "file" | "refs";
+    // a device that may only watch is refused as the server refuses it, before any repository is read
     if (paneId === "pane-observe") return Response.json({ error: { code: "read_only", message: "this device can only watch" } }, { status: 403 });
     if (paneId === "pane-old" && kind === "refs") return Response.json({ error: { code: "not_found", message: "unknown endpoint /api/workspace/diff/refs" } }, { status: 404 });
     if (paneId === "pane-old" && url.searchParams.get("scope") === "branch") return Response.json({ error: { code: "invalid_scope", message: "scope must be workspace, staged or commit" } }, { status: 400 });
@@ -1128,6 +1129,7 @@ try {
     assert.deepEqual(errors, [], `${label}: no errors after the long line`);
     console.log(`PASS ${label}: a match past the right edge of an unwrapped row is scrolled into view across${phone ? "" : ", in split too"}, and back for one at the start; one at the end of a wrapped row taller than the view is brought into view itself`);
 
+    // The Files list stays open beneath, as when a row opens a diff: closing a phone's sheet goes Back in history, which would race the next open
     const target = { machineId: "local", paneId: "pane-main", directory: repos.main, scope: "commit" as const, base: "HEAD~1", head: "HEAD", comparison: null, path: "src/money.ts", oldPath: null };
     await page.evaluate((target) => window.repoDiffQA.openDiff(target), target);
     await waitRows(page);

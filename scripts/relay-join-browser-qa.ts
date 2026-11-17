@@ -1,3 +1,4 @@
+/** Explicit dashboard consent starts pairing once; external offers keep their confirmation. */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
