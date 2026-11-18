@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { noInstalledNotes, noUpdateNotes, readUpdateIpcRequest, unmanagedUpdateStatus, type UpdateCommand, type UpdateRequest, type UpdateStatus, INSTALL_ID } from "../shared/update.ts";
 import { connectUpdater, handleUpdateRequest } from "./update-api.ts";
 
+// Messages go as they would over Node's: copied, one at a time, to whoever listens.
 const A = "a".repeat(40), B = "b".repeat(40);
 const offer = (latest: string): UpdateStatus => ({ ...unmanagedUpdateStatus(), managed: true, blocked_reason: null, available: true,
   latest_revision: latest, latest_version: "9.9.9", current_revision: "c".repeat(40) });
@@ -45,6 +46,7 @@ describe("the update IPC between the bridge and its supervisor", () => {
     older.tell(offer(A));
     expect(older.bridge.status().revision_bound_install).toBeUndefined();
     expect(await post(older.bridge, A)).toEqual({ status: 409, code: "update_restart_required" });
+    // even a request past the HTTP gate goes as a message the older supervisor does not know
     older.bridge.request({ command: "install", expected_revision: A });
     expect(older.received.at(-1)).toEqual({ type: "update-install-revision", expected_revision: A });
     expect(older.commands).toEqual([]);
@@ -58,10 +60,14 @@ describe("the update IPC between the bridge and its supervisor", () => {
     expect(current.bridge.status().revision_bound_install).toBe(true);
     expect(await post(current.bridge, A)).toEqual({ status: 202, code: null });
     expect(current.requests).toEqual([{ command: "install", expected_revision: A, install_id: expect.stringMatching(INSTALL_ID) }]);
+    // what an older bridge sends for its Update: no revision, so no install
     expect(readUpdateIpcRequest({ type: "update-command", command: "install" })).toBeNull();
     expect(readUpdateIpcRequest({ type: "update-command", command: "check" })).toEqual({ command: "check" });
+    // a cancel goes as a type of its own, which an older supervisor ignores
+    // naming the install it stops; one that names none, or not an id, is no cancel
     expect(readUpdateIpcRequest({ type: "update-cancel-v2", install_id: "11111111-2222-4333-8444-555555555555" })).toEqual({ command: "cancel", install_id: "11111111-2222-4333-8444-555555555555" });
     for (const install_id of [undefined, "", "x", 7]) expect(readUpdateIpcRequest({ type: "update-cancel-v2", install_id })).toBeNull();
+    // the name a supervisor that cancels without an id might know: never read as a cancel
     expect(readUpdateIpcRequest({ type: "update-cancel", install_id: "11111111-2222-4333-8444-555555555555" })).toBeNull();
   });
 

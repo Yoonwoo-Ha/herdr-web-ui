@@ -29,6 +29,7 @@ describe("GET /api/fonts", () => {
     writeFileSync(join(fonts, 'Odd"Name.ttf'), "a name CSS would need escaped");
     writeFileSync(join(fonts, "Huge.ttf"), "");
     truncateSync(join(fonts, "Huge.ttf"), USER_FONT_MAX_BYTES + 1);
+    // a link could name any file this user may read
     writeFileSync(join(root, "secret.ttf"), "outside the folder");
     if (process.platform !== "win32") symlinkSync(join(root, "secret.ttf"), join(fonts, "Linked.ttf"));
     server = createServer({ port: 0, hostname: "127.0.0.1", stateDir: state, token: TOKEN, machines: false, sidecar: false, tailscaleOwner: null });

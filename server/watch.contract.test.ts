@@ -10,6 +10,8 @@ async function until(predicate: () => boolean, label: string, ms = 10_000): Prom
   const deadline = Date.now() + ms;
   while (!predicate()) {
     if (Date.now() >= deadline) throw new Error(`${label} not observed within ${ms}ms`);
+    // These are real CLI processes and WebSocket deliveries; fake timers cannot
+    // advance their external lifecycle.
     await Bun.sleep(25);
   }
 }
@@ -124,6 +126,7 @@ describe("WebSocket read-only live watch", () => {
 
       const nonce = crypto.randomUUID().replaceAll("-", "");
       const marker = `watch-${nonce}`;
+      // The full marker occurs only in the command's output, not its typed echo.
       await herdrRpc("pane.send_text", { pane_id: paneId, text: `printf 'watch-%s\\n' '${nonce}'` });
       await herdrRpc("pane.send_keys", { pane_id: paneId, keys: ["Enter"] });
       const frame = await socket.waitFor(

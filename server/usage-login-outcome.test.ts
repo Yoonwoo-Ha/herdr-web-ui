@@ -50,6 +50,7 @@ for await (const code of console) {
   process.exit(0);
 }
 `, { mode: 0o755 });
+  // signs in at once to what codex-plan.json names: "own" is the home Codex writes (CODEX_HOME, else ~/.codex)
   writeFileSync(join(bin, "codex"), `#!${process.execPath}
 import { join } from "node:path";
 if (process.argv.includes("--help")) { console.log("--device-auth"); process.exit(0); }
@@ -249,6 +250,7 @@ it("does not count a home whose earlier sign-in could not be read as newly signe
     platform: "darwin",
     keychain: async (service) => service.startsWith("Claude Code-credentials-") && locked ? { status: "locked" } : service.startsWith("Claude Code-credentials-") ? { status: "found", value: old } : { status: "missing" },
   });
+  // the sign-in lives in the keychain alone, as Claude Code keeps it on a Mac
   rmSync(join(root, ".claude-work", ".credentials.json"));
   const host = start();
   const result = await completeLogin(host, { provider: "claude", account: "claude:work" }, "noop", () => { locked = false; });
@@ -301,6 +303,10 @@ it("signs a Codex home that held only an API key in to its first account", async
   expect(result.account).toBe("first@example.test");
 });
 
+/**
+ * A default Codex home whose auth.json holds token A, with a `Codex Auth` keychain item answering `before`
+ * until the CLI ran, then its own old token B; the CLI only removes the file, so no token is new.
+ */
 function codexKeychainHome(before: Awaited<ReturnType<UsageContext["keychain"]>>) {
   let root = "";
   const old = codexAuth("keychain@example.test");
@@ -370,6 +376,7 @@ it("tells a home whose credential file will not read from one that holds none", 
   const dir = join(root, ".codex-damaged");
   mkdirSync(dir);
   expect(await homeSignIn(ctx, "codex", { kind: "dir", dir })).toBeNull();
+  // read whole, but no sign-in: an API key, or a Claude file with only MCP sign-ins, holds none
   writeFileSync(join(dir, "auth.json"), JSON.stringify({ OPENAI_API_KEY: "fixture-api-key", tokens: null }));
   expect(await homeSignIn(ctx, "codex", { kind: "dir", dir })).toBeNull();
   const claudeDir = join(root, ".claude-mcp");

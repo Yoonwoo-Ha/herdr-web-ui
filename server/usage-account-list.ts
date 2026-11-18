@@ -35,6 +35,7 @@ export class UsageAccountList {
       const changed = next(held);
       if (changed.length !== held.length) writeStateDocument(this.path, JSON.stringify({ accounts: changed }), false);
     });
+    // told also when nothing changed: a retried removal is how a save of what depends on it that failed is tried again
     this.changed();
   }
 
@@ -49,6 +50,7 @@ export class UsageAccountList {
   async report(refresh = false): Promise<UsageReport> {
     const report = await this.usage.report(refresh);
     let removed: Set<string>;
+    // under the guard too: a damaged file is set aside only while no other server can have replaced it
     try { removed = new Set(this.removed()); }
     catch (error) {
       console.warn("Could not read the removed accounts list", error instanceof Error ? error.message : String(error));

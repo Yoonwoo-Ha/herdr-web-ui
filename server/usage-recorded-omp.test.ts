@@ -18,6 +18,7 @@ const KEY = `oauth|account:${ACCOUNT}|email:me@example.com|org:org-1`;
 const SIGN_IN_SECRET = "sentinel-access-token-of-oh-my-pi";
 const CLAUDE_USAGE = "https://api.anthropic.com/api/oauth/usage";
 
+/** `usage_history` as Oh My Pi 18.14 to 18.19 create it, beside the table that holds its sign-ins. */
 const SCHEMA = `
   CREATE TABLE usage_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at INTEGER NOT NULL, provider TEXT NOT NULL, account_key TEXT NOT NULL,
@@ -66,6 +67,7 @@ function insert(db: Database, rows: readonly Row[]): void {
   statement.finalize();
 }
 
+/** A store Oh My Pi has closed: only its database file is left in the folder. */
 function store(rows: readonly Row[], path = join(home, ".omp", "agent", "agent.db"), schema = SCHEMA): string {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true });
@@ -200,6 +202,7 @@ describe("where Oh My Pi keeps its store", () => {
     store([latest("anthropic:5h", 0.4, { account: OTHER, key: `oauth|account:${OTHER}` })], join(home, ".omp-work", "agent", "agent.db"));
     expect(found({ PI_CONFIG_DIR: ".omp-work" })).toEqual([OTHER]);
     expect(found({ PI_CONFIG_DIR: "" })).toEqual([ACCOUNT]);
+    // the agent folder, when it is named, still decides alone
     expect(found({ PI_CONFIG_DIR: ".omp-work", PI_CODING_AGENT_DIR: join(home, "nothing-here") })).toEqual([]);
   });
 

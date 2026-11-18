@@ -1,3 +1,7 @@
+/**
+ * Both grew from pi: each keeps an agent.db that is opened the same way here, and both name Claude's limits alike
+ * ("anthropic:5h", "anthropic:7d", "anthropic:7d:<model>").
+ */
 import { Database, SQLiteError, constants } from "bun:sqlite";
 import { existsSync, statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -5,8 +9,11 @@ import type { RecordedWindow } from "./usage-recorded.ts";
 
 const FIVE_HOURS = 5 * 3600;
 const SEVEN_DAYS = 7 * 86400;
+/** A clock a little ahead of this one is no reason to drop a record; a time further ahead is not one the tool read at. */
 export const AHEAD_MS = 60_000;
+/** A store in use is read through its write-ahead log without waiting; should it still be busy, this long and no longer. */
 const BUSY_TIMEOUT_MS = 250;
+/** Epoch milliseconds are past this since 2001; epoch seconds stay below it for millennia. */
 export const EPOCH_MS_FROM = 1e12;
 
 /**

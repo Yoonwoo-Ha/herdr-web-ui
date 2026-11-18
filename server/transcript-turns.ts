@@ -39,6 +39,7 @@ function answeredBetween(answers: readonly number[], from: number, to: number): 
   return low < answers.length && answers[low]! < to;
 }
 
+/** a slash command the user ran, as Claude Code echoes it: a local_command record, or a user one on older versions */
 export function claudeCommandEchoRecord(entry: { type?: unknown; subtype?: unknown; isMeta?: unknown; content?: unknown; message?: { content?: unknown } }): boolean {
   const text = entry.type === "system" && entry.subtype === "local_command" ? entry.content : entry.type === "user" && !entry.isMeta ? entry.message?.content : undefined;
   return typeof text === "string" && /^\s*(?:<command-message>[^<]*<\/command-message>\s*)?<command-name>\//.test(text);
@@ -56,6 +57,7 @@ export function followClaudeBranch(branch: ClaudeBranch, line: Buffer, start: nu
   let entry: TranscriptEntry & { isSidechain?: unknown; logicalParentUuid?: unknown };
   try { entry = JSON.parse(text) as typeof entry; } catch { branch.last = null; return undefined; }
   if (entry === null || typeof entry !== "object" || typeof entry.uuid !== "string" || entry.isSidechain === true) return entry;
+  // a compaction's boundary starts a chain of its own, and names the record it continues
   const parent = entry.parentUuid === null ? typeof entry.logicalParentUuid === "string" ? entry.logicalParentUuid : null
     : typeof entry.parentUuid === "string" ? entry.parentUuid : undefined;
   const prompt = opensTurn("claude-transcript", text, null);
@@ -77,6 +79,7 @@ export function followClaudeBranch(branch: ClaudeBranch, line: Buffer, start: nu
   return entry;
 }
 
+/** the mark of another session's message in a Claude record, in either of its forms (claudePeerNotice) */
 const PEER_MARK = Buffer.from('"kind":"peer"');
 const TURN_MARK: Record<StreamSource, Buffer> = {
   "copilot-transcript": Buffer.from('"user.message"'),
@@ -94,6 +97,14 @@ const TURN_MARK: Record<StreamSource, Buffer> = {
   "cmd-transcript": Buffer.from('"user"'),
 };
 
+/**
+ * "inline": a prompt that opens no page (a message senpi sent along with
+ * host tool results, which stay on the page of the calls they answer); it still forks the branch and
+ * starts a prompt chain. Pages start at the others, so a page never splits
+ * a turn: a Codex task (its prompt, duplicate records and tool calls all follow
+ * task_started), a Claude or omp prompt (tool results answer the turn before it),
+ * and the same for pi, whose prompts are `message` records with a user role.
+ */
 export function opensTurn(source: StreamSource, line: string, blobs: string | null): boolean | "inline" {
   let entry: { type?: unknown; uuid?: unknown; origin?: unknown; permissionMode?: unknown; data?: { content?: unknown }; isMeta?: unknown; isCompactSummary?: unknown; payload?: { type?: unknown }; message?: { role?: unknown; content?: unknown } };
   try { entry = JSON.parse(line); } catch { return false; }
@@ -107,6 +118,8 @@ export function opensTurn(source: StreamSource, line: string, blobs: string | nu
     const message = piMessage(entry);
     if (message?.role !== "user") return false;
     if ((message.content as Record<string, unknown>[]).some((part) => part.type === "text" && typeof part.text === "string" && part.text.length > 0)) return true;
+    // a pi, omp or omo prompt that is only pictures is drawn as a turn of its own, so it opens one (omp's
+    // pictures in its blob store `blobs`, as the parser names them)
     if (source === "omp-transcript") return piPromptImages(entry, message, blobs).length > 0;
     return (source === "pi-transcript" || source === "cmd-transcript" || source === "omo-transcript") && piPromptImages(entry, message).length > 0;
   }
@@ -115,6 +128,8 @@ export function opensTurn(source: StreamSource, line: string, blobs: string | nu
   const content = entry.message?.content;
   if (typeof content === "string") return !isCommandEntry(content, entry);
   if (!Array.isArray(content)) return false;
+  // senpi's host tool results answer the calls before them and its notices are no one's typing: only a
+  // message sent along with them is a prompt, and with host results it stays on those calls' page
   const sent = senpiPrompt(entry as Parameters<typeof senpiPrompt>[0], content);
   const own = sent.own.filter((block) => block !== null) as ({ type?: unknown; text?: unknown } | null)[];
   const prompt = own.some((block) =>
@@ -139,6 +154,7 @@ export function turnStarts(bytes: Buffer, source: StreamSource, chain: PromptCha
     const end = newline === -1 ? bytes.length : newline;
     const line = bytes.subarray(offset, end);
     if (source === "claude-transcript" && line.includes('"type":"assistant"')) chain.answered = true;
+    // a queued attachment carrying another session's message has no "user" in it: its own mark
     const candidate = line.includes(TURN_MARK[source]) || (source === "claude-transcript" && line.includes(PEER_MARK));
     const opens = candidate ? opensTurn(source, line.toString("utf8"), blobs) : false;
     if (opens) {

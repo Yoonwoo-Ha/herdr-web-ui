@@ -105,6 +105,7 @@ describe("an observe process asked to end", () => {
   const posix = process.platform !== "win32";
 
   it.skipIf(!posix)("has exited once its process has, though a child of that process keeps its output open", async () => {
+    // a launcher that does not `exec` its program: the signal ends the launcher, and its child holds the pipes
     const { watch, ends } = await watching(`sleep 30 &\necho $! > 'ROOT_DIR/child'\ntouch 'ROOT_DIR/ready'\nwait`);
     watch.kill();
     expect(await exitedWithin(watch, 3_000), "what waits for its exit (the pane's next view, its place among 64) would wait for the child").toBe(true);

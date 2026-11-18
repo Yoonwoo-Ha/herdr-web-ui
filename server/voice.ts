@@ -48,6 +48,7 @@ const TYPE_EXTENSIONS: Record<string, string> = {
   "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav", "audio/mpeg": "mp3", "audio/flac": "flac",
 };
 const CONTAINER_TYPES = new Set(["video/webm", "video/mp4", "application/octet-stream", ""]);
+/** multipart framing around the clip */
 const FORM_SLACK_BYTES = 64 * 1024;
 const MESSAGE_MAX_CHARS = 300;
 
@@ -127,6 +128,7 @@ function record(value: unknown): Record<string, unknown> {
   return isJsonObject(value) ? value : {};
 }
 
+/** A line may be split across chunks. The `done` event's text wins over the joined pieces. */
 async function readTranscript(body: ReadableStream<Uint8Array> | null, onDelta: (delta: string) => void): Promise<string> {
   if (!body) return "";
   const reader = body.getReader();
@@ -187,6 +189,7 @@ export function parseClip(form: FormData): VoiceClip {
     try { parsed = JSON.parse(rawKeywords); } catch { throw invalid("keywords must be a JSON array of strings"); }
   }
   if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === "string")) throw invalid("keywords must be a JSON array of strings");
+  // an overlong term is dropped, not cut: half a path would steer the transcript wrong
   const keywords = [...new Set((parsed as string[]).map((item) => item.trim()).filter((item) => item && item.length <= VOICE_KEYWORD_MAX_CHARS))]
     .slice(0, VOICE_KEYWORDS_MAX);
 
@@ -378,6 +381,7 @@ export async function handleVoiceRequest(request: Request, pathname: string, ser
       if (!service.status().configured) throw new VoiceError("voice_not_configured", 409, "Set an OpenAI API key for voice input");
       const limit = VOICE_MAX_AUDIO_BYTES + FORM_SLACK_BYTES;
       if (Number(request.headers.get("content-length") ?? 0) > limit) throw tooLarge();
+      // a chunked body names no length: it is counted as it arrives and dropped past the limit
       const body = await readLimited(request, limit);
       let form: FormData;
       try { form = await new Response(body, { headers: { "content-type": request.headers.get("content-type") ?? "" } }).formData(); }

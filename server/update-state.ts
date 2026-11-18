@@ -13,6 +13,9 @@ export function defaultStateDir(env: Record<string, string | undefined> = proces
     const stateDir = resolve(directory, "../../..");
     if (basename(directory).startsWith("release-") && dirname(directory) === updateStateDir(supervisor.root, supervisor.port, stateDir)) {
       // Bun runs a script from its real path, so a release reached through a symlinked $HOME or
+      // ~/.config is found under the real one here, where the launcher and the source checkout's
+      // supervisor name it through the link. The launcher's name is kept: a launcher from before
+      // this fix takes only a release recorded under its own (#2029).
       const { legacy, next } = stateDirNames(env);
       return [next, legacy].find((dir) => sameDir(dir, stateDir)) ?? stateDir;
     }
@@ -21,6 +24,13 @@ export function defaultStateDir(env: Record<string, string | undefined> = proces
   return currentStateDir(legacy, next);
 }
 
+/**
+ * The two are compared by real path, since one may be spelled through a symlink and the other not
+ * (#2029). Only an absolute path with no `.` or `..` segment qualifies: the real path of
+ * `<stateDir>/link/../release-x` drops the `..` first, where a process started there follows the
+ * link first and runs somewhere else. The name returned is the one to check and run, so both reach
+ * the directory that was compared.
+ */
 export function releaseIn(stateDir: string, directory: string): string | null {
   if (!isAbsolute(directory) || resolve(directory) !== directory) return null;
   try {
@@ -70,10 +80,23 @@ function holdsOwnState(legacy: string, next: string): boolean {
   return legacyContents(legacy, next) === "state";
 }
 
+/**
+ * The old dir wins while it holds state of its own: the bridge registry alone is not, or a fresh
+ * install would leave its state at its first restart.
+ */
 export function currentStateDir(legacy: string, next: string): string {
   return holdsOwnState(legacy, next) ? legacy : next;
 }
 
+/**
+ * A launcher from before 0.4.16 takes an old dir that is not empty for the state, the bridge
+ * registry alone included, and an update never replaces a running launcher, nor the one its
+ * checkout starts next.
+ *
+ * A bridge that runs writes its state under the old name by path, so the move waits until no
+ * bridge registered there runs. A step that fails leaves the rest for the next start; the old dir
+ * meanwhile gets a closed copy of the paired devices from every server start (state-merge.ts).
+ */
 export function linkLegacyRegistry(legacy: string, next: string): void {
   finishInterruptedLink(legacy, next);
   if (legacyContents(legacy, next) !== "registry" || !isDir(next)) return;
@@ -130,6 +153,7 @@ function finishInterruptedLink(legacy: string, next: string): void {
   for (const link of leftovers) {
     let pointsAtNext = false;
     try { pointsAtNext = lstatSync(link).isSymbolicLink() && sameDir(link, next); } catch { }
+    // another process of this install may be making its own right now: only a dead one's is left over
     if (link === `${legacy}.link-${process.pid}` || livePid(Number(link.slice(link.lastIndexOf("-") + 1)))) continue;
     if (pointsAtNext && !existsSync(legacy)) {
       try { renameSync(link, legacy); continue; }
@@ -166,6 +190,7 @@ function liveBridge(registry: string): boolean {
   return false;
 }
 
+/** Whether `pid` names a running process (one of another user's counts). */
 function livePid(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; }
@@ -194,6 +219,10 @@ function removeLink(path: string): void {
 
 let moved = false;
 
+/**
+ * Only the processes that own the state call it (launcher, supervisor, server), before they read
+ * it; anything else, a test included, only resolves where the state is (defaultStateDir).
+ */
 export function moveLegacyStateDir(env: Record<string, string | undefined> = process.env, supervisor?: SupervisorRelease): void {
   if (moved) return;
   const { legacy, next } = stateDirNames(env);
@@ -205,6 +234,7 @@ export function moveLegacyStateDir(env: Record<string, string | undefined> = pro
   adoptLegacyDir(legacy, next);
 }
 
+/** A link at `legacy` moves as a link, so state kept elsewhere stays there. */
 export function adoptLegacyDir(legacy: string, next: string): void {
   const contents = legacyContents(legacy, next);
   if (contents === null) return;
@@ -241,4 +271,6 @@ export function updateStateDir(root: string, port: number, stateDir = defaultSta
     createHash("sha256").update(`${resolve(root)}:${port}`).digest("hex").slice(0, 16));
 }
 
+/** A supervisor exits with this after an install: "start the supervisor of the release now active"
+ * (EX_TEMPFAIL, never a crash code). */
 export const HANDOVER_EXIT = 75;

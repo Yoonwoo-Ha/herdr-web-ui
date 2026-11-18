@@ -240,6 +240,7 @@ describe("providers", () => {
     } });
     utimesSync(path, new Date(NOW), new Date(NOW));
     const [usage] = (await new UsageService(context("darwin"), only("claude")).report()).providers;
+    // the endpoint answers 403 from some networks; nothing is asked of it when the line has the numbers
     expect(requests).toEqual([]);
     expect(usage!.problem).toBeNull();
     expect(usage!.plan).toBe("max");
@@ -564,6 +565,7 @@ describe("providers", () => {
     } }, only("copilot"));
     const { providers } = await service.report();
     const [usage] = providers;
+    // a CLI too old to name its account: the answer names it, and the refused sign-in of the same login gives way
     expect(providers).toHaveLength(1);
     expect(requests.map((request) => (request.init.headers as Record<string, string>)["authorization"])).toEqual(["token gho_stale", "token gho_live"]);
     expect(requests.every((request) => request.url === url)).toBe(true);
@@ -919,6 +921,10 @@ describe("providers", () => {
     expect((requests[0]!.init.headers as Record<string, string>)["authorization"]).toBe("Bearer oc_sk_test");
   });
 
+  /**
+   * OpenCode 2's own credential store, the `credential` table of the DB `server/opencode.ts` reads;
+   * `v1` leaves out `session_v2`, as in a 1.x store, whose `credential` table stays empty.
+   */
   function opencodeStore(rows: Array<{ id?: string; integration?: string; value: unknown; active?: number | null; updated?: number }>, dir = join(home, ".local", "share", "opencode"), v1 = false) {
     mkdirSync(dir, { recursive: true });
     const db = new Database(join(dir, "opencode.db"));
@@ -929,6 +935,8 @@ describe("providers", () => {
     db.close();
   }
 
+  // OpenCode 2 stopped writing auth.json but left it standing, holding the key it replaced: that
+  // file alone reports a CLI signed in and working as expired, so the store answers first
   it("reads OpenCode 2's own credential store ahead of the auth.json it left behind", async () => {
     write(join(home, ".local", "share", "opencode", "auth.json"), { "opencode-go": { type: "api", key: "oc_sk_replaced" } });
     opencodeStore([{ value: { type: "key", key: "oc_sk_live" } }]);
@@ -950,6 +958,8 @@ describe("providers", () => {
     expect((requests[0]!.init.headers as Record<string, string>)["authorization"]).toBe("Bearer oc_sk_go_active");
   });
 
+  // OpenCode 2 imports auth.json once, when it takes over a 1.x store, and leaves the file standing:
+  // signed out of OpenCode 2, or signed in by OAuth, the file's key is one OpenCode no longer uses
   it("leaves out the auth.json OpenCode 2 no longer reads when its store holds no key", async () => {
     opencodeStore([{ value: { type: "oauth", methodID: "browser", refresh: "rt" }, active: null }]);
     write(join(home, ".local", "share", "opencode", "auth.json"), { "opencode-go": { type: "api", key: "oc_sk_signed_out" } });
@@ -957,6 +967,8 @@ describe("providers", () => {
     expect(requests).toEqual([]);
   });
 
+  // known to be OpenCode 2's, a store that will not answer now (busy past the timeout, damaged)
+  // still leaves the file's key one OpenCode no longer uses; the variable it reads still answers
   it("keeps OpenCode 2's old auth.json out when its credential cannot be read, and reads OPENCODE_API_KEY", async () => {
     const dir = join(home, ".local", "share", "opencode");
     mkdirSync(dir, { recursive: true });
@@ -984,6 +996,8 @@ describe("providers", () => {
     expect((requests[0]!.init.headers as Record<string, string>)["authorization"]).toBe("Bearer oc_sk_file");
   });
 
+  // OpenCode keeps every sign-in in one file, <XDG data>/opencode/auth.json (xdg-basedir: on macOS
+  // too), keyed by provider; it has no keychain item, and the file names no account
   it("reads OpenCode's auth.json under XDG_DATA_HOME, its Go key before its Zen key", async () => {
     const data = join(home, "data");
     write(join(data, "opencode", "auth.json"), {

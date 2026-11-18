@@ -12,6 +12,7 @@ import { extname, join } from "node:path";
 import { USER_FONTS_PATH, type UserFont, type UserFontList } from "../shared/user-fonts.ts";
 import { errorResponse, jsonResponse, setRequestRoute } from "./http.ts";
 
+/** A CJK font as woff2 is a few MB, as ttf about 20: past this a phone would wait on every font change. */
 export const USER_FONT_MAX_BYTES = 32 * 1024 * 1024;
 const USER_FONTS_MAX = 64;
 
@@ -61,6 +62,7 @@ function fileOf(pathname: string): string | null | undefined {
   try {
     return decodeURIComponent(pathname.slice(USER_FONTS_PATH.length + 1));
   } catch {
+    // a malformed escape names no file of the list
     return undefined;
   }
 }
@@ -75,6 +77,7 @@ export async function handleUserFontsRequest(request: Request, pathname: string,
     const font = fonts.find((candidate) => candidate.file === file);
     const missing = () => jsonResponse({ error: { code: "not_found", message: "no such font" } }, 404);
     if (!font) return missing();
+    // where the platform has O_NOFOLLOW, a link swapped in after the listing is refused by the open itself
     const handle = await open(join(dir, font.file), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ELOOP" || error.code === "ENOENT") return null;
       throw error;

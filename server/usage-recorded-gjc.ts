@@ -11,6 +11,7 @@
  * window: { resetsAt }, amount: { usedFraction } } under the ids Oh My Pi records too, and metadata. The account id
  * in that metadata is the organization's wherever the provider names one, so the account is taken from the key alone.
  *
+ * This is Gajae Code's cache and not a history: one report per sign-in, read as it is. That table is all this reads.
  * The same file holds Gajae Code's sign-ins (`auth_credentials`): nothing here names that table, and the file is only read.
  */
 import { existsSync } from "node:fs";
@@ -115,6 +116,7 @@ export const gjcRecorded: RecordedSource = {
   read(ctx) {
     const now = ctx.now();
     const rows = readStore(storePath(ctx), (db) => db.query<CacheRow, [string, string, number, number]>(ROWS).all(PREFIX, AFTER_PREFIX, Math.floor(now / 1000), MAX_ROWS));
+    // Gajae Code may hold one account under two sign-ins: it is given once, by the report read last that holds a limit shown here
     const reports = (rows ?? []).flatMap((row) => reportOf(row, now) ?? []).filter((report) => report.windows.length > 0).sort((a, b) => b.readAt - a.readAt);
     const accounts = new Map<string, RecordedReading>();
     for (const report of reports) if (!accounts.has(report.accountId)) accounts.set(report.accountId, report);

@@ -182,6 +182,11 @@ async function shallowPlugin() {
   await git(plugin, "checkout", "-q", "FETCH_HEAD");
   return plugin;
 }
+/**
+ * `leaves` names what each attempt writes into the checkout's pack directory before it ends, the
+ * way git leaves a half-written `tmp_pack_*` behind; a name ending in "/" is a directory, whose
+ * removal then fails.
+ */
 class OfflineUnshallow extends Updater {
   fetches = 0;
   readonly timeouts: number[] = [];
@@ -204,6 +209,11 @@ class OfflineUnshallow extends Updater {
     return super.unshallowFetch(timeout, run);
   }
 }
+/**
+ * Stands in for the tag fetch of a check: writes the half-written `tmp_pack_*` a failed fetch
+ * leaves behind however it ends and then does not finish, ending the way a cancelled or timed-out
+ * one does (#1252).
+ */
 class CancelledTagFetch extends Updater {
   fetches = 0;
   protected async git(...args: string[]): Promise<string> {
@@ -318,6 +328,8 @@ describe("managed source updates with real Git repositories and builds", () => {
     const name = basename(saved.directory);
     mkdirSync(join(saved.directory, "server"));
     writeFileSync(join(saved.directory, "server", "supervisor.ts"), "");
+    // state/alias -> outside/child, and a copy of the release at outside/<name>: a process started at
+    // state/alias/../<name> runs in the copy, while that name, read as text, is inside the state dir
     const outside = join(directory, "outside");
     mkdirSync(join(outside, "child"), { recursive: true });
     cpSync(saved.directory, join(outside, name), { recursive: true });
@@ -340,6 +352,8 @@ describe("managed source updates with real Git repositories and builds", () => {
 
   it("keeps an offer up while a later check runs, and ends it only with a check's answer (#3325)", async () => {
     const target = await release("second", "v0.2.0");
+    // the page polls the published status: a check that withdrew the offer while it ran made the
+    // app-wide line blink out, and the terminal under it resize
     const published: Array<{ phase: string; available: boolean }> = [];
     const watched = new Updater({ ...updater.options, publish(status) { published.push({ phase: status.phase, available: status.available }); } });
     await watched.initialize();
@@ -597,6 +611,7 @@ describe("managed source updates with real Git repositories and builds", () => {
     await git(upstream, "reset", "-q", "--hard", target);
     await updater.request("check");
     expect(updater.status.latest_version).toBe("0.10.0");
+    // the annotated tag peels to the commit that builds and health checks report
     expect(updater.status.latest_revision).toBe(target);
     expect(updater.status.available).toBe(true);
     await updater.request("install");
@@ -611,6 +626,8 @@ describe("managed source updates with real Git repositories and builds", () => {
     expect(updater.status.channel).toBe("stable");
     expect(updater.status.available).toBe(false);
     expect(updater.status.latest_version).toBeNull();
+    // a stable updater fetches refs/tags/v* alone, as every released one did (v0.4.18 to v0.4.22):
+    // the beta/* tags never reach its checkout
     expect(await git(root, "for-each-ref", "refs/tags/beta/")).toBe("");
     expect(await git(root, "tag", "--list", "v0.3.0-beta.1")).toBe("v0.3.0-beta.1");
   });
@@ -666,6 +683,9 @@ describe("managed source updates with real Git repositories and builds", () => {
   });
 
   it("holds a failed unshallow fetch off instead of retrying it on every check", async () => {
+    // on a slow link, each 5-minute check re-downloaded the same history and left a half-written
+    // tmp_pack_* behind: 17 GiB in three days (#1252). The plugin sits ahead of the latest
+    // release, the one checkout shape whose ancestry the shallow grafts cannot answer.
     await git(upstream, "tag", "v0.1.0", "HEAD");
     await commit("unreleased");
     const plugin = await shallowPlugin();
@@ -696,6 +716,9 @@ describe("managed source updates with real Git repositories and builds", () => {
   });
 
   it("marks the bridge's update commands as the user's own, and hands an install its revision", async () => {
+    // Without the revision, the install's own check would install whatever release it
+    // finds, not the one the person was shown; and an older bridge's install, which names none,
+    // must not reach the updater at all.
     const root = mkdtempSync(join(directory, "supervisor-root-"));
     const stateDir = mkdtempSync(join(directory, "supervisor-state-"));
     const record = join(directory, "supervisor-record.json");
@@ -897,6 +920,10 @@ describe("managed source updates with real Git repositories and builds", () => {
   });
 
   it("removes the tmp_pack_* a failed tag fetch left behind", async () => {
+    // The tag fetch of every check is the same leak the unshallow one was: a failed fetch
+    // leaves its half-written tmp_pack_* behind however it ends — a timeout, a cancellation,
+    // or git's own exit on a dropped connection (measured on git 2.54; #1252) — and every
+    // 5-minute check added another.
     const own = join(directory, "tag-fetch-checkout");
     await git(directory, "clone", "-q", upstream, own);
     const managed = new CancelledTagFetch({ root: own, stateDir: join(directory, "tag-fetch-state"),
@@ -948,6 +975,9 @@ describe("managed source updates with real Git repositories and builds", () => {
   });
 
   it("sweeps a tmp_pack_* left an hour or more ago, keeps a fresh one", async () => {
+    // packs leaked before this cleanup existed (879 files, 17 GiB in #1252), or orphaned when the
+    // process exited before a failed fetch's cleanup ran, are swept once stale; a fresh one may
+    // still be another git's live pack (index-pack keeps touching it)
     await git(upstream, "tag", "v0.1.0", "HEAD");
     await commit("unreleased");
     const plugin = await shallowPlugin();
@@ -967,6 +997,9 @@ describe("managed source updates with real Git repositories and builds", () => {
   });
 
   it("leaves the pack directory alone when another git holds a lock", async () => {
+    // a developer's own git pull or an IDE's auto-fetch in the same checkout: the updater's fetch
+    // fails on the lock having downloaded nothing, and the tmp_pack_* that appeared meanwhile is
+    // the other git's, still being written
     await git(upstream, "tag", "v0.1.0", "HEAD");
     await commit("unreleased");
     const plugin = await shallowPlugin();
@@ -1177,6 +1210,7 @@ describe("managed source updates with real Git repositories and builds", () => {
       expect(readFileSync(marker, "utf8")).toBe("release\n");
       expect((await health()).web_ui.revision).toBe(target);
       expect((await readStatus())?.error).toBeNull();
+      // asserted here and not in `finally`, where it would replace the failure that came first
       handle.kill("SIGTERM");
       expect(await handle.exited).toBe(0);
     } catch (error) {
@@ -1363,6 +1397,7 @@ setInterval(() => {}, 1000);`);
     try {
       controller.abort();
       await expect(running).rejects.toThrow("Update cancelled");
+      // the grace period is a minute: only the kill on close can end the helper this soon
       const deadline = Date.now() + 5_000;
       while (alive(pid)) {
         if (Date.now() > deadline) throw new Error("the helper outlived the command");
@@ -1395,6 +1430,7 @@ describe("a release's notes file", () => {
       expect(readNotesFile(join(dir, "small.md"))).toBe("## [0.1.0]\n- one\n");
       writeFileSync(join(dir, "large.md"), Buffer.alloc(NOTES_FILE_LIMIT + 1, 0x78));
       expect(() => readNotesFile(join(dir, "large.md"))).toThrow(/not notes|too large/);
+      // a symlink is not followed: the release's own file is what is read, not where a link points
       symlinkSync(join(dir, "small.md"), join(dir, "link.md"));
       expect(() => readNotesFile(join(dir, "link.md"))).toThrow();
       // a FIFO would hold the supervisor's synchronous read for a writer that never comes

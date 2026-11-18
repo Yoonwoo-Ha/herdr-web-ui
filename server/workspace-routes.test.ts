@@ -115,6 +115,8 @@ describe("a create passes the request's env to the new pane (#2745)", () => {
 });
 
 describe("a create answers after the roster is told", () => {
+  // the page draws a new pane only once the roster lists it: without this push, the roster is read
+  // only after the collector's debounced pane.created, about 500 ms after herdr made the pane
   it.each([
     ["/api/tab/create", { workspace_id: "w1" }, ["tab.create", "session-changed", "answer"]],
     ["/api/tab/create", { workspace_id: "w1", agent: { kind: "claude" } }, ["tab.create", "launch", "session-changed", "answer"]],

@@ -10,6 +10,7 @@ export interface Release {
   directory: string; revision: string; source_revision: string;
   previous_version?: string | null; installed_at?: string;
 }
+/** A release's files are read whole: one larger than this is not notes (the bound `runCommand` puts on what Git prints). */
 export const NOTES_FILE_LIMIT = 2_000_000;
 
 /**
@@ -42,6 +43,8 @@ export function pluginBinaryOf(checkout: string | undefined, compiled: boolean):
 }
 /** herdr updates a plugin's compiled server, not this app */
 export const PLUGIN_BINARY_REASON = "Ovis runs here as the herdr plugin's compiled server: update it with herdr (herdr plugin update devswha.ovis), then restart Ovis.";
+/** Whether a compiled server runs from where install.sh or install.ps1 put it: `<home>/ovis/releases/<id>`, or on
+ * Windows `<home>\\ovis\\bin` (its bin is the release folder itself); a herdr plugin's is under `.ovis/server` */
 export function installedBinaryAt(root: string, compiled: boolean): boolean {
   return compiled && /[\\/]ovis[\\/](?:releases[\\/][^\\/]+|bin)[\\/]?$/i.test(root);
 }
@@ -61,6 +64,7 @@ export function isReleaseFolder(directory: string): boolean {
   return basename(resolved).startsWith("release-") && /^[0-9a-f]{16}$/.test(basename(parent)) && basename(dirname(parent)) === "updates";
 }
 const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
+/** Outside `v*`, which the installers, the app setups and the release jobs read as releases. */
 const BETA_TAG = /^beta\/v(\d+)\.(\d+)\.(\d+)-beta\.(\d+)$/;
 const tagVersion = (tag: string) => tag.replace(/^(beta\/)?v/, "");
 
@@ -93,6 +97,10 @@ function packageVersion(directory: string): string | null {
   } catch { return null; }
 }
 
+/**
+ * The version of the signed ovis-server.json the installers keep beside an installed compiled server, when it is a
+ * release's: read as a release's notes are (a bounded regular file, so a FIFO or a huge file cannot hold startup).
+ */
 function manifestVersion(directory: string): string | null {
   try {
     return releaseVersion((JSON.parse(readNotesFile(join(directory, "ovis-server.json"))) as { version?: unknown }).version);
@@ -135,6 +143,8 @@ export function runCommand(cwd: string, argv: string[], signal?: AbortSignal, ti
     const cleanup = () => { clearTimeout(timer); if (killTimer) clearTimeout(killTimer); signal?.removeEventListener("abort", abort); };
     child.on("error", error => { cleanup(); reject(error); });
     child.on("close", code => {
+      // a group member that ignores SIGTERM and holds none of our pipes outlives the child: the
+      // grace timer cleanup clears would have been its only end
       if (failure !== null) killGroup("SIGKILL");
       cleanup();
       if (code === 0 && !failure) resolve(output.trim());
@@ -146,6 +156,8 @@ export function runCommand(cwd: string, argv: string[], signal?: AbortSignal, ti
 /** The unshallow fetch downloads the whole missing history in one go: a slow link needs minutes,
  * not the 30 s bound of an ordinary command (#1252). */
 const UNSHALLOW_TIMEOUT_MS = 10 * 60_000;
+/** After a failed unshallow fetch, the next attempt waits this long: retried on every 5-minute
+ * check, the same history was re-downloaded for days on slow links (#1252). */
 const UNSHALLOW_RETRY_MS = 6 * 60 * 60_000;
 
 function tmpPacks(packDir: string | null): Set<string> {
@@ -154,6 +166,9 @@ function tmpPacks(packDir: string | null): Set<string> {
   catch { return new Set(); }
 }
 
+/** A `tmp_pack_*` untouched this long belongs to no running fetch: index-pack keeps writing to
+ * (and so updating the mtime of) the file it fills, and the updater's longest fetch, the
+ * unshallow one, is bounded at 10 minutes. */
 const STALE_TMP_PACK_MS = 60 * 60_000;
 
 /** Removes the `tmp_pack_*` files that were not there before the fetch: the ones it wrote before
@@ -181,6 +196,9 @@ function sweepStaleTmpPacks(packDir: string | null, now = Date.now()): void {
   }
 }
 
+/** A fetch that failed because another git holds a lock in the checkout (a developer's own
+ * `git pull` or an IDE's auto-fetch alongside `bun run start`) downloaded nothing; a
+ * `tmp_pack_*` that appeared meanwhile is that git's own, still being written. */
 function lockConflict(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes(".lock': File exists") || message.includes("cannot lock ref");
@@ -253,6 +271,7 @@ export class Updater {
       if (!reason || (reason === NOT_MAIN_REASON && await this.detachedAndClean())) {
         try {
           const saved = JSON.parse(readFileSync(join(this.options.stateDir, "current.json"), "utf8")) as Release;
+          // Only directories created by this updater may be resumed, under this state dir's name for them.
           const directory = saved.source_revision === this.sourceRevision && SHA.test(saved.revision)
             ? releaseIn(this.options.stateDir, saved.directory) : null;
           if (directory !== null && await runCommand(directory, ["git", "rev-parse", "HEAD"]) === saved.revision) this.release = { ...saved, directory };
@@ -333,6 +352,8 @@ export class Updater {
 
   private async discover(byUser = false) {
     const channel = this.channel();
+    // an offer already made stays up while this check runs, and changes only with its answer: the
+    // page polls this status, and an offer withdrawn for the check's length blinks its line (#3325).
     const kept = channel === this.status.channel ? {} : { available: false };
     this.patch({ phase: "checking", error: this.options.notice ?? null, error_code: null, blocked_reason: null, channel, ...kept });
     const reason = await this.sourceBlock();
@@ -347,6 +368,7 @@ export class Updater {
       this.patch({ latest_revision: null, latest_version: null, checked_at, blocked_reason: null, available: false });
       return;
     }
+    // ^{commit} peels an annotated tag to the commit the build and the health check report
     const target = await this.git("rev-parse", `${latest}^{commit}`);
     if (!SHA.test(target)) throw new Error("Invalid update revision");
     const current = this.release!.revision;
@@ -408,6 +430,8 @@ export class Updater {
     const held = tmpPacks(packDir);
     try { return await fetch(); }
     catch (error) {
+      // another git's lock: its in-progress pack is not ours to remove; anything it abandons is
+      // swept once stale
       if (!lockConflict(error)) cleanTmpPacks(packDir, held);
       throw error;
     }
@@ -428,9 +452,12 @@ export class Updater {
     return false;
   }
 
+  /** `expectedRevision`: the release a manual install was offered; the install goes ahead only
+   * while the check it starts with still offers exactly that one. */
   async request(command: UpdateCommand, byUser = false, expectedRevision?: string, installId?: string): Promise<void> {
     if (this.busy || !this.status.managed || this.controller.signal.aborted) return;
     this.busy = true;
+    // the id of the install this run is (its request's): what a cancel must name
     this.runId = command === "install" ? installId ?? null : null;
     let stage: string | null = null;
     let attempted: string | null = null;
@@ -438,6 +465,8 @@ export class Updater {
     try {
       await this.discover(byUser);
       checked = true;
+      // a release published since the person said yes is not the one they said yes to: nothing is
+      // installed, the new offer stays to be read, and nothing tries again by itself
       if (command === "install" && expectedRevision !== undefined && !this.status.blocked_reason && this.status.latest_revision !== expectedRevision) {
         this.patch({ phase: "error", step: null, error_code: "update_offer_changed",
           error: "A different release is on offer than the one asked for, so nothing was installed. Review it, then update again." });
@@ -461,6 +490,7 @@ export class Updater {
         const signal = AbortSignal.any([this.controller.signal, this.installing.signal]);
         this.patch({ phase: "building", step: "download" });
         stage = mkdtempSync(join(this.options.stateDir, "release-"));
+        // Network filesystems and low-memory builds can take minutes even without a network fetch.
         const run = (args: string[], timeout = 10 * 60_000) => runCommand(stage!, args, signal, timeout);
         await run(["git", "clone", "--quiet", "--no-checkout", "--no-hardlinks", this.options.root, "."]);
         await run(["git", "fetch", "--quiet", this.options.root, revision]);
@@ -470,9 +500,11 @@ export class Updater {
         await run([process.execPath, "install", "--frozen-lockfile"]);
         this.patch({ step: "typecheck" });
         // --bun: tsc's `#!/usr/bin/env node` would otherwise run on whatever node herdr's PATH has first, which
+        // may be older than tsc supports now that install.sh no longer puts its own Node there (#596)
         await run([process.execPath, "--bun", "run", "typecheck"]);
         this.patch({ step: "build" });
         await run([process.execPath, "run", "build"]);
+        // the release's Rust PTY host, checked against its manifest; without it the release runs the Node sidecar
         if (existsSync(join(stage, "scripts", "pty-sidecar.ts"))) {
           try { console.log((await run([process.execPath, "scripts/pty-sidecar.ts", "install"], 120_000))); }
           catch (error) { console.error("Rust PTY host install failed; the release uses the Node PTY sidecar", error); }

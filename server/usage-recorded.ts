@@ -44,6 +44,7 @@ function current(window: RecordedWindow, readAt: number, now: number): UsageWind
   };
 }
 
+/** Each is given as known from its record alone (`signed_in` false): whether this PC also signs in to it is the caller's to say. */
 export function recordedUsages(provider: UsageProviderId, sources: readonly RecordedSource[], ctx: RecordedContext,
   read: (source: RecordedSource) => RecordedReading[] = (source) => source.read(ctx)): RecordedUsage[] {
   const now = ctx.now();

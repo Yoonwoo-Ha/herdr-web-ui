@@ -334,7 +334,7 @@ wait
       expect((await within(post(service, "cancel", { login }))).status).toBe(204);
       await within(closed.promise);
     } finally {
-      if (existsSync(childPid)) { try { process.kill(Number(readFileSync(childPid, "utf8")), "SIGKILL"); } catch { } }
+      if (existsSync(childPid)) { try { process.kill(Number(readFileSync(childPid, "utf8")), "SIGKILL"); } catch { /* already stopped */ } }
       listener.stop(true);
     }
   }, 15_000);
@@ -390,6 +390,7 @@ exec sleep 600
     noHerdr();
     const claudeBin = join(root, "claude-init-bin");
     mkdirSync(claudeBin, { recursive: true });
+    // Claude writes its config into the new home as soon as it starts, before any sign-in
     writeFileSync(join(claudeBin, "claude"), `#!/bin/sh\ncase "$*" in *--help*) echo "auth login"; exit 0;; esac\necho '{}' > "$CLAUDE_CONFIG_DIR/.claude.json"\ncat "${join(fixtures, "claude.pty")}"\nexec sleep 600\n`, { mode: 0o755 });
     const service = new UsageLoginService(root, { PATH: `${claudeBin}:/usr/bin:/bin` });
     const name = `init-${++names}`;

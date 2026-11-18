@@ -61,11 +61,16 @@ export interface PaneWatchOptions extends WatchStreamOptions {
   paneId: string;
   cols: number;
   rows: number;
+  /** The same socket the bridge's RPCs use, not the CLI's default session. */
   socketPath: string;
   killGraceMs?: number;
 }
 
 const STDERR_TAIL_CHARS = 4096;
+/**
+ * Its exit is waited for: a pane's next view starts after it, and its place among a connection's watches is its
+ * until then (core/connections.ts), so one that ignored the request would hold both for good.
+ */
 const KILL_GRACE_MS = 1_000;
 
 /** A read-only viewport; unlike terminal attach it never owns the pane's size. */
@@ -74,6 +79,7 @@ export class PaneWatch {
   private readonly proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
   private killed = false;
   private ended = false;
+  /** the process itself has exited; a child of its own may still hold its pipes open */
   private gone = false;
   private killer: ReturnType<typeof setTimeout> | undefined;
   private readonly readers: Array<{ cancel(): Promise<void> }> = [];
@@ -95,7 +101,9 @@ export class PaneWatch {
       },
     });
     // Drain both pipes before reporting the exit of a process that ended by itself: the last frame and
-    // failure diagnostics can arrive after the process-exit notification.
+    // failure diagnostics can arrive after the process-exit notification. One asked to end, or whose
+    // terminal closed, has nothing more to say: its exit is its process's own, whoever still holds its
+    // pipes (a launcher that does not `exec` leaves its child holding them for as long as that runs).
     const drained = Promise.all([this.readStdout(parser), this.readStderr()]);
     this.exited = this.proc.exited.then(async (code) => {
       clearTimeout(this.killer);

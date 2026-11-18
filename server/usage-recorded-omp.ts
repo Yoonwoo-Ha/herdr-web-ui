@@ -78,6 +78,10 @@ function storePath(ctx: RecordedContext): string {
   return join(ctx.home, ctx.env["PI_CONFIG_DIR"] || ".omp", "agent", "agent.db");
 }
 
+/**
+ * Oh My Pi keeps a series per sign-in (`account_key`), and may hold one account under two of them: the account is
+ * then given once, by the series read last whose latest report holds a limit shown here, never as a mix of two.
+ */
 function latestReports(rows: readonly HistoryRow[]): RecordedReading[] {
   const series = new Map<string, { accountId: string; label: string | null; readAt: number; windows: RecordedWindow[] }>();
   for (const row of rows) {

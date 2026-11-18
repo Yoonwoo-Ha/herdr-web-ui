@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { loginPrompt, screenText } from "./usage-login-prompt.ts";
 
+/** What the real CLIs wrote to a private PTY (Bun.spawn's terminal), recorded in a throwaway HOME before any approval. */
 const fixture = (name: string): string => screenText(readFileSync(join(import.meta.dir, "fixtures/usage-login", `${name}.pty`), "utf8"));
 
 describe("screenText", () => {

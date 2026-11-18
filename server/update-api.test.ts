@@ -83,6 +83,7 @@ describe("a cancel", () => {
   it("stops only an install that builds, and only where its supervisor can", async () => {
     let status = offer();
     const updates = service(() => status);
+    // the install it may cancel: the one this server was asked for, by the id its 202 gave
     const granted = await handleUpdateRequest(install(JSON.stringify({ expected_revision: offered })), "/api/updates/install", updates);
     const { install_id: issued } = await granted.json() as { install_id: string };
     updates.requests.splice(0);
@@ -110,6 +111,7 @@ describe("a cancel by its install's id", () => {
     const granted = await handleUpdateRequest(install(JSON.stringify({ expected_revision: offered })), "/api/updates/install", updates);
     const { install_id } = await granted.json() as { install_id: string };
     const cancel = async (id: string) => { const response = await handleUpdateRequest(install(JSON.stringify({ install_id: id })), "/api/updates/cancel", updates); return { status: response.status, body: await response.json() }; };
+    // its install builds: another id is refused, as if no update ran
     status = offer({ phase: "building", install_cancellable: true });
     const wrong = await cancel("99999999-2222-4333-8444-555555555555");
     status = offer({ phase: "idle", install_cancellable: true });
@@ -118,6 +120,7 @@ describe("a cancel by its install's id", () => {
     expect(wrong).toEqual(none);
     expect(expired).toEqual(none);
     expect(none.status).toBe(409);
+    // only its own id, while it runs, is passed on
     status = offer({ phase: "building", install_cancellable: true });
     expect((await cancel(install_id)).status).toBe(202);
     expect(updates.requests.filter((request) => request.command === "cancel")).toEqual([{ command: "cancel", install_id }]);
@@ -130,6 +133,7 @@ describe("a manual install", () => {
     for (const body of [undefined, "", "{}", "null", "[]", "not json", JSON.stringify({ expected_revision: null }),
       JSON.stringify({ expected_revision: "a".repeat(39) }), JSON.stringify({ expected_revision: "a".repeat(65) }),
       JSON.stringify({ expected_revision: "A".repeat(40) }), JSON.stringify({ expected_revision: `${"a".repeat(40)}\n` }),
+      // more than an install's 1 KiB is not one, whatever it names
       JSON.stringify({ expected_revision: offered, padding: "x".repeat(1024) })]) {
       expect(await answer(handleUpdateRequest(install(body), "/api/updates/install", updates))).toEqual({ status: 400, code: "invalid_update_install" });
     }
@@ -141,6 +145,7 @@ describe("a manual install", () => {
     const updates = service(() => status);
     expect(await answer(handleUpdateRequest(install(JSON.stringify({ expected_revision: offered })), "/api/updates/install", updates))).toEqual({ status: 202, code: null });
     expect(updates.requests).toEqual([{ command: "install", expected_revision: offered, install_id: expect.stringMatching(INSTALL_ID) }]);
+    // another release came on offer since the person was shown this one: refused before anything is asked
     status = offer({ latest_revision: moved });
     expect(await answer(handleUpdateRequest(install(JSON.stringify({ expected_revision: offered })), "/api/updates/install", updates))).toEqual({ status: 409, code: "update_offer_changed" });
     status = offer({ available: false });
@@ -155,6 +160,7 @@ describe("a manual install", () => {
   });
 
   it("old supervisor cannot receive an unbound install", async () => {
+    // an older supervisor tells its status without the capability: the bridge offers no install under it
     const sent: unknown[] = [];
     let deliver: (message: unknown) => void = () => {};
     const updates = connectUpdater({ send: (message) => { sent.push(message); }, onMessage: (listener) => { deliver = listener; } });
@@ -162,6 +168,7 @@ describe("a manual install", () => {
     deliver({ type: "update-status", status: older });
     expect(updates.status().revision_bound_install).toBeUndefined();
     expect(await answer(handleUpdateRequest(install(JSON.stringify({ expected_revision: offered })), "/api/updates/install", updates))).toEqual({ status: 409, code: "update_restart_required" });
+    // a capability that is not exactly true is not told
     deliver({ type: "update-status", status: { ...older, revision_bound_install: "yes" } });
     expect(updates.status().revision_bound_install).toBeUndefined();
     expect(await answer(handleUpdateRequest(install(JSON.stringify({ expected_revision: offered })), "/api/updates/install", updates))).toEqual({ status: 409, code: "update_restart_required" });

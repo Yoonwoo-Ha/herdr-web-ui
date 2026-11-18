@@ -58,6 +58,7 @@ function envFault(env: unknown): string | null {
   if (entries.length > MAX_ENV_VARS) return `env may set at most ${MAX_ENV_VARS} variables`;
   let bytes = 0;
   for (const [name, value] of entries) {
+    // the name is quoted and cut: before this check it may hold anything
     if (!ENV_NAME.test(name)) return `env name ${JSON.stringify(name.slice(0, 64))} must be letters, digits and _, not starting with a digit`;
     if (typeof value !== "string" || !hasNoControlCharacters(value)) return `env.${name} must be a string without control characters`;
     bytes += Buffer.byteLength(name) + Buffer.byteLength(value);
@@ -74,6 +75,7 @@ const notQueued = (error: unknown): { error: { code: string; message: string } }
 export async function handleWorkspaceRequest(request: Request, url: URL, pathname: string, bunServer: Pick<ServerContext, "timeout">, broadcastAll: (message: ServerMessage) => void,
   queueFirstMessage: (paneId: string, text: string, kind: string, requester: string | null, launchedPid: number | null) => Promise<PendingMessage>,
   workspaceMoved: () => MoveReceipt, shellAgents?: ShellAgentLocator,
+  /** false: the folders are another machine's, which hc checks as it starts the shell there */
   localFolders = true): Promise<Response | null> {
   if (pathname === "/api/workspace/directories" && request.method === "POST") {
     setRequestRoute(pathname);
@@ -97,6 +99,7 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
     let base: string | undefined;
     if (paneId) {
       try { base = (await paneContext(paneId)).cwd; } catch {}
+      // a relative path whose pane is gone has no folder to be read from: not the server's own
       const path = (url.searchParams.get("path") ?? "").trim();
       if (base === undefined && path !== "" && path !== "~" && !path.startsWith("~/") && !isAbsolute(path)) return badRequest("invalid_cwd", "the pane a relative path belongs to is gone");
     }
@@ -107,6 +110,7 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
   if (pathname === "/api/workspace/diff/files" || pathname === "/api/workspace/diff/file" || pathname === "/api/workspace/diff/refs") {
     setRequestRoute(pathname);
     if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+    // file contents, like /api/fs/file: this app reads them, another site's page does not
     if (request.headers.get("sec-fetch-site") === "cross-site") return jsonResponse({ error: { code: "cross_site", message: "A repository's changes are read from this app" } }, 403);
     const cwd = await routeFolder(url.searchParams.get("pane_id"), (url.searchParams.get("directory") ?? "").trim());
     if (cwd instanceof Response) return cwd;
@@ -123,10 +127,12 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
     return repoLogResponse(pathname.endsWith("/log") ? "log" : pathname.endsWith("/branches") ? "branches" : "show", cwd, url.searchParams);
   }
 
+  // The branch's pull request, through this PC's own gh sign-in: read like the changes, merged only on a POST
   if (pathname === "/api/workspace/pr" || pathname === "/api/workspace/pr/log" || pathname === "/api/workspace/pr/merge") {
     setRequestRoute(pathname);
     const merging = pathname.endsWith("/merge");
     if (request.method !== (merging ? "POST" : "GET")) return badRequest("method_not_allowed", merging ? "use POST" : "use GET");
+    // review comments and job logs are the repository's contents: this app reads them, another site's page does not
     if (request.headers.get("sec-fetch-site") === "cross-site") return jsonResponse({ error: { code: "cross_site", message: "A pull request is read from this app" } }, 403);
     let paneId = url.searchParams.get("pane_id");
     let directory = (url.searchParams.get("directory") ?? "").trim();
@@ -171,6 +177,7 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
     const envProblem = envFault(payload.env);
     if (envProblem !== null) return badRequest("invalid_env", envProblem);
     if (payload.cwd !== undefined && typeof payload.cwd !== "string") return badRequest("invalid_cwd", "cwd must be an existing directory");
+    // the folder of a create request is one the user picked and sees: a share too
     const cwd = payload.cwd === undefined ? undefined : localFolders ? expandedDirectory(payload.cwd, "chosen") : payload.cwd;
     if (payload.cwd !== undefined && cwd === null) return badRequest("invalid_cwd", "cwd must be an existing directory");
     if (payload.label !== undefined && typeof payload.label !== "string") return badRequest("missing_label", "label must be a string");
@@ -185,6 +192,7 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
     if (fault !== null) return badRequest("invalid_agent", fault);
     const messageFault = firstMessageFault(payload.first_message, payload.agent);
     if (messageFault !== null) return badRequest("invalid_first_message", messageFault);
+    // the page connection that asked: the only one that may type the message on its own (server/core/pending.ts)
     const requester = payload.first_message_connection ?? null;
     if (requester !== null && (typeof requester !== "string" || requester.length === 0 || requester.length > 128)) {
       return badRequest("invalid_first_message", "first_message_connection must be the id of this page's connection");
@@ -208,6 +216,7 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
         broadcastAll({ type: "session-changed" });
         return jsonResponse({ workspace_id: workspaceId, pane_id: created.root_pane.pane_id, agent_started: false });
       }
+      // the process the launch brought up, when it says: the first message is bound to it
       let launchedPid: number | null = null;
       const launched = await agentLaunch(created.root_pane.pane_id, payload.agent, (pid) => { launchedPid = pid; }, shellAgents);
       // the request's first message is the user's send: queued for the agent's first ready turn through the
