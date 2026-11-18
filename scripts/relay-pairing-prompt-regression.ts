@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { chromium, type Page } from "playwright-core";
 import type { Machine, RelayPairingRequest } from "../shared/machines.ts";
 import { chromePath } from "./chrome-path.ts";
+import { sheetRisen } from "./settings-page.ts";
 
 // A built client with an in-memory API; no relay, no herdr and no user session. The PC's prompt for a
 // device waiting for approval (src/components/RelayPairingPrompt.tsx), told over the event stream as
@@ -91,19 +92,20 @@ try {
     Date.now = () => qa.at ?? real();
   });
   await page.goto(server.url.href);
-  await page.locator(".app-header").first().waitFor({ timeout: 10_000 });
   const prompt = page.locator('[data-testid="relay-pairing-prompt"]');
   const sentence = prompt.locator(":scope > span > span").first();
   const settings = page.locator(".settings-dialog");
   const settled = () => page.evaluate(() => fetch("/api/health").then(() => undefined));
+  const openSettings = async () => {
+    await page.locator(".sidebar-footer-settings").click();
+    await sheetRisen(page);
+    await settings.locator("button:visible").first().focus();
+    assert.equal(await focus(page), "settings");
+  };
 
   // A key that presses Approve the moment the prompt is there (typed for what was under it) approves nothing:
   // a click no pointer made is what Enter or Space on the button gives
-  await page.keyboard.press("ControlOrMeta+Shift+Comma");
-  await settings.waitFor();
-  await page.waitForFunction(() => document.querySelector(".settings-dialog")?.getAnimations().length === 0);
-  await settings.locator("button:visible").first().focus();
-  assert.equal(await focus(page), "settings");
+  await openSettings();
   await page.evaluate(() => {
     const watch = new MutationObserver(() => {
       const approve = document.querySelector<HTMLElement>(".relay-pairing-prompt .btn-primary");
@@ -256,13 +258,6 @@ try {
   await page.evaluate(() => document.querySelector(".qa-field")?.remove());
   decided.length = 0;
   const count = (n: number) => page.waitForFunction((want) => document.querySelectorAll(".relay-pairing-prompt").length === want, n);
-  const openSettings = async () => {
-    await page.keyboard.press("ControlOrMeta+Shift+Comma");
-    await settings.waitFor();
-    await page.waitForFunction(() => document.querySelector(".settings-dialog")?.getAnimations().length === 0);
-    await settings.locator("button:visible").first().focus();
-    assert.equal(await focus(page), "settings");
-  };
   await openSettings();
   const handedA = ask({ local_only: true });
   await count(1);

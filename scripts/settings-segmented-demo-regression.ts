@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type BrowserContextOptions, type Locator, type Page } from "playwright-core";
 import { buildDemoApp } from "./demo-build.ts";
-import { openSettingsPage } from "./settings-page.ts";
-import { PAGES, SETTINGS, openSettings } from "./settings-pages-harness.ts";
+import { openSettingsPage, sheetRisen } from "./settings-page.ts";
+import { PAGES, SETTINGS } from "./settings-pages-harness.ts";
 import { KO } from "../src/lib/i18n.ko.ts";
 import { JA } from "../src/lib/i18n.ja.ts";
 import { ZH } from "../src/lib/i18n.zh.ts";
@@ -95,9 +95,8 @@ async function settingsIn(browser: Browser, url: string, language: Language, wid
   const page = await context.newPage();
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(url);
-  await page.locator(".conn-live").waitFor({ state: "attached" });
-  await openSettings(page);
+  await page.goto(`${url}?settings=appearance`);
+  await sheetRisen(page);
   return { page, errors, close: () => context.close() };
 }
 

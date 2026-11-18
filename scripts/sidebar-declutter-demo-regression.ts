@@ -7,6 +7,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { openSettingsPage } from "./settings-page.ts";
+import { closeSettings } from "./settings-pages-harness.ts";
 import { serveDemo } from "./demo-server.ts";
 
 // No herdr session is opened, and nothing leaves the loopback.
@@ -357,8 +358,7 @@ async function filterEdges(browser: Browser, scene: Scene): Promise<void> {
       await openSettingsPage(page, "Appearance");
       await page.locator(".settings-dialog").getByRole("switch", { name: "Sidebar filter", exact: true }).click();
       await page.waitForFunction(() => localStorage.getItem("ovis:sidebar-filter-shown") === "false");
-      await page.keyboard.press("Escape");
-      await page.locator(".settings-dialog").waitFor({ state: "detached" });
+      await closeSettings(page);
       assert.equal(await page.locator(".sidebar-filter-input").inputValue(), "zz", "the field keeps its words");
       await page.getByRole("button", { name: "Clear filter", exact: true }).click();
       await page.getByRole("button", { name: "Close filter", exact: true }).click();
@@ -432,8 +432,7 @@ async function filterSetting(browser: Browser, scene: Scene): Promise<void> {
     await page.waitForFunction(() => localStorage.getItem("ovis:sidebar-filter-shown") === "true");
     assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem("ovis:settings") ?? "{}")).sidebarFilter, undefined, "kept out of ovis:settings");
     await capture(page, scene, "settings-appearance", true);
-    await page.keyboard.press("Escape");
-    await page.locator(".settings-dialog").waitFor({ state: "detached" });
+    await closeSettings(page);
     if (scene.phone && await page.locator(".sidebar.is-open").count() === 0) {
       await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
       await page.locator(".sidebar.is-open").waitFor();
