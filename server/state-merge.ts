@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { MAX_PREFERENCES_BYTES, sharedPreferencesBody, type PreferencesChange } from "../shared/preferences.ts";
-import { readDeviceRegistry, type StoredDevice } from "./devices.ts";
+import { readDeviceRegistry, VOUCHED, type StoredDevice } from "./devices.ts";
 import { preparePrivateState, publishPrivateState, writePrivateState } from "./private-state.ts";
 import { normalizeEndpoint, PUSH_EXTRA_KEYS } from "./push.ts";
 import { readStateId, STATE_ID_FILE, writeStateId } from "./preferences.ts";
@@ -106,16 +106,28 @@ export function mergeRegistries(own: Registry | null, other: Registry | null,
     }
     // the credential is chosen apart from the rest: whichever is kept, the role is never widened
     if (twin.token_hash !== device.token_hash) console.error(`Paired device ${device.id} has another credential in the other state dir; the one in use is kept`);
+    // a link done in the other dir moved the row to the account key (docs/account.md); an older copy must not undo it
+    // the later link wins: an unlinked copy, or one linked earlier, takes the other's account key
+    const takes = twin.account !== undefined && (device.account === undefined || (twin.linked_at ?? "") > (device.linked_at ?? ""));
+    // how the row joined is merged apart from the account and key: a link on the device's own word (any mark but a
+    // vouched one, `null` included) is kept whichever copy holds it and whichever account the row takes, as no later
+    // link undoes it. Otherwise the kept copy's mark, or, where both copies are in that account, the other's when the
+    // kept one has none: a vouched mark goes with its own account only. Only a missing mark is none
+    const { joined_by: own, ...rest } = device;
+    const keptMark = takes ? twin.joined_by : own;
+    const otherMark = takes ? own : twin.joined_by;
+    const marks = [keptMark, otherMark].filter((mark) => mark !== undefined);
+    const word = marks.findIndex((mark) => !VOUCHED.has(mark));
+    const joinedBy = word >= 0 ? marks[word] : device.account !== undefined && device.account === twin.account ? marks[0] : keptMark;
     devices.push({
-      ...device,
+      ...rest,
+      ...(joinedBy === undefined ? {} : { joined_by: joinedBy }),
       role: device.role === "watch" || twin.role === "watch" ? "watch" : "drive",
       created_at: earliest([device.created_at, twin.created_at])!,
       last_seen_at: [device.last_seen_at, twin.last_seen_at].filter((seen): seen is string => seen !== null).sort().at(-1) ?? null,
       // the signed add behind the row, kept from either copy (/api/account/status lists it)
       ...(device.account_add === undefined && twin.account_add !== undefined ? { account_add: twin.account_add } : {}),
-      // a link done in the other dir moved the row to the account key (docs/account.md); an older copy must not undo it
-      // the later link wins: an unlinked copy, or one linked earlier, takes the other's account key
-      ...(twin.account !== undefined && (device.account === undefined || (twin.linked_at ?? "") > (device.linked_at ?? ""))
+      ...(takes
         ? { relay_public_key: twin.relay_public_key, account: twin.account, ...(twin.added_by === undefined ? {} : { added_by: twin.added_by }), ...(twin.linked_at === undefined ? {} : { linked_at: twin.linked_at }), ...(twin.link_moved_key === undefined ? {} : { link_moved_key: twin.link_moved_key }) } : {}),
     });
   }

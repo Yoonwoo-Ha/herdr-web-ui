@@ -5048,7 +5048,11 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   account the part has no button and no QR code: its label says which account (the browser's own,
   another one, or one it cannot tell while signed out), one sentence says to sign in to that
   account on the device, and a hint says the QR code is only for a PC in no account; the
-  relay's switch stays above while the relay is not online. Linked-device apps draw the same
+  relay's switch stays above while the relay is not online. On a PC that no account was named
+  for, one hint line (`.settings-hint`) stands where the button would be: to sign in above first,
+  or, signed in, to add the PC to the account first. It is the line the part already shows when
+  the relay asks for a pass, so the tab says in one way that an account comes first.
+  Linked-device apps draw the same
   line (WhatsApp shows its linking QR code on the device being added, never on one already
   linked), and it is deliberate here: a QR code on a PC with members would let in whoever scans
   it with nobody approving. Relay pairing without the

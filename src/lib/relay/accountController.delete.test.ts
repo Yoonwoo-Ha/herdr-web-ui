@@ -5,7 +5,7 @@ import type { ReactElement } from "react";
 import { FakeAccountService } from "../../../shared/account-service-fake.ts";
 import { RelayShell, type RelayShellProps } from "../../components/RelayShell.tsx";
 import { memoryAccountStore } from "../account/store.ts";
-import type { RelayDeviceStore } from "./device.ts";
+import type { ShellDeviceStore } from "./device.ts";
 import { mountRelayShell, type RelayShellMount } from "./shell.tsx";
 
 const SERVICE = "https://account.ovis.sh";
@@ -22,8 +22,8 @@ describe("deleting the account from the hosted shell", () => {
   beforeEach(() => { browser = createShellTestPage(); rendered = []; });
   afterEach(() => { browser.dispose(); });
 
-  const noDevices: RelayDeviceStore = {
-    async get() { return undefined; }, async list() { return []; }, async remove() {},
+  const noDevices: ShellDeviceStore = {
+    async get() { return undefined; }, async list() { return []; }, async remove() {}, async removeRow() { return false; },
     async update(_serverId, change) { return change(undefined); },
   };
   const shellProps = (element: ReactElement): RelayShellProps => {

@@ -26,6 +26,42 @@ export const SIGN_IN_PULL_MS = 60_000;
 /** The same after such a pull could not read the mailbox (the service was down, or did not answer): it found nothing out. */
 export const SIGN_IN_PULL_RETRY_MS = ASKED_PULL_MS;
 export const SIGN_IN_WAIT_MS = 5_000;
+/** The least time between two reads of an account's admissions for links (vouch): a 429 may name a longer one. */
+export const VOUCH_READ_GAP_MS = ASKED_PULL_MS;
+/** How long one such read has for its two calls together. */
+export const VOUCH_READ_MS = 5_000;
+/** The longest wait a 429 of the account service holds such reads back: one answer never shuts QR adds for long. */
+export const VOUCH_RETRY_MAX_MS = 60_000;
+
+/**
+ * The account service's word on a link's key (AccountMailbox.vouch): whether it holds an admission for it, or that it
+ * could not be asked in time, and in how many seconds this PC may ask again.
+ */
+export type Vouch = { readonly vouched: boolean } | { readonly unavailable: true; readonly retryAfter: number };
+
+interface VouchWaiter {
+  readonly account: string;
+  readonly key: string;
+  readonly firstLink: boolean;
+  readonly arrivedAt: number;
+  readonly answer: (vouch: Vouch) => void;
+}
+
+/** `Retry-After` in whole seconds, as the account service sends it; null for none or another form. */
+function retryAfterSeconds(value: string | null): number | null {
+  return value !== null && /^\d{1,9}$/.test(value.trim()) ? Number(value.trim()) : null;
+}
+
+/** The well-formed keys of a list of admissions in a mailbox answer. */
+function admissionKeys(value: unknown): Set<string> {
+  const keys = new Set<string>();
+  if (!Array.isArray(value)) return keys;
+  for (const entry of value) {
+    const key = typeof entry === "object" && entry !== null ? (entry as { key?: unknown }).key : undefined;
+    if (isAccountKeyEncoding(key)) keys.add(key);
+  }
+  return keys;
+}
 
 function scope(account: string, serverId: string, key: string): string {
   return `${account}\0${serverId}\0${key}`;
@@ -106,6 +142,13 @@ export class AccountMailbox {
   /** Why the waiting records cannot be read: no add applies and nothing is pulled until it is fixed. */
   private readonly pendingError: string | null;
 
+  /** Links waiting for the account service's word (vouch), oldest first. */
+  private vouchWaiters: VouchWaiter[] = [];
+  private vouchReading = false;
+  /** From when, on the store's clock (DeviceStore.waitClock), a read for links may start. */
+  private vouchNextAt = Number.NEGATIVE_INFINITY;
+  private vouchTimer: (() => void) | undefined;
+
   constructor(private readonly options: AccountMailboxOptions) {
     const pending = readPending(options.pendingPath);
     this.pending = pending ?? [];
@@ -176,6 +219,107 @@ export class AccountMailbox {
       await this.pull();
     }
     return fresh();
+  }
+
+  /** The account service is turned off on purpose: nothing can be asked of it, so nothing waits for its word. */
+  serviceOff(): boolean {
+    return this.options.service instanceof AccountServiceOff;
+  }
+
+  /** How long until a read for links may start, 0 when one may now (the keep's `service_retry_ms`). */
+  serviceRetryMs(): number {
+    return Math.max(0, Math.ceil(this.vouchNextAt - this.options.devices.waitClock().now()));
+  }
+
+  /**
+   * Whether `account` vouched for `key` at this PC: the account service holds a fresh admission for it
+   * (docs/account.md, "The account's word"). For a link made while a code made for a PC in no account lives; this PC
+   * needs no member for it. It is answered by a read that starts after it was asked, so an admission posted before
+   * the link was sent is seen. A read is two calls, the challenge and the mailbox call (which reads, applies and
+   * acknowledges nothing), with VOUCH_READ_MS for both; one at a time, and VOUCH_READ_GAP_MS apart, so a flood of
+   * links calls the service no more often. A 429 that names a later time starts no read before it, and a link that no
+   * read can start for within VOUCH_READ_GAP_MS is answered at once (`unavailable`). So a link waits 15 seconds at most. The service's
+   * ordinary admissions count, and its quiet ones (`quiet_admissions`) only for `firstLink`: a
+   * device that paired with that code and links as this PC's first member. Never throws.
+   */
+  vouch(account: string, key: string, firstLink: boolean): Promise<Vouch> {
+    const clock = this.options.devices.waitClock();
+    const arrivedAt = clock.now();
+    if (this.vouchNextAt > arrivedAt + VOUCH_READ_GAP_MS) return Promise.resolve(this.unvouched());
+    return new Promise((resolve) => {
+      const answer = (vouch: Vouch) => {
+        this.vouchWaiters = this.vouchWaiters.filter((waiter) => waiter !== entry);
+        resolve(vouch);
+      };
+      const entry: VouchWaiter = { account, key, firstLink, arrivedAt, answer };
+      this.vouchWaiters.push(entry);
+      this.nextVouchRead();
+    });
+  }
+
+  private unvouched(): Vouch {
+    return { unavailable: true, retryAfter: Math.max(1, Math.ceil(this.serviceRetryMs() / 1000)) };
+  }
+
+  /** Starts the read the oldest waiting link needs, now or when one may start. */
+  private nextVouchRead(): void {
+    if (this.vouchReading || this.vouchWaiters.length === 0) return;
+    const clock = this.options.devices.waitClock();
+    const now = clock.now();
+    if (now < this.vouchNextAt) {
+      this.vouchTimer ??= clock.setTimeout(() => { this.vouchTimer = undefined; this.nextVouchRead(); }, this.vouchNextAt - now);
+      return;
+    }
+    const account = this.vouchWaiters[0]!.account;
+    // the links waiting now, and none that comes during the read: a read answers only links that came before it began
+    const judged = this.vouchWaiters.filter((waiter) => waiter.account === account);
+    this.vouchReading = true;
+    this.vouchNextAt = now + VOUCH_READ_GAP_MS;
+    void this.readAdmissions(account).then((read) => {
+      this.vouchReading = false;
+      for (const waiter of judged) {
+        waiter.answer(read === null ? this.unvouched() : { vouched: read.ordinary.has(waiter.key) || (waiter.firstLink && read.quiet.has(waiter.key)) });
+      }
+      // a 429 named a time past the bound of links that came meanwhile: they are answered now, not held
+      for (const waiter of [...this.vouchWaiters]) if (this.vouchNextAt > waiter.arrivedAt + VOUCH_READ_GAP_MS) waiter.answer(this.unvouched());
+      this.nextVouchRead();
+    });
+  }
+
+  /** One read of `account`'s admissions for this PC: its ordinary and its quiet ones, or null when it failed. */
+  private async readAdmissions(account: string): Promise<{ ordinary: Set<string>; quiet: Set<string> } | null> {
+    const service = this.options.service;
+    let identity: RelayIdentity | undefined;
+    try { identity = this.options.identity(); } catch { return null; }
+    if (service instanceof Error || !identity) return null;
+    const clock = this.options.devices.waitClock();
+    const controller = new AbortController();
+    let timedOut: () => void = () => {};
+    const late = new Promise<null>((resolve) => { timedOut = () => resolve(null); });
+    const cancel = clock.setTimeout(() => { controller.abort(); timedOut(); }, VOUCH_READ_MS);
+    const call = async (path: string, body: unknown) => {
+      const response = await (this.options.fetch ?? fetch)(new Request(service + path, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: controller.signal,
+      }));
+      if (response.status === 429) {
+        // a wait it names holds every read back that long; without one, the next read starts VOUCH_READ_GAP_MS after this one
+        const wait = retryAfterSeconds(response.headers.get("retry-after"));
+        if (wait !== null) this.vouchNextAt = Math.max(this.vouchNextAt, clock.now() + Math.min(wait * 1000, VOUCH_RETRY_MAX_MS));
+      }
+      if (!response.ok) throw new Error(`The account service answered ${response.status} to ${path}`);
+      return await response.json() as Record<string, unknown>;
+    };
+    const read = async () => {
+      const challenge = await call("/v1/pc/challenge", { server_id: identity.server_id, public_key: bytesToHex(importPublicKey(identity.public_key)) });
+      if (typeof challenge.challenge_id !== "string") return null;
+      const proof = answerServerChallenge(challenge.frame, importSecretKey(identity.secret_key),
+        { server_id: identity.server_id, role: "account", connection_id: challenge.challenge_id });
+      if (!proof) return null;
+      const mailbox = await call("/v1/pc/mailbox", { server_id: identity.server_id, challenge_id: challenge.challenge_id, proof, account, ack: null });
+      return { ordinary: admissionKeys(mailbox.admissions), quiet: admissionKeys(mailbox.quiet_admissions) };
+    };
+    try { return await Promise.race([read().catch(() => null), late]); }
+    finally { cancel(); }
   }
 
   /**

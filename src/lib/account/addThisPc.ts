@@ -5,7 +5,7 @@
  * adds it with one approval: it types the number this PC shows, and the owner approves here.
  */
 import { importPublicKey } from "../../../shared/relay-e2ee.ts";
-import { decodeOffer } from "../../../shared/relay-offer.ts";
+import { decodeOffer, type RelayOffer } from "../../../shared/relay-offer.ts";
 import { closeRelayLink, fetchHealth, requestRelayLink } from "../api.ts";
 import { apiFetch } from "../api-request-id.ts";
 import { serverIdOfPath } from "../shellMode.ts";
@@ -203,4 +203,20 @@ export async function listThisPc(service: AccountService, options: { relistMs: n
     );
   }
   return { name, serverId: offer.server_id, account: session?.account ?? null };
+}
+
+/**
+ * Lists the PC a QR code's offer names in `account`, beside the code: the code is drawn first and the listing never
+ * holds it up. The offer gives the PC's relay key, so no
+ * other pairing window of the PC is opened or closed for it. Nothing is written
+ * when the account lists the PC already, however long ago (listed anew it would ring the account's devices at every
+ * code), and nothing at all when the sign-in stored now is another account's than the one the screen showed.
+ */
+export async function listOfferedPc(service: AccountService, offer: RelayOffer, account: string): Promise<void> {
+  const session = await service.session();
+  if (session?.account !== account) throw new AddPcWaitOver("sign-in");
+  const directory = service.forSignIn(session);
+  if ((await directory.listPcs()).some((pc) => pc.server_id === offer.server_id)) return;
+  const publicKey = Array.from(importPublicKey(offer.server_public_key), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  await directory.putPc(offer.server_id, { label: (offer.name ?? offer.server_id.slice(0, 8)).slice(0, 48), public_key: publicKey, relay: offer.relay });
 }

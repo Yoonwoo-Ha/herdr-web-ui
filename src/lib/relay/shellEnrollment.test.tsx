@@ -12,24 +12,33 @@ import { memoryAccountStore } from "../account/store.ts";
 import { SettingsProvider } from "../settings.ts";
 import { nativeTransport, setTransport } from "../transport.ts";
 import { dashboardModel, dashboardPcs } from "./dashboard.ts";
-import type { RelayDevice, RelayDeviceStore } from "./device.ts";
+import type { RelayDevice, ShellDeviceStore } from "./device.ts";
 import { mountRelayShell } from "./shell.tsx";
 import { createShellTestPage } from "./shell.test.tsx";
 import { RelayTransport } from "./transport.ts";
 
-const UNTIL_MIN_NS = 3_000_000_000n;
-
+let waiting: (() => void)[] = [];
+/** Told by every fake of a pairing when what it holds changes: a render, a request, a store write, a timer armed. */
+const changed = (): void => { for (const wake of waiting.splice(0)) wake(); };
+/**
+ * Settles once `holds`, looked at again at each change a fake tells of. The enrollment signs, which settles on no turn
+ * of this thread, so no count of turns bounds it: the test's own timeout does, which no faked clock holds.
+ */
 async function until(holds: () => boolean | Promise<boolean>): Promise<void> {
-  const deadline = process.hrtime.bigint() + UNTIL_MIN_NS;
-  for (let turn = 0; turn < 10_000 || process.hrtime.bigint() < deadline; turn++) { if (await holds()) return; await new Promise<void>((resolve) => setImmediate(resolve)); }
-  throw new Error("Enrollment did not reach the expected state");
+  for (;;) {
+    // asked for before the look, so a change while an async look runs wakes the next one
+    const next = new Promise<void>((resolve) => { waiting.push(resolve); });
+    if (await holds()) return;
+    await next;
+  }
 }
 
 describe("account pairing completion", () => {
   let browser: ReturnType<typeof createShellTestPage>;
   const transports: RelayTransport[] = [];
+  const setTimer = globalThis.setTimeout;
   beforeEach(() => { browser = createShellTestPage(); browser.setVisibility("hidden"); });
-  afterEach(() => { jest.useRealTimers(); for (const transport of transports.splice(0)) transport.close(); setTransport(nativeTransport); browser.dispose(); });
+  afterEach(() => { globalThis.setTimeout = setTimer; jest.useRealTimers(); for (const transport of transports.splice(0)) transport.close(); setTransport(nativeTransport); browser.dispose(); waiting = []; });
 
   async function pairing(introduction?: () => Response, options: { readonly code?: string; readonly outdatedFirst?: boolean } = {}) {
     const identity = generateKeyPair();
@@ -38,12 +47,18 @@ describe("account pairing completion", () => {
     await accountStore.set("session", { service: "https://account.ovis.sh", account: "acct-test", provider: "github", access_token: "access", refresh_token: "refresh", expires_at: Date.now() + 3_600_000 });
     const key = await accountStore.key();
     const devices = new Map<string, RelayDevice>([[offer.server_id, { ...offer, device_id: "12".repeat(8), private_key: key.private_key, public_spki: key.public_spki, label: "Phone" }]]);
-    const store: RelayDeviceStore = {
-      get: async (id) => devices.get(id), list: async () => [...devices.values()], remove: async (id) => { devices.delete(id); },
-      update: async (id, change) => { const device = change(devices.get(id)); devices.set(id, device); return device; },
+    const store: ShellDeviceStore = {
+      get: async (id) => devices.get(id), list: async () => [...devices.values()], remove: async (id) => { devices.delete(id); }, removeRow: async (id, row) => { if (devices.get(id)?.device_id !== row) return false; devices.delete(id); return true; },
+      update: async (id, change) => { const device = change(devices.get(id)); devices.set(id, device); changed(); return device; },
     };
     const enrollment = Promise.withResolvers<Response>();
-    let enrolls = 0, linked = false, apps = 0, opens = 0;
+    let enrolls = 0, linked = false, apps = 0, opens = 0, introductionReads = 0;
+    // every wait armed, with how many times the introduction had been read by then
+    const timers: { readonly ms: number; readonly reads: number }[] = [];
+    globalThis.setTimeout = ((...timer: Parameters<typeof setTimeout>) => {
+      timers.push({ ms: timer[1] ?? 0, reads: introductionReads }); changed();
+      return setTimer(...timer);
+    }) as typeof setTimeout;
     let response = enrollment.promise;
     class Admitted extends RelayTransport {
       closed = false;
@@ -52,12 +67,15 @@ describe("account pairing completion", () => {
       override get server() { return { version: this.version, relayProtocol: RELAY_PROTOCOL, features: [ACCOUNT_FEATURE] }; }
       override async renew() {}
       override async fetch(path: string) {
+        try { return this.answer(path); } finally { changed(); }
+      }
+      answer(path: string) {
         if (this.closed) throw new TypeError("Enrollment connection was closed");
         switch (path) {
           case "/api/account/status": return Response.json({ account: linked ? "acct-test" : null, unlinked: [], removals: [], enrolling: true });
           case "/api/account/link": linked = true; return Response.json({});
           case "/api/account/enroll": enrolls++; return response;
-          case "/api/account/introduction": return introduction?.() ?? Response.json({ pcs: [{ ...offer, server_id: deriveServerId(other.publicKey), server_public_key: exportPublicKey(other.publicKey) }] });
+          case "/api/account/introduction": introductionReads++; return introduction?.() ?? Response.json({ pcs: [{ ...offer, server_id: deriveServerId(other.publicKey), server_public_key: exportPublicKey(other.publicKey) }] });
           default: throw new TypeError(`Unexpected PC request: ${path}`);
         }
       }
@@ -67,7 +85,7 @@ describe("account pairing completion", () => {
     const kinds: string[] = [];
     const render = (node: ReactNode): void => {
       if (!isValidElement<{ readonly children?: ReactNode }>(node)) throw new TypeError("Missing shell element");
-      if (node.type === RelayShell && isValidElement<RelayShellProps>(node)) { props = node.props; kinds.push(node.props.state.kind); return; }
+      if (node.type === RelayShell && isValidElement<RelayShellProps>(node)) { props = node.props; kinds.push(node.props.state.kind); changed(); return; }
       render(node.props.children);
     };
     const current = (): RelayShellProps => { if (!props) throw new TypeError("Shell not rendered"); return props; };
@@ -75,7 +93,7 @@ describe("account pairing completion", () => {
     const mountAt = (entryUrl: string) => mountRelayShell({
       container: Object.create(null), entryUrl, shellVersion: "1.0.0", store, accountStore,
       accountService: "https://account.ovis.sh", accountFetch: async () => Response.json({ pcs: [] }),
-      createRoot: () => ({ render, unmount() {} }), renderApp: () => { apps++; return { render() {}, unmount() {} }; },
+      createRoot: () => ({ render, unmount() {} }), renderApp: () => { apps++; changed(); return { render() {}, unmount() {} }; },
       pendingPush: { get: async () => undefined, clear: async () => {} }, navigate() {}, checkPc: async () => ({ kind: "offline", reason: "relay" }),
       open: async () => { const opened = new Admitted(offer); transports.push(opened); return opened; },
     });
@@ -90,7 +108,9 @@ describe("account pairing completion", () => {
     const rows = async () => myPcs([], await store.list(), { now: Date.now(), accountKey: key.public_spki, account: "acct-test" });
     const dashboard = async () => dashboardPcs(await rows(), await store.list());
     const pcPage = `https://app.ovis.sh/s/${offer.server_id}/`;
-    return { current, enrollment, rows, dashboard, mountAt, pcPage, kinds, enrolls: () => enrolls, apps: () => apps, retrySuccess: () => { response = Promise.resolve(Response.json({ results: [] })); } };
+    /** the wait for the next look armed after the `reads`th read of the introduction */
+    const polled = (reads: number): boolean => timers.some((timer) => timer.ms === 3_000 && timer.reads === reads);
+    return { current, enrollment, rows, dashboard, mountAt, pcPage, kinds, polled, enrolls: () => enrolls, apps: () => apps, retrySuccess: () => { response = Promise.resolve(Response.json({ results: [] })); } };
   }
 
   it("enters the PC as soon as a sheet join is admitted, with no Ready screen, and finishes the account's part behind it", async () => {
@@ -159,9 +179,11 @@ describe("account pairing completion", () => {
     const run = await pairing(() => { introductions++; return Response.json({ pcs: [] }); }, options);
     jest.useFakeTimers();
     run.enrollment.resolve(Response.json({ results: [] }));
-    for (let turn = 0; (await run.rows())[0]?.enrollment === "pending" && turn < 5_000; turn++) {
-      if (introductions > 0 && jest.getTimerCount() > 0) jest.advanceTimersByTime(3_000);
-      await crypto.subtle.digest("SHA-256", new Uint8Array(1));
+    const pending = async (): Promise<boolean> => (await run.rows())[0]?.enrollment === "pending";
+    for (let read = 1; ; read++) {
+      await until(async () => !await pending() || run.polled(read));
+      if (!await pending()) break;
+      jest.advanceTimersByTime(3_000);
     }
     expect((await run.rows())[0]?.enrollment).toBe("complete");
     expect(introductions).toBe(reads);

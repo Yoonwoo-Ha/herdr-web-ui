@@ -97,7 +97,9 @@ export function useRelay() {
       return next;
     } finally { if (mounted.current) setPending(false); }
   }, []);
-  return { status, unsupported, pending, request };
+  /** Asks for the relay's state again now, without waiting for the poll's next round. */
+  const reread = useCallback(() => setRefresh((value) => value + 1), []);
+  return { status, unsupported, pending, request, reread };
 }
 
 export type RelayState = ReturnType<typeof useRelay>;

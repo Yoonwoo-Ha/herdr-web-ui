@@ -8,7 +8,7 @@ import type { MyPc } from "../account/myPcs.ts";
 import { memoryAccountStore } from "../account/store.ts";
 import { SettingsProvider } from "../settings.ts";
 import { nativeTransport, setTransport } from "../transport.ts";
-import type { RelayDeviceStore } from "./device.ts";
+import type { ShellDeviceStore } from "./device.ts";
 import { mountRelayShell } from "./shell.tsx";
 import { createShellTestPage } from "./shell.test.tsx";
 import type { RelayShellMount } from "./shellState.ts";
@@ -40,8 +40,8 @@ describe("explicit dashboard pairing consent", () => {
     };
     const current = (): RelayShellProps => { if (!props) throw new TypeError("Missing shell props"); return props; };
     const until = (kind: RelayShellProps["state"]["kind"]): Promise<void> => new Promise((resolve) => { shown = () => { if (current().state.kind === kind) { shown = undefined; resolve(); } }; });
-    const store: RelayDeviceStore = {
-      get: async () => undefined, list: async () => [], remove: async () => {},
+    const store: ShellDeviceStore = {
+      get: async () => undefined, list: async () => [], remove: async () => {}, removeRow: async () => false,
       update: async () => { throw new TypeError("Pairing has not been approved by the PC"); },
     };
     const compared = Promise.withResolvers<void>(), approved = Promise.withResolvers<void>();

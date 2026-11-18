@@ -36,5 +36,17 @@ export function relayFailureText(t: Translate, failure: RelayFailure, name: stri
     case "identity-changed": return { title: t("{name} has a new identity", { name }), copy: t("The PC's relay key is not the one this device paired with, so the saved pairing cannot be trusted. Forget it, then pair again from a new QR code on the PC."), detail: filtered, retry: false };
     case "code-expired": return { title: t("That pairing code no longer works"), copy: t("The code was wrong, used up or expired. Scan a new QR code on the PC."), detail: filtered, retry: false };
     case "bad-offer": return { title: t("This pairing link is damaged"), copy: t("Part of the link is missing or changed. Scan the QR code on the PC again, or copy its link whole."), detail: filtered, retry: false };
+    // a marked code's pairing stopped before it reached the PC: the code was not used, and the same link tries again
+    case "sign-in-first": return { title: t("Sign in to add this device to {name}", { name }), copy: t("Sign in on this device, then scan the QR code again."), detail: filtered, retry: false };
+    case "account-unlisted": return { title: t("Your account does not list {name}", { name }), copy: t("Nothing was paired: sign in to the same account on {name}, then try again.", { name }), detail: filtered, retry: true };
+    case "account-busy": return { title: t("Too many adds just now"), copy: t("Nothing was paired: wait a few minutes, then try again."), detail: filtered, retry: true };
+    case "admission-unanswered": return { title: t("Your Ovis account did not answer"), copy: t("Nothing was paired: check this device's connection, then try again."), detail: filtered, retry: true };
+    case "admission-failed": return { title: t("Your account could not check this device"), copy: t("Nothing was paired: sign out and back in on this device, then try again."), detail: filtered, retry: true };
+    // paired, but the new key was not taken: no link was sent, so only a new scan pairs again
+    case "new-key-unvouched": return { title: t("Your account did not take this device's new key"), copy: t("Show a new QR code on {name} and scan it.", { name }), detail: filtered, retry: false };
+    // the PC refused the first link: only a new scan pairs again
+    case "link-required": return { title: t("{name} no longer takes this QR code", { name }), copy: t("Show a new QR code on {name} and scan it.", { name }), detail: filtered, retry: false };
+    case "account-mismatch": return { title: t("{name} is not set up for your account", { name }), copy: t("On {name}, sign in to your account and show a new QR code, then scan it.", { name }), detail: filtered, retry: false };
+    case "unverified-device": return { title: t("{name} could not check this device with your account", { name }), copy: t("Wait a few minutes, then show a new QR code on {name} and scan it.", { name }), detail: filtered, retry: false };
   }
 }

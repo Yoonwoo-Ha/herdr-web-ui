@@ -142,7 +142,9 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
  *                                          security?: SecuritySummary (authenticated only, no-store),
  *                                          herdr_core?: HerdrCoreFacts (shared/machines.ts; authenticated only, absent until
  *                                          the server's first look for hc has ended), herdr_runtime?: HerdrRuntimeFacts (a driving owner
- *                                          only: which runtime this server serves and what Settings may switch it to) } (boot_id: this server
+ *                                          only: which runtime this server serves and what Settings may switch it to),
+ *                                          account_devices?: { unlinked: { id, label }[], own_word: { id, label }[] } (a driving
+ *                                          owner only: docs/account.md, "How a device joined") } (boot_id: this server
  *                                          lifetime's id, the supervisor's when managed; older servers sent null unmanaged)
  *  GET    /api/session                   -> { snapshot: SessionSnapshot }
  *  POST   /api/runtime                   -> 202 { accepted: true }; body { runtime: "herdr" | "herdr-core" | "alt-runtime" }, X-Herdr-Update: 1,
@@ -174,9 +176,20 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
  *  POST   /api/relay/start               -> RelayStatus; closes an ungated tokenless device gate first
  *  POST   /api/relay/stop                -> RelayStatus; closes sessions with shutdown and WS 1001
  *  POST   /api/relay/offer               -> { url, expires_at }; an offer carrying the active one-time pairing code
- *         (the one Devices shows, else a new one); with x-ovis-no-account-only: 1, a code of its own made only
- *         while the PC is in no account (409 in_account otherwise), ended when the PC joins one; 409 relay_off
- *         while off, relay_offline in error
+ *         (the one Devices shows, else a new one, which replaces the code of the header that follows: no other
+ *         offer carries that one); with x-ovis-no-account-only: 1, a code of its own made only
+ *         while the PC is in no account (409 in_account otherwise) and an account is named for it (409
+ *         no_account_named otherwise: RelayStatus.account_named), ended when the PC joins one; a device that
+ *         pairs with that code through the relay waits to link (docs/account.md, "Who may admit a device"):
+ *         403 link_required for all but its account status and its link, gone after 30 s; 409 relay_off
+ *         while off, relay_offline in error. With x-ovis-expect-account: <account id> (on POST /api/relay/code
+ *         too), such a code made for that account, whose waiting devices are taken into it alone, answered
+ *         with AccountPairing beside the fields above; the offer carries the code pending for the same account,
+ *         else one of its own; 400 invalid_account, 409 in_account (docs/account.md, "A code made for an account").
+ *         Either kind of code is made only with an account service (409 account_service_off), its offer carries
+ *         `admission: 1`, and a link while it lives needs the account's admission (docs/account.md, "The account's word")
+ *  POST   /api/relay/offer/keep          -> AccountPairingState; JSON { id }: such a code read by its pairing.id;
+ *         400 invalid_body without one
  *  POST   /api/relay/link                -> { url }; a pairing link without a code, for pairing by comparing
  *         digits (docs/relay.md); 409 relay_off while off
  *  POST   /api/relay/link/close          -> { ok: true }; ends that link's pairing window and declines the
@@ -487,7 +500,8 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
  *  POST   /api/devices/pair/start        -> PairingCode: a six-digit code good for ten minutes, replacing any pending one
  *         (X-Herdr-Machine: 1 + same origin, from a client with full access)
  *  POST   /api/devices/pair { code, label? } -> 204 + Set-Cookie ovis_device (public, like /api/auth;
- *         401 invalid_code when the code is wrong, spent after five tries, or expired). With
+ *         401 invalid_code when the code is wrong, spent after five tries, or expired, and for the code of an
+ *         offer asked for with x-ovis-no-account-only, which is redeemed through the relay only). With
  *         `Accept: application/json` (a script, never the browser app): 200 DevicePairToken + the same
  *         Set-Cookie; the script then sends `Authorization: Device <token>` in place of the cookie,
  *         under the same role, last-seen and revocation
@@ -537,7 +551,7 @@ export type { UsageProviderId, UsageWindow, UsageResets, UsageCredits, UsageProb
 
 export type { CLIProxyStatus, CLIProxyProvider, CLIProxyLogin, CLIProxyLoginStatus } from "./cliproxy.ts";
 
-export type { AccessVia, AccessRefusal, DeviceRole, HealthAuth, LanExposure, DirectExposure, BindScope, ObservedIngress, SecuritySummary, PairedDevice, DeviceConnection, DeviceRoute, PairingCode, PortalLogin, TailscaleAccess } from "./access.ts";
+export type { AccessVia, AccessRefusal, DeviceRole, HealthAuth, LanExposure, DirectExposure, BindScope, ObservedIngress, SecuritySummary, PairedDevice, DeviceConnection, DeviceRoute, PairingCode, AccountPairing, AccountPairingEnd, AccountPairingLink, AccountPairingState, AccountPairingTurnedAway, PortalLogin, TailscaleAccess } from "./access.ts";
 /** Older servers and the Tailscale-only builder omit relay state. */
 export type RemoteAccess = import("./access.ts").RemoteAccess & { readonly relay?: RelayStatus };
 
@@ -598,6 +612,12 @@ export interface RelayStatus {
   readonly error: string | null;
   /** why, as a fixed code, whenever `error` says something (null otherwise); absent from an older server */
   readonly error_code?: RelayErrorCode | null;
+  /**
+   * Whether an account was named for this PC (`POST /api/account/relay-account`: its signed-in owner added it on
+   * its own page, or ran `ovis add`). The relay tab's QR code is made only once one is (`POST /api/relay/offer`
+   * with `x-ovis-no-account-only`). Absent from an older server.
+   */
+  readonly account_named?: boolean;
   /**
    * Direct connections on this PC's networks (docs/relay.md): whether they are on, and the carriers
    * listened on now (none while the relay is off). Absent from a server without them.

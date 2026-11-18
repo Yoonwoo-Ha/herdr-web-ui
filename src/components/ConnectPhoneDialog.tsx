@@ -7,10 +7,13 @@ import "./DevicesPanel.css";
 
 import type { Machine } from "../../shared/machines.ts";
 import type { AddPcPreset } from "../lib/actions.ts";
-import type { AccountSession } from "../lib/account/store.ts";
+import { indexedAccountStore, type AccountSession } from "../lib/account/store.ts";
 import { pcAccountStatus } from "../lib/account/join.ts";
+import { listOfferedPc } from "../lib/account/addThisPc.ts";
+import { decodeOffer } from "../../shared/relay-offer.ts";
+import { AccountService } from "../lib/account/service.ts";
 import { ACCOUNT_QR_ALONE_MS, ACCOUNT_QR_POLL_MS, ACCOUNT_QR_WATCH_EVENT, accountQrFindings, accountQrNoticeWaiting, accountQrPending, addedBy, holdAccountQrNotice, resetAccountQrWatch, stopAccountQrWatch, takeAccountQrNotice, watchEndedAccountQr, type AccountQrBaseline, type AccountQrStray } from "../lib/accountQrWatch.ts";
-import { ApiError, endPairing, fetchDevices, findSshCandidates, findTailnetPcs, requestRelayOffer, revokeAllDevices, revokeDevice, startPairing, type SshCandidate } from "../lib/api.ts";
+import { ApiError, endPairing, fetchDevices, findSshCandidates, findTailnetPcs, requestRelayOffer, revokeAllDevices, revokeDevice, startPairing, type RelayOffer, type SshCandidate } from "../lib/api.ts";
 import { apiFetch } from "../lib/api-request-id.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { useT } from "../lib/i18n.ts";
@@ -440,6 +443,13 @@ const names = (strays: readonly AccountQrStray[]): string => strays.map((stray) 
  * PC is in and that a device is added by signing in to that account on it. The PC refuses the code too (409
  * `in_account`), and takes back one that is out when it joins an account, so a page that read the PC a moment too
  * early shows none either.
+ *
+ * On a PC that no account was named for there is no QR code yet either, and no button for one: the PC takes the
+ * device that scans it into the account named for it alone, and makes no code before one is named (409
+ * `no_account_named`). It says so in its relay state (`account_named`), and in the button's place the part says what
+ * names one: a sign-in above for a browser that is signed out, adding the PC to the account for one that is signed in.
+ * A press made while the page's relay state said otherwise (it is read every 15 seconds) is refused by the PC: the QR
+ * code comes down with no failure to read, and the relay's state is read again, which brings that sentence.
  */
 export function AccountQr({ relay, phone, active, signedIn, accountId = null, pcAccount, onPcAccount, first = false, relayControls, onPairingHeld, onRevokedAll }: {
   relay: RelayState; phone: boolean; active: boolean; signedIn: boolean;
@@ -465,6 +475,8 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
   const [late, setLate] = useState(accountQrPending);
   const before = useRef<AccountQrBaseline | null>(null);
   const run = useRef(0);
+  /** the account this tab showed when Show the QR code was pressed: its codes' PC is listed there or nowhere */
+  const pressedAs = useRef<string | null>(null);
   /** the last take-down's requests: the next press waits for them, so it never ends the code it is about to get */
   const ending = useRef<Promise<boolean>>(Promise.resolve(true));
   const showButton = useRef<HTMLButtonElement>(null);
@@ -519,6 +531,7 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
 
   const show = async () => {
     const mine = ++run.current;
+    pressedAs.current = signedIn ? accountId : null;
     setError(null);
     setNote(null);
     setView({ kind: "starting" });
@@ -655,11 +668,31 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
     };
   }, [watching, takeDown, look]);
 
+  const { reread } = relay;
+  /**
+   * Signed in, the PC a QR code names is listed in the account this view shows, beside the code and never before it:
+   * the code is a plain one (no mark), which a scanning device pairs with whether the PC is
+   * listed or not, so an account service that is slow or down holds no pairing up. Best-effort, and only a PC the
+   * account does not list yet is written (listOfferedPc). The account is the one the tab showed at the press, and only
+   * when the PC says, in the very answer that carries this code, that it made the code for that account: a PC named
+   * for another account by now, or a server that does not say, is listed nowhere. When the stored sign-in is another
+   * one by the time the offer comes (another tab switched), nothing is listed anywhere either.
+   */
+  const listBeside = useCallback((offer: RelayOffer): void => {
+    const named = decodeOffer(offer.url);
+    const as = pressedAs.current;
+    if (as === null || named === null || offer.account !== as) return;
+    listOfferedPc(new AccountService({ store: indexedAccountStore }), named, as).catch((reason: unknown) => {
+      console.warn("Ovis: this PC was not listed in the account", reason instanceof Error ? reason.name : reason);
+    });
+  }, []);
+
   const refusedForAccount = useCallback(() => {
     const mine = run.current;
     const down = () => { if (mine === run.current) takeDown(); };
+    reread();
     void look(mine).then((left) => { if (left !== null && left.account === null) down(); }, down);
-  }, [look, takeDown]);
+  }, [look, takeDown, reread]);
 
   // a device that pairs normally closes the dialog (Settings' device list); not while this may still have to say
   // which account the PC joined, or says it
@@ -743,6 +776,9 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
   const pass = relay.status?.pass;
   // Ovis's relay refused this PC for its pass: it gets one through an account (docs/relay.md, "Relay pass")
   const needsAccount = !signedIn && relay.status?.phase === "error" && pass?.refused === true && pass.state !== "ok";
+  // no account was named for this PC, as it says itself (an older PC says nothing, and is offered the button as
+  // before): it makes no code for this QR code until one is named, by adding the PC to an account here or by `ovis add`
+  const unnamed = relay.status?.account_named === false;
   const connecting = relay.status !== null && relay.status.blocked === null && relay.status.phase === "connecting";
   const whoseIs = (account: string) => accountId === null ? "unknown" : accountId === account ? "mine" : "other";
   const whose = view.kind === "joined" ? whoseIs(view.account) : null;
@@ -816,7 +852,9 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
           {relayControls}
           {needsAccount ? <p className="settings-hint">{t("Sign in above first; then this PC can show its QR code.")}</p> : relayState}
         </>
-      ) : shown ? <RelayRoute relay={relay} readOnly={false} phone={phone} compact qrOnly onInAccount={refusedForAccount} /> : (
+      ) : shown ? <RelayRoute relay={relay} readOnly={false} phone={phone} compact qrOnly onInAccount={refusedForAccount} onOffer={listBeside} /> : unnamed ? (
+        <p className="settings-hint">{signedIn ? t("Add this PC to your account first; then it can show its QR code.") : t("Sign in above first; then this PC can show its QR code.")}</p>
+      ) : (
         <div className="phone-actions">
           <button ref={showButton} type="button" className="btn" disabled={view.kind === "starting"} aria-busy={view.kind === "starting" || undefined} onClick={() => void show()}>{again ? t("Show a new code") : t("Show the QR code")}</button>
         </div>
@@ -832,10 +870,12 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
   );
 }
 
-export function RelayRoute({ relay, readOnly, phone = false, pairHere = false, sameName = null, compact = false, qrOnly = false, onInAccount }: {
+export function RelayRoute({ relay, readOnly, phone = false, pairHere = false, sameName = null, compact = false, qrOnly = false, onInAccount, onOffer }: {
   relay: RelayState;
   qrOnly?: boolean;
   onInAccount?: () => void;
+  /** told of each QR code's offer as it is drawn (RelayPairing `onOffer`) */
+  onOffer?: (offer: RelayOffer) => void;
   compact?: boolean;
   readOnly: boolean;
   phone?: boolean;
@@ -879,7 +919,7 @@ export function RelayRoute({ relay, readOnly, phone = false, pairHere = false, s
         </div>
       )}
       {error !== null && <p className="settings-hint relay-error" role="alert">{error}</p>}
-      {status.phase === "online" && !readOnly && <RelayPairing phone={phone} compact={compact} qrOnly={qrOnly} onInAccount={onInAccount} />}
+      {status.phase === "online" && !readOnly && <RelayPairing phone={phone} compact={compact} qrOnly={qrOnly} onInAccount={onInAccount} {...(onOffer ? { onOffer } : {})} />}
       {!compact && !readOnly && status.blocked !== "serve_only" && (
         <div className="phone-actions connect-phone-reset">
           <button ref={resetButton} type="button" className="btn btn-ghost" disabled={pending} onClick={() => setConfirmingReset(true)}>{t("Reset relay identity")}</button>

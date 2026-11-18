@@ -121,6 +121,29 @@ describe("a sign-in shared by tabs", () => {
     expect(await store.get("session")).toBeDefined();
   });
 
+  it("ends a call's wait for the lock between tabs at its signal, and begins nothing of that call once the lock is free", async () => {
+    const service = serviceWithSignIn();
+    let now = Date.now();
+    const { store, session } = await signIn(service, memoryAccountStore(), () => now);
+    const lock = memoryLock();
+    // another tab holds the lock, as a refresh of its own does
+    const holding = Promise.withResolvers<void>();
+    const held = lock(() => holding.promise);
+    const account = new AccountService({ store, fetch: service.fetch, now: () => now, lock });
+    // the access token ran out: the call must take the lock to refresh it
+    now = session.expires_at;
+    const before = service.fake.requests.length;
+    const controller = new AbortController();
+    const call = account.listPcs(controller.signal);
+    controller.abort(new DOMException("The pairing's bound was reached", "TimeoutError"));
+    await expect(call).rejects.toThrow("The pairing's bound was reached");
+    holding.resolve();
+    await held;
+    // whatever waited behind the lock has run by the time a next call takes it
+    await lock(async () => undefined);
+    expect(service.fake.requests.slice(before)).toEqual([]);
+  });
+
   it("keeps a sign-in saved without an id the same one across its first refresh, for a call bound to a copy read before it", async () => {
     const service = serviceWithSignIn();
     let now = Date.now();

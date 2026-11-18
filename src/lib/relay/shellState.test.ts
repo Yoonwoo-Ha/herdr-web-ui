@@ -35,6 +35,18 @@ describe("the shell's entry", () => {
     expect(shellEntry(`${APP}/s/not-an-id/#offer=abc`)).toEqual({ serverId: null, offer: null, damaged: true });
   });
 
+  // the mark of a code its PC pins keeps its one value, and no other
+  it("keeps the mark admission: 1 of an offer, and calls any other value of it damaged", () => {
+    const offer = { ...testOffer(), code: "123456" };
+    expect(shellEntry(encodeOffer({ ...offer, admission: 1 }, APP)).offer?.admission).toBe(1);
+    expect(shellEntry(encodeOffer(offer, APP)).offer).not.toHaveProperty("admission");
+    // an offer is written by hand here: encodeOffer would refuse these too
+    for (const value of [2, true, "1", 0]) {
+      const fragment = Buffer.from(JSON.stringify({ ...offer, admission: value })).toString("base64url");
+      expect(shellEntry(`${APP}/s/${offer.server_id}/#offer=${fragment}`)).toMatchObject({ offer: null, damaged: true });
+    }
+  });
+
   it("calls an offer forged when its key is not the one its PC's id is derived from", () => {
     const own = generateKeyPair().publicKey;
     const genuine = { ...testOffer(), server_id: deriveServerId(own), server_public_key: exportPublicKey(own) };

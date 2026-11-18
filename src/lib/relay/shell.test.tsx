@@ -7,7 +7,7 @@ import { deriveServerId } from "../../../shared/relay-server-proof.ts";
 import { RelayShell, type RelayShellProps } from "../../components/RelayShell.tsx";
 import { memoryAccountStore } from "../account/store.ts";
 import { nativeTransport, setTransport } from "../transport.ts";
-import type { RelayDevice, RelayDeviceStore } from "./device.ts";
+import type { RelayDevice, ShellDeviceStore } from "./device.ts";
 import { ACCOUNT_READ_WAIT_MS, ACCOUNT_STEPS_WAIT_MS, mountRelayShell, type RelayShellMount } from "./shell.tsx";
 import { RelayTransport, type RelayTransportOptions } from "./transport.ts";
 import { MuxProtocolError, RELAY_PROTOCOL } from "../../../shared/relay-mux.ts";
@@ -22,16 +22,22 @@ async function until(holds: () => boolean, what: string): Promise<void> {
   for (let turn = 0; turn < 10_000; turn++) { if (holds()) return; await Promise.resolve(); }
   throw new Error(`gave up waiting for ${what}`);
 }
-const UNTIL_SIGNED_MIN_NS = 3_000_000_000n;
-
 async function settleSigned(): Promise<void> {
   for (let turn = 0; turn < 2_000; turn++) await crypto.subtle.digest("SHA-256", new Uint8Array(1));
 }
-
-async function untilSigned(holds: () => boolean, what: string): Promise<void> {
-  const deadline = process.hrtime.bigint() + UNTIL_SIGNED_MIN_NS;
-  for (let turn = 0; turn < 2_000 || process.hrtime.bigint() < deadline; turn++) { if (holds()) return; await crypto.subtle.digest("SHA-256", new Uint8Array(1)); }
-  throw new Error(`gave up waiting for ${what}`);
+let waiting: (() => void)[] = [];
+/** Told by a test's device store (deviceStore) whenever it writes or removes a record. */
+const stored = (): void => { for (const wake of waiting.splice(0)) wake(); };
+/**
+ * Settles once `holds`, looked at again at each write of the device store: for a record that work which signs writes,
+ * which no count of turns bounds. The test's own timeout does, which no faked clock holds.
+ */
+async function untilStored(holds: () => boolean): Promise<void> {
+  for (;;) {
+    const next = new Promise<void>((resolve) => { waiting.push(resolve); });
+    if (holds()) return;
+    await next;
+  }
 }
 const drain = async (): Promise<void> => { for (let turn = 0; turn < 500; turn++) await Promise.resolve(); };
 
@@ -73,13 +79,14 @@ describe("the hosted shell's front page", () => {
   let browser: ReturnType<typeof createShellTestPage>;
   let rendered: ReactElement[];
   beforeEach(() => { browser = createShellTestPage(); rendered = []; });
-  afterEach(() => { jest.useRealTimers(); setTransport(nativeTransport); browser.dispose(); });
+  afterEach(() => { jest.useRealTimers(); setTransport(nativeTransport); browser.dispose(); waiting = []; });
 
-  const deviceStore = (devices: RelayDevice[]): RelayDeviceStore => ({
+  const deviceStore = (devices: RelayDevice[]): ShellDeviceStore => ({
     async get(serverId) { return devices.find((device) => device.server_id === serverId); },
     async list() { return [...devices]; },
-    async remove(serverId) { const at = devices.findIndex((device) => device.server_id === serverId); if (at >= 0) devices.splice(at, 1); },
-    async update(serverId, change) { const next = change(devices.find((device) => device.server_id === serverId)); const at = devices.findIndex((device) => device.server_id === serverId); if (at >= 0) devices[at] = next; else devices.push(next); return next; },
+    async remove(serverId) { const at = devices.findIndex((device) => device.server_id === serverId); if (at >= 0) devices.splice(at, 1); stored(); },
+    async removeRow(serverId, row) { const at = devices.findIndex((device) => device.server_id === serverId && device.device_id === row); if (at < 0) return false; devices.splice(at, 1); stored(); return true; },
+    async update(serverId, change) { const next = change(devices.find((device) => device.server_id === serverId)); const at = devices.findIndex((device) => device.server_id === serverId); if (at >= 0) devices[at] = next; else devices.push(next); stored(); return next; },
   });
   const mountFor = (over: Partial<RelayShellMount>): RelayShellMount => ({
     container: {} as HTMLElement, entryUrl: "https://app.ovis.sh/", shellVersion: "0.0.0-test", label: "Test phone",
@@ -575,7 +582,7 @@ describe("the hosted shell's front page", () => {
       }));
       await until(() => variant() === "unlisted", "the confirm");
       last().onPair();
-      await untilSigned(() => (devices[0] as { account_enrollment?: { state: string } }).account_enrollment?.state === "complete", "the enrollment");
+      await untilStored(() => (devices[0] as { account_enrollment?: { state: string } }).account_enrollment?.state === "complete");
       expect(apps).toBe(1);
       expect(linkedAt).toEqual([0]);
       expect(renewedAt).toEqual([0]);
@@ -782,8 +789,8 @@ describe("the hosted shell's front page", () => {
       await drain();
       version = "1.0.0";
       jest.advanceTimersByTime(1_000);
-      await untilSigned(() => apps === 1, "the PC, opened after its update");
-      await untilSigned(() => (devices[0] as { account_enrollment?: { state: string } }).account_enrollment?.state === "complete", "the enrollment");
+      // the PC opens once the link and the renewal are done, before the enrollment records itself complete
+      await untilStored(() => (devices[0] as { account_enrollment?: { state: string } }).account_enrollment?.state === "complete");
       expect(apps).toBe(1);
       for (const transport of transports) transport.close();
     });

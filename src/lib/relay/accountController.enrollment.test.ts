@@ -20,7 +20,7 @@ import { SettingsProvider } from "../settings.ts";
 import { setCurrentLanguage, translate } from "../i18n.ts";
 import { ConsentChangedError, createAccountController } from "./accountController.ts";
 import { offerOf } from "./shellState.ts";
-import { enrollmentOf, type RelayDevice, type RelayDeviceStore } from "./device.ts";
+import { enrollmentOf, type RelayDevice, type ShellDeviceStore } from "./device.ts";
 import { dashboardModel, dashboardPcs } from "./dashboard.ts";
 import { createShellTestPage } from "./shell.test.tsx";
 import { RelayTransport } from "./transport.ts";
@@ -49,8 +49,8 @@ describe("account enrollment ownership", () => {
     const key = await accountStore.key();
     const original: RelayDevice = { ...offer, device_id: "12".repeat(8), private_key: key.private_key, public_spki: key.public_spki, label: "Phone", account: "account" };
     const devices = new Map([[offer.server_id, original]]);
-    const store: RelayDeviceStore = {
-      get: async (id) => devices.get(id), list: async () => [...devices.values()], remove: async (id) => { devices.delete(id); },
+    const store: ShellDeviceStore = {
+      get: async (id) => devices.get(id), list: async () => [...devices.values()], remove: async (id) => { devices.delete(id); }, removeRow: async (id, row) => { if (devices.get(id)?.device_id !== row) return false; devices.delete(id); return true; },
       update: async (id, change, source) => { source?.assert(devices.get(source.serverId)); const next = change(devices.get(id)); devices.set(id, next); return next; },
     };
     const records: AddRecord[] = [];

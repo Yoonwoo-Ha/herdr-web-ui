@@ -285,9 +285,10 @@ async function pairingParts(): Promise<{ qr: (text: string) => string; decodeOff
 
 /**
  * For a machine profile it is asked on the owner socket only: with no socket the plugin may take (ownerDoor), it is
- * null and nothing is sent, since the profile answers its TCP port with liveness only.
+ * null and nothing is sent, since the profile answers its TCP port with liveness only. `devices`: the groups the
+ * answer lists to its owner (accountDevicesOf); `tokenRequired`: the app let the request in only with its token.
  */
-async function appHealth(): Promise<{ readonly engineDown: string | null } | null> {
+async function appHealth(): Promise<{ readonly engineDown: string | null; readonly devices: AccountDevices | null; readonly tokenRequired: boolean } | null> {
   const door = serverDoor();
   if (machineProfile && door === null) return null;
   try {
@@ -301,7 +302,10 @@ async function appHealth(): Promise<{ readonly engineDown: string | null } | nul
     const engine = typeof profile === "object" && profile !== null && typeof profile.runtime_down === "boolean" ? profile : null;
     if ((typeof body.herdr !== "object" || body.herdr === null) && engine === null) return null;
     commandDoor = door;
-    return { engineDown: engine?.runtime_down === true ? (typeof engine.reason === "string" ? engine.reason : "") : null };
+    return {
+      engineDown: engine?.runtime_down === true ? (typeof engine.reason === "string" ? engine.reason : "") : null,
+      devices: accountDevicesOf(body), tokenRequired: (body.auth as { reason?: unknown }).reason === "token_required",
+    };
   } catch {
     return null;
   }
@@ -1154,12 +1158,45 @@ function runningVersion(): string | null {
   } catch { return null; }
 }
 
+/** The devices an owner's health answer lists apart (server/devices.ts accountGroups). */
+interface AccountDevices { readonly unlinked: readonly ShownDevice[]; readonly own_word: readonly ShownDevice[] }
+interface ShownDevice { readonly id: string; readonly label: string }
+
+/** The `account_devices` of a health answer, in the shape this command reads; null without one (an older server, or a caller that is not its owner). */
+function accountDevicesOf(body: unknown): AccountDevices | null {
+  const groups = (body as { account_devices?: unknown } | null)?.account_devices as Record<string, unknown> | null | undefined;
+  const shown = (list: unknown): list is ShownDevice[] => Array.isArray(list)
+    && list.every((device) => typeof device?.id === "string" && typeof device.label === "string");
+  return typeof groups === "object" && groups !== null && shown(groups["unlinked"]) && shown(groups["own_word"])
+    ? { unlinked: groups["unlinked"], own_word: groups["own_word"] } : null;
+}
+
+/** One group's line: each device by its name and its id, neither with a control character. */
+const deviceLine = (title: string, devices: readonly ShownDevice[]): string => {
+  const plain = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+  return `${title}: ${devices.length === 0 ? "none" : devices.map((device) => `${plain(device.label)} (${plain(device.id)})`).join(", ")}\n`;
+};
+
 /** Reporting "down" is not an action failure: herdr logs a nonzero exit as failed. */
 async function status(): Promise<number> {
   const pid = recordedPid();
   const answer = await appHealth();
   process.stdout.write(`${answer !== null ? "running" : "down"} ${origin}${pid === null ? "" : ` (pid ${pid})`}\n`);
   if (typeof answer?.engineDown === "string") process.stdout.write(`engine: down${answer.engineDown === "" ? "" : ` (${answer.engineDown})`}\n`);
+  // the groups of the app's own answer, which carries no token: on a machine profile's owner socket, or over TCP when
+  // the app lets the command in without one. Nothing proves which program holds a TCP port, so no token goes there
+  const devices = answer?.devices ?? null;
+  if (devices !== null) {
+    // relay rows only: a browser paired on the PC's own address is outside the account too, and listed in Settings → Devices
+    process.stdout.write(deviceLine("relay devices outside the account", devices.unlinked));
+    process.stdout.write(deviceLine("devices that joined the account on their own word", devices.own_word));
+  } else if (answer !== null) {
+    // the answer of an app that is not its owner's (a token, a pairing or the owner's login needed, the open LAN), or of a
+    // release from before the groups: only the token is something to name
+    process.stdout.write(answer.tokenRequired
+      ? "account devices: not shown, as Ovis lets this command in only with a token, which status does not send over TCP\n"
+      : "account devices: not shown, as the app's answer to this command does not list them\n");
+  }
   const version = runningVersion();
   if (version !== null) process.stdout.write(`version: ${version}\n`);
   process.stdout.write(`config: ${CONFIG_FILES.length === 0 ? `none (settings go in ${join(CONFIG_DIR, "env")})` : CONFIG_FILES.join(", ")}\n`);

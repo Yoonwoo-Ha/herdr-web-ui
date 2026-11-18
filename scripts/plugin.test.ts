@@ -724,6 +724,107 @@ describe("the state dir when run by hand", () => {
   });
 });
 
+describe("the devices status lists apart", () => {
+  const GROUPS = { unlinked: [{ id: "6a1f0c9e2b7d4a10", label: "Old phone" }], own_word: [{ id: "0d4c1b7a9e2f3c58", label: "Tab\u001b]0;let\u0007let" }, { id: "1e5d2c8b0a3f4d69", label: "Laptop" }] };
+  /** An Ovis on a port of its own whose health answer is `answer` for each request, by the request's authorization. */
+  function answering(answer: (authorization: string | null) => Record<string, unknown>) {
+    const asked: (string | null)[] = [];
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+      if (new URL(request.url).pathname !== "/api/health") return new Response(null, { status: 404 });
+      asked.push(request.headers.get("authorization"));
+      return Response.json(answer(request.headers.get("authorization")));
+    } });
+    writeFileSync(join(configDir, ".env"), `PORT=${server.port}\n`);
+    return { server, asked, env: { HOST: "127.0.0.1", HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_STATE_DIR: join(scratch, "app-state"), OVIS_TOKEN: "" } };
+  }
+  const lines = (out: string) => out.split("\n").filter((line) => /^(relay )?devices /.test(line));
+
+  it("are the two groups of the owner's health answer, each device by its name with no control character, and its id", async () => {
+    const pc = answering(() => ({ ...APP_HEALTH, account_devices: GROUPS }));
+    try {
+      const result = await run("status", pc.env);
+      expect(result.exitCode, result.err).toBe(0);
+      expect(lines(result.out)).toEqual([
+        "relay devices outside the account: Old phone (6a1f0c9e2b7d4a10)",
+        "devices that joined the account on their own word: Tab]0;letlet (0d4c1b7a9e2f3c58), Laptop (1e5d2c8b0a3f4d69)",
+      ]);
+      expect(pc.asked).toEqual([null]);
+    } finally { await pc.server.stop(true); }
+  });
+
+  it("say none for an empty group, and are not printed by a server that sends none", async () => {
+    const empty = answering(() => ({ ...APP_HEALTH, account_devices: { unlinked: [], own_word: [] } }));
+    try {
+      expect(lines((await run("status", empty.env)).out)).toEqual(["relay devices outside the account: none", "devices that joined the account on their own word: none"]);
+    } finally { await empty.server.stop(true); }
+    const older = answering(() => APP_HEALTH);
+    try {
+      // it let the command in: nothing is asked again, with the token or without
+      const result = await run("status", { ...older.env, OVIS_TOKEN: "the-token" });
+      expect(result.out.split("\n")[0]).toBe(`running http://127.0.0.1:${older.server.port}`);
+      expect(lines(result.out)).toEqual([]);
+      expect(older.asked).toEqual([null]);
+    } finally { await older.server.stop(true); }
+  });
+
+  /**
+   * `status` with fetch replaced inside the command, so nothing listens: each request gets the next of `answers` (the
+   * last one again once they run out). What it printed, and each request's path and authorization.
+   */
+  async function statusAnswering(answers: readonly Record<string, unknown>[], token: string): Promise<{ out: string; asked: string }> {
+    writeFileSync(join(configDir, ".env"), "PORT=9\n");
+    const asked = join(scratch, "asked");
+    rmSync(asked, { force: true });
+    const plugin = JSON.stringify(join(ROOT, "scripts", "plugin.ts"));
+    const child = Bun.spawn([process.execPath, "-e", `import { appendFileSync } from "node:fs";
+const answers = ${JSON.stringify(answers)};
+globalThis.fetch = async (input, init) => {
+  const request = new Request(input, init);
+  appendFileSync(${JSON.stringify(asked)}, \`\${new URL(request.url).pathname} \${request.headers.get("authorization") ?? "none"}\\n\`);
+  return Response.json(answers.length > 1 ? answers.shift() : answers[0]);
+};
+process.argv = [process.execPath, ${plugin}, "status"];
+const { runPlugin } = await import(${plugin});
+await runPlugin();`], { cwd: ROOT, stdout: "pipe", stderr: "pipe", env: launchEnv({ HOST: "127.0.0.1", HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_STATE_DIR: join(scratch, "app-state"), OVIS_TOKEN: token }) });
+    const [out, err, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    expect(exitCode, err).toBe(0);
+    expect(out.split("\n")[0]).toBe("running http://127.0.0.1:9");
+    return { out, asked: readFileSync(asked, "utf8") };
+  }
+  const notice = (out: string) => out.split("\n").filter((line) => line.startsWith("account devices: "));
+
+  it("are never asked for with the token over TCP: the app's answer that did not let the command in is the one request, and status says so", async () => {
+    // its first answer is the app's and lets nothing in, and whatever answers the same address next would be handed the
+    // token (an earlier status asked again with it)
+    const { out, asked } = await statusAnswering([{ ...APP_HEALTH, auth: { required: true, authenticated: false, reason: "token_required" } }, { ...APP_HEALTH, account_devices: GROUPS }], "the-token");
+    expect(asked).toBe("/api/health none\n");
+    expect(lines(out)).toEqual([]);
+    expect(notice(out)).toHaveLength(1);
+    expect(notice(out)[0]).toContain("token");
+    expect(out).not.toContain("the-token");
+  });
+
+  it("print a device's id with no control character, on its group's one line", async () => {
+    const groups = { unlinked: [{ id: "6a1f0c9e\n2b7d4a10", label: "Old phone" }], own_word: [{ id: "0d4c1b7a\u001b[2J9e2f3c58", label: "Tab" }] };
+    const { out } = await statusAnswering([{ ...APP_HEALTH, account_devices: groups }], "");
+    expect(lines(out)).toEqual([
+      "relay devices outside the account: Old phone (6a1f0c9e2b7d4a10)",
+      "devices that joined the account on their own word: Tab (0d4c1b7a[2J9e2f3c58)",
+    ]);
+  });
+
+  it("name the token as the reason they are not shown only when the app asks for it", async () => {
+    // a PC that wants this device paired, with no token set, and an open LAN that lets the command in but is not its owner
+    for (const auth of [{ required: true, authenticated: false, reason: "pairing_required" }, { required: false, authenticated: true, via: "open", role: "drive" }]) {
+      const { out, asked } = await statusAnswering([{ ...APP_HEALTH, auth }], "");
+      expect(asked).toBe("/api/health none\n");
+      expect(lines(out)).toEqual([]);
+      expect(notice(out)).toHaveLength(1);
+      expect(notice(out)[0]).not.toContain("token");
+    }
+  });
+});
+
 describe("add and login", () => {
   function linkedPc() {
     const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {

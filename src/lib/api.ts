@@ -285,6 +285,8 @@ export function fetchRelay(): Promise<RelayStatus> {
 export interface RelayOffer {
   readonly url: string;
   readonly expires_at: string;
+  /** asked for with `x-ovis-no-account-only`: the account named for the PC as it made this code. Absent from an older server */
+  readonly account?: string | null;
 }
 
 /**
@@ -310,7 +312,8 @@ export function requestRelayDirect(on: boolean): Promise<RelayStatus> {
 
 /**
  * `noAccountOnly`: the offer is to put this PC in an account (the relay tab's QR code). The PC then makes it only while
- * it is in no account, answers 409 `in_account` once it is in one, and ends the offer's code when it joins one.
+ * it is in no account, answers 409 `in_account` once it is in one, and ends the offer's code when it joins one. It
+ * makes none before an account is named for it either (409 `no_account_named`; RelayStatus `account_named`).
  */
 export function requestRelayOffer({ noAccountOnly = false }: { noAccountOnly?: boolean } = {}): Promise<RelayOffer> {
   return getJson<RelayOffer>("/api/relay/offer", { method: "POST", headers: { "x-herdr-update": "1", ...(noAccountOnly ? { "x-ovis-no-account-only": "1" } : {}) } });

@@ -16,6 +16,8 @@ export const ACCESS_TOKEN_TTL_S = 3600;
 export const DIRECTORY_MAX = 100;
 export const LIMIT_WINDOW_MS = 10 * 60_000;
 export const ADMISSIONS_PER_WINDOW = 10;
+/** Quiet admissions one account may post in a window: a count of their own, apart from the ordinary ones. */
+export const QUIET_ADMISSIONS_PER_WINDOW = 60;
 export const ACCOUNT_REQUESTS_PER_WINDOW = 600;
 export const DEVICE_CODE_TTL_S = 900;
 export const DEVICE_POLL_S = 5;
@@ -86,6 +88,8 @@ export class FakeAccountService {
   private readonly mailboxes = new Map<string, Mail[]>();
   private readonly challenges = new Map<string, { server_id: string; expected: string; expires: number }>();
   private readonly admissionList: FakeAdmission[] = [];
+  /** quiet admissions: only an app's own sign-in posts one, and only a PC the account lists reads them */
+  private readonly quietList: FakeAdmission[] = [];
   private readonly accountLimits = new Map<string, Record<string, unknown>>();
   private readonly subscribed = new Set<string>();
   private readonly deletedAccounts = new Set<string>();
@@ -283,7 +287,7 @@ export class FakeAccountService {
     for (const [code, held] of this.codes) if (held.account === account) this.codes.delete(code);
     for (const key of [...this.mailboxes.keys()]) if (key.endsWith(`\0${account}`)) this.mailboxes.delete(key);
     for (const key of [...this.counters.keys()]) if (key.endsWith(`:${account}`)) this.counters.delete(key);
-    for (let index = this.admissionList.length - 1; index >= 0; index--) if (this.admissionList[index]?.account === account) this.admissionList.splice(index, 1);
+    for (const list of [this.admissionList, this.quietList]) for (let index = list.length - 1; index >= 0; index--) if (list[index]?.account === account) list.splice(index, 1);
     this.identityList.delete(account);
     this.directories.delete(account);
     this.accountLimits.delete(account);
@@ -298,6 +302,8 @@ export class FakeAccountService {
   pcs(account: string): FakePc[] { return [...this.directories.get(account)?.values() ?? []]; }
 
   admissions(): readonly FakeAdmission[] { return this.admissionList; }
+
+  quietAdmissions(): readonly FakeAdmission[] { return this.quietList; }
 
   mailbox(serverId: string, account: string): AccountRecord[] {
     this.expire();
@@ -468,13 +474,16 @@ export class FakeAccountService {
       return json({ admissions });
     }
     if (path === "/v1/admissions" && request.method === "POST") {
-      const body = await request.json() as { server_id?: unknown; label?: unknown; key?: unknown; os?: unknown };
+      const body = await request.json() as { server_id?: unknown; label?: unknown; key?: unknown; os?: unknown; quiet?: unknown };
+      if (body.quiet !== undefined && typeof body.quiet !== "boolean") return problem(400, "invalid_request", "quiet is true or false");
       if (typeof body.server_id !== "string" || !directory.has(body.server_id) || typeof body.label !== "string") return problem(400, "unknown_pc", "List PCs of this account only");
       if (!isAccountKeyEncoding(body.key)) return problem(400, "invalid_key", "Name the waiting device's account key");
-      if (!this.withinRateLimit(`admissions:${account}`, ADMISSIONS_PER_WINDOW)) return problem(429, "too_many_admissions", "Too many requests; try again later");
+      // quiet only for an app's own sign-in: one a typed device code opened gets the ordinary kind
+      const quiet = body.quiet === true && !this.deviceFamilies.has(session.family);
+      if (!this.withinRateLimit(quiet ? `quiet_admissions:${account}` : `admissions:${account}`, quiet ? QUIET_ADMISSIONS_PER_WINDOW : ADMISSIONS_PER_WINDOW)) return problem(429, "too_many_admissions", "Too many requests; try again later");
       const admission = { id: randomHex(16), server_id: body.server_id, account, label: body.label, key: body.key, at: this.iso(), os: accountOsOf(body.os), ...this.requestPlace };
-      this.admissionList.push(admission);
-      this.ring(account, session.family);
+      (quiet ? this.quietList : this.admissionList).push(admission);
+      if (!quiet) this.ring(account, session.family);
       return json({ id: admission.id });
     }
     return problem(404, "not_found", "Unknown request");
@@ -510,7 +519,11 @@ export class FakeAccountService {
       const admissions = this.admissionList
         .filter((a) => a.server_id === challenge.server_id && a.account === body.account && this.now() - Date.parse(a.at) < ADMISSION_TTL_MS)
         .map(({ key, label, at }) => ({ key, label, at }));
-      return json({ records: rest.slice(0, MAILBOX_PAGE).map(({ seq, record }) => ({ seq, record })), more: rest.length > MAILBOX_PAGE, admissions });
+      // the quiet ones in a field of their own, and only while the account still lists the PC
+      const quiet = entry === undefined ? [] : this.quietList
+        .filter((a) => a.server_id === challenge.server_id && a.account === body.account && this.now() - Date.parse(a.at) < ADMISSION_TTL_MS)
+        .map(({ key, label, at }) => ({ key, label, at }));
+      return json({ records: rest.slice(0, MAILBOX_PAGE).map(({ seq, record }) => ({ seq, record })), more: rest.length > MAILBOX_PAGE, admissions, quiet_admissions: quiet });
     }
     return problem(404, "not_found", "Unknown request");
   }

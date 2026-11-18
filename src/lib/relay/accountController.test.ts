@@ -7,7 +7,7 @@ import { exportPublicKey, generateKeyPair } from "../../../shared/relay-e2ee.ts"
 import { deriveServerId } from "../../../shared/relay-server-proof.ts";
 import { RelayShell, type RelayShellProps } from "../../components/RelayShell.tsx";
 import { memoryAccountStore } from "../account/store.ts";
-import type { RelayDevice, RelayDeviceStore } from "./device.ts";
+import type { RelayDevice, ShellDeviceStore } from "./device.ts";
 import { mountRelayShell, type RelayShellMount } from "./shell.tsx";
 
 const AP = "wss://relay-ap.ovis.sh";
@@ -27,10 +27,11 @@ describe("the hosted shell's front page", () => {
   beforeEach(() => { browser = createShellTestPage(); rendered = []; });
   afterEach(() => { jest.useRealTimers(); browser.dispose(); });
 
-  const deviceStore = (devices: RelayDevice[]): RelayDeviceStore => ({
+  const deviceStore = (devices: RelayDevice[]): ShellDeviceStore => ({
     async get(serverId) { return devices.find((device) => device.server_id === serverId); },
     async list() { return [...devices]; },
     async remove(serverId) { const at = devices.findIndex((device) => device.server_id === serverId); if (at >= 0) devices.splice(at, 1); },
+    async removeRow(serverId, row) { const at = devices.findIndex((device) => device.server_id === serverId && device.device_id === row); if (at < 0) return false; devices.splice(at, 1); return true; },
     async update(serverId, change) { const next = change(devices.find((device) => device.server_id === serverId)); const at = devices.findIndex((device) => device.server_id === serverId); if (at >= 0) devices[at] = next; else devices.push(next); return next; },
   });
   const mountFor = (over: Partial<RelayShellMount>): RelayShellMount => ({

@@ -1,7 +1,7 @@
 import type { Root } from "react-dom/client";
 import type { PendingPushStore } from "../push.ts";
 import type { AccountStore } from "../account/store.ts";
-import type { EnrollmentState, RelayDeviceStore } from "./device.ts";
+import type { EnrollmentState, ShellDeviceStore } from "./device.ts";
 import type { openRelayTransport } from "./transport.ts";
 import type { checkPc } from "./pcStatus.ts";
 import type { offerFromCode } from "./pairCode.ts";
@@ -48,7 +48,16 @@ export function keyMismatch(serverId: string, keys: readonly { key: string; from
 export type RelayFailure = "pc-offline" | "pc-unresponsive" | "relay-unreachable" | "needs-update" | "revoked" | "identity-changed" | "code-expired" | "pair-declined" | "pair-unavailable" | "bad-offer"
   /** the relay closed a pairing device 4403: the PC's relay pass allows no new device sessions (account limits) */
   | "new-devices-refused"
-  | "not-added-yet";
+  | "not-added-yet"
+  /**
+   * a code that carries the mark stopped before the pairing, so it was not used: no sign-in, the PC could not be listed
+   * in the account, or the account service did not take the admission (firstLink.ts AdmissionRefusedError)
+   */
+  | "sign-in-first" | "account-unlisted" | "account-busy" | "admission-unanswered" | "admission-failed"
+  /** after the pairing, this device's account key changed and the account service did not take the new one: no link was sent */
+  | "new-key-unvouched"
+  /** the PC refused this device's first link: its code ended or ran out, the code is for another account, or the account service did not vouch for this device */
+  | "link-required" | "account-mismatch" | "unverified-device";
 
 export type PcUpdate =
   | { phase: "reading" }
@@ -158,7 +167,7 @@ export function pairsAgainWithoutKey(error: unknown, attempt: { code: boolean; p
     && error instanceof MuxProtocolError && error.code === "auth_failed";
 }
 
-/** The failures after which the saved key is no good: the PC removed this phone, or never admitted it. */
+/** The failures after which the saved key is no good: the PC removed this phone, or never admitted it. A refused link alone is none of them. */
 export function forgetsDevice(failure: RelayFailure): boolean {
   return failure === "revoked";
 }
@@ -174,7 +183,7 @@ export interface RelayShellMount {
   entryUrl: string;
   renderApp: () => Root;
   createRoot?: (container: HTMLElement) => Root;
-  store?: RelayDeviceStore;
+  store?: ShellDeviceStore;
   pendingPush?: PendingPushStore;
   open?: typeof openRelayTransport;
   navigate?: (path: string) => void;
@@ -212,6 +221,11 @@ export interface Attempt {
   signIn?: AccountSession;
   retryEnrollment?: boolean;
   retriedPending?: boolean;
+  /**
+   * the PC's row this attempt's pairing is, as the saved record named it when the attempt opened: only that record is
+   * forgotten or replaced for it, so a Forget or a newer pairing made since (another tab) stands. null: none was saved
+   */
+  row?: string | null;
 }
 
 

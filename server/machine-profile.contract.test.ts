@@ -683,7 +683,7 @@ const restricted = [
   "/api/herdr/update", "/api/runtime", "/api/runtime/move", "/api/runtime/move/install",
   "/api/runtime/move/stop", "/api/runtime/move/stop-all", "/api/runtime/move/start", "/api/runtime/move/cancel",
   "/api/portal", "/api/portal/start", "/api/relay/direct", "/api/machines", "/api/machines/ssh-candidates",
-  "/api/fleet/machines", "/api/fleet/invites", "/api/fleet/restore/confirm", "/api/bridge",
+  "/api/fleet/machines", "/api/fleet/invites", "/api/fleet/restore/confirm", "/api/bridge", "/api/devices/pair/start",
 ];
 it.each(restricted)("refuses %s even to an owner in the machine profile", async (path) => {
   const stateDir = scratch();
@@ -839,7 +839,7 @@ it("takes the caller on its socket as the local owner, and a cookie there adds n
   }
   expect((await owner(stateDir, "/api/devices")).status).toBe(200);
   expect((await owner(stateDir, "/api/account/status")).status).toBe(200);
-  const offer = await owner(stateDir, "/api/relay/offer", { method: "POST", headers: { origin: "http://localhost", "x-herdr-update": "1" } });
+  const offer = await owner(stateDir, "/api/relay/offer", { method: "POST", headers: { origin: "http://localhost", "x-herdr-update": "1", "x-ovis-expect-account": "acct_owner" } });
   expect([offer.status, (await offer.json() as { error: { code: string } }).error.code]).toEqual([409, "relay_off"]);
 });
 

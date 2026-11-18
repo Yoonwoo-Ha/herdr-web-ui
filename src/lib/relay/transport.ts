@@ -431,6 +431,9 @@ export class RelayTransport implements Transport {
 
   get server(): RelayServerInfo | undefined { return this.known; }
 
+  /** The PC's row this session signed in, or was admitted, as: the one its channel saved. Undefined while none is open. */
+  get deviceId(): string | null | undefined { return this.channel?.device.device_id; }
+
   get route(): "relay" | "direct" | undefined { return this.channel ? this.channel.direct === undefined ? "relay" : "direct" : undefined; }
 
   private readonly routeListeners = new Set<() => void>();
