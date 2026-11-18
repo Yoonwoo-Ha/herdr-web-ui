@@ -26,10 +26,18 @@ async function linuxStat(pid: number): Promise<{ parent: number; group: number; 
 }
 
 /** The children of every thread of a Linux process (/proc/<pid>/task/<tid>/children). */
-async function linuxChildren(pid: number): Promise<number[]> {
+async function linuxThreadChildren(pid: number): Promise<number[]> {
   const tasks = await readdir(`/proc/${pid}/task`);
   const lists = await Promise.all(tasks.map((task) => readFile(`/proc/${pid}/task/${task}/children`, "utf8")));
   return lists.flatMap((list) => list.split(" ").filter((word) => word !== "").map(Number));
+}
+
+/**
+ * A thread that ended while it was read hands its children to another thread, maybe one read already:
+ * the whole process is read once more, never only the threads that answered, or a child is lost.
+ */
+async function linuxChildren(pid: number): Promise<number[]> {
+  return linuxThreadChildren(pid).catch(() => linuxThreadChildren(pid));
 }
 
 async function linuxBelow(pid: number): Promise<JobProcess[]> {

@@ -4428,6 +4428,68 @@ function claudeHome(pid: number, procStart: string): { home: string; cwd: string
   };
 }
 
+/**
+ * A sandbox wrapper in front of Claude (#3931): `bwrap --new-session` runs Claude in a session of its own, so
+ * no process in the pane's job is Claude. The wrapper's processes carry herdr's agent hint, HERDR_AGENT=claude,
+ * and the store they hand Claude; herdr has the session the wrapper's hook reported.
+ */
+describe.skipIf(process.platform !== "linux")("a Claude a sandbox wrapper runs outside the pane's job (#3931)", () => {
+  const SESSION = "6d1f2e3a-4b5c-4d6e-8f70-81a2b3c4d5e6";
+
+  /** Wrapper stand-ins, one per store, each with the hint and that store in its environment, waiting on the test's stdin. */
+  async function wrapped(stores: string[], reported: string | null, runtime = served.HERDR) {
+    const home = mkdtempSync(join(tmpdir(), "claude-wrapped-"));
+    const cwd = join(home, "work");
+    const store = join(home, "project-store");
+    const transcript = join(store, "projects", claudeProjectDir(cwd), `${SESSION}.jsonl`);
+    mkdirSync(join(transcript, ".."), { recursive: true });
+    writeFileSync(transcript, "");
+    const wrappers: ReturnType<typeof Bun.spawn>[] = [];
+    const restores: (() => void)[] = [];
+    const previousHome = process.env["HOME"];
+    const previousDir = process.env["CLAUDE_CONFIG_DIR"];
+    try {
+      for (const dir of stores) {
+        mkdirSync(join(home, dir), { recursive: true });
+        wrappers.push(Bun.spawn(["bash", "-c", "echo; read -r line"], { env: { PATH: process.env["PATH"] ?? "", HOME: home, HERDR_AGENT: "claude", CLAUDE_CONFIG_DIR: join(home, dir) }, stdin: "pipe", stdout: "pipe", stderr: "ignore" }));
+      }
+      for (const wrapper of wrappers) if ((await (wrapper.stdout as ReadableStream<Uint8Array>).getReader().read()).done) throw new Error("the wrapper stand-in ended early");
+      process.env["HOME"] = home;
+      delete process.env["CLAUDE_CONFIG_DIR"];
+      const rpc = spyOn(herdr, "herdrRpc").mockImplementation((async (method: string) => method === "agent.get"
+        ? { agent: reported === null ? {} : { agent_session: { agent: "claude", source: "herdr:claude", kind: "id", value: reported } } }
+        : { process_info: { pane_id: "w1:p1", shell_pid: 1, foreground_processes: wrappers.map((wrapper) => ({ pid: wrapper.pid, name: "bash", argv: ["bash", "/opt/sandbox/claude-wrapped"] })) } }) as unknown as typeof herdr.herdrRpc);
+      restores.push(() => rpc.mockRestore());
+      const serving = spyOn(served, "capabilities").mockReturnValue(runtime);
+      restores.push(() => serving.mockRestore());
+      return { found: (await claudePaneSession({ pane_id: "w1:p1", cwd, foreground_cwd: cwd } as HerdrPane))?.path ?? null, transcript };
+    } finally {
+      for (const restore of restores.reverse()) restore();
+      for (const wrapper of wrappers) wrapper.kill("SIGKILL");
+      if (previousHome === undefined) delete process.env["HOME"]; else process.env["HOME"] = previousHome;
+      if (previousDir !== undefined) process.env["CLAUDE_CONFIG_DIR"] = previousDir;
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  it("reads the reported session in the store the hinted wrapper hands Claude", async () => {
+    const { found, transcript } = await wrapped(["project-store", "project-store"], SESSION);
+    expect(found).toBe(transcript);
+  });
+
+  it("binds none when the hinted processes name two stores: either could be a guess", async () => {
+    expect((await wrapped(["project-store", "other-store"], SESSION)).found).toBeNull();
+  });
+
+  it("binds none when herdr has no session reported: the wrapper is no Claude whose PID record could say", async () => {
+    expect((await wrapped(["project-store"], null)).found).toBeNull();
+  });
+
+  it("takes no hint on herdr-core, which names the job's leader alone: a process below it may name another store", async () => {
+    expect((await wrapped(["project-store"], SESSION, HERDR_CORE)).found).toBeNull();
+  });
+});
+
 // herdr-core names only the first process of the foreground job: a launcher in front of Claude hid it (#3009)
 describe.skipIf(process.platform !== "linux")("a Claude herdr-core does not name in front (#3009)", () => {
   const launcher = (leader: number) => ({ process_info: { pane_id: "t1", shell_pid: 1, foreground_processes: [{ pid: leader, name: "bun", argv: ["bun", "launch.ts"] }] } });

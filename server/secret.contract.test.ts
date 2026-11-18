@@ -98,7 +98,7 @@ function standIn(root: string): { script: string; resultFile: string } {
   const resultFile = join(root, "result.json");
   const script = join(root, "ask.cjs");
   writeFileSync(script, `
-const { writeFileSync } = require("node:fs");
+const { renameSync, writeFileSync } = require("node:fs");
 const { createHash } = require("node:crypto");
 process.stdin.setRawMode(true); process.stdin.resume();
 let value = "";
@@ -106,7 +106,9 @@ process.stdout.write("\\x1b[2J\\x1b[HPassword:");
 process.stdin.on("data", chunk => {
   value += chunk.toString();
   if (!value.includes("\\r")) return;
-  writeFileSync(${JSON.stringify(resultFile)}, JSON.stringify({ hash: createHash("sha256").update(value).digest("hex"), length: value.length }));
+  // written aside and renamed in: the test reads the file as soon as it exists, never half written
+  writeFileSync(${JSON.stringify(resultFile + ".part")}, JSON.stringify({ hash: createHash("sha256").update(value).digest("hex"), length: value.length }));
+  renameSync(${JSON.stringify(resultFile + ".part")}, ${JSON.stringify(resultFile)});
   value = ""; process.stdout.write("\\r\\nAccepted\\r\\nReady>");
 });
 `);

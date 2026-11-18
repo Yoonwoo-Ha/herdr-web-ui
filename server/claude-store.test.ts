@@ -3,7 +3,7 @@ import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rename
 import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
-import { AmbiguousClaudeStore, claudeAttachArgs, claudeAttachedJob, claudeAttachSession, claudeForegroundSession, claudeJobSession, claudeProcessSession, claudeSessionTempDir, claudeStoreKey, claudeStoreOf, claudeProjectDir, claudeTranscriptFile, claudeRecordOnlyIn, configDirInPsLine, darwinProcess, forgetClaudeSessions, herdrLaunchSource, isClaudeProcess, paneClaudeSource, processClaudeConfigDir, processClaudeSource, processLaunchSource, procArgsEnvironment, windowsShellClaude } from "./claude-store.ts";
+import { AmbiguousClaudeStore, claudeAttachArgs, claudeAttachedJob, claudeAttachSession, claudeForegroundSession, claudeJobSession, claudeProcessSession, claudeSessionTempDir, claudeStoreKey, claudeStoreOf, claudeProjectDir, claudeTranscriptFile, claudeRecordOnlyIn, configDirInPsLine, darwinProcess, forgetClaudeSessions, herdrLaunchSource, hintedClaudeConfigDir, isClaudeProcess, paneClaudeSource, processClaudeConfigDir, processClaudeSource, processLaunchSource, procArgsEnvironment, windowsShellClaude } from "./claude-store.ts";
 import { procStartTime } from "./darwin-process.ts";
 import type { ProcessRow } from "./windows-processes.ts";
 
@@ -1553,5 +1553,27 @@ describe("claudeSessionTempDir", () => {
     expect(await claudeSessionTempDir(transcript, [root], uid! + 1)).toBeNull();
     expect(await claudeSessionTempDir("/home/u/.claude/projects/-home-u-project/notes.jsonl", [root], uid)).toBeNull();
     expect(await claudeSessionTempDir(transcript, [root], undefined)).toBeNull();
+  });
+});
+
+// a sandbox wrapper's hint names the store of the Claude it runs outside the pane's job (#3931)
+describe.skipIf(process.platform !== "linux")("hintedClaudeConfigDir", () => {
+  it("takes the store the hinted processes name, and none while a live process's environment cannot be read", async () => {
+    const root = mkdtempSync(join(tmpdir(), "claude-hint-"));
+    try {
+      const store = join(root, "store");
+      mkdirSync(store);
+      const gone = Bun.spawn(["true"]);
+      await gone.exited;
+      const hinted = 4_000_000;
+      mkdirSync(join(root, "proc", String(hinted)), { recursive: true });
+      writeFileSync(join(root, "proc", String(hinted), "environ"), `PATH=/usr/bin\0HERDR_AGENT=claude\0CLAUDE_CONFIG_DIR=${store}\0`);
+      const proc = join(root, "proc");
+      expect(await hintedClaudeConfigDir([{ pid: hinted }, { pid: gone.pid }], proc)).toBe(store);
+      // this test's own process is alive and has no environ in the fake /proc: it may carry another store
+      await expect(hintedClaudeConfigDir([{ pid: hinted }, { pid: process.pid }], proc)).rejects.toBeInstanceOf(AmbiguousClaudeStore);
+      await expect(hintedClaudeConfigDir([{ pid: process.pid }], proc)).rejects.toBeInstanceOf(AmbiguousClaudeStore);
+      expect(await hintedClaudeConfigDir([{ pid: gone.pid }], proc)).toBeNull();
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });

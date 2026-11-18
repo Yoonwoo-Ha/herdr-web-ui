@@ -33,7 +33,7 @@ import { open as openHandle, readdir, readFile, type FileHandle } from "node:fs/
 import { readStatuslineContext } from "./statusline.ts";
 import { transcriptReader, type TranscriptFile } from "./transcript-reader.ts";
 import nodePath, { basename, dirname, relative, sep, type PlatformPath } from "node:path";
-import { isDshProcess, resolveDshTranscript, dshConversation, dshToolOutput, type DshTranscript } from "./dsh.ts";
+import { isDshProcess, jobDsh, resolveDshTranscript, dshConversation, dshToolOutput, type DshTranscript } from "./dsh.ts";
 import { isKiroChatProcess, resolveKiroTranscript, kiroConversation, kiroToolOutput, type KiroTranscript } from "./kiro.ts";
 import { authorizedTranscript } from "./transcript-store.ts";
 
@@ -43,7 +43,7 @@ import { resolveAgent } from "./pane-context.ts";
 import { codexFreshSession, codexHistorySegments, createCodexTranscriptParser, type HistorySegment, codexOutputText, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHomePlaced, paneCodexProcess, parseCodexTranscript, readRange } from "./codex.ts";
 import { awaited, CODEX_IMAGE_REF, CODEX_TOOL_IMAGE_REF, codexOutputPicture, codexTranscriptImage, DataUrlPictureScan, finish, finishAsync, forgetOmpBlobTypes, InlinePictureScan, MAX_IMAGE_BYTES, ompBlobAnchor, ompBlobDigest, ompBlobPictureSteps, type Steps } from "./codex-images.ts";
 import { type Held, heldOpenPlatform, openHeldDirectory } from "./held-open.ts";
-import { AmbiguousClaudeStore, claudeAttachSession, claudeProcessSession, claudeTranscriptFile, darwinProcess, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, jobClaude, processClaudeConfigDir, windowsShellClaude } from "./claude-store.ts";
+import { AmbiguousClaudeStore, claudeAttachSession, claudeProcessSession, claudeTranscriptFile, darwinProcess, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, hintedClaudeConfigDir, isClaudeProcess, jobClaude, processClaudeConfigDir, windowsShellClaude } from "./claude-store.ts";
 import { coreSocket } from "./herdr-core/discovery.ts";
 import { coreSocketPath } from "./herdr-core/runtime.ts";
 import { capabilities } from "./runtime/capabilities.ts";
@@ -1602,11 +1602,16 @@ async function claudeTranscriptPath(paneId: string, cwds: readonly (string | nul
   const info = await herdrRpc<{ agent: { agent_session?: { value?: unknown } } }>("agent.get", { target: paneId });
   let session = info.agent.agent_session?.value;
   const home = userHome();
-  const processes = await claudeProcesses(paneId, known);
+  const facts: KnownProcesses = known !== undefined ? known
+    : await herdrRpc<{ process_info?: ProcessInfo }>("pane.process_info", { pane_id: paneId }).then((answer) => answer.process_info ?? null, () => null);
+  const processes = await claudeProcesses(paneId, facts);
   const only = processes.length === 1 ? processes[0] : undefined;
   let processDir: string | null = null;
   try {
-    processDir = only ? await processClaudeConfigDir(only.pid, only.argv ?? [only.argv0 ?? only.name ?? ""], home) : null;
+    // no Claude in the whole job herdr names: a wrapper's hint may name its store, and the session is then only the
+    // one reported (#3931). herdr-core names the leader alone, and an empty jobClaude may be two Claudes: no hint there
+    processDir = only ? await processClaudeConfigDir(only.pid, only.argv ?? [only.argv0 ?? only.name ?? ""], home)
+      : processes.length === 0 && capabilities().foreground === "job" ? await hintedClaudeConfigDir(facts?.foreground_processes ?? []) : null;
   } catch (error) {
     // two stores claim the process: ~/.claude would be a guess, maybe another account's session (#586)
     if (error instanceof AmbiguousClaudeStore) throw new ConversationUnavailable("no_session_id");
@@ -1881,6 +1886,18 @@ export type NativeTranscript =
   | { source: "devin-transcript"; path: string; session: string; cwd: string; binding?: string };
 
 /**
+ * The pane's foreground processes the dsh reader looks at: herdr names every process of the job, herdr-core
+ * only its first, so there the dsh processes below it in the job join it (#3939), as for Claude (#3009).
+ */
+async function dshForeground(known: KnownProcesses): Promise<{ foreground_processes?: { pid?: number; argv?: unknown }[] } | null | undefined> {
+  const front = known?.foreground_processes ?? [];
+  const leader = front[0];
+  if (capabilities().foreground !== "leader" || leader === undefined || typeof leader.pid !== "number") return known;
+  if (front.some((entry) => Array.isArray(entry.argv) && isDshProcess(entry.argv))) return known;
+  return { foreground_processes: [...front, ...await jobDsh(leader.pid)] };
+}
+
+/**
  * herdr's agent label follows the pane's foreground processes, so an omo pane reads as `pi` while it waits and
  * as `claude` while its claude-sdk child runs (live-verified 2026-09-21) — the
  * label alone cannot route omo. Its process tree takes precedence over the child
@@ -1923,7 +1940,7 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
   // session headers name the one they run in
   const sessionCwd = typeof pane.foreground_cwd === "string" && pane.foreground_cwd.length > 0 ? pane.foreground_cwd : cwd;
   try {
-    if (agent === "dsh" || agent === "dsh-tui") return { source: "dsh-transcript", ...await resolveDshTranscript(known) };
+    if (agent === "dsh" || agent === "dsh-tui") return { source: "dsh-transcript", ...await resolveDshTranscript(await dshForeground(known)) };
     if (agent === "kiro") return { source: "kiro-transcript", ...await resolveKiroTranscript(known) };
     if (agent === "copilot") return { source: "copilot-transcript", ...await copilotTranscriptPath(pane, panes ?? [pane]) };
     if (agent === "grok") {

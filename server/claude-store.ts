@@ -500,6 +500,40 @@ export async function processClaudeConfigDir(
   return read.legacy;
 }
 
+/**
+ * The store of a Claude the pane's processes cannot show (#3931): a sandbox wrapper such as
+ * `bwrap --new-session` runs it in a session of its own, outside the pane's job. herdr's agent hint,
+ * HERDR_AGENT=claude, marks the foreground processes the wrapper put in front of it, and their
+ * CLAUDE_CONFIG_DIR is the store they hand Claude, read as a Claude process's own (Linux only). Only
+ * the whole foreground job counts, so `processes` is herdr's list, never herdr-core's leader alone. Null
+ * when none carries the hint or it names the default store; AmbiguousClaudeStore when they name more than
+ * one, or a live one cannot be read, which may carry the hint and another store: a guess could be another
+ * account's store.
+ */
+export async function hintedClaudeConfigDir(processes: readonly { pid?: number | null }[], proc = "/proc"): Promise<string | null> {
+  if (process.platform !== "linux") return null;
+  const reads: { pid: number; read: SourceRead }[] = [];
+  let unread: number | null = null;
+  for (const { pid } of processes) {
+    if (typeof pid !== "number") continue;
+    let environ = "";
+    try { environ = await readFile(join(proc, String(pid), "environ"), "utf8"); } catch { /* read as empty */ }
+    // read empty: gone, or not ours to read, which may hide the hint and another store
+    if (environ === "") {
+      if (processAlive(pid)) unread ??= pid;
+      continue;
+    }
+    if (!environ.split("\0").includes("HERDR_AGENT=claude")) continue;
+    reads.push({ pid, read: await environSource(environ) });
+  }
+  if (unread !== null) throw new AmbiguousClaudeStore(unread);
+  const first = reads[0];
+  if (first === undefined) return null;
+  const differs = reads.find(({ read }) => read.source.state === "unreadable" || JSON.stringify(read) !== JSON.stringify(first.read));
+  if (differs !== undefined) throw new AmbiguousClaudeStore(differs.pid);
+  return first.read.legacy;
+}
+
 /** Only an absent path is a miss: an unreadable store is an error to report, not an empty one. */
 function absent(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
