@@ -338,6 +338,9 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
       // a mirrored screen is drawn for the pane's own grid: the client takes that size
       // before the screen, or the rows would wrap in a grid of another width
       if (attachment.kind === "mirror") send(client, { type: "pane-geometry", pane_id: message.pane_id, cols: attachment.cols, rows: attachment.rows, fixed: true });
+      // so is a herdr-core pty's screen, for a client that does not size it: its replay is the program's bytes for this grid
+      const drives = connectionOf(client).mode === "interact" && !claim.keepSize;
+      if (attachment.kind !== "mirror" && !drives) send(client, { type: "pane-geometry", pane_id: message.pane_id, cols: attachment.cols, rows: attachment.rows });
       const tail = attachment.kind === "mirror" ? attachment.process.current ?? "" : attachment.replay.text();
       // a herdr-core joiner keeps the history it already holds: a tail that lost the attach's clear would double
       // it. A tail on the alternate screen gets the clear where it leaves that screen (leaving it first would blank
@@ -363,17 +366,8 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
       if (attachment.ready && !attachment.held) send(client, { type: "input-ready", pane_id: message.pane_id });
       if (!alreadyAttached) attached(client, message.pane_id);
       if (attachment.kind === "mirror") return;
-      if (connectionOf(client).mode === "interact" && !claim.keepSize) {
-        drivePty(message.pane_id, client, geometry.cols, geometry.rows);
-      } else {
-        attachment.grids.delete(client);
-        send(client, {
-          type: "pane-geometry",
-          pane_id: message.pane_id,
-          cols: attachment.cols,
-          rows: attachment.rows,
-        });
-      }
+      if (drives) drivePty(message.pane_id, client, geometry.cols, geometry.rows);
+      else attachment.grids.delete(client);
       return;
     },
     "take-over"(client: Client, message: Frame<"take-over">): void {

@@ -948,6 +948,11 @@ export class HerdrSocket {
     return state !== undefined && !state.keepSize;
   }
 
+  /** Attached without sizing the pty: its grid is another device's, or the pane's own. */
+  keepsSize(paneId: string): boolean {
+    return this.attached.get(paneId)?.keepSize === true;
+  }
+
   setPresence(active: boolean): void {
     if (this.presence === active) return;
     this.presence = active;

@@ -857,6 +857,30 @@ it("says a pane holds the pty's size only while it sized it last and has not let
   }
 });
 
+it("says a pane keeps the pty's size only while it is attached and does not size it", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  FakeSocket.last.open();
+  try {
+    expect(client.keepsSize("w1:p1")).toBe(false);
+    client.attach("w1:p1", 40, 20, true);
+    expect(client.keepsSize("w1:p1")).toBe(true);
+    client.resize("w1:p1", 53, 33, true);
+    expect(client.keepsSize("w1:p1")).toBe(false);
+    client.releaseSize("w1:p1");
+    expect(client.keepsSize("w1:p1")).toBe(true);
+    client.resize("w1:p1", 53, 33, true);
+    client.keepSize("w1:p1", false);
+    expect(client.keepsSize("w1:p1")).toBe(true);
+    client.detach("w1:p1");
+    expect(client.keepsSize("w1:p1")).toBe(false);
+    client.attach("w1:p2", 120, 40);
+    expect(client.keepsSize("w1:p2")).toBe(false);
+  } finally {
+    client.close();
+  }
+});
+
 it("keeps a visible unfocused grid while changing only its reconnect policy", () => {
   const client = new HerdrSocket("ws://test/ws");
   client.connect();

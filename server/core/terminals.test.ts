@@ -108,6 +108,10 @@ for (const readOnly of [false, true]) for (const ready of [false, true]) {
     if (ready) expect(frames.findIndex((frame) => frame.type === "input-ready"))
       .toBeGreaterThan(frames.findIndex((frame) => frame.type === "pty-data"));
     expect(frames.some((frame) => frame.type === "output-recovering")).toBe(false);
+    // a joiner that does not size the pty takes its grid before the replay drawn for it
+    expect(frames.filter((frame) => frame.type === "pane-geometry")).toEqual([{ type: "pane-geometry", pane_id: "p", cols: 80, rows: 24 }]);
+    expect(frames.findIndex((frame) => frame.type === "pane-geometry"))
+      .toBeLessThan(frames.findIndex((frame) => frame.type === "pty-data"));
   });
 }
 

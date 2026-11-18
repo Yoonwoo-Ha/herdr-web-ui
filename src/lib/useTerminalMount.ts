@@ -42,7 +42,7 @@ import { visibleTerminalInputBounds } from "./terminalViewport.ts";
 import type { PaneSubmitRetention } from "./paneSubmitRetention.ts";
 import type { ShortcutOverrides } from "./shortcutBindings.ts";
 import { takeTypeAhead, type TypeAheadItem } from "./typeAhead.ts";
-import { RESIZE_SETTLE_MS, RELEASE_AFTER_MS, IDLE_RELEASE_MS, RESUME_INPUT_WAIT_MS, VIEW_BUFFER_MAX, afterSwitch, dropViewChange, holdViews, inUse, connectedSockets, plainError, releaseViews, CONTROL_CHARACTER } from "./paneTerminalShared.ts";
+import { RESIZE_SETTLE_MS, RELEASE_AFTER_MS, IDLE_RELEASE_MS, RESUME_INPUT_WAIT_MS, VIEW_BUFFER_MAX, afterSwitch, dropViewChange, holdViews, inUse, keepsCoreGrid as keptCoreGrid, takeKeptCoreGrid, connectedSockets, plainError, releaseViews, CONTROL_CHARACTER } from "./paneTerminalShared.ts";
 import { copyOnSelect, herdrUiKnown, loadHerdrUi } from "./herdrUi.ts";
 import { captureForGhostty } from "./ghostty/capture.ts";
 import { holdForPictures } from "./terminalImages.ts";
@@ -408,7 +408,11 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       fitRef.current = fit;
 
       // A mirror has no cursor; xterm's own rests on the last row with text, which serves the same.
-      const adopted = (): boolean => observeRef.current || fixedGridRef.current || followRef.current;
+      // A page attached without sizing a herdr-core pty (away when it attached, or let go of the size since) draws it in
+      // the pty's grid: in its own, a wrapped row or a taller screen put each redraw in rows the program never drew, and
+      // the old frames stayed on screen. A grid held under the soft keyboard is the keyboard's to give back (keyboardHolds).
+      const keepsCoreGrid = (): boolean => !keyboardHeld && keptCoreGrid(socketRef.current, paneRef.current);
+      const adopted = (): boolean => observeRef.current || fixedGridRef.current || followRef.current || keepsCoreGrid();
       const scrollableMirror = (): boolean => fixedGridRef.current && !observeRef.current && !followRef.current;
       // The soft keyboard takes the bottom of the screen, not the pane: a fit to what is left above
       // it would size the shared pty to that strip, and every other viewer of the pane, herdr's own
@@ -435,7 +439,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       };
       const wideOwner = {};
       const fold = createTerminalFold(term, host, {
-        foreign: () => (fixedGridRef.current || observeRef.current || keyboardHeld) && !followRef.current,
+        foreign: () => (fixedGridRef.current || observeRef.current || keyboardHeld || keepsCoreGrid()) && !followRef.current,
         wrap: () => mirrorWrapRef.current,
         onWide: (wide) => {
           const current = paneRef.current;
@@ -445,7 +449,11 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
           if (!panned) followFold();
           syncInputViewport();
         },
-        onTap: () => { if (activeRef.current && !findOpenRef.current) term.focus(); },
+        onTap: () => {
+          // folded rows are outside xterm's element, where a press takes the pane back (reclaim)
+          reassertIfStaleRef.current();
+          if (activeRef.current && !findOpenRef.current) term.focus();
+        },
         onLink: (target, event) => {
           if (!linkPressed(event)) return false;
           if ("url" in target) {
@@ -1031,7 +1039,8 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
           write(data, () => { inFlight--; callback?.(); });
         };
         Object.assign(host, { outputProbe: () => ({ ...term.oscStringState(), parsingReplay, replayOscOpen, retired: writingOutput && parsingOwner !== outputOwner, queued: outputFrames.length, inFlight, peakInFlight, writes, written, frameSettled: frameGateRef.current.current,
-          history: { scrollback: term.options.scrollback ?? 0, length: term.buffer.active.length, viewportY: term.buffer.active.viewportY, baseY: term.buffer.active.baseY } }) });
+          history: { scrollback: term.options.scrollback ?? 0, length: term.buffer.active.length, viewportY: term.buffer.active.viewportY, baseY: term.buffer.active.baseY },
+          grid: { cols: term.cols, rows: term.rows } }) });
       }
 
       // OSC 52: the pane program asked the terminal to set the clipboard - the pty
@@ -1444,7 +1453,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
           followCursor();
         } else if (message.type === "pane-geometry") {
           // observe clients adopt the pty's grid; interact clients drive it and ignore this,
-          // unless the grid is fixed: then nobody here drives it
+          // unless the grid is fixed (nobody here drives it) or a herdr-core pty is kept at another size
           if (message.pane_id !== paneRef.current) return;
           if (message.fixed) {
             fixedGridRef.current = true;
@@ -1456,7 +1465,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
           sharedGridRef.current = { cols: message.cols, rows: message.rows };
           // the pty took a new size: herdr may draw the old screen reflowed before the agent redraws (lib/inputRow.ts FrameGate)
           if (!message.fixed && before !== null && (before.cols !== message.cols || before.rows !== message.rows)) frameGateRef.current.reflowed();
-          if (!observeRef.current && !fixedGridRef.current && !followRef.current && !chatViewRef.current) {
+          if (!adopted() && !chatViewRef.current) {
             if (!keyboardHeld) return;
             heldForce = true;
           }
@@ -2344,6 +2353,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         if (cachedRef.current) { release(); return; }
         const current = paneRef.current;
         if (current && !observeRef.current && !fixedGridRef.current) socket.keepSize(current, document.visibilityState === "hidden");
+        if (!keyboardHeld && takeKeptCoreGrid(term, socket, current, sharedGridRef.current)) followCursorRef.current();
         if (releaseAwayRef.current && releaseTimer === null && !releasedRef.current) releaseTimer = window.setTimeout(() => {
           if (paneRef.current === current) release();
         }, RELEASE_AFTER_MS);
@@ -2423,7 +2433,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         }
         const shared = sharedGridRef.current;
         if (!shared || releasedRef.current || !inUse()) return;
-        if (shared.cols !== term.cols || shared.rows !== term.rows) refit();
+        if ((keepsCoreGrid() && sizesPty()) || shared.cols !== term.cols || shared.rows !== term.rows) refit();
       };
       reassertIfStaleRef.current = reassertIfStale;
       const reclaim = (event: Event): void => {
