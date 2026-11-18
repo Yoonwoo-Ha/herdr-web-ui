@@ -27,8 +27,7 @@ import { LETTA_SEARCH_MAX, lettaPick, lettaSearchShown } from "./dialogs/letta.t
 import { agyCustomEditorMatches, agySameQuestion, parseAgyQuestion } from "./dialogs/agy.ts";
 import { dshFreeTextRow, dshTypedText } from "./dialogs/dsh.ts";
 import { sameText } from "./dialogs/omo.ts";
-import { OMP_REVIEW_HINT_RE, OMP_TABS_HINT_RE, ompCustomEditorMatches } from "./dialogs/omp.ts";
-import { openCodeV1CustomEditorMatches } from "./dialogs/opencode.ts";
+import { OMP_REVIEW_HINT_RE, OMP_TABS_HINT_RE } from "./dialogs/omp.ts";
 import { INVISIBLE_CHAR_RE } from "./dialogs/claude.ts";
 import { parsePiDialog } from "./dialogs/pi.ts";
 import { pendingPiQuestionnaires } from "./pi-questionnaire.ts";
@@ -898,7 +897,7 @@ async function readKnownPrompt(
    * for a key's verifying read: once every other look of this read is done, the screen is read again as it was
    * read before and parsed with what this read found; a card the screen no longer draws so authorizes no key
    */
-  settle: boolean | "editor" = false,
+  settle = false,
   ompBindings = ompLookups,
 ): Promise<{ prompt: InteractivePrompt | null; screen?: string; stale?: boolean; inputUnverified?: true; suppressFallback?: true;
   settled?: InteractivePrompt }> {
@@ -1062,8 +1061,6 @@ async function readKnownPrompt(
   const claudeTabs = agent === "claude" && /^\s*\u2190\s+[\u2610\u2612\u2611\u2714].*\u2192\s*$/m.test(screen);
   let inputUnverified: true | undefined;
   const ompTabs = agent === "omp" && (OMP_TABS_HINT_RE.test(screen) || OMP_REVIEW_HINT_RE.test(screen));
-  const plain = (value: string): string => value.replace(ANSI_RE, "").replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
-    .split(/\r?\n/).map(line => line.trimEnd()).join("\n").trimEnd();
   if (piTabs || claudeTabs || ompTabs) {
     // Detection text has no styles. Background or neutral-vs-dim/green text identifies
     // the active tab, not answered boxes: verify the viewport before authorizing moves.
@@ -1072,8 +1069,10 @@ async function readKnownPrompt(
     const colors = await paneRead({ paneId, source: "visible", format: "ansi", timeoutMs: SUGGESTION_READ_MS }).then(read => read.text, () => null);
     const scrollAfter = await paneScrollInfo(paneId).catch(() => null);
     screen = await liveScreen(paneId);
+    const text = (value: string): string => value.replace(ANSI_RE, "").replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+      .split(/\r?\n/).map(line => line.trimEnd()).join("\n").trimEnd();
     if (colors !== null && viewportShowsLive(scrollBefore, scrollAfter, colors, before, screen)
-      && plain(colors) === plain(screen)) screen = colors;
+      && text(colors) === text(screen)) screen = colors;
     // Plain-text labels remain readable, but authorize no input.
     else if (piTabs) inputUnverified = true;
   }
@@ -1162,30 +1161,22 @@ async function readKnownPrompt(
   if (agent === "pi" && (prompt === null || parsedByPublicPrompt.get(prompt)?.responder.startsWith("fallback"))
     && !(await paneRunsOmo(paneId).catch(() => false))) return { prompt: null, screen, suppressFallback: true };
   if (agent === "pi" && await piAskRefusesKeys(paneId, signal)) return { prompt: null, screen, suppressFallback: true };
-  if (!prompt && agent === "gjc" && settle !== "editor") {
+  if (!prompt && agent === "gjc") {
     const fallback = parseFallbackPrompt(agent, screen);
     if (parsedByPublicPrompt.get(fallback)?.responder === "fallback-gjc-menu") return { prompt: fallback, screen };
   }
   const count = agent === "codex" && prompt === null ? queuedQuestionCount(screen) : 0;
   let settled: InteractivePrompt | undefined;
-  if (settle && (prompt || settle === "editor")) {
+  if (settle && prompt) {
     const styled = screen.includes("\u001b[");
     const drawn = await (styled
       ? paneRead({ paneId, source: "visible", format: "ansi", timeoutMs: SUGGESTION_READ_MS }).then(read => read.text)
       : liveScreen(paneId)).catch(() => null);
-    // Typing can change the card's ID or replace the menu with its editor. Compare the editor
-    // on this last screen, after the other lookups, using the same parser context as the read.
-    if (settle === "editor") {
-      if (styled && drawn !== null && plain(drawn) !== plain(await liveScreen(paneId))) return { prompt: null, inputUnverified: true };
-      return { prompt: drawn === null ? null : parseDrawn(drawn), screen: drawn ?? undefined, inputUnverified };
-    }
-    if (prompt) {
-      const again = drawn === null ? null : parseDrawn(drawn);
-      const now = again ? rebind(again) : null;
-      const at = (card: InteractivePrompt): number | undefined => card.steps?.findIndex(step => step.current);
-      if (!now || now.id !== prompt.id || at(now) !== at(prompt)) inputUnverified = true;
-      else settled = now;
-    }
+    const again = drawn === null ? null : parseDrawn(drawn);
+    const now = again ? rebind(again) : null;
+    const at = (card: InteractivePrompt): number | undefined => card.steps?.findIndex(step => step.current);
+    if (!now || now.id !== prompt.id || at(now) !== at(prompt)) inputUnverified = true;
+    else settled = now;
   }
   if (count === 0 || !pane.cwd) return { prompt, screen, inputUnverified, ...(settled ? { settled } : {}) };
   let rollout = queueRollouts.get(paneId);
@@ -1460,14 +1451,14 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         if (ompCall !== undefined && !(await ompCallStillOpen(paneId, pane.cwd ?? "", ompCall, signal))) throw new OmpCallChanged();
       };
       const verifyThenSend = async <T>(look: AbortSignal, guardUntil: number | null, readUntil: number,
-        same: (shown: ParsedPrompt | null, screen: string, settled: ParsedPrompt | null) => boolean, write: () => T, screenOnly: boolean | "editor" = false): Promise<T> => {
+        same: (shown: ParsedPrompt | null, screen: string, settled: ParsedPrompt | null) => boolean, write: () => T, screenOnly = false): Promise<T> => {
         const guarding = guardKey(body.pane_id, agent, look);
         guarding.catch(() => undefined);
         const guarded = guardUntil === null ? await guarding.then(() => true)
           : await Promise.race([guarding.then(() => true), Bun.sleep(Math.max(0, guardUntil - Date.now())).then(() => false)]);
         if (!guarded) throw new KeyRefused();
         const reading = readKnownPrompt(body.pane_id, pane, agent, options.codexHome, panes, options.openCodeStateDir, openCodeState,
-          AbortSignal.timeout(Math.max(1, readUntil - Date.now())), true, screenOnly === "editor" ? "editor" : !screenOnly);
+          AbortSignal.timeout(Math.max(1, readUntil - Date.now())), true, !screenOnly);
         reading.catch(() => undefined);
         const read = await Promise.race([reading, Bun.sleep(Math.max(0, readUntil - Date.now())).then(() => null)]);
         const shown = read?.prompt ? parsedByPublicPrompt.get(read.prompt) ?? null : null;
@@ -1475,13 +1466,12 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         // a stale read (an OpenCode lookup another session overtook) authorizes nothing: it is refused before any
         // comparison, as an empty screen could make the same generic card as the one the answer was read for
         if (read?.stale) throw new KeyRefused();
-        const readsLive = read?.screen === undefined && screenOnly === true && parsedPrompt?.responder.startsWith("fallback") === true;
+        const readsLive = read?.screen === undefined && screenOnly && parsedPrompt?.responder.startsWith("fallback") === true;
         const screen = read?.screen ?? (read && readsLive
           ? await Promise.race([liveScreen(body.pane_id).catch(() => null), Bun.sleep(Math.max(0, readUntil - Date.now())).then(() => null)])
           : null);
         if (readsLive && request.signal.aborted) throw new KeyRefused();
-        if (!read || read.inputUnverified || (screenOnly === "editor" && (!screen || read.suppressFallback))
-          || Date.now() > readUntil || !same(shown, screen ?? "", settled)) throw new KeyRefused();
+        if (!read || read.inputUnverified || Date.now() > readUntil || !same(shown, screen ?? "", settled)) throw new KeyRefused();
         // pi's select and confirm compare by the dialog drawn, which pi leaves on the screen when it ends, and a
         // dialog moved off its first row has no card to compare: pi must still hold the pane after this read too
         if ((parsedPrompt?.responder === "pi-question" || parsedPrompt?.responder === "pi-confirm") && !(await piOwnsInput(body.pane_id))) throw new KeyRefused();
@@ -1853,12 +1843,6 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         const responder = parsed.responder;
         const reader = registry.readerFor(responder);
         const interaction = body.custom_text === undefined ? reader?.interaction?.(parsed) : undefined;
-        const checkBeforeText = responder === "fallback-gjc-menu" || responder === "pi-ask-question"
-          || responder === "pi-questionnaire-question" || responder === "agy-question";
-        const editorAnswer = body.custom_text !== undefined && (checkBeforeText || responder === "dsh-question"
-          || responder === "claude-question" || responder === "omp-question" || responder === "omo-question" || responder === "omo-review" || responder === "hermes-question"
-          || responder === "hermes-input" || responder === "opencode-v1-question")
-          ? { prompt: parsed, text: body.custom_text.trim() } : undefined;
         // where the moves sent so far leave the cursor (↑ stops at the first row: omoWalk)
         let cursor = parsed.selectedIndex;
         // Claude's unnumbered rows and pi's models are read with no number to aim at: looked at
@@ -1902,7 +1886,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         const sameQuestion = (shown: ParsedPrompt | null, screen: string, onCursor: boolean, settled: ParsedPrompt | null): boolean => {
           if (interaction) return shown?.responder === responder && interaction.matches(screen);
           if (responder === "dsh-question" && cursor === parsed.customMenuIndex) {
-            return dshFreeTextRow(screen, parsed, "") === "typed";
+            return dshFreeTextRow(screen, parsed, customTyped ? dshTypedText(body.custom_text ?? "") : "") === "typed";
           }
           if (responder === "pi-question" || responder === "pi-confirm") {
             const dialog = parsePiDialog(screen, true);
@@ -1927,59 +1911,29 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         function ticked(shown: ParsedPrompt): boolean {
           return !togglesInPlace() || (shown.checkedOptionIndices.length === ticks.size && shown.checkedOptionIndices.every((index) => ticks.has(index)));
         }
-        const inlineEditorMatches = (shown: ParsedPrompt | null, screen: string, draft: string): boolean => {
-          switch (responder) {
-            case "pi-questionnaire-question":
-              return shown?.id === parsed.id && shown.selectedIndex === parsed.customMenuIndex && piQuestionnaireInputMatches(shown, draft);
-            case "pi-ask-question":
-              return shown?.id === parsed.id && shown.selectedIndex === parsed.customMenuIndex && shown.piAskTyping === true && shown.piAskDraft === draft;
-            case "agy-question":
-              return agyCustomEditorMatches(screen, parsed, ticks, draft);
-            case "fallback-gjc-menu":
-              return gjcCustomEditorMatches(screen, parsed, draft);
-            default:
-              return false;
-          }
-        };
         const sendStep = async (step: AnswerStep, move: boolean, more: boolean): Promise<void> => {
           const write = async (): Promise<void> => {
             const first = !move && !committed;
             if (!move) committed = true;
-            // asked again right before herdr writes: a question known to have ended since the last read takes no committing
-            // key (a move keeps its own cancellation boundaries)
-            const asked = (): boolean => asks() && !request.signal.aborted;
-            const guard = move ? undefined : asked;
             try {
-              if (step.keys) await paneSendKeys(body.pane_id, step.keys, undefined, guard);
-              else if (step.text !== undefined) await paneSendText(body.pane_id, step.text, undefined, guard);
+              if (step.keys) await paneSendKeys(body.pane_id, step.keys);
+              else if (step.text !== undefined) await paneSendText(body.pane_id, step.text);
             } catch (error) {
               // herdr was never reached, or the write was cancelled, so nothing was pressed: the card is still to be answered
               if (first && error instanceof HerdrError && (error.code === "connect_failed" || error.code === "cancelled")) committed = false;
-              // the question ended while the write was on its way: nothing was pressed, and the card has changed
-              if (!move && error instanceof HerdrError && error.code === "cancelled" && !asked()) throw new KeyRefused();
               throw error;
             }
           };
           const look = agent === "pi" ? deadline : AbortSignal.timeout(SETTLE_MS);
           const guardUntil = agent === "pi" ? null : Date.now() + SETTLE_MS;
           const lettaTyping = committed && responder === "letta-model" && body.custom_text !== undefined;
-          const claudeDown = responder === "claude-question" && parsed.multi_select && step.keys?.[0] === KEY.down;
-          const typedEditor = customTyped && step.keys?.length === 1 && (step.keys[0] === KEY.enter || claudeDown) ? editorAnswer : undefined;
-          if (!committed || togglesInPlace() || lettaTyping || typedEditor) {
+          const dshEnter = committed && responder === "dsh-question" && customTyped;
+          if (!committed || togglesInPlace() || lettaTyping || dshEnter) {
             const onCursor = !move && (step.keys?.every((key) => key === KEY.enter || key === KEY.space) ?? false);
             const { written } = await verifyThenSend(look, guardUntil, Date.now() + SETTLE_MS,
-              (shown, screen, settled) => {
-                if (typedEditor) {
-                  if (!asks() || request.signal.aborted) return false;
-                  if (checkBeforeText) return inlineEditorMatches(shown, screen, typedEditor.text);
-                  if (responder === "dsh-question") return dshFreeTextRow(screen, parsed, dshTypedText(typedEditor.text)) === "typed";
-                  if (responder === "omp-question") return ompCustomEditorMatches(screen, typedEditor);
-                  if (responder === "opencode-v1-question") return openCodeV1CustomEditorMatches(screen, typedEditor);
-                  return shown?.agent === parsed.agent && shown.customEditorMatches?.(typedEditor, claudeDown ? "editor" : "submit") === true;
-                }
-                return lettaTyping ? lettaSearchShown(shown, parsed, lettaSearch) : sameQuestion(shown, screen, onCursor, settled);
-              }, () => ({ written: write() }),
-              typedEditor ? "editor" : interaction !== undefined || responder === "pi-question" || responder === "pi-confirm" || responder.startsWith("fallback"));
+              (shown, screen, settled) => lettaTyping ? lettaSearchShown(shown, parsed, lettaSearch)
+                : sameQuestion(shown, screen, onCursor, settled), () => ({ written: write() }),
+              interaction !== undefined || responder === "pi-question" || responder === "pi-confirm" || responder.startsWith("fallback"));
             await written;
           } else {
             const guarding = guardKey(body.pane_id, agent, look);
@@ -1995,18 +1949,20 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         let lettaSearch = parsed.lettaSearch ?? "";
         const customEditorReady = async (draft: string): Promise<boolean> => {
           const deadline = Date.now() + SETTLE_MS;
-          if (responder === "pi-ask-question" || responder === "pi-questionnaire-question") {
-            while (asks() && !request.signal.aborted && Date.now() < deadline) {
-              const reading = readKnownPrompt(body.pane_id, pane, agent, options.codexHome, panes, options.openCodeStateDir);
-              const read = await Promise.race([reading, Bun.sleep(Math.max(0, deadline - Date.now())).then(() => null)]);
-              if (!read || read.inputUnverified || !asks() || request.signal.aborted || Date.now() >= deadline) return false;
-              const shown = read.prompt ? parsedByPublicPrompt.get(read.prompt) ?? null : null;
-              if (inlineEditorMatches(shown, read.screen ?? "", draft)) return true;
-              // the same editor, still empty: the paste has not been drawn yet
-              if (draft === "" || !inlineEditorMatches(shown, read.screen ?? "", "")) return false;
-              await Bun.sleep(50);
-            }
-            return false;
+          if (responder === "pi-questionnaire-question") {
+            const read = await readKnownPrompt(body.pane_id, pane, agent, options.codexHome, panes, options.openCodeStateDir);
+            const shown = read.prompt ? parsedByPublicPrompt.get(read.prompt) : null;
+            return !read.inputUnverified && asks() && !request.signal.aborted && Date.now() < deadline
+              && shown?.id === parsed.id && piQuestionnaireInputMatches(shown, draft)
+              && shown.selectedIndex === parsed.customMenuIndex;
+          }
+          if (responder === "pi-ask-question") {
+            // Clear, text and submit each await an RPC: the editor may disappear between them.
+            const reading = readKnownPrompt(body.pane_id, pane, agent, options.codexHome, panes, options.openCodeStateDir);
+            const read = await Promise.race([reading, Bun.sleep(Math.max(0, deadline - Date.now())).then(() => null)]);
+            const shown = read?.prompt ? parsedByPublicPrompt.get(read.prompt) : null;
+            return !!read && !read.inputUnverified && asks() && !request.signal.aborted && Date.now() < deadline
+              && shown?.id === parsed.id && shown.piAskTyping === true && shown.selectedIndex === parsed.customMenuIndex;
           }
           if (responder === "letta-model") {
             // Letta's picker, its search as the keys so far left it (the line drops trailing spaces): a closed
@@ -2046,7 +2002,8 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
                 Bun.sleep(Math.max(0, deadline - Date.now())).then(() => null),
               ]);
               if (!read || !asks() || request.signal.aborted || Date.now() >= deadline) return false;
-              if (inlineEditorMatches(null, read.text, draft)) return true;
+              if (agyCustomEditorMatches(read.text, parsed, ticks, draft)) return true;
+              if (customTyped) return false;
               const before = parseAgyQuestion(read.text);
               if (!agySameQuestion(before, parsed) || before.selectedIndex !== parsed.customMenuIndex || !ticked(before)) return false;
               await Bun.sleep(50);
@@ -2059,11 +2016,13 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
               Bun.sleep(Math.max(0, deadline - Date.now())).then(() => null),
             ]);
             if (!read || !asks() || request.signal.aborted || Date.now() >= deadline) return false;
-            if (inlineEditorMatches(null, read.text, draft)) return true;
-            // the same editor, still empty: the paste has not been drawn yet
-            const waiting = draft !== "" && inlineEditorMatches(null, read.text, "");
-            const before = waiting ? undefined : parsedByPublicPrompt.get(parseFallbackPrompt("gjc", read.text));
-            if (!waiting && (before?.id !== parsed.id || before.selectedIndex !== parsed.customMenuIndex)) return false;
+            if (gjcCustomEditorMatches(read.text, parsed, draft)) return true;
+            if (customTyped) {
+              if (!gjcCustomEditorMatches(read.text, parsed, "")) return false;
+            } else {
+              const before = parsedByPublicPrompt.get(parseFallbackPrompt("gjc", read.text));
+              if (before?.id !== parsed.id || before.selectedIndex !== parsed.customMenuIndex) return false;
+            }
             await Bun.sleep(50);
           }
           return false;
@@ -2083,13 +2042,9 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
             const step = steps[index]!;
             const move = step.keys?.every((key) => key === KEY.up || key === KEY.down || (sideways && (key === KEY.left || key === KEY.right))) ?? false;
             if (!asks()) return promptChanged();
-            // Wait for an editor opened by earlier keys before sending text. dsh draws typed text
-            // incrementally; it gets the same settling wait before the final verify-and-send.
-            if (editorAnswer && committed && !customTyped && checkBeforeText && (responder !== "agy-question" || agyWriteInOpened)
-              && !(await customEditorReady(""))) return promptChanged();
-            // the paste can show a moment after its write: wait, bounded, for the editor to hold it before the fresh check of
-            // the Enter (gjc's menu and agy redraw late; pi's readers look once)
-            if (editorAnswer && customTyped && (responder === "dsh-question" || checkBeforeText) && !(await customEditorReady(editorAnswer.text))) return promptChanged();
+            if ((responder === "fallback-gjc-menu" || responder === "pi-ask-question" || responder === "pi-questionnaire-question" || (responder === "agy-question" && agyWriteInOpened) || responder === "dsh-question") && body.custom_text !== undefined && committed) {
+              if (!(await customEditorReady(customTyped ? body.custom_text.trim() : ""))) return promptChanged();
+            }
             if (responder === "letta-model" && body.custom_text !== undefined && committed && !(await customEditorReady(lettaSearch))) return promptChanged();
             // GJC's selector can close under the answer: its composer must not take the moves.
             if (move && walked && (list || reader?.reread === "each-move" || responder === "fallback-gjc-menu") && !(await onRow())) return promptChanged();
@@ -2102,7 +2057,8 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
             if (key === null) return promptChanged();
             await sendStep(key, move, index < steps.length - 1);
             if (responder === "agy-question" && body.custom_text !== undefined && !move && key.keys?.includes(KEY.enter)) agyWriteInOpened = true;
-            // From here the typed editor is verified after the next key's look, in the same turn as its write.
+            // from here the editor holds this answer's text (customEditorReady looks for it before the next key): dsh-tui's
+            // text is its answer's first key that cannot be undone, so no editor check came before it
             if (key.text !== undefined) {
               customTyped = true;
               lettaSearch += key.text;

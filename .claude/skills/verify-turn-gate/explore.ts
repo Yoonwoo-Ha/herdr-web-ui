@@ -16,30 +16,28 @@ type Fault = { code: string; message: string };
 type Reply = { ok: boolean; code?: string; message?: string };
 type Resend = { id: string; paneId: string; fingerprint: string; reply: Promise<Reply>; settledAt: number | null; uncertain: boolean };
 interface Rec { owner: string; paneId: string; lease: null; identity: object; inFlight: boolean; message: { id: string; request_id: number; text: string; state: string; created_at: string; error?: Fault } }
-interface Gate { by: string; committed: boolean; sawWorking: boolean; completed: boolean; deadline: number | null; restart?: "interruption" | "working"; joined?: number; lenient?: true; since?: number }
+interface Gate { by: string; committed: boolean; sawWorking: boolean; completed: boolean; deadline: number | null; restart?: "interruption" | "working" }
 /** The class under test, with the fields the explorer saves and puts back between steps. */
 interface Inst {
-  records: Map<string, Rec>; statuses: Map<string, St>; events: Map<string, number>; gates: Map<string, Gate>; ahead: Map<string, { status: St; at: number; blind?: true }[]>;
+  records: Map<string, Rec>; statuses: Map<string, St>; events: Map<string, number>; gates: Map<string, Gate>;
   movedInFlight: WeakSet<Rec>; closed: Map<string, number>; resends: Map<string, Resend>;
   enqueue(owner: string, paneId: string, requestId: number, text: string, lease: null, identity: object, held?: boolean): Rec;
   next(paneId: string): Rec | null;
   claim(item: Rec, automatic: boolean): boolean;
-  committing(item: Rec, steeringWorkingTurn?: boolean, restartingWorkingTurn?: boolean, readMark?: number): void;
+  committing(item: Rec, steeringWorkingTurn?: boolean, restartingWorkingTurn?: boolean): void;
   settle(item: Rec, fault?: Fault, uncertain?: boolean, retryWhenReady?: boolean): void;
   discard(item: Rec): boolean;
   mark(paneId: string): number;
   current(paneId: string): St | undefined;
   status(paneId: string, status: St): void;
   observe(paneId: string, status: St, mark: number): void;
-  baseline(paneId: string, status: St, askedAt: number): void;
-  typedAtOnce(paneId: string, steeringWorkingTurn: boolean): void;
   resend(paneId: string, id: string, fingerprint: string, task: () => Promise<Reply>, generation?: number): Promise<Reply>;
   waiting(paneId: string): boolean;
   forget(paneId: string): void;
   hold(owner: string, paneId?: string, fault?: Fault): void;
   holdPane(paneId: string, fault: Fault): void;
   move(from: string, to: string, fault: Fault): void;
-  expire(): string[];
+  expire(): void;
 }
 type InstClass = new (changed: () => void, now: () => number, startTimeoutMs: number, newId: () => string, perPane: () => boolean, elapsed: () => number) => Inst;
 
@@ -105,7 +103,7 @@ export const VARIANTS: Record<string, { what: string; find: string; put: string 
   },
   "timeout-without-hold": {
     what: "expire() drops a gate whose turn did not start in time without holding the pane's messages",
-    find: "        else this.holdPane(paneId, { code: \"pending_turn_unconfirmed\", message: \"The next turn did not start in time; review and send the remaining messages explicitly\" });\n",
+    find: "        this.holdPane(paneId, { code: \"pending_turn_unconfirmed\", message: \"The next turn did not start in time; review and send the remaining messages explicitly\" });\n",
     put: "",
   },
   "restart-counts-old-working": {
@@ -120,13 +118,13 @@ export const VARIANTS: Record<string, { what: string; find: string; put: string 
   },
   "deadline-at-once": {
     what: "committing() sets a deadline that has already passed, so the wait ends at the next timer tick",
-    find: "else gate = { by, committed: true, sawWorking: false, completed: false, deadline: now + this.startTimeoutMs, since: now };",
-    put: "else gate = { by, committed: true, sawWorking: false, completed: false, deadline: now, since: now };",
+    find: "deadline: steeringWorkingTurn && !restartingWorkingTurn ? null : this.now() + this.startTimeoutMs,",
+    put: "deadline: steeringWorkingTurn && !restartingWorkingTurn ? null : this.now(),",
   },
   "observe-ignores-mark": {
     what: "observe() applies a snapshot's status though a status event came after its mark",
-    find: "    if (this.mark(paneId) !== mark) return;\n",
-    put: "",
+    find: "if (this.mark(paneId) === mark) this.apply(paneId, status);",
+    put: "this.apply(paneId, status);",
   },
 };
 
@@ -163,19 +161,17 @@ interface Task {
   /** its connection's lease or its pane is gone: the next check refuses */
   lost: boolean;
   hold: boolean; steering: boolean; statusAtRead: string;
-  /** PendingInputs.mark() as the read before the Enter began */
-  enterMark: number;
 }
 interface World {
   /** how many of the run's `via` steps the path has taken */
   via: number;
-  c: { records: { id: string; o: string; p: string; f: boolean; s: string; rq: number; mv: boolean }[]; statuses: [string, St][]; events: [string, number][]; gates: [string, Gate][]; ahead: [string, { status: St; age: number; blind?: true }[]][] };
+  c: { records: { id: string; o: string; p: string; f: boolean; s: string; rq: number; mv: boolean }[]; statuses: [string, St][]; events: [string, number][]; gates: [string, Gate][] };
   /** what the agent does: its turn (`base`: one this queue did not start), and Enters that wait in its own queue */
   turn: null | "base" | "queue"; aq: string[]; blocked: boolean;
   /** herdr's reading of it, and the status events sent and not yet applied: each with when it was read and the pane id it names */
   h: St; q: { s: St; at: number; p: string }[];
   /** a reconcile's snapshot, read and not yet told to the queue as its baseline */
-  base: null | { s: St; at: number; p: string; stale?: true }; baselines: number;
+  base: null | { s: St; at: number; p: string }; baselines: number;
   /** counts the readings of the agent and the commits, so that which came first can be told */
   seq: number;
   pane: string; gone: boolean; moved: boolean;
@@ -186,8 +182,6 @@ interface World {
    * `last` the reading last counted: a status read before either says nothing of the turn
    */
   waits: { by: string; need: string; timed: boolean; late: boolean; restart: boolean; since: number; last: number }[];
-  /** the class's gate had a start deadline when the start timeout passed: its end by the timer is that timeout's */
-  expiredGate: boolean;
 }
 const NAMES = ["X", "Y", "Z", "W"];
 const IDENTITY = { agent: "agent", terminalId: "t", session: null };
@@ -198,7 +192,7 @@ class Violation extends Error { constructor(readonly rule: Rule, readonly why: s
 
 export interface Result { config: Config; states: number; ms: number; /** breaks whose path lacked the `via` steps */ passed: number; broken: null | { rule: Rule; why: string; steps: { label: string; after: string }[] } }
 
-export async function explore(config: Config, limit = 60_000_000): Promise<Result> {
+export async function explore(config: Config, limit = 5_000_000): Promise<Result> {
   const started = performance.now();
   const Class = await loadClass(config.variant);
   let clock = 0;
@@ -218,7 +212,6 @@ export async function explore(config: Config, limit = 60_000_000): Promise<Resul
     for (const [pane, status] of c.statuses) inst.statuses.set(pane, status);
     for (const [pane, count] of c.events) inst.events.set(pane, count);
     for (const [pane, gate] of c.gates) inst.gates.set(pane, { ...gate });
-    for (const [pane, list] of c.ahead) inst.ahead.set(pane, list.map((reading) => ({ status: reading.status, at: -reading.age, ...(reading.blind ? { blind: true as const } : {}) })));
     return inst;
   };
   /** The fields that decide what the class does next. Clock values and event counts are kept only as far as they compare. */
@@ -233,7 +226,6 @@ export async function explore(config: Config, limit = 60_000_000): Promise<Resul
     for (const task of w.tasks) {
       const count = inst.events.get(task.lane) ?? 0;
       task.mark = task.mark !== count ? -1 : count === 0 ? 0 : 1;
-      task.enterMark = task.enterMark !== count ? -1 : count === 0 ? 0 : 1;
     }
     for (const pane of [...inst.events.keys()].sort()) if ((inst.events.get(pane) ?? 0) > 0) events.push([pane, 1]);
     // readings and commits keep their order, not their numbers
@@ -252,12 +244,7 @@ export async function explore(config: Config, limit = 60_000_000): Promise<Resul
       gates: [...inst.gates].sort(([a], [b]) => a.localeCompare(b)).map(([pane, gate]) => [pane, {
         by: gate.by, committed: gate.committed, sawWorking: gate.sawWorking, completed: gate.completed,
         deadline: gate.deadline === null ? null : Math.max(0, gate.deadline - clock), ...(gate.restart ? { restart: gate.restart } : {}),
-        ...(gate.joined !== undefined ? { joined: Math.max(0, gate.joined - clock) } : {}), ...(gate.lenient ? { lenient: true as const } : {}),
-        // when it was committed, only as far as a baseline compares it: every baseline here is told as asked before it
-        ...(gate.since !== undefined ? { since: 0 } : {}),
       }]),
-      // a reading ahead of herdr's events counts until the start timeout: its age is kept as far as that goes
-      ahead: [...inst.ahead].sort(([a], [b]) => a.localeCompare(b)).map(([pane, list]) => [pane, list.map((reading) => ({ status: reading.status, age: Math.min(TIMEOUT, clock - reading.at), ...(reading.blind ? { blind: true as const } : {}) }))]),
     };
   };
 
@@ -284,7 +271,6 @@ export async function explore(config: Config, limit = 60_000_000): Promise<Resul
     evidence(w, mode === "start" ? config.rest : "working", task.at);
     w.waits = w.waits.filter((wait) => wait.by !== task.id);
     const since = now(w);
-    w.expiredGate = false;
     w.waits.push({ by: task.id, need: mode === "start" ? "WR" : mode === "steer" ? "R" : "RWR", timed: mode !== "steer", late: false, restart: mode === "restart", since, last: since });
   };
   /** The wait may end without its evidence only where every message that waited is handed to the user. */
@@ -330,16 +316,12 @@ export async function explore(config: Config, limit = 60_000_000): Promise<Resul
     // and so is every status event herdr has sent, unless the run lets events come late
     const told = config.free || config.lateEvents || w0.q.length === 0;
     const fresh = (kind: Task["kind"], id: string, owner: string, pc: string, lane: string): Task =>
-      ({ lane, kind, id, owner, pc, mark: 0, fresh: false, reading: false, over: null, ctx: null, at: 0, overAt: 0, lost: false, hold: false, steering: false, statusAtRead: "", enterMark: -2 });
+      ({ lane, kind, id, owner, pc, mark: 0, fresh: false, reading: false, over: null, ctx: null, at: 0, overAt: 0, lost: false, hold: false, steering: false, statusAtRead: "" });
 
     // a status event names its pane: one sent for the id a pane had before it moved is applied to that id
     const applied = (w: World, inst: Inst, status: St, at: number, pane: string, tracked = true): void => {
-      // an event the class takes as older than a snapshot it already has (PendingInputs.overtaken) is no reading of the turn
-      const absorbed = (inst.ahead.get(pane) ?? []).some((reading) => clock - reading.at < TIMEOUT);
       inst.status(pane, status);
-      if (pane === w.pane && !absorbed) evidence(w, status, at);
-      // collector.ts: a reconcile's baseline is not told for a pane with an event since its snapshot was asked for
-      if (tracked && w.base !== null && w.base.p === pane) w.base.stale = true;
+      if (pane === w.pane) evidence(w, status, at);
       for (const task of w.tasks) if (task.lane === pane) { task.fresh = false; if (task.reading && tracked) { task.over = status; task.overAt = at; } }
     };
     if (config.free) for (const status of STATUSES) out.push([`status event applied: ${status}`, (w, inst) => applied(w, inst, status, 0, w.pane)]);
@@ -363,12 +345,7 @@ export async function explore(config: Config, limit = 60_000_000): Promise<Resul
       if (w0.base !== null) out.push([`the reconcile's reading is told to the queue as its baseline: ${w0.base.s}`, (w, inst) => {
         const base = w.base!;
         w.base = null;
-        // status.ts onBaseline: PendingInputs.baseline, for a pane with no event since the snapshot was asked for
-        // asked for before any commit of the class's clock (gates are saved as committed at 0) and after no reading the class
-        // keeps (readAt is not saved): the class takes it as the pane's status under an open wait, and as a snapshot read
-        // with none. Its other cases (asked after the Enter, or before a later reading) are the unit tests' of
-        // server/core/pending-turn-gate.test.ts
-        if (resting(base.s) && !base.stale) inst.baseline(base.p, base.s, -1);
+        if (resting(base.s)) applied(w, inst, base.s, base.at, base.p, false);
       }]);
     }
 
@@ -398,22 +375,17 @@ export async function explore(config: Config, limit = 60_000_000): Promise<Resul
     // and only then: with no time passed since a commit the timer changes nothing
     // The class has one gate, the latest commit's: an earlier Enter's timeout ends nothing once a later one was committed
     const timedOut = (w: World, inst: Inst): void => {
-      // an Enter committed over a Codex restart not yet seen to start carries that restart's wait in the class's gate
       const latest = w.waits.at(-1);
-      const carried = latest && !latest.restart ? w.waits.slice(0, -1).findLast((wait) => wait.restart && wait.need.includes("W")) : undefined;
-      const gate = carried ?? latest;
-      if (gate?.late && gate.need.includes("W") && !inFlight(inst, w.pane)) handOver(w, inst);
+      if (latest?.late && latest.need.includes("W") && !inFlight(inst, w.pane)) handOver(w, inst);
     };
-    if (inst0.gates.size > 0) out.push(["the 100 ms timer runs expire(), no time has passed", (w, inst) => { inst.expire(); timedOut(w, inst); if (w.expiredGate && !inst.gates.has(w.pane)) handOver(w, inst); }]);
+    if (inst0.gates.size > 0) out.push(["the 100 ms timer runs expire(), no time has passed", (w, inst) => { inst.expire(); timedOut(w, inst); }]);
     if ([...inst0.gates.values()].some((gate) => gate.deadline !== null && gate.deadline > 0) || w0.waits.some((wait) => wait.timed)) {
       // here the whole start timeout passes at once
       // and herdr reads what the agent does, and its status event is applied, well within it
       if (config.free || (!starting && told && w0.h === statusOf(w0))) out.push(["the start timeout passes", (w, inst) => {
-        w.expiredGate = inst.gates.get(w.pane)?.deadline != null;
         clock = TIMEOUT; inst.expire();
         for (const wait of w.waits) if (wait.timed) wait.late = true;
         timedOut(w, inst);
-        if (w.expiredGate && !inst.gates.has(w.pane)) handOver(w, inst);
       }]);
     }
 
@@ -467,12 +439,10 @@ export async function explore(config: Config, limit = 60_000_000): Promise<Resul
           // pendingContext: Codex with its question queue collapsed counts as at work, whatever herdr reads
           if (!t0.lost && config.agent === "codex") add(`Codex's questions are collapsed: accepted to ${t0.hold ? "hold" : "queue"} (observe blocked, enqueue)`, accept);
         }
-        else if (resting(t0.ctx) && !t0.hold && !inst0.waiting(t0.lane)) add("nothing waits and the agent is at rest: typed at once, its Enter lands", (w, inst, task) => {
+        else if (resting(t0.ctx) && !t0.hold && !inst0.waiting(t0.lane)) add("nothing waits and the agent is at rest: typed at once, its Enter lands", (w, _inst, task) => {
           if (config.atOnce && checks("NoAutomaticEnterIntoQueuedTurn") && w.waits.length > 0 && (w.turn === "queue" || w.aq.length > 0)) {
             throw new Violation("NoAutomaticEnterIntoQueuedTurn", `${task.id}, sent to the queue, was typed at once while the agent ${w.turn === "queue" ? "is on" : "has yet to begin"} the turn of ${w.waits[0]!.by}, whose wait is still open`);
           }
-          // pending.ts: its committing, as a queued message's: PendingInputs.typedAtOnce
-          inst.typedAtOnce(task.lane, false);
           enterLands(w, null, false);
           end(w, task);
         });
@@ -533,8 +503,7 @@ export async function explore(config: Config, limit = 60_000_000): Promise<Resul
         return;
       }
       if (t0.pc === "pasted") {
-        // pending.ts: enterMark, the pane's event count as this read begins
-        add(`${typist} reads the pane before its Enter`, (_w, inst, task) => { task.enterMark = inst.mark(task.lane); task.reading = true; task.pc = "read2"; });
+        add(`${typist} reads the pane before its Enter`, (_w, _inst, task) => { task.reading = true; task.pc = "read2"; });
         add("refused after the paste: uncertain", uncertain);
         return;
       }
@@ -552,7 +521,7 @@ export async function explore(config: Config, limit = 60_000_000): Promise<Resul
         const steering = t0.kind === "steer" && t0.ctx === "working";
         const commit = (w: World, inst: Inst, task: Task): void => {
           task.steering = steering;
-          inst.committing(item(inst, task.id), steering, false, task.enterMark);
+          inst.committing(item(inst, task.id), steering);
           committed(w, task, steering ? "steer" : "start");
           task.pc = "committed";
         };
@@ -622,7 +591,7 @@ export async function explore(config: Config, limit = 60_000_000): Promise<Resul
   };
 
   // ---- search -----------------------------------------------------------------------------------------------
-  const init: World = { c: { records: [], statuses: [], events: [], gates: [], ahead: [] }, via: 0, turn: "base", aq: [], blocked: false, h: config.rest, q: [], base: null, baselines: 0, seq: 0, pane: "p", gone: false, moved: false, tasks: [], used: 0, others: 0, blocks: 0, waits: [], expiredGate: false };
+  const init: World = { c: { records: [], statuses: [], events: [], gates: [] }, via: 0, turn: "base", aq: [], blocked: false, h: config.rest, q: [], base: null, baselines: 0, seq: 0, pane: "p", gone: false, moved: false, tasks: [], used: 0, others: 0, blocks: 0, waits: [] };
   const take = async (from: string, step: Step): Promise<World> => {
     const next = JSON.parse(from) as World;
     next.via = taken(next.via, step[0]);

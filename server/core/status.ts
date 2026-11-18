@@ -521,7 +521,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
 
   const bridgeAgents = machines ? null : bridgeAgentNews(() => broadcastAll({ type: "session-changed" }));
 
-  function onStatus(paneId: string, read: AgentStatus, agent: string | null, replay?: { before: AgentStatus; agent: string | null; askedAt?: number }): void {
+  function onStatus(paneId: string, read: AgentStatus, agent: string | null, replay?: { before: AgentStatus; agent: string | null }): void {
     if (agent !== "opencode" && (!replay || agent || read !== "unknown")) {
       options.openCodeState?.forget(paneId);
       if (!replay) releaseOpenCodePane(paneId);
@@ -558,11 +558,10 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       waits.forget(paneId);
       return;
     }
-    reportStatus(paneId, raw, agent, replay?.askedAt);
+    reportStatus(paneId, raw, agent);
   }
 
-  /** `askedAt`: a status replayed from a snapshot asked for then, which the queue takes as that snapshot (`pending.baseline`) */
-  function reportStatus(paneId: string, raw: AgentStatus, agent: string | null, askedAt?: number): void {
+  function reportStatus(paneId: string, raw: AgentStatus, agent: string | null): void {
     // back at work, the agent has had its answer, maybe from a terminal: the same prompt on
     // its screen after this is another asking, which an answer to the old card must not take.
     if (raw === "working") promptWaitEnded(paneId);
@@ -575,8 +574,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     const claudeAnswered = claudeEnd === "answered" && claudeFailed.delete(paneId);
     const failedRest = (codexFailed.has(paneId) || (agent === "claude" && claudeFailed.has(paneId))) && raw !== "blocked";
     const status = completions.observe(paneId, failedRest || claudeAnswered ? "idle" : raw, omo.runs(paneId) ? "omo" : gjc.runs(paneId) ? "gjc" : agent, failedRest ? "failed" : claudeAnswered ? "answered" : undefined);
-    if (askedAt === undefined) pending.status(paneId, queueStatus(paneId, status)); else pending.baseline(paneId, queueStatus(paneId, status), askedAt);
-    drainPending(paneId);
+    pending.status(paneId, queueStatus(paneId, status)); drainPending(paneId);
     const tracker = omo.runs(paneId) ? null : agent === "claude" ? claudeAgents : agent === "opencode" ? opencodeAgents : isTaskAgent(agent) ? taskAgents : null;
     if (tracker !== null) {
       const resumed = claudeAgents.loopTold(paneId);
@@ -692,19 +690,16 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       broadcastAll(paneStatus(paneId, "idle"));
       push.onStatus(paneId, alertStatus("idle", waits.waiting(paneId))).catch(logPushError);
     },
-    onBaseline: (panes, newer = new Set(), askedAt = Date.now()) => {
+    onBaseline: (panes) => {
       const projected = panes.map((pane) => ({ ...pane, agent_status: restingClaude(pane.pane_id, pane.agent, pane.agent_status) }));
       for (const pane of projected) if (pane.agent === "claude" || pane.agent === "opencode" || isTaskAgent(pane.agent)) waits.seed(pane.pane_id, pane.agent_status);
       push.seed(projected.map((pane) => ({ ...pane, agent_status: alertStatus(pane.agent_status, waits.waiting(pane.pane_id)) })));
       for (const pane of projected) {
-        // herdr told the pane's status after this snapshot was read: the queue has the newer reading
-        if (newer.has(pane.pane_id)) continue;
         // A fast mirrored client may queue before the collector's first baseline. A
         // known ready baseline can schedule a fresh guarded check even when the tracker
         // still remembers working; an unknown baseline never supplies that permission.
-        // A snapshot reading the agent at work says so itself: the tracker's older ready is no turn evidence.
-        const status = pane.agent_status === "idle" || pane.agent_status === "done" || pane.agent_status === "working" ? pane.agent_status : completions.current(pane.pane_id) ?? pane.agent_status;
-        pending.baseline(pane.pane_id, queueStatus(pane.pane_id, status), askedAt); drainPending(pane.pane_id);
+        const status = pane.agent_status === "idle" || pane.agent_status === "done" ? pane.agent_status : completions.current(pane.pane_id) ?? pane.agent_status;
+        pending.status(pane.pane_id, queueStatus(pane.pane_id, status)); drainPending(pane.pane_id);
       }
     },
     onReconciled: (panes) => {
@@ -717,15 +712,11 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       }
       if (machines) machines.localAgents(panes); else bridgeAgents!.reconciled(panes);
     },
-    onResync: (panes, newer, askedAt = Date.now()) => {
+    onResync: (panes, newer) => {
       const projected = panes.map((pane) => ({ ...pane, agent_status: restingClaude(pane.pane_id, pane.agent, pane.agent_status) }));
       finishes.resync(completions, projected, newer);
       const settled = (pane: HerdrPane): AgentStatus => completions.current(pane.pane_id) ?? pane.agent_status;
-      // read from a snapshot: one asked for before an Enter says nothing of its turn. A pane with an event since has it already
-      for (const pane of panes) {
-        if (!newer.has(pane.pane_id)) pending.baseline(pane.pane_id, queueStatus(pane.pane_id, settled(pane)), askedAt);
-        drainPending(pane.pane_id);
-      }
+      for (const pane of panes) { pending.status(pane.pane_id, queueStatus(pane.pane_id, settled(pane))); drainPending(pane.pane_id); }
       for (const pane of panes) if (!newer.has(pane.pane_id) && (pane.agent === "claude" || pane.agent === "opencode" || isTaskAgent(pane.agent))) waits.status(pane.pane_id, settled(pane));
       push.resync(panes.map((pane) => ({ ...pane, agent_status: alertStatus(settled(pane), waits.waiting(pane.pane_id)) })), newer);
     },

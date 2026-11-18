@@ -628,8 +628,6 @@ it.each(["immediate", "queue"] as const)("sends a %s message as before once a fi
   await d.settled();
   expect(d.typed()).toEqual(["typed in the terminal", PASTE, "Enter"]);
   d.advance(5_000);
-  // herdr reads the Send now's turn and its end: a message sent to the queue goes behind no open wait (#4118)
-  d.delivery.pending.status("p", "working"); await d.rest();
   await d.delivery.pendingFrames.submit(d.owner as never, { type: "submit", id: 5, pane_id: "p", text: "second words", payload: delivery === "immediate" ? "second words" : "unused", delivery } as never);
   await d.settled();
   expect(d.result("submit-result", 5)?.["pending"]).toBeUndefined();

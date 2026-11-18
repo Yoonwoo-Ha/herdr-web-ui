@@ -207,20 +207,6 @@ describe("pane state per herdr lifetime", () => {
     expect(back.unsent().map(({ pane_id, kind, text }) => ({ pane_id, kind, text }))).toEqual([{ pane_id: "w1:p1", kind: "pending", text: "deploy the fix" }]);
   });
 
-  it("brings two carried held messages with the same words back as two recovery items (#3990)", () => {
-    const storage = new MemoryStorage();
-    const leaving = page(storage);
-    leaving.observe([pc("local", undefined)], title);
-    leaving.paneStorage.setItem("ovis:pending:w1:p1", JSON.stringify({ version: 1, messages: [{ id: "one", text: "yes" }, { id: "two", text: "yes" }] }));
-    leaving.carry();
-    const back = page(storage);
-    const after = new PendingMessageStore(() => back.paneStorage, back);
-    back.onRetire((machineId) => after.forget(machineId));
-    back.observe([pc("local", undefined)], title);
-    expect(after.read("w1:p1")).toEqual([]);
-    expect(back.unsent().map(({ kind, text }) => `${kind}:${text}`)).toEqual(["pending:yes", "pending:yes"]);
-  });
-
   it("keeps no held input past its age in the carry, when the page leaves or when the next one takes it", () => {
     const storage = new MemoryStorage();
     const carried = (): string => storage.getItem("ovis:pane-carried:") ?? "";

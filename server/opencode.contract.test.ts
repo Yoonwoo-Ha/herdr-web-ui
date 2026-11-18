@@ -568,10 +568,6 @@ process.stdin.on("data", (chunk) => {
     try {
       ws.send(JSON.stringify({ type: "attach", pane_id: nativePane, cols: 80, rows: 24 }));
       await frame((message) => message.type === "pty-data" && message.pane_id === nativePane);
-      // the turn the queue's last Enter started (the test before) is seen to start and end: a message sent to the queue
-      // while that wait is open waits behind it (#4118)
-      await reportState("working");
-      await untilStatus("working");
       await reportState("idle");
       // after an earlier turn herdr reads an idle report as done: either is a pane at rest
       await untilStatus("idle", "done");

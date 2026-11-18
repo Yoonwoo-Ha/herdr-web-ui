@@ -60,7 +60,7 @@ describe.each(["baseline", "gap", "resync", "newer-event"] as const)("native Ope
           handlers.onReconciled(panes);
           if (mode !== "resync" || resynced) reconciled.resolve();
         },
-        onResync: (panes, newer, askedAt) => { handlers.onResync(panes, newer, askedAt); resynced = true; },
+        onResync: (panes, newer) => { handlers.onResync(panes, newer); resynced = true; },
         onStatus: handlers.onStatus,
         onPaneEnded: handlers.onPaneEnded,
         onStructureChange() {},

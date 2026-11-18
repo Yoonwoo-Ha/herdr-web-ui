@@ -137,8 +137,6 @@ export type ParsedPrompt = InteractivePrompt & {
   claudeTabs?: { identity: string; index: number };
   piAskUser?: PiAskUserForm;
   piAskTyping?: true;
-  /** what pi-ask's open Other editor holds, as its row shows it */
-  piAskDraft?: string;
   piQuestionnaireInput?: string;
   piQuestionnaireInputRows?: string[];
   /** omp says it cut the question (server/omp-ask.ts): it fills the panel's four rows and the footer offers to expand it */
@@ -156,36 +154,11 @@ export type ParsedPrompt = InteractivePrompt & {
   rejectWithEscapeIndex: number | null;
   optionSteps?: AnswerStep[][];
   customSteps?: (text: string, choices?: number[]) => AnswerStep[];
-  customEditorMatches?: (answer: TypedEditorAnswer, cursor: "editor" | "submit") => boolean;
   multiSteps?: (choices: number[]) => AnswerStep[];
   rowKey?: AnswerStep | null;
 };
 
 export type AnswerStep = { keys?: string[]; text?: string; pick?: true };
-
-export type TypedEditorAnswer = { readonly prompt: ParsedPrompt; readonly text: string };
-
-/** Compare the whole field. A wrapped row can lose one space at the break, and the last row can lose padding. */
-export function editorRowsMatch(rows: readonly string[], text: string): boolean {
-  let positions = new Set([0]);
-  for (const [index, raw] of rows.entries()) {
-    const row = raw.trimEnd();
-    const following = rows[index + 1];
-    const next = new Set<number>();
-    for (const start of positions) {
-      if (!text.startsWith(row, start)) continue;
-      const end = start + row.length;
-      if (following === undefined || (row && following.trimEnd())) {
-        next.add(end);
-        if (following !== undefined && text[end] === " ") next.add(end + 1);
-      }
-      if (following !== undefined && text[end] === "\n") next.add(end + 1);
-    }
-    if (next.size === 0) return false;
-    positions = next;
-  }
-  return rows.length > 0 && positions.has(text.length);
-}
 
 export type MenuRow = { label: string; selected: boolean; checked: boolean; description?: string; lineIndex: number };
 

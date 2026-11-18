@@ -358,14 +358,12 @@ export class PaneLifetimes {
   private archive(storage: Storage | null, machineId: string, paneId: string, kind: UnsentKind, values: readonly Unsent[], titles: ReadonlyMap<string, string>, own = false): string[] {
     const title = titles.get(paneId);
     const ids: string[] = [];
-    // a record kept before this call stands for one of these texts at most: two messages with the same words keep two (#3990)
-    const earlier = own ? [] : [...this.unsent()];
     for (const { text, agentOnly } of values) {
       if (text.trim() === "") continue;
       // the input line's key is never written down, by an earlier release's storage either (#2523)
       if (kind === "line" && looksLikeKey(text)) continue;
-      const same = earlier.findIndex((item) => item.machine_id === machineId && item.pane_id === paneId && item.kind === kind && item.text === text && (item.agent_only === true) === agentOnly);
-      if (same >= 0) { ids.push(earlier.splice(same, 1)[0]!.id); continue; }
+      const same = own ? undefined : this.unsent().find((item) => item.machine_id === machineId && item.pane_id === paneId && item.kind === kind && item.text === text && (item.agent_only === true) === agentOnly);
+      if (same !== undefined) { ids.push(same.id); continue; }
       const record: UnsentText = { id: this.newId(), machine_id: machineId, pane_id: paneId, ...(title && title !== paneId ? { pane_title: title } : {}), kind, text, at: this.now(), ...(agentOnly ? { agent_only: true as const } : {}) };
       const { id, ...stored } = record;
       try {

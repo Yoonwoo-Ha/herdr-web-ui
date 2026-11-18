@@ -1,5 +1,5 @@
 import type { DialogReader } from "./registry.ts";
-import { ANSI_RE, type AnswerStep, KEY, editorRowsMatch, finishPrompt, keySteps, own, type ParsedPrompt, type TypedEditorAnswer } from "./shared.ts";
+import { ANSI_RE, type AnswerStep, KEY, finishPrompt, keySteps, own, type ParsedPrompt } from "./shared.ts";
 
 /**
  * OpenCode v2's questions are forms its service holds (GET /api/session/{id}/form), read for the
@@ -37,10 +37,6 @@ const V2_FORM_HEADER_RE = /^(?:Field \d+ of \d+|Review)(?: · |$)/u;
  * 1.x keeps no form a service could answer: these keys are the only way.
  */
 export function parseOpenCodeV1Question(screen: string): ParsedPrompt | null {
-  return readOpenCodeV1Question(screen);
-}
-
-function readOpenCodeV1Question(screen: string, answer?: TypedEditorAnswer): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/u).map((line) => line.trimEnd());
   let end = lines.length - 1;
   while (end >= 0 && (lines[end] === "" || ROW_RE.exec(lines[end]!)?.[1] === undefined && ROW_RE.test(lines[end]!))) end--;
@@ -62,23 +58,11 @@ function readOpenCodeV1Question(screen: string, answer?: TypedEditorAnswer): Par
   const question = body.slice(0, first - 1).filter(Boolean).join(" ").trim();
   if (!question) return null;
   const options: { label: string; description: string | null }[] = [];
-  for (const [index, text] of body.entries()) {
-    if (index < first) continue;
+  for (const text of body.slice(first)) {
     const option = OPTION_RE.exec(text);
     if (option) {
       if (Number(option[1]) !== options.length + 1) return null;
       options.push({ label: option[2]!.trim(), description: null });
-      if (answer && options.length - 1 === answer.prompt.customMenuIndex) {
-        // the custom row read for a typed answer is its editor, or the answer is not where it was typed
-        if (option[2]!.trim() !== CUSTOM_LABEL) return null;
-        // The textarea sits below Other, with the description indent. At its six-row limit
-        // the visible rows no longer prove the full value; the placeholder isn't a value either.
-        const field = body.slice(index + 1);
-        if (field.length >= 6 || !field.every((line) => line.startsWith("   ") || line === "")) return null;
-        const rows = field.map((line) => line.slice(3));
-        if (!editorRowsMatch(rows, answer.text) || editorRowsMatch(rows, CUSTOM_LABEL)) return null;
-        break;
-      }
     } else if (/^ {3}\S/u.test(text) && options.length > 0) {
       const last = options.at(-1)!;
       last.description = `${last.description ? `${last.description} ` : ""}${text.trim()}`;
@@ -101,11 +85,6 @@ function readOpenCodeV1Question(screen: string, answer?: TypedEditorAnswer): Par
     // the custom row's digit opens its text box; Enter there submits the typed answer
     ...(custom !== null ? { customSteps: (text: string) => [digit(custom), { text }, ...keySteps([KEY.enter])] } : {}),
   });
-}
-
-export function openCodeV1CustomEditorMatches(screen: string, answer: TypedEditorAnswer): boolean {
-  const shown = readOpenCodeV1Question(screen, answer);
-  return shown?.id === answer.prompt.id && shown.customMenuIndex === answer.prompt.customMenuIndex;
 }
 
 export const openCodeV1QuestionActive = (screen: string): boolean => parseOpenCodeV1Question(screen) !== null;

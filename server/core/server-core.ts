@@ -118,7 +118,7 @@ export function createCore({ options, devices, preferences, usage, usageLogin, b
     start(): void {
       // ACKs can stop arriving entirely (a suspended tab). Bound the pause even then.
       outputTimer = setInterval(() => {
-        for (const paneId of pending.expire()) drainPending(paneId);
+        pending.expire();
         for (const paneId of attachments.keys()) reconcileOutput(paneId);
       }, 100);
       outputTimer.unref();
