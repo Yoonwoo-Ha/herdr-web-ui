@@ -677,11 +677,15 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         }
       } else if (context.identity.agent === "omp") {
         try {
-          const waited = await untilOmpReported(paneId, context.pane, () => {
+          const inTime = (): void => {
             authorizePending(owner, paneId, lease);
             if (row.withdrawn?.()) throw new HerdrError("pending_discarded", "This message was discarded while it waited for omp; nothing was typed");
             if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) throw new HerdrError("submit_timeout", "The pending message waited too long; nothing was typed");
-          }, options, { strict: true, waiting: () => { waitedForOmp = true; row.waiting?.(true); } });
+          };
+          const waited = await untilOmpReported(paneId, context.pane, inTime, options, { strict: true, waiting: () => { waitedForOmp = true; row.waiting?.(true); } });
+          // the wait's last look at the process is awaited after its last check, and returns the same pane when the
+          // start ran out before the first poll: nothing below would ask again before the message is queued or typed
+          inTime();
           endsOmpStart = waited.agent_session?.source === "herdr:omp" || !typedSinceStart(paneId);
           if (waited !== context.pane) {
             mark = pending.mark(paneId);
@@ -1087,17 +1091,17 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       ended();
       const sessions = identity.agent === kind
         ? { session: identity.session, omoSession: identity.omoSession ?? null, claudeSession: identity.claudeSession ?? null } : { session: null };
+      const attended = page !== undefined && present(page) && !ask.left;
       const item = pending.enqueue(FIRST_MESSAGE_OWNER, paneId, nextFirstRequestId--, text, null,
-        { agent: kind, terminalId: pane.terminal_id, ...sessions, ...launchedProcess });
+        { agent: kind, terminalId: pane.terminal_id, ...sessions, ...launchedProcess }, false, false, attended ? ask.fault ?? undefined : FIRST_MESSAGE_UNATTENDED);
       launchBound.add(item);
       if (kind === "omp" && !ompStarts.has(paneId)) ompStarts.set(paneId, { typed: typedCount(paneId), until: Date.now() + (options.ompStartupMs ?? OMP_STARTUP_MS) });
       learn(item, identity, shellPid, processes, held);
-      if (page === undefined || !present(page) || ask.left) pending.holdItem(item, FIRST_MESSAGE_UNATTENDED);
-      else {
+      // asked again: the first listing above is a send, and a page whose socket it closes has left by now
+      if (attended && present(page) && !ask.left) {
         requesters.set(item, page);
         requested.set(page, (requested.get(page) ?? new Set()).add(item));
-        if (ask.fault) pending.holdItem(item, ask.fault);
-      }
+      } else if (attended) pending.holdItem(item, FIRST_MESSAGE_UNATTENDED);
       return item.message;
     }).finally(() => ask.end());
     drainPending(paneId);
@@ -1410,6 +1414,10 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         }
         let sendingAt: string | undefined;
         let behind: PendingMessage | undefined;
+        // taken as the frame comes, for a message that is queued after all (below): a lease taken in the lane would be a
+        // new one for a page that left the pane and came back while its frame waited there
+        const arrived = message.typed !== true && message.resend_id === undefined && message.clear_draft === undefined && message.send_anyway !== true
+          ? (() => { try { return pendingLease(client, message.pane_id); } catch { return null; } })() : null;
         const dispatch = async () => {
           if (attachments.get(message.pane_id)?.held) throw new HerdrError("attach_held", ATTACH_HELD_MESSAGE);
           // A chat message sent at once while the pane's queue waits for its omp to take input (a new workspace's first
@@ -1418,7 +1426,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
           // and held, as what waited was.
           if (message.typed !== true && message.resend_id === undefined && message.clear_draft === undefined && message.send_anyway !== true
             && ((ompWaits.has(message.pane_id) && pending.waiting(message.pane_id)) || typedWhileOmpStarted(message.pane_id))) {
-            const lease = pendingLease(client, message.pane_id);
+            const lease = arrived ?? pendingLease(client, message.pane_id);
             const context = await pendingContext(client, message.pane_id, lease);
             behind = pending.enqueue(client, message.pane_id, message.id, pendingText(message.text), lease, context.identity, false, agentOnly).message;
             if (typedWhileOmpStarted(message.pane_id)) pending.holdQueued(message.pane_id, TYPED_WHILE_WAITING);

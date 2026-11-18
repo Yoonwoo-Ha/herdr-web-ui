@@ -142,18 +142,17 @@ tests (`server/core/pending-left-lease.test.ts`, and one at the create route in
   the same lease as `Paste`: a write there without that guard is a new step that calls `Write`
   with no `Authorized`. An attach is one step: the claim a page has while its attach still waits
   on herdr is not told apart from membership. A detach then holds as one of a member does, and an
-  attach that fails leaves no hold, which is a page that never opened the pane.
-- **Assumed.** A queue request that was typed at once and then has to wait is queued right after
-  a lease check. For omp that is not so when its startup window ends between two reads
-  (`untilOmpReported` returns the same pane after an RPC): the message would be queued with a
-  lease that may be gone, and not typed.
+  attach that fails leaves no hold, which is a page that never opened the pane. A chat message
+  sent at once that is queued after all behind a starting omp is a queue request (`Submit`) when a
+  lease could be taken as its frame came: that lease is the one it keeps.
 - **Not covered.** That a queued message waits for the turn before it to start and finish (the
   turn gate, `PendingInputs.apply`). Which agent, process or session a message is typed into. A
   pane that ends or moves, beyond its attachment closing (`holdPendingPane`, `movePendingPane`).
-  Discard. A message sent at once, also one that is queued after all behind a starting omp: it
-  takes its lease in the lane, not when its frame comes. A held copy's resend (`resend_id`): it
-  types the browser's text under `authorizeSocket` alone and ends the record with that id as
-  sent. A first message shown as queued for a moment before its hold is told. A page that
+  Discard. A chat message sent at once to a pane that was not ready as its frame came, and is then
+  queued behind a starting omp: it takes its first lease in the lane. A message sent at once and a
+  held copy's resend (`resend_id`): both are a present
+  user's own send, typed under `authorizeSocket` alone with no lease, by design; the resend also
+  ends the record with that id as sent. A page that
   switches to watching and back while the server still reads its create request's body: the
   request counts from when the route has read it. Pi receipts.
   Several panes, several queued messages of one connection, a remote PC's relay connection. What

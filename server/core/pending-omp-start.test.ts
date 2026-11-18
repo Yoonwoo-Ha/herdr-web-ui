@@ -23,7 +23,7 @@ function omp(setup: { startedAgo?: number; argv?: readonly string[]; reported?: 
   const calls: string[] = [], frames: Frame[] = [];
   const pane: Record<string, unknown> = { pane_id: "p", terminal_id: "p", workspace_id: "w", tab_id: "t", agent: "omp", agent_status: "idle", focused: false, revision: 0,
     ...(setup.reported ? { agent_session: SESSION } : {}) };
-  const hooks: { look?: (looks: number) => void; read?: (reads: number) => void | Promise<void>;
+  const hooks: { look?: (looks: number) => void; read?: (reads: number) => void | Promise<void>; authorize?: () => void;
     processes?: (start: boolean) => "fail" | "empty" | undefined } = {};
   let looks = 0, reads = 0, asked = 0, allowed = true, skew = 0, typedCount = 0;
   const herdrNow = { silent: false, paneGone: false };
@@ -60,7 +60,7 @@ function omp(setup: { startedAgo?: number; argv?: readonly string[]; reported?: 
     submitText: setup.realSubmit
       ? createSubmitText({ options: { submitDelayMs: 0 }, lastTyped: new Map(), attachments: new Map(), terminalAttach: async () => true, SUBMIT_DEADLINE_MS: 45_000, TYPED_SETTLE_MS: 0, DRAFT_CLEAR_WAIT_MS: 0, DRAFT_CLEAR_POLL_MS: 1, SUBMIT_DELAY_MS: 0 })
       : async () => { calls.push("immediate"); },
-    authorizeSocket: () => { if (!allowed) throw new herdr.HerdrError("read_only", "this device may only watch"); },
+    authorizeSocket: () => { hooks.authorize?.(); if (!allowed) throw new herdr.HerdrError("read_only", "this device may only watch"); },
     clientSnapshot: async () => {
       if (herdrNow.silent) throw new herdr.HerdrError("herdr_unavailable", "herdr did not answer");
       return { panes: herdrNow.paneGone ? [] : [pane] };
@@ -704,4 +704,49 @@ it("holds a new pane's first message when its terminal was typed into before the
   d.report();
   await d.rest();
   expect(d.typed()).toEqual(["typed in the terminal"]);
+});
+
+it.each([
+  ["its page left", "pending_lease_lost"],
+  ["its deadline passed", "submit_timeout"],
+] as const)("refuses a queue request typed at once when %s during the last look of a wait for omp that ran out before its first poll", async (what, code) => {
+  const d = omp();
+  // the send's own read finds omp at work; its start then runs out between the look at the process and the first
+  // poll, so the wait returns the pane it was given after one more process read, during which this happens
+  let step: "start" | "ran out" | "last look" | "done" = "start";
+  d.hooks.read = (reads) => { if (reads === 2) d.pane["agent_status"] = "working"; };
+  d.hooks.processes = (start) => {
+    if (start && step === "start") step = "ran out";
+    else if (!start && step === "last look") {
+      step = "done";
+      if (what === "its page left") { d.delivery.holdPending(d.owner as never, "p"); d.facts.member = false; } else d.advance(20_000);
+    }
+    return undefined;
+  };
+  d.hooks.authorize = () => { if (step === "ran out") { step = "last look"; d.advance(31_000); } };
+  expect(await d.ways["a queue request typed at once"]()).toMatchObject({ ok: false, code });
+  expect(step as string).toBe("done");
+  expect(d.delivery.pending.list(d.owner as never, "p"), "queued after all, its row would say it waits for the agent's turn").toEqual([]);
+  expect(d.typed()).toEqual([]);
+});
+
+it("refuses a chat message sent at once that would wait behind a starting omp when its page left the pane and came back while the frame waited its turn", async () => {
+  const d = omp();
+  await d.first();
+  await d.eventually("the wait for omp", () => d.looks() >= 2);
+  const told: Frame[] = [];
+  const other = { data: connectionData({ deviceId: undefined, readOnly: false }), getBufferedAmount: () => 0, send: (value: string) => { told.push(JSON.parse(value) as Frame); return 1; } };
+  other.data.attached.set("p", { keepSize: false });
+  d.clients.add(other);
+  const ahead = Promise.withResolvers<void>();
+  void d.serialize("p", () => ahead.promise);
+  const sent = d.delivery.pendingFrames.submit(other as never, { type: "submit", id: 5, pane_id: "p", text: "second words", payload: "second words", delivery: "immediate" } as never);
+  // what terminals.ts detach() does; opening the pane again needs nothing more here, as the lease facts stay true
+  d.delivery.holdPending(other as never, "p");
+  ahead.resolve();
+  await sent;
+  await d.settled();
+  expect(told.find((frame) => frame.type === "submit-result" && frame.id === 5)).toMatchObject({ ok: false, code: "pending_lease_lost" });
+  expect(d.delivery.pending.list(other as never, "p")).toEqual([]);
+  expect(d.calls).not.toContain("immediate");
 });

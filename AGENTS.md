@@ -118,10 +118,10 @@ to change. Also read [server/AGENTS.md](server/AGENTS.md) and [src/AGENTS.md](sr
 - CodeRabbit's reviews are rationed per PR author, and agents open their PRs as one account:
   opening a PR, a push and each `@coderabbitai review` spend one, and past about 80 in a week
   one comes back per hour. Open verified work ready for review, not as a draft: `pr-merge`
-  refuses a draft. A draft is only for work still unfinished; push it once when it is ready. Do not open a stack of PRs at once, and ask for another review
-  only after a commit that changes behaviour in `server/`, `src/` or `shared/`, an HTTP/WS
-  contract or a workflow. A rebase, changelog fragment, docs, comment or test-only commit gets
-  none.
+  refuses a draft. A draft is only for work still unfinished; push it once when it is ready. Do
+  not open a stack of PRs at once, and ask for another review only after a commit that changes
+  behaviour in `server/`, `src/` or `shared/`, an HTTP/WS contract or a workflow. A rebase,
+  changelog fragment, docs, comment or test-only commit gets none.
 - A rate-limited or skipped review still shows a passing CodeRabbit check; its "Review limit
   reached" or "Review skipped" comment means no review ran. CodeRabbit skips a PR of more than
   150 files, so a PR that needs a review stays under that.

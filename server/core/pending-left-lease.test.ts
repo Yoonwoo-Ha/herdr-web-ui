@@ -28,7 +28,10 @@ function pane() {
   spyOn(herdr, "paneRead").mockImplementation(async () => ({ text: "" }) as Awaited<ReturnType<typeof herdr.paneRead>>);
   spyOn(herdr, "paneSendText").mockImplementation(async (_pane, text) => { typed.push(text); });
   spyOn(herdr, "paneSendKeys").mockImplementation(async (_pane, keys) => { typed.push(keys.join(",")); });
-  const page = { data: connectionData({ deviceId: undefined, readOnly: false }), getBufferedAmount: () => 0, send: () => 1 };
+  const frames: Array<{ type: string; messages?: Row[] }> = [];
+  const told: { then?: () => void } = {};
+  const page = { data: connectionData({ deviceId: undefined, readOnly: false }), getBufferedAmount: () => 0,
+    send: (value: string) => { frames.push(JSON.parse(value) as { type: string; messages?: Row[] }); told.then?.(); return 1; } };
   let tail: Promise<unknown> = Promise.resolve();
   const serialize = <T,>(_pane: string, run: () => T | Promise<T>): Promise<T> => { const next = tail.catch(() => {}).then(run); tail = next; return next; };
   const delivery = createPendingDelivery({
@@ -66,7 +69,7 @@ function pane() {
   const opens = () => { page.data.attached.set("p", { keepSize: false }); now.member = true; };
   const leaves = () => { page.data.attached.delete("p"); delivery.holdPending(page as never, "p"); now.member = false; };
   const rests = async () => { now.status = "idle"; delivery.pending.status("p", "idle"); delivery.drainPending("p"); await settled(); };
-  return { delivery, page: page as never, typed, now, settled, hold, holdStart, opens, leaves, rests };
+  return { delivery, page: page as never, typed, frames, told, now, settled, hold, holdStart, opens, leaves, rests };
 }
 
 it("holds a queued message whose sender left the pane during its automatic send, also when the agent only put that send off", async () => {
@@ -162,6 +165,29 @@ it("holds a first message whose page switched to watching and back before its pa
   d.delivery.holdPending(d.page);
   request.at("p");
   expect(await d.delivery.queueFirstMessage("p", "first words", "codex", request)).toMatchObject({ state: "held", error: { code: "first_message_unattended" } });
+});
+
+it("lists a first message that nobody will type as held from its first listing, never as queued for a moment", async () => {
+  const d = pane();
+  d.now.status = "idle";
+  d.opens();
+  expect(await d.delivery.queueFirstMessage("p", "first words", "codex", null)).toMatchObject({ state: "held", error: { code: "first_message_unattended" } });
+  const told = d.frames.filter((frame) => frame.type === "pending-messages").flatMap((frame) => frame.messages ?? []);
+  expect(told.length).toBeGreaterThan(0);
+  expect(told.map((row) => row.state), "an attached page was told it waits for the agent's turn before it was told it is held").not.toContain("queued");
+});
+
+it("holds a first message whose page leaves as it is told of the message's first listing", async () => {
+  const d = pane();
+  d.now.status = "idle";
+  d.opens();
+  // a send to a page can end it then and there (a relay page past its output budget): it has left before it is registered
+  d.told.then = () => { d.told.then = undefined; d.leaves(); };
+  expect(await d.delivery.queueFirstMessage("p", "first words", "codex", connection(d))).toMatchObject({ state: "held", error: { code: "first_message_unattended" } });
+
+  d.opens();
+  await d.rests();
+  expect(d.typed).toEqual([]);
 });
 
 it("lists no first message for a pane that ended while its agent was launched", async () => {
