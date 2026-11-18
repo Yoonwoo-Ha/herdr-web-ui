@@ -100,7 +100,21 @@ export async function relayDashboardQa({ browser, origin, evidence }: DashboardQ
       await route.fulfill({ status: answer.status, headers: { ...Object.fromEntries(answer.headers), ...cors }, body: Buffer.from(await answer.arrayBuffer()) });
     });
     await context.routeWebSocket(/.*/, (ws) => { sockets.push(ws.url()); ws.close(); });
-    await context.addInitScript(({ language, theme, density, scale }) => {
+    await context.addInitScript(({ app, language, theme, density, scale }) => {
+      if (location.origin === app) {
+        // The signed-in shell can render before its account key is committed. Watch the write
+        // in the OAuth return document, where the app will create the key.
+        const put = IDBObjectStore.prototype.put;
+        IDBObjectStore.prototype.put = function (value, key) {
+          const request = put.call(this, value, key);
+          if (this.transaction.db.name === "ovis-account" && this.name === "account" && key === "key") {
+            this.transaction.addEventListener("complete", () => {
+              document.documentElement.setAttribute("data-qa-account-key-committed", "");
+            }, { once: true });
+          }
+          return request;
+        };
+      }
       if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language, theme, density }));
       if (scale !== 1) {
         const apply = (): void => {
@@ -110,7 +124,7 @@ export async function relayDashboardQa({ browser, origin, evidence }: DashboardQ
         };
         if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", apply, { once: true }); else apply();
       }
-    }, { language: locale, theme: options.theme ?? "dark", density: options.density ?? "comfortable", scale: textScale });
+    }, { app: APP, language: locale, theme: options.theme ?? "dark", density: options.density ?? "comfortable", scale: textScale });
     await options.prepare?.(context);
     const page = await context.newPage();
     page.setDefaultTimeout(20_000);
@@ -130,6 +144,7 @@ export async function relayDashboardQa({ browser, origin, evidence }: DashboardQ
     if (options.signedIn ?? true) {
       await page.locator(".account-provider").first().click();
       await page.locator('.relay-dash[data-dashboard-mode="account"]').waitFor({ timeout: LOAD_MS });
+      await page.locator("[data-qa-account-key-committed]").waitFor({ state: "attached" });
       if (fleet.seeds.length > 0) {
         await seedPairings(page, fleet.seeds, ACCOUNT);
         await page.reload();

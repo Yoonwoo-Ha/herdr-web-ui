@@ -97,9 +97,9 @@ try {
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
       await page.goto(url);
-      await page.locator(".conn-live").waitFor({ state: "attached" });
       if (await page.locator(".terminal-stack.is-chat").count() === 0) await openLens(page, "chat");
       await page.locator(".terminal-stack.is-chat").waitFor();
+      await page.locator(".terminal-stack.is-chat .composer-attach:enabled").waitFor();
       await page.locator(".chat-turn-user").first().waitFor();
       await appFaces(page);
       await run(page);
