@@ -18,6 +18,7 @@ process.env["GIT_CONFIG_GLOBAL"] = "/dev/null";
 process.env["GIT_CONFIG_NOSYSTEM"] = "1";
 
 const BIG_LINES = 10_000;
+const SMALL_LINES = 400;
 const LARGE_LINES = 8_000;
 const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-repo-diff-")));
 const evidence = process.env.UI_EVIDENCE_DIR;
@@ -62,6 +63,8 @@ function fixtures(): { main: string; detached: string; plain: string; long: stri
   mkdirSync(join(main, "notes", "dir with space"), { recursive: true });
   git(main, "init", "-q", "-b", "main");
   writeFileSync(join(main, "src/big.ts"), numbered(BIG_LINES, false));
+  // Keep the small patch plain too: big.ts exceeds the syntax highlighting budget.
+  writeFileSync(join(main, "src/small.txt"), numbered(SMALL_LINES, false));
   writeFileSync(join(main, "src/money.ts"), MONEY_OLD.replace("export function add", "export function sum"));
   writeFileSync(join(main, "src/gone.ts"), "export const gone = true;\n\nexport const twice = 2;\n");
   writeFileSync(join(main, "src/staged.ts"), "export const staged = 1;\n");
@@ -80,6 +83,7 @@ function fixtures(): { main: string; detached: string; plain: string; long: stri
   writeFileSync(join(main, "src/staged.ts"), "export const staged = 2;\n");
   git(main, "add", "docs/new-name.md", "src/staged.ts");
   writeFileSync(join(main, "src/big.ts"), numbered(BIG_LINES, true));
+  writeFileSync(join(main, "src/small.txt"), numbered(SMALL_LINES, true));
   writeFileSync(join(main, "src/money.ts"), MONEY_NEW);
   writeFileSync(join(main, "src/staged.ts"), "export const staged = 3;\n");
   writeFileSync(join(main, "src/large.txt"), `${"y".repeat(80)}\n`.repeat(LARGE_LINES));
@@ -315,6 +319,22 @@ async function rowReached(page: Page, line: number, step: string): Promise<void>
     }, [diffRows.toString()] as const);
     throw new Error(`${step}: no row at or past ${line} mounted: ${JSON.stringify(seen)}`, { cause: error });
   }
+}
+async function measureDiffScroll(page: Page, path: string, lines: number, label: string) {
+  const stopTiming = await startRendererTiming(page);
+  const taskStart = await page.evaluate(() => performance.now());
+  await openChange(page, path);
+  await waitRows(page);
+  await scrollDiff(page, "middle");
+  await rowReached(page, Math.floor(lines * 0.4), `${label} ${path} middle`);
+  await scrollDiff(page, "end");
+  await rowReached(page, lines - 1, `${label} ${path} end`);
+  const [cpuMs, taskEnd] = await Promise.all([stopTiming(), page.evaluate(() => performance.now())]);
+  const longestTaskMs = await page.evaluate(([start, end]) => {
+    const tasks: { start: number; elapsed: number }[] = Reflect.get(window, "repoDiffLongTasks");
+    return Math.max(0, ...tasks.filter((task) => task.start >= start && task.start < end).map((task) => task.elapsed));
+  }, [taskStart, taskEnd] as const);
+  return { cpuMs, longestTaskMs };
 }
 async function note(page: Page): Promise<string> {
   const text = page.locator(".repo-diff-body .repo-diff-note").filter({ hasNotText: "Opening…" });
@@ -727,30 +747,32 @@ try {
       "M src/large.txt +8,000−8,000",
       "M src/money.ts +3−2",
       "? src/new.ts",
+      "M src/small.txt +80−80",
       "M src/staged.ts +1−1",
     ], `${label}: the working tree's changed files`);
     assert.equal(await page.locator(".repo-changes-branch").textContent(), "main", `${label}: the branch`);
     assert.equal(await page.locator(".repo-changes-root").textContent(), repos.main, `${label}: the repository root`);
     await shot(page, `list-${width}-${theme}`);
 
-    const before = await page.evaluate(() => history.length);
-    const stopTiming = await startRendererTiming(page);
-    const taskStart = await page.evaluate(() => performance.now());
-    await openChange(page, "src/big.ts");
+    // Warm the shared diff component and worker pool outside both timing windows.
+    await openChange(page, "src/small.txt");
     await waitRows(page);
-    await scrollDiff(page, "middle");
-    await rowReached(page, Math.floor(BIG_LINES / 2) - 1000, `${label} middle`);
-    await scrollDiff(page, "end");
-    await rowReached(page, BIG_LINES - 1, `${label} end`);
-    const [cpuMs, taskEnd] = await Promise.all([stopTiming(), page.evaluate(() => performance.now())]);
-    const elapsedMs = await page.evaluate(([start, end]) => {
-      const tasks: { start: number; elapsed: number }[] = Reflect.get(window, "repoDiffLongTasks");
-      return Math.max(0, ...tasks.filter((task) => task.start >= start && task.start < end).map((task) => task.elapsed));
-    }, [taskStart, taskEnd] as const);
-    assert.ok(cpuMs > 0 && cpuMs < 1_000, `${label}: opening and scrolling the big diff uses less than one second of renderer CPU (${cpuMs.toFixed(1)} ms; longest task ${elapsedMs} ms elapsed)`);
-    console.log(`${label}: renderer CPU ${cpuMs.toFixed(1)} ms, longest task ${elapsedMs} ms elapsed`);
+    await closeDiff(page);
 
-    assert.equal(await page.evaluate(() => history.length), phone ? before : before + 1, `${label}: the diff is a history entry`);
+    const before = await page.evaluate(() => ({ length: history.length, index: navigation.currentEntry?.index, hasForward: navigation.canGoForward }));
+    const big = await measureDiffScroll(page, "src/big.ts", BIG_LINES, label);
+    const after = await page.evaluate(() => ({ length: history.length, index: navigation.currentEntry?.index }));
+    // A desktop push after Back discards the warm-up's forward entry.
+    assert.equal(after.length, phone || before.hasForward ? before.length : before.length + 1, `${label}: the diff is a history entry`);
+    if (!phone) assert.ok(before.index !== undefined && after.index === before.index + 1, `${label}: opening the diff advances desktop history`);
+    await closeDiff(page);
+    const small = await measureDiffScroll(page, "src/small.txt", SMALL_LINES, label);
+    const ratio = big.cpuMs / small.cpuMs;
+    // Both paint viewport-sized windows; 5x leaves room to parse the bigger patch, well below the 25x full row count.
+    const maxCpuRatio = 5;
+    const timing = `renderer CPU: big ${big.cpuMs.toFixed(1)} ms, small ${small.cpuMs.toFixed(1)} ms (${ratio.toFixed(2)}x); longest task ${big.longestTaskMs} ms elapsed for big, ${small.longestTaskMs} ms for small`;
+    assert.ok(big.cpuMs > 0 && small.cpuMs > 0 && ratio < maxCpuRatio, `${label}: opening and scrolling the big diff uses less than ${maxCpuRatio}x the small diff's renderer CPU (${timing})`);
+    console.log(`${label}: ${timing}`);
     await closeDiff(page);
     await openChange(page, "src/big.ts");
     await page.getByRole("dialog", { name: "Changes to big.ts", exact: true }).waitFor();
