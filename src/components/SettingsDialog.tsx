@@ -470,7 +470,7 @@ function AppearancePage() {
     </SettingsGroup>
 
     <SettingsGroup title={t("Sidebar")} section="sidebar">
-      <SettingsRow icon={PanelLeft} preview={<SidebarRowsPreview rows={settings.sidebarRows} />} label={t("Sidebar rows")} description={t("One line gives each workspace and each agent in the sidebar a single line with its name; Two lines show what the agent is doing, with the workspace's name under it. The choice applies on every device.")} wide reset={["sidebarRows"]}>
+      <SettingsRow icon={PanelLeft} preview={<SidebarRowsPreview rows={settings.sidebarRows} />} label={t("Sidebar rows")} description={t("One line gives each workspace and each agent in the sidebar a single line with its name; Two lines add a second line: under a workspace's name, what its pane is on, and in the Agents list, under an agent's task, its workspace. The choice applies on every device.")} wide reset={["sidebarRows"]}>
         <Segmented label={t("Sidebar rows")} value={settings.sidebarRows} onChange={(sidebarRows) => update({ sidebarRows })} options={[{ value: "one", label: t("One line") }, { value: "two", label: t("Two lines") }]} />
       </SettingsRow>
       {/* the scope differs within the one control: said on the row, where the sentences are not (G-097) */}

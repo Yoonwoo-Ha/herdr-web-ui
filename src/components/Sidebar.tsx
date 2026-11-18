@@ -19,7 +19,7 @@ import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { WorktreeDialog, type WorktreeDialogMode } from "./WorktreeDialog.tsx";
 import { focusWorkspaceListToggle } from "../lib/focus.ts";
-import { folderName, shortPathTitle, stripPaneChrome, tabTitle, taskRowLines } from "../lib/paneName.ts";
+import { folderName, isHomeTitle, shortPathTitle, stripPaneChrome, tabTitle, unsaidLine } from "../lib/paneName.ts";
 import { useT } from "../lib/i18n.ts";
 import { contextLeftPercent, formatTokens } from "../lib/compose.ts";
 import { userErrorMessage } from "../lib/userError.ts";
@@ -199,9 +199,6 @@ export function compactBranch(branch: string | null): string | null {
   return branch.replace(BRANCH_KIND, "") || branch;
 }
 
-function cwdBasename(cwd: string | null | undefined): string {
-  return cwd ? folderName(cwd) : "unknown directory";
-}
 
 interface InlineError {
   workspaceId?: string;
@@ -793,7 +790,11 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
     // a folded group's parent stands for its worktrees too, as herdr's collapsed parent does:
     // a checkout that waits or has finished must not hide behind the fold
     const statusPanes = collapsed ? [...panes, ...children.flatMap((child) => roster.filter((candidate) => candidate.workspace_id === child.workspace_id))] : panes;
-    const lines = twoLine ? taskRowLines({ paneTitle: displayPaneTitle(pane), labelled: Boolean(pane.label?.trim()), folder: cwdBasename(pane.cwd), workspace: rowTitle, alias: secondaryBranch }) : null;
+    // Two lines lead with the workspace's name, as herdr's sidebar does, and say under it what the pane it opens is on;
+    // a shell's "~" (its home folder) names nothing, nor does the pane id a pane without a title falls back to
+    const shownPaneTitle = displayPaneTitle(pane);
+    const saysPane = shownPaneTitle !== pane.pane_id && (Boolean(pane.label?.trim()) || !isHomeTitle(shownPaneTitle));
+    const place = twoLine ? unsaidLine(rowTitle, [saysPane ? shownPaneTitle : null, secondaryBranch, pane.cwd ? folderName(pane.cwd) : null]) : null;
     const foldedCount = (collapsed ? children.filter((child) => !roster.some((candidate) => candidate.workspace_id === child.workspace_id && candidate.pane_id === selectedPaneId)).length : 0)
       + (agentsAway ? allWorkers.length : 0);
     const editingWorkspace = editingWorkspaceId === workspace.workspace_id;
@@ -874,13 +875,13 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
               if (event.key === "Enter") saveWorkspaceRename(workspace.workspace_id);
               if (event.key === "Escape") setEditingWorkspaceId(null);
             }}
-          /> : lines ? <span className="workspace-copy is-two-line">
+          /> : place !== null ? <span className="workspace-copy is-two-line">
             <span className="workspace-line">
-              <span className="workspace-name">{lines.title}</span>
+              <span className="workspace-name">{rowTitle}</span>
               {foldedCount > 0 && <span className="workspace-fold-count" aria-hidden="true">+{foldedCount}</span>}
               {filterNote}
             </span>
-            {lines.place && <span className="workspace-place">{lines.place}</span>}
+            {place && <span className="workspace-place">{place}</span>}
           </span> : <span className="workspace-copy">
             <span className="workspace-name">{shownTitle}</span>
             {!compact && secondaryBranch && <span className="worktree-workspace-label">{secondaryBranch}</span>}

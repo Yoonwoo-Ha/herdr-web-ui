@@ -22,7 +22,7 @@ import { AgentMark } from "./AgentMark.tsx";
 import { OvisMark } from "./OvisMark.tsx";
 import { displayPaneTitle, StatusBadge } from "./Sidebar.tsx";
 import { PAGES } from "./SettingsDialog.tsx";
-import { folderName, taskRowLines, unsaidLine } from "../lib/paneName.ts";
+import { folderName, taskTitle, unsaidLine } from "../lib/paneName.ts";
 import { agentTabName } from "../lib/sidebarAgents.ts";
 import { autoTabLabel, customTabLabel, tabLabel } from "../lib/tabName.ts";
 import { shownTabLabels, subscribeTabLabels } from "../lib/tabLabels.ts";
@@ -723,7 +723,7 @@ export function CommandPalette({ open, initialQuery = "", onClose, machines, onS
                 const named = givenTabName(row);
                 const branch = branches.get(row.machineId)?.get(pane.workspace_id)?.branch ?? null;
                 const title = named !== null && named !== paneTitle ? named
-                  : taskRowLines({ paneTitle, labelled: Boolean(pane.label?.trim()), folder, workspace: workspaceLabel, alias: branch }).title;
+                  : taskTitle({ paneTitle, labelled: Boolean(pane.label?.trim()), folder, workspace: workspaceLabel });
                 const under = unsaidLine(title, [title !== paneTitle && paneTitle !== folder ? paneTitle : null, ...(section.placeNamesWorkspace
                   ? [workspaceLabel, branch, folder]
                   : [named !== null ? "" : tabName(row) ?? "", folder])]);
