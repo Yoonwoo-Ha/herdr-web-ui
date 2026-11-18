@@ -26,12 +26,62 @@ import { DevinHistoryChanged } from "./devin.ts";
 import * as devinSession from "./devin-session.ts";
 import * as omo from "./omo.ts";
 import * as gjcRuntime from "./gjc-runtime.ts";
+import * as processStart from "./process-start.ts";
 import * as runtime from "./herdr-core/runtime.ts";
 import * as served from "./runtime/capabilities.ts";
 import { HERDR_CORE } from "./runtime/capabilities.ts";
 import { claudeProjectDir } from "./claude-store.ts";
 import { launchedAgents } from "./launched-agents.ts";
-import { agyTranscriptPage, claudePanePid, claudePaneSession, ConversationReadPending, ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, paneProcessRoots, paneTranscript, parseClaudeTranscript, stoppedAgentJob, unwrapPastes, toolOutput, transcriptImage, transcriptImageAsync, transcriptPage, transcriptToolOutput, TRANSCRIPT_WINDOW_BYTES } from "./conversation.ts";
+import { agyTranscriptPage, claudePanePid, claudePaneSession, ConversationReadPending, ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, paneProcessRoots, paneRunsOmo, paneTranscript, parseClaudeTranscript, stoppedAgentJob, unwrapPastes, toolOutput, transcriptImage, transcriptImageAsync, transcriptPage, transcriptToolOutput, TRANSCRIPT_WINDOW_BYTES } from "./conversation.ts";
+
+it("sees an OmO below its own Windows pane shell, not below another pane's, with or without a supplied list", async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  // herdr on Windows names only the pane's shell
+  const shellOnly = { pane_id: "own-pane", shell_pid: 100, foreground_processes: [{ pid: 100, name: "powershell.exe", argv: ["powershell.exe"] }] };
+  const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({ process_info: shellOnly });
+  const shell = (pid: number) => ({ pid, parent: 1, path: "C:\\Windows\\powershell.exe", commandLine: "powershell.exe" });
+  const omo = (pid: number, parent: number) => ({ pid, parent, path: "C:\\node.exe", commandLine: "node.exe C:\\node_modules\\omo-ai\\bin\\omo.js" });
+  const table = spyOn(gjcRuntime, "recentProcessTable").mockResolvedValue([shell(100), omo(101, 100), shell(200), omo(201, 200)]);
+  const alive = spyOn(processStart, "processAlive").mockReturnValue(true);
+  const born = spyOn(processStart, "processStartedAt").mockReturnValue(null);
+  const home = mkdtempSync(join(tmpdir(), "herdr-omo-win-home-"));
+  const env = { HOME: process.env["HOME"], USERPROFILE: process.env["USERPROFILE"] };
+  process.env["HOME"] = home;
+  process.env["USERPROFILE"] = home;
+  Object.defineProperty(process, "platform", { value: "win32" });
+  try {
+    expect(await paneRunsOmo("own-pane")).toBe(true);
+    expect(await paneRunsOmo("own-pane", shellOnly)).toBe(true);
+    table.mockResolvedValue([shell(100), shell(200), omo(201, 200)]);
+    expect(await paneRunsOmo("own-pane")).toBe(false);
+    expect(await paneRunsOmo("own-pane", shellOnly)).toBe(false);
+    // an OmO a Claude in this pane runs as its tool is not the pane's agent
+    table.mockResolvedValue([shell(100), { pid: 101, parent: 100, path: "C:\\claude.exe", commandLine: "claude.exe" }, omo(102, 101)]);
+    expect(await paneRunsOmo("own-pane")).toBe(false);
+    // the process table is a few seconds old: an OmO that exited since is no longer the pane's
+    table.mockResolvedValue([shell(100), omo(101, 100)]);
+    expect(await paneRunsOmo("own-pane")).toBe(true);
+    alive.mockImplementation((pid: number) => pid !== 101);
+    expect(await paneRunsOmo("own-pane")).toBe(false);
+    expect(await paneRunsOmo("own-pane", shellOnly)).toBe(false);
+    // herdr is asked about this pane by its id: given `target`, it answers for the focused pane
+    expect(rpc.mock.calls.map(([method, params]) => [method, params])).toContainEqual(["pane.process_info", { pane_id: "own-pane" }]);
+    expect(rpc.mock.calls.every(([, params]) => (params as { pane_id?: string }).pane_id === "own-pane")).toBe(true);
+    // a supplied sample is used as it is, herdr not asked again
+    alive.mockReturnValue(true);
+    rpc.mockClear();
+    expect(await paneRunsOmo("own-pane", shellOnly)).toBe(true);
+    expect(rpc).not.toHaveBeenCalled();
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+    for (const [key, value] of Object.entries(env)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    rmSync(home, { recursive: true, force: true });
+    table.mockRestore();
+    alive.mockRestore();
+    born.mockRestore();
+    rpc.mockRestore();
+  }
+});
 
 it("labels only Claude's explicit end_turn text as final-answer evidence", () => {
   const entry = (stop_reason: string | null) => JSON.stringify({ type: "assistant", message: { role: "assistant", stop_reason, content: [{ type: "text", text: "Answer" }] } });

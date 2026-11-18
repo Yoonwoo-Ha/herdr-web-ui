@@ -4,7 +4,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { HerdrPane } from "../shared/protocol.ts";
 import { herdrRpc } from "./herdr/client.ts";
 import { recentProcessTable } from "./gjc-runtime.ts";
-import { processStartedAt, processStartedAtAsync } from "./process-start.ts";
+import { processAlive, processStartedAt, processStartedAtAsync } from "./process-start.ts";
 import { descendantProcesses, type ProcessRow } from "./windows-processes.ts";
 import { userHome } from "./user-home.ts";
 
@@ -339,6 +339,21 @@ function resumedIds(argv: string[]): string[] {
   return result;
 }
 
+const LAUNCH_SHELL = /(^|\/)(cmd|pwsh|powershell)$/i;
+const PACKAGE_RUNNER = /\/(npm|npx)-cli\.js$/i;
+const CONSOLE_HOST = /(^|\/)(conhost|openconsole)(\.exe)?(\s|$)/i;
+/** what herdr may name as a Windows pane's launcher in front of OmO (#886); never another agent */
+const NAMED_LAUNCHER = /(^|\/)pi$/i;
+
+/** A shell or a JS package runner (`cmd /c omo.cmd`, `node …/npx-cli.js omo-ai`): it starts a program and is nothing itself. */
+function isLaunchStep(argv: readonly string[]): boolean {
+  const words = argv.map(windowsPath);
+  if (LAUNCH_SHELL.test(words[0] ?? "")) return true;
+  if (!JS_RUNTIME.test(words[0] ?? "")) return false;
+  const script = words.slice(1).find((word) => !word.startsWith("-"));
+  return script !== undefined && PACKAGE_RUNNER.test(script);
+}
+
 export type ProcessInfo = { process_info?: { shell_pid?: number; foreground_processes?: { pid: number; argv?: string[]; cwd?: string }[] } } | null;
 
 /**
@@ -346,21 +361,48 @@ export type ProcessInfo = { process_info?: { shell_pid?: number; foreground_proc
  * starts (windows-processes.ts). Only processes below this pane's own shell
  * count, and one herdr already named is not added twice.
  */
-export function withOmoDescendants(info: ProcessInfo, rows: readonly ProcessRow[]): ProcessInfo {
+export function withOmoDescendants(info: ProcessInfo, rows: readonly ProcessRow[], alive: (pid: number) => boolean = () => true): ProcessInfo {
   const shell = info?.process_info?.shell_pid;
   if (shell === undefined) return info;
   const foreground = info?.process_info?.foreground_processes ?? [];
-  const omo = descendantProcesses(rows, shell).filter((entry) =>
-    isOmoProcess(entry.argv) && !foreground.some((existing) => existing.pid === entry.pid));
+  const named = new Set(foreground.map((entry) => entry.pid));
+  const below = descendantProcesses(rows, shell);
+  const byPid = new Map(below.map((entry) => [entry.pid, entry]));
+  const parentOf = new Map(rows.map((row) => [row.pid, row.parent]));
+  // A process started in a console of its own (`Start-Process omo`) has its own console host as a
+  // child; one in the pane shares the pane's, which herdr hosts (live-verified, Windows 11).
+  const startedOf = new Map(rows.map((row) => [row.pid, row.started]));
+  const ownConsole = new Set(rows.filter((row) => {
+    if (!CONSOLE_HOST.test(windowsPath(row.path ?? row.commandLine ?? ""))) return false;
+    // a host older than the process now holding its parent's number was that number's earlier owner's
+    const parentStarted = startedOf.get(row.parent);
+    return row.started === undefined || parentStarted === undefined || row.started >= parentStarted;
+  }).map((row) => row.parent));
+  // An OmO that another program started (a Claude running `omo` as a tool) is that program's, not
+  // the pane's: between the shell and the OmO only a shell, a package runner, a process herdr names
+  // for this pane (a launcher such as pi.exe) or OmO itself may sit, and none in another console.
+  const reached = (pid: number): boolean => {
+    if (ownConsole.has(pid)) return false;
+    for (let at = parentOf.get(pid), steps = 0; at !== shell; at = parentOf.get(at!), steps++) {
+      const step = at === undefined ? undefined : byPid.get(at);
+      if (step === undefined || steps > below.length || ownConsole.has(step.pid)) return false;
+      const launcher = named.has(step.pid) && NAMED_LAUNCHER.test(windowsPath(step.argv[0] ?? ""));
+      if (!launcher && !isOmoProcess(step.argv) && !isLaunchStep(step.argv)) return false;
+    }
+    return true;
+  };
+  // the table is a few seconds old (recentProcessTable): an OmO that exited since is not added
+  const omo = below.filter((entry) =>
+    isOmoProcess(entry.argv) && !named.has(entry.pid) && reached(entry.pid) && alive(entry.pid));
   return omo.length === 0 ? info : { ...info, process_info: { ...info?.process_info, foreground_processes: [...foreground, ...omo] } };
 }
 
-const processInfo = async (paneId: string): Promise<ProcessInfo> => {
+export const processInfo = async (paneId: string): Promise<ProcessInfo> => {
   const [info, rows] = await Promise.all([
     herdrRpc<NonNullable<ProcessInfo>>("pane.process_info", { pane_id: paneId }).catch(() => null),
     process.platform === "win32" ? recentProcessTable() : Promise.resolve([]),
   ]);
-  return withOmoDescendants(info, rows);
+  return withOmoDescendants(info, rows, processAlive);
 };
 
 /**
