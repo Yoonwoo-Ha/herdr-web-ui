@@ -115,6 +115,8 @@ const EXPECTED: Record<string, Record<string, InputRowState>> = {
   },
   pi: {
     "draft-empty-119": "ready", "draft-typed-119": "draft", "draft-slash-119": "gone",
+    // pi 1.5.2 with pi-powerline-footer 0.22.0, its status bar above the editor
+    "powerline-draft-empty-200": "ready", "powerline-draft-typed-200": "draft", "powerline-draft-multiline-200": "draft",
     "settings-idle-119": "ready", "settings-idle-40": "ready", "settings-open-119": "gone", "settings-open-40": "gone",
     "settings-closed-119": "ready", "settings-closed-40": "ready",
     "tree-open-119": "gone", "tree-open-40": "gone", "resume-open-119": "gone", "resume-open-40": "gone",
@@ -438,6 +440,28 @@ describe("the chat send's read of the same screens (shared/input-row.ts)", () =>
     // their autocomplete moves the box out of its recorded place: not made out, so not refused
     expect(typed("pi", "pi/draft-slash-119.ansi")).toBeFalse();
     expect(typed("omo", "omo/draft-slash-119.ansi")).toBeFalse();
+  });
+
+  test("pi's editor drawn by pi-powerline-footer, its status bar above it, is read as pi's own", () => {
+    const screen = (name: string): ScreenSnapshot => screenFromAnsi(readFileSync(join(FIXTURES, `pi/powerline-${name}-200.ansi`), "utf8"));
+    // a chat message pasted over a typed `2` was sent and recorded as `2…`, so its receipt never matched
+    expect(inputRowState("pi", screen("draft-typed"))).toBe("draft");
+    expect(typedDraft("pi", screen("draft-typed"))).toBeTrue();
+    expect(typedDraft("pi", screen("draft-multiline"))).toBeTrue();
+    expect(inputRowState("pi", screen("draft-empty"))).toBe("ready");
+    expect(typedDraft("pi", screen("draft-empty"))).toBeFalse();
+    // Left moves pi's cursor onto the `2`, which its editor then draws inverse: still typed text
+    const onCursor = readFileSync(join(FIXTURES, "pi/powerline-draft-typed-200.ansi"), "utf8").replace(" 2\u001b[0m\u001b[7m\u001b[0m", " \u001b[7m2\u001b[0m");
+    expect(typedDraft("pi", screenFromAnsi(onCursor))).toBeTrue();
+    // after the first prompt the extension draws it under the editor (`powerline-last-prompt`, on by default), as
+    // its renderLastPromptLines does
+    const lastPrompt = (name: string, rows: string): ScreenSnapshot => screenFromAnsi(`${readFileSync(join(FIXTURES, `pi/powerline-${name}-200.ansi`), "utf8").replace(/\n$/, "")}\n${rows}\n`);
+    const arrow = " \u001b[38;2;102;102;102m↳\u001b[0m \u001b[38;2;102;102;102mwhat does this repo do?\u001b[0m";
+    expect(inputRowState("pi", lastPrompt("draft-typed", arrow))).toBe("draft");
+    expect(typedDraft("pi", lastPrompt("draft-typed", arrow))).toBeTrue();
+    expect(inputRowState("pi", lastPrompt("draft-empty", arrow))).toBe("ready");
+    // anything else under the editor (its autocomplete list) still fails safe
+    expect(inputRowState("pi", lastPrompt("draft-typed", `   /model  Select model\n${arrow}`))).toBe("gone");
   });
 
   test("pi's editor holding a line typed with leading spaces is a draft to the send, still a dialog's row to the peek", () => {

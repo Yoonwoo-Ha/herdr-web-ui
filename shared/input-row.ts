@@ -160,6 +160,11 @@ export const ompInputRow: InputRowRecognizer = (screen) => {
  * fail safe.
  */
 export const piInputRow: InputRowRecognizer = (screen, typed) => {
+  const stock = piStockInputRow(screen, typed);
+  return stock === "gone" ? piPowerlineInputRow(screen, typed) : stock;
+};
+
+const piStockInputRow: InputRowRecognizer = (screen, typed) => {
   const rows = filled(screen);
   const text = (index: number): string => screen.rows[index]!.text;
   const rules = rows.filter((index) => RULE.test(text(index)));
@@ -189,6 +194,31 @@ export const piInputRow: InputRowRecognizer = (screen, typed) => {
     return "draft";
   }
   return "gone";
+};
+
+/** pi-powerline-footer's editor border: a rule indented one column, `↑` or `↓` at its start where the editor scrolls. */
+const POWERLINE_RULE = /^ [↑↓─]─{9,}$/;
+
+/**
+ * pi with the pi-powerline-footer extension (0.22.0): its status bar sits above the editor, whose two borders
+ * are the screen's last rows. Its first row starts ` > ` (` $ ` in bash mode), the others `   `; nothing in it but
+ * the prompt is an empty box. Under the lower border only the extension's last-prompt row (` ↳ `, drawn once a
+ * prompt was sent) is taken; anything else there (an autocomplete list, another widget) fails safe.
+ * The editor has no placeholder; its cursor draws the character under it inverse, which is still typed text.
+ */
+const piPowerlineInputRow: InputRowRecognizer = (screen, typed) => {
+  const rows = filled(screen);
+  const text = (index: number): string => screen.rows[index]!.text;
+  const last = rows.at(-1);
+  const lower = last !== undefined && /^ ↳ /.test(text(last)) ? rows.at(-2) : last;
+  if (lower === undefined || !POWERLINE_RULE.test(text(lower))) return "gone";
+  const upper = rows.filter((index) => index < lower && POWERLINE_RULE.test(text(index))).at(-1);
+  if (upper === undefined || lower - upper < 2) return "gone";
+  const inner = Array.from({ length: lower - upper - 1 }, (_, offset) => upper + 1 + offset);
+  if (!/^ [>$](?: |$)/.test(text(inner[0]!)) || inner.slice(1).some((index) => !/^ {3}|^$/.test(text(index)))) return "gone";
+  if (inner.length === 1 && text(inner[0]!).trim().length === 1) return "ready";
+  for (const index of inner) typed?.push(...cellsFrom(screen.rows[index]!, 3).map((cell) => cell.inverse ? { ...cell, inverse: false } : cell));
+  return "draft";
 };
 
 /**
