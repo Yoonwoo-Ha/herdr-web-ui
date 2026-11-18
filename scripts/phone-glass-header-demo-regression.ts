@@ -152,7 +152,7 @@ try {
         assert.ok(await page.locator(".header-more-button").evaluate((node) => node === document.activeElement), "Escape gives the focus back to the header's More");
 
         await page.setViewportSize({ width: 700, height: 900 });
-        await page.locator(".pane-slot .tab-strip").waitFor();
+        await tabRowShown(page);
         await page.locator(".tab-strip-label", { hasText: "Duo tab" }).waitFor();
         assert.equal(await page.locator(".pane-frame.is-single .pane-frame-menu").isVisible(), false,
           "upright, the lone tab keeps its row, whose menu carries the pane's actions");
@@ -169,7 +169,7 @@ try {
         await page.locator(".tab-strip-rename").press("Escape");
         await page.locator(".pane-slot .tab-strip").waitFor({ state: "detached" });
         await page.setViewportSize({ width: 700, height: 900 });
-        await page.locator(".pane-slot .tab-strip").waitFor();
+        await tabRowShown(page);
         await page.setViewportSize({ width: 390, height: 844 });
         await page.locator(".pane-slot .tab-strip").waitFor({ state: "detached" });
         await checkMenus(page, "phone");
@@ -214,6 +214,32 @@ try {
   console.log("PASS phone glass header: with no tab row the header's More menu carries the pane's and the tab's actions, and no banner starts under the header");
 } finally {
   rmSync(app, { recursive: true, force: true });
+}
+
+// The row's own inputs (App.tsx and TabStrip.tsx read them): when it does not come back after a resize, the
+// failure says which one still holds it away.
+async function tabRowShown(page: Page): Promise<void> {
+  await page.locator(".pane-slot .tab-strip").waitFor().catch(async (error: Error) => {
+    const seen = await page.evaluate(() => ({
+      viewport: [innerWidth, innerHeight],
+      cramped: matchMedia("(max-width: 768px) and (max-height: 700px)").matches,
+      sheet: matchMedia("(max-width: 640px)").matches,
+      wide: matchMedia("(min-width: 769px)").matches,
+      keyboard: document.documentElement.hasAttribute("data-keyboard"),
+      address: location.search,
+      slots: document.querySelectorAll(".pane-slot").length,
+      tabs: document.querySelectorAll('[role="tab"]').length,
+      strips: [...document.querySelectorAll(".tab-strip")].map((strip) => ({
+        inSlot: strip.closest(".pane-slot") !== null,
+        inHeader: strip.closest(".header-tabs") !== null,
+        box: [strip.getBoundingClientRect().width, strip.getBoundingClientRect().height],
+      })),
+      alerts: [...document.querySelectorAll('[role="alert"]')].map((alert) => alert.textContent?.trim()),
+    })).catch(() => null);
+    // a page that is gone gives no snapshot: the wait's own error is the failure then
+    if (seen === null) throw error;
+    throw new Error(`${error.message}\nthe tab row's inputs: ${JSON.stringify(seen)}`, { cause: error });
+  });
 }
 
 async function openMore(page: Page): Promise<void> {
