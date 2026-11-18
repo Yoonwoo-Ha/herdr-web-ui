@@ -126,12 +126,31 @@ try {
             assert.equal(await inline(page, "--text"), want.text);
             assert.equal(await page.evaluate(() => document.documentElement.style.backgroundColor !== ""), true, `${where}: the page surface is held until the stylesheet arrives`);
             await page.unroute("**/*.js");
+            await page.addInitScript(() => {
+              // The app consumes the carry key at mount. If it has a save to resend, wait for
+              // this document's write of the acknowledged revision, since storage survives reloads.
+              if (sessionStorage.getItem("ovis:preferences-unsent") === null) {
+                performance.mark("preferences-settled");
+                return;
+              }
+              const setItem = Storage.prototype.setItem;
+              Storage.prototype.setItem = function (key: string, value: string): void {
+                setItem.call(this, key, value);
+                if (this !== localStorage || key !== "ovis:sidebar-pins-shared") return;
+                const { revision }: { revision: number } = JSON.parse(value);
+                if (revision > 0) {
+                  Storage.prototype.setItem = setItem;
+                  performance.mark("preferences-settled");
+                }
+              };
+            });
             await page.goto(address());
             await page.locator(".conn-live").waitFor({ state: "attached" });
             await dialog.getByRole("button", { name: "Import", exact: true }).waitFor();
             assert.equal(await palette(page), "custom", `${where}: the app goes on drawing it`);
             assert.equal(await token(page, "--bg"), want.bg);
 
+            await waitDrawn(page, () => performance.getEntriesByName("preferences-settled", "mark").length > 0, undefined, "the resent preferences save");
             await picker.setInputFiles(file("lamplight.json", EXAMPLE.replace(example.theme[scheme]!.base00, "#123456")));
             await waitDrawn(page, () => getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() === "#123456");
             assert.equal(await cards.count(), 1, `${where}: an edited file takes its earlier self's place`);
