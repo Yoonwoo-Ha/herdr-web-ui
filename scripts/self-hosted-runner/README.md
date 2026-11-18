@@ -221,7 +221,12 @@ Fast checks, Integration tests and both Browser regression jobs each run `bun ru
 commit: about 60 CPU seconds apiece on the P620. `run.sh --build-cache DIR --build-cache-writer LOGIN`
 lets the first of them build it and the others restore its `dist/` in a fraction of a second
 (`scripts/build-cache.ts`). Point it at RAM (`/dev/shm/ovis-build-cache`); `--build-cache-mb`
-(default 2048, about 50 builds) bounds it, least recently used first. Measured (four builds of one
+(default 2048, about 50 builds) bounds it, least recently used first. Under SELinux the launcher labels
+the cache and each slot's outbox `container_file_t` as it starts (new files keep their directory's
+label), or runs without the cache when it cannot. A label set this way lasts until the next
+`restorecon` or full relabel, so on such a host put the cache in a directory a `semanage fcontext`
+rule labels `container_file_t` (on disk it is read through the page cache, as fast as `/dev/shm`),
+and give the outboxes (`~/.local/state/ovis-ci-runner/build-outbox`) such a rule too. Measured (four builds of one
 commit, as one run's jobs do): 246-266 CPU s without it, 53-70 CPU s with it; four started at once
 build once.
 

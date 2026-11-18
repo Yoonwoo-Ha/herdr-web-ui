@@ -250,6 +250,7 @@ fi
 # under that run (entries/<run id>/<key>), where only that run's jobs read.
 BUILD_CACHE_ROOT=""
 BUILD_CACHE_OUTBOXES=""
+BUILD_CACHE_LABEL=""
 # which job of a run builds it: a volume of its own in RAM, capped, so a job filling it fills nothing else
 BUILD_CACHE_LOCKS="${PREFIX}build-cache-locks"
 if [ -n "$BUILD_CACHE" ]; then
@@ -262,7 +263,21 @@ if [ -n "$BUILD_CACHE" ]; then
       if BUILD_CACHE_ROOT="$(umask 022 && mkdir -p "$BUILD_CACHE/$REPO/entries" "$BUILD_CACHE/$REPO/used" && cd "$BUILD_CACHE/$REPO" && pwd -P)" &&
         BUILD_CACHE_OUTBOXES="$(umask 022 && mkdir -p "$outboxes" && cd "$outboxes" && pwd -P)" &&
         docker volume create --driver local --opt type=tmpfs --opt device=tmpfs --opt o=size=16m,mode=1777 "$BUILD_CACHE_LOCKS" >/dev/null; then
-        :
+        # Under SELinux a container reads and writes only what is labelled container_file_t, and a new file
+        # takes its directory's label: without this, no job could hand in a build or read the cache. The
+        # cache holds only this user's files; an outbox may hold an earlier job's, which this user may not
+        # relabel, so each slot's outbox is labelled once it is emptied (build_cache_args).
+        # Only directories this user owns are relabelled (a path through a link elsewhere is not), and at
+        # level s0, which every container may use: a level a `:Z` mount once gave stays one container's.
+        if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+          if [ -O "$BUILD_CACHE_ROOT" ] && [ -O "$BUILD_CACHE_OUTBOXES" ] &&
+            chcon -R -t container_file_t -l s0 "$BUILD_CACHE_ROOT" && chcon -t container_file_t -l s0 "$BUILD_CACHE_OUTBOXES"; then
+            BUILD_CACHE_LABEL=1
+          else
+            echo "[build-cache] cannot label $BUILD_CACHE_ROOT and its outboxes container_file_t for SELinux: running without it" >&2
+            BUILD_CACHE_ROOT=""
+          fi
+        fi
       else
         echo "[build-cache] cannot use $BUILD_CACHE/$REPO, its outboxes or the $BUILD_CACHE_LOCKS volume: running without it" >&2
         BUILD_CACHE_ROOT=""
@@ -296,6 +311,10 @@ build_cache_args() {
     fi
   fi
   mkdir -p "$outbox" && chmod 1777 "$outbox" || return 0
+  if [ -n "$BUILD_CACHE_LABEL" ] && ! chcon -t container_file_t -l s0 "$outbox"; then
+    echo "[$1] cannot label its build cache outbox container_file_t for SELinux: starting it without the build cache" >&2
+    return 0
+  fi
   BUILD_CACHE_ARGS=(-v "$BUILD_CACHE_ROOT/entries:/build-cache:ro" -v "$BUILD_CACHE_LOCKS:/build-cache-locks"
     -v "$outbox:/build-cache-outbox" -e OVIS_BUILD_CACHE_DIR=/build-cache -e OVIS_BUILD_CACHE_LOCKS=/build-cache-locks
     -e OVIS_BUILD_CACHE_OUTBOX=/build-cache-outbox ${BUILD_CACHE_WRITER:+-e "OVIS_BUILD_CACHE_WRITER=$BUILD_CACHE_WRITER"})

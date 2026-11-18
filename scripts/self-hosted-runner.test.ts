@@ -193,6 +193,7 @@ function runRunner(options: {
   addrs?: string[];
   routeGet?: "none" | "table" | "until-retry" | "lost-after-rm";
   networkBlock?: string;
+  selinux?: "on" | "chcon-fails";
 } = {}) {
   const { tempDir, args, env, logPath, envFile } = prepareRunner(options);
   try {
@@ -493,6 +494,19 @@ if [ -n "\${RUNNER_TEST_NO_BACKOFF:-}" ] && [ "$*" = 30 ]; then printf 'sleep 30
 exec "${sleep}" "$@"
 `);
     chmodSync(join(binDir, "sleep"), 0o755);
+    // SELinux is off unless a test turns it on, whatever the host running the tests has
+    writeFileSync(join(binDir, "selinuxenabled"), `#!/bin/sh
+[ -n "\${RUNNER_TEST_SELINUX:-}" ]
+`);
+    // as SELinux does, refuses to relabel a file of another user (here: a file named "foreign")
+    writeFileSync(join(binDir, "chcon"), `#!/bin/sh
+printf 'chcon %s\\n' "$*" >> "$RUNNER_TEST_LOG"
+[ "\${RUNNER_TEST_SELINUX:-}" != chcon-fails ] || exit 1
+depth=0; [ "$1" = -R ] && depth=99
+for arg; do case "$arg" in /*) [ -z "$(find "$arg" -maxdepth "$depth" -name foreign -print -quit)" ] || exit 1 ;; esac; done
+`);
+    chmodSync(join(binDir, "selinuxenabled"), 0o755);
+    chmodSync(join(binDir, "chcon"), 0o755);
     chmodSync(join(binDir, "gh"), 0o755);
     chmodSync(join(binDir, "docker"), 0o755);
     chmodSync(join(binDir, "git"), 0o755);
@@ -539,6 +553,8 @@ exec "${sleep}" "$@"
       ...(options.addrs ? { RUNNER_TEST_ADDRS: options.addrs.join("\n") } : {}),
       ...(options.routeGet ? { RUNNER_TEST_ROUTE_GET: options.routeGet } : {}),
       ...(options.networkBlock !== undefined ? { OVIS_CI_NETWORK_BLOCK: options.networkBlock } : {}),
+      // never what the shell running the tests exports: SELinux is off unless a test turns it on
+      RUNNER_TEST_SELINUX: options.selinux ?? "",
       RUNNER_TEST_DEFAULT_BRANCH: options.defaultBranch ?? "main",
       RUNNER_TEST_BRANCHES: (options.branches ?? ["main"]).join(" "),
       XDG_CACHE_HOME: options.cacheHome ?? join(tempDir, "cache"),
@@ -659,6 +675,42 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
       }
       for (const mb of ["0", "00", "0000"]) expect(runRunner({ args: ["--build-cache", join(home, "shm"), "--build-cache-mb", mb] }).result.status).toBe(2);
       expect(runRunner({ args: ["--build-cache", join(home, "shm"), "--build-cache-writer", "a b"] }).result.status).toBe(2);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("labels the build cache and its outboxes for containers under SELinux, and runs without the cache when it cannot", () => {
+    const home = mkdtempSync(join(tmpdir(), "herdr-runner-build-cache-selinux-test-"));
+    try {
+      const stateHome = join(home, "state");
+      const args = ["--build-cache", join(home, "cache")];
+      const outboxes = join(stateHome, "ovis-ci-runner/build-outbox/owner/repo");
+      const host = spawnSync("hostname", ["-s"], { encoding: "utf8" }).stdout.trim();
+      const slot = join(outboxes, `herdr-ci-${host}-1`);
+      const runs = (calls: string) => calls.split("\n").filter((call) => runnerRun.test(call));
+
+      const off = runRunner({ stateHome, args });
+      expect(off.calls).not.toContain("chcon");
+      expect(runs(off.calls)[0]).toContain(":/build-cache:ro ");
+
+      // an earlier job's directory the launcher could not empty, holding a file this user may not relabel
+      mkdirSync(join(slot, "left"), { recursive: true });
+      writeFileSync(join(slot, "left/foreign"), "x");
+      const on = runRunner({ stateHome, args, selinux: "on" });
+      expect(on.result.status).toBe(0);
+      const lines = on.calls.split("\n");
+      const before = (call: string) => lines.indexOf(call) >= 0 && lines.indexOf(call) < lines.findIndex((line) => runnerRun.test(line));
+      expect(before(`chcon -R -t container_file_t -l s0 ${join(home, "cache/owner/repo")}`)).toBe(true);
+      expect(before(`chcon -t container_file_t -l s0 ${outboxes}`)).toBe(true);
+      expect(before(`chcon -t container_file_t -l s0 ${slot}`)).toBe(true);
+      expect(on.result.stderr).not.toContain("container_file_t for SELinux");
+      expect(runs(on.calls)[0]).toContain(":/build-cache:ro ");
+
+      const refused = runRunner({ stateHome, args, selinux: "chcon-fails" });
+      expect(refused.result.status).toBe(0);
+      expect(refused.result.stderr).toContain("container_file_t for SELinux: running without it");
+      expect(runs(refused.calls)[0]).not.toMatch(/:\/build-cache|OVIS_BUILD_CACHE_/);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
