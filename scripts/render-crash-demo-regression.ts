@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
+import { SHEET_HISTORY_KEY } from "../src/lib/historyKeys.ts";
 import { buildDemoApp } from "./demo-build.ts";
 import { DEMO_FILE_PREVIEW_SCRIPT } from "./demo-file-preview.ts";
 import { chromePath } from "./chrome-path.ts";
@@ -232,8 +233,11 @@ try {
         assert.equal(await page.locator(".app-crash").count(), 0, "the page is not blanked");
         await page.getByRole("button", { name: "Open workspace list", exact: true }).tap();
         await page.locator("#workspace-drawer.is-open .sidebar-shell").waitFor();
+        await page.waitForFunction((key) => typeof history.state?.[key] === "string", SHEET_HISTORY_KEY, { timeout: 5_000 });
         await page.touchscreen.tap(page.viewportSize()!.width - 8, page.viewportSize()!.height / 2);
         await page.locator("#workspace-drawer.is-open").waitFor({ state: "detached" });
+        // The drawer's Back lands after it closes and can restore the crash flag from the entry underneath.
+        await page.waitForFunction((key) => history.state?.[key] === undefined, SHEET_HISTORY_KEY, { timeout: 5_000 });
         await stopCrashing(page);
         await notice.getByRole("button", { name: "Try again", exact: true }).tap();
         await page.locator(".pane-frame.is-current").waitFor();
