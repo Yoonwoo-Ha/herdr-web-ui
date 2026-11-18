@@ -63,12 +63,17 @@ export class ConversationReadPending extends Error {
 
 /**
  * A file as it was authorized: its device and inode, exact (bigint, as a bigint stat gives them) or as numbers,
- * which round 64-bit file indexes (Windows') and so tell only as much as a number stat does.
+ * which round 64-bit file indexes (Windows') and so tell only as much as a number stat does. A bigint stat may
+ * give a value past 2^63 (an NFS inode) as negative, where a number stat gives it unsigned (#4089).
  */
 export interface FileIdentity { dev: number | bigint; ino: number | bigint }
 
 function sameFile(identity: FileIdentity, opened: FileIdentity): boolean {
-  const same = (a: number | bigint, b: number | bigint) => typeof a === "bigint" && typeof b === "bigint" ? a === b : Number(a) === Number(b);
+  const unsigned = (value: number | bigint) => typeof value === "bigint" ? BigInt.asUintN(64, value) : value;
+  const same = (a: number | bigint, b: number | bigint) => {
+    const left = unsigned(a), right = unsigned(b);
+    return typeof left === "bigint" && typeof right === "bigint" ? left === right : Number(left) === Number(right);
+  };
   return same(identity.dev, opened.dev) && same(identity.ino, opened.ino);
 }
 

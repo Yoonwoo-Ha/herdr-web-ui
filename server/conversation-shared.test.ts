@@ -3,7 +3,23 @@ import { closeSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { finishAsync, type Steps } from "./codex-images.ts";
-import { boundSteps, ConversationReadPending, type FileIdentity, openBound } from "./conversation-shared.ts";
+import { boundSteps, checkBoundFile, ConversationReadPending, type FileIdentity, openBound, readBound } from "./conversation-shared.ts";
+
+it("holds a file past 2^63 to its inode whether a stat gives it as a number, unsigned or signed (#4089)", () => {
+  const path = "transcript.jsonl";
+  const unsigned = 10_727_827_628_292_156_347n;
+  // a bigint fstat of an NFS file can give bit 63 as the sign; a number stat rounds the unsigned value
+  const signed = BigInt.asIntN(64, unsigned);
+  const opened = (authorized: FileIdentity, stat: FileIdentity): string => {
+    try { readBound([[path, authorized]], () => checkBoundFile(path, stat)); return "open"; }
+    catch (error) { return error instanceof ConversationReadPending ? "refused" : "error"; }
+  };
+  expect(opened({ dev: 194, ino: Number(unsigned) }, { dev: 194n, ino: signed })).toBe("open");
+  expect(opened({ dev: 194n, ino: unsigned }, { dev: 194n, ino: signed })).toBe("open");
+  expect(opened({ dev: 194n, ino: signed }, { dev: 194n, ino: signed - 1n })).toBe("refused");
+  expect(opened({ dev: 194, ino: Number(unsigned) }, { dev: 194n, ino: signed + 4096n })).toBe("refused");
+  expect(opened({ dev: 194n, ino: unsigned }, { dev: 194n, ino: BigInt.asIntN(64, unsigned + 1n) })).toBe("refused");
+});
 
 it("keeps two interleaved lookups' bindings of one path apart, through their awaits and a rejected one, and none after them", async () => {
   const root = mkdtempSync(join(tmpdir(), "bound-steps-"));
