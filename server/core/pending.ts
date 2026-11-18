@@ -1078,12 +1078,13 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       // after a launch herdr may name no agent yet, and what is in front may be a child the agent runs as it
       // starts (Claude Code's git and gh); that binding is completed when herdr names it (learn, bindLaunched)
       const { pane, identity, shellPid, processes, held } = await currentIdentity(paneId, launchedPid, kind);
-      ended();
       const launchedProcess = launchedPid !== null
         ? { processPid: launchedPid, processBirth: identity.processPid === launchedPid ? identity.processBirth : await processStartedAtAsync(launchedPid) }
         : identity.processPid !== null && identity.processPid !== undefined && identity.processPid !== shellPid
           && runsAgentProgram(processes?.foreground_processes?.find((entry) => entry.pid === identity.processPid) ?? {}, kind)
           ? { processPid: identity.processPid, processBirth: identity.processBirth } : {};
+      // after the last await: a pane that ended during any of them has nothing left to discard this message later
+      ended();
       const sessions = identity.agent === kind
         ? { session: identity.session, omoSession: identity.omoSession ?? null, claudeSession: identity.claudeSession ?? null } : { session: null };
       const item = pending.enqueue(FIRST_MESSAGE_OWNER, paneId, nextFirstRequestId--, text, null,

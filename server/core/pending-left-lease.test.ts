@@ -7,6 +7,8 @@ import { createPendingDelivery, FIRST_MESSAGE_OWNER } from "./pending.ts";
 afterEach(() => { mock.restore(); });
 
 type Row = { id: string; state: string; error?: { code: string } };
+/** a process the launch named that herdr does not show in front yet: its start is read on its own */
+const LAUNCHED = 41999;
 
 /**
  * A pane with Codex in front and one page; `hold()` makes the next snapshot read wait, as a herdr call under way does.
@@ -16,7 +18,12 @@ function pane() {
   const typed: string[] = [];
   const now = { status: "working", member: true };
   let waiting: { reached: () => void; release: Promise<void> } | null = null;
-  spyOn(processStart, "processStartedAtAsync").mockResolvedValue(1000);
+  let starting: { reached: () => void; release: Promise<void> } | null = null;
+  spyOn(processStart, "processStartedAtAsync").mockImplementation(async (pid) => {
+    const held = pid === LAUNCHED ? starting : null;
+    if (held) { starting = null; held.reached(); await held.release; }
+    return 1000;
+  });
   spyOn(herdr, "paneProcessInfo").mockImplementation(async () => ({ pane_id: "p", shell_pid: 41000, foreground_processes: [{ pid: 41001, name: "codex", argv: ["codex"] }] }) as Awaited<ReturnType<typeof herdr.paneProcessInfo>>);
   spyOn(herdr, "paneRead").mockImplementation(async () => ({ text: "" }) as Awaited<ReturnType<typeof herdr.paneRead>>);
   spyOn(herdr, "paneSendText").mockImplementation(async (_pane, text) => { typed.push(text); });
@@ -51,10 +58,15 @@ function pane() {
     waiting = { reached: reached.resolve, release: release.promise };
     return { reached: reached.promise, release: release.resolve };
   };
+  const holdStart = () => {
+    const reached = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    starting = { reached: reached.resolve, release: release.promise };
+    return { reached: reached.promise, release: release.resolve };
+  };
   const opens = () => { page.data.attached.set("p", { keepSize: false }); now.member = true; };
   const leaves = () => { page.data.attached.delete("p"); delivery.holdPending(page as never, "p"); now.member = false; };
   const rests = async () => { now.status = "idle"; delivery.pending.status("p", "idle"); delivery.drainPending("p"); await settled(); };
-  return { delivery, page: page as never, typed, now, settled, hold, opens, leaves, rests };
+  return { delivery, page: page as never, typed, now, settled, hold, holdStart, opens, leaves, rests };
 }
 
 it("holds a queued message whose sender left the pane during its automatic send, also when the agent only put that send off", async () => {
@@ -161,6 +173,19 @@ it("lists no first message for a pane that ended while its agent was launched", 
   // what its terminal reports after does not bring the pane back
   d.delivery.holdPendingPane("p", RESTARTING);
   await expect(d.delivery.queueFirstMessage("p", "first words", "codex", request)).rejects.toMatchObject({ code: "pane_not_found" });
+  expect(d.delivery.pending.list(FIRST_MESSAGE_OWNER, "p")).toEqual([]);
+});
+
+it("lists no first message for a pane that ended while the launched process's start was read, the last thing awaited", async () => {
+  const d = pane();
+  d.now.status = "idle";
+  const start = d.holdStart();
+  const asked = d.delivery.queueFirstMessage("p", "first words", "codex", connection(d), LAUNCHED);
+  asked.catch(() => {});
+  await start.reached;
+  d.delivery.holdPendingPane("p", GONE);
+  start.release();
+  await expect(asked).rejects.toMatchObject({ code: "pane_not_found" });
   expect(d.delivery.pending.list(FIRST_MESSAGE_OWNER, "p")).toEqual([]);
 });
 
