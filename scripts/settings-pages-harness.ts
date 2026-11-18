@@ -1,5 +1,5 @@
 import type { Page } from "playwright-core";
-import { sheetRisen } from "./settings-page.ts";
+import { pressInSettings, sheetRisen } from "./settings-page.ts";
 
 const PAGES = ["Appearance", "Chat", "Terminal", "Alerts", "Agents", "Shortcuts", "Devices and PCs", "Experimental", "About"];
 const SETTINGS = { language: "en", showUsage: true, voiceInput: true, showQuickReplies: true, fileOpen: "panel" };
@@ -12,7 +12,7 @@ const openSettings = async (page: Page): Promise<void> => {
 };
 const closeSettings = async (page: Page): Promise<void> => {
   await sheetRisen(page);
-  await page.getByRole("button", { name: "Close settings", exact: true }).click();
+  await pressInSettings(page.getByRole("button", { name: "Close settings", exact: true }));
   await page.locator(".settings-dialog").waitFor({ state: "detached" });
   await page.waitForFunction(() => (history.state as Record<string, unknown> | null)?.["ovis:settings"] === undefined);
 };

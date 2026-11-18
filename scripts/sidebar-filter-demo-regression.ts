@@ -15,6 +15,7 @@ import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { serveDemo } from "./demo-server.ts";
+import { sheetRisen } from "./settings-page.ts";
 
 // No live session is read, and nothing leaves the loopback server below.
 const app = mkdtempSync(join(tmpdir(), "herdr-sidebar-filter-"));
@@ -603,13 +604,14 @@ async function openWorktreeUnderFilter(browser: Browser, scene: Scene): Promise<
     const head = page.getByRole("region", { name: "PC Laptop" }).locator('.workspace-group[data-workspace="w1C"] > .workspace-header').first();
     if (scene.phone) {
       await head.locator(".row-menu-toggle").tap();
-      await page.getByRole("dialog").getByRole("button", { name: "Open worktree…", exact: true }).tap();
+      await sheetRisen(page, ".row-sheet");
+      await page.locator(".row-sheet").getByRole("button", { name: "Open worktree…", exact: true }).tap();
     } else {
       await head.locator(".workspace-select").click({ button: "right" });
       await page.getByRole("menu").getByRole("menuitem", { name: "Open worktree…", exact: true }).click();
     }
     const dialog = page.locator(".worktree-modal");
-    await dialog.waitFor();
+    await sheetRisen(page, ".worktree-modal");
     await dialog.locator(".worktree-row:not([disabled])").first().click();
     await dialog.waitFor({ state: "detached" });
     assert.equal((await storageView(page)).local[foldKey], "1", `${name}: opening a checkout under the filter writes no fold`);

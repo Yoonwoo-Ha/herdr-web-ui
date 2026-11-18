@@ -13,6 +13,7 @@ import { handlePreferencesRequest, PreferenceStore } from "../server/preferences
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { contextMenuKey } from "./context-menu-key.ts";
+import { pressInSettings, sheetRisen } from "./settings-page.ts";
 
 interface RosterPatch { secondPc?: "connected" | "disconnected" | null; longLabel?: { paneId: string; label: string } | null; empty?: boolean; loading?: boolean }
 declare global {
@@ -209,8 +210,9 @@ const errorsOf = (page: Page): string[] => (page as Page & { fixtureErrors: stri
 const getPreferences = (page: Page): Promise<SharedPreferences> => page.evaluate(async () => (await fetch("/api/preferences")).json() as Promise<SharedPreferences>);
 
 async function openDrawer(page: Page): Promise<void> {
-  const toggle = page.locator('button[aria-controls="workspace-drawer"]');
-  if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.tap();
+  const drawer = page.locator("#workspace-drawer.is-open");
+  if (await drawer.count() === 0) await page.locator('#drawer-toggle[aria-expanded="false"]').tap();
+  await sheetRisen(page, "#workspace-drawer.is-open");
   const agents = page.locator(".agents-sidebar .agent-section-toggle");
   if (await agents.getAttribute("aria-expanded") !== "true") await agents.tap();
 }
@@ -220,7 +222,7 @@ async function openMenu(page: Page, phone: boolean, machineId: string, paneId: s
   if (phone) {
     await openDrawer(page);
     await target.locator(".row-menu-toggle").tap();
-    await page.locator(".row-sheet").waitFor();
+    await sheetRisen(page, ".row-sheet");
   } else {
     await target.locator(".agent-select").click({ button: "right" });
     await page.locator(".row-menu").waitFor();
@@ -579,14 +581,15 @@ export async function runPaneMute(part: "behaviour" | "captures"): Promise<void>
             fixture.error = true;
             await toggleMute(page, phone, "local", panes.cli);
             await page.keyboard.press("ControlOrMeta+Shift+Comma");
-            await page.locator(".settings-dialog").waitFor();
-            const alerts = page.locator(".settings-dialog").getByRole("tab", { name: "Alerts", exact: true });
-            if (await alerts.count() > 0) await (phone ? alerts.tap() : alerts.click());
+            await sheetRisen(page);
+            const settings = page.locator(".settings-dialog");
+            await pressInSettings(settings.getByRole("tab", { name: "Alerts", exact: true }));
+            await settings.getByRole("tabpanel", { name: "Alerts", exact: true }).waitFor();
             await page.locator(".settings-save-error").waitFor({ timeout: 10_000 });
             await capture(page, theme, language, "save-error");
             fixture.error = false;
-            await page.keyboard.press("Escape");
-            await page.locator(".settings-dialog").waitFor({ state: "detached" });
+            await pressInSettings(settings.getByRole("button", { name: "Close settings", exact: true }));
+            await settings.waitFor({ state: "detached" });
             fixture.watch = true;
             const watching = await openTab(context, "&mute-fixture=watch");
             await openMenu(watching, phone, "local", P);

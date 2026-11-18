@@ -377,8 +377,17 @@ try {
       await page.goto(root);
       const dialog = page.getByRole("dialog", { name: DIALOG, exact: true });
       const line = dialog.locator(".setup-note-usage");
-      await dialog.getByRole("heading", { name: "Pick an agent", exact: true }).waitFor();
-      await line.waitFor({ state: "attached" });
+      const heading = dialog.getByRole("heading", { name: "Pick an agent", exact: true });
+      await heading.focus();
+      await line.evaluate((node) => {
+        const observer = new IntersectionObserver(([entry]) => {
+          if (entry) node.setAttribute("data-fixture-in-view", String(entry.isIntersecting && entry.intersectionRatio >= 0.99));
+        }, { threshold: [0, 1] });
+        observer.observe(node);
+      });
+      const lineClipped = line.and(page.locator('[data-fixture-in-view="false"]'));
+      const lineInView = line.and(page.locator('[data-fixture-in-view="true"]'));
+      await lineClipped.waitFor({ state: "attached" });
       const below = await line.evaluate((node) => {
         const body = node.closest(".modal-body")!.getBoundingClientRect();
         return node.getBoundingClientRect().bottom > body.bottom;
@@ -390,20 +399,27 @@ try {
       // a native showModal() dialog over the guide (as Add PC opens) covers the line too, though it has no aria-modal (#3882)
       await page.evaluate(() => { const native = document.createElement("dialog"); native.id = "native-over"; native.textContent = "native"; document.body.append(native); native.showModal(); });
       await line.evaluate((node) => node.scrollIntoView({ block: "nearest" }));
+      await lineInView.waitFor({ state: "attached" });
       await frames(4);
       assert.equal(await page.evaluate(() => (window as unknown as { counts: { seen: unknown[]; failed: number } }).counts.seen.length + (window as unknown as { counts: { failed: number } }).counts.failed), 0, "a line under a native modal dialog is not recorded");
       await line.evaluate((node) => { node.closest(".modal-body")!.scrollTop = 0; });
+      // Keep the native cover until the scroll reset reaches IntersectionObserver. Closing it restores focus,
+      // which schedules a record using the last intersection; the line must stay clipped until Settings owns focus.
+      await lineClipped.waitFor({ state: "attached" });
       await page.evaluate(() => { const native = document.getElementById("native-over") as HTMLDialogElement; native.close(); native.remove(); });
-      await frames(4);
       await page.keyboard.press("Control+Shift+Comma");
       const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-      await settings.waitFor();
+      await settings.and(page.locator(":focus-within")).waitFor();
       await line.evaluate((node) => node.scrollIntoView({ block: "nearest" }));
+      await lineInView.waitFor({ state: "attached" });
       await frames(4);
       assert.equal(await seen(), 0, "a line under Settings is not recorded as seen");
       // not even tried: a covered line makes no acknowledgement attempt, failed or not (#3894 CodeRabbit)
       assert.equal(await page.evaluate(() => (window as unknown as { counts: { failed: number } }).counts.failed), 0, "no acknowledgement is attempted while Settings covers the line");
-      await page.keyboard.press("Escape");
+      await Promise.all([
+        page.waitForEvent("console", { predicate: (message) => message.type() === "error" && message.text().startsWith("telemetry notice ") }),
+        page.keyboard.press("Escape"),
+      ]);
       await settings.waitFor({ state: "detached" });
       await page.waitForFunction(() => (window as unknown as { counts: { failed: number } }).counts.failed === 1);
       assert.equal(await seen(), 0, "a failed record is not counted");
