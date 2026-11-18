@@ -121,7 +121,9 @@ setInterval(() => {}, 1 << 30);
     assert.deepEqual(drawn.kept, [`/api/fonts/${FAMILY}.woff2`], "the file is kept for the next load");
     assert.ok(attach, "the pane is attached");
     assert.deepEqual([attach.cols, attach.rows], [drawn.cols, drawn.gridRows], "the pane is attached at the served face's grid");
-    assert.deepEqual(resizes, [], "the served face resizes no pty");
+    // a resize to the grid it attached at changes no pty (the server drops it): a late first role-ack refits to that
+    // same grid, so only a resize to another grid is the served face resizing the pty
+    assert.deepEqual(resizes.filter((frame) => frame.cols !== attach.cols || frame.rows !== attach.rows), [], "the served face resizes no pty");
     assert.deepEqual(errors, []);
     await context.close();
   }
