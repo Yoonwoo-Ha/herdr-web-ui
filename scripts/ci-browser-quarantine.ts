@@ -37,6 +37,7 @@ export const QUARANTINE: Readonly<Record<string, QuarantineEntry>> = {
   "scripts/relay-pairing-prompt-regression.ts": { until: "2026-12-02", issue: 4026 },
   "scripts/render-crash-demo-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/reply-comments-demo-regression.ts": { until: "2026-12-02", issue: 4026 },
+  "scripts/repo-diff-browser-qa.ts": { until: "2026-12-02", issue: 4026 },
   "scripts/settings-pages-demo-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/settings-segmented-demo-regression.ts": { until: "2026-12-02", issue: 4026 },
   "scripts/setup-dialog-demo-regression.ts": { until: "2026-12-18", issue: 4026 },
