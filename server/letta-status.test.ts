@@ -44,6 +44,7 @@ describe("a Letta pane's status from its local messages", () => {
       await file.lines(real, 0, file.stat(real)!.size, (line) => { if ("text" in line) seen.push(line.text); }, () => true);
       expect(seen.some((line) => line.startsWith("xxxx"))).toBe(false);
       expect(seen.at(-1)).toBe(turn.at(-1));
+      // a link put where the file was, or a link for the conversation's folder, gives another conversation's status
       const other = join(dir, "other.jsonl");
       writeFileSync(other, turn.join("\n"));
       const linkedFolder = join(dir, "conversations", "linked");
@@ -52,6 +53,7 @@ describe("a Letta pane's status from its local messages", () => {
       expect(file.stat(join(linkedFolder, "messages.jsonl"))).toBeNull();
       symlinkSync(folder, join(dir, "conversations", "folder-link"));
       expect(file.stat(join(dir, "conversations", "folder-link", "messages.jsonl"))).toBeNull();
+      // nor does a link for a folder above it, here the store's conversations folder pointing into another store
       const otherStore = join(dir, "other-store");
       mkdirSync(join(otherStore, "conversations", "key"), { recursive: true });
       writeFileSync(join(otherStore, "conversations", "key", "messages.jsonl"), turn.join("\n"));
@@ -104,6 +106,7 @@ describe("a Letta pane's status from its local messages", () => {
     const titled = (id: string, status: HerdrPane["agent_status"], title: string) => ({ ...pane(id, "letta", status), terminal_title: title } as HerdrPane);
     const last = new Map<string, HerdrPane["agent_status"]>();
     lettaTitleStatus({ panes: [titled("t1", "working", "[ ! ] Action Required | Tutor")] }, () => true, last);
+    // approved, the call runs and the title spins, while the file still ends at an older answer
     const after = [titled("t1", "idle", "⠋ Tutor")];
     expect(lettaTitleStatus({ panes: after }, () => true, last)).toEqual([{ paneId: "t1", status: "working" }]);
     expect(after[0]!.agent_status).toBe("working");

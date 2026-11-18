@@ -7,7 +7,9 @@ import { coreConnection, HC_MOVED, hcBin, hcRecovery, NoAltRuntimeError, startRu
 import { capabilities, HERDR, HERDR_CORE } from "../runtime/capabilities.ts";
 import { socketAddress } from "../herdr/client.ts";
 
+/** an hc stand-in found, so no test looks at the developer's own PATH, shell or hc */
 const standIn = async () => ({ bin: "/nonexistent/hc", version: "0.1.17" });
+/** nor the developer's login shell: the terminal environment it would read, none */
 const noLogin = async () => ({});
 
 const platform = process.platform;
@@ -30,6 +32,7 @@ afterEach(() => {
   else process.env["OVIS_HC_BIN"] = previousHcBin;
 });
 
+/** where a stand-in hc is found at all: discovery runs one only when every folder above it is safe, which a shared TMPDIR need not be */
 const checkedTmp = platform === "win32" ? tmpdir() : "/tmp";
 
 it.skipIf(platform === "win32")("runs the hc it found, not an unrelated one named first", async () => {
@@ -96,6 +99,7 @@ it.skipIf(platform === "win32")("never runs a file the search did not just verif
     hcBin();
     await hcRecovery();
     expect(hcBin()).not.toBe(replaced);
+    // nothing verified: not even a file that reappears at the old path is handed out
     hcIn(dir, "old", "herbstclient 0.9.5");
     expect(hcBin()).toBe(HC_MOVED);
     await hcRecovery();
@@ -173,6 +177,7 @@ it.skipIf(platform === "win32")("runs hc connect with HERDR_SOCKET as it was bef
 });
 
 it.skipIf(platform === "win32")("runs hc connect in the user's terminal environment, so a core it starts hands that to every pane", async () => {
+  // regression: a core started from a service or an agent's shell gave panes no profile tokens, and the agent's NO_COLOR
   const dir = mkdtempSync(join(tmpdir(), "ovis-hc-terminal-env-"));
   const previous = { HC_SOCKET: process.env["HC_SOCKET"], NO_COLOR: process.env["NO_COLOR"] };
   cleanup = () => {
@@ -303,6 +308,7 @@ it.skipIf(platform !== "win32")("serves herdr-core on Windows through a named pi
     expect(process.env["HERDR_SOCKET"]).toBe(adapter.socketPath);
     expect(socketAddress(adapter.socketPath)).toBe(adapter.socketPath);
     await expect(startRuntime(join(dir, "state"), standIn, noLogin)).rejects.toThrow(/Another Ovis owns this state directory/);
+    // and through a junction to the same folder, which names the same pipe
     symlinkSync(join(dir, "state"), join(dir, "alias"), "junction");
     await expect(startRuntime(join(dir, "alias"), standIn, noLogin)).rejects.toThrow(/Another Ovis owns this state directory/);
   } finally {

@@ -36,11 +36,14 @@ function wireLogsHeld(pid: number, sessions: string): string[] {
   return held;
 }
 
+/** A lock is a small JSON object; anything larger is not the CLI's. */
 const LOCK_BYTES = 4096;
 
 /**
- * The CLI writes `{ pid, hostname, startedAt }` when it takes the session and removes the file when
- * it lets go, but a crash leaves it behind.
+ * Whether one of `own` wrote this lock and still holds it: the CLI writes
+ * `{ pid, hostname, startedAt }` when it takes the session and removes the file when it lets go,
+ * but a crash leaves it behind, and its pid can come to name another process later. A lock
+ * written before its pid's process started (by the latest that start can be) is that leftover.
  */
 function lockOwner(path: string, own: Set<number>): { pid: number; since: number } | null {
   let lock: unknown;
@@ -57,6 +60,7 @@ function lockOwner(path: string, own: Set<number>): { pid: number; since: number
   return started !== null && startedAt >= started ? { pid, since: startedAt } : null;
 }
 
+/** The main agent's wire log of the session with this id, in whichever folder's store holds it. */
 function wireOfSession(sessionId: string, sessions: string): string | null {
   let stores: string[];
   try { stores = readdirSync(sessions); } catch { return null; }
@@ -71,6 +75,11 @@ function wireOfSession(sessionId: string, sessions: string): string | null {
 
 type Proof = { path: string; pid: number; since?: number } | "none" | "ambiguous";
 
+/**
+ * The session these processes (a pane's shell and foreground processes) own right now: the one a
+ * live lock of theirs names, else on Linux the main log they hold open, which a session has before
+ * its lock.
+ */
 function proveWire(own: Set<number>, home: string): Proof {
   const sessions = join(home, ".kimi-code", "sessions");
   const locks = join(home, ".kimi-code", "locks", "sessions");
@@ -98,6 +107,7 @@ function proveWire(own: Set<number>, home: string): Proof {
   return first === undefined ? "none" : { path: first[0], pid: first[1] };
 }
 
+/** What names a running program: its start, and on Linux its command line, which an exec replaces. */
 function programOf(pid: number): string | null {
   const started = processStartedAt(pid);
   if (started === null) return null;
@@ -105,6 +115,7 @@ function programOf(pid: number): string | null {
   try { return `${started}\0${readFileSync(`/proc/${pid}/cmdline`, "utf8")}`; } catch { return null; }
 }
 
+/** The most input history read at once: more typed since the last proof is no answer. */
 const HISTORY_BYTES = 1024 * 1024;
 
 /**
@@ -122,6 +133,7 @@ function historyPath(sessionDir: string, home: string): string | undefined {
   return join(home, ".kimi-code", "user-history", `${createHash("md5").update(cwd, "utf8").digest("hex")}.jsonl`);
 }
 
+/** How far apart the CLI's history write and its lock for one prompt may lie. */
 const PROMPT_WRITE_MS = 250;
 
 /** A command that moves a Kimi to another session: picking an existing one writes nothing to it. */
@@ -173,13 +185,16 @@ function historyAfterProof(path: string | undefined, previous: { path: string; s
     const postdated = since !== undefined && since !== sinceBefore && changed !== undefined && since + PROMPT_WRITE_MS >= changed;
     if (!postdated && !(changed !== undefined && written > changed)) return { history: previous, stale: true };
   }
+  // a history that cannot be read now is read from nowhere: the binding then holds only while a lock proves it
   return { history: { path, size: historyEnd(path) ?? -1 }, stale: false };
 }
 
 /**
- * The CLI lets go of its lock a few seconds after a turn ends and opens its log only to append, so an
- * idle Kimi proves nothing; /sessions and /resume switch to an existing session without a write or a
- * lock until its next prompt.
+ * The CLI lets go of its lock a few seconds after a turn ends and opens its log only to append, so
+ * an idle Kimi proves nothing; while that same program still runs in the pane, holds no other
+ * session, no other process has locked this one, the folder has started no session since and
+ * nobody has typed /sessions or /resume there (which switch to an existing session without a write
+ * or a lock until its next prompt), its last session is still the one it shows.
  */
 const proven = new Map<string, { path: string; pid: number; since?: number; program: string; store: number; history?: { path: string; size: number } }>();
 
@@ -202,8 +217,10 @@ export function kimiWireForPane(paneId: string, pids: number[], home = homedir()
   const last = proven.get(paneId);
   proven.delete(paneId);
   if (proof !== "none" || last === undefined || !own.has(last.pid) || !processAlive(last.pid) || programOf(last.pid) !== last.program) return null;
+  // a lock on this session now is another process's (the pane's own would have proved it)
   const session = dirname(dirname(dirname(last.path)));
   try { statSync(join(home, ".kimi-code", "locks", "sessions", `${basename(session)}.lock`)); return null; } catch {}
+  // a session the folder got since (`/new`) may be the one this Kimi has switched to before it writes
   try { if (statSync(dirname(session)).mtimeMs !== last.store) return null; } catch { return null; }
   if (last.history !== undefined) {
     const read = readHistory(last.history.path, last.history.size);
@@ -232,7 +249,8 @@ function kimiUserText(content: unknown): string | null {
 
 /**
  * The CLI tags every stored message with its origin: injections (AGENTS.md, system reminders), task
- * notifications and cron firings are not the user's; records from older CLIs have no origin.
+ * notifications and cron firings are not the user's and open no turn; records from older CLIs
+ * without an origin still count.
  */
 export function kimiPrompt(record: unknown): ConversationPart[] | null {
   if (record === null || typeof record !== "object") return null;
@@ -279,6 +297,7 @@ function kimiToolSummary(event: { name?: unknown; display?: { kind?: unknown; co
   return typeof event.name === "string" ? event.name : "tool";
 }
 
+/** tool.result records name the call by Kimi's own toolCallId. */
 type PendingTool = Extract<ConversationPart, { kind: "tool" }> & { state: "pending" | "ok" | "error" };
 
 /**
@@ -367,6 +386,7 @@ const RECORD_BYTES = 64 * 1024 * 1024;
 export function kimiToolOutput(path: string, ref: string, max: number): string | null {
   const id = Buffer.from(JSON.stringify(ref));
   let fd: number;
+  // another file than the one the lookup is bound to (openBound) holds none of its calls
   try { fd = openBound(path); } catch { return null; }
   const result = (start: number, end: number): string | undefined => {
     if (end - start > RECORD_BYTES) return undefined;
@@ -406,6 +426,7 @@ export function kimiToolOutput(path: string, ref: string, max: number): string |
         from = newline + 1;
       }
     }
+    // the last record, whole when it parses, may not end in a newline yet
     return (hit ? result(lineStart, position) : undefined) ?? null;
   } catch { return null; } finally { closeSync(fd); }
 }

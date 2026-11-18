@@ -1,10 +1,27 @@
 /**
- * herdr 0.9.5 keeps the first report of a letta process, so after `/new` or `/resume` it still names
- * the conversation the pane left; herdr-core sends no report for Letta, and herdr none without its
- * Letta integration. Every letta process writes the conversation it opened into its project's
- * `.letta/settings.local.json` (`sessionsByServer`) on start and on every switch, and reads it back to
- * resume; nothing in it says which process wrote it, and a letta that opens the conversation the
- * record names writes nothing (`setLocalLastSession` skips an equal session).
+ * Which Letta Code conversation a pane shows. These facts must agree, or Chat uses Terminal:
+ * - herdr's report from its Letta integration (`herdr integration install letta`), when there is one:
+ *   `herdr:letta`,
+ *   the conversation id, or `default:<agent id>` for an agent's default conversation. herdr 0.9.5
+ *   keeps the first report of a letta process, so after `/new` or `/resume` it still names the
+ *   conversation the pane left.
+ * - Letta's own record of the conversation it opened, which every letta process writes into its
+ *   project's `.letta/settings.local.json` (`sessionsByServer`) on start and on every switch, and
+ *   reads back to resume. It is shared by every letta in that folder, and nothing in it says which
+ *   process wrote it, so it speaks for the pane's process only when it is older than that process:
+ *   a letta that opens the conversation the record names writes nothing (`setLocalLastSession`
+ *   skips an equal session), and any later write (a `/new` or `/resume`, its own start on another
+ *   conversation, or another letta, even one gone since) leaves Chat on Terminal until letta starts again.
+ * - The pane's one letta process: its own environment for where Letta keeps its files
+ *   (`LETTA_CONFIG_DIR`, `LETTA_TRANSCRIPT_ROOT`, `HOME`), read from the process on Linux and macOS
+ *   (Windows has no such read, and uses Terminal), and the folder it started in (lettaInStartFolder),
+ *   whose record is the only one read, while the process is still there.
+ * The transcript must then be a regular file at exactly the path Letta derives from the two ids.
+ *
+ * herdr-core sends no report for Letta, and herdr none without the integration. Then nothing backs the
+ * record but its own age, so more must hold (lettaRecordSpeaksAlone): the letta was started plainly,
+ * which resumes the record's conversation; it saves its sessions; no other Letta pane goes unreported;
+ * and the transcript was written since the process started, the process's own use of it.
  */
 import { accessSync, closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
 import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
@@ -56,6 +73,7 @@ export function lettaTranscriptRoot(env: Env): string | null {
 export const lettaTranscriptPath = (root: string, agent: string, conversation: string): string =>
   join(root, agent, conversation, "transcript.jsonl");
 
+/** A NUL-separated environment, as /proc/<pid>/environ holds it. */
 export function parseEnviron(text: string): Env {
   const env: Env = {};
   for (const entry of text.split("\0")) {
@@ -65,8 +83,10 @@ export function parseEnviron(text: string): Env {
   return env;
 }
 
+/** O_NONBLOCK, so a FIFO put where a record was is not waited on; O_NOFOLLOW, so a link there is refused. */
 const RECORD_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0);
 
+/** The text of a regular file of at most `bytes`, opened through no final link; null otherwise. */
 function readBounded(path: string, bytes: number): string | null {
   let fd: number;
   try { fd = openSync(path, RECORD_FLAGS); } catch { return null; }
@@ -109,7 +129,11 @@ export function lettaOpenedSessions(text: string): { agent: string; conversation
   return sessions;
 }
 
-/** Letta's `local-conv-<n>` ids repeat across agents. */
+/**
+ * The agent and conversation the report and Letta's record both name, or null. The agent comes
+ * from the record when the report names only a conversation (`local-conv-<n>` repeats across
+ * agents), and every record of that agent must name the reported conversation.
+ */
 export function lettaBinding(session: LettaSession, opened: readonly { agent: string; conversation: string }[]): { agent: string; conversation: string } | null {
   const named = opened.filter((ref) => ref.conversation === session.conversation && (session.agent === null || ref.agent === session.agent));
   const agents = new Set(named.map((ref) => ref.agent));
@@ -126,8 +150,16 @@ export function isLettaProcess(argv: readonly string[]): boolean {
   return ["node", "bun"].includes(name(argv[0])) && ["letta", "letta.js"].includes(name(argv[1]));
 }
 
+/**
+ * `startedAt`: no later than the process started (processStartLowerBound), which may read differently each time;
+ * `startedBy`: no earlier than it started (processStartUpperBound), null where that is not known;
+ * `identity`: processStartIdentity, the same on every read, so with the pid it names the process;
+ * `verified`: the pid's live command line was read and is the one herdr reported, so its start and
+ * environment are this letta's and not those of a process that reused the pid (Linux)
+ */
 export interface LettaProcess { pid: number; cwd: string; startedAt: number; startedBy: number | null; identity: number; env: Env; argv: readonly string[]; verified?: boolean }
 
+/** A process's live command line, where the system tells it (Linux's /proc); null otherwise. */
 function liveArgv(pid: number): string[] | null {
   if (process.platform !== "linux") return null;
   try {
@@ -141,7 +173,9 @@ const moved = new Set<string>();
 
 /**
  * Letta's SetWorkingDirectory and EnterWorktree tools move a running letta into another project without
- * recording its conversation there.
+ * recording its conversation there, so that project's record is no record of it. The start folder is
+ * the `PWD` its shell gave it, which its environment keeps whatever it does later; without one, or
+ * once seen elsewhere, it is never bound again.
  */
 export function lettaInStartFolder(owner: LettaProcess): boolean {
   const key = `${owner.pid}:${owner.identity}`;
@@ -163,6 +197,8 @@ export async function paneLettaProcess(paneId: string, known?: ProcessInfo | nul
   const { pid, cwd } = found[0]!;
   const argv = (found[0]!.argv ?? []).map(String);
   if (typeof cwd !== "string" || !isAbsolute(cwd)) return null;
+  // herdr named the process a moment ago: the pid now may be another one's. Its live command line must be
+  // the reported one, and its start the same before and after its start and environment are read
   const live = liveArgv(pid);
   if (live !== null && (live.length !== argv.length || live.some((word, at) => word !== argv[at]))) return null;
   const identity = processStartIdentity(pid);
@@ -175,8 +211,13 @@ export async function paneLettaProcess(paneId: string, known?: ProcessInfo | nul
 
 export type LettaTranscript = { path: string; session: string; agent: string; conversation: string };
 
+/**
+ * The transcript a Letta pane shows (see the top of this file), or null when it is not proven, or
+ * when another pane reports the same conversation. The file may not exist yet.
+ */
 export async function lettaTranscriptFor(pane: HerdrPane, panes: readonly HerdrPane[], owner: LettaProcess): Promise<LettaTranscript | null> {
   const session = lettaSessionOf(pane);
+  // a report in another form is not the absence of one
   if (session === null && pane.agent_session) return null;
   if (session === null && !lettaRecordSpeaksAlone(pane, panes, owner)) return null;
   if (session !== null && panes.some((other) => other.pane_id !== pane.pane_id && lettaSessionOf(other)?.reported === session.reported)) return null;
@@ -186,8 +227,10 @@ export async function lettaTranscriptFor(pane: HerdrPane, panes: readonly HerdrP
   const bound = opened === null ? null : session === null ? lettaRecordedBinding(opened) : lettaBinding(session, opened);
   const root = lettaTranscriptRoot(owner.env);
   if (bound === null || root === null) return null;
+  // the peers are read off the event loop: the record bound on must still stand once they answer
   if (session === null && (await claimedElsewhere(pane, panes, owner, bound) || recordOlderThan(record, owner.startedAt) !== text)) return null;
   const path = lettaTranscriptPath(root, bound.agent, bound.conversation);
+  // without a report the record only proves the process has not written yet: its own use of the conversation must show
   if (session === null && (owner.startedBy === null || !writtenSince(path, owner.startedBy))) return null;
   const reported = session?.reported ?? (bound.conversation === "default" ? `default:${bound.agent}` : bound.conversation);
   return { path, session: reported, ...bound };
@@ -197,11 +240,14 @@ export async function lettaTranscriptFor(pane: HerdrPane, panes: readonly HerdrP
 const RESUMING_OPTIONS = new Set(["-m", "--model", "--backend", "--toolset", "-s", "--system"]);
 
 /**
- * Plain `letta` resumes the project's last conversation; `--new`, `--resume`, `--agent` and `--name`
- * pick another. LETTA_DISABLE_SESSION_PERSIST (set at all) or a subagent's LETTA_CODE_AGENT_ROLE turns
- * session saving off.
+ * Whether Letta's record may speak for a pane with no report at all. Plain `letta` resumes the
+ * project's last conversation, the one the record names; any other option may pick another
+ * (`--new`, `--resume`, `--agent`, `--name`, a flag this does not know). With session saving off
+ * (LETTA_DISABLE_SESSION_PERSIST set at all, or a subagent's LETTA_CODE_AGENT_ROLE) the record is not this process's. Another Letta pane with no
+ * report may have moved here from a folder with the same record, so it leaves both unbound.
  */
 function lettaRecordSpeaksAlone(pane: HerdrPane, panes: readonly HerdrPane[], owner: LettaProcess): boolean {
+  // a process whose command line could not be checked live may be another one under a reused pid
   if (owner.verified === false) return false;
   if (owner.env["LETTA_DISABLE_SESSION_PERSIST"] !== undefined || owner.env["LETTA_CODE_AGENT_ROLE"] === "subagent") return false;
   const program = owner.argv.findIndex((word) => /(^|[\\/])letta(\.(?:js|cmd|exe))?$/i.test(word));
@@ -212,6 +258,7 @@ function lettaRecordSpeaksAlone(pane: HerdrPane, panes: readonly HerdrPane[], ow
   return !panes.some((other) => other.pane_id !== pane.pane_id && other.agent === "letta" && lettaSessionOf(other) === null);
 }
 
+/** Whether `path` is a regular file last written after `startedAt`: a write in the same instant may be the process before. */
 function writtenSince(path: string, startedAt: number): boolean {
   try {
     const stat = lstatSync(path);
@@ -219,11 +266,23 @@ function writtenSince(path: string, startedAt: number): boolean {
   } catch { return false; }
 }
 
+/**
+ * How long the peer folders may take to answer a claim check. One that has not answered by then may
+ * hide a claim of its own (a mount that stopped answering), so it claims.
+ */
 export const peerClaimDeadline = { ms: 5_000 };
 
+/**
+ * Whether another Letta pane's folder record names the same conversation: a Letta there resumed it
+ * too, and which pane shows it cannot be told. Its record is read as it stands, written whenever:
+ * an old one only costs this pane its chat, never shows it another's.
+ */
 async function claimedElsewhere(pane: HerdrPane, panes: readonly HerdrPane[], owner: LettaProcess, bound: { agent: string; conversation: string }): Promise<boolean> {
   const own = await realpath(owner.cwd).catch(() => null);
+  // its process may run in a folder other than where the pane started: each folder's record counts
   const folders = lettaPeerFolders(pane, panes).filter((cwd) => isAbsolute(cwd));
+  // the folders are read off the event loop, and one of them may never answer: what a deadline passes is a claim,
+  // as a read that failed is, and the check that was left waiting is not kept
   const claims = await beforePeerDeadline(folders, (folder) => folderClaims(folder, own, bound).catch(() => true));
   return claims === "late" || claims.includes(true);
 }
@@ -262,10 +321,18 @@ async function beforePeerDeadline<T>(folders: readonly string[], check: (folder:
   } finally { clearTimeout(late); }
 }
 
+/** Where Linux names an open descriptor's own path: what is opened through it is inside the folder held. */
 const FD_DIR = "/proc/self/fd";
+/**
+ * How a peer's record is reached. `procFd`: Linux reaches into a held folder by its /proc/self/fd entry;
+ * elsewhere (macOS, Windows, a Linux without /proc) the record is opened by its path and proven by its
+ * identity instead (folderClaims).
+ */
 export const peerRecordReach = { procFd: ((): boolean => { try { return process.platform === "linux" && lstatSync(FD_DIR).isDirectory(); } catch { return false; } })() };
+/** A folder opened as itself: O_DIRECTORY, and O_NOFOLLOW so a link put where it was stands refused. */
 const FOLDER_FLAGS = constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0);
 
+/** A folder's identity as the checks compare it: its device and inode, whole (a 64-bit inode does not fit a number). */
 const deviceInode = (stat: { dev: bigint; ino: bigint }): string => `${stat.dev}:${stat.ino}`;
 
 const sameChain = (a: readonly string[] | null, b: readonly string[] | null): boolean => {
@@ -273,11 +340,28 @@ const sameChain = (a: readonly string[] | null, b: readonly string[] | null): bo
   return a.every((at, step) => at === b[step]);
 };
 
+/**
+ * Whether an error says only that nothing is there, not that it cannot be read. A file standing where a
+ * folder should be (ENOTDIR) is something there, not absence.
+ */
 const absent = (error: unknown): boolean => (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
 
+/** Whether what a lookup found missing is still missing on a second look: one gone only for a moment is there. */
 const stillAbsent = async (error: unknown, again: () => Promise<unknown>): Promise<boolean> =>
   absent(error) && await again().then(() => false, absent);
 
+/**
+ * Whether a peer folder's record names the conversation, read without blocking (the folder may be on a
+ * slow mount). The folder is opened itself, and its `.letta` and the record inside that, each through
+ * the descriptor held before it, so nothing swapped into a folder already checked is read in its stead;
+ * what was opened must be the folder the chain of plain folders from the root names, still where it was
+ * resolved to after the read. Without /proc (peerRecordReach) the record is opened by its path, through
+ * no final link where the platform refuses one, and the file opened must be the one the path names
+ * after the read, on the device of the `.letta` the chain names. Either way the record read must be the
+ * file its path names after the read. A record not proven to be the folder's own claims it unread: reached
+ * through a link, or read under a folder, `.letta` or record swapped for a decoy and put back. Only a folder known to be gone claims nothing; one that cannot be resolved (no
+ * permission, an I/O error) may hide a record of its own.
+ */
 async function folderClaims(folder: string, own: string | null, bound: { agent: string; conversation: string }): Promise<boolean> {
   let real: string;
   try { real = await realpath(folder); } catch (error) { return !await stillAbsent(error, () => realpath(folder)); }
@@ -288,6 +372,7 @@ async function folderClaims(folder: string, own: string | null, bound: { agent: 
   try { before = await folderChain(letta); } catch (error) { return !await stillAbsent(error, () => folderChain(letta)); }
   if (before === null) return true;
   const held: FileHandle[] = [];
+  // once the record is open, any failure claims: only a record missing as it is opened can be absent
   let recordOpened = false;
   try {
     const hold = async (at: string, flags: number): Promise<FileHandle> => { const handle = await open(at, flags); held.push(handle); return handle; };
@@ -301,28 +386,38 @@ async function folderClaims(folder: string, own: string | null, bound: { agent: 
       record = await hold(join(FD_DIR, `${hidden.fd}`, "settings.local.json"), RECORD_FLAGS);
     } else record = await hold(path, RECORD_FLAGS);
     recordOpened = true;
+    // a record whose own stat fails is not proven the folder's own: it claims
     const found = await record.stat({ bigint: true }).catch(() => null);
     if (found === null) return true;
     const readable = found.isFile() && found.size <= BigInt(SETTINGS_BYTES);
     const buffer = Buffer.alloc(readable ? Number(found.size) : 0);
     const { bytesRead } = readable ? await record.read(buffer, 0, buffer.length, 0) : { bytesRead: 0 };
+    // the folders are what they were and the peer's folder still resolves to them: one swapped for a decoy and put back shows here
     if (!sameChain(before, await folderChain(letta).catch(() => null)) || await realpath(folder).catch(() => null) !== real) return true;
+    // the file read is the one the path names now, however it was reached (a record swapped for a decoy and back shows here),
+    // and when opened by its path, in the .letta the chain names
+    // nothing at the path now (a decoy opened, the path then removed) or a stat that fails proves nothing: it claims
     if (await lstat(path, { bigint: true }).then(deviceInode, () => null) !== deviceInode(found)) return true;
     if (!peerRecordReach.procFd && !before.at(-1)!.startsWith(`${found.dev}:`)) return true;
+    // a record that is not a plain file, or too large to read, may name the conversation: it claims
     if (!readable) return true;
+    // a record rewritten in place while it was read (a short read, or a new size or time) is not what was read: it claims
     const after = await record.stat({ bigint: true });
     if (bytesRead !== buffer.length || after.size !== found.size || after.mtimeNs !== found.mtimeNs) return true;
     // an equal size and time do not prove the same bytes (a coarse mtime, or one put back): read it again, and any change claims
     const again = Buffer.alloc(buffer.length + 1);
     const reread = await record.read(again, 0, again.length, 0);
     if (reread.bytesRead !== bytesRead || !again.subarray(0, bytesRead).equals(buffer)) return true;
+    // a record that does not read as one Letta writes (empty, cut short, malformed, another shape) may be one mid-write: it claims
     const opened = lettaOpenedSessions(buffer.toString("utf8"));
     return opened === null || opened.some((ref) => ref.agent === bound.agent && ref.conversation === bound.conversation);
   } catch (error) {
+    // gone only for a moment (moved away and back) is no absence: only a record still gone as it is opened claims nothing
     return recordOpened || !await stillAbsent(error, () => lstat(path));
   } finally { for (const handle of held) await handle.close().catch(() => {}); }
 }
 
+/** Each folder from the root down to `dir`, by device and inode; null when one is not a plain folder (a link, or nothing). */
 async function folderChain(dir: string): Promise<string[] | null> {
   const folders = [dir];
   while (dirname(folders.at(-1)!) !== folders.at(-1)) folders.push(dirname(folders.at(-1)!));
@@ -330,6 +425,11 @@ async function folderChain(dir: string): Promise<string[] | null> {
   return stats.every((found) => found.isDirectory()) ? stats.map(deviceInode).reverse() : null;
 }
 
+/**
+ * With no report (herdr-core sends none for Letta, nor does herdr without its Letta integration), the
+ * conversation Letta's record names when it names one: a record older than the process is what that
+ * process resumed, as it writes nothing for the conversation the record already names.
+ */
 export function lettaRecordedBinding(opened: readonly { agent: string; conversation: string }[]): { agent: string; conversation: string } | null {
   const first = opened[0];
   if (first === undefined || opened.some((ref) => ref.agent !== first.agent || ref.conversation !== first.conversation)) return null;
@@ -342,7 +442,12 @@ export function lettaRecordedBinding(opened: readonly { agent: string; conversat
  */
 const MTIME_SLACK_MS = 2000;
 
-/** Letta writes its record in place and goes on after a failed write, which leaves an old record standing. */
+/**
+ * The text of Letta's record when it is a regular file Letta can still rewrite (it writes in place and
+ * goes on after a failed write, which would leave an old record standing for a new conversation), last
+ * written at least MTIME_SLACK_MS before `startedAt`, and unchanged while it was read: its time and its
+ * words come from one descriptor, checked again after the read. Null otherwise.
+ */
 function recordOlderThan(path: string, startedAt: number): string | null {
   let fd: number;
   try {
@@ -361,6 +466,10 @@ function recordOlderThan(path: string, startedAt: number): string | null {
   } catch { return null; } finally { closeSync(fd); }
 }
 
+/**
+ * Whether `path` (lettaTranscriptPath under `root`) is a regular file reached through no link below
+ * the root: false for a missing file, a link, or one that cannot be checked.
+ */
 export function lettaTranscriptHeld(path: string, root: string): boolean {
   try {
     if (!lstatSync(path).isFile()) return false;
@@ -370,11 +479,17 @@ export function lettaTranscriptHeld(path: string, root: string): boolean {
 
 const canonical = (path: string): string | null => { try { return realpathSync(path); } catch { return null; } };
 
-/** In its home folder, Letta with LETTA_CONFIG_DIR writes no project record, so an old one stays. */
+/**
+ * Whether Letta's project record can speak for the pane's process at all: not in its home folder,
+ * where Letta with LETTA_CONFIG_DIR writes no project record (so an old one stays), and not while
+ * another pane runs Letta in the same folder, which writes the same record.
+ */
 export async function lettaRecordOwned(pane: HerdrPane, panes: readonly HerdrPane[], owner: LettaProcess): Promise<boolean> {
   const resolve = (path: string): Promise<string | null> => realpath(path).catch(() => null);
   const [folder, home] = await Promise.all([resolve(owner.cwd), owner.env["HOME"] === undefined ? null : resolve(owner.env["HOME"])]);
   if (folder === null || home === null || home === folder) return false;
+  // another pane's folder may be on an unresponsive mount: resolved off the event loop, and one that has not
+  // answered by the deadline may be this folder, so the record is not this pane's
   const peers = await beforePeerDeadline(lettaPeerFolders(pane, panes), resolve);
   return peers !== "late" && !peers.includes(folder);
 }
@@ -421,7 +536,9 @@ const word = (value: unknown): string | null => typeof value === "string" && val
  * them for a turn: the conversation's own `model` (what `/model` sets in it), else its agent's, and the
  * conversation's `model_settings` over the agent's, whose effort Letta reads (reasoningForSettings) as
  * `reasoning.reasoning_effort`, else `effort` (what it writes for Anthropic and Bedrock), else
- * `reasoning_effort`. Letta's transcript names neither, and `/model` writes no turn.
+ * `reasoning_effort`. Letta's transcript names neither, and `/model` writes no turn. Null for a cloud
+ * conversation, whose settings live on the server, and for records that do not read as Letta writes
+ * them, name another agent, or (a local conversation's) another conversation.
  */
 export function lettaLocalSettings(store: string, agent: string, conversation: string): ConversationMetadata | null {
   const key = conversation === "default" ? `default:${agent}` : conversation.startsWith("local-conv-") ? `conversation:${conversation}` : null;
@@ -437,6 +554,10 @@ export function lettaLocalSettings(store: string, agent: string, conversation: s
   };
 }
 
+/**
+ * The local backend's own record of a conversation's messages, which Letta appends to as a turn goes
+ * (its transcript is written only when the turn ends); null for a cloud conversation, kept on the server.
+ */
 export function lettaMessagesPath(store: string, agent: string, conversation: string): string | null {
   const key = conversation === "default" ? `default:${agent}` : conversation.startsWith("local-conv-") ? `conversation:${conversation}` : null;
   return key === null ? null : join(store, "conversations", Buffer.from(key).toString("base64url"), "messages.jsonl");
@@ -449,6 +570,9 @@ export async function resolveLettaTranscript(pane: HerdrPane, panes: readonly He
   const store = lettaLocalStore(owner.env);
   const root = lettaTranscriptRoot(owner.env);
   if (found === null || store === null || root === null || !lettaLocalOwner(store, found.agent, found.conversation)) return null;
+  // the peer folders above (lettaRecordOwned resolves them all, claimedElsewhere reads their records) are answered while
+  // this waits: the pane's letta may have exited, or moved to another project (whose record is another one's) since.
+  // herdr is then asked once more, and only the same process in the same folder binds; with no peer nothing was waited on
   if (lettaPeerFolders(pane, panes).length > 0) {
     const same = await paneLettaProcess(pane.pane_id).catch(() => null);
     if (same === null || same.pid !== owner.pid || same.identity !== owner.identity || same.cwd !== owner.cwd || !lettaInStartFolder(same)) return null;

@@ -12,6 +12,7 @@ afterEach(() => {
   cleanup = () => {};
 });
 
+/** a home and a state folder of their own, and an environment that points nothing at the developer's */
 function scratch() {
   const root = mkdtempSync(join(tmpdir(), "ovis-runtime-choice-"));
   cleanup = () => rmSync(root, { recursive: true, force: true });
@@ -47,12 +48,15 @@ it("reads herdr's traces where herdr keeps them on Windows", () => {
   const localAppData = join(root, "Local");
   const windows = { ...env, XDG_CONFIG_HOME: "", APPDATA: appData, LOCALAPPDATA: localAppData };
   expect(runtimeTraces({ env: windows, home, platform: "win32" })).toMatchObject({ tuiInstalled: false, tuiRunning: false });
+  // herdr's installer puts herdr.exe in %LOCALAPPDATA%\Programs\Herdr\bin, which a service's PATH may not hold
   touch(join(localAppData, "Programs", "Herdr", "bin", "herdr.exe"));
   expect(runtimeTraces({ env: windows, home, platform: "win32" }).tuiInstalled).toBe(true);
   rmSync(join(localAppData, "Programs"), { recursive: true });
+  // its config and its socket are in %APPDATA%\herdr
   touch(join(appData, "herdr", "config.toml"));
   touch(join(appData, "herdr", "herdr.sock"));
   expect(runtimeTraces({ env: windows, home, platform: "win32" })).toMatchObject({ tuiInstalled: true, tuiRunning: true });
+  // the server asks %APPDATA%\herdr\herdr.sock (herdrSocketPath) even where XDG_CONFIG_HOME is set
   rmSync(join(appData, "herdr", "config.toml"));
   expect(runtimeTraces({ env: { ...windows, XDG_CONFIG_HOME: join(root, "xdg") }, home, platform: "win32" })).toMatchObject({ tuiInstalled: false, tuiRunning: true });
 });
@@ -244,6 +248,7 @@ it.skipIf(process.platform === "win32")("writes the choice through nothing place
   mkdirSync(state, { recursive: true });
   const target = join(root, "victim");
   writeFileSync(target, "kept");
+  // every name a predictable temporary file could take is a link to the victim
   for (const pid of [process.pid, 1, 2]) symlinkSync(target, join(state, `runtime-7.json.${pid}.tmp`));
   saveRuntime(state, 7, { runtime: "herdr-core", previous: "herdr" });
   expect(readFileSync(target, "utf8")).toBe("kept");

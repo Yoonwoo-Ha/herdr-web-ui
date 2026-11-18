@@ -104,6 +104,10 @@ describe("POSIX install lock", () => {
   });
 });
 
+/**
+ * The Windows mirror, run through `pwsh` wherever it exists (the GitHub Linux runner has it) so the
+ * scripts are exercised rather than only spelled out.
+ */
 const pwsh = Bun.which("pwsh");
 const psq = (value: string) => `'${value.replaceAll("'", "''")}'`;
 

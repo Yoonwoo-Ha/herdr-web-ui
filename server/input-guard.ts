@@ -9,8 +9,10 @@ export interface SeenAttachment<Client> {
 
 export interface SightingFacts {
   attached: boolean;
+  /** the connection was in the attachment it saw: what it typed belongs to that attach */
   origin: boolean;
   sameAttachment: boolean;
+  /** the seen attachment still runs the session seen: no retry, take-over or handoff replaced it */
   samePty: boolean;
   sameClaim: boolean;
   claimed: boolean;
@@ -43,6 +45,11 @@ export function sightingFacts<Client, Attachment extends SeenAttachment<Client>>
   };
 }
 
+/**
+ * Whether typing taken while the connection saw the pane may still be written: into the attach it
+ * was in, which still has the typist, or (taken with no attach of its own) into a pane nobody has
+ * attached since. An attach that came while the typing waited is someone else's screen.
+ */
 export function sameOrigin(facts: SightingFacts): boolean {
   return facts.origin ? facts.sameAttachment && facts.member : !facts.attached;
 }
@@ -54,11 +61,15 @@ export function sameOrigin(facts: SightingFacts): boolean {
  */
 export const typingGuards = {
   herdrTyping: (facts: SightingFacts): boolean => facts.sameClaim && sameOrigin(facts),
+  /** typing queued behind a message into the attach's pty: the same pty, still ready and this bridge's */
   queuedTyping: (facts: SightingFacts): boolean => facts.sameAttachment && facts.samePty && facts.sameClaim && facts.member
     && facts.ready && !facts.held,
+  /** keys: a chord pressed in an attach goes to that attach while it is ready; keys pressed with none, to a pane no other bridge holds */
   keys: (facts: SightingFacts): boolean => !facts.currentHeld && (!facts.origin || (facts.sameAttachment && facts.samePty
     && facts.ready && facts.sameClaim && facts.member)),
+  /** a mirrored pane's secret: the same attach and session, still this connection's */
   mirrorSecret: (facts: SightingFacts): boolean => facts.sameAttachment && facts.samePty && facts.sameClaim && facts.member,
+  /** a pending message's lease, once its terminal is not held: the same attach and session, still claimed, joined and ready */
   pendingLease: (facts: SightingFacts): boolean => facts.sameAttachment && facts.samePty && facts.claimed && facts.member && facts.ready,
 };
 

@@ -176,6 +176,7 @@ describe("machine boundaries", () => {
     const error = spyOn(console, "error").mockImplementation((...args: unknown[]) => { logged.push(args.join(" ")); });
     const watch = () => handleMachineRequest(new Request("http://localhost/api/machines/fixture/pane/prompt?pane_id=pane-1"), manager, undefined, undefined, true);
     try {
+      // exactly at its 1 MiB the answer is still parsed, and loses the plan file and the previews
       serve = () => new Response(padded(answer, MiB).stream);
       const kept = await watch();
       expect(kept.status).toBe(200);
@@ -184,6 +185,7 @@ describe("machine boundaries", () => {
       expect(card.prompt).not.toHaveProperty("plan_file");
       expect(card.outcomes?.[0]).not.toHaveProperty("preview");
       expect(card.outcomes?.[0]).not.toHaveProperty("result_text");
+      // one byte past it, and the answer is refused rather than passed on unredacted
       const over = padded(answer, MiB + 32 * MiB);
       serve = () => new Response(over.stream);
       const refused = await watch();
@@ -191,6 +193,7 @@ describe("machine boundaries", () => {
       const tooLarge = await refused.text();
       expect(JSON.parse(tooLarge).error.code).toBe("remote_response_too_large");
       await within(over.cancelled);
+      // an answer that is not JSON cannot be redacted, so none of it is passed on
       serve = () => new Response(`{"prompt":{"plan_file":"fixture-plan-secret","body":"fixture-plan-text"`);
       const malformed = await watch();
       expect(malformed.status).toBe(502);
@@ -286,6 +289,7 @@ describe("machine boundaries", () => {
         expect((await refused.json() as { error: { code: string } }).error.code, path).toBe("read_only");
       }
       expect(hits).toEqual([]);
+      // the block is the access check's own rule (index.ts `mutating`): what it lets a watcher send goes through
       expect((await ask("GET", "pane/read?pane_id=p", true)).status).toBe(200);
       expect((await ask("OPTIONS", "pane/input", true)).status).not.toBe(403);
       expect(hits).toEqual(["GET /api/pane/read", "OPTIONS /api/pane/input"]);
@@ -323,6 +327,7 @@ describe("machine boundaries", () => {
     for (const destination of ["-oProxyCommand=touch /tmp/no", "host;id", "x\ny", "$(id)", "user@host -p 22", ""]) expect(() => validateTarget({ destination })).toThrow();
     expect(validateTarget({ destination: "user@[::1]", port: 2222, session: "work" }).port).toBe(2222);
     for (const session of ["../default", "$(id)", "work;id"]) expect(() => validateTarget({ destination: "host", session })).toThrow();
+    // a key path on the web server, which may be a Windows one; never an option or a relative path
     for (const identity_file of ["/home/u/.ssh/id", "~/.ssh/id", "~\\.ssh\\id", "C:\\Users\\u\\.ssh\\id", "D:/keys/id"]) expect(validateTarget({ destination: "host", identity_file }).identity_file).toBe(identity_file);
     for (const identity_file of ["-oProxyCommand=x", "keys/id", "C:id", "~user/id", "/k\nx"]) expect(() => validateTarget({ destination: "host", identity_file })).toThrow();
     const value = "a'$(touch /tmp/no)";
@@ -339,6 +344,7 @@ describe("machine boundaries", () => {
     for (const path of ["pane/focus", "pane/move", "layout/ratio", "tab/move"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
     for (const path of ["pane/focus/extra", "pane/move/extra", "layout/apply", "layout/ratio/extra", "layout/../auth", "agent/commands/extra", "agent/start"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
     for (const path of ["agent/rename", "agent/commands"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
+    // the install catalog a PC answers for itself, and an install or sign-in started on that PC; nothing else under it
     for (const path of ["agent-catalog", "agent-catalog/install", "agent-catalog/sign-in"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
     for (const path of ["agent-catalog/uninstall", "agent-catalog/install/extra", "agent-catalog/../auth"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
     expect(MACHINE_PROXY_PATH.test("system")).toBe(true);
@@ -736,6 +742,8 @@ describe("SSH output during setup", () => {
   });
 });
 
+// ssh's run() is answered in place of a PC (a PATH-swapped fake cannot serve it: spawned runs
+// never see the swapped PATH), so setup() fails inside its own catch — where the action is set.
 describe("a first connect that finds a bridge of another version", () => {
   const socket = "/home/u/.config/herdr/herdr.sock";
   const descriptor = { pid: 4242, port: 29431, token: "a".repeat(64), socket_path: socket, bridge_protocol: 1, bundle_version: "0", managed_remote: true };
@@ -999,6 +1007,7 @@ describe("terminal attach capability", () => {
     try {
       expect(isRealNode(stand("node", `echo 22.23.2 ${process.arch}`))).toBe(true);
       expect(isRealNode(stand("old-node", `echo 16.20.2 ${process.arch}`))).toBe(false);
+      // an x64 Node under Rosetta beside an arm64 server, or the other way round (#596 review)
       expect(isRealNode(stand("other-arch", `echo 22.23.2 ${process.arch === "x64" ? "arm64" : "x64"}`))).toBe(false);
       expect(isRealNode(stand("bun-as-node", "echo bun"))).toBe(false);
       expect(isRealNode(stand("broken", "exit 1"))).toBe(false);
@@ -1249,6 +1258,7 @@ describe("bridge verification failures", () => {
     expect(await told(answering(500, "null"))).toBe(GENERIC(500));
   });
 
+  // #1960: an Ovis older than its loopback relay, with HOST set to another address, answers nothing on the PC's 127.0.0.1
   it("says what to change when nothing answers on the PC's loopback, not the connection's raw error", async () => {
     expect((await unanswered({})).told).toBe("This PC's Ovis does not answer at 127.0.0.1:18472 through SSH. If it runs with HOST set to another address, update it or set HOST=127.0.0.1 there, restart it, then add the PC again.");
     expect((await unanswered({ managed_remote: true })).told).toBe("The bridge on this PC does not answer at 127.0.0.1:18472 through SSH. Reconnect after checking the remote bridge.");
@@ -1262,6 +1272,7 @@ describe("bridge verification failures", () => {
   });
 
   it("says a bridge that stops halfway through its answer timed out", async () => {
+    // the deadline is what is tested: 200 ms here, not 15 s
     const realTimeout = AbortSignal.timeout.bind(AbortSignal);
     const short = spyOn(AbortSignal, "timeout").mockImplementation(() => realTimeout(200));
     const manager = new MachineManager(temp(), {} as PushService, {} as CompletionTracker);

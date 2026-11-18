@@ -45,6 +45,7 @@ it.each(["x", "🙂"])("delivers one complete large %s frame across real socket 
     });
   });
   try {
+    // the guard is asked before every write: more than one ask is more than one write
     let writes = 0;
     const guard = () => { writes++; started.resolve(); return true; };
     const result = await herdrRpc<{ method: string; text: string }>("fixture.write", { text }, fixture.path, 2_000, guard);
@@ -81,6 +82,7 @@ it("cuts a request short, never completing it, when the sender loses the right t
     expect(error).toBeInstanceOf(HerdrError);
     expect((error as HerdrError).code).toBe("socket_error");
     expect(asks).toBeGreaterThan(1);
+    // herdr got part of one request and no newline: nothing it can act on
     expect(received.length).toBeGreaterThan(0);
     expect(received.length).toBeLessThan(frame);
     expect(received.includes(10)).toBe(false);

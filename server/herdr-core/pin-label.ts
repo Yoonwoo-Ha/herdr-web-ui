@@ -30,6 +30,7 @@ export function bridgePins(hc: Hc, store: PinStore, machineId: string, stateDir:
   const { agreed, shells, pending } = readAgreed(agreedPath);
   const live = new Map<string, boolean>();
   const refused = new Set<string>();
+  /** pinned in the app but past a full list the bridge started: not unpinned for not being listed */
   const leftOut = new Set<string>();
   let unsaved = false;
   const sending = new Set<string>();
@@ -84,6 +85,7 @@ export function bridgePins(hc: Hc, store: PinStore, machineId: string, stateDir:
       if (pins.length >= MAX_PINS) return false;
       next = [...pins, key];
     } else {
+      // a list started here holds every agent pinned in the app, so none is then taken for an unpin
       const all = [...live].filter(([other, on]) => agents.has(other) && (on || other === address)).map(([other]) => other);
       over = all.slice(MAX_PINS);
       next = all.slice(0, MAX_PINS).map(keyOf);
@@ -110,6 +112,7 @@ export function bridgePins(hc: Hc, store: PinStore, machineId: string, stateDir:
   };
   const writeLabel = (address: string) => {
     const run = (writes.get(address) ?? Promise.resolve()).then(async () => {
+      // no browser has shared its pins yet: not being listed is no unpin
       if (stopped || !live.has(address) || refused.has(address) || !agents.has(address) || store.get().pins === undefined) return;
       const pinned = listed(address);
       if (live.get(address) === pinned) { setAgreed(address, pinned); return; }
@@ -161,6 +164,7 @@ export function bridgePins(hc: Hc, store: PinStore, machineId: string, stateDir:
       queued.length = 0;
     }
     if (before !== undefined && before !== labelPinned && pending.delete(agreedKey(address))) saveAgreed();
+    // only an agent is in the Agents list: a shell's pin is never pruned from it as an unpin
     if (!agents.has(address)) return;
     refused.delete(address);
     const base = agreed.get(agreedKey(address));
@@ -215,6 +219,7 @@ export function bridgePins(hc: Hc, store: PinStore, machineId: string, stateDir:
 
   const unsubscribe = store.subscribe((preferences) => {
     for (const address of [...refused]) heard(address, live.get(address) ?? false);
+    // no browser has shared its pins yet: that is no unpin
     if (preferences.pins === undefined) return;
     let marked = false;
     for (const address of live.keys()) {
@@ -240,12 +245,14 @@ export function bridgePins(hc: Hc, store: PinStore, machineId: string, stateDir:
       closeStream?.();
       reopen();
     };
+    // events before the snapshot wait for it; a new reader per stream, so a cut line never joins the next
     let early: unknown[] | null = [];
     const apply = (message: unknown) => {
       if (!isRecord(message)) return;
       if (message["method"] === "missed") { end(); return; }
       const params = message["params"];
       if (message["method"] !== "event" || !isRecord(params) || typeof params["terminal"] !== "string") return;
+      // another machine's terminal is no row of this PC's list (snapshot.ts `onOtherMachine`): its pin is left alone
       if (onOtherMachine(params["terminal"])) return;
       const data = isRecord(params["data"]) ? params["data"] : {};
       switch (params["type"]) {

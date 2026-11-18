@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { markerOwner, parseProcessLine, refusedSocket, staleMarker } from "./herdr-marker.ts";
 
+// a real marker and the process behind it, read from a Windows PC (herdr 0.9.3)
 const MARKER = "26540:1790829888292852700";
 const DAEMON = { name: "herdr", startedMs: 1790829888236 };
 

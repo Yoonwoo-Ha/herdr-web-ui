@@ -82,7 +82,20 @@ export const SUBMIT_DELAY_MS = 120;
  * Stop tapped just before Send still reaches the pane first.
  */
 export const TYPED_SETTLE_MS = 300;
+/**
+ * A terminal key (WS `keys`) goes through herdr's RPC, around the attach pty: it waits this long
+ * after the pane's last pty keystroke so it never overtakes typing on its way through the
+ * sidecar and the attach, and the whole TYPED_SETTLE_MS when that keystroke ended in an ESC
+ * herdr may still be holding. Short enough that a held arrow between typed letters shows no lag.
+ */
 export const KEY_SETTLE_MS = 40;
+/**
+ * Nothing of a composer message is typed once this long has passed since it reached the
+ * server (it can wait behind a stalled one in the pane's queue): it answers submit_timeout
+ * instead. A send that starts in time ends within two more 10s RPCs, before the client
+ * stops waiting (SUBMIT_TIMEOUT_MS in src/lib/ws.ts), so a message it gave up on never
+ * reaches the pane later.
+ */
 export const SUBMIT_DEADLINE_MS = 45_000;
 const DRAFT_CLEAR_WAIT_MS = 1_500;
 const DRAFT_CLEAR_POLL_MS = 50;
@@ -132,14 +145,20 @@ export function createServer(
     ipv6Loopback?: boolean;
     lanHttps?: LanHttpsConfig;
     token?: string;
+    /** where VAPID keys and push subscriptions persist; tests pass a temp dir */
     stateDir?: string;
     siblingStateDir?: string | null;
+    /** the PC's own Tailscale login, for the identity check; tests set it, otherwise `tailscale status` says */
     tailscaleOwner?: string | null;
+    /** the operator declares `tailscale serve` as this install's only ingress; OVIS_TAILSCALE_SERVE_ONLY=1 says the same */
     tailscaleServeOnly?: boolean;
+    /** the tailnet identity behind the access check; unset, the tailscale CLI says. Tests pass one with their own status reader. */
     tailnet?: TailnetIdentitySource;
     codexHome?: string;
     grokHome?: string;
+    /** Muse Code's data directory; defaults to XDG_DATA_HOME/muse or ~/.local/share/muse. Tests use an isolated store. */
     museData?: string;
+    /** OpenCode's database; defaults to where OpenCode finds it (OPENCODE_DB, XDG_DATA_HOME). Tests use an isolated store. */
     opencodeDb?: string;
     openCodeStateDir?: string;
     devinDbPath?: string;
@@ -156,7 +175,9 @@ export function createServer(
     telemetry?: Telemetry;
     usage?: UsageService;
     system?: SystemSampler | null;
+    /** Tests supply an isolated proxy service, never a user's configured instance. */
     cliProxy?: CLIProxyService;
+    /** Tests use a disposable credential home and stand-in CLI binaries. */
     usageLogin?: UsageLoginService;
     voice?: VoiceService;
     machines?: boolean;
@@ -167,10 +188,12 @@ export function createServer(
     sshCandidates?: SshCandidatesOptions;
     /** a bridge this app starts on a PC (server/remote-entry.ts): its token is the credential its connection server holds, and no browser reaches it, so its snapshots go whole (#2160) */
     bridgeOnly?: boolean;
+    /** false: the panes' files are on another machine (server/herdr-core/machine-entry.ts), so no route reads or makes files on this disk for them */
     localFiles?: boolean;
     herdrProfiles?: () => Promise<HerdrMachineProfile[]>;
     herdrConfigPath?: string;
     registerBridge?: boolean;
+    /** the token a connection server presents as this PC's bridge; random unless a test names it */
     bridgeToken?: string;
     pluginActionWaitMs?: number;
     submitDeadlineMs?: number;
@@ -178,6 +201,7 @@ export function createServer(
     pendingStartTimeoutMs?: number;
     piReceiptLimit?: number;
     alertTiming?: Partial<AlertTiming>;
+    /** accept plain-http loopback push endpoints (server/push.ts); only tests delivering to push.fake.ts set it */
     pushLoopbackHttp?: boolean;
     desktopActivity?: boolean;
     backgroundWait?: { grace: number; limit: number };
@@ -195,14 +219,19 @@ export function createServer(
     agentDetector?: AgentDetector;
   } = {},
 ): ServerInstance {
+  // resolved once: a merge can give the old dir files of its own, after which resolving again could name the other dir
   const stateDir = provided.stateDir ?? defaultStateDir();
+  // a second look for the profile's marker (serve() looked before anything else), before anything here reads the
+  // folder, the device list first: a profile that started at the same moment may have marked it since
   if (provided.profile !== "machine") {
     const refusal = profileFolderRefusal(stateDir);
     if (refusal !== null) throw new ProfileFolderError(refusal);
   }
   const options = provided.profile === "machine" ? { ...provided,
     machineEngine: machineEngine(stateDir, provided.port ?? Number(process.env["PORT"] ?? 0)),
+    // OVIS_TOKEN lets nobody in: the local owner is the caller on the owner's socket
     token: "", hostname: "127.0.0.1", ipv6Loopback: false, lanHttps: undefined, portal: undefined,
+    // nothing updates this server from inside it: its updates answer `updates_unmanaged`, whatever updater it is given
     updates: undefined, herdrUpdate: undefined, herdrCoreInstaller: undefined, herdrCoreFacts: undefined, runtimeService: undefined,
     machines: false, bridgeOnly: false, localFiles: true, registerBridge: false, tailscaleServeOnly: false,
   } : provided;
@@ -226,9 +255,11 @@ export function createServer(
     if (accountBlocked !== null) console.error(accountBlocked);
   }
   const devices = new DeviceStore(stateDir, merge?.devicesBlocked ?? null, accountBlocked);
+  // the machine profile has no open install: from its first answer only the caller on its owner's socket and a device through the relay with its proof get in
   if (options.profile === "machine" && !devices.gated) devices.closeGate();
   const preferences = new PreferenceStore(stateDir);
   readOmpHeldFilesSetting(() => preferences.get().settings.ompHeldFiles === true);
+  // on herdr-core an agent pinned here is pinned in the Herdr app and its other clients too
   const stopPinBridge = capabilities().pins ? bridgePins(coreConnection(), preferences, LOCAL_MACHINE, stateDir) : null;
   try {
     rmSync(join(stateDir, "claude-rewinds.json"), { force: true });
@@ -243,6 +274,7 @@ export function createServer(
   const usage = options.usage ?? new UsageService(undefined, undefined, (refresh, skipped) => cliProxy.report(refresh, skipped));
   const usageAccounts = new UsageAccountList(stateDir, usage, () => cliProxy.hiddenChanged());
   const hiddenAccounts = (hidden: unknown): Set<string> => new Set(Array.isArray(hidden) ? hidden.filter((key): key is string => typeof key === "string") : []);
+  // an account hidden in Settings (the shared usageHidden) or removed from Ovis has its sign-in looked up no more (#3333)
   let removedReadable = true;
   const skippedAccounts = () => {
     let removed: string[] = [];
@@ -251,6 +283,8 @@ export function createServer(
   };
   usage.skipAccounts(skippedAccounts);
   cliProxy.skipAccounts(skippedAccounts, () => removedReadable);
+  // an account shown again is looked up now, not at the browser's next poll; hiding one needs no read,
+  // and with Plan limits off nothing is read at all (gh auth token included)
   let usageHidden = hiddenAccounts(preferences.get().settings.usageHidden);
   preferences.subscribe((next) => {
     const before = usageHidden;
@@ -268,10 +302,13 @@ export function createServer(
     }
   });
   const voice = options.voice ?? new VoiceService({ stateDir, env: process.env, fetch });
+  /** a login named here is taken as it is: a tagged node has none of its own to read (OVIS_TAILSCALE_OWNER) */
   const namedOwner = options.tailscaleOwner !== undefined ? options.tailscaleOwner : process.env["OVIS_TAILSCALE_OWNER"]?.trim() || undefined;
   const tailnet = options.tailnet ?? new TailnetIdentitySource();
   const identityOf = async (grantPath: boolean, host: string | null, loginPath = false) => {
+    // the machine profile believes no Tailscale identity: a header there lets nobody in
     if (options.profile === "machine") return { owner: null, tagged: false, soleLogin: null, dnsName: null, tailnetIp: null };
+    // a login is let in only at this PC's tailnet name or address (access.ts), so a named owner still reads them
     if (namedOwner !== undefined) return { ...(grantPath ? await tailnet.freshIdentity(host) : loginPath ? await tailnet.loginIdentity() : { soleLogin: null, dnsName: null, tailnetIp: null }), owner: namedOwner, tagged: false };
     return grantPath ? tailnet.freshIdentity(host) : loginPath ? tailnet.loginIdentity() : tailnet.identity();
   };
@@ -314,6 +351,8 @@ export function createServer(
     try { seen.moved(event.machine_id, event.message.from, event.message.to); }
     catch (error) { console.warn(`seen: could not carry the reads of ${event.message.from} to ${event.message.to}:`, error); }
   });
+  // on herdr-core a finish read here is read in the Herdr app and its other clients too: only the
+  // pane's finish now, so a read told late never marks a turn that ended since as seen.
   const seenMarker = capabilities().seen === "label" ? coreSeenMarker() : null;
   const markSeen = (finish: SeenFinish, again: boolean) => {
     if (!seenMarker || finish.pc !== LOCAL_MACHINE || machines?.finishEnded(finish.pc, finish.epoch) !== false) return;
@@ -376,7 +415,9 @@ export function createServer(
       throw error;
     }
   }
-  // Bun gives a unix socket the umask's mode
+  // the machine profile's local owner: the caller on <state folder>/serve.sock, which only this account (and
+  // root) can connect to. Bun gives a socket the umask's mode: it is made under 077, the owner's umask comes
+  // back for everything made afterwards, and the file is 0600 before anything is served
   let ownerListener: Bun.Server<SocketData> | null = null;
   if (options.profile === "machine") {
     const path = ownerSocketPath(stateDir);
@@ -384,6 +425,7 @@ export function createServer(
     try {
       ownerListener = Bun.serve<SocketData>({
         unix: path, maxRequestBodySize: BUN_BODY_CEILING,
+        // a request with no Host (HTTP/1.0) names no host at all: refused like any other that is not exactly localhost
         fetch: (request, bunServer) => request.headers.has("host")
           ? handleRequest(request, { ...socketContext(bunServer), get port() { return server.port; }, ownerSocket: true })
           : machineUnauthorized(new URL(request.url, "http://localhost").pathname),
@@ -428,6 +470,7 @@ export function createServer(
   ovisRelay.resume(services, server.port ?? DEFAULT_PORT);
   accountMailbox.start();
 
+  // one listener per address on one port, all or none: a half-bound set would answer where nobody asked it to
   const lanListeners: Bun.Server<SocketData>[] = [];
   let lanHttps: ServerInstance["lanHttps"] = null;
   if (options.lanHttps) {
@@ -473,6 +516,7 @@ export function createServer(
     settlePortalStartup({ ok: true });
   }
 
+  // the app's SSH tunnel reaches a bridge on the PC's 127.0.0.1 only (#1960)
   const target = options.registerBridge ? relayTarget(hostname) : null;
   const relay = target ? loopbackRelay(target, server.port ?? 0) : null;
   const registration = options.registerBridge ? registerBridge(relay?.port ?? server.port ?? 0, bridgeToken) : null;
@@ -532,6 +576,7 @@ export async function serve(): Promise<void> {
     console.error("The machine profile is a preview and was not started; set OVIS_PREVIEW=fleet beside OVIS_PROFILE=machine to start it.");
     process.exit(1);
   }
+  // its owner's door is a unix socket in a folder only that account may enter
   if (profile && process.platform === "win32") {
     console.error("The machine profile does not run on Windows, so no server was started.");
     process.exit(1);
@@ -547,6 +592,7 @@ export async function serve(): Promise<void> {
     console.log(machineHerdrBinary());
     if (process.env["OVIS_TOKEN"]) console.log(`OVIS_TOKEN is not used by the machine profile: this account's programs reach it on ${ownership.socket}, and its port tells anyone only that it is alive.`);
   } else {
+    // a folder a machine profile marked is its own, with or without the preview, before anything reads, moves or writes it
     const refusal = profileFolderRefusal(defaultStateDir());
     if (refusal !== null) {
       console.error(refusal);
@@ -554,7 +600,9 @@ export async function serve(): Promise<void> {
     }
   }
   moveLegacyStateDir();
+  // SSH connection folders an earlier server left in /tmp; here, not in createServer, so tests never touch them
   if (!profile) void sweepSshDirs();
+  // resolved once, for the same reason as in createServer
   const stateDir = ownership?.stateDir ?? defaultStateDir();
   if (!profile && fleetPreview() && process.platform !== "win32") {
     try {
@@ -610,6 +658,7 @@ export async function serve(): Promise<void> {
   const updates = connectUpdater();
   const telemetry = new Telemetry({ stateDir, version, env: process.env, fetch, previousVersion: () => updates.installed().previous_version, runtime: herdrCore === null ? "herdr" : "herdr-core" });
   const portal = profile ? undefined : new PortalService({ stateDir });
+  // the direct carrier on this PC's private and Tailscale addresses, which the phone apps' OvisDirect plugin opens (docs/relay.md)
   const tailnet = new TailnetIdentitySource();
   const relay = new RelayService({ stateDir, ...(profile && !MACHINE_DIRECT_CARRIER_ENABLED ? {} : { direct: { tailnetIp: () => tailnet.identity().tailnetIp } }), accountService: passAccountService() });
   const lanConfig = profile ? null : lanHttpsConfig(process.env);
@@ -624,6 +673,7 @@ export async function serve(): Promise<void> {
       ...(lanConfig !== null && !("error" in lanConfig) ? { lanHttps: lanConfig } : {}) });
     ownership?.listening(instance.port, instance.hostname);
     if (profile) {
+      // a device paired at the machine's own address holds a cookie, which opens nothing here: said, not silent
       const unreachable = instance.context.services.devices.list(null).filter((device) => !device.via_relay).map((device) => device.id);
       if (unreachable.length > 0) console.log(`Devices paired at this machine's own address cannot reach it, only devices through the relay can: ${unreachable.join(", ")}`);
     }
@@ -659,7 +709,9 @@ export async function serve(): Promise<void> {
     stopping = true;
     telemetry.stop();
     instance.stop();
-    // Attach sidecars need ~1.2s to release herdr's exclusive client slot
+    // Attach sidecars need ~1.2s to release herdr's exclusive client slot; Portal unregisters from
+    // its relay, and the pipes it logs to must outlive it
+    // herdr-core's adapter answers what the stopping server still asks meanwhile
     void Promise.all([Bun.sleep(2000), portal?.shutdown(), relay.shutdown()]).then(() => {
       herdrCore?.stop();
       process.exit(0);
@@ -702,6 +754,8 @@ export async function serve(): Promise<void> {
         `WARNING: listening on ${instance.hostname} without OVIS_TOKEN - until a device is paired (Settings → Devices, on this PC) anyone who can reach this address can type into your terminals; pair your devices, set OVIS_TOKEN=<token>, or keep HOST=127.0.0.1 and reach it through Tailscale or an SSH tunnel.`,
       );
     }
+    // The bind address says nothing about the transport: a token cookie and every keystroke
+    // travel in the clear on plain http, so a listener on the same network gets them.
     if ((process.env["OVIS_TOKEN"] ?? "") !== "") {
       console.error(
         `WARNING: listening on http://${instance.hostname}:${instance.port} - OVIS_TOKEN is not confidential over cleartext http; on an untrusted network anyone who can read the traffic has the token and everything you type. Reach this PC over Tailscale, put it behind a TLS-terminating proxy, or keep HOST=127.0.0.1.`,

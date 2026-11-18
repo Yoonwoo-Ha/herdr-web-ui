@@ -1,7 +1,13 @@
 /**
- * Letta sends no OSC 7501, and its transcript is written only when a turn ends. Its local backend
- * appends each message to the conversation's `messages.jsonl` as the turn goes, in the shape gjc's
- * transcript has (letta-code 0.34.44). A cloud conversation keeps its messages on the server.
+ * The status of a Letta Code pane that no report gives one (herdr-core: Letta sends no OSC 7501),
+ * read from Letta's own local record of the conversation the pane shows.
+ *
+ * Letta's transcript is written only when a turn ends, so it cannot say a turn runs. Its local
+ * backend appends each message to the conversation's `messages.jsonl` as the turn goes, in the
+ * shape gjc's transcript has (letta-code 0.34.44): a user prompt, a tool result or an assistant
+ * message that stopped for a tool means work; one that stopped for good is rest, one that errored
+ * or was aborted a rest after a failure. A cloud conversation keeps its messages on the server:
+ * its status stays unknown.
  */
 import type { AgentStatus } from "../shared/herdr-api.generated.ts";
 import type { HerdrPane } from "../shared/protocol.ts";
@@ -34,6 +40,7 @@ const MESSAGES_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (const
  */
 function ownMessagesFile(path: string): { dev: bigint; ino: bigint } | null {
   try {
+    // as bigints: a large inode number rounded to a double could match another file's
     const stat = lstatSync(path, { bigint: true });
     if (!stat.isFile()) return null;
     const folder = dirname(path);
@@ -42,12 +49,14 @@ function ownMessagesFile(path: string): { dev: bigint; ino: bigint } | null {
   } catch { return null; }
 }
 
+/** The reader of Letta's messages files for the tracker: its own regular file only, read from its last `cap` bytes when read anew. */
 export function lettaMessagesFile(cap = LETTA_MESSAGES_BYTES): OmoFile {
   const open = (path: string): number | null => {
     const checked = ownMessagesFile(path);
     if (checked === null) return null;
     let fd: number;
     try { fd = openSync(path, MESSAGES_FLAGS); } catch { return null; }
+    // a folder above it swapped for a link between the check and the open opens another file: the same one must be open
     try { const opened = fstatSync(fd, { bigint: true }); if (opened.isFile() && opened.dev === checked.dev && opened.ino === checked.ino) return fd; } catch {}
     closeSync(fd);
     return null;
@@ -88,6 +97,11 @@ export async function lettaPanes(panes: HerdrPane[], deps: LettaDiscovery = {}):
   return found;
 }
 
+/**
+ * A Letta pane still without a status once its local messages had their say (a cloud conversation,
+ * whose messages are on the server, or one not bound): Letta's own title, which carries a spinner
+ * while a turn runs.
+ */
 export function lettaTitleStatus(snapshot: { panes: HerdrPane[]; agents?: { pane_id: string; agent_status: AgentStatus }[] }, tracks: (paneId: string) => boolean, last: Map<string, AgentStatus>, newest = true): { paneId: string; status: AgentStatus }[] {
   const { panes } = snapshot;
   if (!newest) {
@@ -119,6 +133,7 @@ export function lettaTitleStatus(snapshot: { panes: HerdrPane[]; agents?: { pane
       continue;
     }
     if (pane.agent_status !== "unknown") continue;
+    // the program's own title only: elsewhere `title` may be a pane's label
     const status = titleStatus(pane.agent, pane.terminal_title);
     if (status === null) continue;
     pane.agent_status = status;

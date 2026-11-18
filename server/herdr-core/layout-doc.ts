@@ -1,6 +1,15 @@
 import type { PaneLayoutRect, PaneLayoutSplit } from "../../shared/herdr-api.generated.ts";
 import { isRecord } from "./snapshot.ts";
 
+/**
+ * Which tab a terminal is in stays in its `herdr.space` and `herdr.tab` labels, so a Herdr app
+ * started later adopts it.
+ *
+ * Geometry flows top down: a tab is a fixed LAYOUT_AREA square cut by its splits' ratios, never
+ * the terminals' own grids (a viewer sizes the terminal to its cell, and a grid read back as the
+ * cell made panes shrink each other, #2812).
+ */
+
 export const OVIS_LAYOUT_DOC = "ovis-layout";
 export const OVIS_LAYOUT_SCHEMA = 1;
 export const LAYOUT_AREA: PaneLayoutRect = Object.freeze({ x: 0, y: 0, width: 1000, height: 1000 });
@@ -127,6 +136,7 @@ export function place(root: LayoutNode, area: PaneLayoutRect = LAYOUT_AREA): Pla
   return placed;
 }
 
+/** The pane's leaf turned into a split: the pane first, `made` second, half each (herdr's split). */
 export function splitLeaf(root: LayoutNode, target: string, made: string, direction: SplitDirection): LayoutNode | null {
   let found = false;
   const walk = (node: LayoutNode): LayoutNode => {

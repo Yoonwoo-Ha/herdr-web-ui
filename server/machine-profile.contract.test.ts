@@ -18,12 +18,22 @@ import { bounded, deferred } from "./relay/test-helpers.ts";
 import { connectUpdater } from "./update-api.ts";
 import { updateStateDir } from "./update-state.ts";
 
+/**
+ * serve() refuses the machine profile on Windows (its owner's door is a unix socket in a folder only this
+ * account may enter): every case here runs a profile or compares a server with one, so all are skipped there,
+ * and the one case of `test.if` below checks that refusal instead.
+ */
 const it = process.platform === "win32" ? test.skip : test;
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const root = resolve(import.meta.dir, "..");
 const token = "machine-contract-owner";
 const headers = { authorization: `Bearer ${token}`, "x-herdr-update": "1", "x-herdr-machine": "1" };
+/**
+ * The profile walks its state folder's path at start and refuses one under a folder another account
+ * may write: a TMPDIR the walk refuses (a group-writable folder whose group cannot be shown to be
+ * private) leaves these folders in root's sticky /tmp, where every CI runner has them.
+ */
 const parent = trustRefusal(realpathSync(tmpdir()), harmlessGroups(), true) === null ? tmpdir() : "/tmp";
 function folder(under: string, prefix = "ovis-machine-profile-") {
   const dir = mkdtempSync(join(under, prefix));
@@ -32,6 +42,7 @@ function folder(under: string, prefix = "ovis-machine-profile-") {
 }
 const state = () => folder(parent);
 const scratch = () => folder(tmpdir());
+/** The local owner's call: on the profile's socket in its state folder, addressed as the command line addresses it. */
 function owner(stateDir: string, path: string, init: RequestInit = {}) {
   return fetch(`http://localhost${path}`, { ...init, unix: join(stateDir, "serve.sock") });
 }
@@ -77,7 +88,16 @@ function fakeHerdr(socket: string, refuse?: { method: string; message: string } 
  */
 const herdrConfig = () => realpathSync(folder(parent, "ovis-h-"));
 const unsafeSocket = expect.stringMatching(/^The selected herdr socket cannot be used safely by this account/);
+/**
+ * A server reads the versions of the agent tools it finds on its PATH, each in a process group of its
+ * own that outlives a server a test ends, and those tools would write into the HOME of a server whose
+ * folders the test has removed.
+ */
 const launchPath = "/usr/bin:/bin";
+/**
+ * HOME is a folder of its own unless `env` names one: Bun writes its cache into HOME before the server
+ * runs, and a profile starts only on an empty state folder or one it marked.
+ */
 function launch(stateDir: string, env: Record<string, string | undefined> = {}, umask?: string) {
   const ready = deferred<string>();
   let output = "";
@@ -136,6 +156,8 @@ it.each(["environment", "saved"])("refuses herdr-core selected by %s in its heal
   const hc = join(bin, "hc");
   writeFileSync(hc, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\nif [ "$1" = --version ]; then echo 'hc 0.1.18'; else exit 1; fi\n`, { mode: 0o700 });
   if (source === "saved") { marked(dir); writeFileSync(join(dir, "runtime-0.json"), JSON.stringify({ runtime: "herdr-core", previous: "herdr" })); }
+  // the core's own folders are this test's: no core of the user's is ever looked at. Under root's sticky
+  // /tmp: a core socket is taken only on a path that no other account can write
   const core = mkdtempSync("/tmp/ovis-machine-core-absent-");
   cleanup.push(() => rmSync(core, { recursive: true, force: true }));
   const server = launch(dir, { OVIS_RUNTIME: source === "environment" ? "herdr-core" : "", OVIS_HC_BIN: hc, HC_SOCKET: join(core, "absent.sock"),
@@ -254,6 +276,7 @@ it("refuses a state folder where an Ovis supervisor alive records itself, and st
   const lock = join(updateStateDir(root, 7317, dir), "supervisor.lock");
   const holder = await supervisorRecord(lock);
   const before = readdirSync(dir).sort();
+  // a HOME of its own: Bun itself writes into HOME, which the state folder is in the other launches
   const server = launch(dir, { HOME: scratch() });
   expect(await refused(server)).toContain(`An Ovis already runs on this state folder (lock ${lock}, owner pid ${holder.pid} generation `);
   expect(readdirSync(dir).sort()).toEqual(before);
@@ -322,6 +345,7 @@ it.each([["does not exist yet", false], ["exists", true]] as const)("keeps authe
 });
 
 it("refuses an absent HERDR_REMOTE_SOCKET in a folder another account may write, and never uses a socket made there later", async () => {
+  // outside every herdr folder of this account, where anyone could make the socket once the profile runs
   const open = scratch();
   chmodSync(open, 0o777);
   const socket = join(open, "herdr.sock");
@@ -341,6 +365,7 @@ it("connects to nothing that appears at the selected path but this account's own
   const config = herdrConfig();
   const server = launch(dir, { XDG_CONFIG_HOME: config, HERDR_REMOTE_SOCKET: "", HERDR_REMOTE_SESSION: "a" });
   await bounded(server.ready, 20_000);
+  // what appears at the selected path is a link to a herdr in a folder anyone may write
   const open = scratch();
   chmodSync(open, 0o777);
   const planted = fakeHerdr(join(open, "herdr.sock"));
@@ -372,6 +397,7 @@ function openHome() {
 }
 
 it.each(["absent", "running"])("refuses a named session whose herdr is %s under a HOME another account may write, and names that folder to its owner alone", async (herdr) => {
+  // that account could rename ~/.config between the check and a connection, with no link on the path
   const { home, socket } = openHome();
   let planted: ReturnType<typeof fakeHerdr> | undefined;
   if (herdr === "running") { mkdirSync(dirname(socket), { recursive: true, mode: 0o700 }); planted = fakeHerdr(socket); }
@@ -382,9 +408,11 @@ it.each(["absent", "running"])("refuses a named session whose herdr is %s under 
   // read first: toMatchObject puts its matcher where it matched
   const { reason } = health.machine_profile;
   expect(health).toMatchObject({ machine_profile: { runtime_down: true, reason: unsafeSocket } });
+  // the walk's reason names the folder another account may write, in the start's engine line too, never on standard error
   expect(reason).toContain(`${home} `);
   expect(server.output()).toContain(`Machine engine: herdr (${reason})\n`);
   expect(server.errors()).not.toContain(home);
+  // nobody without full access reads it: TCP answers liveness, and the socket a request naming another host 401
   expect(await (await fetch(`${base}/api/health`, { headers })).text()).toBe('{"ok":true}');
   const stranger = await owner(dir, "/api/health", { headers: { ...headers, host: "evil.example" } });
   expect([stranger.status, (await stranger.text()).includes(home)]).toEqual([401, false]);
@@ -401,6 +429,7 @@ it("refuses its pinned herdr at once when a folder on the way becomes writable b
   await bounded(server.ready, 20_000);
   expect(await (await owner(dir, "/api/health", { headers })).json()).toMatchObject({ machine_profile: { runtime_down: false, reason: null } });
   const used = herdr.connections();
+  // well inside the age the profile keeps its ACL answers: a folder's mode is read before every connection
   chmodSync(join(config, "herdr"), 0o777);
   const health = await (await owner(dir, "/api/health", { headers })).json() as { machine_profile: { reason: string } };
   const { reason } = health.machine_profile;
@@ -416,6 +445,7 @@ it("connects to no session its walk refuses while it looks for one, names why to
   const dir = state();
   const server = launch(dir, { HOME: home, XDG_CONFIG_HOME: undefined, HERDR_REMOTE_SOCKET: "", HERDR_REMOTE_SESSION: "", HERDR_SOCKET: undefined });
   await bounded(server.ready, 20_000);
+  // the one session under a HOME everyone may write is not a session found: the discovery before the start did not even connect to it
   expect(unsafe.connections()).toBe(0);
   const health = await (await owner(dir, "/api/health", { headers })).json() as { machine_profile: { reason: string } };
   const { reason } = health.machine_profile;
@@ -492,6 +522,7 @@ it.each(["/api/session", "/api/machines"])("answers a herdr read that fails on %
   expect(await (await owner(dir, "/api/health", { headers })).json()).toMatchObject({ machine_profile: { runtime_down: false, reason: null } });
   const response = await owner(dir, path, { headers });
   const text = await response.text();
+  // a code herdr gave is answered as one fixed code; the status is the one every failed herdr read answers with
   expect([response.status, JSON.parse(text)]).toEqual([404, { error: { code: "herdr_error", message: "herdr did not answer this request" } }]);
   expect([text.includes(config), text.includes(realpathSync(dir)), text.includes("herdr.sock")]).toEqual([false, false, false]);
   expect(response.headers.get("cache-control")).toBe("no-store");
@@ -543,6 +574,7 @@ it("proves its own boot to its owner on GET /api/machines?verify_source_boot=loc
   for (const path of ["/api/machines?verify_source_boot=other", "/api/machines"]) {
     expect(await (await owner(stateDir, path, { headers })).json()).not.toHaveProperty("verified_source_boot");
   }
+  // the roster answers this app's page only, as an ordinary server's does
   const foreign = await owner(stateDir, "/api/machines", { headers: { ...headers, origin: "http://evil.example" } });
   expect([foreign.status, (await foreign.json() as { error: { code: string } }).error.code]).toEqual([403, "invalid_origin"]);
 });
@@ -707,9 +739,11 @@ it("lets a DNS-rebinding page in nowhere before the relay was ever on, while thi
   cleanup.push(async () => { await herdrRpc("workspace.close", { workspace_id: created.workspace.workspace_id }); });
   const paneId = created.root_pane.pane_id;
   const page = (port: number) => ({ host: `evil.example:${port}`, origin: `http://evil.example:${port}` });
+  // control: an ordinary server whose pairing gate is still open answers this as an open install; the profile, whose gate is closed, does not
   const forwarded = { "x-forwarded-for": "203.0.113.7" };
   expect((await fetch(`http://127.0.0.1:${ordinary}/api/session`, { headers: forwarded })).status).toBe(200);
   expect((await fetch(`http://127.0.0.1:${profile}/api/session`, { headers: forwarded })).status).toBe(401);
+  // the page's own name from loopback is a rebound name on an ordinary server too (#3876): it is asked to pair
   expect((await fetch(`http://127.0.0.1:${ordinary}/api/session`, { headers: page(ordinary) })).status).toBe(401);
   expect((await (await fetch(`http://127.0.0.1:${ordinary}/api/health`, { headers: page(ordinary) })).json()).auth).toMatchObject({ authenticated: false, reason: "pairing_required" });
   expect((await fetch(`http://127.0.0.1:${profile}/api/session`, { headers: page(profile) })).status).toBe(401);
@@ -717,6 +751,7 @@ it("lets a DNS-rebinding page in nowhere before the relay was ever on, while thi
   expect(typed.status).toBe(401);
   const socket = await fetch(`http://127.0.0.1:${profile}/ws`, { headers: { ...page(profile), ...upgrade } });
   expect(socket.status).toBe(401);
+  // a program of this PC's own account on loopback TCP with no header of value is nobody either
   const loopback = await fetch(`http://127.0.0.1:${profile}/api/pane/input`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pane_id: paneId, text: "MACHINE_LOOPBACK" }) });
   expect(loopback.status).toBe(401);
   const own = await owner(stateDir, "/api/pane/input", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pane_id: paneId, text: "MACHINE_OWNER" }) });
@@ -787,6 +822,7 @@ it("answers only liveness on TCP to every caller: the token, a device paired at 
     expect((await fetch(`${base}/ws`, { headers: { ...shape, ...upgrade } })).status).toBe(401);
     expect((await fetch(`${base}/`, { headers: shape })).status).toBe(404);
   }
+  // nothing on TCP started the relay or paired anyone
   expect(await (await owner(stateDir, "/api/relay")).json()).toMatchObject({ phase: "off" });
   expect((await (await owner(stateDir, "/api/devices")).json() as { devices: { id: string }[] }).devices.map((device) => device.id)).toEqual([id]);
 });
@@ -865,6 +901,7 @@ it("ignores OVIS_TOKEN and says so once at its start, and names the devices pair
 
 it("makes its folder 0700 and its socket 0600 under umask 002, gives the umask back, and names the socket in its lease", async () => {
   const dir = join(state(), "made");
+  // a HOME of its own: Bun makes HOME's folders itself before the server runs
   const server = launch(dir, { HOME: scratch() }, "002");
   const base = await bounded(server.ready, 20_000);
   const socket = join(realpathSync(dir), "serve.sock");
@@ -938,6 +975,7 @@ it("leaves no socket and no lease when its port is taken", async () => {
 
 it("keeps an ordinary server with the preview off a folder a profile marked, running or killed, and a profile off a folder an ordinary server uses", async () => {
   const dir = state();
+  // a HOME of its own for each: Bun and the programs a server asks write into HOME
   const profile = launch(dir, { HOME: scratch() });
   await bounded(profile.ready, 20_000);
   const before = readdirSync(dir).sort();
@@ -945,6 +983,7 @@ it("keeps an ordinary server with the preview off a folder a profile marked, run
   expect(readdirSync(dir).sort()).toEqual(before);
   profile.child.kill("SIGKILL");
   await bounded(profile.exited, 15_000);
+  // a killed profile holds nothing, but the folder it marked is still its own
   expect(await refused(launch(dir, { OVIS_PROFILE: "", HOME: scratch() }))).toContain(join(dir, "machine-profile.json"));
   const other = state();
   const ordinary = launch(other, { OVIS_PROFILE: "", HOME: scratch() });
@@ -1101,6 +1140,7 @@ it.each(["refusing every call", "answering only its snapshot and panes", "not li
     if (mode === "refusing every call") {
       expect(answers.filter((answer) => !answeredFirst(answer) && !answer.reached && !NOT_WALKED.test(answer.route)).map((answer) => `${answer.route} ${answer.status} ${answer.code}`)).toEqual([]);
     }
+    // the profile's own answer to the stand-in's refusal, wherever a route answers with it, is never stored
     const worded = answers.filter((each) => each.code === "herdr_error");
     expect(worded.length).toBeGreaterThan(0);
     for (const answer of worded) expect([answer.route, answer.headers]).toEqual([answer.route, expect.stringContaining("no-store")]);

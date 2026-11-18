@@ -114,6 +114,9 @@ describe("a supervisor started by the launcher of an install from before the ren
   }
 
   it("runs the release it installed and keeps the state where that launcher looks", async () => {
+    // the v0.4.13 launcher names the checkout HERDR_WEB_SOURCE_ROOT, and it finds the active
+    // release, at every start and every handover after the next install, only under the old
+    // state dir: moved away, the update came back as the source checkout's old version
     const { directory, root, config, release } = installedRelease();
     const [bridge, ...more] = await startBridge(directory, config, { HERDR_WEB_SOURCE_ROOT: root });
     expect(more).toEqual([]);
@@ -123,6 +126,9 @@ describe("a supervisor started by the launcher of an install from before the ren
   }, 20_000);
 
   it("falls back from a release that fails to the 0.4.13 checkout, telling its bridge what it reads", async () => {
+    // after a second update, the 0.4.13 launcher's own fallback is the previous release's
+    // supervisor, which starts the source checkout the same way: a bridge that cannot answer
+    // the boot id or is not told it is managed leaves the app down or unable to update
     const { directory, root, config, release } = installedRelease();
     const launches = await startBridge(directory, config, { HERDR_WEB_SOURCE_ROOT: root }, true);
     expect(launches.map((launch) => launch.cwd)).toEqual([release, root]);
@@ -155,6 +161,8 @@ describe("a supervisor started by the launcher of an install from before the ren
   }
 
   it.skipIf(process.platform === "win32")("fetches the Rust PTY host that the 0.4.13 updater left out of the release", async () => {
+    // 0.4.13's updater builds a release without scripts/pty-sidecar.ts install, so the release came
+    // up without its Rust PTY host: its terminals ran on Node, or were mirrored on a PC without Node
     const { directory, root, config, release } = installedRelease();
     standInInstall(directory, release);
     const installed = seen(directory, () => installs(directory).length > 0, "the release's Rust PTY host install");
@@ -185,6 +193,8 @@ describe("a supervisor started by the launcher of an install from before the ren
   }, 40_000);
 
   it.skipIf(process.platform === "win32")("stops its Rust PTY host install when the supervisor stops", async () => {
+    // the install runs in a process group of its own: left running, it would outlive the
+    // supervisor and its 120 s limit, and could meet the next supervisor's try in bin/
     const { directory, root, config, release } = installedRelease();
     const started = join(directory, "install-started"), stopped = join(directory, "install-stopped");
     standInInstall(directory, release, `
@@ -207,8 +217,11 @@ describe("a supervisor started by the launcher of an install from before the ren
   }, 30_000);
 
   it.skipIf(process.platform === "win32")("kills a Rust PTY host install that ignores SIGTERM, and its children, before the supervisor exits", async () => {
+    // an install and a child of it that ignore SIGTERM must not outlive the supervisor: left alive,
+    // the next supervisor's try after the retry wait would meet them in bin/
     const { directory, root, config, release } = installedRelease();
     const started = join(directory, "install-started"), pids = join(directory, "install-pids");
+    // both hold the write end of this FIFO: its reader sees the end only once both are gone
     const fifo = join(directory, "install-alive");
     expect(spawnSync("mkfifo", [fifo]).status).toBe(0);
     const reader = createReadStream(fifo);
@@ -219,7 +232,7 @@ describe("a supervisor started by the launcher of an install from before the ren
       reader.on("end", () => { clearTimeout(timer); resolve(); });
       reader.on("error", (error) => { clearTimeout(timer); reject(error); });
     });
-    gone.catch(() => undefined);
+    gone.catch(() => undefined); // awaited below; a run that fails before then must not leave it unhandled
     standInInstall(directory, release, `
       const { openSync } = await import("node:fs");
       const { spawn } = await import("node:child_process");
@@ -245,12 +258,16 @@ describe("a supervisor started by the launcher of an install from before the ren
     } finally {
       if (existsSync(pids)) for (const pid of JSON.parse(readFileSync(pids, "utf8")) as number[]) { try { process.kill(pid, "SIGKILL"); } catch {} }
       clearTimeout(timer);
+      // a reader still waiting for its first writer is let go by a writer that opens and leaves at once
       try { closeSync(openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK)); } catch {}
       reader.destroy();
     }
   }, 40_000);
 
   it.skipIf(process.platform === "win32")("exits even when a process of its Rust PTY host install escaped the group and holds its output open", async () => {
+    // a descendant in a group of its own outlives the group's SIGKILL and keeps the install's
+    // stdout open, so the install never closes: the stop is bounded, or the plugin could never
+    // start the supervisor again
     const { directory, root, config, release } = installedRelease();
     const started = join(directory, "install-started"), pids = join(directory, "install-pids");
     standInInstall(directory, release, `

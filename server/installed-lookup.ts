@@ -29,6 +29,7 @@ export class InstalledLookup {
       return (await this.#lookup.onPath(binary)) !== null;
     }
     const entry: { running: Promise<void> | null; at: number } = { running: null, at: 0 };
+    // the interactive shell (which runs the user's .zshrc) is asked again for a new install only, not on each retry
     entry.running = this.#lookup.refresh(last === undefined).catch(() => undefined).finally(() => { entry.running = null; entry.at = this.#now(); });
     this.#refreshes.set(install, entry);
     await entry.running;

@@ -146,6 +146,7 @@ describe("workspace order evidence across a real bridge", () => {
       });
       const proved = remoteWhere((machine) => machine.source_boot_id === sourceBoot && machine.snapshot?.order_epoch === sourceBoot);
       await drive.observe(runtime);
+      // the proof is the bridge's own health over the manager's connection, never the manager's boot
       expect(await proved).toMatchObject({ source_boot_id: sourceBoot, snapshot: { order_epoch: sourceBoot, read_seq: 0 } });
       const after = remoteWhere((machine) => (machine.snapshot?.read_seq ?? 0) >= 1);
       const moved = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/remote/workspace/move", {

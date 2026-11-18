@@ -10,6 +10,10 @@ type Held = { address: string; state: string; labels: Record<string, string>; st
 
 const AGENT = { app: "claude-code", state: "idle" };
 
+/**
+ * hc's label and event calls over terminals held here: a label write comes back as hc tells it, a
+ * `labels` event. `early` events reach the stream before its snapshot does, as hc may send them.
+ */
 function fakeCore(terminals: Held[]) {
   const written: { terminal: string; labels: Record<string, string> }[] = [];
   const state = { failing: false, early: [] as Record<string, unknown>[], held: null as Record<string, unknown>[] | null, answer: null as Promise<void> | null };
@@ -46,6 +50,7 @@ function fakeCore(terminals: Held[]) {
       return { result: { channel: 1, seq: 1, terminals: snapshot }, channel: { close: async () => {} } };
     },
   };
+  /** the stream ends, as when hc restarts; resolves once the bridge has read the next snapshot */
   const drop = () => { opened = Promise.withResolvers<void>(); onClose?.(); return opened.promise; };
   const release = () => { const held = state.held ?? []; state.held = null; for (const event of held) tell(event); };
   return { hc: hc as never, written, state, tell, drop, release, opened: () => opened.promise, writing: () => writing.promise };

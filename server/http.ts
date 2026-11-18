@@ -1,5 +1,9 @@
 /**
  * The `{ error: { code, message } }` envelope every Ovis route answers with.
+ *
+ * It lives outside index.ts because the auth routes must fail in exactly the shape
+ * the pane routes fail in: a second copy of this envelope is how one API ends up
+ * with two error formats and a client that only handles one of them.
  */
 
 import { randomBytes } from "node:crypto";
@@ -16,7 +20,9 @@ export function wordHerdrFailures(view: HerdrFailureView, reason: (reason: strin
   context.herdrFailure = view;
   context.herdrReason = reason;
 }
+/** The headers of an answer that may carry what this request words: never stored inside a request that words them, else none. */
 export const wordedHeaders = (): Record<string, string> => requestIdContext.getStore()?.herdrFailure === undefined ? {} : { "cache-control": "no-store" };
+/** A layout answer, whose `reason` may be herdr's: never stored, its reason worded, inside a request that words them; else as it is. */
 export function layoutResponse<T extends { reason: string | null }>(body: T): Response {
   const word = requestIdContext.getStore()?.herdrReason;
   if (word === undefined) return jsonResponse(body);
@@ -24,6 +30,7 @@ export function layoutResponse<T extends { reason: string | null }>(body: T): Re
 }
 export const requestFault = (error: unknown, code: string): { code: string; message: string } => faultOf(error, code, requestIdContext.getStore()?.herdrFailure);
 
+/** Call only from a matched dispatch branch, with a fixed template or a finite matched literal. */
 export function setRequestRoute(route: string): void {
   const context = requestIdContext.getStore();
   if (context !== undefined) context.route = route;

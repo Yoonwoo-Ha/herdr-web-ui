@@ -11,6 +11,10 @@ import { MachineScopedConnection } from "./machine-scope.ts";
 import { buildSnapshot } from "./snapshot.ts";
 import type { HerdrPane } from "../../shared/protocol.ts";
 
+/**
+ * The hc client against a real hc, in a core of its own: a session name and state, config and
+ * runtime folders no other core uses, so the user's core and the Herdr app never see it.
+ */
 const bin = process.env["OVIS_TEST_HC_BIN"];
 
 const WAIT_MS = 5000;
@@ -20,6 +24,7 @@ interface Waiter { check: () => boolean; resolve: () => void }
 
 describe.skipIf(!bin)("hc client against a real hc", () => {
   let dir = "";
+  /** set only once every isolating variable is in it: nothing runs hc without it */
   let env: Record<string, string> | null = null;
   let pids: number[] = [];
   let hc: HcConnection;
@@ -37,6 +42,7 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), "ovis-hc-live-"));
     for (const sub of ["state", "config", "run"]) mkdirSync(join(dir, sub), { mode: 0o700 });
+    // an inherited HC_* (a terminal of the user's core, its socket) must not point this test at that core
     const inherited = Object.entries(process.env).filter((entry): entry is [string, string] => !entry[0].startsWith("HC_") && entry[1] !== undefined);
     const isolated = {
       ...Object.fromEntries(inherited),
@@ -52,6 +58,7 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
     const status = Bun.spawn([bin!, "server", "status", "--json"], { env: isolated, stdout: "pipe", stderr: "ignore" });
     const running = JSON.parse(await new Response(status.stdout).text()) as { pid: number; holder?: { pid: number } | null };
     pids = [running.pid, ...(running.holder ? [running.holder.pid] : [])];
+    // spawnHcConnect would run hc with the env this process started with: this core's env is passed explicitly
     hc = new HcConnection(() => {
       const child = Bun.spawn([bin!, "connect"], { env: isolated, stdin: "pipe", stdout: "pipe", stderr: "ignore" });
       return {
@@ -65,6 +72,7 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
 
   afterAll(async () => {
     hc?.close();
+    // a core started with anything but the isolated env could be the user's: only this test's is stopped
     let stopped = 0;
     if (bin && env) stopped = await Bun.spawn([bin, "server", "stop"], { env, stdout: "ignore", stderr: "ignore" }).exited;
     // hc's core and holder are detached daemons, not children: their exit has no event to await
@@ -153,9 +161,11 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
       onExit: (code) => exit.resolve(code),
     });
     await until("first paint", () => screen.length > 0);
+    // a core without the feature must get it as DATA: AUTOMATIC_INPUT it does not know would be dropped
     session.write("auto\r", true);
     expect(await exit.promise).toBe(3);
     expect(screen).toContain("got:auto");
+    // what the pinned core says, for whoever raises the pin: hc 0.1.14 to 0.1.17 do not name the feature
     console.info(`hc ${hello.version} automatic_input: ${hello.features.includes("automatic_input")}`);
     await hc.call("terminal.rm", { terminal: record.address });
   }, TEST_MS);
@@ -279,8 +289,14 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
   }, TEST_MS);
 });
 
+/**
+ * Another machine of a real hc's core, shown as a PC of its own (#2497): two cores of their own
+ * (sessions, state, config and runtime folders nobody else uses), the second added to the first as
+ * `lab` through a `--via` command that runs its `hc connect` in its own env, as SSH would there.
+ */
 describe.skipIf(!bin)("another machine of a real hc's core", () => {
   let dir = "";
+  /** each core's env, set only once every isolating variable is in it */
   const envs: Record<string, string>[] = [];
   let hc: MachineScopedConnection | null = null;
   let stopAdapter: (() => void) | null = null;
@@ -345,6 +361,7 @@ describe.skipIf(!bin)("another machine of a real hc's core", () => {
   afterAll(async () => {
     stopAdapter?.();
     hc?.close();
+    // only this test's cores, each by its own isolated env
     const stopped = await Promise.all(envs.map((env) => Bun.spawn([bin!, "server", "stop"], { env, stdout: "ignore", stderr: "ignore" }).exited));
     if (dir) rmSync(dir, { recursive: true, force: true });
     expect(stopped.every((code) => code === 0)).toBe(true);

@@ -19,6 +19,7 @@ type Env = Record<string, string | undefined>;
 
 export interface HcRelease {
   version: string;
+  /** per `<platform>-<arch>` as Node names them: the archive and its SHA-256 (releases.herdr.dev/core/<version>/manifest.json) */
   targets: Partial<Record<string, { url: string; sha256: string }>>;
 }
 
@@ -75,6 +76,7 @@ export async function installHc(options: InstallHcOptions): Promise<InstalledHc>
   try {
     // unzipped here: GNU tar would need a gzip on the PATH
     writeFileSync(join(work, "hc.tar"), Bun.gunzipSync(archive));
+    // the member named, nothing else: the archive's other files are its license and notices
     // a service's PATH may be bare: tar is in /usr/bin on every Linux and macOS
     const tarBin = Bun.which("tar", { PATH: env["PATH"] ?? "" }) ?? "/usr/bin/tar";
     const tar = Bun.spawn([tarBin, "-xf", join(work, "hc.tar"), "-C", work, "herdr-core"], { stdin: "ignore", stdout: "ignore", stderr: "pipe", env });
@@ -119,6 +121,7 @@ export async function installHc(options: InstallHcOptions): Promise<InstalledHc>
   };
 }
 
+/** The whole body, refused as soon as it passes `limit`: a server that sends more is never held in memory. */
 async function boundedBody(response: Response, limit: number): Promise<Uint8Array<ArrayBuffer>> {
   const chunks: Uint8Array<ArrayBuffer>[] = [];
   let size = 0;

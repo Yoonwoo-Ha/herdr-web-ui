@@ -219,6 +219,11 @@ it("releases the swap queue after a native swap fails without restoring focus", 
   expect(state.focus).toBe("elsewhere");
 });
 
+/**
+ * herdr's pane.move as measured on 0.9.5: into the pane's own tab it answers same_tab (`withinTab`
+ * models a herdr that moves there); a pane moved out to a new tab keeps its ID and leaves herdr's
+ * focus on a pane of the tab it left, which its answer names; an explicit swap focuses its source.
+ */
 async function movePeer({ withinTab = false } = {}) {
   const state = {
     tabs: new Map([["source", "tab"], ["target", "tab"], ["sibling", "tab"], ["other", "tab-2"]]),
@@ -619,6 +624,7 @@ it("accepts a matching result and compatible unknown fields", async () => {
   });
   expect(await herdrRpc<unknown>("fixture.read", {}, path)).toEqual({ ok: true, added_later: { nested: [1, 2] } });
   expect(await herdrRpc("fixture.read", {}, path)).toBeNull();
+  // one connection per call, each with its own request id
   expect(connections).toHaveLength(2);
   expect(new Set(requests.map((r) => r.id)).size).toBe(2);
 });
@@ -657,6 +663,7 @@ it("rejects null and incoherent envelopes", async () => {
 it("rejects a mismatched reply id", async () => {
   let reply: (id: string) => string = () => "";
   const { path } = await peer((request, { socket }) => socket.end(reply(request.id)));
+  // another request's answer, a numeric or missing id: none is this request's reply
   for (const id of ["br-someone-else", 7, null, undefined]) {
     reply = () => `${JSON.stringify({ id, result: { stolen: true } })}\n`;
     const error = await rejection(herdrRpc("fixture.read", {}, path));
@@ -685,6 +692,7 @@ it("takes an error under the ids herdr 0.9.0 and 0.9.1 give it as herdr's own", 
   expect([probe.code, probe.message]).toEqual([gone.code, gone.message]);
   expect(diagnostics.records()).toEqual([]);
 
+  // only an error may carry those ids, and only this request's probe id
   const foreign: [string, (id: string) => unknown][] = [
     ["reply to another request", () => ({ id: "", result: { stolen: true } })],
     ["reply to another request", (id) => ({ id: `${id}:sub:0:probe`, result: { stolen: true } })],
@@ -699,6 +707,7 @@ it("takes an error under the ids herdr 0.9.0 and 0.9.1 give it as herdr's own", 
     expect([error.code, error.message]).toEqual(["bad_frame", expect.stringContaining(`(${reason}, `)]);
   }
 
+  // a subscription refused by herdr 0.9.0 or 0.9.1 reports herdr's error, as one from 0.9.2 does
   type Script = (id: string, socket: Socket) => void;
   let script: Script = () => {};
   const { path: streamPath } = await peer((request, { socket }) => script(request.id, socket));
@@ -715,6 +724,7 @@ it("takes an error under the ids herdr 0.9.0 and 0.9.1 give it as herdr's own", 
   await within(open.allEvents, 5_000, "the event after herdr's error");
   expect(open.errors.map((e) => [(e as HerdrError).code, e.message])).toEqual([[gone.code, gone.message]]);
   expect([open.started(), open.closes(), open.events]).toEqual([1, 0, [event(1)] as never]);
+  // an acknowledgement still needs the subscribe's own id
   script = (_id, socket) => socket.write(ack(""));
   const unacknowledged = subscriber(streamPath);
   await within(unacknowledged.closedOnce, 5_000, "closing on an acknowledgement with an empty id");
@@ -824,11 +834,17 @@ it("accepts largest supported pane and snapshot replies", async () => {
   expect(read.text.length).toBeGreaterThan(LINE_BYTES);
   expect((read as unknown as { added_later: number }).added_later).toBe(1);
 
+  // pane.selection.read returns any range of the same history, so it has the same ceiling
   reply = ({ id }) => exactLine(LARGE_REPLY_BYTES, (pad) => ({ id, result: { type: "pane_selection", text: `${screen.repeat(1000)}${pad}` } }));
   const selection = await herdrRpc<{ text: string }>("pane.selection.read", { pane_id: "pane-1", anchor: { row: 0, col: 0 }, cursor: { row: 9, col: 0 } }, path, 30_000);
   expect(selection.text.startsWith(screen.repeat(1000))).toBe(true);
   expect(selection.text.length).toBeGreaterThan(LINE_BYTES);
 
+  // The snapshot sizing evidence in client.ts: a schema-complete snapshot of 25 workspaces of 8 tabs
+  // of 10 panes (2,000 panes, with every pane's agent and every tab's layout) is 3,598,115 bytes of
+  // JSON. Its whole reply line before padding is that plus 58 bytes of envelope
+  // ({"id":"","result":{"type":"session_snapshot","snapshot":}}), the id's bytes and the newline:
+  // 3,598,174 + id bytes (3,598,188 for a 14-byte id), about 1,800 bytes a pane; twice that is under 8 MiB.
   const full = fullSnapshot(25, 8, 10);
   expect([full.workspaces.length, full.tabs.length, full.layouts.length, full.panes.length, full.agents.length]).toEqual([25, 200, 200, 2000, 2000]);
   expect(Buffer.byteLength(JSON.stringify(full))).toBe(3_598_115);
@@ -853,6 +869,7 @@ it("accepts largest supported pane and snapshot replies", async () => {
 }, 120_000);
 
 it("keeps subscriptions alive beyond the aggregate line cap", async () => {
+  // 2,100 events of about 8 KiB each: far more than LINE_BYTES in total, every line small
   const count = 2100;
   const pad = "e".repeat(8 * 1024);
   const { path, connections } = await peer((request, { socket }) => {
@@ -876,6 +893,7 @@ it("validates subscription acknowledgement separately from events", async () => 
   let script: Script = () => {};
   const { path, connections } = await peer((request, { socket }) => script(request.id, socket));
 
+  // the acknowledgement must answer this subscribe's id; events after it carry none
   script = (id, socket) => socket.write(`${ack(id)}${JSON.stringify(event(1))}\n${JSON.stringify(event(2))}\n`);
   const good = subscriber(path, 2);
   await within(good.allEvents, 5_000, "two events");

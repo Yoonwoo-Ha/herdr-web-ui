@@ -4,6 +4,11 @@ import { basename, isAbsolute, join, relative, sep } from "node:path";
 import type { WorkspaceWorktreeInfo } from "../../shared/herdr-api.generated.ts";
 import type { WorktreeInfo } from "../herdr/client.ts";
 
+/**
+ * herdr's worktree calls, answered with git on a herdr-core PC: hc has no worktrees, so Ovis runs
+ * `git worktree` itself and opens a checkout as a workspace of its own, as New workspace does
+ * there.
+ */
 export const WORKTREE_LABEL = "ovis.worktree";
 
 /** herdr's default folder for new checkouts (its `worktree_directory`): `<dir>/<repository>/<branch, slashes as dashes>` */
@@ -13,6 +18,7 @@ export const defaultCheckoutPath = (repoName: string, branch: string): string =>
 /** the branch as a folder and workspace name, as herdr makes them */
 export const worktreeFolder = (branch: string): string => branch.trim().replaceAll("/", "-");
 
+/** A refusal in herdr's words for its worktree calls (not_git_worktree, worktree_create_failed, …). */
 export class WorktreeError extends Error {
   readonly code: string;
   constructor(code: string, message: string) {
@@ -60,6 +66,7 @@ export function realPath(path: string): string {
   }
 }
 
+/** One checkout of a repository, as `git worktree list` says it; the first is the repository's own. */
 export type Checkout = Pick<WorktreeInfo, "path" | "branch" | "is_bare" | "is_detached" | "is_prunable">;
 
 export interface Repository {
@@ -74,6 +81,7 @@ export interface Repository {
 function gitEnvironment(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
+    // a repository the server itself was started inside is not the one asked about
     if (value === undefined || name === "GIT_DIR" || name === "GIT_WORK_TREE" || name === "GIT_INDEX_FILE" || name === "GIT_COMMON_DIR") continue;
     env[name] = value;
   }

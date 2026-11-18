@@ -17,6 +17,9 @@ const retired = new Set<string>();
 
 const quiet = ["unanswered", "server error", "unanswered other name"], open = ["wrong token", "redirect", "server error after proof"];
 const waits = [...quiet, "server error later"];
+// once chosen, its adapter socket is no longer this account's own: through a link, not a socket, in a folder others may
+// enter, or another socket than the one the server reports; or in a folder another account could swap: outside the
+// account's own roots, or below a folder others may write or another account owns
 const confinement = ["socket link", "not a socket", "open folder", "other socket id", "outside home", "writable parent", "foreign parent", "foreign root parent", "runtime dir"];
 it.each(["connect", "default bridge", "default herdr", "default herdr chosen", "default herdr installed", "default herdr older peer", "unbridged herdr", "herdr stopped, no bundle", "older peer, no bundle", "older peer, no bundle, bridged", "unanswered, no bundle", "newer bundle", "birthless", "unanswered", "server error", "server error later", "server error after proof", "older peer", "gone", "symlink", "reused pid", "changed port", "stopped after proof", "wrong token", "wrong pid", "managed", "wrong runtime", "redirect", "unanswered other name", ...confinement])("chooses the PC's own core server: %s", async (outcome) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "machine-core-choice-")));
@@ -97,6 +100,7 @@ it.each(["connect", "default bridge", "default herdr", "default herdr chosen", "
       const served = remotePort === bridge.port && bridged ? bridge : remotePort === workBridge.port && beside ? workBridge : descriptor;
       expect(remotePort).toBe(served.port);
       return Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request, server) {
+        // an ended case's token is refused, as a bridge refuses one it does not know; any other must be this bridge's
         const authorization = request.headers.get("authorization");
         if (authorization?.startsWith("Bearer ") && retired.has(authorization.slice("Bearer ".length))) return new Response(null, { status: 401 });
         expect(authorization).toBe(`Bearer ${served.token}`);
@@ -289,16 +293,23 @@ it.each(["connect", "default bridge", "default herdr", "default herdr chosen", "
     if (confinement.includes(outcome)) {
       if (outcome === "socket link" || outcome === "not a socket") { adapter.stop(true); rmSync(socket, { force: true }); }
       if (outcome === "socket link") {
+        // another folder's socket, reached through a link where the chosen server's socket was
         mkdirSync(join(dir, "elsewhere"), { mode: 0o700 });
         adapter = Bun.listen({ unix: join(dir, "elsewhere/herdr-core.sock"), socket: { data() {} } });
         symlinkSync(join(dir, "elsewhere/herdr-core.sock"), socket);
       }
       if (outcome === "not a socket") writeFileSync(socket, "");
+      // a folder others may enter or write is not this account's own herdr-core folder
       if (outcome === "open folder") chmodSync(stateDir, 0o755);
+      // the account's own folder, but outside its home (and no runtime dir): a parent it does not control could swap it
+      // (its registration is still found: that home's .config is the fixture's)
       if (outcome === "outside home") { home = join(dir, "home"); mkdirSync(home); symlinkSync(join(dir, ".config"), join(home, ".config")); }
       if (outcome === "writable parent") chmodSync(shared, 0o777);
+      // another account owns the folder above
       if (outcome === "foreign parent") foreign = shared;
+      // or the folder above the account's home itself (the root): it could rename that root and put another in its place
       if (outcome === "foreign root parent") foreign = dirname(dir);
+      // an XDG_RUNTIME_DIR of the account's own that is not /run/user/<uid> is no root of its own
       if (outcome === "runtime dir") { home = join(dir, "home"); mkdirSync(home); symlinkSync(join(dir, ".config"), join(home, ".config")); xdgRuntime = dir; }
       for (const attach of [() => run({ destination: "fixture-only", own_ovis: socket }), reconnect]) {
         retries.mockClear();
@@ -328,6 +339,7 @@ it.each(["connect", "default bridge", "default herdr", "default herdr chosen", "
     const connects = ["connect", "birthless", "older peer"].includes(outcome);
     expect(chosen.phase).toBe(connects ? "connected" : "failed");
     expect(starts).toBe(0);
+    // the registration's token goes only in the tunnel's HTTP request, never in a command on that PC
     expect(commands.length).toBeGreaterThan(0);
     for (const command of commands) expect(command).not.toContain(descriptor.token);
     if (connects) {
@@ -475,6 +487,8 @@ it("spells the session's own socket beside the one chosen", async () => {
   }
 });
 
+// a registration's port and token go into an SSH forward and a request header: one that is no port or no bridge token
+// of this app's opens no tunnel
 it.each([
   ["port 0", { port: 0 }], ["port past 65535", { port: 65536 }], ["fractional port", { port: 1.5 }], ["port as text", { port: "12345" }],
   ["short token", { token: "a".repeat(63) }], ["upper-case token", { token: "A".repeat(64) }], ["token with a newline", { token: `${"a".repeat(64)}\n` }], ["no token", { token: undefined }],

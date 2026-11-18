@@ -608,6 +608,7 @@ describe("a bridge's agent news (#555)", () => {
     const { news, told } = bridge();
     news.reconciled(pane(null));
     expect(told()).toBe(0);
+    // herdr names an agent there with no status event: only a reconcile shows it
     news.reconciled(pane("claude"));
     expect(told()).toBe(1);
     news.reconciled(pane("claude"));
@@ -834,6 +835,7 @@ describe("workspace order evidence through the manager", () => {
     send({ type: "snapshot", snapshot: paired("R", 0) });
     const call = await health.next();
     expect(call.request.headers.get("authorization")).toBe(`Bearer ${runtime.endpoint!.token}`);
+    // the snapshot's epoch is not proof: until health answers, there is none
     expect(remoteOf(manager)?.source_boot_id).toBeUndefined();
     const proved = published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.source_boot_id === "R"));
     call.answer("R");
@@ -1146,6 +1148,7 @@ describe("saving a remote PC's snapshot", () => {
     }) as unknown as typeof setTimeout);
     const { manager, drive, remote, runtime } = await remoteFixture();
     const internals = manager as unknown as { stateDir: string; saveTimer?: ReturnType<typeof setTimeout> };
+    // each durable write creates its temporary file exclusively ("wx") and fsyncs it
     const temporaries: string[] = [];
     const open = spyOn(privateStateFs, "openSync");
     const fsync = spyOn(privateStateFs, "fsyncSync");
@@ -1215,12 +1218,14 @@ it("shows a connected PC's move to herdr-core on its roster, one read at a time,
   await until(() => reads >= before + 3);
   expect(f.runtime.machine.runtime_move?.status).toEqual({ state: "waiting" });
   failing = false;
+  // a move that could not finish names folders and agents' words: the roster tells only how it ended
   const secret = "/home/someone/secret-project";
   answer = { available: true, plan: { workspaces: [], panes: [], ready: true, revision: "r2" }, status: { state: "rolled_back", reason: `could not start ${secret}`, left: [{ pane_id: "w1:p1", agent: "claude", why: `${secret} is gone` }] } };
   await until(() => f.runtime.machine.runtime_move?.status.state === "rolled_back");
   expect(f.runtime.machine.runtime_move?.status).toEqual({ state: "rolled_back", left: 1 });
   const watched = await handleMachineRequest(new Request("http://127.0.0.1/api/machines"), f.manager, undefined, undefined, true);
   expect(await watched.text()).not.toContain("secret-project");
+  // a reason this version does not know is not carried: it could be any words of that PC's
   answer = { available: false, reason: `cannot move ${secret}`, status: { state: "idle" } };
   f.manager.moveOfferSoon("remote");
   await until(() => f.runtime.machine.runtime_move === null);

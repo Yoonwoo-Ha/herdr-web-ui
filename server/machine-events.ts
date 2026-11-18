@@ -1,3 +1,4 @@
+/** The authorized machine event document, shared by SSE and the terminal WebSocket. */
 import type { DevicePairedEvent, DeviceRemovedEvent, Machine, MachineEvent, RelayPairingsEvent, RemotePairingsEvent } from "../shared/machines.ts";
 import type { AgentRowTokens } from "../shared/pane-tokens.ts";
 import type { SharedPreferences } from "../shared/preferences.ts";
@@ -10,9 +11,11 @@ export interface MachineEventDocument {
   preferences?: { get(): SharedPreferences; subscribe(listener: (preferences: SharedPreferences) => void): () => void };
   herdrSidebar?: { get(): AgentRowTokens | null; subscribe(listener: (agents: AgentRowTokens | null) => void): () => void };
   seen?: { list(): SeenFinish[]; subscribe(listener: (finish: SeenFinish) => void): () => void };
+  /** Filtered for the authenticated device and browser at the transport's admission boundary. */
   pairings?: { subscribe(listener: (event: DevicePairedEvent | DeviceRemovedEvent | RelayPairingsEvent | RemotePairingsEvent) => void): () => void };
 }
 
+/** Initial documents and subsequent invalidations use exactly the same redaction on either transport. */
 export function subscribeMachineEvents({ manager, preferences, herdrSidebar, seen, pairings }: MachineEventDocument, send: (event: MachineEvent) => void): () => void {
   const stops: Array<() => void> = [];
   let active = true;

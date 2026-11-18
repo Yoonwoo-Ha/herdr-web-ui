@@ -10,6 +10,10 @@ import { posixHost, windowsHost } from "./remote-host.ts";
 import { SshConnection } from "./ssh.ts";
 import { tunnelRelays } from "./machine-tunnel.fixture.ts";
 
+// Each wait below (a setup settling, the switch asking B, the old PC's retries resuming) is bounded by this; every answer
+// the fixture gives is in-process or on loopback. The switch's two waits start together, so the test itself outlasts
+// three of them in a row and as long again for the rest: a stalled wait says what it waited for and `finally` restores
+// the spies. Cut short by the runner, they stay installed and break the next case.
 const SETTLE_MS = 5000;
 
 it.each([
@@ -49,6 +53,8 @@ it.each([
       return { platform: "linux-x64", home: "/home/fixture", herdrPath: "/fixture/herdr", expectedSocket: selected, bundleReady: true, bundleOlder: false,
         descriptors: selected === a.herdr_socket && oldLost ? [] : [descriptor(selected)], runtimeDir: "/runtime", registryDir: "/registry" };
     }),
+    // B's refusal makes detectHost ask whether the PC is Windows instead: the fixture is not, and that question must not
+    // run a real ssh to the fixture's address, whose name lookup a hosted runner can hold past the test's deadline
     spyOn(windowsHost, "inspect").mockRejectedValue(new Error("Not a Windows PC")),
     spyOn(posixHost, "herdrVersion").mockResolvedValue("herdr 0.9.3"),
     spyOn(posixHost, "alive").mockResolvedValue(true),

@@ -61,10 +61,10 @@ async function discoveryScope(host: HerdrDiscoveryHost): Promise<DiscoveryScope>
               const at = item.indexOf("="); return at < 0 ? [item, ""] : [item.slice(0, at), item.slice(at + 1)];
             }));
             server(args, env.HOME, env.XDG_CONFIG_HOME);
-          } catch {}
+          } catch { /* the process exited or its environment is private */ }
         }
       } finally { directory.closeSync(); }
-    } catch {}
+    } catch { /* /proc is optional; the configured roots still work */ }
   } else if (host.platform === "darwin") {
     const ps = Bun.spawn(["ps", "eww", "-U", String(scope.uid), "-o", "command="], { env: process.env, stdin: "ignore", stdout: "pipe", stderr: "ignore", timeout: PROBE_TIMEOUT_MS });
     const text = await new Response(ps.stdout).text();
@@ -111,8 +111,14 @@ export async function chosenHerdrSocketStatus(path: string, host: HerdrDiscovery
   finally { clearTimeout(timer); }
 }
 
+/**
+ * Where a socket a server keeps for its life may be (pinnedHerdrSocketStatus): trusted herdr folders, this account,
+ * and `walk`, why another account could rename, replace or write something on the way from `/` to a folder or in
+ * it (null: nobody could).
+ */
 export interface HerdrSocketPlace { dirs: string[]; uid: number | undefined; walk(folder: string): string | null }
 
+/** How long a pinned place keeps its ACL answers and its private group: as long as macOS's ACL reads are kept. */
 const PLACE_ACL_AGE_MS = 60_000;
 
 /**
@@ -177,7 +183,12 @@ export async function pinnedHerdrSocketStatus(path: string, host: HerdrDiscovery
   return { status: own ? "gone" : "refused", place };
 }
 
-// macOS refuses realpath on a socket (EOPNOTSUPP)
+/**
+ * A pinned socket as it is now, checked before each connection to it: "usable" only while it is this account's
+ * socket under `place`, its folder reached through no link and walked safely; "gone" while nothing is there.
+ * It does not connect. The socket's own path is never resolved: macOS refuses realpath on a socket
+ * (EOPNOTSUPP), and a last part that lstat calls a socket is no link.
+ */
 export function heldHerdrSocketStatus(path: string, place: HerdrSocketPlace): "usable" | "gone" | "refused" {
   try {
     const socket = lstatSync(path);

@@ -58,7 +58,7 @@ it("returns results and bounded RPC errors after sequential reads exceed HTTP in
       if (method === "pane.process_info") { calls.push(method); return; }
       if (method === "worktree.open") {
         calls.push(`${method}:${params.workspace_id}`);
-        if (params.workspace_id === "fixture-parent") return;
+        if (params.workspace_id === "fixture-parent") return; // real client-side 10 s RPC timeout
         error = { code: "linked_worktree_source", message: "use the synthetic parent" };
         delay = 7000;
       }
@@ -66,6 +66,7 @@ it("returns results and bounded RPC errors after sequential reads exceed HTTP in
       const answer = () => { if (!socket.destroyed) socket.end(JSON.stringify({ id, ...(error ? { error } : { result }) }) + "\n"); };
       if (delay === 0) answer();
       else {
+        // Synthetic daemon work; each delayed answer remains inside its own 10 s RPC deadline.
         const timer = setTimeout(() => { timers.delete(timer); answer(); }, delay);
         timers.add(timer);
       }

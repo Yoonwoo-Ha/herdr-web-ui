@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
 
+/** a host or container with no IPv6 loopback cannot run the opt-in listener; any other bind error still fails */
 const ipv6Available = (() => {
   try {
     Bun.serve({ hostname: "::1", port: 0, fetch: () => new Response("ok") }).stop(true);

@@ -25,6 +25,7 @@ export class LettaUnavailable extends Error {
   constructor() { super("Letta transcript is in a shape the reader does not know"); this.name = "LettaUnavailable"; }
 }
 
+/** The fields letta-code 0.34.27 writes, by kind: an entry with any other could carry words the reader would drop. */
 const FIELDS = new Set(["kind", "text", "captured_at", "source_line_id", "source_message_id"]);
 const TOOL_FIELDS = new Set(["kind", "name", "argsText", "resultText", "resultOk", "captured_at", "source_line_id", "source_message_id"]);
 const TOOL_REF = /^[A-Za-z0-9_:.-]{1,128}$/;
@@ -89,6 +90,7 @@ const SCAN_CUT = "the transcript was not read to its end in time";
 export class LettaScanCut extends Error {
   constructor() { super(SCAN_CUT); this.name = "LettaScanCut"; }
 }
+/** What a file thread answers for such a scan (lettaToolOutputIn): an error crosses a thread as its message alone. */
 export interface LettaScanCutAnswer { cut: true }
 
 const TOOL_OUTPUT_SCAN_BYTES = 256 * 1024 * 1024;
@@ -129,6 +131,7 @@ export function lettaToolOutput(path: string, ref: string, until = Number.POSITI
         pieces = [];
         start = end + 1;
       }
+      // a copy: the next read overwrites `chunk`
       if (start < got) pieces.push(Buffer.from(read.subarray(start)));
     }
   } catch { return null; } finally { closeSync(fd); }
@@ -136,6 +139,11 @@ export function lettaToolOutput(path: string, ref: string, until = Number.POSITI
   return null;
 }
 
+/**
+ * An open that finds another file there answers nothing (readBound, bound here: each thread has its
+ * own bindings), and the cut is made here, so no more than a page of output is copied to the
+ * server's thread.
+ */
 export function lettaToolOutputIn(path: string, ref: string, file: FileIdentity, max: number, budgetMs: number): string | LettaScanCutAnswer | null {
   const until = Date.now() + budgetMs;
   let output: string | null;
@@ -144,6 +152,11 @@ export function lettaToolOutputIn(path: string, ref: string, file: FileIdentity,
   return output !== null && output.length > max ? `${output.slice(0, max)}\n… trimmed` : output;
 }
 
+/**
+ * lettaToolOutput on a file thread (`file-pool.ts`), read from the file `file` names at `path` and cut
+ * to `max` characters there: on the server's thread one long line held every request and terminal for
+ * as long as it took to join, decode and parse (#3326).
+ */
 export async function lettaToolOutputOffThread(path: string, ref: string, file: FileIdentity, max: number): Promise<string | null> {
   let answer: string | LettaScanCutAnswer | null;
   try { answer = await fileTask<string | LettaScanCutAnswer | null>({ op: "letta-output", path, ref, file: { dev: file.dev, ino: file.ino }, max }); }

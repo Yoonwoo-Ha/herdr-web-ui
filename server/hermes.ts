@@ -71,6 +71,7 @@ function parseToolInput(rawArgs: unknown): { inputStr: string; inputObj: Record<
   return { inputStr: String(rawArgs), inputObj: {} };
 }
 
+/** Uses HERMES_HOME when set, otherwise Hermes's own default for this platform (hermes-home.ts). */
 export function defaultHermesHome(home = userHome(), env: Record<string, string | undefined> = process.env, platform: NodeJS.Platform = process.platform): string {
   return hermesHome(home, env, platform);
 }
@@ -82,10 +83,12 @@ export function hermesDbPath(hermesHome = defaultHermesHome()): string {
 const processHomes = new Map<string, { home: string | null; at: number }>();
 const PROCESS_HOME_TTL_MS = 30_000;
 
+/** The HERMES_HOME in one macOS `ps -E -o command=` line. */
 export function hermesHomeInPsLine(text: string): string | null {
   return [...text.matchAll(/(?:^|\s)HERMES_HOME=(.*?)(?=\s+[A-Za-z_][A-Za-z0-9_]*=|\s*$)/g)].at(-1)?.[1] || null;
 }
 
+/** The HERMES_HOME a process started with, cached because a process's environment does not change. */
 export async function processHermesHome(pid: number, argv: readonly string[] = []): Promise<string | null> {
   const key = `${pid}\0${argv.join("\0")}`;
   const known = processHomes.get(key);
@@ -111,6 +114,7 @@ export async function processHermesHome(pid: number, argv: readonly string[] = [
   return home;
 }
 
+/** Recognizes the Hermes executable, including Python launching its entrypoint. */
 export function isHermesProcess(entry: { name?: string | null; argv0?: string | null; argv?: readonly string[] | null }): boolean {
   const binary = (entry.name ?? entry.argv0 ?? entry.argv?.[0] ?? "").toLowerCase();
   if (binary === "hermes" || binary === "hermes.exe" || binary.endsWith("/hermes") || binary.endsWith("\\hermes.exe")) return true;
@@ -126,10 +130,12 @@ export function isHermesProcess(entry: { name?: string | null; argv0?: string | 
   return false;
 }
 
+/** Resolves process terminal identity to Hermes breadcrumb filename convention. */
 export function hermesTerminalId(pid: number): string | null {
   return hermesTerminal(pid)?.id ?? null;
 }
 
+/** hermesTerminalId with the start of the process it names; on macOS both come from one kernel record. */
 function hermesTerminal(pid: number): { id: string; startedAt: number | null } | null {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   try {
@@ -139,6 +145,7 @@ function hermesTerminal(pid: number): { id: string; startedAt: number | null } |
       return { id: `tty-${tty.slice(1).replaceAll("/", "-")}`, startedAt: processStartedAt(pid) };
     }
     if (process.platform === "darwin") {
+      // the kernel's record, as `ps -o tty=` read it, without a child process that holds the event loop
       const record = darwinTerminal(pid);
       if (!record) return null;
       const device = record.tty.startsWith("ttys") ? `dev-${record.tty}` : record.tty;
@@ -148,6 +155,7 @@ function hermesTerminal(pid: number): { id: string; startedAt: number | null } |
   return null;
 }
 
+/** Reads a breadcrumb written during this Hermes process's lifetime for the same canonical cwd. */
 export function hermesBreadcrumbSession(home: string, terminalId: string, cwd: string, startedAt: number): string | null {
   if (!Number.isFinite(startedAt)) return null;
   try {
@@ -290,6 +298,7 @@ export function hermesToolSummary(name: string, input: Record<string, unknown>):
   return toolSummary(name, input);
 }
 
+/** Reads a bounded tool result by call ID from the selected session and transcript generation only. */
 export function hermesToolOutput(sessionId: string, dbPath: string, ref: string, maxChars: number): string | null {
   const parsed = parseHermesOutputRef(ref);
   if (!parsed) return null;
@@ -494,6 +503,7 @@ function hermesMetadata(session: { model?: string | null; model_config?: string 
   return { model: session?.model ?? null, reasoning_effort: reasoningEffort };
 }
 
+/** Page contents name the cache version so WAL edits invalidate unchanged row counts. */
 export function hermesConversationPage(
   sessionId: string,
   dbPath: string,
@@ -607,11 +617,18 @@ const IMAGE_HINT = /^\[Image attached at: ([^\n\]]+)\]$/;
 /** The stand-in Hermes's text-only store projection leaves for each attached picture. */
 const SCREENSHOT_PLACEHOLDER = "[screenshot]";
 
+/** A path as a Markdown destination the file API reads back exactly: each segment percent-encoded, brackets and parentheses too. */
 const markdownPath = (path: string): string => path.split("/").map((segment) => encodeURIComponent(segment).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)).join("/");
 
 /**
- * Hermes stores a prompt with pictures as `caption\n\n[Image attached at: <path>]`, one line per picture,
- * then the `[screenshot]` its store writes for each picture it attached (tui_gateway/session_history.py).
+ * A prompt whose stored text ends in Hermes's own picture hints (`caption\n\n[Image attached at: <path>]`, one
+ * line per picture, then the `[screenshot]` Hermes's store writes for each picture it attached), split into
+ * its caption and a Markdown image of each local file, as Hermes's own history reads the block
+ * (tui_gateway/session_history.py), though a picture sent with Hermes's default caption is shown too: the chat shows each through the file API as any local Markdown image
+ * (src/lib/markdownImages.ts), or keeps the link. Null, and the text left as written, unless every hint
+ * names an absolute POSIX path and each has its `[screenshot]` (words alone attach nothing). The images go
+ * before the words, as the chat shows other agents' prompt pictures, so nothing in the words (an open code
+ * fence) can take them in.
  */
 export function hermesPromptPictures(text: string): { caption: string; images: string } | null {
   const split = text.indexOf("\n\n[Image attached at: ");
@@ -636,6 +653,7 @@ export function parseHermesRows(rows: readonly HermesMessageRow[], identity?: st
 
       if (row.role === "user") {
         const text = typeof row.content === "string" ? row.content : "";
+        // the pictures come off the stored text first: a skill invocation's parser keeps only its request
         const pictures = hermesPromptPictures(text);
         const invocation = hermesSkillPrompt(pictures?.caption ?? text);
         turns.push({

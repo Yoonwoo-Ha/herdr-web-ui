@@ -57,6 +57,7 @@ describe("running herdr discovery", () => {
 0000000000000000: 00000002 00000000 00000000 0001 03 4243 ${join(outside, "other/herdr.sock")}
 `);
     expect(await discoverHerdrSessions(f)).toEqual([]);
+    // An explicit XDG root authorizes only its herdr directory, including paths containing spaces.
     expect(await discoverHerdrSessions({ ...f, xdg: outside })).toEqual([{ socket_path: socket, session: "work", label: "work" }]);
     expect(await discoverHerdrSessions({ ...f, home: join(f.home, "sandbox") })).toEqual([]);
   });
@@ -195,6 +196,7 @@ describe("running herdr discovery", () => {
 describe("the machine profile's own folders", () => {
   it("trust this account's private group alone, not macOS's admin group under Homebrew's prefixes", () => {
     const own = () => 20;
+    // control: the rule of main's other callers trusts admin (80) there on macOS
     expect(harmlessGroups("darwin", own)(80, "/opt/homebrew/var/herdr")).toBe(true);
     const groups = profileGroups(own);
     expect([groups(80, "/opt/homebrew/var/herdr"), groups(80, "/usr/local/state"), groups(20, "/Users/me/.config"), groups(21, "/Users/me/.config")]).toEqual([false, false, true, false]);

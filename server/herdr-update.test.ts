@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleHerdrUpdateRequest, HerdrUpdater, parseHerdrStatus, plainOutput } from "./herdr-update.ts";
 
+/**
+ * The updater runs a stand-in herdr here, a shell script: the real `herdr update` replaces the
+ * herdr on PATH and hands its server off, which no test may do.
+ */
 const root = mkdtempSync(join(tmpdir(), "herdr-update-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -36,6 +40,7 @@ function standIn(says: string, code = 0, options: { handoffCode?: number; sleep?
     options.statusGoesAfterUpdate ? `    rm -f '${statusFile}'` : "    :",
     options.ignoreTerm ? "    trap '' TERM" : "    :",
     options.sleep ? `    sleep ${options.sleep}` : "    :",
+    // herdr reports progress on stderr, with colors on a terminal
     `    printf '%s\\n' '${says}' >&2`,
     `    exit ${code} ;;`,
     '  "server live-handoff")',
@@ -70,6 +75,7 @@ async function finished(updater: HerdrUpdater): Promise<Awaited<ReturnType<Herdr
 }
 
 describe("updating herdr from the app", () => {
+  // what a server started by the herdr plugin carries: a pane's variables
   const pane = { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_SOCKET_PATH: "/pane/herdr.sock" };
   const previous: Record<string, string | undefined> = {};
   beforeEach(() => {
@@ -88,6 +94,7 @@ describe("updating herdr from the app", () => {
     expect(updater.start()).toBe("started");
     const status = await finished(updater);
     expect(herdr.calls()).toContain("update --handoff");
+    // HERDR_ENV=1 is what makes herdr refuse; the socket is this server's, not the pane's
     expect(herdr.seen()).toContain("env=unset pane=unset socket=/srv/herdr.sock");
     expect(herdr.seen()).toContain("stdin=closed");
     expect(status.phase).toBe("idle");
@@ -229,6 +236,7 @@ describe("the herdr update endpoint", () => {
   it("starts an update only for this app's own controls", async () => {
     const herdr = standIn("already up to date (0.9.3)", 0, { sleep: 1 });
     const updater = new HerdrUpdater({ bin: herdr.path });
+    // an HTML form cannot send the header; another site's page is cross-site
     for (const headers of [{}, { ...own, "x-herdr-update": "0" }, { ...own, origin: "https://evil.example" }, { ...own, "sec-fetch-site": "cross-site" }]) {
       const refused = await handleHerdrUpdateRequest(post(headers), updater);
       expect(refused.status).toBe(403);

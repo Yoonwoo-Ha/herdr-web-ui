@@ -1,3 +1,8 @@
+/**
+ * A PC with any trace of herdr's TUI keeps herdr and nothing is run to decide it; only a PC with
+ * none looks for herdr-core, asking a candidate `--version` and nothing else (every other hc
+ * command starts a core).
+ */
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
@@ -11,6 +16,7 @@ import { readSavedRuntime, runtimeFile, saveRuntime } from "./runtime-file.ts";
 type Env = Record<string, string | undefined>;
 
 export interface RuntimeTraces {
+  /** herdr's TUI is installed: OVIS_HERDR_BIN's herdr, a herdr on the PATH, in ~/.local/bin or (Windows) %LOCALAPPDATA%\Programs\Herdr\bin, or its config.toml */
   tuiInstalled: boolean;
   tuiRunning: boolean;
   appInstalled: boolean;
@@ -21,6 +27,7 @@ export interface TraceOptions {
   env?: Env;
   home?: string;
   platform?: NodeJS.Platform;
+  /** where the system keeps apps for every user (/Applications on macOS); tests pass their own */
   systemAppDirs?: readonly string[];
 }
 
@@ -41,10 +48,13 @@ export function runtimeTraces(options: TraceOptions = {}): RuntimeTraces {
   const herdrOnPath = path.split(platform === "win32" ? ";" : delimiter).filter((dir) => dir !== "")
     .some((dir) => isFile(join(dir, `herdr${exe}`)));
   const named = env["OVIS_HERDR_BIN"];
+  // a bare name is looked up on PATH, as the spawn does (server/core/terminal-process.ts)
   const namedFound = named !== undefined && named !== "" && (/[\\/]/.test(named) ? isFile(named) : Bun.which(named, { PATH: path }) !== null);
+  // HERDR_CONFIG_PATH names herdr's config wherever it is kept (herdrConfigPath in server/herdr-sidebar.ts)
   const configPath = env["HERDR_CONFIG_PATH"];
   const tuiInstalled = herdrOnPath || namedFound || isFile(join(installDir, `herdr${exe}`)) || herdrDirs.some((dir) => isFile(join(dir, "config.toml")))
     || (configPath !== undefined && configPath !== "" && isFile(configPath));
+  // the socket HERDR_SOCKET names and the default one are both traces: a stale variable hides no running TUI
   const tuiRunning = [env["HERDR_SOCKET"], ...herdrDirs.map((dir) => join(dir, "herdr.sock"))].some((socket) => socket !== undefined && socket !== "" && exists(socket));
   const systemApps = options.systemAppDirs ?? (platform === "darwin" ? ["/Applications"] : []);
   const appInstalled = (platform === "win32"
@@ -91,6 +101,11 @@ export async function chooseRuntime(options: ChooseOptions): Promise<RuntimeChoi
   return { runtime: "herdr-core", source: "detected", reason: `no herdr TUI on this PC, and the Herdr app's core (hc ${core.version}) is` };
 }
 
+/**
+ * `managed`: a launcher that restarts the server on a switch started it, which says so with
+ * OVIS_RUNTIME_SWITCH (an older supervisor a release fell back to does not, and would ignore the
+ * request).
+ */
 export function runtimeLock(env: Env = process.env, platform: NodeJS.Platform = process.platform, managed?: boolean, ipc = typeof process.send === "function"): RuntimeLock | null {
   managed ??= env["OVIS_MANAGED"] === "1" && env["OVIS_RUNTIME_SWITCH"] === "1" && ipc;
   if (environmentRuntime(env) !== undefined) return "env";

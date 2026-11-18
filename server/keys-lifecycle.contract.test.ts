@@ -86,6 +86,9 @@ async function queuedKeys(leave: "none" | "detach" | "replace" | "reattach" | "r
     release();
     if (leave === "none" || leave === "refresh") {
       if (input && (text === CLICK || automatic)) {
+        // a mouse report keeps the attach input path, where herdr encodes it for the program's
+        // own mouse mode; pane.send_text would type its bytes literally (#667). The terminal's
+        // answers go to the attach that asked, never typed into the program (#2816)
         await until(() => written.includes(text) || texts.length > 0);
         expect(texts).toEqual([]);
         expect(written).toContain(text);
@@ -98,6 +101,8 @@ async function queuedKeys(leave: "none" | "detach" | "replace" | "reattach" | "r
         expect(calls[1]).toEqual(["ctrl+alt+shift+left"]);
       }
     } else {
+      // `input_failed` for a chord too: `input_not_ready` would make the client drop the readiness
+      // of the attach it holds by now (the "reattach" case was told `input-ready` before this)
       await until(() => texts.length > 0 || owner.seen.some((frame) => frame.type === "error" && frame.code === "input_failed"));
       expect(calls).toEqual([["ctrl+right"]]);
       expect(texts).toEqual([]);

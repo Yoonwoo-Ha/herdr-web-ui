@@ -424,6 +424,7 @@ describe("the machine events", () => {
     try {
       expect((await first.until(2)).map((event) => event.type)).toEqual(["herdr-sidebar", "machines"]);
       expect(drawn()).toEqual(["5h 95%", "later"]);
+      // hidden wherever named: in no roster; drawn at its other place: that place is decided, without the operand
       report({ quota: "off · A", eta: "soon" });
       emit!({ type: "machines", machines: [machine] });
       const events = await first.until(3);
@@ -449,6 +450,7 @@ describe("the machine events", () => {
       expect(events.slice(4).map((event) => event.type)).toEqual(["herdr-sidebar", "machines"]);
       expect(drawn()).toEqual(["5h 50%"]);
     } finally { await second.close(); }
+    // every hidden value stayed on the server; rows that do not name a token then let its value go
     expect(text).not.toMatch(/private-literal|starts_with|"contains":"[^"]|"off ·/);
     writeFileSync(path, `[ui.sidebar.agents]\nrows = [["$eta"]]`);
     report({ quota: "off · D", eta: "soon" });
@@ -456,6 +458,7 @@ describe("the machine events", () => {
     writeFileSync(path, `[ui.sidebar.agents]\nrows = [[{ token = "$quota", rules = [{ starts_with = "off", hide = true }] }, "$eta"]]`);
     const third = await open();
     try {
+      // the reconnect's decision, read with that kept roster before its own lands, hides the value it never decided
       await third.until(2);
       expect(drawn()).toEqual(["soon"]);
     } finally { await third.close(); }

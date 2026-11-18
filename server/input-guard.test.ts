@@ -10,6 +10,7 @@ const typedThen = (origin: ReturnType<typeof attach> | undefined, current: Retur
 test("typing taken with no attach is refused once someone attaches meanwhile", () => {
   expect(typedThen(undefined, undefined, "a")).toBe(true);
   expect(typedThen(undefined, attach("b"), "a")).toBe(false);
+  // attaching yourself meanwhile is a new attach too: what was typed before it takes none of it
   expect(typedThen(undefined, attach("a"), "a")).toBe(false);
 });
 
@@ -17,6 +18,7 @@ test("a click or a wheel is told from typing, so a queued one keeps the attach i
   expect(isMouseReport("\x1b[<0;5;3M")).toBe(true);
   expect(isMouseReport("\x1b[<0;5;3M\x1b[<0;5;3m")).toBe(true);
   expect(isMouseReport("\x1b[<65;120;40M")).toBe(true);
+  // the default encoding: CSI M and three bytes, a byte may be any character
   expect(isMouseReport("\x1b[M #!")).toBe(true);
   expect(isMouseReport("\x1b[M\x60;;\x1b[M\x61;;")).toBe(true);
   for (const text of ["", "a", "\x1b[A", "\x1b[<0;5;3", "\x1b[<0;5;3Mx", "x\x1b[<0;5;3M", "\x1b[M #", "\x1b[1;5A"]) {
@@ -115,6 +117,7 @@ test("each typing guard answers every state as the check it replaced", () => {
         && (!origin || (attachments.get(message.pane_id) === origin && origin.process === pty && origin.ready
           && client.data.attached.get(message.pane_id) === claim && origin.clients.has(client)))],
     };
+    // queued typing and a secret are taken only in an attach the client is in
     if (s.attachment && origin) {
       const attachment = s.attachment;
       const pty = s.attachmentPty;
@@ -126,6 +129,7 @@ test("each typing guard answers every state as the check it replaced", () => {
       verdicts["mirrorSecret"] = [typingGuards.mirrorSecret(facts), attachments.get(message.pane_id) === attachment
         && attachment.process === pty && client.data.attached.get(message.pane_id) === claim && attachment.clients.has(client)];
     }
+    // a pending lease is taken on any attachment; one that is held fails before the rest is asked
     if (s.attachment) {
       const lease = { attachment: s.attachment, pty: s.attachmentPty };
       const owner = client;

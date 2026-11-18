@@ -124,6 +124,7 @@ describe("buildSnapshot", () => {
       terminal("t2", { status: { app: "codex", state: "blocked" } }),
       terminal("t3", { status: { app: "omp", state: "error" } }),
       terminal("t4"),
+      // herdr-core names Claude Code `claude-code` and Antigravity `antigravity`; the rest of the server knows them as herdr's `claude` and `agy`
       terminal("t5", { status: { app: "claude-code", state: "idle" } }),
       terminal("t6", { status: { app: "antigravity", state: "idle" } }),
     ], layout, "0.1.14");
@@ -133,6 +134,7 @@ describe("buildSnapshot", () => {
     expect(snapshot.agents.map((a) => [a.pane_id, a.agent])).toEqual([["t1", "claude"], ["t2", "codex"], ["t3", "omp"], ["t5", "claude"], ["t6", "agy"]]);
   });
 
+  // hc 0.1.17 records on old-desktop, 2026-11-08: Letta Code and Devin send no OSC 7501, Grok Build reports `grok-build`
   it("names an agent that reports nothing from the process in front, and Grok Build as herdr's grok", () => {
     const snapshot = buildSnapshot([
       terminal("t1", { argv: ["bash"], status: null, foreground: { pid: 11, name: "node", argv: ["node", "/home/u/npm/node_modules/.bin/letta", "--backend", "local"] } }),
@@ -144,8 +146,10 @@ describe("buildSnapshot", () => {
     expect(snapshot.agents.map((a) => [a.pane_id, a.agent])).toEqual([["t1", "letta"], ["t2", "devin"], ["t3", "grok"]]);
   });
 
+  // hc names no platform, and a terminal may be another machine's (machine-scope.ts) (#3319)
   it("takes a terminal's platform as this PC's on its own core, and by its folder's shape on another machine", () => {
     for (const here of ["linux", "macos", "windows", null] as const) expect(terminalPlatform("C:\\Users\\u", here)).toBe(here);
+    // `//server/share` is a share to Windows and a root to POSIX: either; WSL's `/mnt/c` is Linux's
     const shapes: Record<string, ProgramPlatform> = { "C:\\Users\\u": "windows", "c:/work": "windows", "\\\\server\\share\\x": "windows", "\\\\?\\C:\\work": "windows", "//server/share": null, "/mnt/c/Users/u": "posix", "/home/u": "posix", "": null, "work": null, "~": null };
     expect(Object.keys(shapes).map((cwd) => terminalPlatform(cwd, "elsewhere"))).toEqual(Object.values(shapes));
     expect(terminalPlatform(undefined, "elsewhere")).toBeNull();
@@ -162,11 +166,13 @@ describe("buildSnapshot", () => {
     expect(agentOf({ cwd: "C:\\Users\\u", ...front(["cmd"]) }, "linux")).toBe("cmd");
   });
 
+  // hc tells a terminal's own pid and the pid in front of it, never a process start (#3319 review)
   it("names a terminal started directly as an agent while the process it started is still in front, and none a shell started", () => {
     const started = (argv: string[], cwd: string, front: string | null = null) => ({ status: null, pid: 7, foreground: { pid: 7, name: front ?? "", argv: front ? [front] : [] }, argv, cwd });
     expect(agentOf(started(["C:\\Users\\u\\letta.cmd"], "C:\\Users\\u"), "windows")).toBe("letta");
     expect(agentOf(started(["C:\\Users\\u\\letta.cmd"], "C:\\Users\\u"), "elsewhere")).toBe("letta");
     expect(agentOf(started(["node", "/home/u/.bin/letta"], "/home/u"), "linux")).toBe("letta");
+    // a program the core names in front wins, even as the start's pid: a claude start that exec()ed bash is bash
     expect(agentOf(started(["claude"], "/home/u", "bash"), "linux")).toBeNull();
     expect(agentOf(started(["C:\\Users\\u\\letta.cmd"], "C:\\Users\\u", "cmd.exe"), "windows")).toBeNull();
     for (const argv of [["cmd.exe", "/c", "letta.cmd"], ["pwsh", "-c", "letta"]]) expect(agentOf(started(argv, "C:\\Users\\u", "cmd.exe"), "windows")).toBeNull();

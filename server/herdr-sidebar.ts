@@ -6,7 +6,9 @@ import type { SessionSnapshot } from "../shared/protocol.ts";
 import { isBackgroundRole, PANE_TOKEN_NAME, paneTokenRuleMatches, paneTokenSpecs, type AgentRowTokens, type PaneTokenRule, type PaneTokenSpec, ROLE_TOKEN } from "../shared/pane-tokens.ts";
 
 const POLL_MS = 5_000;
+/** A config is a short TOML document, not an unbounded log. */
 const MAX_CONFIG_BYTES = 1024 * 1024;
+/** herdr's canonical agent ids (`rows_by_agent` keys): `claude`, `codex`, `pi` */
 const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const TEXT_CONDITIONS = ["equals", "contains", "starts_with"] as const;
 const NUMBER_CONDITIONS = ["gt", "lt"] as const;
@@ -26,6 +28,7 @@ function table(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+/** Line-start BOMs outside strings are config markers; inside multiline strings they are value data. */
 function normalizeConfigBom(text: string): string {
   let quote: string | null = null;
   return text.split("\n").map((line) => {
@@ -47,6 +50,7 @@ function normalizeConfigBom(text: string): string {
         quote = null;
       } else i++;
     }
+    // Single-line strings cannot carry delimiter state into the next line.
     if (quote?.length === 1) quote = null;
     return normalized;
   }).join("\n");
@@ -110,6 +114,10 @@ function tokenSpecs(rows: unknown): PaneTokenSpec[] | null {
   return specs;
 }
 
+/**
+ * The `$name` tokens herdr's `[ui.sidebar.agents]` rows draw, from a parsed config.toml; null when
+ * the config sets neither `rows` nor `rows_by_agent`, and the web UI then draws every token.
+ */
 export function agentRowTokens(config: unknown): AgentRowTokens | null {
   const agents = table(table(table(config)?.["ui"])?.["sidebar"])?.["agents"];
   const layout = table(agents);
@@ -166,6 +174,8 @@ export function snapshotWithoutHiddenTokens<S extends Pick<SessionSnapshot, "pan
   const shown = <T extends { pane_id: string; tokens?: Record<string, unknown> }>(item: T, agent: string | null): T => {
     const specs = paneTokenSpecs(layout, agent);
     if (!item.tokens || specs === null) return item;
+    // the background tag files the row under the Agents list's background part: a rule may hide it from
+    // the row (the browser applies the rows' rules too), never from the browser
     const kept = Object.entries(item.tokens).filter(([name, value]) => (name === ROLE_TOKEN && isBackgroundRole(value)) || !hiddenEverywhere(specs, name, value));
     if (kept.length === Object.keys(item.tokens).length) return item;
     changed = true;
@@ -211,6 +221,10 @@ export function decidedRowTokens(layout: AgentRowTokens | null, ...reported: Rea
   return { rows: layout.rows && decide(layout.rows), by_agent: Object.fromEntries(Object.entries(layout.by_agent).map(([agent, specs]) => [agent, decide(specs)])) };
 }
 
+/**
+ * herdr's sidebar rows for agents, read from its config.toml, and read again when the file
+ * changes while a browser listens (herdr's own sidebar reads them at start and on reload-config).
+ */
 export class HerdrSidebarConfig {
   private stamp: string | null | undefined;
   private layout: AgentRowTokens | null = null;

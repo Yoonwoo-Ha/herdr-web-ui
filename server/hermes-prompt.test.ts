@@ -39,6 +39,7 @@ describe("hermes clarify", () => {
     const prompt = parseInteractivePrompt("hermes", screen)!;
     expect(prompt.question).toBe("Name one fruit that grows on trees");
     expect(prompt.body).toBe("1/2 answered");
+    // what is already on the `>` line goes first, or the answer would join it
     expect(answerKeys(prompt, { custom_text: "Apple" })).toEqual([{ keys: ["ctrl+k"] }, { keys: ["ctrl+u"] }, { text: "Apple" }, { keys: ["enter"] }]);
   });
 
@@ -54,6 +55,7 @@ describe("hermes clarify", () => {
     expect(prompt.options.map((option) => option.label)).toEqual(["Red", "Blue"]);
     expect(answerKeys(prompt, { option_indices: [0, 1] })).toEqual([{ keys: ["space"] }, { keys: ["enter"] }]);
     expect(answerKeys(prompt, { option_indices: [0] })).toEqual([{ keys: ["space"] }, { keys: ["down"] }, { keys: ["space"] }, { keys: ["enter"] }]);
+    // the cursor on Other: back up to a choice, since Enter there opens the text line
     const onOther = multi.replace("▸ [ ] 1. Red", "  [ ] 1. Red").replace("  3. Other", "▸ 3. Other");
     expect(answerKeys(parseInteractivePrompt("hermes", onOther)!, { option_indices: [1] })).toEqual([{ keys: ["up"] }, { keys: ["enter"] }]);
   });

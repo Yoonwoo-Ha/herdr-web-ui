@@ -140,6 +140,7 @@ describe("hermes message rows parsing", () => {
       "Look\n\n[Image attached at: C:\\pics\\a.png]",
       "Look\n\n[Image attached at: /tmp/a.png]\nmore words",
       "Look\n\n[Image attached at: /tmp/a.png]\n[screenshot]\n[screenshot]",
+      // words alone attach nothing: Hermes writes a [screenshot] for each picture it attached
       "Look\n\n[Image attached at: /tmp/a.png]",
       "[Image attached at: /tmp/a.png]",
     ]) expect(user(content)).toEqual({ kind: "text", text: content });
@@ -160,7 +161,9 @@ describe("hermes message rows parsing", () => {
   });
 
   it("sums a call up by what the agent said it is for, and only where that field is a purpose", () => {
+    // OmO's eval carries its own one-line summary beside the code
     expect(toolSummary("eval", { language: "js", code: "await check()", summary: "  Run the checks  " })).toBe("Run the checks");
+    // Claude describes a Bash command and a subagent's prompt
     expect(toolSummary("Bash", { command: "bun test", description: "Run the unit tests" })).toBe("Run the unit tests");
     expect(toolSummary("Agent", { prompt: "Find the callers", description: "Find callers" })).toBe("Find callers");
     expect(toolSummary("eval", { code: "1", summary: "x".repeat(200) })).toHaveLength(120);

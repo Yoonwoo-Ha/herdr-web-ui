@@ -12,6 +12,7 @@ import { CompletionTracker } from "./completion.ts";
 import type { PushService } from "./push.ts";
 import type { HerdrProfileState } from "./herdr-profile-state.ts";
 
+// Nothing is installed, stopped or started on any PC, and no user's herdr or Ovis is touched.
 const MACHINE_ID = "00000000-0000-4000-8000-000000000001";
 const SOCKET = "/home/fixture/.config/herdr/herdr.sock";
 const OFFERED = "f".repeat(40);
@@ -79,6 +80,7 @@ function pc(remote: Remote, options: { registered?: boolean; autoUpdate?: boolea
       if (restarted && ++listingsSinceRestart === 2) listedAfterRestart.resolve();
       return listed;
     }
+    // a stop, a start or anything else that changes the PC is not this app's to do there
     operations.push(script);
     throw new Error(`Unexpected remote command: ${script}`);
   };
@@ -230,6 +232,8 @@ describe("a PC whose own Ovis is away (#2047)", () => {
     });
   }
 
+  // A setup at another SSH address is the user's to review there: the PC moves only once it connects there, and one
+  // cancelled or failed leaves it at its own address, where it waits for its own Ovis (#2075)
   for (const runtime of ["bundle-ready", null] as const) {
     it(`${runtime ? "a ready runtime" : "nothing of this app's"} at another address, cancelled at approval, starts nothing and leaves the PC at its own`, async () => {
       let clock = 0;
@@ -279,6 +283,7 @@ describe("a PC whose own Ovis is away (#2047)", () => {
     manager.action(job.id, { action: "approve" });
     const left = await until((machine) => !machine.updating && machine.state !== "connecting");
     expect(manager.job(job.id)).toMatchObject({ phase: "failed", error: expect.stringContaining("Unexpected remote command") });
+    // what was approved there, and only that: the runtime's install, then the start that failed
     expect(operations).toEqual(["install-bundle", expect.stringContaining('ovis-server" remote')]);
     const approved = [...operations];
     expect(left).toMatchObject({ state: "reconnecting", target: { destination: "fixture@pc.invalid" } });
@@ -551,6 +556,7 @@ describe("a PC whose own Ovis is older than this app", () => {
     gate.resolve();
     const jobs = (manager as unknown as { jobs: Map<string, { public: { error: string | null } }> }).jobs;
     await until(() => [...jobs.values()].some((job) => /may still finish it there/.test(job.public.error ?? "")));
+    // never a cancel without the install's id: it could stop another device's install
     expect(requests).not.toContain("POST /api/updates/cancel");
   });
 
@@ -619,6 +625,7 @@ describe("a PC whose own Ovis is older than this app", () => {
   });
 
   for (const path of ["/api/updates", "/api/updates/install"]) it(`never follows a redirect from ${path} out of the tunnel`, async () => {
+    // a server on this PC's own loopback that a followed redirect would reach
     const hits: string[] = [];
     const canary = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) { hits.push(`${request.method} ${new URL(request.url).pathname}`); return Response.json({ accepted: true }, { status: 202 }); } });
     cleanups.push(() => canary.stop(true));
@@ -760,6 +767,7 @@ describe("a PC whose own Ovis is older than this app", () => {
     const { requests, until } = pc({ status: managedOffer({ port: OWN_PORT, serving_url: "https://home-server.example.ts.net" }), access: null }, { autoUpdate: false });
     const waiting = await until((machine) => machine.action_required === "update_bridge");
     expect(waiting.remote_ovis).toMatchObject({ updatable: true, address: `pc.invalid:${OWN_PORT}`, url: "https://home-server.example.ts.net" });
+    // it told both with its status: the route its token keeps closed to the bridge's is not asked
     expect(requests).not.toContain("GET /api/access");
   });
 

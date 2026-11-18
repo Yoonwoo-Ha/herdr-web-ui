@@ -1,6 +1,8 @@
 /**
  * herdr refuses `herdr update` in any process that carries a pane's HERDR_ENV=1 ("run `herdr
- * update` outside herdr after detaching from the session").
+ * update` outside herdr after detaching from the session"). Every terminal this app shows is a
+ * pane, and the plugin that starts this server inherits a pane's variables too, so someone who
+ * only has the app (a phone) cannot update herdr at all. This server runs the update itself:
  *
  * - `herdr update --handoff`, with none of herdr's variables, stdin closed and
  *   HERDR_SOCKET_PATH naming the herdr this server talks to. herdr asks before it stops a
@@ -13,6 +15,7 @@
  *   newer than the running server. An update installed from a shell leaves it so, and
  *   `herdr update` stops at "already up to date" without touching the server.
  *
+ * A live handoff keeps every pane and its processes; open terminals attach again (index.ts).
  * Windows has no live handoff: its herdr updates through an installer, and the app offers nothing.
  */
 import type { HerdrUpdateStatus } from "../shared/update.ts";
@@ -67,6 +70,7 @@ export function parseHerdrStatus(text: string): HerdrVersions | null {
   };
 }
 
+/** herdr prints progress for a terminal: its colors and cursor moves are not for the app. */
 export function plainOutput(text: string): string {
   return text
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
@@ -129,6 +133,7 @@ export class HerdrUpdater {
     const timer = setTimeout(() => {
       timedOut = true;
       proc.kill();
+      // one that ignores the request would keep the updater busy for good
       killer = setTimeout(() => proc.kill("SIGKILL"), this.options.killGraceMs ?? KILL_GRACE_MS);
     }, timeoutMs);
     try {
@@ -190,7 +195,8 @@ export class HerdrUpdater {
   private async run(): Promise<{ ok: boolean; output: string }> {
     const update = await this.exec(["update", "--handoff"], this.options.timeoutMs ?? UPDATE_TIMEOUT_MS);
     if (update.code !== 0) return { ok: false, output: update.output };
-    // herdr's status may not answer for a moment right after a handoff
+    // The status may not answer for a moment right after a handoff; one that never does is no
+    // proof that the server runs the new binary.
     let versions = await this.readVersions(true);
     for (let tries = 1; versions === null && tries < STATUS_TRIES; tries++) {
       await Bun.sleep(this.options.statusRetryMs ?? STATUS_RETRY_MS);

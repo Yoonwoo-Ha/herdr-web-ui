@@ -5,7 +5,7 @@ type Hc = Pick<HcConnection, "call">;
 
 /**
  * Tells every Herdr client that a person looked at a terminal's agent (herdr-app docs/labels.md):
- * `herdr.seen` becomes the terminal's turn.
+ * `herdr.seen` becomes the terminal's turn, so a finish read in Ovis is read in the Herdr app too.
  */
 export class SeenMarker {
   private readonly written = new Map<string, number>();

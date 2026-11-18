@@ -7,6 +7,16 @@ import { createServer } from "./index.ts";
 import { herdrRpc, paneRead } from "./herdr/client.ts";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
 
+/**
+ * RC2: the `input` frame's mirror/RPC branch — the one taken when this PC cannot attach a
+ * terminal, so typing goes to herdr instead — never checked that the client was a member of
+ * the pane's attachment. The pty branch below it refuses a client that is not one; this one
+ * did not, so a connection could type into a pane held by someone else's attach.
+ *
+ * Both cases assert what landed in the pane rather than whether an error arrived: a guard that
+ * refused everything would pass an "no error came back" check while breaking the key bar and
+ * an older bridge's composer send, which is the regression this narrower guard exists to avoid.
+ */
 const root = mkdtempSync(join(tmpdir(), "herdr-input-membership-"));
 const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: root, terminalAttach: false });
 const sockets: WebSocket[] = [];

@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { forgetTranscriptState, transcriptPage } from "./conversation.ts";
 
+// Every agent's chat keeps reading past 64 MiB of history: pages bound each read, the file's size
+// does not.
 const dir = mkdtempSync(join(tmpdir(), "large-history-agents-"));
 afterAll(() => { forgetTranscriptState(); rmSync(dir, { recursive: true, force: true }); });
 const pad = "x".repeat(512 * 1024);

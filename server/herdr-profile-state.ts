@@ -6,6 +6,7 @@ import { writePrivateState } from "./private-state.ts";
 import { holdsDocument, readStateDocument, setAsideDamaged } from "./state-document.ts";
 import { validateTarget } from "./machine-security.ts";
 
+/** `retiring`: this binding's key removal was started and has not succeeded yet. */
 interface ProfileState { binding: string; approved: boolean; connectionApproved: boolean; snapshot: SessionSnapshot | null; retiring?: true; herdrChoice?: Pick<SshTarget, "herdr_socket" | "start_new_herdr" | "own_ovis"> }
 
 export function herdrMachineId(profileId: string): string {
@@ -50,7 +51,9 @@ export class HerdrProfileState {
   reconcile(id: string, target: SshTarget | null, retire?: () => void): boolean {
     const next = binding(target);
     const previous = this.entries.get(id);
+    // A removal that failed is owed even when the old target comes back: the same binding is not "unchanged" then.
     if (previous?.binding === next && !(previous.retiring && retire)) return false;
+    // Keep the old binding, marked, until its credentials are gone, so failures remain retryable.
     if (previous) { this.revoke(id); if (retire) { previous.retiring = true; retire(); } }
     const owed = !retire && previous?.retiring;
     this.entries.set(id, { binding: next, approved: false, connectionApproved: false, snapshot: null, ...(owed ? { retiring: true as const } : {}) }); this.dirty = true;
@@ -99,6 +102,9 @@ export class HerdrProfileState {
     if (errors.length) throw new AggregateError(errors, "Some saved machine keys could not be removed; cleanup will retry");
     return removed;
   }
+  /**
+   * Writes the approvals durably (writePrivateState): a crash must not leave the file unreadable.
+   */
   flush(): void {
     if (!this.dirty) return;
     const document = [...this.entries].map(([profile_id, state]) => ({ profile_id, ...state }));

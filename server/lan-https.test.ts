@@ -94,6 +94,7 @@ describe("lanHttpsCertificate", () => {
   });
 
   it("makes certificates every parser takes, at most 825 days long, past 2049 too", () => {
+    // a serial with a leading zero byte fails to parse about once in 170 certificates
     for (let made = 0; made < 400; made++) expect(() => new X509Certificate(selfSignedCertificate(["192.168.1.50"]).cert)).not.toThrow();
     for (const now of [new Date("2026-11-06T00:00:00Z"), new Date("2049-06-01T00:00:00Z")]) {
       const x509 = new X509Certificate(selfSignedCertificate(["192.168.1.50"], now).cert);
@@ -135,6 +136,7 @@ describe("the LAN HTTPS listener", () => {
       const cert = readFileSync(join(stateDir, "lan-https", "cert.pem"), "utf8");
       expect(listener.sha256).toBe(new X509Certificate(cert).fingerprint256);
       expect(listener.addresses).toEqual(["127.0.0.1"]);
+      // pinned to that certificate alone: the handshake verifies against it and nothing else; this test's loopback peer is then refused
       const response = await fetch(`https://127.0.0.1:${listener.port}/api/health`, { tls: { ca: cert } });
       expect(response.status).toBe(403);
     } finally {
@@ -142,6 +144,7 @@ describe("the LAN HTTPS listener", () => {
     }
   });
 
+  // a peer on a private network needs a private address on this host: a CI runner has one, a bare sandbox may not
   it.skipIf(privateLanAddresses().length === 0)("lets a private peer in with the token, and tells it the main listener's port", async () => {
     const address = privateLanAddresses()[0]!;
     const stateDir = tempDir();
@@ -193,6 +196,7 @@ describe("the LAN HTTPS listener", () => {
   });
 
   it("never lets a LAN peer in as an open install there, while the main listener still does", async () => {
+    // Given: no token and nothing paired, the state in which the main listener lets a LAN request in as `open`
     const app = createServer({ ...base, stateDir: tempDir() });
     try {
       const devices = async (lanHttps: boolean) => {
@@ -303,6 +307,7 @@ describe("the LAN HTTPS listener", () => {
       const guess = (address: string, lanHttps: boolean) => handleRequest(new Request(`${origin}/api/devices`, { headers: { host: "192.168.1.10:7318", authorization: "Bearer wrong" } }), { ...lanContext(app, address), lanHttps });
       for (let peer = 1; peer <= 50; peer++) expect((await guess(`192.168.2.${peer}`, true))!.status).toBe(401);
       expect((await guess("192.168.3.1", true))!.status).toBe(429);
+      // the same addresses on the main listener each keep their own budget
       expect((await guess("192.168.3.1", false))!.status).toBe(401);
     } finally {
       app.stop();

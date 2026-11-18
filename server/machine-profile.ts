@@ -17,12 +17,14 @@ import { writePrivateState } from "./private-state.ts";
 import { MARKER, markedByProfile } from "./profile-marker.ts";
 import { stateDirNames } from "./update-state.ts";
 
+/** The machine profile takes no direct connections, only the relay. This is deliberately not an environment override. */
 export const MACHINE_DIRECT_CARRIER_ENABLED = false;
 
 export class MachineProfileError extends Error {}
 
 /** The local owner's socket in a state folder: a path the server never takes from anything but its folder. */
 export function ownerSocketPath(stateDir: string): string { return join(stateDir, "serve.sock"); }
+/** The longest socket path served: a longer one Bun would listen on, while curl's --unix-socket cannot reach it. */
 const SOCKET_PATH_MAX = 100;
 export function machineEngine(stateDir: string, port: number): string {
   const named = process.env["OVIS_RUNTIME"];
@@ -46,6 +48,12 @@ function canonical(path: string): string {
   }
 }
 
+/**
+ * The state folder, made 0700 where it is absent, once its path holds: every folder and link on the way from
+ * `/` is this account's or root's and no other account can write one (a sticky folder on the way, such as
+ * /tmp, passes), and the folder itself is this account's own with mode 0700. The owner's socket is found by
+ * this path, so only this account or root can move it. On a refusal the folders made here are taken away.
+ */
 function walkedStateDir(told: string): string {
   const made = mkdirSync(told, { recursive: true, mode: 0o700 });
   const stateDir = realpathSync(told);
@@ -55,6 +63,10 @@ function walkedStateDir(told: string): string {
   throw new MachineProfileError(`The machine profile's state folder is not safe to serve from, so no server was started: ${refusal}`);
 }
 
+/**
+ * Why the existing folder `stateDir`, a real path, is not one the profile serves from, or null: the walk from `/`
+ * of walkedStateDir, and the folder this account's own with mode 0700. It makes and changes nothing.
+ */
 export function stateDirRefusal(stateDir: string): string | null {
   const stats = statSync(stateDir);
   return trustRefusal(stateDir, profileGroups(), true)
@@ -119,6 +131,9 @@ export function claimServerState(told: string | undefined) {
     if (error instanceof OwnerGuardBusy) throw new MachineProfileError(`${running} (${hold} is held)`);
     throw cannotHold(error);
   }
+  // again under the hold: an ordinary preview server may have held the folder, written its state and gone between
+  // the first look and the hold. Its refusal leaves the folder as it was found: the serve.own this start made goes,
+  // while still held, so no other server takes a hold on a file about to vanish
   const held = look();
   if (held.foreign) {
     if (made) rmSync(hold, { force: true });
@@ -132,6 +147,7 @@ export function claimServerState(told: string | undefined) {
   }, {}, { wait: false });
   const socket = ownerSocketPath(stateDir);
   rmSync(socket, { force: true });
+  // `door`: this lease's server takes its local owner on `socket` alone, and answers only liveness on TCP
   return { stateDir, socket, release: lease.release, listening: (port: number, hostname: string) => lease.amend((lock) => writePrivateState(join(lock, "http.json"), { port, hostname, socket, door: 1 })) };
 }
 
@@ -141,12 +157,20 @@ export function machineHerdrBinary(): string {
   return `herdr binary: ${Bun.which("herdr") ?? "herdr, not found"} (from PATH)`;
 }
 
+/**
+ * The refusal of a selected socket, whose start tools match on, and after it the walk's own reason when there is
+ * one, for the owner: the folder of this path that another account could change, and how (its mode, owner or group).
+ */
 const unsafeSocket = (reason: string | null | undefined) => `The selected herdr socket cannot be used safely by this account${reason ? `: ${reason}` : ""}`;
 let engineRefusal: string | null = null;
 let pinnedPlace: HerdrSocketPlace | null = null;
 let rediscovery: (() => Promise<string | null>) | null = null;
 let rediscovering: Promise<void> | null = null;
 
+/**
+ * Pin a safe classic session once. An absent explicit socket stays selected for its return where no other
+ * account can put one, and every connection to it is checked first (checkHerdrSockets).
+ */
 export async function machineSocket(stateDir: string, engine: string): Promise<string | null> {
   engineRefusal = await selectSocket(stateDir, engine);
   return engineRefusal;
@@ -171,6 +195,7 @@ async function selectSocket(stateDir: string, engine: string): Promise<string | 
 
 async function discovered(unavailable: string): Promise<string | null> {
   const { sessions: found, refused } = await discoverPinnableHerdrSessions();
+  // none found while the walk dropped one: a herdr runs where no other account must reach it, and the owner reads why
   const refusal = found.length === 1 ? await pinned(found[0]!.socket_path, unavailable)
     : found.length > 1 ? "Several herdr sessions are running; select one with HERDR_REMOTE_SOCKET"
       : refused !== null ? unsafeSocket(refused) : "herdr is not running for the selected session";
@@ -180,6 +205,7 @@ async function discovered(unavailable: string): Promise<string | null> {
 
 async function pinned(selected: string, unavailable: string): Promise<string | null> {
   const { status, place, reason } = await pinnedHerdrSocketStatus(selected);
+  // the walk's reason reaches the owner in serve()'s "Machine engine" line and in its health answer
   if (status === "refused") return unsafeSocket(reason);
   pinnedPlace = place;
   checkHerdrSockets((path) => heldHerdrSocketStatus(path, place) === "usable" ? path : unavailable);
@@ -207,23 +233,48 @@ export async function machineHealth(engine: string, refusal: string | null = eng
 const READ_FAILED = "herdr did not answer this request";
 const READ_FAILED_CODE = "herdr_error";
 
+/**
+ * Codes out of herdr's reply that the profile keeps, each because the app acts on it: `pane_not_found` (nothing was
+ * typed), `stale_content` (the find bar looks again), `agent_blocked` and `agent_not_ready` (the draft stays),
+ * `not_git_worktree` (that workspace is no checkout) and `invalid_request` (the read falls back to recent rows).
+ */
 const KEPT_HERDR_CODES: ReadonlySet<string> = new Set(["pane_not_found", "stale_content", "agent_blocked", "agent_not_ready", "not_git_worktree", "invalid_request"]);
 
+/**
+ * Layout reasons the profile keeps in a move's, swap's, zoom's or resize's answer, each because the app acts on it or
+ * the bridge gives it itself: `same_pane`, `cross_tab`, `not_found` and `no_neighbor` (the app says which), and
+ * `zoomed_tab` and `unchanged` (the bridge's own answers for a move).
+ */
 const KEPT_LAYOUT_REASONS: ReadonlySet<string> = new Set(["same_pane", "cross_tab", "not_found", "no_neighbor", "zoomed_tab", "unchanged"]);
 export const machineLayoutReason = (reason: string): string => KEPT_LAYOUT_REASONS.has(reason) ? reason : READ_FAILED_CODE;
 
 const NOT_RESTORED = "herdr could not restore this pane after it restarted";
 
+/**
+ * A snapshot as the profile gives it to a caller (/api/session, GET /api/machines, the snapshot frame): a pane's
+ * `restore_error` in NOT_RESTORED. It stays set, as the app keys on it; an empty or absent one stays as it is.
+ */
 export function machineSnapshot<S extends Pick<SessionSnapshot, "panes">>(snapshot: S): S {
   if (!snapshot.panes.some((pane) => pane.restore_error)) return snapshot;
   return { ...snapshot, panes: snapshot.panes.map((pane) => pane.restore_error ? { ...pane, restore_error: NOT_RESTORED } : pane) };
 }
 
+/**
+ * The one place that words a failed call to herdr on the profile, for every answer and frame: its code when this
+ * server's herdr client made it, or when it is a reply's code the app acts on (KEPT_HERDR_CODES), else
+ * READ_FAILED_CODE; and as its message `reason` (health's, where a route has it), NOT_RESTORED for a pane herdr could
+ * not restore, the outcome the bridge knows (where a pane ended up), or READ_FAILED.
+ */
 export function machineFailure(error: HerdrError, reason: string | null = null): { code: string; message: string } {
   return { code: error.fromReply && !KEPT_HERDR_CODES.has(error.code) ? READ_FAILED_CODE : error.code,
     message: reason ?? (error.code === "pane_not_restored" ? NOT_RESTORED : error.outcome ?? READ_FAILED) };
 }
 
+/**
+ * The profile's answer to a herdr read that failed (/api/session, GET /api/machines), never stored: the status
+ * errorResponse gives it, and machineFailure's code and message, with the reason the profile's health gives
+ * (`refusal` as health is handed it). An error that is not herdr's is errorResponse's.
+ */
 export async function machineReadError(error: unknown, engine: string, refusal: string | null | undefined): Promise<Response> {
   const answer = errorResponse(error);
   if (!(error instanceof HerdrError)) return answer;
@@ -232,6 +283,10 @@ export async function machineReadError(error: unknown, engine: string, refusal: 
   return jsonResponse({ error: { code, message } }, answer.status, { "cache-control": "no-store" });
 }
 
+/**
+ * Refused before optional route handlers, for local owners and devices alike. A device cookie opens nothing here, so none is
+ * handed out. Of /api/machines only its list is read (GET, machineRoster), and it holds this machine alone.
+ */
 export function machineRouteRestricted(path: string, method: string): boolean {
   if (path === "/api/machines" && method === "GET") return false;
   return /^\/api\/(?:herdr\/update$|runtime(?:\/|$)|portal(?:\/|$)|fleet(?:\/|$)|machines(?:\/|$)|bridge$|devices\/pair$)/.test(path)
@@ -262,6 +317,7 @@ export async function machineRoster(url: URL, read: () => Promise<SessionSnapsho
   return { machines: [machine], ...(asked.length === 1 && asked[0] === LOCAL_MACHINE ? { verified_source_boot: { machine_id: LOCAL_MACHINE, boot_id: ids.bootId } } : {}) };
 }
 
+/** The answer to a caller the profile does not let in, the plain text the terminal socket's client reads included. */
 export function machineUnauthorized(pathname: string): Response {
   setRequestRoute("auth-refusal");
   return pathname === "/ws" ? new Response("unauthorized", { status: 401 })

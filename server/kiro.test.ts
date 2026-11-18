@@ -35,6 +35,10 @@ afterEach(async () => {
   await rm(home, { recursive: true, force: true });
 });
 
+/**
+ * A TUI stand-in running as `kiro-cli-chat chat`, whose child runs as `kiro-cli-chat acp`, as Kiro's session
+ * process does.
+ */
 async function kiroPane(): Promise<{ tui: number; acp: number }> {
   const dir = await mkdtemp(join(home, "pane-"));
   await writeFile(join(dir, "acp"), "ready\n");
@@ -88,6 +92,7 @@ describe("Kiro session binding", () => {
     await writeFile(join(sessions, `${OTHER}.jsonl`), "");
     await lock(ID, pane.acp);
     expect((await resolveKiroTranscript(foreground(pane.tui))).session).toBe(ID);
+    // `/chat new` and `/chat <id>` move the lock to the session now open
     await rm(join(sessions, `${ID}.lock`));
     await lock(OTHER, pane.acp);
     expect((await resolveKiroTranscript(foreground(pane.tui))).session).toBe(OTHER);
@@ -112,6 +117,7 @@ describe("Kiro session binding", () => {
   linuxTest("a lock no later than the process's start is never its own", async () => {
     const pane = await kiroPane();
     await writeFile(join(sessions, `${ID}.jsonl`), "");
+    // the start read from boot time can be up to a second early: a lock that old may be an earlier process's
     await lock(ID, pane.acp, new Date(processStartedAt(pane.acp)!));
     await expect(resolveKiroTranscript(foreground(pane.tui))).rejects.toBeInstanceOf(ConversationUnavailable);
   });
@@ -204,6 +210,7 @@ describe("Kiro conversation", () => {
   });
 
   test("a command that exited non-zero shows as failed, as Kiro 2.35.2 records it", () => {
+    // Kiro writes `status: "success"` for it; only `exit_status` tells
     const result = { version: "v1", kind: "ToolResults", data: { content: [{ kind: "toolResult", data: { toolUseId: "tooluse_fail", content: [{ kind: "json", data: { exit_status: "exit status: 3", stdout: "out\n", stderr: "err\n" } }], status: "success" } }] } };
     const rows = [JSON.parse(TOOL_TURN.split("\n")[0]!), { version: "v1", kind: "AssistantMessage", data: { content: [{ kind: "toolUse", data: { toolUseId: "tooluse_fail", name: "shell", input: { command: "exit 3" } } }] } }, result];
     const { turns } = projectKiro(rows.map((row) => JSON.stringify(row)).join("\n") + "\n", "inode", ID);
