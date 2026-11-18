@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -112,14 +113,24 @@ describe("the context window a pi model runs in", () => {
     expect(piContextWindow("a", "shared-default", dir)).toBe(256000);
   });
 
-  // a catalog that could not be read answered no window; making it readable again changes only its ctime
-  it.skipIf(process.platform === "win32")("versions a catalog by its permissions too, not only its contents", () => {
-    const path = join(agentDir("permissions", catalog), "models.json");
-    chmodSync(path, 0o000);
-    const unreadable = catalogVersion(path);
-    chmodSync(path, 0o644);
-    expect(catalogVersion(path)).not.toBe(unreadable);
+  // a catalog that could not be read answered no window; making it readable again changes only its
+  // ctime. The test reports that ctime instead of making it with chmod: a coarse kernel clock (Linux
+  // 6.12 on HostHatch) leaves it unchanged across two chmods in a row
+  it("versions a catalog by its change time too, not only its contents", () => {
+    const path = join(agentDir("versions", catalog), "models.json");
     expect(catalogVersion(path)).toBe(catalogVersion(path));
+    const stat = fs.statSync;
+    let ctimeMs = 1_000;
+    const held = spyOn(fs, "statSync").mockImplementation(((...args: Parameters<typeof fs.statSync>) => {
+      const value = stat(...args);
+      return value && args[0] === path ? Object.assign(value, { ctimeMs }) : value;
+    }) as typeof fs.statSync);
+    try {
+      const before = catalogVersion(path);
+      expect(catalogVersion(path)).toBe(before);
+      ctimeMs = 2_000;
+      expect(catalogVersion(path)).not.toBe(before);
+    } finally { held.mockRestore(); }
     expect(catalogVersion(join(root, "never-written.json"))).toBe("-");
   });
 
