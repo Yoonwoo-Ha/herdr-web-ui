@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HerdrError } from "../herdr/client.ts";
 import { PendingInputError } from "../pending-input.ts";
-import { createSubmitText, pendingFault, pendingText, submitFraming } from "./composer.ts";
+import { closeBackslash, createSubmitText, pendingFault, pendingText, submitFraming } from "./composer.ts";
 
 let root: string;
 let listener: ReturnType<typeof Bun.listen>;
@@ -157,5 +157,15 @@ describe("a pending row's fault", () => {
     expect(pendingFault(new PendingInputError("pending_wait", "the bridge's words"), view)).toEqual({ code: "pending_wait", message: "the bridge's words" });
     expect([pendingFault(new TypeError("other"), view), pendingFault(new TypeError("other"), undefined)])
       .toEqual([{ code: "submit_failed", message: view().message }, { code: "submit_failed", message: "other" }]);
+  });
+});
+
+describe("closeBackslash", () => {
+  // Pi's editor (pi-tui 1.5.2) reads `\` + Enter as a new line too: the message stayed in its box, and its later
+  // record (without the backslash) never matched the chat's receipt, which then waited for its transcript forever
+  it("gives a Pi message that ends in a backslash a space, so its Enter sends", () => {
+    expect(closeBackslash("pi", "under requisiciones? \\")).toBe("under requisiciones? \\ ");
+    expect(closeBackslash("pi", "\u001b[200~see C:\\temp\\\u001b[201~")).toBe("\u001b[200~see C:\\temp\\ \u001b[201~");
+    expect(closeBackslash("pi", "see C:\\temp\\x")).toBe("see C:\\temp\\x");
   });
 });

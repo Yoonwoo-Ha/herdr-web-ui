@@ -77,12 +77,13 @@ export const modelSwitchText = (agent: string | null, text: string): string =>
 /**
  * Claude Code reads `\` + Enter as a new line, so the Enter after a message whose last character is a
  * backslash adds a line instead of sending: the message stays in the input box (Claude Code 2.1.312,
- * #2277). A space after it lets the Enter send, and Claude Code records the message without the space.
+ * #2277). Pi's editor does the same (pi-tui 1.5.2). A space after it lets the Enter send, and both
+ * record the message without the space.
  * A framed payload gets the space inside its closing paste marker.
  * A chat or queued message gets it; the terminal's input line types `\` + Enter as the keyboard does.
  */
 export const closeBackslash = (agent: string | null, text: string): string =>
-  agent === "claude" ? text.replace(/\\(\u001b\[201~)?$/, "\\ $1") : text;
+  agent === "claude" || agent === "pi" ? text.replace(/\\(\u001b\[201~)?$/, "\\ $1") : text;
 
 /** How long after its process starts an omp that has not reported is waited for: from cold it takes up to about 20 s. */
 export const OMP_STARTUP_MS = 30_000;
