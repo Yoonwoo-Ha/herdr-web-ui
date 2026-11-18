@@ -7,6 +7,7 @@ import { chromium, type Locator, type Page } from "playwright-core";
 import { chromePath } from "./chrome-path.ts";
 import { prepareMachineControlsDemo } from "./sidebar-machine-controls-fixture.ts";
 import { SUPPORTED_ENTRIES } from "../src/lib/themes.ts";
+import { serveDemo } from "./demo-server.ts";
 
 const app = mkdtempSync(join(tmpdir(), "herdr-sidebar-machine-removal-"));
 const evidenceDir = process.env.UI_EVIDENCE_DIR;
@@ -289,15 +290,7 @@ let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 try {
   if (evidenceDir) mkdirSync(evidenceDir, { recursive: true });
   await prepareMachineControlsDemo(app);
-  server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-    let file: string;
-    try { file = decodeURIComponent(new URL(request.url).pathname.slice(1)); }
-    catch { return new Response("bad path", { status: 400 }); }
-    if (!file || file.endsWith("/")) file += "index.html";
-    if (file.split("/").includes("..") || file.includes("\\")) return new Response("bad path", { status: 400 });
-    const body = Bun.file(join(app, file));
-    return await body.exists() ? new Response(body) : new Response("not found", { status: 404 });
-  } });
+  server = serveDemo(app, { prefix: "/" });
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const url = `http://127.0.0.1:${server.port}/`;
   for (const scenario of scenarios) await withScenario(browser, url, scenario);

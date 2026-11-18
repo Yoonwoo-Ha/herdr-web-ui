@@ -12,6 +12,7 @@ import { chromium, type Browser } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
+import { serveDemo } from "./demo-server.ts";
 
 const EVIDENCE = process.env.UI_EVIDENCE_DIR;
 const SERVER = "&demo_finish_epoch=kept";
@@ -262,14 +263,7 @@ async function main(): Promise<void> {
     await buildDemoApp(app);
     const index = join(app, "index.html");
     writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>\n    <script type="module"`));
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-      let file: string;
-      try { file = decodeURIComponent(new URL(request.url).pathname.slice(1)); } catch { return new Response("bad path", { status: 400 }); }
-      if (!file || file.endsWith("/")) file += "index.html";
-      if (file.split("/").includes("..") || file.includes("\\")) return new Response("bad path", { status: 400 });
-      const body = Bun.file(join(app, file));
-      return await body.exists() ? new Response(body) : new Response("not found", { status: 404 });
-    } });
+    const server = serveDemo(app, { prefix: "/" });
     try {
       if (EVIDENCE) mkdirSync(EVIDENCE, { recursive: true });
       const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Page } from "playwright-core";
 import { buildDemoApp } from "./demo-build.ts";
+import { serveDemo } from "./demo-server.ts";
 
 const app = mkdtempSync(join(tmpdir(), "herdr-sidebar-spacing-demo-"));
 const spacing = 16;
@@ -84,16 +85,7 @@ try {
   writeFileSync(join(app, "two-pcs.js"), twoPcs);
   const index = join(app, "index.html");
   writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, '<script src="./demo-transport.js"></script>\n    <script src="./two-pcs.js"></script>\n    <script type="module"'));
-  server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-    const path = new URL(request.url).pathname;
-    const prefix = "/app/";
-    if (!path.startsWith(prefix)) return new Response("not found", { status: 404 });
-    let file = decodeURIComponent(path.slice(prefix.length));
-    if (!file || file.endsWith("/")) file += "index.html";
-    if (file.split("/").includes("..") || file.includes("\\")) return new Response("bad path", { status: 400 });
-    const body = Bun.file(join(app, file));
-    return await body.exists() ? new Response(body) : new Response("not found", { status: 404 });
-  } });
+  server = serveDemo(app, { prefix: "/app/" });
 
   for (const [mobile, empty] of [[false, false], [true, false], [false, true], [true, true]] as const) {
     const label = `${mobile ? "390px" : "desktop"}${empty ? " with no agents" : ""}`;

@@ -16,6 +16,7 @@ import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { appFaces } from "./app-faces.ts";
 import { shownRow, shownRows } from "./shown-rows.ts";
+import { serveDemo } from "./demo-server.ts";
 
 const SETTINGS_KEY = "ovis:settings";
 const PREFIX = "/herdr-web-ui/demo/app/";
@@ -80,17 +81,7 @@ const RECORDER = `<script>(() => {
 })();</script>`;
 
 function serve(): ReturnType<typeof Bun.serve> {
-  return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-    const path = new URL(request.url).pathname;
-    if (!path.startsWith(PREFIX)) return new Response("not found", { status: 404 });
-    let file: string;
-    try { file = decodeURIComponent(path.slice(PREFIX.length)); }
-    catch { return new Response("bad path", { status: 400 }); }
-    if (!file || file.endsWith("/")) file += "index.html";
-    if (file.split("/").includes("..") || file.includes("\\")) return new Response("bad path", { status: 400 });
-    const body = Bun.file(join(app, file));
-    return (await body.exists()) ? new Response(body) : new Response("not found", { status: 404 });
-  } });
+  return serveDemo(app, { prefix: PREFIX });
 }
 
 const settled = (page: Page): Promise<void> => page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));

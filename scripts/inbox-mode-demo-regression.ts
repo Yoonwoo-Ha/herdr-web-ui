@@ -11,6 +11,7 @@ import type { Machine } from "../shared/machines.ts";
 import type { AgentStatus } from "../shared/protocol.ts";
 import { SHEET_HISTORY_KEY } from "../src/lib/historyKeys.ts";
 import { KO } from "../src/lib/i18n.ko.ts";
+import { serveDemo } from "./demo-server.ts";
 
 declare global {
   interface Window {
@@ -385,15 +386,7 @@ try {
   const index = join(app, "index.html");
   writeFileSync(join(app, "inbox-fixture.js"), `(${installInboxFixture.toString()})();`);
   writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, '<script src="./demo-transport.js"></script>\n    <script src="./inbox-fixture.js"></script>\n    <script type="module"'));
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-    let file: string;
-    try { file = decodeURIComponent(new URL(request.url).pathname.slice(1)); }
-    catch { return new Response("bad path", { status: 400 }); }
-    if (!file || file.endsWith("/")) file += "index.html";
-    if (file.split("/").includes("..") || file.includes("\\")) return new Response("bad path", { status: 400 });
-    const body = Bun.file(join(app, file));
-    return await body.exists() ? new Response(body) : new Response("not found", { status: 404 });
-  } });
+  const server = serveDemo(app, { prefix: "/" });
   const base = `http://127.0.0.1:${server.port}`;
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
