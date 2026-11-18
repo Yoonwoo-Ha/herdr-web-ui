@@ -279,7 +279,7 @@ describe("action pins and checkout credentials", () => {
       "actions/attest-build-provenance",
       "actions/cache", "actions/cache/restore", "actions/checkout", "actions/deploy-pages", "actions/download-artifact",
       "actions/setup-node", "actions/upload-artifact", "actions/upload-pages-artifact",
-      "contributor-assistant/github-action", "oven-sh/setup-bun",
+      "oven-sh/setup-bun",
     ]);
     const dependabot = Bun.YAML.parse(readFileSync(join(root, ".github/dependabot.yml"), "utf8")) as {
       updates: Array<{ "package-ecosystem": string; directories: string[] }>;
