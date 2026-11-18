@@ -24,6 +24,7 @@ import { UsageService } from "../server/usage.ts";
 import { FakeAccountService } from "../shared/account-service-fake.ts";
 import type { PairedDevice, PairingCode, RelayStatus, RemoteAccess } from "../shared/protocol.ts";
 import { decodeOffer } from "../shared/relay-offer.ts";
+import { routeDrained } from "./drained-route.ts";
 import { openSettingsPage } from "./settings-page.ts";
 
 export interface RelayFixture {
@@ -416,32 +417,45 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     const visitorContext = await englishContext(browser);
     contexts.push(visitorContext);
     const visitor = await visitorContext.newPage();
-    await visitor.route("**/api/health*", async (route) => {
+    const drainVisitorHealth = await routeDrained(visitor, "**/api/health*", async (route) => {
       const response = await route.fetch();
       const body = await response.json() as { auth: Record<string, unknown> };
       await route.fulfill({ response, json: { ...body, auth: { ...body.auth, via: "portal", role: "drive" } } });
     });
-    const visitorMutations: string[] = [];
-    await visitor.route("**/api/relay/**", (route) => {
-      if (route.request().method() !== "POST") return route.continue();
-      visitorMutations.push(new URL(route.request().url()).pathname);
-      return route.fulfill({ status: 403, json: { error: { code: "owner_only", message: "Use the access token or a paired device." } } });
-    });
-    await openPhoneSettings(visitor, fixture.origin);
-    const seen = relayUi(visitor);
-    // the visitor's sheet holds only what it can use: Phones and devices, with no pairing code, no SSH and no relay
-    // tab; More settings has no relay group for it
-    await seen.connect.click();
-    await seen.devicesTab.getByText("Open Ovis on the PC itself to add a connection.", { exact: true }).waitFor();
-    assert.equal(await seen.sheet.locator(".connect-tabs").count(), 0, "a Portal visitor gets one way, so no tabs");
-    assert.equal(await seen.relayTab.count(), 0, "nor the relay's tab");
-    assert.equal(await seen.sheet.locator(".connect-phone-code").count(), 0, "a Portal visitor is offered no pairing code");
-    assert.equal(await seen.sheet.locator(".compact-pair").count(), 0, "nor a code to type");
-    assert.equal(await seen.sheet.getByRole("switch").count(), 0, "a Portal visitor gets no relay switch");
-    assert.equal(await seen.sheet.getByRole("button", { name: "Sign in to Ovis", exact: true }).count(), 0, "nor the sign-in");
-    assert.equal(await seen.sheet.getByRole("img").count(), 0, "a Portal visitor is shown no pairing offer");
-    assert.equal(await seen.relayGroup.count(), 0, "a Portal visitor's More settings has no relay group");
-    assert.deepEqual(visitorMutations, [], "a Portal visitor never requests an owner-only relay mutation");
+    // a drain that fails too must not hide what the checks found: both errors are reported then
+    let failure: { error: unknown } | undefined;
+    try {
+      const visitorMutations: string[] = [];
+      await visitor.route("**/api/relay/**", (route) => {
+        if (route.request().method() !== "POST") return route.continue();
+        visitorMutations.push(new URL(route.request().url()).pathname);
+        return route.fulfill({ status: 403, json: { error: { code: "owner_only", message: "Use the access token or a paired device." } } });
+      });
+      await openPhoneSettings(visitor, fixture.origin);
+      const seen = relayUi(visitor);
+      // the visitor's sheet holds only what it can use: Phones and devices, with no pairing code, no SSH and no relay
+      // tab; More settings has no relay group for it
+      await seen.connect.click();
+      await seen.devicesTab.getByText("Open Ovis on the PC itself to add a connection.", { exact: true }).waitFor();
+      assert.equal(await seen.sheet.locator(".connect-tabs").count(), 0, "a Portal visitor gets one way, so no tabs");
+      assert.equal(await seen.relayTab.count(), 0, "nor the relay's tab");
+      assert.equal(await seen.sheet.locator(".connect-phone-code").count(), 0, "a Portal visitor is offered no pairing code");
+      assert.equal(await seen.sheet.locator(".compact-pair").count(), 0, "nor a code to type");
+      assert.equal(await seen.sheet.getByRole("switch").count(), 0, "a Portal visitor gets no relay switch");
+      assert.equal(await seen.sheet.getByRole("button", { name: "Sign in to Ovis", exact: true }).count(), 0, "nor the sign-in");
+      assert.equal(await seen.sheet.getByRole("img").count(), 0, "a Portal visitor is shown no pairing offer");
+      assert.equal(await seen.relayGroup.count(), 0, "a Portal visitor's More settings has no relay group");
+      assert.deepEqual(visitorMutations, [], "a Portal visitor never requests an owner-only relay mutation");
+    } catch (error) {
+      failure = { error };
+    }
+    try {
+      await drainVisitorHealth();
+    } catch (drainError) {
+      if (failure === undefined) throw drainError;
+      throw new AggregateError([failure.error, drainError], "the Portal visitor's checks failed, and so did draining its health route");
+    }
+    if (failure !== undefined) throw failure.error;
     await visitorContext.close();
 
     await ui.openMore();
