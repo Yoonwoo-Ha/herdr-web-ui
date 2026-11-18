@@ -24,7 +24,4 @@ export const QUARANTINE: Readonly<Record<string, QuarantineEntry>> = {
   "scripts/terminal-cjk-punctuation-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/terminal-switch-resize-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/terminal-touch-burst-history-regression.ts": { until: "2026-12-18", issue: 4174 },
-  "scripts/ui-contexts-layout-regression.ts": { until: "2026-12-18", issue: 4026 },
-  "scripts/ui-contexts-regression.ts": { until: "2026-12-18", issue: 4026 },
-  "scripts/ui-regression.ts": { until: "2026-12-18", issue: 4026 },
 };

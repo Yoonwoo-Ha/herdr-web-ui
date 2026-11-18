@@ -113,13 +113,17 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
       changes.push(request.postDataJSON() as TelemetryChange);
     });
 
-    await page.goto(origin);
     // the notice by its role, not its sentence: a new notice version rewords it, and the version is asserted below
     const notice = page.locator(".update-notice.is-telemetry[role='status']").first();
-    await notice.waitFor({ state: "visible" });
+    const [acknowledgement] = await Promise.all([
+      page.waitForRequest((request) => request.method() === "POST"
+        && new URL(request.url()).pathname === "/api/telemetry"
+        && (request.postDataJSON() as TelemetryChange).notice_seen === true, { timeout: 15_000 }),
+      page.goto(origin).then(() => notice.waitFor({ state: "visible" })),
+    ]);
     assert.ok((await notice.locator(".update-notice-text").innerText()).trim().length > 0, "the notice says something, whatever its wording");
     await until(async () => (await statusAt(origin)).notice_seen, "the visible notice is reacknowledged");
-    await until(async () => changes.some((change) => change.notice_seen === true && change.notice_version === NOTICE_VERSION), "the browser acknowledges exactly the current notice version");
+    assert.equal((acknowledgement.postDataJSON() as TelemetryChange).notice_version, NOTICE_VERSION, "the browser acknowledges exactly the current notice version");
     assert.equal(changes.findIndex((change) => change.settings !== undefined), changes.findIndex((change) => change.notice_seen === true),
       "no settings snapshot leaves the browser before the notice is acknowledged; the first rides with the acknowledgement");
     await until(async () => {

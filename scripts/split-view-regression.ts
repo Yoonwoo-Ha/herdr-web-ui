@@ -64,13 +64,31 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
     await page.mouse.move(from.x + from.width / 2 + 8, from.y + from.height / 2 + 4, { steps: 2 });
     await page.waitForFunction(() => document.querySelector(".split-drop")?.classList.contains("is-visible") === true);
     const box = (await area.boundingBox())!;
-    await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2, { steps: 8 });
-    // Crossing xterm's row spans can produce only dragenter/dragleave. Moving again on the
-    // same final element emits dragover, which must accept the pane before the drop.
-    await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2);
+    const x = Math.round(box.x + box.width * 0.8);
+    const y = Math.round(box.y + box.height / 2);
+    await page.evaluate(([x, y]) => {
+      const probe = document.querySelector(".pane-split");
+      probe?.removeAttribute("data-test-accepted-drop");
+      const accepted = (event: DragEvent): void => {
+        if (!event.defaultPrevented || event.clientX !== x || event.clientY !== y
+          || event.target !== document.elementFromPoint(x, y)) return;
+        probe?.setAttribute("data-test-accepted-drop", "");
+      };
+      document.addEventListener("dragover", accepted);
+      document.addEventListener("dragenter", accepted);
+      window.addEventListener("dragend", () => {
+        document.removeEventListener("dragover", accepted);
+        document.removeEventListener("dragenter", accepted);
+      }, { once: true });
+    }, [x, y] as const);
+    await page.mouse.move(x - 2, y, { steps: 8 });
+    // Move to a distinct point: moving to the same coordinates need not emit
+    // another native event. A preview alone does not prove this point accepted.
+    await page.mouse.move(x, y);
     await page.waitForFunction(() => {
       const guide = document.querySelector(".split-drop");
-      return guide?.classList.contains("is-visible") === true && guide.getAttribute("data-edge") === "right";
+      return guide?.classList.contains("is-visible") === true && guide.getAttribute("data-edge") === "right"
+        && document.querySelector(".pane-split[data-test-accepted-drop]") !== null;
     });
     if (options.newTargetAtDrop) {
       // The node under the pointer is replaced between the last dragover and the drop (xterm redraws
@@ -458,14 +476,31 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
         .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)[0]?.getAttribute("data-layout-pane"));
       assert.equal(await left(), first);
       const focused = await sessionSnapshot();
-      const from = (await head(first).boundingBox())!;
-      const to = (await head(beside).boundingBox())!;
-      await page.mouse.move(from.x + 30, from.y + from.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(from.x + 38, from.y + from.height / 2 + 4, { steps: 2 });
-      await page.mouse.move(to.x + 60, to.y + to.height / 2, { steps: 8 });
-      await page.mouse.move(to.x + 61, to.y + to.height / 2);
-      await page.waitForFunction((pane) => document.querySelector(`[data-layout-pane="${pane}"] > .pane-frame-head`)?.classList.contains("is-swap-target") === true, beside);
+      const aimSwap = async (): Promise<void> => {
+        // Use the title's hittable area rather than offsets into a frame that
+        // is changing sides. Measure the destination after the drag starts.
+        const source = head(first).locator(".pane-frame-title");
+        await source.hover();
+        const from = await source.boundingBox();
+        assert.ok(from, "the drag source has a title");
+        await source.evaluate((title) => {
+          title.removeAttribute("data-test-drag-started");
+          title.closest(".pane-frame-head")?.addEventListener("dragstart", () => {
+            title.setAttribute("data-test-drag-started", "");
+          }, { once: true });
+        });
+        await page.mouse.down();
+        await page.mouse.move(from.x + from.width / 2 + 8, from.y + from.height / 2 + 4, { steps: 2 });
+        await head(first).locator(".pane-frame-title[data-test-drag-started]").waitFor({ state: "attached" });
+        const to = await head(beside).locator(".pane-frame-title").boundingBox();
+        assert.ok(to, "the swap target has a title");
+        const x = to.x + to.width / 2;
+        const y = to.y + to.height / 2;
+        await page.mouse.move(x - 2, y, { steps: 8 });
+        await page.mouse.move(x, y);
+        await head(beside).and(page.locator(".is-swap-target")).waitFor({ state: "attached" });
+      };
+      await aimSwap();
       assert.equal(await page.locator(".split-drop.is-visible").count(), 0, "no half is offered over a title it would swap with");
       const swapped = page.waitForResponse((response) => response.url().endsWith("/api/pane/swap") && response.request().method() === "POST");
       await page.mouse.up();
@@ -497,14 +532,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
         status: 200, contentType: "application/json",
         body: JSON.stringify({ ok: true, changed: false, reason: "cross_tab", target_pane_id: beside }),
       }));
-      const refusedFrom = (await head(first).boundingBox())!;
-      const refusedTo = (await head(beside).boundingBox())!;
-      await page.mouse.move(refusedFrom.x + 30, refusedFrom.y + refusedFrom.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(refusedFrom.x + 38, refusedFrom.y + refusedFrom.height / 2 + 4, { steps: 2 });
-      await page.mouse.move(refusedTo.x + 60, refusedTo.y + refusedTo.height / 2, { steps: 8 });
-      await page.mouse.move(refusedTo.x + 61, refusedTo.y + refusedTo.height / 2);
-      await page.waitForFunction((pane) => document.querySelector(`[data-layout-pane="${pane}"] > .pane-frame-head`)?.classList.contains("is-swap-target") === true, beside);
+      await aimSwap();
       await page.mouse.up();
       await page.locator(".pane-notice[role='alert']").filter({ hasText: "The panes are in different tabs." }).waitFor();
       assert.equal(await left(), beside, "a refused swap leaves the layout intact");

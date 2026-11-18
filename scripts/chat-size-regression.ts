@@ -574,15 +574,20 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
         const setup = async (recording: Page): Promise<void> => {
           // by path: the app asks with `?compact_agents=1`, which a glob ending in the path does not match
           const isRoster = (url: URL) => url.pathname === "/api/machines";
-          if (scenario === "hidden-mount") await recording.route(isRoster, async (route) => {
-            const response = await route.fetch();
-            // App deliberately does not load while hidden. Hide after loading starts, but before
-            // the roster response can mount a pane; hasFocus alone must not permit an attach.
-            await recording.evaluate(() => {
-              Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
-              Object.defineProperty(document, "hasFocus", { configurable: true, value: () => true });
-            });
-            await route.fulfill({ response });
+          if (scenario === "hidden-mount") await recording.addInitScript(() => {
+            const browserWindow: Window = window;
+            const fetchPage = browserWindow.fetch.bind(browserWindow);
+            let started = false;
+            // Let the first roster read start, then hide in that same task. A
+            // machine-events socket can mount the pane before the HTTP answer.
+            Object.defineProperty(document, "visibilityState", { configurable: true, get: () => started ? "hidden" : "visible" });
+            Object.defineProperty(document, "hasFocus", { configurable: true, value: () => true });
+            browserWindow.fetch = (input, init) => {
+              const answer = fetchPage(input, init);
+              const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+              if (url.pathname === "/api/machines") started = true;
+              return answer;
+            };
           });
           if (scenario === "mirrored-mount") await recording.route(isRoster, async (route) => {
             const response = await route.fetch();
