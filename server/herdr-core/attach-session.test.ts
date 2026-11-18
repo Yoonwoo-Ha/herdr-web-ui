@@ -102,6 +102,23 @@ function attach(onData: (data: string) => void = () => {}, options: ConstructorP
   return { core, session, exits, exited: exited.promise };
 }
 
+/** An attached session whose program prints in hc frames: `program` resolves once the session has heard them all. */
+async function attachedProgram() {
+  const seen: string[] = [];
+  // the attach's own questions come first, or they would land between the program's frames
+  const next = { want: ASKED, hit: Promise.withResolvers<void>() };
+  const attached = attach((data) => { seen.push(data); if (next.want && seen.join("").includes(next.want)) next.hit.resolve(); });
+  await next.hit.promise;
+  const program = async (...frames: string[]) => {
+    next.want = frames.join("");
+    next.hit = Promise.withResolvers<void>();
+    for (const frame of frames) attached.core.output(frame);
+    await next.hit.promise;
+  };
+  const typed = () => attached.core.of(FRAME_DATA).map((frame) => new TextDecoder().decode(frame.payload));
+  return { ...attached, program, typed };
+}
+
 describe("CoreAttachSession", () => {
   it("attaches at the viewer's grid with its history, and types what was written before hc answered, in order", async () => {
     const { core, session } = attach();
@@ -227,6 +244,44 @@ describe("CoreAttachSession", () => {
     next.hit = Promise.withResolvers<void>();
     core.output("off\x1b[?1004l");
     await next.hit.promise;
+  });
+
+  it("types a lone cursor key in the cursor mode hc's stream last set, not the one the viewer's terminal still believed in", async () => {
+    const { core, session, program, typed } = await attachedProgram();
+    // application cursor keys, its sequence split across two of hc's frames: an arrow and Home typed as CSI reach it as SS3
+    await program("less\x1b[?", "1h");
+    session.write("\x1b[A");
+    session.write("\x1b[H");
+    // a subparameter 1 is mode 1004's, no DECCKM; a chord and a typed line are no lone cursor key
+    await program("\x1b[?1004:1l");
+    session.write("\x1b[B");
+    session.write("\x1b[1;5A");
+    session.write("\x1b[A\r");
+    // back to normal mode: an arrow the viewer encoded as SS3 just before it heard reaches the program as CSI
+    await program("\x1b[?1l$ ");
+    session.write("\x1bOA");
+    await core.until(FRAME_DATA, 6);
+    expect(typed()).toEqual(["\x1bOA", "\x1bOH", "\x1bOB", "\x1b[1;5A", "\x1b[A\r", "\x1b[A"]);
+    session.kill();
+  });
+
+  it("puts cursor keys back in normal mode on a terminal reset, and reads a mode list split anywhere or zero-padded", async () => {
+    const { core, session, program, typed } = await attachedProgram();
+    // `reset` after a program left application cursor keys on: RIS, then DECSTR
+    await program("\x1b[?1h", "\x1bc$ ");
+    session.write("\x1b[A");
+    await program("\x1b[?1h", "\x1b[!p$ ");
+    session.write("\x1b[H");
+    // a mode list hc split far from its ESC, then one written with leading zeros
+    await program("x\x1b[?1000;1006;1015;", "1", "h");
+    session.write("\x1b[A");
+    await program("\x1b[?0", "01l");
+    session.write("\x1bOB");
+    await program("\x1b[?01h");
+    session.write("\x1b[F");
+    await core.until(FRAME_DATA, 5);
+    expect(typed()).toEqual(["\x1b[A", "\x1b[H", "\x1bOA", "\x1b[B", "\x1bOF"]);
+    session.kill();
   });
 
   it("does not keep asking viewers whose terminal answers every focus-reports switch with a focus-in (#2815)", async () => {

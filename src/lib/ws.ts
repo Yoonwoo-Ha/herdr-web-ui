@@ -871,6 +871,14 @@ export class HerdrSocket {
     return this.terminalHistory;
   }
 
+  /**
+   * Whether a plain arrow is typed as xterm encodes it (`terminal-modes`: the attach carries the program's modes),
+   * rather than named for the runtime to encode; false until the features come, and on herdr.
+   */
+  typesArrows(): boolean {
+    return this.features.has("terminal-modes");
+  }
+
   unwatch(paneId: string): void {
     if (this.watched.delete(paneId) && this.connected && this.features.has("watch")) {
       this.rawSend({ type: "unwatch", pane_id: paneId });

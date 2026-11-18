@@ -3,6 +3,7 @@ import * as client from "../herdr/client.ts";
 import { type Client, connectionData } from "./connections.ts";
 import { createInputLane } from "./input.ts";
 import { KEY_SETTLE_MS, TYPED_SETTLE_MS } from "../index.ts";
+import { CoreAttachSession } from "../herdr-core/attach-session.ts";
 
 afterEach(() => mock.restore());
 
@@ -12,13 +13,13 @@ function connection(told: Told[]): Client {
   return { data: connectionData({ deviceId: undefined, readOnly: false }), readyState: WebSocket.OPEN, send: (raw: string) => { told.push(JSON.parse(raw)); return 1; }, getBufferedAmount: () => 0, close: () => {} } as unknown as Client;
 }
 
-function lane(ready = true) {
+function lane(ready = true, pty: unknown = "pty") {
   const typed: string[] = [];
   const told: Told[] = [];
   const phone = connection(told);
   const other = connection([]);
   const facts = { attached: true, origin: true, sameAttachment: true, samePty: true, sameClaim: true, claimed: true, member: true, ready, held: false, currentHeld: false, mirror: false, cols: 80 };
-  const sighting = { origin: "attach", pty: "pty", claim: "claim", facts: () => facts, write: (data: string) => { typed.push(`pty ${data}`); return true; } };
+  const sighting = { origin: "attach", pty, claim: "claim", facts: () => facts, write: (data: string) => { typed.push(`pty ${data}`); return true; } };
   let started!: () => void;
   const keyStarted = new Promise<void>((resolve) => { started = resolve; });
   let answer!: () => void;
@@ -82,6 +83,22 @@ it("answers queued typing with an id only once herdr typed it, and a connection 
       expect(typed).toEqual(["keys left", "text echo hi", "keys right"]);
       expect(results()).toEqual([{ type: "input-result", id: 7, pane_id: "w:p1", ok: true }]);
     }
+  }
+});
+
+it("types a lone cursor key queued behind a key into a herdr-core attach, which sends it in the program's mode then, and through herdr elsewhere", async () => {
+  for (const [pty, arrow] of [[Object.create(CoreAttachSession.prototype), "pty \u001b[A"], ["pty", "text \u001b[A"]] as const) {
+    const { typed, results, phone, other, inputFrames, typedInto, keyStarted, answer } = lane(true, pty);
+    const key = inputFrames.keys(phone, { type: "keys", pane_id: "w:p1", keys: ["left"] });
+    await keyStarted;
+    inputFrames.input(phone, { type: "input", pane_id: "w:p1", text: "\u001b[A", id: 3 });
+    const barrier = inputFrames.keys(other, { type: "keys", pane_id: "w:p1", keys: ["right"] });
+    answer();
+    await key;
+    await barrier;
+    expect(typed).toEqual(["keys left", arrow, "keys right"]);
+    expect(results()).toEqual([{ type: "input-result", id: 3, pane_id: "w:p1", ok: true }]);
+    expect(typedInto("w:p1")).toBe(3);
   }
 });
 

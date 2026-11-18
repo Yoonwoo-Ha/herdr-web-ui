@@ -1192,6 +1192,40 @@ it("keeps a pane's scrollback on from a features frame it does not trust yet", (
   } finally { client.close(); }
 });
 
+it("types a plain arrow as xterm encodes it only for a server whose attach carries the program's modes", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  let trusted = false;
+  client.trustFeatures(() => trusted);
+  try {
+    client.connect();
+    let socket = FakeSocket.last;
+    socket.open();
+    // nothing known yet: an arrow stays a named key, as on every bridge before this
+    expect(client.typesArrows()).toBe(false);
+    // it decides what is sent: a features frame not trusted yet does not say it, its snapshot does
+    socket.receive({ type: "features", features: ["submit", "terminal-history", "terminal-modes"], connection: "c1" });
+    expect(client.typesArrows()).toBe(false);
+    socket.receive(snapshot(["submit", "terminal-history", "terminal-modes"]));
+    expect(client.typesArrows()).toBe(true);
+    // a reconnect to a herdr server, whose attach never names the modes, forgets it
+    trusted = true;
+    socket.disconnect();
+    client.connect();
+    socket = FakeSocket.last;
+    socket.open();
+    expect(client.typesArrows()).toBe(false);
+    socket.receive({ type: "features", features: ["submit", "watch"], connection: "c2" });
+    expect(client.typesArrows()).toBe(false);
+    // a herdr-core server lists it in a trusted features frame, before the snapshot
+    socket.disconnect();
+    client.connect();
+    socket = FakeSocket.last;
+    socket.open();
+    socket.receive({ type: "features", features: ["submit", "terminal-history", "terminal-modes"], connection: "c3" });
+    expect(client.typesArrows()).toBe(true);
+  } finally { client.close(); }
+});
+
 it("waits for capabilities when output precedes snapshot, and supports old bridges", () => {
   for (const features of [["input-ready"], []]) {
     const client = new HerdrSocket("ws://test/ws"); client.connect();

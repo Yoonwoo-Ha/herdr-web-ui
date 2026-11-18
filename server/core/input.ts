@@ -8,6 +8,7 @@ import { HerdrError, paneRead, paneSendKeys, paneSendText } from "../herdr/clien
 import { secretPrompt, validSecret } from "../../shared/secret-prompt.ts";
 import { insertTextProblem } from "../../shared/terminal-insert.ts";
 import { mirrorInput } from "../mirror-input.ts";
+import { CoreAttachSession, CURSOR_KEY } from "../herdr-core/attach-session.ts";
 
 /** Keys that may wait to join one `pane.send_keys` while herdr answers the one before (a held arrow repeats ~30/s). */
 const MAX_WAITING_KEYS = 256;
@@ -134,7 +135,10 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
         // herdr encodes it for the program's mouse mode, send_text would type its bytes (#667).
         // The terminal's answers to its attach's questions go to that attach too, or they are typed (#2816):
         // only what the browser's terminal made itself, so a paste of the same bytes is still typed
-        const viaAttach = isMouseReport(text) || (message.automatic === true && isTerminalReply(text));
+        // A lone cursor key typed into a herdr-core attach goes there too, which sends it in the form the program reads
+        // when its turn comes, not the one the viewer's terminal believed in when it was pressed
+        const cursorKey = message.automatic !== true && sighting.pty instanceof CoreAttachSession && CURSOR_KEY.test(text);
+        const viaAttach = cursorKey || isMouseReport(text) || (message.automatic === true && isTerminalReply(text));
         // typed into the attach it saw: one that ended meanwhile (and was attached again) takes none of it
         const roles = connectionOf(client).roles;
         const allowed = () => mayType(client) && connectionOf(client).roles === roles && typingGuards.queuedTyping(sighting.facts());
@@ -147,6 +151,7 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
           if (viaAttach) {
             if (!allowed() || !sighting.write(text, message.automatic === true)) { inputFailed(); return; }
             typedIntoPty(text);
+            if (cursorKey) personTyped(message.pane_id);
             receipt(true);
             return;
           }

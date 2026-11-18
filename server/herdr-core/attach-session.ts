@@ -18,6 +18,8 @@ export const CLEAR_HISTORY = "\x1b[?1049l\x1b[3J\x1b[H\x1b[2J";
  * tail of in-place updates cannot draw it again (hc has no repaint), and the tail's lines land once.
  */
 export const CLEAR_JOINER_HISTORY = "\x1b[?1049l\x1b[3J";
+/** One unmodified cursor or Home/End key, in either cursor mode's form. */
+export const CURSOR_KEY = /^\x1b[[O]([ABCDHF])$/;
 
 type Display = { fg?: string; bg?: string; cursor?: string; cell?: [number, number] };
 
@@ -102,6 +104,14 @@ export class CoreAttachSession {
   private cols: number;
   private rows: number;
   private readonly end: (code: number | null) => void;
+  /**
+   * The program's cursor mode (DECCKM) as hc's stream last said. The viewer's terminal learns it a link's round trip
+   * later: a key typed in between was encoded in the old mode.
+   */
+  private applicationCursor = false;
+  /** where hc's stream stands in a sequence that may change the cursor mode, carried from frame to frame */
+  private modeParse: "ground" | "escape" | "csi" | "private" | "bang" = "ground";
+  private modeParams = "";
 
   constructor(options: CoreAttachOptions) {
     this.cols = options.cols;
@@ -127,6 +137,7 @@ export class CoreAttachSession {
         this.owed += payload.length;
         this.settle();
         let text = decoder.decode(payload, { stream: true });
+        this.trackCursorMode(text);
         if (text && first) {
           first = false;
           text = CLEAR_HISTORY + text;
@@ -170,9 +181,53 @@ export class CoreAttachSession {
       if (focused) this.ask();
     }
     if (!rest) return true;
-    if (this.channel) this.send(rest, automatic);
-    else this.typed.push({ data: rest, automatic });
+    // a lone cursor key goes in the form the program reads now, whichever the viewer's terminal still believed in
+    const key = automatic ? null : CURSOR_KEY.exec(rest);
+    const typed = key ? `${this.applicationCursor ? "\x1bO" : "\x1b["}${key[1]}` : rest;
+    if (this.channel) this.send(typed, automatic);
+    else this.typed.push({ data: typed, automatic });
     return true;
+  }
+
+  /**
+   * Follows DECCKM as xterm does: `CSI ? … 1 … h/l` with 1 a top-level parameter (`?01h` too, `?1004:1h` is mode
+   * 1004's), and the resets that put it back to normal mode, RIS (`ESC c`) and DECSTR (`CSI ! p`).
+   */
+  private trackCursorMode(text: string): void {
+    let at = this.modeParse === "ground" ? text.indexOf("\x1b") : 0;
+    while (at !== -1 && at < text.length) {
+      const char = text[at]!;
+      if (char === "\x1b") this.modeParse = "escape";
+      else {
+        switch (this.modeParse) {
+          case "ground":
+            break;
+          case "escape":
+            if (char === "c") this.applicationCursor = false;
+            this.modeParse = char === "[" ? "csi" : "ground";
+            break;
+          case "csi":
+            this.modeParams = "";
+            this.modeParse = char === "?" ? "private" : char === "!" ? "bang" : "ground";
+            break;
+          case "bang":
+            if (char === "p") this.applicationCursor = false;
+            this.modeParse = "ground";
+            break;
+          case "private":
+            if (/[\d;:]/.test(char)) {
+              if (this.modeParams.length < 256) this.modeParams += char;
+              break;
+            }
+            if ((char === "h" || char === "l") && this.modeParams.split(";").some((param) => /^\d+$/.test(param) && Number(param) === 1)) {
+              this.applicationCursor = char === "h";
+            }
+            this.modeParse = "ground";
+            break;
+        }
+      }
+      at = this.modeParse === "ground" ? text.indexOf("\x1b", at + 1) : at + 1;
+    }
   }
 
   private send(data: string, automatic: boolean): void {
