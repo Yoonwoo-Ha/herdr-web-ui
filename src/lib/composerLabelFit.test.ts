@@ -16,4 +16,9 @@ describe("composerLabelDraw", () => {
     expect(composerLabelDraw("no-effort", { modelClipped: true, modelWidth: 24, modelFloor: 24 })).toBe("out");
     expect(composerLabelDraw("no-effort", { modelClipped: true, modelWidth: 23.5, modelFloor: 24 })).toBe("out");
   });
+
+  it("steps out at a fractional floor, where clientWidth rounds the name's width up past it", () => {
+    expect(composerLabelDraw("no-effort", { modelClipped: true, modelWidth: 23, modelFloor: 22.6 })).toBe("out");
+    expect(composerLabelDraw("no-effort", { modelClipped: true, modelWidth: 24, modelFloor: 22.6 })).toBe("no-effort");
+  });
 });
