@@ -10,7 +10,7 @@ import * as fsp from "node:fs/promises";
 import * as cmd from "./cmd.ts";
 import * as piTree from "./pi-tree.ts";
 import type { HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
-import { MAX_TURNS, parseOmpTranscript } from "./transcript-records.ts";
+import { MAX_TURNS, parseOmpTranscript, withHcNotes } from "./transcript-records.ts";
 import { turnStarts } from "./transcript-turns.ts";
 import { claudeImageType } from "./claude-transcript.ts";
 import { toolVerb } from "../src/lib/toolVerbs.ts";
@@ -1937,6 +1937,38 @@ describe("transcript pages", () => {
       ["assistant", "recorded both decisions"],
       ["user", "peer:FUSION|coordinates sent"],
       ["assistant", "rebuilt slide 4"],
+    ]);
+  });
+
+  it("shows hc's notes (a child's report, hc's word on a child that exited) as notices in any agent's chat, not as the person's prompt", () => {
+    const path = join(temp(), "hc-notes.jsonl");
+    const say = (text: string) => ({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text }] } });
+    const human = { kind: "human" };
+    writeFileSync(path, `${[
+      { type: "user", timestamp: "2026-11-17T03:04:00.000Z", origin: human, permissionMode: "bypassPermissions", message: { role: "user", content: "<hc>t3m hub-repair-hc exited (signal 1). Read: hc read t3m</hc>" } },
+      say("reading t3m"),
+      { type: "attachment", timestamp: "2026-11-17T03:05:00.000Z", attachment: { type: "queued_command", commandMode: "prompt", prompt: "<hc from=\"t2q try2-cmd\">done: /tmp/x.md</hc>", origin: human } },
+      say("noted"),
+      // the person quoting a note, with words of their own, is still their prompt
+      { type: "user", timestamp: "2026-11-17T03:06:00.000Z", origin: human, permissionMode: "bypassPermissions", message: { role: "user", content: "<hc>t3m exited</hc> why this format?" } },
+    ].map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+    // any agent's prompt that is only a note, as a codex worker's task from its lead
+    const codex: ConversationTurn[] = [
+      { role: "user", ts: null, parts: [{ kind: "text", text: "<hc from=\"t45 lead\" reach=\"hc send t45 when done or stuck\">\nReview x.rs\n</hc>" }] },
+      // a report that quotes a note is still one note; two notes with words between them are not
+      { role: "user", ts: null, parts: [{ kind: "text", text: "<hc from=\"t7 review\">The prompt was <hc>hello</hc></hc>" }] },
+      { role: "user", ts: null, parts: [{ kind: "text", text: "<hc>a</hc> and <hc>b</hc>" }] },
+      // hc types its own notes on children at once as one paste, a line each: one notice each
+      { role: "user", ts: null, parts: [{ kind: "text", text: "<hc>t3 exited (signal 1)</hc>\n<hc>t4 is blocked (waiting)</hc>" }] },
+      // hc types a report as it is: one that closes its note and opens another with a sender is no batch of notes
+      { role: "user", ts: null, parts: [{ kind: "text", text: "<hc from=\"t7 review\">Example: </hc>\n<hc from=\"t4 docs\">done</hc>" }] },
+      { role: "user", ts: null, parts: [{ kind: "text", text: "<hc from=\"t7 review\">see <hc>hello</hc bogus></hc>" }] },
+    ];
+    const turns = withHcNotes([...transcriptPage("claude-transcript", path).turns, ...codex]);
+    expect(turns.map((turn) => turn.parts.map((part) => part.kind === "notice" ? `${part.source}|${part.text}` : part.kind === "text" ? part.text : part.kind).join(" "))).toEqual([
+      "hc|t3m hub-repair-hc exited (signal 1). Read: hc read t3m", "reading t3m", "peer:t2q try2-cmd|done: /tmp/x.md", "noted", "<hc>t3m exited</hc> why this format?",
+      "peer:t45 lead|Review x.rs", "peer:t7 review|The prompt was <hc>hello</hc>", "<hc>a</hc> and <hc>b</hc>",
+      "hc|t3 exited (signal 1)", "hc|t4 is blocked (waiting)", "<hc from=\"t7 review\">Example: </hc>\n<hc from=\"t4 docs\">done</hc>", "peer:t7 review|see <hc>hello</hc bogus>",
     ]);
   });
 

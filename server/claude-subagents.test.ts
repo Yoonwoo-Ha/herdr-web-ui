@@ -2884,6 +2884,18 @@ describe("claudeSubagents, background commands", () => {
     s.parent({ type: "user", timestamp: at(33), message: { role: "user", content: "Another Claude session sent a message: <teammate-message>hi</teammate-message>" } });
     s.parent({ type: "user", timestamp: at(34), message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] } });
     expect(claudeSubagentState(s.path, true, NOW)).toMatchObject({ running: 4, turnRunning: 1 });
+    // nor an hc note typed in for a child terminal, which Claude records as the person's
+    s.parent({ type: "user", timestamp: at(35), origin: { kind: "human" }, permissionMode: "bypassPermissions", message: { role: "user", content: '<hc from="t79 worker">Green commit, moving on.</hc>' } });
+    expect(claudeSubagentState(s.path, true, NOW)).toMatchObject({ running: 4, turnRunning: 1 });
+    // nor several notes typed as one paste, which Claude wraps when it is long
+    s.parent({ type: "user", timestamp: at(35), origin: { kind: "human" }, permissionMode: "bypassPermissions", message: { role: "user", content: '<pasted_content id="p1">\n<hc>t3 exited (signal 1)</hc>\n<hc>t4 is blocked (waiting)</hc>\n</pasted_content id="p1">' } });
+    expect(claudeSubagentState(s.path, true, NOW)).toMatchObject({ running: 4, turnRunning: 1 });
+    // the same, its wrapper and notes in text blocks of their own, which the chat reads a line each
+    s.parent({ type: "user", timestamp: at(35), origin: { kind: "human" }, permissionMode: "bypassPermissions", message: { role: "user", content: ['<pasted_content id="p2">', "<hc>t3 exited (signal 1)</hc>", "<hc>t4 is blocked (waiting)</hc>", '</pasted_content id="p2">'].map((text) => ({ type: "text", text })) } });
+    expect(claudeSubagentState(s.path, true, NOW)).toMatchObject({ running: 4, turnRunning: 1 });
+    // a prompt the person gave with a picture is theirs, whatever its text
+    s.parent({ type: "user", timestamp: at(36), origin: { kind: "human" }, permissionMode: "bypassPermissions", message: { role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "" } }, { type: "text", text: "<hc>hello</hc>" }] } });
+    expect(claudeSubagentState(s.path, true, NOW)).toMatchObject({ running: 4, turnRunning: 0 });
   });
 
   it("tells the pane's running count and what of it is the turn's when either changes", async () => {
