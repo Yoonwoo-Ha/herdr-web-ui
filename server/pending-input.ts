@@ -18,6 +18,10 @@ export function sameProcessBirth(before: number, after: number, platform: NodeJS
   return platform === "darwin" ? Math.abs(before - after) <= 1000 : before === after;
 }
 
+/**
+ * An identity learned after enqueue is not a replacement; only mutually known parts disagree. A known start of the same
+ * PID that can no longer be read is no match either: the process may have ended and another taken its PID.
+ */
 export function samePendingIdentity(before: PendingIdentity, after: PendingIdentity, platform: NodeJS.Platform = process.platform): boolean {
   const changed = <T>(a: T | null | undefined, b: T | null | undefined) => a != null && b != null && a !== b;
   return before.agent === after.agent && before.terminalId === after.terminalId
@@ -84,6 +88,10 @@ export class PendingInputs<Owner, Lease> {
     ambiguous: (code: string) => boolean = (code) => !submitNotTyped(code)): Promise<HeldCopyReply> {
     const key = JSON.stringify([paneId, id, generation]);
     this.expireResends();
+    // Withdrawal covers the stable ID, not just one retry generation, while its
+    // bounded disposition is retained. After eviction or a bridge restart, a saved
+    // copy that missed the removal can be resent: offline recovery deliberately
+    // remains available rather than refusing every unknown ID.
     const outcome = this.removed.get(id);
     if (outcome?.paneId === paneId && outcome.outcome === "discarded") {
       return Promise.resolve({ ok: false, code: "pending_discarded", message: "This pending message was withdrawn" });
@@ -108,6 +116,8 @@ export class PendingInputs<Owner, Lease> {
         const paneId = entry.paneId;
         if (reply.ok && item?.paneId === paneId) this.finish(item, "sent");
         else if (entry.uncertain && item?.paneId === paneId) {
+          // Another connection may have committed input. An Edit already waiting
+          // on its discard must see this uncertainty before it can withdraw.
           item.message.state = "uncertain";
           item.message.error = { code: reply.code ?? "pending_uncertain", message: reply.message ?? "Check the terminal before sending this message again" };
           this.gates.delete(paneId);
@@ -168,6 +178,8 @@ export class PendingInputs<Owner, Lease> {
     return receipt?.owner === owner && receipt.paneId === paneId ? receipt.outcome : undefined;
   }
 
+  /** `held`: the message waits for an explicit send; `next` never offers it to automatic delivery. */
+  /** `agentOnly`: for an agent alone (shared/protocol.ts submit `agent_only`); the caller has seen an agent in `identity` */
   enqueue(owner: Owner, paneId: string, requestId: number, text: string, lease: Lease, identity: PendingIdentity, held = false, agentOnly = false): PendingRecord<Owner, Lease> {
     const previous = [...this.records.values()].find((item) => item.owner === owner && item.message.request_id === requestId);
     if (previous) {
@@ -180,6 +192,9 @@ export class PendingInputs<Owner, Lease> {
     if (this.records.size >= MAX_PENDING_TOTAL || own >= (perPane ? MAX_PENDING_PER_PANE : MAX_PENDING_PER_OWNER)) {
       throw new PendingInputError("pending_limit", "The pending-message list is full; send or discard a message first");
     }
+    // Reserve the eventual disposition before accepting text. Recent withdrawals
+    // live at least as long as resend receipts, even under cap pressure; settling
+    // an accepted message can never run out of room or evict a recent withdrawal.
     for (const [id, receipt] of this.removed) {
       if (this.records.size + this.removed.size < MAX_PENDING_DISPOSITIONS) break;
       if (this.elapsed() - receipt.at >= CLOSED_RETENTION_MS) this.removed.delete(id);
@@ -204,6 +219,7 @@ export class PendingInputs<Owner, Lease> {
 
   retains(owner: Owner, id: string): boolean { return this.records.get(id)?.owner === owner; }
 
+  /** The pending message `id`, still held here, was accepted for an agent alone: a saved copy's resend keeps that whatever it says. */
   agentOnly(paneId: string, id: string): boolean { const item = this.records.get(id); return item?.paneId === paneId && item.message.agent_only === true; }
 
   holds(paneId: string): boolean { return [...this.records.values()].some((item) => item.paneId === paneId); }
@@ -219,6 +235,7 @@ export class PendingInputs<Owner, Lease> {
       || [...this.records.values()].some((other) => other.paneId === item.paneId && other.inFlight)
       || (automatic ? this.next(item.paneId) !== item : !["queued", "held"].includes(item.message.state))) return false;
     item.message.state = "sending"; delete item.message.error; item.inFlight = true;
+    // before anything is typed: the row's turn is written after this on this PC's clock (src/lib/sentWaiting.ts)
     item.message.sending_at = new Date(this.now()).toISOString();
     if (!this.gates.get(item.paneId)?.committed) this.gates.set(item.paneId, { by: item.message.id, committed: false, sawWorking: false, completed: false, deadline: null });
     this.publish(item.owner, item.paneId);
@@ -236,6 +253,7 @@ export class PendingInputs<Owner, Lease> {
   settle(item: PendingRecord<Owner, Lease>, fault?: Fault, uncertain = false, retryWhenReady = false): void {
     if (this.records.get(item.message.id) !== item || !item.inFlight) return;
     item.inFlight = false;
+    // a send the pane's move overtook is never tried again by itself under the new ID: it waits for its Send
     if (this.movedInFlight.delete(item)) retryWhenReady = false;
     if (!fault) {
       this.finish(item, "sent");
@@ -256,6 +274,8 @@ export class PendingInputs<Owner, Lease> {
     if (this.records.get(item.message.id) !== item || item.inFlight
       || withdrawalOnly && item.message.state !== "queued" && item.message.state !== "held"
       || [...this.resends.values()].some((entry) => entry.id === item.message.id && entry.settledAt === null)) return false;
+    // Dismissing potentially delivered text is not proof of withdrawal. In
+    // particular, a racing Edit listener must never restore it into the draft.
     this.finish(item, item.message.state === "uncertain" ? "dismissed" : "discarded");
     return true;
   }
@@ -328,6 +348,10 @@ export class PendingInputs<Owner, Lease> {
     for (const owner of new Set([...this.records.values()].filter((item) => item.paneId === paneId).map((item) => item.owner))) this.hold(owner, paneId, fault);
   }
 
+  /**
+   * herdr moved the pane under a new ID: its messages, their outcomes and held-copy sends follow it, each
+   * held for an explicit send (one on its way, uncertain), and every owner is told both IDs' lists.
+   */
   move(from: string, to: string, fault: Fault): void {
     if (from === to) return;
     this.holdPane(from, fault);
@@ -371,6 +395,8 @@ export class PendingInputs<Owner, Lease> {
       }
       if (![...this.records.values()].some((item) => item.owner === owner)) {
         this.closed.delete(owner);
+        // Keep the bounded disposition history after its owner closes too: another
+        // connection may still carry this ID in a saved held copy.
       }
     }
   }

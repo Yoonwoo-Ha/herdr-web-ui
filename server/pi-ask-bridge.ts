@@ -39,6 +39,7 @@ const MAX_ANSWERS_JSON = 65_536;
 export interface PiAskUserForm {
   socket: string;
   pid: number;
+  /** The session file as the extension names it: it checks the same string before it submits. */
   sessionFile: string;
   transcript: string;
   flow: PiAskFlow;
@@ -110,6 +111,19 @@ async function foregroundPids(paneId: string): Promise<number[]> {
 }
 
 
+/**
+ * Whether the pane's foreground pi has a pi-ask form open, as its extension says, with no session
+ * needed: pi writes no session file before its first answer, and a form from `/answer` needs no
+ * tool call. "active": a form pi-ask reported open, or an ask_user call still open on pi's live
+ * branch (a pi-ask that sends no started event still has its call there). "inactive": the
+ * extension answered with neither, from pi's live state (a /tree move that writes nothing leaves
+ * the session file behind it), also when it does not say which calls are open. "absent": no
+ * bridge directory, or none holds a socket for a pid in front: no extension serves the pane's pi.
+ * "unknown" (with a bridge directory: the pane's processes unreadable, a socket that is not this
+ * user's alone, a read that failed or answers for another pid, other pids in front after the
+ * reads) is never room for keys. Active wins, then unknown, then inactive. Every candidate socket
+ * is asked: more than one is no reason to stop.
+ */
 export type PiAskActivity = "active" | "inactive" | "absent" | "unknown";
 export async function piAskActivity(paneId: string, signal?: AbortSignal): Promise<PiAskActivity> {
   if (process.platform === "win32") return "absent";
@@ -131,6 +145,7 @@ export async function piAskActivity(paneId: string, signal?: AbortSignal): Promi
     }
   }
   if (unknown) return "unknown";
+  // the answer is for the pis in front when the reads began: another one in front now is not known
   const after = await foregroundPids(paneId).catch(() => null);
   if (after === null || [...new Set(after)].sort().join() !== [...new Set(pids)].sort().join()) return "unknown";
   return answered ? "inactive" : "absent";
@@ -234,6 +249,10 @@ export function piAskUserPrompt(paneId: string, transcript: string, bound: Bound
 const changed = (): Response => jsonResponse({ error: { code: "prompt_changed", message: "The prompt changed before the answer was sent." } }, 409);
 const invalid = (message: string): Response => badRequest("invalid_answer", message);
 
+/**
+ * One step's answer, by option value: what pi-ask takes (docs/remote-events.md). null: skipped,
+ * which pi-ask allows for every question. A string: why the answer is refused.
+ */
 function stepAnswer(question: PiAskQuestion, indices: unknown, text: unknown): PiAskRemoteAnswer | null | string {
   const multi = question.type === "multi";
   if (text !== undefined && (typeof text !== "string" || text.length > MAX_TEXT)) return "Custom text must be a string.";
@@ -314,6 +333,7 @@ export async function answerPiAskUser(paneId: string, parsed: ParsedPrompt, body
     drafts.delete(paneId);
     return done(changed());
   }
+  // the extension checks createdAt and the session again as it hands the answer to pi-ask
   const reply = await submit(form.socket, { flowId: form.flow.flowId, createdAt: form.flow.createdAt, sessionFile: form.sessionFile, response: { kind: "answer", mode: "submit", answers } }, signal);
   if (reply === null) {
     return done(jsonResponse({ error: { code: "bridge_unconfirmed", message: "pi did not confirm the answer. Check the question in the terminal before sending again." } }, 504));

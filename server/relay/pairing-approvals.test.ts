@@ -63,6 +63,7 @@ describe("the pairing window across a restart", () => {
       expect(restarted.windowOpen()).toBe(false);
       expect(restarted.localOnlyOpen()).toBe(false);
       expect(f.saved()).toEqual({ v: 1, window_until: 0, local_only_until: 0 });
+      // so no later start gets a window from it either, as a clamp to "now" gave at every restart
       f.clock.at += 365 * 86_400_000 - 60_000;
       expect(f.open().windowOpen()).toBe(false);
     }
@@ -72,6 +73,7 @@ describe("the pairing window across a restart", () => {
     const f = fixture();
     f.open().openWindow(f.clock.at, { localOnly: true });
     const opened = f.clock.at;
+    // a start with a clock earlier than the open sees a deadline more than one window ahead
     f.clock.at = opened - 60_000;
     expect(f.open().windowOpen()).toBe(false);
     f.clock.at = opened + 1;
@@ -219,6 +221,7 @@ describe("the pairing window across a restart", () => {
     const approvals = new RelayPairingApprovals({ path: f.path, now: () => f.clock.at, setTimer: (run, ms) => { timers.push({ run, ms }); return () => {}; } });
     approvals.openWindow(f.clock.at, { localOnly: true });
     expect(timers.at(-1)!.ms).toBe(PAIRING_WINDOW_MS);
+    // fired early (a timer is not a clock): it waits for the rest
     f.clock.at += PAIRING_WINDOW_MS - 1_000;
     timers.at(-1)!.run();
     expect(timers.at(-1)!.ms).toBe(1_000);
@@ -316,6 +319,7 @@ describe("what the PC's own windows are told of a waiting request", () => {
     approvals.ask("phone", "123456", f.clock.at + 90_000, device);
     approvals.ask("tablet", "654321", f.clock.at + 90_000, { ...device, localOnly: true });
     expect(approvals.list().map(({ label, local_only }) => [label, local_only])).toEqual([["phone", true], ["tablet", true]]);
+    // account members are not shown it at all
     expect(approvals.remoteList()).toEqual([]);
   });
 
@@ -344,10 +348,13 @@ describe("what the PC's own windows are told of a waiting request", () => {
     approvals.ask("phone", "123456", f.clock.at + 90_000, { ...device, membersOnly: true, localOnly: true });
     expect(approvals.list()).toEqual([]);
     expect(seen.at(-1)).toEqual([]);
+    // what members are told carries no such field either
     expect(approvals.remoteList()).toHaveLength(1);
     expect("local_only" in approvals.remoteList()[0]!).toBe(false);
   });
 
+  // nothing here tells which device shows digits and which takes them typed: the mark is the PC's
+  // window, and a plain link asked meanwhile must not hand what the add-me screen waits for to members
   it("keeps the mark, and the request off members' screens, when an ordinary link is asked for meanwhile", () => {
     const f = fixture();
     const approvals = f.open();

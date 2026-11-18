@@ -90,6 +90,7 @@ describe("shared preferences", () => {
     expect(store.get().state_id).toBeUndefined();
     const first = await (await put(store, JSON.stringify({ settings: {}, pins: ["local:t1"] }))).json();
     expect(first.state_id).toMatch(/^[0-9a-f]{32}$/);
+    // a browser cannot name it
     expect((await (await put(store, JSON.stringify({ settings: {}, state_id: "0".repeat(32) }))).json()).state_id).toBe(first.state_id);
     const again = new PreferenceStore(dir);
     expect(again.get().state_id).toBe(first.state_id);
@@ -146,6 +147,7 @@ describe("shared preferences", () => {
   it("starts empty, keeps only the shared names, counts each write, and survives a restart", async () => {
     const dir = root();
     const store = new PreferenceStore(dir);
+    // no pins until a browser shares its own: an empty list would be taken for everyone's
     expect(await (await handlePreferencesRequest(new Request("http://x/api/preferences"), store)).json()).toEqual({ revision: 0, settings: {}, muted_panes: [] });
     const heard: number[] = [];
     store.subscribe((preferences) => heard.push(preferences.revision));
@@ -169,6 +171,7 @@ describe("shared preferences", () => {
     expect((await put(store, JSON.stringify({ settings: {}, pins: [1] }))).status).toBe(400);
     expect((await put(store, JSON.stringify({ settings: {}, pins: Array.from({ length: MAX_PINS + 1 }, (_, i) => `pc:${i}`) }))).status).toBe(400);
     expect((await put(store, JSON.stringify({ settings: { quickReplies: ["x".repeat(70_000)] }, pins: [] }))).status).toBe(413);
+    // a body that says it is too large is refused unread
     expect((await put(store, "{}", { "content-length": String(70_000) })).status).toBe(413);
     expect((await handlePreferencesRequest(new Request("http://x/api/preferences", { method: "POST", body: "{}" }), store)).status).toBe(405);
     expect(store.get().revision).toBe(0);
@@ -283,6 +286,7 @@ describe("shared preferences", () => {
     for (const tab_labels of [
       { "w1:p1|term_a": "two\nlines" }, { "w1:p1|term_a": "two\rlines" }, { "w1:p1|term_a": "two\u2028lines" }, { "w1:p1|term_a": " " },
       { "w1:p1|term_a": "x".repeat(MAX_TAB_LABEL_LENGTH + 1) }, { "w1:p1|term_a": 3 }, ["w1:p1"],
+      // a key is a pane and its terminal, never free text that could fill the document
       { "w1:p1": "no terminal" }, { [`${"x".repeat(250)}|term_a`]: "long" }, { "w1 p1|term_a": "space" },
       { ...many, "w1:pX|term_x": "one too many" },
     ]) {

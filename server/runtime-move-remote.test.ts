@@ -10,6 +10,9 @@ import { unitHerdrOnly } from "../scripts/test-herdr.ts";
 import { createServer } from "./index.ts";
 import { PortalService } from "./portal.ts";
 
+// The PC being moved from another one: its connection server reaches it with the bridge token
+// (an SSH PC) or as a paired relay device. The Herdr app is installed here, so no move is offered
+// and nothing reaches herdr; what is checked is who gets past each route's gate.
 afterAll(unitHerdrOnly());
 const SECRET = "fictional-browser-token";
 const BRIDGE = "fictional-bridge-token";
@@ -37,8 +40,10 @@ it("lets the connection server holding the bridge token read and run this PC's m
   expect(await send("/api/runtime/move/stop-all", "POST", update, {})).toEqual([409, "not_waiting"]);
   expect(await send("/api/runtime/move/stop", "POST", update, { pane_id: "w1:p1" })).toEqual([409, "not_waiting"]);
   expect(await send("/api/runtime/move/install", "POST", update)).toEqual([409, "unavailable"]);
+  // without the app's header, or with a query, as for any other driver
   expect(await send("/api/runtime/move", "POST", bridge, { revision: "shown" })).toEqual([403, "forbidden"]);
   expect(await send("/api/runtime/move?x=1", "POST", update, { revision: "shown" })).toEqual([403, "forbidden"]);
+  // another token opens nothing, and the bridge token opens no runtime switch
   expect((await fetch(`${base}/api/runtime/move`, { headers: { authorization: "Bearer wrong" } })).status).toBe(401);
   expect((await send("/api/runtime", "POST", update, { runtime: "herdr-core" }))[0]).toBe(401);
 });
@@ -48,6 +53,7 @@ it("holds an install's request open for the whole install, past the usual minute
   const ctx: ServerContext = { ...app.context, requestIP: () => ({ address: "127.0.0.1", family: "IPv4", port: 1 }), timeout: (_request, value) => { seconds.push(value); } };
   const response = await handleRequest(new Request(`${base}/api/runtime/move/install`, { method: "POST", headers: { ...bridge, "x-herdr-update": "1" } }), ctx);
   expect(response?.status).toBe(409);
+  // the last word on this request's timeout is the install's: its download alone may take 120 s
   expect(seconds.at(-1)).toBe(180);
 });
 
@@ -84,8 +90,10 @@ it("refuses a Portal visitor that drives this PC a runtime switch, before the sw
     const visitor = { "x-portal-proof": "proof", "x-portal-user": "visitor", "x-portal-auth": "credential", "x-herdr-update": "1" };
     expect(await send("/api/runtime", "POST", visitor, { runtime: "herdr-core" })).toEqual([403, "forbidden"]);
     expect(switches).not.toHaveBeenCalled();
+    // the owner on this app's page still switches
     expect(await send("/api/runtime", "POST", { authorization: `Bearer ${SECRET}`, "x-herdr-update": "1" }, { runtime: "herdr-core" })).toEqual([202, null]);
     expect(switches).toHaveBeenCalledTimes(1);
+    // nor is it told the runtime facts a switch is offered from
     const facts = async (headers: Record<string, string>) => (await (await fetch(`${base}/api/health?scope=bridge`, { headers })).json() as { herdr_runtime?: unknown }).herdr_runtime;
     expect(await facts(visitor)).toBeUndefined();
     expect(await facts({ authorization: `Bearer ${SECRET}` })).toEqual(facts_);

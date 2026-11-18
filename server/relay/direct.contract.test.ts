@@ -71,6 +71,7 @@ describe("direct carrier", () => {
     cleanup.push(() => elsewhere.close());
     const other = loadRelayIdentity(elsewhere.stateDir);
     const pinned: RelayOffer = { ...offer, server_public_key: other.public_key };
+    // When it reaches this address, the handshake against the pinned key fails before anything is sent
     await expect(bounded(openRelayChannel(pinned, { store: savedStore(device, pinned), socket: () => new WebSocket(url()) }))).rejects.toThrow();
   });
 
@@ -80,7 +81,9 @@ describe("direct carrier", () => {
     const closed = deferred<Error>();
     const channel = await bounded(openRelayChannel(offer, { store: savedStore(device, offer), socket: () => new WebSocket(url()), onClose: (error) => closed.resolve(error) }));
     cleanup.push(() => channel.close());
+    // When the PC removes the device
     fixture.app.context.services.devices.revoke(device.id);
+    // Then the direct session ends, and the device is not let in again
     await bounded(closed.promise);
     const again = await bounded(openRelayChannel(offer, { store: savedStore(device, offer), socket: () => new WebSocket(url()) })).catch((caught: unknown) => caught);
     expect(again).toBeInstanceOf(MuxProtocolError);
@@ -93,7 +96,9 @@ describe("direct carrier", () => {
     const code = store.startPairing().code;
     const phone = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
     const empty: RelayDeviceStore = { get: async () => undefined, update: async (_id, change) => change(undefined), list: async () => [], remove: async () => {} };
+    // When a phone sends it over the direct carrier
     const error = await bounded(openRelayChannel({ ...offer, code }, { store: empty, socket: () => new WebSocket(url()) })).catch((caught: unknown) => caught);
+    // Then it is refused, and the code still pairs through the relay's path
     expect(error).toBeInstanceOf(MuxProtocolError);
     expect((error as MuxProtocolError).code).toBe("auth_failed");
     const publicKey = Buffer.from(await crypto.subtle.exportKey("spki", phone.publicKey)).toString("base64url");
@@ -111,8 +116,10 @@ describe("direct carrier", () => {
     await opened(second);
     const firstClosed = new Promise<number>((resolve) => { first.onclose = (event) => resolve(event.code); });
     clock.advance(1_000);
+    // When the phone opens its channel from the same address
     const channel = await bounded(openRelayChannel(offer, { store: savedStore(device, offer), socket: () => new WebSocket(url()) }));
     cleanup.push(() => channel.close());
+    // Then it is admitted, and the oldest silent client gave way
     expect(channel.device.device_id).toBe(device.id);
     expect(await bounded(firstClosed)).toBe(1013);
   });
@@ -127,6 +134,7 @@ describe("direct carrier", () => {
     await opened(second);
     let firstClosed = false;
     first.onclose = () => { firstClosed = true; };
+    // When a third comes at once, it is the one refused
     const third = new WebSocket(url());
     cleanup.push(() => third.close());
     await expect(opened(third)).rejects.toThrow();
@@ -144,6 +152,7 @@ describe("direct carrier", () => {
     let firstClosed = false;
     first.onclose = () => { firstClosed = true; };
     clock.advance(1_000);
+    // When an ordinary GET reaches the same path, it is turned away and nobody gives way
     const response = await fetch(url().replace("ws://", "http://"));
     expect(response.status).toBe(426);
     expect(firstClosed).toBe(false);
@@ -161,8 +170,11 @@ describe("direct carrier", () => {
     let firstClosed = false;
     first.onclose = () => { firstClosed = true; };
     clock.advance(1_000);
+    // When an upgrade request that the server cannot complete comes from the same address
     const response = await fetch(url().replace("ws://", "http://"), { headers: { upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": "not a key", "sec-websocket-version": "99" } });
+    // Then it is turned away and nobody gave way
     expect(response.status).not.toBe(101);
+    // a ping on the first client's own connection: its pong comes after any close the server sent it
     const fenced = await bounded(new Promise<string>((resolve) => {
       first.addEventListener("close", () => resolve("closed"));
       first.addEventListener("pong" as never, () => resolve("pong"));
@@ -181,6 +193,7 @@ describe("direct carrier", () => {
     });
     const held = [];
     for (let index = 0; index < 8; index++) held.push(await raw());
+    // When a ninth comes, it is closed at once, unread
     const ninth = await raw();
     await bounded(ninth.closed, 2_000);
   });
@@ -198,6 +211,7 @@ describe("direct carrier", () => {
       port: fixture.app.port, addresses: () => ["127.0.0.1"], preferredPort: 0 });
     await strict.start();
     cleanup.push(() => fixture.close(), () => strict.stop());
+    // Then a loopback client is refused
     await expect(opened(new WebSocket(`ws://127.0.0.1:${strict.port}/v1/ws?v=1`))).rejects.toThrow();
   });
 
@@ -232,8 +246,10 @@ describe("direct carriers in AUTH_OK", () => {
     cleanup.push(() => fixture.close());
     const device = await relayDevice(fixture);
     const carriers = ["ws://192.168.0.10:7319"];
+    // When one phone offers DIRECT_CARRIER and another does not
     const offering = await relayConnection(fixture, { directCarriers: () => carriers });
     const plain = await relayConnection(fixture, { directCarriers: () => carriers });
+    // Then only the one that offered is told
     expect((await offering.auth(device, [DIRECT_CARRIER])).direct).toEqual(carriers);
     expect(await plain.auth(device)).not.toHaveProperty("direct");
   });
@@ -243,8 +259,10 @@ describe("direct carriers in AUTH_OK", () => {
     cleanup.push(() => fixture.close());
     const device = await relayDevice(fixture);
     const carriers = (tailnet: boolean): string[] => ["ws://192.168.0.10:7319", ...tailnet ? ["ws://100.64.0.7:7319"] : []];
+    // When one phone offers both features and another DIRECT_CARRIER alone
     const both = await relayConnection(fixture, { directCarriers: carriers });
     const lanOnly = await relayConnection(fixture, { directCarriers: carriers });
+    // Then only the first hears of the Tailscale address
     expect((await both.auth(device, [DIRECT_CARRIER, DIRECT_TAILNET])).direct).toEqual(["ws://192.168.0.10:7319", "ws://100.64.0.7:7319"]);
     expect((await lanOnly.auth(device, [DIRECT_CARRIER])).direct).toEqual(["ws://192.168.0.10:7319"]);
   });
@@ -264,7 +282,9 @@ describe("direct connections setting", () => {
     cleanup.push(() => fixture.close());
     const service = new RelayService({ stateDir: fixture.stateDir, direct: { addresses: () => [] } });
     expect(service.status().direct).toEqual({ on: true, carriers: [] });
+    // When it is turned off
     await service.setDirect(false);
+    // Then it says so, and a new start reads it back
     expect(JSON.parse(readFileSync(join(fixture.stateDir, "relay", "direct.json"), "utf8"))).toEqual({ on: false });
     expect(new RelayService({ stateDir: fixture.stateDir, direct: {} }).status().direct?.on).toBe(false);
   });
@@ -379,7 +399,9 @@ describe("signed-in sessions over every way in", () => {
     const sessions = new SignedInSessions(8, 4, 3);
     const closed: string[] = [];
     for (const device of ["a", "b"]) for (let index = 1; index <= 4; index++) sessions.admit(device, () => closed.push(`${device}${index}`));
+    // When both sign in three carriers each and never use them
     for (const device of ["a", "b"]) for (let index = 1; index <= 3; index++) sessions.candidate(device, () => closed.push(`${device}-c${index}`));
+    // Then only three get past every place
     expect(sessions.size).toBe(11);
     expect(closed).toEqual(["b-c1", "b-c2", "b-c3"]);
   });
@@ -527,6 +549,7 @@ describe("direct connections with the relay", () => {
       const target = new URL(url);
       return new WebSocket(`ws://127.0.0.1:${relay.port}${target.pathname}${target.search}`);
     };
+    // When a phone probes it through the relay, it answers within one handshake, and holds no session for it
     const answered = await bounded(probePc(offer, { relay: offer.relay }, through, 5_000));
     expect(answered.kind).toBe("answered");
     expect(service.status().sessions).toBe(0);
@@ -563,6 +586,7 @@ describe("direct connections with the relay", () => {
     const channel = await bounded(openRelayChannel(offer, { store: savedStore(device, offer), socket: () => new WebSocket(`ws://127.0.0.1:${port()}/v1/ws?v=1`), onClose: (error) => closed.resolve(error) }));
     cleanup.push(() => channel.close());
     expect(service.status().sessions).toBe(1);
+    // When direct connections are turned off, the session ends and nothing is named
     await service.setDirect(false);
     await bounded(closed.promise);
     expect(service.status().direct).toEqual({ on: false, carriers: [] });
@@ -575,10 +599,12 @@ describe("direct connections with the relay", () => {
     const device = await relayDevice(fixture);
     const open = (offerTailnet: boolean) => bounded(openRelayChannel(offer, { store: savedStore(device, offer),
       socket: () => new WebSocket(`ws://127.0.0.1:${port()}/v1/ws?v=1`), offerDirect: true, offerTailnet }));
+    // When an app that opens Tailscale addresses signs in, and then one that does not
     const tailnet = await open(true);
     cleanup.push(() => tailnet.close());
     const lan = await open(false);
     cleanup.push(() => lan.close());
+    // Then only the first is told the Tailscale carrier
     expect(tailnet.directCarriers).toEqual([`ws://10.0.0.7:${port()}`, `ws://100.64.0.7:${port()}`]);
     expect(lan.directCarriers).toEqual([`ws://10.0.0.7:${port()}`]);
   });
@@ -625,6 +651,7 @@ describe("who gives way to a new client", () => {
   it("lets a phone at a new address in while four addresses churn their full share every second", () => {
     const churn = ["192.168.0.101", "192.168.0.102", "192.168.0.103", "192.168.0.104"].flatMap((source, index) => [
       { source, order: index * 2, openedAt: 900 }, { source, order: index * 2 + 1, openedAt: 950 }]);
+    // When a phone comes from an address none of them uses, it gets in without anyone giving way
     expect(admissionDrops(churn, "192.168.0.20", 1_000)).toEqual([]);
   });
 
@@ -665,12 +692,16 @@ describe("the gate in front of the direct carrier", () => {
     cleanup.push(() => first.close(), () => second.close());
     await opened(first);
     await opened(second);
+    // When a third upgrade from it is refused (503, which would keep the connection alive)
     const { answer, closed } = await exchange(direct.port!, upgrade());
+    // Then that answer is the last thing on the connection
     expect(answer.startsWith("HTTP/1.1 101")).toBe(false);
     await closed;
   });
 
   it("carries more than a megabyte to a client that reads slowly, by slowing the sender", async () => {
+    // Given an upstream that switches to WebSocket and then writes 32 MiB as fast as it can
+    // well past what the kernel buffers on loopback, so the gate itself has to hold back
     const total = 32 << 20;
     const blocked = deferred<void>();
     const upstream = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
@@ -736,7 +767,9 @@ describe("the gate in front of the direct carrier", () => {
       addresses: () => ["127.0.0.1"], preferredPort: 0, peerAllowed: (address) => { seen.push(address); return address === "127.0.0.1"; } });
     await direct.start();
     cleanup.push(() => fixture.close(), () => direct.stop());
+    // When a request claims to come from elsewhere and to carry the gate's secret
     const { answer } = await exchange(direct.port!, upgrade("x-ovis-direct-peer: 10.0.0.66\r\nx-ovis-direct-gate: guess\r\n"));
+    // Then the carrier saw only the real peer, and let it upgrade
     expect(answer.startsWith("HTTP/1.1 101")).toBe(true);
     expect(seen.includes("10.0.0.66")).toBe(false);
   });

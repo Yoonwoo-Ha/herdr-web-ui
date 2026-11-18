@@ -46,6 +46,7 @@ it("reads back only carriers this server dials, at most four, from an edited key
     "ws://100.64.0.7:7319", "ws://172.16.0.2:7319", "ws://169.254.0.3:7319", "ws://192.168.0.13:7319"];
   writeFileSync(path, JSON.stringify(saved));
   const loaded = await RelayPcKey.load(path, () => true);
+  // Then only carriers this server dials come back (private or Tailscale, on a direct listener's port), at most four
   expect(loaded.direct).toEqual(["ws://100.64.0.7:7319", "ws://172.16.0.2:7319", "ws://192.168.0.13:7319"]);
 });
 

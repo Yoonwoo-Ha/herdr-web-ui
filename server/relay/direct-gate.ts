@@ -1,12 +1,23 @@
+/**
+ * The door in front of the direct carrier (direct.ts): a plain TCP listener on a network address that
+ * counts connections per peer and in all before a byte is parsed, gives the request head DEADLINE_MS
+ * and HEAD_BYTES at most, answers anything but a WebSocket upgrade of `/v1/ws` from a non-browser itself,
+ * and hands an upgrade to the carrier's own HTTP server on loopback, naming the peer in a header only
+ * this process can vouch for. Nothing on the network reaches Bun's HTTP parser without passing here.
+ */
 import type { Socket, TCPSocketListener } from "bun";
 
+/** Connections from one address, and from all, at once; past either a new one is closed unread. */
 export const MAX_CONNECTIONS_PER_SOURCE = 8;
 export const MAX_CONNECTIONS = 128;
+/** From connect to a complete request head, whatever arrives meanwhile. */
 export const DEADLINE_MS = 5_000;
+/** A request head larger than this is refused. */
 export const HEAD_BYTES = 8 * 1024;
 const HIGH_BYTES = 1 << 20;
 const LOW_BYTES = 256 * 1024;
 
+/** The header the gate names the peer in, and the one that proves the gate added it. */
 export const PEER_HEADER = "x-ovis-direct-peer";
 export const GATE_HEADER = "x-ovis-direct-gate";
 
@@ -14,8 +25,10 @@ export interface GateOptions {
   readonly hostname: string;
   readonly port: number;
   readonly upstreamPort: number;
+  /** a secret the upstream checks in GATE_HEADER */
   readonly secret: string;
   readonly allowed: (address: string) => boolean;
+  /** shared by every gate of one carrier: connections per address and in all */
   readonly counts: Map<string, number>;
   readonly connect?: typeof Bun.connect;
 }
@@ -122,6 +135,8 @@ export function openGate(options: GateOptions): TCPSocketListener<Conn> {
         socket: {
           open: (upstream) => { if (conn.ended) { upstream.end(); return; } up.socket = upstream; flush(up); },
           data: (_upstream, chunk) => {
+            // anything but a switch to WebSocket is the whole answer: it goes to the peer and the connection ends,
+            // so no further request can ride on it past the head's deadline
             if (!conn.upgraded) {
               if (!Buffer.from(chunk.subarray(0, 13)).toString("latin1").startsWith("HTTP/1.1 101 ")) {
                 conn.down.socket?.write(chunk);

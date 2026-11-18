@@ -15,6 +15,7 @@ afterEach(async () => {
   for (const child of children.splice(0)) { child.stdin.end(); await child.exited; }
 });
 
+/** Signal 0 to `pid` is refused (EPERM), as another user's or a protected process refuses it; every other PID is probed for real. */
 function refusing(pid: number) {
   const kill = process.kill.bind(process);
   return spyOn(process, "kill").mockImplementation(((target: number, signal?: NodeJS.Signals | number) => {
@@ -133,6 +134,9 @@ describe("owner records", () => {
   });
 
   it("compares births when the probe is refused (EPERM)", () => {
+    // regression: a refused probe once kept every owner, so a lock or descriptor whose PID another
+    // user's process took after a reboot (or a SYSTEM service after a forced Windows shutdown)
+    // blocked every start
     const child = unrelated();
     const reading = readProcessBirth(child.pid);
     if (reading.state !== "identified") throw new Error(`no birth for ${child.pid}`);
@@ -140,12 +144,15 @@ describe("owner records", () => {
     try {
       expect(probeProcess(child.pid)).toBe("denied");
       expect(ownerGone({ pid: child.pid, birth: earlierBirth })).toBe(true);
+      // a refused probe never proves the owner gone by itself: a matching birth, or none, keeps it
       expect(ownerGone({ pid: child.pid, birth: reading.birth })).toBe(false);
       expect(ownerGone({ pid: child.pid })).toBe(false);
     } finally { refused.mockRestore(); }
   });
 
   it.skipIf(refusedPid === undefined)("reads the birth of a process it may not signal", () => {
+    // the same rule against a real refusal: on Windows that birth comes from CIM, which reads
+    // processes that Get-Process cannot open
     const pid = refusedPid!;
     const reading = readProcessBirth(pid);
     if (reading.state !== "identified") throw new Error(`no birth for ${pid}`);

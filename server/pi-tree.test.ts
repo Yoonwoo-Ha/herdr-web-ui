@@ -10,6 +10,7 @@ const root = mkdtempSync(join(tmpdir(), "herdr-pi-tree-"));
 mkdirSync(root, { recursive: true });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
+/** pi writes one entry per line: an id, a parentId, and whatever the type carries. */
 const entry = (id: string, parentId: string | null, extra: Record<string, unknown> = {}) => ({ id, parentId, timestamp: "2026-09-30T00:00:00.000Z", ...extra });
 const user = (id: string, parentId: string | null, text: string) => entry(id, parentId, { type: "message", message: { role: "user", content: [{ type: "text", text }] } });
 const assistant = (id: string, parentId: string | null, text: string) => entry(id, parentId, { type: "message", message: { role: "assistant", content: [{ type: "text", text }], stopReason: "stop" } });
@@ -50,6 +51,7 @@ describe("pi's entry tree", () => {
   });
 
   it("shows only the branch the leaf stands on after /tree", () => {
+    // two answers branched from one prompt: pi keeps both in the file, runs the last one
     const path = file([
       entry("s", null, { type: "session", version: 3, id: "s", cwd: root }),
       user("u1", "s", "the question"),
@@ -167,10 +169,15 @@ describe("pi's entry tree", () => {
     expect(shown(path)).toEqual(["user:list the files", "assistant:the answer in play", "user:what about the other folder"]);
     expect(transcriptToolOutput("pi-transcript" as never, path, "call-1")).toBe("the first output, kept");
     expect(transcriptToolOutput("pi-transcript" as never, path, "call-3")).toBe("the newest output");
+    // the dropped call's output stays unreachable: the chat never showed that call
     expect(transcriptToolOutput("pi-transcript" as never, path, "call-2")).toBeNull();
   });
 });
 
+// pi keeps the leaf pointer in memory only: `branch()` moves it and writes nothing, and no entry
+// type names the leaf. So the branch a reader can rebuild is the one ending at the last entry
+// written, and everything else in the file is a path pi walked away from. Those turns are hidden
+// from the chat and vanish without a trace, which is what the count below is for.
 describe("pi's abandoned paths", () => {
   it("finds nothing abandoned in a straight line, and says so rather than staying silent", () => {
     const path = file([
@@ -219,6 +226,10 @@ describe("pi's abandoned paths", () => {
   });
 
   it("does not mistake pi's session header for a branch you navigated away from", () => {
+    // every real pi file opens with a session entry no other entry names as its parent, and an entry
+    // that has never had a child is nowhere the pointer was moved away from. Counting heads of
+    // abandoned paths, rather than live entries with abandoned children, reports it as a branch in
+    // every session there has ever been, and the label then says that to the reader
     const path = file([
       entry("session", null, { type: "session", version: 3, cwd: root }),
       entry("m1", null, { type: "model_change", provider: "p", modelId: "m" }),
@@ -263,6 +274,11 @@ describe("pi's abandoned paths", () => {
   });
 
   it("counts a path abandoned at the root itself", () => {
+    // pi keeps its leaf id separate from the file's start, and navigating the tree to the very
+    // first entry clears it (resetLeaf), so the next entry is written with no parent and starts a
+    // second path beside the first. Excluding every parentless entry, to keep pi's session header
+    // out, threw this case away with it: the abandoned path and its turns both vanished, and a
+    // reader who had navigated to the root was told nothing about what they left behind
     const atRoot = file([
       entry("s", null, { type: "session", version: 3, cwd: root }),
       user("u1", null, "the first question"),
@@ -287,6 +303,7 @@ describe("pi's abandoned paths", () => {
   });
 
   it("carries pi's own summary of the abandoned path when the user asked for one", () => {
+    // /tree asks "Summarize branch?"; answering Summarize writes a branch_summary on the new branch
     const path = file([
       entry("s", null, { type: "session", version: 3, id: "s", cwd: root }),
       user("u1", "s", "the question"),
@@ -367,6 +384,7 @@ describe("the abandoned count on the page", () => {
       user("u2", "s", "the retried question"),
       assistant("a-live", "u2", "the answer in play"),
     ]);
+    // omp reads the same shape of file but has no /tree: no count is offered for its transcript
     const omp = transcriptPage("omp-transcript" as never, path);
     expect(omp.abandoned).toBeUndefined();
   });
@@ -376,6 +394,7 @@ describe("pi's entry index on awkward files", () => {
   const session = entry("s", null, { type: "session", version: 3, id: "s", cwd: root });
 
   it("indexes the entries around a record longer than several read chunks", () => {
+    // a picture a tool read sits in its record as base64: one line of many megabytes
     const picture = entry("t1", "u1", { type: "message", message: { role: "toolResult", content: [{ type: "text", text: "x".repeat(9 * 1024 * 1024) }] } });
     const path = file([session, user("u1", "s", "first"), picture, assistant("a1", "t1", "after the picture")]);
     const index = piEntryIndex(path)!;

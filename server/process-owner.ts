@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 export interface ProcessBirth { platform: string; value: string }
+/** `generation` is fresh for every acquisition, so a later owner with the same PID is never mistaken for this one. */
 export interface OwnerRecord { pid: number; generation: string; birth?: ProcessBirth }
 export type BirthReading = { state: "absent" } | { state: "identified"; birth: ProcessBirth } | { state: "unknown" };
 
@@ -80,6 +81,7 @@ export function newOwnerRecord(): OwnerRecord {
   return { pid: process.pid, generation: randomUUID(), ...(ownBirth ? { birth: ownBirth } : {}) };
 }
 
+/** The form each platform's birthValue writes; a recorded value of any other form cannot be compared. */
 const BIRTH_FORMS: Record<string, (value: string) => boolean> = {
   linux: (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:\d+$/.test(value),
   darwin: (value) => parseLstart(value) === value,

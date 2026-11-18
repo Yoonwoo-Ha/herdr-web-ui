@@ -40,6 +40,8 @@ describe("a project's favicon", () => {
   it("is null for a folder without one, a missing folder and a relative one", async () => {
     expect(await findProjectFavicon(project("plain", ["index.ts"]))).toBeNull();
     expect(await findProjectFavicon(join(root, "absent"))).toBeNull();
+    // a relative path has no pane folder to be relative to, as with /api/fs/stat and no pane: it
+    // is never read against the server's own folder
     const near = project("relative", ["favicon.svg"]);
     expect(await findProjectFavicon(relative(process.cwd(), near))).toBeNull();
   });

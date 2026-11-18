@@ -53,6 +53,7 @@ it("gives no code to a device that was revoked while its code waited on the rela
       devices.match(paired.token);
       return paired.device.id;
     };
+    // revoked before the relay answered: the six digits behind the code would be held by a device no revoke can name
     const laptop = pairHere("Laptop");
     const minted = pairCodes.mint(laptop).catch((error: unknown) => error);
     devices.revoke(laptop);

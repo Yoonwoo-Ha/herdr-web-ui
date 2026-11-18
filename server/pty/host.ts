@@ -22,6 +22,13 @@ function binaryDigest(installed: string): string {
   return sha256;
 }
 
+/**
+ * Whether the installed host is the one its record (`<binary>.json`, written by scripts/pty-sidecar.ts
+ * install or the remote bundle's builder) vouches for: the same SHA-256, for the version in the
+ * package.json beside the server (the compiled binary's own version). The record and the version are read on every call (both are small),
+ * so a rewrite of either within one tick of the file clock still counts; only the binary's hash is
+ * cached, so attaches do not hash it again.
+ */
 export function installedHostVouched(installed: string, packageJson: string | null = COMPILED ? null : join(dirname(installed), "..", "package.json")): boolean {
   try {
     const record = JSON.parse(readFileSync(`${installed}.json`, "utf8")) as { sha256?: unknown; version?: unknown };
@@ -32,6 +39,7 @@ export function installedHostVouched(installed: string, packageJson: string | nu
   }
 }
 
+/** The host to run without OVIS_PTY_SIDECAR_BIN: the installed release's when its record vouches for it, else a local build. */
 export function defaultRustSidecar(installed = RUST_SIDECAR_INSTALLED): string {
   return existsSync(installed) && installedHostVouched(installed) ? installed : RUST_SIDECAR_BUILD;
 }
@@ -59,6 +67,11 @@ export function rustSidecarPath(env: Record<string, string | undefined> = proces
   return binary.startsWith("~/") ? join(home, binary.slice(2)) : binary;
 }
 
+/**
+ * Checks the host's identity and its PTY path before it is allowed to serve attachments, in at most
+ * 2 x timeoutMs: a run past its time is killed with SIGKILL, since the host (or a binary posing as it)
+ * may outlive SIGTERM, and the server's start waits on this check.
+ */
 export function probeRustHost(binary: string, env: Record<string, string | undefined> = process.env, timeoutMs = 3000): RustHostVerdict {
   const clean = { ...env };
   delete clean["OVIS_TOKEN"];
@@ -82,6 +95,10 @@ export function probeRustHost(binary: string, env: Record<string, string | undef
   }
 }
 
+/**
+ * It is the default on Linux and macOS once it passes its
+ * check; OVIS_PTY_SIDECAR=node asks for the Node sidecar, which is also the fallback.
+ */
 export function rustSidecar(env: Record<string, string | undefined> = process.env): string | null {
   if (process.platform === "win32") return null;
   const choice = env["OVIS_PTY_SIDECAR"];

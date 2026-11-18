@@ -125,6 +125,7 @@ test("a pass no longer sent is still the one a relay holds the PC to, until the 
   const pass = k.passes[0]!;
   expect(k.made.honored()).toBe(pass);
   answer = async () => new Response("down", { status: 503 });
+  // sent until 5 minutes before it runs out, honored by the relay until 5 minutes after
   k.clock.advance(172_800_000 - 300_000 - 1);
   expect([k.made.current(), k.made.honored()]).toEqual([pass, pass]);
   k.clock.advance(1);
@@ -142,6 +143,7 @@ test("a pass the relay refused is no longer one it holds the PC to", async () =>
   await k.made.refresh();
   expect(k.made.honored()).toBe(k.passes[0]!);
   k.made.stop();
+  // dropped, so no limit it named outlives it
   await k.made.rejected();
   expect(k.made.honored()).toBeNull();
 });

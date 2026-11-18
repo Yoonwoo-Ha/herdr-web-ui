@@ -269,6 +269,7 @@ it("drops and reconnects a control socket that sends an oversized message after 
   }
 });
 
+/** A pass for `serverId` that allows new client sessions or not; the link reads it, and checks no signature. */
 async function passFor(serverId: string, newSessions: boolean): Promise<string> {
   const keys = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
   return signRelayPass(keys.privateKey, "0badc0de", serverId, Math.floor(Date.now() / 1000), undefined, { newSessions });
@@ -370,6 +371,7 @@ it("names a new device to the relay, makes no device, and closes the client's da
   expect(relay.sockets.data[0]?.readyState).toBe(WebSocket.OPEN);
   relay.clock.advance(1);
   expect(relay.sockets.data[0]?.readyState).not.toBe(WebSocket.OPEN);
+  // the code was neither spent nor counted as a failed pairing: asked of the store itself, it still pairs
   const later = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
   expect(relay.devices.pairRelay(code, "Later", Buffer.from(await crypto.subtle.exportKey("spki", later.publicKey)).toString("base64url"))).not.toBeNull();
 });
@@ -379,6 +381,7 @@ it("refuses a new device while its control socket is lost: nobody can be named, 
   const relay = await limitedLink({ state: "ok", enforce_at: null, mode: "enforce" }, { pass: () => pass });
   pass = await relay.passFor(false);
   const phone = await relay.phone();
+  // what the relay said of passes holds while the control socket is away
   await relay.loseControl();
   await phone.pair(relay.devices.startPairing().code, await relay.keys());
   await relay.closing();
@@ -411,6 +414,7 @@ for (const past of [false, true]) {
 
 it("still refuses a new device on a pass it no longer sends while the relay honors it", async () => {
   let held: string | null = null;
+  // five minutes before its pass runs out with no renewal, the PC has none to send; the relay holds it to that pass a while yet
   const relay = await limitedLink({ state: "ok", enforce_at: null, mode: "enforce" }, { pass: () => null, honoredPass: () => held });
   held = await relay.passFor(false);
   const phone = await relay.phone();
@@ -422,6 +426,7 @@ it("still refuses a new device on a pass it no longer sends while the relay hono
 
 it("names nobody once the relay holds this PC to no pass any more", async () => {
   let pass: string | null = null;
+  // whoever times the pass says the relay honors it no longer: what the PC would still send is not asked
   const relay = await limitedLink({ state: "ok", enforce_at: null, mode: "enforce" }, { pass: () => pass, honoredPass: () => null });
   pass = await relay.passFor(false);
   const phone = await relay.phone();
@@ -444,6 +449,7 @@ it("holds a renewal that follows another within the relay's minute, then sends t
   pass = "pass-1";
   relay.link.renewPass(pass);
   expect(renewals()).toEqual(["pass-1"]);
+  // the relay would drop these two without a word and keep the PC to pass-1 (relay/core.ts RENEWAL_GAP_MS)
   pass = "pass-2";
   relay.link.renewPass(pass);
   pass = "pass-3";

@@ -16,6 +16,10 @@ import { startFakePushService, type FakePushService } from "./push.fake.ts";
 import { privateStateFs } from "./private-state.ts";
 import { parseInteractivePrompt } from "./prompt.ts";
 
+/**
+ * The server half of web push, end to end against a fake push service that decrypts
+ * and verifies like a real device would.
+ */
 
 function pane(paneId: string, status: AgentStatus, title: string): HerdrPane {
   return {
@@ -67,6 +71,7 @@ function subscribed(options: Partial<Parameters<typeof createPushService>[0]> = 
 describe("parseSubscription", () => {
   it("accepts what a browser's PushSubscription.toJSON() produces", () => {
     const browserJson = { ...fake.subscription, expirationTime: null };
+    // the fake's endpoint is loopback http, which only a service made for it accepts
     expect(parseSubscription(browserJson, { loopbackHttp: true })).toEqual(fake.subscription);
   });
 
@@ -78,6 +83,8 @@ describe("parseSubscription", () => {
     expect(parseSubscription({ endpoint, keys: { ...keys, auth: "AAAA" } })).toBeNull();
     expect(parseSubscription({ endpoint })).toBeNull();
     expect(parseSubscription("subscription")).toBeNull();
+    // a plain-http endpoint is never a browser subscription, and it is the shape that
+    // would turn the sender into a POST from inside the user's network
     expect(parseSubscription({ endpoint: "http://169.254.169.254/latest/meta-data/", keys })).toBeNull();
     expect(parseSubscription({ endpoint: "http://192.168.0.10:9000/push/1", keys })).toBeNull();
   });
@@ -121,6 +128,7 @@ describe("push state", () => {
     const fsync = spyOn(privateStateFs, "fsyncSync").mockImplementation(() => { throw Object.assign(new Error("EIO: i/o error, fsync"), { code: "EIO" }); });
     try {
       expect(() => push.publicKey()).toThrow("EIO");
+      // no second call may hand out the key that never reached disk
       expect(() => push.publicKey()).toThrow("EIO");
     } finally { fsync.mockRestore(); }
     expect(readdirSync(stateDir)).toEqual([]);
@@ -319,6 +327,7 @@ describe("push delivery", () => {
     const push = subscribed({ serverId: () => "0123456789abcdef0123456789abcdef", onAlertDelivered: () => { delivered += 1; } }, app);
     const sent = spyOn(globalThis, "fetch");
     try {
+      // the relay takes a 2,790-character title without the fields, about 2,660 with them on this endpoint
       for (const [length, named] of [[2600, true], [2740, false]] as const) {
         sent.mockClear();
         fake.received.length = 0;
@@ -372,6 +381,7 @@ describe("push delivery", () => {
     expect((await response?.json()).error.code).toBe("subscription_gone");
   });
 
+  // regression (fails on main): the browser can keep handing over the endpoint its push service retired (#1038)
   it("refuses a re-registration of an endpoint its push service retired, so the device subscribes anew", async () => {
     const push = subscribed();
     fake.answerWith(410);
@@ -410,6 +420,7 @@ describe("push delivery", () => {
     expect((await post("/api/push/subscribe", { subscription: other }))?.status).toBe(204);
   });
 
+  // regression (fails on main): 30 days after the retirement the mark expired, and a watch device registered the owner's endpoint (#2012)
   it("never hands a retired endpoint to another device, however long ago it was retired, and ignores a malformed file", async () => {
     let clock = 1_000_000;
     const push = createPushService({ loopbackHttp: true, stateDir, now: () => clock });
@@ -432,6 +443,7 @@ describe("push delivery", () => {
     expect(createPushService({ loopbackHttp: true, stateDir }).retired(fake.subscription.endpoint)).toBe(false);
   });
 
+  // a mark written before #2012 is the hash of the spelling handed over, and so is the history
   it("keeps refusing, and forgets on goodbye, an endpoint retired under the spelling it was handed over", async () => {
     const legacy = `${fake.subscription.endpoint}#legacy`;
     const raw = createHash("sha256").update(legacy).digest("base64url");
@@ -470,6 +482,7 @@ describe("push delivery", () => {
     expect((JSON.parse(readFileSync(join(stateDir, "push-subscriptions.json"), "utf8")) as { endpoint: string }[]).map((entry) => entry.endpoint)).toEqual([`${fake.subscription.endpoint}-other`]);
   });
 
+  // regression: storing endpoints normalized let a key pair push-keys.json kept for another spelling sign for this one
   it("keeps a subscription and the key pair it was made for under the spelling it was handed over", async () => {
     const { endpoint, keys } = fake.subscription;
     expect(parseSubscription({ endpoint: `${endpoint}#x`, keys }, { loopbackHttp: true })?.endpoint).toBe(`${endpoint}#x`);
@@ -480,6 +493,7 @@ describe("push delivery", () => {
     expect(fake.received[0]).toMatchObject({ vapidKey: push.publicKey(), vapidValid: true });
   });
 
+  // regression (fails on main): a fragment, or any other spelling of the same URL, got past the retired check (#2012)
   it("refuses another spelling of a retired endpoint as that endpoint", async () => {
     const push = subscribed();
     fake.answerWith(410);
@@ -787,6 +801,7 @@ it("persists device ownership and refuses revoked and legacy subscriptions after
   expect(fake.received).toHaveLength(0);
   restarted.revokeDevice("device-a");
   expect(await restarted.sendTest(fake.subscription.endpoint)).toBeNull();
+  // Legacy records cannot identify a revoked device; re-registration supplies an owner.
   push.subscribe(fake.subscription);
   const migrated = createPushService({ loopbackHttp: true, stateDir, canDeliver });
   await migrated.onEnded("w1:p1");
@@ -808,6 +823,7 @@ it("keeps a pending alert across re-registration but drops it after device revoc
   await push.onStatus("w1:p1", "working");
   await push.onStatus("w1:p1", "blocked");
   active.clear();
+  // The registry still blocks delivery if push-file cleanup cannot run.
   await push.settled();
   expect(fake.received).toHaveLength(1);
 });
@@ -816,10 +832,13 @@ it("revoked owner cannot receive queued push", async () => {
   const devices = new DeviceStore(stateDir);
   const owner = devices.pair(devices.startPairing().code, "Owner", "drive")!;
   devices.match(owner.token);
+  // the server's rule (server/core/status.ts): a device's subscription delivers only while that device is paired
   const push = createPushService({ loopbackHttp: true, stateDir, timing: { short: 20 }, canDeliver: (id) => id === null || (id === undefined ? !devices.gated : devices.has(id)) });
   push.subscribe(fake.subscription, undefined, owner.device.id);
   push.seed([pane("w1:p1", "working", "claude")]);
   await push.onStatus("w1:p1", "blocked");
+  // every device is revoked while the alert waits: the registry alone keeps it from going out,
+  // before any push-file cleanup has run
   expect(devices.revokeAll()).toEqual([owner.device.id]);
   await push.settled();
   expect(fake.received).toHaveLength(0);
@@ -827,6 +846,7 @@ it("revoked owner cannot receive queued push", async () => {
   await push.onStatus("w1:p1", "blocked");
   await push.settled();
   expect(fake.received).toHaveLength(0);
+  // the cleanup that follows works from the revoked ids and forgets the subscription for good
   push.revokeDevice(owner.device.id);
   expect(JSON.parse(readFileSync(join(stateDir, "push-subscriptions.json"), "utf8"))).toEqual([]);
 });
@@ -835,19 +855,23 @@ it("tells every other subscriber of a durable enrollment at once, and never the 
   const other = await startFakePushService();
   try {
     const devices = new DeviceStore(stateDir);
+    // a window in use holds alerts back (#751); an enrollment is told regardless, since that window may be the new device's
     const push = createPushService({ loopbackHttp: true, stateDir, inUse: () => true, canDeliver: (id) => id === null || (id === undefined ? !devices.gated : devices.has(id)) });
     const deliveries: Promise<void>[] = [];
     devices.onPaired((event) => deliveries.push(push.devicePaired(event)));
+    // the first device: its credential is issued unconfirmed, so its id is known before it is enrolled
     const tablet = devices.pair(devices.startPairing().code, "Tablet", "drive")!;
     push.subscribe(fake.subscription, undefined, null);
     push.subscribe(other.subscription, undefined, tablet.device.id);
     expect(deliveries).toHaveLength(0);
+    // its first request back is the durable enrollment
     devices.match(tablet.token);
     expect(deliveries).toHaveLength(1);
     await Promise.all(deliveries);
     expect(fake.received.map((push) => push.payload)).toEqual([{ pane_id: null, title: "Ovis", body: "New device paired: Tablet", tag: expect.stringMatching(/^herdr-device-paired-[0-9a-f]{16}$/) }]);
     expect(fake.received[0]!.urgency).toBe("high");
     expect(other.received).toHaveLength(0);
+    // a gated pairing is durable at once: both the PC's browser and the tablet hear of the phone
     const phone = devices.pair(devices.startPairing().code, "Phone", "drive")!;
     expect(deliveries).toHaveLength(2);
     await Promise.all(deliveries);
@@ -884,7 +908,9 @@ it("never pushes a browser's own pairing to it, before or after it paired, while
     expect(fake.received).toHaveLength(0);
     expect(sibling.received.map((push) => push.payload.body)).toEqual(["New device paired: Self"]);
     expect(keyless.received.map((push) => push.payload.body)).toEqual(["New device paired: Self"]);
+    // re-registered on load, now owned by the device it paired, with no key this time: it keeps its browser
     expect((await subscribe(fake.subscription, own.device.id, []))?.status).toBe(204);
+    // a key this browser was issued later (it had lost its cookie) is added to the ones it had, not swapped for them
     const reissued = "e".repeat(32);
     expect((await subscribe(fake.subscription, own.device.id, [reissued]))?.status).toBe(204);
     expect(JSON.parse(readFileSync(join(stateDir, "push-subscriptions.json"), "utf8"))[0]).toMatchObject({ device_id: own.device.id, browser_keys: [self, reissued] });
@@ -900,6 +926,7 @@ it("never pushes a browser's own pairing to it, before or after it paired, while
 
 it("keeps a subscription made through the open LAN only while the LAN stays open", async () => {
   let gated = false;
+  // the server's rule (index.ts): owners null always, undefined only while ungated
   const push = createPushService({ loopbackHttp: true, stateDir, canDeliver: (id) => id === null || (id === undefined ? !gated : false) });
   const request = new Request("http://192.168.1.20:8787/api/push/subscribe", {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ subscription: fake.subscription }),
@@ -908,6 +935,7 @@ it("keeps a subscription made through the open LAN only while the LAN stays open
   expect(JSON.parse(readFileSync(join(stateDir, "push-subscriptions.json"), "utf8"))[0]).not.toHaveProperty("device_id");
   await push.onEnded("w1:p1");
   expect(fake.received).toHaveLength(1);
+  // pairing a device closes the open LAN: its earlier subscriber hears nothing more
   gated = true;
   await push.onEnded("w1:p2");
   expect(fake.received).toHaveLength(1);
@@ -929,12 +957,14 @@ describe("push delivery health (#1039)", () => {
     expect(await push.sendTest(fake.subscription.endpoint)).toEqual({ ok: false, status: 410, gone: true });
     const expected = { registered: false, last_success_at: new Date(1_700_000_000_000).toISOString(), last_failure_at: new Date(1_700_000_001_000).toISOString(), last_failure: "gone" as const };
     expect(push.status(fake.subscription, null)).toEqual(expected);
+    // the record is owner-only and names neither the endpoint nor the keys
     const path = join(stateDir, "push-delivery.json");
     expect(statSync(path).mode & 0o777).toBe(0o600);
     const raw = readFileSync(path, "utf8");
     expect(raw).not.toContain(fake.subscription.endpoint);
     expect(raw).not.toContain(fake.subscription.keys.p256dh);
     expect(raw).not.toContain(fake.subscription.keys.auth);
+    // a restart keeps it, and the key pair every device is bound to
     const vapid = readFileSync(join(stateDir, "vapid.json"), "utf8");
     const restarted = createPushService({ loopbackHttp: true, stateDir, now: () => clock });
     expect(restarted.status(fake.subscription, null)).toEqual(expected);
@@ -943,6 +973,7 @@ describe("push delivery health (#1039)", () => {
     const response = (await statusRequest(restarted, fake.subscription, null))!;
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(expected);
+    // forgotten after its time to live (the retired mark is not: #2012)
     expect(createPushService({ loopbackHttp: true, stateDir, now: () => clock + 31 * 24 * 60 * 60 * 1000 }).status(fake.subscription, null)).toBeNull();
     restarted.unsubscribe(fake.subscription.endpoint);
     expect(restarted.status(fake.subscription, null)).toBeNull();
@@ -960,12 +991,14 @@ describe("push delivery health (#1039)", () => {
       expect(push.status(fake.subscription, owner)?.last_failure).toBe("gone");
       expect(push.retired(endpoint)).toBe(true);
     };
+    // 31 days on, without a restart: the history is gone, on disk too, and the retired mark stays (#2012)
     await retire(null);
     clock += 31 * 24 * 60 * 60 * 1000;
     expect(push.status(fake.subscription, null)).toBeNull();
     expect(push.retired(endpoint)).toBe(true);
     expect(JSON.parse(readFileSync(join(stateDir, "push-delivery.json"), "utf8"))).toEqual([]);
     expect(JSON.parse(readFileSync(join(stateDir, "push-retired.json"), "utf8"))).toHaveLength(1);
+    // an explicit unsubscribe forgets the history, and keeps the mark: it proves neither owner nor keys
     await retire(null);
     push.unsubscribe(endpoint);
     expect(push.status(fake.subscription, null)).toBeNull();
@@ -990,6 +1023,7 @@ describe("push delivery health (#1039)", () => {
       expect(push.status(fake.subscription, "device-a")).toBeNull();
       expect(JSON.parse(readFileSync(join(stateDir, "push-delivery.json"), "utf8"))).toHaveLength(1);
       expect(push.status(other.subscription, "device-b")?.last_success_at).not.toBeNull();
+      // the revoked device's record is not recreated by a restart either
       expect(createPushService({ loopbackHttp: true, stateDir }).status(fake.subscription, "device-a")).toBeNull();
     } finally { other.stop(); }
   });
@@ -1015,9 +1049,11 @@ describe("push delivery health (#1039)", () => {
     expect(restarted.status(fake.subscription, "device-a")).toBeNull();
     expect(JSON.parse(readFileSync(path, "utf8"))).toHaveLength(1000);
     expect(restarted.retired(endpoint)).toBe(true);
+    // the retired mark knows its owner by itself: the revocation takes it, and a restart does not bring it back
     restarted.revokeDevice("device-a");
     expect(restarted.retired(endpoint)).toBe(false);
     expect(createPushService({ loopbackHttp: true, stateDir, now: () => clock }).retired(endpoint)).toBe(false);
+    // another device's revocation leaves a mark it does not own
     fake.answerWith(410);
     const third = createPushService({ loopbackHttp: true, stateDir, now: () => clock });
     third.subscribe(fake.subscription, undefined, "device-c");
@@ -1027,6 +1063,7 @@ describe("push delivery health (#1039)", () => {
     expect(createPushService({ loopbackHttp: true, stateDir, now: () => clock }).retired(endpoint)).toBe(true);
   });
 
+  // regression: two owners' spellings of one endpoint share its mark, and the last retirement took it for its owner alone
   it("keeps a mark two owners' spellings were retired under through either owner's revocation", async () => {
     const push = createPushService({ loopbackHttp: true, stateDir });
     const endpoint = fake.subscription.endpoint;
@@ -1097,15 +1134,18 @@ describe("push delivery health (#1039)", () => {
       expect([label, response.status]).toEqual([label, 404]);
       expect([label, await response.json()]).toEqual([label, unknownBody]);
     }
+    // the open LAN signs in as no device: told so alike for a known and an unknown subscription, before either is looked at
     for (const subscription of [fake.subscription, { ...fake.subscription, endpoint: `${fake.subscription.endpoint}-never-known` }]) {
       const response = (await statusRequest(push, subscription, undefined))!;
       expect([response.status, await response.json()]).toEqual([403, { error: { code: "status_unavailable", message: "this sign-in has no device to answer for" } }]);
     }
+    // a retired subscription keeps the same rule: the tombstone answers its owner alone
     fake.answerWith(410);
     await push.sendTest(fake.subscription.endpoint);
     expect((await statusRequest(push, fake.subscription, "device-a"))!.status).toBe(200);
     expect((await statusRequest(push, fake.subscription, "device-b"))!.status).toBe(404);
     expect((await statusRequest(push, wrongKeys, "device-a"))!.status).toBe(404);
+    // a legacy owner's own deliveries are recorded for nobody
     const legacy = createPushService({ loopbackHttp: true, stateDir: join(stateDir, "legacy") });
     fake.answerWith(201);
     legacy.subscribe(fake.subscription);
@@ -1131,6 +1171,7 @@ describe("push delivery health (#1039)", () => {
       push.subscribe(replacement, undefined, "device-b");
       release();
       expect(await delivery).toEqual({ ok: false, status: 410, gone: true });
+      // the replacement stays registered, is not retired, and carries no failure of the subscription before it
       expect(push.retired(endpoint)).toBe(false);
       expect(JSON.parse(readFileSync(join(stateDir, "push-subscriptions.json"), "utf8"))).toMatchObject([{ endpoint, device_id: "device-b" }]);
       expect(push.status(replacement, "device-b")).toEqual({ registered: true, last_success_at: null, last_failure_at: null, last_failure: null });
@@ -1173,6 +1214,7 @@ describe("push delivery health (#1039)", () => {
     clock += 1000;
     expect(await push.sendTest(unreachable)).toEqual({ ok: false, status: null, gone: false });
     expect(push.status({ ...fake.subscription, endpoint: unreachable }, null)?.last_failure).toBe("network");
+    // delivery denied by the registry never went out: nothing is recorded for it
     const gated = createPushService({ loopbackHttp: true, stateDir, now: () => clock, canDeliver: () => false });
     clock += 1000;
     expect(await gated.sendTest(fake.subscription.endpoint)).toEqual({ ok: false, status: null, gone: false });
@@ -1195,6 +1237,7 @@ describe("push delivery health (#1039)", () => {
       { hash: "h-new", owner: "device-y", keys: "k", success_at: now, failure_at: null, failure: null, at: now },
     ]));
     writeFileSync(join(stateDir, "push-retired.json"), JSON.stringify([{ hash: "h-old", at: old, owner: "device-x" }, { hash: "h-new", at: now, owner: "device-y" }]));
+    // the expired history of device-x is already gone from memory: revoking it must still clear it from disk
     createPushService({ loopbackHttp: true, stateDir, now: () => now }).revokeDevice("device-x");
     const hashes = (file: string) => (JSON.parse(readFileSync(join(stateDir, file), "utf8")) as { hash: string }[]).map((entry) => entry.hash);
     expect(hashes("push-delivery.json")).toEqual(["h-new"]);
@@ -1212,6 +1255,7 @@ describe("push delivery health (#1039)", () => {
       expect(JSON.parse(readFileSync(join(stateDir, "push-subscriptions.json"), "utf8"))).toEqual([]);
       expect(await push.sendTest(fake.subscription.endpoint)).toBeNull();
       expect(push.retired(fake.subscription.endpoint)).toBe(true);
+      // the browser handing it over again is still told to subscribe anew
       const response = await handlePushRequest(new Request("http://localhost/api/push/subscribe", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ subscription: fake.subscription }),
       }), "/api/push/subscribe", push, null);
@@ -1238,6 +1282,7 @@ describe("push delivery health (#1039)", () => {
 });
 
 it("never follows a redirect: an https endpoint cannot send the alert on to a local service", async () => {
+  // a push service never redirects; one that does is an endpoint pointing the POST elsewhere
   const redirector = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(null, { status: 307, headers: { location: fake.subscription.endpoint } }) });
   try {
     const push = createPushService({ loopbackHttp: true, stateDir });
@@ -1532,11 +1577,17 @@ describe("answer buttons on a question's alert (#2916)", () => {
     const none = { prompt_id: undefined, actions: undefined };
     const read = (screen: string | undefined) => alertFor(null, { lookupPrompt: async () => ({ prompt: shown, ...(screen === undefined ? {} : { screen }) }) });
     expect((await read(drawn(shown))).actions).toHaveLength(2);
+    // a line the reader left out of the body (Claude's `Tip:` filter took a line of the command)
     expect(await read(drawn(shown, ["   Tip:; rm -rf production"]))).toEqual(none);
+    // a line over the body the reader's window did not take: nothing over it says the prompt begins there
     expect(await read(drawn(shown).replace(" Bash command", " Bash command\n   rm -rf production"))).toEqual(none);
+    // a marker between the body and the question (Claude's older approval keeps only the lines over it)
     expect(await read(drawn(shown, [" This command requires approval"]))).toEqual(none);
+    // the body begins at the top of the screen: the rest of it may have scrolled away
     expect(await read(drawn(shown).split("\n").slice(2).join("\n"))).toEqual(none);
+    // an option row that is not where the card says
     expect(await read(drawn(shown).replace("2. Deny", "2. Maybe\n    3. Deny"))).toEqual(none);
+    // a prompt not read off a screen at all
     expect(await read(undefined)).toEqual(none);
   });
 
@@ -1545,9 +1596,12 @@ describe("answer buttons on a question's alert (#2916)", () => {
     const real = (screen: string) => alertFor(null, { lookupPrompt: async () => ({ prompt: parseInteractivePrompt("claude", screen)!, screen }) });
     const whole = ["─".repeat(40), " Bash command", "", "   echo safe", "", " Do you want to proceed?", " ❯ 1. Yes", "   2. No", "", " Esc to cancel"];
     expect((await real(whole.join("\n"))).actions).toHaveLength(2);
+    // its `Tip:` filter dropping a line of the command
     expect(await real([...whole.slice(0, 4), "   Tip:; rm -rf production", ...whole.slice(4)].join("\n"))).toEqual(none);
+    // the older approval: its body is only the few lines over its marker
     expect(await real([" Bash command", "", "   rm -rf production", "", "   echo one", "", "   echo two", "", "   echo three", "", "   echo four", "",
       " This command requires approval", "", " Do you want to proceed?", " ❯ 1. Yes", "   2. No", "", " Esc to cancel"].join("\n"))).toEqual(none);
+    // a long command scrolled past the panel's top: only its tail is on the screen
     expect(await real(["   │ rm -rf production", "   │ echo tail", "   ╌╌╌╌╌╌╌╌╌╌╌╌", "", " Do you want to proceed?", " ❯ 1. Yes", "   2. No", "", " Esc to cancel"].join("\n"))).toEqual(none);
   });
 
@@ -1561,6 +1615,7 @@ describe("answer buttons on a question's alert (#2916)", () => {
       prompt({ multi_select: true }),
       prompt({ custom_option_index: 1 }),
       prompt({ kind: "plan" }),
+      // what it allows does not fit the alert whole: the part cut off could be the one that matters
       prompt({ body: `npm run build && ${"x".repeat(300)}; rm -rf production` }),
       prompt({ body: "one\ntwo\nthree\nfour\nrm -rf production" }),
       prompt({ options: [{ label: "Yes", description: "and remember it for this folder" }, { label: "No", description: null }] }),

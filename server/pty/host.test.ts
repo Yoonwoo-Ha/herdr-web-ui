@@ -79,6 +79,7 @@ describe("rustSidecar", () => {
       const installed = join(dir, "bin", "ovis-pty-sidecar");
       writeFileSync(installed, "host");
       const digest = createHash("sha256").update("host").digest("hex");
+      // a whole second, so both writes carry exactly the same mtime, as on a coarse file clock
       const tick = 1_700_000_000;
       writeFileSync(`${installed}.json`, JSON.stringify({ sha256: digest, version: "0.0.1" }));
       utimesSync(`${installed}.json`, tick, tick);
@@ -280,6 +281,7 @@ describe.skipIf(process.platform === "win32")("PtySession Rust fallback", () => 
     resetSidecarForTests();
   });
 
+  /** A PC without Node, as `bun run` leaves one: the `node` on PATH is Bun itself. Nothing here may run pty-host.mjs on it. */
   function withoutNode(): void {
     const dir = mkdtempSync(join(fixtures, "bun-as-node-"));
     symlinkSync(process.execPath, join(dir, "node"));
@@ -317,6 +319,7 @@ describe.skipIf(process.platform === "win32")("PtySession Rust fallback", () => 
     } finally { spawn.mockRestore(); }
   });
 
+  // #596: the installer no longer links its Node into ~/.local/bin, and herdr's PATH may hold a Node older than 18 first
   for (const where of [".local/share/ovis/node", ".local/share/herdr-web-ui/node"]) {
     it(`runs the Node the installer put in ~/${where} over an older one first on PATH, probed and spawned at one path`, async () => {
       const real = Bun.which("node");
@@ -501,6 +504,7 @@ async function appears(path: string): Promise<void> {
 
 const sleepTag = () => `sleep ${5000 + Math.floor(Math.random() * 4000)}.${String(Math.random()).slice(2, 10)}`;
 
+/** Whether every process whose command line holds `tag` is gone within 3 s (a SIGKILLed one takes a moment). */
 async function gone(tag: string): Promise<boolean> {
   for (const deadline = Date.now() + 3000; ;) {
     if (Bun.spawnSync(["pgrep", "-f", tag]).stdout.length === 0) return true;
@@ -509,6 +513,7 @@ async function gone(tag: string): Promise<boolean> {
   }
 }
 
+/** A command in a process group of its own whose members ignore SIGHUP: a hangup alone never ends it. */
 const STUBBORN_GROUP = (tag: string, then: string) => ["-c", `trap '' HUP; ${tag} & printf READY; ${then}`];
 
 function parity(host: "node" | "rust") {
@@ -565,6 +570,7 @@ function parity(host: "node" | "rust") {
       } finally { burst.session.kill(); }
     }, 15_000);
 
+    // a signal's end is never the 0 of a success: told as a shell tells it
     it.skipIf(process.platform === "win32")("reports a command a signal ended as 128 plus the signal's number", async () => {
       const ended = run("sh", ["-c", "kill -TERM $$"]);
       try {
@@ -588,6 +594,8 @@ function parity(host: "node" | "rust") {
       } finally { ended.session.kill(); }
     }, 15_000);
 
+    // the host waits (EXIT_QUIET) for a command that closed its terminal, as a dying one does, before hanging it up:
+    // time is the behaviour here, a command exiting 50 ms after it closed its terminal is well within that wait
     it.skipIf(process.platform === "win32")("lets a command that closed its terminal exit with its own code", async () => {
       const ended = run("sh", ["-c", "exec 0<&- 1>&- 2>&-; sleep 0.05; exit 3"]);
       try {
@@ -734,8 +742,11 @@ function parity(host: "node" | "rust") {
       }
     }, 15_000);
 
+    // the Node host kills the group once node-pty's exit timer ends, also while it holds paused output; the Rust
+    // host hangs it up at the exit and kills it after the drain
     it.skipIf(host !== "node" || process.platform === "win32")("kills what is left of the command's process group when the command exits, while output is paused", async () => {
       const tag = sleepTag();
+      // the tag's seconds as an argument: the host's own command line must not match `tag`
       const leaving = run("sh", ["-c", `trap '' HUP; sleep "$1" & printf READY; read -r _; exit 4`, "sh", tag.slice("sleep ".length)]);
       try {
         await leaving.until("READY", (output) => output.includes("READY"));
@@ -782,6 +793,7 @@ parity("node");
 parity("rust");
 
 function direct(args: string[]) {
+  // exec keeps the host's pid; no core dump when a test aborts it (NO_CORE)
   const proc = Bun.spawn(["sh", "-c", `${NO_CORE}; exec "$0" "$@"`, RUST_HOST ?? "", "40", "5", ...args], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
   let output = "";
   const waiters = new Set<() => void>();
@@ -813,6 +825,7 @@ function direct(args: string[]) {
   return { proc, until, peakMiB, errorLines };
 }
 
+/** Reports each resize, and never reads its input: what it is sent piles up in the pty (raw, so the line discipline keeps it). */
 const UNREAD = ["sh", "-c", 'stty raw -echo; exec node -e "$1"', "sh", `
   const out = process.stdout;
   process.on("SIGWINCH", () => out.write("WINCH " + out.columns + "x" + out.rows));

@@ -3,6 +3,7 @@ import { COMPILED, ROOT } from "../entries.ts";
 import { disableRustHost, rustSidecar, spawnErrorReason } from "./host.ts";
 import { nodeSidecarAvailable, realNode } from "./sidecar.ts";
 
+// a file Node runs, never compiled in: beside the binary, or beside this one from source
 const HOST_SCRIPT = COMPILED ? join(ROOT, "pty-host.mjs") : join(import.meta.dir, "pty-host.mjs");
 
 export interface PtySessionOptions {
@@ -13,6 +14,7 @@ export interface PtySessionOptions {
   onData: (data: string) => void;
   onExit: (code: number | null) => void;
   env?: Record<string, string>;
+  /** A private CLI gets only its supplied environment, not the server's credentials and hooks. */
   inheritEnv?: boolean;
 }
 
@@ -28,6 +30,11 @@ export function writeLine(sink: import("bun").FileSink, line: string): boolean {
   }
 }
 
+/**
+ * A command running on a real PTY, hosted by the Rust host or, as the fallback, the Node sidecar (see pty-host.mjs for
+ * why output flow control currently needs node-pty, and why it is the prebuilt
+ * @lydell/node-pty distribution of it).
+ */
 export class PtySession {
   readonly host: "node" | "rust";
   readonly exited: Promise<void>;
@@ -42,6 +49,7 @@ export class PtySession {
     delete env["HERDR_WEB_TOKEN"];
     const args = [String(options.cols), String(options.rows), options.command, ...options.args];
     const spawnOptions = { stdin: "pipe", stdout: "pipe", stderr: "inherit", env } as const;
+    // only a real Node runs pty-host.mjs: `bun run` puts a `node` that is Bun on a PC without one
     const node = () => {
       const executable = nodeSidecarAvailable() ? realNode(options.inheritEnv === false ? process.env : env) : null;
       if (!executable) throw new Error("no PTY host: the Rust host cannot run and this PC has no Node for the PTY sidecar");
@@ -64,7 +72,10 @@ export class PtySession {
       this.host = "node";
     }
 
+    // Process exit can precede the final stdout read. Deliver every byte before
+    // onExit lets the server remove the attachment.
     this.exited = Promise.all([this.proc.exited, this.pump()]).then(([code]) => {
+      // with no Node to fall back to, switching the Rust host off would leave every later attach without a host
       if (this.host === "rust" && !this.closed && this.proc.signalCode !== null) {
         if (nodeSidecarAvailable()) disableRustHost(`the Rust PTY host ended by ${this.proc.signalCode}`);
         else console.error(`Rust PTY host: ended by ${this.proc.signalCode}; kept, as this PC has no Node for the PTY sidecar`);
@@ -85,6 +96,7 @@ export class PtySession {
         const { done, value } = await reader.read();
         if (done) break;
         if (!value) continue;
+        // stream:true keeps a multi-byte character split across reads intact
         const text = decoder.decode(value, { stream: true });
         if (text) this.options.onData(text);
       }

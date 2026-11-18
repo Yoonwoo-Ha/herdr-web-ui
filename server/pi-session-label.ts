@@ -116,6 +116,8 @@ class Projection {
           }
         } else if (char.charCodeAt(0) < 32) this.invalid = true;
         else {
+          // Quotes, escapes and forbidden controls still take the checked path above, even
+          // after the retained text is full. Each span stays inside the current read chunk.
           this.stringEnd.lastIndex = at;
           const end = this.stringEnd.exec(text)?.index ?? text.length;
           this.string.add(text.slice(at, end));
@@ -208,6 +210,7 @@ export class PiLabelParser {
   private decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   private malformedUtf8 = false;
 
+  /** Bytes from the already checked descriptor. Newline is ASCII in UTF-8. */
   feed(bytes: Buffer): void {
     let start = 0;
     while (start < bytes.length) {

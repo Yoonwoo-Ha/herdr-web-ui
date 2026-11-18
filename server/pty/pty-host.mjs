@@ -6,8 +6,21 @@
  * It comes as @lydell/node-pty, node-pty 1.1.0 repackaged with a prebuilt binary per
  * platform (Linux x64/arm64, macOS, Windows), so installing never runs node-gyp: a PC
  * without Python and a C++ toolchain installs the same as one with them.
+ *
+ * Protocol
+ *   argv:   <cols> <rows> <command> [args...]
+ *   stdin:  newline-delimited JSON control frames
+ *             {"t":"i","d":"<text>"}          write text into the pty
+ *             {"t":"r","c":<cols>,"r":<rows>} resize the pty
+ *             {"t":"p","paused":true|false} pause/resume output (input stays live)
+ *             {"t":"w"}                       signal SIGWINCH to the child at its current size
+ *   stdout: raw pty bytes, unmodified
+ *   stderr: diagnostics only
+ *   exit:   mirrors the child's exit code; 128 + the signal's number when a signal this host did not
+ *           send ended it (POSIX)
  */
 
+// node-pty must never load inside Bun (AGENTS.md): a `node` that is Bun stops here, before the import
 if (process.versions.bun) {
   process.stderr.write("pty-host: this is Bun, not Node; node-pty must not load here\n");
   process.exit(70);
@@ -60,9 +73,11 @@ term.onData((chunk) => {
 const EXIT_QUIET_MS = 200;
 const EXIT_DRAIN_LIMIT_MS = 2000;
 const EXIT_HELD_LIMIT_MS = 15_000;
+/** node-pty's destroy once it asked for it: the command has exited */
 let finalRead = null;
 const KILL_AFTER_MS = 2000;
 const sent = new Set();
+/** whether the command is still there: not yet reaped (node-pty reaps it as it exits) */
 function running() {
   try { process.kill(term.pid, 0); return true; } catch { return false; }
 }
@@ -70,6 +85,7 @@ function endGroup(signal) {
   if (running()) sent.add(signal);
   killGroup(signal);
 }
+/** A command that closed its terminal (EIO) may be dying: closing the pty here would hang it up first. */
 let closing = null;
 const CLOSING_POLL_MS = 10;
 const socket = process.platform === "win32" ? undefined : term._socket;
@@ -77,6 +93,7 @@ if (socket) {
   const destroy = socket.destroy.bind(socket);
   socket.destroy = (...args) => {
     if (args[0] && !finalRead && closing === null) {
+      // an EIO'd pty is readable forever: reading stops, or it spins until the close
       socket._handle?.readStop?.();
       const until = Date.now() + EXIT_QUIET_MS;
       const close = () => { clearInterval(closing.timer); closing.done = true; destroy(...args); };
@@ -89,6 +106,8 @@ if (socket) {
       }, CLOSING_POLL_MS) };
       return socket;
     }
+    // node-pty's own close while the close is held: the command exited, so the pty closes now, with no
+    // second quiet wait; one after it goes through
     if (closing !== null) {
       if (!closing.done) closing.close();
       else destroy(...args);
@@ -191,6 +210,7 @@ const stop = () => {
     stopping = true;
     try {
       endGroup("SIGHUP");
+      // A paused reader still needs to observe EOF after the parent leaves.
       term.resume();
     } catch {
     }
@@ -204,6 +224,8 @@ const stop = () => {
 process.on("SIGTERM", () => { stop(); process.stdin.destroy(); });
 process.on("SIGINT", () => { stop(); process.stdin.destroy(); });
 process.stdin.on("close", stop);
+// The parent can disappear while output is in flight. Close the owned attach
+// instead of turning the expected broken pipe into an uncaught Node exception.
 process.stdout.on("error", (error) => {
   if (error.code !== "EPIPE") process.stderr.write(`pty-host: ${error.message}\n`);
   stop();

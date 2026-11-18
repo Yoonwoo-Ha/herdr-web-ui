@@ -24,6 +24,7 @@ import { dirname } from "node:path";
 export const privateStateFs = { mkdirSync, openSync, writeSync, fsyncSync, closeSync, renameSync, unlinkSync };
 
 export interface PrivateStateWrite {
+  /** false when the parent-directory fsync after the rename failed or was not attempted (Windows) */
   directorySynced: boolean;
 }
 
@@ -31,6 +32,7 @@ export function writePrivateState(path: string, value: unknown, platform: NodeJS
   const temporary = preparePrivateState(path, value, platform);
   try { privateStateFs.renameSync(temporary, path); }
   catch (error) {
+    // Cleanup failures must not mask the write failure the caller has to see.
     try { privateStateFs.unlinkSync(temporary); } catch {}
     throw error;
   }
@@ -42,6 +44,7 @@ export function publishPrivateState(temporary: string, path: string, platform: N
   return syncDirectory(dirname(path), platform);
 }
 
+/** The new bytes of `path`, flushed, in a private temporary file beside it; returns that file. */
 export function preparePrivateState(path: string, value: unknown, platform: NodeJS.Platform = process.platform): string {
   const fs = privateStateFs;
   const directory = dirname(path);
@@ -66,6 +69,7 @@ export function preparePrivateState(path: string, value: unknown, platform: Node
     fd = null; // a failed close must not be retried: the descriptor is released either way
     fs.closeSync(closing);
   } catch (error) {
+    // Cleanup failures must not mask the write failure the caller has to see.
     if (fd !== null) try { fs.closeSync(fd); } catch {}
     try { fs.unlinkSync(temporary); } catch {}
     throw error;

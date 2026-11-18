@@ -33,6 +33,7 @@ it("writes nothing when the sender's right lapses while the connection is made (
   const { path, written } = standIn();
   let allowed = true;
   const call = herdrRpc("pane.send_keys", { pane_id: "p", keys: ["Enter"] }, path, 2_000, () => allowed);
+  // the connect is awaited: the sender detaches (or is revoked) meanwhile
   allowed = false;
   const error = await call.then(() => null, (failure: unknown) => failure);
   expect(error).toBeInstanceOf(HerdrError);

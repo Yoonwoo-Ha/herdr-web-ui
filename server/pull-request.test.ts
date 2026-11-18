@@ -70,6 +70,7 @@ describe("reading a branch's pull request through gh", () => {
     const fake = fakeGh({ "pr view": { stdout: prJson({ url: "https://github.com/123/2048/pull/12" }) }, graphql: { stdout: graphqlJson() } });
     await pullRequestView(scratch, { gh: fake.gh });
     const graphql = fake.calls().find((args) => args[1] === "graphql")!;
+    // gh's -F would send these as numbers, which GitHub refuses for a String! variable
     for (const value of ["owner=123", "name=2048"]) expect([value, graphql[graphql.indexOf(value) - 1]]).toEqual([value, "-f"]);
   });
 

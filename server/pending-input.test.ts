@@ -16,7 +16,7 @@ describe("pending target identity", () => {
     expect(samePendingIdentity({ ...identity, claudeSession: "before-clear" }, { ...identity, claudeSession: "after-clear" })).toBe(false);
     expect(samePendingIdentity({ ...identity, claudeSession: "same" }, { ...identity, claudeSession: "same" })).toBe(true);
     expect(samePendingIdentity({ ...identity, claudeSession: null }, { ...identity, claudeSession: "learned" })).toBe(true);
-    expect(samePendingIdentity({ ...identity, claudeSession: "known" }, { ...identity, claudeSession: null })).toBe(true);
+    expect(samePendingIdentity({ ...identity, claudeSession: "known" }, { ...identity, claudeSession: null })).toBe(true); // control: record unreadable now (a send refuses it in pendingContext, #2125)
   });
 
   it("permits identity parts that were unknown on either read (control #540)", () => {
@@ -512,6 +512,7 @@ describe("an owner counted per pane", () => {
   });
 });
 
+// #511: a saved copy's resend of a message accepted for an agent alone keeps that rule, whatever the copy says
 describe("agent-only pending messages", () => {
   it("says which held message was accepted for an agent alone, on its own pane only", () => {
     let id = 0;
@@ -538,6 +539,7 @@ describe("a pane moved to a new ID (#1503)", () => {
     expect(f.queue.list("a", "p2")).toMatchObject([{ id: queued.message.id, state: "held", error: { code: "pane_moved" } }]);
     expect(f.queue.list("b", "p2")).toMatchObject([{ id: other.message.id, state: "held" }]);
     expect(f.queue.list("a", "p9")).toMatchObject([{ id: elsewhere.message.id, state: "queued" }]);
+    // nothing goes out by itself under the new ID
     f.queue.status("p2", "idle");
     expect(f.queue.next("p2")).toBeNull();
     expect(f.receipts.filter((r) => r.owner === "a" && r.pane === "p1").at(-1)?.messages).toEqual([]);

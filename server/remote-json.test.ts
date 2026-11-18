@@ -38,12 +38,15 @@ describe("capped remote answers", () => {
   });
 
   it("ignores dishonest length headers", async () => {
+    // a small claim does not let a larger body through
     const small = body([bytes("{\"a\":"), bytes("\"0123456789\"}")], { "content-length": "2" });
     await expect(readCapped(small.response, 12)).rejects.toBeInstanceOf(RemoteResponseTooLarge);
     expect(small.receipt.cancelled).toBe(true);
+    // a claim past the cap is refused before anything is read
     const large = body([bytes("{}")], { "content-length": "13" });
     await expect(readCapped(large.response, 12)).rejects.toBeInstanceOf(RemoteResponseTooLarge);
     expect(large.receipt).toEqual({ pulled: 0, cancelled: true });
+    // no length at all is measured the same way
     const absent = body([bytes("0123456"), bytes("789abc")]);
     expect(absent.response.headers.get("content-length")).toBeNull();
     await expect(readCapped(absent.response, 12)).rejects.toBeInstanceOf(RemoteResponseTooLarge);

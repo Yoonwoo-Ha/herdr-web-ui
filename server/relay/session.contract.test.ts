@@ -93,6 +93,7 @@ for (const role of ["drive", "watch"] as const) {
     const request = link.open("/api/preferences", { method: "PUT", headers: guard, body: "stream" });
     const upload = request.stream.sendBody(new Response('{"settings":{}}').body ?? new ReadableStream());
     const response = await request.response;
+    // A refused upload is stopped, so a body write still queued behind the channel is cancelled.
     const uploaded = await upload.then(() => "sent", (error: unknown) => error instanceof MuxStreamError ? error.code : String(error));
     expect(role === "drive" ? ["sent"] : ["sent", "cancelled"]).toContain(uploaded);
     expect(response.status).toBe(role === "drive" ? 200 : 403);
@@ -300,6 +301,7 @@ it("drops forged headers on the encrypted wire and dispatches with synthetic ori
   } });
   try {
     expect(await link.auth(device)).toMatchObject({ device_id: device.id, role: "watch" });
+    // Inject after mux serialization but before encryption, bypassing the client's header filter.
     link.transformClientFrame = (bytes) => {
       const decoded = decodeFrame(bytes);
       if (decoded.type !== FrameType.HTTP_OPEN) return bytes;

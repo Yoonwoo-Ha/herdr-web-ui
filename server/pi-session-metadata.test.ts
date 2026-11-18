@@ -187,6 +187,7 @@ describe("Pi native label semantics", () => {
     const cases = [
       { bytes: Buffer.concat([prefix, final]), title: "끝 🐑" },
       ...[[0xe2], [0xe2, 0x82], [0xf0, 0x9f, 0x90]].map((tail) => ({
+        // The JSON itself is complete; only flushing the decoder reveals this invalid suffix.
         bytes: Buffer.concat([prefix, final, Buffer.from(tail)]), title: "good",
       })),
     ];
@@ -618,6 +619,8 @@ describe("Pi stat-keyed streaming reader", () => {
         if (error) fail(error); else done(count);
       });
     }) });
+    // Three chunks: the first contains a usable header and labels that must stay private
+    // until EOF, since a later session_info can replace or clear the name.
     const body = header() + prompt("first prompt") + name("early name")
       + filler(2 * PI_CHUNK_BYTES) + name("final name");
     writeFileSync(f.file, body);
@@ -760,6 +763,8 @@ describe("Pi stat-keyed streaming reader", () => {
     // took 6.6 s and 9 s and hit the two-second deadline, so the listing's deadline is set past the test's
     // own timeout. The shared two-second deadline is covered with a fake clock below.
     const f = fixture({ deadlineMs: 120_000 });
+    // Match the video's store count, not its private transcripts. The newest 50 files hold
+    // about 200 MiB together. Deadline behavior is covered by the injected-clock cases.
     const system = filler(1024 * 1024);
     const extension = line({ type: "custom", data: { snapshot: "e".repeat(1024 * 1024) } });
     const output = line({ type: "message", message: { role: "toolResult", content: [{ type: "text", text: `${"synthetic output ".repeat(16)}\n\\\"🐑`.repeat(4000) }] } });

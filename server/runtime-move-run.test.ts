@@ -152,6 +152,7 @@ describe("runMove, before anything is ended", () => {
 
   it("waits for the shell to be in front before it counts an agent as ended", async () => {
     const { world, source, destination, options } = fakes();
+    // herdr stops naming the agent while its process still holds the terminal
     source.sendExit = async (id) => { world.calls.push(`herdr exit ${id}`); world.herdr.set(id, { ...world.herdr.get(id)!, agent: null, status: "unknown", shellInFront: false }); };
     const journal = await runMove(stateDir(), PORT, "m1", plan, source, destination, { ...options, exitMs: 50, settleMs: 0 });
     expect([journal.state, journal.reason]).toEqual(["rolled_back", "agent_did_not_exit"]);
@@ -161,6 +162,7 @@ describe("runMove, before anything is ended", () => {
 
   it("restarts in herdr an agent whose shell comes back while the rollback looks", async () => {
     const { world, source, destination, options } = fakes();
+    // herdr drops the agent at once; its shell is back only after the exit wait gave up
     let shellBackAt = Infinity;
     source.sendExit = async (id) => { world.calls.push(`herdr exit ${id}`); shellBackAt = Date.now() + 80; world.herdr.set(id, { ...world.herdr.get(id)!, agent: null, status: "unknown", shellInFront: false }); };
     const plain = source.pane;

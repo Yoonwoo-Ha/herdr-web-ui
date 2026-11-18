@@ -42,14 +42,14 @@ export class RequestLog {
       && typeof error.code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code) ? error.code : "UNKNOWN";
     try {
       console.warn(`Request log disabled: http-requests.jsonl (${code})`);
-    } catch {}
+    } catch { /* A diagnostic failure must not change the response or recurse. */ }
   }
 
   close(): void {
     const fd = this.fd;
     this.fd = undefined;
     if (fd !== undefined) {
-      try { closeSync(fd); } catch {}
+      try { closeSync(fd); } catch { /* Best-effort telemetry must not break a response or shutdown. */ }
     }
   }
 
@@ -100,6 +100,7 @@ export class RequestLog {
           }
         }
       } catch (error) {
+        // Never change the answer or recursively log a writer failure.
         this.disable(error);
       }
       return response;

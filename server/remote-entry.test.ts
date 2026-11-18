@@ -26,6 +26,7 @@ function windowsSocket(env: Record<string, string | undefined>): string {
 
 describe("remote entry socket selection", () => {
   it("uses XDG_CONFIG_HOME before APPDATA on Windows", () => {
+    // regression (fails on main): a set XDG_CONFIG_HOME owns herdr's Windows socket root
     expect(windowsSocket({ XDG_CONFIG_HOME: "C:\\Temp\\xdg", APPDATA: "C:\\Users\\u\\AppData\\Roaming", HERDR_REMOTE_SESSION: "qa" }))
       .toBe("C:\\Temp\\xdg\\herdr\\sessions\\qa\\herdr.sock");
   });
@@ -85,6 +86,7 @@ describe("remote entry startup lock", () => {
     const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]).finally(() => clearTimeout(deadline));
     return { code, output: out + err, serving };
   }
+  /** Signal 0 to `pid` is refused in the entry (EPERM), as another user's process refuses it. */
   function refusing(pid: number): string {
     const preload = join(home, "refuse-signal.ts");
     writeFileSync(preload, `const kill = process.kill.bind(process);\nprocess.kill = ((target, signal) => { if (target === ${pid}) throw Object.assign(new Error("kill EPERM"), { code: "EPERM" }); return kill(target, signal); });\n`);
@@ -120,6 +122,7 @@ describe("remote entry startup lock", () => {
       expect(refused.code).toBe(2);
       expect(JSON.parse(readFileSync(result, "utf8"))).toEqual({ code: "herdr_sessions_found", sessions: [{ socket_path: realSocket(socket), session: "work", label: "work" }] });
       expect(refused.output).not.toContain(join(home, "missing-herdr"));
+      // Explicit consent alone reaches the attempted daemon spawn (a nonexistent test binary).
       const allowed = await start(undefined, { HERDR_REMOTE_START_NEW: "1" });
       expect(allowed.code).not.toBe(0);
       expect(allowed.output).toContain(join(home, "missing-herdr"));
@@ -170,6 +173,7 @@ describe("remote entry startup lock", () => {
       expect(result.code).toBe(2);
       expect(existsSync(resultFile)).toBe(true);
       expect(result.output).not.toContain(join(home, "missing-herdr"));
+      // Only the explicit rejection may be reported; a ping to the untrusted target already violates the boundary.
       if (kind === "outside" || kind === "file") expect(connections).toBe(0);
     } finally { listener?.stop(true); }
   });
@@ -255,6 +259,7 @@ describe("remote entry startup lock", () => {
   it("starts over a registered bridge whose PID a process it may not signal now holds", async () => {
     const reused = other();
     const preload = refusing(reused.pid);
+    // an older version's descriptor has no birth: outside Windows the refusal alone proves it someone else's
     for (const fields of [{ birth: earlierBirth }, ...(process.platform === "win32" ? [] : [{}])]) {
       writeFileSync(descriptor, JSON.stringify({ port: 1, token: "registered-secret", pid: reused.pid, generation: "g", ...fields, socket_path: "s", bridge_protocol: 1, bundle_version: "v" }));
       const run = await start(preload);
@@ -268,6 +273,7 @@ describe("remote entry startup lock", () => {
     const herdr = fakeHerdr();
     try {
       const registered = join(home, ".config/herdr-web-ui/bridges", createHash("sha256").update(herdr.socket).digest("hex") + ".json");
+      // a guard this start cannot open stands for one left by another account
       mkdirSync(guardPath(registered));
       const run = await start();
       expect(run.serving).toBe(false);

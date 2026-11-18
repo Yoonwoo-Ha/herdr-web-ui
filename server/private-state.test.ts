@@ -12,6 +12,11 @@ const real = { ...privateStateFs };
 const spies: { mockRestore(): void }[] = [];
 afterEach(() => { for (const spy of spies.splice(0)) spy.mockRestore(); });
 
+/**
+ * `fail` throws instead of calling through, once, for the
+ * first call of that operation that `when` accepts; a failing close still releases the
+ * descriptor first, as close(2) does on Linux.
+ */
 function trace(options: { fail?: Op; when?: (args: unknown[]) => boolean; error?: Error; maxWrite?: number } = {}) {
   const ops: string[] = [];
   const names = new Map<number, string>();

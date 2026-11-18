@@ -85,6 +85,7 @@ function holdKeyWrite() {
   restores.push(() => { release.resolve(); held.mockRestore(); });
   return {
     entered: bounded(entered.promise),
+    /** lets the key go on to herdr, which asks its guard first; resolves once that write is done or refused */
     release() { release.resolve(); return bounded(settled.promise); },
     restore() { held.mockRestore(); },
   };
@@ -139,6 +140,8 @@ it("terminal queue isolation over relay", async () => {
   await terminal.socket.until(() => terminal.bytes >= OUTPUT_HIGH_BYTES * 2);
   if (!serverSocket) throw new Error("Missing virtual socket");
   await link.flush();
+  // The unread HTTP response still holds source/queue bytes. Terminal receipts have their
+  // own budget: charging those HTTP bytes here fails even before the hard-limit close.
   expect(link.session.bufferedBytes).toBeGreaterThan(OUTPUT_HARD_BYTES);
   expect(serverSocket.getBufferedAmount()).toBe(0);
   expect(link.session.mux.stats.queuedBytes).toBeGreaterThan(0);
@@ -523,6 +526,7 @@ it("ends the connection at the peer's close even while this side's close waits b
     expect(socket.getBufferedAmount()).toBeGreaterThan(0);
     stream.close(1000);
     await link.flush();
+    // a native socket's close handler runs as the close arrives: input still queued goes nowhere
     expect(detached).toEqual([1000]);
     expect(socket.readyState).toBe(WebSocket.CLOSING);
   } finally { release.resolve(); }
@@ -607,6 +611,8 @@ it("hands admitted messages over before a peer's graceful close, without waiting
     for (const data of held) receive(data);
     await bounded(entered.promise);
     await link.flush();
+    // a native socket also hands the rest over while "first" is still being handled, still
+    // open for a reply to each, and only then closes
     expect(messages).toEqual(["first", "ping", "last"]);
     expect(detached).toEqual([1000]);
     expect(await bounded(closed.promise)).toBe(1000);

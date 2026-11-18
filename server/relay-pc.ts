@@ -1,3 +1,10 @@
+/**
+ * Another PC added through the Ovis relay, with no SSH (docs/remote-pcs.md, "Through the relay"). This server pairs
+ * with that PC's Ovis the way a phone does (shared/relay-channel.ts: Noise NK, Ovis Mux v1, a device key it signs
+ * in with), and that PC sees it as one more paired device it can revoke. A loopback forward then gives the PC the
+ * same `{ url, token }` endpoint an SSH local forward gives (machines.ts), so everything that reads a remote PC
+ * through its endpoint (its roster, status socket, API routes and terminals) runs unchanged over the relay.
+ */
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, unlinkSync } from "node:fs";
 import { hostname, networkInterfaces } from "node:os";
@@ -15,6 +22,7 @@ import { OUTPUT_STALLED_CLOSE_CODE } from "../shared/terminal-flow.ts";
 import { OUTPUT_HARD_BYTES } from "./output-window.ts";
 import { writePrivateState } from "./private-state.ts";
 
+/** The other PC refused this one for good (revoked, never paired, a new identity or protocol): retrying cannot help. */
 export class RelayPcRefused extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -22,6 +30,7 @@ export class RelayPcRefused extends Error {
   }
 }
 
+/** The other PC answered, and its Ovis cannot pair with another PC of the account (PAIR_INTENT_VOUCHED): nothing was sent to pair. */
 export class RelayPcOutdated extends Error {
   constructor() {
     super("Update Ovis on that PC first.");
@@ -29,6 +38,7 @@ export class RelayPcOutdated extends Error {
   }
 }
 
+/** The port a PC's direct listener asks for first (server/relay/direct.ts DIRECT_PORT, not imported: that module listens). */
 const DIRECT_LISTENER_PORT = 7319;
 
 /**
@@ -61,11 +71,17 @@ interface SavedKey {
   device_id: string;
   label: string;
   public_spki: string;
+  /** P-256 private key, PKCS#8, base64url: this server's only secret for that PC */
   private_pkcs8: string;
   direct?: string[];
 }
 
+/**
+ * One relay PC's device key, in its own file (mode 0600). A new key lives in memory until the other PC admits it
+ * (channel.ts saves a first pairing's key only on AUTH_OK), so a pairing that fails leaves nothing behind.
+ */
 export class RelayPcKey implements RelayDeviceStore {
+  /** `wanted`: whether the PC is still this server's; a pairing or sign-in finishing after its removal writes no key */
   private constructor(private readonly path: string, private device: RelayDevice, private readonly pkcs8: string, private readonly wanted: () => boolean) {}
 
   static async create(path: string, offer: RelayOffer, wanted: () => boolean, label = relayPcLabel()): Promise<RelayPcKey> {
@@ -85,6 +101,7 @@ export class RelayPcKey implements RelayDeviceStore {
     if (saved?.v !== 1 || typeof saved.device_id !== "string" || typeof saved.private_pkcs8 !== "string"
       || typeof saved.public_spki !== "string" || typeof saved.label !== "string") throw new Error("Invalid relay PC key");
     const offer = validateOffer(saved.offer);
+    // only carriers this server dials (serverDialable): anything else in the file is not an address to dial
     const direct = Array.isArray(saved.direct) ? saved.direct.filter((carrier) => typeof carrier === "string" && serverDialable(carrier)).slice(0, MAX_DIRECT_CARRIERS) : [];
     return new RelayPcKey(path, {
       server_id: offer.server_id, server_public_key: offer.server_public_key, relay: offer.relay,
@@ -95,6 +112,7 @@ export class RelayPcKey implements RelayDeviceStore {
     }, saved.private_pkcs8, wanted);
   }
 
+  /** The PC as the relay names it, without any pairing code: what a reconnect signs in to. */
   get offer(): RelayOffer {
     const { server_id, server_public_key, relay, name } = this.device;
     return { v: 1, server_id, server_public_key, relay, ...(name === undefined ? {} : { name }) };
@@ -110,11 +128,13 @@ export class RelayPcKey implements RelayDeviceStore {
 
   async update(serverId: string, change: (current: RelayDevice | undefined) => RelayDevice): Promise<RelayDevice> {
     if (serverId !== this.device.server_id) throw new Error("Relay PC key names another PC");
+    // the current one is handed over only once admitted: a new key is a pairing that channel.ts saves on AUTH_OK
     const next = change(this.device.device_id === null ? undefined : this.device);
     if (next.device_id === null) throw new Error("Relay PC was not admitted");
     if (!this.wanted()) throw new Error("Relay PC was removed");
     const { server_id, server_public_key, relay, name } = next;
     const offer: RelayOffer = { v: 1, server_id, server_public_key, relay, ...(name === undefined ? {} : { name }) };
+    // what the PC named that this server would not dial is not kept either
     const direct = next.direct?.filter(serverDialable) ?? [];
     writePrivateState(this.path, {
       v: 1, offer, device_id: next.device_id, label: next.label, public_spki: next.public_spki, private_pkcs8: this.pkcs8,
@@ -161,6 +181,7 @@ const QUIET_MS = 3_000;
 const IDLE_CHECK_MS = 5_000;
 const IDLE_CHECKS = 12;
 
+/** This PC's own IPv4 addresses, which change when it joins another network (or Tailscale comes up). */
 function networkNow(): string {
   return Object.values(networkInterfaces()).flatMap((list) => list ?? [])
     .filter((entry) => entry.family === "IPv4" && !entry.internal).map((entry) => entry.address).sort().join(",");
@@ -170,28 +191,41 @@ interface Forwarded { target: string; remote?: WsStream; open: boolean; pending:
 
 const WAITING_BYTES = 1024 * 1024;
 
+/** A close code a server-side socket may send: the relay's own (1006) and reserved ones become 1011. */
 function sendableClose(code: number): number {
   return code === 1000 || code === 1001 || code === 1008 || code === 1011 || code === 1012 || (code >= 3000 && code <= 4999) ? code : 1011;
 }
 
+/**
+ * Connects to the PC (pairing with the offer's code the first time, signing in with the saved key after), then
+ * serves it on 127.0.0.1 behind a random token: each request and WebSocket becomes a stream of the one mux session.
+ */
 export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, options: {
   socket?: (url: string) => RelaySocket;
+  /** how this PC dials the PC's direct carriers; plain WebSockets (which send no Origin) by default */
   directSocket?: (url: string) => RelaySocket;
   onLost: (error: Error) => void;
   onMoved?: () => void;
   network?: () => string;
   networkCheckMs?: number;
   probes?: RouteProbes;
+  /**
+   * A first pairing with another PC of the account (PAIR_INTENT_VOUCHED) instead of a code: `compare` is told the
+   * digits, a PC that does not select the intent is RelayPcOutdated before anything is sent to pair, and `signal`
+   * ends the comparison. The caller never aborts it once the tunnel is open: it would end the admitted channel too.
+   */
   pairing?: { compare: (digits: string) => Promise<void>; signal: AbortSignal };
 }): Promise<RelayPcTunnel> {
   const readNetwork = options.network ?? networkNow;
   const networkCheckMs = options.networkCheckMs ?? NETWORK_CHECK_MS;
   const probes = options.probes ?? newRouteProbes();
   const startNetwork = readNetwork();
+  // or after a sleep, which may end on another network with the same addresses
   if ((probes.network !== undefined && probes.network !== startNetwork) || sleptSince(probes)) Object.assign(probes, newRouteProbes());
   probes.network = startNetwork;
   const due = (): boolean => !probes.failed || probes.at + PROBE_EVERY_MS * probes.backoff <= performance.now();
   const directSocket = options.directSocket ?? ((url: string) => new WebSocket(url) as unknown as RelaySocket);
+  // a pairing's one-time code is spent once admitted: every channel after the first signs in with the key
   const { code: _code, ...signIn } = offer;
   let closed = false;
   let lost = (error: Error): void => { void error; };
@@ -202,8 +236,15 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
   const label = (await key.list())[0]!.label;
   const base = (): RelayChannelOptions => ({
     store: key, label,
+    // whoever asks through the forward sets the deadline (the machine proxy: 75 s, 165 s for its slow routes)
+    // a server can dial a Tailscale address whenever this PC is on Tailscale, and fails fast when not: always asked
+    // for, so the carriers kept with the key stay right when Tailscale comes and goes
     requestTimeoutMs: () => 0, offerDirect: true, offerTailnet: true,
   });
+  /**
+   * The deadline is the admission's only:
+   * an aborted signal ends an admitted channel too, so it is never handed to the channel itself.
+   */
   const openOn = async (direct: string | undefined, ms = 0): Promise<RelayChannel> => {
     let channel: RelayChannel | undefined;
     const settings: RelayChannelOptions = { ...base(), onClose: (error) => {
@@ -212,6 +253,7 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
       lost(error);
     } };
     if (direct === undefined) {
+      // only the first channel pairs: every one after it signs in with the key that pairing admitted
       const pairing = options.pairing !== undefined && !paired ? vouchedPairing(options.pairing) : {};
       paired = true;
       return channel = (await openRelayChannelWithFallback(offer, { ...settings, ...pairing, ...(options.socket ? { socket: options.socket } : {}) }, openRelayChannel)).channel;
@@ -244,6 +286,7 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
         probes.failed = false;
         return channel;
       } catch (error) {
+        // the PC itself refused after Noise proved it: final here as through the relay
         if (fatal(error) && !(error instanceof DirectCarrierUnusableError)) throw error;
       }
     }
@@ -252,6 +295,7 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
     return undefined;
   };
   try {
+    // a pairing goes through the relay only; a sign-in tries the PC's own network first
     current = (offer.code === undefined && options.pairing === undefined ? await openDirect() : undefined) ?? await openOn(undefined);
   } catch (error) {
     throw fatal(error) ? new RelayPcRefused(refusal(error, offer.code !== undefined || options.pairing !== undefined), { cause: error }) : error;
@@ -331,6 +375,8 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
       local.data.waiting = [];
       local.data.waitingBytes = 0;
     };
+    // as this PC's own sockets: output that cannot be delivered, or backs up past the budget, ends the socket (4008);
+    // the budget leaves room for one message as large as the PC may send (LARGE_WS_MESSAGES), a large session's snapshot
     remote.onMessage = (message) => {
       if (local.send(message) === 0 || local.getBufferedAmount() > OUTPUT_HARD_BYTES + MAX_LARGE_WS_MESSAGE_BYTES) local.close(OUTPUT_STALLED_CLOSE_CODE, "output delivery failed");
     };
@@ -469,6 +515,7 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
   const watcher = setInterval(() => {
     const now = Date.now();
     const seen = readNetwork();
+    // a timer far later than asked is a PC that slept: it may wake on another network, even one with the same addresses
     if (seen === network && now - lastLook < networkCheckMs * 2) { lastLook = now; return; }
     network = seen;
     lastLook = now;
@@ -502,6 +549,7 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
   };
 }
 
+/** A comparison that asks to pair this PC with another PC of the account, and only with one that selects that. */
 function vouchedPairing(pairing: { compare: (digits: string) => Promise<void>; signal: AbortSignal }): Partial<RelayChannelOptions> {
   return {
     compare: pairing.compare, signal: pairing.signal, intent: "vouched",
@@ -509,8 +557,13 @@ function vouchedPairing(pairing: { compare: (digits: string) => Promise<void>; s
   };
 }
 
+/** What another PC of the account answers when asked to pair with this one: nothing is sent to pair, and nothing counted there. */
 export type VouchedSupport = "ready" | "outdated" | "offline";
 
+/**
+ * Whether `offer`'s PC would take a pairing from this one through the account (PAIR_INTENT_VOUCHED): the channel is
+ * opened, the PC's answer to HELLO read, and the channel closed before PAIR_REQUEST, with a key that is never kept.
+ */
 export async function vouchedSupport(offer: RelayOffer, options: { socket?: (url: string) => RelaySocket; pcAnswerMs?: number } = {}): Promise<VouchedSupport> {
   const { code: _code, ...plain } = offer;
   class Answered extends Error { constructor(readonly ready: boolean) { super("answered"); } }

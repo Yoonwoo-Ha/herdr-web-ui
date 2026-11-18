@@ -6,6 +6,10 @@ import type { ClientMessage, PanePromptResponse, ServerMessage } from "../shared
 import { createServer } from "./index.ts";
 import { herdrRpc } from "./herdr/client.ts";
 
+/**
+ * Each pane runs Claude's folder-trust menu under the name `claude`, reported idle: `c` closes the menu and `o` draws it
+ * again, as an idle agent opens and closes one without a status.
+ */
 const MENU = `
 const { writeFileSync } = require("node:fs");
 const [ready] = process.argv.slice(2);

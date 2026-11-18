@@ -22,7 +22,12 @@ export class VirtualSocket implements SocketLike {
       this.detach(code, reason);
       closed.resolve();
     };
+    // As on a native socket, the peer's CLOSE ends the connection once the messages before it
+    // were handed over: input still waiting to be typed then goes nowhere.
     stream.onPeerClose = ({ code, reason }) => this.detach(code, reason);
+    // Handed over without waiting for the last one's handling, as a native socket does: a role
+    // change must reach the core before a key still in flight is typed. A local close, unlike
+    // the peer's drain, has already detached the core and must accept no more input.
     stream.onMessage = (message) => {
       if (this.closing || this.detached || !stream.live) return;
       void Promise.resolve(handlers.message(this, typeof message === "string" ? message : Buffer.from(message)))
@@ -36,6 +41,7 @@ export class VirtualSocket implements SocketLike {
 
   get readyState(): number {
     if (this.ended || !this.stream.live) return WebSocket.CLOSED;
+    // A native socket is still open while it hands over the messages before the peer's close.
     if (this.peerDraining) return WebSocket.OPEN;
     if (this.closing || this.stream.endedIn || this.stream.endedOut) return WebSocket.CLOSING;
     return this.stream.accepted ? WebSocket.OPEN : WebSocket.CONNECTING;
@@ -43,6 +49,7 @@ export class VirtualSocket implements SocketLike {
 
   open(): void {
     this.stream.accept();
+    // Like native sockets, messages need not wait for open's asynchronous snapshot.
     void Promise.resolve(this.handlers.open(this)).catch(() => this.stream.reset("internal_error"));
   }
 

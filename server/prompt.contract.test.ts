@@ -52,6 +52,10 @@ draw();
 writeFileSync(out, "");
 `;
 
+/**
+ * Claude's command approval with two numbered rows, its whole panel under its rule: ↑/↓ move its `❯`, Enter or a row's number
+ * logs the row it picks.
+ */
 const APPROVAL = `
 const { appendFileSync, writeFileSync } = require("node:fs");
 const [out, spec] = process.argv.slice(2);
@@ -216,6 +220,7 @@ describe("answer buttons on a question's alert (#2916)", () => {
       expect(payload.prompt_id).toBe(shown.id);
       expect(shown.kind).toBe("approval");
       expect(payload.actions).toEqual([{ option_index: 0, label: "Yes" }, { option_index: 1, label: "No" }]);
+      // what a tap allows is on the alert: the question and the command
       expect(payload.body).toContain("Do you want to proceed?");
       expect(payload.body).toContain("pwd");
       const response = await fetch(`http://127.0.0.1:${alerting.port}/api/pane/prompt/answer`, {
@@ -271,6 +276,7 @@ async function piMenu(label: string, title: string, rows: string[]): Promise<Men
   await herdrRpc("pane.send_text", { pane_id: created.root_pane.pane_id, text: `exec '${join(root, "pi")}' '${join(root, "pi-menu.js")}' '${log}' '${JSON.stringify({ title, rows })}'\n` });
   for (let i = 0; i < 200 && !existsSync(log); i++) await Bun.sleep(50);
   expect(existsSync(log)).toBe(true);
+  // pi reports idle while one of its dialogs is open, and the card still has to be offered
   await herdrRpc("pane.report_agent", { pane_id: created.root_pane.pane_id, source: "manual", agent: "pi", state: "idle" });
   return { pane: created.root_pane.pane_id, log };
 }
@@ -299,6 +305,7 @@ describe("answers to pi's dialogs", () => {
     const prompt = await card(confirm);
     expect(prompt.options.map((option) => option.label)).toEqual(["Yes", "No"]);
     expect((await answer(confirm, prompt.id, 1)).status).toBe(200);
+    // pi's own Yes/No: pressing the row answers the question false, where Escape leaves it open
     expect(await confirmed(confirm)).toEqual(["No"]);
   });
 });
@@ -379,6 +386,7 @@ describe("picks from Claude Code's model list", () => {
     const prompt = await card(models);
     expect(prompt.question).toBe("Select model for this session (currently Opus 5.5). 2 more models are listed in the terminal.");
     expect(prompt.options.map((option) => option.label)).toEqual(MODELS.slice(0, 5).map(([name]) => name));
+    // the window's last row, three below the cursor: ↓ ↓ ↓ and then s, never the Enter that saves a default
     expect((await answer(models, prompt.id, 4)).status).toBe(200);
     expect(await confirmed(models)).toEqual(["session: Haiku 4.5"]);
     let after: unknown = prompt;
@@ -511,6 +519,8 @@ describe("an answer whose menu changes under it", () => {
       await herdrRpc("pane.report_agent", { pane_id: ended.pane, source: "manual", agent: "codex", state: "working" });
       await working;
       await herdrRpc("pane.report_agent", { pane_id: ended.pane, source: "manual", agent: "codex", state: "blocked" });
+      // well inside the answer's own wait (1.5 s) for the cursor: the refusal below is for the
+      // asking that ended, not for a menu that never showed the move
       expect(performance.now() - waiting).toBeLessThan(600);
       writeFileSync(`${ended.log}.go`, "");
       expect((await response).status).toBe(409);

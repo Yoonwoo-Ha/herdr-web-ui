@@ -27,7 +27,9 @@ export function tooOldToMove(kind: Machine["kind"] | undefined, status: number, 
 }
 
 const MOVE_STEPS = new Set(["ending_agents", "building", "starting_agents", "switching"]);
+/** the reasons this version knows (shared/runtime-move.ts MoveUnavailable): any other words of that PC are not carried */
 const MOVE_REASONS = new Set<string>(["not_herdr", "no_herdr_core", "runtime_locked", "herdr_app"] satisfies MoveUnavailable[]);
+/** What of a PC's move status the roster carries (PcMoveStatus): no reason or agent's words, which name folders. */
 function moveSummary(status: Record<string, unknown>): PcMoveStatus | null {
   const { state } = status;
   if (state === "idle" || state === "waiting" || state === "done") return { state };
@@ -40,6 +42,11 @@ function moveSummary(status: Record<string, unknown>): PcMoveStatus | null {
   return null;
 }
 
+/**
+ * A PC's move badge from its own plan answer: null when it cannot tell (an Ovis without the route, one
+ * that does not take this server's credential there, or one with no runtime to switch), undefined when it
+ * did not answer now (herdr away, a timeout), so the badge it had stays.
+ */
 export async function readMoveOffer(endpoint: { url: string; token: string }): Promise<PcMoveOffer | null | undefined> {
   const response = await fetch(`${endpoint.url}/api/runtime/move`, { headers: { authorization: `Bearer ${endpoint.token}` }, redirect: "error", signal: AbortSignal.timeout(30_000) });
   if (!response.ok) {
@@ -71,9 +78,11 @@ async function startMove(manager: MachineManager, id: string, revision: string):
       headers: { authorization: `Bearer ${endpoint.token}`, "content-type": "application/json", "x-herdr-update": "1" },
     });
   } catch {
+    // the start may have reached that PC before its answer was lost: not a refusal
     return { outcome: "unknown", message: MOVE_UNKNOWN };
   }
   if (response.status === 202) { await discard(response); manager.moveOfferSoon(id); return { outcome: "started" }; }
+  // a gateway between here and that PC (the relay, a tunnel) may lose the answer after the PC took the start
   if (response.status === 502 || response.status === 504) { await discard(response); manager.moveOfferSoon(id); return { outcome: "unknown", message: MOVE_UNKNOWN }; }
   const body = await readCapped(response, REMOTE_LIMITS.bridgeError).catch(() => null);
   const code = answerCode(body);

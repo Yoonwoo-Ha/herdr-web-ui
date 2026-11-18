@@ -18,6 +18,7 @@ export class PullRequestError extends Error {
 }
 
 const DEADLINE_MS = 20_000;
+/** a pull request's JSON with its checks is a few hundred kilobytes at most */
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
 const LOG_KEEP_BYTES = 256 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
@@ -80,6 +81,7 @@ async function runGh(cwd: string, args: string[], options: PullRequestOptions, k
   }
 }
 
+/** gh's first line of complaint, as one plain line: shown in the view, so no control characters */
 function firstLine(stderr: string): string {
   return (stderr.split("\n").find((line) => line.trim() !== "") ?? "").replace(/[\u0000-\u001f\u007f]/g, "").replace(/^X\s+/, "").trim().slice(0, 300);
 }
@@ -206,8 +208,11 @@ export async function pullRequestView(cwd: string, options: PullRequestOptions =
   };
 }
 
+/** GitHub's log line prefix: an ISO time, then a space */
 const TIMESTAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ?/;
+/** terminal escapes: links and titles (OSC), colours and moves (CSI), and the two-byte ones (`ESC(B`) */
 const ESCAPES = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b[ -/]*[0-~]/g;
+/** a sent message holds no control character but tab and newline (shared/protocol.ts) */
 const CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
 
 /** GET /api/workspace/pr/log: the last lines of an Actions job's log, from the workspace's repository. */

@@ -23,6 +23,19 @@ export class PreferencesTooLarge extends Error {
   constructor() { super(`Shared preferences are at most ${MAX_PREFERENCES_BYTES / 1024} KB`); }
 }
 
+/**
+ * The muted panes are always in the document, empty while nothing is muted: a server with none
+ * stored reads as none muted, without a write or a new revision, so a browser tells a server that
+ * keeps the list from an older one by the list being there. They are stored in a document of their
+ * own, muted-panes.json, not in preferences.json: a release from before them rewrites
+ * preferences.json whole on its next save (a rollback, a downgrade), and would erase a list kept
+ * there. preferences.json keeps the shape every release reads and writes. The tab labels
+ * (`tab_labels`) are kept apart in tab-labels.json for the same reason; they are only ever added
+ * (mergeTabLabels), and are absent from the document while none is kept. The state folder's id
+ * (`state_id`) is made at the first save and kept in preferences-id.json, apart for the same reason:
+ * a browser tells a folder that started over by it. A damaged one is left as it is and no id is sent
+ * (browsers then go by the revision): a new one would tell them the folder started over when it did not.
+ */
 export class PreferenceStore {
   private current: SharedPreferences = { revision: 0, settings: {}, muted_panes: [] };
   private readonly path: string;
@@ -131,6 +144,9 @@ export class PreferenceStore {
       base = without;
     }
     if (this.stateId === undefined) {
+      // the folder's first save names it, before anything else is written: a save whose id cannot be
+      // kept fails, so no document goes out that a browser could take for a folder's without one. An id
+      // another server on this folder wrote since this one started is taken, never written over
       this.stateId = readStateId(this.stateDir);
       if (this.stateId === undefined) {
         const id = randomUUID().replaceAll("-", "");
@@ -158,6 +174,8 @@ export class PreferenceStore {
     const keepDamagedMutes = change.muted_panes !== undefined && this.mutesUnsettled && this.readMutes() === null;
     const { muted_panes: _stored, tab_labels: _labels, state_id: _id, ...shared } = document();
     writeStateDocument(this.path, `${JSON.stringify(shared, null, 2)}\n`, keepDamaged);
+    // the labels before the mutes, and never in their way: mutes saved before a failed save of the labels
+    // would otherwise silence panes though the browser was told they were not.
     let labelsWritten = false;
     if (labelsChanged) {
       try {
@@ -194,6 +212,8 @@ export class PreferenceStore {
     }
     this.unsettled = false;
     this.current = next;
+    // every listener hears of the saved change; the first one that fails then fails the save's caller, so a
+    // change that could not be followed through (a Hub account's hide not saved, #3428) is not taken as done
     let failure: { error: unknown } | null = null;
     for (const listener of [...this.listeners]) {
       try { listener(this.current); } catch (error) { failure ??= { error }; }
@@ -214,6 +234,7 @@ export async function handlePreferencesRequest(request: Request, store: Preferen
   const tooLarge = () => reply({ error: { code: "too_large", message: new PreferencesTooLarge().message } }, 413);
   if (request.method === "GET") return reply(store.get());
   if (request.method !== "PUT") return reply({ error: { code: "method_not_allowed", message: "Use GET or PUT /api/preferences" } }, 405);
+  // a body announced over the limit is refused unread; one that lies about its length is measured
   const announced = Number(request.headers.get("content-length"));
   if (Number.isFinite(announced) && announced > MAX_PREFERENCES_BYTES) return tooLarge();
   const text = await request.text();

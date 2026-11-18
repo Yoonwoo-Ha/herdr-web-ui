@@ -9,6 +9,7 @@ import { capturePiDeliveryAnchor, capturePiDeliveryAnchorAttempt, capturePiDeliv
 const roots: string[] = [];
 const dir = () => { const root = mkdtempSync(join(tmpdir(), "ovis-pi-delivery-")); roots.push(root); return root; };
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+/** `stamp` is the time Pi gave the message when it was submitted, before it was written. */
 const entry = (id: string, parentId: string | null, role: string, text: string, stamp = Date.now()) => JSON.stringify({
   type: "message", id, parentId, timestamp: "2026-10-24T00:00:00.000Z",
   message: { role, content: [{ type: "text", text }], timestamp: stamp },
@@ -269,6 +270,8 @@ describe("Pi delivery transcript matching", () => {
   it("reads bounded tails on a 200 MiB history and parses only appended records", () => {
     const path = join(dir(), "large.jsonl");
     writeFileSync(path, header());
+    // A sparse hole stands in for 200 MiB of older history: a reader that scanned it would count
+    // every byte, while the disk stores none of them.
     fs.truncateSync(path, 200 * 1024 * 1024);
     appendFileSync(path, "\n" + entry("baseline", "old-24", "assistant", "done"));
     const original = fs.readSync;
@@ -375,6 +378,7 @@ describe("Pi delivery transcript matching", () => {
     const complete = start + message;
     const prefix = kind === "empty file" ? "" : kind === "partial header" ? start.slice(0, -1) : complete.slice(0, -1);
     writeFileSync(path, prefix);
+    // No write occurs during the attempt: equal before/after stats do not prove the writer is done.
     expect(capturePiDeliveryAnchorAttempt(path)).toEqual({ anchor: null, retry: true });
     let waits = 0;
     const anchor = await capturePiDeliveryAnchorRetrying(path, false, undefined, capturePiDeliveryAnchorAttempt,

@@ -4,6 +4,7 @@ import { processStartedAt, processStartedAtAsync, processStartLowerBound, proces
 describe("process start read without holding the event loop", () => {
   it.skipIf(process.platform !== "linux" && process.platform !== "darwin")("reads the same identity the synchronous read gives, with no child process", async () => {
     const child = Bun.spawn([process.execPath, "-e", "await Bun.sleep(5000)"]);
+    // a ps here, even an awaited one, is what #1404 removed: the kernel answers on both platforms
     const spawn = spyOn(Bun, "spawn");
     const blocking = spyOn(Bun, "spawnSync");
     try {
@@ -52,6 +53,7 @@ describe("process start time", () => {
     try {
       const lower = processStartLowerBound(child.pid);
       expect(lower).not.toBeNull();
+      // never after the process started (it started by the time spawn returned) ...
       expect(lower!).toBeLessThanOrEqual(spawned);
       // ... and close: on Linux within btime's whole second and a tick, on macOS the kernel's own start
       expect(lower!).toBeGreaterThanOrEqual(before - (process.platform === "linux" ? 1030 : 5));
@@ -69,6 +71,7 @@ describe("process start time", () => {
   });
 
   it.skipIf(process.platform !== "linux")("bounds a Linux start below both readings: btime's and the uptime's", async () => {
+    // btime is whole seconds: processStartedAt may be up to a second early, the bound below it still
     const before = Date.now();
     const child = Bun.spawn([process.execPath, "-e", "await Bun.sleep(5000)"]);
     const spawned = Date.now();

@@ -11,6 +11,7 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 const ADDRESS = "https://herdr-test-0123456789abcdef0123456789abcdef01234567.relay.example";
 const RELAY = "https://relay.example";
+/** the short host Portal also serves for a `--name` (`<name>.<relay>`), printed on the same ready line */
 const SHORT = "https://herdr-test.relay.example";
 const open = { tokenSet: true, serveOnly: false };
 
@@ -77,6 +78,7 @@ function standIn(options: { version?: string; ready?: boolean; says?: string; ig
   };
 }
 
+/** A relay that answers its version the way Portal's /sdk/domain does. */
 function relay(version = "v2.6.1"): typeof fetch {
   return (async (url: string | URL | Request) => {
     if (!String(url).endsWith("/sdk/domain")) return new Response(null, { status: 404 });
@@ -122,6 +124,9 @@ async function bounded<T>(promise: Promise<T>, what: string, timeoutMs = 2_000):
   }
 }
 
+// A child process starting or stopping is waited for by its own signal (its READY line, its exit). The
+// bound only names a child that hangs: a loaded runner can take seconds to start a Bun process, so it is
+// far above a loaded runner's start time. A case that uses it sets its own timeout above it (CASE_MS).
 const CHILD_MS = 20_000;
 const CASE_MS = CHILD_MS + 10_000;
 
@@ -139,7 +144,9 @@ function seedSavedPortal(stateDir: string, pid: number | null = process.pid): vo
   writeFileSync(join(directory, "state.json"), JSON.stringify({ enabled: true, relay: RELAY, port: 7317, pid }));
 }
 
+// what a server started by the herdr plugin may carry: its own token, and Portal's own settings
 const SECRET = "client-secret-that-only-the-environment-holds";
+/** the bearer secret a stand-in `auth issue` prints, which nothing may keep */
 const LINK = "credential-for-one-visitor-only";
 const AMBIENT_PROOF = "an-ambient-proof-the-server-was-started-with";
 const inherited = { OVIS_TOKEN: "do-not-pass-this-on", IDENTITY_PATH: "/somewhere/else.json", OVIS_PORTAL_OIDC_CLIENT_SECRET: SECRET, AUTH_IDENTITY_PROOF: AMBIENT_PROOF };
@@ -159,6 +166,7 @@ describe("what Portal is given and says", () => {
     expect(relayOrigin("relay.example")).toBe(RELAY);
     expect(relayOrigin(" https://relay.example/ ")).toBe(RELAY);
     expect(relayOrigin("https://relay.example:8443")).toBe("https://relay.example:8443");
+    // `--relays` reads a comma as a second relay
     for (const refused of ["", "http://relay.example", "https://user:pass@relay.example", "https://relay.example/path", "https://relay.example/?x=1", "relay.example --hide", "relay.example,evil.example", "https://a.example,b.example", 7, null]) {
       expect(relayOrigin(refused)).toBeNull();
     }
@@ -229,6 +237,7 @@ describe("running Portal", () => {
     expect(flag("--identity-path")).toBe(join(stateDir, "portal", "identity.json"));
     expect(seen).toContain("--discovery=false");
     expect(seen).toContain("--hide");
+    // the OIDC secret is set on this server and goes only to a Portal that signs in with OIDC
     expect(envOf(seen)).toBe(`token=unset identity=unset ${NO_SECRET}`);
     expect(proofOf(seen)).toBeNull();
     expect(seen.slice(0, -1).filter((line) => line.startsWith("--auth"))).toEqual([]);
@@ -447,6 +456,7 @@ describe("running Portal", () => {
     const first = new PortalService({ stateDir, bin: portal.path, fetch: relay() });
     first.start({ relay: RELAY, port: 7317, ...open });
     await until(first, (s) => s.phase === "running", "the first Portal was ready");
+    // no shutdown: two processes with one identity would take the address from each other
     const next = new PortalService({ stateDir, bin: portal.path, fetch: relay() });
     await next.resume({ port: 7317, ...open });
     expect(await until(next, (s) => s.phase !== "starting", "the next Portal was ready")).toMatchObject({ phase: "running" });
@@ -712,14 +722,17 @@ describe("running Portal", () => {
 describe("who may open the address", () => {
 
   it("builds each sign-in's arguments, with nothing a visitor or the secret could change", () => {
+    // no sign-in: a visitor's own identity headers are dropped, so none can pass for Portal's
     expect(authArgs({ method: "none", allow: [], issuer: null, client_id: null })).toEqual(["--strip-request-header", "X-Portal-User", "--strip-request-header", "X-Portal-Auth"]);
     expect(authArgs(credential())).toEqual(["--auth=credential", "--auth-identity-headers=true"]);
+    // a name with spaces, or one that starts like a flag, stays one argument and never reads as a flag
     expect(authArgs(credential("Alice Smith", "-bob", "--hide"))).toEqual(["--auth=credential", "--auth-identity-headers=true", "--auth-allow=Alice Smith", "--auth-allow=-bob", "--auth-allow=--hide"]);
     expect(authArgs(SIWE_AUTH)).toEqual(["--auth=siwe", "--auth-identity-headers=true", `--auth-allow=${SIWE_AUTH.allow[0]}`]);
     expect(authArgs(OIDC)).toEqual([
       "--auth=oidc", "--auth-identity-headers=true", "--auth-allow=me@example.com", "--auth-allow=@example.com",
       "--auth-oidc-issuer=https://accounts.google.com", "--auth-oidc-client-id=client-1.apps.example",
     ]);
+    // Portal refuses to strip the identity headers it sets itself
     for (const auth of [credential(), SIWE_AUTH, OIDC]) expect(authArgs(auth)).not.toContain("--strip-request-header");
   });
 
@@ -759,6 +772,7 @@ describe("who may open the address", () => {
     const offered = async (options: Parameters<typeof standIn>[0]) => (await new PortalService({ stateDir: mkdtempSync(join(root, "state-")), bin: standIn(options).path, fetch: relay() }).status(open)).auth_methods;
     expect(await offered({})).toEqual(["credential", "siwe", "oidc"]);
     expect(await offered({ flags: SIGN_IN_FLAGS })).toEqual(["credential", "siwe"]);
+    // a Portal that signs visitors in but cannot prove the identity it states offers nothing, whatever else it lists
     expect(await offered({ flags: [...SIGN_IN_FLAGS.filter((flag) => flag !== PROOF_FLAG), ...OIDC_FLAGS] })).toEqual([]);
     expect(await offered({ flags: [PROOF_FLAG, "auth-identity-headers", "auth-allow value"] })).toEqual([]);
     expect(await offered({ flags: ["auth string", PROOF_FLAG, "auth-allow value"] })).toEqual([]);
@@ -795,6 +809,7 @@ describe("who may open the address", () => {
     expect(await next.status(open)).toMatchObject({ phase: "idle", auth: credential("alice", "bob") });
     next.start({ relay: RELAY, port: 7317, ...open });
     await until(next, (s) => s.phase === "running", "Portal was ready again");
+    // a start without a sign-in is the app's own token or a paired device again
     expect(portal.seen().some((arg) => arg.startsWith("--auth"))).toBe(false);
     expect(savedState(stateDir)).toMatchObject({ auth: { method: "none", allow: [] } });
     await next.shutdown();
@@ -832,6 +847,7 @@ describe("who may open the address", () => {
   });
 
   it("starts a sign-in only on a Portal that binds it to its hosts (v2.7.3 or later, by semver)", async () => {
+    // malformed versions fail closed: leading zeros, junk after it, a fourth part, a huge part, an empty or zero-led pre-release
     for (const [version, runs] of [
       ["v2.7.2", false], ["v2.7.3-rc.1", false], ["v2.7.3junk", false],
       ["v02.7.3", false], ["v2.07.3", false], ["v2.7.3x", false], ["v2.7.3.4", false], ["v2.7.3+foo..bar", false],
@@ -993,6 +1009,7 @@ describe("the proof of a Portal with a sign-in", () => {
     for (const given of [null, "", "a", proof.slice(1), proof.slice(0, -1), `${proof}0`, `${proof}${proof}`, proof.replace(/.$/, "b"), proof.toUpperCase(), ` ${proof}`, "x".repeat(10_000)]) {
       expect(proofMatches(proof, given)).toBe(false);
     }
+    // no proof made: nothing matches
     for (const given of [null, "", proof]) expect(proofMatches(null, given)).toBe(false);
   });
 
@@ -1007,6 +1024,7 @@ describe("the proof of a Portal with a sign-in", () => {
       const proof = proofOf(portal.seen())!;
       expect(proof).toMatch(PROOF);
       expect(service.vouches(proof)).toBe(true);
+      // the one made here, never one this server's own environment had
       expect(service.vouches(AMBIENT_PROOF)).toBe(false);
       for (const wrong of [null, "", proof.slice(1), proof.slice(0, -1), `${proof}0`, "0".repeat(64), proof.toUpperCase()]) expect(service.vouches(wrong)).toBe(false);
       expect(argsOf(portal.seen()).some((arg) => arg.includes(proof))).toBe(false);
@@ -1068,6 +1086,7 @@ describe("the proof of a Portal with a sign-in", () => {
     await started(one, credential());
     const stoppedProof = proofOf(first.seen())!;
     one.stop();
+    // at once, not when the process has gone
     expect(one.vouches(stoppedProof)).toBe(false);
     await until(one, (s) => s.phase === "idle", "Portal stopped");
     expect(stopped.vouches(stoppedProof)).toBe(false);
@@ -1080,12 +1099,14 @@ describe("the proof of a Portal with a sign-in", () => {
     expect(shut.vouches(shutProof)).toBe(false);
     await bounded(done, "Portal shutdown settled");
 
+    // ended on its own with no relaunch allowed (nothing authorized one)
     const third = standIn({ exitAfter: true });
     const ended = new PortalService({ stateDir: mkdtempSync(join(root, "state-")), bin: third.path, fetch: relay() });
     ended.start({ relay: RELAY, port: 7317, auth: credential(), ...open });
     await until(ended, (s) => s.phase === "error", "Portal ended");
     expect(ended.vouches(proofOf(third.seen()))).toBe(false);
 
+    // a spawn that fails: whatever was made for it counts for nothing
     const fourth = standIn();
     const failing = new PortalService({ stateDir: mkdtempSync(join(root, "state-")), bin: fourth.path, fetch: relay() });
     const spawn = Bun.spawn;
@@ -1138,6 +1159,7 @@ describe("private links", () => {
       }
       expect(savedState(stateDir)).toMatchObject({ invites: [{ name: "Alice Smith", role: "watch" }, { name: "bob", role: "watch" }] });
       expect(service.roleFor("Alice Smith", "credential")).toBe("watch");
+      // the link is a bearer secret: no status, saved file, Portal output or log keeps it
       expect(JSON.stringify(await service.status(open))).not.toContain(LINK);
       expect(readFileSync(join(stateDir, "portal", "state.json"), "utf8")).not.toContain(LINK);
       expect(JSON.stringify([...log.mock.calls, ...info.mock.calls])).not.toContain(LINK);
@@ -1229,6 +1251,7 @@ describe("private links", () => {
       expect(body.error.code).toBe("portal_invite_failed");
       expect(body.error.message).toContain("exit 1");
       expect(body.error.message).toContain("load tunnel identity: no such file");
+      // even a credential it printed before failing is not repeated
       expect(JSON.stringify(body)).not.toContain(LINK);
     } finally {
       await bounded(service.shutdown(), "Portal shutdown settled");
@@ -1291,6 +1314,7 @@ function observe(service: PortalService, options: { refuseSave?: (pid: number) =
       return launched;
     }),
     spyOn(Bun, "spawn").mockImplementation(((command: string[], spawnOptions?: Parameters<typeof Bun.spawn>[1]) => {
+      // `expose --help` is the status asking which sign-ins this Portal offers, not a tunnel
       const expose = Array.isArray(command) && command[1] === "expose" && command[2] !== "--help";
       if (expose) earlierGone.push(exposes.every((pid) => !alive(pid)));
       const child = spawn(command, spawnOptions);

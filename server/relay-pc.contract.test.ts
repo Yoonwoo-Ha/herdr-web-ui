@@ -23,6 +23,10 @@ function stateDir(): string {
   return dir;
 }
 
+/**
+ * The private address B names for its direct carrier in these tests, on the direct listener's own port (the only one
+ * a PC server dials); A's dials to it reach B's loopback listener on whatever port that got.
+ */
 const LAN = "10.99.0.1";
 const TAILNET = "100.64.0.7";
 const listener = { port: 0 };
@@ -72,6 +76,7 @@ async function twoPcs(options: { direct?: { reachable: (dial: number, host: stri
     const target = new URL(url);
     lan.dialed.push(target.host);
     if (target.hostname !== LAN && target.hostname !== TAILNET) return new WebSocket("ws://127.0.0.1:1/");
+    // port 1 on loopback refuses at once, as an address of another network does
     const dial = ++lan.dials;
     const port = options.direct?.reachable(dial, target.hostname) ? (target.port === "7319" ? String(listener.port) : target.port) : "1";
     const socket = new WebSocket(`ws://127.0.0.1:${port}${target.pathname}${target.search}`);
@@ -144,9 +149,11 @@ it("adds a PC through the relay, shows its panes, signs in again after a restart
   const { machine } = await added.json() as { machine: Machine };
   expect(machine).toMatchObject({ kind: "relay", name: "Lab", relay: { server_id: new URL(link).pathname.split("/")[2] } });
 
+  // a release from before relay PCs reads machines.json: a relay PC is kept apart, so a rollback still starts
   expect(readFileSync(join(aState, "machines.json"), "utf8")).not.toContain(machine.id);
   expect(readFileSync(join(aState, "relay-pcs.json"), "utf8")).toContain(machine.id);
 
+  // B admitted A as one more paired device, by the same consent a phone needs
   const devices = b.context.services.devices;
   const paired = devices.list(null).find((device) => device.via_relay);
   expect(paired?.label).toBe(`Ovis on ${hostname()}`.slice(0, 64));
@@ -172,14 +179,17 @@ it("adds a PC through the relay, shows its panes, signs in again after a restart
   terminal.onclose = null;
   terminal.close();
 
+  // a restart signs in with the saved key: the pairing code is spent, and none is sent again
   a.stop();
   a = startA();
   await machineWhen(a.base, (pc) => pc.id === machine.id && pc.state === "connected");
 
+  // B revokes A: A stops, says why, and does not try again
   devices.revoke(paired!.id);
   const revoked = await machineWhen(a.base, (pc) => pc.id === machine.id && pc.state === "error");
   expect(revoked.error).toContain("removed this PC's access");
 
+  // Remove PC forgets the key with the registration
   const removed = await fetch(`${a.base}/api/machines/${machine.id}`, { method: "DELETE", headers: { origin: a.base, "x-herdr-machine": "1", "x-herdr-update": "1" } });
   expect(removed.status).toBe(200);
   const keys = join(aState, "relay-pcs");
@@ -201,10 +211,13 @@ it("finds a PC by the code it shows, keeps its offer while its ID is compared, a
   const { code, server_id } = await minted.json() as { code: string; server_id: string };
   const found = await findRelayPc(a.base, code.toLowerCase());
   expect(found.status).toBe(200);
+  // the ID to compare with B's screen, and no pairing code: the offer that holds one stays on A
   const answer = await found.json() as { ticket: string; server_id: string; name: string };
   expect(answer).toEqual({ ticket: expect.any(String), server_id, name: expect.any(String) });
+  // one exchange spends the code: nothing finds B with it again
   expect(await errorCode(await findRelayPc(a.base, code))).toBe("typed_code_no-pc");
 
+  // only the window holding the ticket adds it: another client naming B's public ID takes nothing
   const other = await postRelay(a.base, { found: server_id });
   expect(other.status).toBe(400);
   expect((await other.json() as { error: { message: string } }).error.message).toContain("no longer waiting");
@@ -213,6 +226,7 @@ it("finds a PC by the code it shows, keeps its offer while its ID is compared, a
   const { machine } = await added.json() as { machine: Machine };
   expect(machine.relay?.server_id).toBe(server_id);
   await machineWhen(a.base, (pc) => pc.id === machine.id && pc.state === "connected");
+  // and only once
   expect((await postRelay(a.base, { found: answer.ticket })).status).toBe(400);
 }, 60_000);
 
@@ -273,6 +287,7 @@ it("moves a relay PC's connection to its same-network address without dropping i
   const { link, startA } = await twoPcs({ direct: { reachable: () => true } });
   let a = startA();
   const { machine } = await (await addRelayPc(a.base, link, "Lab")).json() as { machine: Machine };
+  // When A has paired through the relay (pairing never goes direct) and B named its address inside the channel
   const seen: string[] = [];
   const routedEarly: string[] = [];
   const moved = await machineWhen(a.base, (pc) => {
@@ -291,6 +306,7 @@ it("moves a relay PC's connection to its same-network address without dropping i
   a = startA();
   const back = await machineWhen(a.base, (pc) => pc.id === machine.id && pc.state === "connected");
   expect(back.route).toBe("direct");
+  // and that channel outlives the deadline its sign-in had (each carrier's share of 1.5 s)
   const watch = new AbortController();
   const dropped: string[] = [];
   const watching = machineWhen(a.base, (pc) => { if (pc.id === machine.id && pc.state !== "connected") dropped.push(pc.state); return false; }, watch.signal).catch(() => undefined);
@@ -399,6 +415,7 @@ it("dials none of the carriers a PC names off its listener's port family or on l
   const tunnel = await openRelayPcTunnel(offer, key, { socket: local as never, directSocket: onLan as never, onLost: () => {}, onMoved: () => moved.resolve() });
   cleanup.push(() => tunnel.close());
   await bounded(moved.promise);
+  // Then it only ever dialed B's listener on the direct port, and keeps only that one
   expect([...new Set(lan.dialed)]).toEqual([`${LAN}:7319`]);
   expect(key.direct).toEqual([`ws://${LAN}:7319`]);
 }, 60_000);
@@ -521,6 +538,7 @@ it("shows a relay PC's own update on its card and installs it from here, with it
   const { machine } = await (await addRelayPc(a.base, link, "Lab")).json() as { machine: Machine };
   const offered = await machineWhen(a.base, (pc) => pc.id === machine.id && pc.state === "connected" && pc.ovis_update != null);
   expect(offered.ovis_update).toEqual({ how: "own", current_version: "0.5.0", latest_version: "0.5.1", updatable: true, reason: null, revision: OFFERED_RELEASE });
+  // a release other than the one shown is refused, and nothing is asked of that PC
   const other = await fetch(`${a.base}/api/machines/${machine.id}/update`, { method: "POST", headers: { origin: a.base, "x-herdr-machine": "1", "x-herdr-update": "1", "content-type": "application/json" }, body: JSON.stringify({ revision: "b".repeat(40) }) });
   expect(other.status).toBe(409);
   expect(b.requests).toEqual([]);
@@ -531,6 +549,8 @@ it("shows a relay PC's own update on its card and installs it from here, with it
   expect(started.status).toBe(202);
   const { job_id } = await started.json() as { job_id: string };
   expect((await step).updating).toMatchObject({ job_id, ovis: true });
+  // the install names the release shown, and carries the id its 202 gave (POST /api/updates/install), which only a cancel by
+  // the one that asked for it names
   expect(b.requests).toEqual([{ command: "install", expected_revision: OFFERED_RELEASE, install_id: expect.stringMatching(INSTALL_ID) }]);
   const done = await machineWhen(a.base, (pc) => pc.id === machine.id && !pc.updating && pc.ovis_update === null);
   expect(done.update_error ?? null).toBeNull();

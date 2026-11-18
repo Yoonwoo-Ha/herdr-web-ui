@@ -112,6 +112,7 @@ it("lets one holder at a time, the kernel's own: a second taker is refused while
 it("frees the lock when its holder's process dies, with nothing but the kernel to tell (no pid, no start time)", async () => {
   const holder = await holderProcess(lockPath);
   expect(await takeMoveLock(lockPath)).toBeNull();
+  // killed outright: nothing of it cleans up, and its socket file stays behind with nobody listening
   await holder.kill();
   expect(existsSync(lockPath)).toBe(true);
   const taken = await takeMoveLock(lockPath);

@@ -36,6 +36,7 @@ it("offers to install herdr-core where only it is missing, installs it once aske
   try {
     expect(await read()).toEqual({ available: false, reason: "no_herdr_core", install: { version: "0.1.17" }, status: { state: "idle" } });
 
+    // a request from another page, or no request at all, installs nothing
     expect(await refusal(await install(auth))).toEqual([403, "forbidden"]);
     expect((await install({ "x-herdr-update": "1" })).status).toBe(401);
     expect(installs).toBe(0);

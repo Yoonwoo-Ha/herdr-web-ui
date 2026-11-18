@@ -49,6 +49,7 @@ describe("GET /api/workspace/git/log", () => {
   beforeAll(() => {
     root = repository("log");
     oids = [1, 2, 3, 4, 5].map((n) => commit(root, `commit ${n}`, 1_700_000_000 + n * 60));
+    // names a comma-split or short-name list would read wrong, and an annotated tag that must peel to its commit
     git(root, ["branch", "feat/a,b", oids[2]!]);
     git(root, ["tag", "-a", "v1.0", "-m", "release", oids[0]!]);
     git(root, ["update-ref", "refs/remotes/origin/main", oids[3]!]);
@@ -183,6 +184,7 @@ describe("GET /api/workspace/git/show", () => {
     const changes = await repoDiffFiles(root, query({ scope: "commit", base: EMPTY_TREE, head: first }));
     expect(changes.files.map((file) => [file.path, file.status])).toEqual([["a.txt", "added"]]);
     expect((await repoDiffFile(root, query({ scope: "commit", base: EMPTY_TREE, head: first, path: "a.txt" }))).patch).toContain("\n+root commit\n");
+    // the empty tree is a base only: it is no commit to read from
     expect(await codeOf(repoDiffFiles(root, query({ scope: "commit", base: first, head: EMPTY_TREE })))).toBe("revision_not_found");
   });
 

@@ -5,6 +5,13 @@ import { resolve } from "node:path";
 
 import { type Context, EMPTY_TREE_OIDS, type GitRun, MAX_REFNAME_BYTES, OID, RepoDiffError, type RepoDiffOptions, checkRevision, contextOf, repositoryOf, resolveRevision, runGit } from "./repo-diff.ts";
 
+/**
+ * A repository's history, read with git and never written: a page of commits, the local branches
+ * with their upstreams, and one commit's whole message. They run git as the diff routes do
+ * (`repo-diff.ts`: argv only, the same safety flags, byte caps and deadline), and one commit's
+ * changes are read with those routes, against the `base` the commit read names.
+ */
+
 export const REPO_LOG_MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 50;
 const MAX_SKIP = 999_999_999;
@@ -19,10 +26,12 @@ const historyContext = (options: RepoLogOptions): Context => contextOf({ ...opti
 /** No signature is checked (that runs gpg), and the text is UTF-8 whatever the repository's log encoding. */
 const LOG_FLAGS = ["--no-color", "--no-decorate", "--no-show-signature", "--encoding=UTF-8", "-z"];
 const COMMIT_FIELDS = ["%H", "%P", "%an", "%ae", "%aI", "%cn", "%ce", "%cI", "%s"];
+/** Each field ends in a NUL, and `-z` ends each commit with one more. */
 const COMMIT_FORMAT = `--format=${COMMIT_FIELDS.map((field) => `${field}%x00`).join("")}`;
 
 type CommitRow = Omit<RepoCommit, "refs">;
 
+/** The whole commits of `log` output in COMMIT_FORMAT: what follows the last complete one was cut short. */
 function commitsOf(output: string): CommitRow[] {
   const end = output.lastIndexOf("\0");
   const tokens = end < 0 ? [] : output.slice(0, end).split("\0");
@@ -42,11 +51,13 @@ function commitsOf(output: string): CommitRow[] {
   return commits;
 }
 
+/** The branches, remote branches and tags at these commits, an annotated tag at the commit it names. */
 async function refsAt(context: Context, root: string, oids: string[]): Promise<{ refs: Map<string, string[]>; complete: boolean }> {
   const refs = new Map<string, string[]>();
   if (oids.length === 0) return { refs, complete: true };
   const run = await runGit(context, root, ["for-each-ref", "--format=%(objectname)%00%(*objectname)%00%(symref)%00%(refname)", "--sort=refname", ...oids.map((oid) => `--points-at=${oid}`), "--", "refs/heads/", "refs/remotes/", "refs/tags/"], context.maxListBytes);
   if (!run.overflow && run.code !== 0) throw new RepoDiffError("git_failed", "git could not list this repository's refs", 500);
+  // one ref per line, read by its full name so a name with a comma or a slash reads as itself
   for (const line of run.stdout.split("\n").slice(0, -1)) {
     const [oid, peeled, symref, name] = line.split("\0");
     const at = peeled === "" ? oid : peeled;
@@ -107,6 +118,7 @@ export async function repoLog(cwd: string, params: URLSearchParams, options: Rep
 
 const BRANCH_FORMAT = "--format=%(HEAD)%00%(refname)%00%(objectname)%00%(symref)%00%(upstream)%00%(upstream:track,nobracket)%00%(committerdate:iso-strict)%00%(contents:subject)";
 
+/** `for-each-ref` rows in BRANCH_FORMAT; what follows the last newline was cut short. */
 function branchesOf(output: string): RepoBranch[] {
   const branches: RepoBranch[] = [];
   for (const line of output.split("\n").slice(0, -1)) {

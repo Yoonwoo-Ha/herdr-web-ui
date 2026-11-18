@@ -1,3 +1,6 @@
+/**
+ * Transcript reads/stats are asynchronous on the checked descriptor, never a reopened path.
+ */
 import { closeSync, fstat, read, type BigIntStats } from "node:fs";
 
 import { PiLabelParser, type PiLabel } from "./pi-session-label.ts";
@@ -25,6 +28,7 @@ const descriptorRead = (fd: number, buffer: Buffer, length: number, position: nu
 });
 
 interface Task {
+  /** Check each asynchronous step; null explicitly refuses a path/descriptor identity. */
   open: (checkActive: () => void) => number | null | Promise<number | null>;
   deadline: number;
   done: (label: PiLabel | null) => void;
@@ -121,6 +125,7 @@ export class PiSessionReader {
       checkActive();
       const unchanged = (after: BigIntStats) => before.size === after.size
         && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
+      // Nanoseconds strengthen the requested millisecond key on filesystems that expose them.
       key = [before.dev, before.ino, before.size, before.mtimeMs, before.ctimeMs, before.mtimeNs, before.ctimeNs].join(":");
       const cached = task.cache === null ? undefined : this.labels.get(task.cache.path);
       if (task.cache !== null) this.labels.delete(task.cache.path);
@@ -168,12 +173,16 @@ export class PiSessionReader {
       const finished = parser.finish();
       const label = finished.header === null ? null : finished;
       if (!accepted(label)) return null;
+      // One-chunk headerless files are cheap and stay free; longer files must not restart
+      // their completed scan on every open and consume unfinished-header slots forever.
       if (label === null && end <= PI_CHUNK_BYTES) return null;
       this.remember(task, { key, scope: task.cache?.scope ?? "", label });
       if (label === null) task.cache?.headerless?.();
       return label;
     } catch (error) {
       if (error instanceof PiMetadataDeadline) {
+        // No new I/O after expiry. This parser is private until the next opener checks its key;
+        // only the header already validated before expiry may identify a row now.
         if (key !== "" && position > 0) this.remember(task, {
           key, scope: task.cache?.scope ?? "", label: task.partial, progress: { parser, position },
         });
@@ -181,6 +190,7 @@ export class PiSessionReader {
       }
       checkActive();
       if (error instanceof PiMetadataBusy) throw error;
+      // A discovered file whose header could not be checked is not proof of an empty store.
       if (fd !== undefined || task.mode === "header") throw new PiMetadataBusy();
       return null;
     } finally { if (fd !== undefined) closeSync(fd); }
@@ -220,8 +230,10 @@ export class PiSessionReader {
     }
   }
 
+  /** Cache count only, never the retained labels or paths (regression instrumentation). */
   cacheSize(): number { return this.labels.size; }
 
+  /** Resource counts only, never names/prompts/paths (regression instrumentation). */
   size(): { active: number; waiting: number } {
     return { active: this.active, waiting: this.queue.length };
   }

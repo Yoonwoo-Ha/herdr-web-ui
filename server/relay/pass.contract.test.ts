@@ -45,6 +45,11 @@ async function fixture(mode: "off" | "grace" | "enforce" = "enforce", extra: Par
   const limited = new Set<string>();
   const signing: { newSessions?: boolean } = {};
   const passVersions: unknown[] = [];
+  /**
+   * When every pass is issued: two that say the same are then the same pass, whatever second each was asked in. A PC an
+   * enforcing relay refuses at the door asks twice as it starts, and a second pass that differed from the one its
+   * control socket opened with would go out as a renewal of its own, ahead of the one a test waits for.
+   */
   const issuedAt = Math.floor(Date.now() / 1000);
   const accountFetch = async (request: Request): Promise<Response> => {
     const path = new URL(request.url).pathname;
@@ -148,6 +153,7 @@ test("an enforcing relay refuses a PC with no account to name; once its owner na
   expect(refused.phase).toBe("error");
   expect(refused.pass).toEqual({ state: "no_account", relay: null, enforce_at: null, refused: true, enforced: true });
   expect(f.asked).toEqual([]);
+  // an account that does not list this PC gets no pass
   expect((await f.nameAccount("acct_2")).status).toBe(204);
   expect((await f.nameAccount("not an id")).status).toBe(400);
   expect((await f.nameAccount("acct_1")).status).toBe(204);
@@ -156,6 +162,7 @@ test("an enforcing relay refuses a PC with no account to name; once its owner na
   expect(online.phase).toBe("online");
   expect(online.error_code).toBeNull();
   expect(online.pass).toEqual({ state: "ok", relay: "ok", enforce_at: "2099-01-01T00:00:00.000Z", refused: false, enforced: true });
+  // sent in a header on every PC socket, never in the address
   expect(f.headers.at(-1)?.[RELAY_PASS_HEADER]).toStartWith("ovp1.");
   expect(existsSync(join(f.stateDir, "relay", "pass.json"))).toBe(true);
 });
@@ -183,6 +190,8 @@ test("a PC whose pass the relay refuses (a key it does not trust) says pass_refu
   const raw = Array.from(new Uint8Array(await crypto.subtle.exportKey("raw", untrusted.publicKey)), (byte) => byte.toString(16).padStart(2, "0")).join("");
   const f = await fixture("enforce", {}, `${KID}:${raw}`);
   expect((await f.nameAccount("acct_1")).status).toBe(204);
+  // a pass this PC kept under another key, from this PC's own account service (a pass is kept with the service that
+  // gave it, #3302): its control socket carries it from the start, so no retry waits on a timer
   const identity = loadRelayIdentity(f.stateDir);
   const stale = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
   mkdirSync(join(f.stateDir, "relay"), { recursive: true });
@@ -214,6 +223,7 @@ test("a pass saved before the account service's address stopped parsing still le
   expect((await f.nameAccount("acct_1")).status).toBe(204);
   await f.start();
   await bounded(f.synced);
+  // restarted with an OVIS_ACCOUNT_SERVICE_URL that does not parse: no new pass can be asked for, the saved one still holds
   await f.restart({ accountService: new Error("Invalid OVIS_ACCOUNT_SERVICE_URL") });
   await f.start();
   expect(await bounded(Promise.race([f.synced.then((sync) => sync["relay_pass"]), f.refused]))).toEqual({ state: "ok", enforce_at: "2099-01-01T00:00:00.000Z", mode: "enforce" });
@@ -235,6 +245,7 @@ test("a staging pass kept from before goes to no production relay while the acco
 });
 
 test("a staging pass kept from before goes to the global relay through pairing neither, while the account service's address does not parse", async () => {
+  // in grace the relay lets the PC in without a pass, so the kept staging pass stays kept
   const f = await fixture("grace");
   const identity = loadRelayIdentity(f.stateDir);
   const stale = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
@@ -264,6 +275,8 @@ test("a test PC on a staging copy of Ovis's relay (OVIS_RELAY_STAGING=1 with OVI
   const f = await fixture();
   expect((await f.nameAccount("acct_1")).status).toBe(204);
   withEnv({ OVIS_RELAY_STAGING: "1", OVIS_RELAY_URL: f.origin });
+  // the relay from the environment, no list of Ovis's relays named by the test, and Ovis's staging account service (as
+  // written by hand: any case, a trailing dot): the relay counts as Ovis's for the setting alone
   await f.restart({ relay: undefined, ovisRelays: undefined, accountService: "https://Account-Staging.devswha.workers.dev." });
   await f.start();
   expect((await bounded(f.synced))["relay_pass"]).toEqual({ state: "ok", enforce_at: "2099-01-01T00:00:00.000Z", mode: "enforce" });
@@ -278,6 +291,7 @@ test("the staging setting does nothing with any account service but Ovis's stagi
     const before = f.dialed.length;
     await f.restart({ relay: undefined, ovisRelays: undefined, accountService });
     await f.start();
+    // a relay of anyone's: no pass is asked for or sent to it
     expect([accountService, f.service.status().pass]).toEqual([accountService, undefined]);
     await bounded(f.refused);
     expect(f.dialed.slice(before).every((socket) => socket.pass === null)).toBe(true);
@@ -342,6 +356,8 @@ test("a pass that allows no new client sessions is told in the status; one that 
   const f = await fixture();
   f.signing.newSessions = false;
   expect((await f.nameAccount("acct_1")).status).toBe(204);
+  // The PC starts on a pass it kept. With none, the relay may refuse its first control socket before the pass comes;
+  // the PC then asks twice, and the second pass going out as a renewal ended the wait below before the pass it is for
   await f.savePass();
   await f.start();
   await bounded(f.synced);
@@ -350,6 +366,7 @@ test("a pass that allows no new client sessions is told in the status; one that 
   expect((await f.nameAccount("acct_2")).status).toBe(204);
   expect((await f.nameAccount("acct_1")).status).toBe(204);
   await bounded(f.renewal);
+  // the PC says it reads both pass forms, so the service may sign it a v2 pass
   expect(f.passVersions.length).toBeGreaterThan(0);
   expect(f.passVersions.every((versions) => JSON.stringify(versions) === "[1,2]")).toBe(true);
   expect(f.service.status().pass).toEqual({ state: "ok", relay: "ok", enforce_at: "2099-01-01T00:00:00.000Z", refused: false, enforced: true });

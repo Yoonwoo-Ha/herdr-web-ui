@@ -51,6 +51,7 @@ describe("relay identity", () => {
     const dir = stateDir();
     const first = loadRelayIdentity(dir);
     expect(first.server_id).toMatch(/^[0-9a-f]{32}$/);
+    // the relay admits the PC only by a key that derives its server_id
     expect(first.server_id).toBe(deriveServerId(importPublicKey(first.public_key)));
     if (process.platform !== "win32") expect(mode(relayIdentityPath(dir))).toBe(0o600);
     expect(loadRelayIdentity(dir)).toEqual(first);

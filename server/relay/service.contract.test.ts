@@ -96,6 +96,7 @@ async function fixture(serveOnly?: boolean, options: Partial<RelayServiceOptions
     get base() { return `http://127.0.0.1:${app.port}`; },
     async request(path = "", method = "GET", guarded = true) {
       const guard: Record<string, string> = guarded ? { "x-herdr-update": "1" } : {};
+      // the machine profile's local owner is the caller on its socket in the state folder
       if (appOptions.profile === "machine") return fetch("http://localhost/api/relay" + path, { method, unix: join(stateDir, "serve.sock"), headers: { origin: "http://localhost", ...guard } });
       return fetch(this.base + "/api/relay" + path, { method, headers: { origin: this.base, ...guard } });
     },
@@ -319,27 +320,32 @@ it("ends the relay offer's code, and a typed code, with the paired device that a
     const ask = (path: string) => fetch(`${f.base}/api/relay${path}`, { method: "POST", headers: { origin: f.base, "x-herdr-update": "1", authorization: `Device ${token}` } });
     return { id, ask };
   };
+  // the offer it asks for starts a code: that code goes when the device is revoked
   const laptop = await pairHere("Laptop");
   expect(devices.activePairing()).toBeNull();
   expect((await laptop.ask("/offer")).status).toBe(200);
   expect(devices.activePairing()).not.toBeNull();
   devices.revoke(laptop.id);
   expect(devices.activePairing()).toBeNull();
+  // so does this PC's own code once a device was handed it in an offer
   const tablet = await pairHere("Tablet");
   const own = await f.offer();
   const handed = decodeOffer((await (await tablet.ask("/offer")).json() as { url: string }).url);
   expect(handed?.code).toBe(own.code);
   devices.revoke(tablet.id);
   expect(devices.activePairing()).toBeNull();
+  // and the code to type it asked for, with the six digits behind it
   const phone = await pairHere("Phone");
   expect((await phone.ask("/code")).status).toBe(200);
   expect(devices.activePairing()).not.toBeNull();
   devices.revoke(phone.id);
   expect(devices.activePairing()).toBeNull();
+  // a code this PC asked for itself outlives the removal of a device that never had it
   const other = await pairHere("Other");
   const kept = await f.offer();
   devices.revoke(other.id);
   expect(devices.activePairing()?.code).toBe(kept.code);
+  // a device revoked while its request was on its way is handed nothing and starts nothing
   for (const path of ["/api/relay/offer", "/api/relay/code"]) {
     const late = await handleRelayRequest(new Request(f.base + path, { method: "POST", headers: { origin: f.base, "x-herdr-update": "1" } }), path, f.app.context, other.id);
     expect([path, late.status, await late.json()]).toEqual([path, 401, { error: { code: "unauthorized", message: "this device is no longer paired" } }]);
@@ -359,6 +365,7 @@ it("makes the relay tab's QR code only for a PC in no account, and takes it back
   const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
   const key = Buffer.from(await crypto.subtle.exportKey("spki", keys.publicKey)).toString("base64url");
   const laptop = devices.pairRelay(devices.startPairing().code, "Laptop", key)!.device;
+  // a code another place shows as digits is never the one the QR code carries
   devices.startPairing();
   let started = 0;
   devices.onPairingStarted(() => { started++; });
@@ -366,6 +373,7 @@ it("makes the relay tab's QR code only for a PC in no account, and takes it back
   expect([started, devices.activePairing()?.code]).toEqual([1, qr]);
   expect([await codeOf(await ask(true)), await codeOf(await ask(false)), started]).toEqual([qr, qr, 1]);
   expect(devices.linkAccountKey(laptop.id, key, key, "acct_1")).not.toBeNull();
+  // the PC is in an account: the code is taken back, and a page that still shows the QR code is refused a new one
   expect(devices.activePairing()).toBeNull();
   const refused = await ask(true);
   expect([refused.status, await refused.json()]).toEqual([409, { error: { code: "in_account", message: "This PC is already in an Ovis account. Sign in to that account on the device to add it." } }]);
@@ -395,12 +403,14 @@ it("closes the pairing window on request, and keeps it closed for the next start
   await f.start();
   expect((await f.request("/link", "POST")).status).toBe(200);
   expect(f.service.approvals.windowOpen()).toBe(true);
+  // Given the request does not come from this app's relay controls, it changes nothing
   expect((await f.request("/link/close", "POST", false)).status).toBe(403);
   expect(f.service.approvals.windowOpen()).toBe(true);
   const closed = await f.request("/link/close", "POST");
   expect(closed.status).toBe(200);
   expect(await closed.json()).toEqual({ ok: true });
   expect(f.service.approvals.windowOpen()).toBe(false);
+  // Then a restart does not bring it back
   await f.restart();
   expect(f.service.approvals.windowOpen()).toBe(false);
   expect(await (await f.request("/link/close", "POST")).json()).toEqual({ ok: true });
@@ -604,6 +614,7 @@ it("fails closed on corrupt saved state and on an unreadable identity", async ()
   loadRelayIdentity(f.stateDir);
   writeFileSync(join(f.stateDir, "relay", "state.json"), "{bad");
   await f.restart();
+  // nothing goes through the relay: off, with the reason
   expect(f.service.status()).toMatchObject({ phase: "off", error: "Could not start the relay.", error_code: "start_failed" });
   expect(f.attempts).toBe(0);
   writeFileSync(relayIdentityPath(f.stateDir), "{bad");
@@ -725,6 +736,7 @@ it("closes relay clients that never sign in, so they cannot hold the PC's slots"
   await f.start();
   const offer = await f.offer();
   const squatters = [];
+  // seven: the eighth would already push the oldest out (below)
   for (let index = 0; index < 7; index += 1) squatters.push(await squatter(f, offer));
   clock.advance(14_999);
   expect(squatters.every((squatting) => squatting.socket.readyState === WebSocket.OPEN)).toBe(true);
@@ -783,6 +795,7 @@ it("lets a new client in when every place holds a client that never signed in, e
   const offer = await f.offer();
   const squatters = [];
   for (let index = 0; index < 8; index += 1) squatters.push(await squatter(f, offer));
+  // the eighth arrival pushes the oldest out at once (well before a squatter closes on its own, about 10 s in)
   await bounded(squatters[0]!.closed, 2_000);
   const peer = await client(f, offer);
   await bounded(squatters[1]!.closed, 2_000);
@@ -794,6 +807,7 @@ it("never evicts a signed-in session to make room", async () => {
   const f = await fixture(false, { clock: new TestClock() });
   await f.start();
   const first = await client(f, await f.offer());
+  // each used before the next: used, a session counts as the device's for good; one never used could give way to a later racing carrier
   expect((await first.http("/api/relay")).status).toBe(200);
   const signedIn = [first];
   for (let index = 0; index < 3; index += 1) {
@@ -1048,6 +1062,7 @@ it.each(["missing HTTP", "missing WS", "wrong"])("machine profile refuses %s pro
   if (scenario === "wrong") peer.mux.sendSession({ type: FrameType.AUTH, flags: 0, stream_id: 0,
     payload: { scheme: "device-key", device_id: allowed.device.id, signature: Buffer.alloc(64, 9).toString("base64url") } });
   else {
+    // The malicious client claims local admission so it can send OPEN; the server has granted none.
     peer.mux.authenticate(allowed.device.id);
     if (scenario.endsWith("HTTP")) peer.mux.openHttp({ target: "/api/session", method: "GET", headers: [], body: "none" });
     else peer.mux.openWs({ target: "/ws", protocols: [], headers: [] });
@@ -1164,6 +1179,7 @@ it("machine profile gives a plugin run's state to a device that drives it and re
   await f.start();
   const offer = await f.offer();
   const drive = await client(f, offer);
+  // a driving device reaches the route (it asks for a run with no log id, which the route itself refuses)
   const driving = await drive.http("/api/plugin/action");
   expect([driving.status, (await driving.json() as { error: { code: string } }).error.code]).not.toEqual([403, "read_only"]);
   f.app.context.services.devices.update(drive.device.id, { role: "watch" });

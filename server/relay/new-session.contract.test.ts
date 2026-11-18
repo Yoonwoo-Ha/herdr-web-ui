@@ -32,6 +32,7 @@ async function fixture(mode: Mode, newSessions: boolean | undefined, enforceAt =
   const origin = `wss://127.0.0.1:${relay.port}`;
   const challenges = new Map<string, string>();
   const signing: { newSessions: boolean | undefined } = { newSessions };
+  /** each pass is issued a second after the one before, so the relay takes the latest as the one that decides */
   let issued = 0;
   const accountFetch = async (request: Request): Promise<Response> => {
     const path = new URL(request.url).pathname;
@@ -50,6 +51,9 @@ async function fixture(mode: Mode, newSessions: boolean | undefined, enforceAt =
   };
   const sign = (serverId: string) => signRelayPass(pair.privateKey, KID, serverId, Math.floor(Date.now() / 1000) + issued++, undefined,
     signing.newSessions === undefined ? {} : { newSessions: signing.newSessions });
+  // The PC starts on a pass it saved, as after a restart: its control socket carries it from the start. With none, an
+  // enforcing relay refuses that socket and the PC asks twice; whether the second pass then goes out as a renewal is a
+  // matter of timing, and the relay takes one renewal a minute, so a test's own renewal would wait for it
   const identity = loadRelayIdentity(stateDir);
   mkdirSync(join(stateDir, "relay"), { recursive: true });
   writeFileSync(join(stateDir, "relay", "pass.json"), JSON.stringify({ pass: await sign(identity.server_id), server_id: identity.server_id,
@@ -79,6 +83,7 @@ async function fixture(mode: Mode, newSessions: boolean | undefined, enforceAt =
     }
     return socket;
   };
+  /** how far ahead of the real clock the PC's pass keeper reads the time (ms): it stops sending a pass 5 minutes before it runs out */
   const passTime = { ahead: 0 };
   const passClock = { now: () => Date.now() + passTime.ahead, setTimeout: (callback: () => void, ms: number) => { const timer = setTimeout(callback, ms); return () => clearTimeout(timer); } };
   const service = new RelayService({ stateDir, relay: origin, regionalRelays: [], connect, random: () => 0, accountService: "https://account.test", accountFetch, ovisRelays: [origin], pairCodeRelay: origin, passClock });
@@ -132,6 +137,7 @@ async function phone(f: Fixture, offer: RelayOffer, step: { code: string; keys?:
     onmessage: null, onclose: null, onerror: null,
     send: (data) => { socket.send(data); }, close: (code, reason) => socket.close(code, reason),
   };
+  /** the relay's own word to this client (`assigned`): all a client that knows the server_id alone hears from it */
   const fromRelay: string[] = [];
   socket.onmessage = (event) => {
     if (typeof event.data === "string" && event.data.includes('"assigned"')) {
@@ -173,6 +179,7 @@ test("a new phone with a code that holds is named to the relay and closed 4403; 
   await named;
   expect(f.newSessionFrames()).toEqual([JSON.stringify({ type: "new_session", connection_id: p.connectionId })]);
   expect(deviceCount(f)).toBe(before);
+  // the code was neither spent nor counted as a failed pairing: it still pairs (asked of the store, which has no relay to refuse it)
   const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
   const publicKey = Buffer.from(await crypto.subtle.exportKey("spki", keys.publicKey)).toString("base64url");
   expect(f.app.context.services.devices.pairRelay(offer.code ?? "", "Later phone", publicKey)).not.toBeNull();
@@ -190,6 +197,7 @@ test("a device this PC knows signs in and stays, and a session already open stay
   const offer = await f.offer();
   const stranger = await phone(f, offer, { code: offer.code ?? "" });
   expect((await stranger.closed).code).toBe(RELAY_NEW_SESSIONS_CLOSE);
+  // only the stranger was named, and both of the known device's sockets are still open
   expect(f.newSessionFrames()).toEqual([JSON.stringify({ type: "new_session", connection_id: stranger.connectionId })]);
   expect(known.socket.readyState).toBe(WebSocket.OPEN);
   expect(again.socket.readyState).toBe(WebSocket.OPEN);
@@ -206,6 +214,7 @@ test("a phone this PC knows that pairs again with the key it saved is not named:
   const again = await phone(f, offer, { code: offer.code ?? "", keys: known.keys });
   expect(await again.outcome()).toBe("admitted");
   expect(deviceCount(f)).toBe(before + 1);
+  // a phone with a key new to this PC is still refused, and it alone was named
   const next = await f.offer();
   const stranger = await phone(f, next, { code: next.code ?? "" });
   expect((await stranger.closed).code).toBe(RELAY_NEW_SESSIONS_CLOSE);
@@ -217,12 +226,15 @@ test("a phone that finishes pairing after the PC stopped sending its pass, while
   const offer = await f.offer();
   const before = deviceCount(f);
   const p = await phone(f, offer, "squat");
+  // no renewal came for two days: 5 minutes before its pass runs out the PC has none to send any more, and the relay
+  // holds the PC to that pass until 5 minutes after
   f.passTime.ahead = (172_800 - 300) * 1000;
   expect(f.service.status().pass).toMatchObject({ state: "unavailable", enforced: true, new_sessions: false });
   await p.pair(offer.code ?? "");
   expect(await p.closed).toEqual({ code: RELAY_NEW_SESSIONS_CLOSE, reason: RELAY_NEW_SESSIONS_REFUSED });
   expect(f.newSessionFrames()).toEqual([JSON.stringify({ type: "new_session", connection_id: p.connectionId })]);
   expect(deviceCount(f)).toBe(before);
+  // once the relay honors the pass no longer, the PC holds itself to nothing (the relay closes its sockets then)
   f.passTime.ahead += 600_000;
   expect(f.service.status().pass?.new_sessions).toBeUndefined();
 });
@@ -230,11 +242,14 @@ test("a phone that finishes pairing after the PC stopped sending its pass, while
 test("a client that only knows the server_id learns nothing of the limit: a wrong code fails as ever and nothing is named", async () => {
   const f = await fixture("enforce", false);
   const offer = await f.offer();
+  // connected and greeted, never pairing: nothing is said at socket open
   const squatter = await phone(f, offer, "squat");
+  // a code that does not hold is an ordinary failed pairing
   const guesser = await phone(f, offer, { code: "0".repeat((offer.code ?? "").length) });
   expect(await guesser.error).toBe("auth_failed");
   expect((await guesser.closed).code).not.toBe(RELAY_NEW_SESSIONS_CLOSE);
   expect(f.newSessionFrames()).toEqual([]);
+  // the relay told neither of them anything but its connection id: nothing of the pass
   for (const client of [squatter, guesser]) expect(client.fromRelay.map((frame) => Object.keys(JSON.parse(frame) as object))).toEqual([["type", "connection_id"]]);
   expect(squatter.socket.readyState).toBe(WebSocket.OPEN);
 });

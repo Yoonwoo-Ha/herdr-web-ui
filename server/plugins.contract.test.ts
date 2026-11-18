@@ -298,6 +298,7 @@ platforms = ["linux", "macos"]
     expect(failed).toMatchObject({ status: "failed", exit_code: 3, output: "boom" });
     const asked = await fetch(`${base()}/api/machines/local/plugin/action?plugin_id=${encodeURIComponent(PLUGIN)}&log_id=${encodeURIComponent(failed.log_id)}`);
     expect([asked.status, await asked.json()]).toEqual([200, failed]);
+    // a POST without the app's header never reaches the route, and no other plugin path is aliased
     const bare = await fetch(`${base()}/api/machines/local/plugin/action`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ plugin_id: PLUGIN, action_id: "fail" }) });
     expect([bare.status, ((await bare.json()) as ApiError).error.code]).toEqual([403, "invalid_origin"]);
     const other = await fetch(`${base()}/api/machines/local/plugin/link`, { method: "POST", headers: { "x-herdr-machine": "1" } });

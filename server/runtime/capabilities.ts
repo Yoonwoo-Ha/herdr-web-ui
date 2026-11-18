@@ -1,6 +1,10 @@
 import type { HerdrCoreLayout, HerdrIdentity } from "../../shared/machines.ts";
 
 export interface RuntimeCapabilities {
+  /**
+   * The runtime's own name. Read only where the question is which program this is (`herdr update`
+   * updates herdr; herdr starts two agent kinds without a manifest), never for what it can do.
+   */
   readonly runtime: string;
   /**
    * How a live terminal is attached. `pty-cli`: a PTY runs the runtime's own attach command (herdr's
@@ -22,9 +26,14 @@ export interface RuntimeCapabilities {
    * `leader`, only its first, so an agent below a launcher, or shown by an attach client, is looked for.
    */
   readonly foreground: "job" | "leader";
+  /** how a finish read here reaches the runtime's other clients: `label`, a `herdr.seen` label written on its terminal; null, it does not */
   readonly seen: "label" | null;
   readonly pins: boolean;
   readonly machines: boolean;
+  /**
+   * Which process hands a new terminal its environment: `server`, the one listening on the runtime's
+   * socket; `core`, the core hc reports (the socket is this server's own adapter).
+   */
   readonly spawner: "server" | "core";
 }
 

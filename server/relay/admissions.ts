@@ -11,10 +11,19 @@ export const CHECK_GAP_MS = 5_000;
 
 const NEAR: Record<DeviceRoute, number> = { lan: 0, tailscale: 1, relay: 2 };
 
+/**
+ * The signed-in sessions one PC serves, whichever way they came: the relay links (global and regional)
+ * and the direct carriers count against the same limits, so no way in adds places of its own.
+ */
 export class SignedInSessions {
   private order = 0;
   private readonly entries = new Set<{ readonly deviceId: string; order: number; chosen: boolean; readonly close: () => void; readonly line?: SessionLine }>();
 
+  /**
+   * `max` at once, past which only a device at its `perDevice` share gets in, up to `perDeviceCandidates` over;
+   * `perDevice` chosen for one device key, whose oldest gives way; at most `perDeviceCandidates`
+   * not chosen yet for one device key (an app races its carriers: two direct ones and the relay)
+   */
   constructor(private readonly max = 8, private readonly perDevice = 4, private readonly perDeviceCandidates = 3) {}
 
   get size(): number { return this.entries.size; }
@@ -40,6 +49,8 @@ export class SignedInSessions {
       this.entries.delete(oldest);
       oldest.close();
     }
+    // with every place taken, a device at its share still gets in (once used, its own oldest gives way), but never
+    // more than one device's racing carriers past every place
     const over = this.entries.size - this.max;
     if (over > 0 && (this.chosenOf(deviceId) < this.perDevice || over > this.perDeviceCandidates)) {
       release();
@@ -51,6 +62,7 @@ export class SignedInSessions {
         if (entry.chosen || !this.entries.has(entry)) return;
         entry.chosen = true;
         entry.order = ++this.order;
+        // the device's own oldest give way, so a device at its share always gets its new session in
         const own = [...this.entries].filter((other) => other.deviceId === deviceId && other.chosen).sort((a, b) => a.order - b.order);
         for (const oldest of own.slice(0, Math.max(0, own.length - this.perDevice))) {
           this.entries.delete(oldest);

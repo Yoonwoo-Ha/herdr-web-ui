@@ -171,6 +171,7 @@ it("offers a tool's own picture over the image endpoint", async () => {
 it("resolves pi's context window from the agent dir pi reads its models from", async () => {
   writeFileSync(transcript, turns("Check chat", "Answer one"));
   expect((await read()).metadata?.context?.window).toBeNull();
+  // the window is nowhere in the transcript: pi's own catalog is the only disk answer for it
   const agentDir = join(root, "agent-dir");
   mkdirSync(agentDir, { recursive: true });
   writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { test: { models: [{ id: "pi-contract-model", contextWindow: 200_000 }] } } }));
@@ -236,6 +237,8 @@ it("counts the turns a /tree left behind, over HTTP", async () => {
     { type: "message", id: "a-live", parentId: "u2", timestamp: "2026-09-30T00:00:04Z", message: { role: "assistant", content: "the answer in play" } },
   ]));
   const branched = await read();
+  // pi moved its leaf and wrote nothing, so the page is built from the live branch alone; the
+  // count is the only thing that can tell the reader the file holds more than this
   expect(JSON.stringify(branched.turns)).not.toContain("abandoned");
   expect(branched.abandoned).toEqual({ count: 2, branches: 1, summary: null });
 
@@ -259,6 +262,7 @@ it("answers a session pi has not written yet as an empty conversation, then foll
   const fresh = join(slug, "fresh.jsonl");
   await reportSession(fresh, target);
   expect(await read(target)).toMatchObject({ source: "pi-transcript", turns: [], cursor: null, history_id: "unwritten:fresh" });
+  // a cursor from another conversation is refused, whichever way it points
   for (const cursor of ["before", "since", "from"]) {
     const stale = await fetch(`http://127.0.0.1:${server.port}/api/pane/conversation?pane_id=${encodeURIComponent(target)}&${cursor}=${encodeURIComponent("other:0")}`);
     expect(stale.status).toBe(409);

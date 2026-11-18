@@ -55,26 +55,34 @@ const STOP_GRACE_MS = 4_000;
 const PROCESS_POLL_MS = 100;
 const KILL_CONFIRM_MS = 1_000;
 const VERSION_TIMEOUT_MS = 2_500;
+/** the panel polls the status; `portal version` and `portal expose --help` are a process each time */
 const PROBE_CACHE_MS = 5_000;
 const RELAY_TIMEOUT_MS = 5_000;
 const PIPE_GRACE_MS = 250;
 const OUTPUT_LINES = 30;
+/** `portal auth issue` reads the identity file and signs: a local call */
 const ISSUE_TIMEOUT_MS = 10_000;
+/** how long a stream of a visitor Portal signed in stays open before it must come through Portal's sign-in again (`recheckMs`) */
 const PORTAL_RECHECK_MS = 5 * 60_000;
+/** what Portal may keep of this server's environment: enough to run and to reach the relay */
 const PORTAL_ENV = ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TMPDIR", "TEMP", "TMP", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR"];
 
 type Phase = PortalStatus["phase"];
 type Child = ReturnType<typeof Bun.spawn>;
 interface Guards {
+  /** OVIS_TOKEN is set */
   tokenSet: boolean;
+  /** OVIS_TAILSCALE_SERVE_ONLY: tailscale serve is declared the only way in */
   serveOnly: boolean;
 }
 interface StartRequest extends Guards {
   relay: string;
   port: number;
+  /** who may open the address; unset, only the app's own token or a paired device */
   auth?: PortalAuth;
 }
 type Launch = Required<StartRequest>;
+/** what a relaunch must find unchanged: the exited child's saved pid and the identity it served with */
 interface Recovery {
   pid: number;
   identity: string;
@@ -83,8 +91,10 @@ interface Recovery {
 interface SavedState {
   enabled: boolean;
   relay: string | null;
+  /** the server that started it: another one on this state directory leaves its Portal alone */
   port: number | null;
   pid: number | null;
+  /** who may open the address, for a start that comes from this file (the boot's resume, a relaunch) */
   auth: PortalAuth;
   /** Names and roles only, never the bearer links. Older state has none and defaults to watch. */
   invites?: readonly { readonly name: string; readonly role: DeviceRole }[];
@@ -112,8 +122,17 @@ export function atLeast(version: string, minimum: string): boolean {
   return true;
 }
 
+/**
+ * A whole semver version with an optional leading v: no leading zeros, at most 9 digits a part (so
+ * each is a safe integer), dot-separated pre-release identifiers that are neither empty nor
+ * zero-led numbers, and build identifiers that are not empty.
+ */
 const SEMVER = /^v?(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})(-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
+/**
+ * Whether `version` is the release `minimum` or later by semver: a pre-release comes before its
+ * release, build metadata counts for nothing, and anything that is not a whole semver version is too old.
+ */
 function releaseAtLeast(version: string, minimum: string): boolean {
   const have = SEMVER.exec(version);
   const need = SEMVER.exec(minimum);
@@ -122,6 +141,7 @@ function releaseAtLeast(version: string, minimum: string): boolean {
   return have[4] === undefined;
 }
 
+/** A relay as the user gave it, as an https origin; null for anything with a path, a query, credentials or a second host. */
 export function relayOrigin(input: unknown): string | null {
   if (typeof input !== "string" || input.trim() === "") return null;
   const text = input.trim();
@@ -132,6 +152,7 @@ export function relayOrigin(input: unknown): string | null {
   return /^[a-z0-9.-]+$/i.test(url.hostname) ? url.origin : null;
 }
 
+/** The address on Portal's "service ready at" line, without the default port; null for any other line. */
 export function readyUrl(line: string): string | null {
   const match = /service ready at (https:\/\/\S+)/.exec(line);
   if (!match) return null;
@@ -161,6 +182,7 @@ function oidcSecret(): string | null {
   return value ? value : null;
 }
 
+/** Portal's environment: what running and reaching the relay need, and the secrets of a start that has them. */
 function portalEnv(secrets: { oidcSecret?: string | null; proof?: string | null } = {}): Record<string, string> {
   const env: Record<string, string> = { NO_COLOR: "1" };
   for (const name of PORTAL_ENV) {
@@ -225,7 +247,7 @@ function processPresence(pid: number): "alive" | "gone" | "unknown" {
       const end = stat.lastIndexOf(")");
       // A zombie still has a PID but cannot be running or signaled.
       if (end >= 0 && stat.slice(end + 1).trimStart().startsWith("Z")) return "gone";
-    } catch { }
+    } catch { /* process.kill below distinguishes a gone pid from an unreadable one */ }
   }
   try {
     process.kill(pid, 0);
@@ -383,12 +405,15 @@ export class PortalService {
   private ending: Child | null = null;
   private versionRead: Probe<VersionRead> | null = null;
   private signInsRead: Probe<PortalSignIn[]> | null = null;
+  /** who may open the address: the running Portal's, else the saved choice the next start uses */
   private auth: PortalAuth = NO_PORTAL_AUTH;
   private invites: NonNullable<SavedState["invites"]> = [];
   private shortUrl: string | null = null;
+  /** the port this service represents; a service for another port must not change the owner's saved choice */
   private serverPort: number | null = null;
   /** this server's own token and serve-only answer, bound by createServer; a relaunch asks it, never a request */
   private guards: (() => Guards) | null = null;
+  /** what the running Portal, started with a sign-in, sends with the identity it vouches for; made at its launch, kept here and nowhere else */
   private proof: string | null = null;
   private readyChild: Child | null = null;
   private readyIdentity: string | null = null;
@@ -413,6 +438,7 @@ export class PortalService {
   private get identityPath(): string { return join(this.dir, "identity.json"); }
   private get statePath(): string { return join(this.dir, "state.json"); }
 
+  /** Binds what this server allows now, which a relaunch checks before it does anything and again before it spawns. */
   authorize(guards: () => Guards): void {
     this.guards = guards;
   }
@@ -454,6 +480,11 @@ export class PortalService {
     };
   }
 
+  /**
+   * At the server's start. A Portal the last server left running is stopped whatever comes next,
+   * so a server that may not open the address does not keep one open; an address that was on
+   * comes back, so an app update does not take it down for good.
+   */
   async resume(request: Omit<StartRequest, "relay">): Promise<void> {
     if (this.shutdownRequested || this.child !== null || this.launching) return;
     const saved = this.saved();
@@ -461,6 +492,7 @@ export class PortalService {
     this.auth = saved.auth;
     this.invites = saved.invites ?? [];
     this.serverPort = request.port;
+    // a server on another port shares this state directory: what runs is its own
     if (saved.port !== null && saved.port !== request.port) return;
     const operation = ++this.operation;
     this.launching = true;
@@ -506,6 +538,7 @@ export class PortalService {
   serves(host: string | null): boolean {
     const name = host === null ? null : hostName(host);
     if (name === null || this.url === null || this.auth.method !== "none") return false;
+    // its port too: the same name on another port is another server's (https's own port when none is given)
     const port = Number(/:(\d{1,5})$/.exec(host!)?.[1] ?? 443);
     return [this.url, this.shortUrl].some((url) => {
       if (url === null) return false;
@@ -514,6 +547,7 @@ export class PortalService {
     });
   }
 
+  /** Only private links have invite records; every unrecorded Portal identity may watch. */
   roleFor(user: string | null, method: string | null): DeviceRole {
     return method === "credential" ? this.invites.find((invite) => invite.name === user)?.role ?? "watch" : "watch";
   }
@@ -579,6 +613,7 @@ export class PortalService {
   shutdown(): Promise<void> {
     this.shutdownRequested = true;
     this.operation++;
+    // resume already fails the startup gate closed; a cleanup error must not strand shutdown.
     const cleanup = this.cleanup?.catch((error: unknown) => {
       console.error(`Portal cleanup failed during shutdown: ${messageOf(error)}`);
     });
@@ -611,10 +646,12 @@ export class PortalService {
     return !this.shutdownRequested && this.operation === operation && (this.phase === "starting" || this.phase === "recovering");
   }
 
+  /** The identity file's digest; null when it is missing or unreadable, which no relaunch accepts. */
   private identityDigest(): string | null {
     try { return createHash("sha256").update(readFileSync(this.identityPath)).digest("hex"); } catch { return null; }
   }
 
+  /** A relaunch goes ahead only while this server may open the address and the saved state is still the exited child's. */
   private checkRecovery({ relay, port, auth }: Launch, recovery: Recovery): void {
     const guards = this.guards?.() ?? null;
     if (guards === null) throw new Error("this server gave no authority to restart it. Start it again.");
@@ -648,12 +685,15 @@ export class PortalService {
     }
     await this.checkRelay(relay);
     if (!this.isCurrentStart(operation)) return;
+    // a relaunch must not stop a Portal that another server recorded meanwhile
     if (recovery !== null) this.checkRecovery(request, recovery);
+    // another server of this app on this identity: two Portals keep taking the address from each other
     await this.cleanLeftover(this.saved().pid);
     if (!this.isCurrentStart(operation)) return;
     if (recovery !== null) this.checkRecovery(request, recovery);
     // Portal needs its identity parent before it starts; it contains the saved address.
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+    // a Portal with a sign-in gets a proof of its own at each launch, in its environment alone
     const proof = auth.method === "none" ? null : randomBytes(32).toString("hex");
     this.proof = proof;
     let child: Child;
@@ -674,6 +714,7 @@ export class PortalService {
       throw error;
     }
     this.child = child;
+    // a Portal whose pid cannot be kept is one the next server could not stop: it ends before its address can show
     try {
       this.save({ enabled: true, relay, port, pid: child.pid, auth });
     } catch (error) {
@@ -784,6 +825,11 @@ export class PortalService {
     if (!atLeast(release, PORTAL_VERSION)) throw new Error(`${relay} runs Portal ${release}; the tunnel needs a relay on ${PORTAL_VERSION} or later.`);
   }
 
+  /**
+   * A Portal on this identity that this server did not start: one a server killed outright left
+   * running, or one another server of this app runs. A pid outlives its process, so only the one
+   * recorded here, and only while its command line is `portal expose` on this identity, is stopped.
+   */
   private async cleanLeftover(pid: number | null): Promise<void> {
     const cleanup = this.stopLeftover(pid);
     this.cleanup = cleanup;
@@ -794,6 +840,7 @@ export class PortalService {
 
   private async stopLeftover(pid: number | null): Promise<void> {
     if (pid === null || pid === this.child?.pid) return;
+    // All inspection and termination fits inside the supervisor's six-second shutdown budget.
     const deadline = Date.now() + STOP_GRACE_MS + KILL_CONFIRM_MS;
     const argv = await this.identifyProcess(pid, deadline);
     if (argv === null || !isPortalExpose(argv, this.identityPath)) return;
@@ -804,6 +851,7 @@ export class PortalService {
       await Bun.sleep(Math.min(PROCESS_POLL_MS, graceDeadline - Date.now()));
       if (this.processIsGone(pid)) return;
     }
+    // The pid may have been recycled while Portal was given its grace period.
     const currentArgv = await this.identifyProcess(pid, deadline);
     if (currentArgv === null || !isPortalExpose(currentArgv, this.identityPath)) return;
     if (!this.signalLeftover(pid, "SIGKILL")) return;
@@ -856,6 +904,7 @@ export class PortalService {
     if (!isJsonObject(value)) throw new Error("Saved Portal state is invalid.");
     const { enabled, relay, port, pid } = value;
     const origin = relayOrigin(relay);
+    // a file from before the choice existed has none: the app's own token or a paired device
     const auth = checkPortalAuth(value["auth"]);
     if ("problem" in auth) throw new Error("Saved Portal state is invalid.");
     const invites: { name: string; role: DeviceRole }[] = [];
@@ -890,6 +939,10 @@ export class PortalService {
 
 const NO_PORTAL: PortalStatus = { supported: false, version: null, min_version: PORTAL_VERSION, usable: false, phase: "idle", relay: null, url: null, blocked: null, error: null, output: null, auth: NO_PORTAL_AUTH, auth_methods: [], oidc_secret: false };
 
+/**
+ * /api/portal and its actions. What this server is (its port, token and serve-only setting) comes
+ * from index.ts, which also keeps a visitor Portal's own sign-in let in away from the actions.
+ */
 export async function handlePortalRequest(request: Request, pathname: string, portal: PortalService | undefined, context: Omit<StartRequest, "relay">): Promise<Response> {
   const reply = (body: unknown, code = 200) => jsonResponse(body, code, { "cache-control": "no-store" });
   const fail = (code: string, message: string, http: number) => reply({ error: { code, message } }, http);

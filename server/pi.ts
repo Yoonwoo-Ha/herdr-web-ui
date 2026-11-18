@@ -25,6 +25,11 @@ export { transcriptInStore as piTranscriptInStore, unwrittenSession } from "./tr
 export const defaultPiSessionDir = (): string =>
   process.env["PI_CODING_AGENT_SESSION_DIR"] || join(piAgentDir(), "sessions");
 
+/**
+ * The session id in the name pi gives a session file (`<time>_<uuid>.jsonl`), or null for any
+ * other name. pi writes the file only once the first answer is in (its SessionManager waits for
+ * an assistant message), so until then the name is the only place to read the id from.
+ */
 export function piUnwrittenHeaderId(path: string): string | null {
   return /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/iu.exec(basename(path))?.[1] ?? null;
 }
@@ -90,6 +95,7 @@ export function ownSocket(socket: string): boolean {
   try { return ownedSocket(lstatSync(dirname(socket)), lstatSync(socket)); } catch { return false; }
 }
 
+/** ownSocket off the event loop: a pi profile on a stalled mount must not hold every other request. */
 async function ownSocketAsync(socket: string): Promise<boolean> {
   try { return ownedSocket(await lstat(dirname(socket)), await lstat(socket)); } catch { return false; }
 }
@@ -109,7 +115,7 @@ export async function bridgeState(socket: string, signal?: AbortSignal): Promise
     const state = await response.json() as PiAskBridgeState;
     return typeof state === "object" && state !== null && state.version === 1 && Array.isArray(state.flows) ? state : null;
   } catch {
-    return null;
+    return null; // no extension listening (a socket a crashed pi left), or too slow: the terminal
   }
 }
 
@@ -125,6 +131,7 @@ async function extensionSessionFile(pi: VerifiedPiProcess, environ: readonly str
   return state?.pid === pi.pid && typeof state.sessionFile === "string" && state.sessionFile.length > 0 ? state.sessionFile : null;
 }
 
+/** The web UI extension's socket of this pi process, in that process's own agent directory, when it is the user's own. */
 async function extensionSocket(pi: { pid: number; cwd?: string | null }, environ: readonly string[] | null, home: string): Promise<string | null> {
   if (process.platform === "win32") return null;
   const agentDir = environ === null ? piAgentDir() : piProcessPaths(environ, home, pi.cwd ?? "").agentDir;
@@ -178,6 +185,8 @@ export async function piExtensionCommands(
   } catch {
     return null;
   }
+  // the answer is that pi's: one that left the front while it was asked, or now shares it with
+  // another pi, no longer speaks for the pane
   const after = options.processesAfter
     ? await options.processesAfter()
     : (await paneProcessInfo(paneId).catch(() => null))?.foreground_processes ?? null;
@@ -188,6 +197,10 @@ export async function piExtensionCommands(
 // pi runs an extension command before it expands a prompt template of the same name
 registerCatalogSource({ agent: "pi", owns: [], shadows: true, rows: (pane, _cwd, signal) => piExtensionCommands(pane.pane_id, signal) });
 
+/**
+ * Resolve only stores the pane's Pi process identifies; an unseen CLI override is unsafe. The
+ * agent directory comes with it: pi reads its model catalogs from there, not from the bridge's.
+ */
 function piSessionDirForProcess(
   argv: readonly string[],
   environ: readonly string[] | null,
@@ -228,6 +241,7 @@ export async function piPaneAgentDirs(
     pids.push(entry.pid);
     const argv = entry.argv?.length ? entry.argv : argvOf(entry.pid);
     if (!argv?.length || !isPiProcess(argv)) continue;
+    // whatever its session store (a --session-dir the bridge cannot follow), the agent directory is pi's own
     const environ = environOf(entry.pid);
     const agentDir = environ === null ? null : piProcessPaths(environ, home, entry.cwd ?? "").agentDir;
     if (agentDir !== null) agentDirs.add(agentDir);
@@ -278,6 +292,7 @@ export async function piTranscriptPath(
   if (absent && piProcesses.length === 1) {
     const pi = piProcesses[0]!;
     reported = await extensionSessionFile(pi, environOf(pi.pid), home);
+    // the answer is that pi's: one that left the front while it was asked is not the pane's any more
     if (reported !== null) {
       const after = options.processesAfter
         ? await options.processesAfter()
@@ -304,6 +319,8 @@ export async function piTranscriptPath(
   }
   if (canonicalProcessStores.size > 1) return null;
   const canonicalStores = new Set<string>();
+  // A process-owned custom profile replaces the bridge default. Including both would let a
+  // stale report from the bridge's unrelated profile appear valid for this pane.
   const candidateStores = piProcesses.length === 0 ? [sessionDir] : [...canonicalProcessStores];
   for (const store of candidateStores) {
     try { canonicalStores.add(realpathSync(store)); } catch { }

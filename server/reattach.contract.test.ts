@@ -70,6 +70,7 @@ async function startSession(): Promise<void> {
   }
 }
 
+// registered before the server starts, so a start that fails still cleans up after itself
 afterAll(async () => {
   for (const ws of sockets) ws.close();
   if (handoffs) {
@@ -95,6 +96,7 @@ if (process.env["HERDR_TEST_MODE"] !== "unit" && process.platform !== "win32" &&
 
 beforeAll(() => {
   if (!handoffs) return;
+  // the attach, the RPCs and the status collector all read HERDR_SOCKET when they start
   previousSocket = process.env["HERDR_SOCKET"];
   process.env["HERDR_SOCKET"] = socket;
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: root });
@@ -156,6 +158,7 @@ describe.skipIf(!handoffs)("a pane herdr hands off to a new server", () => {
       const killed = Bun.spawn(["pkill", "-f", `^[^ ]*herdr terminal attach ${terminal}$`]);
       await killed.exited;
       const startedAt = Date.now();
+      // the 1 s window, not the RPC's own 10 s
       await until(() => client.state.exits === 1, "pty-exit once the relookup window ran out", 6_000);
       expect(Date.now() - startedAt).toBeLessThan(4_000);
     } finally {

@@ -29,6 +29,7 @@ it("attributes reserved setup job lookups to the dispatch branch rather than a m
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ route: "/api/machines/setup/:job_id", status: 404 });
     }
+    // Adjacent dispatch branches keep their own templates and never copy private segments.
     for (const [path, route, status] of [
       ["/api/machines/private-pc/pane/conversation", "/api/machines/:machine_id/pane/conversation", 503],
       ["/api/machines/private-pc/pane/summary", "/api/machines/:machine_id/pane/summary", 503],
@@ -173,6 +174,7 @@ it("records exactly one completion for HTTP responses, early refusals, streams a
     for (const name of ["cache-control", "content-type", "x-frame-options", "referrer-policy"]) {
       expect(responseMedia.headers.get(name)).toBe(routeMedia.headers.get(name) ?? (name === "referrer-policy" ? "no-referrer" : null));
     }
+    // The HTTP route supplies a media source; compare the otherwise byte-identical CSP.
     expect(responseMedia.headers.get("content-security-policy")).toBe(
       routeMedia.headers.get("content-security-policy")?.replace("media-src data: blob:", `media-src data: blob: ${base}/api/fs/page-media/`) ?? null,
     );
@@ -192,6 +194,7 @@ it("records exactly one completion for HTTP responses, early refusals, streams a
       const row = records(root).find((record) => record.request_id === response.headers.get("x-request-id"));
       expect(row?.client_request_id).toBe(/^[A-Za-z0-9._-]{1,64}$/.test(value) ? value : undefined);
     }
+    // A wire CRLF ends the header; injected fields never become log metadata.
     check(await handshake(app.port, "/ws", "X-Request-Id: safe\r\nX-Injected: fictional-secret\r\n"), 101);
     expect(new Set(seenIds).size).toBe(seenIds.length);
     const all = records(root);

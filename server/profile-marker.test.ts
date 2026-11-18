@@ -31,6 +31,7 @@ it.each(notMarkers)("takes %s for no marker", (_, make) => {
   expect(markedByProfile(join(dir, MARKER))).toBe(false);
 });
 
+// a FIFO is never read: reading one would wait for a writer that never comes
 it.skipIf(process.platform === "win32")("takes a FIFO for no marker, at once", () => {
   const dir = folder();
   expect(Bun.spawnSync(["mkfifo", join(dir, MARKER)]).exitCode).toBe(0);

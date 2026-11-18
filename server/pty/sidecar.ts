@@ -16,8 +16,10 @@ export interface SidecarRuntime {
   pty: () => boolean;
 }
 
+/** a node that hangs must not hold the server: no answer in this long counts as no Node */
 const PROBE_TIMEOUT_MS = 3000;
 
+/** the oldest Node pty-host.mjs runs on (top-level await, its syntax) */
 const MIN_NODE_MAJOR = 18;
 
 /**
@@ -39,6 +41,11 @@ export function isRealNode(executable: string, env: Record<string, string | unde
 
 const probed = new Map<string, boolean>();
 
+/**
+ * Where install.sh puts the Node it installs for the sidecar, and where it put it before the rename.
+ * It no longer links that Node into ~/.local/bin, where it overrode the user's own (#596), so the
+ * server looks for it here itself.
+ */
 const APP_NODE_DIRS = [".local/share/ovis/node", ".local/share/herdr-web-ui/node"];
 
 /**
@@ -110,6 +117,10 @@ export function sidecarAvailable(runtime?: SidecarRuntime): boolean {
   return known;
 }
 
+/**
+ * Where the runtime's live terminal is a stream (`streamed`: on herdr-core, one on the server's own hc
+ * connection, server/herdr-core/attach-session.ts), no PTY host is needed.
+ */
 export function attachableIdentity(identity: HerdrIdentity, sidecar: boolean, streamed = capabilities().attach !== "pty-cli"): HerdrIdentity {
   if (sidecar || streamed || identity.terminal_attach === false) return identity;
   return { ...identity, terminal_attach: false, terminal_mirror: true };

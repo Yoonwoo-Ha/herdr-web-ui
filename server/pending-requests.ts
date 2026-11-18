@@ -2,6 +2,7 @@ import { PendingInputError } from "./pending-input.ts";
 
 interface Entry<T> { fingerprint: string; reply: Promise<T>; resolved: boolean; value?: T }
 
+/** Recent idempotency receipts stay bounded; retired IDs cannot execute again after eviction. */
 export class PendingRequestBook<T> {
   private readonly entries = new Map<number, Entry<T>>();
   private retiredThrough = -1;

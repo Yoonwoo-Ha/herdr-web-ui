@@ -4,15 +4,24 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, realpa
 import { connect, createServer, type Server } from "node:net";
 import { basename, dirname, join } from "node:path";
 
+/**
+ * The lock is the kernel's own:
+ * flock(2) on runtime-move.lock in that session's folder, which nothing removes and the kernel frees when the holder
+ * dies; then the previous version's socket at runtime-move.sock as well. No process id or start time is ever read or
+ * trusted.
+ */
 export const moveLockPath = (herdrSocket: string): string => join(dirname(herdrSocket), "runtime-move.sock");
 
+/** The lock cannot be taken safely here: its folder is not this user's own, anybody may write in it, or something else sits at its name. */
 export class MoveLockUnsafe extends Error {}
 export const MOVE_LOCK_UNSAFE = "The folder of this herdr session's socket is not yours, anybody may write in it, or something Ovis did not make sits at runtime-move.sock or runtime-move.lock there, so Ovis cannot lock a move. Fix that on this PC, then try again.";
 
 export type MoveLockStep = "stale" | "bound";
 
 export interface MoveLockHandle {
+  /** whether this server still holds it: the socket at its name answers with this holder's own token */
   holds(): Promise<boolean>;
+  /** lets go at once: its socket file is removed only while it is still the one this holder bound */
   release(): void;
 }
 
@@ -31,6 +40,12 @@ function realLockPath(path: string): string {
   return join(folder, basename(path));
 }
 
+/**
+ * The lock a take holds first, one the kernel alone arbitrates, with nothing ever removed: flock(2) on runtime-move.lock
+ * in the session's real folder, freed when its holder's descriptor closes (as when it dies), and shared by every server
+ * that sees that folder, in any container. Every server takes this same one, so two takers of a dead holder's socket file
+ * can never both go on. Where no C library can be loaded for it, no move is locked, so none is started.
+ */
 type Flock = { flock(fd: number, operation: number): number; errno(): number };
 const LOCK_EX = 2, LOCK_NB = 4;
 /** "would block": another holder has it (Linux EAGAIN, macOS EWOULDBLOCK) */
@@ -56,6 +71,7 @@ function flockBinding(): Flock | null {
 }
 interface KernelLock { held(): boolean; release(): void }
 function takeKernelLock(path: string): KernelLock | null {
+  // the calls first, so a library that cannot be loaded leaves no descriptor open
   const calls = flockBinding();
   if (!calls) throw new MoveLockUnsafe("This PC's C library cannot be loaded to lock a move, so Ovis cannot move this herdr session here.");
   // only this user's own regular file, never through a link: anything else there is refused, not an internal error
@@ -79,6 +95,7 @@ function takeKernelLock(path: string): KernelLock | null {
 }
 
 const listen = (path: string, token: string): Promise<Server | "in_use"> => new Promise((resolve, reject) => {
+  // every connection is told this holder's token, then closed: how a server tells whether it is still the holder
   const server = createServer((socket) => socket.end(token));
   server.once("error", (error: NodeJS.ErrnoException) => { if (error.code === "EADDRINUSE") resolve("in_use"); else reject(error); });
   server.listen(path, () => resolve(server));
@@ -93,11 +110,19 @@ const ask = (path: string): Promise<string | "none" | null> => new Promise((reso
   socket.on("error", (error: NodeJS.ErrnoException) => { clearTimeout(timer); resolve(error.code === "ECONNREFUSED" || error.code === "ENOENT" ? "none" : null); });
 });
 
+/**
+ * Takes the session's move lock, or null while another server holds it (or might). A socket file with nobody listening
+ * (its holder died) is removed only after a refused connection proves it, and only once; only a socket is ever removed.
+ * After binding, the socket is asked who holds it: of two servers that both removed a dead holder's file, the one whose
+ * own token answers holds it, and the other gives up its unreachable listener.
+ */
 export async function takeMoveLock(asked: string, onStep?: (step: MoveLockStep) => Promise<void> | void): Promise<MoveLockHandle | null> {
   if (process.platform === "win32") throw new MoveLockUnsafe("Moving herdr's session to herdr-core runs on Linux and macOS only.");
   const path = realLockPath(asked);
   const kernel = takeKernelLock(path);
   if (!kernel) return null;
+  // the socket at runtime-move.sock as well: a server of the previous version holds only that one. Its dead holder's
+  // file is removed only while this server holds the kernel lock, so no other server of this version is removing it too
   try {
     const handle = await takeSocketLock(path, onStep, kernel);
     if (!handle) kernel.release();
@@ -121,6 +146,7 @@ async function takeSocketLock(path: string, onStep: ((step: MoveLockStep) => Pro
   }
   await onStep?.("bound");
   const held: Server = server;
+  // the socket file this holder bound: another one at the name since (a racer's) is never removed by it
   let bound: number | null = null;
   try { bound = lstatSync(path).ino; } catch {}
   const ours = (): boolean => { try { return bound !== null && lstatSync(path).ino === bound; } catch { return false; } };

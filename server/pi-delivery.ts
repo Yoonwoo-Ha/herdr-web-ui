@@ -60,11 +60,14 @@ export class PiReceiptCapacity<Owner extends object> {
   }
 }
 
+/** `at`: Pi's own submission time of a user message, or null where the record carries none. */
+/** `skill`: the skill and request of a record that is Pi's own expansion of `/skill:name request` */
 type PiSkillSend = { name: string; request: string };
 type BranchEntry = { id: string; parent: string | null; role: string; text: string; skill?: PiSkillSend; at: number | null; start: number; end: number };
 const TAIL_BYTES = 64 * 1024;
 const MAX_APPEND_BYTES = 32 * 1024 * 1024;
 class PiDeliveryBudgetExceeded extends Error {}
+/** A writer may pause between chunks without changing stat during this capture attempt. */
 class PiDeliveryIncomplete extends Error {}
 const identity = (stat: NonNullable<ReturnType<typeof statSync>>): string => `${stat.dev}:${stat.ino}`;
 const fileId = (path: string): string | null => {
@@ -72,6 +75,9 @@ const fileId = (path: string): string | null => {
   catch { return null; }
 };
 
+/**
+ * Pi owns an append-only log: inode, header, exact boundary tails and parent links attest
+ * continuation. This is not an integrity checksum for arbitrary edits to older history. */
 function bytesAt(fd: number, start: number, length: number): Buffer {
   const bytes = Buffer.alloc(length);
   let offset = 0;
@@ -88,6 +94,8 @@ function tailAt(fd: number, end: number): string {
   const start = Math.max(0, end - TAIL_BYTES);
   return digest(bytesAt(fd, start, end - start));
 }
+/** Both the opened descriptor and the path must still name the captured append-only prefix.
+ * Growth after the snapshot is harmless; replacement/truncation or a changed boundary is not. */
 function stable(fd: number, path: string, file: string, size: number, tail: string): boolean {
   const current = fstatSync(fd), named = statSync(path);
   return identity(current) === file && identity(named) === file
@@ -129,6 +137,7 @@ export function piRecordText(text: string): string {
  */
 const piMaybeCommand = (text: string): boolean => text.startsWith("/") && !text.startsWith("/skill:");
 
+/** Whether `entry` is the user record Pi writes for a send of `text`: as typed, or a skill's expansion. */
 function piRecordOf(text: string, entry: BranchEntry): boolean {
   if (entry.role !== "user") return false;
   if (entry.text === text) return true;
@@ -211,6 +220,7 @@ function appended(fd: number, size: number, anchor: PiDeliveryAnchor): AppendSta
   for (let newline = bytes.indexOf(0x0a); newline !== -1; newline = bytes.indexOf(0x0a, offset)) {
     if (newline - offset > MAX_PI_ENTRY_BYTES || entries.length >= MAX_PI_INDEX_ENTRIES) throw new PiDeliveryBudgetExceeded("Pi append budget exceeded");
     const entry = parseEntry(bytes.subarray(offset, newline), previous.scanned + offset, previous.scanned + newline + 1);
+    // A first-file session header attests the session, not a user turn or a tree parent.
     if (!(anchor.size === 0 && entry.start === 0)) entries.push(entry);
     offset = newline + 1;
   }
@@ -260,6 +270,17 @@ export async function capturePiDeliveryAnchorRetrying(path: string, allowMissing
   return null;
 }
 
+/**
+ * Match Ovis-origin typed receipts to durable user records on the active Pi branch.
+ * Candidates and matching entries are both FIFO. Unrelated user records are skipped, while a
+ * later Ovis receipt may not cross an earlier unmatched one. Content is only a bounded scoped
+ * correlator: Pi does not expose a submission id in its TUI or transcript. A record stamped no
+ * earlier than the receipt's capture confirms it. Where the only such text was stamped earlier,
+ * either someone else submitted it before Ovis's Enter or the wall clock was set back, so the
+ * receipt is `ambiguous`: neither confirmed nor left waiting for a record that may never come.
+ * The same text submitted elsewhere after that Enter, or staged by Pi during compaction (stamped
+ * only when the stage drains), remains indistinguishable.
+ */
 export function matchPiDeliveries(path: string, candidates: readonly PiDeliveryCandidate[], consumedEntries = new Set<string>()): { consumed: string[]; changed: string[]; ambiguous?: string[]; unavailable?: string[]; retry: boolean } {
   if (candidates.length === 0) return { consumed: [], changed: [], retry: false };
   let fd: number | undefined;
@@ -301,8 +322,13 @@ export function matchPiDeliveries(path: string, candidates: readonly PiDeliveryC
       const passed = first && chain.find((entry) => entry.start >= first.start && fresh(entry) && !consumedEntries.has(key(entry))
         && later.some((next) => piRecordOf(next.text, entry)));
       const own = same.find(fresh);
+      // Pi ran it where it moved on without recording it as typed, or where the record after a listed
+      // template is not its text (its expansion). Any other record is skipped, as for every receipt: it
+      // may be a message typed in the terminal, and this send's own record may still follow.
       if (first && first.text !== candidate.text && !(own && (!passed || own.start < passed.start)) && (passed || candidate.template)) {
         consumed.push(candidate.id);
+        // The record is its expansion, unless the later receipts it could be theirs claim every copy of
+        // it, as when an extension's command recorded nothing.
         const copies = chain.filter((entry) => entry.start >= first.start && entry.role === "user" && entry.text === first.text && !consumedEntries.has(key(entry))).length;
         if (copies > claims) {
           matchedEntries.push(key(first)); afterMatched = first.start;

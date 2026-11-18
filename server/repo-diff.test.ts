@@ -21,6 +21,7 @@ function git(cwd: string, ...args: string[]): string {
   return result.stdout.toString();
 }
 
+/** `git update-ref --stdin`: many refs made or dropped in one process. */
 function updateRefs(cwd: string, commands: string[]): void {
   const result = Bun.spawnSync(["git", "-C", cwd, "update-ref", "--stdin"], { stdin: Buffer.from(`${commands.join("\n")}\n`), stdout: "pipe", stderr: "pipe" });
   if (result.exitCode !== 0) throw new Error(`git update-ref --stdin failed: ${result.stderr.toString()}`);
@@ -141,6 +142,7 @@ describe("workspace and staged changes", () => {
       await expect(repoDiffFile(root, query({ path }))).rejects.toMatchObject({ code: "invalid_path", status: 400 });
     }
     await expect(repoDiffFile(root, query({ path: "keep.txt", old_path: "../x" }))).rejects.toMatchObject({ code: "invalid_path", status: 400 });
+    // pathspec magic and globs are read as plain names
     for (const path of ["staged-new.txt", "*.txt", ":(glob)**", ":/keep.txt"]) {
       await expect(repoDiffFile(root, query({ path }))).rejects.toMatchObject({ code: "not_found", status: 404 });
     }
@@ -357,6 +359,7 @@ describe("a branch against a base", () => {
     git(other, "commit", "-q", "-m", "other");
     await expect(repoDiffFile(other, pinned(list, { path: "shared.txt" }))).rejects.toMatchObject({ code: "comparison_changed", status: 409 });
     const malformed: unknown[] = ["{", "[]", "null", JSON.stringify({ ...identity, extra: 1 }), JSON.stringify({ ...identity, merge_base_oid: "HEAD" }), JSON.stringify({ ...identity, repository_root: "" }), JSON.stringify({ head_oid: identity.head_oid }), "x".repeat(9_000)];
+    // a full git id is 40 (SHA-1) or 64 (SHA-256) hex digits, nothing between or around
     for (const key of ["head_oid", "base_oid", "merge_base_oid"] as const) {
       for (const length of [39, 41, 63, 65]) malformed.push(JSON.stringify({ ...identity, [key]: "a".repeat(length) }));
     }
@@ -420,10 +423,13 @@ describe("a branch against a base", () => {
         expect(parsed((await repoDiffFile(root, pinned(list, { path: "feature.txt" }))).patch).map((file) => file.name)).toEqual(["feature.txt"]);
       }
       expect(offered[2]!.length).toBe(209);
+      // a full name with letters a short expression refuses is a name and nothing more: no range, reflog,
+      // peel, path, space or option rides on it, and none past the cap
       const marker = join(scratch, "refname-option-ran");
       for (const base of ["refs/heads/topic+base..main", "refs/heads/topic+base@{1}", "refs/heads/topic+base^{tree}", "refs/heads/topic+base~1", "refs/heads/topic+base:feature.txt", "refs/heads/topic+base ", `refs/heads/topic+base --output=${marker}`, "refs/heads/topic+base.lock", "refs/heads/topic+base/", `refs/heads/topic+${"x".repeat(1_100)}`, "refs/tags/v1+x", "refs/heads/topic+base\0"]) {
         await expect(repoDiffFiles(root, branchQuery({ base }))).rejects.toMatchObject({ code: "invalid_revision", status: 400 });
       }
+      // a valid name that starts like an option is still only a refname, and here names nothing
       await expect(repoDiffFiles(root, branchQuery({ base: "refs/heads/-p" }))).rejects.toMatchObject({ code: "revision_not_found", status: 404 });
       expect(existsSync(marker)).toBeFalse();
     } finally {
@@ -606,6 +612,7 @@ describe("bounds", () => {
         expect((await repoDiffFiles(hooked, query())).files.map((file) => file.path)).toEqual(["a.txt", "b.txt"]);
         for (const path of ["a.txt", "b.txt"]) expect((await repoDiffFile(hooked, query({ path }))).patch).toStartWith(`diff --git a/${path} b/${path}\n`);
       });
+      // the stand-in above only runs on git before 2.36, so the value itself is checked on any git
       const argvs = (spawn.mock.calls as unknown as [string[]][]).map(([argv]) => argv).filter((argv) => argv[0] === "git");
       expect(argvs.length).toBeGreaterThan(0);
       for (const argv of argvs) {
@@ -653,6 +660,7 @@ describe("GET /api/workspace/diff/*", () => {
     writeFileSync(join(root, "a.txt"), "two\n");
     const store = new DeviceStore(stateDir);
     const watchToken = store.pair(store.startPairing().code, "Watch", "watch")!.token;
+    // a first pairing is a device only once its cookie came back: that return is what saves it
     expect(store.match(watchToken)).not.toBeNull();
     watchCookie = `ovis_device=${watchToken}`;
     server = createServer({ port: 0, stateDir, token: "test-repo-diff", tailscaleOwner: null, machines: false });

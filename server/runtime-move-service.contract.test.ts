@@ -22,6 +22,7 @@ const TEST_MS = 60_000;
 describe.skipIf(!bin)("move of herdr's session to a real herdr-core", () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "mv-")));
   const stateDir = join(root, "ovis-state");
+  // set only once the core's own folders exist: afterAll stops a core only through it
   let env: Record<string, string> = {};
   let hc: HcConnection | null = null;
   let workspace: string | null = null;
@@ -30,6 +31,7 @@ describe.skipIf(!bin)("move of herdr's session to a real herdr-core", () => {
 
   beforeAll(async () => {
     for (const sub of ["state", "config", "run", "ovis-state", "home", "bin"]) mkdirSync(join(root, sub), { mode: 0o700 });
+    // a stand-in agent first on the core's PATH: an agent the move starts there is never a real CLI
     writeFileSync(join(root, "bin", "claude"), "#!/bin/sh\n[ \"$2\" = refused ] && { sleep 2; exit 1; }\nwhile :; do sleep 60; done\n");
     chmodSync(join(root, "bin", "claude"), 0o755);
     // and on the PATH of the login shell the move's panes start from: Debian's /etc/profile sets a PATH of its own
@@ -60,6 +62,7 @@ describe.skipIf(!bin)("move of herdr's session to a real herdr-core", () => {
     workspace = created.workspace.workspace_id;
     const down = await paneSplit(created.root_pane.pane_id, "down", false);
     const tab = await tabCreate({ workspaceId: workspace, cwd: logs, label: "logs" });
+    // the split's shell starts where the first pane is; its folder in the plan is the one asked of the move
     const full = await planMove(await sessionSnapshot(), { findResume: async () => null, processInfo: async () => undefined, inputEmpty: async () => null, holdsPending: () => false });
     const ours = new Set([created.root_pane.pane_id, down.pane_id, tab.root_pane.pane_id]);
     const plan: MovePlan = {
@@ -145,6 +148,8 @@ describe.skipIf(!bin)("move of herdr's session to a real herdr-core", () => {
     expect(pane).not.toBe("");
   }, TEST_MS);
 
+  // a resumed agent in a split whose folder is gone: its shell starts home, not in the first pane's folder,
+  // and the move goes on only once the agent runs the conversation it was given
   async function resumeInSplit(session: string) {
     const left = join(root, `left-${session}`);
     mkdirSync(left);

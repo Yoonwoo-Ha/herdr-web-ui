@@ -20,6 +20,12 @@ export function compareVersions(a: string, b: string): number | null {
   return first && second ? compare(first, second) : null;
 }
 
+/**
+ * release-summaries.json as a release wrote it:
+ * `{ "0.3.53": { "en": { "new": ["…"], "improved": ["…"], "fixed": ["…"] }, "ko": { … }, … } }`.
+ * It is text from a Git remote, like the changelog: what is not a version with lines in a
+ * language the app has is left out, and a file that is not JSON holds no summary.
+ */
 export function releaseSummaries(text: string): Map<string, ReleaseSummary> {
   const found = new Map<string, ReleaseSummary>();
   let written: unknown;

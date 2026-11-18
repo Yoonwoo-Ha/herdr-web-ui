@@ -1,3 +1,10 @@
+/**
+ * Byte ceilings for what another PC's bridge (or the bundle release) answers. A timeout bounds
+ * how long an answer may take, not how much of it is held, so every buffered answer is read
+ * through `readCapped`: its bytes are counted as they arrive and the stream is cancelled at the
+ * first byte past the ceiling, before anything is decoded. These are the sizes this app supports
+ * for each answer, not a guess at what a bridge will send.
+ */
 const KiB = 1024;
 const MiB = 1024 * KiB;
 export const REMOTE_LIMITS = {
@@ -8,6 +15,7 @@ export const REMOTE_LIMITS = {
   bundleManifest: MiB,
   sessionSnapshot: 64 * MiB,
   proxy: 64 * MiB,
+  /** a watching device's pane/prompt, parsed here so its hidden fields can be removed */
   watchedPrompt: MiB,
 } as const;
 
@@ -23,6 +31,11 @@ export async function discard(response: Response): Promise<void> {
   await response.body?.cancel().catch(() => {});
 }
 
+/**
+ * The answer's bytes, at most `limit` of them. A Content-Length past the limit is refused
+ * before reading; otherwise the bytes are counted as they stream in (after any decompression),
+ * whatever the header says, and the stream is cancelled as soon as they pass the limit.
+ */
 export async function readCapped(response: Response, limit: number): Promise<Uint8Array<ArrayBuffer>> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > limit) { await discard(response); throw new RemoteResponseTooLarge(); }
@@ -44,6 +57,7 @@ export async function readCapped(response: Response, limit: number): Promise<Uin
   return Buffer.concat(chunks);
 }
 
+/** Parses capped bytes; a parse failure says so without echoing them. */
 export function parseJson<T>(bytes: Uint8Array): T {
   try { return JSON.parse(new TextDecoder().decode(bytes)) as T; }
   catch { throw new RemoteResponseInvalid(); }

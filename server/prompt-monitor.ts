@@ -65,6 +65,7 @@ export class PromptMonitor {
     this.timer = undefined;
   }
 
+  /** One read of every watched pane, never two at once: a slow herdr skips ticks rather than piling reads up. */
   tick(): Promise<void> {
     this.ticking ??= this.readAll().finally(() => { this.ticking = null; });
     return this.ticking;

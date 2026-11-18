@@ -25,6 +25,7 @@ interface PiIndex {
   entries: PiEntry[];
   children: Map<string, PiEntry[]>;
   scanned: number;
+  /** the 64 bytes before `scanned`, which no append overwrites */
   tail: string;
 }
 
@@ -64,6 +65,8 @@ function extendIndex(index: PiIndex, path: string, size: number): void {
   try {
     let end = index.scanned;
     let carry = Buffer.alloc(0);
+    // the chunks of a line still without its newline: a record holding a picture runs to many
+    // megabytes, and joining it to each next chunk copied it once per chunk
     let open: Buffer[] = [];
     while (end < size) {
       const want = Math.min(INDEX_CHUNK_BYTES, size - end);
@@ -123,7 +126,11 @@ export function piEntryIndex(path: string): PiIndex | null {
   let file: string;
   try { const stat = statSync(path); size = stat.size; file = `${stat.dev}:${stat.ino}`; } catch { return null; }
   const cached = piIndexes.get(path);
-  piIndexes.delete(path);
+  // an append cannot disturb what was scanned — parents precede children — but a rewrite,
+  // a truncation or an in-place replacement can, and only the tail check tells them apart;
+  // a file put in the old one's place (an import, a restore) is another file even where its
+  // tail reads the same
+  piIndexes.delete(path); // a failed extension must not leave a partially indexed graph cached
   try {
     const reusable = cached && cached.file === file && cached.scanned <= size && readBefore(path, cached.scanned, 64) === cached.tail;
     const fresh = reusable ? cached : buildIndex(path, size, file);
@@ -152,6 +159,10 @@ export function forgetAllPiIndexes(): void {
   piIndexes.clear();
 }
 
+/**
+ * An id repeated (never pi, but never trusted) keeps its last append.
+ * Index entry/record budgets still fail closed rather than invent a partial branch.
+ */
 export function piBranchSegments(path: string, size: number): TranscriptSegment[] | null {
   const index = piEntryIndex(path);
   if (index === null || index.entries.length === 0) return null;
@@ -179,6 +190,7 @@ export function piBranchSegments(path: string, size: number): TranscriptSegment[
 
 export function* piBranchRecordRanges(path: string, size: number): Generator<{ line: string; start: number; end: number }> {
   let branch: TranscriptSegment[] | null, index: PiIndex | null;
+  // another file than the one the read is bound to holds no records of it
   try { branch = piBranchSegments(path, size); index = piEntryIndex(path); } catch { return; }
   if (!branch || !index || (index.entries.at(-1)?.end ?? 0) > size) return;
   let fd: number;
@@ -204,10 +216,20 @@ export function* piBranchRecords(path: string, size: number): Generator<string> 
   for (const item of piBranchRecordRanges(path, size)) yield item.line;
 }
 
+/** Test/diagnostic summary: metadata estimates only; never session contents. */
 export function piIndexCacheUsage(): { files: number; estimatedBytes: number } {
   return { files: piIndexes.size, estimatedBytes: [...piIndexes.values()].reduce((sum, item) => sum + item.retainedBytes, 0) };
 }
 
+/**
+ * pi keeps the leaf pointer to itself. `branch()` moves it and writes no entry, and no entry type
+ * names the leaf, so the only branch a reader of the file can rebuild is the one ending at the
+ * last entry written. Every other message in the file was abandoned, and the chat hides it with no
+ * trace it was ever there — which is what this counts, so the reader can say so out loud.
+ *
+ * `summary` carries pi's own account of the abandoned path when the user answered `/tree`'s
+ * "Summarize branch?" with a summary — a `branch_summary` entry written on the new branch.
+ */
 export function piAbandonedTurns(path: string, size: number): { count: number; branches: number; summary: string | null } | null {
   const index = piEntryIndex(path);
   if (index === null || index.entries.length === 0) return null;
@@ -221,20 +243,44 @@ export function piAbandonedTurns(path: string, size: number): { count: number; b
     next = next.parent === null ? undefined : byId.get(next.parent);
   }
   let summary: string | null = null;
+  // a branch is a place the pointer was moved away from: a live entry with a child left behind, so
+  // an abandoned path attached to the path still in play. Attached is the word — pi's session header
+  // is a root no entry ever links to, orphaned from the moment it is written, and counting heads of
+  // abandoned paths instead would report it as a navigation in every session there has ever been
   const heads: PiEntry[] = [];
   const isHead = (entry: PiEntry) => {
+    // a parentless entry other than pi's header, off the live path, with something left under it:
+    // pi's leaf cleared to null (navigating the tree to its very first entry) starts a path at the
+    // root, and abandoning that path is the same navigation as abandoning one mid-tree. The child
+    // is what makes it a path rather than a stray line, and it is also what keeps an append-only
+    // journal — every entry parentless, none linked — down at zero branches instead of calling its
+    // whole history abandoned
     if (entry.parent !== null || entry.type === "session" || live.has(entry.id)) return false;
     return (index.children.get(entry.id) ?? []).some((child) => !live.has(child.id));
   };
   for (const id of live) {
+    // ids deduped the way piBranchSegments dedupes them: an entry appended twice (never pi, never
+    // trusted) is still one place navigated away from
     const left = new Map<string, PiEntry>();
     for (const child of index.children.get(id) ?? []) if (!live.has(child.id) && !left.has(child.id)) left.set(child.id, child);
     heads.push(...left.values());
   }
   for (const entry of index.entries) if (isHead(entry) && !heads.some((head) => head.id === entry.id)) heads.push(entry);
   const branches = heads.length;
+  // The turns are counted INSIDE these subtrees, never over the whole file. A turn whose chain of
+  // parents does not lead to a counted head — its parent id never appears, the damage
+  // piBranchSegments calls "not invented" — belongs to no branch, and counting it would let the
+  // label name a branch for turns no branch holds. That is the invariant, true by construction
+  // rather than checked afterwards: count > 0 only ever with a branch behind it. It also answers a
+  // file with no links at all, where every entry is parentless: nothing is owned, so the journal
+  // reads as zero turns on zero branches instead of abandoning its whole history to a leaf that is
+  // only the last line written.
   let count = 0;
   if (branches > 0) {
+    // children link to parents, so a subtree's entries were appended after its head: one forward
+    // pass marks each entry owned by the branch it falls under, and only owned turns count. Counted
+    // by id, as everywhere else in this reader — an entry appended twice (never pi, never trusted)
+    // is one turn, not two
     const owned = new Set<string>();
     const counted = new Set<string>();
     for (const entry of index.entries) {

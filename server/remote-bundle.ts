@@ -43,6 +43,7 @@ async function fileSha256(path: string): Promise<string> {
   return hash.digest("hex");
 }
 
+/** The response body to <cache>/<sha>.tgz, checked on the way; a partial file never keeps the name. */
 async function download(url: string, sha256: string, cacheDir: string, report: (done: number, total: number | null) => void): Promise<void> {
   const response = await fetch(url, { signal: AbortSignal.timeout(30 * 60_000) });
   if (!response.ok || !response.body) throw new Error(`Bundle download failed (${response.status})`);
@@ -76,6 +77,10 @@ async function download(url: string, sha256: string, cacheDir: string, report: (
   }
 }
 
+/**
+ * The verified bundle file for a platform: a local manifest's own file, or a release asset
+ * downloaded once into cacheDir and reused while its checksum still matches.
+ */
 export async function bundleFile(platform: string, signal: AbortSignal, options: BundleFileOptions = {}): Promise<BundleFile> {
   signal.throwIfAborted();
   const source = await bundleManifestSource(platform, options);
