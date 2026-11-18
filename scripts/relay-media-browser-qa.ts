@@ -2,14 +2,14 @@
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { Database } from "bun:sqlite";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import type { BrowserContext, Page } from "playwright-core";
 import { startBunRelay } from "../relay/bun.ts";
 import { fileInfo, fileResponse, pagePolicy } from "../server/file-view.ts";
-import { herdrRpc, sessionSnapshot, subscribeEvents, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { opencodeImage } from "../server/opencode.ts";
 import { decodeOffer, encodeOffer } from "../shared/relay-offer.ts";
 import { relayResourcePath } from "../shared/relay-mux.ts";
@@ -20,6 +20,7 @@ import { chromePath } from "./chrome-path.ts";
 import { loadPagesSite, pagesResponse } from "./pages-static.ts";
 import { relayBrowserSocket, relayServerTree } from "./relay-browser-bridge.ts";
 import type { RelayServerTree } from "./relay-browser-bridge.ts";
+import { startRelayMediaOpenCode } from "./relay-media-opencode.ts";
 
 export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
   const { createServer, RelayService } = tree;
@@ -125,23 +126,7 @@ export async function relayMediaQa(tree: RelayServerTree): Promise<void> {
     workspaces.push(workspace.workspace.workspace_id);
     const pane = workspace.root_pane.pane_id;
     // A session report is accepted only while the actual foreground process holds the pane.
-    const standIn = join(dir, "opencode");
-    writeFileSync(standIn, "#!/bin/sh\nwhile read -r line; do :; done\n");
-    chmodSync(standIn, 0o755);
-    const watching = Promise.withResolvers<void>();
-    const running = Promise.withResolvers<void>();
-    const subscription = subscribeEvents([{ type: "pane.updated", pane_id: pane }, { type: "pane.agent_status_changed", pane_id: pane }], {
-      onStarted: watching.resolve,
-      onError: running.reject,
-      onEvent: () => { void sessionSnapshot().then((snapshot) => {
-        if (snapshot.panes.some((candidate) => candidate.pane_id === pane && candidate.agent === "opencode")) running.resolve();
-      }, running.reject); },
-    });
-    try {
-      await bounded(watching.promise, "agent event subscription");
-      await herdrRpc("pane.send_text", { pane_id: pane, text: `exec ${JSON.stringify(standIn)}\n` });
-      await bounded(running.promise, "stand-in OpenCode foreground process");
-    } finally { subscription.close(); }
+    await startRelayMediaOpenCode(pane, dir);
     await herdrRpc("pane.report_agent_session", { pane_id: pane, source: "herdr:opencode", agent: "opencode",
       agent_session_id: "ses_media", session_start_source: "select" });
     const reported = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === pane);
