@@ -47,7 +47,6 @@ export const QUARANTINE: Readonly<Record<string, QuarantineEntry>> = {
   "scripts/sidebar-filter-demo-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/sidebar-heads-demo-regression.ts": { until: "2026-12-02", issue: 4026 },
   "scripts/sidebar-peek-demo-regression.ts": { until: "2026-12-02", issue: 4026 },
-  "scripts/terminal-arrows-clicks-regression.ts": { until: "2026-12-02", issue: 4026 },
   "scripts/terminal-autoswitch-demo-regression.ts": { until: "2026-12-02", issue: 4026 },
   "scripts/terminal-cjk-punctuation-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/terminal-ghostty-demo-regression.ts": { until: "2026-12-02", issue: 4026 },
@@ -59,5 +58,4 @@ export const QUARANTINE: Readonly<Record<string, QuarantineEntry>> = {
   "scripts/ui-contexts-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/ui-ime-regression.ts": { until: "2026-12-02", issue: 4026 },
   "scripts/ui-regression.ts": { until: "2026-12-18", issue: 4026 },
-  "scripts/web-panel-mobile-regression.ts": { until: "2026-12-02", issue: 4026 },
 };

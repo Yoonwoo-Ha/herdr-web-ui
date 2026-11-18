@@ -31,6 +31,7 @@ interface Session {
   pane: string;
   frames: Array<{ type: string; text?: string; keys?: string[] }>;
   received: () => string;
+  ready: () => boolean;
   point: (x: number, y: number) => Promise<{ x: number; y: number }>;
   close: () => Promise<void>;
 }
@@ -90,7 +91,9 @@ async function open(browser: Browser, server: ReturnType<typeof createServer>, n
   });
   await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(pane)}`);
   await until(() => ready, `${name}: terminal accepts input`);
-  await page.locator(".xterm-screen").waitFor();
+  const current = ".pane-frame.is-current";
+  const screen = page.locator(`${current} .xterm-screen`);
+  await page.locator(shownRow(current), { hasText: "PROBE READY plain" }).waitFor({ timeout: 10_000 });
   let read = 0;
   return {
     page, pane, frames,
@@ -100,8 +103,10 @@ async function open(browser: Browser, server: ReturnType<typeof createServer>, n
       read = all.length;
       return Buffer.from(fresh, "hex").toString("latin1");
     },
+    ready: () => ready,
     point: async (x, y) => {
-      const box = (await page.locator(".xterm-screen").boundingBox())!;
+      const box = await screen.boundingBox();
+      assert.ok(box, `${name}: the current pane's terminal grid`);
       return { x: box.x + x, y: box.y + y };
     },
     close: () => context.close(),
@@ -256,8 +261,8 @@ try {
   {
     const s = await open(browser, attached, "mouse", "\\033[?1049h\\033[?1000h\\033[?1006hhttps://example.test/621 notes.md\\r\\n");
     writeFileSync(join(root, "mouse", "notes.md"), "# Notes\n");
-    const at = await s.point(100, 70);
     await mouseReporting(s);
+    const at = await s.point(100, 70);
     let got = "";
     const click = /\x1b\[<0;(\d+);(\d+)M[\s\S]*\x1b\[<0;(\d+);(\d+)m/;
     await s.page.mouse.click(at.x, at.y);
@@ -401,6 +406,14 @@ try {
     // Nothing reaches xterm in between: a key, or a buttonless move (a hover report), would clear the
     // selection first, so the press is where the modifier drag let go.
     assert.ok((await s.page.locator(".xterm-selection div").count()) > 0, "the selection is still up when the plain drag starts");
+    // The press reaches the program only from this pane's grid with its mouse mode on, and only while the pane
+    // takes input: a mouse report the pane cannot take now is dropped without a word (useTerminalMount sendTyped).
+    // both hold together right before the press: readiness checked first could drop while the hit test waits
+    let under = "";
+    await until(async () => (under = s.ready() ? await s.page.evaluate(({ x, y }) => {
+      const at = document.elementFromPoint(x, y);
+      return at?.closest(".pane-frame.is-current .xterm.enable-mouse-events") ? "" : at ? `${at.tagName.toLowerCase()}.${[...at.classList].join(".")}` : "nothing";
+    }, to) : "a pane that does not take input") === "", () => `the plain drag's press lands on this pane's grid while it takes input (found ${under})`);
     await dragFromHere(to, from);
     await until(() => drag.test(got += s.received()), () => `a plain drag after a selection received (read ${JSON.stringify(got)})`);
     await until(async () => (await s.page.locator(".xterm-selection div").count()) === 0, "the earlier selection is cleared");
