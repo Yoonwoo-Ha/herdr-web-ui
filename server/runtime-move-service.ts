@@ -3,7 +3,7 @@ import { chmodSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HerdrRuntimeFacts, RuntimeName } from "../shared/machines.ts";
-import type { PaneProcessInfo, SessionSnapshot } from "../shared/herdr-api.generated.ts";
+import type { PaneInfo, PaneProcessInfo, SessionSnapshot } from "../shared/herdr-api.generated.ts";
 import type { MovePlan, MovePlanResponse, MoveStatus, MoveStopAllOffer } from "../shared/runtime-move.ts";
 import { agentLaunch } from "./agent-launch.ts";
 import { freeAgentName } from "./agent-name.ts";
@@ -82,11 +82,17 @@ export interface MoveService {
 
 export type InputLane = <T>(paneId: string, task: () => T | Promise<T>) => Promise<T>;
 
-export function herdrSource(holdsPending: (paneId: string) => boolean, inputEmpty: MoveSource["inputEmpty"], lane: InputLane, prompt: (paneId: string, text: string) => Promise<void> = agentPrompt): MoveSource {
+export function herdrSource(
+  holdsPending: (paneId: string) => boolean,
+  inputEmpty: MoveSource["inputEmpty"],
+  lane: InputLane,
+  prompt: typeof agentPrompt = agentPrompt,
+  read: (paneId: string) => Promise<Pick<PaneInfo, "agent" | "agent_status" | "agent_session">> = paneGet,
+): MoveSource {
   return {
     pane: async (paneId) => {
       try {
-        const pane = await paneGet(paneId);
+        const pane = await read(paneId);
         const info = await paneProcessInfo(paneId).catch(() => undefined);
         const shellInFront = info?.shell_pid == null || info.foreground_process_group_id == null ? null : info.foreground_process_group_id === info.shell_pid;
         return { agent: pane.agent ?? null, status: pane.agent_status, session: pane.agent_session?.value ?? null, shellInFront };
@@ -95,12 +101,30 @@ export function herdrSource(holdsPending: (paneId: string) => boolean, inputEmpt
     holdsPending,
     inputEmpty,
     // in the pane's input lane, behind anything typed or sent through Ovis before it and ahead of anything
-    // after, checked again there: a message queued or text typed meanwhile stops it. herdr then pastes it
-    // and its Enter, and refuses while the agent waits for an answer
-    sendExit: (paneId, agent, command) => lane(paneId, async () => {
-      if (holdsPending(paneId)) throw new Error("a message waits for the pane");
-      if (await inputEmpty(paneId, agent) !== true) throw new Error("text is in the input box");
-      await prompt(paneId, command);
+    // after. There the input box is read again, then the agent last of all (its status is what the lane
+    // wait leaves stale), and the queue is asked once more at herdr's write. Still typed into: work or a
+    // draft that starts between those reads and herdr's Enter, 300 ms after its paste, from outside the
+    // lane (the terminal, herdr's own clients, POST /api/pane/input); herdr has no call that types only
+    // into an idle agent with an empty box
+    sendExit: (paneId, agent, session, command) => lane(paneId, async () => {
+      if (holdsPending(paneId)) return "agent_busy";
+      if (await inputEmpty(paneId, agent) !== true) return "input_left";
+      const now = await read(paneId).catch(() => null);
+      if (now == null || now.agent !== agent || (now.agent_status !== "idle" && now.agent_status !== "done")) return "agent_busy";
+      if (session !== null && now.agent_session?.value !== session) return "plan_changed";
+      try {
+        await prompt(paneId, command, undefined, () => !holdsPending(paneId));
+      } catch (error) {
+        if (!(error instanceof HerdrError)) throw error;
+        // nothing was typed only when this side sent nothing (the guard refused, herdr was never
+        // reached) or herdr itself answered that it refused; any other error may follow the keys
+        if (!error.fromReply && error.code === "cancelled") return "agent_busy";
+        if (!error.fromReply && error.code === "connect_failed") return `failed: ${error.message}` as const;
+        if (error.fromReply && error.code === "agent_blocked") return "agent_busy";
+        if (error.fromReply && (error.code === "agent_not_found" || error.code === "agent_not_ready")) return "plan_changed";
+        throw error;
+      }
+      return "sent";
     }),
     runsConversation: async (agent, session) => (await sessionSnapshot()).panes.some((pane) => pane.agent === agent && pane.agent_session?.value === session),
     start: async (paneId, argv) => {

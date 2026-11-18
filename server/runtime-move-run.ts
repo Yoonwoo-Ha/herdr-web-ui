@@ -10,7 +10,8 @@ export interface MoveSource {
   holdsPending: (paneId: string) => boolean;
   inputEmpty: (paneId: string, agent: string) => Promise<boolean | null>;
   /** sends the command as a message to the agent (herdr's agent.prompt: pasted, then Enter) */
-  sendExit: (paneId: string, agent: string, command: string) => Promise<void>;
+  /** Types the exit, or answers why it typed nothing. It throws only when it cannot say whether the keys went out. */
+  sendExit: (paneId: string, agent: string, session: string | null, command: string) => Promise<"sent" | "agent_busy" | "input_left" | "plan_changed" | `failed: ${string}`>;
   runsConversation: (agent: string, session: string) => Promise<boolean>;
   start: (paneId: string, argv: readonly string[]) => Promise<void>;
 }
@@ -117,8 +118,8 @@ export async function runMove(stateDir: string, port: number, id: string, plan: 
       step("ending_agents", index, agents.length);
       const verdict = pane.verdict;
       const now = await source.pane(pane.pane_id);
-      // checked again before the keys: an agent that took work since the plan is not typed into, but
-      // one that takes it after this read (during the input check) still is
+      // an agent that took work since the plan is not typed into; sendExit reads the agent, its
+      // conversation and its input box once more as the last thing before the keys
       if (!now || now.agent !== verdict.agent || (now.status !== "idle" && now.status !== "done") || source.holdsPending(pane.pane_id)) throw new MoveAbort("agent_busy");
       // the conversation shown is the one ended: one switched to since would be reopened as the wrong one
       if (verdict.kind === "resume" && now.session !== verdict.session_id) throw new MoveAbort("plan_changed");
@@ -128,7 +129,9 @@ export async function runMove(stateDir: string, port: number, id: string, plan: 
       if (command === undefined) throw new MoveAbort("no_exit_command");
       journal.ended.push({ pane_id: pane.pane_id, agent: verdict.agent, argv: verdict.kind === "resume" ? verdict.argv : [verdict.agent], session: verdict.kind === "resume" ? verdict.session_id : null });
       save();
-      await source.sendExit(pane.pane_id, verdict.agent, command);
+      const exit = await source.sendExit(pane.pane_id, verdict.agent, verdict.kind === "resume" ? verdict.session_id : null, command);
+      // refused, so nothing was typed: it was not ended and a rollback has nothing to put back there
+      if (exit !== "sent") { journal.ended.pop(); throw new MoveAbort(exit); }
       let gone = false;
       for (const deadline = Date.now() + exitMs; Date.now() < deadline;) {
         const after = await source.pane(pane.pane_id);
