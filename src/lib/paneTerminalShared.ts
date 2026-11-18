@@ -15,6 +15,20 @@ export const RESUME_INPUT_WAIT_MS = 5_000;
 export const VIEW_BUFFER_MAX = 512 * 1024;
 export const VIEW_HOLD_MS = 1000;
 
+declare const __HERDR_TEST_HOOKS__: boolean;
+export interface TerminalTimerTestWindow extends Window {
+  __herdrTestTerminalTimeout?: (run: () => void, delay: number) => number;
+}
+
+/** Lets browser regressions track terminal work without counting unrelated timers with the same delay. */
+export function setTerminalTimeout(run: () => void, delay: number): number {
+  const timers: TerminalTimerTestWindow = window;
+  if (typeof __HERDR_TEST_HOOKS__ === "boolean" && __HERDR_TEST_HOOKS__ && timers.__herdrTestTerminalTimeout) {
+    return timers.__herdrTestTerminalTimeout(run, delay);
+  }
+  return timers.setTimeout(run, delay);
+}
+
 // A switch's pane attaches before the hidden recent tabs' views start or stop: herdr serves a
 // starting view and the attach in turn, so a view started beside it delays the pane the user picked.
 const viewHold = { held: false, queued: new Set<() => void>(), timer: 0 };
@@ -22,7 +36,7 @@ const viewHold = { held: false, queued: new Set<() => void>(), timer: 0 };
 export function holdViews(): void {
   viewHold.held = true;
   window.clearTimeout(viewHold.timer);
-  viewHold.timer = window.setTimeout(releaseViews, VIEW_HOLD_MS);
+  viewHold.timer = setTerminalTimeout(releaseViews, VIEW_HOLD_MS);
 }
 
 export function releaseViews(): void {

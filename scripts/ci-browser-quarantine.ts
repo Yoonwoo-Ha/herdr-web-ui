@@ -20,8 +20,6 @@ export const QUARANTINE: Readonly<Record<string, QuarantineEntry>> = {
   "scripts/chat-virtual-browser-qa.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/file-viewer-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/gjc-status-browser-regression.ts": { until: "2026-12-02", issue: 4026 },
-  "scripts/inbox-mode-demo-regression.ts": { until: "2026-12-02", issue: 4026 },
-  "scripts/inbox-mode-rail-demo-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/omo-question-wheel-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/pane-mute-captures-demo-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/pane-mute-demo-regression.ts": { until: "2026-12-02", issue: 4026 },
