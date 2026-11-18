@@ -126,8 +126,8 @@ async function open(browser: Browser, server: number, prefix: string, kind: "cor
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => { if (message.type() === "warning" && message.text().includes("libghostty")) errors.push(message.text()); });
   await page.goto(`http://127.0.0.1:${server}${prefix}?pane=${encodeURIComponent(panes.shell)}&view=terminal&server=${kind}`);
-  // attached, not visible: once libghostty draws, xterm's own rows are hidden under it
-  await page.locator(".pane-frame.is-current .xterm-rows", { hasText: "BEFORE-LOAD" }).waitFor({ state: "attached" });
+  // Either renderer can paint the first replay; xterm stops painting once libghostty takes over.
+  await page.locator(".pane-frame.is-current :is(.xterm-rows, .ghostty-row)", { hasText: "BEFORE-LOAD" }).filter({ visible: true }).first().waitFor();
   return { page, wasm, errors };
 }
 

@@ -14,7 +14,6 @@ export const QUARANTINE_MAX_DAYS = 30;
 export const QUARANTINE: Readonly<Record<string, QuarantineEntry>> = {
   "scripts/agent-lock-demo-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/agent-skill-menu-demo-regression.ts": { until: "2026-12-18", issue: 4026 },
-  "scripts/agent-state-groups-demo-regression.ts": { until: "2026-12-02", issue: 4026 },
   "scripts/application-paging-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/chat-history-browser-qa.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/chat-virtual-browser-qa.ts": { until: "2026-12-18", issue: 4026 },
@@ -32,9 +31,7 @@ export const QUARANTINE: Readonly<Record<string, QuarantineEntry>> = {
   "scripts/settings-pages-demo-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/setup-dialog-demo-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/sidebar-filter-demo-regression.ts": { until: "2026-12-18", issue: 4026 },
-  "scripts/terminal-autoswitch-demo-regression.ts": { until: "2026-12-02", issue: 4026 },
   "scripts/terminal-cjk-punctuation-regression.ts": { until: "2026-12-18", issue: 4026 },
-  "scripts/terminal-ghostty-demo-regression.ts": { until: "2026-12-02", issue: 4026 },
   "scripts/terminal-served-font-regression.ts": { until: "2026-12-02", issue: 4026 },
   "scripts/terminal-switch-resize-regression.ts": { until: "2026-12-18", issue: 4026 },
   "scripts/terminal-touch-burst-history-regression.ts": { until: "2026-12-02", issue: 4026 },
