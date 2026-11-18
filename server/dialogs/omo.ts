@@ -2,7 +2,7 @@ import type { DialogReader, ReaderContext } from "./registry.ts";
 import { pickerPlan } from "./interaction-plan.ts";
 import { type InteractivePrompt } from "../../shared/protocol.ts";
 import type { NativeSteps } from "./step-navigate.ts";
-import { ANSI_RE, onePerPass, type AnswerStep, type CardWords, KEY, type OmoAsk, PI_MODEL_TAIL_RE, type ParsedPrompt, type PromptDraft, SOLID_RULE_RE, cleanLine, englishOf, findLastIndex, finishPrompt, isDivider, own, joinWrapped, keySteps, navigationKeys, normalizeText, piModelRows, screenWidth, wrapped } from "./shared.ts";
+import { ANSI_RE, onePerPass, type AnswerStep, type CardWords, KEY, type OmoAsk, PI_MODEL_TAIL_RE, type ParsedPrompt, type PromptDraft, SOLID_RULE_RE, cleanLine, editorRowsMatch, englishOf, findLastIndex, finishPrompt, isDivider, own, joinWrapped, keySteps, navigationKeys, normalizeText, piModelRows, screenWidth, wrapped } from "./shared.ts";
 
 // OmO's ask_user_question form (omo 5.1): `Ask user · 30m`, a tab per question then Submit, and
 // under them the active question or, on the Submit tab, the review of the answers
@@ -112,6 +112,14 @@ function omoWalk(to: number, from: number, rows: number): string[] {
 function omoAnsweredCount(lines: string[], from: number, to: number): number | null {
   const match = /Submit \((\d+)\/\d+ answered\)/.exec(lines.slice(from, to).map(cleanLine).join(" "));
   return match ? Number(match[1]) : null;
+}
+
+/** The `>` marks the first row only; the form's Submit line ends the field. */
+function omoEditorRows(lines: string[], field: number, hint: number): string[] {
+  const submit = findLastIndex(lines.slice(field + 1, hint), (line) => /^\s*Submit \(\d+\/\d+ answered\)/.test(line));
+  if (submit < 0) return [];
+  const first = lines[field]?.replace(/^\s*> ?/, "") ?? "";
+  return [first, ...lines.slice(field + 1, field + 1 + submit)];
 }
 
 interface OmoQuestionView {
@@ -288,7 +296,7 @@ function parseOmoTyping(screen: string, ask: OmoAsk | null, trusted: boolean): P
   const known = ask && (!form || askOnScreen(form, ask)) ? ask : null;
   if (!trusted && !known) return null;
   const label = findLastIndex(lines.slice(0, hintIndex), (line) => /^Your answer \(/.test(cleanLine(line)));
-  const field = findLastIndex(lines.slice(0, hintIndex), (line, index) => index > label && /^>/.test(cleanLine(line)));
+  const field = lines.findIndex((line, index) => index > label && index < hintIndex && /^\s*>(?: |$)/.test(line));
   if (label < 0 || field < 0) return null;
   const typed = cleanLine(lines[field]!).replace(/^>\s?/, "").trim();
   const view = omoQuestionView(lines, form ? form.barEnd + 1 : 0, label, !form);
@@ -317,6 +325,8 @@ function parseOmoTyping(screen: string, ask: OmoAsk | null, trusted: boolean): P
     tabs = form.tabs;
     question = joinWrapped(view.question, screenWidth(lines));
   }
+  const width = screenWidth(lines);
+  const steps = omoSteps(tabs, known);
   const choices: { label: CardWords; description: string | null; steps: AnswerStep[] }[] = [
     { label: own("Save the typed answer"), description: typed || null, steps: keySteps([KEY.enter]) },
     { label: own("Discard it"), description: null, steps: keySteps([KEY.escape]) },
@@ -325,11 +335,20 @@ function parseOmoTyping(screen: string, ask: OmoAsk | null, trusted: boolean): P
     // a menu: a number typed in the chat acts on the terminal's input, so it waits for Confirm
     kind: "menu", title: omoTitle(tabs, index, known), question, body: null,
     options: choices.map((choice) => ({ label: choice.label, description: choice.description })),
-    multi_select: false, custom_option_index: null, steps: omoSteps(tabs, known),
+    multi_select: false, custom_option_index: null, steps,
   }, {
     responder: "omo-typing", menuLabels: choices.map((choice) => englishOf(choice.label)), selectedIndex: -1,
     checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
     optionSteps: choices.map((choice) => choice.steps),
+    customEditorMatches: ({ prompt, text }) =>
+      prompt.responder === "omo-question" && question === prompt.question
+      && (view.question.length > 0 ? sameText(joinWrapped(view.question, width), prompt.question) : prompt.omoQuestion !== undefined)
+      && englishOf(omoTitle(tabs, index, known)) === prompt.title
+      && prompt.omoQuestion?.call === known?.id && (prompt.omoQuestion === undefined || index === prompt.omoQuestion.index)
+      && JSON.stringify(steps?.map((step) => [step.label, step.current])) === JSON.stringify(prompt.steps?.map((step) => [step.label, step.current]))
+      && (view.rows.at(-1)?.number ?? 0) === prompt.options.length
+      && view.rows.every((row) => sameText(joinWrapped(row.label, width, /^(?:→\s+)?\d+\.\s+/).replace(/\s+✓$/, ""), prompt.options[row.number - 1]?.label ?? ""))
+      && editorRowsMatch(omoEditorRows(lines, field, hintIndex), text),
   }, { call: known?.id });
 }
 
@@ -414,6 +433,15 @@ function parseOmoReview(screen: string, ask: OmoAsk | null, trusted: boolean): P
     checkedOptionIndices: [], customMenuIndex: count, rejectWithEscapeIndex: null,
     optionSteps: [...choices.map(({ steps }) => steps), []],
     customSteps: (text) => [...keySteps(omoWalk(count, selectedIndex, count + 1)), { text }, ...keySteps([KEY.enter])],
+    ...(onComment ? {
+      customEditorMatches: ({ prompt, text }) => {
+        const input = lines.findIndex((line, at) => at >= index && at < hintIndex && /^\s*>(?: |$)/.test(line));
+        if (input < 0 || prompt.responder !== "omo-review" || nativeSteps?.identity !== prompt.nativeSteps?.identity
+          || JSON.stringify([...choices.map(({ label }) => englishOf(label)), englishOf(commentLabel)]) !== JSON.stringify(prompt.options.map(({ label }) => label))
+          || (submitAt < 0 ? englishOf(own("Submit your answers?")) : after.slice(submitAt)) !== prompt.question) return false;
+        return editorRowsMatch(omoEditorRows(lines, input, hintIndex), text);
+      },
+    } : {}),
   }, { call: known?.id });
 }
 

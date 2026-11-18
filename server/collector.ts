@@ -54,9 +54,14 @@ const SNAPSHOT_RETRY_MS = 5_000;
 const REPLAY_SETTLE_MS = 150;
 
 export interface StatusCollectorHandlers {
-  onStatus: (paneId: string, status: AgentStatus, agent: string | null, replay?: { before: AgentStatus; agent: string | null }) => void;
-  onBaseline: (panes: readonly HerdrPane[]) => void;
-  onResync?: (panes: readonly HerdrPane[], newer: ReadonlySet<string>) => void;
+  /** `replay.askedAt`: when the snapshot the replayed status was read from was asked for (`Date.now()`) */
+  onStatus: (paneId: string, status: AgentStatus, agent: string | null, replay?: { before: AgentStatus; agent: string | null; askedAt?: number }) => void;
+  /**
+   * `newer`: panes with an event or an exit since the snapshot was asked for, whose reading here is older than that.
+   * `askedAt`: when it was asked for (`Date.now()`).
+   */
+  onBaseline: (panes: readonly HerdrPane[], newer: ReadonlySet<string>, askedAt: number) => void;
+  onResync?: (panes: readonly HerdrPane[], newer: ReadonlySet<string>, askedAt: number) => void;
   onReconciled?: (panes: readonly HerdrPane[]) => void;
   onPaneEnded: (paneId: string) => void;
   /**
@@ -348,18 +353,19 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
     const replay = replayFor;
     replayFor = null;
     const askedAt = statusEvents;
+    const askedTime = Date.now();
     try {
       const snapshot = await deps.snapshot();
       if (stopped) return;
-      handlers.onBaseline(snapshot.panes);
+      // an exit since the snapshot was asked for is newer than it too. A focus is not: work that
+      // ended during a loss is still to be settled, or it would read as going on for good
+      const newer = new Set([...lastEventOf, ...actedOn].filter(([, seq]) => seq > askedAt).map(([paneId]) => paneId));
+      handlers.onBaseline(snapshot.panes, newer, askedTime);
       for (const pane of snapshot.panes) if (!displayAgents.has(pane.pane_id)) displayAgents.set(pane.pane_id, pane.display_agent ?? null);
       const resynced = resync !== null && resync === statusGeneration && statusSubscription !== null;
       if (resynced) {
         recovering = false;
-        // an exit since the snapshot was asked for is newer than it too. A focus is not: work that
-        // ended during the loss is still to be settled, or it would read as going on for good
-        const newer = new Set([...lastEventOf, ...actedOn].filter(([, seq]) => seq > askedAt).map(([paneId]) => paneId));
-        handlers.onResync?.(snapshot.panes, newer);
+        handlers.onResync?.(snapshot.panes, newer, askedTime);
         for (const pane of snapshot.panes) if (!newer.has(pane.pane_id)) displayAgents.set(pane.pane_id, pane.display_agent ?? null);
         handlers.onStructureChange();
       }
@@ -397,7 +403,7 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
           if (newerThan(pane.pane_id, askedAt) || before === undefined || before.status === pane.agent_status) continue;
           const agent = pane.agent ?? null;
           heard.set(pane.pane_id, { status: pane.agent_status, agent });
-          handlers.onStatus(pane.pane_id, pane.agent_status, agent, { before: before.status, agent: before.agent });
+          handlers.onStatus(pane.pane_id, pane.agent_status, agent, { before: before.status, agent: before.agent, askedAt: askedTime });
         }
       }
       handlers.onReconciled?.(snapshot.panes.filter((pane) => !newerThan(pane.pane_id, askedAt)));

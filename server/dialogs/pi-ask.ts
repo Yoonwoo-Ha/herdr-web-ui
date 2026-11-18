@@ -119,7 +119,7 @@ function question(frame: Frame, expected?: OmoAsk): ParsedPrompt | null {
       can_step_next: navigable && tabs.steps[tabs.index! + 1]?.can_navigate === true } : {}),
   }, {
     ...(navigable ? { piAskForm: { identity: `${expected?.id ?? ""}\0${tabs!.identity}`, index: tabs!.index! } } : {}),
-    ...(typing ? { piAskTyping: true as const } : {}),
+    ...(typing ? { piAskTyping: true as const, piAskDraft: other.label.trim() } : {}),
     responder: "pi-ask-question", menuLabels: [...options.map(option => option.label), OTHER, ...(next ? [next.label] : [])],
     selectedIndex, checkedOptionIndices: checked, customMenuIndex: multi ? null : custom, rejectWithEscapeIndex: null,
     ...(!multi ? { customSteps: (text: string): AnswerStep[] => [
