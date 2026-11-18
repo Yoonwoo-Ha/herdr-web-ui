@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { Pencil, Terminal } from "lucide-react";
 import { act, createElement } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 
@@ -252,6 +253,47 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
       await act(async () => input().props.onKeyDown({ key: "Enter", stopPropagation() {}, nativeEvent: { isComposing: false, keyCode: 13 } }));
       expect(renameFields()).toBe(0);
     });
+  });
+
+  it("names a phone's open split tab for its open pane, and a tap on it lists the tab's panes once", async () => {
+    const lead = { ...pane("w1", "w1:t1"), agent: "claude" } as PaneInfo;
+    const shell = { ...pane("w1", "w1:t1"), pane_id: "w1:t1:q", terminal_id: "w1:t1:q:term", label: "build shell" } as PaneInfo;
+    const split = (label: string): SessionSnapshot => ({ ...snapshot, tabs: snapshot.tabs.map((entry) => entry.tab_id === "w1:t1" ? { ...entry, label, pane_count: 2 } : entry), panes: [lead, shell, ...snapshot.panes.slice(1)] });
+    // the header's tabs hand the pane's own actions over with the tab's panes in them
+    const paneActions = () => [{ id: "pane:w1:t1:p", label: "lead", icon: Terminal, run() {} }, { id: "rename", label: "Rename pane", icon: Pencil, run() {} }];
+    const drawSplit = async (shown: SessionSnapshot): Promise<void> => {
+      const tree = createElement(SettingsProvider, null, createElement(AppLayoutContext.Provider, { value: TUI },
+        createElement(TabStrip, { snapshot: shown, workspace: shown.workspaces[0]!, selectedPane: shell, onSelectPane: (paneId: string) => { picked.push(paneId); }, onNewTab: () => {}, onNewTerminal: async () => {}, paneActions })));
+      await act(async () => { if (renderer) renderer.update(tree); else renderer = create(tree, { createNodeMock: node }); });
+    };
+    const picked: string[] = [];
+    const menu = () => renderer!.root.findByType(RowMenu).props as { title: string; items: { id: string; run: () => void }[] };
+    const chip = () => tab().findByProps({ className: "tab-strip-label" }).children.join("");
+    const marks = () => tab().findAll((found) => found.props.className === "tab-strip-agent").length;
+    // a 700px window: one pane of a split at a time, the menu a popover rather than a phone's sheet
+    const wide = window.matchMedia;
+    window.matchMedia = (query: string) => ({ ...media, matches: query.includes("(max-width: 768px)") && !query.includes("max-height") }) as unknown as MediaQueryList;
+
+    await drawSplit(split(""));
+    expect(chip()).toBe("build shell");
+    expect(marks()).toBe(0);
+    await act(async () => tab().props.onClick({ currentTarget: node(), detail: 1, ctrlKey: false }));
+    expect(menu().items.map((item) => item.id))
+      .toEqual(["pane:w1:t1:p", "pane:w1:t1:q", "rename", "move-right", "new-agent-tab", "rename-tab", "close-tab"]);
+    await act(async () => menu().items[0]!.run());
+    expect(picked).toEqual(["w1:t1:p"]);
+
+    // named from elsewhere while its menu is open: the chip and the menu take the new name
+    await drawSplit(split("deploy"));
+    expect(chip()).toBe("deploy");
+    expect(menu().title).toBe("deploy");
+
+    window.matchMedia = wide;
+    await act(async () => renderer?.unmount());
+    renderer = undefined;
+    await drawSplit(split(""));
+    expect(chip()).toBe("Tab 1");
+    expect(marks()).toBe(1);
   });
 
   it("leaves a tab's unfinished name behind when the strip moves to another workspace", async () => {

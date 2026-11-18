@@ -2568,6 +2568,16 @@ button {
   padding: 0 var(--space-2);
 }
 
+/* one pane of a split at a time: the open tab is named for its pane, whose name can be long; the
+   tab's place and its ⋯ stay in view before the row's + */
+@media (max-width: 768px) {
+  .pane-slot .tab-strip-label {
+    max-width: min(var(--tab-max-w), 40vw);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
 .header-tabs .tab-strip-label {
   min-width: 0;
   overflow: hidden;

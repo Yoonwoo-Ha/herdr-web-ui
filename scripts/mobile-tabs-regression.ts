@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, Locator, Page } from "playwright-core";
 import { appFaces } from "./app-faces.ts";
-import { herdrRpc, paneSplit, tabCreate, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { herdrRpc, paneRename, paneSplit, tabCreate, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { chromePath } from "./chrome-path.ts";
 import { openLens } from "./header-lens.ts";
 
@@ -84,7 +84,7 @@ async function activeTabInView(page: Page, label: string): Promise<void> {
   });
 }
 
-async function checkPhoneRow(browser: Browser, origin: string, first: string, panes: string[]): Promise<void> {
+async function checkPhoneRow(browser: Browser, origin: string, first: string, second: string, panes: string[]): Promise<void> {
   for (const width of [360, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 780 }, isMobile: true, hasTouch: true, locale: "en-US" });
     try {
@@ -105,6 +105,15 @@ async function checkPhoneRow(browser: Browser, origin: string, first: string, pa
         .map((node) => node.getBoundingClientRect()).filter((rect) => rect.width > 0 && (rect.width < 44 || rect.height < 44)).length);
       assert.equal(small, 0, `${label}: every tab, the ⋯ and the + are touch targets`);
       await activeTabInView(page, label);
+      // the split tab shows one pane at a time: it says which of its panes is open, and a tap on it, open, lists them
+      assert.match((await page.locator('.pane-slot .tab-strip [role="tab"][aria-selected="true"] .tab-strip-position [aria-hidden="true"]').textContent()) ?? "", /^[12]\/2$/,
+        `${label}: the open split tab says which of its two panes is open`);
+      await page.locator('.pane-slot .tab-strip [role="tab"][aria-selected="true"]').tap();
+      const paneMenu = page.getByRole("dialog", { name: "Tab 1", exact: true });
+      await paneMenu.waitFor();
+      assert.deepEqual((await paneMenu.locator('.row-sheet-item[data-item^="pane:"]').evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset["item"]))).sort(),
+        [`pane:${first}`, `pane:${second}`].sort(), `${label}: a tap on the open split tab lists its two panes`);
+      await cancelSheet(page, paneMenu);
       await page.locator('.pane-slot .tab-strip [role="tab"]', { hasText: "deploy" }).tap();
       await page.locator(`[data-layout-pane=${JSON.stringify(panes[2])}]`).waitFor({ state: "visible" });
       await activeTabInView(page, `${label}, after a tap on a tab further on`);
@@ -114,7 +123,7 @@ async function checkPhoneRow(browser: Browser, origin: string, first: string, pa
   }
 }
 
-async function checkHeaderLongPress(browser: Browser, origin: string, first: string): Promise<void> {
+async function checkHeaderLongPress(browser: Browser, origin: string, first: string, second: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 360, height: 780 }, isMobile: true, hasTouch: true, locale: "en-US" });
   try {
     await context.addInitScript(() => {
@@ -125,15 +134,15 @@ async function checkHeaderLongPress(browser: Browser, origin: string, first: str
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.clock.install();
-    await page.goto(`${origin}/?pane=${encodeURIComponent(first)}`);
+    await page.goto(`${origin}/?pane=${encodeURIComponent(second)}`);
     await page.locator(".conn-live").waitFor();
     const row = page.locator(".app-header .header-tabs .tab-strip");
-    const second = row.getByRole("tab", { name: "second", exact: true });
-    await second.waitFor();
+    const secondTab = row.getByRole("tab", { name: "second", exact: true });
+    await secondTab.waitFor();
     const selected = (): Promise<string | null> => row.locator('[role="tab"][aria-selected="true"] .tab-strip-label').textContent();
-    assert.equal(await selected(), "Tab 1", "the first tab is open");
+    assert.equal(await selected(), "split shell", "the first tab is open, named for the one pane of its split in view");
     const point = async (): Promise<{ x: number; y: number }> => {
-      const tab = (await second.boundingBox())!;
+      const tab = (await secondTab.boundingBox())!;
       const strip = (await row.boundingBox())!;
       return { x: Math.min(tab.x + tab.width / 2, strip.x + strip.width - 24), y: tab.y + tab.height / 2 };
     };
@@ -147,11 +156,11 @@ async function checkHeaderLongPress(browser: Browser, origin: string, first: str
     await page.clock.runFor(600);
     await menu.waitFor();
     await touch("touchEnd");
-    assert.equal(await selected(), "Tab 1", "a long press opens the tab's menu and does not open the tab");
+    assert.equal(await selected(), "split shell", "a long press opens the tab's menu and does not open the tab");
     await menu.getByRole("button", { name: "Cancel", exact: true }).tap();
     await menu.waitFor({ state: "detached" });
 
-    await second.tap();
+    await secondTab.tap();
     await row.locator('[role="tab"][aria-selected="true"] .tab-strip-label', { hasText: "second" }).waitFor();
 
     // Last: under the page's clock the press's own events can leave the next tap unanswered, which a real clock does not
@@ -171,6 +180,22 @@ async function checkHeaderLongPress(browser: Browser, origin: string, first: str
     await position.waitFor();
     assert.match((await position.locator('[aria-hidden="true"]').textContent()) ?? "", /^[12]\/2$/, "the digits are drawn, hidden from the tab's name");
     assert.match((await position.locator(".visually-hidden").textContent()) ?? "", /^, Pane [12] of 2$/, "and said in words");
+
+    // one pane of the split in view: a press held on its open tab lists the tab's panes once, not twice, and a tap lists them too
+    const open = row.locator('[role="tab"][aria-selected="true"]');
+    const paneMenu = page.getByRole("dialog", { name: "Tab 1", exact: true });
+    const listed = (): Promise<number> => paneMenu.locator('.row-sheet-item[data-item^="pane:"]').count();
+    const openBox = (await open.boundingBox())!;
+    await touch("touchStart", { x: openBox.x + openBox.width / 2, y: openBox.y + openBox.height / 2 });
+    await page.clock.runFor(600);
+    await paneMenu.waitFor();
+    await touch("touchEnd");
+    assert.equal(await listed(), 2, "a long press on the open split tab lists each of its two panes once");
+    await paneMenu.getByRole("button", { name: "Cancel", exact: true }).tap();
+    await paneMenu.waitFor({ state: "detached" });
+    await open.tap();
+    await paneMenu.waitFor();
+    assert.equal(await listed(), 2, "a tap on the open split tab lists its panes");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 }
@@ -186,6 +211,8 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     const first = created.root_pane.pane_id;
     // herdr keeps the first pane in front: the split one is seen only where the browser opens it
     const second = (await paneSplit(first, "right", false)).pane_id;
+    // a shell's name is its pane's alone: the tab keeps herdr's number
+    await paneRename(second, "split shell");
     const other = await workspaceCreate({ cwd: root, label: "ovis-test-mobile-tabs-other" });
     otherWorkspaceId = other.workspace.workspace_id;
     const panes: string[] = [];
@@ -193,8 +220,8 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     const last = panes.at(-1)!;
     await herdrRpc("pane.report_agent", { pane_id: first, source: "manual", agent: "claude", state: "idle" });
 
-    await checkPhoneRow(browser, origin, first, panes);
-    await checkHeaderLongPress(browser, origin, first);
+    await checkPhoneRow(browser, origin, first, second, panes);
+    await checkHeaderLongPress(browser, origin, first, second);
     await context.addInitScript(() => {
       if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
       if (localStorage.getItem("ovis:phone-tabs") === null) localStorage.setItem("ovis:phone-tabs", JSON.stringify("header"));
@@ -347,8 +374,11 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
         if (scrolled) {
           assert.equal(await strip.evaluate((node) => node.scrollLeft), 0, "a strip the user scrolled is left there when the faces come");
           assert.equal(await openInView(), false);
-          await late.getByRole("tab", { name: "Tab 1", exact: true }).tap();
-          await late.locator('.tab-strip [role="tab"][aria-selected="true"]', { hasText: "Tab 1" }).waitFor();
+          // opened, the split tab is named for its open pane: it is known by its id
+          const tab1 = late.getByRole("tab", { name: "Tab 1", exact: true });
+          const tab1Id = await tab1.getAttribute("data-tab-id");
+          await tab1.tap();
+          await late.locator(`.tab-strip [role="tab"][aria-selected="true"][data-tab-id=${JSON.stringify(tab1Id)}]`).waitFor();
           await activeTabInView(late, "a tab opened after the user's scroll");
         } else {
           await activeTabInView(late, "the last tab, after the faces came");

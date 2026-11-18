@@ -1468,7 +1468,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   (a shell's glyph) and name, the open one a pill capped at 7rem so the next tab's mark shows beside
   it and the row reads as tabs, not a title, a split tab's open pane (`1/2`, heard as "Pane 1 of 2", the
   digits hidden from the tab's name) after its name, and the open tab always scrolled into view. A tap
-  opens a tab where it was left; a press held 450ms (moving no more than 8px) opens that tab's menu, as
+  opens a tab where it was left, and a tap on the open split tab lists its panes (its menu, as below); a press held 450ms (moving no more than 8px) opens that tab's menu, as
   a long press does a phone's list row, and the click lifting it opens no tab; Android's own long-press
   `contextmenu` opens the same menu once, and a press still held when the PC or workspace changes opens
   nothing. No `+` or `⋯` is drawn
@@ -2967,7 +2967,17 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   two-character name (탭 1) is still a finger's target with the `⋯` a target of its own beside it; a desktop with a mouse draws the same `⋯` on the selected tab, hidden in its place
   until the strip is hovered or the tab has keyboard focus (Menu / popover). Shift+F10 or the menu key opens the full tab menu from a focused tab.
   Pane actions are not tab actions. Up to 768px, where a split tab shows one pane at a time, the
-  tab's menu lists the tab's panes first, the open one marked current, over a hairline.
+  tab's menu lists the tab's panes first, the open one marked current, over a hairline, each pane
+  once (the pane's own actions, which carry the panes where the row counts as hidden, add no
+  second list). There a tap on the open split tab opens that menu, in the row and in the header
+  alike, and the open split tab is that pane: it wears the pane's agent mark (none for a shell) and
+  its name (the pane's agent or first-message name, else its title), unless someone named the tab,
+  whose name stays, and its place among them (`1/2`, heard as "Pane 1 of 2") follows its name, in the
+  row as in the header; in the row under the header that name is cut with an ellipsis at
+  `min(var(--tab-max-w), 40vw)`, so its place, its `⋯` and the row's `+` stay in view. The tab's
+  menus and the tab sheet keep the tab's own name and mark. herdr's TUI, which
+  draws every pane of a split, needs none of this; the Codex and Claude phone apps open their thread
+  list from a tap on the title, which the tap follows.
   Only at these narrow widths does it omit Split and Zoom pane; Unzoom pane stays available whenever the tab is zoomed.
 - A tab herdr still names by its number ("Tab 2"), which a CLI that sets only its own title leaves
   alike, shows a few words of the first message its agent was given, about 24 columns (a wide

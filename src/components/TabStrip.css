@@ -401,6 +401,10 @@
 
 .header-tabs.is-phone .tab-strip-position {
   order: 3;
+}
+
+/* a split tab's open pane, where one pane shows at a time (`1/2`, heard as "Pane 1 of 2") */
+.tab-strip-position {
   flex: 0 0 auto;
   color: var(--text-dim);
   font-size: var(--fs-xs);
