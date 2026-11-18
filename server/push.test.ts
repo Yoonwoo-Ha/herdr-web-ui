@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import webpush from "web-push";
@@ -107,6 +107,18 @@ describe("push state", () => {
     expect(Buffer.from(key, "base64url").length).toBe(65);
     expect(createPushService({ loopbackHttp: true, stateDir }).publicKey()).toBe(key);
     expect(statSync(join(stateDir, "vapid.json")).mode & 0o777).toBe(0o600);
+  });
+
+  it.skipIf(process.platform === "win32")("regression: takes others' write access away from the key pair before it is read", () => {
+    const dir = mkdtempSync(join(tmpdir(), "push-untrusted-"));
+    try {
+      chmodSync(dir, 0o777);
+      const key = createPushService({ loopbackHttp: true, stateDir: dir }).publicKey();
+      expect(statSync(dir).mode & 0o777).toBe(0o755);
+      chmodSync(join(dir, "vapid.json"), 0o666);
+      expect(createPushService({ loopbackHttp: true, stateDir: dir }).publicKey()).toBe(key);
+      expect(statSync(join(dir, "vapid.json")).mode & 0o777).toBe(0o644);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   it("refuses a malformed key file instead of rotating the key under every device", () => {

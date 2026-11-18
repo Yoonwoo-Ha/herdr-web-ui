@@ -19,7 +19,7 @@ import type { Access } from "./access.ts";
 import { CLEAR_LEGACY_DEVICE_COOKIE, COOKIE_MAX_AGE_SECONDS, DEVICE_COOKIE_CLEARED, deviceCookie, isSecureRequest, noContent, parseCookies } from "./auth.ts";
 import { badRequest, isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
 import { sameOrigin } from "./machine-security.ts";
-import { writePrivateState } from "./private-state.ts";
+import { privateStateRefusal, writePrivateState } from "./private-state.ts";
 
 const CODE_TTL_MS = 10 * 60_000;
 const CODE_ATTEMPTS = 5;
@@ -183,6 +183,12 @@ export function isDeviceRole(value: unknown): value is DeviceRole {
 export type DeviceRegistry = { kind: "missing" } | { kind: "ok"; gateClosedAt: string | null; devices: StoredDevice[]; placeholder: boolean } | { kind: "bad" };
 
 export function readDeviceRegistry(path: string): DeviceRegistry {
+  // one another account could write is as unreadable as a damaged one: the gate stays closed
+  const refused = privateStateRefusal(path);
+  if (refused !== null) {
+    console.error(`devices.json is not trusted: ${refused}`);
+    return { kind: "bad" };
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, "utf8"));

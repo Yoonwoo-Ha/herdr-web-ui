@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DevicePairedEvent } from "../shared/protocol.ts";
 import { DeviceGoneError, DeviceStore, handleDeviceRequest, newStreamKey, normalizeLabel, PairingRateLimitedError, PcInAccountError, readDeviceRegistry, sameBrowser, streamCookie, streamKeys } from "./devices.ts";
-import { privateStateFs } from "./private-state.ts";
+import { privateStateFs, privateStateRefusal } from "./private-state.ts";
 import { isTaggedNode, parseTailscaleOwner } from "./tailscale.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "herdr-devices-"));
@@ -19,6 +19,53 @@ async function relaySignature(key: CryptoKey, nonce: Uint8Array, serverId = "ser
   return Buffer.from(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key,
     Buffer.concat([Buffer.from("ovis-relay-auth/1"), nonce, Buffer.from(serverId)]))).toString("base64url");
 }
+
+describe("regression: a registry another account could write", () => {
+  const root = mkdtempSync(join(tmpdir(), "devices-untrusted-"));
+  afterAll(() => { rmSync(root, { recursive: true, force: true }); });
+  const registry = JSON.stringify({ gate_closed_at: null, devices: [{ id: "planted", token_hash: "x".repeat(64), role: "drive", label: "Planted", created_at: "2026-11-01T00:00:00.000Z", last_seen_at: null }] });
+  const mode = (path: string) => statSync(path).mode & 0o777;
+  const someoneElse = (process.getuid?.() ?? 0) + 1;
+
+  it.skipIf(process.platform === "win32")("is refused when another account owns it, its folder or the link to it", () => {
+    const dir = mkdtempSync(join(root, "theirs-"));
+    writeFileSync(join(dir, "devices.json"), registry, { mode: 0o600 });
+    // as another account sees what it made: owned by it
+    expect(privateStateRefusal(join(dir, "devices.json"), process.platform, someoneElse)).toContain("owned by uid");
+    expect(privateStateRefusal(join(dir, "missing.json"), process.platform, someoneElse)).toContain("owned by uid");
+    const linked = mkdtempSync(join(root, "linked-"));
+    symlinkSync(join(dir, "devices.json"), join(linked, "devices.json"));
+    expect(privateStateRefusal(join(linked, "devices.json"), process.platform, someoneElse)).toContain("owned by uid");
+    expect(privateStateRefusal(join(dir, "devices.json"))).toBeNull();
+  });
+
+  it.skipIf(process.platform === "win32")("takes others' write access away from what is this user's before reading it, and keeps working", () => {
+    const dir = mkdtempSync(join(root, "open-"));
+    chmodSync(dir, 0o757);
+    writeFileSync(join(dir, "devices.json"), registry, { mode: 0o600 });
+    chmodSync(join(dir, "devices.json"), 0o646);
+    const store = new DeviceStore(dir);
+    expect(store.error).toBeNull();
+    expect(store.gated).toBe(true);
+    expect(mode(dir)).toBe(0o755);
+    expect(mode(join(dir, "devices.json"))).toBe(0o644);
+    // through a link of this user's, the target's folder and file are held to the same rule
+    const elsewhere = mkdtempSync(join(root, "elsewhere-"));
+    chmodSync(elsewhere, 0o757);
+    writeFileSync(join(elsewhere, "devices.json"), registry, { mode: 0o600 });
+    chmodSync(join(elsewhere, "devices.json"), 0o666);
+    const linked = mkdtempSync(join(root, "mine-linked-"));
+    symlinkSync(join(elsewhere, "devices.json"), join(linked, "devices.json"));
+    expect(readDeviceRegistry(join(linked, "devices.json")).kind).toBe("ok");
+    expect(mode(elsewhere)).toBe(0o755);
+    expect(mode(join(elsewhere, "devices.json"))).toBe(0o644);
+    // a first installation in a folder others could write is one no longer
+    const fresh = mkdtempSync(join(root, "fresh-"));
+    chmodSync(fresh, 0o777);
+    expect(new DeviceStore(fresh).gated).toBe(false);
+    expect(mode(fresh)).toBe(0o755);
+  });
+});
 
 describe("the gate closing", () => {
   it("is told once, when the first device's cookie came back or the relay closed it, never for a later device or a revoke", async () => {

@@ -83,7 +83,7 @@ import { cleanLine, isDivider, parsedByPublicPrompt } from "./dialogs/shared.ts"
 import { badRequest, jsonResponse, setRequestRoute } from "./http.ts";
 import { isLoopbackHost } from "./access.ts";
 import type { AlertWebhook } from "./alert-webhook.ts";
-import { writePrivateState } from "./private-state.ts";
+import { privateStateRefusal, writePrivateState } from "./private-state.ts";
 
 /** A blocked agent is still blocked when the phone gets signal back; a newer push for the pane replaces it anyway. */
 const PUSH_TTL_SECONDS = 12 * 60 * 60;
@@ -216,6 +216,13 @@ export interface PushServiceOptions {
 }
 
 export { defaultStateDir } from "./update-state.ts";
+
+/** readJson for the key pair and the subscriptions: one another account could write is refused, and no key is made in its place */
+function readPrivateJson(path: string): unknown {
+  const refused = privateStateRefusal(path);
+  if (refused !== null) throw new Error(`${path} is not trusted: ${refused}`);
+  return readJson(path);
+}
 
 function readJson(path: string): unknown {
   try {
@@ -418,7 +425,7 @@ export function createPushService(options: PushServiceOptions): PushService {
   /** Created on first need: a server nobody subscribes to never writes a key. */
   function keys(): { publicKey: string; privateKey: string } {
     if (vapid) return vapid;
-    const stored = readJson(vapidPath) as { publicKey?: unknown; privateKey?: unknown } | undefined;
+    const stored = readPrivateJson(vapidPath) as { publicKey?: unknown; privateKey?: unknown } | undefined;
     if (stored === undefined) {
       // cached only once on disk: a key no restart would find must never sign a subscription
       const created = webpush.generateVAPIDKeys();
@@ -434,7 +441,7 @@ export function createPushService(options: PushServiceOptions): PushService {
 
   function store(): Map<string, PushSubscriptionRecord> {
     if (subscriptions) return subscriptions;
-    const stored = readJson(subscriptionsPath);
+    const stored = readPrivateJson(subscriptionsPath);
     subscriptions = new Map();
     if (Array.isArray(stored)) {
       for (const entry of stored) {
