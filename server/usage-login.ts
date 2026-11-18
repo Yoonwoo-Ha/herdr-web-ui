@@ -97,6 +97,8 @@ interface PrivateLogin {
   changed: ReturnType<typeof Promise.withResolvers<void>>;
   /** the CLI's recent output, in memory only, for its prompt; emptied when it ends */
   output: string;
+  /** the screen a code was last typed on: no other code is typed until the CLI has shown something since */
+  typedOn: string | null;
   ended: boolean;
 }
 
@@ -241,10 +243,12 @@ export class UsageLoginService {
         const code = isJsonObject(body) && typeof body["code"] === "string" ? body["code"].trim() : null;
         if (code === null || !SIGN_IN_CODE.test(code)) return badRequest("invalid_code", "Paste the code the sign-in page showed, as it is");
         if (login.ended) return gone();
-        // typed only while the CLI's last output asks for it; a write leaves that output as it was, so a second
-        // code checked before the CLI's answer to the first has arrived is typed too
-        if (!loginPrompt(login.provider, screenText(login.output)).wants_code) return conflictResponse("code_not_wanted", "The sign-in is not asking for a code now.");
+        // typed only while the CLI's last output asks for it, and once per asking: a write leaves that output as
+        // it was until the CLI's answer arrives, and a second code checked before then is not typed
+        const screen = screenText(login.output);
+        if (screen === login.typedOn || !loginPrompt(login.provider, screen).wants_code) return conflictResponse("code_not_wanted", "The sign-in is not asking for a code now.");
         if (!login.proc.write(`${code}\r`)) return gone();
+        login.typedOn = screen;
         return new Response(null, { status: 204 });
       }
       return jsonResponse({ error: { code: "not_found", message: "not found" } }, 404);
@@ -261,6 +265,7 @@ export class UsageLoginService {
       const login = this.privates.get(id);
       if (login === undefined || login.ended) return;
       login.output = "";
+      login.typedOn = null;
       let account: LoginAccount | null = null;
       try {
         if (login.exitCode === 0 && !login.cancelled && !login.expired) account = await loginAccount(this.context, login.target, login.before);
@@ -581,7 +586,7 @@ export class UsageLoginService {
         this.privates.set(loginId, {
           provider: target.provider, target, before,
           exitCode: null, signedIn: null, owner, secret, cancelled: false, expired: false, lock, done,
-          changed: Promise.withResolvers<void>(), read: false, madeHome: unusedCredentialHome, proc, output: "", ended: false,
+          changed: Promise.withResolvers<void>(), read: false, madeHome: unusedCredentialHome, proc, output: "", typedOn: null, ended: false,
         });
         unusedCredentialHome = null;
         reserved = null;

@@ -191,11 +191,14 @@ it("follows a sign-in in the server's own terminal: no herdr pane, on any device
   const panes = (await herdr.sessionSnapshot()).panes;
   const screens = await Promise.all(panes.map((pane) => herdr.paneRead({ paneId: pane.pane_id, source: "recent_unwrapped", lines: 500 }).then((read) => read.text, () => "")));
   expect(screens.filter((text) => text.includes(state!))).toEqual([]);
-  const sent = await fetch(`http://127.0.0.1:${server.port}/api/usage/login/code`, { method: "POST", headers: { "content-type": "application/json", ...signIn }, body: JSON.stringify({ login, code: "fixture-code#fixture-state" }) });
-  expect(sent.status).toBe(204);
+  // two codes sent at once (two tabs, a double click): the CLI is typed one of them, not both on one line each
+  const codes = ["fixture-code#fixture-state", "second-code#fixture-state"];
+  const sent = await Promise.all(codes.map((code) => fetch(`http://127.0.0.1:${server.port}/api/usage/login/code`, { method: "POST", headers: { "content-type": "application/json", ...signIn }, body: JSON.stringify({ login, code }) })));
+  const typed = codes.filter((_, index) => sent[index]!.status === 204);
+  expect(typed).toHaveLength(1);
   await loginEvent(usageLogin.settled(login));
   expect((await prompt())["ended"]).toBe(true);
-  expect(readFileSync(join(root, ".claude-private", "pasted-code"), "utf8")).toBe("fixture-code#fixture-state");
+  expect(readFileSync(join(root, ".claude-private", "pasted-code"), "utf8")).toBe(typed[0]!);
 });
 
 it("binds prompt, code and cancel to the paired device even after another driver reads the lock file", async () => {
