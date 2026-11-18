@@ -1,8 +1,29 @@
 #!/usr/bin/env bash
+# Test harness of job-started.sh (scripts/self-hosted-runner.test.ts): the only place a test starts the hook,
+# which may kill, and only after one of two guards has passed: before that it starts no hook and no parent of one
+# (the container guard runs stat and readlink, and its orphan check one bash that reads a FIFO).
+#   namespace: PID 1 of a PID namespace of its own, started as
+#     unshare --user --map-root-user --pid --fork --mount-proc --kill-child bash hook-test-harness.sh <token> ...
+#     It is PID 1, PID 1 of /proc carries the run's <token> (so /proc is this namespace's), and no other
+#     process is visible: every pid it can name is one it started, and the kernel kills them all when it exits.
+#   container: inside a throwaway container of an image that carries the marker below: hook-test.Dockerfile's,
+#     which CI's hook-kill-tests.yml builds (the live runner image has none, so these tests never run in a live
+#     runner's container), started as
+#     python3 (PR_SET_CHILD_SUBREAPER on itself, then exec) bash hook-test-harness.sh container ...
+#     The marker is there, root's and read-only, /.dockerenv is there, PID 1 is the container's init (tini or
+#     docker-init), and the PID namespace is not the host's initial one (/proc/$$/ns/pid is not pid:[4026531836],
+#     a constant of the kernel). The probe, which runs alone, also refuses when /proc shows any process that is
+#     neither this harness nor one above it: another container's processes, as with --pid=container:<a live
+#     runner>, or anything else. Then it proves that an orphan of its subtree comes to it, not to any process
+#     above it: the hook's parent can only be a process of this subtree or this harness (a bash), never the
+#     container's real Runner.Worker. It notes every process above it (pid and start time) and reports whether
+#     all of them still run after the case.
+# Any doubt exits 97, and the tests skip. The harness signals nothing: whether a process lives is read from /proc.
 set -u
 
 marker=/opt/runner-hooks/ovis-runner-image
 
+# Builtins only, in this process: a subshell or a command started here would be a second process.
 in_own_namespace() {
   local token=$1 arg found=0 args pids
   [[ $$ == 1 ]] || { why="not PID 1 of a new PID namespace (pid $$)"; return 1; }
@@ -27,6 +48,8 @@ in_runner_container() {
   [[ $ns =~ ^pid:\[[0-9]+\]$ && $ns != 'pid:[4026531836]' ]] || { why="in the host's initial PID namespace ($ns)"; return 1; }
 }
 
+# The probe's own: every process /proc shows is this harness or one above it. Builtins only, so this check
+# starts no process; the guard's stat and readlink have ended and been reaped before it.
 alone_in_namespace() {
   local -A line_of_mine=()
   local pid=$$ stat entry
@@ -60,6 +83,12 @@ stat_of() {
   read -r _ ppid_of _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ start_of _ <<<"$line"
 }
 
+# A block said is not yet a block that holds. After the hook's "this hook blocks (pid N)" line, it must be seen
+# to go round its loop: a /bin/sleep child of pid N, then another one (so N has read its parent again and stayed),
+# with N and its parent still running at every poll. The polls read /proc only; between two of them the harness
+# waits on fd 5, the hold FIFO it alone writes and never does, for 0.1 s. At most 150 polls: 15 s of waits plus
+# the reads and scheduling, not a strict bound, against the hook's 5 s loop. The end is the hook's own second
+# sleep, never a silence; it shows the block held through one more read of its parent, not forever.
 persists() {
   local hook_pid=$1 first="" children child comm polls=0
   while (( polls++ < 150 )); do
@@ -76,6 +105,7 @@ persists() {
   return 1
 }
 
+# running or gone (a zombie is gone)
 state() {
   local line
   IFS= read -r line 2>/dev/null <"/proc/$1/stat" || { echo gone; return; }
@@ -92,16 +122,20 @@ done
 
 dir=$HARNESS_DIR
 mkdir -p "$dir/exe" "$dir/decoys"
+# The write end of $dir/hold stays with this harness alone: what reads it ends when the harness does.
 mkfifo "$dir/hold"
 exec 5<>"$dir/hold"
 
 if [[ $guard == container ]]; then
+  # An orphan of this subtree must come to this harness: one that would go to a process above it could
+  # leave the hook a parent outside the subtree.
   ( "$BASH" -c 'read -r _ <"$0"' "$dir/hold" 5>&- & echo "$!" >"$dir/orphan" )
   IFS= read -r orphan <"$dir/orphan"
   stat_of "$orphan" && [[ $ppid_of == "$$" ]] || { echo "not isolated: an orphan of this harness went to ${ppid_of:-nobody}, not to it" >&2; exit 97; }
 fi
 if [[ $parent == probe ]]; then echo isolated; exit 0; fi
 
+# Decoys that must outlive every case: another Runner.Worker that is not the hook's parent, and a look-alike name
 cp "$BASH" "$dir/decoys/Runner.Worker"
 cp "$BASH" "$dir/decoys/Runner.Worker2"
 decoys=()
@@ -124,6 +158,7 @@ case $parent in
 esac
 cp "$BASH" "$dir/exe/$exe"
 if [[ $output == closed ]]; then
+  # $1: a FIFO whose only reader is closed before the hook starts, so its first write raises SIGPIPE
   script="${prefix}mkfifo \"\$1\" && exec 4<>\"\$1\" 5>\"\$1\" 4<&- && $run >&5 2>&5; echo \"next step ran\""
 elif [[ $parent == gone || $parent == leaves ]]; then
   script="$run & read -r _ <\"\$1\"; exit 0"

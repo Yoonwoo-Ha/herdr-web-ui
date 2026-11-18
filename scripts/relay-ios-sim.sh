@@ -4,9 +4,18 @@
 #
 # bash scripts/relay-ios-sim.sh [evidence-dir]
 #
+# This PC: dist-shell/ served as Pages serves it (scripts/pages-static.ts), the Bun relay
+# (relay/bun.ts) and a PC (createServer on the isolated herdr test session, a mkdtemp state dir),
+# all on 127.0.0.1, with `tailscale serve` giving the shell and the relay HTTPS/WSS addresses on
+# two free ports for this run only. The PC's relay is that wss: address, as in production: no seam.
+#
 # eamac: a fresh clone in /tmp from a git bundle of HEAD (nothing is pushed), the app built with
-# CODE_SIGN_IDENTITY=-: an unsigned build cannot store the relay device key, WebKit's IndexedDB put of a
-# CryptoKey fails with DataCloneError.
+# OVIS_APP_URL naming this run's shell and signed to run locally (CODE_SIGN_IDENTITY=-: an unsigned
+# build cannot store the relay device key, WebKit's IndexedDB put of a CryptoKey fails with
+# DataCloneError), its own new Simulator, and WebDriverAgent built beside that clone.
+#
+# Everything is undone on exit: the Simulator deleted, the /tmp clone removed, the serve entries
+# turned off (and checked gone), the tunnel and the local servers stopped.
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -35,6 +44,9 @@ stop_child() {
   return 0
 }
 
+# Each step is bounded and does not depend on the one before:
+# the run's own processes are stopped before anything waits on them, so a remote half that is
+# blocked anywhere (on the build, on WebDriverAgent's readiness) cannot hold the rest up.
 cleanup() {
   local code=$?
   trap - EXIT INT TERM
@@ -76,6 +88,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# `read -t` blocks on the FIFO until a line arrives or the time is up: nothing is polled.
 await_event() {
   local fd="$1" name="$2" until=$((SECONDS + $3)) line
   while true; do
@@ -227,14 +240,15 @@ git -C "$r/wda" -c advice.detachedHead=false checkout -q FETCH_HEAD
 [ "$(git -C "$r/wda" rev-parse HEAD)" = "$wda_commit" ] || { echo "ENDED WebDriverAgent is not commit $wda_commit"; exit 1; }
 port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
 mkfifo "$r/wda.ready"
-# WebDriverAgent prints ServerURLHere once it listens
+# WebDriverAgent prints ServerURLHere once it listens: awk reports that line (or the end of the run
+# without it) on a FIFO and keeps writing the log
 TEST_RUNNER_USE_PORT="$port" xcodebuild -project "$r/wda/WebDriverAgent.xcodeproj" -scheme WebDriverAgentRunner \
   -destination "id=$udid" -derivedDataPath "$r/wdadd" test 2>&1 \
   | awk -v logfile="$r/wda.log" -v ready="$r/wda.ready" '{ print > logfile; fflush(logfile) } !done && /ServerURLHere->/ { print "READY" > ready; close(ready); done = 1 } END { if (!done) { print "ENDED" > ready; close(ready) } }' &
 read -r state <"$r/wda.ready"
 [ "$state" = READY ] || { tail -40 "$r/wda.log" >&2; echo "ENDED WebDriverAgent did not start"; exit 1; }
 echo "WDA $port"
-# Capacitor prints "WebView loaded" as each page finishes
+# on "launch": the app with its console attached; Capacitor prints "WebView loaded" as each page finishes
 while read -r command; do
   case "$command" in
     launch) xcrun simctl launch --console-pty --terminate-running-process "$udid" sh.ovis.app -AppleLanguages "(en)" -AppleLocale en_US 2>&1 \

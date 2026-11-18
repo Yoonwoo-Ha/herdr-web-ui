@@ -36,6 +36,7 @@ function git {
             foreach ($line in "fatal: detected dubious ownership in repository at '$folder'", "'$folder' is owned by:", "`tNT AUTHORITY/SYSTEM (S-1-5-18)", 'but the current user is:', "`tWINVM/someone (S-1-5-21-1-2-3-1000)", 'To add an exception for this directory, call:', '', "`tgit config --global --add safe.directory $quoted") { Write-Error $line -ErrorAction Continue }
             $global:LASTEXITCODE = 128; return
         }
+        # a plugin folder inside another repository ($state.gitPrefix: its path there): git reads the repository around it
         if ($args[3] -eq '--show-prefix') { return $state.gitPrefix }
         $head = if ($state.gitPrefix) { Get-TestCommit 'the repository around it' } else { Get-TestCommit $state.ref }
         if ($args[-1] -eq 'HEAD') { return $head }
@@ -44,6 +45,8 @@ function git {
         if ($id -match '^[0-9a-f]{4,40}$' -and $head.StartsWith($id)) { return $head }
         $global:LASTEXITCODE = 1; return
     }
+    # GitHub's refs by name: a branch at its tip ($state.moved: a commit after the one installed), an annotated tag as its
+    # tag object and, asked for <name>^{}, its commit; nothing for a commit id, and exit 128 offline
     if ($args[0] -eq 'ls-remote' -and $args[1] -ne '--tags') {
         if ($state.offline) { $global:LASTEXITCODE = 128; return }
         foreach ($pattern in $args[2..($args.Count - 1)] | Where-Object { $_ -ne '--' }) {
@@ -89,6 +92,8 @@ function bun {
         $keptVersion = if (Test-Path -LiteralPath $keptJson) { (Get-Content -Raw -LiteralPath $keptJson | ConvertFrom-Json).version }
         $toSource = $marked -or -not (Test-Path -LiteralPath (Join-Path $serverDir 'bin\ovis-server.exe')) -or $keptVersion -ne '1.2.3'
         if ($args[-1] -eq 'stop') {
+            # a kept binary of this version that fails its check ($state.badBinary: signature, executable or client), with no
+            # release to fetch it again (out of reach, or a folder without it): no binary can be had, so the stop goes to the sources
             if ($state.badBinary) { $toSource = $true }
             if (($env:OVIS_FROM_SOURCE -eq '1' -or $toSource) -and -not (Test-Path -LiteralPath (Join-Path $root 'node_modules\all-installed'))) { $global:LASTEXITCODE = 1; return }
             $handDir = Join-Path $env:USERPROFILE '.local\state\ovis'
@@ -219,6 +224,7 @@ exit /b 1
         if ($Source) { Invoke-Expression $Source 6>&1 | Out-String } else { & $installer -Ref '' 6>&1 | Out-String }
     }
     $given = { @(Get-Content -LiteralPath $ghCalls -ErrorAction SilentlyContinue | Where-Object { $_ -match '--method PUT' }).Count }
+    # the status read: the installer's own launcher must reach the stand-in, or a wrong launcher would pass as "already starred"
     $read = { @(Get-Content -LiteralPath $ghCalls -ErrorAction SilentlyContinue | Where-Object { $_ -match 'user/starred' -and $_ -notmatch '--method PUT' }).Count }
     Set-Content -LiteralPath (Join-Path $ghStandIn 'mode.txt') -Encoding Ascii -Value 'signed-out'
 
@@ -260,6 +266,9 @@ exit /b 1
     $fromSource = Join-Path $pluginRoot '.ovis\server\from-source'
     $sourceBuild = Join-Path $pluginRoot '.ovis\server\source-build'
     $state.serverRecord = Join-Path $env:XDG_STATE_HOME 'herdr\plugins\devswha.ovis\server.pid'
+    # a server of this plugin running as this very process, recorded as start records it: its pid, and its creation time
+    # (or another, for a record whose pid another process has taken since; or none, 'none', as a start before server.owner),
+    # or as process $Id, recorded without its creation time
     $serverRuns = {
         param([string]$Birth, [int]$Id = $PID)
         New-Item -ItemType Directory -Force -Path (Split-Path $state.serverRecord) | Out-Null
@@ -280,6 +289,8 @@ exit /b 1
         $set = $parsed.EndBlock.Statements[0]
         (@("$($set.Left.VariablePath.UserPath)=$($set.Right.Expression.Value)") + @($parsed.EndBlock.Statements[1].PipelineElements[0].CommandElements | ForEach-Object { $_.Value })) -join '|'
     }
+    # a checkout on the release's binary: unbuilt, with that version's binary and client kept in .ovis/server/bin, the
+    # binary of the SHA-256 its manifest names ($Version: another's; $Bad: another SHA-256, as one failing its check)
     $onBinary = {
         param([string]$Version = '1.2.3', [switch]$Bad)
         & $unbuilt
@@ -343,6 +354,8 @@ exit /b 1
     $message = ''
     try { & $installer -Ref 'feat/windows-install' } catch { $message = $_.Exception.Message }
     Assert (($state.launcherCalls -join ',') -eq 'install 1' -and (Test-Path -LiteralPath (Join-Path $pluginRoot 'dist\index.html'))) "A cut-off build with no release binary kept must be built again without a stop (launcher: $($state.launcherCalls -join ',')): $message"
+    # the ref must name the installed commit: another branch, a branch that moved since, or another commit is said, with the
+    # commits, and nothing is stopped or built; offline, nothing is either
     $installedAt = (Get-TestCommit 'feat/windows-install').Substring(0, 12)
     foreach ($case in @(
         @{ name = 'another branch'; ref = 'other-branch'; at = (Get-TestCommit 'other-branch').Substring(0, 12) },
@@ -368,6 +381,13 @@ exit /b 1
     $state.launcherCalls = @()
     & $installer -Ref 'v1.10.0'
     Assert ($state.launcherCalls.Count -eq 0 -and $state.installs -eq $installs) "Nothing must be rebuilt for a release tag (launcher: $($state.launcherCalls -join ','))"
+    # what a source build left, the marker naming this version: only all the packages and the client, under a stamp that
+    # says the build finished at the installed commit (or the version alone, where git could not tell it), or under none
+    # (an older launcher), need no build, and the installed commit is said. With no release binary the stop goes to the
+    # sources at once, not asking the release; a stop that fails is passed over only with neither a release binary nor a
+    # server recorded as running (an earlier build's, here this process), whose process is named, with how to stop it
+    # only when its creation time matched. A refusal that would repeat on every rerun names what to remove (recover: doing
+    # that lets the next run build), and a failed build names the checkout to find a server by only where no stop stopped one.
     $finished = "1.2.3 $(Get-TestCommit 'feat/windows-install')"
     $keptBin = Join-Path $pluginRoot '.ovis\server\bin'
     foreach ($case in @(
@@ -405,6 +425,9 @@ exit /b 1
         @{ name = 'the same, an Ovis started by hand recorded as running too'; binary = $true; badBinary = $true; packages = 'some'; stamp = 'started'; server = 'alive'; byHand = $true; calls = 'stop'; refused = $true; names = { $keptBin; Split-Path $state.serverRecord }; recover = { Remove-Item -LiteralPath $keptBin -Recurse -Force } },
         @{ name = 'a finished build of another commit, git failing at the checkout this once'; packages = 'all'; client = $true; stamp = "1.2.3 $(Get-TestCommit 'earlier')"; gitFails = 'other'; calls = ''; refused = $true; untouched = $true; names = { 'bad object HEAD'; 'nothing was stopped or changed' }; recover = { <# git answers again #> } },
         @{ name = 'a build cut off, git failing at the checkout this once'; packages = 'some'; stamp = 'started'; gitFails = 'other'; calls = ''; refused = $true; untouched = $true; names = { 'bad object HEAD' }; recover = { <# git answers again #> } },
+        # a working install git distrusts every time (a folder another account owns), stamped with the version alone by a
+        # launcher that read no commit there: refused, naming the command that trusts the folder; once it is run (the
+        # stand-in answering again), the next run rebuilds once and stamps the commit
         @{ name = 'a finished build stamped with the version alone, in a folder git does not trust'; packages = 'all'; client = $true; stamp = '1.2.3'; gitFails = $true; trust = $true; calls = ''; refused = $true; untouched = $true; names = { 'dubious ownership' }; recover = { <# git trusts the folder #> } },
         @{ name = 'a finished build of another commit, in a folder git does not trust'; packages = 'all'; client = $true; stamp = "1.2.3 $(Get-TestCommit 'earlier')"; gitFails = $true; trust = $true; calls = ''; refused = $true; untouched = $true; names = { 'dubious ownership' }; recover = { <# git trusts the folder #> } },
         @{ name = 'the same, the old id installed too and its server stopped for the move'; packages = 'all'; client = $true; stamp = "1.2.3 $(Get-TestCommit 'earlier')"; gitFails = $true; trust = $true; legacy = $true; calls = ''; refused = $true; untouched = $true; names = { 'dubious ownership'; 'server of the old id was stopped'; 'herdr plugin action invoke devswha.herdr-web-ui.start-windows' } },
@@ -468,6 +491,8 @@ exit /b 1
         }
         Assert (($state.launcherCalls -join ',') -eq $case.calls) "$($case.name): the launcher must get '$($case.calls)', not '$($state.launcherCalls -join ',')': $message"
         if ($case.trust) {
+            # the command the refusal ends with (or, kept, the line said alone), read as PowerShell reads it: git config with
+            # the folder as one argument, never git's own command, quoted for a POSIX shell
             $command = if ($message) { ($message -split "`n")[-1] } else { @($said -split "`r?`n" | Where-Object { $_ -like 'git config *' })[0] }
             Assert (-not "$message$said".Contains('To add an exception')) "$($case.name): git's own lines after its first must not be said: $message $said"
             $parseErrors = $null
@@ -502,6 +527,14 @@ exit /b 1
         else { Assert (-not $message -and ($case.noGit -or $said.Contains($finished.Substring(6, 12)))) "$($case.name): must be kept, saying the installed commit: $message $said" }
         if ($serverChild) { Stop-Process -Id $serverChild.Id -Force -ErrorAction SilentlyContinue; $serverChild = $null }
     }
+    # The release out of reach, with no kept release binary the launcher runs without it (none, another version's, or this
+    # version's failing its check) and packages that load the stop: the stop would stop the server through the sources,
+    # and herdr's start, the marker taken back, would have to ask the release, so it could not start it again if the build
+    # then failed (offline: bun install fetching nothing). So the release is asked first, and nothing is stopped or built:
+    # the server recorded as running, the marker that sends herdr's start to its build and that build's stamp stay as they
+    # were, whether the build would fail or not; an old id's server stopped for the move is said, with its start. With the
+    # release in reach, or a kept binary that runs (its stop and its start need no release), the repair stops and builds as
+    # before, and a failed build points to the start only where that binary may run.
     $earlier = "1.2.3 $(Get-TestCommit 'earlier')"
     foreach ($case in @(
         @{ name = 'no kept release binary, the build failing'; binary = 'none'; down = $true },
@@ -534,6 +567,8 @@ exit /b 1
             Assert ($calls -eq '' -and $message.Contains('could not be reached') -and $message.Contains($said) -and ($case.binary -eq 'none' -or $message.Contains($keptBin)) -and (Test-Path -LiteralPath $state.serverRecord) -and (Test-Path -LiteralPath $fromSource) -and (Get-Content -Raw -LiteralPath $sourceBuild).Trim() -eq $earlier) "$($case.name), the release out of reach: nothing must be stopped or built, the server, the marker and the stamp left as they were (launcher: $calls; $left): $message"
         }
     }
+    # The "may still run" hint after a failed build finds the server by its checkout's folder: a folder whose name has
+    # brackets (wildcard characters to -like) and an apostrophe, read as PowerShell reads the hint, matches that folder only
     $bracketed = Join-Path $ghStandIn "[x] it's a plugin"
     foreach ($name in 'scripts\plugin.ps1', 'scripts\plugin-launch.ts', 'node_modules\some', '.ovis\server\source-build') {
         New-Item -ItemType Directory -Force -Path (Split-Path (Join-Path $bracketed $name)) | Out-Null
@@ -551,6 +586,8 @@ exit /b 1
     Remove-Item -LiteralPath (Join-Path $pluginRoot 'scripts\plugin-launch.ts'), (Join-Path $pluginRoot 'package.json') -Force; & $unbuilt
     Remove-Item Env:\OVIS_RELEASES_URL
     $state.serverRecord = ''; $state.gitPrefix = ''
+    # the trust command for folders with a space and with an apostrophe (git prints its own with '\'' for a quote, which
+    # PowerShell reads otherwise), from the installer's own text: read as PowerShell reads it, it names the folder whole
     $trustAst = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $installer).Path, [ref]$null, [ref]$null).Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-TrustCommand' }, $true)
     Invoke-Expression $trustAst.Extent.Text
     foreach ($folder in 'C:/Users/John Doe/AppData/Local/herdr/plugins/devswha.ovis', "C:/Users/John O'Brien/plugin", "C:/it's/a ''quoted'' one") {
@@ -602,6 +639,9 @@ exit /b 1
     $state.installed = $false; $state.started = $false; $state.refId = 'devswha.ovis'; $state.manifestBlocked = $false
     Write-Host 'PASS a release from before the rename installs under its old id'
 
+    # An install under the old id moves to the new one. Its server is stopped with the state dir herdr hands the
+    # plugin, where a release from before 0.4.13 keeps its pid: told nothing, that stop looks in ~/.local/state,
+    # finds no server, and the one that outlived herdr keeps the old checkout open for the uninstall.
     $savedXdg = $env:XDG_STATE_HOME; $savedPluginState = $env:HERDR_PLUGIN_STATE_DIR
     try {
         Remove-Item Env:\HERDR_PLUGIN_STATE_DIR -ErrorAction SilentlyContinue
@@ -663,6 +703,7 @@ exit /b 1
         $global:herdrInstallOpened = @()
     }
 
+    # The star: mentioned once on a first install, asked only at a terminal, given only on "y".
     $mention = 'a GitHub star helps other herdr users find it'
     $question = 'star it now with the GitHub account'
     $said = & $firstInstall 'starred'
@@ -715,6 +756,7 @@ exit /b 1
     & $firstInstall 'signed-out' | Out-Null
     Write-Host 'PASS star: silent when starred or on a rerun, a link without gh, an answer or a terminal, asked once at a terminal and given only on yes'
 
+    # A gh that leaves a child holding its output: the call ends on its deadline and the child ends with it.
     $parsed = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $installer).Path, [ref]$null, [ref]$null)
     $ghApi = $parsed.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-GhApi' }, $true)
     Assert ($null -ne $ghApi) 'The installer must define Invoke-GhApi'
@@ -823,6 +865,9 @@ public static class ImmediateGh {
         $env:HERDR_TEST_GH_READY = $oldReady; $env:HERDR_TEST_GH_CHILD = $oldChild
     }
 
+    # The release's binary, from a local release folder signed by a key made for this test. The installer trusts only
+    # the key on its $releasePublicKey line, so the test runs a copy whose line names the test's key: nothing in the
+    # shipped script reads a key from anywhere else.
     $binaryScratch = Join-Path ([IO.Path]::GetTempPath()) "ovis-binary-install-$PID"
     New-Item -ItemType Directory -Force -Path $binaryScratch | Out-Null
     $realBun = (Get-Command bun -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
@@ -869,6 +914,7 @@ console.log(key.publicKey);
     $releaseDir = Join-Path $binaryScratch 'release'
     $testKey = "$(& $realBun $fixture $releaseDir (Join-Path $PSScriptRoot 'server-manifest.ts') | Select-Object -Last 1)".Trim()
     Assert ($LASTEXITCODE -eq 0 -and $testKey -match '^[A-Za-z0-9+/]{43}=$') "The release fixture must be made: $testKey"
+    # v1.2.4's binary with one byte changed, the same size: only its SHA-256 can tell
     $corrupt = Join-Path $releaseDir 'v1.2.4\ovis-server-windows-x64.exe'
     $bytes = [IO.File]::ReadAllBytes($corrupt); $bytes[3] = $bytes[3] -bxor 1; [IO.File]::WriteAllBytes($corrupt, $bytes)
     $shipped = Get-Content -Raw $installer

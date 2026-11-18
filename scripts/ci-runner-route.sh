@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # A same-repository pull request goes to the self-hosted runners unless jobs already wait for them:
 # the workflow token cannot list runners, so the Actions API's queued and running jobs stand in.
+# A fork pull request always gets the GitHub-hosted image: its code must never reach the
+# self-hosted runner. This script runs from the checked-out revision, which a fork pull request
+# controls; the runner itself refuses fork code (scripts/self-hosted-runner/job-started.sh).
 set -euo pipefail
 
 hosted='"ubuntu-24.04"'
@@ -29,8 +32,13 @@ choose_labels() {
   echo "linux=$compact"
 }
 
+# the labels of the pull requests' runners (run.sh registers them with self-hosted, Linux and X64):
+# a job that asks only for labels among these can take one of them
 pool_labels='["self-hosted","linux","x64","self-hosted-ovis"]'
 
+# Only a whole answer is printed: pages a failed attempt got before failing would be counted twice.
+# A refusal (HTTP 4xx: the token or the path) would answer the same again, so only a server error or
+# no answer is asked again. All reads together have API_BUDGET seconds from the script's start, so the
 # hosted fallback is printed well inside Detect changes' five minutes; each attempt is bounded by a
 # minute or what is left, with timeout or gtimeout where there is one (stock macOS has neither: there
 # an attempt is unbounded, and only the shared budget stops further ones).
@@ -132,6 +140,8 @@ fi
 
 line=$(route_linux)
 echo "$line"
+# Fast checks can stay on other runners while the Linux jobs go to the cloud VM runners (label ovis-vm):
+# CI_FAST_SELF_HOSTED_LABELS applies only then, so a fork's Fast checks always follow its hosted Linux jobs.
 linux=${line#linux=}
 fast=$linux
 fast_labels="${FAST_LABELS:-}"
