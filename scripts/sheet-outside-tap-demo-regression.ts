@@ -51,6 +51,11 @@ const pointAbove = (page: Page, selector: string, top: number): Promise<Point | 
   return null;
 }, top);
 const topOf = (page: Page, selector: string): Promise<number> => page.locator(selector).first().evaluate((node) => node.getBoundingClientRect().top);
+const rowSheetAtRest = (page: Page) => page.waitForFunction(() => {
+  const sheet = document.querySelector(".row-sheet");
+  return sheet !== null && sheet.contains(document.activeElement)
+    && sheet.getAnimations().length === 0 && sheet.parentElement?.getAnimations().length === 0;
+});
 
 type Pointer = "touch" | "mouse";
 
@@ -101,7 +106,7 @@ async function listSheet(page: Page, button: string, name: string, pointer: Poin
   await page.locator(".mode-inbox .inbox-item").first().waitFor({ timeout: 20_000 });
   if (pointer === "touch") await page.locator(button).tap();
   else await page.locator(button).click();
-  await page.locator(".row-sheet").waitFor();
+  await rowSheetAtRest(page);
   const point = await pointAbove(page, ".mode-inbox .inbox-item", await topOf(page, ".row-sheet"));
   assert.ok(point !== null, `a row of the list shows above the ${name}`);
   const seen = await tap(page, point, pointer);
@@ -128,6 +133,7 @@ try {
       await withPhone(browser, base, "/?app=inbox", "(c) Settings from the list's More: a tap above it closes it alone", async (page) => {
         await page.locator(".mode-inbox .inbox-item").first().waitFor({ timeout: 20_000 });
         await page.locator(".mode-inbox .inbox-more").tap();
+        await rowSheetAtRest(page);
         await page.locator('.row-sheet [data-item="settings"]').tap();
         await page.locator(".settings-dialog").waitFor();
         await page.waitForFunction(() => {
@@ -153,9 +159,16 @@ try {
       await withPhone(browser, base, `/?pane=${encodeURIComponent(panes.omp)}&view=chat`, "(d) the classic More sheet over a pane: a tap above it lands on its scrim alone", async (page) => {
         await page.locator(".pane-frame.is-current").waitFor({ timeout: 20_000 });
         await page.locator(".header-more-button").tap();
-        await page.locator(".row-sheet").waitFor();
+        // Measure the gap above the sheet at its final height.
+        await rowSheetAtRest(page);
         const top = await topOf(page, ".row-sheet");
-        const seen = await tap(page, { x: PHONE.width / 2, y: Math.round(top / 2) });
+        const point = { x: PHONE.width / 2, y: Math.round(top / 2) };
+        const hit = await page.evaluate(({ x, y }) => {
+          const node = document.elementFromPoint(x, y);
+          return { scrim: node !== null && node === document.querySelector(".row-sheet")?.parentElement, target: node?.outerHTML.slice(0, 150) };
+        }, point);
+        assert.ok(hit.scrim, `the point above the More sheet hits its scrim: ${JSON.stringify(hit.target)}`);
+        const seen = await tap(page, point);
         await page.locator(".row-sheet").waitFor({ state: "detached", timeout: 5_000 });
         assert.deepEqual(behind(seen), [], "every event of the tap outside the sheet lands on its scrim, none on the pane behind");
       });

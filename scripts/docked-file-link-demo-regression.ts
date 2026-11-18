@@ -6,7 +6,7 @@ import { chromium, type Locator } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
-import { serveDemo } from "./demo-server.ts";
+import { DEMO_PREFIX, serveDemo } from "./demo-server.ts";
 
 const app = mkdtempSync(join(tmpdir(), "ovis-docked-file-link-demo-"));
 const evidence = process.env.UI_EVIDENCE_DIR;
@@ -34,8 +34,21 @@ const server = await (async () => {
   writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>${FILES_SCRIPT}\n    <script type="module"`));
   return serveDemo(app);
 })();
+let draftServer: ReturnType<typeof serveDemo> | undefined;
 
 try {
+  draftServer = serveDemo(app);
+  const draftPath = "doc/draft-ietf-httpapi-idempotency-key-header.html";
+  const draftUrl = new URL(`${DEMO_PREFIX}${draftPath}`, draftServer.url).href;
+  mkdirSync(join(app, "doc"));
+  writeFileSync(join(app, draftPath), "<title>draft</title><h1>Idempotency-Key draft</h1>");
+  // The first navigation of a background tab must reach the fixture even before
+  // Playwright can attach to the tab and intercept requests.
+  const transport = join(app, "demo-transport.js");
+  const demo = readFileSync(transport, "utf8");
+  const ietf = "https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/";
+  assert.ok(demo.includes(ietf), "the conversation has the draft link");
+  writeFileSync(transport, demo.replace(ietf, draftUrl));
   const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   try {
     if (evidence) mkdirSync(evidence, { recursive: true });
@@ -52,12 +65,10 @@ try {
         document.addEventListener("click", (event) => { const seen = clicks.find((click) => click.event === event); if (seen) seen.reached = true; });
         window.addEventListener("pointerdown", (event) => { Object.assign(window, { pressedOn: event.target }); }, true);
       });
-      await context.route("https://datatracker.ietf.org/**", (route) => route.fulfill({ contentType: "text/html", body: "<title>draft</title>" }));
       const page = await context.newPage();
       page.setDefaultTimeout(10_000);
       page.on("pageerror", (error) => errors.push(error.message));
-      await page.goto(`http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(chatPane)}&view=chat`);
-      await page.locator(".conn-live").waitFor({ state: "attached" });
+      await page.goto(new URL(`${DEMO_PREFIX}?pane=${encodeURIComponent(chatPane)}&view=chat`, server.url).href);
       const chatFrame = page.locator(`section.pane-frame[data-layout-pane=${JSON.stringify(chatPane)}]`);
       await chatFrame.locator("button.markdown-file", { hasText: "src/lib/idempotency.ts" }).waitFor();
       const shellPane = await page.evaluate(async (pane_id) => {
@@ -182,18 +193,35 @@ try {
       }
       console.log("PASS a press that made no click hands no later click on to its link, after a new press or a lost focus");
 
-      const webLink = 'a[href^="https://datatracker.ietf.org/"]';
+      const webLink = `a[href=${JSON.stringify(draftUrl)}]`;
       await dock(desktop);
-      await inView(desktop, chatFrame.locator(webLink));
-      const tab = desktop.context.waitForEvent("page", { timeout: 5_000 }).catch(() => null);
-      await chatFrame.locator(webLink).click({ modifiers: ["Control"] });
+      const web = chatFrame.locator(webLink);
+      await inView(desktop, web);
+      const bounds = await web.boundingBox();
+      assert.ok(bounds, "the web link is laid out");
+      const point = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+      await page.mouse.move(point.x, point.y);
+      await page.keyboard.down("Control");
+      await page.mouse.down();
+      assert.equal(await pressedOn(web), true, "the Ctrl press landed on the web link");
       await selected(page, chatPane);
+      // The release must hit the old point after the dock has moved the link.
+      await page.waitForFunction(({ selector, x, y }) => {
+        const link = document.querySelector(selector);
+        return link !== null && !link.contains(document.elementFromPoint(x, y));
+      }, { selector: webLink, ...point });
+      const [opened] = await Promise.all([
+        desktop.context.waitForEvent("page", { timeout: 5_000 }).catch(() => null),
+        page.mouse.up(),
+      ]);
+      await page.keyboard.up("Control");
       const handed = await handedOn(page, webLink, "a Ctrl press on a web link");
       assert.equal(handed.ctrl, true, "the click handed on to the web link keeps Ctrl");
-      const opened = await tab;
       assert.ok(opened, "the web link opens its page in a tab");
-      await opened.waitForURL(/datatracker\.ietf\.org/);
+      await opened.waitForURL(draftUrl, { waitUntil: "commit" });
+      await opened.getByRole("heading", { name: "Idempotency-Key draft", exact: true }).waitFor({ timeout: 10_000 });
       console.log("PASS a web link pressed with Ctrl in a pane that is not selected opens its page, keeping the key");
+      await desktop.context.close();
     }
 
     // a finger's tap: the browser makes its click from a new hit test, which must not click what moved under the finger as well
@@ -212,6 +240,7 @@ try {
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 } finally {
+  await draftServer?.stop(true);
   await server.stop(true);
   rmSync(app, { recursive: true, force: true });
 }

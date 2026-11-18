@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium, type Page } from "playwright-core";
+import { chromium, errors, type Page } from "playwright-core";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { SUPPORTED_ENTRIES } from "../src/lib/themes.ts";
@@ -104,23 +104,40 @@ const pcHeader = (page: Page, pc: string) => page.evaluate((pc) => {
   };
 }, pc);
 
-const pcTrailing = (page: Page, pc: string) => page.evaluate((pc) => {
+const readPcTrailing = ({ pc, waitFor }: { readonly pc: string; readonly waitFor?: "both" | "add" }) => {
   const group = document.querySelector<HTMLElement>(`section.machine-group[aria-label="PC ${pc}"]`)!;
   const header = group.querySelector<HTMLElement>(".machine-header")!;
   const box = (element: Element | null) => { const r = element?.getBoundingClientRect(); return r ? { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height } : null; };
   const centre = (element: Element | null) => { const r = element?.getBoundingClientRect(); return r ? r.left + r.width / 2 : null; };
-  const takesTap = (element: Element | null) => { const r = element?.getBoundingClientRect(); return r !== undefined && element!.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)); };
+  const hit = (element: Element | null) => { const r = element?.getBoundingClientRect(); return r && document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); };
   const add = header.querySelector<HTMLButtonElement>(".machine-new"), fold = header.querySelector<HTMLElement>(".machine-toggle");
+  const addHit = hit(add), foldHit = hit(fold);
+  const addTakesTap = add?.contains(addHit ?? null), foldTakesTap = fold?.contains(foldHit ?? null);
+  if (waitFor && (!addTakesTap || (waitFor === "both" && !foldTakesTap))) return null;
   const row = group.querySelector(".workspace-header");
   return {
-    add: { box: box(add)!, glyph: centre(add?.querySelector("svg") ?? null)!, takesTap: takesTap(add), disabled: add?.disabled ?? null },
-    fold: { box: box(fold)!, glyph: centre(fold?.querySelector("svg") ?? null)!, takesTap: takesTap(fold) },
+    add: { box: box(add)!, glyph: centre(add?.querySelector("svg") ?? null)!, takesTap: addTakesTap, hit: addHit?.getAttribute("class") ?? addHit?.tagName, disabled: add?.disabled ?? null },
+    fold: { box: box(fold)!, glyph: centre(fold?.querySelector("svg") ?? null)!, takesTap: foldTakesTap, hit: foldHit?.getAttribute("class") ?? foldHit?.tagName },
     title: box(header.querySelector(".machine-title"))!,
     menuColumn: centre(row?.querySelector(".row-menu-toggle svg") ?? null),
     stateColumn: centre(row?.querySelector(".sidebar-pane-meta") ?? null),
     drawerRight: document.querySelector(".sidebar")!.getBoundingClientRect().right,
   };
-}, pc);
+};
+
+async function pcTrailing(page: Page, pc: string, waitFor: "both" | "add" = "both") {
+  // Scrolling the list (including its clamp after a fold) can leave the header clipped until the next paint.
+  let at;
+  try {
+    const snapshot = await page.waitForFunction(readPcTrailing, { pc, waitFor });
+    at = await snapshot.jsonValue();
+  } catch (error) {
+    if (!(error instanceof errors.TimeoutError)) throw error;
+    at = await page.evaluate(readPcTrailing, { pc });
+  }
+  assert.ok(at);
+  return at;
+}
 
 const addContrast = (page: Page, pc: string) => page.evaluate((pc) => {
   const rgb = (color: string): number[] => {
@@ -201,13 +218,12 @@ try {
           const errors: string[] = [];
           page.on("pageerror", (error) => errors.push(error.message));
           await page.goto(`http://127.0.0.1:${server.port}/`);
-          await page.locator(".conn-live").waitFor({ state: "attached" });
+          await page.locator(".agents-sidebar .agent-item").first().waitFor({ state: "attached" });
           if (phone) {
             await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
             // CDP touch dispatch has no actionability wait: wait for the drawer's slide to reach the screen
             await page.waitForFunction(() => (document.querySelector(".sidebar.is-open")?.getBoundingClientRect().left ?? -1) >= -0.5);
           }
-          await page.locator(".agents-sidebar .agent-item").first().waitFor({ state: "attached" });
           if (scene.twoPcs) await page.waitForFunction((offline) => document.querySelectorAll(".machine-list .machine-group .machine-workspaces").length === 2 && document.querySelectorAll(".machine-list .machine-group.is-offline").length === offline, scene.workOffline ? 1 : 0);
           await page.evaluate(() => document.fonts.ready);
           await run(page, label);
@@ -373,14 +389,15 @@ try {
           assert.ok(Math.abs(at.fold.glyph - at.menuColumn!) <= 1, `${label}: ${pc}'s fold is on the column of its rows' ⋯ (${at.fold.glyph} vs ${at.menuColumn})`);
           for (const [control, box] of [["fold", at.fold.box], ["+", at.add.box]] as const) assert.ok(box.width >= 44 && box.height >= 44, `${label}: ${pc}'s ${control} is a finger's 44 px (${box.width}x${box.height})`);
           assert.ok(Math.abs(at.add.box.left - at.fold.box.right) <= 0.5, `${label}: ${pc}'s fold ends where its + starts, so the two share no tap (${at.fold.box.right} vs ${at.add.box.left})`);
-          assert.ok(at.add.takesTap && at.fold.takesTap, `${label}: a tap on the middle of ${pc}'s + and of its fold lands on each`);
+          assert.ok(at.add.takesTap && at.fold.takesTap, `${label}: a tap on the middle of ${pc}'s + and of its fold lands on each (hit ${at.add.hit} and ${at.fold.hit})`);
           assert.ok(at.add.box.right <= at.drawerRight + 0.5, `${label}: ${pc}'s + ends inside the drawer (${at.add.box.right} of ${at.drawerRight})`);
         }
         for (const pc of ["Laptop", "Work PC"]) await page.getByRole("button", { name: `Collapse ${pc}`, exact: true }).click();
         await page.waitForFunction(() => !document.querySelector(".machine-list .machine-workspaces"));
         for (const pc of ["Laptop", "Work PC"]) {
-          const folded = await pcTrailing(page, pc);
-          assert.ok(folded.add.takesTap, `${label}: folded, ${pc} still offers its +`);
+          await header(pc).scrollIntoViewIfNeeded();
+          const folded = await pcTrailing(page, pc, "add");
+          assert.ok(folded.add.takesTap, `${label}: folded, ${pc} still offers its + (hit ${folded.add.hit})`);
           assert.ok(Math.abs(folded.add.box.left - open[pc]!.add.box.left) <= 0.5 && Math.abs(folded.title.right - open[pc]!.title.right) <= 0.5, `${label}: folding ${pc} moves neither its + nor its name's room`);
         }
         for (const pc of ["Work PC", "Laptop"]) {

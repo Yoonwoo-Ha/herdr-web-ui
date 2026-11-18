@@ -135,14 +135,17 @@ try {
             const big = await rowAt();
             assert.ok(Math.abs(big.row - big.host) < 0.5, `${width}px: a virtualized row is drawn at the measured line height (${big.row} vs ${big.host})`);
             assert.ok(big.last, `${width}px: the last line is in view at the end of a long file`);
-            const topLine = (): Promise<number> => page.evaluate(() => {
+            // the first line drawn in view, once the virtualizer has drawn the rows of the scroll position; given
+            // `near`, once that line is within 3 of it, as the view's reveal ends a few frames after a size change
+            const topLine = async (near?: number): Promise<number> => (await page.waitForFunction((near) => {
               const view = document.querySelector<HTMLElement>(".virtual-source-scroll")!.getBoundingClientRect();
               const rows = [...document.querySelector("diffs-container")!.shadowRoot!.querySelectorAll<HTMLElement>("[data-line]")];
               const shown = rows.filter((row) => { const box = row.getBoundingClientRect(); return box.bottom > view.top + 1 && box.top < view.bottom; });
-              return Math.min(...shown.map((row) => Number(row.dataset["line"])));
-            });
+              if (shown.length === 0) return false;
+              const top = Math.min(...shown.map((row) => Number(row.dataset["line"])));
+              return near === undefined || Math.abs(top - near) <= 3 ? top : false;
+            }, near, { timeout: 10_000 })).jsonValue() as number;
             await page.evaluate((height) => { document.querySelector<HTMLElement>(".virtual-source-scroll")!.scrollTop = 1499 * height; }, big.host);
-            await page.waitForFunction(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(true)))));
             const before = await topLine();
             assert.ok(before > 1400 && before < 1600, `${width}px: scrolled to the middle (${before})`);
             await page.locator(".settings-dialog").getByRole("button", { name: "Reset", exact: true }).click();
@@ -152,8 +155,7 @@ try {
               const scroll = document.querySelector<HTMLElement>(".virtual-source-scroll")!;
               return Math.abs(scroll.scrollHeight - 3000 * height) < 3000 * height * 0.05;
             }, small);
-            await page.waitForFunction(() => new Promise((done) => setTimeout(() => requestAnimationFrame(() => done(true)), 0)));
-            const after = await topLine();
+            const after = await topLine(before).catch(() => topLine());
             assert.ok(Math.abs(after - before) <= 3, `${width}px: the view keeps its line across the change (${before} → ${after})`);
             await page.keyboard.press("Escape");
             await page.locator(".settings-dialog").waitFor({ state: "detached" });
