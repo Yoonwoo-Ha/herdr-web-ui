@@ -148,7 +148,7 @@ const OTHER_MACHINE_FILES = /^\/api\/(?:fs\/|pane\/(?:files|docs|image)$|workspa
 
 export async function handleRequest(request: Request, ctx: ServerContext): Promise<Response | undefined> {
   const { options, hostname, token, bridgeToken, bootId, devices, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, cliProxyRoutes, usageLogin, usage, voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartupResult, portalStartup } = ctx.services;
-  const { sidecar, serialize, push, alertWebhook, logPushError, omo, claudeAgents, opencodeAgents, plans, clientSnapshot, machines, broadcastAll, collector, queueFirstMessage } = core;
+  const { sidecar, serialize, push, alertWebhook, logPushError, omo, claudeAgents, opencodeAgents, plans, clientSnapshot, machines, broadcastAll, collector, queueFirstMessage, askFirstMessage } = core;
   return requestLog.handle(request, async (headers) => {
   if (options.profile === "machine") wordHerdrFailures(machineFailure, machineLayoutReason);
   const startup = portalStartupResult ?? await portalStartup;
@@ -812,7 +812,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   const filesResponse = await handleFileRequest(request, url, pathname, { bridgeAuthorized, requestHost, forwarded, client, access });
   if (filesResponse) return filesResponse;
 
-  const workspaceResponse = await handleWorkspaceRequest(request, url, pathname, ctx, broadcastAll, queueFirstMessage, () => {
+  const workspaceResponse = await handleWorkspaceRequest(request, url, pathname, ctx, broadcastAll, { ask: askFirstMessage, queue: queueFirstMessage }, () => {
     const receipt = orderSequence.moved();
     void machines?.refreshLocal();
     return receipt;

@@ -9,6 +9,7 @@ import { MAX_LABEL_CHARS } from "../shared/labels.ts";
 import { MAX_INVENTORY_WORKSPACES, type WorktreeInventoryEntry } from "../shared/workspace-lifecycle.ts";
 import { hasNoControlCharacters, firstMessageFault } from "../shared/launch-rules.ts";
 import type { DirectoryCreated, PendingMessage, ServerMessage, TabMoved, TabMovedToWorkspace, WorkspaceMoved } from "../shared/protocol.ts";
+import type { FirstMessageAsk } from "./pending-input.ts";
 import type { MoveReceipt } from "./order-sequence.ts";
 import { agentFault, agentLaunch, type AgentPayload } from "./agent-launch.ts";
 import { createDirectory, expandedDirectory, listDirectories } from "./directories.ts";
@@ -72,8 +73,14 @@ const notQueued = (error: unknown): { error: { code: string; message: string } }
   return { error: typeof own === "string" ? { code: own, message: error instanceof Error ? error.message : String(error) } : requestFault(error, "first_message_not_queued") };
 };
 
+/** server/core/pending.ts askFirstMessage and queueFirstMessage */
+export interface FirstMessages {
+  ask: (requester: string | null) => FirstMessageAsk;
+  queue: (paneId: string, text: string, kind: string, requester: FirstMessageAsk, launchedPid: number | null) => Promise<PendingMessage>;
+}
+
 export async function handleWorkspaceRequest(request: Request, url: URL, pathname: string, bunServer: Pick<ServerContext, "timeout">, broadcastAll: (message: ServerMessage) => void,
-  queueFirstMessage: (paneId: string, text: string, kind: string, requester: string | null, launchedPid: number | null) => Promise<PendingMessage>,
+  firstMessages: FirstMessages,
   workspaceMoved: () => MoveReceipt, shellAgents?: ShellAgentLocator,
   /** false: the folders are another machine's, which hc checks as it starts the shell there */
   localFolders = true): Promise<Response | null> {
@@ -199,6 +206,9 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
     }
     // agent.start can legitimately take a minute; Bun's default idle timeout is shorter.
     if (payload.agent) bunServer.timeout(request, 75);
+    // taken before the workspace is made and the agent launched: a page that leaves or stops typing during that minute
+    // gets its first message held, as one that leaves after it is listed does
+    const asked = payload.agent && typeof payload.first_message === "string" ? firstMessages.ask(requester) : null;
     try {
       const options = {
         ...(cwd === undefined || cwd === null ? {} : { cwd }),
@@ -209,6 +219,7 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
         ? await tabCreate({ ...options, workspaceId: payload.workspace_id as string })
         : await workspaceCreate(options);
       const workspaceId = created.tab.workspace_id;
+      asked?.at(created.root_pane.pane_id);
       // the page selects the pane on this answer but draws it only once the roster lists it: the roster is read as
       // the answer goes, not after the collector's debounced pane.created (500 ms). Not before the launch either:
       // herdr answers calls made at once up to 250 ms late, and the launch makes its own.
@@ -221,8 +232,8 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
       const launched = await agentLaunch(created.root_pane.pane_id, payload.agent, (pid) => { launchedPid = pid; }, shellAgents);
       // the request's first message is the user's send: queued for the agent's first ready turn through the
       // bridge's pending path (server/core/pending.ts), never typed here; an agent that did not start gets none
-      const firstMessage = launched.agent_started && typeof payload.first_message === "string"
-        ? await queueFirstMessage(created.root_pane.pane_id, payload.first_message, payload.agent.kind as string, requester, launchedPid).then((message): { id: string; held?: string } | ReturnType<typeof notQueued> => ({
+      const firstMessage = launched.agent_started && asked !== null
+        ? await firstMessages.queue(created.root_pane.pane_id, payload.first_message as string, payload.agent.kind as string, asked, launchedPid).then((message): { id: string; held?: string } | ReturnType<typeof notQueued> => ({
           id: message.id,
           ...(message.state === "held" && message.error ? { held: message.error.code } : {}),
         }), (error: unknown) => {
@@ -234,6 +245,8 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
       return jsonResponse({ workspace_id: workspaceId, pane_id: created.root_pane.pane_id, ...launched, ...(typeof payload.first_message === "string" ? { first_message: firstMessage } : {}) }, 200, wordedHeaders());
     } catch (error) {
       return errorResponse(error);
+    } finally {
+      asked?.end();
     }
   }
 

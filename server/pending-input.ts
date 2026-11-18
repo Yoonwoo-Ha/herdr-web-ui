@@ -31,6 +31,13 @@ export function samePendingIdentity(before: PendingIdentity, after: PendingIdent
     && (before.processBirth == null
       || (after.processBirth == null ? before.processPid == null || before.processPid !== after.processPid : sameProcessBirth(before.processBirth, after.processBirth, platform)));
 }
+/**
+ * A create request's first message from the request on, while its workspace is made, its agent launched and herdr
+ * asked before the message is listed (server/core/pending.ts askFirstMessage). `at` names the pane once it is known,
+ * `end` ends the request.
+ */
+export interface FirstMessageAsk { at(paneId: string): void; end(): void }
+
 export interface PendingRecord<Owner, Lease> {
   owner: Owner;
   paneId: string;

@@ -62,11 +62,14 @@ const launches: string[] = [];
 const realLaunch = agentLaunchModule.agentLaunch;
 let standInLaunch = false;
 let standInPid: number | null = null;
+let launchHold: { reached: () => void; release: Promise<void> } | null = null;
 mock.module("./agent-launch.ts", () => ({
   ...agentLaunchModule,
   agentLaunch: async (...args: Parameters<typeof realLaunch>) => {
     if (!standInLaunch) return realLaunch(...args);
     launches.push(String(args[1].kind));
+    const hold = launchHold;
+    if (hold) { launchHold = null; hold.reached(); await hold.release; }
     if (standInPid !== null) args[2]?.(standInPid);
     return { agent_started: true as const };
   },
@@ -2152,6 +2155,38 @@ describe("a create request's first message", () => {
     expect(tab.agent_started).toBeTrue();
     expect(tab.first_message).toEqual({ id: expect.any(String), held: "first_message_unattended" });
     const socket = new Socket(server.port); entry.sockets.push(socket);
+    await socket.attach(tab.pane_id);
+    const held = await listed(socket, tab.pane_id, tab.first_message.id, "held");
+    expect(held.messages.find((item: PendingMessage) => item.id === tab.first_message.id).error.code).toBe("first_message_unattended");
+  }, 30_000);
+
+  it("asked for by a page that switched to watching and back while its agent was launched, the create route's answer says it is held", async () => {
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "ovis-test-pending-first-watched-launch", cwd: root, focus: false });
+    const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
+    const server = createServer({ port: 0, stateDir: join(root, "state-first-watched-launch") });
+    entry.stop = server.stop;
+    const socket = new Socket(server.port); entry.sockets.push(socket);
+    const connection = await socket.connection();
+    let release!: () => void;
+    const launching = new Promise<void>((reached) => { launchHold = { reached, release: new Promise<void>((free) => { release = free; }) }; });
+    standInLaunch = true;
+    const answer = fetch(`http://localhost:${server.port}/api/tab/create`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace_id: created.workspace.workspace_id, cwd: root, agent: { kind: "claude" }, first_message: "FIRST-WATCHED-LAUNCH", first_message_connection: connection }),
+    }).finally(() => { standInLaunch = false; launchHold = null; });
+    try {
+      await launching;
+      // the launch may take a minute: nothing is listed yet for the switch to watching to hold
+      const from = socket.seen.length;
+      socket.send({ type: "role", mode: "observe" });
+      await socket.wait((frame) => frame.type === "role-ack" && frame.mode === "observe", from);
+      socket.send({ type: "role", mode: "interact" });
+      await socket.wait((frame) => frame.type === "role-ack" && frame.mode === "interact", from);
+    } finally { release(); }
+    const res = await answer;
+    expect(res.status).toBe(200);
+    const tab = await res.json() as { pane_id: string; first_message: { id: string; held?: string } };
+    expect(tab.first_message).toEqual({ id: expect.any(String), held: "first_message_unattended" });
     await socket.attach(tab.pane_id);
     const held = await listed(socket, tab.pane_id, tab.first_message.id, "held");
     expect(held.messages.find((item: PendingMessage) => item.id === tab.first_message.id).error.code).toBe("first_message_unattended");
