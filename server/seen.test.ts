@@ -60,6 +60,8 @@ describe("read finishes shared by the browsers of a server", () => {
   });
 
   it("drops the oldest records past the limit", () => {
+    // a full store in one write: every record() is a durable write of the whole file, and 500 of them
+    // took a minute on a loaded runner's disk
     const dir = root();
     writeFileSync(join(dir, "seen.json"), `${JSON.stringify(Array.from({ length: MAX_SEEN }, (_, pane) => finish(`p${pane}`, 1)))}\n`);
     const store = new SeenStore(dir);

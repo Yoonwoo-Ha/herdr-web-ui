@@ -1,3 +1,7 @@
+/**
+ * ssh's host patterns (`*` any run, `?` one character) for the ssh config reader (server/ssh-config.ts), at a cost
+ * bounded by the pattern and the text: a match that would take more is left unknown (null), never guessed.
+ */
 
 const MIN_STEPS = 10_000;
 const STEPS_PER_CHAR = 4;
@@ -57,6 +61,10 @@ export function globMatch(glob: string, text: string): boolean | null {
   return true;
 }
 
+/**
+ * ssh's pattern list (`a,b,!c`): a negated pattern that matches says no, else one other pattern matching says yes;
+ * null when a pattern that could change the answer is unknown
+ */
 export function listMatches(patterns: readonly string[], text: string): boolean | null {
   const negated = patterns.filter((pattern) => pattern.startsWith("!")).map((pattern) => globMatch(pattern.slice(1), text));
   if (negated.includes(true)) return false;

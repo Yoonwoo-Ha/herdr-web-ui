@@ -12,6 +12,10 @@
  * starts with its own mark (MARK), and a file there without it is the user's whatever its name: an
  * install refuses to replace it and a removal leaves it. Only the
  * `statusLine` member of settings.json is edited, in place, so the rest of the file keeps its bytes.
+ *
+ * Removing it writes settings.json back byte for byte when nothing else in it changed since the
+ * install (deleting it when the install created it), and otherwise puts back only the status line
+ * it replaced (or its absence). It then deletes the installer's own files and the captured payload.
  */
 import { randomUUID } from "node:crypto";
 import { chmodSync, closeSync, existsSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -25,7 +29,12 @@ const KEY = "statusLine";
 
 /** A refusal whose message is safe to show anywhere: it never quotes settings.json or a command in it. */
 export class StatuslineInstallError extends Error {}
+/** the only files the installer writes in its directory, and so the only ones --remove deletes */
 const OWN_FILES = ["statusline-tee.sh", "statusline-capture.ts", "install.json"] as const;
+/**
+ * What each file the installer or its capture writes starts with: the only proof a file of that name
+ * is theirs. The payload's must match what server/statusline-capture.ts writes.
+ */
 const MARK: Record<string, string> = {
   "statusline-tee.sh": `#!/bin/sh\n${BANNER}\n`,
   "statusline-capture.ts": `// ${GENERATED}\n`,
@@ -46,6 +55,11 @@ const shellQuote = (value: string): string => (/^[\w./:@%+=,-]+$/.test(value) ? 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const commandOf = (value: unknown): string | null => (isObject(value) && typeof value["command"] === "string" ? value["command"] : null);
 
+/**
+ * The words a POSIX shell would split `command` into, with quotes and backslashes taken off and a
+ * leading unquoted `~/` expanded; nothing is run. Enough to find a path however it is quoted. The
+ * index of each word with an unquoted `*`, `?` or `[` (a glob the shell would expand) goes in `globs`.
+ */
 function shellWords(command: string, home: string, globs?: Set<number>): string[] {
   const words: string[] = [];
   let word: string | null = null;
@@ -98,6 +112,10 @@ function runsWrapper(path: string, tee: string): boolean {
   try { return realpathSync(path) === realpathSync(tee); } catch { return false; }
 }
 
+/**
+ * Only ever a reason to refuse an install or to keep the wrapper; the one command removal replaces is
+ * exactly the one it wrote.
+ */
 function namesAWrapper(command: string, tee: string, home: string): boolean {
   if (command.replace(/\/(?:\.?\/)+/g, "/").includes("herdr-statusline/statusline-tee.sh")) return true;
   const globs = new Set<number>();
@@ -112,6 +130,7 @@ function namesAWrapper(command: string, tee: string, home: string): boolean {
 }
 
 export interface StatuslineInstallOptions {
+  /** the home whose ~/.herdr holds the captured payload, and ~/.claude when no config dir is set */
   home: string;
   configDir?: string | undefined;
   bunPath?: string;
@@ -214,6 +233,10 @@ function ownFile(path: string): boolean {
   return start !== null && start.equals(mark);
 }
 
+/**
+ * Whether `path` is what a write of the installer cut short left: its content so far is the start of
+ * the file it was writing, mark included (or a prefix of the mark, where it was cut shorter still).
+ */
 function ownLeftover(path: string): boolean {
   const mark = Buffer.from(MARK[LEFTOVER.exec(basename(path))![1]!]!);
   const start = head(path, mark.length);
@@ -236,6 +259,10 @@ function head(path: string, length: number): Buffer | null {
   }
 }
 
+/**
+ * Write through a temporary file and a rename, so a failed write leaves the old file whole. Where
+ * nothing was there, a link publishes it instead: it fails rather than replace a file made meanwhile.
+ */
 function writeAtomically(path: string, content: string, mode: number): void {
   const temporary = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
   const absent = lstatSync(path, { throwIfNoEntry: false }) === undefined;
@@ -256,11 +283,17 @@ function writeAtomically(path: string, content: string, mode: number): void {
   }
 }
 
+/** settings.json is often a link into a dotfiles checkout: the file it points at is the one rewritten. */
 function writeSettings(path: string, content: string): void {
   const target = realpathSync(path);
   writeAtomically(target, content, statSync(target).mode & 0o777);
 }
 
+/**
+ * The installer's directory is used only while it holds nothing but the installer's own files, each
+ * a regular file with its mark: a link there could point a write anywhere, and anything else there,
+ * even under one of its names, is the user's.
+ */
 function checkOwnDirectory(own: string): "missing" | "owned" {
   let entry;
   try { entry = lstatSync(own); } catch (error) { if (isMissing(error)) return "missing"; throw error; }
@@ -274,6 +307,7 @@ function checkOwnDirectory(own: string): "missing" | "owned" {
 
 function readSettings(path: string): { text: string | null; value: Record<string, unknown> } {
   if (!existsSync(path)) {
+    // a link to a file not there yet (a dotfiles checkout not set up) is the user's, not an absent file
     if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) throw new StatuslineInstallError(`${path} links to a file that is not there; fix the link first`);
     return { text: null, value: {} };
   }
@@ -321,6 +355,7 @@ export function statuslineInstallState(options: StatuslineInstallOptions): Statu
   }
 }
 
+// The compiled binary carries no source files, only both files' text (scripts/build-server.ts).
 declare const OVIS_STATUSLINE_SOURCES: Record<"statusline-context.ts" | "statusline-capture.ts", string> | undefined;
 const sourceOf = (name: "statusline-context.ts" | "statusline-capture.ts"): string =>
   typeof OVIS_STATUSLINE_SOURCES === "undefined" ? readFileSync(new URL(`./${name}`, import.meta.url), "utf8") : OVIS_STATUSLINE_SOURCES[name];
@@ -334,6 +369,13 @@ function holderRuns(token: string): boolean {
   try { process.kill(pid, 0); return true; } catch (error) { return isCode(error, "EPERM"); }
 }
 
+/**
+ * One change at a time, across processes too (two servers on one home): an install and a removal
+ * that interleave could leave settings.json running a wrapper the other just deleted. A lock is
+ * removed, by its holder or a takeover, by first moving it to a name of its own: deleting it in place
+ * would leave an empty directory for a moment, which a new lock could be published over and then
+ * deleted with it.
+ */
 function locked<T>(configDir: string, change: () => T): T {
   const lock = join(configDir, ".herdr-statusline.lock");
   const ownerOf = (dir: string): string | null => { try { return readFileSync(join(dir, "owner"), "utf8"); } catch { return null; } };
@@ -352,6 +394,7 @@ function locked<T>(configDir: string, change: () => T): T {
     try { renameSync(built, lock); return true; }
     catch (error) {
       rmSync(built, { recursive: true, force: true });
+      // held (a lock with its owner), or not a directory this can replace (a link): either way, not ours
       if (isCode(error, "EEXIST") || isCode(error, "ENOTEMPTY") || isCode(error, "ENOTDIR")) return false;
       throw error;
     }
@@ -362,6 +405,7 @@ function locked<T>(configDir: string, change: () => T): T {
       const entry = lstatSync(lock, { throwIfNoEntry: false });
       if (entry !== undefined) {
         const seen = ownerOf(lock);
+        // a token is whole once published; anything else (a link, no owner, a holder still running) is busy
         if (!entry.isDirectory() || seen === null || !/^\d+:[0-9a-f-]{36}$/.test(seen) || holderRuns(seen)) throw busy();
         if (ownerOf(lock) !== seen) throw busy();
         discard(lock);
@@ -408,6 +452,7 @@ function installUnlocked(options: StatuslineInstallOptions): string {
   chmodSync(where.own, 0o700);
   writeAtomically(where.capture, MARK["statusline-capture.ts"] + CAPTURE_SOURCE(), 0o600);
   writeAtomically(where.tee, wrapper(previous, where.capture, where.bun), 0o700);
+  // the record goes before settings.json: an install cut short still leaves what removing it needs
   writeAtomically(where.record, `${JSON.stringify(record, null, 2)}\n`, 0o600);
   if (text === null) writeAtomically(where.settings, installed, 0o600);
   else writeSettings(where.settings, installed);
@@ -425,6 +470,7 @@ function removeUnlocked(options: StatuslineInstallOptions): string {
   const where = locations(options);
   let entry;
   try { entry = lstatSync(where.own); } catch (error) { if (isMissing(error)) return `nothing to remove: ${where.own} is not there`; throw error; }
+  // a link here could point the deletions below anywhere
   if (!entry.isDirectory()) throw new StatuslineInstallError(`${where.own} is not the directory this installer made (a link?); move it away first`);
   if (existsSync(where.record) && !lstatSync(where.record).isFile()) throw new StatuslineInstallError(`${where.record} is not a file this installer wrote; move it away first`);
   let outcome: string;
@@ -435,6 +481,7 @@ function removeUnlocked(options: StatuslineInstallOptions): string {
   } else {
     const record = JSON.parse(readFileSync(where.record, "utf8")) as InstallRecord;
     const { text, value } = readSettings(where.settings);
+    // a settings.json the install created that is a link now was moved into the user's dotfiles: kept
     const linked = lstatSync(where.settings, { throwIfNoEntry: false })?.isSymbolicLink() === true;
     if (text !== null && text === record.installed && !(record.original === null && linked)) {
       if (record.original === null) rmSync(where.settings);
@@ -447,6 +494,7 @@ function removeUnlocked(options: StatuslineInstallOptions): string {
       outcome = `left ${where.settings} as it is: its status line was changed since the install`;
     }
   }
+  // a status line changed since the install that may still run the wrapper keeps working: its files stay
   let named: string | null = null;
   try { named = commandOf(readSettings(where.settings).value[KEY]); } catch {}
   if (named !== null && namesAWrapper(named, where.tee, where.home)) {
@@ -455,11 +503,13 @@ function removeUnlocked(options: StatuslineInstallOptions): string {
   const removeFile = (path: string) => {
     try { rmSync(path); } catch (error) { if (!isMissing(error)) throw error; }
   };
+  // a file under one of the installer's names without its mark is the user's, and stays
   for (const name of OWN_FILES) if (ownFile(join(where.own, name))) removeFile(join(where.own, name));
   for (const name of readdirSync(where.own).filter((name) => LEFTOVER.test(name))) if (ownLeftover(join(where.own, name))) removeFile(join(where.own, name));
   const payload = ownFile(where.payload) ? (removeFile(where.payload), ` and ${where.payload}`) : "";
   const contexts = join(where.home, ".herdr", "statusline-context");
   try {
+    // Other Claude profiles share the home; their context captures must survive this removal.
     if (contextDirectorySafe(contexts)) {
       const profile = contextProfile(where.configDir);
       for (const name of readdirSync(contexts)) {

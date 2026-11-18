@@ -115,6 +115,8 @@ const GROK_DESCRIPTIONS = Object.fromEntries(Object.entries(GROK_COMMANDS).flatM
   ...(command.aliases ?? []).map((alias) => [alias, command.description]),
 ]));
 const PAGER_NAMES = Object.entries(GROK_COMMANDS).flatMap(([name, command]) => command.terminal ? [name, ...(command.aliases ?? [])] : []);
+// Catalog the pinned official release build. Per-command flags above copy the pager modules'
+// `visible()` and release-profile gate rather than a separately maintained hidden-name set.
 const RELEASE_BUILD = true;
 const GROK_AGENT_HIDDEN = Object.entries(GROK_COMMANDS)
   .filter(([, command]) => command.hidden || (RELEASE_BUILD && command.releaseHidden))
@@ -167,6 +169,7 @@ function pluginRoots(root: string, installed: boolean): Root[] {
   return result;
 }
 
+/** Grok's legacy command roots contain flat markdown files, not SKILL.md directories. */
 function legacyCommands(root: string, origin: Root["origin"]): SlashCommand[] {
   let entries;
   try { entries = readdirSync(root, { withFileTypes: true }); } catch { return []; }
@@ -283,6 +286,8 @@ export const source: AgentCommandSource = {
     for (const candidate of candidates) grouped.set(candidate.key, [...(grouped.get(candidate.key) ?? []), candidate]);
     const result: SlashCommand[] = [];
     for (const [key, rows] of grouped) {
+      // a same-named local, repo or user skill overrides the bundled copy; a plugin skill overrides
+      // nothing and keeps its plugin:name, so only native skills contest the bare name
       const overridden = rows.some((candidate) => candidate.scope !== "bundled" && candidate.row.origin !== "plugin");
       const scopes = new Map<string, (typeof rows)[number]>();
       for (const candidate of rows) if (!scopes.has(candidate.scope) && !(overridden && candidate.scope === "bundled")) scopes.set(candidate.scope, candidate);

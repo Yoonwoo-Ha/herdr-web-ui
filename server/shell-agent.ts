@@ -25,6 +25,7 @@ import { COMPILED } from "./entries.ts";
 export const SHELL_AGENTS: Record<string, (argv: readonly string[]) => boolean> = {
   omo: isOmoProcess,
   gjc: isGjcProcess,
+  // dsh-tui's host process (node …/@deepseek-harness-tui/dsh-tui/lib/…/host-entry.js), behind its launcher shims
   "dsh-tui": isDshProcess,
 };
 /** The shell-started agents known to start on Windows; the others are not offered there. */
@@ -76,6 +77,10 @@ export function parseLoginPath(output: string): string | null {
   return path === "" ? null : path;
 }
 
+/**
+ * The variables the probe printed as JSON between its markers, those named as a shell variable can
+ * be (an exported bash function's `BASH_FUNC_f%%` is not one); null when there is no such object.
+ */
 export function parseLoginEnv(output: string): Record<string, string> | null {
   const start = output.lastIndexOf(`\n${LOGIN_ENV_START}\n`);
   const end = output.lastIndexOf(`\n${LOGIN_ENV_END}\n`);
@@ -101,6 +106,10 @@ export interface LoginPathProbe {
  */
 export const PATH_PROBE_MARKER = "OVIS_PATH_PROBE";
 
+/**
+ * A shell SIGKILL cannot end (blocked in the kernel, say on a hung home) is answered for `graceMs`
+ * after the kill and reaped when it exits.
+ */
 export function loginPathProbe(options: LoginShellOptions): LoginPathProbe {
   const probe = loginShellProbe(options, LOGIN_PATH_SCRIPT, parseLoginPath, "PATH");
   return async (signal) => {
@@ -109,6 +118,11 @@ export function loginPathProbe(options: LoginShellOptions): LoginPathProbe {
   };
 }
 
+/**
+ * The PATH a pane's shell starts an agent from: that of an interactive login shell (`-l -i -c`), which
+ * also reads what only an interactive shell reads (zsh's .zshrc, where installers and nvm add their
+ * folders), then the plain login shell's folders it does not name.
+ */
 export function agentPathProbe(options: LoginShellOptions & { rereadGapMs?: number }): LoginPathProbe & { reread: () => void; problem: () => string | null } {
   const env = { ...(options.env ?? process.env), [PATH_PROBE_MARKER]: "1" };
   const interactive = loginPathProbe({ ...options, env, interactive: true });
@@ -232,12 +246,15 @@ function loginShellProbe<T>(options: LoginShellOptions, script: string, read: (o
       try { process.kill(-child.pid!, "SIGKILL"); } catch { }
       if (failure !== null) { done({ value: null, reason: failure }); return; }
       if (code !== 0) { done({ value: null, reason: `${shell} -l ended with ${code === null ? exitSignal : `exit ${code}`}` }); return; }
+      // stdout may still hold output at exit: it is read until close, bounded, as a process outside
+      // the group (one the profile moved to a session of its own) may keep the pipe open
       grace = setTimeout(answer, graceMs);
     });
     child.on("close", () => { if (exited && failure === null) answer(); });
   });
 }
 
+/** Only the fixed names of SHELL_AGENTS are looked up, and only absolute executable files are kept. */
 export class ShellAgentLocator {
   readonly #platform: string;
   readonly #servicePath: () => string;
@@ -283,6 +300,8 @@ export class ShellAgentLocator {
     const found = new Map<string, string>();
     const result = missing.length === 0 ? null : await probe(this.#abort.signal).catch((error: unknown): LoginPathResult => ({ path: null, reason: `the login shell probe failed: ${error instanceof Error ? error.message : String(error)}` }));
     if (this.#stopped) return;
+    // only absolute entries: a relative one (`./node_modules/.bin`, common in .zshrc) would make
+    // whatever is in this server's working folder an agent
     const loginPath = result?.path ? result.path.split(":").filter((entry) => isAbsolute(entry)).join(":") || null : null;
     if (loginPath !== null) {
       for (const kind of missing) {

@@ -18,6 +18,7 @@ let switching = false;
 const runtimeService: RuntimeService = { facts: () => facts, request: (target) => { asked.push(target); return { ok: true }; }, switching: () => switching };
 const workspaces: string[] = [];
 let server: ReturnType<typeof createServer>;
+// with an hc on this PC a move would build there for real: that is the gated test in runtime-move-service.contract.test.ts
 const hcHere = await findHc() !== null;
 
 const read = async (): Promise<MovePlanResponse> => (await (await fetch(`http://127.0.0.1:${server.port}/api/runtime/move`, { headers: { authorization: `Bearer ${SECRET}` } })).json()) as MovePlanResponse;

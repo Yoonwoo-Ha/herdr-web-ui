@@ -22,6 +22,7 @@ import type { Included } from "./ssh-config.ts";
 import { entriesOf, glibcGetdents, glibcOpenAt, type Getdents, type OpenAt } from "./ssh-include-dir.ts";
 import { matchComponent, parseComponent, type Token } from "./ssh-include-glob.ts";
 
+/** an ssh config is a few kilobytes; past this it is not read on */
 export const MAX_FILE_BYTES = 256 * 1024;
 const MAX_INCLUDED_FILES = 64;
 const MAX_INCLUDED_BYTES = 1024 * 1024;
@@ -59,6 +60,7 @@ const inside = (path: string, roots: readonly string[]): boolean => roots.some((
   return rest !== ".." && !rest.startsWith(`..${sep}`) && !isAbsolute(rest);
 });
 
+/** whether the object open at `fd`, opened as `path`, really is inside `roots` */
 async function openedInside(fd: number, path: string, roots: readonly string[]): Promise<boolean> {
   const platform = includeTestOnly.platform ?? process.platform;
   if (platform === "linux") return inside(await readlink(`/proc/self/fd/${fd}`), roots);
@@ -67,6 +69,11 @@ async function openedInside(fd: number, path: string, roots: readonly string[]):
   return inside(real, roots) && opened.dev === named.dev && opened.ino === named.ino;
 }
 
+/**
+ * An entry opened, links followed as ssh does, relative to the folder a listing held when it has one, when what was
+ * opened is inside `roots`; null when nothing is there, as for ssh, unless a listing named it: any open of a listed
+ * entry that fails (gone, a link that loops or leads nowhere, refused) is unread, as it may have been swapped meanwhile
+ */
 async function openInside({ path, base, listed }: Entry, roots: readonly string[], flags: number): Promise<Handle | "refused" | null> {
   const openAt = openAtCall();
   let handle: Handle;
@@ -76,6 +83,7 @@ async function openInside({ path, base, listed }: Entry, roots: readonly string[
     handle = { fd, close: () => closeOf(fd) };
   } else {
     try { handle = await open(path, flags); } catch (error) {
+      // only a path that is not there is nothing, as for ssh; one it could not open (EACCES, EMFILE, ELOOP) is unread
       return listed !== true && error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR") ? null : "refused";
     }
   }
@@ -84,19 +92,28 @@ async function openInside({ path, base, listed }: Entry, roots: readonly string[
   return "refused";
 }
 
+/** glibc's getdents64 (server/ssh-include-dir.ts); null without glibc */
 const getdents: Getdents | null = glibcGetdents();
 
+/** glibc's openat, which opens what a listing matched relative to the folder it holds; null without glibc */
 const openAtGlibc: OpenAt | null = glibcOpenAt();
 
+/** whether a wildcard Include's folders are listed through their descriptor (getdents64); without it, by path, unclaimed */
 export const wildcardIncludesRead = getdents !== null;
 
 export const includeTestOnly: { getdents?: Getdents | null; openAt?: OpenAt | null; platform?: NodeJS.Platform } = {};
 const descriptorListing = (): Getdents | null => includeTestOnly.getdents === undefined ? getdents : includeTestOnly.getdents;
 const openAtCall = (): OpenAt | null => includeTestOnly.openAt === undefined ? openAtGlibc : includeTestOnly.openAt;
 
+/**
+ * The names in folder `dir` when it really is inside `roots`: through its open descriptor where getdents64 is, the
+ * folder then `held` open (the caller closes it) where openat is, else by the path its realpath
+ * checked, read whole (Bun has no listing that stops early) and then charged to `budget.entries`
+ */
 async function listInside(dir: Entry, roots: readonly string[], budget: Budget): Promise<{ names: Listing; held?: Handle }> {
   const getdentsCall = descriptorListing();
   if (getdentsCall !== null) {
+    // opened as any file: a match that is no folder is nothing, as for ssh, not a failed open
     const folder = await openInside(dir, roots, READ_FLAGS);
     if (folder === null) return { names: null };
     if (folder === "refused") return { names: "unread" };
@@ -117,6 +134,7 @@ async function listInside(dir: Entry, roots: readonly string[], budget: Budget):
   // encoding (so a name that is not UTF-8 could not be told apart); readdir is used, and a folder past the budget is unread
   let raw: Buffer[];
   try { raw = await readdir(real, { encoding: "buffer" }); } catch (error) {
+    // a match that is a file (`conf.d/*/x`) or gone is nothing, as for ssh; a folder it could not list is unread
     return { names: error instanceof Error && "code" in error && (error.code === "ENOTDIR" || error.code === "ENOENT") ? null : "unread" };
   }
   const names = raw.map((bytes) => bytes.toString("utf8"));
@@ -151,7 +169,9 @@ export function includer(sshDir: string, home: string): (pattern: string) => Pro
     const components = parts.filter((part): part is { name: string } | { tokens: Token[] } => part !== null);
     const first = components.findIndex((part) => "tokens" in part);
     const literal = (upTo: number) => components.slice(0, upTo).map((part) => "name" in part ? part.name : "").join(sep) || sep;
+    // a scan cut short, or a folder left unlisted, may have missed a file sorted before the ones found
     let [scanCut, truncated] = [false, false];
+    // the folders the last wildcard listed, held open until what they matched is opened
     let held: Handle[] = [];
     try {
       let paths: Entry[] = [];
@@ -181,6 +201,7 @@ export function includer(sshDir: string, home: string): (pattern: string) => Pro
         // ssh reads the files glob(3) returns, sorted by their spelling's bytes (strcmp)
         paths = level.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
       }
+      // without openat, what a listing matched is opened by its path, which a swap can redirect: names only
       const byPath = first >= 0 && (descriptorListing() === null || openAtCall() === null);
       const texts: Included[] = [];
       for (const entry of paths) {
@@ -190,6 +211,7 @@ export function includer(sshDir: string, home: string): (pattern: string) => Pro
         if (handle === "refused") { texts.push(null); continue; }
         try {
           const found = await readHandle(handle.fd, Math.min(MAX_FILE_BYTES, budget.bytes)).catch(() => null);
+          // a folder among a wildcard's matches is no config, as for ssh
           if (found === "folder" && first >= 0) continue;
           budget.files--;
           const text = found === "folder" ? null : found;

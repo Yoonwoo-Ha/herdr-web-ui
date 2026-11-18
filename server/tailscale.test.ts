@@ -32,7 +32,9 @@ describe("parseSoleTailnetLogin", () => {
     expect(parseSoleTailnetLogin(tailnet([42, undefined], [[42, undefined], [43, undefined]]))).toBeNull();
     expect(parseSoleTailnetLogin(tailnet([42, undefined], [[42, undefined], [42, ["tag:ci"]]]))).toBeNull();
     expect(parseSoleTailnetLogin(tailnet([42, ["tag:server"]], [[42, undefined]]))).toBeNull();
+    // two logins whose ids round to the same double are still two logins
     expect(parseSoleTailnetLogin(bigIds(NEXT_ID))).toBeNull();
+    // a peer the status names no owner for is not proof of anything
     expect(parseSoleTailnetLogin(JSON.stringify({ BackendState: "Running", Self: { UserID: 42 }, Peer: { k: { DNSName: "p.example.ts.net." } } }))).toBeNull();
   });
 
@@ -46,6 +48,7 @@ describe("parseSoleTailnetLogin", () => {
   });
 });
 
+/** the access decision for a no-login request that `tailscale serve` forwarded, with the operator's serve-only switch on */
 const HOST = "pc.example.ts.net";
 const serveRequest = (identity: TailnetIdentity, host: string | null = HOST) => {
   const input: AccessInput = { loopback: true, forwarded: true, funnel: false, tailscaleLogin: null, host, tokenMatched: false, device: null, ...identity, serveOnly: true, tokenConfigured: false, gated: false };
@@ -163,6 +166,7 @@ describe("loginIdentity", () => {
     const s = source([booting, booting, tailnet([42, undefined])]);
     try {
       expect((await s.identities.loginIdentity()).owner).toBeNull();
+      // within two seconds of a read, requests answer from it: nothing can keep the CLI spawning
       for (let i = 0; i < 20; i++) await s.identities.loginIdentity();
       expect(s.reads()).toBe(1);
       s.later(2_000);

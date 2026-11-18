@@ -315,6 +315,7 @@ describe("gjc discovery", () => {
   });
 
   it("matches the active pinned v0.18.12 builtin registry", () => {
+    // The upstream active registry removes quarantined agents and non-Linux import-session.
     expect([...source.builtins].sort()).toEqual([...PINNED_GJC_ACTIVE_BUILTINS].sort());
     expect(source.builtins).not.toContain("agents");
     expect(source.builtins.includes("import-session")).toBe(process.platform === "linux");

@@ -43,6 +43,7 @@ export interface AgentCommandSource {
   readonly pin?: string | readonly string[];
   readonly skillsOverrideBuiltins?: boolean;
 }
+/** omo loads the first skill of a name, in root order (its own, ~/.agents, then the bundled one). */
 const omoFirstByName: AgentCommandSource = {
   ...omo,
   discover(ctx) {

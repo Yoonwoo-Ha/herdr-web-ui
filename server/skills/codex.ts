@@ -25,6 +25,7 @@ function canonical(path: string): string {
   catch { return resolve(path); }
 }
 
+/** Custom prompts are offered only by a Codex known to be older than 0.118.0. */
 function offersPrompts(version: string | null | undefined): boolean {
   const parts = version?.match(/^v?(\d+)\.(\d+)\.(\d+)/)?.slice(1).map(Number);
   if (!parts) return false;
@@ -57,6 +58,11 @@ function manifestName(root: string): string | null {
 
 interface FoundSkill { readonly name: string; readonly description: string; readonly path: string }
 
+/**
+ * SKILL.md files under `root`, to depth 6; `ancestors` guards link cycles along one branch only, so
+ * sibling links to one folder multiply the paths: every folder resolved counts against `budget`, which
+ * the roots of one discovery share (walk.ts MAX_WALK_FOLDERS).
+ */
 function scanSkills(root: string, budget: { folders: number }): FoundSkill[] {
   const found: FoundSkill[] = [];
   const ancestors = new Set<string>();
@@ -70,6 +76,7 @@ function scanSkills(root: string, budget: { folders: number }): FoundSkill[] {
     try {
       const declared = join(directory, "SKILL.md");
       try {
+        // a SKILL.md that is itself a link is not followed; a linked directory is
         if (lstatSync(declared).isFile()) {
           const fields = readFrontmatter(declared);
           const description = typeof fields?.description === "string" ? fields.description.replace(/\s+/g, " ").trim() : "";
@@ -164,7 +171,7 @@ export const source: AgentCommandSource = {
     const codexHome = environValue(env, "CODEX_HOME") || join(home, ".codex");
     let config: Record<string, unknown> = {};
     try { config = plainObject(Bun.TOML.parse(readFileSync(join(codexHome, "config.toml"), "utf8"))); }
-    catch {}
+    catch { /* missing or malformed TOML leaves discovery ungated */ }
     const configured = plainObject(config.skills).config;
     const disabled = new Set((Array.isArray(configured) ? configured : []).flatMap((entry: unknown) => {
       const setting = plainObject(entry);
@@ -208,6 +215,7 @@ export const source: AgentCommandSource = {
     const cache = join(codexHome, "plugins", "cache");
     const plugins = config.plugins === undefined ? null : plainObject(config.plugins);
     const ancestors = new Set<string>();
+    // A version's `latest` link and the version itself are one plugin install, loaded once.
     const loaded = new Set<string>();
     const visit = (directory: string): void => {
       let path: string;

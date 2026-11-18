@@ -15,12 +15,14 @@ export function devinSessionSkills(cogs: unknown): Set<string> {
   return names;
 }
 
+/** A typed `/name` Devin expanded into the stored content, for a skill the session records. */
 export function devinPromptSkill(content: string, typed: string, skills: ReadonlySet<string>): SkillActivity | null {
   if (typed === content) return null;
   const name = /^\/([^\s/<>]{1,200})(?:\s|$)/.exec(typed)?.[1];
   return name && skills.has(name) ? { name, evidence: "instructions", status: "loaded" } : null;
 }
 
+/** Devin's `skill` tool names the skill it invokes in `skill`. */
 export function devinToolSkill(name: string, args: Record<string, unknown>, status: unknown): SkillActivity | null {
   if (name !== "skill" || typeof args.skill !== "string" || !/^[^\s/<>]{1,200}$/.test(args.skill)) return null;
   return { name: args.skill, evidence: "invocation", status: status === "completed" ? "loaded" : status === "error" || status === "failed" ? "failed" : "requested" };

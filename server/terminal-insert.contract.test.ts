@@ -10,7 +10,9 @@ import { INSERT_MAX_UNITS } from "../shared/terminal-insert.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-insert-"));
 let server: { port: number; stop: () => void };
+/** a bridge beside the first, on the same herdr: the pane's terminal is held by whichever attached first */
 let other: { port: number; stop: () => void };
+/** a bridge without terminal attach (no sidecar, as on Windows): panes are mirrored, typing goes through herdr */
 let mirror: { port: number; stop: () => void };
 const workspaces: string[] = [];
 
@@ -205,6 +207,7 @@ describe("WebSocket insert", () => {
       socket.send({ type: "insert", id: request, pane_id: shell.pane, text: "git status" });
       expect(await socket.result(request)).toEqual({ type: "insert-result", id: request, pane_id: shell.pane, ok: true });
       expect(await recorded(shell, from, (text) => text.includes("git status"))).toBe("git status");
+      // a quote and non-ASCII go as typed; still no CR, LF, ESC or key after them
       await barrier(socket, shell, from, "git status");
       const after = chunks(shell).length;
       const second = id();
@@ -232,6 +235,7 @@ describe("WebSocket insert", () => {
       const marked = id();
       socket.send({ type: "insert", id: marked, pane_id: shell.pane, text: `one${paste("two")}` });
       expect(await socket.result(marked)).toMatchObject({ ok: false, code: "invalid_insert_text" });
+      // a tab would be taken by a shell as completion: refused like the other controls
       const tabbed = id();
       socket.send({ type: "insert", id: tabbed, pane_id: shell.pane, text: "git\tstatus" });
       expect(await socket.result(tabbed)).toMatchObject({ ok: false, code: "invalid_insert_text" });
@@ -298,6 +302,7 @@ describe("WebSocket insert", () => {
       expect(await socket.result(observing)).toMatchObject({ ok: false, code: "read_only" });
       socket.send({ type: "role", mode: "interact" });
       await socket.waitFor((message) => message.type === "role-ack" && message.mode === "interact");
+      // a connection that never attached the pane has no attach to type into
       const outside = id();
       outsider.send({ type: "insert", id: outside, pane_id: shell.pane, text: "outside" });
       expect(await outsider.result(outside)).toMatchObject({ ok: false, code: "not_attached" });
@@ -318,6 +323,7 @@ describe("WebSocket insert", () => {
       const from = chunks(shell).length;
       const original = herdr.paneSendText;
       const guards: (boolean | undefined)[] = [];
+      // herdr's guard is asked right before the write: what happened to the sender meanwhile decides.
       const race = (change: () => Promise<void>) => spyOn(herdr, "paneSendText").mockImplementationOnce(async (pane, text, socketPath, guard) => {
         await change();
         guards.push(guard?.());
@@ -341,6 +347,8 @@ describe("WebSocket insert", () => {
       socket.send({ type: "insert", id: detached, pane_id: shell.pane, text: "detached" });
       expect(await socket.result(detached)).toMatchObject({ ok: false, code: "not_attached" });
       await socket.attached(shell.pane);
+      // the connection closes while its insert waits on herdr: the guard refuses the write, and the
+      // next connection's attach replays nothing of it
       race(() => closedOnServer(socket));
       socket.send({ type: "insert", id: id(), pane_id: shell.pane, text: "closed" });
       const next = await Socket.connect();

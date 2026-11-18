@@ -90,6 +90,7 @@ it("holds a lookup's slot until its resolver answers, however long that takes, s
     await called(16);
     jest.advanceTimersByTime(1);
     await listing;
+    // far past the 1.5 s after which a lookup used to give its slot up while its resolver call was still unanswered
     jest.advanceTimersByTime(60_000);
   } finally { jest.useRealTimers(); }
   await new Promise<void>((settled) => setImmediate(settled));

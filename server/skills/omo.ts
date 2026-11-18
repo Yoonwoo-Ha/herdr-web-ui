@@ -132,8 +132,9 @@ function disabledSkills(home: string, cwd: string | null | undefined, env: reado
   const disabled = new Set<string>();
   const load = (path: string): Record<string, unknown> => {
     try {
+      // bounded and regular files only: project configs are looked up above the pane's folder
       return plainObject(parseJsonc(readSkillText(path)));
-    } catch { return {}; }
+    } catch { return {}; /* upstream drops a source layer on read or parse errors */ }
   };
   const configPath = (directory: string): string => {
     const jsonc = join(directory, ".omo", "omo.jsonc");
@@ -169,7 +170,9 @@ export const source: AgentCommandSource = {
     login: [...terminalForm], logout: [...terminalForm], fork: [...terminalForm],
     resume: [...terminalForm], sessions: [...terminalForm],
     share: [...terminalForm], trust: [...terminalForm],
+    // bare /import prints its usage; /import <path> asks "Replace current session with …?" (interactive-mode.js 8034-8040)
     import: [{ match: "bare", interaction: "unknown" }, { match: "other", interaction: "terminal" }],
+    // bare opens an inline "Rename session" text input; given a name it is stored in the session (interactive-mode.js 8173-8194)
     rename: [...terminalForm, { match: "other", interaction: "none" }], name: [...terminalForm, { match: "other", interaction: "none" }],
   },
   terminalBound: terminalCommands,

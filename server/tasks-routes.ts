@@ -41,6 +41,7 @@ export async function handleTasksRequest(request: Request, url: URL, pathname: s
         const running = tasks.filter((task) => task.status === "running");
         return jsonResponse({ tasks: [...running, ...tasks.filter((task) => task.status !== "running")], runs: omoRuns(session.cwd, session.sessionId), server_time });
       }
+      // an OpenCode pane's subagents are its child sessions; of a pane that ran both, the one it runs now
       const opencode = opencodeAgents.sessionOf(paneId);
       if (opencode === null || (!opencode.live && claudeAgents.sessionOf(paneId)?.live === true)) {
         const claude = claudeAgents.sessionOf(paneId);

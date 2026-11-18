@@ -96,9 +96,20 @@ const forms: Record<string, CommandForm[]> = {
   model: [{ match: "bare", interaction: "dialog", dialog: "letta-model" }],
 };
 
+/** a skill named like a builtin is left out of the menu, as Letta's own leaves it out (SlashCommandAutocomplete.tsx) */
 const builtinNames: ReadonlySet<string> = new Set(Object.keys(descriptions));
 const isDirectory = (path: string): boolean => { try { return statSync(path).isDirectory(); } catch { return false; } };
 
+/**
+ * The skills Letta's `/` menu lists, by the rules of its discovery (src/agent/skills.ts): a
+ * SKILL.md anywhere under a root, also below another skill's folder, named by its frontmatter `id`,
+ * else `name`, else its folder's path under the root (`root` for one right in the root); a later root wins over an earlier one for the same name; a skill with
+ * `user-invocable: false` is left out, and so is one named like a builtin. The roots, lowest
+ * first: `<config dir>/skills` (`LETTA_CONFIG_DIR`, else `~/.letta`), then the project's
+ * `.skills` and `.agents/skills`. Letta's bundled skills and the agent's own memory skills are
+ * not read here: their folders are the installed package's and the agent's, which the pane's
+ * folder does not name.
+ */
 export const source: AgentCommandSource = {
   builtins: Object.keys(descriptions).filter((name) => !(agentHidden as readonly string[]).includes(name)),
   descriptions,
@@ -119,6 +130,7 @@ export const source: AgentCommandSource = {
       for (const skill of walkSkills(root, { depth: "recursive", looseMarkdown: "none", ignoreFiles: false, requireDescription: false, belowSkills: true, budget })) {
         const field = (key: string): string => typeof skill.fields[key] === "string" ? (skill.fields[key] as string).trim() : "";
         const folder = relative(root, join(skill.path, "..")).split(sep).join("/");
+        // a SKILL.md right in the root has no folder: Letta names it "root"
         const name = field("id") || field("name") || folder || "root";
         if (!/^\S+$/.test(name)) continue;
         const flag = skill.fields["user-invocable"];

@@ -240,6 +240,7 @@ it("hands a window's buffer to another lease only once every read into it has se
   const cancelled = reader.read("held", (file) => file.window(0, 4), { signal: abort.signal }).catch((e) => e);
   await tick(); abort.abort();
   expect(await cancelled).toBeInstanceOf(TranscriptBusyError);
+  // the cancelled lease's read may still write into its buffer: the next lease gets another
   expect(await reader.read("next", async (file) => (await file.window(1, 2)).toString())).toBe("bc");
   expect(buffers[1]).not.toBe(buffers[0]);
   held.resolve(); await reader.settled();
@@ -516,6 +517,7 @@ it.skipIf(process.platform !== "linux")("gives up a read on the event loop betwe
 });
 
 it.skipIf(process.platform !== "linux")("opens a transcript while its filesystem is looked up, and reads it on the event loop once that says local", async () => {
+  // a lookup as slow as one on a network filesystem (several round trips)
   const lookup = deferred();
   const path = onFilesystem(0x9123683e, "abcdefgh\n", lookup.promise);
   stillClock();
@@ -560,6 +562,7 @@ function slowCalls(name: "openSync" | "closeSync", advance: (ms: number) => void
   const fail = () => { state.fails = false; return Object.assign(new Error(`${name} failed`), { code: "EIO" }); };
   const spy = spyOn(fs, name).mockImplementation(((...args: unknown[]) => {
     advance(state.ms);
+    // an open that fails opens nothing; a close that fails has closed the descriptor all the same
     if (state.fails && name === "openSync") throw fail();
     const value = real(...args);
     if (state.fails) throw fail();
@@ -599,6 +602,7 @@ for (const name of ["openSync", "closeSync"] as const) {
 }
 
 it.skipIf(process.platform !== "linux")("reads a transcript on another device than its local directory through the thread pool", async () => {
+  // a file mounted into the directory from another filesystem (NFS, say): its device is not the directory's
   const path = onFilesystem(0x9123683e);
   const real = fsp.stat;
   const other = spyOn(fsp, "stat").mockImplementation((async (...args: Parameters<typeof real>) => {

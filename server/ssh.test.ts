@@ -84,6 +84,7 @@ esac
 echo ran
 `;
 
+// CI's runner image has no OpenSSH, so the real one cannot be relied on.
 const FAKE_SSH_KEYGEN = String.raw`#!/bin/sh
 for file; do :; done
 exec "$FAKE_BUN" -e '
@@ -140,6 +141,8 @@ describe.skipIf(process.platform === "win32")("SSH without connection sharing", 
     expect(ssh.connected()).toBe(true);
   });
 
+  // a PC's discovery answer is read only up to its cap: past it the command is stopped, and nothing it said is taken, so a
+  // PC cannot pad a list nor stream until the command's timeout
   it.each(["whitespace", "stdout", "stderr"])("stops reading a PC's herdr discovery past its cap: %s", async (flood) => {
     const { ssh, ask } = fixture({ FAKE_FLOOD: flood });
     await ssh.start(ask("unused"));
@@ -152,6 +155,7 @@ describe.skipIf(process.platform === "win32")("SSH without connection sharing", 
     await ssh.start(ask("unused"));
     expect(await ssh.run("true")).toBe("ran\n");
     expect(calls().some((line) => line.endsWith("sh -c 'true'"))).toBe(true);
+    // the sftp beside it, told to start that ssh rather than its own build's
     await ssh.upload(join(root, "calls"), String.raw`C:\Users\pc\bundle`);
     expect(calls().some((line) => line.startsWith(`sftp -S ${join(root, "bin", "ssh")} `))).toBe(true);
   });
@@ -286,6 +290,7 @@ describe.skipIf(process.platform === "win32")("SSH without connection sharing", 
       await expect(forwarding).rejects.toThrow("Connection cancelled");
     }, 5_000);
 
+    // a ProxyJump's ssh enters its own session before this ssh has even authenticated
     for (const [how, extra] of [["", {}], [", behind a ProxyJump", { FAKE_JUMP: "1" }], [", with LogVerbose", { FAKE_LOG_VERBOSE: "1" }]] as const) it(`never hands the bridge token to a process that took the port before ssh bound it${how}`, async () => {
       const { root, ssh, ask } = fixture({ ...extra });
       await ssh.start(ask("unused"));
@@ -363,6 +368,7 @@ describe("which ssh says a forward is bound", () => {
     expect(forwardSaysReady({}, "darwin")).toBe(true);
   });
 
+  // a failed forward's error is ssh's own words: the lines -v adds, prefixed or not, stay out of it
   it("keeps ssh's own words and drops what -v adds", () => {
     const stderr = [
       "OpenSSH_10.0p2, OpenSSL 3.5.1 1 Jul 2025",

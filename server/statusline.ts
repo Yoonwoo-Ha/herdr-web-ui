@@ -15,6 +15,7 @@ import { CONTEXT_STALE_MS, contextDirectorySafe, contextFilename, contextProfile
  *   rate_limits.seven_day  { used_percentage, resets_at }
  */
 export interface StatuslinePayload {
+  /** when the file was last written: the status line renders on activity, so an idle pane's is old */
   readAt: number;
   account: { id: string; label: string | null } | null;
   fiveHour: StatuslineWindow | null;
@@ -23,13 +24,19 @@ export interface StatuslinePayload {
 
 export interface StatuslineWindow {
   usedPercent: number;
+  /** ISO time, from the payload's epoch seconds; null when it names none */
   resetsAt: string | null;
 }
 
+/**
+ * A payload older than this is not a reading: the five-hour window has turned over, so its number
+ * describes a window that is gone. The file survives a sleeping laptop, so its age is checked.
+ */
 export const STALE_MS = CONTEXT_STALE_MS;
 
 export const statuslinePath = (home: string): string => join(home, ".herdr", "statusline-last.json");
 
+/** The capture writes a few hundred bytes; a file past this is not one of its readings, and is not read. */
 const MAX_CAPTURE_BYTES = 64 * 1024;
 
 function readCapture(path: string, maxBytes = MAX_CAPTURE_BYTES): string | null {

@@ -23,11 +23,13 @@ it("writes the line each shell runs as a command, not as a string", () => {
   expect(shellCommandLine("posix", "/usr/local/bin/gjc", ["it's"])).toBe("'/usr/local/bin/gjc' 'it'\\''s'");
   // a trailing backslash must not escape the closing quote for the program that parses it
   expect(shellCommandLine("cmd", "C:\\gjc\\gjc.exe", ["C:\\work\\", "--resume"])).toBe('"C:\\gjc\\gjc.exe" "C:\\work\\\\" "--resume"');
+  // cmd cannot carry these inside quotes
   expect(() => shellCommandLine("cmd", "C:\\gjc\\gjc.exe", ["%PATH%"])).toThrow();
   expect(() => shellCommandLine("cmd", "C:\\gjc\\gjc.exe", ['say "hi"'])).toThrow();
 });
 
 it("gives a native program its arguments through Windows PowerShell 5.1 as they were, and none 5.1 would split or PowerShell 7 might change", () => {
+  // each as it arrived intact at node.exe from 5.1.26100 (live-verified)
   expect(powershellNativeArgs("powershell", ['say "hi"', "", "C:\\dir with space\\", "trail\\", "x y\\\\", 'a\\"b', "it's", "a\u00a0b\\", "a\ufeffb\\"])).toEqual([
     // 5.1 escapes no quote for the program's own parser, and drops an empty argument
     'say \\"hi\\"',
@@ -39,24 +41,29 @@ it("gives a native program its arguments through Windows PowerShell 5.1 as they 
     // the backslashes before a quote are doubled, and one more escapes it
     'a\\\\\\"b',
     "it's",
+    // 5.1 quotes for what .NET calls whitespace: a no-break space, not a byte-order mark
     "a\u00a0b\\\\",
     "a\ufeffb\\",
   ]);
   expect(shellCommandLine("powershell", "codex", powershellNativeArgs("powershell", ["--", 'fix the "x" bug']))).toBe(`& 'codex' '--' 'fix the \\"x\\" bug'`);
   // 5.1 counts the escaped quotes too: whitespace only after an odd number of them goes unquoted, and the argument arrives split
   for (const arg of ['"fix the bug"', 'x="a b"', 'a"b c']) expect(() => powershellNativeArgs("powershell", [arg])).toThrow();
+  // one whitespace after an even number of them is enough for 5.1 to quote it
   expect(powershellNativeArgs("powershell", ['"a b" c', 'say "hi"'])).toEqual(['\\"a b\\" c', 'say \\"hi\\"']);
   // PowerShell 7 escapes them itself from 7.3, and passes them as 5.1 does before that
   expect(powershellNativeArgs("pwsh", ["--model", "a b", "trail\\", "it's"])).toEqual(["--model", "a b", "trail\\", "it's"]);
   for (const arg of ['say "hi"', "", "C:\\dir with space\\"]) expect(() => powershellNativeArgs("pwsh", [arg])).toThrow();
   // cmd reads an agent's arguments again when PowerShell finds it as a .cmd file: `&` there runs the rest
   for (const program of ["powershell", "pwsh"] as const) {
+    // and inside its quotes too: % and !NAME! expand, and a shim's `call` doubles a ^
     for (const arg of ['fix "a&echo ran&b" now', "a&b", "x|y", "a<b", "a>b", "^caret", "%PATH%", "a b %OS%", "a & !OS!", "up ^ caret"]) expect(() => powershellNativeArgs(program, [arg])).toThrow();
     // unless PowerShell puts it in quotes, for a space, where cmd reads & | < > as text
     // (live-verified, 5.1.26100 and 7.6 to an npm-style .cmd shim): a profile folder named R&D (#3084)
     const settings = "C:\\Users\\R&D\\AppData\\Local\\ovis\\claude settings\\a.json";
     const quoted = [settings, "fix A & B", "x | y", "a < b > c"];
     expect(powershellNativeArgs(program, quoted)).toEqual(quoted);
+    // but a `"` in any argument of the line toggles cmd's quotes, which run across arguments, and so
+    // does a `!Q!` delayed expansion turns into one (#3092)
     for (const args of [['x"', "a & calc & rem"], ['"', " & echo INJECTED & rem "], ["--append-system-prompt", 'a 12" screen', "--settings", settings], ["!Q!", "a & calc & rem"]]) {
       expect(() => powershellNativeArgs(program, args)).toThrow();
     }
@@ -71,6 +78,7 @@ it("recognizes gjc as Windows reports it", () => {
 });
 
 it("finds what runs under a pane's shell in the process table", () => {
+  // the table as PowerShell prints it; rows from a Windows PC with gjc running in a pane
   const table = parseProcessTable(JSON.stringify([
     { ProcessId: 41948, ParentProcessId: 26540, ExecutablePath: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", CommandLine: "powershell.exe -NoExit" },
     { ProcessId: 12156, ParentProcessId: 41948, ExecutablePath: "C:\\Users\\devsw\\AppData\\Local\\gjc\\gjc.exe", CommandLine: '"C:\\Users\\devsw\\AppData\\Local\\gjc\\gjc.exe"' },
@@ -98,6 +106,7 @@ it("finds what runs under a pane's shell in the process table", () => {
   expect(descendantArgv(table, 26540).length).toBe(3);
   expect(descendantArgv(table, 4242)).toEqual([]);
   expect(parseProcessTable("not json")).toEqual([]);
+  // the process's start, as the table script reads it (ms since 1970), comes along when present
   expect(parseProcessTable(JSON.stringify({ ProcessId: 2, ParentProcessId: 1, ExecutablePath: null, CommandLine: "x", Started: 1790886000123 }))).toEqual([{ pid: 2, parent: 1, path: null, commandLine: "x", started: 1790886000123 }]);
   expect(windowsArgv('"C:\\a b\\x.exe" one "two three"')).toEqual(["C:\\a b\\x.exe", "one", "two three"]);
 });
@@ -145,6 +154,7 @@ function manual() {
 
 const once = (probe: LoginPathProbe): Promise<LoginPathResult> => probe(new AbortController().signal);
 
+/** Whether `pid` still runs; a zombie waiting for its new parent to reap it does not. */
 async function running(pid: number): Promise<boolean> {
   try { process.kill(pid, 0); } catch { return false; }
   const state = (await Bun.$`ps -o stat= -p ${pid}`.nothrow().text()).trim();
@@ -164,7 +174,7 @@ function fifo(file: string, timeoutMs = 5000): Promise<string> {
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       // ENXIO: the read had not opened the FIFO yet, so there is nothing to end
-      try { closeSync(openSync(file, constants.O_WRONLY | constants.O_NONBLOCK)); } catch { }
+      try { closeSync(openSync(file, constants.O_WRONLY | constants.O_NONBLOCK)); } catch { /* no reader yet */ }
       reject(new Error(`${file} was not written`));
     }, timeoutMs);
   });
@@ -183,6 +193,10 @@ it("reads the login PATH between its markers, whatever the profile prints around
   expect(parseLoginPath("__OVIS_LOGIN_PATH__\n\n__OVIS_LOGIN_PATH_END__\n")).toBeNull();
 });
 
+/**
+ * A login shell that also takes `-i`, as zsh does: `-l` sets the login PATH, `-i` runs `rc` (a
+ * .zshrc) and puts gjc's folder in front of it.
+ */
 function rcFixture(rc = ":") {
   const f = fixture();
   const rcBin = join(f.root, "rc bin");
@@ -205,6 +219,7 @@ function rcFixture(rc = ":") {
 
 it("finds an agent a pane's interactive shell puts on PATH (zsh's .zshrc), and keeps the login PATH where that shell gives none", async () => {
   const f = rcFixture();
+  // the login shell alone misses it: what hid Claude Code from the desktop app's agent list on a Mac
   expect(await new ShellAgentLocator({ platform: "linux", servicePath: f.servicePath, probe: loginPathProbe({ shell: f.shell, env: f.env }) }).executable("gjc")).toBeNull();
   expect(await once(agentPathProbe({ shell: f.shell, env: f.env }))).toEqual({ path: `${f.rcBin}:${f.loginBin}:/usr/bin:/bin` });
   expect(await new ShellAgentLocator({ platform: "linux", servicePath: f.servicePath, probe: agentPathProbe({ shell: f.shell, env: f.env }) }).executable("gjc")).toBe(f.gjc);
@@ -322,6 +337,7 @@ it("finds a kind installed on the kept login PATH after a miss, with no new logi
   const { probe, runs } = counted(async () => ({ path: `${f.loginBin}:/usr/bin` }));
   const locator = new ShellAgentLocator({ platform: "linux", servicePath: f.servicePath, probe });
   expect(await locator.executable("omo")).toBeNull();
+  // its installer puts it on the login PATH (~/.local/bin and the like) a moment later
   writeFileSync(join(f.loginBin, "omo"), "#!/bin/sh\n", { mode: 0o755 });
   expect(await locator.executable("omo")).toBe(join(f.loginBin, "omo"));
   expect(runs()).toBe(1);
@@ -519,6 +535,7 @@ it("answers a shell SIGKILL does not end within the bound, and reaps it once it 
   const f = fixture(`echo $$ > "${"$"}HOME/shell.pid"; exec sleep 30`);
   const shellPid = fifo(join(f.home, "shell.pid"));
   const realKill = process.kill.bind(process);
+  // the kills reach nothing while `stuck`, as for a shell blocked in the kernel; the exit's own group kill is seen
   let stuck = true;
   let reaped: (() => void) | null = null;
   const groupKilled = new Promise<void>((resolve) => { reaped = resolve; });
@@ -548,6 +565,9 @@ it("answers a shell SIGKILL does not end within the bound, and reaps it once it 
 });
 
 it.skipIf(Bun.which("setsid") === null)("reads the PATH printed after the shell exited, before its output closed", async () => {
+  // the profile hands the script to a process in a session of its own (the shell exits only once it
+  // says, through a FIFO, that it left the group), which waits until the shell is reaped and only
+  // then prints the PATH: all of it arrives after the shell's exit
   const afterExit = (before: string) => fixture(`mkfifo "${"$"}HOME/left"; setsid /bin/sh -c 'echo > "$HOME/left"; while kill -0 "$0" 2>/dev/null; do :; done; ${before} exec /bin/sh -c "$1"' "$$" "$2" & read _ < "${"$"}HOME/left"; exit 0`);
   const f = afterExit("");
   expect(await once(loginPathProbe({ shell: f.shell, env: f.env, timeoutMs: 5000 }))).toEqual({ path: `${f.loginBin}:/usr/bin:/bin` });
@@ -556,6 +576,8 @@ it.skipIf(Bun.which("setsid") === null)("reads the PATH printed after the shell 
 });
 
 it.skipIf(Bun.which("setsid") === null)("answers with the PATH when a process outside the group keeps the output open", async () => {
+  // the profile leaves a process in a session of its own holding stdout and stderr; the shell exits
+  // only once it says, through a FIFO, that it left the group, so the group kill cannot end it
   const f = fixture(`mkfifo "${"$"}HOME/left"; setsid /bin/sh -c 'echo > "$HOME/left"; exec sleep 30' & echo $! > "${"$"}HOME/held.pid"; read _ < "${"$"}HOME/left"`);
   let held = 0;
   try {

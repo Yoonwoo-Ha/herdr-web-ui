@@ -6,6 +6,19 @@ import { contextOf, parseConversationMetadata } from "./conversation-metadata.ts
 import { isContextClear } from "./transcript-records.ts";
 import { claudeCommandEchoRecord, opensTurn } from "./transcript-turns.ts";
 
+/**
+ * Claude: a task is taken when its tool call is answered without an error, with the id Claude
+ * gave it. Claude empties its list once every task in it is done, and so does this: the first
+ * task created after that starts a new plan. A teammate of an agent team that changes a task
+ * writes that in its own transcript, which is not read here.
+ *
+ * Codex: each explicit `update_plan` call sends the whole checklist, so the last one is the plan.
+ * Code inside an `exec` call may quote a plan without calling the tool, and is ignored.
+ * OmO: the last complete `todo` tool answer replaces the plan; an empty list clears it.
+ *
+ * A Claude rewind leaves the answers it went back over in the file, and the next prompt hangs from
+ * the record it went back to (followClaudeBranch, which the chat follows).
+ */
 export const PLAN_BUDGET = 32 * 1024 * 1024;
 const LINE_BUDGET = 8 * 1024 * 1024;
 const MAX_STEPS = 200;
@@ -36,6 +49,7 @@ const CHAIN_LINE = 1024 * 1024;
 const MAX_SINCE = 10_000;
 const MAX_PLACES = 2_000;
 const MAX_FIGURES = 2_000;
+/** a uuid longer than this (Claude Code writes 36 characters) gets no place */
 const MAX_UUID = 64;
 
 interface Figure { at: number; context: ConversationMetadata["context"] }
@@ -107,6 +121,7 @@ function followChain(chain: ClaudeChain, line: string): number | null {
   const place = chain.count++;
   if (isContextClear(entry, "claude-transcript")) { chain.since = new Set([null, uuid]); chain.forked = null; chain.echo = undefined; chain.places.clear(); chain.figures = []; return place; }
   if (uuid.length <= MAX_UUID) remember(chain.places, uuid, place, MAX_PLACES);
+  // a compaction's boundary starts a chain of its own, and names the record it continues
   const parent = entry["parentUuid"] === null ? typeof entry["logicalParentUuid"] === "string" ? entry["logicalParentUuid"] : null
     : typeof entry["parentUuid"] === "string" ? entry["parentUuid"] : undefined;
   const answer = entry["type"] === "assistant";
@@ -139,6 +154,7 @@ function note(figures: Figure[], at: number, context: ConversationMetadata["cont
 const CONTEXT_MARKS: Record<PlanSource, readonly string[]> = {
   "claude-transcript": ['"usage"', "command-name>", "local-command-stdout>"],
   "codex-transcript": ['"token_count"', '"turn_context"', '"session_meta"'],
+  // OmO's figure has no window: the ring would draw nothing
   "omo-session": [],
 };
 
@@ -193,6 +209,7 @@ function created(read: Read, input: Row, answer: Row | null, content: unknown): 
   const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((part) => row(part)?.["text"]).filter((part) => typeof part === "string").join("") : "";
   const id = idOf(row(answer?.["task"])?.["id"]) ?? text.match(/^Task #(\S+) created/)?.[1] ?? null;
   if (id === null) return;
+  // Claude empties a list whose tasks are all done: the next task begins another plan
   if ([...read.steps.values()].every((step) => step.status === "completed")) read.steps.clear();
   if (read.steps.size >= MAX_STEPS) return;
   read.steps.set(id, { id, label: words(input["subject"]) ?? `#${id}`, active: words(input["activeForm"]), status: "pending", blocked_by: [], owner: null, started_at: null, ended_at: null });

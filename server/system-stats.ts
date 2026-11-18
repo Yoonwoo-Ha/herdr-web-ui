@@ -49,6 +49,7 @@ export function cpuTimesOf(list: ReadonlyArray<{ times: { user: number; nice: nu
   return { busy, total };
 }
 
+/** `MemTotal` and `MemAvailable` from /proc/meminfo, in bytes; null when either is missing. */
 export function parseMeminfo(text: string): { total: number; used: number } | null {
   const kib = (name: string): number | null => {
     const match = new RegExp(`^${name}:\\s+(\\d+)\\s*kB`, "m").exec(text);
@@ -183,7 +184,8 @@ export function createSystemSampler(io: SystemIo = realIo, options: { diskCapMs?
 
   /**
    * A disk read that has not come back is not started again: each one holds a thread of the
-   * process's small pool, and a stuck mount would use them all up.
+   * process's small pool, and a stuck mount would use them all up. Nor
+   * is it waited on again, so a read that never ends holds one handler, not one per ask.
    */
   function disks(): Promise<SystemDisk[]> {
     const known = (): SystemDisk[] => lastDisks !== null && io.now() - lastDisks.at <= DISK_STALE_MS ? lastDisks.list : [];
@@ -196,6 +198,9 @@ export function createSystemSampler(io: SystemIo = realIo, options: { diskCapMs?
 
   async function take(): Promise<SystemReport> {
     const cores = io.cpuCount();
+    // nothing to compare with, a comparison point from a quiet spell (that would be an average of
+    // the whole spell, not "now"), or cores that came or went (their lifetime of ticks joins one
+    // reading): compare over a fresh window
     if (previous === null || io.now() - previous.at > STALE_MS || previous.cores !== cores) {
       previous = { at: io.now(), cpu: io.cpuTimes(), cores };
       await io.sleep(FIRST_WINDOW_MS);

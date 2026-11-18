@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { brotliCompressSync, brotliDecompressSync, gzipSync, gunzipSync } from "node:zlib";
 import { compressResponse } from "./compress.ts";
 
+/** a WebAssembly module's magic and version, then zeros: what the terminal's libghostty-vt module starts with */
 const WASM = Buffer.concat([Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]), Buffer.alloc(4096)]);
 
 async function fixture(check: (serve: (path: string, encoding?: string | null) => Promise<Response>) => Promise<void>) {
@@ -71,6 +72,7 @@ test("honors encoding preferences, explicit exclusions, wildcards and identity f
     expect(response.headers.get("content-encoding")).toBe(wanted);
     expect(response.headers.get("vary")).toBe("Accept-Encoding");
   }
+  // x-gzip is gzip under its older name: accepted as gzip, and excluded with it
   expect((await serve("/assets/app-hash.js", "x-gzip, identity;q=0")).headers.get("content-encoding")).toBe("gzip");
   expect((await serve("/assets/app-hash.js", "*;q=1, x-gzip;q=0, br;q=0, identity;q=0")).status).toBe(406);
   const rejected = await serve("/assets/app-hash.js", "*;q=0, identity;q=0");
@@ -111,6 +113,8 @@ test("the production gzip wrapper preserves the representation already negotiate
 }));
 
 test("answers a file the build does not have with a 404, and any other path with the shell", () => fixture(async serve => {
+  // a tab of the build before an update asks for its own chunk: the shell under a script's URL
+  // fails as a module anyway, and a service worker would keep it there
   for (const path of ["/assets/katex-old.js", "/assets/nested/", "/assets/", "/icons/icon-512-old.png"]) {
     const missing = await serve(path, "gzip");
     expect(missing.status).toBe(404);

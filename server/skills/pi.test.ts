@@ -75,6 +75,7 @@ describe("pi's builtins", () => {
   });
 
   it("lists the builtins Pi runs itself but hides from its menu", () => {
+    // Pi 1.4's submit handler runs these when typed exactly; they never reach the transcript
     expect(source.agentHidden).toEqual(["debug", "arminsayshi", "dementedelves"]);
     for (const name of source.agentHidden ?? []) {
       expect(source.builtins).toContain(name);
@@ -262,6 +263,7 @@ describe("pi's forms as the chat reads them", () => {
     let rows: SlashCommand[];
     try { rows = JSON.parse(JSON.stringify(paneCommands("pi", null, home))) as SlashCommand[]; }
     finally { rmSync(home, { recursive: true, force: true }); }
+    // bare /name shows the name in the terminal; with an argument it only sets it, like /model <id>
     expect(typedTerminalCommand(rows, "/name")?.name).toBe("name");
     expect(typedTerminalCommand(rows, "/name Release 1")).toBeNull();
     expect(typedTerminalCommand(rows, "/model anthropic/fictional-model")).toBeNull();

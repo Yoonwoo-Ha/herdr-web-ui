@@ -57,8 +57,12 @@ export async function runSupervisor(root = ROOT) {
   const host = process.env["HOST"] ?? "127.0.0.1";
   const probeHost = host === "0.0.0.0" ? "127.0.0.1" : host === "::" ? "[::1]" : host.includes(":") ? `[${host}]` : host;
   const origin = `http://${probeHost}:${port}`;
+  // a launcher from before the rename finds its releases only under the old state dir: the move
+  // waits for a launcher of this version
   const legacyStateDir = legacyLauncherStateDir(process.env);
   const supervisor = { root, port, directory: ROOT };
+  // a folder a machine profile marked is its own: nothing of this launch happens there, the legacy move included
+  // (server/profile-marker.ts)
   const marked = profileFolderRefusal(resolve(legacyStateDir ?? defaultStateDir(process.env, supervisor)));
   if (marked !== null) {
     console.error(marked);
@@ -79,9 +83,12 @@ export async function runSupervisor(root = ROOT) {
   let active: Release | null = null;
   let switching = true, stopping = false;
   let replacedSwitch: string | null = null;
+  // The bridge answers before its first health check has passed here. An install taken in that
+  // gap stopped the bridge under the check, and the start failed: commands wait for the start.
   const started = Promise.withResolvers<void>();
   const publish = () => {
     if (updater.status.phase === "error") console.error(`Update failed: ${updater.status.error}`);
+    // revision_bound_install: this supervisor reads `update-install-revision` and installs only the revision it names
     try { child?.send({ type: "update-status", status: { ...updater.status, revision_bound_install: true }, notes: updater.notes, installed: updater.installed }); } catch {}
   };
   async function stopChild() {
@@ -93,12 +100,18 @@ export async function runSupervisor(root = ROOT) {
     await prior.exited;
     clearTimeout(timer);
   }
+  /**
+   * A herdr TUI that is stopped is no failed start: Settings offers it, and the user starts herdr
+   * later.
+   */
   async function launch(release: Release | null) {
     if (stopping) throw new Error("Server is stopping");
     const bootId = crypto.randomUUID();
     const settings = { OVIS_MANAGED: "1", OVIS_RUNTIME_SWITCH: "1", OVIS_BOOT_ID: bootId, OVIS_STATE_DIR: appStateDir, OVIS_REVISION: release?.revision ?? "" };
     const candidate = Bun.spawn(COMPILED ? entryCommand("serve") : [process.execPath, ENTRIES.serve], {
       cwd: release?.directory ?? root, windowsHide: true, stdin: "ignore", stdout: "inherit", stderr: "inherit",
+      // a launcher from before the rename runs from a checkout from before it, where a release that
+      // fails falls back to: that bridge reads its settings under the old names
       env: { ...process.env, ...(legacyStateDir === null ? settings : withLegacyNames(settings)), HERDR_SOCKET: socketPath },
       ipc(message) {
         if (message?.type === "update-status-request") publish();
@@ -112,6 +125,7 @@ export async function runSupervisor(root = ROOT) {
             }
           });
         }
+        // an unbound `install` (an older bridge's) is refused: an install names the revision offered
         const request = readUpdateIpcRequest(message);
         if (request) {
           if (request.command === "cancel") updater.cancel(request.install_id);
@@ -132,6 +146,8 @@ export async function runSupervisor(root = ROOT) {
       try {
         const bridge = await fetch(`${origin}/api/health?scope=bridge`, { signal: AbortSignal.timeout(1000) });
         const own = await bridge.json() as { web_ui?: { boot_id?: string }; runtime?: string };
+        // a bridge from before its own answer carried the boot id (an older checkout a release falls back
+        // to): the whole health answer is the only check it can pass, as it always was
         const older = bridge.ok && own.web_ui === undefined;
         if (older || bridge.ok && ours(own)) {
           let ready = !older && (own.runtime === undefined || own.runtime === "herdr") && !await herdrMayListen(socketPath);
@@ -221,6 +237,9 @@ export async function runSupervisor(root = ROOT) {
   async function shutdown(code: number) {
     if (stopping) return;
     stopping = true; updater.stop(); rustHostInstall.abort();
+    // waited for, so that one of the try's group that ignores SIGTERM is still killed past the grace,
+    // which an exit now would have dropped with it; past RUST_HOST_STOP_MS this lets go all the same,
+    // and a process of the try may still run
     await Promise.all([stopChild(), rustHostTry && boundedStop(rustHostTry.done, rustHostTry.directory)]);
     lock.release();
     process.exit(code);

@@ -8,6 +8,9 @@
  * never opens it. A registry or merge record that cannot be read fails closed: the store stays gated
  * and pairs nothing (devices.ts), neither registry is written, and a dir without a registry gets a
  * closed, empty one marked incomplete: its missing devices are never read as revoked.
+ *
+ * Push subscriptions go to the dir in use only, each taken over once, with the key pair it was made
+ * for (push.ts PUSH_EXTRA_KEYS).
  */
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
@@ -22,9 +25,11 @@ import { stateDirNames } from "./update-state.ts";
 
 const RECORD = "state-merge.json";
 const BACKUPS = "state-merge-backups";
+/** Beside a registry written where one was missing: it may lack devices the other dir holds. */
 const INCOMPLETE = "state-merge-devices-incomplete.json";
 
 export interface SiblingMerge {
+  /** why the device registries could not be merged: the store must stay gated (devices.ts) */
   devicesBlocked: string | null;
 }
 
@@ -36,6 +41,7 @@ export function siblingStateDir(active: string, env: Record<string, string | und
   try {
     if (!statSync(other).isDirectory()) return null;
   } catch (error) {
+    // an other dir that cannot be looked at may hold devices: the merge then fails closed
     return (error as NodeJS.ErrnoException).code === "ENOENT" ? null : other;
   }
   return realpath(other) === own ? null : other;
@@ -57,7 +63,16 @@ interface MergeRecord {
   preferences: Record<string, PreferencesSnapshot>;
   preferences_target?: PreferencesSnapshot;
   push: Record<string, string[]>;
+  /** whether the merged registry had a closed gate: with both registries gone, the install is still not a fresh one */
   gated?: boolean;
+  /**
+   * Written before a merge publishes its registries, and gone from the record that follows them: a
+   * crash in between leaves it. The new bytes of each registry are prepared first, in a file of their
+   * own (`temp`), and publishing is renaming that file into place. So a dir got the merge when it held
+   * it already (`same`) or its prepared file is gone: its base is then the merged ids, and a device
+   * revoked there since stays revoked, whatever bytes that left. A dir whose prepared file is still
+   * there, or that was never written, did not get it, and keeps the base it was merged against.
+   */
   pending?: { ids: string[]; sides: Record<string, { same: boolean; temp: string | null; base: string[] | null }> };
 }
 
@@ -82,6 +97,7 @@ export function mergeRegistries(own: Registry | null, other: Registry | null,
   const myIds = new Set(mine.map((device) => device.id));
   const devices: StoredDevice[] = [];
   for (const device of mine) {
+    // revoked through the other dir since the last merge
     if (other !== null && !incomplete.other && bases.other?.has(device.id) && !theirIds.has(device.id)) continue;
     const twin = theirs.find((candidate) => candidate.id === device.id);
     if (!twin) {
@@ -95,6 +111,7 @@ export function mergeRegistries(own: Registry | null, other: Registry | null,
       role: device.role === "watch" || twin.role === "watch" ? "watch" : "drive",
       created_at: earliest([device.created_at, twin.created_at])!,
       last_seen_at: [device.last_seen_at, twin.last_seen_at].filter((seen): seen is string => seen !== null).sort().at(-1) ?? null,
+      // the signed add behind the row, kept from either copy (/api/account/status lists it)
       ...(device.account_add === undefined && twin.account_add !== undefined ? { account_add: twin.account_add } : {}),
       // a link done in the other dir moved the row to the account key (docs/account.md); an older copy must not undo it
       // the later link wins: an unlinked copy, or one linked earlier, takes the other's account key
@@ -103,9 +120,11 @@ export function mergeRegistries(own: Registry | null, other: Registry | null,
     });
   }
   for (const device of theirs) {
+    // revoked here since the last merge
     if (myIds.has(device.id) || own !== null && !incomplete.own && bases.own?.has(device.id)) continue;
     devices.push(device);
   }
+  // every piece of evidence that either side was ever gated keeps the merge gated
   const gate = earliest([own?.gate_closed_at, other?.gate_closed_at, ...mine.map((d) => d.created_at), ...theirs.map((d) => d.created_at)]);
   return { gate_closed_at: gate, devices };
 }
@@ -139,12 +158,20 @@ function readRecord(dirs: string[], pair: string[]): MergeRecord | null {
   return found;
 }
 
+/**
+ * A merge that cannot run leaves the store gated in this process only. So that a release before
+ * this one, which knows nothing of the merge, stays gated on this dir too, the dir's own registry
+ * gets a closed gate, its devices as they are; a damaged one is left alone (it keeps every release gated).
+ */
 function closeGateOnDisk(active: string, stamp: string, now: Date): void {
   const path = join(active, "devices.json");
   const own = readDeviceRegistry(path);
   if (own.kind === "bad" || own.kind === "ok" && (own.gateClosedAt !== null || own.devices.length > 0)) return;
   try {
     backUp(active, "devices.json", stamp);
+    // where there was no registry, the marks keep the next merge from reading its empty list as
+    // every device revoked: one in the registry, and one beside it that an older release saving the
+    // registry does not erase
     if (own.kind === "missing") markIncomplete(active, true);
     writePrivateState(path, { gate_closed_at: now.toISOString(), devices: own.kind === "ok" ? own.devices : [], ...(own.kind === "missing" ? { placeholder: true } : {}) });
   } catch (error) {
@@ -183,6 +210,7 @@ function readPreferences(dir: string): { doc: PreferencesSnapshot & { revision: 
 
 type Intent = (ids: string[], sides: NonNullable<MergeRecord["pending"]>["sides"], gated: boolean) => string | null;
 
+/** Whether a release before this one reading `read` keeps its gate closed. */
 const closedFor = (read: ReturnType<typeof readDeviceRegistry>): boolean =>
   read.kind === "bad" || read.kind === "ok" && (read.gateClosedAt !== null || read.devices.length > 0);
 
@@ -203,18 +231,21 @@ function mergeDevices(active: string, sibling: string, base: MergeRecord | null,
   if (unreadable !== null) {
     return { ids: null, changed: 0, blocked: `Cannot read ${unreadable}, so the paired devices of ${active} and ${sibling} cannot be merged. Restore a valid devices.json there or fix its permissions, then restart the server. External access without a token or trusted Tailscale login remains blocked.` };
   }
+  // an incomplete registry (closeGateOnDisk) adds its devices and its closed gate, and revokes nothing
   const ownIncomplete = own.kind === "ok" && own.placeholder || existsSync(join(active, INCOMPLETE));
   const otherIncomplete = other.kind === "ok" && other.placeholder || existsSync(join(sibling, INCOMPLETE));
   const registry = (read: typeof own): Registry | null => read.kind === "ok" ? { gate_closed_at: read.gateClosedAt, devices: read.devices } : null;
   const mine = registry(own);
   const theirs = registry(other);
   if (mine === null && theirs === null) {
+    // both gone after a merge that knew paired devices or a closed gate: this is no first installation
     if (base !== null && (base.devices.length > 0 || base.gated === true || (base.pending?.ids.length ?? 0) > 0)) {
       return { ids: null, changed: 0, blocked: `Neither ${ownPath} nor ${otherPath} exists, although the last merge of these dirs knew ${base.devices.length} paired device(s)${base.gated ? " and a closed gate" : ""}. Restore devices.json from ${join(active, BACKUPS)} or ${join(sibling, BACKUPS)}, then restart the server. External access without a token or trusted Tailscale login remains blocked.` };
     }
     return { blocked: null, ids: [], changed: 0 };
   }
   const merged = mergeRegistries(mine, theirs, bases, { own: ownIncomplete, other: otherIncomplete });
+  // with a complete registry in it, the result holds every device not revoked since the last merge
   const complete = mine !== null && !ownIncomplete || theirs !== null && !otherIncomplete;
   const onDisk = (read: typeof own) => read.kind === "ok" ? { gate_closed_at: read.gateClosedAt, devices: read.devices, ...(read.placeholder ? { placeholder: true } : {}) } : null;
   const added = merged.devices.filter((device) => !mine?.devices.some((held) => held.id === device.id)).length;
@@ -256,6 +287,7 @@ function mergeDevices(active: string, sibling: string, base: MergeRecord | null,
     } catch (error) {
       const reason = `Cannot write the merged paired devices into ${otherPath}: ${error instanceof Error ? error.message : String(error)}`;
       console.error(reason);
+      // that release must at least find a closed gate there, and no device revoked here
       if (!closedFor(readDeviceRegistry(otherPath))) closeGateOnDisk(sibling, stamp, now);
       const left = readDeviceRegistry(otherPath);
       const revokedThere = left.kind === "ok" && left.devices.some((device) => !merged.devices.some((kept) => kept.id === device.id));
@@ -388,6 +420,7 @@ function mergePush(active: string, sibling: string, base: MergeRecord | null, st
     const theirs = subscriptionsIn(readPushFile(join(sibling, "push-subscriptions.json")));
     const theirKey = vapidIn(readPushFile(join(sibling, "vapid.json")));
     const before = base?.push[realpath(sibling)] ?? [];
+    // an endpoint counts as taken over once it is here, or kept out on purpose: never one skipped for a key it lacks
     const recorded = (done: Subscription[]) => ({ [realpath(sibling)]: [...new Set([...before, ...done.map((subscription) => endpointHash(subscription.endpoint))])] });
     if (theirs.length === 0) return { record: recorded([]), taken: 0 };
     // the key each of their subscriptions was made for: one they took over keeps its own
@@ -451,6 +484,7 @@ export function mergeSiblingState(active: string, sibling: string, now = new Dat
   try {
     blocked = merge(active, sibling, now, stamp);
   } catch (error) {
+    // whatever went wrong, the server still starts, gated: a start that failed would fall back to an older release
     blocked = `Cannot merge the state of ${sibling} into ${active} (${error instanceof Error ? error.message : String(error)}). External access without a token or trusted Tailscale login remains blocked; restart the server once it is fixed.`;
   }
   if (blocked !== null) closeGateOnDisk(active, stamp, now);
@@ -463,6 +497,7 @@ function merge(active: string, sibling: string, now: Date, stamp: string): strin
   try {
     base = readRecord([active, sibling], pair);
   } catch (error) {
+    // without the last merge a revoked device could come back: nothing is merged, and the store stays gated
     return `${error instanceof Error ? error.message : String(error)}, so the paired devices of ${active} and ${sibling} cannot be merged. Restore or remove it, then restart the server. External access without a token or trusted Tailscale login remains blocked.`;
   }
   let intent: MergeRecord | null = null;
@@ -506,6 +541,8 @@ function merge(active: string, sibling: string, now: Date, stamp: string): strin
     } catch (error) {
       const reason = `Cannot write ${join(dir, RECORD)}: ${error instanceof Error ? error.message : String(error)}`;
       console.error(reason);
+      // without it the next merge compares with an older one, and would bring back a device revoked
+      // until then: blocked, the device store changes nothing while this server runs, so none is revoked
       if (dir === active) blocked ??= `${reason}. Fix its permissions, then restart the server. External access without a token or trusted Tailscale login remains blocked.`;
     }
   }

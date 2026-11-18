@@ -36,7 +36,7 @@ export async function sweepSshDirs(root = SSH_DIR_ROOT, maxAgeMs = 60 * 60_000, 
       if (process.getuid && info.uid !== process.getuid()) continue;
       await rmdir(path);
       removed++;
-    } catch {}
+    } catch {} // not empty, gone already, or not ours: left as it is
   }
   return removed;
 }
@@ -53,6 +53,10 @@ export interface SshClient {
   git?: true;
 }
 
+/**
+ * A line ssh -v writes that is not ssh's word on what went wrong: its debug lines, and the few it writes
+ * unprefixed (its version banner, "Authenticated to", and the transfer totals it writes at exit).
+ */
 export function sshVerboseLine(line: string): boolean {
   return /^(?:debug\d: |OpenSSH_|Authenticated to |Transferred: sent |Bytes per second: )/u.test(line);
 }
@@ -92,6 +96,8 @@ export function sshClient({ env = process.env, platform = process.platform, exis
   const override = env["OVIS_SSH"]?.trim().replace(/^"(.*)"$/, "$1");
   if (override) return beside(override.includes("/") || override.includes("\\") ? override : which(override) ?? override);
   if (platform !== "win32") return plain;
+  // a machine-wide install (the registry and Program Files take an administrator to change),
+  // then one inside this account's own profile, which only the account itself can write
   const roots: string[] = [];
   const installed = registry();
   if (installed) roots.push(installed);
@@ -145,6 +151,11 @@ function listening(port: number): Promise<boolean> {
   return promise;
 }
 
+/**
+ * What ssh said last, for the setup dialog: some messages ask the user to act while ssh keeps
+ * waiting (Tailscale SSH's browser check URL), and the exit error is too late for those.
+ * Control characters go (a terminal's colours and cursor moves mean nothing in a dialog).
+ */
 export function recentSshOutput(text: string, maxLines = 8, maxBytes = 2048): string {
   const lines = text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\r\n?/g, "\n").replace(/[\x00-\x09\x0b-\x1f\x7f]/g, "").split("\n").map((line) => line.trimEnd()).filter((line) => line !== "");
   const tail = lines.slice(-maxLines).join("\n");
@@ -197,6 +208,7 @@ export class SshConnection {
   private askServer = createServer();
   private askPath = "";
   private askHelper = "";
+  /** only a helper started by this connection's ssh knows it */
   private askToken = randomBytes(32).toString("hex");
   /** direct mode: answers typed during start(), kept once start() authenticated with them */
   private typed = new Map<string, string>();
@@ -386,6 +398,7 @@ export class SshConnection {
     if (answer !== "yes") throw new Error("Host key verification failed.");
     appendFileSync(this.knownHosts(), learned + "\n", { mode: 0o600 });
   }
+  /** `maxOutput`: bytes its stdout and its stderr may each send; past that the command is stopped and fails */
   async run(script: string, input?: Uint8Array | StreamInput, timeout = 90_000, maxOutput?: number): Promise<string> {
     if (this.closed) throw new Error("SSH connection closed");
     // BatchMode prevents an expired master from unexpectedly opening a new password prompt.
@@ -507,6 +520,8 @@ export class SshConnection {
     const proc = Bun.spawn(args, { stdin: stream ? "pipe" : input ? new Blob([new Uint8Array(input as Uint8Array)]) : "ignore", stdout: "pipe", stderr: "pipe", env: this.askEnv() });
     this.children.add(proc);
     const timer = setTimeout(() => proc.kill(), timeout);
+    // a file goes over in chunks, each written once ssh has taken the last one, so what was
+    // written tracks what was sent to within ssh's own buffer
     const feed = stream ? (async () => {
       const sink = proc.stdin as FileSink;
       let done = 0;
@@ -519,6 +534,7 @@ export class SshConnection {
       stream.onUploaded?.();
     })().then(() => null, (error: unknown) => error) : Promise.resolve(null);
     try {
+      // a capped stream is read only up to its cap: past it the command is stopped, and nothing it sent is taken
       const read = async (stream: ReadableStream<Uint8Array>): Promise<string> => {
         if (maxOutput === undefined) return new Response(stream).text();
         const chunks: Uint8Array[] = [];

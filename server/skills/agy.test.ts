@@ -120,6 +120,7 @@ it("keeps the panels, pickers and forms that hold the screen in the terminal", (
   const held = ["artifact", "codesearch", "cs", "search", "context", "diff", "help", "tasks", "rewind", "undo", "feedback", "logout"];
   expect(source.terminalBound).toEqual(expect.arrayContaining(held));
   for (const name of held) expect(source.forms?.[name]).toEqual([{ match: "bare", interaction: "terminal" }]);
+  // /open <file> opens the PC's editor; bare it only prints its usage
   expect(source.forms?.open).toEqual([{ match: "bare", interaction: "unknown" }, { match: "other", interaction: "terminal" }]);
   for (const name of ["compact", "clear", "new", "fork", "title"]) expect(source.terminalBound).not.toContain(name);
 });

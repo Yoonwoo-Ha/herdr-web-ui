@@ -8,6 +8,7 @@
 
 export type Token = { kind: "char"; char: string } | { kind: "one" } | { kind: "star" } | { kind: "class"; negate: boolean; ranges: [string, string][] };
 
+/** both ends of a range a digit, a lowercase or an uppercase ASCII letter alike: ordered the same in every locale */
 const plainRange = (from: string, to: string): boolean => [/[0-9]/, /[a-z]/, /[A-Z]/].some((kind) => kind.test(from) && kind.test(to)) && from <= to;
 
 function bracket(chars: string[], start: number): { token: Token; next: number } | "open" | null {
@@ -62,6 +63,7 @@ const fits = (token: Token, char: string): boolean => {
   }
 };
 
+/** A leading dot is matched only by a literal dot, as glob(3) does. */
 export function matchComponent(tokens: readonly Token[], name: string, budget: { steps: number }): boolean | null {
   const text = Array.from(name);
   const head = tokens[0];

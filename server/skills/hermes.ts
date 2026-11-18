@@ -136,11 +136,14 @@ const CORE_NAMES = new Set([...Object.keys(BUILTINS), "start", "topic", "pause",
 const TERMINAL_BOUND = ["model", "resume", "sessions", "config", "agents", "plugins", "skills", "skin",
   "reload-mcp", "reload_mcp", "update", "undo", "prompt", "compose", "palette", "tasks", "journey", "learning", "memory-graph",
   "subscription", "upgrade", "topup", "login", "debug"] as const;
+// new, reset and clear confirm first unless told now, --yes or -y (approvals.destructive_slash_confirm,
+// cli_loops_mixin.py:93-100, 191-202); curator's destructive subcommands ask on a stdin the CLI does not read
 const CONFIRMED: CommandForm[] = [
   { match: "bare", interaction: "terminal" },
   ...["now", "--yes", "-y"].map((sub): CommandForm => ({ match: { sub }, interaction: "none" })),
   { match: "other", interaction: "terminal" },
 ];
+// printed inline by the classic CLI and read by the result readers in server/dialogs/hermes.ts
 const RESULT_FORMS: Record<string, CommandForm[]> = {
   ...Object.fromEntries(
     [["help", "help"], ["status", "status"], ["version", "version"], ["v", "version"], ["profile", "profile"], ["reload-skills", "reload-skills"], ["reload_skills", "reload-skills"]]
@@ -156,6 +159,7 @@ const RESULT_FORMS: Record<string, CommandForm[]> = {
 const SKIP_DIRS = new Set([".git", ".github", ".hub", ".archive", ".curator_backups", ".locks", ".venv", "venv", "node_modules", "site-packages", "__pycache__", ".tox", ".nox"]);
 const SUPPORT_DIRS = new Set(["references", "templates", "assets", "scripts"]);
 
+/** Hermes continues beneath a skill root, pruning only its support directories. */
 function skillFiles(root: string): { path: string; fields: Readonly<Record<string, unknown>> }[] {
   const result: { path: string; fields: Readonly<Record<string, unknown>> }[] = [];
   const ancestors = new Set<string>();

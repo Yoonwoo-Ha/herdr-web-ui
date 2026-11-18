@@ -4,6 +4,10 @@ import type { SkillActivity } from "../../shared/protocol.ts";
 // request order, each skill's body after its line.
 const FIRST_MENTION = /^\s*<ADDITIONAL_METADATA>\nThe current local time is: [^\n]*\n\nThe user has mentioned some items in the form @\[ITEM\]\. Here is extra information about the items that were mentioned by the user, in the order that they appear:\n\n\/([^\s()<>]{1,200}) is a \[Slash Command\]:\n<SKILL>The user has explicitly invoked the \(([^()\r\n<>]{1,200})\) skill\./;
 
+/**
+ * Only the first item sits before any skill body: a later one could be text inside a body, so it
+ * gives no row, and a request holding the envelope's own tags gives none either.
+ */
 export function agyInvokedSkills(request: string, metadata: string): SkillActivity[] {
   if (/<\/?(?:USER_REQUEST|ADDITIONAL_METADATA)>/.test(request)) return [];
   const match = FIRST_MENTION.exec(metadata);

@@ -41,6 +41,7 @@ export function setAsideDamaged(path: string, now = new Date()): string {
       if (attempt > 99) throw Object.assign(new Error("too many copies"), { code: "EEXIST" });
       aside = `${name}-${attempt}`;
     }
+    // the kept copy is on disk under its name before the original goes, so a second crash keeps one
     try { flushFile(aside); } catch (error) { dropCopy(aside); throw error; }
     syncDirectory(dirname(path), process.platform);
     try { unlinkSync(path); } catch (error) { dropCopy(aside); throw error; }
@@ -57,6 +58,7 @@ function keepAs(path: string, aside: string): boolean {
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
   }
+  // a file system without hard links
   try { copyFileSync(path, aside, constants.COPYFILE_EXCL); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
@@ -80,6 +82,12 @@ export function holdsDocument(path: string, text: string): boolean {
   try { return JSON.stringify(JSON.parse(readFileSync(path, "utf8"))) === text; } catch { return false; }
 }
 
+/**
+ * Replaces the document at `path` with `text` through a private temporary file. With
+ * `keepDamaged`, the file now at `path` is first moved, bytes untouched, to `<path>.bad` (0600),
+ * replacing an older one; when it cannot be kept the write is refused and `path` is left as it
+ * was.
+ */
 export function writeStateDocument(path: string, text: string, keepDamaged: boolean): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   // a name no one can guess, created exclusively ("wx": O_CREAT | O_EXCL, which follows no link at that name), so
@@ -108,6 +116,7 @@ export function writeStateDocument(path: string, text: string, keepDamaged: bool
       throw new Error(`Cannot keep the damaged ${basename(path)} as ${basename(damagedCopy(path))} (${reason}), so it was not replaced`);
     }
   }
+  // a fresh name each time: one a failed rename left would stay for good, so it goes before the failure is told
   try { renameSync(temporary, path); }
   catch (error) {
     try { rmSync(temporary, { force: true }); } catch {}

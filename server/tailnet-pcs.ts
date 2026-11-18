@@ -9,9 +9,11 @@
 import { HTTPS_PORTS, tailscaleBinary } from "./tailscale.ts";
 
 const PROBE_MS = 2500;
+/** an address the list found stays addable this long */
 const FOUND_MS = 10 * 60_000;
 const MAX_PEERS = 32;
 const PHONE_OS = new Set(["ios", "android"]);
+/** a health or code answer is a few hundred bytes; anything past this is not one */
 const MAX_BODY_BYTES = 64 * 1024;
 
 export interface TailnetPcsOptions {
@@ -32,6 +34,7 @@ export interface TailnetPc {
 interface PeerJson { DNSName?: string; UserID?: string; Online?: boolean; OS?: string; Tags?: string[]; TailscaleIPs?: string[] }
 interface StatusJson { BackendState?: string; Self?: PeerJson; Peer?: Record<string, PeerJson> }
 
+/** Online, untagged peers of this PC's own login, phones aside, from `tailscale status --json`. */
 export function tailnetPeers(status: string | null): { name: string; dnsName: string; ips: string[] }[] {
   if (status === null) return [];
   let parsed: StatusJson;
@@ -50,6 +53,7 @@ export function tailnetPeers(status: string | null): { name: string; dnsName: st
     });
 }
 
+/** `tailscale status --json` from this PC's own CLI, or null when Tailscale is not here or does not answer in time */
 export const readTailscaleStatus = async (): Promise<string | null> => {
   const binary = tailscaleBinary();
   if (binary === null) return null;
@@ -63,6 +67,7 @@ export const readTailscaleStatus = async (): Promise<string | null> => {
 
 const httpsOrigin = (dnsName: string, port: number) => `https://${dnsName}${port === 443 ? "" : `:${port}`}`;
 
+/** The body as JSON, or null when it is not JSON or runs past MAX_BODY_BYTES; reading stops there. */
 async function boundedJson(response: Response): Promise<unknown> {
   if (response.body === null) return null;
   const reader = response.body.getReader();
@@ -136,10 +141,12 @@ export class TailnetPcs {
         ?? found.find((answer) => !answer.outdated) ?? found[0] ?? null;
     }));
     const listed = pcs.filter((pc) => pc !== null);
+    // a fresh list replaces the last: a PC gone from it is no longer addable
     this.found = new Map(listed.map((pc) => [pc.url, { name: pc.name, dnsName: pc.dnsName, at: Date.now() }]));
     return listed.map(({ name, url, relay, outdated, server_id }) => ({ name, url, relay, outdated, server_id }));
   }
 
+  /** the name a recent list found at this address, or null: no other address is ever asked for a code */
   foundAt(url: unknown): string | null {
     if (typeof url !== "string") return null;
     const held = this.found.get(url);

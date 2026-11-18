@@ -27,8 +27,10 @@ export interface SshCandidate {
 
 export interface SshCandidatesOptions {
   sshDir?: string;
+  /** the folder `~` stands for, and with `sshDir` the only one an Include may read in; the server account's own by default */
   home?: string;
   readStatus?: () => Promise<string | null>;
+  /** the addresses a host name resolves to, as ssh would reach it (getaddrinfo: hosts file, DNS, MagicDNS) */
   resolve?: (host: string) => Promise<string[]>;
   resolveTimeoutMs?: number;
 }

@@ -2,6 +2,10 @@ import type { ConversationPart } from "../shared/protocol.ts";
 
 export const TOOL_OUTPUT_CHARS = 4000;
 
+/**
+ * omo's goal calls answer with the goal as JSON the chat reads, its objective alone up to 4000
+ * characters: cut at the usual length, a finished goal's answer lost its status.
+ */
 const WHOLE_OUTPUT_TOOLS = new Set(["create_goal", "update_goal", "get_goal"]);
 const WHOLE_OUTPUT_CHARS = 16_000;
 

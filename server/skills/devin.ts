@@ -59,6 +59,7 @@ const forms: Record<string, CommandForm[]> = {
   ...Object.fromEntries(terminalBound.map((name) => [
     name, [{ match: "bare" as const, interaction: "terminal" as const }],
   ])),
+  // bare opens the "Select mode:" picker, the "Revert to step:" picker or the bug form; given a value they act
   mode: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
   revert: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "unknown" }],
   bug: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "unknown" }],
@@ -67,6 +68,7 @@ const forms: Record<string, CommandForm[]> = {
 };
 
 function importSettings(value: unknown): Map<string, boolean> {
+  // Devin expects a structured object; arrays and other invalid values behave as no overrides.
   return new Map(Object.entries(plainObject(value)).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"));
 }
 
@@ -124,6 +126,7 @@ export const source: AgentCommandSource = {
         found.push({ namespace, command: { name: plugin ? `${namespace}:${name}` : name, description: skill.description, source: "skill", origin, id: skill.id } });
       }
     };
+    // Native source roots share a precedence tier: first directory wins within each scope.
     for (const [base, origin] of [[home, "user"], [project, "project"]] as const) {
       if (!base) continue;
       const imports = origin === "user" ? userImports : projectImports;
@@ -187,6 +190,8 @@ export const source: AgentCommandSource = {
       }
     };
     plugins(pluginRoot);
+    // An imported skill that is the same file as a native one (~/.claude/skills linked to Devin's own
+    // root) is that native skill: listed once under its native name, as Devin lists it.
     const native = new Set(["devin", "cognition", "agents"]);
     const nativeFiles = new Set(found.filter((item) => native.has(item.namespace)).map((item) => item.command.id));
     const listed = found.filter((item) => native.has(item.namespace) || item.command.id === undefined || !nativeFiles.has(item.command.id));
@@ -199,6 +204,7 @@ export const source: AgentCommandSource = {
     const result = new Map<string, SlashCommand>();
     for (const { namespace, command } of listed) {
       const name = (namespaces.get(command.name)?.size ?? 0) > 1 ? `${namespace}:${command.name}` : command.name;
+      // Project overrides user only within the same source namespace.
       result.set(name, { ...command, name });
     }
     return [...result.values()];

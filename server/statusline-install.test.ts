@@ -166,6 +166,7 @@ describe("status-line switch and capture", () => {
     expect(run([]).exitCode).toBe(1);
     expect(readFileSync(settings(), "utf8")).toBe(other);
     expect(readFileSync(settings(real), "utf8")).toBe(wrapped);
+    // a command the installer did not write is never replaced; one that still runs the wrapper keeps it
     const kept = run(["--remove"], link);
     expect(kept.exitCode).toBe(1);
     expect(kept.stderr).toContain("nothing was removed");
@@ -382,6 +383,7 @@ describe("status-line switch and capture", () => {
     install();
     draw(JSON.stringify({ rate_limits: { five_hour: { used_percentage: 40 } } }));
     expect(draw("not json")).toBe("not json");
+    // a render without limits (before Claude's first answer) does not wipe the last reading
     draw(JSON.stringify({ model: { id: "m" } }));
     expect(readStatusline(home)?.fiveHour?.usedPercent).toBe(40);
   });

@@ -128,11 +128,13 @@ describe("startScreenMetadata", () => {
     expect(codexStartScreenUnused([header, "  Select Model and Effort", "\u203a 1. GPT-6.1-Sol (default) (current)"].join("\n"))).toBeFalse();
     expect(codexStartScreenUnused(`\u203a hello\n\n\u2022 Hi there\n\n${CODEX}`)).toBeFalse();
     expect(codexStartScreenUnused(CODEX.replace(header, "  the tail of an answer\n\u2022 OpenAI Codex (v0.163.0)"))).toBeFalse();
+    // the banner boxed, as some versions draw it
     expect(codexStartScreenUnused(CODEX.replace(header, "\u2502 >_ OpenAI Codex (v0.163.0) \u2502"))).toBeTrue();
   });
 
   it("tells an Agy start screen with nothing said yet from one with a conversation or an open panel", () => {
     expect(agyStartScreenUnused(AGY)).toBeTrue();
+    // narrow layout with logo rows above the title and a multi-line draft in the composer
     const narrow = [
       "❯ agy",
       "       ▄▀▀▄",
@@ -152,6 +154,7 @@ describe("startScreenMetadata", () => {
     expect(agyStartScreenUnused(said(" > hello\n\n ✦ Hi! How can I help?"))).toBeFalse();
     expect(agyStartScreenUnused(said(" > /model\n  ⎿   Exited /model command"))).toBeFalse();
     expect(agyStartScreenUnused(said(" ● Read(README.md)"))).toBeFalse();
+    // a panel open under the composer (/model, /codesearch) or a missing header/footer
     expect(agyStartScreenUnused(`${AGY}\n Switch Model`)).toBeFalse();
     expect(agyStartScreenUnused(AGY.replace(" ? for shortcuts   Gemini 3.8 Flash · high", " Code Search:\n ? for shortcuts   Gemini 3.8 Flash · high"))).toBeFalse();
     expect(agyStartScreenUnused(AGY.replace("       ▄▀▀▄         Antigravity CLI 1.4.4", ""))).toBeFalse();
@@ -159,6 +162,7 @@ describe("startScreenMetadata", () => {
   });
 
   it("tells OpenCode's home screen, which shows no session, from a session's screen or one drawn over", () => {
+    // recorded from OpenCode 2.2.2 in a herdr pane: wide, narrow ("open" over "code"), and a session after its first prompt
     const recorded = (name: string) => readFileSync(join(import.meta.dir, "fixtures", `${name}.txt`), "utf8");
     const home = recorded("opencode-home-2.2.2-wide");
     expect(opencodeStartScreenUnused(home)).toBeTrue();
@@ -166,6 +170,7 @@ describe("startScreenMetadata", () => {
     expect(opencodeStartScreenUnused(home.replace("Ask anything\u2026 \"Fix broken tests\"", "fix the build"))).toBeTrue();
     expect(opencodeStartScreenUnused(home.replace("/update to install v2.3.0", ""))).toBeTrue();
     expect(opencodeStartScreenUnused(recorded("opencode-session-2.2.2"))).toBeFalse();
+    // 2.0.32's home screen with the autocomplete drawn over the logo
     expect(opencodeStartScreenUnused(recorded("opencode-autocomplete-2.0.32-skill-wide"))).toBeFalse();
     expect(opencodeStartScreenUnused(`hello\n${home}`)).toBeFalse();
     expect(opencodeStartScreenUnused(home.replace("2.2.2", "\u250c Sessions \u2510"))).toBeFalse();
@@ -180,8 +185,10 @@ describe("startScreenMetadata", () => {
 
   it("reads Pi's model id and thinking level from its footer's stats row", () => {
     expect(startScreenMetadata("pi-transcript", PI)).toEqual({ model: "zorro-davidau-3.8-flash-next", reasoning_effort: "xhigh" });
+    // several providers: Pi names the provider in front
     expect(startScreenMetadata("pi-transcript", PI.replace("zorro", "(openrouter) zorro"))).toEqual({ model: "zorro-davidau-3.8-flash-next", reasoning_effort: "xhigh" });
     expect(startScreenMetadata("pi-transcript", PI.replace("\u2022 xhigh", "\u2022 thinking off"))).toEqual({ model: "zorro-davidau-3.8-flash-next", reasoning_effort: "off" });
+    // a model that does not reason states no level
     expect(startScreenMetadata("pi-transcript", PI.replace(" \u2022 xhigh", ""))).toEqual({ model: "zorro-davidau-3.8-flash-next", reasoning_effort: null });
     expect(startScreenMetadata("pi-transcript", PI.replace("0.0%/262k (auto)", "?/1.0M"))).toEqual({ model: "zorro-davidau-3.8-flash-next", reasoning_effort: "xhigh" });
   });
@@ -189,6 +196,7 @@ describe("startScreenMetadata", () => {
   it("names no Pi model without one, or from a line that is not its footer", () => {
     expect(startScreenMetadata("pi-transcript", PI.replace("zorro-davidau-3.8-flash-next \u2022 xhigh", "no-model"))).toEqual({ model: null, reasoning_effort: null });
     expect(startScreenMetadata("pi-transcript", "about 50% of the 262k window is used by model-x")).toEqual({ model: null, reasoning_effort: null });
+    // a narrow pane: Pi cut the id down to two columns after the stats, so the whole id is unknown
     expect(startScreenMetadata("pi-transcript", "~\n0.0%/262k (auto)  claude-sonnet-4-5-2025")).toEqual({ model: null, reasoning_effort: null });
   });
 

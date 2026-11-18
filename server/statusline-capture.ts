@@ -19,6 +19,7 @@ const dir = join(home, ".herdr");
 const path = join(dir, "statusline-last.json");
 const temp = join(dir, `.statusline-last.json.${process.pid}.${randomUUID()}.tmp`);
 let wrote = false;
+/** Whether `file` is a regular file (not a link, even to nothing) that starts with `mark`. */
 function startsWith(file: string, mark: string): boolean {
   if (!lstatSync(file, { throwIfNoEntry: false })?.isFile()) return false;
   const fd = openSync(file, "r");
@@ -73,6 +74,7 @@ try {
   const limits = record(body["rate_limits"]);
   const fiveHour = window(limits["five_hour"]);
   const sevenDay = window(limits["seven_day"]);
+  // a render before Claude's first answer names no limits; the last reading stays
   if (fiveHour === undefined && sevenDay === undefined) process.exit(0);
   const configDir = process.env["CLAUDE_CONFIG_DIR"];
   let account: { id: string; label: string | null } | null = null;
@@ -86,10 +88,15 @@ try {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   chmodSync(dir, 0o700);
   const absent = lstatSync(path, { throwIfNoEntry: false }) === undefined;
+  // anything there but a payload this capture wrote is someone else's, and stays
   if (absent || startsWith(path, MARK)) {
+    // the name is this run's own (its pid and a random uuid), so whatever is there is its to delete
     wrote = true;
     writeFileSync(temp, `${MARK}${JSON.stringify({ rate_limits: { five_hour: fiveHour, seven_day: sevenDay }, _herdr: { account } }).slice(1)}`, { mode: 0o600, flag: "wx" });
+    // turned off while this ran (the switch deletes this helper, or the file is no longer the
+    // installer's): a reading now would outlive the removal
     if (startsWith(import.meta.path, `// ${GENERATED}\n`)) {
+      // nothing there: a link creates it only while still nothing is, never over a file made meanwhile
       if (!absent) renameSync(temp, path);
       else {
         try { linkSync(temp, path); } catch (error) {

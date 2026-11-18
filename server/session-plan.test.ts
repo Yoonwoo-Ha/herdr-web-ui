@@ -170,6 +170,7 @@ describe("SessionPlans", () => {
   });
 
   it("follows a Claude rewind on the recorded fork as the chat does: the abandoned answers' figure goes", async () => {
+    // Given Claude Code 2.1.304's recorded restore: apple and banana answered, then "cherry" sent from before apple.
     const lines = readFileSync(new URL("./fixtures/claude-rewind-2.1.304-fork.jsonl", import.meta.url), "utf8").split("\n").filter(Boolean);
     const fork = lines.findIndex((line) => line.includes('"content":"cherry"'));
     const f = file();
@@ -212,6 +213,7 @@ describe("SessionPlans", () => {
   });
 
   it("takes a Claude command's echo from before the last answer as a fork only once the conversation goes on from it, as the chat does", async () => {
+    // Given an answered prompt, then a /context echo hanging from the prompt (as 2.1.304 links it after a Restore) and its output.
     const f = file();
     const echo = (uuid: string, parentUuid: string, content: string) => f.add({ type: "system", subtype: "local_command", uuid, parentUuid, isSidechain: false, content });
     f.add({ type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "one" } });

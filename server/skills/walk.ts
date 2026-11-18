@@ -12,6 +12,7 @@ export interface WalkRules {
   readonly ignoreFiles: boolean;
   readonly requireDescription: boolean;
   readonly skipNames?: (name: string) => boolean;
+  /** Look on below a folder whose SKILL.md was loaded, for skills nested in it (Letta's discovery does). */
   readonly belowSkills?: boolean;
   readonly uniqueFolders?: boolean;
   readonly budget?: WalkBudget;
@@ -47,8 +48,12 @@ function parseFrontmatter(markdown: string): Readonly<Record<string, unknown>> |
   } catch { return null; }
 }
 
+// Discovery runs on the server's one thread for every menu: a skill file is read only up to this
+// much, and only when it is a regular file (a link to /dev/zero or a huge file would stall it).
 const MAX_SKILL_BYTES = 64 * 1024;
 
+// A walk visits at most this many folders. Its link guard covers the current branch only, so sibling
+// links to shared folders make an acyclic tree exponential, and discovery runs on the server's thread.
 export const MAX_WALK_FOLDERS = 4096;
 
 /**
@@ -114,11 +119,18 @@ export function readFrontmatter(path: string, budget?: WalkBudget): Readonly<Rec
   } catch { return null; }
 }
 
+/**
+ * Agents read a header that is not strict YAML (an unquoted colon, `argument-hint: [a] [b]`)
+ * line by line, so a header YAML refuses still yields its description line.
+ */
 export function description(markdown: string): string {
   const frontmatter = markdown.match(FRONTMATTER);
   const found = parseFrontmatter(markdown)?.description;
   const raw = frontmatter?.[1]?.match(/^description:[ \t]*(.+?)\s*$/m)?.[1]?.trim();
+  // a block scalar's indicator alone is no description: its text is on the lines below it
   const line = raw && !/^[>|][-+]?\d?$/.test(raw) ? raw.replace(/^(["'])(.*)\1$/, "$2") : undefined;
+  // YAML takes ` #` in a plain value as a comment (`Issue #102 ...` reads as `Issue`); the line
+  // as written is what the person meant there, and what the line-reading loaders showed before
   if (typeof found === "string" && found.trim()) return line && !/^["']/.test(raw!) && line.length > found.trim().length && line.startsWith(found.trim()) ? line : found.trim();
   if (line) return line;
   const body = frontmatter ? markdown.slice(frontmatter[0].length) : markdown;
@@ -331,6 +343,8 @@ export function piTemplates(root: string, source: SlashCommand["source"]): Slash
     if (!entry.isFile() && !entry.isSymbolicLink()) continue;
     let markdown: string;
     try {
+      // the target is what gets read, so the target is what gets asked: a broken link throws here
+      // and is skipped, as pi skips it, and a link to a folder fails isFile however it is named.
       markdown = readSkillText(join(root, entry.name));
     } catch {
       continue;

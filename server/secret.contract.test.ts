@@ -11,9 +11,16 @@ import { herdrRpc, herdrSocketPath, paneRead, paneSendText, workspaceClose, work
 interface ProxiedRequest { method: string; params: unknown; answered: boolean }
 interface Leg { up: Socket<undefined> | null; held: Buffer[]; entry: ProxiedRequest | null }
 
+/**
+ * A unix socket in front of the test herdr, for what a mirrored pane is sent: herdr's own
+ * socket cannot be asked what it received or made to refuse. One upstream connection per
+ * client connection, bytes passed on as they come (a subscription stays open), each
+ * request's method and params kept in order.
+ */
 function herdrProxy(path: string, upstream: string) {
   const log: ProxiedRequest[] = [];
   const control = { refuse: false, screens: null as { visible: string; detection: string } | null };
+  // a write the kernel took only part of: the rest goes out on drain, and an end waits for it
   const backlog = new Map<object, { chunks: Buffer[]; end: boolean }>();
   const push = (to: Socket<any>, chunk: Buffer): void => {
     const waiting = backlog.get(to);
@@ -53,6 +60,7 @@ function herdrProxy(path: string, upstream: string) {
         const entry: ProxiedRequest = { method: request.method, params: request.params, answered: false };
         leg.entry = entry;
         log.push(entry);
+        // A scrolled viewport can show a previous prompt while the live screen has moved on.
         const params = request.params as { source?: string; format?: string } | undefined;
         if (control.screens && request.method === "pane.read" && params?.format === "text") {
           const text = params.source === "detection" ? control.screens.detection : control.screens.visible;
@@ -105,6 +113,7 @@ process.stdin.on("data", chunk => {
   return { script, resultFile };
 }
 
+/** One secret entered on a pane whose terminal is mirrored (a herdr that cannot attach), herdr behind the proxy. */
 async function mirroredSecret(refuse: boolean, screens?: { visible: string; detection: string }, prompt = "Password:", value = "fixture-value", typed = false) {
   const root = mkdtempSync(join(tmpdir(), "ovis-secret-mirror-"));
   const { script, resultFile } = standIn(root);
@@ -150,6 +159,7 @@ async function mirroredSecret(refuse: boolean, screens?: { visible: string; dete
       await until(() => seen.some((frame) => frame.type === "secret-result"));
     }
     const result = typed ? { ok: true } : seen.find((frame) => frame.type === "secret-result");
+    // an unawaited send would still be on its way: let the pane have it before the log is read
     if (!refuse && result.ok) await until(() => existsSync(resultFile));
     const received = existsSync(resultFile) ? JSON.parse(readFileSync(resultFile, "utf8")) : null;
     const reads = proxy.log.slice(dispatchFrom).filter((entry) => entry.method === "pane.read" && (entry.params as { format?: string }).format === "text");
@@ -207,6 +217,7 @@ it("no passphrase is entered with the Enter key alone where ssh-keygen offers it
   expect(result.ok).toBe(true);
   expect(sends).toEqual([{ method: "pane.send_keys", params: { pane_id: pane, keys: ["Enter"] } }]);
   expect(received).toEqual({ hash: createHash("sha256").update("\r").digest("hex"), length: 1 });
+  // an empty value is no answer to a prompt that offers no such thing
   const refused = await mirroredSecret(false, undefined, "Password:", "");
   expect(refused.result).toMatchObject({ ok: false, code: "invalid_secret" });
   expect(refused.sends).toEqual([]);
@@ -279,10 +290,12 @@ it("secret frames validate prompts and authority, never queue, and type one no-e
     expect((await result(4)).code).toBe("read_only");
     expect(existsSync(resultFile)).toBe(false);
     send({ type: "role", mode: "interact" });
+    // Authority can change while the screen check awaits herdr.
     secret(8); send({ type: "role", mode: "observe" });
     expect((await result(8)).code).toBe("read_only");
     expect(existsSync(resultFile)).toBe(false);
     send({ type: "role", mode: "interact" });
+    // A second bridge is attached to the pane record but cannot write to the held PTY.
     const heldServer = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "held-state") });
     const heldSocket = new WebSocket(`ws://127.0.0.1:${heldServer.port}/ws`);
     const heldSeen: any[] = [];

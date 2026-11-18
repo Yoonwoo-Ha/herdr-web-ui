@@ -213,6 +213,7 @@ test("describes Devin's terminal-bound and picker forms in the scanner source", 
   for (const name of ["model", "fusion", "org", "billing", "shortcuts", "btw", "handoff", "logout"]) {
     expect(source.forms?.[name]).toEqual([{ match: "bare", interaction: "terminal" }]);
   }
+  // a picker or form bare, an action given a value; an untrusted directory asks first
   for (const name of ["mode", "revert", "bug"]) expect(source.forms?.[name]?.[0]).toEqual({ match: "bare", interaction: "terminal" });
   expect(source.forms?.mode?.[1]).toEqual({ match: "other", interaction: "none" });
   expect(source.forms?.["add-dir"]).toEqual([{ match: "bare", interaction: "unknown" }, { match: "other", interaction: "terminal" }]);
@@ -295,6 +296,7 @@ test("lists an imported skill that is the same file as a native one once, under 
   f.put(join(native, "linked/SKILL.md"));
   mkdirSync(join(f.home, ".claude"), { recursive: true });
   symlinkSync(native, join(f.home, ".claude/skills"), "dir");
+  // a different file with a native name still collides and is qualified
   f.put(join(native, "other/SKILL.md"));
   f.put(join(f.cwd, ".claude/skills/other/SKILL.md"));
   const names = f.skills().map(({ name }) => name);

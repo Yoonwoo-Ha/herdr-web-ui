@@ -32,6 +32,7 @@ describe("system readings", () => {
   });
 
   it("reads macOS memory as Activity Monitor's Memory Used: App Memory, wired and compressed", () => {
+    // (anonymous 1170884 - purgeable 2550) + wired 169660 + compressor 138348, in 16 KiB pages; the file cache is left out
     expect(parseVmStat(VM_STAT, 48 * GIB)).toEqual({ total: 48 * GIB, used: 1476342 * 16384 });
     // an Intel Mac counts 4 KiB pages
     const intel = VM_STAT.replace("page size of 16384 bytes", "page size of 4096 bytes");
@@ -65,6 +66,7 @@ describe("system readings", () => {
 
   it("reports a disk as df does and leaves out one too small to fill up", () => {
     const gib = 1024 ** 3;
+    // 100 GiB filesystem, 5 GiB reserved for root: Use% is used over used plus what a user can still fill
     const disk = diskOf("/", { bsize: 4096, blocks: (100 * gib) / 4096, bfree: (35 * gib) / 4096, bavail: (30 * gib) / 4096 });
     expect(disk).toEqual({ path: "/", used: 65 * gib, total: 95 * gib, percent: 68.4 });
     expect(diskOf("/boot", { bsize: 4096, blocks: 1000, bfree: 10, bavail: 10 })).toBeNull();

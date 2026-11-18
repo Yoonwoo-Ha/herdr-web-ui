@@ -112,8 +112,11 @@ export const source: AgentCommandSource = {
     try { settings = plainObject(parseJsonc(readConfigText(join(copilotHome, "settings.json")))); }
     catch {}
     const disabled = new Set(strings(settings.disabledSkills));
+    // a relative folder is the Copilot process's, which works in the pane's folder
     const added = strings(settings.skillDirectories).flatMap((path) =>
       path.startsWith("~/") ? [join(home, path.slice(2))] : isAbsolute(path) ? [path] : cwd ? [resolve(cwd, path)] : []);
+    // Copilot's order, the first skill of a name winning: the project folders, then the personal
+    // folders, then the folders `copilot skill add` saved
     const roots: [string, SlashCommand["origin"]][] = [
       ...(cwd ? projectFolders(cwd, home) : []).flatMap((directory): [string, SlashCommand["origin"]][] =>
         [".github", ".agents", ".claude"].map((prefix) => [join(directory, prefix, "skills"), "project"])),
@@ -123,6 +126,7 @@ export const source: AgentCommandSource = {
     const budget = createWalkBudget();
     const found = new Map<string, SlashCommand | null>();
     for (const [root, origin] of roots) {
+      // a root that is a file is passed over, as Copilot does, rather than ending the whole list
       if (!isDirectory(root)) continue;
       for (const skill of walkSkills(root, { depth: "recursive", looseMarkdown: "none", ignoreFiles: false, requireDescription: false, budget })) {
         // a SKILL.md without frontmatter Copilot can read fails to load there
@@ -130,6 +134,7 @@ export const source: AgentCommandSource = {
         const named = typeof skill.fields.name === "string" ? skill.fields.name.trim() : "";
         const name = /^\S+$/.test(named) ? named : skill.name;
         if (found.has(name)) continue;
+        // its menu leaves out a disabled skill, one only the model may invoke, and one a builtin outranks
         const invocable = skill.fields["user-invocable"] !== false && skill.fields["user-invocable"] !== "false";
         const listed = invocable && !disabled.has(name) && !typedOnly.has(name);
         found.set(name, listed ? { name, description: skill.description, source: "skill", origin, id: skill.id } : null);

@@ -13,6 +13,7 @@ import type { ProcessRow } from "./windows-processes.ts";
 import { codexRolloutPath } from "./codex.ts";
 import rolloutHeaders from "./fixtures/codex-rollout-headers.json";
 
+/** A stat as the listing asks for it: with `bigint`, the identity an NTFS file ID above 2^53 keeps exactly. */
 const statAs = (path: string, bigint?: boolean): Stats | BigIntStats => bigint ? statSync(path, { bigint: true }) : statSync(path);
 const FIXTURES = join(import.meta.dir, "fixtures", "session-history");
 const WINDOWS = process.platform === "win32";
@@ -48,6 +49,7 @@ function install(agent: SessionHistoryAgent, home: string): void {
     const text = readFileSync(file, "utf8").replaceAll('"{{CWD}}"', JSON.stringify(CWD));
     if (target.endsWith(".sql")) {
       const db = new Database(target.replace(/\.sql$/, ".db"), { create: true });
+      // one transaction: a statement each would sync the disk each time, seconds on a loaded machine
       db.transaction(() => db.exec(text.replaceAll(":cwd", sql(CWD)).replaceAll(":uris", sql(JSON.stringify([pathToFileURL(CWD).href])))))();
       db.close();
       continue;
@@ -311,6 +313,7 @@ describe("listSessions", () => {
     const checked = realpathSync(session);
     const rows = await listSessions("pi", CWD, {
       home, env: {},
+      // the file is checked, then swapped for a link out of the store before it is opened
       stat: (path, bigint) => {
         const stat = statAs(path, bigint);
         if (path === checked) { rmSync(path); symlinkSync(join(outside, "secret.jsonl"), path); }
@@ -353,6 +356,7 @@ describe("listSessions", () => {
     let swapped = false;
     const rows = listSessions("hermes", CWD, {
       home, env: {},
+      // the database is checked, then swapped for a link to another one before it is opened
       stat: (path, bigint) => {
         const stat = statAs(path, bigint);
         if (path === checked && !swapped) { swapped = true; rmSync(path); symlinkSync(join(elsewhere, ".hermes", "state.db"), path); }
@@ -383,6 +387,7 @@ describe("listSessions", () => {
         if (path === checked && swap) { rmSync(path); symlinkSync(join(outside, "secret.jsonl"), path); }
         return stat;
       },
+      // A deliberately unchecked reader: handed a path, it would follow the swapped-in link.
       readHead: ((target: number | string, max: number) => {
         targets.push(target);
         if (typeof target !== "number") return readFileSync(target).subarray(0, max);
@@ -397,6 +402,7 @@ describe("listSessions", () => {
     expect(targets).toHaveLength(1);
   });
 
+  // NTFS file IDs often pass 2^53: two that differ only in their low bits round to one number
   const NEAR = 2n ** 60n;
   const withIno = <T extends Stats | BigIntStats>(stat: T, ino: bigint): T =>
     Object.assign(Object.create(Object.getPrototypeOf(stat) as object) as T, stat, { ino: typeof stat.ino === "bigint" ? ino : Number(ino) });
@@ -444,6 +450,8 @@ describe("listSessions", () => {
       home, env: {},
       stat: (path, bigint) => {
         if (path !== checked) return statAs(path, bigint);
+        // at its check the database is swapped for another one (a file, which no link check sees), and
+        // swapped back before the next look, so both looks see the checked file
         if (seen++ === 0) {
           const stat = statAs(path, bigint);
           renameSync(checked, kept); copyFileSync(join(elsewhere, ".hermes", "state.db"), checked);
@@ -553,6 +561,7 @@ describe("listSessions", () => {
   function afterFileClock(ctimeNs: bigint): void {
     const dir = mkdtempSync(join(tmpdir(), "file-clock-"));
     const probe = join(dir, "probe");
+    // a clock set back while it waits would keep it here: a tick is milliseconds, so seconds mean a stuck clock
     const deadline = performance.now() + 2_000;
     try {
       for (let seen = -1n; seen <= ctimeNs;) {
@@ -574,6 +583,8 @@ describe("listSessions", () => {
     let afterWriter: string[] | undefined;
     const rows = listSessions("hermes", CWD, {
       home, env: {},
+      // between the immutable open and the query an agent opens the store, writes, checkpoints and
+      // closes: its last close takes its side files with it
       opened: (_path, immutable) => {
         reads++;
         if (!immutable || afterWriter) return;
@@ -652,6 +663,7 @@ describe("listSessions", () => {
     expect(before).toEqual(["state.db-wal"]);
     const rows = listSessions("hermes", CWD, { home: restored, env: {} });
     expect(sideFiles(store)).toEqual(before);
+    // immutable reads the main file alone: what only the log holds is not seen
     expect(rows.map((row) => row.firstMessage)).toEqual(["Fixture hermes prompt 2", "Fixture hermes prompt 1"]);
   });
 
@@ -677,6 +689,8 @@ describe("listSessions", () => {
     mkdirSync(join(home, ".hermes"));
     const db = join(home, ".hermes", "state.db");
     const writer = new Database(db, { create: true });
+    // a writer whose uncommitted pages reach the main file (a tiny cache spills them), then a crash:
+    // the main file and its hot -journal, as they are on disk
     writer.exec("PRAGMA journal_mode = DELETE; PRAGMA synchronous = OFF");
     writer.transaction(() => {
       writer.exec(readFileSync(join(FIXTURES, "hermes", "dot-hermes", "state.sql"), "utf8").replaceAll(":cwd", sql(CWD)));
@@ -703,6 +717,7 @@ describe("listSessions", () => {
     const writer = new Database(db);
     try {
       writer.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; PRAGMA wal_checkpoint(TRUNCATE)");
+      // written after the last checkpoint: only the -wal holds it (an immutable open would miss it)
       writer.exec("UPDATE messages SET content = 'only in the log' WHERE session_id = '20261002_090000_fx0002' AND role = 'user'");
       const before = sideFiles(dirname(db));
       const rows = listSessions("hermes", CWD, { home, env: {} });
@@ -720,6 +735,8 @@ describe("listSessions", () => {
     expect(listed(MAX_STATS - 5)).toBe(0);
   });
 
+  // the store hermes-agent's own SessionDB made, and what Hermes answered about each row
+  // (scripts/hermes-history-schema-probe.ts)
   const HERMES_NATIVE = join(import.meta.dir, "fixtures", "hermes-history");
   const hermesEvidence = JSON.parse(readFileSync(join(HERMES_NATIVE, "evidence.json"), "utf8")) as {
     native_list_in_cwd: string[]; rows: Array<{ id: string; kind: string; resume_opens: string }>;
@@ -738,6 +755,10 @@ describe("listSessions", () => {
     const home = newHome();
     nativeHermes(home);
     const rows = listSessions("hermes", CWD, { home, env: {} });
+    // left out, as Hermes resumes each as another row: fx0106 (an older branch branched again) as
+    // fx0119, fx0121 through its empty child as fx0123, fx0129 (no end reason) as its unmarked child,
+    // fx0132 (a legacy branch compressed later) as its continuation; fx0135, a reset compressed later,
+    // resumes as itself
     expect(rows.map((row) => `${row.id.slice(-6)} ${kindOf(row.id)}`)).toEqual([
       "fx0135 reset", "fx0134 root", "fx0131 root", "fx0128 root", "fx0125 branch", "fx0124 root", "fx0120 root", "fx0119 legacy-branch", "fx0110 branch",
       "fx0109 root", "fx0108 legacy-reset", "fx0107 root", "fx0105 root", "fx0104 reset", "fx0103 root",
@@ -765,6 +786,7 @@ describe("listSessions", () => {
 
   it("hides a Hermes child that ended in a compression whose continuation holds no messages yet", () => {
     const home = newHome();
+    // Hermes's resume still opens the continuation (get_compression_tip reads no messages)
     nativeHermes(home, "DELETE FROM messages WHERE session_id = '20261010_134000_fx0133'");
     const plain = newHome();
     nativeHermes(plain);
@@ -883,6 +905,7 @@ describe("listSessions", () => {
     try {
       await listSessions("pi", CWD, { home, env: {}, lstat: (path) => { looked++; return lstatSync(path); } });
     } finally {
+      // removed here, inside this test's own time: on NTFS making and removing them takes seconds
       rmSync(home, { recursive: true, force: true });
     }
     expect(looked).toBeGreaterThan(MAX_STATS);
@@ -893,6 +916,7 @@ describe("listSessions", () => {
     const home = newHome();
     const project = join(home, ".claude", "projects", claudeProjectDir(CWD));
     mkdirSync(project, { recursive: true });
+    // Claude names a session by a random id: the names say nothing of the times
     const written: { id: string; at: number }[] = [];
     for (let n = 0; n < 500; n++) {
       const id = `${(n * 7919 % 500).toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`;
@@ -917,6 +941,7 @@ describe("listSessions", () => {
         writeFileSync(path, `${JSON.stringify({ type: "user", cwd: CWD, message: { role: "user", content: `prompt ${n}` } })}\n`);
         const at = (n * 7919) % count;
         utimesSync(path, 1_790_000_000 + at, 1_790_000_000 + at);
+        // Claude keeps a folder of subagent transcripts beside a session
         if (folders) mkdirSync(join(project, id));
         written.push({ id, at });
       }
@@ -936,6 +961,7 @@ describe("listSessions", () => {
         writeFileSync(path, name === "summary.json" ? JSON.stringify({ info: { id, cwd: CWD }, updated_at: new Date(updated * 1000).toISOString() }) : "");
         utimesSync(path, updated, updated);
       }
+      // a folder's time moves when a file is made in it, not while a session keeps writing to one
       utimesSync(dir, folder, folder);
     };
     for (let n = 0; n < 300; n++) session(`idle-${n}`, 1_790_000_000 + n, 1_790_500_000 + n);
@@ -1203,6 +1229,7 @@ describe("GET /api/sessions/history", () => {
     return child;
   };
   const stop = async (...children: ReturnType<typeof Bun.spawn>[]) => { for (const child of children) { child.kill(); await child.exited; } };
+  /** herdr's own environment, which a new tab inherits: none exported, unless a test says otherwise */
   const launchAbsent = async () => ({ state: "absent" as const });
   const claudePane = (pid: number) => async (): Promise<PaneProcesses> => ({ shell_pid: null, foreground_processes: [{ pid, name: "claude", argv: ["claude"] }] });
   type ClaudeListing = { sessions: { id: string; firstMessage: string | null; resume: { argv: string[]; source?: { pane_id: string; store_key: string } } | null }[] };
@@ -1264,6 +1291,7 @@ describe("GET /api/sessions/history", () => {
         expect(await codes(valid, { paneProcesses: claudePane(implicit.pid) })).toEqual([409, "stale_source"]);
         expect(await codes(valid, { paneProcesses: async () => ({ shell_pid: null, foreground_processes: [{ pid: child.pid, name: "claude" }, { pid: implicit.pid, name: "claude" }] }) })).toEqual([409, "claude_store_unknown"]);
         expect(await codes(valid, { paneProcesses: async () => { throw new Error("herdr busy"); } })).toEqual([409, "claude_store_unknown"]);
+        // herdr's answer without the pane's processes says nothing of its Claude: never the default store
         for (const partial of [undefined, {}, { shell_pid: 7 }, { foreground_processes: [] }]) expect(await codes(valid, { paneProcesses: async () => partial })).toEqual([409, "claude_store_unknown"]);
         const implicitPane = claudePane(implicit.pid);
         const implicitKey = ((await (await handleSessionHistoryRequest(...request("workspace_id=w1&agent=claude&pane_id=p1"), { readOnly: false, ...base, paneProcesses: implicitPane })).json()) as ClaudeListing).sessions[0]!.resume!.source!.store_key;
@@ -1272,6 +1300,7 @@ describe("GET /api/sessions/history", () => {
           expect(withheld.sessions.map((row) => [row.firstMessage, row.resume?.source])).toEqual([["default store prompt", undefined]]);
           expect(await codes({ ...valid, store_key: implicitKey }, { paneProcesses: implicitPane, launchSource })).toEqual([409, "launch_unsupported"]);
         }
+        // nothing the refusals said names a store's path or a prompt
         for (const body of [{ ...valid, store_key: "0".repeat(24) }, { ...valid, pane_id: "p-gone" }, { ...valid, session_id: ID(7) }]) expect(JSON.stringify(await (await resume(body, base)).json())).not.toMatch(/alternate|prompt/);
       } finally { await stop(child, implicit); }
     });
@@ -1302,6 +1331,7 @@ describe("GET /api/sessions/history", () => {
       mkdirSync(rcStore);
       claudeStore(alternate, ID(1), "alternate store prompt");
       const child = await claudeStandIn({ PATH: process.env["PATH"] ?? "", CLAUDE_CONFIG_DIR: alternate });
+      // the new tab's shell exports its own store from a startup file, overriding the tab's env
       const rcClaude = await claudeStandIn({ PATH: process.env["PATH"] ?? "", CLAUDE_CONFIG_DIR: rcStore });
       const sameClaude = await claudeStandIn({ PATH: process.env["PATH"] ?? "", CLAUDE_CONFIG_DIR: alternate });
       try {
@@ -1335,6 +1365,7 @@ describe("GET /api/sessions/history", () => {
         const base = { stores: { home, env: {} }, snapshot: async () => reporting, paneProcesses, launchSource: launchAbsent };
         const listed = await (await handleSessionHistoryRequest(...request("workspace_id=w1&agent=claude&pane_id=p1"), { readOnly: false, ...base })).json() as ClaudeListing;
         const closed: string[] = [];
+        // a second `claude --resume` would write the same transcript: the pane showing it is opened instead
         expect(await answer(await resume({ workspace_id: "w1", pane_id: "p1", agent: "claude", session_id: ID(1), store_key: listed.sessions[0]!.resume!.source!.store_key }, { ...base, tabs: fakeTabs(closed) })))
           .toEqual([200, { action: "opened", workspace_id: "w1", pane_id: "p2" }] as never);
       } finally { await stop(implicit, explicit); }
@@ -1343,6 +1374,7 @@ describe("GET /api/sessions/history", () => {
     it("closes a resumed Claude's tab that does not say its store in time", async () => {
       const home = newHome();
       claudeStore(join(home, ".claude"), ID(1), "default store prompt");
+      // Both panes are a shell with nothing under it, on every platform: Windows looks under shell_pid
       const shell = async (): Promise<PaneProcesses> => ({ shell_pid: 1, foreground_processes: [{ pid: 1, name: "bash", argv: ["bash"] }] });
       const table = async (): Promise<ProcessRow[]> => [{ pid: 1, parent: 0, path: "bash", commandLine: "bash" }];
       const base = { stores: { home, env: {} }, snapshot: async () => snapshot(), paneProcesses: shell, table, launchSource: launchAbsent, launchCheckMs: 0 };
@@ -1353,6 +1385,10 @@ describe("GET /api/sessions/history", () => {
     });
 
     it("holds a resume's request open past the server's first idle window, through its start and store check", async () => {
+      // Bun 1.4 puts a request's deadline at its start plus the last timeout set for it once its body is in
+      // (one set before is dropped as the body is read): setting the same value again moves nothing. So a
+      // window is in force when the route starts, 4 s here, and the start alone takes 5.5 s: the answer
+      // comes only if the route's own budget, asked once, really extends that window
       const home = newHome();
       claudeStore(join(home, ".claude"), ID(1), "default store prompt");
       const shell = async (): Promise<PaneProcesses> => ({ shell_pid: 1, foreground_processes: [{ pid: 1, name: "bash", argv: ["bash"] }] });
@@ -1466,6 +1502,7 @@ describe("GET /api/sessions/history", () => {
       { pid: SHELL, parent: 1, path: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", commandLine: "powershell.exe" },
       { pid: PID, parent: SHELL, path: CLAUDE_EXE, commandLine: `"${CLAUDE_EXE}"`, started: STARTED },
     ];
+    // the native claude.exe the shell started runs the session in a child claude.exe, and only that child writes the record
     const LAUNCHER = 4000;
     const launched = (shell: number): ProcessRow[] => [
       { pid: LAUNCHER, parent: shell, path: CLAUDE_EXE, commandLine: `"${CLAUDE_EXE}"`, started: STARTED - 1_000 },
@@ -1544,6 +1581,8 @@ describe("GET /api/sessions/history", () => {
     });
 
     it("keeps a resume from a shell pane that came up on ~/.claude, and closes one on another store", async () => {
+      // p1 is a shell with no Claude (the default store, chosen by nothing exported); the new pane's
+      // shell runs the resumed Claude, whose PID record cannot say how its store was chosen
       const NEW_SHELL = 20;
       const rows = async (): Promise<ProcessRow[]> => [
         { pid: SHELL, parent: 1, path: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", commandLine: "powershell.exe" },
@@ -1594,6 +1633,7 @@ describe("GET /api/sessions/history", () => {
   it("lists a pane with no Claude from the server's default store, and refuses a pane of another workspace before reading any", async () => {
     const home = newHome();
     claudeStore(join(home, ".claude"), ID(1), "default store prompt");
+    // a shell with nothing under it, on every platform: Windows looks under shell_pid
     const shell = async () => ({ shell_pid: 1, foreground_processes: [{ pid: 1, name: "bash", argv: ["bash"] }] });
     const table = async (): Promise<ProcessRow[]> => [{ pid: 1, parent: 0, path: "bash", commandLine: "bash" }];
     let asked = 0;

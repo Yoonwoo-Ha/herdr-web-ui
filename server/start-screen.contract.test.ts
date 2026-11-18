@@ -7,6 +7,7 @@ import { createServer } from "./index.ts";
 import { herdrRpc, paneRead, paneScroll, paneScrollInfo, subscribeEvents, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import type { ConversationResponse } from "../shared/protocol.ts";
 
+// A terminal-started Codex with no reported session names its model through its live footer.
 const root = mkdtempSync(join(tmpdir(), "ovis-start-screen-contract-"));
 const originalHome = process.env["HOME"];
 const originalPiAgentDir = process.env["PI_CODING_AGENT_DIR"];
@@ -43,6 +44,7 @@ beforeAll(async () => {
   const shown = (await paneRead({ paneId: scrolledPane, source: "visible", format: "text" })).text;
   expect(shown).toContain("codex_old_contract");
   expect(shown).not.toContain("codex_live_contract");
+  // a Pi that has had no turn: its session file is not written yet, and its footer names the model
   const pi = await workspaceCreate({ cwd: root, label: "ovis-test-start-screen-pi" });
   workspaces.push(pi.workspace.workspace_id);
   piPane = pi.root_pane.pane_id;

@@ -4,6 +4,7 @@ import type { SkillActivity } from "../shared/protocol.ts";
 const record = (value: unknown): Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const label = (value: unknown): string | null => typeof value === "string" && value.length > 0 && value.length <= 200 && !/[\r\n<>]/.test(value) ? value : null;
 
+/** No filesystem lookup: evidence belongs to the bound transcript, including remote PCs. */
 export function skillDocument(path: unknown): SkillActivity | null {
   if (typeof path !== "string" || path.length > 4096 || /[\r\n]/.test(path)) return null;
   const normalized = path.replaceAll("\\", "/");
@@ -12,6 +13,7 @@ export function skillDocument(path: unknown): SkillActivity | null {
   return name && name !== "." ? { name, path, evidence: "instructions", status: "loaded" } : null;
 }
 
+/** Codex's explicitly selected skill is injected as one complete user-context envelope. */
 export function selectedSkill(text: string): SkillActivity | null {
   const match = /^<skill>\s*<name>([^<>\r\n]+)<\/name>\s*<path>([^<>\r\n]+)<\/path>[\s\S]*<\/skill>$/.exec(text.trim());
   if (!match) return null;
@@ -23,6 +25,7 @@ export function selectedSkill(text: string): SkillActivity | null {
 const SKILL_INSTRUCTION = /^The user explicitly invoked the "([^"]+)" skill\. Follow the instructions in <skill-instruction> as binding for this request, while respecting higher-priority instructions\.\n\n<skill-instruction name="([^"]+)" location="([^"]+)">\n[\s\S]*?\n<\/skill-instruction>/;
 const LEGACY_SKILL = /^<skill name="([^"]+)" location="([^"]+)">\n[\s\S]*?\n<\/skill>(?:\n\n([\s\S]+))?$/;
 
+/** pi names the skill file it loaded: a SKILL.md, or a standalone `.md` skill (`--skill review.md`). */
 function loadedSkill(name: string | undefined, location: string | undefined): SkillActivity | null {
   const skill = label(name);
   if (skill === null || typeof location !== "string" || location.length === 0 || location.length > 4096 || /[\r\n]/.test(location)) return null;
@@ -59,6 +62,7 @@ export function skillInvocationPrompt(text: string): { skills: SkillActivity[]; 
   return skill ? { skills: [skill], request: legacy![3]?.trim() ?? "" } : null;
 }
 
+/** omp and gjc keep the user's invocation in details, separate from the expanded body. */
 export function skillPromptMessage(value: unknown): { skills: SkillActivity[]; request: string } | null {
   const entry = record(value);
   if (entry.type !== "custom_message" || entry.customType !== "skill-prompt" || entry.display === false) return null;

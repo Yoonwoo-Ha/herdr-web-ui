@@ -7,6 +7,7 @@ import { sshDir, twoPeers } from "./ssh-candidates.fixture.ts";
 import { glibcGetdents, glibcOpenAt, type Getdents, type OpenAt } from "./ssh-include-dir.ts";
 import { includeTestOnly } from "./ssh-include.ts";
 
+// a wildcard Include listed through the held folder's descriptor (getdents64) and its matches opened through it (openat), with glibc
 const [getdents, openAt] = [glibcGetdents(), glibcOpenAt()];
 const calls = (): { getdents: Getdents; openAt: OpenAt } => {
   if (getdents === null || openAt === null) throw new Error("glibc's getdents64/openat did not load");
@@ -46,6 +47,7 @@ it.skipIf(!linux)("leaves an Include unread when its held folder is outside home
 it.skipIf(!linux)("leaves an Include unread when any open of a file it listed fails", async () => {
   const fails: Record<string, (dir: string, file: string) => void> = {
     gone: () => {},
+    // a link whose target runs through a file: ENOTDIR
     notDir: (dir, file) => { unlinkSync(file); symlinkSync(join(dir, "config", "sub"), file); },
     loop: (_, file) => { unlinkSync(file); symlinkSync(file, file); },
     ...(process.getuid?.() === 0 ? {} : { refused: (_: string, file: string) => { chmodSync(file, 0); } }),

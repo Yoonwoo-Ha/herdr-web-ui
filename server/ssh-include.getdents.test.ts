@@ -19,6 +19,7 @@ const answering = (chunks: (Buffer | number)[]) => (_fd: number, buffer: Buffer)
   chunk.copy(buffer);
   return chunk.length;
 };
+/** one linux_dirent64 record naming `name`: its d_reclen says `reclen`, its bytes are `bytes` long */
 const record = (name: string, reclen: number, bytes = Math.max(reclen, 20 + name.length)): Buffer => {
   const written = Buffer.alloc(bytes);
   written.writeUInt16LE(reclen, 16);
@@ -38,7 +39,7 @@ it.skipIf(process.platform === "win32")("leaves an Include unread when getdents6
 });
 
 it.skipIf(process.platform === "win32")("counts every record getdents64 answers, `.` and `..` too, against the folder-entry budget", async () => {
-  const records = [".", "..",
+  const records = [".", "..", // dot-names, which `*` never matches, so only the entry budget can cut the listing
     ...Array.from({ length: 1023 }, (_, index) => `.n${String(index).padStart(4, "0")}`)].map((name) => record(name, 32));
   expect(await withGetdents(answering([Buffer.concat(records.slice(0, 1000)), Buffer.concat(records.slice(1000))]), { "conf.d/x.conf": "" })).toEqual(unread);
 });

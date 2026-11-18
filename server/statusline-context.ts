@@ -36,6 +36,11 @@ export function readContextFile(path: string, profile: string) {
   }
 }
 
+/**
+ * Move first, inspect the moved inode, then unlink only our capture. A foreign entry is
+ * linked back without overwriting a newcomer; if that fails it stays in a visible recovery file.
+ * Pathname-only POSIX APIs cannot pin the parent directory against a concurrent same-user rename.
+ */
 export function removeContextFile(path: string, profile: string, olderThan = Infinity): boolean {
   const directory = contextDirname(path);
   if (!contextDirectorySafe(directory)) return false;
@@ -51,7 +56,7 @@ export function removeContextFile(path: string, profile: string, olderThan = Inf
   try {
     const capture = readContextFile(quarantine, profile);
     owned = capture !== null && capture.mtimeMs < olderThan;
-  } catch {}
+  } catch { /* Invalid, linked or unreadable entries belong to the user, not this installation. */ }
   if (owned) {
     contextFs.unlinkSync(quarantine);
     return true;
@@ -91,12 +96,14 @@ export function pruneContextFiles(directory: string, profile: string, now: numbe
   } finally {
     entries.closeSync();
   }
+  // Inspect at most 128 own captures, oldest first; foreign names cannot consume the budget.
   for (const { path } of candidates.sort((a, b) => a.mtimeMs - b.mtimeMs).slice(0, 128)) {
     try { removeContextFile(path, profile, now - CONTEXT_STALE_MS); }
     catch {}
   }
 }
 
+/** Exclusive temp creation and hard-link publication never overwrite a target. */
 export function publishContext(directory: string, profile: string, capture: { session_id: string; model: string; window: number }): void {
   if (!contextDirectorySafe(directory)) return;
   const pending = contextJoin(directory, `.${capture.session_id}.${contextUUID()}.tmp`);
@@ -117,7 +124,7 @@ export function publishContext(directory: string, profile: string, capture: { se
       if (error === null || typeof error !== "object" || !("code" in error) || error.code !== "EEXIST") throw error;
       fresh = false;
       if (!removeContextFile(target, profile)) return;
-      contextFs.linkSync(pending, target);
+      contextFs.linkSync(pending, target); // EEXIST means a newcomer won: leave it alone.
     }
     if (fresh) pruneContextFiles(directory, profile, Date.now());
   } catch { /* Context is optional; never interrupt quota capture or the original status line. */ }

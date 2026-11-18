@@ -7,6 +7,10 @@ const KEPT_MOST = 512;
 const FAILED_MS = 10_000;
 const kept = new Map<string, { address: string | null; at: number }>();
 
+/**
+ * The PC an SSH target reaches, as OpenSSH resolves it (`ssh -G`, which reads the config and connects to nothing):
+ * `user@hostname:port`. Two aliases of one host, or a port given and the default 22, are the same PC.
+ */
 export function sshAddress(target: SshTarget): string | null | undefined {
   const hit = kept.get(keyOf(target));
   if (!fresh(hit)) void warmSshAddresses([target]);
@@ -54,6 +58,7 @@ export async function warmSshAddresses(targets: SshTarget[]): Promise<void> {
 }
 const RESOLVE_MS = 3000;
 
+/** The resolver, replaced in tests (scripts/test-herdr.ts): never the account's ssh or its config there. */
 export const sshAddresses: { resolve(target: SshTarget, config?: string): Promise<string | null> } = {
   resolve: (target, config) => resolveWithSsh(target, config),
 };

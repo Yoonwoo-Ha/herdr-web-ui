@@ -95,6 +95,7 @@ async function verdictOf(pane: PaneInfo, facts: MoveFacts, claimed: Set<string>,
   if (pane.agent_status !== "idle" && pane.agent_status !== "done") return { kind: "busy", reason: "agent_working", agent, command: null };
   if (facts.holdsPending(pane.pane_id)) return { kind: "busy", reason: "agent_working", agent, command: null };
   if (!Object.hasOwn(EXIT_COMMANDS, agent)) return { kind: "needs_you", agent };
+  // the exit is sent as a message: only into an input line read empty, or text typed there would go with it
   if (await facts.inputEmpty(pane.pane_id, agent) !== true) return { kind: "needs_you", agent };
   const session = pane.agent_session;
   if (session && session.kind === "id" && session.agent === agent && isSessionHistoryAgent(agent) && pane.cwd) {

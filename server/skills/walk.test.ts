@@ -320,6 +320,7 @@ describe("repository ancestors", () => {
     expect(ancestorsToRepoRoot(cwd, home.toUpperCase(), "win32")).toEqual([cwd]);
     expect(ancestorsToRepoRoot(root, home.toUpperCase(), "win32")).toEqual([]);
     expect(ancestorsToRepoRoot(root.toUpperCase(), home, "win32")).toEqual([]);
+    // elsewhere letter case tells folders apart
     expect(ancestorsToRepoRoot(cwd, home.toUpperCase(), "linux")).toEqual([cwd, home, root]);
     expect(ancestorsToRepoRoot(root, home.toUpperCase(), "linux")).toEqual([root]);
   });

@@ -79,6 +79,11 @@ export class SeenStore {
     return next;
   }
 
+  /**
+   * herdr moved a pane of `pc` under a new ID (#1503): what was read under the old ID is read under the new one,
+   * each finish under the number the server counts it by there (`renumber`, server/finishes.ts moved), and every
+   * browser is told.
+   */
   moved(pc: string, from: string, to: string, renumber: (id: number) => number = (id) => id): void {
     if (from === to) return;
     for (const finish of this.list()) {
@@ -102,6 +107,7 @@ export class SeenStore {
   }
 }
 
+/** The body as text, or null past MAX_SEEN_BYTES: one announced over it is refused unread, one that lies about its length is cut off as it arrives. */
 async function readSeenBody(request: Request): Promise<string | null> {
   const announced = Number(request.headers.get("content-length"));
   if (Number.isFinite(announced) && announced > MAX_SEEN_BYTES) return null;

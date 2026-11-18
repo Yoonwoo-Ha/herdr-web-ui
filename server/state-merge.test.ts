@@ -67,6 +67,7 @@ describe("paired devices of the install's other state dir", () => {
     expect(ids(active)).toEqual(["a", "b"]);
     expect(registry(active)).toEqual(registry(sibling));
     expect(registry(active).gate_closed_at).toBe("2026-10-25T05:19:00.000Z");
+    // the device paired in the other dir gets in with its own cookie
     expect(new DeviceStore(active).match("token-b")?.id).toBe(device("b").id);
     const [backup] = readdirSync(join(active, "state-merge-backups"));
     expect(readFileSync(join(active, "state-merge-backups", backup!, "devices.json"), "utf8")).toBe(before);
@@ -85,6 +86,7 @@ describe("paired devices of the install's other state dir", () => {
   it("keep the gate closed when both registries are gone after a merge that knew them", () => {
     for (const paired of [[device("a")], []]) {
       const { active, sibling } = install();
+      // a paired install, and one whose every device was revoked (its gate stays closed)
       writeDevices(active, paired, "2026-10-25T05:19:00.000Z");
       mergeSiblingState(active, sibling, at(0));
       for (const dir of [active, sibling]) rmSync(join(dir, "devices.json"));
@@ -166,9 +168,11 @@ describe("paired devices of the install's other state dir", () => {
       let blocked: string | null;
       try { blocked = mergeSiblingState(active, sibling, at(0)).devicesBlocked; } finally { failing.mockRestore(); said.mockRestore(); }
       if (failures === 1) {
+        // the copy failed, the closed placeholder did not: a release before this one on that dir is gated
         expect(blocked).toBeNull();
         expect(new DeviceStore(sibling).gated).toBe(true);
       } else {
+        // nothing could be written there: this server says so and stays gated
         expect(blocked).toContain(sibling);
         expect(new DeviceStore(active, blocked).gated).toBe(true);
       }
@@ -230,6 +234,7 @@ describe("paired devices of the install's other state dir", () => {
     writeFileSync(join(sibling, "devices.json"), "{ not json");
     const said = spyOn(console, "error").mockImplementation(() => {});
     try { mergeSiblingState(active, sibling, at(1)); } finally { said.mockRestore(); }
+    // an older release pairs y on the placeholder and saves the registry its own way, without the mark
     writeDevices(active, [device("y")], "2026-10-25T06:00:00.000Z");
     writeFileSync(join(sibling, "devices.json"), repaired);
     mergeSiblingState(active, sibling, at(2));
@@ -521,6 +526,7 @@ describe("push subscriptions of the install's other state dir", () => {
     return fake;
   };
 
+  // regression: the merge compared raw spellings, so another spelling of an endpoint retired here came back registered (#2012)
   it("leave out another spelling of an endpoint retired here", async () => {
     const { active, sibling } = install();
     const key = webpush.generateVAPIDKeys();
@@ -533,6 +539,7 @@ describe("push subscriptions of the install's other state dir", () => {
     expect(held).toEqual([]);
   });
 
+  // regression: storing endpoints normalized let the other dir's next write respell one taken over, and the next merge took it again
   it("do not come back after a goodbye here when the other dir writes its list again", async () => {
     const { active, sibling } = install();
     const fake = await subscribe(sibling, webpush.generateVAPIDKeys());
@@ -571,6 +578,7 @@ describe("push subscriptions of the install's other state dir", () => {
     await push.sendTest(here.subscription.endpoint);
     expect(there.received[0]).toMatchObject({ vapidKey: theirs.publicKey, vapidValid: true });
     expect(here.received[0]).toMatchObject({ vapidKey: mine.publicKey, vapidValid: true });
+    // unsubscribed here since: the next merge does not bring it back
     push.unsubscribe(there.subscription.endpoint);
     mergeSiblingState(active, sibling, at(1));
     const held = JSON.parse(readFileSync(join(active, "push-subscriptions.json"), "utf8")) as { endpoint: string }[];
@@ -610,6 +618,7 @@ describe("push keys of the install's other state dir", () => {
     const own = webpush.generateVAPIDKeys();
     const fake = await startFakePushService();
     fakes.push(fake);
+    // the other dir once took this subscription over, made for a key that is not its own
     writeJson(join(sibling, "vapid.json"), webpush.generateVAPIDKeys());
     writeJson(join(sibling, PUSH_EXTRA_KEYS), { keys: [{ ...first, endpoints: [fake.subscription.endpoint] }] });
     writeJson(join(sibling, "push-subscriptions.json"), [{ ...fake.subscription, device_id: null }]);

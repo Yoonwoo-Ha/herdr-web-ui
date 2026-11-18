@@ -90,5 +90,6 @@ it("follows COPILOT_HOME and leaves out what Copilot's menu leaves out", () => {
   skill(join(home, ".copilot", "skills", "default-home"), "default-home");
   put(join(copilotHome, "settings.json"), '{ "disabledSkills": ["off"] }');
   expect(skills(null, home, [`COPILOT_HOME=${copilotHome}`]).map(({ name }) => name)).toEqual(["kept"]);
+  // the builtin /help keeps its row: Copilot runs it, not the skill
   expect(paneCommands("copilot", null, home, { environ: [`COPILOT_HOME=${copilotHome}`] }).filter(({ name }) => name === "help").map(({ source }) => source)).toEqual(["builtin"]);
 });

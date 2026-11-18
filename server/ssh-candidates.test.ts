@@ -11,6 +11,7 @@ const status = (peers: string[]): string => JSON.stringify({
   Peer: Object.fromEntries(peers.map((name, index) => [`k${index}`, { DNSName: `${name}.tail.ts.net.`, UserID: 1, Online: true, OS: "linux", TailscaleIPs: [`100.64.1.${index + 1}`] }])),
 });
 
+/** answers each named peer's name and MagicDNS name with its address in `status(peers)`, as MagicDNS does */
 const magicDns = (peers: string[]) => async (host: string): Promise<string[]> => {
   const index = peers.findIndex((name) => host === name || host === `${name}.tail.ts.net`);
   return index < 0 ? [] : [`100.64.1.${index + 1}`];

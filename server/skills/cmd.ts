@@ -79,6 +79,7 @@ const forms: NonNullable<AgentCommandSource["forms"]> = {
   "mode:plan": [{ match: "bare", interaction: "none" }],
   "plan-review": [{ match: "bare", interaction: "terminal" }],
   "pr-comments": [{ match: "bare", interaction: "terminal" }],
+  // bare opens the add-dir modal, the compact mode or language selector, or the full-screen context view (dist/cli.mjs dispatchCommand)
   "add-dir": [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
   agents: [{ match: "bare", interaction: "terminal" }],
   changelog: [{ match: "bare", interaction: "terminal" }, { match: { sub: "all" }, interaction: "terminal" }],
@@ -185,7 +186,7 @@ function* commandsAt(root: string, origin: SlashCommand["source"], budget: WalkB
         description: folder ? `${folder} · ${command.description}` : command.description,
       };
     }
-  } catch { return; }
+  } catch { return; /* an unreadable command root lists nothing, as Command Code's own loader skips it */ }
 }
 
 function discover(ctx: AgentCommandContext): SlashCommand[] {
@@ -237,6 +238,8 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
   const advance = (walks: typeof candidates): typeof candidates => walks.filter((candidate) => {
     const step = candidate.walk.next();
     if (step.done) { candidate.cut = spent(); return false; }
+    // Only a command found before the bound was spent is safe: after that the walk may have skipped a
+    // folder or entries holding a same-name command that Command Code reaches first.
     if (step.value && !(candidate.command && spent())) candidate.rows.push(step.value);
     return true;
   });
@@ -245,6 +248,8 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
   while (personal.length && budget.folders >= reserved.folders && budget.entries >= reserved.entries && budget.reads >= reserved.reads) personal = advance(personal);
   let pending = candidates;
   while (pending.length) pending = advance(pending);
+  // Once a command root is cut short, any name may be one of its unlisted commands, which Command Code
+  // runs first: lower-priority command roots list nothing, and skills keep only their /skill: form.
   let unresolved = false;
   const discovered = candidates.flatMap((candidate, index) => {
     if (index >= commandRoots.length) return candidate.rows;

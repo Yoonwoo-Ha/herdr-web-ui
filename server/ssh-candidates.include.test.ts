@@ -79,6 +79,10 @@ it("claims nothing for a host an Include with a token or environment variable ma
   expect(candidates.map((candidate) => [candidate.name, candidate.tailnet])).toEqual([["box", undefined], ["box", "box.tail.ts.net"], ["other", "other.tail.ts.net"]]);
 });
 
+/**
+ * Runs `swap` right after the code under test first resolves or opens `path`: the moment between a check of a path and
+ * its use, where a folder or file on the way can be replaced by a link
+ */
 function swapAfterFirstLook(path: string, swap: () => void): () => void {
   const [realpath, open] = [fsPromises.realpath, fsPromises.open];
   let swapped = false;
@@ -161,11 +165,13 @@ it.skipIf(process.platform === "win32")("claims no PC for a host a folder listed
   const folder = join(ssh, "conf.d");
   const realpath = fsPromises.realpath;
   let swapped = false;
+  // swapped for a link out of home just after the folder's path is checked, before it is listed by that path
   const spy = spyOn(fsPromises, "realpath").mockImplementation((async (looked: PathLike) => {
     const found = await realpath(looked);
     if (!swapped && String(looked) === folder) { swapped = true; renameSync(folder, `${folder}.old`); symlinkSync(outside, folder); }
     return found;
   }) as typeof realpath);
+  // listed by path, names only, as off glibc (macOS here)
   Object.assign(includeTestOnly, { getdents: null, platform: "darwin" });
   try {
     const candidates = await sshCandidates({ sshDir: ssh, home, readStatus: async () => twoPeers });
@@ -200,6 +206,7 @@ it.skipIf(!wildcardIncludesRead)("reads the files a wildcard matches in the orde
 
 it("reads a wildcard Include by path where getdents64 is not available, and claims no PC for the hosts it brings", async () => {
   const dir = sshDir({ "conf.d/x.conf": "Host box\n  HostName 100.64.0.2\n", config: "Include conf.d/*\nHost box\n  HostName 100.64.0.1\n" });
+  // listed by path, names only, as off glibc (macOS here)
   Object.assign(includeTestOnly, { getdents: null, platform: "darwin" });
   try {
     const candidates = await sshCandidates({ sshDir: dir, home: dir, readStatus: async () => twoPeers });
@@ -210,6 +217,7 @@ it("reads a wildcard Include by path where getdents64 is not available, and clai
 });
 
 it("lists a host only a wildcard Include names where getdents64 is not available, without claiming the PC its HostName reaches", async () => {
+  // listed by path, names only, as off glibc (macOS here)
   Object.assign(includeTestOnly, { getdents: null, platform: "darwin" });
   try {
     expect(await rowsOf({ "config.d/lab.conf": "Host lab\n  HostName 100.64.0.2\n", config: "Include config.d/*\n" })).toEqual([
@@ -219,6 +227,7 @@ it("lists a host only a wildcard Include names where getdents64 is not available
 });
 
 it("claims no PC for a host whose options a wildcard Include listed by path sets, even one its own Host lines do not name", async () => {
+  // listed by path, names only, as off glibc (macOS here)
   Object.assign(includeTestOnly, { getdents: null, platform: "darwin" });
   try {
     expect(await rowsOf({ "conf.d/x.conf": "Host *\n  HostName 100.64.0.1\n", config: "Include conf.d/*\nHost lab\n" })).toEqual([
@@ -231,6 +240,7 @@ it("claims no PC for a host after a wildcard Include listed by path, whether the
   const after = "Host lab\n  HostName 100.64.0.1\n";
   const empty = sshDir({ config: `Include conf.d/*\n${after}` });
   mkdirSync(join(empty, "conf.d"));
+  // listed by path, names only, as off glibc (macOS here)
   Object.assign(includeTestOnly, { getdents: null, platform: "darwin" });
   try {
     expect(await rowsOf({ "conf.d/a.conf": "Host listed\n", config: `Include conf.d/*\n${after}` })).toEqual([["listed", undefined], ["lab", undefined], ...unclaimed]);

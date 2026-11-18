@@ -52,6 +52,7 @@ describe("OpenCode's menu", () => {
     expect(commands.filter((row) => row.source === "skill").map((row) => row.name)).toEqual(["customize-opencode", "native"]);
   });
 
+  // v1 (packages/core skill discovery): the Claude flags gate only the .claude roots; .agents stays.
   for (const flag of ["OPENCODE_DISABLE_CLAUDE_CODE_SKILLS", "OPENCODE_DISABLE_CLAUDE_CODE"]) {
     it(`omits only the Claude roots when the pane sets ${flag}`, () => {
       const { home, cwd, config } = fixture();
@@ -78,6 +79,7 @@ describe("OpenCode's menu", () => {
     const { root, home } = fixture();
     const custom = join(root, "custom");
     put(join(custom, "commands", "check.md"), "---\ndescription: Check\n---\nRun checks");
+    // every level links twice to the next: 2^24 paths without a bound, so the old walk never ended
     const levels = 24;
     for (let level = 0; level < levels; level++) mkdirSync(join(custom, "commands", "lattice", `d${level}`), { recursive: true });
     for (let level = 0; level < levels - 1; level++) {

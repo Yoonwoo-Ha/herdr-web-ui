@@ -127,6 +127,7 @@ export function isTaggedNode(status: string | null): boolean {
   return (parseJson<StatusJson>(status)?.Self?.Tags?.length ?? 0) > 0;
 }
 
+/** The login this PC's Tailscale node belongs to, from `tailscale status --json`; null when it does not say, or the node is tagged. */
 export function parseTailscaleOwner(status: string | null): string | null {
   const parsed = parseStatus(status);
   const id = parsed?.Self?.UserID;
@@ -147,6 +148,12 @@ export function parseSoleTailnetLogin(status: string | null): string | null {
   return readSoleLogin(status).login;
 }
 
+/**
+ * `parseSoleTailnetLogin`'s proof together with what the status settles for good: a Running status
+ * that names this PC's user states whether one login owns the tailnet - the login above, or a tag
+ * or a second login against it. A daemon still coming up, a status that names no user for this
+ * PC, or one that names no login for a tailnet it would prove, leaves the question open instead.
+ */
 function readSoleLogin(status: string | null): { login: string | null; settled: boolean } {
   // "every node" is every node this PC's Tailscale lists: a node an ACL hides is not in its network map
   const parsed = parseStatus(status);
@@ -154,6 +161,7 @@ function readSoleLogin(status: string | null): { login: string | null; settled: 
   const self = parsed.Self;
   if (self === undefined || self.UserID === undefined || self.UserID === null) return { login: null, settled: false };
   const owner = self.UserID;
+  // offline peers count: they are nodes of this tailnet and can come back at any moment
   const nodes: NodeJson[] = [self, ...Object.values(parsed.Peer ?? {})];
   const sole = nodes.every((node) => (node.Tags?.length ?? 0) === 0
     && node.UserID !== undefined && node.UserID !== null && String(node.UserID) === String(owner));
@@ -162,10 +170,12 @@ function readSoleLogin(status: string | null): { login: string | null; settled: 
   return { login, settled: login !== null };
 }
 
+/** This PC's IPv4 address on the tailnet (100.x.y.z), from `tailscale status --json`; null when it has none. */
 export function parseTailscaleIp(status: string | null): string | null {
   return parseJson<StatusJson>(status)?.Self?.TailscaleIPs?.find((ip) => /^\d+\.\d+\.\d+\.\d+$/.test(ip)) ?? null;
 }
 
+/** This PC's MagicDNS name from `tailscale status --json`, without its trailing dot; null when it has none. */
 export function parseNodeName(status: string | null): string | null {
   return parseJson<StatusJson>(status)?.Self?.DNSName?.replace(/\.$/, "") || null;
 }
@@ -179,6 +189,7 @@ export interface TailnetIdentity {
 }
 
 const OWNER_TTL_MS = 5 * 60_000;
+/** how soon a request stating a login may read the status again while this PC's own login is unknown */
 const LOGIN_RETRY_MS = 2_000;
 
 const cliStatus = async (): Promise<string | null> => {
@@ -194,6 +205,10 @@ const cliStatus = async (): Promise<string | null> => {
  * that waits for a read, shared with any read already in flight.
  */
 export class TailnetIdentitySource {
+  /**
+   * the last read's answer and when it landed; null until the first read lands. `ownerKnown`: a
+   * Running status named this PC's login, or that its node is tagged and has none
+   */
   private cache: (TailnetIdentity & { at: number; settled: boolean; ownerKnown: boolean }) | null = null;
   private reading: Promise<void> | null = null;
 
@@ -222,6 +237,9 @@ export class TailnetIdentitySource {
       return;
     }
     const sole = readSoleLogin(status);
+    // a daemon that is not Running proves nothing about whose PC this is: the login a Running one named is
+    // kept, else the one this status names is used; either stays unconfirmed, so a login request reads again
+    // (`loginIdentity`)
     const running = parseStatus(status)?.BackendState === "Running";
     const kept = !running && this.cache !== null && (this.cache.owner !== null || this.cache.tagged) ? this.cache : null;
     const owner = kept ? kept.owner : parseTailscaleOwner(status);
@@ -243,6 +261,11 @@ export class TailnetIdentitySource {
     return this.reading;
   }
 
+  /**
+   * The PC's own Tailscale login, or that its node is tagged and has none, and the one login that
+   * owns this whole tailnet (`parseSoleTailnetLogin`), cached five minutes. A stale value is
+   * answered at once and refreshed in the background.
+   */
   identity(): TailnetIdentity {
     if (this.cache === null || Date.now() - this.cache.at >= OWNER_TTL_MS) void this.refresh();
     return {

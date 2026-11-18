@@ -153,6 +153,7 @@ describe("what a stop checks right before it acts", () => {
     const realNow = Date.now;
     Date.now = () => tried + 3_100;
     try {
+      // herdr's pid for the shell is not a process here (another pid namespace): nothing is signalled
       delete terminals[101];
       expect(await service.stopPane("p1", true)).toBe("not_local");
       terminals[101] = 999;
@@ -189,6 +190,7 @@ describe("the merge pass's two cases", () => {
   it("sends no Ctrl+C when the command in front became another one in the same group by the last look", async () => {
     const { service, fronts, sent, wait, onInfo } = world();
     await wait();
+    // the shell's job exec'd another program: same shell, same group, another name
     onInfo((paneId, inLane) => { if (paneId === "p1" && inLane) fronts["p1"] = { shell: 101, group: 201, name: "vim" }; });
     expect(await service.stopPane("p1", false, "sleep")).toBe("changed");
     expect(sent).toEqual([]);

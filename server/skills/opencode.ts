@@ -62,6 +62,7 @@ const V2_BUILTINS: readonly Builtin[] = [
   { name: "btw", description: "Ask a side question", forms: [...TERMINAL, { match: "other", interaction: "terminal" }] },
   { name: "cd", description: "Change working directory" },
   { name: "clear", description: "Clear session" },
+  // routes/session/index.tsx: dialogs and clipboard work the TUI alone shows; compact has no form the block gives
   { name: "compact", description: "Compact session" },
   { name: "copy", description: "Copy last assistant message", forms: TERMINAL, visibility: "terminal" },
   { name: "export", description: "Export session transcript", forms: TERMINAL, visibility: "terminal" },
@@ -71,8 +72,12 @@ const V2_BUILTINS: readonly Builtin[] = [
   { name: "pair", description: "Pair device" },
   { name: "plugins", description: "Plugins", forms: TERMINAL, visibility: "terminal" },
   { name: "reload", description: "Reload configuration" },
+  // bare opens the rename dialog; with a title (arguments: true) it renames in place
   { name: "rename", description: "Rename session", forms: [...TERMINAL, { match: "other", interaction: "unknown" }] },
+  // /update and /restart register only when the TUI has an updater or a restartable service, which a
+  // scan cannot see: they are listed, and the terminal says whether this session has them
   { name: "restart", description: "Restart service" },
+  // dialogs the TUI alone shows (app.tsx DialogConfig, prompt/index.tsx workspace manager)
   { name: "settings", description: "Open settings", forms: TERMINAL, visibility: "terminal" },
   { name: "stats", description: "Usage statistics" },
   { name: "terminal", description: "New terminal" },
@@ -87,6 +92,7 @@ const canonical = (path: string): string => { try { return realpathSync(path); }
 
 function configCommands(path: string, source: "user" | "project", key: string): SlashCommand[] {
   try {
+    // bounded and regular files only: a FIFO or a huge file here would hold the server's one thread
     const config: unknown = parseJsonc(readConfigText(path));
     if (typeof config !== "object" || config === null || !(key in config)) return [];
     const commands = (config as Record<string, unknown>)[key];
@@ -105,6 +111,8 @@ function commandFiles(root: string): { name: string; path: string }[] {
   const ancestors = new Set<string>();
   let folders = 0;
   const visit = (directory: string): void => {
+    // the link guard covers the current branch only: sibling links to shared folders make an acyclic
+    // tree exponential, and this runs on the server's thread, so it shares the skill walk's bound
     if (++folders > MAX_WALK_FOLDERS) return;
     const real = canonical(directory);
     if (ancestors.has(real)) return;
@@ -143,10 +151,12 @@ export const source: AgentCommandSource = {
     ];
     const descriptions = new Map<string, string>();
     for (const [directory, source] of directories) {
+      // File commands override config commands at the same root.
       for (const filename of ["opencode.json", "opencode.jsonc"]) {
         for (const command of configCommands(join(directory, filename), source, v2 ? "commands" : "command")) commands.set(command.name, command);
       }
       if (source === "project" && basename(directory) !== ".opencode") continue;
+      // the singular directory is legacy in v2 and still read; the plural one wins a clash
       for (const kind of ["command", "commands"]) {
         for (const { name, path } of commandFiles(join(directory, kind))) {
           const id = canonical(path);
@@ -164,11 +174,13 @@ export const source: AgentCommandSource = {
     }]]);
     const disabled = (key: string) => env[key] === "1" || env[key] === "true";
     const external = !disabled("OPENCODE_DISABLE_EXTERNAL_SKILLS");
+    // the Claude flags remove only the .claude roots; .agents stays
     const claude = external && !disabled("OPENCODE_DISABLE_CLAUDE_CODE_SKILLS") && !disabled("OPENCODE_DISABLE_CLAUDE_CODE");
     const roots: { path: string; origin: "user" | "project" }[] = [];
     if (external) {
       const kinds = [...(claude ? [".claude"] : []), ".agents"];
       const place = (directory: string, kind: string) => roots.push({ path: join(directory, kind, "skills"), origin: directory === ctx.home ? "user" : "project" });
+      // v2 registers every .claude root before every .agents root; v1 goes directory by directory
       if (v2) for (const kind of kinds) for (const directory of [ctx.home, ...projects]) place(directory, kind);
       else for (const directory of [ctx.home, ...projects]) for (const kind of kinds) place(directory, kind);
     }
@@ -179,16 +191,19 @@ export const source: AgentCommandSource = {
       for (const skill of walkSkills(path, { depth: "recursive", looseMarkdown: v2 ? "root" : "none", ignoreFiles: false, requireDescription: false })) {
         const text = skill.fields.description;
         if (v2) {
+          // v2: the path names the skill; the frontmatter name is only a label and nothing is validated
           const id = basename(skill.path) !== "SKILL.md" ? basename(skill.path, ".md") : dirname(skill.path) === path ? "SKILL" : basename(dirname(skill.path));
           skills.set(id, { name: id, description: typeof text === "string" ? text.trim() : "", source: "skill", trigger: "@", origin, id: canonical(skill.path) });
           continue;
         }
+        // v1 needs a string name that matches its directory; the description is optional
         const name = skill.fields.name;
         if (typeof name !== "string" || name !== basename(dirname(skill.path)) || name.length > 64 || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name) ||
           (text !== undefined && typeof text !== "string") || (typeof text === "string" && text.length > 1024)) continue;
         skills.set(name, { name, description: typeof text === "string" ? text.trim() : "", source: "skill", origin, id: canonical(skill.path) });
       }
     }
+    // Commands win over skills, including builtins; custom builtin overrides keep just one row.
     const pin = v2 ? V2_PIN : V1_PIN;
     const extras: SlashCommand[] = (v2 ? V2_BUILTINS : V1_BUILTINS).map(({ name, description, forms, visibility }) => ({
       name, description, source: "builtin", visibility: visibility ?? "offered", forms: forms ?? [{ match: "bare", interaction: "unknown" }],

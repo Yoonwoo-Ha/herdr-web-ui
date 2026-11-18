@@ -80,6 +80,7 @@ async function pcB(login: string, options: { codeServerId?: string } = {}) {
     headers.set("tailscale-user-login", login);
     headers.set("x-forwarded-for", "100.64.0.7");
     const answer = await fetch(`${bBase}${url.pathname}${url.search}`, { method: request.method, headers, body: request.body });
+    // a PC that names another PC's ID beside its code
     if (url.pathname === "/api/relay/code" && options.codeServerId !== undefined) return Response.json({ ...await answer.json() as object, server_id: options.codeServerId });
     return answer;
   } });
@@ -113,6 +114,7 @@ it("adds a PC of the same Tailscale login through the relay with one tap, after 
   // a node of another login is never asked anything
   expect(probed).toEqual(["pc-b.tail.ts.net"]);
 
+  // only an address the list found is asked for a code
   expect((await ask("POST", { url: "http://127.0.0.1:9" })).status).toBe(404);
 
   const added = await ask("POST", { url: serveUrl });
@@ -161,6 +163,7 @@ it("lets no open LAN window borrow this PC's Tailscale login, and adds no PC tha
   expect((await fromLan.json() as { error: { code: string } }).error.code).toBe("owner_only");
 
   expect((await (await ask("GET")).json() as Found).pcs).toHaveLength(1);
+  // Tailscale now says that name is another login's: the list minutes ago does not make it addable
   setPeers([{ name: "pc-b", user: "42" }]);
   const added = await ask("POST", { url: serveUrl });
   expect(added.status).toBe(404);

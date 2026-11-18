@@ -69,6 +69,7 @@ const TERMINAL_FORMS = [
   "settings", "language", "theme", "pet", "goal", "copy", "tutorial", "help", "hotkeys", "mcp", "agents",
   "extensions", "monitors", "tree", "fork", "login", "logout", "new", "drop", "resume", "sessions", "btw",
   "retry", "background", "debug", "exit",
+  // the transcript viewer overlay (slash-commands/builtin-registry.ts:1577-1581)
   "transcript",
 ] as const;
 const FORMS: NonNullable<AgentCommandSource["forms"]> = Object.fromEntries([
@@ -82,6 +83,8 @@ const FORMS: NonNullable<AgentCommandSource["forms"]> = Object.fromEntries([
     { match: "other" as const, interaction: "none" as const },
   ]],
   ["handoff", [{ match: "bare" as const, interaction: "none" as const }]],
+  // bare opens a model selector or the provider onboarding selector, `/provider login` the OAuth selector and
+  // `/session delete` a confirmation (builtin-registry.ts:1358-1384, 1979-2043; modes/controllers/selector-controller.ts:3681-3697)
   ["routing", [
     { match: "bare" as const, interaction: "terminal" as const },
     { match: "other" as const, interaction: "none" as const },
@@ -109,6 +112,7 @@ const ACTIVE_DESCRIPTIONS = Object.fromEntries(
 );
 const ACTIVE_FORMS = Object.fromEntries(Object.entries(FORMS).filter(([name]) => activeBuiltin(name)));
 
+// Descriptions read from the installed binary's embedded SKILL.md frontmatter.
 const BUNDLED = {
   autoresearch: "Goal-directed research missions that interleave web research with data experimentation and end on a structured best-effort verdict",
   "deep-interview": "Socratic deep interview with mathematical ambiguity gating before explicit execution approval",
@@ -120,7 +124,7 @@ function settings(agentDir: string): Readonly<Record<string, unknown>> {
   try {
     const config: unknown = Bun.YAML.parse(readFileSync(join(agentDir, "config.yml"), "utf8"));
     return typeof config === "object" && config !== null && !Array.isArray(config) ? Object.fromEntries(Object.entries(config)) : {};
-  } catch { return {}; }
+  } catch { return {}; /* missing or invalid YAML uses gjc's defaults */ }
 }
 function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : {};

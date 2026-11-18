@@ -48,10 +48,17 @@ function cacheControlFor(pathname: string): string {
   return SHORT_CACHE;
 }
 
+/**
+ * The policy both headers carry, before contentSecurityPolicy() adds the request's host to `frame-src`
+ * and the account service to `connect-src`. A browser script that serves a build of its own sends it as it is:
+ * serveStatic reads only this checkout's dist/, and sends no policy before that is built.
+ */
 export const CONTENT_SECURITY_POLICY = CSP_DIRECTIVES.join("; ");
 
+/** A host name or bracketed IPv6 address, nothing that could end or add a directive. */
 const FRAMEABLE_HOST = /^(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])$/i;
 
+/** The policy for a request from `origin` (requestOrigin): its host's other ports may be framed. */
 export function contentSecurityPolicy(origin?: string): string {
   let host: string | null = null;
   try {
@@ -68,6 +75,11 @@ export function contentSecurityPolicy(origin?: string): string {
   }).join("; ");
 }
 
+/**
+ * OVIS_CSP=report-only measures the policy above without enforcing it: the browser
+ *   logs what the policy would have blocked and the app keeps working. `report-only` is the
+ *   measurement mode; anything else enforces.
+ */
 function cspHeader(origin?: string): Record<string, string> {
   const mode = process.env["OVIS_CSP"];
   const policy = contentSecurityPolicy(origin);
@@ -76,11 +88,17 @@ function cspHeader(origin?: string): Record<string, string> {
     : { "content-security-policy": policy };
 }
 
+/**
+ * Each PC is its own origin, so two PCs installed on one phone are two apps, and both would be called
+ * "Ovis" (#476). Read on every request, like OVIS_CSP; the manifest and the shell revalidate on every
+ * load, so an installed app learns a new name without a reinstall.
+ */
 export function appName(): string | null {
   const name = process.env["OVIS_APP_NAME"]?.trim();
   return name ? name : null;
 }
 
+/** The manifest under another name: `short_name` is the home-screen label, `name` the rest. */
 export function renameManifest(manifest: string, name: string): string {
   return JSON.stringify({ ...JSON.parse(manifest), name, short_name: name }, null, 2);
 }
@@ -100,6 +118,10 @@ export function manifestBody(text: string, origin: string): string {
   return relateManifest(name ? renameManifest(text, name) : text, origin);
 }
 
+/**
+ * The origin a browser used to reach this request: the scheme from X-Forwarded-Proto when a
+ * proxy states one (http or https), else the request URL's, and the host from the Host header.
+ */
 export function requestOrigin(request: Request): string {
   const url = new URL(request.url);
   const forwarded = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
@@ -175,6 +197,8 @@ export async function serveStatic(pathname: string, acceptEncoding?: string | nu
       });
     }
   }
+  // a missing file is not a page: the shell under a bundle's URL fails as a script anyway, and a
+  // service worker would keep it there. An old tab asks for its own build's chunks after an update.
   if (pathname.startsWith("/assets/") || pathname.startsWith("/icons/")) {
     return new Response(null, { status: 404, headers: { "cache-control": REVALIDATE, ...cspHeader() } });
   }
