@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { forgetPiModels, piContextWindow } from "./pi-models.ts";
+import { catalogVersion, forgetPiModels, piContextWindow } from "./pi-models.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-pi-models-"));
 afterEach(() => forgetPiModels());
@@ -110,6 +110,17 @@ describe("the context window a pi model runs in", () => {
     // correct a window must not have to restart anything for the ring to agree
     writeFileSync(join(dir, "models.json"), `\uFEFF{ // the platform raised this week\n${JSON.stringify({ providers: { "shared-default": { models: [{ id: "a", contextWindow: 256000 }] } } }).slice(1, -1)}\n}`);
     expect(piContextWindow("a", "shared-default", dir)).toBe(256000);
+  });
+
+  // a catalog that could not be read answered no window; making it readable again changes only its ctime
+  it.skipIf(process.platform === "win32")("versions a catalog by its permissions too, not only its contents", () => {
+    const path = join(agentDir("permissions", catalog), "models.json");
+    chmodSync(path, 0o000);
+    const unreadable = catalogVersion(path);
+    chmodSync(path, 0o644);
+    expect(catalogVersion(path)).not.toBe(unreadable);
+    expect(catalogVersion(path)).toBe(catalogVersion(path));
+    expect(catalogVersion(join(root, "never-written.json"))).toBe("-");
   });
 
   it("never answers a model with the window of the one standing in for it", () => {

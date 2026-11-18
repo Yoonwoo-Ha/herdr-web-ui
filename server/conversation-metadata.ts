@@ -20,13 +20,13 @@ const CLAUDE_LONG_WINDOW = 1_000_000;
  * Only Codex records its window; a Claude model is known to run in the 1M one once a request
  * went past 200k (and keeps it: a compaction shrinks the use, not the window). A pi model
  * states no window either, so it is looked up in the catalog pi reads its own providers from
- * (`piContextWindow`); unresolved, no ring is drawn rather than one drawn on a guess.
+ * (`piWindow`); unresolved, no ring is drawn rather than one drawn on a guess.
  */
-export function contextOf(used: number, model: string | null, window: number | null, before: ConversationMetadata["context"], piProvider?: string | null, piAgentDir?: string | null): ConversationMetadata["context"] {
+export function contextOf(used: number, model: string | null, window: number | null, before: ConversationMetadata["context"], piWindow?: (model: string) => number | null): ConversationMetadata["context"] {
   if (used === 0) return before;
   if (window !== null) return { used, window };
-  if (piProvider !== undefined) {
-    const resolved = model === null || piAgentDir === null ? null : piContextWindow(model, piProvider, piAgentDir);
+  if (piWindow !== undefined) {
+    const resolved = model === null ? null : piWindow(model);
     return resolved === null ? { used, window: null } : { used, window: resolved };
   }
   const long = model?.startsWith("claude") && (used > CLAUDE_STANDARD_WINDOW || before?.window === CLAUDE_LONG_WINDOW);
@@ -85,8 +85,15 @@ export function claudeSetting(value: unknown): { model?: string; effort?: string
   return set;
 }
 
+/**
+ * What an omp-shaped fold knows past the metadata it returns: the provider the last record named,
+ * which an answer that names none still ran at (and which the pill no longer shows). A fold that
+ * continues another one is handed the same object, so it reads its text as one fold would.
+ */
+export interface MetadataFold { piProvider: string | null }
+
 /** Codex turn_context is a snapshot; omp/omo setting changes are separate events. */
-export function parseConversationMetadata(text: string, source: ConversationResponse["source"], before?: ConversationMetadata, piAgentDir?: string | null): ConversationMetadata {
+export function parseConversationMetadata(text: string, source: ConversationResponse["source"], before?: ConversationMetadata, piAgentDir?: string | null, fold?: MetadataFold): ConversationMetadata {
   const metadata: ConversationMetadata = before ? { ...before } : { model: null, reasoning_effort: null };
   // Agy's exported rows do not attest the selected model or reasoning effort.
   if (source === "agy-transcript") return metadata;
@@ -122,7 +129,16 @@ export function parseConversationMetadata(text: string, source: ConversationResp
   if (source === "muse-transcript") return { ...metadata, model: museModel(text, metadata.model) };
   // pi states the provider on the same records that state usage, so the window is asked for
   // from what this line says rather than remembered across sources
-  let piProvider: string | null = null;
+  let piProvider: string | null = fold?.piProvider ?? null;
+  // the catalogs cannot change within one fold, so each model is looked up (and its files
+  // stat'ed) once, not once per answer
+  const piWindows = new Map<string, number | null>();
+  const piWindow = (model: string): number | null => {
+    if (piAgentDir === null) return null;
+    const key = JSON.stringify([piProvider, model]);
+    if (!piWindows.has(key)) piWindows.set(key, piContextWindow(model, piProvider, piAgentDir));
+    return piWindows.get(key)!;
+  };
   for (const line of text.split("\n")) {
     let entry: RecordValue;
     try { entry = record(JSON.parse(line)); } catch { continue; }
@@ -186,7 +202,7 @@ export function parseConversationMetadata(text: string, source: ConversationResp
           // failed or aborted request out, which filled nothing
           const filled = message.stopReason === "error" || message.stopReason === "aborted" ? 0
             : count(usage.totalTokens) || count(usage.input) + count(usage.output) + count(usage.cacheRead) + count(usage.cacheWrite);
-          metadata.context = contextOf(filled, metadata.model, null, metadata.context, piProvider, piAgentDir);
+          metadata.context = contextOf(filled, metadata.model, null, metadata.context, piWindow);
         }
       }
     } else if (source === "claude-transcript") {
@@ -200,5 +216,6 @@ export function parseConversationMetadata(text: string, source: ConversationResp
       }
     }
   }
+  if (fold) fold.piProvider = piProvider;
   return metadata;
 }

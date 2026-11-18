@@ -1,4 +1,5 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -233,6 +234,23 @@ describe("context use", () => {
       expect(parseConversationMetadata(jsonl(omp), "omp-transcript").context).toEqual({ used: 8, window: null });
     } finally {
       if (previous === undefined) delete process.env["PI_CODING_AGENT_DIR"]; else process.env["PI_CODING_AGENT_DIR"] = previous;
+      forgetPiModels();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("stats pi's catalog once per fold, not once per answer", () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-meta-stats-"));
+    const catalog = join(dir, "models.json");
+    writeFileSync(catalog, JSON.stringify({ providers: { lwsa: { models: [{ id: "qwen-test", contextWindow: 215_000 }] } } }));
+    forgetPiModels();
+    const stat = spyOn(fs, "statSync");
+    try {
+      const answers = Array.from({ length: 50 }, (_, i) => ({ type: "message", message: { role: "assistant", model: "qwen-test", provider: "lwsa", usage: { totalTokens: 1_000 + i } } }));
+      expect(parseConversationMetadata(jsonl(...answers), "pi-transcript", undefined, dir).context).toEqual({ used: 1_049, window: 215_000 });
+      expect(stat.mock.calls.filter(([path]) => path === catalog)).toHaveLength(1);
+    } finally {
+      stat.mockRestore();
       forgetPiModels();
       rmSync(dir, { recursive: true, force: true });
     }
