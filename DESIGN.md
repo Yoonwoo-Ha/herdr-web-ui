@@ -1775,8 +1775,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   the place took, and loses the place from sight. Two lines draws the row as the
   roster did before it was one line, on an agent row's height and type: the title of the pane the
   row opens, and under it in `--text-dim` `--fs-xs` the place, "workspace · folder" with no name
-  said twice (`taskRowLines`, lib/paneName.ts). A shell titled by its folder leads with the
-  workspace instead; a linked worktree is placed by its branch, then its own workspace name. The
+  said twice (`taskRowLines`, lib/paneName.ts). A shell titled by its folder, or by `~` (a shell at
+  its home folder), leads with the workspace instead; a linked worktree is placed by its branch, then its own workspace name. The
   folder, the mark, the status cell, the menu and the fold count stay where they are, and the menu
   and rename still act on the workspace. The choice is shared with the other browsers of the server
   and applies at once.

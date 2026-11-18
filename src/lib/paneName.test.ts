@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { codexThreadTitle, folderName, placeLine, shortPathTitle, tabTitle, taskRowLines, stripPaneChrome, unsaidLine } from "./paneName.ts";
+import { codexThreadTitle, folderName, isHomeTitle, placeLine, shortPathTitle, tabTitle, taskRowLines, stripPaneChrome, unsaidLine } from "./paneName.ts";
 
 it("shows a path title as its last folder, and leaves any other title alone", () => {
   expect(shortPathTitle("/tmp/audit-oDjsU2/lms-backend")).toBe("lms-backend");
@@ -43,12 +43,28 @@ it("draws a two-line row as the pane's title over its place, without repeating a
     .toEqual({ title: "checkout-api", place: "api" });
   expect(taskRowLines({ paneTitle: "release", labelled: false, folder: "release", workspace: "release" }))
     .toEqual({ title: "release", place: "" });
+  // a shell at home titles itself "~", which names no project: the row leads with the workspace
+  expect(taskRowLines({ paneTitle: "~", labelled: false, folder: "haemin", workspace: "checkout-api" }))
+    .toEqual({ title: "checkout-api", place: "haemin" });
+  expect(taskRowLines({ paneTitle: "~/", labelled: false, folder: "haemin", workspace: "checkout-api" }).title).toBe("checkout-api");
+  // a pane the user named "~" keeps it
+  expect(taskRowLines({ paneTitle: "~", labelled: true, folder: "haemin", workspace: "checkout-api" }).title).toBe("~");
   expect(taskRowLines({ paneTitle: "api", labelled: true, folder: "api", workspace: "checkout-api" }))
     .toEqual({ title: "api", place: "checkout-api" });
   expect(taskRowLines({ paneTitle: "session-list", labelled: false, folder: "fix-session-list", workspace: "Hotfix", alias: "fix/session-list" }))
     .toEqual({ title: "session-list", place: "Hotfix · fix/session-list · fix-session-list" });
   expect(taskRowLines({ paneTitle: "Hotfix", labelled: true, folder: "fix-payment", workspace: "Hotfix", alias: "fix/payment" }))
     .toEqual({ title: "Hotfix", place: "fix/payment · fix-payment" });
+});
+
+it("tells a home folder title from a path or a name that starts with a tilde", () => {
+  expect(isHomeTitle("~")).toBe(true);
+  expect(isHomeTitle(" ~ ")).toBe(true);
+  expect(isHomeTitle("~/")).toBe(true);
+  expect(isHomeTitle("~\\")).toBe(true);
+  expect(isHomeTitle("~/dev/api")).toBe(false);
+  expect(isHomeTitle("~tilde-name")).toBe(false);
+  expect(isHomeTitle("vim ~")).toBe(false);
 });
 
 it("keeps the thread of a Codex title and drops the project folder Codex adds after it", () => {
