@@ -178,6 +178,19 @@ describe("startScreenMetadata", () => {
     expect(opencodeStartScreenUnused(home.replace(/^ *\u2503.*$/gmu, ""))).toBeFalse();
   });
 
+  it("reads Antigravity's status row, the display name and effort, not the banner", () => {
+    expect(startScreenMetadata("agy-transcript", AGY)).toEqual({ model: "Gemini 3.8 Flash", reasoning_effort: "high" });
+    const working = AGY.replace("? for shortcuts   Gemini 3.8 Flash · high", "esc to cancel          Gemini 3.8 Flash · high");
+    expect(startScreenMetadata("agy-transcript", working)).toEqual({ model: "Gemini 3.8 Flash", reasoning_effort: "high" });
+    const panel = AGY.replace("? for shortcuts   Gemini 3.8 Flash · high", "                 Gemini 3.8 Flash · high");
+    expect(startScreenMetadata("agy-transcript", panel)).toEqual({ model: "Gemini 3.8 Flash", reasoning_effort: "high" });
+    const mode = AGY.replace("Gemini 3.8 Flash · high", "auto · Gemini 4 Hydrogen · medium");
+    expect(startScreenMetadata("agy-transcript", mode)).toEqual({ model: "Gemini 4 Hydrogen", reasoning_effort: "medium" });
+    // the banner and a quoted picker are not the row; a missing row names none
+    expect(startScreenMetadata("agy-transcript", AGY.replace("? for shortcuts   Gemini 3.8 Flash · high", "? for shortcuts"))).toEqual({ model: null, reasoning_effort: null });
+    expect(startScreenMetadata("agy-transcript", AGY.replace("? for shortcuts   Gemini 3.8 Flash · high", "Switch Model\n> Gemini 3.1 Pro (Low)"))).toEqual({ model: null, reasoning_effort: null });
+  });
+
   it("reads gjc's status line, keeping a model it has no id for as gjc wrote it", () => {
     expect(startScreenMetadata("gjc-transcript", GJC)).toEqual({ model: "claude-opus-5-5", reasoning_effort: "xhigh" });
     expect(startScreenMetadata("gjc-transcript", GJC.replace("opus-5.5", "kimi-k3"))).toEqual({ model: "kimi-k3", reasoning_effort: "xhigh" });

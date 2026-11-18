@@ -833,9 +833,10 @@ export interface ConversationResponse {
   turns: ConversationTurn[];
   metadata?: ConversationMetadata;
   /**
-   * `metadata` was read off the agent's own screen: a conversation not begun, or a Codex that has
-   * reported no session (whose scrollback answer carries `metadata` only so). No file records it
-   * and the pane's output can change it, so the chat re-reads on terminal output.
+   * `metadata` was read off the agent's own screen: a conversation not begun, a Codex that has
+   * reported no session (whose scrollback answer carries `metadata` only so), or an Antigravity
+   * conversation, whose ledger never records the model. No file records it and the pane's output
+   * can change it, so the chat re-reads on terminal output.
    */
   screen?: true;
   /**

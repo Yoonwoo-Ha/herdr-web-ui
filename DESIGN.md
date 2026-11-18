@@ -4211,8 +4211,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - Before a session's first message no transcript names its model, so the pill takes it from the
   agent's own screen (`server/start-screen.ts`), as the Codex and Claude apps show the model in
   their composers before anything is sent: Claude Code's model under its title, and the live
-  status line of Codex and gjc. omp waits for its transcript to record the model: resolving its
-  screen's catalog names would require `omp models`, whose discovery can refresh OAuth tokens.
+  status line of Codex, gjc and Antigravity. Antigravity's ledger never records the model, so the
+  same status row is read after the conversation exists: the display name and the effort word on
+  the right (`Gemini 3.8 Flash · high`, or `auto · Gemini 4 Hydrogen · medium` with a mode word in
+  front). That name is kept as written. It is not a catalog id. omp waits for its transcript to
+  record the model: resolving its screen's catalog names would require `omp models`, whose
+  discovery can refresh OAuth tokens.
   The bridge never runs that command or infers an omp model from its status line or directory.
   Codex is read only from the live footer beneath its composer; an answer quoting the /model
   picker or a draft cannot supply a model, and while a popup hides the footer the model is unknown.
@@ -4225,9 +4229,11 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   reports no session, so its terminal-output fallback carries the status line's model, and whether
   it has begun nothing yet (its greeting) is decided on the same live screen. Such an answer is
   marked `screen`, and the chat re-reads it on terminal output, so a switch made in the terminal
-  shows once the agent draws it. A name on the screen that the
-  agent's own naming does not turn into one id draws no pill (no catalog is looked up), nor does a
-  screen that states no model, and an agent's default model never stands in for the session's.
+  shows once the agent draws it. An existing Antigravity conversation is marked `screen` the same
+  way, including when the row cannot be read, so the next draw can fill or change the pill. A name
+  on the screen that the agent's own naming does not turn into one id draws no pill (no catalog is
+  looked up), nor does a screen that states no model, and an agent's default model never stands in
+  for the session's. Antigravity's status-row name is the exception: it is drawn as written.
 - The model is drawn by name only where its id is one `modelLabel` (`src/lib/modelName.ts`) can
   name for certain, from the vendor's own regular naming and matched whole:
   `claude-<family>-<major>[-<minor>]`, also behind `anthropic/`, is `<Family> <major>.<minor>`

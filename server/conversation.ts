@@ -2121,11 +2121,13 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     startScreenMetadata(source, await bottomViewport(paneId));
   const notBegun = async (source: RecognizedConversation["source"], id: string, read?: ConversationMetadata, fromScreen = false): Promise<RecognizedConversation> => {
     const screen = fromScreen || readsStartScreen(source);
-    const metadata = read ?? (screen ? await screenMetadata(source) : { model: null, reasoning_effort: null });
+    // agy's greeting names a model only from the frame its unused session was proven on (passed in
+    // as `read`): a later frame can already show another conversation, or another agy's.
+    const metadata = read ?? (screen && source !== "agy-transcript" ? await screenMetadata(source) : { model: null, reasoning_effort: null });
     return { source, turns: [], metadata, ...(screen ? { screen: true as const } : {}), cursor: null, history_id: id, version: answerVersion(id, `${metadata.model}\0${metadata.reasoning_effort}`) };
   };
 
-  const onNotStarted = (error: ConversationNotStarted): Promise<RecognizedConversation> => {
+  const onNotStarted = async (error: ConversationNotStarted): Promise<RecognizedConversation> => {
     if (writtenSessions.has(`${error.source}\0${error.identity}`)) throw new ConversationUnavailable("transcript_missing");
     if (page.before !== undefined || page.since !== undefined || page.from !== undefined) throw new HistoryChanged();
     // Claude writes its file with the first message, so at work with none it has no turn yet: a
@@ -2164,8 +2166,10 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
         if (screen.model !== null) throw new ConversationUnavailable(error.message, screen);
       }
       if (pane.agent === "agy" && error.message === "no_session_path" && page.before === undefined && page.since === undefined && page.from === undefined && pane.agent_status !== "working" && pane.agent_status !== "blocked") {
-        const fresh = await agyFreshSession(pane, await bottomViewport(paneId));
-        if (fresh !== null) return await notBegun("agy-transcript", fresh);
+        // the model comes from the frame proven to be the unused start screen, not a later read
+        const text = await bottomViewport(paneId);
+        const fresh = await agyFreshSession(pane, text);
+        if (fresh !== null) return await notBegun("agy-transcript", fresh, startScreenMetadata("agy-transcript", text));
       }
       // an OpenCode at its home screen, which herdr reports no session for until the first prompt (#3600)
       if (pane.agent === "opencode" && pane.agent_session == null && error.message === "no_session_id" && page.before === undefined && page.since === undefined && page.from === undefined && pane.agent_status !== "working" && pane.agent_status !== "blocked") {
@@ -2340,7 +2344,16 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     try { revision = grokProjection(resolved.path, statSync(resolved.path)).revision; } catch {}
     if (revision === null || revision === "0") throw new ConversationUnavailable("transcript_missing");
   }
+  // The ledger never records the selected model. The live status row does, and a switch there
+  // writes no turn, so the answer is marked screen and the chat re-reads it on terminal output.
+  // A scroll or a failed read leaves the name unknown rather than one from an older frame, and is
+  // still marked screen so the next draw can fill it. The row is read before the store check below,
+  // so a pane that moved to another conversation during the read is refused, not given its model.
+  const agyScreen = resolved.source === "agy-transcript" ? await screenMetadata("agy-transcript") : null;
   if (resolved.agy && !sameAgyStore(resolved.agy, await resolveAgyStore(snapshot.panes.find((pane) => pane.pane_id === paneId)!))) throw new ConversationUnavailable("no_session_path");
+  // The screen read waits on herdr. A pane closed or bound to another session meanwhile has not
+  // this conversation, nor the model its screen shows now, and nothing is recorded for it.
+  if (agyScreen !== null && (!live() || rebound(paneId, transcript))) throw new ConversationUnavailable("no_session_id");
   if (identity !== null) { writtenSessions.add(`${resolved.source}\0${identity}`); rememberPaneSession(paneId, `${resolved.source}\0${identity}`); }
   if (resolved.source === "claude-transcript" && identity !== null && answer.metadata.context) {
     const window = readStatuslineContext(userHome(), identity, answer.metadata.model, resolved.path);
@@ -2380,6 +2393,15 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     if (current.path !== resolved.path || current.binding !== resolved.binding
       || copilotHistoryIdentity(resolved.path) !== history) throw new HistoryChanged();
     return bindCopilotAnswer(answer, prefix);
+  }
+  if (agyScreen !== null) {
+    // Enrich the response, never the shared page.
+    return {
+      ...answer,
+      screen: true,
+      metadata: { ...answer.metadata, ...agyScreen },
+      version: answerVersion(answer.version, `${agyScreen.model}\0${agyScreen.reasoning_effort}`),
+    };
   }
   return answer;
 }

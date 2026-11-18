@@ -3931,6 +3931,123 @@ describe("Agy native ledger through shared paging", () => {
       expect(await paneConversation(pane.pane_id).catch((error: unknown) => error)).toMatchObject({ name: "ConversationUnavailable", message: "transcript_missing" });
     } finally { snapshot.mockRestore(); store.mockRestore(); rpc.mockRestore(); }
   });
+  it("records nothing for a pane forgotten while its status row was read", async () => {
+    const session = "00000000-0000-4000-8000-000000000001";
+    add(0, "USER_INPUT", "one");
+    const pane = { pane_id: "agy-forgotten", cwd: root, agent: "agy", agent_status: "idle" } as HerdrPane;
+    const snapshot = spyOn(herdr, "sessionSnapshot").mockImplementation(async () => ({ panes: [pane], agents: [] }) as unknown as SessionSnapshot);
+    const store = spyOn(agyStore, "resolveAgyStore").mockResolvedValue({ root, session, path, pid: 2, started: "test" });
+    const rpc = spyOn(herdr, "herdrRpc").mockImplementation(async (method: string) => (method === "pane.get"
+      ? { pane: { ...pane, scroll: { offset_from_bottom: 0, max_offset_from_bottom: 10, viewport_rows: 40 } } }
+      : { process_info: { foreground_processes: [] } }) as never);
+    let forget = true;
+    const read = spyOn(herdr, "paneRead").mockImplementation(async () => {
+      if (forget) forgetPaneTranscriptState(pane.pane_id);
+      return { text: " ? for shortcuts   Gemini 3.8 Flash \u00b7 high\n" } as never;
+    });
+    try {
+      expect(await paneConversation(pane.pane_id).catch((error: unknown) => error)).toMatchObject({ name: "ConversationUnavailable", message: "no_session_id" });
+      // the refused read left no mark that this session was written: agy starting it afresh greets
+      forget = false;
+      db.exec("DELETE FROM steps");
+      rmSync(path);
+      expect(await paneConversation(pane.pane_id)).toMatchObject({ history_id: `unwritten:${session}`, turns: [] });
+    } finally { snapshot.mockRestore(); store.mockRestore(); rpc.mockRestore(); read.mockRestore(); }
+  });
+  it("names no model on an unwritten conversation's greeting, whose screen may already show another conversation", async () => {
+    const session = "00000000-0000-4000-8000-000000000001";
+    rmSync(path);
+    const other = join(root, "other.jsonl");
+    writeFileSync(other, row(0, "USER_INPUT", "other session"));
+    const pane = { pane_id: "agy-unwritten-switch", cwd: root, agent: "agy", agent_status: "idle" } as HerdrPane;
+    const snapshot = spyOn(herdr, "sessionSnapshot").mockImplementation(async () => ({ panes: [pane], agents: [] }) as unknown as SessionSnapshot);
+    const store = spyOn(agyStore, "resolveAgyStore").mockResolvedValue({ root, session, path, pid: 2, started: "test" });
+    const rpc = spyOn(herdr, "herdrRpc").mockImplementation(async (method: string) => (method === "pane.get"
+      ? { pane: { ...pane, scroll: { offset_from_bottom: 0, max_offset_from_bottom: 10, viewport_rows: 40 } } }
+      : { process_info: { foreground_processes: [] } }) as never);
+    // agy moves the pane to another conversation as its screen is read
+    const read = spyOn(herdr, "paneRead").mockImplementation(async () => {
+      store.mockResolvedValue({ root, session: "other", path: other, pid: 3, started: "other" });
+      return { text: " ? for shortcuts   Gemini 4 Hydrogen \u00b7 medium\n" } as never;
+    });
+    try {
+      const greeting = await paneConversation(pane.pane_id);
+      expect(greeting).toMatchObject({ history_id: `unwritten:${session}`, turns: [], screen: true, metadata: { model: null, reasoning_effort: null } });
+      expect(JSON.stringify(greeting)).not.toContain("Gemini 4 Hydrogen");
+    } finally { snapshot.mockRestore(); store.mockRestore(); rpc.mockRestore(); read.mockRestore(); }
+  });
+  it("reads the live status row after a conversation exists, and not a scrolled frame", async () => {
+    const session = "00000000-0000-4000-8000-000000000001";
+    add(0, "USER_INPUT", "one");
+    const pane = { pane_id: "agy-model", cwd: root, agent: "agy", agent_status: "idle" } as HerdrPane;
+    const footer = " ? for shortcuts   Gemini 3.8 Flash · high\n";
+    let offset = 0;
+    const snapshot = spyOn(herdr, "sessionSnapshot").mockImplementation(async () => ({ panes: [pane], agents: [] }) as unknown as SessionSnapshot);
+    const store = spyOn(agyStore, "resolveAgyStore").mockResolvedValue({ root, session, path, pid: 2, started: "test" });
+    const rpc = spyOn(herdr, "herdrRpc").mockImplementation(async (method: string) => (method === "pane.get"
+      ? { pane: { ...pane, scroll: { offset_from_bottom: offset, max_offset_from_bottom: 10, viewport_rows: 40 } } }
+      : { process_info: { foreground_processes: [] } }) as never);
+    const read = spyOn(herdr, "paneRead").mockImplementation(async () => ({ text: footer }) as never);
+    try {
+      const shown = await paneConversation(pane.pane_id);
+      expect(shown.turns).toHaveLength(1);
+      expect(shown.metadata).toMatchObject({ model: "Gemini 3.8 Flash", reasoning_effort: "high" });
+      expect(shown.screen).toBe(true);
+      offset = 4;
+      const scrolled = await paneConversation(pane.pane_id);
+      expect(scrolled.screen).toBe(true);
+      expect(scrolled.metadata?.model ?? null).toBeNull();
+      expect(scrolled.metadata?.reasoning_effort ?? null).toBeNull();
+    } finally { snapshot.mockRestore(); store.mockRestore(); rpc.mockRestore(); read.mockRestore(); }
+  });
+  it("refuses a conversation whose pane was forgotten or rebound while its status row was read", async () => {
+    const session = "00000000-0000-4000-8000-000000000001";
+    add(0, "USER_INPUT", "one");
+    const pane = { pane_id: "agy-model-closed", cwd: root, agent: "agy", agent_status: "idle" } as HerdrPane;
+    const footer = " ? for shortcuts   Gemini 3.8 Flash \u00b7 high\n";
+    const other = join(root, "other.jsonl");
+    writeFileSync(other, row(0, "USER_INPUT", "other session"));
+    const snapshot = spyOn(herdr, "sessionSnapshot").mockImplementation(async () => ({ panes: [pane], agents: [] }) as unknown as SessionSnapshot);
+    const store = spyOn(agyStore, "resolveAgyStore").mockResolvedValue({ root, session, path, pid: 2, started: "test" });
+    const rpc = spyOn(herdr, "herdrRpc").mockImplementation(async (method: string) => (method === "pane.get"
+      ? { pane: { ...pane, scroll: { offset_from_bottom: 0, max_offset_from_bottom: 10, viewport_rows: 40 } } }
+      : { process_info: { foreground_processes: [] } }) as never);
+    let during: "show" | "forget" | "rebind" | "switch" = "show";
+    const read = spyOn(herdr, "paneRead").mockImplementation(async () => {
+      if (during === "forget") forgetPaneTranscriptState(pane.pane_id);
+      if (during === "rebind") {
+        store.mockResolvedValue({ root, session: "other", path: other, pid: 3, started: "other" });
+        await paneTranscript(pane.pane_id);
+      }
+      if (during === "switch") {
+        store.mockResolvedValue({ root, session: "other", path: other, pid: 3, started: "other" });
+        return { text: " ? for shortcuts   Gemini 4 Hydrogen \u00b7 medium\n" } as never;
+      }
+      return { text: footer } as never;
+    });
+    const refused = async (message: string, model: string) => {
+      const error = await paneConversation(pane.pane_id).catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ name: "ConversationUnavailable", message });
+      expect(JSON.stringify(error)).not.toContain(model);
+    };
+    const reset = () => {
+      forgetTranscriptState();
+      store.mockResolvedValue({ root, session, path, pid: 2, started: "test" });
+    };
+    try {
+      expect((await paneConversation(pane.pane_id)).metadata).toMatchObject({ model: "Gemini 3.8 Flash", reasoning_effort: "high" });
+      during = "forget";
+      await refused("no_session_id", "Gemini 3.8 Flash");
+      reset();
+      during = "rebind";
+      await refused("no_session_path", "Gemini 3.8 Flash");
+      // agy's store moved the pane to another conversation during the read, and nothing else
+      // resolved the pane meanwhile: the old turns never go out with the new model
+      reset();
+      during = "switch";
+      await refused("no_session_path", "Gemini 4 Hydrogen");
+    } finally { snapshot.mockRestore(); store.mockRestore(); rpc.mockRestore(); read.mockRestore(); }
+  });
   it("retries a transient mid-turn catalog race and answers 503 ConversationReadPending instead of dropping chat", async () => {
     const session = "00000000-0000-4000-8000-000000000001";
     add(0, "USER_INPUT", "one");
@@ -4022,11 +4139,25 @@ describe("Agy native ledger through shared paging", () => {
     const rpc = spyOn(herdr, "herdrRpc").mockImplementation(async (method: string) => (method === "pane.get"
       ? { pane: { ...pane, scroll: { offset_from_bottom: scrolledUp, max_offset_from_bottom: 10, viewport_rows: 40 } } }
       : { process_info: { foreground_processes: [{ pid: process.pid, name: "agy", argv }] } }) as never);
-    const read = spyOn(herdr, "paneRead").mockImplementation(async () => ({ text: currentScreen }) as never);
+    let afterFirstRead: string | null = null;
+    const read = spyOn(herdr, "paneRead").mockImplementation(async () => {
+      const text = currentScreen;
+      if (afterFirstRead !== null) currentScreen = afterFirstRead;
+      return { text } as never;
+    });
     try {
       const greeting = await paneConversation(pane.pane_id);
-      expect(greeting).toMatchObject({ source: "agy-transcript", turns: [], cursor: null });
+      expect(greeting).toMatchObject({
+        source: "agy-transcript", turns: [], cursor: null, screen: true,
+        metadata: { model: "Gemini 3.8 Flash", reasoning_effort: "high" },
+      });
       expect(greeting.history_id).toStartWith(`unwritten:agy:${pane.pane_id}:${process.pid}:`);
+      // the model comes from the frame proven to be the unused start screen, not a later one that
+      // may already show another conversation
+      afterFirstRead = screen.replace(" >", " > hello\n\n \u2726 Hi there\n\n \u2500\u2500\u2500\u2500\n >").replace("Gemini 3.8 Flash \u00b7 high", "Gemini 4 Hydrogen \u00b7 medium");
+      expect((await paneConversation(pane.pane_id)).metadata).toMatchObject({ model: "Gemini 3.8 Flash", reasoning_effort: "high" });
+      afterFirstRead = null;
+      currentScreen = screen;
       argv = ["agy", "--continue"];
       await expect(paneConversation(pane.pane_id)).rejects.toBeInstanceOf(ConversationUnavailable);
       argv = ["agy"];
