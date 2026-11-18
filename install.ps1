@@ -469,11 +469,11 @@ if (-not $fromSource) {
 if (-not $binaryDone) {
 $bun = Get-Command bun -ErrorAction SilentlyContinue
 if (-not $bun -or [version]((Run-Tool bun @('--version')) -replace '-.*$', '') -lt [version]'1.4.0') {
-    Write-Host 'Ovis: installing Bun 1.4.2 for your user'
+    Write-Host 'Ovis: installing Bun 1.4.4 for your user'
     # The same stable runtime as CI; use Bun's official installer rather than a second downloader.
     # It leaves this session with the user's PATH alone: without the machine's, neither this script nor herdr finds git.
     $path = $env:PATH
-    & ([scriptblock]::Create((Invoke-WebRequest 'https://bun.sh/install.ps1' -UseBasicParsing).Content)) -Version '1.4.2'
+    & ([scriptblock]::Create((Invoke-WebRequest 'https://bun.sh/install.ps1' -UseBasicParsing).Content)) -Version '1.4.4'
     $env:PATH = $path
 }
 if (-not (Get-Command bun -ErrorAction SilentlyContinue)) { throw 'Bun did not install. See https://bun.sh.' }

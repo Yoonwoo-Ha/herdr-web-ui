@@ -4,7 +4,7 @@ inputs:
   bun-version:
     description: Bun version for ci.yml, pages.yml and release.yml; the one place it is set.
     required: false
-    default: '1.4.2'
+    default: '1.4.4'
   node:
     description: "'true' installs Node 22 (the PTY sidecar runs on it)."
     required: false

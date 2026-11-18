@@ -202,7 +202,7 @@ bun run dist                 # stage, bundle, then dist/Ovis-<version>-<arch>.Ap
                              # installs to %LOCALAPPDATA%\Programs\ovis-desktop)
 ```
 
-`bun scripts/build.ts stage` downloads herdr-core 0.1.17 and Bun 1.4.2 for this machine
+`bun scripts/build.ts stage` downloads herdr-core 0.1.17 and Bun 1.4.4 for this machine
 (`scripts/runtimes.ts` pins their SHA-256; a mismatch stops the build), checks that each runs and
 says its version, builds the client (`bun run build` at the repository root) and copies the server
 with its production packages into `stage/`. Each build checks the cached downloads against their

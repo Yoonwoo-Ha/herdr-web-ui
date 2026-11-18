@@ -235,7 +235,7 @@ exit /b 1
 
     $state.bunVersion = '1.3.0'
     & $installer -Ref ''
-    Assert ($state.bunVersion -eq '1.4.2') 'An old Bun must be updated through its installer'
+    Assert ($state.bunVersion -eq '1.4.4') 'An old Bun must be updated through its installer'
     Assert ($env:PATH.EndsWith($originalPath)) "Bun's installer must not leave the session without the machine PATH"
     $state.bunVersion = '1.3.0'; $state.failBun = $true
     $failed = $false

@@ -951,7 +951,7 @@ from source instead is [one rule](../INSTALL.md#binary-or-source). Their tests r
 the test, or pass that key as `installServer`'s option, which the launcher never does: the shipped scripts read no
 key from anywhere else. `OVIS_RELEASES_URL` (https://, or a `file://` folder laid out as GitHub's
 `<url>/v<version>/<file>`) points them at another place, checked against the same key. Remote PC bundles and the desktop app carry the same binary with what runs beside it
-(`scripts/server-artifact.ts`), and no server sources. The builds are reproducible with the same Bun: CI pins Bun 1.4.2,
+(`scripts/server-artifact.ts`), and no server sources. The builds are reproducible with the same Bun: CI pins Bun 1.4.4,
 so CI's hashes differ from ones built with another Bun.
 
 ### The server binary's signing key

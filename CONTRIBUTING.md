@@ -28,7 +28,7 @@ commenting the sentence it gives.
 - Bun 1.4 or newer, and herdr 0.9.0 or newer for the integration tests. Terminals in a checkout run on
   the Rust PTY host (`cargo build --release --manifest-path crates/pty-sidecar/Cargo.toml`, or
   `bun scripts/pty-sidecar.ts install` on a release tag); Node 18 or newer is the fallback, and the PTY
-  tests run on both. CI runs Bun 1.4.2, Node 22 and herdr 0.9.3, all pinned in
+  tests run on both. CI runs Bun 1.4.4, Node 22 and herdr 0.9.3, all pinned in
   [.github/actions/setup-ci/action.yml](.github/actions/setup-ci/action.yml).
 
 ```bash
