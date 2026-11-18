@@ -181,6 +181,7 @@ try {
     window.formAnswers = [];
     window.formNext = null;
     window.formDelay = 0;
+    window.formAnswerGate = null;
     window.formReturned = 0;
     window.formReadFails = false;
     window.formFailedReads = 0;
@@ -209,7 +210,8 @@ try {
           window.formNext = null;
           if (next === null) { if (answer.pane_id === web) window.formPrompt = null; else delete window.panePrompts[answer.pane_id]; }
           // window.formDelay: the answer takes that long to come back, as send_keys and the re-read do
-          return new Promise((done) => setTimeout(done, window.formDelay || 0)).then(() => { if (next !== null) window.formPrompt = next; window.formReturned += 1; return json({ ok: true }); });
+          const gate = window.formAnswerGate ?? new Promise((done) => setTimeout(done, window.formDelay || 0));
+          return gate.then(() => { if (next !== null) window.formPrompt = next; window.formReturned += 1; return json({ ok: true }); });
         }
       }
       return demo(input, init);
@@ -240,6 +242,8 @@ try {
           window.matchMedia = (query) => media(query === "(pointer: coarse)" ? "not all" : query);
         });
         await context.addInitScript(([owner, messages, settings]) => {
+          // The demo's opening turn is in another pane. Its completion droplet can cover this card.
+          Reflect.set(window, "__ovisDemoHoldTurn", true);
           localStorage.setItem("ovis:settings", settings!);
           const enterSends: unknown = JSON.parse(settings!).enterSends;
           if (typeof enterSends === "boolean") localStorage.setItem("ovis:enter-sends", String(enterSends));
@@ -554,13 +558,19 @@ try {
       {
         const { page, errors, close } = await open({ width: 1440, height: 900, prompt: FORM });
         try {
-          await page.evaluate(() => { (window as unknown as { formDelay: number }).formDelay = 600; });
+          await page.evaluate(() => {
+            const formAnswerGate = new Promise<void>((resolve) => {
+              window.addEventListener("qa-release-form-answer", () => resolve(), { once: true });
+            });
+            Object.assign(window, { formAnswerGate });
+          });
           await page.locator(".prompt-card").getByRole("button", { name: /^1\. In memory/ }).click();
           await page.locator(".prompt-card-options[aria-busy=true]").waitFor();
           const elsewhere = page.locator(".app-header button:not([disabled]):visible").first();
           await elsewhere.focus();
           assert.equal(await elsewhere.evaluate((node) => document.activeElement === node), true);
           assert.equal(await page.locator(".prompt-card-options").getAttribute("aria-busy"), "true", "the answer is still on its way");
+          await page.evaluate(() => { window.dispatchEvent(new Event("qa-release-form-answer")); });
           await page.locator(".prompt-card").getByText(FORM.question).waitFor({ state: "detached" });
           assert.equal((await answersOf(page)).length, 1);
           assert.equal(await elsewhere.evaluate((node) => document.activeElement === node), true, "focus stays where the user put it while the answer was on its way");

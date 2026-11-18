@@ -41,21 +41,17 @@ const openFiles = async (page: import("playwright-core").Page) => {
   else await runMoreItem(page, "Browse files");
 };
 
-// A loaded or reloaded chat scrolls to its end once its conversation is measured; the chat frame
-// names its content only once it is presented there. Even then a link far above the end is no
-// steady target for a pointer: a follow to the end still on its way moves it between pointer down
-// and up, or takes its row and the focus away before a key, and nothing opens. Not even a wheel
-// read back first holds still: the follow undid one in looped runs.
-const transcriptSettled = (page: Page) => page.locator(".chat-frame[data-pane-content]").waitFor({ state: "attached" });
+const transcriptLink = (page: Page, link: Locator): Locator =>
+  page.locator(".pane-frame.is-current .chat-view").locator(link);
 const reloadFollowingEnd = async (page: Page): Promise<void> => {
   await page.evaluate(() => { for (const node of document.querySelectorAll(".chat-view")) node.scrollTop = node.scrollHeight; });
   await page.waitForFunction(() => (JSON.parse(sessionStorage.getItem("ovis:chat-positions") ?? "[]") as [string, { atEnd: boolean }][]).every(([, place]) => place.atEnd));
   await page.reload();
 };
-const activateInTranscript = async (page: Page, link: Locator): Promise<void> => {
-  await transcriptSettled(page);
-  await link.dispatchEvent("click");
-};
+// Dispatch waits for the link in the selected chat. It does not need the end of the chat to be
+// presented, which is what data-pane-content acknowledges.
+const activateInTranscript = (page: Page, link: Locator): Promise<void> =>
+  transcriptLink(page, link).dispatchEvent("click");
 
 const root = mkdtempSync(join(tmpdir(), "ovis-file-back-"));
 const reportServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(
@@ -665,11 +661,9 @@ try {
   console.log("PASS from 980px a file opened from the Files dialog shows in the panel and the dialog closes");
 
   for (const [label, content] of [["extensionless", "Extensionless text"], ["unknown text", "Unknown extension text"]] as const) {
-    const link = page.getByRole("button", { name: label, exact: true });
-    // the panel just closed: the chat takes its width back and its rows move under a pointer.
-    await transcriptSettled(page);
-    await link.focus();
-    await link.dispatchEvent("click");
+    const link = transcriptLink(page, page.getByRole("button", { name: label, exact: true }));
+    // Focus and activate in the same task, before the chat can move or unmount the row.
+    await link.evaluate((button: HTMLButtonElement) => { button.focus(); button.click(); });
     await panel.getByText(content, { exact: true }).waitFor();
     assert.equal(await page.locator(".modal.file-viewer").count(), 0, "real text metadata corrects an unknown-extension popup guess");
     await panel.getByRole("button", { name: "Close file", exact: true }).click();

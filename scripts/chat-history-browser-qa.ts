@@ -385,11 +385,18 @@ try {
   terminalText = Array.from({ length: 100 }, (_, i) => `Fictional terminal line ${i}`).join("\n");
   await refresh();
   await page.getByText(/Fictional terminal line 99/).waitFor();
-  await page.getByRole("log").evaluate((node) => { node.scrollTop = 0; node.dispatchEvent(new Event("scroll")); });
+  await page.waitForFunction(() => {
+    const log = document.querySelector(".chat-view[role=log]");
+    return log !== null && log.scrollTop > 0 && log.scrollHeight - log.clientHeight - log.scrollTop <= 1;
+  });
+  await page.getByRole("log").hover();
+  await page.mouse.wheel(0, -10_000);
+  // The read checks stickToBottom, so changing scrollTop alone is not the handoff.
+  await page.getByRole("button", { name: "Jump to latest", exact: true }).waitFor();
   terminalText += "\nFictional terminal appended line";
   await refresh();
   await page.getByText(/Fictional terminal appended line/).waitFor();
-  await page.locator(".chat-new-messages").waitFor();
+  await page.getByRole("button", { name: "New messages", exact: true }).waitFor();
   unavailable = false;
   console.log("PASS changing terminal fallback retains the New messages indicator while scrolled up");
 
