@@ -328,6 +328,12 @@ if (import.meta.main) {
   } catch (error) {
     console.log(`build cache: could not lock ${name} (${(error as Error).message})`);
   }
+  // the job that held the lock can store its build and let go between this job's first look and its
+  // taking the lock: look again under the lock, or this job builds the same commit a second time
+  if (owner && restored()) {
+    releaseLock(lockDir, lock, owner);
+    process.exit(0);
+  }
   console.log(`build cache: miss ${name}; building`);
   const heartbeat = owner ? setInterval(() => refreshLock(lockDir, lock, owner!), 30_000) : undefined;
   const code = await viteBuildAsync(args);
