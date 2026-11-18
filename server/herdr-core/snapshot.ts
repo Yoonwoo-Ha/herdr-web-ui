@@ -6,6 +6,7 @@ import { clampRatio, type Grouping, type LayoutNode, LAYOUT_AREA, parseOvisLayou
 import { worktreeOfLabels } from "./worktrees.ts";
 import { paneAgent, type ProgramPlatform, reportedAgent, reportedStatus } from "../agent-identity.ts";
 import { catalogPlatform, type CatalogPlatform } from "../../shared/agent-catalog.ts";
+import type { JobProcess } from "../foreground-job.ts";
 
 /**
  * hc has no workspaces, tabs or panes. The Herdr desktop app keeps its own (spaces, tabs and split
@@ -495,14 +496,31 @@ export function buildSnapshot(terminals: readonly HcTerminal[], layout: unknown,
   };
 }
 
-export function processInfoOf(terminal: HcTerminal): PaneProcessInfo {
+/**
+ * A shell running a command string (`sh -c "codex …"`): how hc runs a template's `command:` line. dash
+ * stays in front under its own pid and runs the program as its child, so hc names only the shell (#4052).
+ */
+export function runsCommandString(foreground: HcForeground | null | undefined): foreground is HcForeground {
+  const [program, flags] = foreground?.argv ?? [];
+  return /(?:^|\/)(?:sh|bash|dash|zsh)$/.test(program ?? "") && /^-[a-z]*c[a-z]*$/.test(flags ?? "");
+}
+
+/**
+ * herdr's `pane.process_info` for a terminal: its shell and what runs in front of it. `job`: the
+ * processes below the one in front, in its job (foreground-job.ts), named after it as herdr names
+ * every process of the job; the adapter reads them only for a shell running a command string.
+ */
+export function processInfoOf(terminal: HcTerminal, job: readonly JobProcess[] | null = null): PaneProcessInfo {
   const foreground = terminal.foreground;
   return {
     pane_id: terminal.address,
     shell_pid: terminal.pid ?? null,
     foreground_process_group_id: foreground?.pid ?? null,
     foreground_processes: foreground
-      ? [{ name: foreground.name, pid: foreground.pid, argv: foreground.argv ?? null, argv0: foreground.argv?.[0] ?? null, cmdline: foreground.argv?.join(" ") ?? null, cwd: foreground.cwd ?? null }]
+      ? [
+        { name: foreground.name, pid: foreground.pid, argv: foreground.argv ?? null, argv0: foreground.argv?.[0] ?? null, cmdline: foreground.argv?.join(" ") ?? null, cwd: foreground.cwd ?? null },
+        ...(job ?? []).map(({ pid, name, argv }) => ({ name, pid, argv, argv0: argv[0] ?? null, cmdline: argv.join(" "), cwd: null })),
+      ]
       : [],
   };
 }
