@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type BrowserContext, type Page, type Response } from "playwright-core";
 import { chromePath } from "./chrome-path.ts";
+import { advanceUntil } from "./preferences-regression-clock.ts";
 process.env["OVIS_MACHINE_EVENTS_WS"] = "0";
 
 await import("./test-herdr.ts");
@@ -16,7 +17,13 @@ let server = serve(0);
 const origin = `http://127.0.0.1:${server.port}`;
 const isEventStream = (url: string | URL) => new URL(url).pathname === "/api/machines/events";
 
-interface Opened { context: BrowserContext; page: Page; puts: { settings: Record<string, unknown>; pins?: string[] }[] }
+interface Opened {
+  context: BrowserContext;
+  page: Page;
+  puts: { settings: Record<string, unknown>; pins?: string[] }[];
+  answers: Response[];
+  read: number;
+}
 const mainKey = "ovis:settings";
 const qaDir = process.env["PREFERENCES_QA_DIR"];
 if (qaDir) mkdirSync(qaDir, { recursive: true });
@@ -46,12 +53,14 @@ async function browserAt(browser: Awaited<ReturnType<typeof chromium.launch>>, o
   }, [own, pins] as const);
   await before?.(context);
   const puts: Opened["puts"] = [];
+  const answers: Opened["answers"] = [];
   const page = await context.newPage();
   await page.clock.install();
   page.on("request", (request) => { if (request.method() === "PUT" && request.url().endsWith("/api/preferences")) puts.push(request.postDataJSON()); });
+  page.on("response", (response) => { if (isPut(response)) answers.push(response); });
   await page.goto(origin);
   await page.locator(".conn-live").waitFor({ state: "attached" });
-  return { context, page, puts };
+  return { context, page, puts, answers, read: 0 };
 }
 
 function storageHolds(page: Page, key: string, expected: Record<string, unknown> | string[]): Promise<void> {
@@ -100,25 +109,23 @@ async function reached(onWay: Promise<void>, what: string, state: () => Promise<
   if (!came) throw new Error(`${what}: no save reached the server in 60 s; ${await state()}`);
 }
 async function nextPut(opened: Opened): Promise<Response> {
-  const answered = opened.page.waitForResponse(isPut);
-  let got = false;
-  void answered.then(() => { got = true; }, () => {});
-  for (let second = 0; second < 12 && !got; second++) await opened.page.clock.runFor(1_000);
-  return await answered;
+  const answer = opened.answers[opened.read] ?? await advanceUntil([opened.page], opened.page.waitForResponse(isPut));
+  opened.read++;
+  return answer;
 }
 const reopenMs: number[] = [];
 /**
  * The event stream reopens for real: the server restarts on its port, and each page's EventSource
- * reconnects. The reconnect is the browser's own (its retry wait is real time, not the page clock),
- * which a loaded PC can stretch past Playwright's 30 s default, so the deadline is named here.
+ * reconnects. If Chromium closes the old source, the app's replacement timer needs the page clock.
  */
+const streamReopened = (page: Page) => page.waitForResponse((response) => isEventStream(response.url()) && response.status() === 200, { timeout: 120_000 });
 async function restartServer(pages: readonly Page[]): Promise<void> {
-  const reopened = pages.map((page) => page.waitForResponse((response) => isEventStream(response.url()), { timeout: 120_000 }));
+  const reopened = Promise.all(pages.map(streamReopened));
   const port = server.port;
   const started = Date.now();
   server.stop();
   server = serve(port);
-  await Promise.all(reopened);
+  await advanceUntil(pages, reopened);
   reopenMs.push(Date.now() - started);
 }
 async function chooseMode(opened: Opened, mode: "Light" | "Dark"): Promise<void> {
@@ -308,11 +315,15 @@ try {
       await mode("Light");
       await e.page.clock.runFor(1_800);
       assert.equal(e.puts.length, 5, "a second Retry and a new edit start no parallel send");
-      const firstAnswer = e.page.waitForResponse(isPut);
+      const first = hold;
+      hold = Promise.withResolvers<void>();
+      onWay = Promise.withResolvers<void>();
+      first.resolve();
+      assert.equal((await nextPut(e)).status(), 200);
+      await advanceUntil([e.page], reached(onWay.promise, "retry-confirms-latest follow-up", saveState));
+      assert.equal(await alert.count(), 1, "the status stays while the newer edit is unconfirmed");
       hold.resolve();
       hold = null;
-      assert.equal((await firstAnswer).status(), 200);
-      assert.equal(await alert.count(), 1, "the status stays while the newer edit is unconfirmed");
       assert.equal((await nextPut(e)).status(), 200);
       assert.equal(e.puts[5]?.settings["theme"], "light", "the edit made during the Retry goes next");
       await alert.waitFor({ state: "detached" });
@@ -357,10 +368,9 @@ try {
       await e.page.clock.runFor(600);
       await reached(onWay.promise, "undone-while-refused", saveState);
       await mode("Dark");
-      const refused = e.page.waitForResponse(isPut);
       hold.resolve();
       hold = null;
-      assert.equal((await refused).status(), 500);
+      assert.equal((await nextPut(e)).status(), 500);
       await quiet();
       assert.equal(await alert.count(), 0, "a refused save of a change already undone leaves no alert");
       assert.equal(e.puts.length, putsBefore + 1, "nothing is sent for a change already undone");
@@ -390,9 +400,9 @@ try {
       assert.equal(e.puts.length, atDisconnect, "a lost event stream cancels the wait for the next save");
       assert.equal(atDisconnect, putsAtStart + 1);
       failing = false;
-      const reopened = [e.page, f.page].map((page) => page.waitForResponse((response) => isEventStream(response.url()), { timeout: 120_000 }));
+      const reopened = Promise.all([e.page, f.page].map(streamReopened));
       server = serve(port);
-      await Promise.all(reopened);
+      await advanceUntil([e.page, f.page], reopened);
       assert.equal((await nextPut(e)).status(), 200);
       await alert.waitFor({ state: "detached" });
       await settingsHold(f.page, { theme: "light" });
@@ -412,23 +422,22 @@ try {
       failing = false;
       onWay = Promise.withResolvers<void>();
       hold = Promise.withResolvers<void>();
-      await e.page.clock.runFor(5_600);
-      await reached(onWay.promise, "retry-during-automatic-send", saveState);
+      // The retry timer requests a React update; only the resulting effect schedules the send.
+      await advanceUntil([e.page], reached(onWay.promise, "retry-during-automatic-send", saveState));
       assert.equal(e.puts.length, putsFirst + 2);
       await retry.click();
-      const confirmedAnswer = e.page.waitForResponse(isPut);
       hold.resolve();
       hold = null;
-      assert.equal((await confirmedAnswer).status(), 200);
+      assert.equal((await nextPut(e)).status(), 200);
       await alert.waitFor({ state: "detached" });
       const portAgain = await loseStream();
       const atLoss = e.puts.length;
       await mode("Light");
       await quiet();
       assert.equal(e.puts.length, atLoss, "a Retry already answered authorizes no later send while the stream is lost");
-      const reopenedAgain = [e.page, f.page].map((page) => page.waitForResponse((response) => isEventStream(response.url()), { timeout: 120_000 }));
+      const reopenedAgain = Promise.all([e.page, f.page].map(streamReopened));
       server = serve(portAgain);
-      await Promise.all(reopenedAgain);
+      await advanceUntil([e.page, f.page], reopenedAgain);
       assert.equal((await nextPut(e)).status(), 200);
       await settingsHold(f.page, { theme: "light" });
       await quiet();
@@ -465,11 +474,7 @@ try {
       assert.equal((await nextPut(e)).status(), 200, "a stream the browser gave up on holds no change back");
       await settingsHold(f.page, { theme: "dark" });
       streamRefused = false;
-      const reopenedStream = e.page.waitForResponse((response) => isStream(response) && response.status() === 200);
-      let streamBack = false;
-      void reopenedStream.then(() => { streamBack = true; }, () => {});
-      for (let second = 0; second < 70 && !streamBack; second++) await e.page.clock.runFor(1_000);
-      await reopenedStream;
+      await advanceUntil([e.page], e.page.waitForResponse((response) => isStream(response) && response.status() === 200));
       await Promise.all([settingsHold(e.page, { showThinking: true }), write({ showThinking: true })]);
       assert.equal(e.puts.length, atClose + 1);
       assert.equal(mostAtOnce, 1);

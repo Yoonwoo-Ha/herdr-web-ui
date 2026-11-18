@@ -44,12 +44,13 @@ try {
         });
         const gate = Promise.withResolvers<void>();
         try {
-          await context.addInitScript(({ theme, project }) => {
+          await context.addInitScript(({ theme, project, other }) => {
             const setItem = Storage.prototype.setItem;
             Storage.prototype.setItem = function (key, value) {
               setItem.call(this, key, value);
-              if (this === localStorage && key === "ovis:recent-directories:local"
-                && JSON.parse(value).includes(project)) console.info("RECENTS_SEEDED");
+              if (this !== localStorage || key !== "ovis:recent-directories:local") return;
+              const paths: unknown = JSON.parse(value);
+              if (Array.isArray(paths) && paths.includes(project) && paths.includes(other)) console.info("RECENTS_SEEDED");
             };
             localStorage.setItem("ovis:settings", JSON.stringify({ theme, language: "ko" }));
             localStorage.setItem("ovis:new-session-agent", "codex");
@@ -57,7 +58,7 @@ try {
             if (localStorage.getItem("ovis:recent-directories:local") === null) {
               localStorage.setItem("ovis:recent-directories:local", '["/older/one"]');
             }
-          }, { theme, project });
+          }, { theme, project, other });
           await context.route("**/api/agents", (route) => route.fulfill({ json: { agents: [{ kind: "codex", label: "Codex" }] } }));
           // by path: the app asks with `?compact_agents=1`, which a glob ending in the path does not match
           await context.route((url) => url.pathname === "/api/machines/events", (route) => route.abort());
@@ -120,11 +121,18 @@ try {
           };
           await openNew();
           const dialog = page.getByRole("dialog");
-          const chip = dialog.getByRole("button", { name: `${project} 폴더 사용`, exact: true });
-          await chip.waitFor();
           await dialog.locator(".agent-picker-trigger", { hasText: "Codex" }).waitFor();
           const chips = dialog.locator('[role="group"] .new-session-folder-chip:not(.new-session-folder-more)');
           const more = dialog.locator('[role="group"] .new-session-folder-more');
+          const packed = async (count: number): Promise<void> => {
+            await page.evaluate(() => document.fonts.ready.then(() => undefined));
+            await page.waitForFunction((count) => {
+              const row = document.querySelector(".new-session-folder-chips");
+              if (!row) return false;
+              return [...row.children].reduce((total, chip) => total
+                + (chip.classList.contains("new-session-folder-more") ? Number(chip.textContent) : 1), 0) === count;
+            }, count);
+          };
           const titles = (from: typeof chips) => from.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("title")));
           const offered = async (): Promise<(string | null)[]> => {
             const shown = await titles(chips);
@@ -140,13 +148,15 @@ try {
             assert.equal(await dialog.isVisible(), true, "Escape closes the list, not the dialog");
             return [...shown, ...rest];
           };
-          const pickFolder = async (path: string): Promise<void> => {
+          const pickFolder = async (path: string): Promise<typeof chips> => {
             const button = dialog.getByRole("button", { name: `${path} 폴더 사용`, exact: true });
-            if (await button.count() > 0) { await button.click(); return; }
+            if (await button.count() > 0) { await button.click(); return button; }
             await more.click();
             await page.getByRole("menu", { name: "최근 폴더", exact: true }).getByRole("menuitem").and(page.locator(`[title="${path}"]`)).click();
+            return more;
           };
           const submit = dialog.locator('button[type="submit"]');
+          await packed(3);
           const first = await offered();
           assert.equal(first[0], "/older/one", "the folder kept comes first");
           assert.deepEqual([...first.slice(1)].sort(), [other, project].sort(), "folders only seen in panes come behind the one kept");
@@ -162,12 +172,12 @@ try {
 
           const request = page.waitForRequest((request) => request.url().endsWith("/api/workspace/create"));
           const response = page.waitForResponse((response) => response.url().endsWith("/api/workspace/create"));
-          await chip.click();
+          const picked = await pickFolder(project);
           assert.equal(await dialog.locator("#new-session-cwd").inputValue(), project);
           assert.equal(requests, 0, "a chip fills Directory and starts nothing");
           await submit.click();
           assert.deepEqual((await request).postDataJSON(), { cwd: project, label: null, agent: { kind: "codex" } });
-          assert.equal(await chip.isDisabled(), true);
+          assert.equal(await picked.isDisabled(), true);
           assert.equal(await dialog.locator('[role="group"] .new-session-folder-chip:not(:disabled)').count(), 0);
           await page.keyboard.press("Escape");
           assert.equal(await dialog.isVisible(), true);
@@ -187,7 +197,7 @@ try {
           await page.reload();
           await betaRow.waitFor({ state: "attached" });
           await openNew();
-          await chip.waitFor();
+          await packed(4);
           assert.deepEqual(await offered(), [project, "/older/one", other, "/older/two"]);
           if (width !== 390) assert.equal(new Set(await chips.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().top))).size, 1, "a wider screen keeps one row too, the rest under +N");
           if (width !== 390) assert.equal(await more.count(), 1, "four folders with a long name are more than the row holds: +N lists the rest");
