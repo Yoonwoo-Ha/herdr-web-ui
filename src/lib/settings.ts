@@ -978,6 +978,11 @@ interface SettingsContextValue {
   resolvedTheme: ResolvedTheme;
   resolvedEntry: DrawnTheme;
   resolvedLanguage: Language;
+  /** this tab's settings as of now, a change React has not drawn yet included: what runs outside a render (a document from the server, a save's answer) judges against this, never against the last render */
+  own: () => Settings;
+  /** `changed` is called at once after each change to this tab's settings, before React draws it; the result stops it */
+  watch: (changed: () => void) => () => void;
+  /** a function is handed what is stored now (another tab's saved change included) */
   update: (patch: Partial<Settings> | ((current: Settings) => Partial<Settings>)) => void;
 }
 
@@ -985,6 +990,15 @@ const SettingsContext = createContext<SettingsContextValue | null>(null);
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(loadSettings);
+  // This tab's settings as of now. `update` and the storage handler advance it at once and then hand it to React to
+  // draw: a change is never worked out in an updater, which React runs later, and twice under StrictMode.
+  const held = useRef<Settings>(settings);
+  const watchers = useRef(new Set<() => void>());
+  const advance = useCallback((next: Settings): void => {
+    held.current = next;
+    setSettings(next);
+    for (const changed of [...watchers.current]) changed();
+  }, []);
   const stored = useRef<Settings>(settings);
   const [systemDark, setSystemDark] = useState(() => resolveTheme("system") === "dark");
 
@@ -995,11 +1009,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       // placement is the device's, so a tab still open moves its row with the one that changed it
       const { shortcutOverrides, enterSends, voiceEngine, phoneTabs } = loadSettings();
       stored.current = { ...stored.current, shortcutOverrides, enterSends, voiceEngine, phoneTabs };
-      setSettings((current) => ({ ...current, shortcutOverrides, enterSends, voiceEngine, phoneTabs }));
+      advance({ ...held.current, shortcutOverrides, enterSends, voiceEngine, phoneTabs });
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  }, [advance]);
 
   useEffect(() => {
     const query = window.matchMedia?.(DARK_QUERY);
@@ -1030,28 +1044,30 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, [settings, resolvedEntry, resolvedLanguage]);
 
   const update = useCallback((patch: Partial<Settings> | ((current: Settings) => Partial<Settings>)) => {
-    // StrictMode runs the updater twice on the same state: the first run's save must not change what the second one reads
-    let made: Partial<Settings> | undefined;
-    setSettings((current) => {
-      const differs = (key: string, value: unknown, from: Settings): boolean => JSON.stringify(value) !== JSON.stringify(from[key as keyof Settings]);
-      const readable = (): boolean => {
-        try {
-          const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
-          if (raw === null) return false;
-          JSON.parse(raw);
-          return true;
-        } catch { return false; }
-      };
-      const latest = (): Settings => !readable() ? current
-        : sanitizeSettings({ ...loadSettings(), ...Object.fromEntries(Object.entries(current).filter(([key, value]) => differs(key, value, stored.current))) });
-      const next = sanitizeSettings({ ...current, ...(typeof patch === "function" ? made ??= patch(latest()) : patch) });
-      const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) => differs(key, value, current) || differs(key, value, stored.current)));
-      if (saveSettings(sanitizeSettings({ ...loadSettings(), ...changed }))) stored.current = next;
-      return next;
-    });
+    const current = held.current;
+    const differs = (key: string, value: unknown, from: Settings): boolean => JSON.stringify(value) !== JSON.stringify(from[key as keyof Settings]);
+    const readable = (): boolean => {
+      try {
+        const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+        if (raw === null) return false;
+        JSON.parse(raw);
+        return true;
+      } catch { return false; }
+    };
+    const latest = (): Settings => !readable() ? current
+      : sanitizeSettings({ ...loadSettings(), ...Object.fromEntries(Object.entries(current).filter(([key, value]) => differs(key, value, stored.current))) });
+    const next = sanitizeSettings({ ...current, ...(typeof patch === "function" ? patch(latest()) : patch) });
+    const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) => differs(key, value, current) || differs(key, value, stored.current)));
+    if (saveSettings(sanitizeSettings({ ...loadSettings(), ...changed }))) stored.current = next;
+    advance(next);
+  }, [advance]);
+  const own = useCallback((): Settings => held.current, []);
+  const watch = useCallback((changed: () => void): (() => void) => {
+    watchers.current.add(changed);
+    return () => { watchers.current.delete(changed); };
   }, []);
 
-  const value = useMemo(() => ({ settings, resolvedTheme, resolvedEntry, resolvedLanguage, update }), [settings, resolvedTheme, resolvedEntry, resolvedLanguage, update]);
+  const value = useMemo(() => ({ settings, resolvedTheme, resolvedEntry, resolvedLanguage, own, watch, update }), [settings, resolvedTheme, resolvedEntry, resolvedLanguage, own, watch, update]);
   return createElement(SettingsContext.Provider, { value }, children);
 }
 

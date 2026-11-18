@@ -176,14 +176,16 @@ export interface PreferencesSync {
 }
 
 export function usePreferencesSync(enabled: boolean): PreferencesSync {
-  const { settings, update } = useSettings();
+  const { own, watch, update } = useSettings();
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const muted = useSyncExternalStore(subscribePaneMutes, currentPaneMutes, currentPaneMutes);
   const tabLabels = useSyncExternalStore(subscribeTabLabels, currentTabLabels, currentTabLabels);
-  const latest = useRef<Local>({ settings, pins, muted, tabLabels });
-  latest.current = { settings, pins, muted, tabLabels };
+  // What this tab holds now, a change React has not drawn yet included: the provider's settings and the stores all
+  // change at once. Everything that happens outside a render (a document, a save's answer or failure, Retry) is
+  // judged against this, in the order it happened, so no result depends on when React renders.
+  const here = useCallback((): Local => ({ settings: own(), pins: currentSidebarPins(), muted: currentPaneMutes(), tabLabels: currentTabLabels() }), [own]);
   const stored = useRef(loadSharedPins());
-  const base = useRef<Baseline>({ settings: sharedSettings(settings), pins: stored.current?.pins ?? null, muted: null, tabLabels: {} });
+  const base = useRef<Baseline>({ settings: sharedSettings(own()), pins: stored.current?.pins ?? null, muted: null, tabLabels: {} });
   const revision = useRef(0);
   const loadedRef = useRef(false);
   const [loaded, setLoaded] = useState(false);
@@ -213,31 +215,72 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
   const carried = useRef<Carried | null | undefined>(undefined);
   if (carried.current === undefined) carried.current = takeCarried();
 
+  const standDown = useCallback(() => {
+    failures.current = 0;
+    refused.current = null;
+    window.clearTimeout(pauseTimer.current);
+    userRetry.current = false;
+    setSaveError(null);
+    setPaused(false);
+    setRetrying(false);
+  }, []);
+  // Nothing unsent ends what a refusal left behind, the wait for its retry included: the next render sets up the wait
+  // an edit made after this needs. False while something is unsent.
+  const rest = useCallback((): boolean => {
+    if (preferencesChange(base.current, here()) !== null) return false;
+    standDown();
+    setAttempt((count) => count + 1);
+    return true;
+  }, [here, standDown]);
+  // Looked at as each edit and document lands, not only at the next render: an edit that comes back before that
+  // render is then a new one, as it is once drawn.
+  const quiet = useCallback(() => {
+    if (loadedRef.current && inFlight.current === null) rest();
+  }, [rest]);
+  useEffect(() => {
+    const stops = [watch(quiet), subscribeSidebarPins(quiet), subscribePaneMutes(quiet), subscribeTabLabels(quiet)];
+    return () => { for (const stop of stops) stop(); };
+  }, [watch, quiet]);
+
+  // Gone with the tree (the crash screen replaces it in a live page). A save can still be answered after that: its
+  // document sets no setting here then, or this tab's old view would be stored over what another tab stored since.
+  const gone = useRef(false);
+  useEffect(() => {
+    gone.current = false;
+    return () => { gone.current = true; };
+  }, []);
+
   const absorb = useCallback((remote: SharedPreferences) => {
     if (off.current || (loadedRef.current && remote.revision <= revision.current)) return;
+    const local = here();
     const before = carried.current;
     carried.current = null;
+    // a change the page before this one sent on its way out, where the server holds nothing newer than that page
+    // knew: the request may have been lost, so each value still here as it went is this page's edit and goes again
     if (before && !loadedRef.current && remote.revision <= before.revision) {
       for (const [key, value] of Object.entries(before.settings)) {
-        if (same(latest.current.settings[key as SharedSettingKey], value)) delete base.current.settings[key as SharedSettingKey];
+        if (same(local.settings[key as SharedSettingKey], value)) delete base.current.settings[key as SharedSettingKey];
       }
     }
     revision.current = Math.max(revision.current, remote.revision);
     const kept = stored.current;
     const startedOver = kept !== null && (remote.revision < kept.revision || (kept.stateId !== undefined && remote.state_id !== undefined && remote.state_id !== kept.stateId));
     if (!loadedRef.current && startedOver) base.current = { ...base.current, pins: null };
-    const taken = takePreferences(base.current, latest.current, remote, inFlight.current, readOnly.current, refused.current);
+    const taken = takePreferences(base.current, local, remote, inFlight.current, readOnly.current, refused.current);
     base.current = !loadedRef.current && remote.pins === undefined ? { ...taken.base, pins: null } : taken.base;
     saveSharedPins(base.current.pins === null ? null : { pins: [...base.current.pins], revision: remote.revision, ...(remote.state_id === undefined ? {} : { stateId: remote.state_id }) });
-    latest.current = { settings: sanitizeSettings({ ...latest.current.settings, ...taken.patch }), pins: taken.pins ?? latest.current.pins, muted: taken.muted === undefined ? latest.current.muted : taken.muted, tabLabels: taken.tabLabels ?? latest.current.tabLabels };
-    if (Object.keys(taken.patch).length > 0) update(taken.patch);
+    // Taken at once, as the stores below are: the next document, answer or edit is judged against it before React draws it.
+    // Each of the four tells `quiet` as it lands. A list not in yet is still this tab's old one, which differs from the
+    // new baseline wherever the one taken will, so what is unsent reads as nothing before the last is in only if it is nothing after.
+    if (Object.keys(taken.patch).length > 0 && !gone.current) update(taken.patch);
     if (taken.pins !== null) setSidebarPins(taken.pins);
     if (taken.muted !== undefined) setPaneMutes(taken.muted);
     if (taken.tabLabels !== null) setTabLabels(taken.tabLabels);
     loadedRef.current = true;
     setLoaded(true);
     setTaken((count) => count + 1);
-  }, [update]);
+    quiet();
+  }, [here, quiet, update]);
 
   const receive = useCallback((remote: SharedPreferences) => {
     if (inFlight.current === null) { absorb(remote); return; }
@@ -263,16 +306,6 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
     return () => { cancelled = true; window.clearTimeout(retry); };
   }, [enabled, loaded, loadAttempt, receive]);
 
-  const standDown = useCallback(() => {
-    failures.current = 0;
-    refused.current = null;
-    window.clearTimeout(pauseTimer.current);
-    userRetry.current = false;
-    setSaveError(null);
-    setPaused(false);
-    setRetrying(false);
-  }, []);
-
   const resume = useCallback(() => {
     if (off.current || readOnly.current) return;
     failures.current = 0;
@@ -282,11 +315,11 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
   }, []);
   const retry = useCallback(() => {
     if (off.current || readOnly.current) return;
-    if (inFlight.current === null && preferencesChange(base.current, latest.current) === null) { standDown(); return; }
+    if (inFlight.current === null && preferencesChange(base.current, here()) === null) { standDown(); return; }
     userRetry.current = true;
     setRetrying(true);
     resume();
-  }, [resume, standDown]);
+  }, [here, resume, standDown]);
   const resubscribed = useCallback(() => {
     if (base.current.tabLabels === null) base.current.tabLabels = {};
     streamLostRef.current = false;
@@ -307,7 +340,8 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
     window.clearTimeout(retryTimer.current);
   }, []);
 
-  const change = loaded ? preferencesChange(base.current, { settings, pins, muted, tabLabels }) : null;
+  // against this tab's settings as of now, not the ones this render draws: the baseline beside them is as of now too
+  const change = loaded ? preferencesChange(base.current, { settings: own(), pins, muted, tabLabels }) : null;
   const pending = change === null ? null : JSON.stringify(change);
   useEffect(() => {
     if (loaded && pending === null && inFlight.current === null) standDown();
@@ -326,16 +360,19 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
     let timer: number | undefined;
     const leaving = (event: Event): void => {
       if (event.type === "visibilitychange" && document.visibilityState !== "hidden") return;
+      // what is unsent as the page goes: `pending` is as of the render that set this up, and an edit since may not be drawn
+      const unsent = preferencesChange(base.current, here());
+      if (unsent === null) return;
       if (inFlight.current !== null || timer === undefined) {
-        if (outlives.current === pending) return;
-        outlives.current = pending;
-        const body = JSON.parse(pending) as PreferencesChange;
-        carry({ revision: revision.current, settings: body.settings });
-        savePreferences(body, true).catch(() => undefined);
+        const going = JSON.stringify(unsent);
+        if (outlives.current === going) return;
+        outlives.current = going;
+        carry({ revision: revision.current, settings: unsent.settings });
+        savePreferences(unsent, true).catch(() => undefined);
         return;
       }
       window.clearTimeout(timer);
-      carry({ revision: revision.current, settings: (JSON.parse(pending) as PreferencesChange).settings });
+      carry({ revision: revision.current, settings: unsent.settings });
       sendNow(true);
     };
     const listen = (): (() => void) => {
@@ -346,10 +383,12 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
     if (inFlight.current !== null) return listen();
     if ((streamLost || (streamClosed.current && refused.current !== null)) && !userRetry.current) return;
     const sendNow = (keepalive: boolean): void => {
+      // what is unsent when it goes, not when this wait began: a document or an edit since then counts, drawn or not
+      const body = preferencesChange(base.current, here());
+      if (body === null) return;
       userRetry.current = false;
-      const body = JSON.parse(pending) as PreferencesChange;
       inFlight.current = body;
-      outlives.current = keepalive ? pending : null;
+      outlives.current = keepalive ? JSON.stringify(body) : null;
       savePreferences(body, keepalive).then((saved) => {
         refused.current = null;
         // An older server silently drops new names. Acknowledge exactly what was sent, not
@@ -363,25 +402,26 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
         settled();
         failures.current = 0;
         setRetrying(false);
-        if (preferencesChange(base.current, latest.current) === null) {
+        if (preferencesChange(base.current, here()) === null) {
           userRetry.current = false;
           setSaveError(null);
         }
         setAttempt((count) => count + 1);
       }).catch((error: unknown) => {
+        const status = error instanceof ApiError ? error.status : null;
+        // before a document held behind this save is read: a device that cannot write takes it whole, and a
+        // refused value gives way to a newer one saved elsewhere
+        if (status === 403) readOnly.current = true;
+        else if (status !== 404) refused.current = body;
         settled();
-        if (error instanceof ApiError && error.status === 403) {
-          readOnly.current = true;
+        if (status === 403) {
           standDown();
-        } else if (error instanceof ApiError && error.status === 404) {
+        } else if (status === 404) {
           off.current = true;
           standDown();
-        } else if (preferencesChange(base.current, latest.current) === null) {
-          standDown();
-        } else {
+        } else if (!rest()) {
           const next = userErrorMessage(error);
           setSaveError((before) => before !== null && before.message === next.message && before.detail === next.detail ? before : next);
-          refused.current = body;
           failures.current += 1;
           if (userRetry.current && failures.current < PAUSE_AFTER) { setAttempt((count) => count + 1); return; }
           userRetry.current = false;
@@ -400,7 +440,7 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
       window.clearTimeout(retryTimer.current);
       unlisten();
     };
-  }, [enabled, loaded, paused, streamLost, pending, attempt, absorb, settled, standDown]);
+  }, [enabled, loaded, paused, streamLost, pending, attempt, absorb, settled, standDown, here, rest]);
 
   return { receive, saveError, paused, retrying, retry, resubscribed, disconnected, closed };
 }
