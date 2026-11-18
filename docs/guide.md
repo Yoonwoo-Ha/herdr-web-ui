@@ -948,7 +948,8 @@ PC's panes are then the app's. One server serves one runtime, chosen as it start
    Herdr app is installed or its core runs.
 
 Ovis needs an `hc` speaking
-protocol generation 1 (checked with 0.1.14 and 0.1.17), and looks for it in `OVIS_HC_BIN`, then
+protocol generation 1 (checked with 0.1.14 and 0.1.17). With `OVIS_HC_BIN` set it runs that hc and
+no other: when it does not answer, the server says so and stops. Otherwise it looks in
 the usual install places (`~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, mise, Nix and
 cargo), then the `PATH`, then your login shell's `PATH`, taking `herdr-core` before `hc` in each.
 On Linux and macOS a candidate found there is run only when it and every folder on the way to it
@@ -1147,7 +1148,7 @@ Each `OVIS_*` variable was called `HERDR_WEB_*` before Ovis took its name (`OVIS
 | `OVIS_BUNDLE_MANIFEST` | unset | Remote-PC bundle manifest (path or URL) that overrides local and published bundles |
 | `OVIS_HERDR_BIN` | `herdr` | herdr executable used for terminal attach |
 | `OVIS_RUNTIME` | chosen | `herdr-core` shows the terminals of [herdr-core](https://herdr.dev/core) (`hc`), the core the Herdr desktop app runs on, instead of herdr's TUI server. Unset, the runtime chosen in Settings, else what the PC has, decides; set, it wins and Settings cannot switch: see [Herdr app terminals](#herdr-app-terminals) |
-| `OVIS_HC_BIN` | found | hc executable used with `OVIS_RUNTIME=herdr-core`, looked at first: the server runs it as its one `hc connect`, which also carries the live terminals. One whose `--version` does not say `hc …` is passed over for the next one found (see [Herdr app terminals](#herdr-app-terminals)). `HC_SESSION` and `HC_SOCKET` pick the core as for any hc command |
+| `OVIS_HC_BIN` | found | hc executable used with `OVIS_RUNTIME=herdr-core`, and the only one tried when set: the server runs it as its one `hc connect`, which also carries the live terminals. One whose `--version` does not say `hc …` stops the server with a message that names it, and no other hc is run in its place (see [Herdr app terminals](#herdr-app-terminals)). `HC_SESSION` and `HC_SOCKET` pick the core as for any hc command |
 | `OVIS_SSH` | `ssh` (Git for Windows' on Windows) | OpenSSH client for [remote PCs](#remote-pcs-over-ssh); the `sftp` and `ssh-keygen` beside it are used too |
 | `OVIS_APP_NAME` | unset (`Ovis`) | The name the installed app has on a phone or computer, for example the PC's name. Each PC installs as an app of its own, and without it they are all called `Ovis`. An app already installed takes the new name when the browser next updates it, usually within a day or two, without a reinstall. Keep it short: a home screen cuts a long label |
 | `OVIS_PASTE_DIR` | `<pane cwd>/.ovis` | Where pasted and attached files are saved: an absolute path or `~/…`. Set it to keep them out of your projects; an agent may then ask before reading one. It covers the panes of this server's PC; a remote PC keeps the default |

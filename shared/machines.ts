@@ -284,11 +284,13 @@ export interface HerdrRuntimeFacts {
  * (server/herdr-core/discovery.ts), null when none answers as hc. `running`: the core's socket file
  * is there for `session`; nothing connects to it, since any hc command but `--version` starts a core.
  * `session` is null when HC_SESSION is not a plain name (hc refuses such names), so no path is told.
+ * `bundled_unused`: the desktop app's own hc did not answer, and `version` is another hc's found in its place.
  */
 export interface HerdrCoreFacts {
   version: string | null;
   session: string | null;
   running: boolean;
+  bundled_unused?: true;
 }
 export interface FoundHerdrSession { socket_path: string; session?: string; label: string }
 export interface FoundOvis { socket_path: string; runtime: "herdr-core" }
