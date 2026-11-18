@@ -676,6 +676,150 @@ Ready to submit your answers?
 `);
     expect(bash).toMatchObject({ kind: "approval", title: "Bash command", question: "Do you want to proceed?", body: "rm -rf junk\nDelete the junk directory" });
     expect(labels(bash)).toEqual(["Yes", "Yes, and always allow access to /tmp/prompt-lab/junk from this project", "Yes, and switch to auto mode · auto mode handles these prompts for you", "No"]);
+    // a safety-check hold hides the numbers and opens on No: the card still offers both
+    const held = parseInteractivePrompt("claude", `
+● claude.ai Claude Docs - batch (MCP)(container: {"kind":"project"})
+────────────────────────────────────────
+ Tool use
+   claude.ai Claude Docs - batch (MCP)
+ A save or delete of a project doc. It needs a person's approval.
+ Claude Code's automatic safety check flagged this action, so the action hasn't run.
+ Do you want to proceed?
+   Yes
+ ❯ No
+ Esc to cancel
+`);
+    expect(held).toMatchObject({ kind: "approval", title: "Tool use", question: "Do you want to proceed?" });
+    expect(labels(held)).toEqual(["Yes", "No"]);
+    expect(answerKeys(held!, { option_index: 0 })).toEqual([{ keys: ["up"] }, { keys: ["enter"] }]);
+    // other unnumbered lines under the question are no such menu
+    expect(parseInteractivePrompt("claude", `
+────────────────────────────────────────
+ Tool use
+ Claude Code's automatic safety check flagged this action, so the action hasn't run.
+ Do you want to proceed?
+   Something else
+ ❯ No
+ Esc to cancel
+`)).toBeNull();
+    // nor is a Yes/No list without the safety check's words over it (an example in Claude's text)
+    expect(parseInteractivePrompt("claude", `
+────────────────────────────────────────
+ Example dialog
+ Do you want to proceed?
+   Yes
+ > No
+ Esc to cancel
+`)).toBeNull();
+    // the words of an earlier asking above a later panel name neither its title nor its action
+    const later = parseInteractivePrompt("claude", `
+● Bash(rm -rf old)
+  This command requires approval
+  ⎿ done
+
+● Write(notes.md)
+────────────────────────────────────────
+ Create file
+   notes.md
+ Claude Code's automatic safety check flagged this action, so the action hasn't run.
+ Do you want to proceed?
+   Yes
+ ❯ No
+ Esc to cancel
+`);
+    expect(later).toMatchObject({ kind: "approval", title: "Create file" });
+    expect(later!.body).toContain("notes.md");
+    expect(later!.body).not.toContain("rm -rf old");
+    const laterMcp = parseInteractivePrompt("claude", `
+● Bash(rm -rf old)
+  This command requires approval
+  ⎿ done
+
+● plugin/thing - do (MCP)(id: 1)
+────────────────────────────────────────
+ Tool use
+   plugin/thing - do (MCP)
+ Claude Code's automatic safety check flagged this action, so the action hasn't run.
+ Do you want to proceed?
+   Yes
+ ❯ No
+ Esc to cancel
+`);
+    expect(laterMcp).toMatchObject({ kind: "approval", title: "Tool use" });
+    expect(laterMcp!.body).not.toContain("rm -rf old");
+    // a narrow pane wraps the safety check's words
+    expect(labels(parseInteractivePrompt("claude", `
+────────────────────────────────────────
+ Tool use
+ Claude Code's automatic safety check
+ flagged this action, so the action
+ hasn't run.
+ Do you want to proceed?
+   Yes
+ ❯ No
+ Esc to cancel
+`))).toEqual(["Yes", "No"]);
+    // nor do two paragraphs that only together read as the words
+    expect(parseInteractivePrompt("claude", `
+────────────────────────────────────────
+ About the automatic safety check
+
+ Flagged this action? Here is how it looks:
+ Do you want to proceed?
+   Yes
+ > No
+ Esc to cancel
+`)).toBeNull();
+    // a call quoted in a boxed preview is not the panel's call: the approval keeps its card
+    const boxed = parseInteractivePrompt("claude", `
+● Bash(cat <<'EOF' > notes.md)
+────────────────────────────────────────
+ Bash command
+   │ cat <<'EOF' > notes.md
+   │ ● plugin/thing - do (MCP)(id: 1)
+   │ EOF
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+ Esc to cancel
+`);
+    expect(boxed).toMatchObject({ kind: "approval", title: "Bash command" });
+    // a held menu quoted inside a boxed preview is the command's text, not Claude's dialog
+    expect(parseInteractivePrompt("claude", `
+────────────────────────────────────────
+ Bash command
+   │ Claude Code's automatic safety check flagged this action, so the action hasn't run.
+   │ Do you want to proceed?
+   │   Yes
+   │ ❯ No
+   │ Esc to cancel
+`)).toBeNull();
+    // a call-less held approval under an earlier, finished MCP panel keeps its own title
+    expect(parseInteractivePrompt("claude", `
+● plugin/thing - do (MCP)(id: 1)
+────────────────────────────────────────
+ Tool use
+   plugin/thing - do (MCP)
+  ⎿ done
+────────────────────────────────────────
+ Bash command
+   sleep 100
+ Claude Code's automatic safety check flagged this action, so the action hasn't run.
+ Do you want to proceed?
+   Yes
+ ❯ No
+ Esc to cancel
+`)).toMatchObject({ kind: "approval", title: "Bash command" });
+    // the words quoted above a rule do not make an example under it a held approval
+    expect(parseInteractivePrompt("claude", `
+● The safety check says "Claude Code's automatic safety check flagged this action" when it holds one.
+────────────────────────────────────────
+ Example dialog
+ Do you want to proceed?
+   Yes
+ > No
+ Esc to cancel
+`)).toBeNull();
     const wrapped = parseInteractivePrompt("claude", `
 ────────────────────────────────────────
  Bash command

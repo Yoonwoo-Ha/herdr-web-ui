@@ -2,7 +2,7 @@ import type { DialogReader } from "./registry.ts";
 import { pickerPlan } from "./interaction-plan.ts";
 import { type InteractivePromptAnswer, type InteractivePromptStep } from "../../shared/protocol.ts";
 import { piActiveTab } from "./pi-ask-tabs.ts";
-import { ANSI_RE, onePerPass, type CardWords, KEY, NUMBERED_OPTION_RE, type ParsedPrompt, SELECTED_RE, SOLID_RULE_RE, cleanLine, englishOf, findLastIndex, finishPrompt, own, isDivider, joinWrapped, keySteps, listNames, listRows, menuRows, navigationKeys, nearestQuestion, normalizeText, parseNumberedRows, screenWidth, sequentialRows, sliderKeys, wrapped } from "./shared.ts";
+import { ANSI_RE, onePerPass, type CardWords, KEY, NUMBERED_OPTION_RE, type NumberedRow, type ParsedPrompt, SELECTED_RE, SOLID_RULE_RE, cleanLine, englishOf, findLastIndex, finishPrompt, own, isDivider, joinWrapped, keySteps, listNames, listRows, menuRows, navigationKeys, nearestQuestion, normalizeText, parseNumberedRows, screenWidth, sequentialRows, sliderKeys, wrapped } from "./shared.ts";
 
 // several questions navigate between tabs: "Tab/Arrow keys to navigate"
 export const CLAUDE_ASK_HINT_RE = /enter to select.*(?:↑\/↓|tab\/arrow keys) to navigate.*esc to cancel/i;
@@ -547,12 +547,24 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
 
   const requiredIndex = findLastIndex(lines, (line) => /This command requires approval/i.test(cleanLine(line)));
   const dangerousRmIndex = findLastIndex(lines, (line) => /^Dangerous rm operation\b/i.test(cleanLine(line)));
-  const approvalIndex = Math.max(requiredIndex, dangerousRmIndex);
+  const markerIndex = Math.max(requiredIndex, dangerousRmIndex);
   const questionIndex = findLastIndex(lines, (line) => /^Do you want to .+\?$/i.test(cleanLine(line)));
   if (questionIndex < 0) return null;
+  // a marker with a later tool call or panel rule under it is an earlier asking's: it names
+  // neither this panel's title nor its action
+  const approvalIndex = markerIndex >= 0 && lines.slice(markerIndex + 1, questionIndex)
+    .some((line) => SOLID_RULE_RE.test(cleanLine(line)) || isCallRow(line)) ? -1 : markerIndex;
   // options end at the key hint: a line under the last one is then only its wrapped label
   const hintIndex = findLastIndex(lines, (_, index) => /esc to cancel/i.test(wrapped(lines, index)));
-  const rows = parseNumberedRows(lines, questionIndex + 1, hintIndex > questionIndex ? hintIndex : lines.length);
+  const rowsEnd = hintIndex > questionIndex ? hintIndex : lines.length;
+  const numbered = parseNumberedRows(lines, questionIndex + 1, rowsEnd);
+  // unnumbered rows are a held approval only under the safety check's own words in this panel,
+  // read across the rows a narrow pane wraps them on, never from above the panel's rule
+  const panelTop = findLastIndex(lines.slice(0, questionIndex), (line) => SOLID_RULE_RE.test(cleanLine(line)) || isDivider(cleanLine(line)));
+  const held = numbered.length === 0 && !isBoxedRow(lines[questionIndex]!)
+    && lines.slice(Math.max(0, panelTop + 1, questionIndex - 12), questionIndex).map((line) => isBoxedRow(line) ? "" : cleanLine(line))
+      .join("\n").split(/\n\s*\n/).some((paragraph) => /automatic safety check flagged this action/i.test(paragraph.replace(/\s+/g, " ")));
+  const rows = held ? heldApprovalRows(lines, questionIndex + 1, rowsEnd) : numbered;
   if (!sequentialRows(rows) || rows.length < 2 || rows.filter((row) => row.selected).length !== 1) return null;
   // a hint of its own under the last row and over the last hint, whole or wrapped by a narrow
   // pane: the panel was answered, and what ends the screen now is another prompt ("Password:"
@@ -605,6 +617,41 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
     responder: "claude-approval", menuLabels: rows.map((row) => row.label), selectedIndex: rows.findIndex((row) => row.selected),
     checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
   });
+}
+
+/** a tool call Claude drew at the top level, not one quoted inside a boxed preview (`│ ● Bash(…)`) */
+function isCallRow(line: string): boolean {
+  return CLAUDE_CALL_RE.test(line.replace(ANSI_RE, "").trimStart());
+}
+
+/** a row of a boxed preview (`│ …`): what it quotes is the command's text, not Claude's dialog */
+function isBoxedRow(line: string): boolean {
+  return line.replace(ANSI_RE, "").trimStart().startsWith("│");
+}
+
+/**
+ * An approval Claude Code's safety check held (`defaultToNo`: "Claude Code's automatic safety
+ * check flagged this action, so the action hasn't run") hides its numbers so that no single
+ * key approves it, and opens on No (2.1.323):
+ *
+ *   Do you want to proceed?
+ *     Yes
+ *   ❯ No
+ *
+ *   Esc to cancel
+ *
+ * Only Yes/No rows count: any other line between the question and the hint is not such a menu.
+ */
+function heldApprovalRows(lines: string[], start: number, end: number): NumberedRow[] {
+  const rows: NumberedRow[] = [];
+  for (let index = start; index < end; index += 1) {
+    const text = cleanLine(lines[index]!);
+    if (!text || isDivider(text)) continue;
+    const label = text.replace(SELECTED_RE, "").trim();
+    if (isBoxedRow(lines[index]!) || !/^(?:Yes|No)\b/i.test(label)) return [];
+    rows.push({ number: rows.length + 1, label, selected: SELECTED_RE.test(text), checked: false, lineIndex: index });
+  }
+  return rows.length >= 2 && rows.length <= 4 ? rows : [];
 }
 
 /**
