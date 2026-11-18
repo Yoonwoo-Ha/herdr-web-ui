@@ -1305,11 +1305,17 @@ the job then fails. CI uploads `browser-logs` on success or failure; browser-mai
 every time, browser-other only when it failed or was cancelled (a timeout included) (its ~2,000 screenshots of a green run cost
 about 50 s to upload on the job that ends a run last).
 A script that fails is run a second time (`BROWSER_RETRY=0` turns that off). One that then passes
-does not fail the job, and is not counted as a plain pass either: its first log is kept as
-`<script>.attempt-1.log` and printed, the summary marks it `~` and `summary.json` lists it under
-`flaky`, and on GitHub it gets a warning annotation and a line in the job summary. A flaky script
-is a bug to fix in the script or the app, not noise: the second run only keeps one PR's merge
-from waiting on another change's race. A script that fails twice fails the job.
+is not counted as a plain pass: its first log is kept as `<script>.attempt-1.log` and printed,
+`summary.json` lists it under `flaky`, and on GitHub it gets an annotation and a line in the job
+summary. It fails the job unless `QUARANTINE` in `scripts/ci-browser-quarantine.ts` lists it with
+an issue about it and an end date not yet past (UTC, the date itself included): then
+the summary marks it `~` and the annotation is a warning. Otherwise the summary marks it `!`,
+`summary.json` also lists it under `notQuarantined`, and the error names the two ways out: fix the
+race, or add the entry. A flaky script is a bug to fix in the script or the app, not noise: the
+second run tells a race from a plain failure, and the quarantine keeps a known race from failing
+every PR while it is fixed, never for long (an entry ends at most 30 days ahead, which
+`scripts/ci-browser-parallel.test.ts` checks, along with its script and issue). Remove an entry
+once its script has stopped flaking. A script that fails twice fails the job.
 One run of a script may take `BROWSER_SCRIPT_TIMEOUT_SECONDS` (default 600). A run past it is
 stopped (SIGTERM, then SIGKILL, then SIGKILL again for what the run started meanwhile and still carries its
 mark), says what it saw (`stopped N processes`, `could NOT stop: <pid> (<program name>)` for each one it could not, the name read from its executable and never from its arguments, only a process still running at the last look, at most 20 and then `and N more`,

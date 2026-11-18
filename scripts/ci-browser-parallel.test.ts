@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { processStart } from "./check.ts";
 import { parseLaneLog } from "./ci-flakes.ts";
-import { programName, processName, failureSite, longestFirst, scriptTimeoutSeconds, serialBrowserScripts, shardScripts, stopReport, stopRun } from "./ci-browser-parallel.ts";
+import { programName, processName, failureSite, longestFirst, quarantineNote, quarantineStatus, scriptTimeoutSeconds, serialBrowserScripts, shardScripts, stopReport, stopRun } from "./ci-browser-parallel.ts";
+import { QUARANTINE, QUARANTINE_MAX_DAYS } from "./ci-browser-quarantine.ts";
 import type { StopIo } from "./ci-browser-parallel.ts";
 
 /** A killed process that its parent (a subreaper, say) has not reaped yet is a zombie: not alive. */
@@ -522,6 +523,66 @@ describe("parallel browser output timestamps", () => {
       expect(summary).toContain('"script": "scripts/ui-regression.ts"');
       expect(summary).toContain('"code": 0');
       expect(summary).not.toContain("timestamp");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("browser flake quarantine", () => {
+  const entry = { until: "2026-12-02", issue: 4026 };
+
+  it("excuses a listed script through its end date, and no longer after it", () => {
+    expect(quarantineStatus("scripts/a.ts", {}, "2026-11-18")).toEqual({ state: "unlisted" });
+    expect(quarantineStatus("scripts/a.ts", { "scripts/a.ts": entry }, "2026-12-02")).toEqual({ state: "quarantined", entry });
+    expect(quarantineStatus("scripts/a.ts", { "scripts/a.ts": entry }, "2026-12-03")).toEqual({ state: "ended", entry });
+  });
+
+  it("names the issue of a quarantined script, and the fix for one that fails the lane", () => {
+    expect(quarantineNote({ state: "quarantined", entry })).toContain("until 2026-12-02 (#4026)");
+    for (const status of [{ state: "unlisted" } as const, { state: "ended", entry } as const]) {
+      expect(quarantineNote(status)).toContain("fails the lane");
+      expect(quarantineNote(status)).toContain("scripts/ci-browser-quarantine.ts");
+    }
+    expect(quarantineNote({ state: "ended", entry })).toContain("ran out after 2026-12-02");
+  });
+
+  it("lists only scripts the lane runs, each with its issue and an end date at most the limit ahead", () => {
+    const lane = serialBrowserScripts();
+    const today = new Date().toISOString().slice(0, 10);
+    const limit = new Date(Date.parse(`${today}T00:00:00Z`) + QUARANTINE_MAX_DAYS * 86_400_000).toISOString().slice(0, 10);
+    const wrong = Object.entries(QUARANTINE).flatMap(([script, { until, issue }]) => [
+      ...(lane.includes(script) ? [] : [`${script}: not in scripts/ci-browser.sh`]),
+      ...(/^\d{4}-\d\d-\d\d$/.test(until) && !Number.isNaN(Date.parse(`${until}T00:00:00Z`)) && new Date(`${until}T00:00:00Z`).toISOString().startsWith(until) ? [] : [`${script}: until "${until}" is not a YYYY-MM-DD date`]),
+      ...(until <= limit ? [] : [`${script}: until ${until} is more than ${QUARANTINE_MAX_DAYS} days ahead (${limit} at most)`]),
+      ...(Number.isInteger(issue) && issue > 0 ? [] : [`${script}: issue ${issue} is not an issue number`]),
+    ]);
+    expect(wrong).toEqual([]);
+  });
+
+  it("fails the lane when a script that is not quarantined passes only on its second run", async () => {
+    const script = serialBrowserScripts().find((name) => !(name in QUARANTINE))!;
+    const name = script.replace(/^scripts\//, "").replace(/\.ts$/, "");
+    const dir = mkdtempSync(join(tmpdir(), "browser-parallel-test-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "bash"), '#!/bin/sh\nprintf "/stub/chrome\\\\n"\n', { mode: 0o755 });
+    writeFileSync(join(bin, "bun"), `#!/bin/sh\nif [ "$1" = scripts/demo-build.ts ]; then exit 0; fi\nif [ -e ${dir}/ran ]; then echo "PASS on the second run"; exit 0; fi\ntouch ${dir}/ran\necho "AssertionError: a stub race"\nexit 1\n`, { mode: 0o755 });
+    try {
+      const child = Bun.spawn([process.execPath, "scripts/ci-browser-parallel.ts"], {
+        cwd: join(import.meta.dir, ".."),
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, BROWSER_SCRIPTS: script, BROWSER_EXCLUDE: "", BROWSER_SHARD: "", BROWSER_RETRY: "", CHECK_DIR: dir, GITHUB_ACTIONS: "", GITHUB_STEP_SUMMARY: "" },
+        stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 15_000,
+      });
+      const [text, , code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      expect(code).toBe(1);
+      expect(text).toContain(`FLAKY ${script} (`);
+      expect(text).toContain("It is not quarantined, so it fails the lane");
+      expect(parseLaneLog(text)).toEqual([{ script, outcome: "flaky", site: null, message: "AssertionError: a stub race" }]);
+      const summary = JSON.parse(readFileSync(join(dir, "browser-logs", "summary.json"), "utf8"));
+      expect(summary.flaky).toEqual([script]);
+      expect(summary.notQuarantined).toEqual([script]);
+      expect(existsSync(join(dir, "browser-logs", `${name}.attempt-1.log`))).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

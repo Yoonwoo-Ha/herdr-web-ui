@@ -7,6 +7,7 @@ import { availableParallelism } from "node:os";
 import { basename, join } from "node:path";
 import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { QUARANTINE, QUARANTINE_MAX_DAYS, type QuarantineEntry } from "./ci-browser-quarantine.ts";
 
 const repo = join(import.meta.dir, "..");
 const FAILURE_TAIL_LINES = 400;
@@ -131,6 +132,24 @@ const workflowData = (message: string): string =>
 export function scriptOutcome(code: number, secondRun: boolean): "pass" | "flaky" | "fail" {
   if (code !== 0) return "fail";
   return secondRun ? "flaky" : "pass";
+}
+
+export type QuarantineStatus =
+  | { readonly state: "quarantined"; readonly entry: QuarantineEntry }
+  | { readonly state: "ended"; readonly entry: QuarantineEntry }
+  | { readonly state: "unlisted" };
+
+/** `today` is a UTC date, YYYY-MM-DD; an entry still holds on its end date. */
+export function quarantineStatus(script: string, list: Readonly<Record<string, QuarantineEntry>>, today: string): QuarantineStatus {
+  const entry = list[script];
+  if (entry === undefined) return { state: "unlisted" };
+  return today <= entry.until ? { state: "quarantined", entry } : { state: "ended", entry };
+}
+
+export function quarantineNote(status: QuarantineStatus): string {
+  if (status.state === "quarantined") return `It is quarantined until ${status.entry.until} (#${status.entry.issue}), so it does not fail the lane.`;
+  if (status.state === "ended") return `Its quarantine ran out after ${status.entry.until}, so it fails the lane: fix the race in the script or the app, or move its end date in QUARANTINE in scripts/ci-browser-quarantine.ts, at most ${QUARANTINE_MAX_DAYS} days ahead.`;
+  return `It is not quarantined, so it fails the lane: fix the race in the script or the app, or give it an entry in QUARANTINE in scripts/ci-browser-quarantine.ts with an issue about it and an end date at most ${QUARANTINE_MAX_DAYS} days ahead.`;
 }
 
 class ChromiumSetupError extends Error {
@@ -406,6 +425,8 @@ async function main(): Promise<void> {
   if (baseEvidenceDir) mkdirSync(baseEvidenceDir, { recursive: true });
 
   const retry = process.env.BROWSER_RETRY !== "0";
+  const today = new Date().toISOString().slice(0, 10);
+  const quarantine = (script: string): QuarantineStatus => quarantineStatus(script, QUARANTINE, today);
   const timeoutSeconds = scriptTimeoutSeconds(process.env.BROWSER_SCRIPT_TIMEOUT_SECONDS);
   const queue = process.env.BROWSER_ORDER === "listed" ? [...scripts] : longestFirst(scripts, timings);
   const untimed = scripts.filter((script) => !Number.isFinite(timings[script]));
@@ -465,7 +486,8 @@ async function main(): Promise<void> {
         if (message) result.message = message;
       }
       results.push(result);
-      const failure = outcome === "fail" ? ` exit=${result.code}, log ${log}` : outcome === "flaky" ? `, failed once: ${result.firstLog}` : "";
+      const failure = outcome === "fail" ? ` exit=${result.code}, log ${log}`
+        : outcome === "flaky" ? `, failed once: ${result.firstLog}; ${quarantine(script).state === "quarantined" ? "quarantined" : "not quarantined, so the lane fails"}` : "";
       console.log(`[worker-${workerId}] ${outcome.toUpperCase()} ${script} (${result.seconds.toFixed(1)}s)${failure}`);
       lock.active--;
     }
@@ -482,18 +504,21 @@ async function main(): Promise<void> {
   console.log("-".repeat(80));
 
   const ordered = scripts.map((s) => results.find((r) => r.script === s)!).filter(Boolean);
+  const flaky = ordered.filter((r) => scriptOutcome(r.code, r.firstLog !== undefined) === "flaky");
+  const unexcused = flaky.filter((r) => quarantine(r.script).state !== "quarantined");
   for (const result of ordered) {
-    const status = { pass: " ", flaky: "~", fail: "!" }[scriptOutcome(result.code, result.firstLog !== undefined)];
+    const outcome = scriptOutcome(result.code, result.firstLog !== undefined);
+    const status = outcome === "flaky" && unexcused.includes(result) ? "!" : { pass: " ", flaky: "~", fail: "!" }[outcome];
     console.log(`${status}${result.script.padEnd(59)}${result.seconds.toFixed(1).padStart(8)}${String(result.code).padStart(6)}`);
   }
 
   const totalSeconds = (Date.now() - startedAt) / 1000;
   const passed = results.filter((r) => r.code === 0).length;
   const failed = results.filter((r) => r.code !== 0);
-  const flaky = ordered.filter((r) => scriptOutcome(r.code, r.firstLog !== undefined) === "flaky");
 
   console.log("-".repeat(80));
-  console.log(`Total: ${passed}/${results.length} passed in ${totalSeconds.toFixed(1)}s with ${workers} workers${flaky.length > 0 ? `, ${flaky.length} only on a second run (~)` : ""}`);
+  const flakyNote = flaky.length === 0 ? "" : `, ${flaky.length} only on a second run (~)${unexcused.length > 0 ? `, ${unexcused.length} of them not quarantined (!), which fails the lane` : ""}`;
+  console.log(`Total: ${passed}/${results.length} passed in ${totalSeconds.toFixed(1)}s with ${workers} workers${flakyNote}`);
 
   writeFileSync(join(logDir, "summary.json"), JSON.stringify({
     workers,
@@ -501,6 +526,7 @@ async function main(): Promise<void> {
     passed,
     total: results.length,
     flaky: flaky.map((r) => r.script),
+    notQuarantined: unexcused.map((r) => r.script),
     scripts: ordered.map(({ script, seconds, code, log, firstLog, site, message, stop }) => ({
       script, seconds, code, log, ...(firstLog ? { firstLog } : {}),
       ...(site ? { site } : {}), ...(message ? { message } : {}), ...(stop ? { stop } : {}),
@@ -517,12 +543,14 @@ async function main(): Promise<void> {
 
   for (const result of flaky) {
     const detail = failureDetail(result);
-    console.log(`\n${"=".repeat(80)}\nFLAKY ${result.script}: failed, then passed when run again; first log: ${result.firstLog}${detail ? `; ${detail}` : ""}`);
+    const status = quarantine(result.script);
+    console.log(`\n${"=".repeat(80)}\nFLAKY ${result.script}: failed, then passed when run again; first log: ${result.firstLog}${detail ? `; ${detail}` : ""}. ${quarantineNote(status)}`);
     tail(result.firstLog!);
-    if (process.env.GITHUB_ACTIONS) console.log(`::warning title=Flaky browser script::${workflowData(`${result.script}${detail ? `: ${detail}` : ""} failed once and passed when run again. Its first log is ${basename(result.firstLog!)} in the browser-logs artifact.`)}`);
+    const level = status.state === "quarantined" ? "warning" : "error";
+    if (process.env.GITHUB_ACTIONS) console.log(`::${level} title=Flaky browser script::${workflowData(`${result.script}${detail ? `: ${detail}` : ""} failed once and passed when run again. Its first log is ${basename(result.firstLog!)} in the browser-logs artifact. ${quarantineNote(status)}`)}`);
   }
   if (flaky.length > 0 && process.env.GITHUB_STEP_SUMMARY) {
-    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Flaky browser scripts\n\nFailed once, passed when run again:\n\n${flaky.map((r) => `- \`${r.script}\`${failureDetail(r) ? `: ${failureDetail(r)}` : ""} (first log \`${basename(r.firstLog!)}\`)`).join("\n")}\n`);
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Flaky browser scripts\n\nFailed once, passed when run again:\n\n${flaky.map((r) => `- \`${r.script}\`${failureDetail(r) ? `: ${failureDetail(r)}` : ""} (first log \`${basename(r.firstLog!)}\`). ${quarantineNote(quarantine(r.script))}`).join("\n")}\n`);
   }
 
   for (const result of failed) {
@@ -535,7 +563,7 @@ async function main(): Promise<void> {
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Failed browser scripts\n\n${failed.map((r) => `- \`${r.script}\`${failureDetail(r) ? `: ${failureDetail(r)}` : ""} (full log \`${basename(r.log)}\`)`).join("\n")}\n`);
   }
 
-  process.exit(failed.length > 0 ? 1 : 0);
+  process.exit(failed.length > 0 || unexcused.length > 0 ? 1 : 0);
 }
 
 if (import.meta.main) {
