@@ -1872,6 +1872,21 @@ describe("ovis link, on the PC itself", () => {
     expect(out.at(-1)).toContain("Could not link this PC");
   });
 
+  it("says how to make room when the account service refuses the listing with 409 directory_full, and keeps every other refusal's text", async () => {
+    const refusing = (code: string) => scanning({ service: async (request, pass) => {
+      if (new URL(request.url).pathname.startsWith("/v1/pcs/") && request.method === "PUT") return Response.json({ error: { code, message: "no room" } }, { status: 409 });
+      return pass();
+    } });
+    const full = await refusing("directory_full");
+    expect(full.code).toBe(1);
+    expect(full.out.at(-1)).toStartWith("Could not link this PC: ");
+    expect(full.out.at(-1)).toContain("ovis add again");
+    expect(full.text).not.toContain("directory_full");
+    const other = await refusing("conflict");
+    expect(other.code).toBe(1);
+    expect(other.out.at(-1)).toBe("Could not link this PC: The account service answered 409 (conflict)\n");
+  });
+
   it("is done only once the account's other devices are in, and shows no code again after a device paired", async () => {
     const { code, out, offers, cancels } = await scanning({
       step: (state, looks) => {
