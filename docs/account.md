@@ -8,6 +8,18 @@ into a PC is still decided by that PC's own device list (`devices.json`), as wit
 [`shared/account-records.ts`](../shared/account-records.ts); tests use the in-memory service in
 [`shared/account-service-fake.ts`](../shared/account-service-fake.ts).
 
+In the apps: the iPhone and Android apps open on the account's sign-in, and a first sign-in makes the
+account ([Sign-in methods](#sign-in-methods)). A new device then joins the account's PCs with one
+approval on a device already in it that drives the PC asked: the new device leads with **Get approved
+on a device you already use**, the device in use asks **Add a new device?** and has its person pick the
+number the new device shows, and the new device confirms **The numbers match**
+([Who may admit a device](#who-may-admit-a-device)). The approver's signed `add` then reaches each PC
+where it is a drive member ([rule 4](#rules)). The account's first device on a PC is approved on the PC
+itself, or, on a PC in no account yet, scans the QR code it shows for the account and confirms
+**Pair**, with nothing approved on the PC ([By QR code](#adding-a-pc)). A PC added over Tailscale or
+SSH (Add a connection → Tailscale or Direct) is no account member ([rule 8](#rules)). The steps are
+in [the guide](guide.md#through-an-account).
+
 Nothing here changes how a device signs in: `AUTH` (`device-key`) and the mux frames stay as they
 are ([Ovis Mux v1](relay.md#ovis-mux-v1)).
 
@@ -38,7 +50,7 @@ are ([Ovis Mux v1](relay.md#ovis-mux-v1)).
    admission trusts it: while a code made to put a PC in an account lives, its word on a device's
    key lets that device in ([The account's word](#the-accounts-word)).
 8. **Tailscale is not membership.** A PC found on your Tailscale is added over SSH (Add a connection →
-   SSH, [remote-pcs.md](remote-pcs.md)), and one an older Ovis added through the relay with a code that
+   Tailscale, [remote-pcs.md](remote-pcs.md)), and one an older Ovis added through the relay with a code that
    PC handed over to your own Tailscale login is a paired device of that PC. Neither is an account member by itself: membership comes only from the
    rules here (a device linking its own pairing, or an approval by a member).
 
@@ -447,7 +459,8 @@ A client offering `pair-sas` offers at most one intent; a PC selects an intent o
 comparison without a selected intent is `pair-intent-pc`.
 
 The approval prompt says what is being approved: **pair this PC**, or **add to the account**; a
-remote approver's app adds how many PCs that means from its own list of the account's PCs. The
+remote approver's card (**Add a new device?**, **Check the number, then approve**) adds how many PCs
+that means from its own list of the account's PCs. The
 intent travels inside the encrypted channel that the digits authenticate: a relay that changes it
 must sit in the middle, and then the digits differ.
 
@@ -791,12 +804,13 @@ until someone signs in on it; the steps below are then the way.
    ([Enrolling a PC](#enrolling-a-pc)), so the account's other devices are let in and introduced.
 
 A wrong number ends that comparison; the person starts again from **Add** on the dashboard. A device without an account
-pairs with a QR code or pairing code behind **Pair with a QR or code** on the sign-in screen.
+pairs with a QR code or pairing code behind **Start without signing in** on the sign-in screen, which
+leads to **Add a PC**.
 
 ### Adding a PC of your account
 
 **Add a connection → Ovis relay** on a PC (A) whose page is signed in, with A in that account, lists
-the account's other PCs as the SSH tab lists its PCs: **Connect** for one already in A's machine list,
+the account's other PCs: **Connect** for one already in A's machine list,
 **Add** for one that would pair, and "Update Ovis on that PC" or "Offline" with no button. **Add**
 makes A's server a paired device of that PC (B), as **Add a PC through the relay** with a link does,
 and A then lists B like any SSH PC, after a restart too. B's row is a plain drive row: A is never an
