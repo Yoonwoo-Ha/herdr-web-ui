@@ -1,6 +1,17 @@
 export const APP_ORIGIN = "https://app.ovis.sh";
 
-export const ACCOUNT_SIGN_IN = false;
+export const ACCOUNT_SIGN_IN = true;
+
+/** The account service, which names the sign-ins it offers (`GET /v1/providers`), and those the app can draw, in its order. */
+export const ACCOUNT_SERVICE = "https://account.ovis.sh";
+export const ACCOUNT_PROVIDERS = ["github", "google", "apple"];
+
+/** The sign-ins a `/v1/providers` answer names, in the app's order, or null for an answer that names nothing readable. */
+export function listedProviders(body) {
+  // the hosted app's own reading (src/lib/account/store.ts): an answer without both lists names nothing
+  if (typeof body !== "object" || body === null || !Array.isArray(body.providers) || !Array.isArray(body.device)) return null;
+  return ACCOUNT_PROVIDERS.filter((provider) => body.providers.includes(provider));
+}
 
 export const korean = /^ko\b/i.test(navigator.language ?? "");
 
@@ -13,10 +24,45 @@ export function localize() {
   if (!korean) return;
   document.documentElement.lang = "ko";
   for (const element of document.querySelectorAll("[data-ko]")) element.textContent = element.dataset.ko;
+  for (const element of document.querySelectorAll("[data-ko-label]")) element.setAttribute("aria-label", element.dataset.koLabel);
 }
 
 export function shell(method, options = {}) {
-  return window.Capacitor.nativePromise("HerdrShell", method, options);
+  const call = window.Capacitor.nativePromise("HerdrShell", method, options);
+  if (method !== "open") return call;
+  // a PC's page draws its own bars, on the app's dark start: they go back to light icons before it opens, and follow
+  // this screen again when it did not open (refused, cancelled), as the screen stays
+  barsFor(false);
+  return call.catch((err) => { barsForScreen(); throw err; });
+}
+
+/** The bars back to this screen's colours: an open that did not happen (refused, or cancelled before it answered). */
+export function barsForScreen() {
+  if (LIGHT !== null) barsFor(LIGHT.matches);
+}
+
+const LIGHT = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: light)") : null;
+
+/**
+ * The system bars' icons for the screen's colours: Android takes them from the page's theme-color (MainActivity,
+ * BAR_COLOR_SCRIPT), iOS from Capacitor's SystemBars, set to light icons for the app (capacitor.config.json). Only the
+ * app's own screens are ever light (shell.css), so only they ask for dark icons, and every PC opens with light ones.
+ */
+function barsFor(light) {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = light ? "#eeeae2" : "#12100e";
+  // on iOS a call to a plugin the app lacks never settles (src/lib/nativeApp.ts, hasNativePlugin): asked only when announced
+  if (window.Capacitor?.getPlatform?.() === "ios" && (window.Capacitor.PluginHeaders ?? []).some((header) => header.name === "SystemBars")) {
+    window.Capacitor.nativePromise("SystemBars", "setStyle", { style: light ? "LIGHT" : "DARK" }).catch(() => undefined);
+  }
+}
+
+/** The app's own screens follow the phone's light or dark mode, the system bars with them. */
+export function followScheme() {
+  if (LIGHT === null) return;
+  const apply = () => barsFor(LIGHT.matches);
+  LIGHT.addEventListener("change", apply);
+  apply();
 }
 
 /**

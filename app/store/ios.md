@@ -81,7 +81,7 @@ testers need a short beta review.
 > - The app connects only to your own PC: over Tailscale or your own network, or, once you turn it
 >   on on the PC, through the Ovis relay, end-to-end encrypted.
 >
-> No account, no ads, no tracking. Try the demo on the first screen to look around without a PC.
+> Sign in with GitHub, Google or Apple, or start without an account. No ads, no tracking.
 >
 > Ovis is open source: https://github.com/devswha/ovis
 
@@ -176,9 +176,9 @@ refuse addresses that are not an Ovis server, which is an app change, not a form
 > Ovis is the phone app for Ovis, an open-source program people run on their own computer to
 > watch and control their coding agents and terminals (https://ovis.sh). The app connects only
 > to the user's own computer, directly or through the end-to-end encrypted Ovis relay that
-> computer turns on, so there is no account to give you. To review the whole app without
-> a computer, tap "Try the demo" on the first screen: it runs the full interface with made-up
-> agents and terminals, entirely on the phone. "Scan QR code" uses the camera only to read the
+> computer turns on. Signing in is optional. To review the whole app without a computer, tap
+> "Start without signing in", then "Enter an address", type demo and tap Open: it runs the full
+> interface with made-up agents and terminals, entirely on the phone. "Scan QR code" uses the camera only to read the
 > pairing code a computer shows. The app uses the microphone for voice input the user chooses:
 > turning Voice input on in Settings briefly opens it to ask for access; the mic button or the
 > keyboard shortcut starts dictation.

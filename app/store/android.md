@@ -94,7 +94,7 @@ presence > Main store listing > Manage translations.
 > - The app connects only to your own PC: over Tailscale or your own network, or, once you turn it
 >   on on the PC, through the Ovis relay, end-to-end encrypted.
 >
-> No account, no ads, no tracking. Try the demo on the first screen to look around without a PC.
+> Sign in with GitHub, Google or Apple, or start without an account. No ads, no tracking.
 >
 > Ovis is open source: https://github.com/devswha/ovis
 
@@ -117,7 +117,7 @@ emulator; no real PC or session is in them.
 | Section | Answer |
 |---|---|
 | Privacy policy | `https://ovis.sh/privacy/` |
-| App access | "All or some functionality is restricted". Instructions: *No account is needed. The app opens a computer that runs the Ovis server (open source, ovis.sh). Without one, tap "Try the demo" on the first screen: it shows the whole app with made-up agents and terminals, on the phone only.* No login details. |
+| App access | "All or some functionality is restricted". Instructions: *No account is needed. The app opens a computer that runs the Ovis server (open source, ovis.sh). Without one, tap "Start without signing in", then "Enter an address", type demo and tap Open: it shows the whole app with made-up agents and terminals, on the phone only.* No login details. |
 | Ads | No, the app has no ads |
 | Content rating | Category "All other app types" (utility). Every question No: no violence, sexual content, profanity, drugs, gambling; no user-to-user chat or sharing between users; no location sharing; no digital purchases. Expected rating: Everyone / PEGI 3 |
 | Target audience | 18 and over only (a developer tool; the privacy policy says it is not for children) |
