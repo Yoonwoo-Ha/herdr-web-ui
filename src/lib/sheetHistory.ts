@@ -123,6 +123,14 @@ function cover(state: unknown): void {
 }
 let pushing = false;
 let stepping: Set<string> | null = null;
+/**
+ * Where the browser tells its entries (the Navigation API), the key of the one the step on its way lands on: the entry
+ * under the one it leaves, named as the step is asked, as the browser names it then. A sheet that makes its entry
+ * meanwhile changes neither. Its landing is the popstate onto that entry (`landing`); any other is not the step's.
+ */
+let stepOnto: string | null = null;
+let landing: Event | null = null;
+let landedOn: (event: Event) => boolean = () => false;
 let steppedOff = false;
 /**
  * A step the browser drops lands nowhere: the wait ends by itself (LANDING_MS), so the next Back is
@@ -140,6 +148,24 @@ export function sheetSteppedOff(): boolean {
 
 export function sheetBackPending(): boolean {
   return stepping !== null;
+}
+
+/** The key of the entry the step on its way lands on; null with no step on its way, or where the browser tells no entries. */
+export function sheetBackOnto(): string | null {
+  return stepping === null ? null : stepOnto;
+}
+
+/** Whether a popstate is the step on its way landing on the entry it was asked for, and no traversal of anyone else's. */
+export function sheetBackLanded(event: Event): boolean {
+  return landedOn(event);
+}
+
+function stepBack(): void {
+  const api = (window as unknown as { navigation?: NavigationApi }).navigation;
+  const at = api?.currentEntry;
+  stepOnto = api && at ? api.entries().find((entry) => entry.index === at.index - 1)?.key ?? null : null;
+  stepping = new Set();
+  window.history.back();
 }
 
 function sheetOf(state: unknown): string | null {
@@ -254,10 +280,11 @@ export function leaveSheet(id: string): void {
       addresses.set(heir, window.location.href);
       if (key !== undefined) entryKeys.set(heir, key);
       seen = heir;
-    } else {
-      // the traversal runs later: a sheet that opens before its popstate keeps its entry
-      stepping = new Set();
-      window.history.back();
+    } else if (stepOnto === null || !stepping?.has(id)) {
+      // the traversal runs later: a sheet that opens before its popstate keeps its entry. One that opened over the
+      // entry a step on its way leaves, and closed before it landed, takes none where that step's landing is told by
+      // its entry: the step leaves this entry too, and a second one would land under the entry it names
+      stepBack();
     }
   }, 0));
 }
@@ -335,6 +362,7 @@ if (typeof window !== "undefined") {
     holding = false;
     const was = here;
     here = where();
+    landing = stepping !== null && stepOnto !== null && here?.key === stepOnto ? event : null;
     settle(here);
     ahead = null;
     took = climbing !== null && here?.key === climbing.key;
@@ -349,8 +377,7 @@ if (typeof window !== "undefined") {
         keep(owner);
       } else {
         seen = sheetOf(event.state);
-        stepping = new Set();
-        window.history.back();
+        stepBack();
       }
       return;
     }
@@ -371,10 +398,8 @@ if (typeof window !== "undefined") {
       returning = null;
       if (seen === entry) {
         steppedOff = true;
-        if (!open.has(owner)) {
-          stepping = new Set();
-          window.history.back();
-        } else if (owner !== entry) {
+        if (!open.has(owner)) stepBack();
+        else if (owner !== entry) {
           window.history.replaceState({ ...(event.state as Record<string, unknown>), [KEY]: owner }, "", href);
           addresses.set(owner, href);
           seen = owner;
@@ -458,6 +483,7 @@ if (typeof window !== "undefined") {
   };
   window.addEventListener("popstate", hear);
   sheetStep.holds = (event) => { hear(event as PopStateEvent); return holding; };
+  landedOn = (event) => { hear(event as PopStateEvent); return event === landing; };
   if (sheetOf(window.history.state) !== null) window.history.replaceState(ordinary(window.history.state, true), "");
 }
 

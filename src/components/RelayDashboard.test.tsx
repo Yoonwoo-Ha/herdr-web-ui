@@ -280,24 +280,25 @@ describe("RelayDashboard frame and routes", () => {
   describe("a closed sheet's Back still on its way", () => {
     let pending = false;
     let pushed: string[] = [];
-    // the browser's entries: an older place, the details, and the closed sheet's entry the Back leaves
-    const entries = [{ key: "older", index: 0 }, { key: "details", index: 1 }, { key: "sheet", index: 2 }];
-    const navigation = { currentEntry: entries[2] as { key: string; index: number } | null, entries: () => entries };
+    // what sheetHistory answers: the key of the entry the Back lands on (none where the browser tells no entries),
+    // and whether a popstate is that landing
+    let onto: string | null = "details";
+    let landed = false;
     const details = () => renderer!.root.findAll((n) => n.props["data-pc-details"] !== undefined);
     const back = async () => { await act(async () => { renderer!.root.find((n) => n.type === "button" && textOf(n).trim() === "Back").props.onClick(); }); };
     const place = async (name: string) => { await act(async () => { renderer!.root.find((n) => n.type === "a" && n.props.className?.includes("relay-dash-nav-item") && textOf(n).includes(name)).props.onClick({ preventDefault() {}, button: 0 }); }); };
     /** the sheet's Back lands on the details' entry, or the user's own Back or Forward lands elsewhere */
     const lands = async (hash: string, sheets: boolean) => {
       pending = false;
-      navigation.currentEntry = sheets ? entries[1]! : entries[0]!;
+      landed = sheets;
       await navigateHash(hash, "popstate");
     };
     beforeEach(async () => {
       pending = false;
       pushed = [];
-      navigation.currentEntry = entries[2]!;
-      (window as unknown as { navigation?: unknown }).navigation = navigation;
-      mock.module("../lib/sheetHistory.ts", () => ({ ...loadedSheet, sheetBackPending: () => pending }));
+      onto = "details";
+      landed = false;
+      mock.module("../lib/sheetHistory.ts", () => ({ ...loadedSheet, sheetBackOnto: () => (pending ? onto : null), sheetBackLanded: () => landed }));
       const push = window.history.pushState.bind(window.history);
       window.history.pushState = (data: unknown, unused: string, url?: string | URL | null) => { pushed.push(String(url)); push(data, unused, url); };
       phoneMatches = true;
@@ -357,7 +358,6 @@ describe("RelayDashboard frame and routes", () => {
       await back();
       await act(async () => { renderer!.unmount(); });
       pending = false;
-      navigation.currentEntry = entries[0]!;
       window.location.hash = "#overview";
       window.location.href = "https://app.ovis.sh/#overview";
       window.dispatchEvent(new Event("popstate"));
@@ -366,8 +366,8 @@ describe("RelayDashboard frame and routes", () => {
       expect(renderer!.root.findByType("h1").children.join("")).toBe("Overview");
     });
 
-    it("holds nothing where the browser tells no entries, and writes the address at once as before", async () => {
-      Reflect.deleteProperty(window, "navigation");
+    it("holds nothing where sheetHistory names no entry the Back lands on (no Navigation API), and writes the address at once as before", async () => {
+      onto = null;
       pending = true;
       await back();
       expect(pushed).toEqual(["/#pcs"]);

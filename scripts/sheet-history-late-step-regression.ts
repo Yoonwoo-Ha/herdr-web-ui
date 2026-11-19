@@ -6,9 +6,11 @@
  * The walk holds that step in the page: the sheet module's history.back() is kept until the second Escape has closed
  * the details (their panel gone), then the page goes onto the entry that call named, as the browser would have. The
  * step used to land on the details' address under the list's, and the dashboard followed it, opening the details
- * again; now the dashboard holds the list's address until the step lands and writes it then. At 1440 on a PC no sheet
- * holds an entry, and the same walk must end the same. One walk per width, in an order fixed by events: no retries,
- * no waits for time.
+ * again; now the dashboard holds the list's address until the step lands and writes it then. A second walk opens Add a
+ * PC and closes it between the two Escapes (#4221): on a phone its entry sits over the closed sheet's while the step is
+ * held, and the step still lands on the details' entry; the dashboard used to take that landing for a traversal of
+ * someone else's and drop the list's address. At 1440 on a PC no sheet holds an entry, and the same walks must end the
+ * same. Each walk at each width, in an order fixed by events: no retries, no waits for time.
  *
  * The shell is the build in dist-shell/ (`bun run build:shell`; the browser lane builds it first), served as Cloudflare
  * Pages serves it on https://app.ovis.sh (routed here); the account service is the in-memory fake with a fixture
@@ -120,15 +122,19 @@ const expect = (holds: boolean, what: string): void => { if (!holds) throw new E
 /** two frames: whatever the last event set has been drawn */
 const drawn = (page: Page): Promise<void> => page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 
-/** The walk at one width: details, the sheet from them, Escape, Escape (the sheet's step held on a phone), then Back and Forward. */
-async function walk(page: Page, width: 390 | 1440): Promise<string> {
+/**
+ * The walk at one width: details, the sheet from them, Escape, (with `addPc`: Add a PC opened, then Escape), Escape
+ * (the first sheet's step held on a phone), then Back and Forward.
+ */
+async function walk(page: Page, width: 390 | 1440, addPc: boolean): Promise<string> {
+  const tag = `${addPc ? "add-pc-" : ""}${width}`;
   await page.locator(".relay-pc-name-btn").first().click();
   await page.locator("[data-pc-details]").waitFor();
   const detailsHash = await page.evaluate(() => location.hash);
   await page.locator(".relay-pc-details-actions .btn").first().click();
   await page.locator("[data-add-pc-phase]").waitFor();
   await sheetsSettled(page);
-  await shot(page, `${width}-sheet`);
+  await shot(page, `${tag}-sheet`);
   // what the page heard is counted from here, with the details up under the sheet; and the sheet's step back is
   // subscribed to before the Escape is sent, as the page handles the two in this order
   await page.evaluate(() => { const qa = window.lateStepQa; qa.order.length = 0; qa.gone = false; qa.reopened = false; });
@@ -137,6 +143,17 @@ async function walk(page: Page, width: 390 | 1440): Promise<string> {
   if (asked) await bounded(asked, "step back of the closed sheet");
   else await page.locator("[data-add-pc-phase]").waitFor({ state: "detached" });
   expect(await page.locator("[data-pc-details]").count() === 1, "the first Escape closed more than the sheet");
+  if (addPc) {
+    // Add a PC opens over the details while the first sheet's step is held: on a phone its entry is made over the
+    // closed sheet's, which that step leaves; its Escape closes it alone
+    const before = await page.evaluate(() => history.length);
+    await page.locator('[data-action="add-pc"]').filter({ visible: true }).first().click();
+    await page.locator(".add-pc-sheet").waitFor();
+    if (width === 390) await page.waitForFunction((length) => history.length > length, before);
+    await page.keyboard.press("Escape");
+    await page.locator(".add-pc-sheet").waitFor({ state: "detached" });
+    expect(await page.locator("[data-pc-details]").count() === 1, "the Escape on Add a PC closed more than Add a PC");
+  }
   await page.keyboard.press("Escape");
   // the second Escape handled: the details gone before the step lands
   await page.waitForFunction(() => document.querySelector("[data-pc-details]") === null);
@@ -150,19 +167,20 @@ async function walk(page: Page, width: 390 | 1440): Promise<string> {
   await page.waitForFunction(() => location.hash === "#pcs");
   await drawn(page);
   const seen = await page.evaluate(() => ({ order: window.lateStepQa.order.join(" "), reopened: window.lateStepQa.reopened, details: document.querySelector("[data-pc-details]") !== null, hash: location.hash }));
-  if (evidence) writeFileSync(join(evidence, `late-step-${width}.json`), `${JSON.stringify({ width, detailsHash, ...seen })}\n`);
-  await shot(page, `${width}-closed`);
+  if (evidence) writeFileSync(join(evidence, `late-step-${tag}.json`), `${JSON.stringify({ width, detailsHash, ...seen })}\n`);
+  await shot(page, `${tag}-closed`);
   expect(!seen.reopened && !seen.details, `the details opened again after the second Escape (${JSON.stringify(seen)})`);
   expect(seen.hash === "#pcs", `the address is ${seen.hash}, not the list's #pcs`);
-  expect(seen.order === (width === 390 ? "escape back escape popstate" : "escape escape"), `the order was "${seen.order}"`);
+  const escapes = addPc ? "escape escape" : "escape";
+  expect(seen.order === (width === 390 ? `escape back ${escapes} popstate` : `escape ${escapes}`), `the order was "${seen.order}"`);
   // Back: the details again, at their address; Forward: the list again
   await page.goBack();
   await page.waitForFunction((hash) => document.querySelector("[data-pc-details]") !== null && location.hash === hash, detailsHash);
-  await shot(page, `${width}-back`);
+  await shot(page, `${tag}-back`);
   await page.goForward();
   await page.waitForFunction(() => document.querySelector("[data-pc-details]") === null && location.hash === "#pcs");
   await drawn(page);
-  await shot(page, `${width}-forward`);
+  await shot(page, `${tag}-forward`);
   return `${seen.order}; closed at #pcs, Back to ${detailsHash}, Forward to #pcs`;
 }
 
@@ -170,15 +188,15 @@ const site = servePagesSite(shellDir, 0, "127.0.0.1");
 const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
 const failed: string[] = [];
 try {
-  for (const width of [390, 1440] as const) {
-    const name = width === 390 ? `late-step-390-cpu${THROTTLE}x` : "late-step-1440";
+  for (const [width, addPc] of [[390, false], [1440, false], [390, true], [1440, true]] as const) {
+    const name = `late-step${addPc ? "-add-pc" : ""}-${width === 390 ? `390-cpu${THROTTLE}x` : "1440"}`;
     const started = Date.now();
     let opened: Awaited<ReturnType<typeof open>> | null = null;
     try {
       opened = await open(browser, `http://127.0.0.1:${site.port}`, width);
       const { context, page, errors } = opened;
       if (width === 390) await (await context.newCDPSession(page)).send("Emulation.setCPUThrottlingRate", { rate: THROTTLE });
-      const measured = await walk(page, width);
+      const measured = await walk(page, width, addPc);
       if (errors.length > 0) throw new Error(`the page heard ${JSON.stringify(errors.slice(0, 3))}`);
       console.log(`PASS ${name}: ${measured} (${Date.now() - started} ms)`);
     } catch (error) {
