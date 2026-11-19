@@ -8,7 +8,7 @@ import { INBOX_FROM_KEY, type useInbox } from "./useInbox.ts";
 import { pageAddress, pageSearch } from "./pageQuery.ts";
 import type { SelectionMark } from "./selectionMark.ts";
 import { settingsEntry, settingsSteppedOff } from "./settingsHistory.ts";
-import { sheetSteppedOff } from "./sheetHistory.ts";
+import { sheetBackPending, sheetSteppedOff } from "./sheetHistory.ts";
 import type { useFilePanels } from "./useFilePanels.ts";
 import type { useNewSessionState } from "./useNewSessionDialog.ts";
 import type { usePaneLens } from "./usePaneLens.ts";
@@ -113,6 +113,8 @@ export function useAddressBar({ inbox, mode, newSessionOpen, newSessionMachineId
   useEffect(() => { forgetLeftFiles(paneLive); }, [machines, forgetLeftFiles, paneLive]);
   useEffect(() => {
     if (locked !== false || machines.length === 0 || snapshot === null || !linkLanded) return;
+    // A sheet's own Back can still land on the old URL; release the write when its popstate lands.
+    if (sheetBackPending()) { heldWrite.current = true; return; }
     if (linkWorkspaceId === undefined) {
       const written = writtenLink.current;
       if (listWritten.current && !newSessionOpen && written?.create && !popUnread(window.event, readPop.current)) {

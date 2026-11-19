@@ -138,6 +138,10 @@ export function sheetSteppedOff(): boolean {
   return steppedOff;
 }
 
+export function sheetBackPending(): boolean {
+  return stepping !== null;
+}
+
 function sheetOf(state: unknown): string | null {
   if (state === null || typeof state !== "object") return null;
   const id = (state as Record<string, unknown>)[KEY];
