@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { OWN_UPDATE_OFFER, type Machine, type RemoteOvis } from "../../shared/machines.ts";
-import { manageActions, ownOvisAction, ownUpdateFailure, pcListExit } from "./MachineSidebar.tsx";
+import { manageActions, ownOvisAction, ownUpdateFailure, pcListExit, removablePc } from "./MachineSidebar.tsx";
 
 const offer = (updatable: boolean): RemoteOvis => ({ version: "0.4.16", latest_version: updatable ? "0.4.18" : null, updatable, reason: updatable ? null : "it cannot", address: "pc.invalid:4000", url: null });
 const pc = (patch: Partial<Pick<Machine, "remote_ovis" | "action_required" | "error">>) => ({ remote_ovis: null, action_required: null, error: null, ...patch });
@@ -39,6 +39,14 @@ describe("a PC's own Ovis on its card", () => {
   });
 });
 
+describe("Remove in Settings", () => {
+  it("offers it for a PC added here over SSH, through the relay or by its address once it is not connected", () => {
+    const removable = (kind: Machine["kind"], state: Machine["state"] = "error", herdr_profile_id?: string) => removablePc({ kind, state, herdr_profile_id });
+    expect(["ssh", "relay", "address"].map((kind) => removable(kind as Machine["kind"]))).toEqual([true, true, true]);
+    expect([removable("address", "connected"), removable("ssh", "disconnected", "p1"), removable("hc"), removable("local")]).toEqual([false, false, false, false]);
+  });
+});
+
 describe("Manage PC's menu", () => {
   type Managed = Parameters<typeof manageActions>[0];
   const ssh = (patch: Partial<Managed> = {}): Managed => ({ kind: "ssh", herdr_profile_id: undefined, enabled: true, target: { destination: "pc.invalid" }, action_required: null, ...patch });
@@ -50,8 +58,9 @@ describe("Manage PC's menu", () => {
     expect(waiting(ssh())).toEqual([]);
   });
 
-  it("offers no SSH setup or bridge update for a PC reached through the relay", () => {
+  it("offers no SSH setup or bridge update for a PC reached through the relay or by its address", () => {
     expect(ids(ssh({ kind: "relay", target: undefined }))).toEqual(["rename", "toggle", "hide", "remove"]);
+    expect(ids(ssh({ kind: "address", target: undefined }))).toEqual(["rename", "toggle", "hide", "remove"]);
   });
 
   it("keeps herdr's limits for a PC herdr manages: no rename, disconnect or removal here", () => {

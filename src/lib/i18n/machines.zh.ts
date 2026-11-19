@@ -55,6 +55,7 @@ export const MACHINES_ZH: Record<string, string> = {
   "Hide on this device": "在此设备上隐藏",
   "Remove PC…": "移除 PC…",
   "over SSH": "通过 SSH",
+  "by its address": "通过地址",
   "through the relay": "通过中继",
   "No saved sessions": "没有已保存的会话",
   "Updating the bridge": "正在更新 bridge",

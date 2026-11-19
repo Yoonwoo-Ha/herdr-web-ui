@@ -44,6 +44,7 @@ import { importPublicKey } from "../shared/relay-e2ee.ts";
 import { deriveServerId } from "../shared/relay-server-proof.ts";
 import { validateOffer } from "../shared/relay-offer.ts";
 import type { HcMachine, MachineBridge } from "./herdr-core/machine-bridge.ts";
+import { addressBootId, addressOrigin, AddressPcError, AddressPcRefused, checkAddressTarget, loadAddressPcToken, openAddressPcForward, pairAddressPc, removeAddressPcToken, saveAddressPcToken, type AddressPcForward } from "./address-pc.ts";
 
 /** a PC keeps the six-digit code in its offer for 10 minutes at most (server/devices.ts) */
 const RELAY_FOUND_MS = 10 * 60_000;
@@ -63,11 +64,12 @@ export class AccountPcError extends Error {
 }
 
 type StoredMachine = { id: string; name: string; enabled: boolean; snapshot?: SessionSnapshot | null }
-  & ({ kind?: "ssh"; target: SshTarget; server_id?: string } | { kind: "relay"; relay: NonNullable<Machine["relay"]> });
+  & ({ kind?: "ssh"; target: SshTarget; server_id?: string } | { kind: "relay"; relay: NonNullable<Machine["relay"]> } | { kind: "address"; address: string });
 interface Runtime {
   machine: Machine;
   ssh?: SshConnection;
   tunnel?: RelayPcTunnel;
+  forward?: AddressPcForward;
   routeProbes?: RouteProbes;
   hc?: { id: string; name: string; bridge?: MachineBridge };
   endpoint?: { url: string; token: string };
@@ -141,6 +143,10 @@ const INSTALL_FROM_CARD = "This PC needs Ovis installed again over SSH, which ch
 export const OWN_UPDATES_AT_ONCE = 4;
 const TERMINAL = new Set<SetupJob["phase"]>(["connected", "failed", "cancelled"]);
 const RELAY_PC_UPDATES = "A PC added through the relay runs its own Ovis, which updates itself: use Update on its card.";
+const ADDRESS_PC_UPDATES = "A PC added by its address runs its own Ovis, which updates itself: use Update on its card.";
+function savedOrigin(value: unknown): value is string {
+  try { return addressOrigin(value) === value; } catch { return false; }
+}
 const JOBS_FULL = "Finish or cancel the current connection jobs first";
 const SETUP_JOBS_AT_ONCE = 4;
 const DEFAULT_SESSION_ONLY = "Installing from here sets Ovis up for herdr's default session only, and this PC is added with a named session. Install it on that PC, or add it without a session.";
@@ -315,7 +321,8 @@ export class MachineManager {
   private statePath: string;
   private written: string | undefined;
   private relayStatePath: string;
-  private relayWritten: string | undefined;
+  private addressStatePath: string;
+  private apartWritten: { relay?: string; address?: string } = {};
   private setAside: string[] = [];
   private sshDir: string;
   private local: Machine = { id: LOCAL_MACHINE, name: hostname(), kind: "local", enabled: true, state: "connecting", error: null, snapshot: null };
@@ -383,6 +390,7 @@ export class MachineManager {
     this.profileState = new HerdrProfileState(stateDir);
     this.statePath = join(stateDir, "machines.json");
     this.relayStatePath = join(stateDir, "relay-pcs.json");
+    this.addressStatePath = join(stateDir, "address-pcs.json");
     this.sshDir = join(stateDir, "ssh");
     this.installer = new PcInstaller({ sshDir: this.sshDir, connect: (request) => this.installConnect(request), onChange: (job) => this.showInstall(job), restore: () => options.restoreReplaced?.() === true });
     this.settingsPath = join(stateDir, "machine-settings.json");
@@ -399,8 +407,9 @@ export class MachineManager {
     // without saved PCs; JSON that is not a list of PCs still refuses to start, so nothing replaces it
     // PCs added through the relay live in a file of their own: a release from before them reads machines.json and
     // refuses one it does not know, so a rollback would not start (docs/development.md, rollback restores code)
-    for (const path of [this.statePath, this.relayStatePath]) {
+    for (const path of [this.statePath, this.relayStatePath, this.addressStatePath]) {
       const relayPcs = path === this.relayStatePath;
+      const addressPcs = path === this.addressStatePath;
       const read = readStateDocument(path);
       if (read.kind === "malformed") {
         const aside = setAsideDamaged(path);
@@ -418,7 +427,10 @@ export class MachineManager {
             if (item.kind !== "relay") throw new Error("Invalid machine registration");
             if (typeof item.relay?.server_id !== "string" || !SERVER_ID_PATTERN.test(item.relay.server_id) || typeof item.relay.relay !== "string" || !isWssOrigin(item.relay.relay)) throw new Error("Invalid machine registration");
             machine = { ...common, kind: "relay", relay: { server_id: item.relay.server_id, relay: item.relay.relay } };
-          } else if (item.kind === "relay") throw new Error("Invalid machine registration");
+          } else if (addressPcs) {
+            if (item.kind !== "address" || !savedOrigin(item.address)) throw new Error("Invalid machine registration");
+            machine = { ...common, kind: "address", address: item.address };
+          } else if (item.kind === "relay" || item.kind === "address") throw new Error("Invalid machine registration");
           else machine = { ...common, kind: "ssh", target: validateTarget(item.target), ...(typeof item.server_id === "string" && SERVER_ID_PATTERN.test(item.server_id) ? { server_id: item.server_id } : {}) };
           const runtime = this.runtime(machine);
           this.machines.set(item.id, runtime);
@@ -639,7 +651,7 @@ export class MachineManager {
   }
   private watchOwnOffer(runtime: Runtime, generation: number): void {
     const target = runtime.machine.target;
-    const own = runtime.machine.kind === "relay" || runtime.machine.kind === "ssh" && !!target && !!runtime.ownOvisAt && sameSshSession(runtime.ownOvisAt, target);
+    const own = runtime.machine.kind === "relay" || runtime.machine.kind === "address" || runtime.machine.kind === "ssh" && !!target && !!runtime.ownOvisAt && sameSshSession(runtime.ownOvisAt, target);
     if (!own) return;
     const read = async () => {
       const endpoint = runtime.endpoint;
@@ -746,29 +758,32 @@ export class MachineManager {
    * The registrations cannot be recomputed, so they are written durably (writePrivateState): a
    * crash after a plain rename can leave the file its old length in NULs. Every refresh of a remote
    * PC saves soon, mostly with the same snapshot, so only a document that differs from the one on
-   * disk pays for the write and its fsync. `relayLast` is for the save that adds a relay PC
-   * (addRelay): relay-pcs.json, its registration, goes last instead, so a save that fails before it
-   * leaves the PC off disk, as it leaves no key (#2833).
+   * disk pays for the write and its fsync. `last` is for the save that adds a relay or address PC
+   * (addRelay, addAddress): that kind's own file, its registration, goes last instead, so a save that
+   * fails before it leaves the PC off disk, as it leaves no key or token (#2833).
    */
-  private persist(relayLast = false): void {
-    if (!relayLast) this.persistRelayPcs();
+  private persist(last?: "relay" | "address"): void {
+    for (const kind of ["relay", "address"] as const) if (kind !== last) this.persistApart(kind);
     const owned = [...this.machines.values()].filter(({ machine }) => !machine.herdr_profile_id && machine.kind !== "hc").map(({ machine }) => machine);
-    const data: StoredMachine[] = owned.filter((m) => m.kind !== "relay").map((m) => ({ id: m.id, name: m.name, target: m.target!, ...(m.server_id ? { server_id: m.server_id } : {}), enabled: m.enabled, snapshot: m.snapshot }));
+    const data: StoredMachine[] = owned.filter((m) => m.kind !== "relay" && m.kind !== "address").map((m) => ({ id: m.id, name: m.name, target: m.target!, ...(m.server_id ? { server_id: m.server_id } : {}), enabled: m.enabled, snapshot: m.snapshot }));
     const text = JSON.stringify(data);
     // the PCs' registrations are written last: a save that fails before them leaves them as they were on disk, so a
     // PC moved to another address (setup) is saved there only when nothing else of its save can still fail (#2075)
     for (const { machine } of this.machines.values()) if (machine.herdr_profile_id) this.profileState.saveSnapshot(machine.herdr_profile_id, machine.snapshot);
     this.profileState.flush();
     if (text !== this.written || !holdsDocument(this.statePath, text)) { writePrivateState(this.statePath, data); this.written = text; }
-    if (relayLast) this.persistRelayPcs();
+    if (last) this.persistApart(last);
   }
-  private persistRelayPcs(): void {
-    const relayPcs: StoredMachine[] = [...this.machines.values()].map(({ machine }) => machine).filter((m) => !m.herdr_profile_id && m.kind === "relay")
-      .map((m) => ({ id: m.id, name: m.name, kind: "relay", relay: m.relay!, enabled: m.enabled, snapshot: m.snapshot }));
-    const relayText = JSON.stringify(relayPcs);
-    if (relayText !== this.relayWritten || !holdsDocument(this.relayStatePath, relayText)) {
-      if (relayPcs.length > 0 || this.relayWritten !== undefined || existsSync(this.relayStatePath)) writePrivateState(this.relayStatePath, relayPcs);
-      this.relayWritten = relayText;
+  /** relay-pcs.json and address-pcs.json: PCs a release from before them would refuse in machines.json */
+  private persistApart(kind: "relay" | "address"): void {
+    const path = kind === "relay" ? this.relayStatePath : this.addressStatePath;
+    const pcs: StoredMachine[] = [...this.machines.values()].map(({ machine }) => machine).filter((m) => !m.herdr_profile_id && m.kind === kind)
+      .map((m) => m.kind === "relay" ? { id: m.id, name: m.name, kind: "relay", relay: m.relay!, enabled: m.enabled, snapshot: m.snapshot }
+        : { id: m.id, name: m.name, kind: "address", address: m.address!, enabled: m.enabled, snapshot: m.snapshot });
+    const text = JSON.stringify(pcs);
+    if (text !== this.apartWritten[kind] || !holdsDocument(path, text)) {
+      if (pcs.length > 0 || this.apartWritten[kind] !== undefined || existsSync(path)) writePrivateState(path, pcs);
+      this.apartWritten[kind] = text;
     }
   }
   job(id: string): SetupJob | undefined { return this.jobs.get(id)?.public; }
@@ -793,6 +808,7 @@ export class MachineManager {
     const runtime = this.machines.get(id);
     if (!runtime) throw new Error("PC not found");
     if (runtime.machine.kind === "relay") throw new Error(RELAY_PC_UPDATES);
+    if (runtime.machine.kind === "address") throw new Error(ADDRESS_PC_UPDATES);
     if (runtime.machine.kind === "hc") throw new Error(HC_MACHINE_MANAGED);
     // its own Ovis updating itself: a bridge update would disconnect it and take over its progress
     if (runtime.ownJob) throw new PcUpdateRefused("This PC is already updating.");
@@ -1059,6 +1075,7 @@ export class MachineManager {
     if ([...this.jobs.values()].filter((j) => !["connected", "failed", "cancelled"].includes(j.public.phase)).length >= SETUP_JOBS_AT_ONCE) throw (request.update_remote ? new PcUpdateRefused(JOBS_FULL) : new Error(JOBS_FULL));
     if (request.machine_id && !existing) throw new Error("PC not found");
     if (existing?.machine.kind === "relay") throw new Error(RELAY_PC_UPDATES);
+    if (existing?.machine.kind === "address") throw new Error(ADDRESS_PC_UPDATES);
     if (existing?.machine.kind === "hc") throw new Error(HC_MACHINE_MANAGED);
     if (existing && [...this.jobs.values()].some((j) => j.public.machine_id === existing.machine.id && !["connected", "failed", "cancelled"].includes(j.public.phase))) throw new Error("A connection job for this PC is already running");
     if ([...this.jobs.values()].some((job) => (!TERMINAL.has(job.public.phase) || job.closing) && samePc(job.public.target, target))) throw new Error("This app is already connecting to this PC; wait for that to finish, or cancel it.");
@@ -1872,7 +1889,7 @@ export class MachineManager {
     const endpoint = runtime.endpoint;
     const generation = runtime.generation;
     try {
-      if ((runtime.tunnel || runtime.hc) && !runtime.machine.herdr) {
+      if ((runtime.tunnel || runtime.forward || runtime.hc) && !runtime.machine.herdr) {
         await this.readRelayHerdr(runtime, endpoint, generation);
         if (generation !== runtime.generation || this.stopped) return;
       }
@@ -1912,7 +1929,7 @@ export class MachineManager {
     if (runtime.ssh) runtime.ssh.onExit = () => this.lost(runtime, generation, new Error("SSH connection ended"));
     runtime.poll = setInterval(() => void this.refresh(runtime).catch((e) => this.lost(runtime, generation, e)), 5000);
     runtime.poll.unref();
-    if (runtime.ssh || runtime.tunnel) this.watchMove(runtime, generation);
+    if (runtime.ssh || runtime.tunnel || runtime.forward) this.watchMove(runtime, generation);
   }
   private watchMove(runtime: Runtime, generation: number): void {
     const watch = runtime.moveWatch ??= { reading: false, again: false };
@@ -1962,7 +1979,7 @@ export class MachineManager {
       this.emit({ type: "machine-message", machine_id: runtime.machine.id, message });
       if (["pane-status", "pane-exited", "session-changed"].includes(message.type)) void this.refresh(runtime).catch((e) => this.lost(runtime, generation, e));
     };
-    ws.onclose = () => this.lost(runtime, generation, new Error(runtime.tunnel ? "Relay connection to this PC was lost" : runtime.hc ? "This machine's server connection was lost" : "SSH bridge connection interrupted"));
+    ws.onclose = () => this.lost(runtime, generation, new Error(runtime.tunnel ? "Relay connection to this PC was lost" : runtime.forward ? "Connection to this PC was lost" : runtime.hc ? "This machine's server connection was lost" : "SSH bridge connection interrupted"));
     ws.onerror = () => ws.close();
   }
   private tunnelOptions(runtime: Runtime, generation: number): Parameters<typeof openRelayPcTunnel>[2] {
@@ -1986,7 +2003,7 @@ export class MachineManager {
     this.disconnect(runtime);
     runtime.machine.error = error instanceof Error ? error.message : String(error);
     // the other PC turned this one away for good (revoked it, say): trying again could only fail the same way
-    if (error instanceof RelayPcRefused) {
+    if (error instanceof RelayPcRefused || error instanceof AddressPcRefused) {
       runtime.machine.state = "error"; runtime.machine.action_required = null;
       this.emit();
       return;
@@ -2055,6 +2072,17 @@ export class MachineManager {
       } catch (e) { this.lost(runtime, generation, e); }
       return;
     }
+    if (runtime.machine.kind === "address") {
+      try {
+        delete runtime.machine.herdr;
+        await checkAddressTarget(runtime.machine.address!);
+        if (generation !== runtime.generation || this.stopped) return;
+        runtime.forward = openAddressPcForward(runtime.machine.address!, loadAddressPcToken(this.addressTokenPath(runtime.machine.id)), (error) => this.lost(runtime, generation, error));
+        runtime.endpoint = runtime.forward.endpoint;
+        await this.observe(runtime); this.emit();
+      } catch (e) { this.lost(runtime, generation, e); }
+      return;
+    }
     runtime.ssh = new SshConnection(runtime.machine.target!, this.sshDir, join(this.sshDir, runtime.machine.id));
     try {
       await runtime.ssh.start(); await this.prepare(runtime);
@@ -2084,6 +2112,7 @@ export class MachineManager {
     for (const close of runtime.terminals) close(); runtime.terminals.clear();
     runtime.ssh?.close(); runtime.ssh = undefined; runtime.endpoint = undefined;
     runtime.tunnel?.close(); runtime.tunnel = undefined; delete runtime.machine.route;
+    runtime.forward?.close(); runtime.forward = undefined;
     if (runtime.hc?.bridge) { runtime.hc.bridge.stop(); runtime.hc.bridge = undefined; }
     runtime.verification?.abort.abort(); runtime.verification = undefined;
     runtime.acceptedEpoch = undefined; runtime.candidate = undefined; runtime.candidateRun = undefined; delete runtime.machine.source_boot_id;
@@ -2207,11 +2236,52 @@ export class MachineManager {
     this.dropUpdate(runtime);
     // the key goes first: a registration saved without the PC must not leave its credential behind
     if (runtime.machine.kind === "relay") removeRelayPcKey(this.relayKeyPath(id));
+    if (runtime.machine.kind === "address") removeAddressPcToken(this.addressTokenPath(id));
     this.machines.delete(id); this.persist();
     for (const suffix of ["", ".pub"]) try { unlinkSync(join(this.sshDir, id + suffix)); } catch {}
     this.emit();
   }
   private relayKeyPath(id: string): string { return join(this.stateDir, "relay-pcs", `${id}.json`); }
+  private addressTokenPath(id: string): string { return join(this.stateDir, "address-pcs", `${id}.json`); }
+  /**
+   * Add a connection → Direct, an https address: pairs with that PC's own Ovis with the six-digit code it shows, as a
+   * device that drives it (server/address-pc.ts), and adds it once that pairing is saved here.
+   */
+  async addAddress(address: unknown, code: unknown, name?: unknown): Promise<Machine> {
+    if (this.stopped) throw new Error("Server stopping");
+    const origin = addressOrigin(address);
+    if (typeof code !== "string" || !/^\d{6}$/.test(code.trim())) throw new AddressPcError("code");
+    if (name !== undefined && (typeof name !== "string" || !name.trim() || name.length > 100)) throw new Error("Enter a PC name (1–100 characters)");
+    const added = (): boolean => [...this.machines.values()].some(({ machine }) => machine.address === origin);
+    if (added()) throw new AddressPcError("added");
+    await checkAddressTarget(origin);
+    // a code this PC shows, typed with this PC's own address, would pair it with itself
+    if (this.bootId && await addressBootId(origin) === this.bootId) throw new AddressPcError("self");
+    const deviceToken = await pairAddressPc(origin, code.trim(), relayPcLabel());
+    if (this.stopped || added()) throw new Error(this.stopped ? "Server stopping" : `That PC is already added. It now also lists ${relayPcLabel()} once more under Phone & devices: revoke that one there.`);
+    const id = randomUUID();
+    const tokenPath = this.addressTokenPath(id);
+    const runtime = this.runtime({
+      id, name: typeof name === "string" ? name.trim() : new URL(origin).hostname, kind: "address", address: origin,
+      enabled: true, state: "connecting", error: null, snapshot: null,
+    });
+    const generation = runtime.generation;
+    // the PC is added only once its registration is on disk: a save that fails leaves no PC, connection or token behind
+    try {
+      runtime.forward = openAddressPcForward(origin, deviceToken, (error) => this.lost(runtime, generation, error));
+      runtime.endpoint = runtime.forward.endpoint;
+      this.machines.set(id, runtime);
+      saveAddressPcToken(tokenPath, deviceToken); this.persist("address");
+    } catch (error) {
+      this.machines.delete(id);
+      runtime.machine.enabled = false; this.disconnect(runtime);
+      removeAddressPcToken(tokenPath);
+      throw new Error(`This PC could not be saved (${error instanceof Error ? error.message : String(error)}). That PC already lists it under Phone & devices as ${relayPcLabel()}: revoke it there.`, { cause: error });
+    }
+    this.emit();
+    try { await this.observe(runtime); this.emit(); } catch (e) { this.lost(runtime, generation, e); }
+    return runtime.machine;
+  }
   /**
    * Settings → Remote PCs, with the code another PC shows (its Settings → Phone & devices → Show a code to type):
    * finds that PC as a phone does (shared/relay-code-offer.ts) and holds its offer here, the one-time code in it
@@ -2424,7 +2494,7 @@ export class MachineManager {
     runtime.tunnel = tunnel; runtime.endpoint = tunnel.endpoint;
     this.machines.set(id, runtime);
     // the PC is added only once its registration is on disk: a save that fails leaves no PC, connection or key behind
-    try { this.persist(true); } catch (error) {
+    try { this.persist("relay"); } catch (error) {
       this.machines.delete(id);
       runtime.machine.enabled = false; this.disconnect(runtime);
       removeRelayPcKey(keyPath);

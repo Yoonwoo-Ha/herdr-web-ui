@@ -55,7 +55,7 @@ import { openPresentation } from "./lib/filePresentation.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
 import { headerCrumb, showsChat } from "./lib/headerCrumb.ts";
-import { LOCAL_MACHINE, paneStorageId } from "../shared/machines.ts";
+import { LOCAL_MACHINE, pairedPc, paneStorageId } from "../shared/machines.ts";
 import { serverIdOfPath, shellMode } from "./lib/shellMode.ts";
 import { usePairedNotices } from "./lib/usePairedNotices.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
@@ -675,7 +675,7 @@ export function App() {
       },
       connectPc: (machine) => {
         setSettingsOpen(false);
-        if (machine.kind === "relay") {
+        if (pairedPc(machine)) {
           const at = picks.current;
           void load().finally(() => { if (picks.current === at) selectTarget(machine.id, null); });
           return;

@@ -55,6 +55,7 @@ export const MACHINES_JA: Record<string, string> = {
   "Hide on this device": "このデバイスで非表示",
   "Remove PC…": "PC を削除…",
   "over SSH": "SSH 経由",
+  "by its address": "アドレス経由",
   "through the relay": "リレー経由",
   "No saved sessions": "保存されたセッションはありません",
   "Updating the bridge": "ブリッジを更新しています",

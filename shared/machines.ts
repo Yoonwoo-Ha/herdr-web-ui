@@ -20,16 +20,24 @@ export interface SshTarget {
   /** Explicitly chosen on this PC; permits starting its configured session when absent. */
   start_new_herdr?: boolean;
 }
+/** Why POST /api/machines/address added no PC, answered as `address_pc_<failure>`: the app words each one. */
+export const ADDRESS_PC_FAILURES = ["address", "target", "code", "wrong_code", "waiting", "unreachable", "not_ovis", "added", "self"] as const;
+export type AddressPcFailure = typeof ADDRESS_PC_FAILURES[number];
+/** A PC this server is paired with as one of its devices (relay, address): it runs its own Ovis, which it is revoked on. */
+export function pairedPc(machine: Pick<Machine, "kind">): boolean { return machine.kind === "relay" || machine.kind === "address"; }
 export interface Machine {
   /** Read-only identity inherited from the local herdr catalog. */
   herdr_profile_id?: string;
   id: string;
   name: string;
   /** hc: another machine of this PC's herdr-core (`hc machine add`), reached through that core */
-  kind: "local" | "ssh" | "relay" | "hc";
+  /** address: another PC's own Ovis added by its https address, paired as a device that drives it */
+  kind: "local" | "ssh" | "relay" | "hc" | "address";
   target?: SshTarget;
   /** a PC added through the Ovis relay (no SSH): its relay ID and the relay it is reached through */
   relay?: { server_id: string; relay: string };
+  /** an address PC's origin, such as https://desk.example.ts.net */
+  address?: string;
   /**
    * How a connected relay PC is reached now: on one of its direct carriers (its own network, or Tailscale), or
    * through the relay. Absent while it is not connected, and for other kinds of PC.

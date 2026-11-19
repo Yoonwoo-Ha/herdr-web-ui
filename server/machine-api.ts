@@ -15,6 +15,7 @@ import { crossSiteFileRead, FILE_POLICY, pagePolicy } from "./file-view.ts";
 import { snapshotWithoutHiddenTokens, withoutHiddenTokens } from "./herdr-sidebar.ts";
 import { parseJson, readCapped, REMOTE_LIMITS, RemoteResponseInvalid, RemoteResponseTooLarge } from "./remote-json.ts";
 import { answerCode, moveAll, moveAllPlans, PC_MOVE_PATH, PC_UPDATE_REQUIRED, tooOldToMove } from "./remote-move.ts";
+import { ADDRESS_PC_WORDS, AddressPcError } from "./address-pc.ts";
 
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
 /**
@@ -260,6 +261,20 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       const body: unknown = await request.json().catch(() => null);
       if (!isJsonObject(body)) return fail("invalid_body", "Expected a pairing link", 400);
       return jsonResponse({ machine: await manager.addRelay(body.link, body.name, body.found) }, 201);
+    }
+    // Add a connection → Direct, an https address: only a window direct to this PC that drives it gets here (dispatch.ts)
+    if (parts[0] === "address" && parts.length === 1 && request.method === "POST") {
+      setRequestRoute("/api/machines/address");
+      // the code that PC shows is a secret, like an SSH password
+      if (!canSendSecret(request)) return fail("https_required", "A pairing code requires HTTPS or localhost", 403);
+      const body: unknown = await request.json().catch(() => null);
+      if (!isJsonObject(body)) return fail("invalid_body", "Expected an address and a code", 400);
+      try { return jsonResponse({ machine: await manager.addAddress(body.address, body.code, body.name) }, 201); }
+      catch (error) {
+        if (!(error instanceof AddressPcError)) throw error;
+        const [message, status] = ADDRESS_PC_WORDS[error.failure];
+        return fail(`address_pc_${error.failure}`, message, status);
+      }
     }
     if (parts[0] === "relay" && parts[1] === "code" && parts.length === 2 && request.method === "POST") {
       setRequestRoute("/api/machines/relay/code");
