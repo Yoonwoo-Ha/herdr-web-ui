@@ -41,14 +41,6 @@
   background: var(--status-blocked);
 }
 
-.add-pc-step-count {
-  margin: 0 0 var(--space-1);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-regular);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-dim);
-}
-
 .add-pc-sub {
   margin: var(--space-1) 0 0;
   max-width: 65ch;

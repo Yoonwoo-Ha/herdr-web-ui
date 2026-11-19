@@ -556,7 +556,7 @@ describe("the dashboard", () => {
       await act(async () => { buttons("Join")[0]!.props.onClick({ stopPropagation() {} }); });
       expect(dialog().props["data-add-pc-mode"]).toBe("join");
       expect(renderer!.root.findAll((n) => n.props.inert === true)).toHaveLength(1);
-      expect(textOf(dialog())).toContain("Add this device to nuc");
+      expect(textOf(dialog())).toContain("Open nuc in Ovis on a device you already use");
       await act(async () => { button("Ask to join").props.onClick(); });
       expect(joined[1]).toEqual(["nuc", { sheet: "join" }]);
     });
@@ -675,7 +675,7 @@ describe("the dashboard", () => {
       await mount({ ...props({ kind: "ready", name: "Mac mini", server_id: ids.mini }), onOpenPc: () => { openedPc += 1; }, sheetJoin: { mode: "new", server_id: ids.mini } });
       expect(dialog().props["data-add-pc-mode"]).toBe("new");
       expect(dialog().props["data-add-pc-phase"]).toBe("ready");
-      expect(textOf(dialog())).toContain("Step 4 of 4");
+      expect(dialog().findAll((n) => n.type === "div" && n.props.role === "progressbar").map((n) => n.props["aria-valuenow"])).toEqual([4]);
       expect(dialog().findAll((n) => n.type === "li").map((n) => n.props["data-step"])).toEqual(["done", "done", "done", "done"]);
       await act(async () => { button("Open PC").props.onClick(); });
       expect(openedPc).toBe(1);

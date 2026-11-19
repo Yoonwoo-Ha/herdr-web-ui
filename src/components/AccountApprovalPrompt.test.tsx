@@ -41,7 +41,8 @@ describe("who is asking, on the approval card", () => {
 describe("approving a device that asks to join the account", () => {
   const request: RemotePairingRequest = { id: "r1", label: "Hako's iPhone", intent: "account", choices: ["111111", "222222", "333333"], expires_at: "", key: "k" };
 
-  async function approveButton(asker: Asker | undefined): Promise<{ disabled: boolean; numbersDisabled: boolean }> {
+  type Decision = [decision: "approve" | "decline", digits?: string];
+  async function onCard<T>(asker: Asker | undefined, decided: Decision[], walk: (root: ReturnType<typeof create>["root"]) => Promise<T>): Promise<T> {
     const keys = ["window", "document", "navigator", "getComputedStyle", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"];
     const saved = new Map(keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
     const events = new EventTarget();
@@ -58,26 +59,45 @@ describe("approving a device that asks to join the account", () => {
       documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } }, querySelector: () => null, querySelectorAll: () => [], activeElement: null,
       addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events),
     } });
+    let renderer: ReturnType<typeof create> | undefined;
     try {
-      let renderer: ReturnType<typeof create> | undefined;
       await act(async () => {
-        renderer = create(createElement(SettingsProvider, null, createElement(AccountApprovalCard, { request, pcName: "p620", pcCount: 2, asker, onDecide: async () => {} })),
+        renderer = create(createElement(SettingsProvider, null, createElement(AccountApprovalCard, { request, pcName: "p620", pcCount: 2, asker, onDecide: async (...decision: Decision) => { decided.push(decision); } })),
           { createNodeMock: () => ({ focus() {}, contains: () => true, querySelectorAll: () => [] }) });
       });
-      const root = renderer!.root;
-      await act(async () => { root.findAll((node) => node.props.role === "radio")[0]!.props.onClick(); });
-      const approve = root.findAll((node) => node.type === "button" && node.props.className === "btn btn-primary")[0]!;
-      const disabled = approve.props.disabled === true;
-      const numbersDisabled = root.findAll((node) => node.props.role === "radio").every((node) => node.props.disabled === true);
-      await act(async () => { renderer!.unmount(); });
-      return { disabled, numbersDisabled };
+      return await walk(renderer!.root);
     } finally {
+      // a walk that throws still unmounts the card, so its focus trap leaves before the globals go back
+      if (renderer) await act(async () => { renderer!.unmount(); });
       for (const [key, descriptor] of saved) {
         if (descriptor) Object.defineProperty(globalThis, key, descriptor);
         else Reflect.deleteProperty(globalThis, key);
       }
     }
   }
+
+  const radios = (root: ReturnType<typeof create>["root"]) => root.findAll((node) => node.type === "button" && node.props.role === "radio");
+  const approveOf = (root: ReturnType<typeof create>["root"]) => root.findAll((node) => node.type === "button" && node.props.className === "btn btn-primary")[0]!;
+  const approveButton = (asker: Asker | undefined) => onCard(asker, [], async (root) => {
+    await act(async () => { radios(root)[0]!.props.onClick(); });
+    return { disabled: approveOf(root).props.disabled === true, numbersDisabled: radios(root).every((node) => node.props.disabled === true) };
+  });
+
+  it("keeps the number pick: three numbers, none picked, Approve held until one is, and the picked one sent", async () => {
+    const decided: Decision[] = [];
+    const seen = await onCard({ os: null, country: null, city: null }, decided, async (root) => {
+      const before = { labels: radios(root).map((node) => node.props["aria-label"]), shown: radios(root).map((node) => node.children.join("")), checked: radios(root).map((node) => node.props["aria-checked"]), approveHeld: approveOf(root).props.disabled === true };
+      await act(async () => { radios(root)[1]!.props.onClick(); });
+      const after = { checked: radios(root).map((node) => node.props["aria-checked"]), approveHeld: approveOf(root).props.disabled === true };
+      await act(async () => { approveOf(root).props.onClick(); });
+      return { before, after };
+    });
+    expect(seen).toEqual({
+      before: { labels: request.choices.map((choice) => choice.split("").join(" ")), shown: ["111 111", "222 222", "333 333"], checked: [false, false, false], approveHeld: true },
+      after: { checked: [false, true, false], approveHeld: false },
+    });
+    expect(decided).toEqual([["approve", "222222"]]);
+  });
 
   it("waits to approve until it knows who is asking, then lets a picked number approve", async () => {
     expect(await approveButton(undefined)).toEqual({ disabled: true, numbersDisabled: true });

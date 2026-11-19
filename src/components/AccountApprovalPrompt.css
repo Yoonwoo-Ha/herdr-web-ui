@@ -29,6 +29,12 @@
   overflow-wrap: anywhere;
 }
 
+.account-approval-lead {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-md);
+  color: var(--text-strong);
+}
+
 .account-approval-via {
   margin: var(--space-1) 0 var(--space-5);
   font-size: var(--fs-sm);
