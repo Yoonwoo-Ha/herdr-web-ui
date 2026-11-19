@@ -152,6 +152,20 @@ it("withholds Pi's Enter from another process that took its PID during the last 
   expect(await drain({ mode: "pi", afterPaste: (pane) => { let reads = 0; pane.onProcessRead = () => { if (++reads === 7) pane.birth = 5_000; }; } })).toEqual(["paste"]);
 });
 
+it("types no OpenCode skill once the deadline passed while the first write's herdr connection opened", async () => {
+  const pasted: string[] = [];
+  const listedAfter = await drain({ mode: "skill", after: () => {
+    // herdrRpc asks the guard once the connection is open, here 2 s after the call (the deadline is 1 s)
+    spyOn(client, "paneSendText").mockImplementation(async (_pane, text, _socket, guard) => {
+      setSystemTime(new Date(Date.now() + 2_000));
+      if (guard && !guard()) throw new client.HerdrError("cancelled", "herdr pane.send_text was not sent: the sender may no longer send");
+      pasted.push(text);
+    });
+  } }).then(() => listed());
+  expect(pasted).toEqual([]);
+  expect(listedAfter[0]?.slice(0, 2)).toEqual(["held", "submit_timeout"]);
+});
+
 it("types no OpenCode skill into a masked prompt that comes up during the check before it", async () => {
   expect(await drain({ mode: "skill", after: (pane) => { let reads = 0; pane.onProcessRead = () => { if (++reads === 4) pane.screen = PROMPT; }; } })).toEqual([]);
 });
