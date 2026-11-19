@@ -64,16 +64,17 @@ export async function memberRow(account: string) {
 
 /**
  * `accountFetch`: what the PC's calls to the account service reach, given the test account service; that service
- * itself by default. `accountService`: OVIS_ACCOUNT_SERVICE_URL's value (`off` turns it off).
+ * itself by default. `accountService`: OVIS_ACCOUNT_SERVICE_URL's value (`off` turns it off). `server`: further options
+ * of createServer.
  */
-export async function pairingPc(options: { rows?: readonly { created_at: string }[]; accountFetch?: (request: Request, service: FakeAccountService) => Promise<Response>; accountService?: string } = {}) {
+export async function pairingPc(options: { rows?: readonly { created_at: string }[]; accountFetch?: (request: Request, service: FakeAccountService) => Promise<Response>; accountService?: string; server?: Partial<Parameters<typeof createServer>[0]> } = {}) {
   const stateDir = mkdtempSync(join(tmpdir(), "ovis-pairing-"));
   const first = options.rows?.[0];
   if (first) writeFileSync(join(stateDir, "devices.json"), JSON.stringify({ gate_closed_at: first.created_at, devices: options.rows }), { mode: 0o600 });
   const account = new FakeAccountService();
   const accountFetch = options.accountFetch;
   const service = new RelayService({ stateDir, relay: "wss://relay.test", connect: () => idleSocket() });
-  const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, sidecar: false, relay: service,
+  const app = createServer({ ...options.server, port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, sidecar: false, relay: service,
     accountService: { url: options.accountService ?? "https://account.test", fetch: accountFetch ? (request) => accountFetch(request, account) : account.fetch } });
   const base = `http://127.0.0.1:${app.port}`;
   const closes: (() => void)[] = [];

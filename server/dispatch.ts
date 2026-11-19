@@ -46,6 +46,7 @@ import { handleUpdateRequest, updateRequestAllowed } from "./update-api.ts";
 import { handleHerdrUpdateRequest } from "./herdr-update.ts";
 import { handlePortalRequest } from "./portal.ts";
 import { handleRelayRequest } from "./relay/routes.ts";
+import type { LocalConfirms } from "./account/local-confirm.ts";
 import { handleAccountRequest } from "./account/routes.ts";
 import type { AccountMailbox } from "./account/mailbox.ts";
 import type { AccountHolds } from "./account/holds.ts";
@@ -118,6 +119,8 @@ export interface RequestServices {
   readonly orderSequence: OrderSequence;
   readonly clientConnectionLog: ClientConnectionLog;
   readonly requestLog: RequestLog;
+  /** acts waiting for this PC's screen (server/account/local-confirm.ts); only with the Step 2 release flag */
+  readonly localConfirms?: LocalConfirms;
   readonly portalStartupResult: PortalStartup | undefined;
   readonly portalStartup: Promise<PortalStartup>;
 }
@@ -162,6 +165,12 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   const relayPeer = ctx.peer.kind === "relay" ? ctx.peer.device : undefined;
   // the machine profile on TCP: its liveness for every caller; no credential or header of the request is read
   if (options.profile === "machine" && relayPeer === undefined && ctx.ownerSocket !== true) return machineTcpAnswer(request, pathname);
+  // an act waiting for this PC's screen is answered there alone (server/account/local-confirm.ts): every caller of a
+  // route gets the same refusal, before anything about it is decided
+  if (ctx.services.localConfirms !== undefined && /^\/api\/account\/local-confirm(?:\/|$)/.test(pathname)) {
+    setRequestRoute("/api/account/local-confirm");
+    return jsonResponse({ error: { code: "local_required", message: "Confirm this on this PC's own screen." } }, 403);
+  }
   const bridgeAuthorized = options.profile !== "machine" && relayPeer === undefined && ctx.lanHttps !== true && isAuthenticated(request, bridgeToken);
   // the connection server that reaches this one as its PC reads its update status and asks for the
   // update on offer: an Ovis run on this PC by itself is updated through its own updater, never

@@ -55,6 +55,7 @@ import { RelayService } from "./relay/service.ts";
 import { AccountMailbox, accountServiceUrl, passAccountService } from "./account/mailbox.ts";
 import { AccountHolds } from "./account/holds.ts";
 import { AccountIntroductions } from "./account/introductions.ts";
+import { desktopOwnerChannel, desktopOwnerFdChannel, LOCAL_CONFIRM_FILE, LocalConfirms, openConfirmListener, takeDesktopOwnerFd } from "./account/local-confirm.ts";
 import { Telemetry } from "./telemetry.ts";
 import { UsageService } from "./usage.ts";
 import { createSystemSampler, type SystemSampler } from "./system-stats.ts";
@@ -204,6 +205,10 @@ export function createServer(
     /** accept plain-http loopback push endpoints (server/push.ts); only tests delivering to push.fake.ts set it */
     pushLoopbackHttp?: boolean;
     desktopActivity?: boolean;
+    /** OVIS_ACCOUNT_OPENS_ALL, the Step 2 release flag (off by default): screen proof (server/account/local-confirm.ts) exists only with it */
+    accountOpensAll?: boolean;
+    /** the desktop app's end of the desktop-owner channel (`takeDesktopOwnerFd`); used only with `accountOpensAll` */
+    desktopOwner?: { input: ReadableStream<Uint8Array>; write(line: string): void };
     backgroundWait?: { grace: number; limit: number };
     statusNow?: () => number;
     herdrIdentity?: () => string | null;
@@ -444,6 +449,17 @@ export function createServer(
   }
 
   const requestLog = new RequestLog(stateDir);
+  // a port file an earlier run left names a port anyone may have taken since
+  try { rmSync(join(stateDir, LOCAL_CONFIRM_FILE), { force: true }); }
+  catch (error) { console.error(`${LOCAL_CONFIRM_FILE} could not be removed: ${error instanceof Error ? error.message : String(error)}`); }
+  const localConfirms = (options.accountOpensAll ?? process.env["OVIS_ACCOUNT_OPENS_ALL"] === "1") ? new LocalConfirms() : undefined;
+  // a page that cannot open leaves acts waiting for the desktop app's channel; it never fails the start
+  const confirmListener = (() => {
+    if (!localConfirms) return null;
+    try { return openConfirmListener(localConfirms, { stateDir }); }
+    catch (error) { console.error(`The local confirm page did not open: ${error instanceof Error ? error.message : String(error)}`); return null; }
+  })();
+  const desktopOwner = localConfirms && options.desktopOwner ? desktopOwnerChannel(localConfirms, options.desktopOwner) : null;
   const accountHolds = new AccountHolds({ enrollingPath: join(stateDir, "account-enrolling.json"), heldPath: join(stateDir, "account-held.json") });
   const accountMailbox = new AccountMailbox({
     pendingPath: join(stateDir, "account-pending.json"), holds: accountHolds,
@@ -464,7 +480,7 @@ export function createServer(
       switchRuntime: () => { const answer = options.runtimeService!.request("herdr-core"); return answer.ok ? null : answer.message; },
       ...(options.herdrCoreInstaller ? { installer: options.herdrCoreInstaller } : {}),
     }) : null,
-    options, relay: ovisRelay, relayReceiptIds: new RelayReceiptIds(), hostname, token, bridgeToken, bootId, devices, accountMailbox, accountIntroductions: new AccountIntroductions(Date.now, join(stateDir, "account-introductions.json")), accountHolds, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, cliProxyRoutes, usageLogin, usage, usageAccounts, systemSampler, fontsDir: join(stateDir, "fonts"), voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartup,
+    options, relay: ovisRelay, relayReceiptIds: new RelayReceiptIds(), hostname, token, bridgeToken, bootId, devices, accountMailbox, accountIntroductions: new AccountIntroductions(Date.now, join(stateDir, "account-introductions.json")), accountHolds, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, cliProxyRoutes, usageLogin, usage, usageAccounts, systemSampler, fontsDir: join(stateDir, "fonts"), voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartup, localConfirms,
     get portalStartupResult() { return portalStartupResult; },
   };
   ovisRelay.resume(services, server.port ?? DEFAULT_PORT);
@@ -562,6 +578,8 @@ export function createServer(
       server.stop(true);
       ipv6?.stop(true);
       ownerListener?.stop(true);
+      confirmListener?.stop();
+      desktopOwner?.stop();
       for (const listener of lanListeners) listener.stop(true);
       releaseFilePool();
       releaseCommandHistory();
@@ -571,6 +589,8 @@ export function createServer(
 }
 
 export async function serve(): Promise<void> {
+  // before anything is spawned, so no child holds the desktop app's channel
+  const desktopOwnerFd = takeDesktopOwnerFd(process.argv);
   const profile = process.env["OVIS_PROFILE"] === "machine";
   if (profile && !fleetPreview()) {
     console.error("The machine profile is a preview and was not started; set OVIS_PREVIEW=fleet beside OVIS_PROFILE=machine to start it.");
@@ -670,6 +690,7 @@ export async function serve(): Promise<void> {
       runtimeService: runtimeService({ stateDir, port: Number(startEnv["PORT"] || DEFAULT_PORT), serving: choice.runtime, source: choice.source, ...(fallback ? { fallback } : {}), env: startEnv, core: herdrCoreFacts, accepted: () => launchAccepted, restart: (id) => process.send?.({ type: "runtime-restart", id }) }) }),
       portal, relay, tailnet, telemetry, registerBridge: true, herdrProfiles: readHerdrProfiles, shellAgents: new ShellAgentLocator(), agentDetector: new AgentDetector({ locate: catalogLocator({ probe: defaultLoginProbe() }) }), stateDir, siblingStateDir: siblingStateDir(stateDir),
       desktopActivity: process.env["OVIS_DESKTOP_APP"] === "1",
+      ...(desktopOwnerFd !== null ? { desktopOwner: desktopOwnerFdChannel(desktopOwnerFd) } : {}),
       ...(lanConfig !== null && !("error" in lanConfig) ? { lanHttps: lanConfig } : {}) });
     ownership?.listening(instance.port, instance.hostname);
     if (profile) {
