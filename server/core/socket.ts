@@ -1,4 +1,5 @@
 import type { WebSocketHandler } from "bun";
+import { ACCOUNT_OPENS_ALL_CAPABILITY, accountOpensAll } from "../../shared/account-devices-api.ts";
 import type { ClientMessage, ClientRole, ServerFeature, SessionSnapshot } from "../../shared/protocol.ts";
 import { ConnectionDiagnostics } from "../connection-diagnostics.ts";
 import { faultOf, HerdrError, type HerdrFailureView, LARGE_REPLY_BYTES } from "../herdr/client.ts";
@@ -12,7 +13,13 @@ const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "pending-ho
 
 type Frame<K extends ClientMessage["type"]> = Extract<ClientMessage, { type: K }>;
 
-export type FrameHandlers = { [K in Exclude<ClientMessage["type"], "presence">]: (client: Client, message: Frame<K>) => void | Promise<void> };
+/**
+ * Device notice frames (feature "account-opens-all/1"): typed in the protocol, with no handler until the PC's journal
+ * answers them, so until then they are dropped like any frame this server does not know.
+ */
+type AccountNoticeFrame = "notice-seen" | "notice-answer";
+
+export type FrameHandlers = { [K in Exclude<ClientMessage["type"], "presence" | AccountNoticeFrame>]: (client: Client, message: Frame<K>) => void | Promise<void> };
 
 export type SocketHandler = Omit<WebSocketHandler<SocketData>, "open" | "message" | "close" | "drain"> & {
   open(client: Client): void | Promise<void>;
@@ -146,6 +153,9 @@ export function createSocket({ clients, present, stopped, admit, setRole, watcha
       if (terminalHistory()) features.push("terminal-history");
       if (terminalModes()) features.push("terminal-modes");
       if (client.data.machineEvents) features.push("machine-events");
+      // advertised for the step 2 tracks to build on; the notice handlers land later, and the flag stays off
+      // anywhere real until the release gate (S2-38)
+      if (accountOpensAll()) features.push(ACCOUNT_OPENS_ALL_CAPABILITY);
       // a folder OVIS_PASTE_DIR names lets the page read an upload's path whole through it (#2771); a
       // watch-only connection, which may list no folder, is not told where it is
       const pasteDir = client.data.readOnly ? undefined : pasteDirectoryForAll();

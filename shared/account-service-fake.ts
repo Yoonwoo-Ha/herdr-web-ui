@@ -1,9 +1,14 @@
 /**
+ * Test support only: nothing in production imports it (server/conventions.test.ts).
  * It checks what the real service must check (record shape and signature, the caller's directory,
  * server proof with the `account` role), so tests fail where a PC or app relies on something the
  * service would refuse.
  */
-import { ACCOUNT_RECORDS_MAX, AccountRecordError, isAccountKeyEncoding, readAccountRecord, type AccountRecord } from "./account-records.ts";
+import {
+  ACCOUNT_RECORDS_MAX, AccountRecordError, isAccountKeyEncoding, isDeviceSafetyRecord, parseSafetyRecord, readAccountRecord, verifySafetyRecord,
+  type AccountRecord, type BlockRecord, type DeviceLiftRecord, type SafetyRecord,
+} from "./account-records.ts";
+import { ACCOUNT_SNAPSHOT_V, SNAPSHOT_GONE, type AccountSnapshotPage, type SnapshotFreezeLine } from "./account-snapshot.ts";
 import { accountOsOf, type AccountOs, type AccountPlace } from "./account-asker.ts";
 import { isWssOrigin } from "./relay-offer.ts";
 import { deriveServerId, proofKey, serverChallenge, verifyServerProof } from "./relay-server-proof.ts";
@@ -67,6 +72,23 @@ export const ADMISSION_TTL_MS = 10 * 60_000;
 
 interface Mail { seq: number; record: AccountRecord; at: number }
 
+/** Devices one snapshot page lists. */
+export const SNAPSHOT_PAGE = 100;
+
+/** Device table P6, P21: an account's registered keys, each with a `no` that is never reused, and its durable records. */
+interface Registry {
+  next: number;
+  version: number;
+  /** Device table T58: raised when the account gains or loses a sign-in method */
+  methods_version: number;
+  devices: Map<string, { no: number; label: string; eligible: boolean; removed: boolean }>;
+  blocks: BlockRecord[];
+  lifts: DeviceLiftRecord[];
+  freezes: SnapshotFreezeLine[];
+}
+
+type SnapshotState = Omit<AccountSnapshotPage, "page" | "last" | "v">;
+
 export class FakeAccountService {
   private readonly tokens = new Map<string, Session>();
   /** `link`: the sign-in (account and refresh family) a linking sign-in adds this identity to, once that sign-in redeems the code */
@@ -98,6 +120,10 @@ export class FakeAccountService {
   /** Where the service sees every request come from (Cloudflare's `request.cf`); unknown unless a test says. */
   requestPlace: AccountPlace = { country: null, city: null };
   linkPageAcceptsLabelAndOs = true;
+  private readonly registries = new Map<string, Registry>();
+  private readonly snapshots = new Map<string, SnapshotState>();
+  /** OVIS_ACCOUNT_OPENS_ALL at the service: off, the snapshot and safety-record routes do not exist. */
+  opensAll = false;
   private seq = 0;
   readonly requests: string[] = [];
 
@@ -141,7 +167,7 @@ export class FakeAccountService {
 
   private addIdentity(account: string, provider: SignInProvider): void {
     const methods = this.identityList.get(account) ?? new Map();
-    if (!methods.has(provider)) methods.set(provider, { added_at: this.iso() });
+    if (!methods.has(provider)) { methods.set(provider, { added_at: this.iso() }); this.methodsChanged(account); }
     this.identityList.set(account, methods);
   }
 
@@ -299,6 +325,40 @@ export class FakeAccountService {
     for (const [token, session] of this.tokens) if (session.family === family) this.tokens.delete(token);
   }
 
+  private registry(account: string): Registry {
+    const registry = this.registries.get(account) ?? { next: 1, version: 1, methods_version: 0, devices: new Map(), blocks: [], lifts: [], freezes: [] };
+    this.registries.set(account, registry);
+    return registry;
+  }
+
+  /** Device table P18, P21: registers a key for the account (S2-19 adds the route) and returns its `no`. */
+  registerDevice(account: string, key: string, label: string, eligible = true): number {
+    const registry = this.registry(account);
+    const known = registry.devices.get(key);
+    if (known) return known.no;
+    const no = registry.next++;
+    registry.devices.set(key, { no, label, eligible, removed: false });
+    registry.version += 1;
+    return no;
+  }
+
+  /** Device table T36 (service effect): the key leaves the list and keeps its `no` in `removed`. */
+  removeDevice(account: string, key: string): void {
+    const device = this.registry(account).devices.get(key);
+    if (!device || device.removed) return;
+    device.removed = true;
+    this.registry(account).version += 1;
+  }
+
+  private methodsChanged(account: string): void {
+    const registry = this.registry(account);
+    registry.methods_version += 1;
+    registry.version += 1;
+  }
+
+  /** Makes every snapshot id handed out so far answer `snapshot_gone`. */
+  dropSnapshots(): void { this.snapshots.clear(); }
+
   pcs(account: string): FakePc[] { return [...this.directories.get(account)?.values() ?? []]; }
 
   admissions(): readonly FakeAdmission[] { return this.admissionList; }
@@ -421,6 +481,7 @@ export class FakeAccountService {
       if (!methods?.has(removed)) return problem(404, "not_found", "The account does not sign in with it");
       if (methods.size === 1) return problem(409, "last_identity", "Add another way to sign in first");
       methods.delete(removed);
+      this.methodsChanged(account);
       if (this.signIns.get(removed) === account) this.signIns.delete(removed);
       // the sign-ins made with it end
       for (const held of [...this.tokens.values()]) if (held.account === account && held.provider === removed) this.revokeFamily(held.family);
@@ -466,6 +527,7 @@ export class FakeAccountService {
       }
       return json({ queued: new Set(body.server_ids).size });
     }
+    if (path === "/v1/safety-records" && request.method === "POST" && this.opensAll) return await this.safetyRecord(account, await request.json());
     if (path === "/v1/admissions" && request.method === "GET") {
       // what the approving client checks the key PC X shows it against, before it signs an add
       const admissions = this.admissionList
@@ -500,13 +562,18 @@ export class FakeAccountService {
       this.challenges.set(challengeId, { server_id: body.server_id, expected, expires: this.now() + CHALLENGE_TTL_MS });
       return json({ challenge_id: challengeId, frame });
     }
-    if (path === "/v1/pc/mailbox") {
+    if (path === "/v1/pc/mailbox" || (path === "/v1/pc/snapshot" && this.opensAll)) {
       const challenge = typeof body.challenge_id === "string" ? this.challenges.get(body.challenge_id) : undefined;
       if (typeof body.challenge_id === "string") this.challenges.delete(body.challenge_id);
       if (!challenge || challenge.server_id !== body.server_id || this.now() > challenge.expires || !verifyServerProof(body.proof, challenge.expected)) {
         return problem(401, "proof_invalid", "Ask for a new challenge and answer it");
       }
       if (typeof body.account !== "string") return problem(400, "invalid_account", "Name the account this PC belongs to");
+      if (path === "/v1/pc/snapshot") {
+        // P6: only a PC the account lists reads the account's devices and records
+        if (this.directories.get(body.account)?.has(challenge.server_id) !== true) return problem(403, "not_listed", "This PC is not one of the account's");
+        return this.snapshotPage(challenge.server_id, body.account, body.snapshot, body.page);
+      }
       this.expire();
       const key = box(challenge.server_id, body.account);
       const queue = this.mailboxes.get(key) ?? [];
@@ -526,6 +593,90 @@ export class FakeAccountService {
       return json({ records: rest.slice(0, MAILBOX_PAGE).map(({ seq, record }) => ({ seq, record })), more: rest.length > MAILBOX_PAGE, admissions, quiet_admissions: quiet });
     }
     return problem(404, "not_found", "Unknown request");
+  }
+
+  /**
+   * Device table P6, G1: page 0 freezes the account's state under a new snapshot id; every later page is
+   * asked by that id and served from the same state, or answered `snapshot_gone`.
+   */
+  private snapshotPage(serverId: string, account: string, id: unknown, page: unknown): Response {
+    let state: SnapshotState | undefined;
+    if (id === undefined && (page === undefined || page === 0)) {
+      const registry = this.registry(account);
+      const entries = [...registry.devices].sort(([, a], [, b]) => a.no - b.no);
+      state = {
+        snapshot: randomHex(16), account, server_id: serverId, version: registry.version, methods_version: registry.methods_version,
+        // P16, G12: a key above a standing freeze line is not list-eligible
+        devices: entries.filter(([, d]) => !d.removed).map(([key, { no, eligible, label }]) => ({ key, no, eligible: eligible && !this.frozen(registry, no), label })),
+        removed: entries.filter(([, d]) => d.removed).map(([key, { no }]) => ({ key, no })),
+        blocks: [...registry.blocks], lifts: [...registry.lifts], freezes: [...registry.freezes],
+      };
+      this.snapshots.set(state.snapshot, state);
+    } else if (typeof id === "string") {
+      state = this.snapshots.get(id);
+      if (state === undefined || state.account !== account || state.server_id !== serverId) return problem(410, SNAPSHOT_GONE, "Start the read again");
+    }
+    if (state === undefined || !Number.isSafeInteger(page ?? 0) || (page ?? 0) as number < 0) return problem(400, "invalid_request", "Ask page 0 with no snapshot, then each page by its snapshot id");
+    const index = (page ?? 0) as number;
+    // every list is paged on its own, so no page holds more than SNAPSHOT_PAGE entries of any list
+    const lists = [state.devices, state.removed, state.blocks, state.lifts, state.freezes];
+    const pages = Math.max(1, ...lists.map((list) => Math.ceil(list.length / SNAPSHOT_PAGE)));
+    if (index >= pages) return problem(400, "invalid_request", "No such page");
+    const slice = <T>(list: readonly T[]) => list.slice(index * SNAPSHOT_PAGE, (index + 1) * SNAPSHOT_PAGE);
+    const body: AccountSnapshotPage = {
+      v: ACCOUNT_SNAPSHOT_V, snapshot: state.snapshot, account, server_id: serverId, version: state.version, methods_version: state.methods_version, page: index, last: index === pages - 1,
+      devices: slice(state.devices), removed: slice(state.removed), blocks: slice(state.blocks), lifts: slice(state.lifts), freezes: slice(state.freezes),
+    };
+    return json(body);
+  }
+
+  /**
+   * Device table P16, P21, T52 (service effect): a block commits whole (target removed, freeze line, record
+   * kept); a lift ends that block's service line. Each signer must be a registered member older than the target.
+   */
+  private frozen(registry: { freezes: readonly SnapshotFreezeLine[] }, no: number): boolean {
+    return registry.freezes.some((line) => no > line.after);
+  }
+
+  private async safetyRecord(account: string, body: { record?: unknown }): Promise<Response> {
+    let record: SafetyRecord;
+    try {
+      record = parseSafetyRecord(body.record);
+    } catch (error) {
+      if (error instanceof AccountRecordError) return problem(400, "record_invalid", error.message);
+      throw error;
+    }
+    if (!isDeviceSafetyRecord(record)) return problem(400, "record_invalid", "Send a block or a device's lift");
+    if (!await verifySafetyRecord(record)) return problem(400, "signature_invalid", "The signature does not hold");
+    if (record.account !== account) return problem(403, "account_mismatch", "The record is for another account");
+    const registry = this.registry(account);
+    const signer = registry.devices.get(record.signer);
+    if (signer && this.frozen(registry, signer.no)) return problem(403, "frozen", "A key a block freezes signs nothing");
+    if (!signer || signer.removed || signer.no !== record.signer_no) return problem(403, "signer_not_member", "The signer is not a device of this account");
+    if (record.kind === "block") {
+      const target = registry.devices.get(record.target);
+      if (!target || target.no !== record.target_no) return problem(403, "unknown_target", "The target is not where the block says");
+      if (signer.no >= target.no) return problem(403, "signer_not_older", "Only a device older than the target blocks it");
+      if (!registry.blocks.some((held) => held.id === record.id)) {
+        if (target.removed) return problem(409, "target_removed", "The target is already removed");
+        target.removed = true;
+        registry.blocks.push(record);
+        registry.freezes.push({ block: record.id, target: record.target, after: record.target_no });
+        registry.version += 1;
+      }
+      return json({ id: record.id });
+    }
+    const block = registry.blocks.find((held) => held.id === record.target);
+    if (!block) return problem(404, "not_found", "No such block");
+    if (record.signer_no >= block.target_no) return problem(403, "signer_not_older", "Only a device older than the blocked one lifts it");
+    // T52: as the service, only a list-eligible device lifts
+    if (!signer.eligible) return problem(403, "not_eligible", "This device cannot lift a block yet");
+    if (!registry.lifts.some((held) => held.id === record.id)) {
+      registry.lifts.push(record);
+      registry.freezes = registry.freezes.filter((line) => line.block !== block.id);
+      registry.version += 1;
+    }
+    return json({ id: record.id });
   }
 
   private expire(): void {

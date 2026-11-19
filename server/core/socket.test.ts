@@ -67,6 +67,26 @@ it("names the folder OVIS_PASTE_DIR sends uploads to in the features frame, and 
   }
 });
 
+it("lists account-opens-all/1 only while OVIS_ACCOUNT_OPENS_ALL is 1", async () => {
+  const previous = process.env["OVIS_ACCOUNT_OPENS_ALL"];
+  try {
+    for (const [flag, listed] of [[undefined, false], ["0", false], ["1", true]] as const) {
+      if (flag === undefined) delete process.env["OVIS_ACCOUNT_OPENS_ALL"]; else process.env["OVIS_ACCOUNT_OPENS_ALL"] = flag;
+      const handler = createSocket({
+        clients: new Set(), present: new Set(), stopped: () => false, admit: () => true, setRole() {}, watchable: () => true, terminalHistory: () => false, terminalModes: () => false, watchPane() {}, unwatchPane() {},
+        end() {}, holdPending() {}, attachments: new Map(),
+        clientSnapshot: async () => ({ workspaces: [], panes: [], agents: [], layouts: [] }) as unknown as SessionSnapshot, herdrLifetime: () => undefined, browserSnapshot: (snapshot) => snapshot, countVisit() {}, drainOutput() {}, frames: {} as never,
+      });
+      const frames: { type: string; features?: string[] }[] = [];
+      const client: Client = { data: connectionData({ deviceId: undefined, readOnly: false }), readyState: WebSocket.OPEN, getBufferedAmount: () => 0, send: (raw: string) => { frames.push(JSON.parse(raw)); return raw.length; }, close: () => {} };
+      await handler.open!(client);
+      expect({ flag, listed: frames[0]!.features!.includes("account-opens-all/1") }).toEqual({ flag, listed });
+    }
+  } finally {
+    if (previous === undefined) delete process.env["OVIS_ACCOUNT_OPENS_ALL"]; else process.env["OVIS_ACCOUNT_OPENS_ALL"] = previous;
+  }
+});
+
 it("offers no watch where none can be drawn (herdr-core), and ends a watch sent anyway without starting one", async () => {
   const watched: string[] = [];
   const handler = createSocket({

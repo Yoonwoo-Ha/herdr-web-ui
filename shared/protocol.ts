@@ -1,4 +1,5 @@
 import type { HerdrKeys } from "./herdr-keys.ts";
+import type { ACCOUNT_OPENS_ALL_CAPABILITY, DeviceNotice, NoticeAnswer, NoticeReplay, NoticeSeen } from "./account-devices-api.ts";
 import type { MachineEvent } from "./machines.ts";
 /**
  * Ovis's own HTTP/WebSocket contract, shared by the Bun server and the React client.
@@ -1325,7 +1326,11 @@ export type ClientMessage =
    * client sends it when the page comes back, the network changes or nothing arrived for a while,
    * and drops a socket that stays silent: a half-open one still reads OPEN in the browser. A remote
    * PC's socket relays it unchanged, so the remote server's snapshot decides whether it is sent. */
-  | { type: "ping"; id: number };
+  | { type: "ping"; id: number }
+  /** device table T57 (feature "account-opens-all/1"): this row has seen the notices up to `seq`; it decides nothing */
+  | NoticeSeen
+  /** device table T51, T53 (feature "account-opens-all/1"): "It's me", or "Not me" with its signed blocks, for one notice */
+  | NoticeAnswer;
 
 /** Local-only diagnostic metadata. This contract never contains a message, URL or credential. */
 export type ClientConnectionEventKind = "connect" | "open" | "connect_timeout" | "close" | "socket_error"
@@ -1374,8 +1379,11 @@ export interface ClientConnectionTrace {
  * sign-in, sudo in any language, passwd, mysql, gpg, openssl too). A bridge answers `invalid_secret` at a prompt
  * outside what it lists, so the browser types that secret as direct input instead (`input`, never kept), while
  * its own screen still shows the prompt.
+ * `account-opens-all/1` (ACCOUNT_OPENS_ALL_CAPABILITY): listed only while OVIS_ACCOUNT_OPENS_ALL is on at the PC (device
+ * table P10, P15, T57). Only then may the server send `device-notice` and `device-notice-replay`, and only then does a
+ * client send `notice-seen` and `notice-answer`.
  */
-export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "terminal-insert" | "agent-only" | "machine-events" | "terminal-history" | "terminal-modes" | "input-receipt" | "conversation-search" | "conversation-watch-detached" | "prompt-watch" | "secret-prompts-2" | "secret-prompts-3";
+export type ServerFeature = typeof ACCOUNT_OPENS_ALL_CAPABILITY | "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "terminal-insert" | "agent-only" | "machine-events" | "terminal-history" | "terminal-modes" | "input-receipt" | "conversation-search" | "conversation-watch-detached" | "prompt-watch" | "secret-prompts-2" | "secret-prompts-3";
 
 export type ServerMessage =
   | { type: "machine-event"; event: MachineEvent }
@@ -1470,6 +1478,11 @@ export type ServerMessage =
   | { type: "watch-end"; pane_id: string }
   /** the answer to a `ping`, with its id; only this frame, for a ping in flight, ends the client's liveness probe */
   | { type: "pong"; id: number }
+  /** device table P15, T57 (feature "account-opens-all/1"): one new journal entry, sent only by the server and only with the flag on */
+  | { type: "device-notice"; notice: DeviceNotice }
+  /** device table T57 (feature "account-opens-all/1"): the unseen notices. Sent right after the `features` frame and before
+   * any other frame (the snapshot included), never first, so the client already knows account-opens-all/1 when it arrives */
+  | { type: "device-notice-replay"; replay: NoticeReplay }
   /** `pane_id` names the pane an error is about, when it is about one (`attach_held`) */
   | { type: "error"; code: string; message: string; pane_id?: string };
 
