@@ -249,3 +249,23 @@
     animation: none;
   }
 }
+
+.add-pc-command {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.add-pc-other {
+  padding: 0 var(--space-4) var(--space-4);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.add-pc-other summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--pointer-target);
+  cursor: pointer;
+  color: var(--text);
+}

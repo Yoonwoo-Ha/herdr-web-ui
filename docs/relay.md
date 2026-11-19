@@ -152,6 +152,10 @@ two screens instead, as in Bluetooth's numeric comparison:
 7. **Confirm and approve.** The phone sends `PAIR_CONFIRM` once its person taps **The numbers
    match**, and the PC's owner approves (`POST /api/relay/pairing`). Only both together make the
    device, the same record and key a pairing with a code makes, and `AUTH_OK` follows as usual.
+   A join that a PC's own page offers (a signed-in device the PC still has to approve) sends
+   `PAIR_CONFIRM` as soon as the digits show, with no tap: its person pressed **Ask to join** on
+   that page, the key is the one the page's id derives from, and the PC's approval of the same
+   digits stays the gate.
    On a PC without a screen, `bun scripts/plugin.ts pair --approve` in its terminal shows each
    waiting phone with its digits and asks for them: typing the six digits, or their last three,
    approves, Enter by itself declines, and anything else answers nothing and is asked again. It
@@ -195,7 +199,8 @@ the account's directory, checked against its id, so a relay cannot stand in for 
 encrypted channel, so it sees only a few more frames and their sizes and timing.
 
 The phone's screen asks **Does {name} show this number?** with **The numbers match** and **Cancel**,
-then waits for the approval. A PC that declines, or does not approve in time, leaves the phone at
+then waits for the approval. On a PC's own page, the join shows the digits under **Approve it on {name}**, with
+**Cancel** alone, and waits for the approval. A PC that declines, or does not approve in time, leaves the phone at
 **{name} did not approve this phone**, with no key saved.
 
 **Pairing with a typed code.** For a device with no camera pointed at the PC, **Show a code to

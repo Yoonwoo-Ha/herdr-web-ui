@@ -23,7 +23,7 @@ describe("explicit dashboard pairing consent", () => {
     drawn.clear();
   });
 
-  const arrive = async (mode: "new" | "join") => {
+  const arrive = async (mode: "new" | "join", from = "") => {
     const identity = generateKeyPair();
     const pc: MyPc = {
       server_id: deriveServerId(identity.publicKey), name: "Desk", state: "needs-approval",
@@ -62,6 +62,7 @@ describe("explicit dashboard pairing consent", () => {
       },
     };
     await mountRelayShell(mount);
+    Object.assign(window.location, { hash: from });
     const join = current().onJoin;
     if (!join) throw new TypeError("Account pairing action is missing");
     join(pc, { sheet: mode, typed: mode === "new" });
@@ -70,7 +71,7 @@ describe("explicit dashboard pairing consent", () => {
     const scoped = { ...mount, entryUrl: new URL(path, mount.entryUrl).href };
     await mountRelayShell(scoped);
     await compared.promise;
-    return { pc, current, until, approved: approved.promise, again: () => mountRelayShell(scoped) };
+    return { pc, current, until, paths, approved: approved.promise, again: () => mountRelayShell(scoped) };
   };
 
   it.each(["new", "join"] as const)("starts the %s sheet's comparison after one confirmation", async (mode) => {
@@ -82,6 +83,12 @@ describe("explicit dashboard pairing consent", () => {
     current().onCancel();
     await again();
     expect(current().state.kind).toBe("confirm");
+  });
+
+  it.each(["#my-machines", "#my-machines?machine=0123456789abcdef0123456789abcdef", "#pcs?filter=needs"])("goes back to %s, where the join was started, when it is cancelled", async (from) => {
+    const { current, paths } = await arrive("join", from);
+    current().onCancel();
+    expect(paths.at(-1)).toBe(`/${from}`);
   });
 
   it("turns a typed comparison into the join sheet's when the PC shows no number: this device's digits show and their match approves the same request", async () => {

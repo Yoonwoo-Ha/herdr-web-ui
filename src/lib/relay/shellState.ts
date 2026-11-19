@@ -20,6 +20,7 @@ import { ServerIdentityChangedError } from "./device.ts";
 import type { TypedCodeFailure } from "./pairCode.ts";
 import type { RelayDevice } from "./device.ts";
 import { formatDashboardHash, isDashboardHash, parseDashboardHash } from "./dashboardRoute.ts";
+import { formatMyMachinesHash, parseMyMachinesHash } from "../account/myMachinesRoute.ts";
 
 export type KeySource = "link" | "saved";
 
@@ -85,7 +86,7 @@ export type RelayShellState =
    * `pressed`: the button was pressed and the press is being checked; what the confirm said then ("own": a key of
    * the device's own) stays on screen meanwhile.
    */
-  | { kind: "confirm"; offer: RelayOffer; account?: "checking" | "unlisted" | "listed"; pressed?: "unlisted" | "listed" | "own" }
+  | { kind: "confirm"; offer: RelayOffer; account?: "checking" | "unlisted" | "listed"; pressed?: "unlisted" | "listed" | "own"; /** a join a PC's own page offers: its one press, drawn alone */ alone?: true }
   | { kind: "connecting"; name: string | null }
   | { kind: "ready"; name: string | null; server_id: string; enrollment?: EnrollmentState | "local" | EnrollmentCompletion }
   | { kind: "code-entry"; failure: TypedCodeFailure | null }
@@ -93,7 +94,7 @@ export type RelayShellState =
   /** a typed code found a PC: its full ID to compare with the PC's screen before anything is paired */
   | { kind: "code-compare"; offer: RelayOffer }
   /** pairing without a code: the digits to compare with the PC's screen; `confirmed` once this phone said they match */
-  | { kind: "compare"; name: string | null; digits: string; confirmed: boolean; /** the digits are typed from the PC's screen, never shown here */ typed?: boolean; /** the typed digits were not the PC's: the comparison ended */ wrong?: boolean; challenge?: number }
+  | { kind: "compare"; name: string | null; digits: string; confirmed: boolean; /** the digits are typed from the PC's screen, never shown here */ typed?: boolean; /** the typed digits were not the PC's: the comparison ended */ wrong?: boolean; challenge?: number; /** a join a PC's own page started for itself: the PC takes the number, nothing is pressed here */ alone?: true }
   /** the phone's key for a PC whose identity changed is gone; only a new QR code from the PC pairs it again */
   | { kind: "forgotten"; name: string | null }
   /** a link with another key under a PC's id (forgedOffer): refused every time, and no saved key is touched */
@@ -234,9 +235,16 @@ export interface SheetJoin {
   readonly mode: "new" | "join";
   readonly server_id: string;
   readonly returnHash?: string;
+  /** the join a PC's own page started for itself: drawn alone, with no list behind it */
+  readonly alone?: true;
 }
 export function dashboardHash(hash: string): string {
   return isDashboardHash(hash) ? formatDashboardHash(parseDashboardHash(hash)) : "";
+}
+/** Where a sheet opened from the front page goes back to: the dashboard route or My machines it was opened on, else the front page. */
+export function returnHash(hash: string): string {
+  const machines = parseMyMachinesHash(hash);
+  return machines !== null ? formatMyMachinesHash(machines) : dashboardHash(hash);
 }
 export function sheetContext(serverId?: string): SheetJoin | null {
   try {
@@ -244,12 +252,12 @@ export function sheetContext(serverId?: string): SheetJoin | null {
     sessionStorage.removeItem("ovis-add-pc-sheet");
     if (typeof kept !== "object" || kept === null || !("mode" in kept) || !("server_id" in kept)) return null;
     if ((kept.mode !== "new" && kept.mode !== "join") || kept.server_id !== serverId || typeof kept.server_id !== "string") return null;
-    const returnHash = "returnHash" in kept && typeof kept.returnHash === "string" ? dashboardHash(kept.returnHash) : "";
-    return { mode: kept.mode, server_id: kept.server_id, ...(returnHash ? { returnHash } : {}) };
+    const back = "returnHash" in kept && typeof kept.returnHash === "string" ? returnHash(kept.returnHash) : "";
+    return { mode: kept.mode, server_id: kept.server_id, ...(back ? { returnHash: back } : {}), ...("alone" in kept && kept.alone === true ? { alone: true as const } : {}) };
   } catch { return null; }
 }
 export function keepSheetContext(join: SheetJoin): void {
-  try { sessionStorage.setItem("ovis-add-pc-sheet", JSON.stringify({ mode: join.mode, server_id: join.server_id, returnHash: dashboardHash(join.returnHash ?? "") })); }
+  try { sessionStorage.setItem("ovis-add-pc-sheet", JSON.stringify({ mode: join.mode, server_id: join.server_id, returnHash: returnHash(join.returnHash ?? ""), ...(join.alone ? { alone: true } : {}) })); }
   catch {}
 }
 export function typedJoin(serverId: string): boolean {

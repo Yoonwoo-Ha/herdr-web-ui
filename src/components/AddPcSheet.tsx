@@ -62,6 +62,15 @@ export interface AddPcSheetProps {
   onTypeNumber?: () => void;
 }
 
+const APPROVE_COMMAND = "ovis pair --approve";
+
+/** A sentence with a command in it, the command kept on one line as code. */
+function withCommand(sentence: string, command: string): ReactNode {
+  const at = sentence.indexOf(command);
+  if (at < 0) return sentence;
+  return <>{sentence.slice(0, at)}<code className="add-pc-command">{command}</code>{sentence.slice(at + command.length)}</>;
+}
+
 export function AddPcSheet({ mode, pc, state, onJoin, onPair, onMatch, onRetry, onOpenPc, onCancel, onClose, onPairByQr, onAskToJoin, onTypeNumber }: AddPcSheetProps) {
   const t = useT(), locale = useLocale(), phone = useMediaQuery(SHEET_QUERY);
   const id = useId();
@@ -220,6 +229,33 @@ export function AddPcSheet({ mode, pc, state, onJoin, onPair, onMatch, onRetry, 
         break;
       }
     }
+  }
+
+  // a join a PC's own page offers: one press to ask, then the number alone, which the PC checks and approves
+  if ((state.kind === "confirm" || state.kind === "compare") && state.alone === true && pc !== null) {
+    const asking = state.kind === "confirm";
+    return createPortal(
+      <div className="modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+        <div ref={surface} className="modal add-pc-sheet add-pc-alone" lang={locale} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} tabIndex={-1} data-add-pc-mode={mode} data-add-pc-phase={asking ? "confirm" : "compare"}>
+          <header className="modal-header add-pc-head"><h2 className="modal-title" id={`${id}-title`}>{asking ? t("Add this device to {name}", { name }) : t("Approve it on {name}", { name })}</h2></header>
+          {state.kind === "compare" && (
+            <div className="modal-body add-pc-body">
+              <p className="relay-shell-digits" aria-label={state.digits.split("").join(" ")}>{`${state.digits.slice(0, 3)} ${state.digits.slice(3)}`}</p>
+              <p className="relay-shell-copy">{t("Approve it if the PC shows the same number.")}</p>
+            </div>
+          )}
+          <footer className="modal-footer add-pc-footer">{asking ? pairActions(cancel, <button key="primary" type="button" className="btn btn-primary" data-sheet-primary onClick={onPair}>{t("Ask to join")}</button>) : cancel}</footer>
+          {state.kind === "compare" && (
+            <details className="add-pc-other">
+              <summary>{t("Another way")}</summary>
+              <p className="relay-shell-detail">{withCommand(t("In the PC's terminal: ovis pair --approve"), APPROVE_COMMAND)}</p>
+              <p className="relay-shell-detail">{t("Or approve it on another device of your account that has this PC open.")}</p>
+            </details>
+          )}
+        </div>
+      </div>,
+      document.body,
+    );
   }
 
   const failureKind = state.kind === "failed" ? state.failure : null;
