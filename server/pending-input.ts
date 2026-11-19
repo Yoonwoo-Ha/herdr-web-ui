@@ -49,7 +49,13 @@ export interface PendingRecord<Owner, Lease> {
 type Fault = { code: string; message: string };
 interface HeldCopyReply { ok: boolean; code?: string; message?: string }
 type Removed = { id: string; outcome: "sent" | "discarded" | "dismissed" };
-interface TurnGate { by: string; committed: boolean; sawWorking: boolean; completed: boolean; deadline: number | null; restart?: "interruption" | "working" }
+/**
+ * `joined`: until then a ready status may be the end of the turn a Send now's Enter joined, or of one that ended just
+ * before that Enter landed and started a turn of its own. `lenient`: such a ready came, and the wait is for that own
+ * turn's start; one that never shows ends the wait without holding the queue, as the Enter joined the turn that ended.
+ * `since`: when the Enter was committed.
+ */
+interface TurnGate { by: string; committed: boolean; sawWorking: boolean; completed: boolean; deadline: number | null; restart?: "interruption" | "working"; joined?: number; lenient?: true; since?: number }
 const ready = (status: AgentStatus | undefined) => status === "idle" || status === "done";
 export const PENDING_START_TIMEOUT_MS = 10_000;
 export const MAX_PENDING_PER_OWNER = 32;
@@ -70,6 +76,14 @@ export class PendingInputs<Owner, Lease> {
   private readonly statuses = new Map<string, AgentStatus>();
   private readonly events = new Map<string, number>();
   private readonly gates = new Map<string, TurnGate>();
+  /** when a status of the pane was last taken, from an event or a read */
+  private readonly readAt = new Map<string, number>();
+  /**
+   * what took the pane's last reading. A collector snapshot that ties it in the same millisecond is newer than an event
+   * (the collector tells no snapshot with an event since it was asked) and than its own first pass, but not than a read
+   * of the pane, whose order against it cannot be told
+   */
+  private readonly readBy = new Map<string, "event" | "read" | "snapshot">();
   private readonly waits = new Map<string, NonNullable<PendingMessage["waiting"]>>();
   private readonly closed = new Map<Owner, number>();
   private readonly movedInFlight = new WeakSet<PendingRecord<Owner, Lease>>();
@@ -251,12 +265,37 @@ export class PendingInputs<Owner, Lease> {
     return true;
   }
 
-  committing(item: PendingRecord<Owner, Lease>, steeringWorkingTurn = false, restartingWorkingTurn = false): void {
+  /** `readMark`: `mark()` as the caller's last read before this Enter began; no status came since it when it still is */
+  committing(item: PendingRecord<Owner, Lease>, steeringWorkingTurn = false, restartingWorkingTurn = false, readMark?: number): void {
     if (this.records.get(item.message.id) !== item || !item.inFlight) return;
-    this.gates.set(item.paneId, { by: item.message.id, committed: true, sawWorking: steeringWorkingTurn && !restartingWorkingTurn, completed: false,
-      deadline: steeringWorkingTurn && !restartingWorkingTurn ? null : this.now() + this.startTimeoutMs,
-      ...(restartingWorkingTurn ? { restart: "interruption" as const } : {}),
-    });
+    const by = item.message.id, now = this.now();
+    const earlier = this.gates.get(item.paneId);
+    // an earlier Send now's Codex restart not yet seen to start keeps its wait: a working read before it is the turn Escape ends.
+    // A steering read at work made after its ready was seen (no status came since it) is the restarted turn itself, which this
+    // Enter joins
+    const joinsRestart = steeringWorkingTurn && earlier?.restart === "working" && readMark === this.mark(item.paneId);
+    const restarting = earlier?.committed && !earlier.completed && earlier.by !== by && earlier.restart !== undefined && !joinsRestart ? earlier : undefined;
+    let gate: TurnGate;
+    if (restartingWorkingTurn) gate = { by, committed: true, sawWorking: false, completed: false, deadline: now + this.startTimeoutMs, restart: "interruption", since: now };
+    // its own start timeout: the earlier one's, maybe passed already, would end this Enter's wait before its turn could show.
+    // Read at rest before this Enter, after the earlier one's Escape: that is the ready the interruption waits for
+    else if (restarting) gate = { ...restarting, by, since: now, deadline: now + this.startTimeoutMs,
+      ...(!steeringWorkingTurn && restarting.restart === "interruption" ? { restart: "working" as const } : {}) };
+    else if (steeringWorkingTurn) gate = { by, committed: true, sawWorking: true, completed: false, deadline: null, joined: now + this.startTimeoutMs, since: now };
+    else gate = { by, committed: true, sawWorking: false, completed: false, deadline: now + this.startTimeoutMs, since: now };
+    this.gates.set(item.paneId, gate);
+  }
+
+  /**
+   * A message sent to the queue and typed at once, with no row of its own (the pane read at rest and nothing waited): its
+   * Enter's turn is waited for as a queued message's is, so the next one sent to the queue goes behind it.
+   */
+  typedAtOnce(paneId: string, steeringWorkingTurn: boolean): void {
+    if (this.gates.get(paneId)?.committed) return;
+    const now = this.now();
+    this.gates.set(paneId, steeringWorkingTurn
+      ? { by: "", committed: true, sawWorking: true, completed: false, deadline: null, joined: now + this.startTimeoutMs, since: now }
+      : { by: "", committed: true, sawWorking: false, completed: false, deadline: now + this.startTimeoutMs, since: now });
   }
 
   settle(item: PendingRecord<Owner, Lease>, fault?: Fault, uncertain = false, retryWhenReady = false): void {
@@ -295,20 +334,58 @@ export class PendingInputs<Owner, Lease> {
 
   status(paneId: string, status: AgentStatus): void {
     this.events.set(paneId, this.mark(paneId) + 1);
+    this.readAt.set(paneId, this.now());
+    this.readBy.set(paneId, "event");
     this.apply(paneId, status);
   }
 
+  /**
+   * A collector snapshot of a pane with no event since it was asked for, at `askedAt` (status.ts: a reconcile's baseline,
+   * a resync, a replay). A snapshot, not an event: asked for after the Enter whose turn is awaited it is read as a submit's
+   * read is (`observe`); asked for before it, it may be older than that turn, and is only the pane's status. Its reading is
+   * dated when it was asked: the same snapshot told again (a resync or a replay after its baseline, with a status only the
+   * replay can tell, such as a Codex finish) is no older than itself.
+   */
+  baseline(paneId: string, status: AgentStatus, askedAt: number): void {
+    const since = this.gates.get(paneId)?.since;
+    const read = this.readAt.get(paneId) ?? -Infinity;
+    // asked before a reading already taken, it is older than that reading and tells nothing, not even the status
+    const fresh = askedAt > read || (askedAt === read && this.readBy.get(paneId) !== "read");
+    if (!fresh) return;
+    if (since === undefined || askedAt > since) this.read(paneId, status, askedAt);
+    else this.statuses.set(paneId, status);
+    this.readAt.set(paneId, askedAt);
+    this.readBy.set(paneId, "snapshot");
+    // a submit's read under way across it is older than this status, as across an event
+    this.events.set(paneId, this.mark(paneId) + 1);
+  }
+
+  /**
+   * A snapshot's reading of the pane, taken when nothing newer than `mark` was told. herdr's events can trail it (#4118
+   * case B): an event older than the reading still counts as the turn's evidence, as no event carries herdr's order.
+   */
   observe(paneId: string, status: AgentStatus, mark: number): void {
-    if (this.mark(paneId) === mark) this.apply(paneId, status);
+    if (this.mark(paneId) !== mark) return;
+    this.readBy.set(paneId, "read");
+    this.read(paneId, status, this.now());
   }
 
+  /** `at`: when the reading was taken (a collector snapshot's is when it was asked for) */
+  private read(paneId: string, status: AgentStatus, at: number): void {
+    this.readAt.set(paneId, at);
+    this.apply(paneId, status, at);
+  }
+
+  /** A message of the pane waits, or an Enter's turn has not been seen to start and finish: one sent now goes behind it. */
   waiting(paneId: string): boolean {
-    return [...this.records.values()].some((item) => item.paneId === paneId && (item.inFlight || item.message.state === "queued"));
+    return this.gates.get(paneId)?.committed === true
+      || [...this.records.values()].some((item) => item.paneId === paneId && (item.inFlight || item.message.state === "queued"));
   }
 
-  forget(paneId: string): void { this.statuses.delete(paneId); this.events.delete(paneId); this.gates.delete(paneId); this.waits.delete(paneId); }
+  forget(paneId: string): void { this.statuses.delete(paneId); this.events.delete(paneId); this.gates.delete(paneId); this.waits.delete(paneId); this.readAt.delete(paneId); this.readBy.delete(paneId); }
 
-  private apply(paneId: string, status: AgentStatus): void {
+  /** `at`: when the status was read; a Send now's `joined` window is judged by it, not by when it reached the queue */
+  private apply(paneId: string, status: AgentStatus, at = this.now()): void {
     this.statuses.set(paneId, status);
     const gate = this.gates.get(paneId);
     if (!gate?.committed) return;
@@ -322,8 +399,13 @@ export class PendingInputs<Owner, Lease> {
       if (status !== "working") return;
       delete gate.restart;
     }
-    if (status === "working") { gate.sawWorking = true; gate.deadline = null; }
+    if (status === "working") { gate.sawWorking = true; gate.deadline = null; delete gate.lenient; }
     if (ready(status) && gate.sawWorking) {
+      if (gate.joined !== undefined && at < gate.joined) {
+        delete gate.joined;
+        Object.assign(gate, { sawWorking: false, deadline: this.now() + this.startTimeoutMs, lenient: true });
+        return;
+      }
       gate.completed = true;
       if (![...this.records.values()].some((item) => item.paneId === paneId && item.inFlight)) this.gates.delete(paneId);
     }
@@ -389,11 +471,14 @@ export class PendingInputs<Owner, Lease> {
     this.closed.set(owner, this.elapsed());
   }
 
-  expire(): void {
+  /** @returns the panes whose wait ended without holding their queue, which may go on now */
+  expire(): string[] {
     this.expireResends();
+    const released: string[] = [];
     for (const [paneId, gate] of this.gates) {
       if (gate.deadline !== null && this.now() >= gate.deadline && ![...this.records.values()].some((item) => item.paneId === paneId && item.inFlight)) {
-        this.holdPane(paneId, { code: "pending_turn_unconfirmed", message: "The next turn did not start in time; review and send the remaining messages explicitly" });
+        if (gate.lenient) released.push(paneId);
+        else this.holdPane(paneId, { code: "pending_turn_unconfirmed", message: "The next turn did not start in time; review and send the remaining messages explicitly" });
         this.gates.delete(paneId);
       }
     }
@@ -408,5 +493,6 @@ export class PendingInputs<Owner, Lease> {
         // connection may still carry this ID in a saved held copy.
       }
     }
+    return released;
   }
 }

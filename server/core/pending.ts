@@ -656,7 +656,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
   }
 
   async function dispatchPendingText(owner: Client, paneId: string, text: string, lease: PendingLease, identity: PendingIdentity,
-    automatic: boolean, arrivedAt: number, committing: (working: boolean, restarting?: boolean) => void = () => {}, interruptWorkingCodex = false,
+    automatic: boolean, arrivedAt: number, committing: (working: boolean, restarting?: boolean, readMark?: number) => void = () => {}, interruptWorkingCodex = false,
     requestId = 0, agentOnly = false, queued = false,
     row: { withdrawn?: () => boolean; waiting?: (waits: boolean) => void } = {}): Promise<SubmitReply> {
     let wrote = false;
@@ -799,6 +799,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         }
         throw error;
       };
+      // the pane's event count as the read before the Enter began: whether a status came since that read (committing)
+      let enterMark = pending.mark(paneId);
       let beforeEnter = await pendingContext(owner, paneId, lease, identity, true, agentOnly).catch(enterRefused);
       if (automatic && (beforeEnter.working || queueHeld(paneId, false))) enterRefused(new HerdrError("pending_wait", "The agent started another turn before this queued message could be committed"));
       authorizePending(owner, paneId, lease);
@@ -806,6 +808,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       const beforeCapturePid = beforeEnter.identity.processPid;
       const piAnchor = piTracked ? await preparePiReceipt(paneId, beforeEnter.identity).catch(() => null) : undefined;
       if (piAnchor !== undefined) {
+        enterMark = pending.mark(paneId);
         beforeEnter = await pendingContext(owner, paneId, lease, identity, true, agentOnly).catch(enterRefused);
         if (automatic && (beforeEnter.working || queueHeld(paneId, false))) enterRefused(new HerdrError("pending_wait", "The agent started another turn before this queued message could be committed"));
         await stillInFront(paneId, beforeCapturePid, identity, agentOnly).catch(enterRefused);
@@ -823,7 +826,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       if (resumed()) refuseResumed();
       authorizePending(owner, paneId, lease);
       const steering = !automatic && beforeEnter.working;
-      committing(steering);
+      committing(steering, false, enterMark);
       // Claude Code queues what Enter commits during a turn; Ctrl+Enter sends it now (#737). herdr
       // encodes the key as the pane asked, and as a plain CR for a program that asked for nothing.
       const sentAt = Date.now();
@@ -897,7 +900,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       if (by === null) throw new HerdrError("input_not_ready", "No connection has the pane attached to type the message");
       const lease = item.lease ?? pendingLease(by, item.paneId);
       reply = await dispatchPendingText(by, item.paneId, item.message.text, lease, item.identity,
-        automatic, arrivedAt, (working, restarting) => pending.committing(item, working, restarting), interruptWorkingCodex, item.message.request_id, item.message.agent_only === true, false,
+        automatic, arrivedAt, (working, restarting, readMark) => pending.committing(item, working, restarting, readMark), interruptWorkingCodex, item.message.request_id, item.message.agent_only === true, false,
         { withdrawn: () => withdrawn.has(item), waiting: (waits) => pending.sendingWaitsFor(item, waits ? "omp_starting" : undefined) });
     } catch (error) {
       reply = { ok: false, ...pendingFault(error, options.herdrFailure) };
@@ -1407,7 +1410,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
               // Queued, it never clears a stopped send Claude put back in its box, as the drain does not (#2546).
               if (message.delivery === "queue" && !pending.waiting(message.pane_id) && !typedWhileOmpStarted(message.pane_id)) {
                 const sendingAt = new Date().toISOString();
-                const typed = await dispatchPendingText(client, message.pane_id, text, lease!, context.identity, false, arrivedAt, undefined, false, message.id, agentOnly, true);
+                const typed = await dispatchPendingText(client, message.pane_id, text, lease!, context.identity, false, arrivedAt,
+                  (working) => pending.typedAtOnce(message.pane_id, working), false, message.id, agentOnly, true);
                 if (typed.ok || typed.code !== "pending_wait") return typed.ok ? { ...typed, sending_at: sendingAt } : typed;
                 waited = true;
               }
