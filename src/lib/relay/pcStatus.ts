@@ -8,10 +8,15 @@ import { relayFallback } from "../../../shared/relay-regions.ts";
 import { keyIdOf } from "./shellState.ts";
 
 export type PcStatus =
-  | { readonly kind: "checking" }
+  /** `previous`: what the last finished check found, which the row keeps showing while this one runs */
+  | { readonly kind: "checking"; readonly previous?: PcFinding }
   /** the PC finished the encrypted handshake on `route`; the check stops before signing in, so this device's own admission is not known */
   | { readonly kind: "answered"; readonly route: DeviceRoute; readonly relay?: string; readonly rttMs: number }
-  | { readonly kind: "offline"; readonly reason: "pc" | "relay" };
+  /** `pc`: the relay had nobody for it; `refused`: the relay turned this device away; `relay`: no relay was reached, or one failed saying nothing */
+  | { readonly kind: "offline"; readonly reason: "pc" | "refused" | "relay" };
+
+/** A finished check's result. */
+export type PcFinding = Exclude<PcStatus, { kind: "checking" }>;
 
 /** Every direct carrier together gets this long, as a connection gives them (transport.ts DIRECT_BUDGET_MS). */
 export const DIRECT_PROBE_MS = 1_500;
@@ -33,7 +38,7 @@ export function sweepOf(devices: readonly RelayDevice[], cursor: number, max: nu
   return [...paired.slice(start), ...paired.slice(0, start)].slice(0, max);
 }
 
-export async function checkPc(device: RelayDevice, sockets: PcCheckSockets, probe: typeof probePc = probePc): Promise<Exclude<PcStatus, { kind: "checking" }>> {
+export async function checkPc(device: RelayDevice, sockets: PcCheckSockets, probe: typeof probePc = probePc): Promise<PcFinding> {
   const offer: RelayOffer = { v: 1, server_id: device.server_id, server_public_key: device.server_public_key, relay: device.relay };
   const carriers = sockets.direct ? device.direct ?? [] : [];
   const deadline = Date.now() + DIRECT_PROBE_MS;
@@ -51,5 +56,5 @@ export async function checkPc(device: RelayDevice, sockets: PcCheckSockets, prob
     else if (first.kind === "silent" && found.kind === "silent") found = first;
   }
   return found.kind === "answered" ? { kind: "answered", route: "relay", relay, rttMs: found.ms }
-    : { kind: "offline", reason: found.kind === "silent" ? "pc" : "relay" };
+    : { kind: "offline", reason: found.kind === "silent" ? "pc" : found.kind === "refused" ? "refused" : "relay" };
 }

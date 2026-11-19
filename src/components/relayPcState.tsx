@@ -1,11 +1,36 @@
 import type { ReactNode } from "react";
 import { currentLocale, type Translate } from "../lib/i18n.ts";
-import { relayHost, type dashboardModel } from "../lib/relay/dashboard.ts";
+import { lastSeen } from "../lib/lastSeen.ts";
+import { relayHost, type DashboardState, type dashboardModel } from "../lib/relay/dashboard.ts";
 import type { PcStatus } from "../lib/relay/pcStatus.ts";
 import type { StatusDotState } from "./StatusDot.tsx";
 
 export type DashboardRow = ReturnType<typeof dashboardModel>["rows"][number];
 type MapNode = ReturnType<typeof dashboardModel>["map"]["hubs"][number]["nodes"][number];
+
+export type OutOfReach = Extract<DashboardState, "offline" | "unreachable">;
+
+export function outOfReachWord(state: OutOfReach, t: Translate): string {
+  switch (state) {
+    case "offline": return t("Machine offline");
+    case "unreachable": return t("Could not reach this machine");
+  }
+}
+
+export function outOfReachReason(pc: { readonly displayState: DashboardState; readonly last_seen_at: string | null; readonly check?: PcStatus | null }, t: Translate, now?: number): string | null {
+  switch (pc.displayState) {
+    case "offline": {
+      const cause = t("It is off, has no network, or Ovis is not running on it.");
+      return pc.last_seen_at === null ? cause : `${t("Last seen {when}.", { when: lastSeen(pc.last_seen_at, now) })} ${cause}`;
+    }
+    case "unreachable": {
+      const found = pc.check?.kind === "checking" ? pc.check.previous : pc.check;
+      return found?.kind === "offline" && found.reason === "refused" ? t("The relay turned this device away. Wait a minute, then check again.")
+        : t("This device could not reach the relay. Check this device's network.");
+    }
+    case "paired": case "unchecked": case "needs-approval": case "needs-update": return null;
+  }
+}
 
 export function mapStateWord(node: MapNode, t: Translate): string {
   if (node.check?.kind === "checking") return t("Checking…");
@@ -13,7 +38,7 @@ export function mapStateWord(node: MapNode, t: Translate): string {
     case "unchecked": return localStateWord(node.check, t);
     case "needs-approval": return t("Needs approval");
     case "needs-update": return t("Needs update");
-    case "offline": return t("Offline");
+    case "offline": case "unreachable": return outOfReachWord(node.state, t);
     case "paired":
       if (node.check?.kind === "answered") return routeText(node.check, t);
       return node.seen === "lately" ? t("Seen lately") : t("Ready");
@@ -25,7 +50,7 @@ export function mapStateDetail(node: MapNode, t: Translate): string {
   switch (node.state) {
     case "needs-approval": return t("Needs approval") + route;
     case "needs-update": return `${t("Needs update")} · ${t("Update Ovis on it")}${route}`;
-    case "offline": case "paired": case "unchecked": return mapStateWord(node, t);
+    case "offline": case "unreachable": case "paired": case "unchecked": return mapStateWord(node, t);
   }
 }
 
@@ -35,6 +60,7 @@ export function pcDotState(row: DashboardRow, updating = false): StatusDotState 
   switch (row.displayState) {
     case "needs-approval": case "needs-update": return "needs-you";
     case "offline": case "unchecked": return "offline";
+    case "unreachable": return "failed";
     case "paired": return "ready";
   }
 }

@@ -8,7 +8,7 @@ import type { MyPc } from "../lib/account/myPcs.ts";
 import { DEVICE_PROVIDERS } from "../lib/account/service.ts";
 import type { AccountProvider } from "../lib/account/store.ts";
 import { copyText } from "../lib/clipboard.ts";
-import { currentLocale, useT } from "../lib/i18n.ts";
+import { useT } from "../lib/i18n.ts";
 import { lastSeen } from "../lib/lastSeen.ts";
 import { dashboardModel, relayHost, type DashboardFilter, type DashboardPc } from "../lib/relay/dashboard.ts";
 import type { PcStatus } from "../lib/relay/pcStatus.ts";
@@ -17,7 +17,7 @@ import { serverScopePath } from "../lib/shellMode.ts";
 import { skeletonRows } from "../lib/skeleton.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { PROVIDER_NAMES } from "./AccountPcs.tsx";
-import { askToJoinReason } from "./relayPcState.tsx";
+import { askToJoinReason, localStateWord, outOfReachReason, outOfReachWord, pcDotState, type DashboardRow } from "./relayPcState.tsx";
 import { INSTALLER_COMMAND } from "./RelayShellScreens.tsx";
 import { Skeleton } from "./Skeleton.tsx";
 import { StatusDot, type StatusDotState } from "./StatusDot.tsx";
@@ -53,6 +53,8 @@ export interface RelayOverviewProps {
   readonly onSelectPc?: (serverId: string) => void;
   readonly onSelect?: (serverId: string) => void;
   readonly onOpenPc?: (pc: DashboardPc) => void;
+  /** Check again on a PC this device could not reach: that PC alone */
+  readonly onCheckPc?: (serverId: string) => void;
   readonly children?: ReactNode;
 }
 
@@ -68,33 +70,30 @@ export function relayLatencyMs(relay: { readonly origin: string; readonly pcs: r
 }
 
 export function attentionReasonText(
-  pc: DashboardPc,
+  pc: DashboardRow,
   expiresAt: number | null,
   t: ReturnType<typeof useT>,
   options: { readonly now: number; readonly targetVersion: string },
 ): string {
-  switch (pc.state) {
+  switch (pc.displayState) {
     case "needs-approval":
       if (expiresAt !== null) return t("new · {n} min left", { n: Math.max(1, Math.ceil((expiresAt - options.now) / 60_000)) });
       return askToJoinReason(pc, t) ?? t("Needs approval");
     case "needs-update":
       return t("update to {version}", { version: options.targetVersion });
-    case "offline": {
-      if (pc.last_seen_at === null) return t("Offline");
-      const minutes = Math.max(1, Math.round((options.now - Date.parse(pc.last_seen_at)) / 60_000));
-      if (minutes < 60) return t("offline since {n} min", { n: minutes });
-      if (minutes < 60 * 48) return t("offline since {n} h", { n: Math.round(minutes / 60) });
-      return t("offline since {when}", { when: new Date(pc.last_seen_at).toLocaleDateString(currentLocale()) });
-    }
+    case "offline": case "unreachable":
+      return [outOfReachWord(pc.displayState, t), outOfReachReason(pc, t, options.now)].join(" · ");
     case "paired":
       return t("Ready");
+    case "unchecked":
+      return localStateWord(pc.check, t);
   }
 }
 
-function rowAction(pc: DashboardPc, fresh: boolean, t: ReturnType<typeof useT>, props: Pick<RelayOverviewProps, "onOpenSheet" | "onSelectPc" | "onSelect" | "onOpenPc">): ReactNode {
+function rowAction(pc: DashboardRow, fresh: boolean, t: ReturnType<typeof useT>, props: Pick<RelayOverviewProps, "onOpenSheet" | "onSelectPc" | "onSelect" | "onOpenPc" | "onCheckPc">): ReactNode {
   const openPc = (): void => { if (props.onOpenPc) props.onOpenPc(pc); else window.location.assign(serverScopePath(pc.server_id)); };
   const selectPc = (): void => { (props.onSelectPc ?? props.onSelect)?.(pc.server_id); };
-  switch (pc.state) {
+  switch (pc.displayState) {
     case "needs-approval":
       if (!pc.join) return null;
       return fresh
@@ -105,7 +104,12 @@ function rowAction(pc: DashboardPc, fresh: boolean, t: ReturnType<typeof useT>, 
     case "offline":
       if (pc.paired) return <button type="button" className="btn" data-attention-action="details" onClick={selectPc}>{t("Details")}</button>;
       return pc.join ? <button type="button" className="btn" data-attention-action="join" onClick={() => props.onOpenSheet?.(pc, "join")}>{t("Join")}</button> : null;
-    case "paired":
+    // Open can only fail while no relay answers this device: the check is what to try once its network is back
+    case "unreachable":
+      return props.onCheckPc
+        ? <button type="button" className="btn" data-attention-action="check" onClick={() => props.onCheckPc?.(pc.server_id)}>{t("Check again")}</button>
+        : <button type="button" className="btn" data-attention-action="details" onClick={selectPc}>{t("Details")}</button>;
+    case "paired": case "unchecked":
       return <button type="button" className="btn" data-attention-action="open" onClick={openPc}>{t("Open")}</button>;
   }
 }
@@ -307,8 +311,8 @@ export function RelayOverview(props: RelayOverviewProps) {
               )}
               <ol className="relay-overview-attention">
                 {attentionRows.map(({ pc, reason, expiresAt, why, joins }) => (
-                  <li key={pc.server_id} className="relay-overview-attention-row" data-pc-state={pc.state}>
-                    <StatusDot state={reason === "offline" ? "offline" : "needs-you"} />
+                  <li key={pc.server_id} className="relay-overview-attention-row" data-pc-state={reason}>
+                    <StatusDot state={pcDotState(pc)} />
                     <span className="relay-overview-attention-name" title={pc.name}>{pc.name}</span>
                     <span className="relay-overview-attention-why" {...(sharedReason === null && joins ? { "data-reason": "join" } : {})}>{sharedReason === null ? why : pc.relay !== null ? relayHost(pc.relay) : pc.last_seen_at !== null ? lastSeen(pc.last_seen_at, now) : "—"}</span>
                     <div className="relay-overview-attention-act">{rowAction(pc, expiresAt !== null, t, props)}</div>

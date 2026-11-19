@@ -35,6 +35,21 @@ export class RelayUnreachableError extends Error {
 }
 
 /**
+ * The relay's closes that turn a client away (relay/core.ts CLOSE): TRY_AGAIN (busy: too many clients for the PC) and
+ * POLICY. Only before the relay assigns a socket are they read as its refusal; a close after it is read as any other.
+ */
+const RELAY_REFUSALS: ReadonlySet<number> = new Set([1008, 1013]);
+
+/** The relay reached and turned this device away before assigning it (busy, or a policy): nothing is known of the PC. */
+export class RelayRefusedError extends RelayUnreachableError {
+  constructor(closeCode: number) {
+    super(closeCode);
+    this.message = `The relay turned this device away (${closeCode})`;
+    this.name = "RelayRefusedError";
+  }
+}
+
+/**
  * The relay closed this client RELAY_NEW_SESSIONS_CLOSE: the PC named it as a device new to it while its relay pass
  * allows no new sessions (relay/README.md, "New sessions"). Only a device that was pairing hears it; ones the PC
  * knows still sign in.
@@ -341,7 +356,8 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
       const pairing = offer.code !== undefined || device.device_id === null;
       if (event.code === RELAY_NEW_SESSIONS_CLOSE && direct === undefined && pairing) stop(new RelayNewSessionsRefusedError());
       transport.onclose?.(event.code, event.reason);
-      stop(phase === "assigned" ? new RelayUnreachableError(event.code) : new MuxProtocolError("internal_error", "Relay socket closed"));
+      stop(phase !== "assigned" ? new MuxProtocolError("internal_error", "Relay socket closed")
+        : direct === undefined && RELAY_REFUSALS.has(event.code) ? new RelayRefusedError(event.code) : new RelayUnreachableError(event.code));
     };
     socket.onerror = () => {
       const error = phase === "assigned" ? new RelayUnreachableError(null) : new MuxProtocolError("internal_error", "Relay socket failed");
@@ -422,9 +438,11 @@ export async function probeDirect(offer: RelayOffer, direct: string, socketFor: 
 /**
  * What a probe of the PC found: it `answered` (the Noise handshake to its pinned key completed, `ms`
  * from the carrier's `assigned` frame, so one round trip to the PC and back), the carrier assigned the
- * connection and no PC answered in time (`silent`: offline, for a relay), or nothing assigned it (`unreachable`).
+ * connection and no PC answered in time (`silent`: offline, for a relay), the relay turned this device away
+ * (`refused`: a close of RELAY_REFUSALS before it assigned the connection), or the carrier failed with nothing said (`unreachable`: no assignment,
+ * an error or a dropped socket; a relay's HTTP 429 before the upgrade looks the same to a browser).
  */
-export type PcProbe = { readonly kind: "answered"; readonly ms: number } | { readonly kind: "silent" } | { readonly kind: "unreachable" };
+export type PcProbe = { readonly kind: "answered"; readonly ms: number } | { readonly kind: "silent" } | { readonly kind: "refused" } | { readonly kind: "unreachable" };
 
 export function probePc(offer: RelayOffer, via: { readonly direct: string } | { readonly relay: string }, socketFor: (url: string) => RelaySocket, ms: number, signal?: AbortSignal): Promise<PcProbe> {
   const unreachable: PcProbe = { kind: "unreachable" };
@@ -468,8 +486,12 @@ export function probePc(offer: RelayOffer, via: { readonly direct: string } | { 
       onmessage: null, onclose: null, onerror: null,
     };
     let assigned = false;
-    socket.onerror = failed;
-    socket.onclose = failed;
+    socket.onerror = () => settle(unreachable);
+    socket.onclose = (event) => {
+      if ("relay" in via && !assigned && RELAY_REFUSALS.has(event.code)) settle({ kind: "refused" });
+      else if (event.code === 1006) settle(unreachable);
+      else failed();
+    };
     socket.onmessage = (event) => {
       if (settled) return;
       if (assigned) { transport.onmessage?.({ data: event.data, isBinary: typeof event.data !== "string" }); return; }

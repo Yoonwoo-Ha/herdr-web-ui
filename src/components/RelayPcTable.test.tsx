@@ -371,7 +371,7 @@ describe("RelayPcTable", () => {
     expect(answeredLocal).not.toContain(">Ready<");
 
     const noAnswerLocal = renderHtml(buildProps([localPc], { mode: "local" }, new Map([[IDS.local, { kind: "offline", reason: "pc" }]])));
-    expect(noAnswerLocal).toContain('<span class="relay-pc-state-word" title="No answer">No answer</span>');
+    expect(noAnswerLocal).toContain('<span class="relay-pc-state-word" title="Machine offline · It is off, has no network, or Ovis is not running on it.">Machine offline</span>');
     expect(noAnswerLocal).not.toContain("This device: no answer");
   });
 
@@ -451,8 +451,43 @@ describe("RelayPcTable", () => {
     expect(rowOf(IDS.update).replace(/<[^>]+>/g, "")).toContain("Tailscale · 18 ms");
     const unanswered = renderHtml(buildProps([stale], {}, new Map<string, PcStatus>([[IDS.offlinePaired, { kind: "offline", reason: "pc" }]])));
     expect(unanswered).toContain('<svg class="status-dot" data-state="offline"');
-    expect(unanswered).toContain('title="Offline · 20 h ago">Offline · 20 h ago</span>');
+    expect(unanswered).toContain('title="Machine offline · Last seen 20 h ago. It is off, has no network, or Ovis is not running on it.">Machine offline</span>');
     expect(unanswered.replace(/<[^>]+>/g, "")).toContain("No answer");
+  });
+
+  it("says Machine offline with when and why for a listed PC the relay had nobody for, and Could not reach this machine with Check again when no relay answered this device: neither is Ready, and neither offers Open", async () => {
+    // pc-a: listed, the account heard from it a minute ago; this device's own check says otherwise
+    const pcA = makePc(IDS.ready, "pc-a", "paired");
+    const said = (check: PcStatus, phone: boolean) => {
+      phoneMatches = phone;
+      const html = renderHtml(buildProps([pcA], { onCheckPc: none }, new Map([[IDS.ready, check]]))).replaceAll("&#x27;", "'");
+      const row = new RegExp(`<(tr|li)[^>]*data-pc-id="${IDS.ready}"[\\s\\S]*?<\\/(tr|li)>`).exec(html)?.[0] ?? "";
+      const [, title = "", word = ""] = /class="relay-pc-state-word" title="([^"]+)">([^<]+)</.exec(row) ?? [];
+      // the table's row keeps one line and says why in its state word's title; a phone's row says it on a line of its own
+      return {
+        state: /data-pc-state="([^"]+)"/.exec(row)?.[1],
+        dot: /class="status-dot" data-state="([^"]+)"/.exec(row)?.[1],
+        word,
+        why: phone ? /class="relay-pc-probe-line">([^<]+)</.exec(row)?.[1] : title.slice(`${word} · `.length),
+        action: /data-pc-action="([^"]+)"/.exec(row)?.[1],
+      };
+    };
+    const offline = { state: "offline", dot: "offline", word: "Machine offline", why: "Last seen just now. It is off, has no network, or Ovis is not running on it.", action: "details" };
+    const unreached = { state: "unreachable", dot: "failed", word: "Could not reach this machine", why: "This device could not reach the relay. Check this device's network.", action: "check" };
+    const turnedAway = { ...unreached, why: "The relay turned this device away. Wait a minute, then check again." };
+    for (const phone of [false, true]) {
+      expect([said({ kind: "offline", reason: "pc" }, phone), said({ kind: "offline", reason: "relay" }, phone), said({ kind: "offline", reason: "refused" }, phone)]).toEqual([offline, unreached, turnedAway]);
+      // a re-check in flight keeps the last finished check's word and why; only the dot says Checking
+      expect(said({ kind: "checking", previous: { kind: "offline", reason: "refused" } }, phone)).toEqual({ ...turnedAway, dot: "checking" });
+    }
+    phoneMatches = false;
+    // Check again checks this PC alone
+    const checked: string[] = [];
+    await mount(buildProps([pcA], { onCheckPc: (serverId) => { checked.push(serverId); } }, new Map<string, PcStatus>([[IDS.ready, { kind: "offline", reason: "relay" }]])));
+    const again = rootOf(renderer).find((n) => n.type === "button" && n.props["data-pc-action"] === "check");
+    expect(textOf(again)).toBe("Check again");
+    await act(async () => { again.props.onClick({ stopPropagation() {} }); });
+    expect(checked).toEqual([IDS.ready]);
   });
 
   it("keeps Needs update, its glyph and Update for a PC the account does not list once this device's check answered, with the answer in the Relay cell", () => {
@@ -486,12 +521,12 @@ describe("RelayPcTable", () => {
     expect(joinPhone.findAll((n) => n.type === "p" && n.props.className === "relay-pc-probe-line").map(textOf)).toEqual([joinReason]);
   });
 
-  it("names the specific state in the State cell (Needs approval, Needs update, Offline · when, Ready) with the full text in a title, while the filter chip keeps Needs you", () => {
+  it("names the specific state in the State cell (Needs approval, Needs update, Machine offline, Ready) with the full text in a title, while the filter chip keeps Needs you", () => {
     const html = renderHtml(buildProps());
     const stateOf = (id: string) => /<span class="relay-pc-state-word" title="([^"]+)">([^<]+)<\/span>/.exec(new RegExp(`<tr[^>]*data-pc-id="${id}"[\\s\\S]*?<\\/tr>`).exec(html)?.[0] ?? "")?.slice(1);
     expect(stateOf(IDS.fresh)).toEqual(["Needs approval", "Needs approval"]);
     expect(stateOf(IDS.update)).toEqual(["Needs update", "Needs update"]);
-    expect(stateOf(IDS.offlinePaired)).toEqual(["Offline · 2 h ago", "Offline · 2 h ago"]);
+    expect(stateOf(IDS.offlinePaired)).toEqual(["Machine offline · Last seen 2 h ago. It is off, has no network, or Ovis is not running on it.", "Machine offline"]);
     expect(stateOf(IDS.ready)).toEqual(["Ready", "Ready"]);
     expect(html).not.toContain(">Needs you</span>");
     const chips = /<div class="segmented"[\s\S]*?<\/div>/.exec(html)?.[0] ?? "";
@@ -534,7 +569,7 @@ describe("RelayPcTable", () => {
     const metaOf = (id: string) => textOf(list.find((n) => n.type === "li" && n.props["data-pc-id"] === id).find((n) => n.props.className === "relay-pc-phone-meta"));
     expect(metaOf(IDS.ready)).toBe("Ready·Same network · 4 ms·just now");
     expect(metaOf(IDS.update)).toBe("Needs update·Tailscale · 18 ms·just now");
-    expect(metaOf(IDS.offlinePaired)).toBe("Offline · just now·No answer·just now");
+    expect(metaOf(IDS.offlinePaired)).toBe("Machine offline·No answer·just now");
     await act(async () => { rootUpdate(renderer)(createElement(SettingsProvider, { children: createElement(RelayPcTable, buildProps([unchecked], {}, status)) })); });
     const uncheckedItem = rootOf(renderer).find((n) => n.type === "li" && n.props["data-pc-id"] === IDS.join);
     expect(textOf(uncheckedItem.find((n) => n.props.className === "relay-pc-phone-meta"))).toBe("Ready·Not checked·just now");
@@ -543,7 +578,7 @@ describe("RelayPcTable", () => {
   it("drops the Last seen column when asked (Details open beside it) and rebalances the remaining four columns", () => {
     const html = renderHtml(buildProps(sampleFleet(), { showLastSeen: false }));
     expect(html.match(/<th scope="col"/g)).toHaveLength(4);
-    expect(html).not.toContain("Last seen");
+    expect(html).not.toContain(">Last seen<");
     expect(html).not.toContain("relay-pc-col-seen");
     expect(html).not.toContain("relay-pc-cell-seen");
     expect(html).toContain('class="relay-dash-table relay-pc-table is-without-seen"');

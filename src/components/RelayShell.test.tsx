@@ -98,7 +98,7 @@ describe("the front page's account part", () => {
     expect(text).toContain("homeAnswers · Same Wi-Fi, direct · 9 ms");
     expect(text).toContain("officeAnswers · Seoul relay · 148 ms");
     expect(html).toContain('<span class="connection-slow">148 ms</span>');
-    expect(text).toContain("laptopOfflineThe PC is off, or Ovis is not running on it.");
+    expect(text).toContain("laptopMachine offlineIt is off, has no network, or Ovis is not running on it.");
     expect(html.indexOf("Check now")).toBeLessThan(html.indexOf("home"));
     expect(text).not.toContain("Connected");
     const signedIn = render({ ...props({ kind: "list", devices: [], account: { kind: "signed-in", provider: "github", error: null, pcs: [pc("a".repeat(32), "home", "paired")] } }), scoped: false, onSignIn: none, pcStatus, onCheckPcs: none });
@@ -181,7 +181,7 @@ describe("the dashboard", () => {
     const relays = [...html.matchAll(/<button type="button" class="pill relay-overview-relay-chip">([^<]+)<\/button><span class="relay-overview-relay-count">([^<]+)<\/span><span class="relay-overview-relay-scope">([^<]+)<\/span>/g)].map(([, host, n, kind]) => [host, n, kind]);
     expect(relays).toEqual([["relay-ap.ovis.sh", "3 PCs", "regional"], ["relay.ovis.sh", "1 PC", "global"]]);
     const attention = [...html.matchAll(/<span class="relay-overview-attention-name"[^>]*>([^<]+)<\/span><span class="relay-overview-attention-why">([^<]+)<\/span>/g)].map(([, name, why]) => [name, why]);
-    expect(attention).toEqual([["Mac mini", "new · 10 min left"], ["Home server", "offline since 20 h"]]);
+    expect(attention).toEqual([["Mac mini", "new · 10 min left"], ["Home server", "Machine offline · Last seen 20 h ago. It is off, has no network, or Ovis is not running on it."]]);
     expect(html).not.toContain('data-slot="relay-map"');
     expect(html).toContain('class="relay-overview-map-disclosure"');
     expect(html).toContain('<span class="relay-dash-nav-count">4</span>');
@@ -229,7 +229,7 @@ describe("the dashboard", () => {
     expect(rowOf(unpaired, "Home server")).toContain("relay-ap.ovis.sh");
   });
 
-  it("keeps Offline in the row of a PC the directory has not seen lately until this device's own check answers, which reads Ready with its route, and shows the probe line only after explicit Check now", () => {
+  it("keeps Machine offline in the row of a PC the directory has not seen lately until this device's own check answers, which reads Ready with its route, and shows the probe line only after explicit Check now", () => {
     const answered = { kind: "answered", route: "relay", rttMs: 13 } as const;
     const html = render(signedIn(four(), { pcStatus: new Map([[ids.home, answered], [ids.desk, answered]]), onCheckPcs: none }));
     const cell = (name: string) => /<td class="relay-dash-state-cell[^"]*">([\s\S]*?)<\/td>/.exec(rowOf(html, name))?.[1] ?? "";
@@ -241,7 +241,7 @@ describe("the dashboard", () => {
     const down = render(signedIn(four(), { pcStatus: new Map([[ids.home, { kind: "offline", reason: "pc" }]] as const), onCheckPcs: none }));
     expect(rowOf(down, "Home server")).toContain('<svg class="status-dot" data-state="offline"');
     const downCell = /<td class="relay-dash-state-cell[^"]*">([\s\S]*?)<\/td>/.exec(rowOf(down, "Home server"))?.[1] ?? "";
-    expect(text(downCell)).toBe("Offline · 20 h ago");
+    expect(text(downCell)).toBe("Machine offline");
   });
 
   it("gives both the sidebar and a phone's tab bar the five real routes: Overview, PCs, Devices, Relay and Settings", () => {
@@ -608,7 +608,7 @@ describe("the dashboard", () => {
       const offline = { kind: "failed", failure: "pc-offline", name: "Mac mini", detail: "The relay closed the connection (0)" } as const;
       await mount({ ...props({ ...offline, server_id: ids.mini }), onRetry: () => { retried += 1; }, sheetJoin: { mode: "join", server_id: ids.mini } });
       expect(dialog().props["data-add-pc-phase"]).toBe("failed");
-      expect(textOf(dialog())).toContain("Mac mini is offline");
+      expect(textOf(dialog())).toContain("Machine offline");
       expect(textOf(dialog())).not.toContain("The relay closed the connection (0)");
       await act(async () => { button("Try again").props.onClick(); });
       expect(retried).toBe(1);
@@ -616,7 +616,7 @@ describe("the dashboard", () => {
       for (const state of [{ ...offline, server_id: ids.desk }, offline]) {
         await mount({ ...props(state), sheetJoin: { mode: "join", server_id: ids.mini } });
         expect(dialogs()).toHaveLength(0);
-        expect(textOf(renderer!.root.findByType("h1"))).toBe("Mac mini is offline");
+        expect(textOf(renderer!.root.findByType("h1"))).toBe("Machine offline");
         expect(textOf(renderer!.root)).not.toContain("The relay closed the connection (0)");
         await act(async () => { renderer!.unmount(); });
       }

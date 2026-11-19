@@ -112,6 +112,8 @@ export function nodeStatusDotState(node: RelayMapNode): StatusDotState {
       return "needs-you";
     case "offline": case "unchecked":
       return "offline";
+    case "unreachable":
+      return "failed";
     case "paired":
       return "ready";
   }

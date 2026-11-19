@@ -13,6 +13,7 @@ import { decodeFrame, encodeFrame, FrameType, LIMITS_V1, MuxProtocolError } from
 import type { MuxFrame } from "../../../shared/relay-mux.ts";
 import { MuxEngine } from "../../../shared/relay-mux-engine.ts";
 import { ADMISSION_MS, ASSIGNMENT_MS, openRelayChannel, PC_ANSWER_MS, RelayAdmissionTimeoutError, RelayNewSessionsRefusedError, RelayPcOfflineError, RelayUnreachableError } from "./channel.ts";
+import { probePc } from "../../../shared/relay-channel.ts";
 import { isFatalRelayError } from "./transport.ts";
 import { RELAY_NEW_SESSIONS_CLOSE, RELAY_NEW_SESSIONS_REFUSED } from "../../../shared/relay-pass.ts";
 import type { RelaySocket } from "./channel.ts";
@@ -264,6 +265,44 @@ it("calls a relay that never assigns the connection unreachable, after ASSIGNMEN
   expect(error).toMatchObject({ closeCode: null, silent: true });
   expect(failureOf(error, { code: true, paired: false })).toBe("relay-unreachable");
   expect(socket.closed).toBe(4000);
+});
+
+it("calls a relay that turned this device away before assigning it (TRY_AGAIN, POLICY) a refusal, and a socket that failed saying nothing unreachable", async () => {
+  const failure = async (code: number) => {
+    const socket = new SilentSocket();
+    const created = Promise.withResolvers<void>();
+    const offer = { v: 1 as const, server_id: "12".repeat(16), server_public_key: exportPublicKey(generateKeyPair().publicKey), relay: "wss://relay.example" };
+    const outcome = settled(openRelayChannel(offer, { store: new MemoryDeviceStore(), socket: () => { created.resolve(); return socket; } }));
+    await created.promise;
+    socket.onclose?.(new CloseEvent("close", { code, reason: "too many clients for this server" }));
+    await flush();
+    return failureOf(outcome.get()?.error, { code: false, paired: true });
+  };
+  expect([await failure(1013), await failure(1008), await failure(1006), await failure(1011)]).toEqual(["relay-refused", "relay-refused", "relay-unreachable", "relay-unreachable"]);
+});
+
+it("tells a probe's PC that never came from a relay that turned this device away before assigning it and from a carrier that failed saying nothing", async () => {
+  jest.useFakeTimers();
+  const offer = { v: 1 as const, server_id: "12".repeat(16), server_public_key: exportPublicKey(generateKeyPair().publicKey), relay: "wss://relay.example" };
+  const probed = async (act: (socket: SilentSocket) => void) => {
+    const socket = new SilentSocket();
+    const found = probePc(offer, { relay: offer.relay }, () => socket, 8_000);
+    act(socket);
+    await flush();
+    jest.advanceTimersByTime(8_000);
+    return (await found).kind;
+  };
+  const assigned = (socket: SilentSocket): void => socket.deliver(JSON.stringify({ type: "assigned", connection_id: "ef".repeat(16) }));
+  const closed = (socket: SilentSocket, code: number): void => socket.onclose?.(new CloseEvent("close", { code }));
+  expect({
+    nobody: await probed(assigned),
+    pcGone: await probed((socket) => { assigned(socket); closed(socket, 1012); }),
+    busyBefore: await probed((socket) => closed(socket, 1013)),
+    policy: await probed((socket) => closed(socket, 1008)),
+    dropped: await probed((socket) => { assigned(socket); closed(socket, 1006); }),
+    failed: await probed((socket) => { assigned(socket); socket.onerror?.(new Event("error")); }),
+    unassigned: await probed((socket) => closed(socket, 1011)),
+  }).toEqual({ nobody: "silent", pcGone: "silent", busyBefore: "refused", policy: "refused", dropped: "unreachable", failed: "unreachable", unassigned: "unreachable" });
 });
 
 it("calls the PC offline when the relay assigned the connection but nothing answered within PC_ANSWER_MS", async () => {

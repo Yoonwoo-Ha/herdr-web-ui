@@ -231,7 +231,7 @@ export function RelayDashboard({
             <RelayPcTable rows={model.rows} attention={model.attention} filters={model.filters} filter={activeFilter} onFilter={setFilter}
               relayFilter={relayFilter} onClearRelayFilter={() => navigateTo(formatDashboardHash({ view: "pcs", filter: activeFilter, relay: null, pc: route.pc }))}
               selectedPcId={selectedRow?.server_id ?? null} onSelect={selectPc} onOpenSheet={onOpenSheet} showLastSeen={selectedRow === null} narrow={selectedRow !== null && narrowSplitTable}
-              {...(pcStatus ? { pcStatus } : {})} {...(handleCheckPcs ? { onCheckPcs: handleCheckPcs } : {})} checkedByUser={checkedByUser} mode={mode} />
+              {...(pcStatus ? { pcStatus } : {})} {...(handleCheckPcs ? { onCheckPcs: handleCheckPcs } : {})} {...(onCheckPc ? { onCheckPc } : {})} checkedByUser={checkedByUser} mode={mode} />
           </div>
         )}
         {selectedRow && (
@@ -287,7 +287,7 @@ export function RelayDashboard({
         onSelectFilter={(f) => navigateTo(formatDashboardHash({ view: "pcs", filter: f }))}
         onOpenRelay={(origin) => navigateTo(origin ? formatDashboardHash({ view: "pcs", relay: relayHost(origin) }) : "#relay")}
         {...(onRefreshAccount ? { onRetryError: onRefreshAccount, onRefreshAccount } : {})} onAddPc={onAddPc} {...(onPairByQr ? { onPairByQr } : {})}
-        onOpenSheet={onOpenSheet} onSelectPc={selectPc}>
+        onOpenSheet={onOpenSheet} onSelectPc={selectPc} {...(onCheckPc ? { onCheckPc } : {})}>
         {pcs !== null && pcs.length > 0 && renderTableSection(null)}
       </RelayOverview>
     );

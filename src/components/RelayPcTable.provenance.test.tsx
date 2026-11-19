@@ -90,7 +90,7 @@ describe("dashboard state provenance across rendered surfaces", () => {
     const offline = /<tr[^>]*data-pc-id="Offline"[\s\S]*?<\/tr>/.exec(html)?.[0] ?? "";
     expect(update).toMatch(/class="relay-pc-state-word"[^>]*>Needs update<\/span>/);
     expect(update).toContain('data-pc-action="update">Update</a>');
-    expect(offline).toMatch(/class="relay-pc-state-word"[^>]*>Offline/);
+    expect(offline).toMatch(/class="relay-pc-state-word"[^>]*>Machine offline/);
     expect(offline).toContain('data-pc-action="details">Details</button>');
     expect(update).toContain(enrollment === "pending" ? "Adding it to your account…" : "Account setup is incomplete.");
     expect(offline).toContain(enrollment === "pending" ? "Adding it to your account…" : "Account setup is incomplete.");

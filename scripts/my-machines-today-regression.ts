@@ -63,6 +63,9 @@ cleanup.push(() => relay.stop());
 const relayAddress = (url: string): string => { const target = new URL(url); return `ws://127.0.0.1:${relay.port}${target.pathname}${target.search}`; };
 /** While true, this device's sockets to the relay fail at once: the relay is out of its reach. */
 let relayBlocked = false;
+/** Resolved at the next socket turned away while the relay is out of reach. */
+const turnedAway: (() => void)[] = [];
+const nextTurnedAway = (): Promise<void> => new Promise((resolve) => { turnedAway.push(resolve); });
 /** What the pages said and which relay sockets they opened: printed when a precondition fails. */
 const pageLog: string[] = [];
 
@@ -135,7 +138,11 @@ async function device(browser: Browser, width: number, language: "en" | "ko" = "
   });
   await context.routeWebSocket(/^wss:\/\/relay\.test\//, (ws) => {
     pageLog.push(`${width} WS ${relayBlocked ? "refused" : "open"} ${ws.url()}`);
-    if (relayBlocked) { ws.close({ code: 1011, reason: "relay out of reach" }); return; }
+    if (relayBlocked) {
+      ws.close({ code: 1011, reason: "relay out of reach" });
+      for (const resolve of turnedAway.splice(0)) resolve();
+      return;
+    }
     const socket = new WebSocket(relayAddress(ws.url()));
     socket.binaryType = "arraybuffer";
     const pending: (string | Uint8Array<ArrayBuffer>)[] = [];
@@ -291,7 +298,14 @@ function steps(browser: Browser, width: 390 | 1440): Step[] {
     } },
     { name: "the relay out of reach: Could not reach this machine, and why", run: async () => {
       relayBlocked = true;
+      // a check that reached no relay says nothing yet: the row keeps what it said, and the next minute's check, which
+      // takes that machine first, is believed (pcSweep.ts)
+      const first = nextTurnedAway();
       await visitLater(page());
+      await bounded(first, "the visit's check turned away", 15_000);
+      const second = nextTurnedAway();
+      await page().clock.fastForward(61_000);
+      await bounded(second, "the next minute's check turned away", 15_000);
       await inState(page(), "unreachable").waitFor();
       const text = await row(page()).innerText();
       assert.match(text, /Could not reach this machine/);

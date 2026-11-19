@@ -51,6 +51,10 @@ describe("checking a saved PC", () => {
     expect(await checkPc(device({ relay: "wss://relay.example" }), { relay: socket }, probes({}).probe)).toEqual({ kind: "offline", reason: "relay" });
     expect(await checkPc(device(), { relay: socket }, probes({ "wss://relay-ap.ovis.sh": { kind: "silent" } }).probe)).toEqual({ kind: "offline", reason: "relay" });
   });
+
+  it("passes a relay's refusal on as a refusal, not as a relay this device could not reach", async () => {
+    expect(await checkPc(device({ relay: "wss://relay.example" }), { relay: socket }, probes({ "wss://relay.example": { kind: "refused" } }).probe)).toEqual({ kind: "offline", reason: "refused" });
+  });
 });
 
 describe("the PCs one sweep checks", () => {

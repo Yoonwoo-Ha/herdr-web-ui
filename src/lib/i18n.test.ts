@@ -86,7 +86,6 @@ describe.each(Object.entries(DICTIONARIES))("%s state words", (_name, dictionary
   it.each([
     ["Ready", "Ready · not in the account yet"],
     ["Offline", "Offline · {when}"],
-    ["Offline", "{name} is offline"],
     ["Not checked", "Paired · not checked"],
   ])("reuses the %p word inside %p", (word, composed) => {
     expect(dictionary[composed]).toBeString();

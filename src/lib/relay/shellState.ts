@@ -15,7 +15,7 @@ import type { MyPc } from "../account/myPcs.ts";
 import type { AccountProvider, AccountSession } from "../account/store.ts";
 import { inNativeApp } from "../nativeApp.ts";
 import { serverIdOfPath } from "../shellMode.ts";
-import { RelayAdmissionTimeoutError, RelayNewSessionsRefusedError, RelayUnreachableError, UnsafeRelayDestinationError } from "./channel.ts";
+import { RelayAdmissionTimeoutError, RelayNewSessionsRefusedError, RelayRefusedError, RelayUnreachableError, UnsafeRelayDestinationError } from "./channel.ts";
 import { ServerIdentityChangedError } from "./device.ts";
 import type { TypedCodeFailure } from "./pairCode.ts";
 import type { RelayDevice } from "./device.ts";
@@ -46,7 +46,7 @@ export function keyMismatch(serverId: string, keys: readonly { key: string; from
   return null;
 }
 
-export type RelayFailure = "pc-offline" | "pc-unresponsive" | "relay-unreachable" | "needs-update" | "revoked" | "identity-changed" | "code-expired" | "pair-declined" | "pair-unavailable" | "bad-offer"
+export type RelayFailure = "pc-offline" | "pc-unresponsive" | "relay-unreachable" | "relay-refused" | "needs-update" | "revoked" | "identity-changed" | "code-expired" | "pair-declined" | "pair-unavailable" | "bad-offer"
   /** the relay closed a pairing device 4403: the PC's relay pass allows no new device sessions (account limits) */
   | "new-devices-refused"
   | "not-added-yet"
@@ -145,6 +145,7 @@ export function failureOf(error: unknown, attempt: { code: boolean; paired: bool
   if (attempt.compared && (error instanceof RelayAdmissionTimeoutError
     || error instanceof MuxProtocolError && (error.code === "auth_failed" || error.code === "timeout"))) return "pair-declined";
   if (error instanceof ServerIdentityChangedError) return "identity-changed";
+  if (error instanceof RelayRefusedError) return "relay-refused";
   if (error instanceof RelayUnreachableError) return "relay-unreachable";
   if (error instanceof RelayAdmissionTimeoutError) return "pc-unresponsive";
   if (!(error instanceof MuxProtocolError)) return "relay-unreachable";

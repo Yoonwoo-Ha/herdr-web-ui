@@ -278,12 +278,12 @@ describe("the Add-a-PC sheet", () => {
   it("keeps a connection failure's own diagnosis after a new PC's Add window has closed, and the same subtitle before and after it", async () => {
     const expired = pcOf({ added_at: new Date(Date.now() - 15 * 60_000).toISOString() });
     await mount(props("new", expired, { kind: "failed", failure: "pc-offline", name: "desk2", detail: null, server_id: SERVER_ID }));
-    expect(all()).toContain("desk2 is offline");
+    expect(all()).toContain("Machine offline");
     expect(all()).not.toContain("Add window closed");
     await update(props("new", expired, { kind: "failed", failure: "relay-unreachable", name: "desk2", detail: null, server_id: SERVER_ID }));
-    expect(all()).toContain("The relay could not be reached");
+    expect(all()).toContain("Could not reach this machine");
     expect(all()).not.toContain("Add window closed");
-    expect(all()).toContain("Check this device's connection, then try again.");
+    expect(all()).toContain("This device could not reach the relay. Check this device's network, then try again.");
     // the relay's refusal of a new device is the account's limit, not the window or the flow: both flows say what the link says, with Try again
     for (const flow of ["new", "join"] as const) {
       const plain = relayFailureText((key) => key, "new-devices-refused", "desk2", null);
@@ -295,8 +295,8 @@ describe("the Add-a-PC sheet", () => {
       expect(renderer!.root.findAll((instance) => instance.type === "button").map(text)).toContain("Try again");
     }
     await update(props("join", expired, { kind: "failed", failure: "pc-offline", name: "desk2", detail: null, server_id: SERVER_ID }));
-    expect(all()).toContain("desk2 is offline");
-    expect(all()).toContain("Start Ovis on the PC");
+    expect(all()).toContain("Machine offline");
+    expect(all()).toContain("Start it, or wait for it to come back");
     for (const pc of [pcOf(), expired]) {
       await update(props("new", pc, LIST));
       expect(text(renderer!.root.findByProps({ className: "add-pc-sub" }))).toBe("Type the number desk2 shows on its own screen, then approve there.");
@@ -322,8 +322,8 @@ describe("the Add-a-PC sheet", () => {
   it("says why a join failed without raw close-code details, offers Try again where that can help, and never repeats the problem line in the subtitle across any sheet state", async () => {
     await mount(props("new", pcOf(), { kind: "failed", failure: "pc-offline", name: "desk2", detail: "The relay closed the connection (0)", server_id: SERVER_ID }));
     expect(renderer!.root.findByProps({ role: "dialog" }).props["data-add-pc-phase"]).toBe("failed");
-    expect(all()).toContain("desk2 is offline");
-    expect(all()).toContain("Start Ovis on the PC");
+    expect(all()).toContain("Machine offline");
+    expect(all()).toContain("Start it, or wait for it to come back");
     expect(all()).not.toContain("The relay closed the connection (0)");
     expect(steps()).toEqual(["done", "failed", "todo", "todo"]);
     await click("Try again");
@@ -475,7 +475,7 @@ describe("the Add-a-PC sheet", () => {
         expect(relayFailureText(id, failure, "desk2", "x", flow)).toEqual(relayFailureText(id, failure, "desk2", "x"));
       }
     }
-    expect(relayFailureText(id, "relay-unreachable", "desk2").copy).toBe("Check this device's connection, then try again.");
+    expect(relayFailureText(id, "relay-unreachable", "desk2").copy).toBe("This device could not reach the relay. Check this device's network, then try again.");
     expect(relayFailureText(id, "revoked", "desk2").title).toBe("This device was removed from desk2");
     expect(relayFailureText(id, "pair-declined", "desk2", "The relay closed the connection (0)").detail).toBeNull();
     expect(relayFailureText(id, "pc-offline", "desk2", "relay closed 4404").detail).toBe("relay closed 4404");

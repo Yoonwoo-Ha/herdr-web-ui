@@ -121,7 +121,8 @@ function RelayMapFigure({ map, layout, selectedPcId, onSelectPc, onSelectRelay }
     ...(dotStates.has("needs-you") ? [{ key: "needs-you", dot: "needs-you" as const, label: t("Needs you") }] : []),
     ...(dotStates.has("checking") ? [{ key: "checking", dot: "checking" as const, label: t("Checking…") }] : []),
     ...(hasUnchecked ? [{ key: "unchecked", dot: "offline" as const, label: t("Paired · not checked") }] : []),
-    ...(nodes.some((node) => node.state === "offline") ? [{ key: "offline", dot: "offline" as const, label: t("Offline") }] : []),
+    ...(nodes.some((node) => node.state === "offline") ? [{ key: "offline", dot: "offline" as const, label: t("Machine offline") }] : []),
+    ...(dotStates.has("failed") ? [{ key: "unreachable", dot: "failed" as const, label: t("Could not reach this machine") }] : []),
   ];
 
   const checkingWires = checkingWirePaths(map, layout);
