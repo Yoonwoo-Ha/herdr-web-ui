@@ -52,7 +52,7 @@ import { isOmoProcess, omoProcessIdentity, omoSessionForPane, processEnviron, pr
 import { processAlive, processStartedAtAsync } from "./process-start.ts";
 import { ompBlobStore, ompHeldOpen, ompPaneRoute, ompRouteOwns, ompRouteStore, ompRouteTranscript } from "./omp.ts";
 import { forgetOpencodeRead, forgetOpencodeState, OPENCODE_IMAGE_REF, opencodeConversation, opencodeDatabasePath, opencodeFreshSession, opencodeImage, opencodeReadKey, opencodeSessionId, opencodeToolOutput } from "./opencode.ts";
-import { piTranscriptPath, unwrittenSession } from "./pi.ts";
+import { PI_NPM_ENTRY, piTranscriptPath, unwrittenSession } from "./pi.ts";
 import { cmdModelCatalogPath, cmdTranscriptPath } from "./cmd.ts";
 import { defaultDevinDbPath, DevinHistoryUnavailable, devinConversation, forgetDevinState } from "./devin.ts";
 import { forgetGrokState, GROK_IMAGE_REF, grokImage, grokProjection, grokToolOutput, parseGrokTranscript, GrokUnavailable } from "./grok.ts";
@@ -1381,6 +1381,8 @@ export async function paneRunsOmo(paneId: string, known?: KnownProcesses): Promi
  */
 const NPM_ENTRIES: Partial<Record<string, RegExp>> = {
   omp: /(^|[\\/])node_modules[\\/]@oh-my-pi[\\/]pi-coding-agent[\\/]dist[\\/]cli\.js$/i,
+  // pi as its npm package runs it, and as gentle-shell runs its bundled pi (#4198)
+  pi: PI_NPM_ENTRY,
 };
 
 export function agentProcesses<T extends { argv?: readonly string[] | null; argv0?: string | null; name?: string | null }>(processes: readonly T[], agent: string): T[] {

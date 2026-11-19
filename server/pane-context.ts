@@ -1,4 +1,5 @@
 import type { HerdrPane } from "../shared/protocol.ts";
+import { labelledAgent } from "../shared/supported-agents.ts";
 import { storeAgentVersion, type VersionSource } from "./agent-version.ts";
 import { type NativeTranscript, paneProcessRoots } from "./conversation.ts";
 import { HerdrError, paneGet } from "./herdr/client.ts";
@@ -14,7 +15,7 @@ export function resolveAgent(
   roots?: PaneRoots,
   store: VersionSource | null = null,
 ): { agent: string | null; version: string | null } {
-  const agent = roots?.omo ? "omo" : pane.agent ?? pane.agent_session?.agent ?? null;
+  const agent = roots?.omo ? "omo" : labelledAgent(pane.agent ?? pane.agent_session?.agent ?? null);
   return { agent, version: storeAgentVersion(agent, store) };
 }
 

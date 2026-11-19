@@ -313,6 +313,14 @@ pi's own menu does. An extension installed before this, pi without it, two pi pr
 and Windows suggest only the builtins, prompts and skills; typing such a command in full still sends
 it. Run the installer again and restart pi to update an installed extension.
 
+[gentle-shell](https://github.com/Gentleman-Programming/gentle-shell) runs pi under a name of its
+own, with a pi home of its own: herdr lists its panes as `gentle-shell`, and Ovis reads them as pi.
+herdr keeps no session for that name, so their chat needs the same extension, installed in
+gentle-shell's home: `PI_CODING_AGENT_DIR=~/.gentle-shell/agent bun scripts/install-pi-integration.ts`,
+then restart gentle-shell. Without it a gentle-shell pane uses Terminal. This works on Linux: on macOS
+Ovis cannot read a running pi's environment, so it looks for the extension in its own pi home only,
+and a gentle-shell pane there uses Terminal too.
+
 Command Code chat needs the session herdr reports for the pane. Command Code sends that report
 and herdr keeps only the sessions of the agents it knows natively, so no released herdr accepts
 it yet: the pane's status, title and model arrive, its conversation does not. Without it the

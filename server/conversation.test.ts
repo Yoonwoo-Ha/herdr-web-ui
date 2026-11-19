@@ -282,6 +282,23 @@ describe("pane process roots", () => {
     });
   }
 
+  it("reads the environment of the bundled pi gentle-shell runs under node (#4198)", async () => {
+    const recorded = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "herdr-0.9.5-gentle-shell-pane.json"), "utf8"));
+    const front = recorded["pane.process_info"].process_info.foreground_processes[0];
+    const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue(recorded["pane.process_info"]);
+    const identity = spyOn(omo, "omoProcessIdentity").mockReturnValue(null);
+    const environ = spyOn(omo, "processEnviron").mockReturnValue(["PI_CODING_AGENT_DIR=/home/user/.gentle-shell/agent"]);
+    try {
+      expect(await paneProcessRoots("gentle-shell-fixture", "pi")).toMatchObject({
+        omo: null, environ: ["PI_CODING_AGENT_DIR=/home/user/.gentle-shell/agent"], pid: front.pid, cwd: front.cwd,
+      });
+    } finally {
+      environ.mockRestore();
+      identity.mockRestore();
+      rpc.mockRestore();
+    }
+  });
+
   it("matches a runtime launcher but never an agent name in unrelated arguments", async () => {
     const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({
       process_info: { foreground_processes: [

@@ -782,3 +782,28 @@ it.skipIf(process.platform === "win32")("reads the session the pane's pi names t
     rmSync(profile, { recursive: true, force: true });
   }
 });
+
+it.skipIf(process.platform === "win32")("reads the pi a pane herdr labels gentle-shell runs, from gentle-shell's own home (#4198)", async () => {
+  // herdr 0.9.5's answers for a gentle-shell pane: its own agent name, no session (herdr drops a custom source's)
+  const recorded = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "herdr-0.9.5-gentle-shell-pane.json"), "utf8"));
+  const agent = recorded["agent.get"].agent;
+  const processes = recorded["pane.process_info"].process_info.foreground_processes;
+  const pid: number = processes[0].pid;
+  const profile = join(root, "gentle-shell-home");
+  const sessions = join(profile, "sessions", "--home-user-project--");
+  mkdirSync(sessions, { recursive: true });
+  const written = join(sessions, "2026-11-17T14-06-52-131Z_01a1e9d4-fce1-73a2-82b6-11a1ac60faa8.jsonl");
+  writeFileSync(written, "{\"type\":\"session\"}\n");
+  const sockets = join(profile, "herdr-web-ui-ask");
+  mkdirSync(sockets, { mode: 0o700 });
+  const server = Bun.serve({ unix: join(sockets, `${pid}.sock`), fetch: () => Response.json({ version: 1, flows: [], openCalls: [], pid, sessionFile: written }) });
+  const options = { agent, processes, processesAfter: async () => processes, environOf: () => [`PI_CODING_AGENT_DIR=${profile}`], home: root };
+  try {
+    expect(await piTranscriptPath(agent.pane_id, undefined, options)).toEqual({ path: written, agentDir: profile, identity: expect.any(String) });
+    // the name alone is no pi: a process in front that is not pi keeps the terminal
+    expect(await piTranscriptPath(agent.pane_id, undefined, { ...options, processes: [{ pid, argv: ["node", "/home/user/server.js"] }] })).toBeNull();
+  } finally {
+    await server.stop(true);
+    rmSync(profile, { recursive: true, force: true });
+  }
+});
