@@ -13,6 +13,7 @@ import { registerPendingPush } from "../push.ts";
 import { alertPrefs, loadSettings, SettingsProvider } from "../settings.ts";
 import { readAlertFilters, withAlertFilters } from "../alertFilters.ts";
 import { onLazyChunkFailure } from "../lazyChunk.ts";
+import { serverScopePath } from "../shellMode.ts";
 import { setTransport } from "../transport.ts";
 import { takeEntryUrl, watchNavigation } from "./boot.ts";
 import { nativeDirectSocket, nativeDirectTailnet } from "./directSocket.ts";
@@ -36,6 +37,37 @@ export const ACCOUNT_READ_WAIT_MS = 8_000;
 export const ACCOUNT_STEPS_WAIT_MS = 15_000;
 
 
+const LAST_PC = "ovis-last-pc";
+const LAUNCHED = "ovis-launched";
+
+/** The PC this device opened last, kept by its id alone (no key), so the next launch opens it again. */
+function rememberPc(serverId: string): void {
+  try { localStorage.setItem(LAST_PC, serverId); } catch { /* a page without storage opens on the front page */ }
+}
+
+/** This tab has shown a page of the shell: from now on a front page is one it came back to, and stays. */
+function markLaunched(): void {
+  try { sessionStorage.setItem(LAUNCHED, "1"); } catch { /* no storage: launchPc opens nothing */ }
+}
+
+/**
+ * The saved PC a launch opens: the one opened last while it is still saved, else the first. Only the first front page
+ * of this tab's session opens one (`opens`: it came with no fragment), whatever it shows: Back from a PC, a Cancel on
+ * its page, or a reload lands on the front page and stays there. `signedIn`: the page a sign-in returned to, which
+ * opens one once its sign-in is read, as the launch it continues would have.
+ */
+function launchPc(devices: readonly { readonly server_id: string; readonly device_id: string | null }[], opens: boolean, signedIn = false): string | null {
+  try {
+    const first = sessionStorage.getItem(LAUNCHED) === null;
+    sessionStorage.setItem(LAUNCHED, "1");
+    // a row with no device id is a pairing that never finished: opening its page would ask to pair again
+    const paired = devices.filter((device) => device.device_id !== null);
+    if (!(opens && (first || signedIn)) || paired.length === 0) return null;
+    const last = localStorage.getItem(LAST_PC);
+    return paired.find((device) => device.server_id === last)?.server_id ?? paired[0]?.server_id ?? null;
+  } catch { return null; }
+}
+
 export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   // any navigation in this tab since the entry was read, even one the page takes no step for (Back to another
   // fragment): a `#sign-in=` entry starts only on a page nothing moved
@@ -50,6 +82,12 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   // waited meanwhile is stale and does nothing
   let entries = 0;
   const scoped = entry.serverId !== null;
+  // a front page that came with a fragment (a sign-in's return, a link that starts one, a page view) does not open a PC
+  // at once: a sign-in's return does once its sign-in is read (below), the others stay where the link put them
+  const entryHash = new URL(mount.entryUrl).hash;
+  // `left`: the launch sent this page to a PC: nothing more is drawn or probed on the way out
+  let launching = !scoped && entryHash === "", signedInNow = false, left = false;
+  if (scoped) markLaunched();
   const iosTab = iosBrowserTab({ userAgent: navigator.userAgent, maxTouchPoints: navigator.maxTouchPoints ?? 0, standalone: "standalone" in navigator && navigator.standalone === true });
   let shell: Root | null = null, app: Root | null = null, transport: RelayTransport | null = null;
   let last: Attempt | null = null, opening: AbortController | null = null;
@@ -105,7 +143,13 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   let refusalProvider: AccountProvider | null = null;
   // the sign-in each confirm that names an account was drawn for (kept off the rendered state: it holds the tokens)
   const drawnFor = new WeakMap<RelayShellState, AccountSession>();
+  let signingIn = false;
   const accountChanged = async (): Promise<void> => {
+    // a sign-in that finished on this page (the phone app's own sheet) goes on as the launch it interrupted, as a
+    // browser's return to the page does
+    const finished = signingIn && account.state?.kind === "signed-in";
+    signingIn = account.state?.kind === "signing-in";
+    if (finished && !scoped) { launching = signedInNow = true; }
     const read = account.state?.kind !== "signing-in";
     if (read) accountRead = true;
     if (read && (account.state?.kind !== "signed-in" || account.state.pcs !== null)) unanswered = false;
@@ -117,6 +161,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     }
     if (app === null && shown?.kind === "confirm") show(confirmOf(shown.offer));
     else if (frontUp()) { if (sheetJoin && shown) show(shown); else await showFront(); }
+    signedInNow = false;
   };
   /**
    * The account as the sign-in screen draws it: a refusal a web return brought along shows, with its provider, until the
@@ -212,6 +257,12 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     const before = shown;
     const devices = await store.list();
     if (shown !== before) return;
+    // the app opens on a PC: the first front page of a launch goes straight into the PC this device opened last, by its
+    // saved pairing (a page scoped to it connects with the key it holds; nothing is paired here)
+    // nothing moved since the entry was read (a link, Back, a sheet's route): the page stays where it was taken
+    const pc = left || navigatedSinceEntry() || entries !== 0 ? null : launchPc(devices, launching, signedInNow);
+    if (pc !== null) { left = true; navigate(serverScopePath(pc)); }
+    if (left) return;
     show(devices.length ? { kind: "list", devices, account: account.state } : { kind: "empty", account: account.state });
     if (devices.length && !checked) { checked = true; void sweep.check(); }
   };
@@ -375,6 +426,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
 
 
   const enterApp = (opened: RelayTransport, attempt: Attempt): void => {
+    rememberPc(attempt.offer.server_id);
     // the pairing's own page opened the PC: a later load of it acts as whoever is signed in then
     keepDeviceOnlyPc(null);
     keepConfirmedSignIn(null);
@@ -682,6 +734,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   // A newer navigation meanwhile (another PC's link, Back) keeps the sign-in but drops this pairing's screen and handoff
   const loaded = entries;
   let returning: PendingPairing | undefined;
+  if (left) return;
   await account.load(account.enabled ? signInReturn(new URL(mount.entryUrl).hash) : null, (kept) => {
     if (entries !== loaded) return;
     returning = kept;
@@ -697,6 +750,8 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     const link = new URL(encodeOffer(offer, window.location.origin));
     navigate(link.pathname + link.hash);
   });
+  // a sign-in that came back signed in (not refused or cancelled, whose reason the sign-in screen says)
+  if (returning === undefined && signInReturn(entryHash) !== null && account.state?.kind === "signed-in" && frontUp()) { launching = signedInNow = true; await showFront(); signedInNow = false; }
   // `#sign-in=<provider>` (boot took it off the address, so a reload or Back starts nothing): that provider's sign-in
   // starts once, exactly as a press of its button on this page would. Nothing starts for a provider the account service
   // did not name, on a page signed in (in any tab: the stored session is read right before), or once the page moved

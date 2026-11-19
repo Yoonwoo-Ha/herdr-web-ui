@@ -259,4 +259,5 @@ export const DEVICES_JA: Record<string, string> = {
   "An SSH address: Connect checks that PC's fingerprint first.": "SSH アドレスです。接続すると、まずその PC のフィンガープリントを確認します。",
   "Open a PC from outside with Portal or Cloudflare (guide)": "Portal や Cloudflare で外から開く (ガイド)",
   "On another PC, sign in with the same account.": "別の PC で同じアカウントにサインインしてください。",
+  "Sign in to Ovis": "Ovis にサインイン",
 };

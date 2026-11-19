@@ -9,10 +9,11 @@ import type { KeyMismatch } from "../lib/relay/shellState.ts";
 import { serverScopePath } from "../lib/shellMode.ts";
 import { describeUpdate } from "../lib/updateProgress.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
-import { AccountFinePrint, AccountSignIn, CheckPcsButton, PcStatusLine } from "./AccountPcs.tsx";
+import { AccountSignIn, CheckPcsButton, PcStatusLine } from "./AccountPcs.tsx";
 import { KeyId } from "./KeyId.tsx";
 import { relayFailureText } from "./relayFailureText.ts";
 import { CodeEntry, ReadyCheckpoint, type RelayShellProps } from "./RelayShell.tsx";
+import { RelayAddPc } from "./RelayAddPc.tsx";
 import { SheepMascot } from "./SheepMascot.tsx";
 
 function PcCard({ name, detail = null }: { readonly name: string; readonly detail?: string | null }) {
@@ -111,9 +112,9 @@ function CopyableCommand({ command }: { readonly command: string }) {
 }
 
 export interface RelayShellCardContentProps {
-  readonly props: RelayShellProps; readonly view: "sign-in" | "pair" | "saved" | null;
-  readonly signInFirst: boolean; readonly saved: number; readonly addingPc: boolean;
-  readonly setSignedOutView: (view: "sign-in" | "pair" | "saved") => void; readonly setAddingPc: (adding: boolean) => void;
+  readonly props: RelayShellProps; readonly view: "sign-in" | "pair" | null;
+  readonly signInFirst: boolean; readonly addingPc: boolean;
+  readonly setSignedOutView: (view: "sign-in" | "pair") => void; readonly setAddingPc: (adding: boolean) => void;
 }
 
 /** What continuing agrees to: Ovis's privacy policy (ovis.sh/privacy, in English and Korean), linked. */
@@ -157,7 +158,19 @@ function PairConfirm({ state, pc, onPair }: { state: Extract<RelayShellProps["st
   );
 }
 
-export function RelayShellCardContent({ props, view, signInFirst, saved, addingPc, setSignedOutView, setAddingPc }: RelayShellCardContentProps) {
+/** Where a PC's QR code is, for a page with no scanner of its own, and the way to pair with a code instead. */
+function ScanQrStep({ onCodeStart, back }: { readonly onCodeStart: () => void; readonly back: ReactNode }) {
+  const t = useT();
+  return (
+    <>
+      <h1 className="relay-shell-title">{t("Scan the QR code on your PC")}</h1>
+      <p className="relay-shell-copy">{t("On the PC, open Settings → Devices and PCs → Add a connection → Ovis relay and scan the QR code.")}</p>
+      <div className="relay-shell-actions"><button type="button" className="btn btn-primary" onClick={onCodeStart}>{t("Pair with a code")}</button>{back}</div>
+    </>
+  );
+}
+
+export function RelayShellCardContent({ props, view, signInFirst, addingPc, setSignedOutView, setAddingPc }: RelayShellCardContentProps) {
   const { state, pcStatus, onCheckPcs, scoped, iosTab, onPair, onRetry, onCancel, onBack, onForget, onUpdate, onMatch, onCodeStart, onCodeSubmit, onCodeMatch, onOpenPc, onSignIn, accountProviders } = props;
   const t = useT();
   const account = (state.kind === "list" || state.kind === "empty") && onSignIn ? state.account ?? null : null;
@@ -193,12 +206,10 @@ export function RelayShellCardContent({ props, view, signInFirst, saved, addingP
       {state.kind === "ready" && onOpenPc && <ReadyCheckpoint open={onOpenPc} cancel={onCancel} state={state} retry={onRetry} />}
       {signInFirst && (
         <>
-          <h1 className="relay-shell-title relay-shell-signin-title">{t("Sign in to Ovis")}</h1>
+          <h1 className="relay-shell-hero relay-shell-signin-hero"><span>{t("Your PCs, anywhere.")}</span>{" "}<span className="relay-shell-hero-quiet">{t("Sign in to your Ovis account")}</span></h1>
           {signIn}
-          {saved > 0 && <button type="button" className="btn account-continue-saved" disabled={signingIn} data-action="continue-local" onClick={() => setSignedOutView("saved")}>{saved === 1 ? t("Continue without an account (1 PC)") : t("Continue without an account ({count} PCs)", { count: saved })}</button>}
-          <hr className="account-divider" />
-          <div className="relay-shell-sign-in-links"><button type="button" className="btn btn-ghost account-link" data-action="pair-qr" disabled={signingIn} onClick={() => setSignedOutView("pair")}>{t("Pair with a QR or code")}</button></div>
-          <AccountFinePrint />
+          <p className="relay-shell-first-time">{t("First time? Your account is made right away.")}</p>
+          <button type="button" className="btn btn-ghost account-link relay-shell-no-account" data-action="no-account" disabled={signingIn} onClick={() => setSignedOutView("pair")}>{t("Start without signing in")}</button>
         </>
       )}
       {state.kind === "list" && account === null && (
@@ -225,19 +236,14 @@ export function RelayShellCardContent({ props, view, signInFirst, saved, addingP
           <div className="relay-shell-actions"><button type="button" className="btn" onClick={onCodeStart}>{t("Pair with a code")}</button></div>
         </>
       )}
-      {(account === null ? state.kind === "empty" : view === "pair" || addingPc) && (
-        <>
-          <h1 className="relay-shell-title">{t("Scan the QR code on your PC")}</h1>
-          <p className="relay-shell-copy">{t("On the PC, open Settings → Devices and PCs → Add a connection → Ovis relay and scan the QR code.")}</p>
-          <div className="relay-shell-actions">
-            <button type="button" className="btn btn-primary" onClick={onCodeStart}>{t("Pair with a code")}</button>
-            {back}
-            {account && (addingPc
-              ? <button type="button" className="btn btn-ghost" onClick={() => setAddingPc(false)}>{t("Back")}</button>
-              : <button type="button" className="btn btn-ghost" onClick={() => setSignedOutView("sign-in")}>{t("Sign in instead")}</button>)}
-          </div>
-        </>
+      {(account === null ? state.kind === "empty" : view === "pair" && !addingPc) && (
+        <RelayAddPc
+          onBack={account ? () => setSignedOutView("sign-in") : scoped ? onBack : undefined}
+          devices={state.kind === "list" ? state.devices : []}
+          qr={(qrBack) => <ScanQrStep onCodeStart={onCodeStart} back={<button type="button" className="btn btn-ghost" onClick={qrBack}>{t("Back")}</button>} />}
+        />
       )}
+      {account && addingPc && <ScanQrStep onCodeStart={onCodeStart} back={<button type="button" className="btn btn-ghost" onClick={() => setAddingPc(false)}>{t("Back")}</button>} />}
       {(state.kind === "code-entry" || state.kind === "code-looking") && (
         <CodeEntry failure={state.kind === "code-entry" ? state.failure : null} looking={state.kind === "code-looking"} onSubmit={onCodeSubmit} back={<button type="button" className="btn" onClick={onCancel}>{t("Cancel")}</button>} />
       )}

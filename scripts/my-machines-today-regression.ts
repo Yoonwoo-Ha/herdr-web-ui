@@ -189,10 +189,11 @@ async function visitLater(page: Page): Promise<void> {
   await load(page, "#my-machines");
 }
 const relayOpens = (width: number): number => pageLog.filter((line) => line.startsWith(`${width} WS open`)).length;
+/** Signs in on the front page: a device with a saved pairing then opens that machine (a launch), one without lands on the dashboard. */
 async function signIn(page: Page): Promise<void> {
   await page.goto(APP);
   await page.locator(".account-provider").first().click();
-  await page.locator('[data-dashboard-mode="account"]').waitFor();
+  await page.locator('[data-dashboard-mode="account"], .app').first().waitFor();
 }
 /** Every string a person can read on the page now: its text and its labels. */
 const rendered = (page: Page): Promise<string> => page.evaluate(() => [document.body.innerText,
@@ -228,9 +229,11 @@ function steps(browser: Browser, width: 390 | 1440): Step[] {
       await page().locator('[data-relay-state="confirm"] .btn-primary').click();
       await page().locator(".app").waitFor();
     } },
-    { name: "signed in: the front page stays the dashboard, with no link to My machines", precondition: true, run: async () => {
+    { name: "signed in: the sign-in's return opens the paired machine, with no link to My machines", precondition: true, run: async () => {
       await signIn(page());
-      assert.equal(await page().locator('a[href*="my-machines"]').count(), 0, "the dashboard links to My machines");
+      await page().locator(".app").waitFor();
+      assert.equal(new URL(page().url()).pathname, `/s/${identity.server_id}/`, "the sign-in's return opened the paired machine");
+      assert.equal(await page().locator('a[href*="my-machines"]').count(), 0, "the machine's page links to My machines");
     } },
     { name: "My machines lists the machine as ready, with its route", precondition: true, run: async () => {
       await visitLater(page());

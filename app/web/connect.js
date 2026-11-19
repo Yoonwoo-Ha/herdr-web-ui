@@ -61,10 +61,12 @@ async function open(text) {
   if (String(text).trim().toLowerCase() === "demo") { location.href = "demo/index.html"; return; }
   const url = parseAddress(text);
   if (url === null) { error.textContent = t("That is not an http or https address.", "http 또는 https 주소가 아닙니다."); if (!addressScreen.hidden) input.focus(); return; }
-  // the hosted app itself, saved once it loaded (a sign-in opens it): it opens again as it was opened
+  // the hosted app itself, saved once it loaded (a sign-in opens it): picked from this list, it opens on its list of PCs
+  // (#pcs), not straight into the PC it opened last as a launch does (src/lib/relay/shell.tsx, launchPc): a new web view
+  // starts a new session, so a bare address would count as a launch and loop back to the PC just left
   if (url.origin === new URL(APP_ORIGIN).origin && url.pathname === "/" && url.hash === "") {
     error.textContent = "";
-    try { await shell("open", { url: `${APP_ORIGIN}/`, name: "Ovis" }); }
+    try { await shell("open", { url: `${APP_ORIGIN}/#pcs`, name: "Ovis" }); }
     catch (err) { error.textContent = String(err?.message ?? err); }
     return;
   }

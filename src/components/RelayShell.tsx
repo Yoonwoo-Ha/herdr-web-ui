@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } fr
 import { createPortal } from "react-dom";
 
 import { GLOBAL_RELAY } from "../../shared/relay-regions.ts";
-import { myPcs, newPcs, type MyPc } from "../lib/account/myPcs.ts";
+import { newPcs, type MyPc } from "../lib/account/myPcs.ts";
 import { useMyMachinesRoute } from "../lib/account/myMachinesRoute.ts";
 import type { AccountProvider } from "../lib/account/store.ts";
 import { useT } from "../lib/i18n.ts";
@@ -160,46 +160,45 @@ export function RelayShell(props: RelayShellProps) {
   const rawAccount: AccountView | null = (state.kind === "list" || state.kind === "empty") && onSignIn ? state.account ?? null : null;
   if (rawAccount !== null && rawAccount !== cachedAccount) setCachedAccount(rawAccount);
   const account: AccountView | null = rawAccount ?? (addingPcOpen(state) && onSignIn ? cachedAccount : null);
-  const [signedOutView, setSignedOutView] = useState<"sign-in" | "pair" | "saved">("sign-in");
+  const [signedOutView, setSignedOutView] = useState<"sign-in" | "pair">("sign-in");
   const [sheet, setSheet] = useState<{ pc: MyPc | null; mode: AddPcSheetMode } | null>(null);
   const [addingPc, setAddingPc] = useState(false);
   const machinesRoute = useMyMachinesRoute();
   // a sheet opened on one of the two screens goes with it, whether by a link or the browser's Back
   const onMachines = machinesRoute !== null;
   useEffect(() => { setSheet(null); }, [onMachines]);
-  const saved = state.kind === "list" ? state.devices.length : 0;
   const signedOutOrSigningIn = account?.kind === "signed-out" || account?.kind === "signing-in";
-  const view = !signedOutOrSigningIn ? null : signedOutView === "saved" && saved === 0 ? "sign-in" : signedOutView;
+  const view = signedOutOrSigningIn ? signedOutView : null;
   const signInFirst = view === "sign-in";
   // a sign-out found while the QR dialog is open closes it: the sign-in stays the only screen, and a later sign-in opens no stale dialog
   if (addingPc && signInFirst) setAddingPc(false);
+  // a sign-in puts Start without signing in behind it: a later sign-out opens on the sign-in again
+  if (account?.kind === "signed-in" && signedOutView !== "sign-in") setSignedOutView("sign-in");
   const name = state.kind === "confirm" || state.kind === "code-compare" ? state.offer.name ?? null
     : state.kind === "list" || state.kind === "empty" || state.kind === "code-entry" || state.kind === "code-looking" ? null : state.name;
   const pc = name ?? t("this PC");
   const stateName = state.kind === "failed" ? state.failure : state.kind === "outdated" ? "pc-outdated" : state.kind === "forged" ? "identity-changed" : state.kind;
   const devices = state.kind === "list" ? state.devices : [];
-  const local = view === "saved" && state.kind === "list";
   // a pairing's sign-in reads on the plain page, with nothing around it; its other steps are on the step frame
   const plain = state.kind === "failed" && state.failure === "sign-in-first" && onSignIn !== undefined;
 
-  if (account && (account.kind === "signed-in" || local)) {
-    const signedIn = account.kind === "signed-in" ? account : null;
-    const outdatedIds = new Set([...(observedVersions ?? [])].filter(([, value]) => value.outdated).map(([id]) => id));
+  if (account?.kind === "signed-in") {
+    const signedIn = account;
     const modalOpen = sheet !== null || addingPc;
     // My machines has its own signed-in address and main landmark; while the directory cannot be read, the dashboard says so and offers its retry
-    const machines = signedIn !== null && signedIn.error === null && machinesRoute !== null;
+    const machines = signedIn.error === null && machinesRoute !== null;
     const Frame = machines ? "div" : "main";
     const dash = machines ? (
       <MyMachinesPage route={machinesRoute} pcs={signedIn.pcs} pcStatus={pcStatus ?? new Map()} onCheckPc={(serverId) => onCheckPc?.(serverId)}
         onJoin={(target) => setSheet({ pc: target, mode: newPcs([target], Date.now()).length > 0 ? "new" : "join" })} />
     ) : (
       <RelayDashboard
-        pcs={signedIn ? (signedIn.pcs === null ? null : dashboardPcs(signedIn.pcs, devices, directoryRelays)) : dashboardPcs(myPcs([], devices, { now: Date.now(), outdated: outdatedIds }), devices)}
-        account={signedIn ? { provider: signedIn.provider } : null}
+        pcs={signedIn.pcs === null ? null : dashboardPcs(signedIn.pcs, devices, directoryRelays)}
+        account={{ provider: signedIn.provider }}
         defaultRelay={defaultRelay}
         meLabel={meLabel ?? t("This device")}
-        error={signedIn?.error ?? null}
-        {...(signedIn?.deleteError !== undefined ? { deleteError: signedIn.deleteError } : {})}
+        error={signedIn.error}
+        {...(signedIn.deleteError !== undefined ? { deleteError: signedIn.deleteError } : {})}
         {...(pcStatus ? { pcStatus } : {})}
         {...(observedVersions ? { observedVersions } : {})}
         {...(onCheckPcs ? { onCheckPcs } : {})}
@@ -209,11 +208,10 @@ export function RelayShell(props: RelayShellProps) {
         onPairByQr={() => { setSheet(null); setAddingPc(true); }}
         onOpenSheet={(target, mode) => setSheet({ pc: target, mode })}
         {...(onForgetPc ? { onForgetPc } : {})}
-        {...(signedIn ? {} : { onSignIn: () => setSignedOutView("sign-in") })}
-        {...(signedIn && onSignOut ? { onSignOut } : {})}
-        {...(signedIn && onLeave ? { onLeave } : {})}
-        {...(signedIn && onDeleteAccount ? { onDeleteAccount } : {})}
-        {...(signedIn && accountSignIn !== undefined ? { signedInAs: accountSignIn } : {})}
+        {...(onSignOut ? { onSignOut } : {})}
+        {...(onLeave ? { onLeave } : {})}
+        {...(onDeleteAccount ? { onDeleteAccount } : {})}
+        {...(accountSignIn !== undefined ? { signedInAs: accountSignIn } : {})}
       />
     );
     return (
@@ -249,7 +247,7 @@ export function RelayShell(props: RelayShellProps) {
     );
   }
 
-  const content = <RelayShellCardContent props={props} view={view} signInFirst={signInFirst} saved={saved} addingPc={addingPc} setSignedOutView={setSignedOutView} setAddingPc={setAddingPc} />;
+  const content = <RelayShellCardContent props={props} view={view} signInFirst={signInFirst} addingPc={addingPc} setSignedOutView={setSignedOutView} setAddingPc={setAddingPc} />;
   const step = plain ? undefined : pairingStep(state);
   if (step !== undefined) {
     // before this phone's press the comparison can still go back; after it, the pairing waits on the PC and only its own small Cancel ends it
@@ -263,12 +261,14 @@ export function RelayShell(props: RelayShellProps) {
     );
   }
 
+  // Add a PC stands on the page as the sign-in does, from the top, with its own sheep and Back
+  const adding = !addingPc && (account === null ? state.kind === "empty" : view === "pair");
   return (
-    <main className={plain ? "relay-shell-screen relay-shell-plain" : "relay-shell-screen"} data-relay-state={stateName} {...(account ? { "data-account-state": account.kind } : {})}>
-      <div className={signInFirst ? "relay-shell account-centered relay-shell-signin" : plain ? "relay-shell relay-shell-signin" : "relay-shell"}>
+    <main className={plain ? "relay-shell-screen relay-shell-plain" : adding ? "relay-shell-screen relay-add-screen" : "relay-shell-screen"} data-relay-state={stateName} {...(account ? { "data-account-state": account.kind } : {})}>
+      <div className={signInFirst || adding ? "relay-shell account-centered relay-shell-signin" : plain ? "relay-shell relay-shell-signin" : "relay-shell"}>
         {signInFirst || plain
           ? <SheepMascot screen="header" size={80} />
-          : <img src="/icons/icon-192.png?v=sheep1" alt="" width="44" height="44" className="relay-shell-mark" />}
+          : !adding && <img src="/icons/icon-192.png?v=sheep1" alt="" width="44" height="44" className="relay-shell-mark" />}
         {content}
       </div>
     </main>

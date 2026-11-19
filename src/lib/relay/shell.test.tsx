@@ -45,7 +45,8 @@ export function createShellTestPage() {
   const descriptors = new Map<string, PropertyDescriptor | undefined>();
   let visibility: "visible" | "hidden" = "visible";
   const page = new EventTarget();
-  const sessionStore = new Map<string, string>();
+  // a tab past its launch: a front page stays on screen instead of opening the PC saved last (shell.tsx, launchPc)
+  const sessionStore = new Map<string, string>([["ovis-launched", "1"]]);
     for (const key of ["window", "document", "navigator", "localStorage", "sessionStorage", "matchMedia"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     const storage = (store: Map<string, string>) => ({ getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value); }, removeItem: (key: string) => { store.delete(key); }, key: () => null, length: 0, clear: () => store.clear() });
     const matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
@@ -877,6 +878,119 @@ describe("the hosted shell's front page", () => {
     await signedInMount([], false);
     expect(shellProps(rendered[0]!).state).toMatchObject({ kind: "confirm", account: "checking" });
     await until(() => confirm().account === undefined, "the missing sign-in");
+  });
+
+  describe("a launch", () => {
+    const pcs = async (...ids: string[]): Promise<RelayDevice[]> => {
+      const key = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
+      return ids.map((server_id) => ({ server_id, server_public_key: "k", relay: AP, device_id: "paired", private_key: key.privateKey, public_spki: "fixture", label: "Phone" }));
+    };
+    const launch = (): void => { browser.sessionStore.delete("ovis-launched"); };
+
+    it("opens the PC this device opened last, by its saved pairing, once per tab", async () => {
+      launch();
+      localStorage.setItem("ovis-last-pc", "b".repeat(32));
+      const went: string[] = [];
+      const store = deviceStore(await pcs("a".repeat(32), "b".repeat(32)));
+      await mountRelayShell(mountFor({ store, navigate: (path) => { went.push(path); } }));
+      expect(went).toEqual([`/s/${"b".repeat(32)}/`]);
+      expect(rendered).toHaveLength(0);
+      // Back from that PC: the front page stays
+      await mountRelayShell(mountFor({ store, navigate: (path) => { went.push(path); } }));
+      expect(went).toHaveLength(1);
+      expect(rendered.length).toBeGreaterThan(0);
+    });
+
+    it("opens only a finished pairing, never a row still waiting for one", async () => {
+      launch();
+      const went: string[] = [];
+      const [unfinished, done] = await pcs("a".repeat(32), "b".repeat(32));
+      localStorage.setItem("ovis-last-pc", "a".repeat(32));
+      await mountRelayShell(mountFor({ store: deviceStore([{ ...unfinished!, device_id: null }, done!]), navigate: (path) => { went.push(path); } }));
+      expect(went).toEqual([`/s/${"b".repeat(32)}/`]);
+    });
+
+    it("opens the first saved PC when the one opened last is gone, and nothing with none saved", async () => {
+      launch();
+      localStorage.setItem("ovis-last-pc", "f".repeat(32));
+      const went: string[] = [];
+      await mountRelayShell(mountFor({ store: deviceStore(await pcs("a".repeat(32))), navigate: (path) => { went.push(path); } }));
+      expect(went).toEqual([`/s/${"a".repeat(32)}/`]);
+      launch();
+      await mountRelayShell(mountFor({ store: deviceStore([]), navigate: (path) => { went.push(path); } }));
+      expect(went).toHaveLength(1);
+    });
+
+    // the page a sign-in returns to (#code=…) opens the saved PC once its sign-in is read, as the launch it continues would
+    const returned = async (store: ShellDeviceStore, went: string[], listed: unknown[] = []): Promise<void> => {
+      const accountStore = memoryAccountStore();
+      await accountStore.set("pending", { "state-1": { service: SERVICE, provider: "github", state: "state-1", verifier: "verifier-123", redirect_uri: "https://app.ovis.sh/", started_at: Date.now() } });
+      let exchanged = 0;
+      await mountRelayShell(mountFor({
+        entryUrl: "https://app.ovis.sh/#code=good-code&state=state-1", store, navigate: (path) => { went.push(path); },
+        accountStore, accountService: SERVICE, accountProviders: ["github"],
+        accountFetch: async (input) => {
+          if (new URL(String(input)).pathname === "/v1/pcs") return Response.json({ pcs: listed });
+          exchanged++;
+          return Response.json({ access_token: "access", refresh_token: "refresh", expires_in: 3600, account: "acct-test", provider: "github" });
+        },
+      }));
+      expect(exchanged).toBe(1);
+      expect(await accountStore.get("session")).toMatchObject({ account: "acct-test" });
+    };
+
+    it("opens the saved PC once a sign-in's return is read, exactly once, and a reload after it stays on the front page", async () => {
+      browser.setVisibility("hidden");
+      const went: string[] = [];
+      const store = deviceStore(await pcs("a".repeat(32)));
+      // the launch that started the sign-in already passed this tab's first front page
+      await returned(store, went);
+      expect(went).toEqual([`/s/${"a".repeat(32)}/`]);
+      await mountRelayShell(mountFor({ store, navigate: (path) => { went.push(path); } }));
+      expect(went).toHaveLength(1);
+    });
+
+    it("opens nothing after a sign-in's return with no saved pairing, though the account lists PCs", async () => {
+      browser.setVisibility("hidden");
+      const went: string[] = [];
+      await returned(deviceStore([]), went, [{ server_id: "b".repeat(32), label: "Desk PC", added_at: new Date().toISOString(), last_seen_at: null, public_key: null, relay: AP }]);
+      expect(went).toEqual([]);
+      expect(last().state.kind).toBe("empty");
+    });
+
+    it("opens nothing after a refused or cancelled sign-in, whose reason the sign-in screen says", async () => {
+      browser.setVisibility("hidden");
+      const went: string[] = [];
+      const accountStore = memoryAccountStore();
+      await accountStore.set("pending", { "state-1": { service: SERVICE, provider: "github", state: "state-1", verifier: "verifier-123", redirect_uri: "https://app.ovis.sh/", started_at: Date.now() } });
+      await mountRelayShell(mountFor({
+        entryUrl: "https://app.ovis.sh/#error=access_denied&state=state-1", store: deviceStore(await pcs("a".repeat(32))), navigate: (path) => { went.push(path); },
+        accountStore, accountService: SERVICE, accountProviders: ["github"], accountFetch: async () => Response.json({ pcs: [] }),
+      }));
+      expect(went).toEqual([]);
+      expect(last().state).toMatchObject({ kind: "list", account: { kind: "signed-out" } });
+    });
+
+    it("leaves a page that moved while the saved pairings were read where it was taken", async () => {
+      launch();
+      const went: string[] = [];
+      await mountRelayShell(mountFor({ store: deviceStore(await pcs("a".repeat(32))), navigate: (path) => { went.push(path); }, navigatedSinceEntry: () => true }));
+      expect(went).toEqual([]);
+    });
+
+    it("stays on a front page that came with a fragment, or after a PC's own page in this tab", async () => {
+      const went: string[] = [];
+      const store = deviceStore(await pcs("a".repeat(32)));
+      launch();
+      await mountRelayShell(mountFor({ store, entryUrl: "https://app.ovis.sh/#pane=w1", navigate: (path) => { went.push(path); } }));
+      // the phone app's saved row for the hosted app opens it on its list (app/web/connect.js)
+      launch();
+      await mountRelayShell(mountFor({ store, entryUrl: "https://app.ovis.sh/#pcs", navigate: (path) => { went.push(path); } }));
+      launch();
+      await mountRelayShell(mountFor({ store: deviceStore([]), entryUrl: `https://app.ovis.sh/s/${"a".repeat(32)}/` }));
+      await mountRelayShell(mountFor({ store, navigate: (path) => { went.push(path); } }));
+      expect(went).toEqual([]);
+    });
   });
 
   it("returns admitted version observations to the dashboard and clears outdated on newer admission", async () => {

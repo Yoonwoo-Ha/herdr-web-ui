@@ -101,4 +101,5 @@ export const DASHBOARD_JA: Record<string, string> = {
   "Compact makes text one step smaller and rows shorter, so more fits on the screen.": "「コンパクト」は文字を一段階小さくし、行の高さを詰めて、画面により多く表示します。",
   "The text size of this app's menus, lists and dialogs.": "このアプリのメニュー、リスト、ダイアログの文字サイズです。",
   "The language of this app. System follows the browser's language.": "このアプリの表示言語です。「システム」はブラウザーの言語に合わせます。",
+  "Pair with a QR or code": "QR またはコードでペアリング",
 };

@@ -226,7 +226,6 @@ describe("RelayShellScreens", () => {
               props: shown,
               view: null,
               signInFirst: false,
-              saved: 0,
               addingPc: false,
               setSignedOutView: none,
               setAddingPc: none,
@@ -255,7 +254,7 @@ describe("RelayShellScreens", () => {
     }
   });
 
-  it("keeps the sign-in column mounted during signing-in with the busy provider marked and peers disabled", () => {
+  it("keeps the sign-in column mounted during signing-in with the busy provider marked, and the way past it held too", () => {
     const html = render(
       createElement(RelayShellCardContent, {
         props: {
@@ -266,23 +265,21 @@ describe("RelayShellScreens", () => {
         },
         view: "sign-in",
         signInFirst: true,
-        saved: 2,
         addingPc: false,
         setSignedOutView: none,
         setAddingPc: none,
       }),
     );
-    expect(html).toContain("Sign in to Ovis");
+    expect(html).toContain("Sign in to your Ovis account");
     expect(html).toContain('data-provider="google" aria-busy="true" disabled=""');
-    expect(html).toContain('class="btn account-continue-saved" disabled=""');
-    expect(html).toContain('data-action="pair-qr" disabled=""');
+    expect(html).toContain('data-action="no-account" disabled=""');
   });
 
   describe("the confirm before a link's PC is paired with", () => {
     const offer = { v: 1 as const, server_id: "0123456789abcdef0123456789abcdef", server_public_key: "key", relay: "wss://relay.ovis.sh", name: "Desk PC" };
     const confirm = (account?: "checking" | "unlisted" | "listed", pressed?: "unlisted" | "listed" | "own"): string => render(createElement(RelayShellCardContent, {
       props: baseProps({ kind: "confirm", offer, ...(account ? { account } : {}), ...(pressed ? { pressed } : {}) }),
-      view: null, signInFirst: false, saved: 0, addingPc: false, setSignedOutView: none, setAddingPc: none,
+      view: null, signInFirst: false, addingPc: false, setSignedOutView: none, setAddingPc: none,
     }));
     const pcId = '<span class="key-id" role="group" aria-label="ID of the PC this link names"><span class="key-id-group">0123</span>';
 
@@ -392,7 +389,7 @@ describe("RelayShellScreens", () => {
       let renderer: ReactTestRenderer | undefined;
       await act(async () => {
         renderer = create(createElement(SettingsProvider, { children: createElement(RelayShellCardContent, {
-          props: { ...baseProps(state), ...extra }, view: null, signInFirst: false, saved: 0, addingPc: false, setSignedOutView: none, setAddingPc: none,
+          props: { ...baseProps(state), ...extra }, view: null, signInFirst: false, addingPc: false, setSignedOutView: none, setAddingPc: none,
         }) }));
       });
       return renderer!;
@@ -430,7 +427,7 @@ describe("RelayShellScreens", () => {
     it("keeps the PC's ID of an Add and pair confirm folded under Details, with the account on the PC's card", () => {
       const offer = { v: 1 as const, server_id: "a3f9c2e17b4d5a6c8e9f0b1d2c3a4e5f", server_public_key: "key", relay: "wss://relay.example", name: "Desk", code: "123456" };
       const confirm = (account: "unlisted" | "listed") => render(createElement(RelayShellCardContent, {
-        props: baseProps({ kind: "confirm", offer, account }), view: null, signInFirst: false, saved: 0, addingPc: false, setSignedOutView: none, setAddingPc: none,
+        props: baseProps({ kind: "confirm", offer, account }), view: null, signInFirst: false, addingPc: false, setSignedOutView: none, setAddingPc: none,
       }));
       const adding = confirm("unlisted");
       expect(adding).toContain('<span class="relay-step-card-name">Desk</span><span class="relay-step-card-detail">Your Ovis account</span>');

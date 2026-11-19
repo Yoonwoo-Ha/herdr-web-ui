@@ -259,4 +259,5 @@ export const DEVICES_ZH: Record<string, string> = {
   "An SSH address: Connect checks that PC's fingerprint first.": "这是 SSH 地址。点击连接会先核对那台 PC 的指纹。",
   "Open a PC from outside with Portal or Cloudflare (guide)": "通过 Portal 或 Cloudflare 从外部打开（指南）",
   "On another PC, sign in with the same account.": "在另一台 PC 上用同一账户登录。",
+  "Sign in to Ovis": "登录 Ovis",
 };

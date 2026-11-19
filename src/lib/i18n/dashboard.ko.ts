@@ -101,4 +101,5 @@ export const DASHBOARD_KO: Record<string, string> = {
   "Compact makes text one step smaller and rows shorter, so more fits on the screen.": "촘촘은 글자를 한 단계 줄이고 행 높이를 낮춰 한 화면에 더 많이 보여 줍니다.",
   "The text size of this app's menus, lists and dialogs.": "이 앱의 메뉴, 목록, 대화 상자의 글자 크기입니다.",
   "The language of this app. System follows the browser's language.": "이 앱에 표시되는 언어입니다. 시스템은 브라우저의 언어를 따릅니다.",
+  "Pair with a QR or code": "QR이나 코드로 페어링",
 };

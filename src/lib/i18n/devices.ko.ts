@@ -259,4 +259,5 @@ export const DEVICES_KO: Record<string, string> = {
   "An SSH address: Connect checks that PC's fingerprint first.": "SSH 주소예요. 연결을 누르면 먼저 그 PC의 지문을 확인해요.",
   "Open a PC from outside with Portal or Cloudflare (guide)": "Portal·Cloudflare로 밖에서 열기 (안내서)",
   "On another PC, sign in with the same account.": "다른 PC에서 같은 계정으로 로그인하세요.",
+  "Sign in to Ovis": "Ovis에 로그인",
 };

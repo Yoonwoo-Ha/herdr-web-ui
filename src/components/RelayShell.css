@@ -50,14 +50,6 @@
   overflow-wrap: anywhere;
 }
 
-.relay-shell-signin-title {
-  margin: 0 0 var(--space-6);
-  font-size: var(--fs-display);
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--tracking-display);
-  line-height: var(--lh-tight);
-}
-
 .relay-shell-screen.relay-shell-plain {
   place-items: stretch center;
   padding-top: max(var(--space-8), 10dvh);
@@ -95,6 +87,23 @@
 
 .relay-shell-hero-quiet {
   color: var(--text-dim);
+}
+
+/* the sign-in: the two lines over the buttons, then one quiet line and the way past it, small */
+.relay-shell-signin-hero {
+  margin-bottom: var(--space-6);
+}
+
+.relay-shell-first-time {
+  margin: var(--space-4) 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-md);
+  text-align: center;
+}
+
+.relay-shell-no-account {
+  align-self: center;
+  margin-top: var(--space-5);
 }
 
 .relay-shell-pair-signin {
@@ -353,8 +362,4 @@
 
 .relay-shell-code-id {
   margin: var(--space-4) 0;
-}
-
-.relay-shell-sign-in-links {
-  margin: 0;
 }

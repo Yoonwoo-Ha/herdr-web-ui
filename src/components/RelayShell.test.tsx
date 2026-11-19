@@ -37,33 +37,30 @@ describe("the front page's account part", () => {
   });
 
   const saved = (server_id: string, name: string) => ({ server_id, server_public_key: "k", relay: "wss://relay.example", name, device_id: "0".repeat(16), label: "Phone" }) as unknown as Extract<RelayShellProps["state"], { kind: "list" }>["devices"][number];
-  const signInAlternatives = (html: string) => [...html.matchAll(/<button type="button" class="(?:btn account-continue-saved|btn btn-ghost account-link)"[^>]*>([^<]+)</g)].map(([, label]) => label);
+  const signInAlternatives = (html: string) => [...html.matchAll(/<button type="button" class="btn btn-ghost account-link[^"]*"[^>]*>([^<]+)</g)].map(([, label]) => label);
 
-  it("opens on the sign-in alone: GitHub and Apple alike, under one title, with only the pairing link below", () => {
+  it("opens on the sign-in alone: GitHub and Apple alike, under one title, then the first-time line and Start without signing in", () => {
     const html = render({ ...props({ kind: "empty", account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none, accountProviders: ["github", "apple"] });
     expect(html).toContain('data-account-state="signed-out"');
     const buttons = [...html.matchAll(/<button type="button" class="([^"]+)"[^>]*>(?:<svg[\s\S]*?<\/svg>)?(Continue with [^<]+)</g)].map(([, kind, label]) => [kind, label]);
     expect(buttons).toEqual([["btn account-provider", "Continue with GitHub"], ["btn account-provider", "Continue with Apple"]]);
     expect(html.match(/<h1/g)).toHaveLength(1);
-    expect(signInAlternatives(html)).toEqual(["Pair with a QR or code"]);
-    expect(html.indexOf("Continue with Apple")).toBeLessThan(html.indexOf("Pair with a QR or code"));
-    expect(html.indexOf("Pair with a QR or code")).toBeLessThan(html.indexOf("The account only lists your PCs."));
+    expect(signInAlternatives(html)).toEqual(["Start without signing in"]);
+    expect(html.indexOf("Continue with Apple")).toBeLessThan(html.indexOf("First time? Your account is made right away."));
+    expect(html.indexOf("First time? Your account is made right away.")).toBeLessThan(html.indexOf("Start without signing in"));
+    expect(html).not.toContain("Pair with a QR or code");
+    expect(html).not.toContain("The account only lists your PCs.");
     expect(html).not.toContain("relay-shell-pc");
     expect(html).not.toContain("Scan the QR code on your PC");
   });
 
-  it("keeps saved PCs off the sign-in, directly under the providers before the divider, counted", () => {
+  it("keeps saved PCs off the sign-in: they wait behind Start without signing in", () => {
     const two = render({ ...props({ kind: "list", devices: [saved("a".repeat(32), "p620"), saved("b".repeat(32), "nuc")], account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none });
     expect(two).toContain("Continue with GitHub");
-    expect(two).toContain('data-action="continue-local"');
-    expect(signInAlternatives(two)).toEqual(["Continue without an account (2 PCs)", "Pair with a QR or code"]);
-    expect(two.indexOf("Continue without an account (2 PCs)")).toBeLessThan(two.indexOf("account-divider"));
-    expect(two.indexOf("account-divider")).toBeLessThan(two.indexOf("Pair with a QR or code"));
+    expect(signInAlternatives(two)).toEqual(["Start without signing in"]);
     expect(two).not.toContain("relay-shell-pc");
     expect(two).not.toContain("p620");
     expect(two).not.toContain("<details");
-    const one = render({ ...props({ kind: "list", devices: [saved("a".repeat(32), "p620")], account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none });
-    expect(signInAlternatives(one)).toEqual(["Continue without an account (1 PC)", "Pair with a QR or code"]);
     expect(render({ ...props({ kind: "list", devices: [saved("a".repeat(32), "p620")] }), scoped: false })).toContain(`href="/s/${"a".repeat(32)}/"`);
   });
 
@@ -72,10 +69,10 @@ describe("the front page's account part", () => {
     const signedIn = render({ ...props({ kind: "list", devices, account: { kind: "signed-in", provider: "github", error: null, pcs: [pc("a".repeat(32), "p620", "paired")] } }), scoped: false, onSignIn: none, onSignOut: none });
     expect(signedIn).toContain("Sign out");
     const after = render({ ...props({ kind: "list", devices, account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none, onSignOut: none });
-    expect(after).toContain("Sign in to Ovis");
+    expect(after).toContain("Sign in to your Ovis account");
     expect(after).not.toContain("Sign out");
     expect(after).not.toContain("relay-shell-pc");
-    expect(signInAlternatives(after)).toEqual(["Continue without an account (2 PCs)", "Pair with a QR or code"]);
+    expect(signInAlternatives(after)).toEqual(["Start without signing in"]);
   });
 
   it("opens a pairing link straight into pairing, without the sign-in", () => {
@@ -83,7 +80,7 @@ describe("the front page's account part", () => {
     expect(html).toContain('data-relay-state="confirm"');
     expect(html).toContain("Pair with Desk?");
     expect(html).not.toContain("Continue with GitHub");
-    expect(html).not.toContain("Sign in to Ovis");
+    expect(html).not.toContain("Sign in to your Ovis account");
   });
 
   it("says how each saved PC answered the latest check, with Check now above the list", () => {
@@ -638,7 +635,7 @@ describe("the dashboard", () => {
       expect(dialog().props["data-pair-dialog"]).toBe("qr");
       const signedOut: RelayShellProps = { ...signedIn(four()), state: { kind: "list", devices: devices(), account: { kind: "signed-out", error: null } } };
       await act(async () => { renderer!.update(createElement(SettingsProvider, { children: createElement(RelayShell, signedOut) })); });
-      expect(renderer!.root.findAllByType("h1").map(textOf)).toEqual(["Sign in to Ovis"]);
+      expect(renderer!.root.findAllByType("h1").map(textOf)).toEqual(["Your PCs, anywhere. Sign in to your Ovis account"]);
       await act(async () => { renderer!.update(createElement(SettingsProvider, { children: createElement(RelayShell, signedIn(four())) })); });
       expect(dialogs()).toHaveLength(0);
     });
@@ -707,26 +704,25 @@ describe("the dashboard", () => {
       expect(button("Forget this PC")).toBeDefined();
     });
 
-    it("lists this device's own pairings behind Continue without an account without account-availability words, and offers the sign-in at the foot", async () => {
+    it("opens on the sign-in again after a sign-out that follows Start without signing in and a sign-in", async () => {
+      const signedOut = { ...props({ kind: "list", devices: [device(ids.desk, "p620", AP)], account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none };
+      await mount(signedOut);
+      await act(async () => { button("Start without signing in").props.onClick(); });
+      expect(textOf(renderer!.root.findByType("h1"))).toBe("Add a PC");
+      await act(async () => { renderer!.update(createElement(SettingsProvider, { children: createElement(RelayShell, signedIn(four())) })); });
+      await act(async () => { renderer!.update(createElement(SettingsProvider, { children: createElement(RelayShell, signedOut) })); });
+      expect(textOf(renderer!.root.findByType("h1"))).toBe("Your PCs, anywhere. Sign in to your Ovis account");
+    });
+
+    it("takes Start without signing in to Add a PC, which lists this device's own pairings by their pages, and Back to the sign-in", async () => {
       await mount({ ...props({ kind: "list", devices: [device(ids.desk, "p620", AP), device(ids.mac, "nuc", GLOBAL)], account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none });
-      await act(async () => { button("Continue without an account (2 PCs)").props.onClick(); });
-      const main = renderer!.root.findByType("main");
-      expect(main.props["data-account-state"]).toBe("signed-out");
-      expect(renderer!.root.findByProps({ className: "relay-dash" }).props["data-dashboard-mode"]).toBe("local");
-      expect(rows()).toEqual(["nuc", "p620"]);
-      expect(renderer!.root.findAll((node) => node.type === "a" && node.props["data-pc-action"] === "open").map((link) => link.props.href)).toEqual([`/s/${ids.mac}/`, `/s/${ids.desk}/`]);
-      const foot = renderer!.root.findByProps({ className: "relay-dash-foot" });
-      expect(textOf(foot)).toContain("Without an account");
-      expect(textOf(foot)).not.toContain("Sign out");
-      expect(renderer!.root.findAll((node) => node.type === "p" && node.props.className === "relay-dash-sub")).toHaveLength(0);
-      const allText = textOf(renderer!.root);
-      expect(allText).toContain("Paired with this device");
-      expect(allText).toContain("Paired · not checked");
-      expect(allText).not.toContain("Needs you");
-      expect(allText).not.toContain("Ready");
-      expect(renderer!.root.findAll((node) => node.type === "button" && String(node.props.className ?? "").includes("relay-overview-relay-chip")).map(textOf)).toEqual(["relay-ap.ovis.sh", "relay.ovis.sh"]);
-      await act(async () => { foot.find((node) => node.type === "button").props.onClick(); });
-      expect(textOf(renderer!.root.findByType("h1"))).toBe("Sign in to Ovis");
+      await act(async () => { button("Start without signing in").props.onClick(); });
+      expect(textOf(renderer!.root.findByType("h1"))).toBe("Add a PC");
+      expect(renderer!.root.findAll((node) => node.type === "button" && typeof node.props["data-action"] === "string" && node.props["data-action"].startsWith("add-")).map((way) => way.props["data-action"])).toEqual(["add-qr", "add-address"]);
+      expect(renderer!.root.findAll((node) => node.type === "a" && node.props.className === "relay-add-saved-pc").map((link) => link.props.href)).toEqual([`/s/${ids.desk}/`, `/s/${ids.mac}/`]);
+      expect(textOf(renderer!.root)).not.toContain("Pair with a QR or code");
+      await act(async () => { renderer!.root.find((node) => node.type === "button" && node.props["aria-label"] === "Back").props.onClick(); });
+      expect(textOf(renderer!.root.findByType("h1"))).toBe("Your PCs, anywhere. Sign in to your Ovis account");
     });
   });
 });

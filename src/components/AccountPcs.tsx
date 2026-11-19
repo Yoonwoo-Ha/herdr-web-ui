@@ -128,10 +128,6 @@ export function AccountSignIn({
   );
 }
 
-export function AccountFinePrint() {
-  const t = useT();
-  return <p className="account-fineprint">{t("The account only lists your PCs. Sessions stay end-to-end encrypted.")}</p>;
-}
 
 export function pcStateWord(state: MyPcState, t: ReturnType<typeof useT>): string {
   switch (state) {
