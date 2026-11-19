@@ -4,7 +4,8 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } fr
 import { createPortal } from "react-dom";
 
 import { GLOBAL_RELAY } from "../../shared/relay-regions.ts";
-import { myPcs, type MyPc } from "../lib/account/myPcs.ts";
+import { myPcs, newPcs, type MyPc } from "../lib/account/myPcs.ts";
+import { useMyMachinesRoute } from "../lib/account/myMachinesRoute.ts";
 import type { AccountProvider } from "../lib/account/store.ts";
 import { useT } from "../lib/i18n.ts";
 import { dashboardPcs } from "../lib/relay/dashboard.ts";
@@ -18,6 +19,7 @@ import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { AddPcSheet, type AddPcSheetMode } from "./AddPcSheet.tsx";
 import { codeFailureText, type TypedCodeFailure } from "./codeFailureText.ts";
 import { KeyId } from "./KeyId.tsx";
+import { MyMachinesPage } from "./MyMachinesPage.tsx";
 import { RelayDashboard } from "./RelayDashboard.tsx";
 import { EnrollmentStatus } from "./EnrollmentStatus.tsx";
 import { INSTALLER_COMMAND, PLUGIN_COMMANDS, RelayShellCardContent, TypedDigits } from "./RelayShellScreens.tsx";
@@ -159,6 +161,10 @@ export function RelayShell(props: RelayShellProps) {
   const [signedOutView, setSignedOutView] = useState<"sign-in" | "pair" | "saved">("sign-in");
   const [sheet, setSheet] = useState<{ pc: MyPc | null; mode: AddPcSheetMode } | null>(null);
   const [addingPc, setAddingPc] = useState(false);
+  const machinesRoute = useMyMachinesRoute();
+  // a sheet opened on one of the two screens goes with it, whether by a link or the browser's Back
+  const onMachines = machinesRoute !== null;
+  useEffect(() => { setSheet(null); }, [onMachines]);
   const saved = state.kind === "list" ? state.devices.length : 0;
   const signedOutOrSigningIn = account?.kind === "signed-out" || account?.kind === "signing-in";
   const view = !signedOutOrSigningIn ? null : signedOutView === "saved" && saved === 0 ? "sign-in" : signedOutView;
@@ -176,7 +182,13 @@ export function RelayShell(props: RelayShellProps) {
     const signedIn = account.kind === "signed-in" ? account : null;
     const outdatedIds = new Set([...(observedVersions ?? [])].filter(([, value]) => value.outdated).map(([id]) => id));
     const modalOpen = sheet !== null || addingPc;
-    const dash = (
+    // My machines has its own signed-in address and main landmark; while the directory cannot be read, the dashboard says so and offers its retry
+    const machines = signedIn !== null && signedIn.error === null && machinesRoute !== null;
+    const Frame = machines ? "div" : "main";
+    const dash = machines ? (
+      <MyMachinesPage route={machinesRoute} pcs={signedIn.pcs} pcStatus={pcStatus ?? new Map()} onCheckPc={(serverId) => onCheckPc?.(serverId)}
+        onJoin={(target) => setSheet({ pc: target, mode: newPcs([target], Date.now()).length > 0 ? "new" : "join" })} />
+    ) : (
       <RelayDashboard
         pcs={signedIn ? (signedIn.pcs === null ? null : dashboardPcs(signedIn.pcs, devices, directoryRelays)) : dashboardPcs(myPcs([], devices, { now: Date.now(), outdated: outdatedIds }), devices)}
         account={signedIn ? { provider: signedIn.provider } : null}
@@ -201,7 +213,7 @@ export function RelayShell(props: RelayShellProps) {
       />
     );
     return (
-      <main className="relay-dash-screen" data-relay-state={stateName} data-account-state={account.kind}>
+      <Frame className={Frame === "main" ? "relay-dash-screen" : undefined} data-relay-state={stateName} data-account-state={account.kind}>
         {/* one wrapper whether a sheet is open or not: swapping it in would remount the dashboard, losing the control that opened the sheet before its focus trap records it */}
         <div inert={modalOpen || undefined}>{dash}</div>
         {sheet && (
@@ -213,7 +225,7 @@ export function RelayShell(props: RelayShellProps) {
             queueMicrotask(() => { if (document.activeElement === null || document.activeElement === document.body) [...document.querySelectorAll<HTMLElement>('[data-action="add-pc"]')].find((el) => el.getClientRects().length > 0)?.focus({ preventScroll: true }); });
           }} />
         )}
-      </main>
+      </Frame>
     );
   }
 

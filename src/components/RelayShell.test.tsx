@@ -356,6 +356,39 @@ describe("the dashboard", () => {
     const button = (label: string) => { const found = buttons(label); if (found.length !== 1) throw new Error(`${found.length} buttons say ${label}`); return found[0]!; };
     const rows = () => renderer!.root.findAll((node) => node.type === "tr" && node.props["data-pc-state"] !== undefined).map((row) => textOf(row.find((node) => node.props.className === "relay-pc-name-label")));
 
+    describe("My machines at #my-machines", () => {
+      const landmarks = () => renderer!.root.findAll((n) => n.type === "main").length;
+      const machinesShown = () => renderer!.root.findAll((n) => typeof n.props.className === "string" && n.props.className.split(" ").includes("acct-stack")).length > 0;
+      const go = async (hash: string) => { await act(async () => { (window.location as { hash?: string }).hash = hash; window.dispatchEvent(new Event("hashchange")); }); };
+
+      it("draws My machines in place of the dashboard, with one main landmark on each", async () => {
+        (window.location as { hash?: string }).hash = "#my-machines";
+        await mount(signedIn(four()));
+        expect(machinesShown()).toBe(true);
+        expect(landmarks()).toBe(1);
+        await go("#overview");
+        expect(machinesShown()).toBe(false);
+        expect(landmarks()).toBe(1);
+      });
+
+      it("keeps the dashboard, its error and its retry, while the directory cannot be read", async () => {
+        (window.location as { hash?: string }).hash = "#my-machines";
+        const shown = signedIn(four());
+        await mount({ ...shown, state: { ...shown.state, account: { kind: "signed-in", provider: "github", error: "The account service did not answer.", pcs: null } } as RelayShellProps["state"] });
+        expect(renderer!.root.findAll((n) => typeof n.props.className === "string" && n.props.className.split(" ").includes("relay-dash")).length).toBe(1);
+        expect(landmarks()).toBe(1);
+      });
+
+      it("closes a sheet opened on one screen when the address moves to the other", async () => {
+        (window.location as { hash?: string }).hash = "#overview";
+        await mount(signedIn(four()));
+        await act(async () => { button("Add a PC").props.onClick(); });
+        expect(dialogs()).toHaveLength(1);
+        await go("#my-machines");
+        expect(dialogs()).toHaveLength(0);
+      });
+    });
+
     it("keeps the account foot in the desktop sidebar and moves account controls to the Devices view on a phone", async () => {
       const stops = () => renderer!.root.findAll((node) => node.type === "button" || (node.type === "a" && node.props.href !== undefined)).map((node) => textOf(node).trim());
       await mount(signedIn(four()));

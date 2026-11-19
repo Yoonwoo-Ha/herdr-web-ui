@@ -19,6 +19,7 @@ import { UPDATES_ZH } from "./i18n/updates.zh.ts";
 import { PALETTE_ZH } from "./i18n/palette.zh.ts";
 import { RELAY_ZH } from "./i18n/relay.zh.ts";
 import { DASHBOARD_ZH } from "./i18n/dashboard.zh.ts";
+import { MY_MACHINES_ZH } from "./i18n/my-machines.zh.ts";
 import { RUNTIME_MOVE_ZH } from "./i18n/runtime-move.zh.ts";
 
 /**
@@ -633,6 +634,7 @@ export const ZH_PARTS: Record<string, Record<string, string>> = {
   palette: PALETTE_ZH,
   relay: RELAY_ZH,
   dashboard: DASHBOARD_ZH,
+  "my-machines": MY_MACHINES_ZH,
   "runtime-move": RUNTIME_MOVE_ZH,
 };
 

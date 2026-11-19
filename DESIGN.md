@@ -5805,6 +5805,29 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   label, autofocused field, primary Unlock button and linked alert text.
 - Success mounts the shell; Lock unsubscribes push, deletes auth and returns to the gate.
 
+### My machines (`.acct-*`)
+- `#my-machines` opens the signed-in machine list in the hosted shell. The front page stays the
+  relay dashboard. `MyMachinesPage` adapts the account directory, local pairings and connection
+  checks already held by the shell; the screens make no requests of their own. Today's source
+  does not offer Devices, Invites or removal.
+- Layout: a section nav beside one column of rows -> the relay dashboard's shell; scroll owner:
+  the document. On a phone its bottom tab stays clear of the last row. A machine's details open
+  beside the list from 1100 px and replace it below that width, with Back and focus returned to
+  the row. Add a machine is a dialog, a bottom sheet at 640 px and under; its `.modal-body`
+  scrolls and the page behind it is inert.
+- **Add a machine** is the primary action. The list puts machines that need attention first; PCs
+  follow under **My PCs** when both kinds are present. Each row gives the name, state glyph and
+  word, why it cannot open, engine and route when known. **Open** is offered for a ready or
+  unchecked machine, and for one that needs an update but knows this device. **Try again** is
+  offered when the machine could not be reached; **Join** uses the shell's existing way in.
+- Details show State, Engine, Route, Kind, Came in, Own Ovis when applicable, Account list when
+  known, and Key ID. Today's add sheet shows `ovis add` and **Copy**, followed by what the
+  command does. The isolated fixture also exercises the signed-list form of the sheet: the
+  command and the bare join line are separate, with the waiting and joined states below them.
+- Follows Tailscale's admin console in putting machine state and the next available action in
+  the list. Codex, Claude, Paseo, T3 Code, Zed, Warp and Conductor have no equivalent account
+  machine list. The screen uses Ovis's dashboard, details and dialog styles.
+
 ### Relay shell (`.relay-shell*`)
 - The hosted shell's screens before the app (components/RelayShell.tsx, lib/relay/shell.tsx): the
   token gate's card, one sidebar wide on `--bg`, the sheep mark, a `--fs-lg` title that says what
