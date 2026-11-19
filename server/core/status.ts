@@ -821,10 +821,17 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       broadcastAll(paneStatus(paneId, "idle"));
       alert(paneId, alertStatus("idle", waits.waiting(paneId)));
     },
-    onBaseline: (panes, newer = new Set(), askedAt = Date.now()) => {
+    onBaseline: (panes, newer = new Set(), askedAt = Date.now(), created = new Map()) => {
       const projected = panes.map((pane) => ({ ...pane, agent_status: restingClaude(pane.pane_id, pane.agent, pane.agent_status) }));
       for (const pane of projected) if (pane.agent === "claude" || pane.agent === "opencode" || isTaskAgent(pane.agent)) waits.seed(pane.pane_id, pane.agent_status);
-      push.seed(projected.map((pane) => ({ ...pane, agent_status: cards.status(pane.pane_id, alertStatus(pane.agent_status, waits.waiting(pane.pane_id))) })));
+      const alerted = projected.map((pane) => ({ ...pane, agent_status: cards.status(pane.pane_id, alertStatus(pane.agent_status, waits.waiting(pane.pane_id))) }));
+      // web push alone hears a new pane's first reading as a change from its creation; everything else takes the
+      // snapshot as for any pane, the queue below included
+      for (const pane of alerted) {
+        const began = created.get(pane.pane_id);
+        if (began !== undefined) push.firstStatus(pane.pane_id, began, pane.agent_status).catch(logPushError);
+      }
+      push.seed(alerted);
       // a tab, workspace or worktree that closed names none of its panes: the snapshot without them says they went
       push.gone(projected, newer);
       for (const pane of projected) {

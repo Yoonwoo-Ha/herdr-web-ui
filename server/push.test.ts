@@ -639,6 +639,60 @@ describe("alert timing and each device's choice", () => {
     } finally { timers.restore(); }
   });
 
+  it("tells a new pane's first reading as a change from its creation, once, never between two readings at rest nor for a pane it heard of", async () => {
+    const timers = holdAlertTimers();
+    try {
+      const { push } = timed({ input: true, done: "always" });
+      await push.firstStatus("w2:p1", "unknown", "blocked");
+      await push.onStatus("w2:p1", "blocked");
+      expect(timers.pending()).toBe(1);
+      await push.firstStatus("w3:p1", "unknown", "done");
+      await push.firstStatus("w4:p1", "idle", "done");
+      await push.firstStatus("w5:p1", "unknown", "working");
+      await push.firstStatus("w1:p1", "unknown", "blocked");
+      expect(timers.pending()).toBe(2);
+      timers.fire();
+      await push.settled();
+      expect(fake.received.map((r) => `${r.payload.pane_id} ${r.payload.body}`).sort()).toEqual(["w2:p1 waiting for your input", "w3:p1 work finished"]);
+      // what it was first read as is what the next change is measured against
+      await push.onStatus("w4:p1", "done");
+      await push.onStatus("w5:p1", "working");
+      expect(timers.pending()).toBe(0);
+    } finally { timers.restore(); }
+  });
+
+  it("calls off a new pane's first question once a snapshot no longer lists it", async () => {
+    const timers = holdAlertTimers();
+    try {
+      const { push } = timed();
+      await push.firstStatus("w2:p1", "unknown", "blocked");
+      expect(timers.pending()).toBe(1);
+      push.gone([pane("w1:p1", "idle", "claude")], new Set());
+      expect(timers.pending()).toBe(0);
+      await push.settled();
+      expect(fake.received).toHaveLength(0);
+    } finally { timers.restore(); }
+  });
+
+  it("does not time a turn from a new pane's first reading: it began before anyone read it", async () => {
+    const timers = holdAlertTimers();
+    try {
+      const { push, advance } = timed();
+      await push.firstStatus("w2:p1", "unknown", "working");
+      await push.firstStatus("w3:p1", "unknown", "blocked");
+      timers.fire();
+      await push.settled();
+      fake.received.length = 0;
+      advance(500);
+      await push.onStatus("w2:p1", "done");
+      await push.onStatus("w3:p1", "done");
+      expect(timers.pending()).toBe(2);
+      timers.fire();
+      await push.settled();
+      expect(fake.received.map((r) => r.payload.body)).toEqual(["work finished", "work finished"]);
+    } finally { timers.restore(); }
+  });
+
   it("follows what the device chose: no questions, every finish, or no finish at all", async () => {
     const quiet = timed({ input: false, done: "always" });
     await quiet.push.onStatus("w1:p1", "blocked");

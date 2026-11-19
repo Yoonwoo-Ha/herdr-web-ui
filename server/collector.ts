@@ -36,6 +36,11 @@ import { focusFromMove, HerdrError, sessionSnapshot, subscribeEvents, type Event
  *   closed on its account, and an event herdr had sent but this side had not read yet goes
  *   with it (traced: the snapshot already showed `unknown`, the event for it never came).
  *
+ * - A pane created while this listens has no status subscription until a snapshot shows it: a question it asked or a
+ *   finish in that time is the snapshot's first reading, which takes it silently. Its creation frame carries the status
+ *   it began with, kept apart from what a pane was last told as (`born`): that baseline stays the snapshot's, as for any
+ *   pane, and only web push is handed the creation status, to alert a first change from (`onBaseline`'s `created`).
+ *
  * Status frames are flat (`{event:"pane.agent_status_changed", data:{pane_id, agent_status, ...}}`)
  * while structure frames carry a snake_case `data.type` - both shapes below parse only
  * what the live server actually sends.
@@ -59,8 +64,10 @@ export interface StatusCollectorHandlers {
   /**
    * `newer`: panes with an event or an exit since the snapshot was asked for, whose reading here is older than that.
    * `askedAt`: when it was asked for (`Date.now()`).
+   * `created`: the status each pane this snapshot reads first began with, from its creation frame, for web push alone
+   * (the panes' baseline is this snapshot's, as for any pane)
    */
-  onBaseline: (panes: readonly HerdrPane[], newer: ReadonlySet<string>, askedAt: number) => void;
+  onBaseline: (panes: readonly HerdrPane[], newer: ReadonlySet<string>, askedAt: number, created: ReadonlyMap<string, AgentStatus>) => void;
   onResync?: (panes: readonly HerdrPane[], newer: ReadonlySet<string>, askedAt: number) => void;
   onReconciled?: (panes: readonly HerdrPane[]) => void;
   onPaneEnded: (paneId: string) => void;
@@ -122,7 +129,7 @@ export function parseStatusFrame(frame: EventFrame): { paneId: string; status: A
 
 export type StructureEvent =
   | { kind: "pane-ended"; paneId: string }
-  | { kind: "structure-changed"; closed?: string; moved?: { previousPaneId: string; paneId: string; status: AgentStatus; agent: string | null } };
+  | { kind: "structure-changed"; closed?: string; moved?: { previousPaneId: string; paneId: string; status: AgentStatus; agent: string | null }; created?: { paneId: string; status: AgentStatus }; scopedClose?: true };
 
 export function parseFocusFrame(frame: EventFrame): string | null {
   const data = frame.data as { type?: unknown; pane_id?: unknown } | undefined;
@@ -141,6 +148,10 @@ export function parseStructureFrame(frame: EventFrame): StructureEvent | null {
         ? { kind: "structure-changed", moved: { previousPaneId: data.previous_pane_id, paneId: data.pane.pane_id, status: data.pane.agent_status as AgentStatus, agent: typeof data.pane.agent === "string" ? data.pane.agent : null } }
         : { kind: "structure-changed" };
     case "pane_created":
+      // herdr's frame carries the pane; herdr-core's names only its ID, nothing of its status
+      return typeof data.pane?.pane_id === "string" && typeof data.pane.agent_status === "string"
+        ? { kind: "structure-changed", created: { paneId: data.pane.pane_id, status: data.pane.agent_status as AgentStatus } }
+        : { kind: "structure-changed" };
     case "pane_updated":
     case "workspace_created":
     case "workspace_updated":
@@ -148,16 +159,17 @@ export function parseStructureFrame(frame: EventFrame): StructureEvent | null {
     case "workspace_renamed":
     case "workspace_moved":
     case "workspace_reordered":
-    case "workspace_closed":
     case "worktree_created":
     case "worktree_opened":
-    case "worktree_removed":
     case "tab_created":
-    case "tab_closed":
     case "tab_renamed":
     case "tab_moved":
     case "layout_updated":
       return { kind: "structure-changed" };
+    case "workspace_closed":
+    case "worktree_removed":
+    case "tab_closed":
+      return { kind: "structure-changed", scopedClose: true };
     default:
       return null;
   }
@@ -171,6 +183,7 @@ function resilientSubscription(
   isStopped: () => boolean,
   onFirstStart?: () => void,
   liveness?: { identity: () => string | null; onChange: (identity: string | null) => void },
+  onLost?: () => void,
 ): { close: () => void } {
   let subscription: Subscription | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -198,6 +211,7 @@ function resilientSubscription(
       onClose: () => {
         subscription = null;
         liveness?.onChange(null);
+        onLost?.();
         if (isStopped()) return;
         retryTimer = setTimeout(open, delay);
         delay = Math.min(delay * 2, deps.reconnectMaxMs);
@@ -249,6 +263,13 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
   const trackedPanes = new Map<string, number>();
   const exitedAt = new Map<string, number>();
   const focusedAt = new Map<string, number>();
+  /** what each pane created while this listens began as, and when its frame was read, until a snapshot reads it */
+  const born = new Map<string, { status: AgentStatus; seq: number }>();
+  /**
+   * when a pane may last have gone with no frame naming it: a workspace, worktree or tab closed (such a close names none
+   * of its panes), or the lifecycle connection was lost
+   */
+  let unnamedCloseAt = 0;
   let gap = false;
   let replayFor: number | null = null;
   let statusStarted = false;
@@ -303,6 +324,7 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
           if (!parsed) return;
           lastEventOf.set(parsed.paneId, ++statusEvents);
           heard.set(parsed.paneId, { status: parsed.status, agent: parsed.agent });
+          born.delete(parsed.paneId);
           handlers.onStatus(parsed.paneId, parsed.status, parsed.agent);
           const shown = displayAgents.get(parsed.paneId);
           displayAgents.set(parsed.paneId, parsed.displayAgent);
@@ -360,7 +382,20 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
       // an exit since the snapshot was asked for is newer than it too. A focus is not: work that
       // ended during a loss is still to be settled, or it would read as going on for good
       const newer = new Set([...lastEventOf, ...actedOn].filter(([, seq]) => seq > askedAt).map(([paneId]) => paneId));
-      handlers.onBaseline(snapshot.panes, newer, askedTime);
+      const paneIds = snapshot.panes.map((pane) => pane.pane_id);
+      // a snapshot asked for before then may list a new pane that went (or, after a herdr started again, another pane
+      // under its ID), and the snapshot asked for after may come after the alert's wait: it tells no first change, as for
+      // any pane
+      const closedSince = unnamedCloseAt > askedAt;
+      const created = new Map<string, AgentStatus>();
+      for (const paneId of paneIds) {
+        const began = born.get(paneId);
+        if (began === undefined || newer.has(paneId)) continue;
+        if (!closedSince) created.set(paneId, began.status);
+        born.delete(paneId);
+      }
+      for (const [paneId, began] of born) if (began.seq <= askedAt && !paneIds.includes(paneId)) born.delete(paneId);
+      handlers.onBaseline(snapshot.panes, newer, askedTime, created);
       for (const pane of snapshot.panes) if (!displayAgents.has(pane.pane_id)) displayAgents.set(pane.pane_id, pane.display_agent ?? null);
       const resynced = resync !== null && resync === statusGeneration && statusSubscription !== null;
       if (resynced) {
@@ -369,7 +404,6 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
         for (const pane of snapshot.panes) if (!newer.has(pane.pane_id)) displayAgents.set(pane.pane_id, pane.display_agent ?? null);
         handlers.onStructureChange();
       }
-      const paneIds = snapshot.panes.map((pane) => pane.pane_id);
       for (const [paneId, seq] of trackedPanes) {
         if (seq <= askedAt && !paneIds.includes(paneId)) {
           trackedPanes.delete(paneId);
@@ -465,6 +499,7 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
         actedOn.set(parsed.paneId, ++statusEvents);
         exitedAt.set(parsed.paneId, statusEvents);
         heard.delete(parsed.paneId);
+        born.delete(parsed.paneId);
         handlers.onPaneEnded(parsed.paneId);
       }
       else {
@@ -477,6 +512,8 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
           const before = heard.get(previousPaneId);
           heard.delete(previousPaneId);
           heard.set(paneId, before === undefined || status === "working" || status === "blocked" ? { status, agent } : before);
+          // a new pane moved before a snapshot read it is handled from here as any pane is
+          born.delete(previousPaneId);
           actedOn.set(previousPaneId, ++statusEvents);
           lastEventOf.set(paneId, statusEvents);
           handlers.onPaneMoved?.(previousPaneId, paneId);
@@ -488,8 +525,14 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
           trackedPanes.delete(parsed.closed);
           actedOn.set(parsed.closed, ++statusEvents);
           heard.delete(parsed.closed);
+          born.delete(parsed.closed);
           if (!cleaned) handlers.onPaneClosed?.(parsed.closed);
         }
+        // a frame read after a snapshot or a subscription already had the pane is older than what they told
+        if (parsed.created !== undefined && !heard.has(parsed.created.paneId) && !subscribedPaneIds.has(parsed.created.paneId)) {
+          born.set(parsed.created.paneId, { status: parsed.created.status, seq: ++statusEvents });
+        }
+        if (parsed.scopedClose) unnamedCloseAt = ++statusEvents;
       }
       scheduleStructureChange();
     },
@@ -504,6 +547,12 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
       if (trackedPanes.size > 0) void reconcile();
     },
     handlers.herdrLive,
+    // a close or an exit may have gone unheard meanwhile, and a herdr started again reuses pane IDs: no creation frame
+    // read before can be told which pane a later snapshot lists under its ID
+    () => {
+      born.clear();
+      unnamedCloseAt = ++statusEvents;
+    },
   );
 
   // Its own connection: a focus type an older herdr refuses must not cost pane exits.

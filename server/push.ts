@@ -201,6 +201,12 @@ export interface PushService {
   closed(paneId: string, machineId?: string): void;
   /** herdr gave a pane a new ID (moved to another workspace): its status and an alert waiting or under way go with it */
   moved(from: string, to: string, machineId?: string): void;
+  /**
+   * A pane created while the server ran, first read at `status` by a snapshot, where nothing was heard of it yet: told
+   * as a change from what it was `created` as, so a question or finish it reached before anyone listened alerts. Not
+   * between two readings at rest (herdr reads a finish nobody saw as done or idle), and its turn is of unknown length.
+   */
+  firstStatus(paneId: string, created: AgentStatus, status: AgentStatus, machineId?: string): Promise<void>;
   onStatus(paneId: string, status: AgentStatus, machineId?: string): Promise<void>;
   onEnded(paneId: string, machineId?: string): Promise<void>;
   onFailed(paneId: string, machineId?: string): Promise<void>;
@@ -850,6 +856,68 @@ export function createPushService(options: PushServiceOptions): PushService {
     unsent.add(entry);
   }
 
+  /** `timed`: a turn this change begins is timed from now; a first reading came after its turn began */
+  async function statusChanged(paneId: string, status: AgentStatus, machineId: string, timed: boolean): Promise<void> {
+    const key = paneStorageId(machineId, paneId);
+    const previous = lastStatus.get(key);
+    lastStatus.set(key, status);
+    if (previous === status) return;
+    callOff(key);
+    const busy = (value: AgentStatus | undefined): boolean => value === "working" || value === "blocked";
+    if (timed && busy(status) && previous !== undefined && !busy(previous)) turnStart.set(key, now());
+    let worked: number | null = null;
+    if (!busy(status)) {
+      const start = turnStart.get(key);
+      worked = start === undefined ? null : now() - start;
+      turnStart.delete(key);
+    }
+    if (!shouldNotifyStatus(previous, status)) return;
+    if (muted(machineId, paneId)) return;
+    const groups = new Map<number, PushSubscriptionRecord[]>();
+    for (const subscription of store().values()) {
+      const prefs = subscription.alerts ?? DEFAULT_ALERTS;
+      if (!alertPcAllowed(prefs, ...pcKeys(machineId))) continue;
+      const delay = delayFor(prefs, status, worked);
+      if (delay !== null) groups.set(delay, [...(groups.get(delay) ?? []), subscription]);
+    }
+    const hookPrefs = options.webhook?.prefs() ?? null;
+    const hookDelay = hookPrefs === null ? null : delayFor(hookPrefs, status, worked);
+    if (hookDelay !== null && !groups.has(hookDelay)) groups.set(hookDelay, []);
+    if (groups.size === 0) return;
+    // the destination the alert arose for: one set before the timer fires was not there to be told
+    const hookAt = options.webhook?.generation();
+    schedule(key, machineId, paneId, groups, async (to, silenced, delay, pane) => {
+      if (options.inUse?.() || muted(machineId, pane.paneId)) return;
+      // only this PC's prompts are read here, and only a question's alert carries buttons
+      const reading = status === "blocked" && machineId === "local" ? readActions(pane.paneId) : Promise.resolve(null);
+      const asked = changes.get(pane.key);
+      const [{ title, agentKind }, answer] = await Promise.all([lookUp(pane.key, machineId, pane.paneId), reading]);
+      if (options.inUse?.() || silenced() || muted(machineId, pane.paneId)) return;
+      // a question whose pane changed while its prompt was read: the next asking's alert, under the same tag, holds what
+      // the pane asks now, and this one's buttons must not replace it. A finish already under way still goes out
+      if (status === "blocked" && changes.get(pane.key) !== asked) return;
+      const kind: AlertKind = status === "blocked" ? blockedAlertKind(agentKind) : "done";
+      // a device that dropped out meanwhile is not written to, nor one that does not want this kind
+      const live = to.flatMap((subscription) => {
+        const current = store().get(subscription.endpoint);
+        return current && current.device_id === subscription.device_id && wants(current, kind, machineId) ? [current] : [];
+      });
+      const hook = delay === hookDelay && options.webhook?.wants(kind) === true;
+      if (live.length === 0 && !hook) return;
+      const message = statusMessage(pane.paneId, title, status, kind);
+      if (hook) tellWebhook(pane.key, machineId, pane.paneId, message, hookAt);
+      if (live.length === 0) return;
+      const alert: PushPayload = { ...message, ...where(pane.key, machineId), tag: paneNotificationTag(pane.paneId, machineId) };
+      const urgency = status === "blocked" ? "high" : "normal";
+      const answering = answer === null ? [] : live.filter((subscription) => options.canAnswer?.(subscription.device_id) ?? true);
+      await Promise.all([
+        // the buttons go with what they answer: a bare "Yes" under "waiting for your input" says nothing of what it allows
+        broadcast({ ...alert, ...(answer === null ? {} : { body: answer.body, prompt_id: answer.promptId, actions: answer.actions }) }, urgency, answering, true),
+        broadcast(alert, urgency, live.filter((subscription) => !answering.includes(subscription)), true),
+      ]);
+    });
+  }
+
   return {
     publicKey: () => keys().publicKey,
     parse: (value) => parseSubscription(value, options),
@@ -990,65 +1058,16 @@ export function createPushService(options: PushServiceOptions): PushService {
       }
     },
 
-    async onStatus(paneId, status, machineId = "local") {
+    firstStatus(paneId, created, status, machineId = "local") {
       const key = paneStorageId(machineId, paneId);
-      const previous = lastStatus.get(key);
-      lastStatus.set(key, status);
-      if (previous === status) return;
-      callOff(key);
-      const busy = (value: AgentStatus | undefined): boolean => value === "working" || value === "blocked";
-      if (busy(status) && previous !== undefined && !busy(previous)) turnStart.set(key, now());
-      let worked: number | null = null;
-      if (!busy(status)) {
-        const start = turnStart.get(key);
-        worked = start === undefined ? null : now() - start;
-        turnStart.delete(key);
-      }
-      if (!shouldNotifyStatus(previous, status)) return;
-      if (muted(machineId, paneId)) return;
-      const groups = new Map<number, PushSubscriptionRecord[]>();
-      for (const subscription of store().values()) {
-        const prefs = subscription.alerts ?? DEFAULT_ALERTS;
-        if (!alertPcAllowed(prefs, ...pcKeys(machineId))) continue;
-        const delay = delayFor(prefs, status, worked);
-        if (delay !== null) groups.set(delay, [...(groups.get(delay) ?? []), subscription]);
-      }
-      const hookPrefs = options.webhook?.prefs() ?? null;
-      const hookDelay = hookPrefs === null ? null : delayFor(hookPrefs, status, worked);
-      if (hookDelay !== null && !groups.has(hookDelay)) groups.set(hookDelay, []);
-      if (groups.size === 0) return;
-      // the destination the alert arose for: one set before the timer fires was not there to be told
-      const hookAt = options.webhook?.generation();
-      schedule(key, machineId, paneId, groups, async (to, silenced, delay, pane) => {
-        if (options.inUse?.() || muted(machineId, pane.paneId)) return;
-        // only this PC's prompts are read here, and only a question's alert carries buttons
-        const reading = status === "blocked" && machineId === "local" ? readActions(pane.paneId) : Promise.resolve(null);
-        const asked = changes.get(pane.key);
-        const [{ title, agentKind }, answer] = await Promise.all([lookUp(pane.key, machineId, pane.paneId), reading]);
-        if (options.inUse?.() || silenced() || muted(machineId, pane.paneId)) return;
-        // a question whose pane changed while its prompt was read: the next asking's alert, under the same tag, holds what
-        // the pane asks now, and this one's buttons must not replace it. A finish already under way still goes out
-        if (status === "blocked" && changes.get(pane.key) !== asked) return;
-        const kind: AlertKind = status === "blocked" ? blockedAlertKind(agentKind) : "done";
-        // a device that dropped out meanwhile is not written to, nor one that does not want this kind
-        const live = to.flatMap((subscription) => {
-          const current = store().get(subscription.endpoint);
-          return current && current.device_id === subscription.device_id && wants(current, kind, machineId) ? [current] : [];
-        });
-        const hook = delay === hookDelay && options.webhook?.wants(kind) === true;
-        if (live.length === 0 && !hook) return;
-        const message = statusMessage(pane.paneId, title, status, kind);
-        if (hook) tellWebhook(pane.key, machineId, pane.paneId, message, hookAt);
-        if (live.length === 0) return;
-        const alert: PushPayload = { ...message, ...where(pane.key, machineId), tag: paneNotificationTag(pane.paneId, machineId) };
-        const urgency = status === "blocked" ? "high" : "normal";
-        const answering = answer === null ? [] : live.filter((subscription) => options.canAnswer?.(subscription.device_id) ?? true);
-        await Promise.all([
-          // the buttons go with what they answer: a bare "Yes" under "waiting for your input" says nothing of what it allows
-          broadcast({ ...alert, ...(answer === null ? {} : { body: answer.body, prompt_id: answer.promptId, actions: answer.actions }) }, urgency, answering, true),
-          broadcast(alert, urgency, live.filter((subscription) => !answering.includes(subscription)), true),
-        ]);
-      });
+      const atRest = (value: AgentStatus): boolean => value === "idle" || value === "done";
+      if (lastStatus.has(key) || (atRest(created) && atRest(status))) return Promise.resolve();
+      lastStatus.set(key, created);
+      return statusChanged(paneId, status, machineId, false);
+    },
+
+    onStatus(paneId, status, machineId = "local") {
+      return statusChanged(paneId, status, machineId, true);
     },
 
     async onFailed(paneId, machineId = "local") {
