@@ -1191,6 +1191,26 @@ describe.skipIf(platform() === "win32")("a machine profile, under the fleet prev
     expect(pc.calls.map((call) => `${call.door} ${call.call}`)).toEqual(["socket GET /api/health"]);
   }, 30_000);
 
+  it("names the settings file when its OVIS_STATE_DIR hides the profile named on the command line, and only then", async () => {
+    const pc = profilePc();
+    const other = join(pc.home, "other-state");
+    try {
+      pc.settings(`OVIS_STATE_DIR=${other}\n`);
+      const status = await run("status", pc.env);
+      const add = await run("add", pc.env);
+      const approve = await run("pair", pc.env, { args: ["--approve"] });
+      const wayOut = `${join(configDir, ".env")} sets OVIS_STATE_DIR to ${other}, which wins over ${pc.state}. Run it with that profile's HERDR_PLUGIN_CONFIG_DIR, or set the same OVIS_STATE_DIR in the file.\n`;
+      const stopped = `Ovis is not running at http://127.0.0.1:${pc.port}; start it first\n${wayOut}`;
+      // status's stdout keeps its one line, which install.sh reads
+      expect([status.out.split("\n")[0], status.err, add.err, add.exitCode, approve.err, approve.exitCode]).toEqual([`down http://127.0.0.1:${pc.port}`, wayOut, stopped, 1, stopped, 1]);
+      printed(pc, status, add, approve);
+      pc.settings(`OVIS_STATE_DIR=${pc.state}\n`);
+      const same = await run("status", pc.env);
+      expect(same.out.split("\n")[0], same.err).toBe(`running http://127.0.0.1:${pc.port}`);
+    } finally { await pc.stop(); }
+    expect(pc.calls.map((call) => `${call.door} ${call.call}`)).toEqual(["socket GET /api/health"]);
+  }, 30_000);
+
   const ENGINE_DOWN = { ok: true, auth: { required: false, authenticated: true, via: "local", role: "drive" }, machine_profile: { engine: "herdr", runtime_down: true, reason: "herdr is not running for the selected session" } };
 
   it("takes a profile whose engine does not answer as running on its owner socket: status says the engine is down, add goes on", async () => {
@@ -1598,9 +1618,9 @@ describe("a command handed on to the release the app updated to", () => {
    * With `group`, it leads a process group of its own, as a command
    * in a terminal does. Its stderr goes into a file: a release left running would hold a pipe open.
    */
-  function handOn(command: string, { fail = false, group = false } = {}) {
+  function handOn(command: string, { fail = false, group = false, given = join(scratch, "app-state"), settings = "" } = {}) {
     const port = quietPort();
-    writeFileSync(join(configDir, ".env"), `PORT=${port}\n`);
+    writeFileSync(join(configDir, ".env"), `PORT=${port}\n${settings}`);
     const release = join(updateStateDir(ROOT, port, join(scratch, "app-state")), "release-test");
     mkdirSync(join(release, "scripts"), { recursive: true });
     const pidFile = join(scratch, "release-pid");
@@ -1615,11 +1635,13 @@ setInterval(() => {}, 1 << 30);
     const revision = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: ROOT, windowsHide: true }).stdout.toString().trim();
     writeFileSync(join(release, "..", "current.json"), JSON.stringify({ source_revision: revision, directory: release }));
     const notes = join(scratch, "notes");
+    const releaseEnv = join(scratch, "release-env");
     const child = Bun.spawn([process.execPath, "-e", `import { appendFileSync } from "node:fs";
 const spawn = Bun.spawn;
 Bun.spawn = (argv, options) => {
   if (!String(argv[1]).endsWith(${JSON.stringify(releaseScript)})) return spawn(argv, options);
   appendFileSync(${JSON.stringify(notes)}, \`spawn \${process.listenerCount("SIGTERM")} \${process.listenerCount("SIGHUP")}\n\`);
+  appendFileSync(${JSON.stringify(releaseEnv)}, JSON.stringify({ state: options.env.OVIS_STATE_DIR, given: options.env.OVIS_PLUGIN_GIVEN_STATE_DIR }));
   ${fail ? "throw new Error(\"the release cannot start\");" : "return spawn(argv, options);"}
 };
 process.argv = [process.execPath, ${plugin}, ${JSON.stringify(command)}];
@@ -1628,12 +1650,13 @@ try { await runPlugin(); } catch (error) { appendFileSync(${JSON.stringify(notes
 process.kill(process.pid, "SIGTERM");
 setInterval(() => {}, 1_000);`], {
       cwd: ROOT, stdout: "pipe", stderr: Bun.file(join(scratch, "stderr")), detached: group,
-      env: launchEnv({ HOST: "127.0.0.1", HERDR_PLUGIN_ROOT: ROOT, HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_STATE_DIR: join(scratch, "app-state"), OVIS_TOKEN: "" }),
+      env: launchEnv({ HOST: "127.0.0.1", HERDR_PLUGIN_ROOT: ROOT, HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_STATE_DIR: given, OVIS_TOKEN: "" }),
     });
     const released = () => existsSync(pidFile) ? Number(readFileSync(pidFile, "utf8")) : 0;
     return {
       child, released,
       notes: () => existsSync(notes) ? readFileSync(notes, "utf8") : "",
+      releaseEnv: () => existsSync(releaseEnv) ? JSON.parse(readFileSync(releaseEnv, "utf8")) as unknown : null,
       said: () => existsSync(join(scratch, "stderr")) ? readFileSync(join(scratch, "stderr"), "utf8") : "",
       [Symbol.dispose]: () => {
         child.kill("SIGKILL");
@@ -1641,6 +1664,13 @@ setInterval(() => {}, 1_000);`], {
       },
     };
   }
+
+  posix("gives the release the environment the settings file made, and the OVIS_STATE_DIR it was run with apart", async () => {
+    using run = handOn("a-later-command", { given: join(scratch, "given-state"), settings: `OVIS_STATE_DIR=${join(scratch, "app-state")}\n` });
+    const up = await within(run.child.stdout.getReader().read(), "the release never started");
+    expect(new TextDecoder().decode(up.value), run.said()).toBe("up\n");
+    expect(run.releaseEnv()).toEqual({ state: join(scratch, "app-state"), given: join(scratch, "given-state") });
+  }, 30_000);
 
   for (const command of ["link", "phone-setup", "a-later-command"]) {
     for (const [signal, exit] of [["SIGTERM", 3], ["SIGHUP", 4], ["SIGINT", 6]] as const) {

@@ -156,6 +156,16 @@ const CONFIG_FILES = ENV_FILES.map((name) => join(CONFIG_DIR, name)).filter((fil
 const fileVars = CONFIG_FILES.map(readEnvFile);
 const shadowed = fileVars.length === 2 ? Object.keys(fileVars[0]!).filter((key) => key in fileVars[1]! && fileVars[0]![key] !== fileVars[1]![key]) : [];
 const env = mergeEnvLayers([process.env, ...fileVars]);
+/**
+ * The OVIS_STATE_DIR this command was run with, which a settings file may set over (stateDirWayOut). A command handed on
+ * to the release Settings installed (handOn) is told it apart: its own environment is the merged one.
+ */
+const GIVEN_STATE_DIR_VARIABLE = "OVIS_PLUGIN_GIVEN_STATE_DIR";
+const givenStateDir = process.env[GIVEN_STATE_DIR_VARIABLE] ?? mergeEnvLayers([process.env])["OVIS_STATE_DIR"] ?? "";
+// resolved where the command was run: a handed-on release runs in the plugin's root. And told this process alone: a server
+// or command it starts reads its own
+const GIVEN_STATE_DIR = givenStateDir === "" ? "" : resolve(givenStateDir);
+delete env[GIVEN_STATE_DIR_VARIABLE];
 const configuredSocket = fileVars.some((vars) => (vars["HERDR_SOCKET"] ?? "") !== "");
 const PATH_KEY = platform() === "win32" ? Object.keys(env).sort().find(key => key.toLowerCase() === "path") ?? "PATH" : "PATH";
 const APP_STATE_DIR = defaultStateDir(env);
@@ -218,6 +228,34 @@ function ownerDoor(): string | null {
     return socket.isSocket() && socket.uid === process.getuid?.() && (socket.mode & 0o022) === 0 ? own : null;
   } catch { return null; }
 }
+/**
+ * The way out when a machine profile is not found because the plugin's settings file sets OVIS_STATE_DIR over the one
+ * the command was run with (the file wins, as INSTALL.md documents): the command looked for the owner socket in another
+ * folder (#4210). Empty in any other case: also where the file's folder has an owner socket that did not answer.
+ */
+function stateDirWayOut(): string {
+  const given = GIVEN_STATE_DIR;
+  if (!machineProfile || given === "" || serverDoor() !== null || sameDir(given, APP_STATE_DIR)) return "";
+  // the last file that sets it is the one that wins
+  const setting = CONFIG_FILES.filter((_, index) => "OVIS_STATE_DIR" in mergeEnvLayers([fileVars[index]!]));
+  const file = setting[setting.length - 1];
+  if (file === undefined) return "";
+  return `${file} sets OVIS_STATE_DIR to ${APP_STATE_DIR}, which wins over ${given}. Run it with that profile's HERDR_PLUGIN_CONFIG_DIR, or set the same OVIS_STATE_DIR in the file.\n`;
+}
+
+function sameDir(one: string, other: string): boolean {
+  try {
+    return realpathSync(one) === realpathSync(other);
+  } catch {
+    return resolve(one) === resolve(other);
+  }
+}
+
+function notRunning(): number {
+  process.stderr.write(`Ovis is not running at ${origin}; start it first\n${stateDirWayOut()}`);
+  return 1;
+}
+
 /**
  * The door of this command: the one its first passing health check went to (appHealth), kept for every later request
  * of the command, so a command never moves from one door to the other.
@@ -874,10 +912,7 @@ async function pair(parts?: Awaited<ReturnType<typeof pairingParts>>): Promise<n
     return 1;
   }
   const { qr, decodeOffer } = parts ?? await pairingParts();
-  if (!(await health())) {
-    process.stderr.write(`Ovis is not running at ${origin}; start it first\n`);
-    return 1;
-  }
+  if (!(await health())) return notRunning();
   const headers: Record<string, string> = { "content-type": "application/json", "x-herdr-machine": "1" };
   if ((env["OVIS_TOKEN"] ?? "") !== "") headers["authorization"] = `Bearer ${env["OVIS_TOKEN"]}`;
   let code: string;
@@ -943,10 +978,7 @@ async function pair(parts?: Awaited<ReturnType<typeof pairingParts>>): Promise<n
 /** The PC's terminal is the PC itself, so this is approval on this PC (docs/account.md, "Who may admit a device"). */
 async function approvePairings(): Promise<number> {
   const { approveWaiting, discardTyped } = await import("./plugin-link.ts");
-  if (!(await health())) {
-    process.stderr.write(`Ovis is not running at ${origin}; start it first\n`);
-    return 1;
-  }
+  if (!(await health())) return notRunning();
   const headers: Record<string, string> = { "content-type": "application/json", "x-herdr-machine": "1", "x-herdr-update": "1", origin: serverOrigin() };
   if ((env["OVIS_TOKEN"] ?? "") !== "") headers["authorization"] = `Bearer ${env["OVIS_TOKEN"]}`;
   let pairings: WaitingDevice[];
@@ -1007,7 +1039,9 @@ async function handOn(active: string, args: readonly string[]): Promise<number> 
   const handlers = { SIGINT: process.platform === "win32" ? () => undefined : pass("SIGINT"), SIGTERM: pass("SIGTERM"), SIGHUP: pass("SIGHUP") } as const;
   for (const [signal, handler] of Object.entries(handlers)) process.on(signal, handler);
   try {
-    child = Bun.spawn([process.execPath, active, ...args], { cwd: ROOT, windowsHide: true, env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+    // the merged environment as it is (the release may not find a settings file named by a relative path), and the folder
+    // this command was run with apart, to name both where it finds no machine profile (stateDirWayOut)
+    child = Bun.spawn([process.execPath, active, ...args], { cwd: ROOT, windowsHide: true, env: { ...env, [GIVEN_STATE_DIR_VARIABLE]: GIVEN_STATE_DIR }, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
     return await child.exited;
   } finally {
     for (const [signal, handler] of Object.entries(handlers)) process.off(signal, handler);
@@ -1019,10 +1053,7 @@ async function linkCommand(): Promise<number> {
   // Always "link", whichever name it was run by: a release from before `add` and `login` knows only that one
   if (active !== join(resolve(ROOT), "scripts", "plugin.ts") && resolve(active) !== resolve(import.meta.filename)) return await handOn(active, ["link", ...process.argv.slice(3)]);
   const { discardTyped, link: linkPc, linkSettings } = await import("./plugin-link.ts");
-  if (!(await health())) {
-    process.stderr.write(`Ovis is not running at ${origin}; start it first\n`);
-    return 1;
-  }
+  if (!(await health())) return notRunning();
   const headers: Record<string, string> = {};
   if ((env["OVIS_TOKEN"] ?? "") !== "") headers["authorization"] = `Bearer ${env["OVIS_TOKEN"]}`;
   const stop = new AbortController();
@@ -1203,6 +1234,8 @@ async function status(): Promise<number> {
   const pid = recordedPid();
   const answer = await appHealth();
   process.stdout.write(`${answer !== null ? "running" : "down"} ${origin}${pid === null ? "" : ` (pid ${pid})`}\n`);
+  // on stderr: install.sh reads status's stdout lines, and a folder's name could begin with "running"
+  if (answer === null) process.stderr.write(stateDirWayOut());
   if (typeof answer?.engineDown === "string") process.stdout.write(`engine: down${answer.engineDown === "" ? "" : ` (${answer.engineDown})`}\n`);
   // the groups of the app's own answer, which carries no token: on a machine profile's owner socket, or over TCP when
   // the app lets the command in without one. Nothing proves which program holds a TCP port, so no token goes there
