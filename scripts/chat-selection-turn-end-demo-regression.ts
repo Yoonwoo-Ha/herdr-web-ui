@@ -217,7 +217,10 @@ try {
             assert.equal(await gap(), grown - down, `${label}: scrolled down into what grew`);
           }
           for (let made = 0; made < steps; made++) {
-            await page.evaluate((step) => { document.querySelector<HTMLElement>(".chat-view-virtual")!.scrollTop -= step; }, step);
+            await page.locator(".chat-view-virtual").evaluate((node, step) => {
+              node.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -step }));
+              node.scrollTop -= step;
+            }, step);
             await frames(page);
           }
           assert.equal(await gap(), grown - down + step * steps, `${label}: the scroll stands under the selection`);

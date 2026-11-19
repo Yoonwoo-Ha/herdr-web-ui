@@ -63,7 +63,7 @@ export interface ChatTimelineProps<Row extends ChatTimelineRow> {
   header: ReactNode;
   footer: ReactNode;
   label: string;
-  onScroll: () => void;
+  onScroll: (listCorrected?: boolean) => void;
   onFollowed: (top: number) => void;
   onOpen: () => void;
   renderRow: (row: Row, index: number) => ReactNode;
@@ -193,21 +193,31 @@ export function ChatTimeline<Row extends ChatTimelineRow>(given: ChatTimelinePro
   // not heard yet (its event comes later in the frame) is read first, as that event would read it:
   // a reader who left the end is not pulled back.
   const followQueued = useRef(false);
+  const correction = useRef<{ readonly top: number; readonly applied: boolean } | null>(null);
   const scrolled = useRef(onScroll);
   scrolled.current = onScroll;
-  const heard = useCallback(() => {
+  const heard = useCallback((listCorrected = false) => {
     heardTop.current = scroller.current?.scrollTop ?? null;
-    scrolled.current();
+    scrolled.current(listCorrected);
   }, [scroller]);
-  const followMeasured = useCallback(() => {
+  const followMeasured = useCallback((change?: "measure" | "adjust") => {
+    const top = scroller.current?.scrollTop;
+    // Item measurements report before the list applies their adjustment; scrollAdjust reports
+    // the offset written by the list, including a later adjustment outside the measurement batch.
+    if (top !== undefined && (change === "adjust" || (change === "measure" && correction.current === null))) {
+      correction.current = { top, applied: change === "adjust" };
+    }
     if (followQueued.current) return;
     followQueued.current = true;
     queueMicrotask(() => {
       followQueued.current = false;
+      const pending = correction.current;
+      correction.current = null;
       const node = scroller.current, list = listRef.current;
       if (node === null || list === null || !following.current || manualLayout.current || selecting.current) return;
       if (node.scrollTop !== heardTop.current) {
-        heard();
+        const listCorrected = pending !== null && (pending.applied ? node.scrollTop === pending.top : node.scrollTop !== pending.top);
+        heard(listCorrected);
         if (!following.current || manualLayout.current || selecting.current) return;
       }
       const measured = list.getState().contentLength;
@@ -335,9 +345,10 @@ export function ChatTimeline<Row extends ChatTimelineRow>(given: ChatTimelinePro
     node.addEventListener("scroll", scrolled, { passive: true });
     // the list's adjust scrolls in its own frame callback; the hold looks once it has
     const unlisten = listRef.current?.getState().listen("scrollAdjust", () => {
-      if (anchor.current === null) return;
-      listAdjusted.current = true;
-      keepMeasured();
+      if (anchor.current !== null) {
+        listAdjusted.current = true;
+        keepMeasured();
+      } else if (following.current && !manualLayout.current && !selecting.current) followMeasured("adjust");
     });
     return () => {
       unlisten?.();
@@ -348,7 +359,7 @@ export function ChatTimeline<Row extends ChatTimelineRow>(given: ChatTimelinePro
       selecting.current = false;
       anchor.current = null;
     };
-  }, [scroller, listRef, keep, keepMeasured, markTop, selecting]);
+  }, [scroller, listRef, keep, keepMeasured, markTop, following, manualLayout, selecting, followMeasured]);
 
   // The footer (a sent message's bubble, the Working line) is no row: no item size change reports
   // its growth, and a scroll to the end asked for before the list measured it stops short of it,
@@ -405,11 +416,11 @@ export function ChatTimeline<Row extends ChatTimelineRow>(given: ChatTimelinePro
     alwaysRender={{ keys: pinned }}
     ListHeaderComponent={<div className="chat-virtual-header">{header}</div>}
     ListFooterComponent={<div ref={footerRef} className="chat-virtual-footer">{footer}</div>}
-    onScroll={heard}
+    onScroll={() => heard()}
     onLoad={() => { if (following.current) listRef.current?.scrollToEnd({ animated: false }); }}
     onItemSizeChanged={() => {
       if (selecting.current) keepMeasured();
-      else if (following.current && !manualLayout.current) followMeasured();
+      else if (following.current && !manualLayout.current) followMeasured("measure");
     }}
   />;
 }

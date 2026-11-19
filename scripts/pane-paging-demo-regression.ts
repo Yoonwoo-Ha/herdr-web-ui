@@ -279,8 +279,14 @@ try {
           await openSettingsPage(page, "Shortcuts");
           await page.getByRole("combobox", { name: "Scroll pane up", exact: true }).selectOption("default");
           await page.keyboard.press("Escape");
-          await transcript.evaluate((node) => { node.scrollTop = 0; node.dispatchEvent(new Event("scroll", { bubbles: true })); });
-          await settled(page);
+          await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor({ state: "hidden" });
+          for (let pages = 0; ; pages++) {
+            assert.ok(pages < 128, "repeated upward pages reach the history start within a bound");
+            await page.keyboard.press("Meta+Shift+PageUp");
+            await settled(page);
+            if (await transcript.evaluate((node) => node.scrollTop === 0)) break;
+          }
+          await returnControl(page).waitFor();
           await page.keyboard.press("Meta+Shift+PageUp");
           await settled(page);
           assert.equal(await transcript.evaluate((node) => node.scrollTop), 0, "PageUp at the history start has no movement");
