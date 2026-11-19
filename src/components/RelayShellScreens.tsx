@@ -3,6 +3,8 @@ import { ChevronRight } from "lucide-react";
 
 import { copyText } from "../lib/clipboard.ts";
 import { useT } from "../lib/i18n.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
+import { useSettings } from "../lib/settings.ts";
 import type { KeyMismatch } from "../lib/relay/shellState.ts";
 import { serverScopePath } from "../lib/shellMode.ts";
 import { describeUpdate } from "../lib/updateProgress.ts";
@@ -102,6 +104,15 @@ export interface RelayShellCardContentProps {
   readonly setSignedOutView: (view: "sign-in" | "pair" | "saved") => void; readonly setAddingPc: (adding: boolean) => void;
 }
 
+/** What continuing agrees to: Ovis's privacy policy (ovis.sh/privacy, in English and Korean), linked. */
+function AgreementLine() {
+  const t = useT();
+  const { resolvedLanguage } = useSettings();
+  const privacy = resolvedLanguage === "ko" ? "https://ovis.sh/ko/privacy/" : "https://ovis.sh/privacy/";
+  const [before = "", after = ""] = t("By continuing, you agree to the {privacy}.").split("{privacy}");
+  return <p className="relay-shell-agreement">{before}<ExternalLink kind="ovis" href={privacy}>{t("Privacy Policy")}</ExternalLink>{after}</p>;
+}
+
 /**
  * While the sign-in is read nothing is claimed and the button is held; while a press is checked, the wording it was
  * made on stays up (`pressed`), so the question does not change under it.
@@ -142,6 +153,8 @@ export function RelayShellCardContent({ props, view, signInFirst, saved, addingP
   const progress = state.kind === "outdated" && state.update.phase === "installing" ? describeUpdate({ phase: "building", step: state.update.step }) : null;
   const retry = <button type="button" className="btn btn-primary" onClick={onRetry}>{t("Try again")}</button>;
   const failure = state.kind === "failed" ? relayFailureText(t, state.failure, pc, state.detail) : null;
+  // a marked pairing that stopped for a sign-in signs in right here, and goes on after it without a new scan
+  const pairSignIn = state.kind === "failed" && state.failure === "sign-in-first" && onSignIn ? state.account ?? null : undefined;
   const statusText = signingIn ? t("Signing in…") : state.kind === "code-looking" ? t("Looking for the PC…") : state.kind === "connecting" ? t("Connecting to {name}…", { name: pc })
     : state.kind === "compare" && state.confirmed ? t("Approve this device on {name} within 90 seconds to finish.", { name: pc })
     : state.kind === "outdated" && state.update.phase === "reading" ? t("Checking {name}…", { name: pc })
@@ -236,7 +249,17 @@ export function RelayShellCardContent({ props, view, signInFirst, saved, addingP
           <div className="relay-shell-actions">{!state.confirmed && <button type="button" className="btn btn-primary" onClick={() => onMatch()}>{t("The numbers match")}</button>}<button type="button" className="btn" onClick={onCancel}>{t("Cancel")}</button></div>
         </>
       )}
-      {state.kind === "failed" && failure !== null && (
+      {state.kind === "failed" && failure !== null && pairSignIn !== undefined && onSignIn && (
+        <div className="relay-shell-pair-signin">
+          <h1 className="relay-shell-hero"><span>{t("Your PCs, anywhere.")}</span>{" "}<span className="relay-shell-hero-quiet">{t("Sign in to your Ovis account")}</span></h1>
+          <AccountSignIn nameOnly onSignIn={onSignIn} error={pairSignIn?.kind === "signed-out" ? pairSignIn.error : null} busy={pairSignIn?.kind === "signing-in"}
+            busyProvider={pairSignIn?.kind === "signing-in" ? (pairSignIn.provider ?? null) : null} failedProvider={pairSignIn?.kind === "signed-out" ? (pairSignIn.provider ?? null) : null}
+            {...(accountProviders ? { providers: accountProviders } : {})} />
+          <AgreementLine />
+          {back && <div className="relay-shell-actions relay-shell-quiet">{back}</div>}
+        </div>
+      )}
+      {state.kind === "failed" && failure !== null && pairSignIn === undefined && (
         <>
           <h1 className="relay-shell-title">{failure.title}</h1>
           <p className="relay-shell-copy">{failure.copy}</p>

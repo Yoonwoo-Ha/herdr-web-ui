@@ -7,6 +7,7 @@
  */
 import { exportAccountKey } from "../../../shared/account-records.ts";
 import type { AddRecord, RemoveRecord } from "../../../shared/account-records.ts";
+import type { RelayOffer } from "../../../shared/relay-offer.ts";
 
 export interface AccountKey {
   readonly private_key: CryptoKey;
@@ -37,6 +38,14 @@ export interface PendingSignIn {
   readonly verifier: string;
   readonly redirect_uri: string;
   readonly started_at: number;
+  /** the marked pairing this sign-in was started for (relay/shell.tsx): it goes with the sign-in, whatever its end */
+  readonly pairing?: PendingPairing;
+}
+
+/** A scanned offer waiting on a sign-in; `at`: when the code was scanned, which bounds how long it is tried. */
+export interface PendingPairing {
+  readonly offer: RelayOffer;
+  readonly at: number;
 }
 
 interface Records {

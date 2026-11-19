@@ -11,6 +11,9 @@ import {
   TypedDigits,
 } from "./RelayShellScreens.tsx";
 import { CodeEntry, type RelayShellProps } from "./RelayShell.tsx";
+import { PROVIDER_NAMES } from "./AccountPcs.tsx";
+import { relayFailureText } from "./relayFailureText.ts";
+import { translate, type Vars } from "../lib/i18n.ts";
 
 const none = () => {};
 const baseProps = (state: RelayShellProps["state"]): RelayShellProps => ({
@@ -379,5 +382,50 @@ describe("RelayShellScreens", () => {
     } finally {
       await act(async () => { renderer?.unmount(); });
     }
+  });
+
+  // A marked pairing's sign-in and the confirm it comes back to: what can be pressed, where it goes, and what waits
+  describe("the inline sign-in of a marked pairing", () => {
+    const en = (key: string, vars?: Vars): string => translate("en", key, vars);
+    const failed = { kind: "failed" as const, failure: "sign-in-first" as const, name: "Desk", detail: null, server_id: "a".repeat(32) };
+    const offered = { onSignIn: none, accountProviders: ["github", "google"] as const };
+    const draw = async (state: RelayShellProps["state"], extra: Partial<RelayShellProps> = {}): Promise<ReactTestRenderer> => {
+      let renderer: ReactTestRenderer | undefined;
+      await act(async () => {
+        renderer = create(createElement(SettingsProvider, { children: createElement(RelayShellCardContent, {
+          props: { ...baseProps(state), ...extra }, view: null, signInFirst: false, saved: 0, addingPc: false, setSignedOutView: none, setAddingPc: none,
+        }) }));
+      });
+      return renderer!;
+    };
+    const providerButtons = (renderer: ReactTestRenderer): ReactTestInstance[] => renderer.root.findAll((node) => node.type === "button" && typeof node.props["data-provider"] === "string");
+
+    it("offers each provider the account service lists, by name, none drawn as the one to pick, and signs in with the one pressed", async () => {
+      const pressed: string[] = [];
+      const screen = await draw(failed, { ...offered, onSignIn: (provider) => { pressed.push(provider); } });
+      const buttons = providerButtons(screen);
+      expect(buttons.map((button) => button.props["data-provider"])).toEqual(["github", "google"]);
+      expect(buttons.map((button) => textOf(button))).toEqual([PROVIDER_NAMES.github, PROVIDER_NAMES.google]);
+      expect(buttons.filter((button) => String(button.props.className).split(" ").includes("btn-primary"))).toEqual([]);
+      await act(async () => { buttons[1]!.props.onClick(); });
+      expect(pressed).toEqual(["google"]);
+      expect(screen.root.findAllByType("a").map((link) => link.props.href)).toEqual(["https://ovis.sh/privacy/"]);
+    });
+
+    it("holds every provider while one signs in, and offers the sign-in again after a refusal", async () => {
+      const busy = await draw({ ...failed, account: { kind: "signing-in", provider: "google" } }, offered);
+      expect(providerButtons(busy).map((button) => [button.props["data-provider"], button.props["aria-busy"] ?? null, button.props.disabled])).toEqual([["github", null, true], ["google", "true", true]]);
+      const refused = await draw({ ...failed, account: { kind: "signed-out", error: "refused", provider: "google" } }, offered);
+      expect(refused.root.findAll((node) => node.type === "button" && node.props["data-action"] === "retry-signin")).toHaveLength(1);
+    });
+
+    it("names no provider where the page offers no sign-in, or once the code ran out during one", async () => {
+      const noService = await draw(failed);
+      expect(providerButtons(noService)).toEqual([]);
+      expect(noService.root.findAllByProps({ className: "relay-shell-copy" }).map(textOf)).toEqual([relayFailureText(en, "sign-in-first", "Desk").copy]);
+      const expired = await draw({ kind: "failed", failure: "scan-expired", name: "Desk", detail: null }, offered);
+      expect(providerButtons(expired)).toEqual([]);
+      expect(textOf(expired.root.findByType("h1"))).toBe(relayFailureText(en, "scan-expired", "Desk").title);
+    });
   });
 });

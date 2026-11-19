@@ -199,9 +199,11 @@ describe("the admission before a first link", () => {
       }
     }
     let props: RelayShellProps | undefined;
+    // every screen drawn, in order
+    const drawn: RelayShellProps["state"][] = [];
     const render = (node: ReactNode): void => {
       if (!isValidElement<{ readonly children?: ReactNode }>(node)) throw new TypeError("Missing shell element");
-      if (node.type === RelayShell && isValidElement<RelayShellProps>(node)) { props = node.props; changed(); return; }
+      if (node.type === RelayShell && isValidElement<RelayShellProps>(node)) { props = node.props; drawn.push(node.props.state); changed(); return; }
       render(node.props.children);
     };
     const current = (): RelayShellProps => { if (!props) throw new TypeError("Shell not rendered"); return props; };
@@ -281,7 +283,7 @@ describe("the admission before a first link", () => {
     /** every session the attempt opened is closed: it is over, and nothing more of it reaches the PC */
     const over = (): Promise<void> => until(() => opened.length > 0 && opened.every((transport) => transport.closed));
     const enrollment = async (): Promise<string | undefined> => ((await store.get(offer.server_id)) as SavedDevice | undefined)?.account_enrollment?.state;
-    return { current, press, switchAccount, armed, over, enrollment, directoryReads: () => directoryReads, reloads: () => reloads,
+    return { current, drawn: () => drawn, press, switchAccount, armed, over, enrollment, directoryReads: () => directoryReads, reloads: () => reloads,
       markedReadHeld: markedReadHeld.promise, releaseMarkedRead: () => markedReadRelease.resolve(), linkHeld: linkHeld.promise, releaseLink: () => linkRelease.resolve(), readHeld: readHeld.promise, releaseRead: () => readRelease.resolve(), secondPostHeld: secondPostHeld.promise, releaseSecondPost: () => secondPostRelease.resolve(), events, pcEvents, posted, quiet, sent, failure, endRow, admissionGate, store, offer, apps: () => apps, opens: () => opens, postSignal: () => postSignal };
   }
 
@@ -399,6 +401,13 @@ describe("the admission before a first link", () => {
   });
 
   // a marked pairing's first link the PC turned away: the refusal is said, and the record of the row it ended goes
+  it("keeps a new pairing's mark on the failure screen of its refused first link", async () => {
+    const run = await pairing({ mark: true, listed: true, links: [() => Response.json({ error: { code: "link_required" } }, { status: 403 })] });
+    run.admissionGate.resolve();
+    await until(() => run.current().state.kind === "failed");
+    expect(run.current().state).toMatchObject({ kind: "failed", failure: "link-required", pairing: true });
+  });
+
   for (const [code, status, failure] of [["link_required", 403, "link-required"], ["account_mismatch", 409, "account-mismatch"], ["unverified_device", 403, "unverified-device"]] as const) {
     it(`says a new marked pairing's refused link (${code}) in its own words, opens no app, and forgets the row the PC ended`, async () => {
       const run = await pairing({ mark: true, listed: true, links: [() => Response.json({ error: { code, message: "private refusal" } }, { status })] });
@@ -655,6 +664,17 @@ describe("the admission before a first link", () => {
     await until(() => run.current().state.kind === "failed");
     expect(run.failure()).toBe("unverified-device");
     expect((await run.store.get(run.offer.server_id))?.device_id).toBe(REPLACED_ID);
+  });
+
+  it("says a connecting screen comes after approval only once the PC accepted the pairing", async () => {
+    const run = await pairing({ mark: true, listed: true });
+    run.admissionGate.resolve();
+    await until(() => run.drawn().some((state) => state.kind === "connecting" && state.approved === true));
+    const connecting = run.drawn().filter((state) => state.kind === "connecting");
+    // the first is drawn as the pairing starts, before any compare or PAIR: nothing was approved yet
+    expect(connecting[0]).not.toHaveProperty("approved");
+    expect(connecting.at(-1)).toMatchObject({ kind: "connecting", name: "Desk", approved: true });
+    expect(run.pcEvents()[0]).toBe("pair");
   });
 
   it("with the mark, keeps the connecting screen and its Cancel while the first link waits for the time the PC named, and opens the PC once it passes", async () => {

@@ -49,5 +49,6 @@ export function relayFailureText(t: Translate, failure: RelayFailure, name: stri
     case "link-required": return { title: t("{name} no longer takes this QR code", { name }), copy: t("Show a new QR code on {name} and scan it.", { name }), detail: filtered, retry: false };
     case "account-mismatch": return { title: t("{name} is not set up for your account", { name }), copy: t("On {name}, sign in to your account and show a new QR code, then scan it.", { name }), detail: filtered, retry: false };
     case "unverified-device": return { title: t("{name} could not check this device with your account", { name }), copy: t("Wait a few minutes, then show a new QR code on {name} and scan it.", { name }), detail: filtered, retry: false };
+    case "scan-expired": return { title: t("The QR code ran out while you signed in"), copy: t("Show a new QR code on {name} and scan it.", { name }), detail: filtered, retry: false };
   }
 }

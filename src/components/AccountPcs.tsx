@@ -64,6 +64,7 @@ export function AccountSignIn({
   busy = false,
   busyProvider = null,
   failedProvider = null,
+  nameOnly = false,
 }: {
   readonly onSignIn: (provider: AccountProvider) => void;
   readonly error: string | null;
@@ -72,6 +73,8 @@ export function AccountSignIn({
   readonly busy?: boolean;
   readonly busyProvider?: AccountProvider | null;
   readonly failedProvider?: AccountProvider | null;
+  /** each button names only its provider ("GitHub"), for a screen whose title already says what it is for */
+  readonly nameOnly?: boolean;
 }) {
   const t = useT();
   const [lastProvider, setLastProvider] = useState<AccountProvider | null>(null);
@@ -101,7 +104,7 @@ export function AccountSignIn({
               {isBusy
                 ? <span className="boot-spinner account-provider-mark account-provider-spinner" aria-hidden="true" />
                 : <ProviderMark provider={provider} />}
-              {providerLabel(provider, t)}
+              {nameOnly ? PROVIDER_NAMES[provider] : providerLabel(provider, t)}
             </button>
           );
         })}

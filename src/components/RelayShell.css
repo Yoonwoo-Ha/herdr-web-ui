@@ -53,6 +53,113 @@
   line-height: var(--lh-tight);
 }
 
+.relay-shell-screen.relay-shell-plain {
+  place-items: stretch center;
+  padding-top: max(var(--space-8), 10dvh);
+}
+
+.relay-shell-plain > .relay-shell {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  text-align: center;
+}
+
+/* the app's mark, small and centred, as the screen's one picture */
+.relay-shell-plain .relay-shell-mark {
+  width: calc(var(--space-6) * 2);
+  height: calc(var(--space-6) * 2);
+  margin: 0 auto var(--space-4);
+  border-radius: var(--radius-lg);
+}
+
+/* two lines of one size: what Ovis is, then what this screen asks, quieter */
+.relay-shell-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0;
+  font-size: var(--fs-display);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--lh-tight);
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+
+.relay-shell-hero-quiet {
+  color: var(--text-dim);
+}
+
+.relay-shell-pair-signin {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.relay-shell-pair-signin .account-sign-in {
+  margin-top: var(--space-5);
+}
+
+.relay-shell-pair-signin .account-providers,
+.relay-shell-plain .relay-shell-actions {
+  gap: var(--space-2);
+}
+
+.relay-shell-plain .relay-shell-actions {
+  margin-top: var(--space-5);
+}
+
+/* every way in weighs the same: one height, one radius, the card colour and a hairline; the mark at the start edge */
+.relay-shell-plain .account-provider {
+  height: calc(var(--touch-target) + var(--space-1));
+  min-height: calc(var(--touch-target) + var(--space-1));
+  background: var(--bg-panel);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-cta);
+  color: var(--text-strong);
+  font-weight: var(--fw-medium);
+}
+
+@media (hover: hover) {
+  .relay-shell-plain .account-provider:hover:not(:disabled) {
+    background: var(--bg-hover);
+    border-color: var(--border-strong);
+    color: var(--text-strong);
+  }
+}
+
+.relay-shell-agreement {
+  margin: var(--space-5) 0 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--text-dim);
+  text-align: center;
+  text-wrap: balance;
+}
+
+.relay-shell-agreement a {
+  color: var(--accent);
+}
+
+/* the way out: one small grey link at the foot of the page */
+.relay-shell-plain .relay-shell-actions.relay-shell-quiet {
+  align-items: center;
+  margin-top: auto;
+  padding-top: var(--space-6);
+}
+
+.relay-shell-plain .relay-shell-quiet .btn {
+  width: auto;
+  min-height: var(--touch-target);
+  padding-inline: var(--space-3);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  background: transparent;
+  border-color: transparent;
+}
+
 .relay-shell-copy {
   margin: 0;
   font-size: var(--fs-md);

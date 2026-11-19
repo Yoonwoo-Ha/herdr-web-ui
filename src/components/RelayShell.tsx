@@ -177,6 +177,8 @@ export function RelayShell(props: RelayShellProps) {
   const stateName = state.kind === "failed" ? state.failure : state.kind === "outdated" ? "pc-outdated" : state.kind === "forged" ? "identity-changed" : state.kind;
   const devices = state.kind === "list" ? state.devices : [];
   const local = view === "saved" && state.kind === "list";
+  // a marked pairing's sign-in reads on the plain page with nothing around it
+  const plain = state.kind === "failed" && state.failure === "sign-in-first" && onSignIn !== undefined;
 
   if (account && (account.kind === "signed-in" || local)) {
     const signedIn = account.kind === "signed-in" ? account : null;
@@ -246,7 +248,7 @@ export function RelayShell(props: RelayShellProps) {
   }
 
   return (
-    <main className="relay-shell-screen" data-relay-state={stateName} {...(account ? { "data-account-state": account.kind } : {})}>
+    <main className={plain ? "relay-shell-screen relay-shell-plain" : "relay-shell-screen"} data-relay-state={stateName} {...(account ? { "data-account-state": account.kind } : {})}>
       <div className={signInFirst || state.kind === "compare" ? "relay-shell account-centered" : "relay-shell"}>
         <img src="/icons/icon-192.png?v=sheep1" alt="" width="44" height="44" className="relay-shell-mark" />
         <RelayShellCardContent props={props} view={view} signInFirst={signInFirst} saved={saved} addingPc={addingPc} setSignedOutView={setSignedOutView} setAddingPc={setAddingPc} />
