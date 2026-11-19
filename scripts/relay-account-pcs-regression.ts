@@ -18,6 +18,7 @@ import { FakeAccountService } from "../shared/account-service-fake.ts";
 import type { RemotePairingRequest } from "../shared/machines.ts";
 import { importPublicKey } from "../shared/relay-e2ee.ts";
 import { decodeOffer } from "../shared/relay-offer.ts";
+import { deriveServerId } from "../shared/relay-server-proof.ts";
 import { chromePath } from "./chrome-path.ts";
 import { openSettingsPage } from "./settings-page.ts";
 
@@ -80,6 +81,10 @@ const offered = await fetch(`${bBase}/api/relay/offer`, { method: "POST", header
 const { code: _code, ...offer } = decodeOffer((await offered.json() as { url: string }).url)!;
 await service.fetch(new Request(`${ACCOUNT_SERVICE}/v1/pcs/${offer.server_id}`, { method: "PUT", headers: { authorization: `Bearer ${token}` },
   body: JSON.stringify({ label: "Desk", public_key: bytesToHex(importPublicKey(offer.server_public_key)), relay: offer.relay }) }));
+// a PC of the account that is never on: its relay route answers nobody
+const awayKey = randomBytes(32);
+await service.fetch(new Request(`${ACCOUNT_SERVICE}/v1/pcs/${deriveServerId(awayKey)}`, { method: "PUT", headers: { authorization: `Bearer ${token}` },
+  body: JSON.stringify({ label: "Away", public_key: bytesToHex(awayKey), relay: offer.relay }) }));
 
 const aState = stateDir();
 const aRelay = relayService(aState);
@@ -158,6 +163,9 @@ async function openRelayTab(page: Page) {
   return desk;
 }
 
+/** a PC of the account the sidebar lists under its own because it is not in this app yet */
+const accountRow = (page: Page, name: string) => page.locator(`.account-pc-group[aria-label="PC ${name}"]`);
+
 async function opened(page: Page, name: string): Promise<void> {
   const selected = page.locator(`.machine-title[aria-current="true"][title="${name}"]`);
   const setup = page.locator("dialog.machine-dialog[open]");
@@ -180,18 +188,30 @@ try {
   const pageErrors: string[] = [];
 
   const adding = await signedInWindow(browser, pageErrors);
-  const desk = await openRelayTab(adding.page);
-  const add = desk.getByRole("button", { name: "Add Desk", exact: true });
+  // signed in, with nothing opened: the sidebar lists the account's PCs that are not in this app yet
+  const away = accountRow(adding.page, "Away");
+  await away.getByText("Switched off", { exact: true }).waitFor({ timeout: 30_000 });
+  const checkAway = away.getByRole("button", { name: "Check again", exact: true });
+  const deskRow = accountRow(adding.page, "Desk");
+  const add = deskRow.getByRole("button", { name: "Add Desk", exact: true });
   await add.waitFor();
+  assert.equal(await adding.page.locator(".settings-dialog, .connect-phone-dialog").count(), 0, "no settings or Add a connection was opened for the list");
+  await shot(adding.page, "sidebar");
+  await checkAway.click();
+  // held while that PC is asked again, then offered again since it still does not answer
+  await away.getByRole("button", { name: "Checking…", exact: true }).waitFor();
+  await checkAway.waitFor({ timeout: 30_000 });
+  assert.equal(await away.getByText("Switched off", { exact: true }).count(), 1, "it still reads Switched off");
   const approve = await approver();
   const prompted = remotePrompt();
   await add.click();
-  const digits = (await desk.locator(".relay-account-digits").innerText()).replace(/\s/g, "");
-  assert.match(digits, /^\d{6}$/, "the page shows the six digits to approve");
+  const digits = (await deskRow.locator(".relay-account-digits").innerText()).replace(/\s/g, "");
+  assert.match(digits, /^\d{6}$/, "the sidebar shows the six digits to approve");
   const request = await prompted;
-  assert.ok(request.choices.includes(digits), "B's member is offered the digits the page shows");
+  assert.ok(request.choices.includes(digits), "B's member is offered the digits the sidebar shows");
   assert.equal(await approve(request.id, digits), 200, "B's member approves");
   await opened(adding.page, "Desk");
+  await deskRow.waitFor({ state: "detached" });
   const listed = await (await fetch(`${origin}/api/machines`, { headers: { origin } })).json() as { machines: { kind: string; name: string }[] };
   assert.equal(listed.machines.filter((machine) => machine.kind === "relay" && machine.name === "Desk").length, 1, "A added Desk once");
   await shot(adding.page, "after-add");
@@ -205,7 +225,7 @@ try {
   await shot(connecting.page, "after-connect");
 
   assert.deepEqual(pageErrors, [], "no page error");
-  console.log("PASS Add a connection → Ovis relay: Add pairs this PC with the account's other PC once its member approves, and Connect on a PC already added opens it; both select it in the sidebar with no SSH setup dialog");
+  console.log("PASS the account's PCs: the sidebar lists those not in this app yet with nothing opened, Switched off with Check again for one that does not answer, and its Add pairs once a member approves; Add a connection → Ovis relay's Connect opens one already added; both select it in the sidebar with no SSH setup dialog");
 } catch (error) {
   code = 1;
   console.error("FAIL relay account PCs:", error);
