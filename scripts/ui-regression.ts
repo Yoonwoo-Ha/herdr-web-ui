@@ -767,10 +767,10 @@ try {
     await openSettingsPage(page, "Devices and PCs");
     await page.getByRole("dialog", { name: "Settings" }).getByRole("button", { name: "Add a connection", exact: true }).click();
     const connectSheet = page.getByRole("dialog", { name: "Add a connection", exact: true });
-    await connectSheet.locator('.connect-tabs [data-tab="ssh"]').click();
-    const sshAdd = connectSheet.locator(".connect-ssh-form").getByRole("button", { name: "Add", exact: true });
-    assert.equal(await sshAdd.isDisabled(), true, "Add waits for an SSH address");
-    await connectSheet.getByLabel("Or type an SSH address", { exact: true }).fill("qa@pc.invalid");
+    await connectSheet.locator('.connect-tabs [data-tab="direct"]').click();
+    const sshAdd = connectSheet.locator(".connect-ssh-form").getByRole("button", { name: "Connect", exact: true });
+    assert.equal(await sshAdd.isDisabled(), true, "Connect waits for an address");
+    await connectSheet.getByLabel("Address or SSH", { exact: true }).fill("qa@pc.invalid");
     await sshAdd.click();
     await page.getByRole("dialog", { name: "Add PC", exact: true }).waitFor();
     assert.equal(await page.getByRole("dialog", { name: "Add PC", exact: true }).getByLabel("SSH alias or user@address", { exact: true }).inputValue(), "qa@pc.invalid", "Add PC opens with the typed address");

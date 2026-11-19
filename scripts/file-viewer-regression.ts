@@ -488,9 +488,9 @@ try {
   await openSettingsPage(page, "Devices and PCs");
   await settingsOverPreview.getByRole("button", { name: "Add a connection", exact: true }).click();
   const connectDevice = page.getByRole("dialog", { name: "Add a connection", exact: true });
-  await connectDevice.locator('.connect-tabs [data-tab="ssh"]').click();
-  await connectDevice.getByLabel("Or type an SSH address", { exact: true }).fill("qa@pc.invalid");
-  await connectDevice.locator(".connect-ssh-form").getByRole("button", { name: "Add", exact: true }).click();
+  await connectDevice.locator('.connect-tabs [data-tab="direct"]').click();
+  await connectDevice.getByLabel("Address or SSH", { exact: true }).fill("qa@pc.invalid");
+  await connectDevice.locator(".connect-ssh-form").getByRole("button", { name: "Connect", exact: true }).click();
   const addPc = page.locator("dialog.machine-dialog");
   await addPc.waitFor();
   await settingsOverPreview.waitFor({ state: "hidden" });

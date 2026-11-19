@@ -158,9 +158,9 @@ function relayUi(page: Page) {
       await relayGroup.waitFor();
     },
     sheet,
-    tabs: sheet.locator(".connect-tabs [data-tab]"),
-    async openTab(name: "ssh" | "devices" | "relay"): Promise<void> {
-      await sheet.locator(`.connect-tabs [data-tab="${name}"]`).click();
+    tabs: sheet.locator(".connect-ways [data-tab]"),
+    async openTab(name: "relay" | "tailscale" | "direct" | "devices"): Promise<void> {
+      await sheet.locator(`.connect-ways [data-tab="${name}"]`).click();
       await sheet.locator(`[data-tab-panel="${name}"]`).waitFor();
     },
     relayTab,
@@ -212,13 +212,18 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     await dialog.locator('.settings-fold[data-fold="more"] > summary').click();
 
     await connect.click();
-    await sheet.locator('[data-tab-panel="ssh"]').waitFor();
+    await sheet.locator('[data-tab-panel="relay"]').waitFor();
     assert.equal(await sheet.getByRole("group", { name: "How to connect", exact: true }).count(), 1, "the tabs are one labelled group");
     assert.deepEqual(await tabs.evaluateAll((buttons) => buttons.map((button) => [button.getAttribute("data-tab"), button.textContent, button.getAttribute("aria-pressed")])),
-      [["ssh", "SSH", "true"], ["devices", "Phones and devices", "false"], ["relay", "Ovis relay", "false"]], "an owner's PC window gets SSH, Phones and devices and Ovis relay, opened on SSH");
+      [["relay", "Ovis relay", "true"], ["tailscale", "Tailscale", "false"], ["direct", "Direct", "false"], ["devices", "Phones and devices", "false"]], "an owner's PC window gets Ovis relay, Tailscale and Direct, then Phones and devices apart, opened on the relay");
     assert.equal(await sheet.locator(".connect-other, .connect-way, .connect-way-body, .connect-phone-relay, .tailnet-pcs").count(), 0, "no other ways fold, no ways list, no relay pairing QR code and no tailnet PCs");
     assert.equal(await sheet.getByRole("img", { name: "QR code that pairs a phone through the relay", exact: true }).count(), 0, "the sheet offers no relay pairing QR code");
     assert.equal((await relayState()).phase, "off", "opening the sheet turns nothing on");
+    assert.equal(await sheet.locator('.connect-tabs [data-tab="devices"]').count(), 0, "Phones and devices sits beside the tabs, not among them");
+    await ui.openTab("tailscale");
+    assert.equal(await sheet.locator('[data-tab-panel="relay"]').isHidden(), true, "Tailscale takes the relay tab's place");
+    await ui.openTab("direct");
+    await sheet.getByLabel("Address or SSH", { exact: true }).waitFor();
 
     await ui.openTab("relay");
     const signInButton = relayTab.getByTestId("connect-signin").getByRole("button", { name: "Sign in to Ovis", exact: true });
@@ -322,7 +327,7 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     assert.equal(await relayQr.count(), 1, "the QR code stays up");
     assert.equal(await sheet.isVisible(), true, "and the sheet stays open");
     const codeEnded = answered(page, "/api/devices/pair/cancel");
-    await ui.openTab("ssh");
+    await ui.openTab("direct");
     assert.equal((await codeEnded).status(), 200, "another tab ends the QR code's pairing code");
     await ui.openTab("relay");
     await accountQr.getByRole("button", { name: "Show a new code", exact: true }).waitFor();

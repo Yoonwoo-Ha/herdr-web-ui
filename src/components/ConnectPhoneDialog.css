@@ -86,8 +86,44 @@
   color: var(--text);
 }
 
-.connect-tabs {
+/* the three ways to add a PC, and pairing a phone apart at their end */
+.connect-ways {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
   align-self: stretch;
+}
+
+/* on a narrow phone the tabs keep the row, and pairing a phone goes under them */
+.connect-tabs {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.connect-phone-way {
+  flex: none;
+}
+
+.connect-phone-way[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--bg-elevated);
+}
+
+.connect-picks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.connect-picks-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.connect-outside-help {
+  align-self: flex-start;
 }
 
 .connect-tabs > button {
@@ -265,7 +301,8 @@
     flex-basis: 100%;
   }
 
-  .connect-found-source {
+  .connect-found-source,
+  .connect-found-row > :last-child:not(.connect-found-detail) {
     margin-inline-start: auto;
   }
 }

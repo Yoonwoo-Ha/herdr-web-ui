@@ -35,8 +35,16 @@ import { SettingsQuery, Toggle } from "./SettingsControls.tsx";
 import { PortalPanel } from "./PortalPanel.tsx";
 import { usePortal } from "../lib/portal.ts";
 import { CompactPair } from "./CompactPair.tsx";
+import { ExternalLink } from "../lib/externalLink.ts";
 
-export type ConnectTab = "ssh" | "devices" | "relay";
+/** The ways to add a PC are the tabs (the relay, Tailscale, a typed address); pairing a phone sits apart, after them. */
+export type ConnectTab = "relay" | "tailscale" | "direct" | "devices";
+
+/** the guide's way to open a PC from outside: Portal, Cloudflare Tunnel or a reverse proxy */
+const OUTSIDE_HELP = "https://github.com/devswha/ovis/blob/main/docs/guide.md#behind-a-reverse-proxy";
+
+/** an address the direct tab takes for another PC's Ovis rather than SSH: any http(s) scheme, as a browser reads `https:host` too */
+const OVIS_ADDRESS = /^https?:/i;
 
 const PHONE_QUERY = "(pointer: coarse), (max-width: 768px)";
 
@@ -54,16 +62,22 @@ export const relayOffered = (relay: RelayState): boolean => !relay.unsupported &
 const relayOn = (relay: RelayState): boolean => relay.status !== null && relay.status.blocked === null && relay.status.phase !== "off";
 
 /**
- * SSH is the owner's, on a page of this PC (not the hosted shell, not a device that only watches); the relay's tab is
- * the owner's on a direct page of a PC that has the relay.
+ * The relay's tab is the owner's on a direct page of a PC that has the relay; Tailscale and a typed address go over
+ * SSH, the owner's on a page of this PC (not the hosted shell, not a device that only watches).
  */
 export function connectTabs({ sshOffered, relay, readOnly }: { sshOffered: boolean; relay: RelayState; readOnly: boolean }): ConnectTab[] {
-  return [...(sshOffered ? ["ssh" as const] : []), "devices", ...(relayOffered(relay) && !readOnly ? ["relay" as const] : [])];
+  return [...(relayOffered(relay) && !readOnly ? ["relay" as const] : []), ...(sshOffered ? ["tailscale" as const, "direct" as const] : []), "devices"];
 }
 
+/**
+ * The tab the dialog shows until one is picked: a phone mostly pairs itself; a PC's window the relay, but only where the
+ * page has the Ovis account. Without it the relay tab is the relay's own pairing, which makes a code as it opens and
+ * would replace one another window shows, so the window opens on the first way that asks nothing of the PC.
+ */
 export function openingTab({ tabs, phone, noticeWaiting, hasAccount }: { tabs: readonly ConnectTab[]; phone: boolean; noticeWaiting: boolean; hasAccount: boolean }): ConnectTab {
   if (noticeWaiting && hasAccount && tabs.includes("relay")) return "relay";
-  return phone && tabs.includes("devices") ? "devices" : tabs[0]!;
+  if (phone && tabs.includes("devices")) return "devices";
+  return tabs.find((way) => way !== "relay" || hasAccount) ?? tabs[0]!;
 }
 
 export interface RelayAccount {
@@ -126,17 +140,20 @@ export function ConnectPhoneDialog({ plan, pairUrl, relay, readOnly, closesGate,
   const phone = useMediaQuery(PHONE_QUERY);
   const tabs = connectTabs({ sshOffered: onAddPc !== null && !readOnly && !inRelayShell(), relay, readOnly });
   const hasAccount = account !== null;
-  const [chosen, setChosen] = useState<ConnectTab>(() => openingTab({ tabs, phone, noticeWaiting: accountQrNoticeWaiting(), hasAccount }));
+  // until a tab is picked, the opening one follows the tabs as they arrive (the relay's state comes a moment later)
+  const [chosen, setChosen] = useState<ConnectTab | null>(() => accountQrNoticeWaiting() && hasAccount ? "relay" : null);
+  const found = useFoundPcs(machines, tabs.includes("tailscale"));
   useEffect(() => {
     if (!hasAccount) return;
     const onWatch = (event: Event) => { if ((event as CustomEvent<{ notice: boolean }>).detail.notice) setChosen("relay"); };
     window.addEventListener(ACCOUNT_QR_WATCH_EVENT, onWatch);
     return () => window.removeEventListener(ACCOUNT_QR_WATCH_EVENT, onWatch);
   }, [hasAccount]);
-  const tab = tabs.includes(chosen) ? chosen : tabs[0]!;
+  const tab = chosen !== null && tabs.includes(chosen) ? chosen : openingTab({ tabs, phone, noticeWaiting: false, hasAccount });
   const opened = useRef(new Set<ConnectTab>());
   opened.current.add(tab);
-  const label: Record<ConnectTab, string> = { ssh: "SSH", devices: t("Phones and devices"), relay: t("Ovis relay") };
+  const label: Record<ConnectTab, string> = { relay: t("Ovis relay"), tailscale: "Tailscale", direct: t("Direct"), devices: t("Phones and devices") };
+  const ways = tabs.filter((way) => way !== "devices");
 
   return createPortal(
     <SettingsQuery.Provider value={[]}>
@@ -147,14 +164,22 @@ export function ConnectPhoneDialog({ plan, pairUrl, relay, readOnly, closesGate,
           <button type="button" className="icon-button" aria-label={t("Close")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         <div className="modal-body connect-phone-body">
-          {tabs.length > 1 && (
-            <div className="segmented connect-tabs" role="group" aria-label={t("How to connect")}>
-              {tabs.map((way) => <button key={way} type="button" aria-pressed={tab === way} data-tab={way} onClick={() => setChosen(way)}>{label[way]}</button>)}
+          {ways.length > 0 && (
+            <div className="connect-ways">
+              <div className="segmented connect-tabs" role="group" aria-label={t("How to connect")}>
+                {ways.map((way) => <button key={way} type="button" aria-pressed={tab === way} data-tab={way} onClick={() => setChosen(way)}>{label[way]}</button>)}
+              </div>
+              <button type="button" className="btn btn-ghost connect-phone-way" aria-pressed={tab === "devices"} data-tab="devices" onClick={() => setChosen("devices")}>{label.devices}</button>
             </div>
           )}
-          {opened.current.has("ssh") && tabs.includes("ssh") && (
-            <div className="connect-tab" data-tab-panel="ssh" hidden={tab !== "ssh"}>
-              <SshTab machines={machines} onAddPc={onAddPc!} onConnectMachine={onConnectMachine} />
+          {opened.current.has("tailscale") && tabs.includes("tailscale") && (
+            <div className="connect-tab" data-tab-panel="tailscale" hidden={tab !== "tailscale"}>
+              <TailscaleTab found={found} onAddPc={onAddPc!} />
+            </div>
+          )}
+          {opened.current.has("direct") && tabs.includes("direct") && (
+            <div className="connect-tab" data-tab-panel="direct" hidden={tab !== "direct"}>
+              <DirectTab found={found} machines={machines} onAddPc={onAddPc!} onConnectMachine={onConnectMachine} />
             </div>
           )}
           {opened.current.has("devices") && (
@@ -175,93 +200,163 @@ export function ConnectPhoneDialog({ plan, pairUrl, relay, readOnly, closesGate,
   );
 }
 
-type FoundSource = "herdr" | SshCandidate["source"];
-const SOURCE_LABEL: Record<FoundSource, string> = { herdr: "herdr", ssh_config: "ssh config", tailscale: "Tailscale" };
+/** What the PCs this PC could reach over SSH say for one of them: added already, its Ovis too old, still being asked, or open to add. */
+type FoundPcState = "added" | "outdated" | "waiting" | "open";
 
 /**
- * SSH: the PCs found, each with Connect (saved in herdr, its own dialog), Add (Add PC with its address) or Added,
- * then a field for any other address. A window the server will not tell (an open LAN window, Portal, the relay)
- * gets the field; one refused as owner_only (an open LAN window: the relay shell and a Portal visitor show no SSH tab)
- * is told where the list can be seen, so an empty tab is not taken for a PC that knows none.
+ * The PCs this PC's server could reach over SSH (its ssh config, its Tailscale login), for the Tailscale and direct
+ * tabs. A window the server will not tell (owner_only, read_only) gets an empty list that says nothing of the PC
+ * (`unread`); one refused as owner_only is told where the list can be seen, so an empty tab is not taken for a PC that
+ * knows none.
  */
-export function SshTab({ machines, onAddPc, onConnectMachine }: { machines: readonly Machine[]; onAddPc: (preset?: AddPcPreset) => void; onConnectMachine: (machine: Machine) => void }) {
-  const t = useT();
+export type FoundPcs = ReturnType<typeof useFoundPcs>;
+
+/** read once per dialog, for both tabs, so their lists, version rules and retry agree; `enabled` false reads nothing */
+export function useFoundPcs(machines: readonly Machine[], enabled = true) {
   const [found, setFound] = useState<SshCandidate[] | null>(null);
   const [failed, setFailed] = useState(false);
+  // refused or failed: the empty list is not the PC's answer
+  const [unread, setUnread] = useState(false);
   // the server keeps its list from this window (owner_only): one line above the field says where it can be seen
   const [withheld, setWithheld] = useState(false);
   const [reads, setReads] = useState(0);
-  const [typed, setTyped] = useState("");
   const [outdated, setOutdated] = useState<ReadonlySet<string>>(new Set());
   const [tailnetRead, setTailnetRead] = useState(false);
   useEffect(() => {
+    if (!enabled) return;
     let live = true;
     setTailnetRead(false);
     findTailnetPcs().then(({ pcs }) => {
       if (live) setOutdated(new Set(pcs.filter((pc) => pc.outdated).map((pc) => new URL(pc.url).hostname.toLowerCase())));
     }, () => undefined).finally(() => { if (live) setTailnetRead(true); });
     return () => { live = false; };
-  }, [reads]);
+  }, [reads, enabled]);
   useEffect(() => {
+    if (!enabled) return;
     let live = true;
     setFailed(false);
+    setUnread(false);
     setWithheld(false);
     findSshCandidates().then(({ pcs }) => { if (live) setFound(pcs); }, (error: unknown) => {
       const refused = error instanceof ApiError && (error.code === "owner_only" || error.code === "read_only");
       if (!refused) console.warn("Ovis: the PCs to add over SSH could not be read", error instanceof Error ? error.name : error);
       if (!live) return;
       setFound([]);
+      setUnread(true);
       setFailed(!refused);
       // a watching device (read_only) adds no PC: it is told nothing new
       setWithheld(error instanceof ApiError && error.code === "owner_only");
     });
     return () => { live = false; };
-  }, [reads]);
-  const saved = machines.filter((machine) => machine.herdr_profile_id !== undefined && machine.action_required === "connect");
-  const added = (destination: string) => machines.some(({ target }) => target?.destination === destination && (target.port ?? 22) === 22 && target.session === undefined);
-  const add = (event: FormEvent) => {
-    event.preventDefault();
-    const destination = typed.trim();
-    if (destination !== "") onAddPc({ destination });
-  };
-  const row = (key: string, name: string, detail: string | null, source: FoundSource, action: ReactNode) => (
-    <li key={key} className="connect-found-row">
-      <span className="connect-found-name">{name}</span>
-      {detail !== null && <span className="connect-found-detail">{detail}</span>}
-      <span className="connect-found-source">{SOURCE_LABEL[source]}</span>
-      {action}
-    </li>
-  );
+  }, [reads, enabled]);
+  // a found PC is Added only as Add would add it: its own address, on ssh's default port and herdr's default session
+  const stateOf = (pc: SshCandidate): FoundPcState =>
+    machines.some(({ target }) => target?.destination === pc.destination && (target.port ?? 22) === 22 && target.session === undefined) ? "added"
+    : pc.tailnet !== undefined && outdated.has(pc.tailnet.toLowerCase()) ? "outdated"
+    // until the Tailscale PCs' Ovis is known (it asks each PC, a few seconds), one of them waits, so an older one is not added
+    : pc.tailnet !== undefined && !tailnetRead ? "waiting"
+    : "open";
+  const retry = () => { setFound(null); setReads((count) => count + 1); };
+  return { found, unread, failed, withheld, stateOf, retry };
+}
+
+/** The found list's failure with Try again, or where a list this window is refused can be seen. */
+function FoundPcsTrouble({ failed, withheld, retry }: { failed: boolean; withheld: boolean; retry: () => void }) {
+  const t = useT();
   return (
     <>
-      <p className="settings-description">{t("Add another PC over SSH.")}</p>
-      {found === null ? <p className="settings-hint" role="status">{t("Looking for PCs…")}</p> : (saved.length > 0 || found.length > 0) && (
-        <div className="connect-found">
-          <ul className="connect-found-list">
-            {saved.map((machine) => row(`herdr:${machine.id}`, machine.name, machine.target?.destination ?? null, "herdr",
-              <button type="button" className="btn" onClick={() => onConnectMachine(machine)}>{t("Connect")}</button>))}
-            {found.map((pc) => row(`${pc.source}:${pc.destination}`, pc.name, pc.detail, pc.source, added(pc.destination)
-              ? <span className="connect-found-added"><Check aria-hidden="true" />{t("Added")}</span>
-              : pc.tailnet !== undefined && outdated.has(pc.tailnet.toLowerCase())
-              ? <span className="settings-hint">{t("Update Ovis on that PC to 0.5 first.")}</span>
-              : <button type="button" className="btn" disabled={pc.tailnet !== undefined && !tailnetRead} aria-label={t("Add {name}", { name: pc.name })} onClick={() => onAddPc({ destination: pc.destination, name: pc.name })}>{t("Add")}</button>))}
-          </ul>
-        </div>
-      )}
       {failed && (
         <div className="connect-found-failed" role="alert">
           <p className="settings-hint">{t("The PCs this PC knows could not be read.")}</p>
-          <button type="button" className="btn" onClick={() => { setFound(null); setReads((count) => count + 1); }}><RefreshCw aria-hidden="true" />{t("Try again")}</button>
+          <button type="button" className="btn" onClick={retry}><RefreshCw aria-hidden="true" />{t("Try again")}</button>
         </div>
       )}
       {withheld && <p className="settings-hint" role="status">{t("See the PCs this PC knows on this PC itself, or from a device paired with it directly.")}</p>}
+    </>
+  );
+}
+
+/**
+ * Tailscale: the other PCs of this PC's Tailscale login (a config host that reaches one stands for it). Connect opens
+ * Add PC with its address, which goes over SSH with nothing to install there first; never through the relay.
+ */
+export function TailscaleTab({ found: { found, unread, failed, withheld, stateOf, retry }, onAddPc }: { found: FoundPcs; onAddPc: (preset?: AddPcPreset) => void }) {
+  const t = useT();
+  const pcs = found?.filter((pc) => pc.source === "tailscale" || pc.tailnet !== undefined) ?? null;
+  return (
+    <>
+      <p className="settings-description">{t("The PCs of this Tailscale login. Connect goes over SSH, with nothing to install there.")}</p>
+      {pcs === null ? <p className="settings-hint" role="status">{t("Looking for PCs…")}</p>
+        : pcs.length > 0 ? (
+          <div className="connect-found">
+            <ul className="connect-found-list">
+              {pcs.map((pc) => {
+                const state = stateOf(pc);
+                return (
+                  <li key={`${pc.source}:${pc.destination}`} className="connect-found-row">
+                    <span className="connect-found-name">{pc.name}</span>
+                    <span className="connect-found-detail">{pc.tailnet ?? pc.detail ?? pc.destination}</span>
+                    {state === "added" ? <span className="connect-found-added"><Check aria-hidden="true" />{t("Added")}</span>
+                      : state === "outdated" ? <span className="settings-hint">{t("Update Ovis on that PC to 0.5 first.")}</span>
+                      : <button type="button" className="btn" disabled={state === "waiting"} aria-label={`${t("Connect")} ${pc.name}`} onClick={() => onAddPc({ destination: pc.destination, name: pc.name })}>{t("Connect")}</button>}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ) : !unread && <p className="settings-hint" role="status">{t("No other PC of this Tailscale login was found.")}</p>}
+      <FoundPcsTrouble failed={failed} withheld={withheld} retry={retry} />
+    </>
+  );
+}
+
+/**
+ * Direct: one field for an address. An SSH alias, user@host or a tailnet name opens Add PC with it (the host's
+ * fingerprint first); an https:// address, another PC's Ovis in this window, is not taken yet and says so. Under it
+ * the hosts of this PC's ssh config and the PCs saved in herdr, one press each, and the guide's way to open a PC from
+ * outside.
+ */
+export function DirectTab({ found: { found, failed, withheld, stateOf, retry }, machines, onAddPc, onConnectMachine }: { found: FoundPcs; machines: readonly Machine[]; onAddPc: (preset?: AddPcPreset) => void; onConnectMachine: (machine: Machine) => void }) {
+  const t = useT();
+  const id = useId();
+  const [typed, setTyped] = useState("");
+  const address = typed.trim();
+  const ovis = OVIS_ADDRESS.test(address);
+  const saved = machines.filter((machine) => machine.herdr_profile_id !== undefined && machine.action_required === "connect");
+  const hosts = (found?.filter((pc) => pc.source === "ssh_config") ?? []).map((pc) => ({ pc, state: stateOf(pc) }));
+  const outdated = hosts.filter(({ state }) => state === "outdated").map(({ pc }) => pc.name);
+  const add = (event: FormEvent) => {
+    event.preventDefault();
+    if (address !== "" && !ovis) onAddPc({ destination: address });
+  };
+  return (
+    <>
       <form className="connect-ssh-form" onSubmit={add}>
-        <label className="settings-label" htmlFor="connect-ssh-address">{t("Or type an SSH address")}</label>
+        <label className="settings-label" htmlFor={`${id}-address`}>{t("Address or SSH")}</label>
         <div className="connect-ssh-field">
-          <input id="connect-ssh-address" className="input" type="text" value={typed} placeholder="user@host" autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" onChange={(event) => setTyped(event.target.value)} />
-          <button type="submit" className="btn" disabled={typed.trim() === ""}>{t("Add")}</button>
+          <input id={`${id}-address`} className="input" type="text" value={typed} placeholder="user@host, desk.tailnet.ts.net, https://…" autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" aria-describedby={address === "" ? undefined : `${id}-kind`} onChange={(event) => setTyped(event.target.value)} />
+          <button type="submit" className="btn" disabled={address === "" || ovis}>{t("Connect")}</button>
         </div>
+        {address !== "" && <p className="settings-hint" id={`${id}-kind`} role="status" data-address-kind={ovis ? "ovis" : "ssh"}>{ovis
+          ? t("Opening another PC's Ovis here by its address is coming soon. For now, connect over SSH or the Ovis relay.")
+          : t("An SSH address: Connect checks that PC's fingerprint first.")}</p>}
       </form>
+      {(saved.length > 0 || hosts.length > 0) && (
+        <section className="connect-picks" aria-label="ssh config">
+          <p className="settings-label">ssh config</p>
+          <div className="connect-picks-list">
+            {saved.map((machine) => <button key={`herdr:${machine.id}`} type="button" className="btn" title={machine.target?.destination} onClick={() => onConnectMachine(machine)}>{machine.name}</button>)}
+            {hosts.map(({ pc, state }) => state === "added"
+              ? <span key={pc.destination} className="connect-found-added" data-pick-state={state}><Check aria-hidden="true" />{pc.name} · {t("Added")}</span>
+              : <button key={pc.destination} type="button" className="btn" disabled={state !== "open"} data-pick-state={state} title={pc.detail ?? undefined}
+                  onClick={() => onAddPc({ destination: pc.destination, name: pc.name })}>{pc.name}</button>)}
+          </div>
+          {outdated.length > 0 && <p className="settings-hint">{outdated.join(", ")}: {t("Update Ovis on that PC to 0.5 first.")}</p>}
+        </section>
+      )}
+      {found === null && <p className="settings-hint" role="status">{t("Looking for PCs…")}</p>}
+      <FoundPcsTrouble failed={failed} withheld={withheld} retry={retry} />
+      <ExternalLink kind="link" className="settings-hint connect-outside-help" href={OUTSIDE_HELP}>{t("Open a PC from outside with Portal or Cloudflare (guide)")}</ExternalLink>
     </>
   );
 }
@@ -366,6 +461,7 @@ export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBy
       <div ref={signInView} className="connect-signin" data-testid="connect-signin" data-bare={bare || undefined}>
         {signInStatus}
         {joinBySignIn && onConnectMachine && <RelayAccountPcs machines={machines} onConnectMachine={onConnectMachine} />}
+        {joinBySignIn && <p className="settings-hint">{t("On another PC, sign in with the same account.")}</p>}
         {pcIn !== null ? (
           !bare && <>{relaySwitch}{switchFailure}{startFailure}</>
         ) : (

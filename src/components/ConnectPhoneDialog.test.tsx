@@ -18,7 +18,7 @@ import { QrCode } from "./QrCode.tsx";
 
 // the confirmation before Revoke all is a portal on document.body, which this renderer has none of
 await mock.module("react-dom", () => ({ ...ReactDom, createPortal: (node: ReactNode) => node }));
-const { ACCOUNT_QR_HIDDEN_MS, ACCOUNT_QR_MAX_MS, CodeRoute, connectTabs, openingTab, RelayRoute, RelayTab, sameNameRelayDevice, SshTab } = await import("./ConnectPhoneDialog.tsx");
+const { ACCOUNT_QR_HIDDEN_MS, ACCOUNT_QR_MAX_MS, CodeRoute, connectTabs, openingTab, RelayRoute, RelayTab, sameNameRelayDevice, TailscaleTab, DirectTab, useFoundPcs } = await import("./ConnectPhoneDialog.tsx");
 const { ConfirmDialog } = await import("./ConfirmDialog.tsx");
 const { announcePairingCode, QR_CODE_ENDED_CHANNEL, useRelay } = await import("../lib/useRelay.ts");
 const { ACCOUNT_QR_ALONE_MS, ACCOUNT_QR_LATE_MS, ACCOUNT_QR_POLL_MS, accountQrFindings, accountQrNoticeWaiting, addedBy, accountQrPending, resetAccountQrWatch, unvouched } = await import("../lib/accountQrWatch.ts");
@@ -419,66 +419,165 @@ describe("Connect a phone on a phone", () => {
     expect(qrCodes()).toHaveLength(0);
   });
 
-  it("offers only the ways this window can use: SSH where PCs are added from, the relay to its owner on a direct page", () => {
+  it("offers only the ways this window can use: the relay to its owner on a direct page, Tailscale and an address where PCs are added from", () => {
     const off = relayState({ ...ONLINE, phase: "off" });
-    expect(connectTabs({ sshOffered: true, relay: off, readOnly: false })).toEqual(["ssh", "devices", "relay"]);
-    expect(connectTabs({ sshOffered: false, relay: relayState(), readOnly: false })).toEqual(["devices", "relay"]);
-    expect(connectTabs({ sshOffered: true, relay: { ...off, unsupported: true }, readOnly: false })).toEqual(["ssh", "devices"]);
+    expect(connectTabs({ sshOffered: true, relay: off, readOnly: false })).toEqual(["relay", "tailscale", "direct", "devices"]);
+    expect(connectTabs({ sshOffered: false, relay: relayState(), readOnly: false })).toEqual(["relay", "devices"]);
+    expect(connectTabs({ sshOffered: true, relay: { ...off, unsupported: true }, readOnly: false })).toEqual(["tailscale", "direct", "devices"]);
     // a watching device or a Portal visitor cannot use the relay, and the hosted shell already is on it
     expect(connectTabs({ sshOffered: false, relay: relayState(), readOnly: true })).toEqual(["devices"]);
     shellMeta = true;
     expect(connectTabs({ sshOffered: false, relay: relayState(), readOnly: false })).toEqual(["devices"]);
   });
 
-  it("opens on the relay tab for a waiting notice only where that tab can show it: a page with the Ovis account", () => {
-    const all = ["ssh", "devices", "relay"] as const;
-    expect(openingTab({ tabs: all, phone: false, noticeWaiting: true, hasAccount: true })).toBe("relay");
-    expect(openingTab({ tabs: all, phone: false, noticeWaiting: true, hasAccount: false })).toBe("ssh");
+  it("opens a PC's window on its first way and a phone on pairing itself; a waiting notice on the relay tab only where it can show it", () => {
+    const all = ["relay", "tailscale", "direct", "devices"] as const;
+    expect(openingTab({ tabs: all, phone: false, noticeWaiting: false, hasAccount: true })).toBe("relay");
+    // without the account the relay tab is the relay's own pairing, which makes a code as it opens: not opened on it
+    expect(openingTab({ tabs: all, phone: false, noticeWaiting: false, hasAccount: false })).toBe("tailscale");
+    expect(openingTab({ tabs: ["relay", "devices"], phone: false, noticeWaiting: false, hasAccount: false })).toBe("devices");
     expect(openingTab({ tabs: all, phone: true, noticeWaiting: true, hasAccount: false })).toBe("devices");
-    expect(openingTab({ tabs: ["ssh", "devices"], phone: false, noticeWaiting: true, hasAccount: true })).toBe("ssh");
-    expect(openingTab({ tabs: all, phone: true, noticeWaiting: false, hasAccount: true })).toBe("devices");
+    expect(openingTab({ tabs: all, phone: true, noticeWaiting: true, hasAccount: true })).toBe("relay");
+    expect(openingTab({ tabs: ["tailscale", "direct", "devices"], phone: false, noticeWaiting: true, hasAccount: true })).toBe("tailscale");
   });
 
-  it("lists the PCs found over SSH: Add opens Add PC with that address, an added one says so, a herdr PC connects", async () => {
+  const ssh = (destination: string, extra: Partial<Machine> = {}): Machine => ({ id: destination, name: destination, kind: "ssh", target: { destination }, enabled: true, state: "disconnected", error: null, snapshot: null, ...extra });
+  const flushReads = async () => { for (let flush = 0; flush < 3; flush += 1) await act(async () => {}); };
+  // the dialog reads the found PCs once for both tabs (useFoundPcs)
+  function Tailscale({ machines, onAddPc }: { machines: readonly Machine[]; onAddPc: (preset?: AddPcPreset) => void }) {
+    return <TailscaleTab found={useFoundPcs(machines)} onAddPc={onAddPc} />;
+  }
+  function Direct({ machines, onAddPc, onConnectMachine }: { machines: readonly Machine[]; onAddPc: (preset?: AddPcPreset) => void; onConnectMachine: (machine: Machine) => void }) {
+    return <DirectTab found={useFoundPcs(machines)} machines={machines} onAddPc={onAddPc} onConnectMachine={onConnectMachine} />;
+  }
+  function Both({ machines }: { machines: readonly Machine[] }) {
+    const found = useFoundPcs(machines);
+    return <><TailscaleTab found={found} onAddPc={() => undefined} /><DirectTab found={found} machines={machines} onAddPc={() => undefined} onConnectMachine={() => undefined} /></>;
+  }
+
+  it("lists only the PCs of the Tailscale login: Connect opens Add PC with that address, an added one says so", async () => {
+    tailnetOutdated = false;
+    const added: (AddPcPreset | undefined)[] = [];
+    await mount(<Tailscale machines={[]} onAddPc={(preset) => { added.push(preset); }} />);
+    await flushReads();
+    expect(requests).toContain("/api/machines/ssh-candidates");
+    expect(text(renderer!.root)).not.toContain("nuc12");
+    await act(async () => { renderer!.root.findByProps({ "aria-label": "Connect winvm" }).props.onClick(); });
+    expect(added).toEqual([{ destination: "winvm.tail.ts.net", name: "winvm" }]);
+    await act(async () => { renderer!.unmount(); });
+    await mount(<Tailscale machines={[ssh("winvm.tail.ts.net", { state: "connected" })]} onAddPc={() => undefined} />);
+    await flushReads();
+    expect(renderer!.root.findAllByProps({ "aria-label": "Connect winvm" })).toHaveLength(0);
+    expect(text(renderer!.root)).toContain("Added");
+  });
+
+  it("holds a Tailscale PC's Connect until its Ovis is known, so an older one is not added meanwhile", async () => {
+    let answer = () => undefined as void;
+    tailnetAnswer = new Promise((resolve) => { answer = resolve; });
+    tailnetOutdated = false;
+    await mount(<Tailscale machines={[]} onAddPc={() => undefined} />);
+    await flushReads();
+    expect(renderer!.root.findByProps({ "aria-label": "Connect winvm" }).props.disabled).toBe(true);
+    await act(async () => { answer(); });
+    await flushReads();
+    expect(renderer!.root.findByProps({ "aria-label": "Connect winvm" }).props.disabled).toBe(false);
+  });
+
+  it("tells a Tailscale PC with an older Ovis, and an ssh config host that reaches it, to update it there instead of offering Connect", async () => {
+    extraCandidates = [{ name: "lab", destination: "lab", detail: "rise@winvm.tail.ts.net", source: "ssh_config", tailnet: "winvm.tail.ts.net" }];
+    await mount(<Tailscale machines={[]} onAddPc={() => undefined} />);
+    await flushReads();
+    expect(renderer!.root.findAllByProps({ "aria-label": "Connect winvm" })).toHaveLength(0);
+    expect(renderer!.root.findAll((node) => node.type === "span" && text(node) === "Update Ovis on that PC to 0.5 first.")).toHaveLength(2);
+  });
+
+  it("takes one typed address: an SSH one opens Add PC, an https:// one is not taken yet and says so", async () => {
+    const added: (AddPcPreset | undefined)[] = [];
+    await mount(<Direct machines={[]} onAddPc={(preset) => { added.push(preset); }} onConnectMachine={() => undefined} />);
+    await flushReads();
+    const type = async (value: string) => { await act(async () => { renderer!.root.findByType("input").props.onChange({ target: { value } }); }); };
+    const submit = async () => { await act(async () => { renderer!.root.findByType("form").props.onSubmit({ preventDefault() {} }); }); };
+    const kind = () => renderer!.root.findAll((node) => node.props["data-address-kind"] !== undefined).map((node) => node.props["data-address-kind"]);
+    expect(kind()).toEqual([]);
+    await type("https://desk.tail.ts.net:7317");
+    expect(kind()).toEqual(["ovis"]);
+    expect(renderer!.root.findByProps({ type: "submit" }).props.disabled).toBe(true);
+    await submit();
+    expect(added).toEqual([]);
+    for (const written of ["https:desk.tail.ts.net", "HTTP:/desk"]) {
+      await type(written);
+      expect(kind()).toEqual(["ovis"]);
+      await submit();
+    }
+    expect(added).toEqual([]);
+    await type(" dev@10.0.0.5 ");
+    expect(kind()).toEqual(["ssh"]);
+    await submit();
+    expect(added).toEqual([{ destination: "dev@10.0.0.5" }]);
+  });
+
+  it("offers the ssh config hosts and the PCs saved in herdr one press each, and the guide for opening a PC from outside", async () => {
     const added: (AddPcPreset | undefined)[] = [];
     const connected: string[] = [];
-    const ssh = (destination: string, extra: Partial<Machine> = {}): Machine => ({ id: destination, name: destination, kind: "ssh", target: { destination }, enabled: true, state: "disconnected", error: null, snapshot: null, ...extra });
-    const machines = [ssh("winvm.tail.ts.net", { state: "connected" }), ssh("build-box", { herdr_profile_id: "p1", action_required: "connect" })];
-    await mount(<SshTab machines={machines} onAddPc={(preset) => { added.push(preset); }} onConnectMachine={(machine) => { connected.push(machine.id); }} />);
-    expect(requests).toContain("/api/machines/ssh-candidates");
-    expect(buttons()).toEqual(["Connect", "Add", "Add"]);
-    expect(text(renderer!.root).includes("Added")).toBe(true);
-    await act(async () => { renderer!.root.findByProps({ "aria-label": "Add nuc12" }).props.onClick(); });
+    const machines = [ssh("build-box", { herdr_profile_id: "p1", action_required: "connect" })];
+    await mount(<Direct machines={machines} onAddPc={(preset) => { added.push(preset); }} onConnectMachine={(machine) => { connected.push(machine.id); }} />);
+    await flushReads();
+    // the Tailscale PC is the Tailscale tab's
+    expect(buttons()).toEqual(["Connect", "build-box", "nuc12"]);
+    await act(async () => { button("nuc12").props.onClick(); });
     expect(added).toEqual([{ destination: "nuc12", name: "nuc12" }]);
-    await act(async () => { button("Connect").props.onClick(); });
+    await act(async () => { button("build-box").props.onClick(); });
     expect(connected).toEqual(["build-box"]);
+    expect(renderer!.root.findByType("a").props.href).toBe("https://github.com/devswha/ovis/blob/main/docs/guide.md#behind-a-reverse-proxy");
   });
 
-  it("says where the list can be seen when the server keeps it from this window", async () => {
-    // the server's own words for the refusal (server/dispatch.ts): no instruction to type an address, which an open LAN
-    // window could not add either
+  it("in Direct, says an added host is added and an older-Ovis Tailscale host needs an update, in words, and offers neither", async () => {
+    extraCandidates = [{ name: "lab", destination: "lab", detail: "rise@winvm.tail.ts.net", source: "ssh_config", tailnet: "winvm.tail.ts.net" }];
+    const added: (AddPcPreset | undefined)[] = [];
+    await mount(<Direct machines={[ssh("nuc12")]} onAddPc={(preset) => { added.push(preset); }} onConnectMachine={() => undefined} />);
+    await flushReads();
+    expect(buttons()).toEqual(["Connect", "lab"]);
+    expect(button("lab").props.disabled).toBe(true);
+    expect(text(renderer!.root)).toContain("nuc12 · Added");
+    expect(text(renderer!.root)).toContain("lab: Update Ovis on that PC to 0.5 first.");
+  });
+
+  it("reads the found PCs once for both tabs, so they agree, and one Try again reads them again for both", async () => {
+    candidatesRefused = "boom";
+    extraCandidates = [{ name: "lab", destination: "lab", detail: "rise@winvm.tail.ts.net", source: "ssh_config", tailnet: "winvm.tail.ts.net" }];
+    await mount(<Both machines={[]} />);
+    await flushReads();
+    const reads = () => requests.filter((path) => path === "/api/machines/ssh-candidates" || path === "/api/machines/tailnet").length;
+    expect(reads()).toBe(2);
+    expect(renderer!.root.findAll((node) => node.type === "button" && text(node).includes("Try again"))).toHaveLength(2);
+    candidatesRefused = null;
+    await act(async () => { renderer!.root.findAll((node) => node.type === "button" && text(node).includes("Try again"))[0]!.props.onClick(); });
+    await flushReads();
+    expect(reads()).toBe(4);
+    expect(renderer!.root.findAll((node) => node.type === "button" && text(node).includes("Try again"))).toHaveLength(0);
+    expect(renderer!.root.findAll((node) => node.type === "span" && text(node) === "Update Ovis on that PC to 0.5 first.")).toHaveLength(2);
+    expect(text(renderer!.root)).toContain("lab: Update Ovis on that PC to 0.5 first.");
+  });
+
+  it("says where the list can be seen when the server keeps it from this window, and still takes a typed address", async () => {
+    // the server's own words for the refusal (server/dispatch.ts)
     const hint = "See the PCs this PC knows on this PC itself, or from a device paired with it directly.";
     const added: (AddPcPreset | undefined)[] = [];
-    // an open LAN window: the one window that shows the SSH tab and is refused the list (the relay shell and a Portal
-    // visitor, read only, show no SSH tab)
+    // an open LAN window: the one window that shows these tabs and is refused the list
     candidatesRefused = "owner_only";
-    await mount(<SshTab machines={[]} onAddPc={(preset) => { added.push(preset); }} onConnectMachine={() => {}} />);
-    expect(requests).toContain("/api/machines/ssh-candidates");
+    await mount(<Direct machines={[]} onAddPc={(preset) => { added.push(preset); }} onConnectMachine={() => {}} />);
+    await flushReads();
     expect(text(renderer!.root)).toContain(hint);
-    expect(buttons()).toEqual(["Add"]);
-    await act(async () => { renderer!.root.findByProps({ id: "connect-ssh-address" }).props.onChange({ target: { value: "mymac" } }); });
+    await act(async () => { renderer!.root.findByType("input").props.onChange({ target: { value: "mymac" } }); });
     await act(async () => { renderer!.root.findByType("form").props.onSubmit({ preventDefault() {} }); });
     expect(added).toEqual([{ destination: "mymac" }]);
     await act(async () => { renderer!.unmount(); });
-    // a watching device adds no PC: it is not told to type one
+    // a watching device adds no PC: it is told nothing new
     candidatesRefused = "read_only";
-    await mount(<SshTab machines={[]} onAddPc={() => {}} onConnectMachine={() => {}} />);
+    await mount(<Tailscale machines={[]} onAddPc={() => {}} />);
+    await flushReads();
     expect(text(renderer!.root)).not.toContain(hint);
-    expect(buttons()).toEqual(["Add"]);
-    await act(async () => { renderer!.unmount(); });
-    candidatesRefused = null;
-    await mount(<SshTab machines={[]} onAddPc={() => {}} onConnectMachine={() => {}} />);
-    expect(text(renderer!.root)).not.toContain(hint);
+    expect(text(renderer!.root)).not.toContain("No other PC of this Tailscale login was found.");
   });
 
   it("without the Ovis account here, the relay tab keeps the relay's own pairing: its switch, QR code and code to type", async () => {
@@ -491,35 +590,6 @@ describe("Connect a phone on a phone", () => {
     expect(buttons()).not.toContain("Sign in to Ovis");
     await act(async () => { renderer!.update(<SettingsProvider>{tab(relayState({ ...ONLINE, phase: "off" }))}</SettingsProvider>); });
     expect(renderer!.root.findAllByProps({ label: "Ovis relay", checked: false })).toHaveLength(1);
-  });
-
-  it("holds a Tailscale PC's Add until its Ovis is known, so an older one is not added meanwhile", async () => {
-    let answer = () => undefined as void;
-    tailnetAnswer = new Promise((resolve) => { answer = resolve; });
-    tailnetOutdated = false;
-    await mount(<SshTab machines={[]} onAddPc={() => undefined} onConnectMachine={() => undefined} />);
-    for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
-    expect(renderer!.root.findByProps({ "aria-label": "Add winvm" }).props.disabled).toBe(true);
-    expect(renderer!.root.findByProps({ "aria-label": "Add nuc12" }).props.disabled).toBe(false);
-    await act(async () => { answer(); });
-    for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
-    expect(renderer!.root.findByProps({ "aria-label": "Add winvm" }).props.disabled).toBe(false);
-  });
-
-  it("tells an ssh config host that is an older-Ovis Tailscale PC to update it there too", async () => {
-    extraCandidates = [{ name: "lab", destination: "lab", detail: "rise@winvm.tail.ts.net", source: "ssh_config", tailnet: "winvm.tail.ts.net" }];
-    await mount(<SshTab machines={[]} onAddPc={() => undefined} onConnectMachine={() => undefined} />);
-    for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
-    expect(renderer!.root.findAllByProps({ "aria-label": "Add lab" })).toHaveLength(0);
-    expect(renderer!.root.findAll((node) => node.type === "span" && text(node) === "Update Ovis on that PC to 0.5 first.")).toHaveLength(2);
-  });
-
-  it("tells a Tailscale PC with an older Ovis to update it there, in one line, instead of offering Add", async () => {
-    await mount(<SshTab machines={[]} onAddPc={() => undefined} onConnectMachine={() => undefined} />);
-    for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
-    expect(renderer!.root.findAllByProps({ "aria-label": "Add winvm" })).toHaveLength(0);
-    expect(renderer!.root.findAllByProps({ "aria-label": "Add nuc12" })).toHaveLength(1);
-    expect(text(renderer!.root)).toContain("Update Ovis on that PC to 0.5 first.");
   });
 
   it("keeps the desktop's relay QR code up front, with no self-pairing", async () => {

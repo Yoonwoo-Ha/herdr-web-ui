@@ -255,9 +255,9 @@ try {
       await openSettingsPage(page, "Devices and PCs");
       await settings.getByRole("button", { name: "Add a connection", exact: true }).tap();
       const connect = page.getByRole("dialog", { name: "Add a connection", exact: true });
-      await connect.locator('.connect-tabs [data-tab="ssh"]').tap();
-      await connect.getByLabel("Or type an SSH address", { exact: true }).fill("qa@pc.invalid");
-      await connect.locator(".connect-ssh-form").getByRole("button", { name: "Add", exact: true }).tap();
+      await connect.locator('.connect-tabs [data-tab="direct"]').tap();
+      await connect.getByLabel("Address or SSH", { exact: true }).fill("qa@pc.invalid");
+      await connect.locator(".connect-ssh-form").getByRole("button", { name: "Connect", exact: true }).tap();
       const addPc = page.locator("dialog.machine-dialog");
       await addPc.waitFor();
       await settings.waitFor({ state: "detached" });

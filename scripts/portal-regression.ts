@@ -58,7 +58,7 @@ const openPhoneSettings = async (page: Page): Promise<void> => {
   await page.locator('.settings-dialog [data-section="devices"]').getByRole("button", { name: "Add a connection", exact: true }).click();
   const connect = settingsOf(page);
   await connect.waitFor({ timeout: 10_000 });
-  const devicesTab = connect.locator('.connect-tabs [data-tab="devices"]');
+  const devicesTab = connect.locator('.connect-ways [data-tab="devices"]');
   if (await devicesTab.count() > 0) await devicesTab.click();
   await connect.locator('[data-tab-panel="devices"]').waitFor({ timeout: 10_000 });
 };
