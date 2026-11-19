@@ -5,7 +5,7 @@ import { Check, RefreshCw, X } from "lucide-react";
 import "./ConnectPhoneDialog.css";
 import "./DevicesPanel.css";
 
-import type { Machine } from "../../shared/machines.ts";
+import { ADDRESS_PC_FAILURES, type AddressPcFailure, type Machine } from "../../shared/machines.ts";
 import type { AddPcPreset } from "../lib/actions.ts";
 import { indexedAccountStore, type AccountSession } from "../lib/account/store.ts";
 import { pcAccountStatus } from "../lib/account/join.ts";
@@ -13,7 +13,7 @@ import { listOfferedPc } from "../lib/account/addThisPc.ts";
 import { decodeOffer } from "../../shared/relay-offer.ts";
 import { AccountService } from "../lib/account/service.ts";
 import { ACCOUNT_QR_ALONE_MS, ACCOUNT_QR_POLL_MS, ACCOUNT_QR_WATCH_EVENT, accountQrFindings, accountQrNoticeWaiting, accountQrPending, addedBy, holdAccountQrNotice, resetAccountQrWatch, stopAccountQrWatch, takeAccountQrNotice, watchEndedAccountQr, type AccountQrBaseline, type AccountQrStray } from "../lib/accountQrWatch.ts";
-import { ApiError, endPairing, fetchDevices, findSshCandidates, findTailnetPcs, requestRelayOffer, revokeAllDevices, revokeDevice, startPairing, type RelayOffer, type SshCandidate } from "../lib/api.ts";
+import { addAddressPc, ApiError, endPairing, fetchDevices, findSshCandidates, findTailnetPcs, requestRelayOffer, revokeAllDevices, revokeDevice, startPairing, type RelayOffer, type SshCandidate } from "../lib/api.ts";
 import { apiFetch } from "../lib/api-request-id.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { useT } from "../lib/i18n.ts";
@@ -310,9 +310,27 @@ export function TailscaleTab({ found: { found, unread, failed, withheld, stateOf
   );
 }
 
+function addressFailureText(t: ReturnType<typeof useT>, error: unknown): string {
+  const code = error instanceof ApiError && typeof error.code === "string" && error.code.startsWith("address_pc_") ? error.code.slice("address_pc_".length) : null;
+  const failure: AddressPcFailure | undefined = ADDRESS_PC_FAILURES.find((known) => known === code);
+  switch (failure) {
+    case "address": return t("Enter only that PC's Ovis address, starting with https://");
+    case "target": return t("That address cannot be another PC's Ovis.");
+    case "code": return t("Type the six-digit code that PC shows.");
+    case "wrong_code": return t("That code is wrong, spent or expired. Show a new code on that PC and type it.");
+    case "waiting": return t("That PC refuses codes for a while after wrong ones. Wait a minute, then try again.");
+    case "unreachable": return t("No PC answered at that address. Check it, and that Ovis runs there.");
+    case "not_ovis": return t("No Ovis that pairs devices answered at that address. Update Ovis there, or check the address.");
+    case "added": return t("That PC is already added.");
+    case "self": return t("That address is this PC's own Ovis.");
+    default: return t("That PC could not be added. Try again.");
+  }
+}
+
 /**
  * Direct: one field for an address. An SSH alias, user@host or a tailnet name opens Add PC with it (the host's
- * fingerprint first); an https:// address, another PC's Ovis in this window, is not taken yet and says so. Under it
+ * fingerprint first); an https:// address, another PC's Ovis, takes the six-digit code that PC shows and opens it in this
+ * window once this PC's server paired with it (server/address-pc.ts); the code stays in its input alone. Under it
  * the hosts of this PC's ssh config and the PCs saved in herdr, one press each, and the guide's way to open a PC from
  * outside.
  */
@@ -320,6 +338,16 @@ export function DirectTab({ found: { found, failed, withheld, stateOf, retry }, 
   const t = useT();
   const id = useId();
   const [typed, setTyped] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const codeRef = useRef<HTMLInputElement>(null);
+  // a second press before the first one's render would spend the same code twice
+  const pairing = useRef(false);
+  // what the pairing in flight was asked for: its answer is dropped once the address changes or the tab closes
+  const asked = useRef<string | null>(null);
+  useEffect(() => () => { asked.current = null; }, []);
+  // the code admits whoever holds it: it is typed only where it cannot cross the network in clear (as an SSH password)
+  const secretAllowed = window.isSecureContext;
   const address = typed.trim();
   const ovis = OVIS_ADDRESS.test(address);
   const saved = machines.filter((machine) => machine.herdr_profile_id !== undefined && machine.action_required === "connect");
@@ -327,19 +355,45 @@ export function DirectTab({ found: { found, failed, withheld, stateOf, retry }, 
   const outdated = hosts.filter(({ state }) => state === "outdated").map(({ pc }) => pc.name);
   const add = (event: FormEvent) => {
     event.preventDefault();
-    if (address !== "" && !ovis) onAddPc({ destination: address });
+    if (address === "") return;
+    if (!ovis) { onAddPc({ destination: address }); return; }
+    const code = codeRef.current;
+    if (code === null || pairing.current || !secretAllowed) return;
+    pairing.current = true;
+    asked.current = address;
+    setAdding(true);
+    setFailure(null);
+    const current = () => asked.current === address;
+    void addAddressPc(address, code.value.replace(/\s/g, "")).then(({ machine }) => {
+      if (!current()) return;
+      code.value = "";
+      if (machine && typeof machine.id === "string") onConnectMachine(machine); else setFailure(t("That PC could not be added. Try again."));
+    }, (error: unknown) => { if (current()) setFailure(addressFailureText(t, error)); })
+      .finally(() => { pairing.current = false; setAdding(false); });
   };
   return (
     <>
       <form className="connect-ssh-form" onSubmit={add}>
         <label className="settings-label" htmlFor={`${id}-address`}>{t("Address or SSH")}</label>
         <div className="connect-ssh-field">
-          <input id={`${id}-address`} className="input" type="text" value={typed} placeholder="user@host, desk.tailnet.ts.net, https://…" autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" aria-describedby={address === "" ? undefined : `${id}-kind`} onChange={(event) => setTyped(event.target.value)} />
-          <button type="submit" className="btn" disabled={address === "" || ovis}>{t("Connect")}</button>
+          <input id={`${id}-address`} className="input" type="text" value={typed} placeholder="user@host, desk.tailnet.ts.net, https://…" autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" aria-describedby={address === "" ? undefined : `${id}-kind`} onChange={(event) => {
+            // a code typed for one PC is never sent to another
+            if (codeRef.current) codeRef.current.value = "";
+            asked.current = null;
+            setFailure(null);
+            setTyped(event.target.value);
+          }} />
+          <button type="submit" className="btn" disabled={address === "" || adding || (ovis && !secretAllowed)}>{t("Connect")}</button>
         </div>
         {address !== "" && <p className="settings-hint" id={`${id}-kind`} role="status" data-address-kind={ovis ? "ovis" : "ssh"}>{ovis
-          ? t("Opening another PC's Ovis here by its address is coming soon. For now, connect over SSH or the Ovis relay.")
+          ? t("Opens that PC's Ovis here. On that PC, open Settings → Devices and PCs → Add a connection → Phones and devices, and type the six-digit pairing code it shows. This PC can then drive that PC.")
           : t("An SSH address: Connect checks that PC's fingerprint first.")}</p>}
+        {ovis && <>
+          <label className="settings-label" htmlFor={`${id}-code`}>{t("Pairing code")}</label>
+          <input ref={codeRef} id={`${id}-code`} className="input connect-address-code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={7} placeholder="000000" required pattern="\d{3} ?\d{3}" spellCheck={false} disabled={adding || !secretAllowed} />
+          {!secretAllowed && <p className="settings-hint">{t("Needs HTTPS or localhost.")}</p>}
+        </>}
+        {failure !== null && <p className="settings-hint" role="alert">{failure}</p>}
       </form>
       {(saved.length > 0 || hosts.length > 0) && (
         <section className="connect-picks" aria-label="ssh config">

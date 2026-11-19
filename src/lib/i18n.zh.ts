@@ -301,6 +301,7 @@ const BASE: Record<string, string> = {
   "Paired: {name}.": "已配对：{name}。",
   "QR code that pairs a phone with code {code}": "使用代码 {code} 配对手机的二维码",
   "Pairing code": "配对码",
+  "Needs HTTPS or localhost.": "需要 HTTPS 或 localhost。",
   "{agent} is ready": "{agent} 已就绪",
 
 

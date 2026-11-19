@@ -297,6 +297,7 @@ const BASE: Record<string, string> = {
   "Paired: {name}.": "페어링됨: {name}.",
   "QR code that pairs a phone with code {code}": "코드 {code}로 폰을 페어링하는 QR 코드",
   "Pairing code": "페어링 코드",
+  "Needs HTTPS or localhost.": "HTTPS 또는 localhost가 필요합니다.",
   "{agent} is ready": "{agent} 준비 완료",
 
   "Drag to resize · double-click to reset": "끌어서 크기 조절 · 두 번 클릭하면 초기화",

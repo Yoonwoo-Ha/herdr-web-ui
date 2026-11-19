@@ -1453,6 +1453,8 @@ export const findSshCandidates = () => machineRequest<{ pcs: SshCandidate[] }>("
 /** A PC of this PC's Tailscale login whose Ovis lets this PC in as its owner (server/tailnet-pcs.ts); `outdated`: older than 0.5. */
 export interface TailnetPc { readonly name: string; readonly url: string; readonly relay: string | null; readonly outdated: boolean }
 export const findTailnetPcs = () => machineRequest<{ pcs: TailnetPc[] }>("/tailnet");
+/** POST /api/machines/address: pairs with another PC's Ovis at that https address by the six-digit code it shows, and adds it. */
+export const addAddressPc = (address: string, code: string) => machineRequest<{ machine: Machine }>("/address", "POST", { address, code });
 /** Another PC of the account as the page read it from the account's directory: its key checked against its id here too. */
 export interface AccountPcEntry { readonly server_id: string; readonly server_public_key: string; readonly relay: string; readonly name: string }
 export type AccountPcState = "ready" | "outdated" | "offline";

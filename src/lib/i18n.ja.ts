@@ -299,6 +299,7 @@ const BASE: Record<string, string> = {
   "Paired: {name}.": "ペアリングしました: {name}。",
   "QR code that pairs a phone with code {code}": "コード {code} でスマートフォンをペアリングする QR コード",
   "Pairing code": "ペアリングコード",
+  "Needs HTTPS or localhost.": "HTTPS または localhost が必要です。",
   "{agent} is ready": "{agent} の準備ができました",
 
   "Drag to resize · double-click to reset": "ドラッグでサイズ変更 · ダブルクリックでリセット",

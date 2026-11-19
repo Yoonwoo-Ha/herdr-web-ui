@@ -146,7 +146,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "Not saved on the server yet; reloading or closing this page can undo the change.": "まだサーバーに保存されていません。このページを再読み込みするか閉じると、変更が取り消されることがあります。",
   "Sending the change to the server…": "変更をサーバーに送信しています…",
   "Keep screen on": "画面をオンのままにする",
-  "Needs HTTPS or localhost.": "HTTPS または localhost が必要です。",
   "This browser can't keep the screen on.": "このブラウザーでは画面をオンに保てません。",
   "For this device. An alert waits a little first, and none comes when the pane changes meanwhile, as when you answer at the PC.": "このデバイスに適用されます。通知は少し待ってから送られ、その間に PC で回答するなどしてペインの状態が変わった場合は送られません。",
   "Alerts from": "通知を受け取る PC",

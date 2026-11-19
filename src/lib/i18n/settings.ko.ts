@@ -146,7 +146,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "Not saved on the server yet; reloading or closing this page can undo the change.": "서버에\u00a0아직 저장되지\u00a0않았습니다. 이\u00a0페이지를 새로\u00a0고치거나\u00a0닫으면 변경이\u00a0취소될\u00a0수\u00a0있습니다.",
   "Sending the change to the server…": "변경을 서버로\u00a0보내는\u00a0중…",
   "Keep screen on": "화면 켜짐 유지",
-  "Needs HTTPS or localhost.": "HTTPS 또는 localhost가 필요합니다.",
   "This browser can't keep the screen on.": "이 브라우저는 화면을 켜 둘 수 없습니다.",
   "For this device. An alert waits a little first, and none comes when the pane changes meanwhile, as when you answer at the PC.": "이 기기에 적용됩니다. 알림은 잠시 기다렸다가 보내며, 그사이 PC에서 답하는 등 pane 상태가 바뀌면 보내지 않습니다.",
   "Alerts from": "알림을 보낼 PC",

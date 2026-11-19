@@ -146,7 +146,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Not saved on the server yet; reloading or closing this page can undo the change.": "尚未保存到服务器；重新加载或关闭此页面可能会撤销此更改。",
   "Sending the change to the server…": "正在将更改发送到服务器…",
   "Keep screen on": "保持屏幕常亮",
-  "Needs HTTPS or localhost.": "需要 HTTPS 或 localhost。",
   "This browser can't keep the screen on.": "此浏览器无法保持屏幕常亮。",
   "For this device. An alert waits a little first, and none comes when the pane changes meanwhile, as when you answer at the PC.": "仅适用于此设备。提醒会先稍等片刻，如果期间窗格状态发生变化（例如你已在 PC 上回答），则不会发送。",
   "Alerts from": "接收提醒的电脑",
