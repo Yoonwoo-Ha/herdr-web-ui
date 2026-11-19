@@ -66,8 +66,8 @@ keytool -printcert -jarfile app/build/outputs/bundle/release/app-release.aab   #
 | Field | Now | Rule |
 |---|---|---|
 | `applicationId` | `sh.ovis.app` | never changes once uploaded |
-| `versionCode` | `10` | raise it by one for every upload, test tracks included (`defaultConfig` in `app/android/app/build.gradle`); the last upload is 1.0.3 (10), built from v0.5.5 and sent to production review on 2026-11-19 |
-| `versionName` | `1.0.3` | what people see; raise it for each public release |
+| `versionCode` | `11` | raise it by one for every upload, test tracks included (`defaultConfig` in `app/android/app/build.gradle`); the last upload is 1.0.4 (11), built from main after #4215 and sent to production review on 2026-11-19 |
+| `versionName` | `1.0.4` | what people see; raise it for each public release |
 | `targetSdkVersion` | 36 | Play asks new apps for a recent target |
 
 ## 3. Store listing
