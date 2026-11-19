@@ -15,7 +15,7 @@
  * send nothing.
  */
 import { randomUUID } from "node:crypto";
-import { accessSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { accessSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync, type Stats } from "node:fs";
 import { dirname, join } from "node:path";
 import { ACTIVE_LATE_DAYS, countBucket, COUNTS_LATE_DAYS, emptyUsage, harnessOf, sameUsage, TELEMETRY_COUNT_MAX, TELEMETRY_COUNTERS, TELEMETRY_SHOWN, telemetryCountsChange, telemetryHarnesses, telemetrySettings, telemetrySurface, telemetryUsage, type InstallMethod, type TelemetryActive, type TelemetryBucket, type TelemetryChange, type TelemetryCounter, type TelemetryCounts, type TelemetryCountsChange, type TelemetryEvent, type TelemetryHarness, type TelemetryIngress, type TelemetryRuntime, type TelemetrySettings, type TelemetryShown, type TelemetryStatus, type TelemetrySurface, type TelemetryUsage, type TelemetryUsageCount, type TelemetryWidthCounts } from "../shared/telemetry.ts";
 import { COUNTS_ON, NOTICE_VERSION } from "../shared/telemetry-notice.ts";
@@ -27,12 +27,10 @@ export const TELEMETRY_URL = "https://herdr-web-ui-telemetry.devswha.workers.dev
 export const ACTIVE_URL = "https://herdr-web-ui-telemetry.devswha.workers.dev/v1/active";
 export const COUNTS_URL = "https://herdr-web-ui-telemetry.devswha.workers.dev/v1/counts";
 const FILE = "telemetry.json";
-/**
- * The switch turned off, as a file of its own beside FILE that only the switch writes or removes. Every other
- * write saves the whole of FILE as it was read, so a server on the same state directory that read the switch on
- * a moment before it was turned off would write it back on; none of them touches this file, so off holds.
- */
+/** Each off replaces this mark. An on acknowledges the mark it saw without removing it. */
 const OFF_FILE = "telemetry-off";
+/** A mark written for an off an older build kept in FILE alone: no off happened then, so an on asked before it still goes. */
+const MIGRATED_MARK = "migrated:";
 const LOCK_FILE = "telemetry.lock";
 /** how long a server waits for another's lock before it skips its write (an off is not skipped: it is marked before this wait, and goes without the lock after it) */
 const LOCK_WAIT_MS = 200;
@@ -40,6 +38,7 @@ const LOCK_STALE_MS = 5_000;
 /** a section holds the lock for well under a millisecond: one held this long, by anyone, was left behind */
 const LOCK_MAX_HOLD_MS = 5 * 60_000;
 const heldLocks = new Set<string>();
+const CHANGE_BUSY = "Another Ovis server on this PC is changing the usage counts; try again";
 
 function sleepSync(ms: number): void { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
 
@@ -64,6 +63,8 @@ function staleLock(file: string): boolean {
   }
 }
 const SEND_TIMEOUT_MS = 10_000;
+/** A claim outlives a POST's timeout but can be reclaimed after a crash or a skipped completion write. */
+const SEND_CLAIM_MS = 2 * SEND_TIMEOUT_MS;
 const START_DELAY_MS = 15_000;
 /** after the notice was shown, time to read it and press Turn off before the first event goes */
 export const NOTICE_GRACE_MS = 10 * 60_000;
@@ -83,6 +84,24 @@ export const USAGE_RESEND_MS = 60 * 60_000;
 /** a change is a few small fields and at most one settings snapshot, which the receiver takes only under 8 KiB with the rest of its event */
 const MAX_CHANGE_BYTES = 16 * 1024;
 
+interface SendClaim {
+  readonly id: string;
+  readonly until: number;
+}
+
+function readClaim(value: unknown): SendClaim | undefined {
+  if (!isJsonObject(value) || typeof value["id"] !== "string" || typeof value["until"] !== "number" || !Number.isFinite(value["until"])) return undefined;
+  return { id: value["id"], until: value["until"] };
+}
+
+function claimSend(entry: { claim?: SendClaim }): SendClaim | null {
+  const now = Date.now();
+  if (entry.claim && entry.claim.until > now) return null;
+  const claim = { id: randomUUID(), until: now + SEND_CLAIM_MS };
+  entry.claim = claim;
+  return claim;
+}
+
 interface ActiveDay {
   day: string;
   harnesses: TelemetryHarness[];
@@ -96,6 +115,7 @@ interface ActiveDay {
    * a receiver may have read a message whose answer was lost; null before one went */
   wire_usage: TelemetryUsage | null;
   sent_at: number | null;
+  claim?: SendClaim;
 }
 
 function withKind<T extends string>(list: readonly T[], item: T | null | undefined): T[] {
@@ -125,7 +145,7 @@ function readActive(value: unknown): ActiveDay[] {
     const sentUsage = item["sent_usage"] === undefined ? (sent === null ? null : usage) : telemetryUsage(item["sent_usage"]);
     const wireUsage = item["wire_usage"] === undefined ? sentUsage : telemetryUsage(item["wire_usage"]);
     const sentAt = typeof item["sent_at"] === "number" && Number.isFinite(item["sent_at"]) ? item["sent_at"] : null;
-    days.push({ day: item["day"], harnesses, sent, visited: item["visited"] !== false, usage, sent_usage: sentUsage, wire_usage: wireUsage, sent_at: sentAt });
+    days.push({ day: item["day"], harnesses, sent, visited: item["visited"] !== false, usage, sent_usage: sentUsage, wire_usage: wireUsage, sent_at: sentAt, claim: readClaim(item["claim"]) });
   }
   return days.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
 }
@@ -148,6 +168,7 @@ interface CountDay {
   version: string;
   narrow: WidthTally | null;
   wide: WidthTally | null;
+  claim?: SendClaim;
 }
 
 function readTally(value: unknown): WidthTally | null {
@@ -169,7 +190,7 @@ function readCountDays(value: unknown): CountDay[] {
     const narrow = item["narrow"] === null ? null : readTally(item["narrow"]);
     const wide = item["wide"] === null ? null : readTally(item["wide"]);
     if (narrow === null && wide === null) continue;
-    days.push({ day: item["day"], version: item["version"], narrow, wide });
+    days.push({ day: item["day"], version: item["version"], narrow, wide, claim: readClaim(item["claim"]) });
   }
   return days.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
 }
@@ -188,6 +209,7 @@ function widthCounts(tally: WidthTally | null): TelemetryWidthCounts | null {
 interface Saved {
   install_id: string;
   enabled: boolean;
+  enabled_mark: string | null;
   /** when the current notice (notice_version) was shown; null before, and for a file that saw only an older notice */
   notice_seen_at: string | null;
   notice_version: number;
@@ -292,21 +314,31 @@ function telemetryChange(value: unknown): TelemetryChange | null {
   }
 }
 
-/**
- * Whether OFF_FILE marks the counts off. It fails closed: only a name that is not there, in a state directory this
- * process can read, counts as no mark. Anything at the name (a dangling link too) or any failure to tell is off.
- */
-function offMarked(offFile: string): boolean {
+/** Null is a missing mark; undefined means the mark could not be read and the counts stay off. */
+function offMark(offFile: string): string | null | undefined {
+  let stat: Stats;
   try {
-    lstatSync(offFile);
-    return true;
+    stat = lstatSync(offFile);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") return true;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
+    try {
+      accessSync(dirname(offFile), constants.R_OK | constants.X_OK);
+      return null;
+    } catch { return undefined; }
   }
+  if (!stat.isFile()) return undefined;
   try {
-    accessSync(dirname(offFile), constants.R_OK | constants.X_OK);
-    return false;
-  } catch { return true; }
+    // Older versions wrote an empty file.
+    return readFileSync(offFile, "utf8") || `legacy:${stat.ino}:${stat.mtimeMs}:${stat.ctimeMs}`;
+  } catch { return undefined; }
+}
+
+/** Whether FILE itself says on, whatever the mark says; false when it cannot be read. */
+function fileSaysOn(file: string): boolean {
+  try {
+    const value: unknown = JSON.parse(readFileSync(file, "utf8"));
+    return isJsonObject(value) && value["enabled"] !== false;
+  } catch { return false; }
 }
 
 function keptDiffers(file: string, saved: Saved): boolean {
@@ -323,8 +355,9 @@ function readSaved(file: string, offFile: string): Saved | null {
     if (!isJsonObject(value) || typeof value["install_id"] !== "string" || value["install_id"] === "") return null;
     // a switch an older build turned off is copied into OFF_FILE whenever it is read, so no late write of FILE can turn it
     // on; a read that cannot write it now still reads off, and the next read tries again
-    if (value["enabled"] === false && !offMarked(offFile)) {
-      try { writeFileSync(offFile, "", { mode: 0o600 }); } catch { /* read-only for now: still off, marked at a later read */ }
+    const mark = offMark(offFile);
+    if (value["enabled"] === false && mark === null) {
+      try { writeFileSync(offFile, `${MIGRATED_MARK}${randomUUID()}`, { flag: "wx", mode: 0o600 }); } catch { /* already marked or read-only: still off */ }
     }
     // a notice from before it said what is sent now does not count: it is shown again first
     const noticeSeenAt = value["notice_version"] === NOTICE_VERSION && typeof value["notice_seen_at"] === "string" ? value["notice_seen_at"] : null;
@@ -334,10 +367,12 @@ function readSaved(file: string, offFile: string): Saved | null {
     // and a delivered one is cut back to what was delivered of it: what was added since may be from before an off
     const active = seenVersion < VISITS_NOTICE_VERSION ? [] : value["visits_after_notice"] === true ? readActive(value["active"]) : readActive(value["active"]).flatMap((entry) => entry.sent === null ? [] : [{ ...entry, harnesses: [...entry.sent], usage: entry.sent_usage ?? emptyUsage(), sent_usage: entry.sent_usage ?? emptyUsage(), wire_usage: entry.sent_usage ?? emptyUsage() }]);
     // a file that is off keeps nothing to send: an older build, or a write that failed, may have left rows in it
-    const on = value["enabled"] !== false && !offMarked(offFile);
+    const enabledMark = typeof value["enabled_mark"] === "string" ? value["enabled_mark"] : null;
+    const on = value["enabled"] !== false && mark === enabledMark;
     return {
       install_id: value["install_id"],
       enabled: on,
+      enabled_mark: enabledMark,
       notice_seen_at: noticeSeenAt,
       notice_version: NOTICE_VERSION,
       reported_version: typeof value["reported_version"] === "string" ? value["reported_version"] : null,
@@ -365,7 +400,7 @@ export class Telemetry {
   private activeAbort?: AbortController;
   private activeTimer?: Timer;
   private countsSending: Promise<void> | null = null;
-  private readonly countsDelivered = new Set<string>();
+  private readonly countsDelivered = new Map<string, number>();
   private countsAbort?: AbortController;
   /** how deep this server is in a lock section: one inside another takes no second lock, so a server never waits on itself */
   private lockDepth = 0;
@@ -396,12 +431,12 @@ export class Telemetry {
   }) {
     this.file = join(options.stateDir, FILE);
     this.offFile = join(options.stateDir, OFF_FILE);
-    // a first run's state directory is made before the mark is looked for: one that is not there reads off (offMarked)
-    try { mkdirSync(options.stateDir, { recursive: true, mode: 0o700 }); } catch { /* not made: offMarked reads off */ }
+    // a first run's state directory is made before the mark is looked for: one that is not there reads off
+    try { mkdirSync(options.stateDir, { recursive: true, mode: 0o700 }); } catch { /* not made: offMark reads off */ }
     const saved = readSaved(this.file, this.offFile);
     // a state made fresh names no version an update replaced: the updater's record of it is from before this file (one a
     // purge removed, or one that never was)
-    this.saved = saved ?? { install_id: randomUUID(), enabled: !offMarked(this.offFile), notice_seen_at: null, notice_version: NOTICE_VERSION, reported_version: null, replaced_forgotten: true, forgotten: 0, visits_after_notice: true, settings: null, active: [], usage_after_notice: true, counts: [] };
+    this.saved = saved ?? { install_id: randomUUID(), enabled: offMark(this.offFile) === null, enabled_mark: null, notice_seen_at: null, notice_version: NOTICE_VERSION, reported_version: null, replaced_forgotten: true, forgotten: 0, visits_after_notice: true, settings: null, active: [], usage_after_notice: true, counts: [] };
     // what was read and not kept (an older build's rows, an off file's) is written away once, so it does not stay on disk
     if (saved) {
       this.locked(() => {
@@ -447,15 +482,21 @@ export class Telemetry {
     const latest = readSaved(this.file, this.offFile);
     if (latest) this.saved = latest;
     // the file could not be read: what is known of it stays, but an off, or no way to tell, wins
-    else if (offMarked(this.offFile)) this.saved.enabled = false;
+    else if (offMark(this.offFile) !== this.saved.enabled_mark) this.saved.enabled = false;
   }
 
   private markOff(): void {
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
-    writeFileSync(this.offFile, "", { mode: 0o600 });
+    const mark = randomUUID();
+    const temp = `${this.offFile}.${mark}.tmp`;
+    writeFileSync(temp, mark, { mode: 0o600 });
+    try { renameSync(temp, this.offFile); } catch (error) {
+      rmSync(temp, { force: true });
+      throw error;
+    }
   }
 
-  private persist(): void {
+  private persist(): boolean {
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
     // an off another server wrote since this one read the file: what this one holds is from before it, so it is not
     // written back, and the counter is never lowered
@@ -477,11 +518,12 @@ export class Telemetry {
       if (!still) {
         rmSync(temp, { force: true });
         console.error(`telemetry: ${this.file} was not written: this server's lock was taken over while it held it`);
-        return;
+        return false;
       }
     }
     renameSync(temp, this.file);
     this.writable = true;
+    return true;
   }
 
   private schedule(ms: number): void {
@@ -568,19 +610,30 @@ export class Telemetry {
       // stops it at once, whatever the wait for the lock
       this.markOff();
     }
-    // the off mark as this change found it: one made meanwhile (another server's off that could not wait for the lock)
-    // wins, and this change neither writes over it nor removes it
-    const markOf = (): number | null => { try { return statSync(this.offFile).mtimeMs; } catch { return null; } };
+    // the off mark an on was asked against: an off marked after it, even one done before this server gets the lock, wins
+    const markAsked = clean.enabled === true ? offMark(this.offFile) : null;
     const apply = () => this.locked((): "applied" | "superseded" => {
-      const markAtStart = markOf();
+      let markAtStart = offMark(this.offFile);
+      if (clean.enabled === true && markAtStart !== markAsked && !(markAsked === null && markAtStart?.startsWith(MIGRATED_MARK))) return "superseded";
       this.refresh();
+      // the read just now marked an older build's off: that mark is the one this change found
+      if (markAtStart === null) {
+        const migrated = offMark(this.offFile);
+        if (migrated?.startsWith(MIGRATED_MARK)) markAtStart = migrated;
+      }
       // the counter as the request found it: settings told with the generation the page heard last are from now
       const heard = this.saved.forgotten;
+      // an off another server marked and has not written yet: no page heard it, so settings told now may be from before it
+      const offUnwritten = !this.saved.enabled && fileSaysOn(this.file);
       // off is marked before FILE is written, whatever another server writes to FILE meanwhile
       if (clean.enabled === false) this.markOff();
       // nothing kept before an off is sent after it: the off, and an on after an off (one another server marked), drop every
       // visit day and count day not yet delivered
       if (clean.enabled === false || (clean.enabled === true && !this.saved.enabled)) this.forgetUnsent();
+      if (clean.enabled === true) {
+        if (markAtStart === undefined) return "superseded";
+        this.saved.enabled_mark = markAtStart;
+      }
       if (clean.enabled !== undefined) this.saved.enabled = clean.enabled;
       // on again with nothing owed: the version running now is what a later update replaces, known at the on
       if (clean.enabled === true && this.saved.reported_version === this.options.version) this.saved.replaced_forgotten = false;
@@ -589,14 +642,11 @@ export class Telemetry {
       // acknowledgement) and while the counts are on; telling it sends nothing by itself
       // a request that names no generation, or one from before an off the page had not heard, keeps none: they may be from
       // before it (a request delayed while another page turned the counts off and on)
-      if (clean.settings !== undefined && clean.generation === heard && this.saved.notice_seen_at !== null && this.saved.enabled && !this.blocked()) this.saved.settings = clean.settings;
-      if (clean.enabled !== false && markOf() !== markAtStart) return "superseded";
-      this.persist();
+      if (clean.settings !== undefined && clean.generation === heard && !offUnwritten && this.saved.notice_seen_at !== null && this.saved.enabled && !this.blocked()) this.saved.settings = clean.settings;
+      if (clean.enabled !== false && offMark(this.offFile) !== markAtStart) return "superseded";
+      if (!this.persist()) throw new FileBusyError(CHANGE_BUSY);
       // and again after: an on from another server between the two writes cannot leave this off without its mark
       if (clean.enabled === false) this.markOff();
-      // on removes the mark only once FILE says on, so no read in between finds FILE off and no mark (readSaved would mark it),
-      // and only the mark it found: one another server made meanwhile stays
-      if (clean.enabled === true && markOf() === markAtStart) rmSync(this.offFile, { force: true });
       return "applied";
     }, (): "applied" | "superseded" | "busy" => {
       // another server holds the lock: an off still goes, with its mark and without what was not sent; anything else waits
@@ -611,15 +661,15 @@ export class Telemetry {
     });
     let applied = apply();
     if (applied === "busy") applied = apply();
-    if (applied === "busy") throw new FileBusyError("Another Ovis server on this PC is changing the usage counts; try again");
+    if (applied === "busy") throw new FileBusyError(CHANGE_BUSY);
     if (applied === "superseded") return this.status();
     if (clean.alert_opened) {
-      this.tally("alerts_opened");
+      if (this.tally("alerts_opened") === false) throw new FileBusyError(CHANGE_BUSY);
       // a tap alone sends nothing: the day's next visit carries it, so no message tells when it was
       if (Object.keys(clean).length === 1) return this.status();
     }
     if (clean.counts) {
-      this.tallyCounts(clean.counts);
+      if (this.tallyCounts(clean.counts) === false) throw new FileBusyError(CHANGE_BUSY);
       // a browser's counts alone send nothing: a finished day goes at a start or a visit, so no message tells when a button was pressed
       if (Object.keys(clean).length === 1) return this.status();
     }
@@ -658,7 +708,7 @@ export class Telemetry {
    * Counts one prompt answer, alert delivered or alert tapped in today's usage; never while usage
    * is not counted. It sends nothing by itself: the day's next visit (or a later day's) carries it.
    */
-  tally(kind: TelemetryUsageCount): void {    this.locked(() => {
+  tally(kind: TelemetryUsageCount): boolean | undefined { return this.locked(() => {
       if (!this.countingUsage()) return;
       const day = utcDay(this.now());
       this.prune();
@@ -668,10 +718,10 @@ export class Telemetry {
       const entry = this.saved.active.find((known) => known.day === day);
       if (!entry || entry.usage[kind] >= TELEMETRY_COUNT_MAX) return;
       entry.usage = { ...entry.usage, [kind]: entry.usage[kind] + 1 };
-      try { this.persist(); } catch (error) {
+      try { return this.persist(); } catch (error) {
         console.error(`telemetry: the ${kind} count could not be recorded (${message(error)})`);
       }
-    }, () => this.skipped(`the ${kind} count`));
+    }, () => { this.skipped(`the ${kind} count`); return false; });
   }
 
   /**
@@ -679,7 +729,7 @@ export class Telemetry {
    * version; never while usage is not counted (off, blocked, or the current notice not shown), so nothing
    * pressed before the notice is kept. It sends nothing by itself.
    */
-  tallyCounts(change: TelemetryCountsChange): void {    this.locked(() => {
+  tallyCounts(change: TelemetryCountsChange): false | undefined { return this.locked(() => {
       if (!this.countsOn() || !this.countingUsage()) return;
       // counted under another generation (before an off, in a tab that did not hear it), or by a page that names none
       if (change.generation !== this.saved.forgotten) return;
@@ -700,11 +750,11 @@ export class Telemetry {
       }
       tally.shown = [...new Set([...tally.shown, ...change.shown])].sort();
       entry[change.width] = tally;
-      try { this.persist(); } catch (error) {
+      try { if (!this.persist()) return false; } catch (error) {
         console.error(`telemetry: the counts could not be recorded (${message(error)})`);
       }
       if (day !== today) this.settleLater();
-    }, () => this.skipped("a browser's counts"));
+    }, () => { this.skipped("a browser's counts"); return false; });
   }
 
   private countsOn(): boolean { return this.options.countsOn ?? COUNTS_ON; }
@@ -728,57 +778,64 @@ export class Telemetry {
     if (this.now() < seen + (this.options.noticeGraceMs ?? NOTICE_GRACE_MS)) return Promise.resolve();
     const pruned = this.locked(() => {
       this.refresh();
-      if (this.prune()) {
-        try { this.persist(); } catch (error) {
-          console.error(`telemetry: ${this.file} could not be written (${message(error)})`);
-          return false;
-        }
+      try { return !this.prune() || this.persist(); } catch (error) {
+        console.error(`telemetry: ${this.file} could not be written (${message(error)})`);
+        return false;
       }
-      return true;
     }, () => { this.skipped("the counts to send"); return false; });
     if (!pruned) return Promise.resolve();
     // a day goes once it has ended and COUNTS_SETTLE_MS more have passed, for the batches still on their way
     const settled = utcDay(this.now() - COUNTS_SETTLE_MS);
-    const due = this.saved.counts.filter((entry) => entry.day < settled && !this.countsDelivered.has(entry.day)).map((entry) => this.countsMessage(entry.day));
+    const generation = this.saved.forgotten;
+    const due = this.saved.counts.filter((entry) => entry.day < settled && this.countsDelivered.get(entry.day) !== generation).map((entry) => entry.day);
     this.settleLater();
     if (due.length === 0) return Promise.resolve();
-    const generation = this.saved.forgotten;
     const abort = new AbortController();
     this.countsAbort = abort;
     this.countsSending = (async () => {
       try {
-        for (const counts of due) {
-          // right before it goes: turned off here or by another server on the same state directory meanwhile
-          if (abort.signal.aborted || offMarked(this.offFile)) return;
-          // an off and on again meanwhile (by another server on the same state directory) began a new generation and
-          // cleared the days kept: a day from before it is not sent
-          this.refresh();
-          if (!this.saved.enabled || this.saved.forgotten !== generation || !this.saved.counts.some((entry) => entry.day === counts.day)) return;
+        for (const day of due) {
+          const next = this.locked(() => {
+            this.refresh();
+            if (abort.signal.aborted || !this.saved.enabled || this.saved.forgotten !== generation) return "stop";
+            const entry = this.saved.counts.find((known) => known.day === day);
+            const claim = entry && claimSend(entry);
+            if (!claim) return "skip";
+            return this.persist() ? { claim, counts: this.countsMessage(day) } : "stop";
+          }, () => { this.skipped("a counts message about to go"); return "stop" as const; });
+          if (next === "stop") return;
+          if (next === "skip") continue;
+          let delivered = false;
           try {
+            this.refresh();
+            if (abort.signal.aborted || !this.saved.enabled || this.saved.forgotten !== generation
+              || !this.saved.counts.some((entry) => entry.day === day && entry.claim?.id === next.claim.id)) return;
+            // last, the statement before the POST: an off marked since the reads above
+            if (offMark(this.offFile) !== this.saved.enabled_mark) return;
             const response = await this.options.fetch(this.options.countsUrl ?? COUNTS_URL, {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify(counts),
+              body: JSON.stringify(next.counts),
               signal: AbortSignal.any([abort.signal, AbortSignal.timeout(SEND_TIMEOUT_MS)]),
             });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            delivered = response.ok;
+            if (!delivered) throw new Error(`HTTP ${response.status}`);
           } catch (error) {
             if (!abort.signal.aborted) console.error(`telemetry: the counts message was not delivered (${message(error)})`);
             return;
+          } finally {
+            if (delivered) this.countsDelivered.set(day, generation);
+            this.locked(() => {
+              this.refresh();
+              // A completion from before an off cannot touch the new generation.
+              if (this.saved.forgotten !== generation) return;
+              const entry = this.saved.counts.find((known) => known.day === day);
+              if (entry?.claim?.id !== next.claim.id) return;
+              if (delivered) this.saved.counts = this.saved.counts.filter((known) => known.day !== day);
+              else delete entry.claim;
+              this.persist();
+            }, () => this.skipped("a counts day's delivery"));
           }
-          this.locked(() => {
-            this.refresh();
-            // an off and on since it went began a new generation: a day recorded under it is a new batch, kept and sent
-            if (this.saved.forgotten !== generation) return;
-            this.countsDelivered.add(counts.day);
-            this.saved.counts = this.saved.counts.filter((entry) => entry.day !== counts.day);
-            this.persist();
-          }, () => {
-            // the file cannot be locked (a read-only folder, another server's lock): the day the receiver took is not sent
-            // again from this server, unless an off and on it knows of began a new generation
-            if (this.saved.forgotten === generation) this.countsDelivered.add(counts.day);
-            this.skipped("a counts day's delivery");
-          });
         }
       } catch (error) {
         console.error(`telemetry: ${this.file} could not be written (${message(error)})`);
@@ -797,7 +854,7 @@ export class Telemetry {
   private settleLater(): void {
     const today = utcDay(this.now());
     const settled = utcDay(this.now() - COUNTS_SETTLE_MS);
-    if (settled === today || !this.saved.counts.some((entry) => entry.day === settled && !this.countsDelivered.has(entry.day))) return;
+    if (settled === today || !this.saved.counts.some((entry) => entry.day === settled && this.countsDelivered.get(entry.day) !== this.saved.forgotten)) return;
     this.countsTimer?.clear();
     this.countsTimer = this.arm(() => void this.flushCounts(), Date.parse(`${today}T00:00:00Z`) + COUNTS_SETTLE_MS - this.now());
   }
@@ -871,7 +928,7 @@ export class Telemetry {
       }
 
       if (changed || pruned) {
-        try { this.persist(); } catch (error) {
+        try { if (!this.persist()) return null; } catch (error) {
           console.error(`telemetry: the visit could not be recorded (${message(error)})`);
           return null;
         }
@@ -897,7 +954,7 @@ export class Telemetry {
           const merged = [...new Set([...entry.harnesses, ...found.map(harnessOf).filter((harness) => harness !== null)])].sort();
           if (!sameHarnesses(merged, entry.harnesses)) {
             entry.harnesses = merged;
-            try { this.persist(); } catch (error) {
+            try { if (!this.persist()) return false; } catch (error) {
               console.error(`telemetry: the visit could not be recorded (${message(error)})`);
               return false;
             }
@@ -921,13 +978,10 @@ export class Telemetry {
     if (!this.writable) return Promise.resolve();
     const pruned = this.locked(() => {
       this.refresh();
-      if (this.prune()) {
-        try { this.persist(); } catch (error) {
-          console.error(`telemetry: ${this.file} could not be written (${message(error)})`);
-          return false;
-        }
+      try { return !this.prune() || this.persist(); } catch (error) {
+        console.error(`telemetry: ${this.file} could not be written (${message(error)})`);
+        return false;
       }
-      return true;
     }, () => { this.skipped("the visit days to send"); return false; });
     if (!pruned) return Promise.resolve();
     const seen = this.saved.notice_seen_at === null ? NaN : Date.parse(this.saved.notice_seen_at);
@@ -951,64 +1005,66 @@ export class Telemetry {
       return Promise.resolve();
     }
     if (this.activeSending) { this.activeAgain = true; this.activeAgainVisit ||= visit; return this.activeSending; }
-    const due = this.saved.active.filter(owed).map((entry) => ({ active: this.activeMessage({ ...entry, usage: carried(entry) }), fresh: usageDue(entry) }));
+    const due = this.saved.active.filter(owed).map((entry) => entry.day);
     const forgotten = this.saved.forgotten;
     const abort = new AbortController();
     this.activeAbort = abort;
     this.activeSending = (async () => {
       try {
-        for (const { active: built } of due) {
+        for (const day of due) {
           if (abort.signal.aborted) return;
-          let active = built;
-          const next = this.locked((): "stop" | "skip" | "send" => {
-            // as the file stands now: an off here or by another server since the list was made deleted its days, and they
-            // are neither sent nor written back
+          const next = this.locked(() => {
             this.refresh();
             if (!this.saved.enabled || this.saved.forgotten !== forgotten) return "stop";
-            // kept before it goes: a receiver may read it even when its answer never comes back, so the hour counts from here
-            const going = this.saved.active.find((known) => known.day === active.day);
-            if (!going) return "skip";
-            // built again from the day as it stands under the lock: another server may have sent a sample since the list was made
-            if (!owed(going)) return "skip";
+            const going = this.saved.active.find((known) => known.day === day);
+            if (!going || !owed(going)) return "skip";
+            const claim = claimSend(going);
+            if (!claim) return "skip";
             const fresh = usageDue(going);
-            active = this.activeMessage({ ...going, usage: carried(going) });
+            const active = this.activeMessage({ ...going, usage: carried(going) });
+            // Keep the sample even if the receiver's answer is lost; a retry within the hour carries it again.
             going.wire_usage = active.usage;
             if (fresh) going.sent_at = this.now();
-            this.persist();
-            // the write found an off another server made after the re-read above: this message is from before it
-            return this.saved.forgotten !== forgotten ? "stop" : "send";
-          }, () => { this.skipped("an active message about to go"); return "stop"; });
+            return this.persist() ? { claim, active } : "stop";
+          }, () => { this.skipped("an active message about to go"); return "stop" as const; });
           if (next === "stop") return;
           if (next === "skip") continue;
-          // last, right before it goes: turned off here or by another server on the same state directory meanwhile, or off and
-          // on again (a new counter) since the message was built
-          if (offMarked(this.offFile)) return;
-          this.refresh();
-          if (this.saved.forgotten !== forgotten) return;
+          const { active, claim } = next;
+          let delivered = false;
           try {
+            if (offMark(this.offFile) !== this.saved.enabled_mark) return;
+            const current = this.locked(() => {
+              this.refresh();
+              return this.saved.enabled && this.saved.forgotten === forgotten
+                && this.saved.active.some((entry) => entry.day === day && entry.claim?.id === claim.id);
+            }, () => false);
+            // last, after the lock is let go and right before the POST: an off marked meanwhile
+            if (!current || abort.signal.aborted || offMark(this.offFile) !== this.saved.enabled_mark) return;
             const response = await this.options.fetch(this.options.activeUrl ?? ACTIVE_URL, {
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify(active),
               signal: AbortSignal.any([abort.signal, AbortSignal.timeout(SEND_TIMEOUT_MS)]),
             });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            delivered = response.ok;
+            if (!delivered) throw new Error(`HTTP ${response.status}`);
           } catch (error) {
             if (!abort.signal.aborted) console.error(`telemetry: the active message was not delivered (${message(error)})`);
             return;
-          }
-          const marked = this.locked(() => {
-            this.refresh();
-            if (this.saved.forgotten !== forgotten) return false;
-            const entry = this.saved.active.find((known) => known.day === active.day);
-            if (entry) {
-              entry.sent = active.harnesses;
-              entry.sent_usage = active.usage;
+          } finally {
+            this.locked(() => {
+              this.refresh();
+              if (this.saved.forgotten !== forgotten) return;
+              const entry = this.saved.active.find((known) => known.day === day);
+              if (entry?.claim?.id !== claim.id) return;
+              if (delivered) {
+                entry.sent = active.harnesses;
+                entry.sent_usage = active.usage;
+              }
+              delete entry.claim;
               this.persist();
-            }
-            return true;
-          }, () => { this.skipped("an active message's delivery"); return false; });
-          if (!marked) return;
+            }, () => this.skipped("an active message's delivery"));
+          }
         }
       } catch (error) {
         console.error(`telemetry: ${this.file} could not be written (${message(error)})`);
@@ -1046,10 +1102,14 @@ export class Telemetry {
     this.abort = abort;
     this.sending = (async () => {
       try {
-        // right before it goes: turned off by another server on the same state directory since the read above
-        if (offMarked(this.offFile)) return;
-        this.refresh();
-        if (this.saved.forgotten !== forgotten) return;
+        // turned off by another server on the same state directory since the read above
+        if (offMark(this.offFile) !== this.saved.enabled_mark) return;
+        const current = this.locked(() => {
+          this.refresh();
+          return this.saved.enabled && this.saved.forgotten === forgotten;
+        }, () => false);
+        // right before it goes, after the lock is let go: turned off by another server on the same state directory meanwhile
+        if (!current || abort.signal.aborted || offMark(this.offFile) !== this.saved.enabled_mark) return;
         const response = await this.options.fetch(this.options.url ?? TELEMETRY_URL, {
           method: "POST",
           headers: { "content-type": "application/json" },
