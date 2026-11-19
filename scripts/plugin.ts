@@ -248,6 +248,11 @@ function serverFetch(path: string, init: RequestInit = {}, door = serverDoor()):
   return door === null ? fetch(`${origin}${path}`, init) : ownerFetch(door, `http://localhost${path}`, init);
 }
 
+/** A request that ran past its `AbortSignal.timeout`: the server answered health, then stopped answering. */
+function timedOut(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "TimeoutError";
+}
+
 /**
  * herdr's PATH plus where the one-line installer (install.sh) puts Bun, Node and herdr: herdr may
  * have been started from a shell that has none of them, and the server spawns `node` for every
@@ -875,15 +880,24 @@ async function pair(parts?: Awaited<ReturnType<typeof pairingParts>>): Promise<n
   }
   const headers: Record<string, string> = { "content-type": "application/json", "x-herdr-machine": "1" };
   if ((env["OVIS_TOKEN"] ?? "") !== "") headers["authorization"] = `Bearer ${env["OVIS_TOKEN"]}`;
-  const started = await serverFetch("/api/devices/pair/start", { method: "POST", headers, body: "{}" });
-  if (!started.ok) {
-    process.stderr.write(`could not start a pairing (${started.status}): ${await started.text()}\n`);
+  let code: string;
+  try {
+    const started = await serverFetch("/api/devices/pair/start", { method: "POST", headers, body: "{}", signal: AbortSignal.timeout(5000) });
+    if (!started.ok) {
+      process.stderr.write(`could not start a pairing (${started.status}): ${await started.text()}\n`);
+      return 1;
+    }
+    ({ code } = (await started.json()) as { code: string; expires_at: string });
+  } catch (error) {
+    if (!timedOut(error)) throw error;
+    // the start may have reached the PC, which then made a code this never got. No route reads it back, and a cancel
+    // cannot tell it from a code made elsewhere since; a new start replaces whichever is pending, as every start does
+    process.stderr.write(`Ovis at ${origin} did not answer in time. It may have made a pairing code that was not shown: run ${env["OVIS_CLI_NAME"] || "ovis"} pair again to replace it.\n`);
     return 1;
   }
-  const { code } = (await started.json()) as { code: string; expires_at: string };
   let url: string | null = null;
   try {
-    const access = (await (await serverFetch("/api/access", { headers })).json()) as { tailscale: { serving_url: string | null } };
+    const access = (await (await serverFetch("/api/access", { headers, signal: AbortSignal.timeout(5000) })).json()) as { tailscale: { serving_url: string | null } };
     url = access.tailscale.serving_url;
   } catch {}
   const out: string[] = [`Pairing code: ${code.slice(0, 3)} ${code.slice(3)}   (good for 10 minutes, for one device)`];
@@ -935,12 +949,19 @@ async function approvePairings(): Promise<number> {
   }
   const headers: Record<string, string> = { "content-type": "application/json", "x-herdr-machine": "1", "x-herdr-update": "1", origin: serverOrigin() };
   if ((env["OVIS_TOKEN"] ?? "") !== "") headers["authorization"] = `Bearer ${env["OVIS_TOKEN"]}`;
-  const listed = await serverFetch("/api/relay/pairings", { headers });
-  if (!listed.ok) {
-    process.stderr.write(`could not read the waiting pairings (${listed.status}): ${await listed.text()}\n`);
+  let pairings: WaitingDevice[];
+  try {
+    const listed = await serverFetch("/api/relay/pairings", { headers, signal: AbortSignal.timeout(15_000) });
+    if (!listed.ok) {
+      process.stderr.write(`could not read the waiting pairings (${listed.status}): ${await listed.text()}\n`);
+      return 1;
+    }
+    ({ pairings } = (await listed.json()) as { pairings: WaitingDevice[] });
+  } catch (error) {
+    if (!timedOut(error)) throw error;
+    process.stderr.write(`Ovis at ${origin} did not answer in time; try again\n`);
     return 1;
   }
-  const { pairings } = (await listed.json()) as { pairings: WaitingDevice[] };
   if (pairings.length === 0) {
     process.stdout.write("No device is waiting to pair.\n");
     return 0;

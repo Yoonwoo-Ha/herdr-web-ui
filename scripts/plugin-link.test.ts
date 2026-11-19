@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { FakeAccountService } from "../shared/account-service-fake.ts";
 import { encodeOffer } from "../shared/relay-offer.ts";
+import { DEFAULT_ACCOUNT_SERVICE } from "../shared/web-policy.ts";
 import { loadRelayIdentity } from "../server/relay/identity.ts";
 import { updateStateDir } from "../server/update-state.ts";
 import { mergeEnvLayers } from "../server/legacy-env.ts";
@@ -236,7 +237,9 @@ describe("ovis link, on the PC itself", () => {
     const out: string[] = [];
     expect(await link(["--code"], { origin: ORIGIN, headers: {}, fetch: local.fetch, out: (text) => out.push(text), signal: stop.signal, lines: answers(), accountService: SERVICE })).toBe(0);
     const text = out.join("");
-    expect(text).toContain("No code to type");
+    // the reason the PC gave, without the route it was asked on
+    expect(text).toContain("No code to type this time (internal error (x)).");
+    expect(text).not.toContain("/api/relay/code");
     expectQrCode(text);
     expect(text).toContain(pc.server_id.match(/.{4}/g)!.join(" "));
     expect(cancelled).toBe(1);
@@ -277,7 +280,7 @@ describe("ovis link, on the PC itself", () => {
     }
   });
 
-  async function linkToAccount(options: { args?: string[]; prepare?: (service: FakeAccountService) => void; approve: (service: FakeAccountService, code: string) => void; enforcing?: boolean }) {
+  async function linkToAccount(options: { args?: string[]; prepare?: (service: FakeAccountService) => void; approve: (service: FakeAccountService, code: string) => void; enforcing?: boolean; service?: string }) {
     const pc = identity();
     const time = clock();
     const service = new FakeAccountService(time.now);
@@ -307,7 +310,7 @@ describe("ovis link, on the PC itself", () => {
     const keys = keyboard();
     const code = await link([...options.args ?? [], "--approve"], {
       origin: ORIGIN, headers: {}, fetch: local.fetch, now: time.now, wait: time.wait, signal: new AbortController().signal,
-      accountService: SERVICE, serviceFetch: (input, init) => service.fetch(new Request(input, init)), lines: keys.lines, terminal: true, discard: keys.discard,
+      accountService: options.service ?? SERVICE, serviceFetch: (input, init) => service.fetch(new Request(input, init)), lines: keys.lines, terminal: true, discard: keys.discard,
       out: (text) => {
         out.push(text);
         const shown = /code:? ([A-Z0-9-]{4,16})\b/.exec(text);
@@ -534,6 +537,19 @@ describe("ovis link, on the PC itself", () => {
     expect(text).not.toContain("github.com/login/device");
     expectQrCode(text);
     expect(service.pcs("acct_1")).toHaveLength(1);
+  });
+
+  it("names the sign-ins of the link page only at the real account service: a test copy may ask for another", async () => {
+    for (const [service, named] of [[SERVICE, false], [DEFAULT_ACCOUNT_SERVICE, true]] as const) {
+      const { code, text } = await linkToAccount({
+        service,
+        prepare: (fake) => fake.offerLinkPage(["github", "google"]),
+        approve: (fake, shown) => fake.approveOnLinkPage(shown, "acct_1", "google"),
+      });
+      expect(code).toBe(0);
+      expect(text).toContain(`${service}/link`);
+      expect([text.includes("GitHub"), text.includes("Google")]).toEqual([named, named]);
+    }
   });
 
   it("uses GitHub's device page when the link page refuses with 429", async () => {
@@ -2377,7 +2393,8 @@ describe("ovis link, on the PC itself", () => {
       step: (state, looks) => { if (looks === 1) { state.account = "acct_1"; state.devices = [OLD, MEMBER]; } },
     });
     expect(code).toBe(0);
-    expect(text).toContain("No code to type this time");
+    expect(text).toContain("No code to type this time (Pairing with a typed code works through Ovis's relay only; scan the QR code instead.).");
+    expect(text).not.toContain("/api/relay/code");
     expect(cancels).toEqual([{ code: "100001" }]);
     expect(offers).toEqual(["100001"]);
     const order = ["POST /api/relay/code", "POST /api/relay/offer", "POST /api/devices/pair/cancel"].map((call) => paths.indexOf(call));

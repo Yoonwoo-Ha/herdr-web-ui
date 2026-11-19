@@ -30,6 +30,7 @@ import { isLoopbackHost } from "../server/access.ts";
 import { fleetPreview } from "../server/preview.ts";
 import { accountOsOfPlatform } from "../shared/account-asker.ts";
 import { decodeOffer } from "../shared/relay-offer.ts";
+import { DEFAULT_ACCOUNT_SERVICE } from "../shared/web-policy.ts";
 import { importPublicKey } from "../shared/relay-e2ee.ts";
 import { startDeviceSignIn, startLinkPageSignIn } from "../src/lib/account/deviceSignIn.ts";
 import { NEW_PC_MS } from "../src/lib/account/myPcs.ts";
@@ -142,7 +143,8 @@ function qr(text: string): string {
 }
 
 class LocalError extends Error {
-  constructor(message: string, readonly status = 0, readonly code = "") { super(message); }
+  /** `reason`: what is shown to a person, without the route `message` starts with (localApi) */
+  constructor(message: string, readonly status = 0, readonly code = "", readonly reason = message) { super(message); }
 }
 
 class AwayError extends Error {}
@@ -207,7 +209,7 @@ function localApi(options: LinkOptions) {
         if (typeof body.error?.message === "string") message = body.error.message;
         if (typeof body.error?.code === "string") code = body.error.code;
       } catch {}
-      throw new LocalError(`${path}: ${message}`, response.status, code);
+      throw new LocalError(`${path}: ${message}`, response.status, code, message);
     }
     if (response.status === 204) return undefined as T;
     return await response.json() as T;
@@ -692,7 +694,7 @@ async function linkWithCode(options: LinkOptions, api: Api): Promise<number> {
           mine = mineOf(undefined, code.pairing?.id);
         } catch (error) {
           if (!(error instanceof LocalError) || onMachine(error)) throw error;
-          refused = error.message;
+          refused = error.reason;
         }
         // the QR code carries this round's code while it is pending, else one of its own: never one made elsewhere
         offer = await api<{ url: string; expires_at: string } & ForAccount>("POST", "/api/relay/offer", { headers: { "x-ovis-pairing": code?.pairing?.id ?? "new" } });
@@ -985,7 +987,7 @@ async function addByQr(options: LinkOptions, api: Api, joining: Joining): Promis
       if (!(error instanceof LocalError)) throw error;
       // nothing was started, and the code pending stays as it was: neither taken back here nor counted as this round's
       if (NO_CODE_STARTED.has(error.code)) throw refusal(error);
-      refused = error.message;
+      refused = error.reason;
     }
     // the typed code is this run's from here on, and is taken back by its id however the run ends, shown or not. One
     // from an Ovis that names none is told only by the QR code that carries it
@@ -1481,7 +1483,8 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
       "Sign in to your Ovis account:",
       `open ${signIn.verificationUri} on any device and enter the code: ${signIn.userCode}`,
       ...(signIn.verificationUriComplete === null ? [] : ["or scan this QR code with the phone's camera:", qr(signIn.verificationUriComplete)]),
-      "Then continue with GitHub or Google there. Waiting for the sign-in…",
+      // a test copy of the service may ask for another sign-in there
+      options.accountService === DEFAULT_ACCOUNT_SERVICE ? "Then continue with GitHub or Google there. Waiting for the sign-in…" : "Then sign in there. Waiting for the sign-in…",
       "",
     ]
     : [
