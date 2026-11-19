@@ -12,8 +12,8 @@ Extension, a later build; see [Later builds](#later-builds)).
 | Setting | Value | Where |
 |---|---|---|
 | Bundle ID | `sh.ovis.app` | `PRODUCT_BUNDLE_IDENTIFIER`, `app/ios/App/App.xcodeproj` |
-| Version | `1.0.1` | `MARKETING_VERSION`, in the project's build settings, which the app and its extension share (not a target's General tab) |
-| Build | `9` | `CURRENT_PROJECT_VERSION`, in the project's build settings too; raise it by one for every upload, TestFlight included |
+| Version | `1.0.2` | `MARKETING_VERSION`, in the project's build settings, which the app and its extension share (not a target's General tab) |
+| Build | `10` | `CURRENT_PROJECT_VERSION`, in the project's build settings too; raise it by one for every upload, TestFlight included |
 | Devices | iPhone and iPad | `TARGETED_DEVICE_FAMILY = "1,2"`, so the listing needs iPad screenshots too |
 | Minimum iOS | 15.0 | `IPHONEOS_DEPLOYMENT_TARGET` |
 | Signing | Automatic, no team yet | the owner picks the team in Xcode (section 3) |
@@ -39,9 +39,9 @@ Extension, a later build; see [Later builds](#later-builds)).
 
 ## 3. Build and upload (the owner, on his Mac with Xcode)
 
-The last upload is version 1.0.1 build 9, built from v0.5.4 (`b9d07980`) and submitted for App
-Review on 2026-11-15; version 1.0 build 8 is on the App Store. The next upload raises the build to
-10. Check App Store Connect before uploading in case a later build has already been uploaded. The App and OvisNotifications targets inherit the same project-level
+The last upload is version 1.0.1 build 9, built from v0.5.4 (`b9d07980`), on the App Store since
+its review in November 2026. The next upload is version 1.0.2 build 10, the app opening on the
+account sign-in. Check App Store Connect before uploading in case a later build has already been uploaded. The App and OvisNotifications targets inherit the same project-level
 build number in Debug and Release.
 
 ```bash
