@@ -1376,6 +1376,24 @@ describe("push resync after lost status events", () => {
     expect(fake.received).toHaveLength(0);
   });
 
+  it.each([
+    ["closes", (push: PushService) => push.closed("w1:p1")],
+    ["is gone from a snapshot", (push: PushService) => push.gone([], new Set())],
+  ])("drops a finish already under way when its pane %s", async (_name, away) => {
+    const asked = Promise.withResolvers<void>();
+    const looked = Promise.withResolvers<void>();
+    const push = createPushService({ loopbackHttp: true, stateDir, timing: { short: 0, long: 0, longTurn: 0 },
+      lookupPane: async () => { asked.resolve(); await looked.promise; return { title: "claude" }; } });
+    push.subscribe(fake.subscription);
+    push.seed([pane("w1:p1", "working", "claude")]);
+    await push.onStatus("w1:p1", "done");
+    await asked.promise;
+    away(push);
+    looked.resolve();
+    await push.settled();
+    expect(fake.received).toHaveLength(0);
+  });
+
   it("leaves a pane with a newer event, and done versus idle, as they are", async () => {
     const push = subscribed();
     push.seed([pane("w1:p1", "working", "a"), pane("w1:p2", "working", "b")]);

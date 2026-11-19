@@ -295,6 +295,22 @@ describe("web push alerts reach the webhook", () => {
     expect(destination.received).toHaveLength(3);
   });
 
+  it("still posts an exit waiting behind another post once a snapshot no longer lists its pane", async () => {
+    const hook = webhook();
+    hook.save({ preset: "json", url: destination.url() }, undefined);
+    const push = createPushService({ stateDir, timing: { short: 0, long: 0, longTurn: 0 }, webhook: hook });
+    push.seed([pane("w1:p1", "working"), pane("w1:p2", "working")]);
+    const answer = destination.hold();
+    await push.onStatus("w1:p2", "blocked");
+    await push.settled();
+    await destination.posts(1);
+    await push.onEnded("w1:p1");
+    push.gone([pane("w1:p2", "blocked")], new Set());
+    answer();
+    await hook.settled();
+    expect(destination.received.map((post) => JSON.parse(post.body).kind)).toEqual(["input", "ended"]);
+  });
+
   it("does not tell a destination set after the alert arose", async () => {
     const hook = webhook();
     hook.save({ preset: "json", url: destination.url("/a") }, undefined);

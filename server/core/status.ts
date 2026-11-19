@@ -825,6 +825,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       const projected = panes.map((pane) => ({ ...pane, agent_status: restingClaude(pane.pane_id, pane.agent, pane.agent_status) }));
       for (const pane of projected) if (pane.agent === "claude" || pane.agent === "opencode" || isTaskAgent(pane.agent)) waits.seed(pane.pane_id, pane.agent_status);
       push.seed(projected.map((pane) => ({ ...pane, agent_status: cards.status(pane.pane_id, alertStatus(pane.agent_status, waits.waiting(pane.pane_id))) })));
+      // a tab, workspace or worktree that closed names none of its panes: the snapshot without them says they went
+      push.gone(projected, newer);
       for (const pane of projected) {
         // herdr told the pane's status after this snapshot was read: the queue has the newer reading
         if (newer.has(pane.pane_id)) continue;
@@ -868,7 +870,10 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       broadcastAll({ type: "pane-exited", pane_id: paneId });
       push.onEnded(paneId).catch(logPushError);
     },
-    onPaneClosed: (paneId) => paneGone(paneId),
+    onPaneClosed: (paneId) => {
+      paneGone(paneId);
+      push.closed(paneId);
+    },
     onPaneMoved: (from, to) => {
       const renumber = finishes.moved(from, to);
       for (const state of [codexFailedAt, codexTurns, codexLooked] as Map<string, unknown>[]) if (state.has(from)) { state.set(to, state.get(from)); state.delete(from); }
@@ -880,6 +885,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       try { options.seenMoved?.(from, to, renumber); }
       catch (error) { console.warn(`seen: could not carry the reads of ${from} to ${to}:`, error); }
       broadcastAll({ type: "pane-moved", from, to });
+      push.moved(from, to);
       paneMoved?.(from, to);
     },
     onStructureChange: () => broadcastAll({ type: "session-changed" }),

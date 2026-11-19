@@ -10,9 +10,10 @@ import * as conversation from "../conversation.ts";
 import * as herdr from "../herdr/client.ts";
 import * as service from "../opencode-service.ts";
 import { PendingInputs } from "../pending-input.ts";
+import type { AlertTiming } from "../push.ts";
 import { connectionData, type Client } from "./connections.ts";
 
-type Handlers = { onStatus: collector.StatusCollectorHandlers["onStatus"]; onBaseline: (panes: readonly unknown[]) => void; onReconciled: (panes: readonly HerdrPane[]) => void; onResync: NonNullable<collector.StatusCollectorHandlers["onResync"]>; onPaneEnded: (paneId: string) => void; onPaneClosed: (paneId: string) => void; herdrLive?: { identity: () => string | null; onChange: (identity: string | null) => void } };
+type Handlers = { onStatus: collector.StatusCollectorHandlers["onStatus"]; onBaseline: (panes: readonly unknown[]) => void; onReconciled: (panes: readonly HerdrPane[]) => void; onResync: NonNullable<collector.StatusCollectorHandlers["onResync"]>; onPaneEnded: (paneId: string) => void; onPaneClosed: (paneId: string) => void; onPaneMoved: (from: string, to: string) => void; herdrLive?: { identity: () => string | null; onChange: (identity: string | null) => void } };
 export let handlers: Handlers;
 export let collectorSnapshot: () => Promise<{ panes: HerdrPane[] }>;
 export const originalCollector = collector.startStatusCollector;
@@ -61,7 +62,7 @@ export const opencode = (session: string | null) => ({ ...base, agent: "opencode
 export const claude = { ...base, agent: "claude", agent_session: { agent: "claude", source: "hook", kind: "id", value: CLAUDE } };
 
 let hubs = 0;
-export function hub<Owner = unknown, Lease = unknown>(path = transcript, queued?: PendingInputs<Owner, Lease>, drain?: (paneId: string) => void, herdrIdentity?: () => string | null) {
+export function hub<Owner = unknown, Lease = unknown>(path = transcript, queued?: PendingInputs<Owner, Lease>, drain?: (paneId: string) => void, herdrIdentity?: () => string | null, alertTiming?: Partial<AlertTiming>) {
   let panes: unknown[] = [];
   let gate: Promise<void> | null = null;
   let reading: (() => void) | undefined;
@@ -85,7 +86,7 @@ export function hub<Owner = unknown, Lease = unknown>(path = transcript, queued?
   const pending = queued ?? new PendingInputs<Owner, Lease>(() => {});
   const held: { paneId: string; code: string }[] = [];
   const status = createStatusHub({
-    options: { stateDir: join(root, `state${++hubs}`), opencodeDb: store, machines: false, ...(herdrIdentity ? { herdrIdentity } : {}), cardTimer: (tick) => { cardTick = tick; return () => {}; } },
+    options: { stateDir: join(root, `state${++hubs}`), opencodeDb: store, machines: false, ...(herdrIdentity ? { herdrIdentity } : {}), cardTimer: (tick) => { cardTick = tick; return () => {}; }, ...(alertTiming ? { alertTiming } : {}) },
     devices: { gated: false, has: () => true, onPaired: () => {} } as never, preferences: { get: () => ({ revision: 0, settings: {}, muted_panes: [] }), subscribe: () => () => {} } as never,
     clients: new Set([client]), present, pending, drainPending: drain ?? (() => {}), holdPendingPane: (paneId, fault) => { held.push({ paneId, code: fault.code }); },
     usage: { invalidate() {} } as never, usageLogin: { ended: () => false } as never,
