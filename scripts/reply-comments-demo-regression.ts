@@ -29,6 +29,14 @@ interface Submit { text: string; agent_only?: true; delivery?: string }
 
 const frames = (page: Page): Promise<void> => page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 
+const atEnd = (page: Page) => page.waitForFunction(() => {
+  const view = document.querySelector<HTMLElement>('.chat-view[data-chat-pinned="0"]');
+  const transcript = view?.querySelector<HTMLElement>(".chat-transcript-virtual");
+  // The list can temporarily pad the transcript past its real end.
+  return view !== null && transcript?.style.paddingBottom === ""
+    && Math.abs(view.scrollHeight - view.clientHeight - view.scrollTop) <= 1;
+}, undefined, WAIT);
+
 const layout = (page: Page) => page.evaluate(() => {
   const view = document.querySelector<HTMLElement>(".chat-view")!;
   return { height: view.clientHeight, scrollTop: view.scrollTop, composer: document.querySelector(".composer")!.getBoundingClientRect().top };
@@ -198,13 +206,7 @@ try {
           assert.equal(await page.locator(".reply-comment-offer").count(), 0, `${label}: no Comment across a user message`);
           await page.locator('.chat-view[data-chat-pinned]:not([data-chat-pinned="0"])').waitFor({ state: "attached", ...WAIT });
           await page.evaluate(() => getSelection()?.removeAllRanges());
-          await page.waitForFunction(() => {
-            const view = document.querySelector<HTMLElement>('.chat-view[data-chat-pinned="0"]');
-            const transcript = view?.querySelector<HTMLElement>(".chat-transcript-virtual");
-            // The list can temporarily pad the transcript past its real end.
-            return view !== null && transcript?.style.paddingBottom === ""
-              && Math.abs(view.scrollHeight - view.clientHeight - view.scrollTop) <= 1;
-          }, undefined, WAIT);
+          await atEnd(page);
           const before = await layout(page);
           await select(page, FIRST.quote, !shape.mobile);
           await page.locator(".reply-comment-offer").waitFor(WAIT);
@@ -224,6 +226,8 @@ try {
           await page.locator(".reply-comments-open", { hasText: "1 comment on the reply" }).waitFor(WAIT);
           assert.equal(await page.evaluate(() => getSelection()?.isCollapsed ?? true), true, `${label}: saving clears the selection`);
           await page.locator(".chat-frame[data-pane-content]").waitFor({ state: "attached", ...WAIT });
+          // The chip grew the composer; the chat follows its end a frame or more later, moving the reply under the next gesture.
+          await atEnd(page);
 
           await comment(page, SECOND.quote, SECOND.comment, !shape.mobile, 2);
           await page.locator(".reply-comments-open").click();
