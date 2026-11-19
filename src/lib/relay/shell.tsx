@@ -14,10 +14,10 @@ import { alertPrefs, loadSettings, SettingsProvider } from "../settings.ts";
 import { readAlertFilters, withAlertFilters } from "../alertFilters.ts";
 import { onLazyChunkFailure } from "../lazyChunk.ts";
 import { setTransport } from "../transport.ts";
-import { takeEntryUrl } from "./boot.ts";
+import { takeEntryUrl, watchNavigation } from "./boot.ts";
 import { nativeDirectSocket, nativeDirectTailnet } from "./directSocket.ts";
 import { enrollmentOf, indexedDeviceStore, indexedPendingPush, ServerIdentityChangedError, type RelayDevice } from "./device.ts";
-import { failureOf, forgedOffer, forgetsDevice, iosBrowserTab, keyMismatch, offerOf, pairsAgainWithoutKey, shellEntry, sheetContext, keepSheetContext, typedJoin, keepTypedJoin, returnHash, keepConfirmedPc, takeConfirmedPc, keepDeviceOnlyPc, deviceOnlyPc, keepConfirmedSignIn, confirmedSignIn, keepPairingReturn, takePairingReturn, offerDigest } from "./shellState.ts";
+import { signInEntry, failureOf, forgedOffer, forgetsDevice, iosBrowserTab, keyMismatch, offerOf, pairsAgainWithoutKey, shellEntry, sheetContext, keepSheetContext, typedJoin, keepTypedJoin, returnHash, keepConfirmedPc, takeConfirmedPc, keepDeviceOnlyPc, deviceOnlyPc, keepConfirmedSignIn, confirmedSignIn, keepPairingReturn, takePairingReturn, offerDigest } from "./shellState.ts";
 import type { AccountView, Attempt, RelayShellMount, RelayShellState, SheetJoin } from "./shellState.ts";
 import { openRelayTransport, type RelayTransport } from "./transport.ts";
 import { offerFromCode, TypedCodeError } from "./pairCode.ts";
@@ -37,6 +37,9 @@ export const ACCOUNT_STEPS_WAIT_MS = 15_000;
 
 
 export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
+  // any navigation in this tab since the entry was read, even one the page takes no step for (Back to another
+  // fragment): a `#sign-in=` entry starts only on a page nothing moved
+  const navigatedSinceEntry = mount.navigatedSinceEntry ?? watchNavigation(window);
   const store = mount.store ?? indexedDeviceStore;
   await loadObservedVersions(store);
   const open = mount.open ?? openRelayTransport;
@@ -694,4 +697,16 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     const link = new URL(encodeOffer(offer, window.location.origin));
     navigate(link.pathname + link.hash);
   });
+  // `#sign-in=<provider>` (boot took it off the address, so a reload or Back starts nothing): that provider's sign-in
+  // starts once, exactly as a press of its button on this page would. Nothing starts for a provider the account service
+  // did not name, on a page signed in (in any tab: the stored session is read right before), or once the page moved
+  // since its load (a link, an offer, Back), which is asked again right before the page leaves for the provider
+  const asked = account.enabled && returning === undefined ? signInEntry(new URL(mount.entryUrl).hash) : null;
+  const unmoved = (): boolean => !navigatedSinceEntry() && entries === 0;
+  const stillWanted = async (): Promise<boolean> => unmoved() && await account.stored() === undefined && unmoved();
+  if (asked !== null && unmoved() && account.state?.kind !== "signed-in") {
+    const provider = (await account.listed()).find((id) => id === asked);
+    // asked before it starts, and again once its pending record is written, right before the page leaves for the provider
+    if (provider !== undefined && await stillWanted()) account.signIn(provider, undefined, stillWanted);
+  }
 }

@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { AppCrash } from "../../components/AppCrash.tsx";
-import { moveQueryToFragment } from "../pageQuery.ts";
+import { moveQueryToFragment, queryWithoutSignIn } from "../pageQuery.ts";
 import { loadRelayShell } from "../relay.ts";
 import { SHEEP_FOR } from "./sheepBadges.ts";
 
@@ -22,8 +22,11 @@ interface Page {
  */
 export function takeEntryUrl(page: Page): string {
   const { href, pathname, search, hash } = page.location;
-  // a sign-in's return (`#code=…&state=…`, account/signin.ts) leaves with the offer: its code is a credential too
-  const kept = search.length > 1 ? `#${search.slice(1)}` : hash.startsWith("#offer=") || signInFragment(hash) ? "" : hash;
+  // a sign-in's return (`#code=…&state=…`, account/signin.ts) leaves with the offer: its code is a credential too. So
+  // does a link that starts a sign-in (`#sign-in=<provider>`), so a reload or Back does not start it again
+  // A query naming one is dropped, never moved into the fragment (pageQuery.ts)
+  const query = search.length > 1 ? queryWithoutSignIn(search) : "";
+  const kept = query !== "" ? `#${query}` : hash.startsWith("#offer=") || hash.startsWith("#sign-in=") || signInFragment(hash) ? "" : hash;
   if (`${search}${hash}` !== kept) page.history.replaceState(null, "", pathname + kept);
   return href;
 }
@@ -56,12 +59,25 @@ export function showStart(container: ParentNode, load: () => Promise<Pick<typeof
     .catch((error: unknown) => { console.warn("Ovis: the mascot was not drawn", error); });
 }
 
+/**
+ * Whether this tab navigated since the call (a fragment, an offer pasted in, Back). Boot starts it as it reads the entry,
+ * before anything loads, so a navigation while the shell still loads counts too.
+ */
+export function watchNavigation(target: { addEventListener(type: string, listener: () => void): void }): () => boolean {
+  let navigated = false;
+  const note = (): void => { navigated = true; };
+  target.addEventListener("hashchange", note);
+  target.addEventListener("popstate", note);
+  return () => navigated;
+}
+
 export function bootRelayShell(container: HTMLElement, renderApp: () => Root, load: typeof loadRelayShell = loadRelayShell): void {
   const entryUrl = takeEntryUrl(window);
+  const navigatedSinceEntry = watchNavigation(window);
   void showStart(container);
   // an older entry of this tab's history may still hold its query: it moves as the load's did, before the app reads it
   window.addEventListener("popstate", () => { moveQueryToFragment(window); });
-  void load().then(({ mountRelayShell }) => mountRelayShell({ container, entryUrl, renderApp })).catch((error: unknown) => {
+  void load().then(({ mountRelayShell }) => mountRelayShell({ container, entryUrl, renderApp, navigatedSinceEntry })).catch((error: unknown) => {
     console.error("Ovis: the relay shell did not start", error);
     createRoot(container).render(createElement(AppCrash, { error }));
   });

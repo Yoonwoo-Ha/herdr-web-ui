@@ -70,12 +70,14 @@ export type DeviceProvider = (typeof DEVICE_PROVIDERS)[number];
 
 export interface OfferedProviders {
   readonly providers: AccountProvider[];
+  /** What the service's answer named, none included; null when it gave none to read (`providers` is then the build's) */
+  readonly listed: AccountProvider[] | null;
   readonly device: DeviceProvider[];
   readonly page: DeviceProvider[];
 }
 
 export async function offeredProviders(service: string, fallback: readonly AccountProvider[], options: { fetch?: Fetch } = {}): Promise<OfferedProviders> {
-  const before: OfferedProviders = { providers: [...fallback], device: ["github"], page: [] };
+  const before: OfferedProviders = { providers: [...fallback], listed: null, device: ["github"], page: [] };
   let body: unknown;
   try {
     const response = await (options.fetch ?? fetch)(new URL("/v1/providers", service));
@@ -88,11 +90,12 @@ export async function offeredProviders(service: string, fallback: readonly Accou
   if (!isRecord(body) || !Array.isArray(body.providers) || !Array.isArray(body.device)) return before;
   const named = new Set<unknown>(body.providers);
   const providers = ACCOUNT_PROVIDERS.filter((provider) => named.has(provider));
-  if (providers.length === 0) return before;
+  if (providers.length === 0) return { ...before, listed: [] };
   const device = new Set<unknown>(body.device);
   const page = new Set<unknown>(Array.isArray(body.device_page) ? body.device_page : []);
   return {
     providers,
+    listed: providers,
     device: DEVICE_PROVIDERS.filter((provider) => device.has(provider) && named.has(provider)),
     page: DEVICE_PROVIDERS.filter((provider) => page.has(provider) && named.has(provider)),
   };
