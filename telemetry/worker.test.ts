@@ -345,6 +345,7 @@ describe("telemetry receiver: active", () => {
 
   test("active: readActive takes a message with the day's usage, and an older sender's without it", () => {
     expect(readActive({ ...active, usage }, now)?.usage).toEqual(usage);
+    expect(readActive({ ...active, usage: { ...usage, ingress: ["lan", "portal", "relay"] } }, now)?.usage?.ingress).toEqual(["lan", "portal", "relay"]);
     expect(readActive(active, now)?.usage).toBeNull();
   });
 
