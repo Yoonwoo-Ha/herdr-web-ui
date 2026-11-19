@@ -188,6 +188,11 @@ export interface PushService {
   devicePaired(event: DevicePairedEvent, origin?: readonly string[]): Promise<void>;
   seed(panes: readonly HerdrPane[], machineId?: string, machineName?: string, serverId?: string): void;
   resync(panes: readonly HerdrPane[], newer: ReadonlySet<string>, machineId?: string): void;
+  /**
+   * A status the pane already had, where nothing was heard of it yet: nothing is announced, and the change after it (a
+   * card's wait, server/card-waits.ts) is news rather than a first sighting.
+   */
+  assume(paneId: string, status: AgentStatus, machineId?: string): void;
   onStatus(paneId: string, status: AgentStatus, machineId?: string): Promise<void>;
   onEnded(paneId: string, machineId?: string): Promise<void>;
   onFailed(paneId: string, machineId?: string): Promise<void>;
@@ -906,6 +911,11 @@ export function createPushService(options: PushServiceOptions): PushService {
         if (pane.agent_kind) kinds.set(key, pane.agent_kind); else kinds.delete(key);
         if (!lastStatus.has(key)) lastStatus.set(key, pane.agent_status);
       }
+    },
+
+    assume(paneId, status, machineId = "local") {
+      const key = paneStorageId(machineId, paneId);
+      if (!lastStatus.has(key)) lastStatus.set(key, status);
     },
 
     resync(panes, newer, machineId = "local") {

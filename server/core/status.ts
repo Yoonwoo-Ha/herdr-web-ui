@@ -9,6 +9,7 @@ import { alertStatus, paneAlertsMuted, pushPaneTitle } from "../../shared/notify
 import { AgentTaskStatus, isTaskAgent } from "../agent-tasks.ts";
 import { resolveAgyStore } from "../agy-store.ts";
 import { BackgroundWait } from "../background-wait.ts";
+import { CardWaits, changedHands, type Roster } from "../card-waits.ts";
 import { busyPanes, DESKTOP_ACTIVITY_FILE, trackDesktopActivity } from "../desktop-activity.ts";
 import { ClaudeSubagentStatus, plain } from "../claude-subagents.ts";
 import { claudeLastTurnEnd, claudeTranscriptStart, type ClaudeTurnEnd } from "../claude-transcript.ts";
@@ -39,7 +40,8 @@ import { OMO_ALIASES, OmoStatus } from "../omo-status.ts";
 import type { OrderSequence } from "../order-sequence.ts";
 import type { PendingInputs } from "../pending-input.ts";
 import type { PreferenceStore } from "../preferences.ts";
-import { currentPrompt, onChatSubmitted, promptWaitEnded, type OpenCodePromptState } from "../prompt.ts";
+import { currentPrompt, type OmpLookups, onChatSubmitted, onPromptAnswering, promptWaitEnded, waitingCard } from "../prompt.ts";
+import { OpenCodePromptState } from "../opencode-prompt.ts";
 import { type AlertTiming, createPushService, defaultStateDir } from "../push.ts";
 import { SessionPlans } from "../session-plan.ts";
 import { readStatuslineContext } from "../statusline.ts";
@@ -52,6 +54,21 @@ import { type Client, send } from "./connections.ts";
 import type { TelemetryIngress, TelemetrySurface } from "../../shared/telemetry.ts";
 
 const VISIT_READ_MS = 10 * 60_000;
+/**
+ * How often a herdr-core server reads its agents' screens for an asking they did not report (server/card-waits.ts).
+ * One read of one terminal costs four hc requests, not one: a `terminal.read`, plus the `terminal.list` and two
+ * `doc.get` the prompt readers make (measured with 30 working agents for 60 s: 600 reads came with 596 lists and
+ * 1192 doc reads more than at rest). So 30 working agents read every 3 s are about 40 hc requests a second, and read
+ * every second about 120.
+ *
+ * Hence two paces. A terminal a page in use shows is read on every tick: someone is looking at it, and its card
+ * should show within a second. Every other one is read on every third tick only: its card counts as waiting within
+ * 3 s, and its alert waits for push's short wait (10 s) after that anyway, so a faster read would only cost requests.
+ * No device is alerted while a page is in use (push.ts `inUse`), so an open page that shows other terminals speeds
+ * nothing up for this one.
+ */
+const CARD_READ_MS = 1000;
+const CARD_UNWATCHED_EVERY = 3;
 
 export function createStatusHub<Owner, Lease>({ options, devices, preferences, clients, present, pending, drainPending, holdPendingPane, paneMoved, usage, usageLogin }: {
   options: {
@@ -77,6 +94,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     openCodeStateDir?: string;
     orderSequence?: OrderSequence;
     seenMoved?: (from: string, to: string, renumber: (id: number) => number) => void;
+    /** runs each tick of the card reads (CARD_READ_MS) and returns how to stop them; tests tick by hand */
+    cardTimer?: (tick: () => Promise<void>) => () => void;
   };
   devices: DeviceStore;
   preferences: PreferenceStore;
@@ -106,7 +125,9 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     muted: (machineId, paneId) => paneAlertsMuted(preferences.get().muted_panes, machineId, paneId),
     lookupPane: async (paneId) => {
       const pane: Pick<HerdrPane, "agent_kind"> & Parameters<typeof pushPaneTitle>[0] = await paneGet(paneId);
-      return { title: pushPaneTitle(pane), ...(pane.agent_kind ? { agent_kind: pane.agent_kind } : {}) };
+      // or what the card it waits on asks, where the agent itself did not say (server/card-waits.ts)
+      const kind = pane.agent_kind ?? cards.kindOf(paneId) ?? undefined;
+      return { title: pushPaneTitle(pane), ...(kind ? { agent_kind: kind } : {}) };
     },
     onAlertDelivered: () => options.telemetry?.tally("alerts_delivered"),
   });
@@ -143,9 +164,28 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     onFound: (paneId) => completions.adopt(paneId, "letta", []),
   });
   const waits = new BackgroundWait(options.statusNow ?? Date.now, options.backgroundWait);
+  /** herdr-core panes whose agent asks on screen what it did not report (server/card-waits.ts); read with state of their own, as a prompt watch is */
+  const cardOpenCode = new OpenCodePromptState();
+  const cardOmp: OmpLookups = new Map();
+  const cards = new CardWaits(
+    (pane, panes) => waitingCard(pane, panes, { codexHome: options.codexHome, openCodeStateDir: options.openCodeStateDir, openCodeState: cardOpenCode, ompLookups: cardOmp }),
+    (paneId, waiting) => cardChanged(paneId, waiting),
+  );
+  const alert = (paneId: string, status: AgentStatus): void => { push.onStatus(paneId, cards.status(paneId, status)).catch(logPushError); };
+  let lastPanes: Map<string, HerdrPane> | null = null;
   let settling: string | null = null;
   const agentNow = new Map<string, string | null>();
   const agentRead = new Map<string, number>();
+  /** when (opencodeAgents.beginRead) each pane's agent was last told gone: a snapshot read begun before then names it to no card read */
+  const agentExited = new Map<string, number>();
+  /** when each pane closed, until a snapshot read begun after it is in: one begun before lists it to no card read */
+  const paneClosed = new Map<string, number>();
+  /**
+   * How many times each pane's agent, or its session, was told to be another, by an event or a snapshot, a change back
+   * to the one before counted too: a card read begun under an earlier count is of an agent that left (server/card-waits.ts)
+   */
+  const agentLifetime = new Map<string, number>();
+  const handsChanged = (paneId: string): void => { agentLifetime.set(paneId, (agentLifetime.get(paneId) ?? 0) + 1); };
   const eventAgent = new Map<string, { agent: string | null; since: number }>();
   const statusNow = options.statusNow ?? Date.now;
   function newLifetime(paneId: string, keep: string | null): void {
@@ -332,7 +372,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       pending.status(paneId, queueStatus(paneId, status)); drainPending(paneId);
       waits.status(paneId, status);
       broadcastAll(paneStatus(paneId, status));
-      push.onStatus(paneId, alertStatus(status, waits.waiting(paneId))).catch(logPushError);
+      alert(paneId, alertStatus(status, waits.waiting(paneId)));
       return;
     }
     if (end !== "failed" || claudeFailed.has(paneId)) return;
@@ -341,7 +381,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     pending.status(paneId, queueStatus(paneId, status)); drainPending(paneId);
     waits.status(paneId, status);
     broadcastAll(paneStatus(paneId, status));
-    push.onStatus(paneId, alertStatus(status, waits.waiting(paneId))).catch(logPushError);
+    alert(paneId, alertStatus(status, waits.waiting(paneId)));
     claudeFailedAlert(paneId);
   }
   /** herdr calls such a pane's rest DONE as it calls any finish it did not see, or `unknown`: it is at rest, and READY */
@@ -369,22 +409,37 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     const named = failedRests(letta.apply(gjc.apply(omo.apply(snapshot))));
     const newest = titleRead > titleApplied;
     if (newest) titleApplied = titleRead;
+    const told = lastPanes;
+    const ids = new Set(named.panes.map((pane) => pane.pane_id));
+    // the newest read also gives the card reads their panes, without a pane closed, or an agent whose exit was told,
+    // after this read began
+    if (newest) {
+      lastPanes = new Map(named.panes.filter((pane) => (paneClosed.get(pane.pane_id) ?? 0) < read)
+        .map((pane) => [pane.pane_id, (agentExited.get(pane.pane_id) ?? 0) > read ? { ...pane, agent: null } : pane]));
+      for (const [paneId, closed] of paneClosed) {
+        if (closed > read) continue;
+        paneClosed.delete(paneId);
+        if (!ids.has(paneId)) agentLifetime.delete(paneId);
+      }
+    }
     if (newest) notePaneFolders(named.panes.flatMap((pane) => [pane.cwd, pane.foreground_cwd]));
     if (capabilities().agents === "reported") for (const { paneId, status } of lettaTitleStatus(named, (paneId) => letta.tracks(paneId), lettaTitled, newest)) {
       const rest = status === "idle" ? lettaRests.get(paneId) : undefined;
       if (status !== "blocked") lettaRests.delete(paneId);
       gjcChanged(paneId, status, true, rest, "letta");
     }
-    const ids = new Set(named.panes.map((pane) => pane.pane_id));
     for (const paneId of [...agentNow.keys()]) {
       if (ids.has(paneId) || (agentRead.get(paneId) ?? 0) > read) continue;
       agentNow.delete(paneId);
       agentRead.delete(paneId);
+      agentExited.delete(paneId);
+      agentLifetime.delete(paneId);
       eventAgent.delete(paneId);
       heard.delete(paneId);
     }
     for (const pane of named.panes) {
       if ((agentRead.get(pane.pane_id) ?? 0) > read) continue;
+      if (changedHands({ agent: agentNow.get(pane.pane_id), agent_session: told?.get(pane.pane_id)?.agent_session }, pane)) handsChanged(pane.pane_id);
       agentNow.set(pane.pane_id, pane.agent ?? null);
       agentRead.set(pane.pane_id, read);
       hearClaude(pane.pane_id, pane.agent, pane.agent_status, false);
@@ -400,7 +455,11 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     return named;
   };
   const backgroundOf = (paneId: string): number => omo.backgroundOf(paneId) || claudeAgents.countOf(paneId) || opencodeAgents.countOf(paneId) || taskAgents.countOf(paneId);
-  const clientSnapshot = async (): Promise<SessionSnapshot> => {
+  /**
+   * The snapshot a send is checked against, each status as its agent reported it. A card's wait is not in it: the send
+   * reads the screen itself (server/core/pending.ts), and a wait outlives its card by a read or more.
+   */
+  const deliverySnapshot = async (): Promise<SessionSnapshot> => {
     const order = options.orderSequence?.read();
     const epoch = finishes.epoch;
     const identity = finishes.herdrIdentity();
@@ -408,7 +467,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       const raw = await rawSnapshot();
       return { ...raw, panes: raw.panes.map((pane) => ({ ...pane, agent_status: restingClaude(pane.pane_id, pane.agent, pane.agent_status) })) };
     });
-    if (epoch !== finishes.epoch) return clientSnapshot();
+    if (epoch !== finishes.epoch) return deliverySnapshot();
     // the same herdr before and after the read: its panes are that herdr's. Without that proof the
     // snapshot names none, rather than give one herdr's pane IDs to another's drafts
     const lifetime = identity !== null && identity === finishes.herdrIdentity() ? herdrLifetime(identity) : undefined;
@@ -425,6 +484,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     }, completions);
     return order ? { ...settled, ...order } : settled;
   };
+  // clients see a card a pane waits on over what its agent reported, which the finishes and the turns were read from
+  const clientSnapshot = async (): Promise<SessionSnapshot> => cards.apply(await deliverySnapshot());
   let visitReadAt = -Infinity;
   function countVisit(snapshot?: ReturnType<typeof clientSnapshot>, visit: { surface?: TelemetrySurface; ingress?: TelemetryIngress } = {}): void {
     const telemetry = options.telemetry;
@@ -438,7 +499,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       .catch((error) => console.error(`telemetry: the visit was not counted (${error instanceof Error ? error.message : String(error)})`));
   }
   const paneStatus = (paneId: string, status: AgentStatus, about: { background_tasks?: number; plan?: PlanSummary | null; context?: PaneContext | null } = {}): ServerMessage =>
-    ({ type: "pane-status", pane_id: paneId, agent_status: status, ...finishes.status(paneId, status), ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
+    ({ type: "pane-status", pane_id: paneId, agent_status: cards.status(paneId, status), ...finishes.status(paneId, status), ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
   const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot, { restoreReplaced: () => preferences.get().settings.restoreReplacedServer === true, bootId: options.orderSequence?.epoch, localFinishEpoch: () => finishes.epoch, relaySocket: options.relayPcSocket, relayDirectSocket: options.relayPcDirectSocket, serverId: options.serverId, tailnet: options.tailnetPcs, sshCandidates: options.sshCandidates, ...(options.pcUpdateTimings ? { ownUpdate: options.pcUpdateTimings } : {}) });
   if (machines && options.herdrProfiles) machines.watchHerdrProfiles(options.herdrProfiles);
   if (machines && capabilities().machines) machines.watchHcMachines(() => listHcMachines(coreConnection()), (machine) => startMachineBridge(machine, options.stateDir ?? defaultStateDir()));
@@ -470,7 +531,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     waits.running(paneId, background, null, false);
     if (turn) waits.status(paneId, status);
     broadcastAll(paneStatus(paneId, status, { background_tasks: background }));
-    if (turn || waits.waiting(paneId) !== held) push.onStatus(paneId, alertStatus(status, waits.waiting(paneId))).catch(logPushError);
+    if (turn || waits.waiting(paneId) !== held) alert(paneId, alertStatus(status, waits.waiting(paneId)));
     if (turn && rest === "failed" && status === "idle") push.onFailed(paneId).catch(logPushError);
   }
 
@@ -479,7 +540,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     const status = turn ? completions.observe(paneId, derived, agent, rest) : completions.current(paneId) ?? completions.observe(paneId, derived, agent);
     if (turn) { pending.status(paneId, status); drainPending(paneId); }
     broadcastAll(paneStatus(paneId, status));
-    if (turn) push.onStatus(paneId, status).catch(logPushError);
+    if (turn) alert(paneId, status);
     if (turn && rest === "failed" && status === "idle") push.onFailed(paneId).catch(logPushError);
   }
 
@@ -495,7 +556,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     const status = completions.current(paneId);
     if (status === undefined) return;
     broadcastAll(paneStatus(paneId, status, { background_tasks: running }));
-    if (changed) push.onStatus(paneId, alertStatus(status, waits.waiting(paneId))).catch(logPushError);
+    if (changed) alert(paneId, alertStatus(status, waits.waiting(paneId)));
     if (changed) claudeFailHeldEnds(paneId);
   }
 
@@ -504,7 +565,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       const status = completions.current(paneId);
       if (status === undefined) continue;
       broadcastAll(paneStatus(paneId, status));
-      push.onStatus(paneId, alertStatus(status, waits.waiting(paneId))).catch(logPushError);
+      alert(paneId, alertStatus(status, waits.waiting(paneId)));
       claudeFailHeldEnds(paneId);
     }
   }
@@ -526,7 +587,19 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       options.openCodeState?.forget(paneId);
       if (!replay) releaseOpenCodePane(paneId);
     }
+    const ran = agentNow.get(paneId);
     agentNow.set(paneId, agent);
+    // its agent is gone (it exited at its card): the wait goes with it, so does a read of its screen under way, and the
+    // status reported now is what shows. The card reads take no agent for it from a snapshot read begun before this,
+    // whether a snapshot or only its own status events had named that agent
+    if (agent === null) {
+      const waited = cards.waiting(paneId);
+      cards.forget(paneId);
+      const last = lastPanes?.get(paneId);
+      if (ran || last?.agent) agentExited.set(paneId, opencodeAgents.beginRead());
+      if (last?.agent) lastPanes!.set(paneId, { ...last, agent: null });
+      if (waited) broadcastAll({ type: "session-changed" });
+    }
     const was = settling;
     settling = paneId;
     const resumed = claudeAgents.loopTold(paneId);
@@ -547,6 +620,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     if (reconcileProviderStatus(omo, gjc, { pane_id: paneId, agent })) completions.forget(paneId);
     const named = [{ pane_id: paneId, agent: omo.runs(paneId) ? "omo" : gjc.runs(paneId) ? "gjc" : agent }];
     if (machines) machines.localAgents(named); else bridgeAgents!.status(named);
+    if (named[0]!.agent && changedHands({ agent: ran }, named[0]!)) handsChanged(paneId);
     agentNow.set(paneId, named[0]!.agent ?? null);
     agentRead.set(paneId, opencodeAgents.beginRead());
     if (eventAgent.get(paneId)?.agent !== (named[0]!.agent ?? null)) eventAgent.set(paneId, { agent: named[0]!.agent ?? null, since: statusNow() });
@@ -560,6 +634,57 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     }
     reportStatus(paneId, raw, agent, replay?.askedAt);
   }
+
+  /**
+   * A herdr-core pane began or stopped waiting on a card its agent did not report: shown and alerted as blocked, then
+   * as what the agent's reports make it (the turn, its finish included, is counted from those alone). A pane whose agent
+   * reports blocked itself is left as it said. Web push hears the status before the wait first, so the wait is news and
+   * alerts, not a first sighting. Another card in a waited one's place comes as that wait's end and a new beginning: push
+   * hears the agent's own status between the two, so the new card alerts as any other.
+   */
+  function cardChanged(paneId: string, waiting: boolean): void {
+    const status = completions.current(paneId) ?? lastPanes?.get(paneId)?.agent_status ?? "unknown";
+    if (status === "blocked") return;
+    const told = alertStatus(status, waits.waiting(paneId));
+    if (waiting) push.assume(paneId, told);
+    broadcastAll(paneStatus(paneId, status));
+    alert(paneId, told);
+    // the rows say what it waits on from the next snapshot
+    broadcastAll({ type: "session-changed" });
+  }
+  /** never two reads at once: a slow read skips a tick rather than pile up */
+  let cardReading: Promise<void> | null = null;
+  const cardPane = (pane: HerdrPane): HerdrPane => ({
+    ...pane,
+    // a status event told before the program in front was known names no agent: the snapshot's then stands
+    agent: agentNow.get(pane.pane_id) ?? pane.agent ?? null,
+    agent_status: completions.current(pane.pane_id) ?? pane.agent_status,
+  });
+  /** each pane asked for anew around its own read (server/card-waits.ts): an agent that left, or was replaced, while a screen was read is not read as itself */
+  const cardRoster: Roster = {
+    all: () => [...(lastPanes?.values() ?? [])].map(cardPane),
+    pane: (paneId) => { const pane = lastPanes?.get(paneId); return pane && cardPane(pane); },
+    lifetime: (paneId) => agentLifetime.get(paneId) ?? 0,
+  };
+  /**
+   * Read: a pane whose agent works or has reported nothing (Codex's question, Claude Code's folder trust), and one that
+   * waits; never an agent at rest or one that reports blocked itself. The panes are the newest snapshot's, with each
+   * agent and status as its own reports made them since, so no snapshot is taken for a read.
+   */
+  function cardTick(only?: ReadonlySet<string>): Promise<void> {
+    if (capabilities().agents !== "reported" || lastPanes === null) return Promise.resolve();
+    // OmO, GJC and Letta panes have trackers of their own, whose status stands: none is read, and a wait begun before
+    // its tracker found the pane ends there
+    cardReading ??= cards.tick(cardRoster, (pane) => pane.agent_status === "working" || pane.agent_status === "unknown", (paneId) => omo.runs(paneId) || gjc.tracks(paneId) || letta.tracks(paneId), only)
+      .catch(() => undefined).finally(() => { cardReading = null; });
+    return cardReading;
+  }
+  // an answer from a card is its wait's, the one the pane is in as the answer begins: once it was delivered the pane is
+  // read, and where that wait is still on, its first read without a card ends it
+  const stopAnswered = onPromptAnswering((paneId) => {
+    const wait = cards.generation(paneId);
+    return () => { if (wait !== undefined) cards.answer(paneId, wait); void cardTick(new Set([paneId])); };
+  });
 
   /** `askedAt`: a status replayed from a snapshot asked for then, which the queue takes as that snapshot (`pending.baseline`) */
   function reportStatus(paneId: string, raw: AgentStatus, agent: string | null, askedAt?: number): void {
@@ -587,7 +712,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     } else waits.forget(paneId);
     const tell = (): void => {
       broadcastAll(paneStatus(paneId, status, tracker !== null ? { background_tasks: tracker.countOf(paneId) } : {}));
-      push.onStatus(paneId, alertStatus(status, waits.waiting(paneId))).catch(logPushError);
+      alert(paneId, alertStatus(status, waits.waiting(paneId)));
     };
     if (agent === "codex" && status === "done" && !omo.runs(paneId) && !gjc.runs(paneId) && (codexTurns.get(paneId) ?? 0) > 0) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -635,7 +760,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
         pending.status(paneId, queueStatus(paneId, status)); drainPending(paneId);
         waits.status(paneId, status);
         broadcastAll(paneStatus(paneId, status));
-        push.onStatus(paneId, status).catch(logPushError);
+        alert(paneId, status);
         return;
       }
       const now = completions.current(paneId);
@@ -646,7 +771,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       pending.status(paneId, queueStatus(paneId, status)); drainPending(paneId);
       waits.status(paneId, status);
       broadcastAll(paneStatus(paneId, status));
-      push.onStatus(paneId, status).catch(logPushError);
+      alert(paneId, status);
       push.onFailed(paneId).catch(logPushError);
     }, () => undefined).finally(() => codexLooking.delete(paneId));
     codexLooking.set(paneId, done);
@@ -656,6 +781,9 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   const shellSnapshots = new WeakSet<HerdrPane>();
   const snapshotVerifications = new WeakMap<HerdrPane, number>();
   function paneGone(paneId: string): void {
+    cards.forget(paneId);
+    lastPanes?.delete(paneId);
+    paneClosed.set(paneId, opencodeAgents.beginRead());
     codexWorking(paneId, false);
     claudeWorking(paneId, false);
     codexTurns.delete(paneId);
@@ -676,6 +804,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     heard.delete(paneId);
     agentNow.delete(paneId);
     agentRead.set(paneId, opencodeAgents.beginRead());
+    agentExited.delete(paneId);
     eventAgent.delete(paneId);
     forgetPaneTranscriptState(paneId);
     bridgeAgents?.ended(paneId);
@@ -690,12 +819,12 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       if (!completions.seen(paneId)) return;
       pending.status(paneId, queueStatus(paneId, "idle")); drainPending(paneId);
       broadcastAll(paneStatus(paneId, "idle"));
-      push.onStatus(paneId, alertStatus("idle", waits.waiting(paneId))).catch(logPushError);
+      alert(paneId, alertStatus("idle", waits.waiting(paneId)));
     },
     onBaseline: (panes, newer = new Set(), askedAt = Date.now()) => {
       const projected = panes.map((pane) => ({ ...pane, agent_status: restingClaude(pane.pane_id, pane.agent, pane.agent_status) }));
       for (const pane of projected) if (pane.agent === "claude" || pane.agent === "opencode" || isTaskAgent(pane.agent)) waits.seed(pane.pane_id, pane.agent_status);
-      push.seed(projected.map((pane) => ({ ...pane, agent_status: alertStatus(pane.agent_status, waits.waiting(pane.pane_id)) })));
+      push.seed(projected.map((pane) => ({ ...pane, agent_status: cards.status(pane.pane_id, alertStatus(pane.agent_status, waits.waiting(pane.pane_id))) })));
       for (const pane of projected) {
         // herdr told the pane's status after this snapshot was read: the queue has the newer reading
         if (newer.has(pane.pane_id)) continue;
@@ -732,7 +861,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
         drainPending(pane.pane_id);
       }
       for (const pane of panes) if (!newer.has(pane.pane_id) && (pane.agent === "claude" || pane.agent === "opencode" || isTaskAgent(pane.agent))) waits.status(pane.pane_id, settled(pane));
-      push.resync(panes.map((pane) => ({ ...pane, agent_status: alertStatus(settled(pane), waits.waiting(pane.pane_id)) })), newer);
+      push.resync(panes.map((pane) => ({ ...pane, agent_status: cards.status(pane.pane_id, alertStatus(settled(pane), waits.waiting(pane.pane_id))) })), newer);
     },
     onPaneEnded: (paneId) => {
       paneGone(paneId);
@@ -787,10 +916,37 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   taskAgents.start();
   const waitTimer = setInterval(waitsRanOut, 1000);
   waitTimer.unref?.();
+  /** the panes a page in use shows: its terminal attached (the chat lens's too), or its chat or prompt followed without one */
+  const shownPanes = (): Set<string> => {
+    const shown = new Set<string>();
+    for (const client of present) for (const panes of [client.data.attached.keys(), client.data.conversationWatches, client.data.promptWatches]) for (const paneId of panes) shown.add(paneId);
+    return shown;
+  };
+  let cardTicks = 0;
+  /** every terminal is due a read: kept past a read of fewer panes in flight, so a page's reads never starve the rest */
+  let cardsDue = false;
+  let readingAll: Promise<void> | null = null;
+  const cardPace = (): Promise<void> => {
+    if (cardTicks++ % CARD_UNWATCHED_EVERY === 0) cardsDue = true;
+    if (cardReading !== null) {
+      // a read of every terminal still under way takes the turn that falls due meanwhile: none follows it at once.
+      // (read back to back while a core restarted, cards already alerted were alerted again)
+      if (cardReading === readingAll) cardsDue = false;
+      return cardReading;
+    }
+    if (cardsDue) { cardsDue = false; return readingAll = cardTick(); }
+    const shown = shownPanes();
+    return shown.size > 0 ? cardTick(shown) : Promise.resolve();
+  };
+  const stopCardTimer = (options.cardTimer ?? ((tick) => {
+    const timer = setInterval(() => { void tick(); }, CARD_READ_MS);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }))(cardPace);
   plans.start();
 
   const untrackOpenCode = trackVerifiedOpenCodePanes((paneId) => collector.trackPane(paneId), () => collector.refresh());
-  const tracked = { ...collector, stop() { untrackOpenCode(); stopMutes(); stopSubmitted(); desktopActivity?.stop(); taskAgents.stop(); collector.stop(); } };
+  const tracked = { ...collector, stop() { untrackOpenCode(); stopMutes(); stopSubmitted(); stopAnswered(); stopCardTimer(); desktopActivity?.stop(); taskAgents.stop(); collector.stop(); } };
 
   /**
    * `fresh` is asked of every caller: a wiring that dropped it would make delivery's last checks read an answer up
@@ -803,5 +959,5 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     const identity = finishes.herdrIdentity();
     return identity === null || identity !== liveHerdr ? undefined : herdrLifetime(identity);
   };
-  return { push, alertWebhook, omo, gjc, letta, claudeAgents, opencodeAgents, taskAgents, plans, clientSnapshot, currentHerdrLifetime, queueHeld, countVisit, machines, broadcastAll, logPushError, collector: tracked, waitTimer };
+  return { push, alertWebhook, omo, gjc, letta, claudeAgents, opencodeAgents, taskAgents, plans, cards, cardTick, clientSnapshot, deliverySnapshot, currentHerdrLifetime, queueHeld, countVisit, machines, broadcastAll, logPushError, collector: tracked, waitTimer };
 }

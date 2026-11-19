@@ -1359,6 +1359,56 @@ export async function shownPromptText(pane: HerdrPane, panes: HerdrPane[], optio
   return shown !== null && draft ? `${shown}\0${JSON.stringify(draft)}` : shown;
 }
 
+/**
+ * The readers whose card is the agent asking its user something it waits on: a permission, a question, a plan to
+ * approve, a confirmation or a menu it opened by itself (Claude's folder trust, Codex's continue menu). Not a picker
+ * the user opened (a `/model` or `/effort` list, Claude's goal dialog), not a held message, and never a fallback card,
+ * which only stands for a status someone reported. pi is not read here (shownPromptText).
+ */
+const WAITING_RESPONDERS: ReadonlySet<string> = new Set([
+  "claude-approval", "claude-confirm", "claude-plan", "claude-question", "claude-submit", "cmd-question",
+  "codex-approval", "codex-question", "codex-async-question", "codex-queued-question", "codex-menu",
+  "agy-question", "hermes-approval", "hermes-question", "hermes-input", "omo-question", "omo-review", "omo-pending",
+  "omp-approval", "omp-question", "omp-submit", "opencode-v1-question", "opencode-question",
+]);
+
+/** What the waiting a card stands for is about, in the words an agent's own report uses (`kind`); null: it does not say. */
+export function waitingKindOf(prompt: InteractivePrompt): "permission" | "question" | null | undefined {
+  if (!WAITING_RESPONDERS.has(parsedByPublicPrompt.get(prompt)?.responder ?? "")) return undefined;
+  return prompt.kind === "approval" || prompt.kind === "plan" ? "permission" : prompt.kind === "question" ? "question" : null;
+}
+
+/**
+ * Whether the agent on a pane's screen waits for its user (server/card-waits.ts): the kind of the card a reader
+ * returns for it now, null when no such card shows, undefined when the read says nothing (it raced a change, or
+ * failed). OpenCode's form kept from a lookup that no longer answers is such a read: the card stays for its user,
+ * but whether it is still asked is not known. Read with the caller's own OpenCode and omp state, so it starts and
+ * ends no asking.
+ */
+export async function waitingCard(pane: HerdrPane, panes: HerdrPane[], options: { codexHome?: string; openCodeStateDir?: string; openCodeState: OpenCodePromptState; ompLookups: OmpLookups }): Promise<{ kind: "permission" | "question" | null; id: string } | null | undefined> {
+  const agent = pane.agent;
+  if (!agent || agent === "pi") return undefined;
+  const known = await readKnownPrompt(pane.pane_id, pane, agent, options.codexHome, panes, options.openCodeStateDir, options.openCodeState, undefined, false, false, options.ompLookups).catch(() => undefined);
+  if (known === undefined || known.stale || known.inputUnverified) return undefined;
+  if (!known.prompt) return null;
+  if (parsedByPublicPrompt.get(known.prompt)?.openCodeForm?.available === false) return undefined;
+  const kind = waitingKindOf(known.prompt);
+  const id = contentId(known.prompt);
+  return kind === undefined || id === undefined ? null : { kind, id };
+}
+
+type AnsweringListener = (paneId: string) => () => void;
+const answeringListeners = new Set<AnsweringListener>();
+/**
+ * Told the pane as an answer from a card's button begins (POST /api/pane/prompt/answer), before anything is read or
+ * typed for it. What the listener gives back is called if that answer was delivered, once its form has settled: by
+ * then the pane may show its next card, so what the answer was for is the listener's to note as it begins.
+ */
+export function onPromptAnswering(listener: AnsweringListener): () => void {
+  answeringListeners.add(listener);
+  return () => { answeringListeners.delete(listener); };
+}
+
 const SUGGESTION_PARSERS: Readonly<Record<string, (ansi: string) => string | null>> = {
   claude: parseClaudeSuggestion,
   gjc: parseGjcSuggestion,
@@ -1429,6 +1479,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
     const log = { paneId: body.pane_id, matched: false };
     answerLog = log;
     let delivered = false;
+    const answered = [...answeringListeners].map((listener) => listener(body.pane_id));
     const response = await serialize(body.pane_id, async () => {
       if (request.signal.aborted) return promptChanged();
       const deadlineMs = options.answerDeadlineMs ?? 4_000;
@@ -2166,7 +2217,10 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
     // the wait for the form's next step only reads the pane: after the pane's turn, so a message
     // queued for it meanwhile is not held up behind the polls
     if (form.still !== undefined) await formMovedOn(body.pane_id, form.still, options.codexHome, options.openCodeStateDir);
-    if (response.ok && delivered) options.onAnswered?.();
+    if (response.ok && delivered) {
+      options.onAnswered?.();
+      for (const told of answered) told();
+    }
     await logAnswer(log, response);
     return response;
   } catch (error) {

@@ -79,12 +79,15 @@ export function hub<Owner = unknown, Lease = unknown>(path = transcript, queued?
   );
   const frames: { type: string; agent_status?: string; background_tasks?: number; background_wait?: boolean }[] = [];
   const client: Client = { data: connectionData({ deviceId: undefined, readOnly: false }), readyState: WebSocket.OPEN, getBufferedAmount: () => 0, send: (encoded: string) => { frames.push(JSON.parse(encoded)); return 1; }, close: () => {} };
+  /** the connections whose page is in use (visible and focused): none until a test adds the client */
+  const present = new Set<Client>();
+  let cardTick: () => Promise<void> = () => Promise.resolve();
   const pending = queued ?? new PendingInputs<Owner, Lease>(() => {});
   const held: { paneId: string; code: string }[] = [];
   const status = createStatusHub({
-    options: { stateDir: join(root, `state${++hubs}`), opencodeDb: store, machines: false, ...(herdrIdentity ? { herdrIdentity } : {}) },
+    options: { stateDir: join(root, `state${++hubs}`), opencodeDb: store, machines: false, ...(herdrIdentity ? { herdrIdentity } : {}), cardTimer: (tick) => { cardTick = tick; return () => {}; } },
     devices: { gated: false, has: () => true, onPaired: () => {} } as never, preferences: { get: () => ({ revision: 0, settings: {}, muted_panes: [] }), subscribe: () => () => {} } as never,
-    clients: new Set([client]), present: new Set(), pending, drainPending: drain ?? (() => {}), holdPendingPane: (paneId, fault) => { held.push({ paneId, code: fault.code }); },
+    clients: new Set([client]), present, pending, drainPending: drain ?? (() => {}), holdPendingPane: (paneId, fault) => { held.push({ paneId, code: fault.code }); },
     usage: { invalidate() {} } as never, usageLogin: { ended: () => false } as never,
   });
   const alerts: string[] = [];
@@ -95,9 +98,10 @@ export function hub<Owner = unknown, Lease = unknown>(path = transcript, queued?
   const ended: string[] = [];
   stubs.push(spyOn(status.push, "onEnded").mockImplementation(async (paneId: string) => { ended.push(paneId); }));
   return {
-    alerts, pending, status, held,
+    alerts, pending, status, held, client, present,
+    tickCards: () => cardTick(),
     ended: () => ({ push: [...ended], frames: frames.filter((seen) => seen.type === "pane-exited").length }),
-    herdrSays: (pane: unknown) => { panes = [pane]; },
+    herdrSays: (...shown: unknown[]) => { panes = shown; },
     snapshot: async () => { const snapshot = await status.clientSnapshot(); await status.claudeAgents.refresh(panes as HerdrPane[]); return snapshot; },
     heldSnapshot: async () => {
       const opened = Promise.withResolvers<void>();

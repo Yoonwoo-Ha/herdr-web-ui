@@ -1653,3 +1653,44 @@ describe("answer buttons on a question's alert (#2916)", () => {
     expect(fake.received[0]!.payload.actions).toBeUndefined();
   });
 });
+
+describe("a card's wait told to web push (server/card-waits.ts)", () => {
+  const SHORT = 40;
+  /** the short wait's timer, held until the test fires it; every other timer runs for real */
+  function heldShortWait() {
+    const realSet = globalThis.setTimeout;
+    const realClear = globalThis.clearTimeout;
+    const held = new Map<object, () => void>();
+    const set = spyOn(globalThis, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+      if (ms !== SHORT) return realSet(callback, ms, ...args);
+      const handle = {};
+      held.set(handle, () => callback(...args));
+      return handle;
+    }) as never);
+    const clear = spyOn(globalThis, "clearTimeout").mockImplementation(((handle: unknown) => {
+      if (!held.delete(handle as object)) realClear(handle as Parameters<typeof clearTimeout>[0]);
+    }) as never);
+    return { pending: () => held.size, fire: () => { const due = [...held.values()]; held.clear(); for (const run of due) run(); }, restore: () => { set.mockRestore(); clear.mockRestore(); } };
+  }
+  const service = () => {
+    const push = createPushService({ loopbackHttp: true, stateDir, timing: { short: SHORT, long: SHORT, longTurn: 1_000 } });
+    push.subscribe(fake.subscription, { input: true, done: "always" });
+    return push;
+  };
+
+  it("alerts once, after its short wait, for a wait first heard as blocked once the agent's own status was assumed", async () => {
+    const timers = heldShortWait();
+    try {
+      const push = service();
+      push.assume("t1", "unknown");
+      await push.onStatus("t1", "blocked");
+      expect(timers.pending()).toBe(1);
+      timers.fire();
+      await push.settled();
+      expect(fake.received).toHaveLength(1);
+      // the same card read again is no change
+      await push.onStatus("t1", "blocked");
+      expect(timers.pending()).toBe(0);
+    } finally { timers.restore(); }
+  });
+});

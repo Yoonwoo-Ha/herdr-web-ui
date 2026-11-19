@@ -290,8 +290,14 @@ export function composerSendShown(state: { working: boolean; text: string }): bo
   return !state.working || state.text.trim().length > 0;
 }
 
-export function composerDelivery(agent: string | null, status?: AgentStatus): "queue" | "immediate" {
-  return agent !== null && status === "working" ? "queue" : "immediate";
+/**
+ * `cardWaits`: the PC's server also shows a pane blocked while it reads a card its agent did not report (herdr-core,
+ * server/card-waits.ts). That agent may still be working, and nothing the page gets tells such a wait from the
+ * agent's own blocked: a message for it waits as one for a working agent does. An agent that reports blocked
+ * itself takes no message either way: the server refuses it at once or queued alike.
+ */
+export function composerDelivery(agent: string | null, status?: AgentStatus, cardWaits = false): "queue" | "immediate" {
+  return agent !== null && (status === "working" || (cardWaits && status === "blocked")) ? "queue" : "immediate";
 }
 
 /**
