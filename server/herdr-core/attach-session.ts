@@ -266,6 +266,11 @@ export class CoreAttachSession {
     if (this.channel) void this.channel.close().then(() => this.end(null));
   }
 
+  /** As `kill`: hc reads the close after what was typed, both going over the one connection in the order written. */
+  leave(): void {
+    this.kill();
+  }
+
   private report(): void {
     const json = JSON.stringify(this.display);
     if (!this.channel || json === this.sentDisplay) return;
