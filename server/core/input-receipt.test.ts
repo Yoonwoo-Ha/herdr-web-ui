@@ -102,6 +102,23 @@ it("types a lone cursor key queued behind a key into a herdr-core attach, which 
   }
 });
 
+it("sends a lone cursor key as hc's named key while the herdr-core attach is paused, in order with the typing after it", async () => {
+  for (const [paused, sent] of [[true, ["pty a", "keys up", "text b"]], [false, ["pty a", "pty \u001bOA", "pty b"]]] as const) {
+    const attach = Object.create(CoreAttachSession.prototype) as CoreAttachSession;
+    if (paused) attach.pause();
+    const { typed, results, phone, other, inputFrames, typedInto, answer } = lane(true, attach);
+    inputFrames.input(phone, { type: "input", pane_id: "w:p1", text: "a" });
+    inputFrames.input(phone, { type: "input", pane_id: "w:p1", text: "\u001bOA", id: 4 });
+    inputFrames.input(phone, { type: "input", pane_id: "w:p1", text: "b" });
+    const barrier = inputFrames.keys(other, { type: "keys", pane_id: "w:p1", keys: ["right"] });
+    answer();
+    await barrier;
+    expect(typed).toEqual([...sent, "keys right"]);
+    expect(results()).toEqual([{ type: "input-result", id: 4, pane_id: "w:p1", ok: true }]);
+    expect(typedInto("w:p1")).toBe(4);
+  }
+});
+
 it("answers typing written straight to the pty at once, a refusal with its code, and an input without an id not at all", () => {
   const live = lane();
   live.inputFrames.input(live.phone, { type: "input", pane_id: "w:p1", text: "a", id: 1 });

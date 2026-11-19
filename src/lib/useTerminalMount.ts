@@ -952,7 +952,6 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         const frame = outputFrames.shift();
         if (!frame || disposed) {
           writingOutput = false;
-          if (!disposed && arrowModeCandidate === arrowModeEpoch) arrowModesReady = true;
           return;
         }
         writingOutput = true;
@@ -1095,8 +1094,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
           && recoveringPane !== parsingModePane) {
           arrowModeEpoch++;
           parsingModeEpoch = arrowModeEpoch;
-          arrowModesReady = false;
-          arrowModeCandidate = arrowModeEpoch;
+          arrowModeWitness = arrowModeEpoch;
         }
         return false;
       }));
@@ -1147,13 +1145,14 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       ghosttyFaintObserver.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ["style"] });
       setConnectedBefore(connectedSockets.has(socket));
       let outputGeneration = 0;
-      // A raw arrow is safe only after this attachment's output has finished parsing in xterm.
-      // Capture this on the Typed item too: input waiting for an attach may flush after the first paint.
-      let arrowModesReady = false;
+      // A raw arrow needs this attachment's output to have shown its DECCKM: only then has the server's attach
+      // (CoreAttachSession) read the program's cursor mode, and it types a lone cursor key in that mode, whatever
+      // xterm still believed when it encoded the key, so output still on its way to xterm holds nothing back.
+      // Captured on the Typed item too: input waiting for an attach may flush after the first paint.
       let arrowModeEpoch = 0;
-      // A witness becomes sendable only after the ordered output queue has drained.
-      let arrowModeCandidate: number | null = null;
-      const invalidateArrowModes = (): void => { arrowModesReady = false; arrowModeCandidate = null; arrowModeEpoch++; };
+      // the epoch of the current attachment's DECCKM witness, null before one
+      let arrowModeWitness: number | null = null;
+      const invalidateArrowModes = (): void => { arrowModeWitness = null; arrowModeEpoch++; };
       let touchWheelDispatching = false;
       // Bumped by readiness receipts: revokes only the proof that queued output is current, never
       // the parse itself (a masked prompt must still keep typing out of every draft).
@@ -1349,10 +1348,6 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
               outputLifetime++;
             }
           }
-      // A raw arrow is safe only after this attachment has parsed an explicit DECCKM set/reset.
-          // Suspend raw sends while these bytes wait for xterm. Keep an established mode witness:
-          // ordinary output does not change DECCKM unless its parsed CSI explicitly does so.
-          arrowModesReady = false;
           const generation = outputGeneration;
           const lifetime = outputLifetime;
           const target = outputTargetRef.current;
@@ -1638,10 +1633,11 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       host.addEventListener("keydown", onCommandArrow);
       // a key, a chord or text for the pane: sent now, or, when the pane cannot take it, told or held for review
       const sendTyped = (current: string, typed: Typed): void => {
-        // xterm encodes an arrow from its parsed mode, so only one encoded after this attachment's output
-        // parsed may go as text. Logical type-ahead arrows and keys queued before that fence stay named.
+        // An arrow pressed after this attachment showed its DECCKM goes as text, also while output is still on its
+        // way to xterm (#4123): a named key waits out hc's typing quiet period, and so does all typing behind it.
+        // Logical type-ahead arrows and arrows pressed before that witness stay named.
         const rawArrow = typed.arrowModeEpoch !== undefined && typed.arrowModeEpoch !== null
-          && typed.arrowModeEpoch === arrowModeEpoch && arrowModesReady && !writingOutput && outputFrames.length === 0 && socket.typesArrows();
+          && typed.arrowModeEpoch === arrowModeEpoch && socket.typesArrows();
         if (typed.keys !== null && (typed.chord || !rawArrow)) {
           if (socket.sendKeys(current, typed.keys)) return;
           // A named arrow that could not be sent must never fall through as its possibly stale CSI bytes.
@@ -1758,7 +1754,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         const arrow = chord === null && !pasting && !composingRef.current && !compositionCommitPendingRef.current && key?.startsWith("Arrow")
           ? terminalChord(key, NO_STICKY_MODIFIERS) : null;
         const typed: Typed = { input, keys: arrow !== null ? [arrow] : chord !== null ? [chord] : null, chord: chord !== null, stop: stopKey && input === "\u001b", secret,
-          ...(arrow !== null ? { arrowModeEpoch: arrowModesReady ? arrowModeEpoch : null } : {}), ...(automatic ? { automatic } : {}) };
+          ...(arrow !== null ? { arrowModeEpoch: arrowModeWitness === arrowModeEpoch ? arrowModeEpoch : null } : {}), ...(automatic ? { automatic } : {}) };
         adoptTypeAhead(current);
         // typed into a tab taking its pane back from idleness: it waits for the new attach (never a password)
         if (resumeInput !== null && resumeInput.pane !== current) takeResume();
