@@ -415,6 +415,9 @@ describe("alertsHere: what the step, Done and Setup: N left say of this device's
     ["an older server or the open LAN: no record, the confirmation push failed (and after a reload)", { push: record({ delivered: null }), confirmed: false }, "off"],
     ["an older server or the open LAN: no record, subscribed before the outcome was kept: as before", { push: record({ delivered: null }), confirmed: null }, "on"],
     ["an older server or the open LAN: no record, no subscription", { pushOn: false, push: record({ delivered: null }) }, "off"],
+    ["a delivered subscription, but the permission not granted here", { notifications: "default" }, "off"],
+    ["a delivered subscription, but no push in this browser", { pushSupported: false }, "off"],
+    ["a delivered subscription, its health not read yet since the load", { push: record({ checked: false }) }, "checking"],
   ];
   for (const [name, facts, expected] of rows) {
     it(name, () => {
@@ -426,7 +429,7 @@ describe("alertsHere: what the step, Done and Setup: N left say of this device's
     expect(alertsSurfaces("on")).toEqual({ step: "send-test", done: "done", row: "done" });
     expect(alertsSurfaces("off")).toEqual({ step: "turn-on", done: "not-yet", row: "left" });
     expect(alertsSurfaces("checking")).toEqual({ step: "checking", done: "checking", row: "wait" });
-    expect(alertsSurfaces("unavailable")).toEqual({ step: "note", done: "not-yet", row: "done" });
+    expect(alertsSurfaces("unavailable")).toEqual({ step: "note", done: "unavailable", row: "done" });
   });
 });
 

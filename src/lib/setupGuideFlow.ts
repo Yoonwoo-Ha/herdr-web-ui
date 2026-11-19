@@ -279,10 +279,10 @@ export function alertsHere({ alertsOn, notifications, desktop, pushSupported, pu
   return push.delivered ? "on" : "off";
 }
 
-export function alertsSurfaces(alerts: AlertsHere): { step: "send-test" | "turn-on" | "checking" | "note"; done: "done" | "not-yet" | "checking"; row: "done" | "left" | "wait" } {
+export function alertsSurfaces(alerts: AlertsHere): { step: "send-test" | "turn-on" | "checking" | "note"; done: "done" | "not-yet" | "checking" | "unavailable"; row: "done" | "left" | "wait" } {
   if (alerts === "on") return { step: "send-test", done: "done", row: "done" };
   if (alerts === "checking") return { step: "checking", done: "checking", row: "wait" };
   // nothing can be set up here (plain http): the row does not count it as left
-  if (alerts === "unavailable") return { step: "note", done: "not-yet", row: "done" };
+  if (alerts === "unavailable") return { step: "note", done: "unavailable", row: "done" };
   return { step: "turn-on", done: "not-yet", row: "left" };
 }
