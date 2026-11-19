@@ -38,6 +38,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   it opens Add a PC (`/#add`). A PC the phone app opened by its address goes back to the app's own
   screens.
   ([#4276](https://github.com/devswha/ovis/pull/4276))
+- In the hosted app, the sidebar lists the other PCs this device is paired with under the PC it
+  shows: a tap opens one, and a PC that does not answer reads Off with Check again.
+  ([#4279](https://github.com/devswha/ovis/pull/4279))
 
 ### Changed
 - The iPhone and Android apps open on the Ovis account's sign-in (GitHub, Google and Apple, as the
