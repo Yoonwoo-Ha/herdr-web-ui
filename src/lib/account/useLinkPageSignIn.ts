@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { reserveTab } from "../externalLink.ts";
 import { deviceLabel, deviceOs } from "../phone.ts";
 import { startDeviceSignIn, startLinkPageSignIn, type DeviceSignIn } from "./deviceSignIn.ts";
 import { offeredProviders, type OfferedProviders } from "./service.ts";
@@ -46,10 +47,7 @@ export function useLinkPageSignIn(service: string, onSignedIn: (session: Account
     if (offer === null) return;
     if (offer.page.length === 0 && offer.device.length === 0) { onOpenAccount(); return; }
     running.current?.abort();
-    // in the click, before anything is awaited: a tab opened later is a popup the browser blocks
-    const tab = window.open("about:blank", "_blank");
-    // the sign-in page gets no handle on this one
-    if (tab !== null) tab.opener = null;
+    const tab = reserveTab();
     const controller = new AbortController();
     let sent = false;
     controller.signal.addEventListener("abort", () => { if (!sent) tab?.close(); }, { once: true });

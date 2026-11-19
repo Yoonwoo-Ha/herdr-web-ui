@@ -21,6 +21,7 @@ import { currentLocale, useT, type Translate } from "../lib/i18n.ts";
 import { inMacApp, inNativeApp } from "../lib/nativeApp.ts";
 import { pairThisBrowser, UnconfirmedPairing } from "../lib/pairing.ts";
 import { deviceLabel, deviceOs } from "../lib/phone.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
 import { AccountPcList, AccountSignIn, PROVIDER_NAMES, ProviderMark } from "./AccountPcs.tsx";
 import { QrCode } from "./QrCode.tsx";
 import { statusText } from "./RelayPanel.tsx";
@@ -1116,9 +1117,9 @@ export function AccountSection({ onAccount, recheck = 0 }: {
               )}
           <div className="account-device-actions">
             {view.userCode !== null && (
-              <a className="btn btn-primary" href={view.verificationUri} target="_blank" rel="noopener noreferrer">
+              <ExternalLink kind="sign-in" className="btn btn-primary" href={view.verificationUri}>
                 {view.provider === "ovis" ? t("Open the sign-in page") : t("Open {provider}", { provider: PROVIDER_NAMES[view.provider] })}
-              </a>
+              </ExternalLink>
             )}
             <button type="button" className="btn" onClick={() => { cancelDeviceSignIn(); void load(); }}>{t("Cancel")}</button>
           </div>

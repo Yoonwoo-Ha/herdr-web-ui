@@ -11,6 +11,7 @@ import { machineErrorText } from "../lib/userError.ts";
 import { BridgeUpdateProgress, OwnOvisAddress, ownOvisAction } from "./MachineSidebar.tsx";
 import "./Machines.css";
 import { useT } from "../lib/i18n.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
 import { asksChoice, FoundHerdrChoices, type HerdrChoice } from "./FoundHerdrChoices.tsx";
 
 export function MachineDialog({ machine, preset, updateRemote = false, onClose, onConnected }: { machine?: Machine; preset?: AddPcPreset; updateRemote?: boolean; onClose(): void; onConnected(id: string): void }) {
@@ -156,7 +157,7 @@ export function MachineDialog({ machine, preset, updateRemote = false, onClose, 
 
 function SshOutput({ text }: { text: string }) {
   const t = useT();
-  return <pre className="machine-ssh-output" aria-label={t("SSH output")}>{sshOutputParts(text).map((part, i) => part.type === "link" ? <a key={i} href={part.href} target="_blank" rel="noopener noreferrer">{part.value}</a> : part.value)}</pre>;
+  return <pre className="machine-ssh-output" aria-label={t("SSH output")}>{sshOutputParts(text).map((part, i) => part.type === "link" ? <ExternalLink kind="link" key={i} href={part.href}>{part.value}</ExternalLink> : part.value)}</pre>;
 }
 
 /**

@@ -4,6 +4,7 @@ import { useT } from "../lib/i18n.ts";
 import { SignInError } from "../lib/account/signin.ts";
 import type { AccountSession } from "../lib/account/store.ts";
 import { useLinkPageSignIn } from "../lib/account/useLinkPageSignIn.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
 import { PROVIDER_NAMES } from "./AccountPcs.tsx";
 import { linkAddress } from "./AccountSection.tsx";
 
@@ -52,9 +53,9 @@ export function RelaySignIn({ service, onSignedIn, onOpenAccount }: { service: s
         <output className="account-device-code" aria-live="polite">{userCode}</output>
         <p className="settings-description" role="status">{provider === "ovis" ? t("Waiting for the sign-in…") : t("Waiting for {provider}…", { provider: PROVIDER_NAMES[provider] })}</p>
         <div className="account-device-actions">
-          <a ref={signInPage} className={state.opened ? "btn" : "btn btn-primary"} href={page} target="_blank" rel="noopener noreferrer">
+          <ExternalLink kind="sign-in" ref={signInPage} className={state.opened ? "btn" : "btn btn-primary"} href={page}>
             {provider === "ovis" ? t("Open the sign-in page") : t("Open {provider}", { provider: PROVIDER_NAMES[provider] })}
-          </a>
+          </ExternalLink>
           <button type="button" className="btn" onClick={cancel}>{t("Cancel")}</button>
         </div>
       </div>

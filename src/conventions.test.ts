@@ -270,6 +270,31 @@ describe("regular expressions", () => {
   });
 });
 
+describe("opening outside the app", () => {
+  // src/lib/externalLink.ts is the one way out: the place that will decide which browser a link opens in
+  const OWNER = "src/lib/externalLink.ts";
+  const RAW = /["'\x60]_blank["'\x60]|\bwindow\s*\.\s*open\s*(?:\?\.\s*)?\(/gi;
+
+  it("goes through src/lib/externalLink.ts, never a raw new tab or window.open", () => {
+    const offenders = scan("src/**/*.{ts,tsx}").filter((name) => name !== OWNER && !/\.test\./.test(name)).flatMap((file) => {
+      const code = stripComments(read(file));
+      return [...code.matchAll(RAW)].map((match) => `${file}:${lineOf(code, match.index)}: ${match[0]}`);
+    });
+    fail(offenders, `A link that opens outside the app is an <ExternalLink kind=...> and an address opened from code goes to openExternal(url, kind), or reserveTab() for a sign-in, all from ${OWNER}: no target="_blank" or window.open( anywhere else.`);
+  });
+
+  it("tells a raw new tab from a comment that names one", () => {
+    const found = (code: string): number => [...stripComments(code).matchAll(RAW)].length;
+    expect(found('<a href={url} target="_blank" rel="noreferrer">')).toBe(1);
+    expect(found('link.target = "_blank";')).toBe(1);
+    expect(found('const tab = window.open("about:blank", "_blank");')).toBe(2);
+    expect(found('// opens a tab (`target="_blank"`) with window.open(')).toBe(0);
+    expect(found('<a target="_BLANK" href={url}>')).toBe(1);
+    expect(found("window.open (url); window.open?.(url);")).toBe(2);
+    expect(found("const blank = isBlank(window.opener);")).toBe(0);
+  });
+});
+
 describe("popstate listeners", () => {
   // lib/useAddressBar.ts reads the entry every Back and Forward lands on, and holds the address back
   // until it has. The order of the listeners does not matter to that; a listener that stops the

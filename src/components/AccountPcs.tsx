@@ -12,6 +12,7 @@ import { useT } from "../lib/i18n.ts";
 import { lastSeen } from "../lib/lastSeen.ts";
 import type { PcStatus } from "../lib/relay/pcStatus.ts";
 import { serverScopePath } from "../lib/shellMode.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { ConnectionLine } from "./ConnectionLine.tsx";
 import { outOfReachReason, outOfReachWord } from "./relayPcState.tsx";
@@ -224,7 +225,7 @@ export function AccountPcRows({ pcs, watching, remove, onRemoved, now = Date.now
       {pcs.length > 0 && (
         <li className="devices-row account-pcs-open">
           <span className="settings-description">{t("To open a PC of your account in a browser, sign in to this account at app.ovis.sh.")}</span>
-          <a className="btn" href={HOSTED_APP_URL} target="_blank" rel="noreferrer">{t("Open app.ovis.sh")}</a>
+          <ExternalLink kind="ovis" className="btn" href={HOSTED_APP_URL}>{t("Open app.ovis.sh")}</ExternalLink>
         </li>
       )}
       {removing !== null && (

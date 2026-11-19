@@ -23,7 +23,7 @@ import type { SkillMatcher } from "../lib/skillMentions.ts";
 import { previewChunks } from "../lib/textPreview.ts";
 import type { GalleryImage } from "../lib/imageViewer.ts";
 import { useSettings } from "../lib/settings.ts";
-import { isWebLink, openWebLink } from "../lib/terminalFileLinks.ts";
+import { ExternalLink, isWebLink, openExternal } from "../lib/externalLink.ts";
 
 const SkillMatcherContext = createContext<SkillMatcher | null>(null);
 
@@ -270,7 +270,7 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
     if (shouldOpenWebPage(event, href, openWebPage, machineId)) event.preventDefault();
     else if (settings.reuseExternalLinkTab && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.altKey && isWebLink(href)) {
       event.preventDefault();
-      openWebLink(href, true);
+      openExternal(href, "link", true);
     }
   };
   return <>{nodes.map((node, index) => {
@@ -285,7 +285,7 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
       case "code": {
         const file = fileUriPath(node.value);
         if (open !== null && file !== null) return <FilePathLink key={key} path={file} code open={open} />;
-        if (interactive && /^https?:\/\/\S+$/i.test(node.value)) return <a key={key} className="markdown-code-link" href={node.value} target="_blank" rel="noopener noreferrer" onClick={webClick(node.value)}><code>{node.value}</code></a>;
+        if (interactive && /^https?:\/\/\S+$/i.test(node.value)) return <ExternalLink kind="link" key={key} className="markdown-code-link" href={node.value} onClick={webClick(node.value)}><code>{node.value}</code></ExternalLink>;
         if (open === null || !codeIsFilePath(node.value)) return <code key={key}>{node.value}</code>;
         return node.value.includes("/") ? <FilePathLink key={key} path={node.value} code open={open} /> : <CodeFileName key={key} name={node.value} open={open} />;
       }
@@ -298,7 +298,7 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
       case "strong": return <strong key={key}><Inline nodes={node.children} interactive={interactive} /></strong>;
       case "em": return <em key={key}><Inline nodes={node.children} interactive={interactive} /></em>;
       case "del": return <del key={key}><Inline nodes={node.children} interactive={interactive} /></del>;
-      case "link": return <a key={key} href={node.href} target="_blank" rel="noopener noreferrer" title={node.title} onClick={webClick(node.href)}><Inline nodes={node.children} interactive={false} standalone={standalone} /></a>;
+      case "link": return <ExternalLink kind="link" key={key} href={node.href} title={node.title} onClick={webClick(node.href)}><Inline nodes={node.children} interactive={false} standalone={standalone} /></ExternalLink>;
       case "file": {
         const label = <Inline nodes={node.children} interactive={false} />;
         return open !== null

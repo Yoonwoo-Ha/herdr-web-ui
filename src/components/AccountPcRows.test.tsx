@@ -90,7 +90,7 @@ describe("the account's PCs in a PC's own Settings", () => {
     // a PC's own page cannot tell whether this browser is paired with that PC at app.ovis.sh, where /s/<id>/ opens
     // only a paired one: the link goes to the front page, which is right for every browser, and is named for it
     const links = root.findAll((node) => node.type === "a");
-    expect(links.map((link) => [textOf(link), link.props.href, link.props.target, link.props.rel])).toEqual([["Open app.ovis.sh", "https://app.ovis.sh/", "_blank", "noreferrer"]]);
+    expect(links.map((link) => [textOf(link), link.props.href, link.props.target, link.props.rel])).toEqual([["Open app.ovis.sh", "https://app.ovis.sh/", "_blank", "noopener noreferrer"]]);
     expect(HOSTED_APP_URL).toBe("https://app.ovis.sh/");
     expect(root.findAll((node) => node.type === "li").map(textOf)).toEqual([
       "DeskPCIn your account", "LaptopPCIn your account",

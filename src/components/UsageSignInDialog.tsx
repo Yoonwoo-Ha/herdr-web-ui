@@ -7,7 +7,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
-import { Check, Copy, ExternalLink, SquareTerminal, X } from "lucide-react";
+import { Check, Copy, ExternalLink as ExternalLinkIcon, SquareTerminal, X } from "lucide-react";
 
 import type { UsageLoginPrompt, UsageLoginRequest } from "../../shared/usage-login.ts";
 import { ApiError, cancelUsageLogin, fetchUsageLoginAccounts, fetchUsageLoginPrompt, followUsageLogin, sendUsageLoginCode, startUsageLogin } from "../lib/api.ts";
@@ -17,6 +17,7 @@ import { followedOutcome, type SignInOutcome } from "../lib/signInOutcome.ts";
 import { PROVIDER_NAME } from "../lib/usage.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
 import "./UsageAccountDialog.css";
 
 const PROMPT_POLL_MS = 1000;
@@ -186,7 +187,7 @@ export function UsageSignInDialog({ request, onOpenTerminal, onSignedIn, onClose
         ? <p className="settings-hint" role="status">{t("Waiting for {provider} to show its sign-in page…", { provider: PROVIDER_NAME[provider] })}</p>
         : <div className="account-auth-form usage-sign-in-steps">
           <p className="settings-hint">{prompt.user_code !== null ? t("1. Open the sign-in page and sign in.") : t("Open the sign-in page and sign in.")}</p>
-          <a className="btn usage-sign-in-open" href={prompt.url} target="_blank" rel="noopener noreferrer"><ExternalLink aria-hidden="true" />{t("Open sign-in page")}</a>
+          <ExternalLink kind="sign-in" className="btn usage-sign-in-open" href={prompt.url}><ExternalLinkIcon aria-hidden="true" />{t("Open sign-in page")}</ExternalLink>
           <span className="settings-hint usage-sign-in-host">{new URL(prompt.url).host}</span>
           {prompt.user_code !== null && <>
             <p className="settings-hint">{t("2. Enter this one-time code there:")}</p>

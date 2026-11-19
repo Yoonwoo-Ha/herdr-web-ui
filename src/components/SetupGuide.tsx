@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type ReactNode } from "react";
-import { ArrowRight, Bell, BellRing, Check, ChevronLeft, Circle, CircleCheck, Copy, ExternalLink, TriangleAlert, Folder, Gauge, Globe, Info, KeyRound, LoaderCircle, Network, Play, RefreshCw, RotateCw, Smartphone, Wifi, X } from "lucide-react";
+import { ArrowRight, Bell, BellRing, Check, ChevronLeft, Circle, CircleCheck, Copy, ExternalLink as ExternalLinkIcon, TriangleAlert, Folder, Gauge, Globe, Info, KeyRound, LoaderCircle, Network, Play, RefreshCw, RotateCw, Smartphone, Wifi, X } from "lucide-react";
 
 import type { AgentCatalogEntry, AgentCatalogRow } from "../../shared/agent-catalog.ts";
 import type { HealthAuth, PairingCode, RemoteAccess } from "../../shared/protocol.ts";
@@ -43,6 +43,7 @@ import { TelemetryNotice } from "./TelemetryControls.tsx";
 import { UsageSignInDialog } from "./UsageSignInDialog.tsx";
 import { QrCode } from "./QrCode.tsx";
 import { copyText } from "../lib/clipboard.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
 import { failureText, RelayPairing, statusText } from "./RelayPanel.tsx";
 import "./SetupGuide.css";
 
@@ -1064,7 +1065,7 @@ function StoreQr({ store }: { store: Store }) {
   const name = store === "app-store" ? "App Store" : "Google Play";
   return (
     <QrPanel value={url} label={t("QR code that opens {store}", { store: name })} address={url} scanLine={t("Scan to open {store}.", { store: name })}>
-      <a className="setup-link" href={url} target="_blank" rel="noreferrer noopener">{t("Open {store}", { store: name })} <ExternalLink aria-hidden="true" /></a>
+      <ExternalLink kind="link" className="setup-link" href={url}>{t("Open {store}", { store: name })} <ExternalLinkIcon aria-hidden="true" /></ExternalLink>
     </QrPanel>
   );
 }

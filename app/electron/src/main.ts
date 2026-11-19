@@ -12,6 +12,7 @@ import { extractedAppDir, othersRunFrom } from "./appimage.ts";
 import { desktopLocale, desktopText } from "./text.ts";
 import { hideWindow } from "./windowClose.ts";
 import { argvLinkQuery, LINK_SCHEME, openLinkQuery, tellsLink } from "./openLink.ts";
+import { openOutside } from "./openOutside.ts";
 
 type StepState = "pending" | "ok" | "failed";
 export interface Status {
@@ -76,12 +77,6 @@ function serverOrigin(): string | null {
 
 function ours(url: string): boolean {
   try { return new URL(url).origin === serverOrigin(); } catch { return false; }
-}
-
-function openOutside(url: string): void {
-  try {
-    if (["http:", "https:", "mailto:"].includes(new URL(url).protocol)) void shell.openExternal(url);
-  } catch {}
 }
 
 function setStatus(next: Partial<Status>): void {

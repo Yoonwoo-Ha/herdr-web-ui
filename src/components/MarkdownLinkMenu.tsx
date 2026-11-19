@@ -14,7 +14,7 @@ import { copyText } from "../lib/clipboard.ts";
 import { useT } from "../lib/i18n.ts";
 import { inAndroidApp } from "../lib/nativeApp.ts";
 import { useSettings } from "../lib/settings.ts";
-import { isWebLink, openWebLink } from "../lib/terminalFileLinks.ts";
+import { openExternal } from "../lib/externalLink.ts";
 
 export function pressedLink(event: MouseEvent): HTMLAnchorElement | null {
   // Android ends a dragged text selection with a contextmenu typed "mouse": that is the selection's, not the link's
@@ -58,8 +58,7 @@ export function MarkdownLinkMenu() {
     { id: "copy", label: t("Copy link"), icon: Link2, run: () => { void copyText(href); } },
     { id: "open", label: t("Open link"), icon: ExternalLink, run: () => {
       if (link.isConnected) link.click();
-      else if (isWebLink(href)) openWebLink(href, settings.reuseExternalLinkTab);
-      else window.open(href, "_blank", "noopener,noreferrer");
+      else openExternal(href, "link", settings.reuseExternalLinkTab);
     } },
     ...(typeof navigator.share === "function" ? [{ id: "share", label: t("Share link"), icon: Share2, run: () => {
       // the share sheet rejects when the user closes it: nothing to tell them

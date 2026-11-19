@@ -32,6 +32,7 @@ import { SHEET_QUERY } from "../lib/sheets.ts";
 import { changePc, inNativeApp } from "../lib/nativeApp.ts";
 import { serverIdOfPath, shellMode } from "../lib/shellMode.ts";
 import { canHideMachine, HIDDEN_MACHINES_MAX, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
 
 export const DRAWER_QUERY = "(max-width: 768px)";
 
@@ -523,7 +524,7 @@ export function OwnOvisAddress({ own }: { own: Pick<RemoteOvis, "address" | "url
   const [copied, setCopied] = useState(false);
   const field = useRef<HTMLElement>(null);
   // the host it named is shown with the link: an address that PC chose, which the link text alone would hide
-  if (own.url) return <p className="machine-own-address"><a href={own.url} target="_blank" rel="noopener noreferrer">{t("Open that PC's Ovis")}</a><code>{urlHost(own.url)}</code></p>;
+  if (own.url) return <p className="machine-own-address"><ExternalLink kind="ovis" href={own.url}>{t("Open that PC's Ovis")}</ExternalLink><code>{urlHost(own.url)}</code></p>;
   return <div className="machine-own-address">
     <span>{t("Open it on that PC or through its own tailnet address:")}</span>
     <span className="machine-own-address-row">

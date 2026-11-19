@@ -4,6 +4,7 @@ import { MAX_CUSTOM_THEMES, MAX_THEME_FILE_BYTES, nameKey, readThemeFile, withIm
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useSettings } from "../lib/settings.ts";
 import type { Mode } from "../lib/themes.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
 import { SettingsRow } from "./SettingsControls.tsx";
 import "./ThemeFiles.css";
 
@@ -70,7 +71,7 @@ export function ThemeFiles({ onImported }: { onImported: (sides: readonly Mode[]
         condition={status !== null && <span className={status.failed ? "settings-condition" : "settings-hint"} role={status.failed ? "alert" : "status"}>{status.text}</span>}
       >
         <span className="settings-actions theme-file-actions">
-          <a className="settings-link" href={THEME_FILE_HELP} target="_blank" rel="noreferrer">{t("File format")}</a>
+          <ExternalLink kind="link" className="settings-link" href={THEME_FILE_HELP}>{t("File format")}</ExternalLink>
           <button type="button" className="btn" onClick={() => picker.current?.click()}>{t("Import")}</button>
         </span>
         {/* no `accept`: a phone's picker greys out a .yaml it has no type for, and what is no theme is refused with a reason anyway */}

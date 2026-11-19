@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { AppWindow, ExternalLink } from "lucide-react";
+import { AppWindow, ExternalLink as ExternalLinkIcon } from "lucide-react";
 
 import "./BackgroundTasks.css";
 
@@ -8,6 +8,7 @@ import { useLocale, useT } from "../lib/i18n.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useSettings } from "../lib/settings.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
 import type { AgentStatus, ClaudeArtifact } from "../../shared/protocol.ts";
 
 /**
@@ -83,14 +84,14 @@ function ArtifactsChip({ paneId, status }: { paneId: string; status: AgentStatus
       <ul className="bg-task-list">{artifacts.map((artifact) => {
         const when = formatChatTimestamp(artifact.at, now, locale, t);
         return <li key={artifact.url} className="bg-task is-openable">
-          <a className="bg-task-open" href={artifact.url} target="_blank" rel="noopener noreferrer">
+          <ExternalLink kind="link" className="bg-task-open" href={artifact.url}>
             <AppWindow className="bg-task-icon" aria-hidden="true" />
             <span className="bg-task-main">
               <span className="bg-task-title">{artifact.title ?? artifact.url}</span>
               {when && <span className="bg-task-meta" title={when.full}>{when.label}</span>}
             </span>
-            <ExternalLink className="bg-task-caret" aria-hidden="true" />
-          </a>
+            <ExternalLinkIcon className="bg-task-caret" aria-hidden="true" />
+          </ExternalLink>
         </li>;
       })}</ul>
     </div>}

@@ -7,6 +7,7 @@ import { ApiError, changeTelemetry, fetchTelemetry } from "../lib/api.ts";
 import { telemetrySettingsSnapshot, useSettings } from "../lib/settings.ts";
 import { useT } from "../lib/i18n.ts";
 import { nativeModalOver } from "../lib/useFocusTrap.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
 import { SettingsGroup, SettingsRow, Toggle } from "./SettingsControls.tsx";
 
 /**
@@ -236,7 +237,7 @@ export function TelemetryControls() {
           <pre className="update-output">{JSON.stringify(status.counts, null, 2)}</pre>
         </>}
         <p className="settings-hint">{t("The receiver adds the country this message comes from (two letters, such as KR). It does not store the address.")}</p>
-        <a className="settings-link" href={FIELDS_HELP} target="_blank" rel="noreferrer">{t("What each field means")}</a>
+        <ExternalLink kind="link" className="settings-link" href={FIELDS_HELP}>{t("What each field means")}</ExternalLink>
       </details>
     </SettingsGroup>
   );
