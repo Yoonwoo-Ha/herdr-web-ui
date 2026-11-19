@@ -1,5 +1,5 @@
 import type { DialogReader } from "./registry.ts";
-import { ANSI_RE, onePerPass, type AnswerStep, KEY, type ParsedPrompt, type PromptDraft, findLastIndex, finishPrompt, keySteps, navigationKeys, own } from "./shared.ts";
+import { ANSI_RE, onePerPass, type AnswerStep, type CardWords, KEY, type ParsedPrompt, type PromptDraft, editorRowsMatch, englishOf, findLastIndex, finishPrompt, keySteps, navigationKeys, own } from "./shared.ts";
 import type { NativeSteps } from "./step-navigate.ts";
 
 /**
@@ -68,7 +68,9 @@ function parseHermesClarify(screen: string): ParsedPrompt | null {
   if (hintIndex < 0) return null;
   const askIndex = findLastIndex(lines.slice(0, hintIndex), (line) => HERMES_ASK_RE.test(line.trim()));
   if (askIndex < 0) return null;
-  const block = lines.slice(askIndex + 1, hintIndex).filter((line) => line.trim());
+  const rawBlock = lines.slice(askIndex + 1, hintIndex);
+  const occupied = rawBlock.flatMap((line, index) => line.trim() ? [index] : []);
+  const block = occupied.map((index) => rawBlock[index]!);
   const indent = (line: string) => line.length - line.trimStart().length;
   const at = block.findIndex((line) => line.trimStart().startsWith("▸ ") && !HERMES_ROW_RE.test(line.trim()));
   if (at < 0) return null;
@@ -88,6 +90,7 @@ function parseHermesClarify(screen: string): ParsedPrompt | null {
   const switches = HERMES_SWITCH_RE.test(lines[hintIndex]!);
   if (member[0]?.startsWith(">")) {
     const { nativeSteps, ...navigation } = hermesNavigation(block, base, at, switches);
+    const questionStep = (step: { readonly label: CardWords; readonly current: boolean; readonly answered: boolean }) => [englishOf(step.label), step.current, step.answered];
     return finishPrompt("hermes", {
       kind: "question", title: own("Question"), question, body,
       options: [{ label: own("Type your answer"), description: null }], multi_select: false, custom_option_index: 0,
@@ -96,6 +99,18 @@ function parseHermesClarify(screen: string): ParsedPrompt | null {
       ...(nativeSteps ? { nativeSteps } : {}),
       responder: "hermes-input", menuLabels: [], selectedIndex: 0, checkedOptionIndices: [], customMenuIndex: 0,
       rejectWithEscapeIndex: null, customSteps: typed,
+      customEditorMatches: ({ prompt, text }) => {
+        const start = occupied[end];
+        if (start === undefined || question !== prompt.question || (total! > 1 && prompt.steps?.length !== total)
+          || JSON.stringify(navigation.steps?.map(questionStep)) !== JSON.stringify(prompt.steps?.map(questionStep))
+          || lines.slice(hintIndex + 1).some((line) => /^\s*[❯›>$]/.test(line))) return false;
+        const input = rawBlock.slice(start, occupied[end + member.length]);
+        const first = /^(\s*> )(.*)$/.exec(input[0] ?? "");
+        if (!first) return false;
+        const indent = " ".repeat(first[1]?.length ?? 0);
+        return input.slice(1).every((line) => line === "" || line.startsWith(indent))
+          && editorRowsMatch([first[2] ?? "", ...input.slice(1).map((line) => line.slice(indent.length))], text);
+      },
     });
   }
   const rows: { label: string; selected: boolean; box: boolean; checked: boolean }[] = [];

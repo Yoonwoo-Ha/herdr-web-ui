@@ -2,7 +2,7 @@ import type { DialogReader } from "./registry.ts";
 import { pickerPlan } from "./interaction-plan.ts";
 import { type InteractivePromptAnswer, type InteractivePromptStep } from "../../shared/protocol.ts";
 import { piActiveTab } from "./pi-ask-tabs.ts";
-import { ANSI_RE, onePerPass, type CardWords, KEY, NUMBERED_OPTION_RE, type NumberedRow, type ParsedPrompt, SELECTED_RE, SOLID_RULE_RE, cleanLine, englishOf, findLastIndex, finishPrompt, own, isDivider, joinWrapped, keySteps, listNames, listRows, menuRows, navigationKeys, nearestQuestion, normalizeText, parseNumberedRows, screenWidth, sequentialRows, sliderKeys, wrapped } from "./shared.ts";
+import { ANSI_RE, onePerPass, type CardWords, KEY, NUMBERED_OPTION_RE, type NumberedRow, type ParsedPrompt, SELECTED_RE, SOLID_RULE_RE, cleanLine, editorRowsMatch, englishOf, findLastIndex, finishPrompt, own, isDivider, joinWrapped, keySteps, listNames, listRows, menuRows, navigationKeys, nearestQuestion, normalizeText, parseNumberedRows, screenWidth, sequentialRows, sliderKeys, wrapped } from "./shared.ts";
 
 // several questions navigate between tabs: "Tab/Arrow keys to navigate"
 export const CLAUDE_ASK_HINT_RE = /enter to select.*(?:↑\/↓|tab\/arrow keys) to navigate.*esc to cancel/i;
@@ -221,12 +221,10 @@ function parseClaudeQuestion(screen: string): ParsedPrompt | null {
   if (!sequentialRows(rows) || rows.filter((row) => row.selected).length !== (onSubmit ? 0 : 1)) return null;
   const chatIndex = rows.findIndex((row) => row.label === "Chat about this");
   let customIndex = rows.findIndex((row) => /^Type something\.?$/i.test(row.label));
-  // typed into, the row shows the draft instead of "Type something.", with the cursor on it or
-  // not (2.1.295): in Claude's own form, where the question is named by its chip or tabs and a
-  // rule parts that row from "Chat about this", it is still the typed answer's
+  // Typed into, the row shows the draft instead of "Type something." (2.1.295).
+  // The rule before "Chat about this" identifies the custom row even without a chip or tabs.
   const drafted = customIndex < 0 && !preview && chatIndex > 1
-    && lines.slice(rows[chatIndex - 1]!.lineIndex + 1, rows[chatIndex]!.lineIndex).some((line) => isDivider(line))
-    && (claudeTabs(lines, rows[0]!.lineIndex) !== null || claudeChip(lines, rows[0]!.lineIndex) !== null);
+    && lines.slice(rows[chatIndex - 1]!.lineIndex + 1, rows[chatIndex]!.lineIndex).some((line) => isDivider(line));
   if (drafted) customIndex = chatIndex - 1;
   if (preview) {
     // its notes are no answer of their own: no typed-answer row, the options are the menu
@@ -277,8 +275,27 @@ function parseClaudeQuestion(screen: string): ParsedPrompt | null {
   // Claude opens the box on the first option's row: a box drawn higher up is no option's
   const box = preview ? previewBox(raw, rows[0]!.lineIndex, rows[0]!.lineIndex) : null;
   const drawn = box !== null && box.column >= 2 && box.inner >= CLAUDE_PREVIEW_MIN_WIDTH && rowAt >= 0 && rowAt < optionRows.length ? previewText(raw, box) : null;
+  const editor = rows[customIndex];
   return {
     ...parsed,
+    ...(editor && drafted && (!multiSelect || editor.checked) ? {
+      customEditorMatches: ({ prompt, text }, cursor) => {
+        if ((multiSelect && cursor === "submit" ? !onSubmit : !editor.selected)
+          || parsed.id !== prompt.id || parsed.claudeTabs?.index !== prompt.claudeTabs?.index
+          || parsed.claudeTabs?.identity !== prompt.claudeTabs?.identity
+          || parsed.checkedOptionIndices.join() !== prompt.checkedOptionIndices.join()) return false;
+        const first = raw[editor.lineIndex]?.match(/^(\s*(?:[›>❯]\s*)?\d+\. (?:\[[ xX✓✔]\] )?)(.*)$/u);
+        if (!first) return false;
+        const indent = " ".repeat(Bun.stringWidth(first[1] ?? ""));
+        const rest = raw.slice(editor.lineIndex + 1, rows[chatIndex]?.lineIndex);
+        const divider = findLastIndex(rest, (line) => /^─{3,}\s*$/.test(line));
+        const submit = multiSelect ? findLastIndex(rest, (line) => /^(?:[›>❯]\s*)?Submit$/.test(cleanLine(line))) : divider;
+        if (divider < 0 || submit < 0) return false;
+        const wrappedRows = rest.slice(0, Math.min(divider, submit));
+        return wrappedRows.every((line) => line.startsWith(indent))
+          && editorRowsMatch([first[2] ?? "", ...wrappedRows.map((line) => line.slice(indent.length))], text);
+      },
+    } : {}),
     ...(words === null ? {} : { screen_words: words }),
     ...(drawn === null ? {} : { option_preview: { option_index: rowAt, ...drawn } }),
   };
