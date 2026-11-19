@@ -1,4 +1,86 @@
 {
+  "0.5.6": {
+    "en": {
+      "new": [
+        "Add another PC's Ovis by its https address and the code it shows.",
+        "Your account's PCs that are not in this app yet show in the sidebar."
+      ],
+      "improved": [
+        "The phone apps and app.ovis.sh open on the Ovis account sign-in.",
+        "Add a connection has three tabs: Ovis relay, Tailscale and Direct.",
+        "One approval on a device you use joins a new device to your PCs.",
+        "The hosted app opens straight into the PC you used last.",
+        "Usage counts tell visits through the Ovis relay and Portal apart."
+      ],
+      "fixed": [
+        "A PC that is off says so, with Check again to try it at once.",
+        "Keys typed while offline wait until you send or discard them.",
+        "Signing in on Android no longer hangs after the browser returns.",
+        "An alert is called off when its pane closes before it goes out.",
+        "Chat keeps following new messages as the list settles."
+      ]
+    },
+    "ko": {
+      "new": [
+        "다른 PC의 Ovis를 https 주소와 그 PC에 뜬 코드로 추가할 수 있어요.",
+        "계정에 있지만 이 앱에 아직 없는 PC가 사이드바에 보여요."
+      ],
+      "improved": [
+        "휴대폰 앱과 app.ovis.sh가 Ovis 계정 로그인 화면으로 열려요.",
+        "연결 추가에 Ovis 릴레이, Tailscale, 직접 연결 세 탭이 생겼어요.",
+        "쓰던 기기에서 한 번 승인하면 새 기기가 내 PC들에 연결돼요.",
+        "호스팅 앱이 마지막으로 연 PC로 바로 열려요.",
+        "사용량 집계가 Ovis 릴레이와 Portal을 통한 방문을 구분해요."
+      ],
+      "fixed": [
+        "꺼진 PC는 꺼졌다고 표시되고, 다시 확인으로 바로 재시도할 수 있어요.",
+        "오프라인일 때 입력한 키는 보내거나 버릴 때까지 기다려요.",
+        "Android에서 로그인 후 브라우저에서 돌아와도 멈추지 않아요.",
+        "알림이 나가기 전에 창이 닫히면 그 알림은 취소돼요.",
+        "목록이 자리를 잡는 동안에도 채팅이 새 메시지를 계속 따라가요."
+      ]
+    },
+    "ja": {
+      "new": [
+        "別の PC の Ovis を https アドレスと表示されたコードで追加できます。",
+        "アカウントにあってこのアプリにまだない PC がサイドバーに出ます。"
+      ],
+      "improved": [
+        "スマホアプリと app.ovis.sh は Ovis アカウントのサインインで開きます。",
+        "接続の追加に Ovis リレー、Tailscale、直接の 3 つのタブができました。",
+        "使用中の端末で一度承認すると、新しい端末がすべての PC につながります。",
+        "ホスト版アプリは最後に開いた PC で直接開きます。",
+        "利用状況の集計で Ovis リレーと Portal 経由のアクセスを区別します。"
+      ],
+      "fixed": [
+        "電源が切れた PC はそう表示され、再確認ですぐに試せます。",
+        "オフライン中に入力したキーは、送信か破棄するまで待機します。",
+        "Android でブラウザから戻ったあとサインインが止まらなくなりました。",
+        "通知を送る前にペインが閉じると、その通知は取り消されます。",
+        "一覧が落ち着くまでの間も、チャットが新しいメッセージを追います。"
+      ]
+    },
+    "zh": {
+      "new": [
+        "可以用另一台电脑 Ovis 的 https 地址和它显示的代码添加它。",
+        "账户中尚未加入此应用的电脑会显示在侧边栏。"
+      ],
+      "improved": [
+        "手机应用和 app.ovis.sh 会打开 Ovis 账户登录页。",
+        "添加连接有三个标签页：Ovis 中继、Tailscale 和直接连接。",
+        "在正在使用的设备上批准一次，新设备就能连接你的所有电脑。",
+        "托管应用会直接打开上次使用的电脑。",
+        "用量统计会区分通过 Ovis 中继和 Portal 的访问。"
+      ],
+      "fixed": [
+        "关机的电脑会如实显示，并可用“重新检查”立即重试。",
+        "离线时输入的按键会等你发送或丢弃。",
+        "在 Android 上从浏览器返回后，登录不再卡住。",
+        "通知发出前其窗格已关闭时，该通知会被取消。",
+        "列表调整时，聊天仍会跟随新消息。"
+      ]
+    }
+  },
   "0.5.5": {
     "en": {
       "new": [
