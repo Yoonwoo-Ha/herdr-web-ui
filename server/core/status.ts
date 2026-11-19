@@ -654,6 +654,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   }
   /** never two reads at once: a slow read skips a tick rather than pile up */
   let cardReading: Promise<void> | null = null;
+  /** the hub stopped: no read starts, and one under way finds no pane, so it shows and alerts nothing */
+  let cardsStopped = false;
   const cardPane = (pane: HerdrPane): HerdrPane => ({
     ...pane,
     // a status event told before the program in front was known names no agent: the snapshot's then stands
@@ -663,7 +665,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   /** each pane asked for anew around its own read (server/card-waits.ts): an agent that left, or was replaced, while a screen was read is not read as itself */
   const cardRoster: Roster = {
     all: () => [...(lastPanes?.values() ?? [])].map(cardPane),
-    pane: (paneId) => { const pane = lastPanes?.get(paneId); return pane && cardPane(pane); },
+    pane: (paneId) => { const pane = cardsStopped ? undefined : lastPanes?.get(paneId); return pane && cardPane(pane); },
     lifetime: (paneId) => agentLifetime.get(paneId) ?? 0,
   };
   /**
@@ -672,18 +674,22 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
    * agent and status as its own reports made them since, so no snapshot is taken for a read.
    */
   function cardTick(only?: ReadonlySet<string>): Promise<void> {
-    if (capabilities().agents !== "reported" || lastPanes === null) return Promise.resolve();
+    if (cardsStopped || capabilities().agents !== "reported" || lastPanes === null) return Promise.resolve();
     // OmO, GJC and Letta panes have trackers of their own, whose status stands: none is read, and a wait begun before
     // its tracker found the pane ends there
     cardReading ??= cards.tick(cardRoster, (pane) => pane.agent_status === "working" || pane.agent_status === "unknown", (paneId) => omo.runs(paneId) || gjc.tracks(paneId) || letta.tracks(paneId), only)
       .catch(() => undefined).finally(() => { cardReading = null; });
     return cardReading;
   }
-  // an answer from a card is its wait's, the one the pane is in as the answer begins: once it was delivered the pane is
-  // read, and where that wait is still on, its first read without a card ends it
+  // an answer from a card is its wait's, the one the pane is in as the answer begins: once it was delivered to a card the
+  // agent waits on the pane is read, and where that wait is still on, its first read without a card ends it
   const stopAnswered = onPromptAnswering((paneId) => {
     const wait = cards.generation(paneId);
-    return () => { if (wait !== undefined) cards.answer(paneId, wait); void cardTick(new Set([paneId])); };
+    return (delivered) => {
+      if (!delivered) return;
+      if (wait !== undefined) cards.answer(paneId, wait);
+      void cardTick(new Set([paneId]));
+    };
   });
 
   /** `askedAt`: a status replayed from a snapshot asked for then, which the queue takes as that snapshot (`pending.baseline`) */
@@ -959,7 +965,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   plans.start();
 
   const untrackOpenCode = trackVerifiedOpenCodePanes((paneId) => collector.trackPane(paneId), () => collector.refresh());
-  const tracked = { ...collector, stop() { untrackOpenCode(); stopMutes(); stopSubmitted(); stopAnswered(); stopCardTimer(); desktopActivity?.stop(); taskAgents.stop(); collector.stop(); } };
+  const tracked = { ...collector, stop() { cardsStopped = true; untrackOpenCode(); stopMutes(); stopSubmitted(); stopAnswered(); stopCardTimer(); desktopActivity?.stop(); taskAgents.stop(); collector.stop(); } };
 
   /**
    * `fresh` is asked of every caller: a wiring that dropped it would make delivery's last checks read an answer up

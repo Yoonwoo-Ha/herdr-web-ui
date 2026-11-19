@@ -5225,17 +5225,28 @@ ${omoRule}
     });
   });
 
-  test("tells its listeners as an answer begins, before any key, and again once it was delivered", async () => {
+  test("tells its listeners as an answer begins, before any key, and once it was delivered to a card the agent waits on", async () => {
     await withPane("codex", "blocked", menu(RESUME), async (pane) => {
       moving(pane, RESUME);
       const told: string[] = [];
       const stop = onPromptAnswering((paneId) => {
         told.push(`${paneId} begins after ${pane.sent.length} keys`);
-        return () => { told.push(`delivered after ${pane.sent.length} keys`); };
+        return (delivered) => { told.push(`${delivered ? "delivered" : "not delivered"} after ${pane.sent.length} keys`); };
       });
       try {
         expect(await answer((await card())!.id, { option_index: 2 })).toEqual({ status: 200, code: undefined });
         expect(told).toEqual(["p_1 begins after 0 keys", "delivered after 3 keys"]);
+      } finally { stop(); }
+    });
+  });
+
+  test("tells no listener an answer to a picker the user opened was delivered to a card the agent waits on", async () => {
+    await withPane("claude", "idle", claudeModelList(1), async () => {
+      const told: string[] = [];
+      const stop = onPromptAnswering((paneId) => (delivered) => { told.push(`${paneId} ${String(delivered)}`); });
+      try {
+        expect(await answer((await card())!.id, { option_index: 1 })).toEqual({ status: 200, code: undefined });
+        expect(told).toEqual(["p_1 false"]);
       } finally { stop(); }
     });
   });

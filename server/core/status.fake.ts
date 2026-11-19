@@ -17,21 +17,27 @@ type Handlers = { onStatus: collector.StatusCollectorHandlers["onStatus"]; onBas
 export let handlers: Handlers;
 export let collectorSnapshot: () => Promise<{ panes: HerdrPane[] }>;
 export const originalCollector = collector.startStatusCollector;
-mock.module("../collector.ts", () => ({
-  ...collector,
-  startStatusCollector: (seen: Handlers, deps: { snapshot: typeof collectorSnapshot }) => {
-    collectorSnapshot = deps.snapshot;
-    handlers = seen;
-    return { ready: Promise.resolve(), structureReady: Promise.resolve(), focusReady: Promise.resolve(), trackPane() {}, refresh() {}, stop() {} };
-  },
-}));
+/**
+ * The hubs here take a collector that only hands them its handlers. It is put in place for each hub and taken away as
+ * soon as the hub is built: this module is loaded once per process, so a fake put in place at load and taken away at the
+ * end of the first file that loaded it left a later file in the same bun test run to start real collectors that retried
+ * herdr for ever.
+ */
+function fakeCollector(): void {
+  mock.module("../collector.ts", () => ({
+    ...collector,
+    startStatusCollector: (seen: Handlers, deps: { snapshot: typeof collectorSnapshot }) => {
+      collectorSnapshot = deps.snapshot;
+      handlers = seen;
+      return { ready: Promise.resolve(), structureReady: Promise.resolve(), focusReady: Promise.resolve(), trackPane() {}, refresh() {}, stop() {} };
+    },
+  }));
+}
+const realCollector = (): void => { mock.module("../collector.ts", () => ({ ...collector, startStatusCollector: originalCollector })); };
 const { createStatusHub } = await import("./status.ts");
 
 export const root = mkdtempSync(join(tmpdir(), "herdr-status-hub-"));
-afterAll(() => {
-  mock.module("../collector.ts", () => ({ ...collector, startStatusCollector: originalCollector }));
-  rmSync(root, { recursive: true, force: true });
-});
+afterAll(() => { rmSync(root, { recursive: true, force: true }); });
 const stubs: { mockRestore(): void }[] = [];
 afterEach(() => { for (const stub of stubs.splice(0)) stub.mockRestore(); });
 
@@ -85,12 +91,15 @@ export function hub<Owner = unknown, Lease = unknown>(path = transcript, queued?
   let cardTick: () => Promise<void> = () => Promise.resolve();
   const pending = queued ?? new PendingInputs<Owner, Lease>(() => {});
   const held: { paneId: string; code: string }[] = [];
-  const status = createStatusHub({
+  fakeCollector();
+  // put back at once: the hub takes its collector as it is built, and this module's afterEach runs only in the first file
+  // that loads it
+  const status = (() => { try { return createStatusHub({
     options: { stateDir: join(root, `state${++hubs}`), opencodeDb: store, machines: false, ...(herdrIdentity ? { herdrIdentity } : {}), cardTimer: (tick) => { cardTick = tick; return () => {}; }, ...(alertTiming ? { alertTiming } : {}) },
     devices: { gated: false, has: () => true, onPaired: () => {} } as never, preferences: { get: () => ({ revision: 0, settings: {}, muted_panes: [] }), subscribe: () => () => {} } as never,
     clients: new Set([client]), present, pending, drainPending: drain ?? (() => {}), holdPendingPane: (paneId, fault) => { held.push({ paneId, code: fault.code }); },
     usage: { invalidate() {} } as never, usageLogin: { ended: () => false } as never,
-  });
+  }); } finally { realCollector(); } })();
   const alerts: string[] = [];
   const poll = status.opencodeAgents.poll.bind(status.opencodeAgents);
   stubs.push(spyOn(status.opencodeAgents, "poll").mockImplementation((only) => { const read = poll(only); polls.push(read); return read; }));

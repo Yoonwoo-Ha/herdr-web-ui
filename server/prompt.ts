@@ -1398,12 +1398,13 @@ export async function waitingCard(pane: HerdrPane, panes: HerdrPane[], options: 
   return kind === undefined || id === undefined ? null : { kind, id };
 }
 
-type AnsweringListener = (paneId: string) => () => void;
+type AnsweringListener = (paneId: string) => (delivered: boolean) => void;
 const answeringListeners = new Set<AnsweringListener>();
 /**
  * Told the pane as an answer from a card's button begins (POST /api/pane/prompt/answer), before anything is read or
- * typed for it. What the listener gives back is called if that answer was delivered, once its form has settled: by
- * then the pane may show its next card, so what the answer was for is the listener's to note as it begins.
+ * typed for it. What the listener gives back is told once that answer ended, whether it was delivered to a card the agent
+ * waits on (`waitingKindOf`): never true for a picker the user opened or a fallback card. By then its form has settled
+ * and the pane may show its next card, so what the answer was for is the listener's to note as it begins.
  */
 export function onPromptAnswering(listener: AnsweringListener): () => void {
   answeringListeners.add(listener);
@@ -1420,6 +1421,12 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
   if (url.pathname !== "/api/pane/prompt" && url.pathname !== "/api/pane/prompt/answer") return null;
   setRequestRoute(url.pathname);
   let answerLog: { paneId: string; matched: boolean } | null = null;
+  /** the answering listeners told of this answer, to be told its end */
+  const answering: ((delivered: boolean) => void)[] = [];
+  /** keys for this answer went to the pane: also where something after them failed */
+  let delivered = false;
+  /** the card it matched is one the agent waits on */
+  let waitedOn = false;
   try {
     if (url.pathname === "/api/pane/prompt") {
       if (request.method !== "GET") return badRequest("method_not_allowed", "GET is required.");
@@ -1479,8 +1486,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
     const form: { still?: (prompt: InteractivePrompt | null) => boolean } = {};
     const log = { paneId: body.pane_id, matched: false };
     answerLog = log;
-    let delivered = false;
-    const answered = [...answeringListeners].map((listener) => listener(body.pane_id));
+    for (const listener of answeringListeners) answering.push(listener(body.pane_id));
     const response = await serialize(body.pane_id, async () => {
       if (request.signal.aborted) return promptChanged();
       const deadlineMs = options.answerDeadlineMs ?? 4_000;
@@ -1496,6 +1502,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
       // a plan card's id carries its plan file's revision: the file as it is now must match too
       if (inputUnverified || !prompt || (await withPlanFile(prompt, options.claudeTranscript?.(body.pane_id)))!.id !== body.prompt_id) return promptChanged();
       log.matched = true;
+      waitedOn = waitingKindOf(prompt) !== undefined;
 
       const parsedPrompt = parsedByPublicPrompt.get(prompt);
       // before each key: the look the key needs (beforeKey), then, for an omp card read under an open ask call, that
@@ -2218,13 +2225,12 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
     // the wait for the form's next step only reads the pane: after the pane's turn, so a message
     // queued for it meanwhile is not held up behind the polls
     if (form.still !== undefined) await formMovedOn(body.pane_id, form.still, options.codexHome, options.openCodeStateDir);
-    if (response.ok && delivered) {
-      options.onAnswered?.();
-      for (const told of answered) told();
-    }
+    if (response.ok && delivered) options.onAnswered?.();
+    for (const told of answering.splice(0)) told(waitedOn && response.ok && delivered);
     await logAnswer(log, response);
     return response;
   } catch (error) {
+    for (const told of answering.splice(0)) told(waitedOn && delivered);
     const response = errorResponse(error);
     if (answerLog !== null) await logAnswer(answerLog, response);
     return response;

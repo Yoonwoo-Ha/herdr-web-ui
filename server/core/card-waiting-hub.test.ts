@@ -214,10 +214,9 @@ describe("what ends a card's wait, and what it leaves", () => {
     const h = await started(pane("codex", "working"));
     screen(question);
     await h.status.cardTick();
+    // the agent is gone by the snapshot alone, no status event saying so: the next read finds none in front and ends the wait
     h.herdrSays(pane(null, "working"));
     await h.snapshot();
-    // the agent is known from the snapshot alone: the next read finds none in front and ends the wait
-    handlers.onStatus("t1", "working", null);
     await h.status.cardTick();
     expect(h.status.cards.waiting("t1")).toBe(false);
     expect((await h.snapshot()).panes[0]!.agent_status).not.toBe("blocked");
@@ -415,6 +414,19 @@ describe("what ends a card's wait, and what it leaves", () => {
     expect(shown.read.length).toBe(reads);
     expect(h.status.cards.waiting("t1")).toBe(false);
     expect(sent()).toBe(1);
+  });
+
+  it("starts no wait and alerts nobody from a read that returns after the hub stopped", async () => {
+    serving(true);
+    const h = await started(pane("codex", "working"));
+    const read = heldRead();
+    const tick = h.status.cardTick();
+    await read.begun;
+    h.status.collector.stop();
+    read.answer(question);
+    await tick;
+    expect(h.status.cards.waiting("t1")).toBe(false);
+    expect(h.alerts).not.toContain("blocked");
   });
 
   it("reads no pane closed after the snapshot that lists it was asked for", async () => {
