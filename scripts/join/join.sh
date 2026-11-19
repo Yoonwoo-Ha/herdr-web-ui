@@ -26,11 +26,16 @@
 set -u
 umask 077
 
-# HOME and the trial folder canonical once, before anything is looked up or written: /proc/<pid>/exe, pwd -P and the
-# sockets herdr made are canonical, and every "is this our server?" check compares with these paths (a HOME reached
-# through a link, /home -> /var/home, or written with a doubled or trailing slash, would miss them all). The trial
-# folder by its parent only: the folder itself being a link is refused (j_no_links)
-j_canonical() { realpath -m -- "$1" 2>/dev/null || readlink -m -- "$1" 2>/dev/null || printf '%s' "$1"; }
+# HOME and the trial folder canonical once, before anything is looked up or written: /proc/<pid>/exe and pwd -P are
+# canonical, and every "is this our server?" check compares with these paths (a HOME reached through a link, /home ->
+# /var/home, or written with a doubled or trailing slash, would miss them all). herdr's sockets are the exception: they
+# keep the spelling herdr bound them by, so j_choose also looks under the HOME as given. The trial folder by its parent
+# only: the folder itself being a link is refused (j_no_links)
+# only a resolver that succeeds is heard: one that prints and then fails (BusyBox's realpath on some paths) adds nothing
+j_canonical() {
+  j_c=$(realpath -m -- "$1" 2>/dev/null) || j_c=$(readlink -m -- "$1" 2>/dev/null) || j_c=$1
+  printf '%s' "$j_c"
+}
 j_stage=""
 j_self_dir=$(dirname "$0")
 case $j_self_dir in "${TMPDIR:-/tmp}"/tmp.* | /tmp/tmp.*) [ "$(ls -A "$j_self_dir" 2>/dev/null)" = join.sh ] || j_self_dir="" ;; *) j_self_dir="" ;; esac
@@ -48,6 +53,7 @@ trap 'j_cleanup; exit 129' HUP
 # a line break at its end): the folders made below are listed one per line, and the trial server's settings file holds
 # one setting per line, so it is refused before anything is made
 case $HOME in *[[:cntrl:]]*) printf 'Ovis: HOME holds a line break or another control character, which the trial cannot use; nothing was changed\n' >&2; exit 2 ;; esac
+j_home_given=$HOME
 HOME=$(j_canonical "$HOME")
 export HOME
 J_HOME="$(j_canonical "$HOME/.local/share")/ovis-machine"
@@ -218,6 +224,10 @@ j_remove() {
   fi
   j_made=$(sed -n '1!G;h;$p' "$J_HOME/receipt" | sed -n 's/^dir //p')
   if [ -f "$unit_path" ]; then rm -f -- "$unit_path"; systemctl --user daemon-reload >/dev/null 2>&1; fi
+  # the unit as j_start_systemd writes it first, left there when that write or the run ended before its rename: only a
+  # file that starts with the join's marker
+  j_new="$(dirname "$unit_path")/.$J_UNIT.new"
+  if [ -f "$j_new" ] && [ ! -L "$j_new" ] && [ "$(head -n 1 "$j_new" 2>/dev/null)" = "$J_MARK" ]; then rm -f -- "$j_new"; fi
   j_linger_left=""
   for j_who in $(sed -n 's/^linger //p' "$J_HOME/receipt"); do
     loginctl disable-linger "$j_who" >/dev/null 2>&1 || j_linger_left=$j_who
@@ -256,6 +266,8 @@ j_account_read() {
 }
 j_rollback() { [ "$j_fresh" = 1 ] && j_remove; }
 j_rolled_back() {
+  # a run again that ends before it stopped the earlier install has changed nothing of it, which is left running
+  if [ "${1:-}" != all ] && [ "$j_fresh" = 0 ] && [ "$j_touched" = 0 ]; then printf 'nothing was changed'; return; fi
   j_rc=keep
   if [ "${1:-}" = all ] || [ "$j_fresh" = 1 ]; then j_remove; j_rc=$?; fi
   if [ "$j_rc" = 0 ]; then
@@ -335,7 +347,9 @@ j_ask() {
 }
 
 j_choose() {
-  j_seen=$(sh -c "$J_DETECT" 2>/dev/null)
+  # /proc/net/unix names a socket as it was bound: under the canonical HOME and, where it differs, under the HOME as
+  # given (a herdr started as /home/u, the link to /var/home/u); one socket is bound by one spelling, so shows once
+  j_seen=$({ sh -c "$J_DETECT"; [ "$j_home_given" = "$HOME" ] || HOME=$j_home_given sh -c "$J_DETECT"; } 2>/dev/null | awk '!seen[$0]++')
   j_found=$(printf '%s\n' "$j_seen" | grep "^herdr$J_TAB")
   j_cores=$(printf '%s\n' "$j_seen" | sed -n "s/^herdr-core$J_TAB\\([^$J_TAB]*\\)$J_TAB.*/\\1/p" | tr '\n' ' ' | sed 's/ $//')
   j_bin=$(printf '%s\n' "$j_seen" | sed -n 's/^bin herdr //p' | sed -n 1p)
@@ -366,7 +380,10 @@ j_choose() {
     j_pick=$(printf '%s\n' "$j_pick" | sed -n "${j_answer}p")
   fi
   j_session=$(printf '%s\n' "$j_pick" | cut -f2)
-  j_socket=$(printf '%s\n' "$j_pick" | cut -f3)
+  # the socket as found (herdr's own config folder, which its status reads, follows from it) and canonical, as every other
+  # path the trial server is given: the same socket, whichever spelling found it
+  j_found=$(printf '%s\n' "$j_pick" | cut -f3)
+  j_socket=$(j_canonical "$j_found")
   # the program of the session's own server; only where it cannot be read, the first one in the usual folders
   # the program of the process that listens on that socket (/proc/<pid>/exe), never a herdr found on PATH or in the
   # usual folders: a machine may hold several herdr programs, and only the session's own one attaches its terminals
@@ -378,7 +395,7 @@ j_choose() {
 j_herdr_version() {
   [ -n "$j_herdr" ] || refuse 32 "the program of the herdr server that listens on $j_socket cannot be read from its process; nothing was changed"
   if [ "$j_session" = default ]; then set -- status server; else set -- --session "$j_session" status server; fi
-  j_root=${j_socket%/herdr.sock}
+  j_root=${j_found%/herdr.sock}
   [ "$j_session" = default ] || j_root=${j_root%/sessions/*}
   j_root=${j_root%/herdr}
   j_status=$(XDG_CONFIG_HOME=$j_root "$j_herdr" "$@" 2>/dev/null </dev/null)
@@ -405,8 +422,15 @@ j_listening() {
   else awk 'NR > 1 && $4 == "0A" { split($2, a, ":"); print a[2] }' /proc/net/tcp /proc/net/tcp6 2>/dev/null | while read -r hex; do printf '%d\n' "0x$hex"; done
   fi
 }
+# j_stop_line: the command that stops the trial server for good where the join could not: under systemd its service
+# disabled as well as stopped (a stop alone leaves it to start again at the next login or boot)
+j_stop_line() {
+  if [ "$j_services" = systemd-user ]; then printf 'systemctl --user disable --now %s' "$J_UNIT"
+  else printf '%s stop' "$(j_quote "$J_HOME/bin/ovis-machine")"; fi
+}
 j_choose_port() {
-  j_port=$(sed -n 's/^port //p' "$J_HOME/trial" 2>/dev/null)
+  j_old_port=$(sed -n 's/^port //p' "$J_HOME/trial" 2>/dev/null)
+  j_port=$j_old_port
   [ -z "$j_want_port" ] || j_port=$j_want_port
   if [ -z "$j_port" ]; then
     taken=" $(j_listening | tr '\n' ' ') "
@@ -414,7 +438,9 @@ j_choose_port() {
     [ -n "$j_port" ] || refuse 14 "ports $J_PORTS are all in use here: choose a free one with --port <n>; nothing was changed"
   fi
   case $J_RESERVED in *" $j_port "*) refuse 2 "port $j_port is kept for another Ovis: choose another with --port <n>; nothing was changed" ;; esac
-  [ "$j_fresh" = 0 ] || ! j_port_taken "$j_port" || refuse 14 "port $j_port is already in use here (another program listens on it): choose a free one with --port <n>; nothing was changed"
+  # any port but the one an earlier run's trial server holds is looked at now, before that server is stopped: a run again
+  # must not stop and disable a working trial server for a port it then cannot take
+  [ "$j_port" = "$j_old_port" ] || ! j_port_taken "$j_port" || refuse 14 "port $j_port is already in use here (another program listens on it): choose a free one with --port <n>; nothing was changed"
 }
 j_port_taken() { j_listening | grep -qx "$1"; }
 # j_port_exe <port>: the program of the process that listens on <port>, from /proc: the socket's inode in /proc/net/tcp*,
@@ -435,7 +461,10 @@ j_consent() {
   j_host=$(hostname 2>/dev/null || uname -n)
   j_user=$(id -un)
   j_linger_en="" j_linger_ko=""
-  if [ "$j_services" = systemd-user ] && command -v loginctl >/dev/null 2>&1 && [ "$(loginctl show-user "$j_user" -p Linger --value 2>/dev/null)" != yes ]; then
+  # read as j_start_systemd reads it, which turns lingering on only after an explicit "no" from a loginctl that exits 0:
+  # an unreadable state is promised nothing here, and the start then says it left lingering as it is
+  j_linger_now=$(command -v loginctl >/dev/null 2>&1 && loginctl show-user "$j_user" -p Linger --value 2>/dev/null) || j_linger_now=""
+  if [ "$j_services" = systemd-user ] && [ "$j_linger_now" = no ]; then
     j_linger_en="
   It will try to turn lingering on for the user \"$j_user\", so the trial server keeps running after logout;
   if that is refused, it says so, and the trial server stops when \"$j_user\" logs out."
@@ -1028,6 +1057,9 @@ for tool in curl sha256sum mktemp awk; do command -v "$tool" >/dev/null 2>&1 || 
 
 j_fresh=1
 [ -f "$J_HOME/receipt" ] && j_fresh=0
+# j_touched: a run again has begun to change the earlier install (its server stopped first); j_add_began: the add has
+# been started, so a device may have put this machine in an account
+j_touched=0 j_add_began=0
 # a folder is taken as an earlier join's only when its receipt and unit check out as the undo checks them
 if [ "$j_fresh" = 0 ]; then j_receipt_ok; else [ ! -e "$J_HOME" ]; fi \
   || refuse 14 "$J_HOME exists but was not made by this join: move it away, then run the line again; nothing was changed"
@@ -1061,10 +1093,11 @@ if [ "${OVIS_JOIN_TEST_PLAIN_SERVER:-}" = 1 ] || [ "${OVIS_JOIN_TEST_ADD_DONE:-}
 fi
 j_consent
 # from the yes on, Ctrl+C, TERM or HUP rolls back as a refusal does, and says what is left (the undo line, if anything
-# is). After a HUP there may be no terminal left: the roll back comes first, and a write that fails changes nothing
+# is). After a HUP there may be no terminal left: the roll back comes first, and a write that fails changes nothing.
+# A second Ctrl+C or TERM is ignored, as a HUP is: the roll back is bounded, and cut midway it would leave a folder
+# without its receipt
 j_interrupted() {
-  trap - INT TERM
-  trap '' HUP PIPE
+  trap '' INT TERM HUP PIPE
   if [ -n "${probe:-}" ]; then
     if ! j_probe_stop; then
       j_probe_how
@@ -1075,6 +1108,11 @@ j_interrupted() {
     probe=""
   fi
   printf 'Ovis: interrupted; %s\n' "$(j_rolled_back)" >&2
+  # from the add on, a device may have put this machine in an account, whose list nothing here reaches (as the undo says)
+  if [ "$j_add_began" = 1 ]; then
+    printf '%s\n' "If the add already listed this machine, your account may still show it; see docs/guide.md \"Through an account\"." >&2
+    printf '%s\n' "추가 중에 이 머신이 계정 목록에 올라갔다면 목록에 남아 있을 수 있습니다. docs/guide.md \"Through an account\"를 보세요." >&2
+  fi
   exit "$1"
 }
 trap 'j_interrupted 130' INT
@@ -1099,12 +1137,30 @@ done
 
 if [ "$j_fresh" = 1 ]; then
   made=$(j_missing_dirs "$(dirname "$J_HOME")")
-  printf '%s\n' "$made" | while IFS= read -r p; do [ -n "$p" ] || continue; mkdir -m 700 "$p" || exit 1; done \
+  # the folders and the receipt that lists them are made with Ctrl+C, TERM and HUP held: an end in between would leave a
+  # folder no receipt lists, which the roll back cannot see and a run again refuses. The commands that make them ignore
+  # the signal; the first one is noted here and acted on once the receipt lists them. The lists are read from a here-
+  # document, not a pipe, so no process that feeds them can be ended by the signal
+  j_held=""
+  trap 'j_held=${j_held:-130}' INT
+  trap 'j_held=${j_held:-143}' TERM
+  trap 'j_held=${j_held:-129}' HUP
+  ( trap '' INT TERM HUP; while IFS= read -r p; do [ -n "$p" ] || continue; mkdir -m 700 "$p" || exit 1; done ) <<EOF \
     || refuse 14 "a parent of $J_HOME cannot be made; nothing was changed"
-  mkdir -m 700 "$J_HOME" && : >"$J_HOME/receipt" || refuse 14 "$J_HOME cannot be made; nothing was changed"
+$made
+EOF
+  ( trap '' INT TERM HUP; mkdir -m 700 "$J_HOME" && : >"$J_HOME/receipt" ) || refuse 14 "$J_HOME cannot be made; nothing was changed"
   j_note home "$J_HOME"
-  printf '%s\n' "$made" | while IFS= read -r p; do [ -n "$p" ] && j_note dir "$p"; done
+  # in this shell: j_note is printf, so nothing here starts a process
+  while IFS= read -r p; do [ -n "$p" ] && j_note dir "$p"; done <<EOF
+$made
+EOF
+  trap 'j_interrupted 130' INT
+  trap 'j_interrupted 143' TERM
+  trap 'j_interrupted 129' HUP
+  [ -z "$j_held" ] || j_interrupted "$j_held"
 else
+  j_touched=1
   j_halt || refuse 14 "the trial server of the previous run could not be seen stopped and its service disabled: stop it, then run the line again"
   ! j_port_taken "$j_port" || refuse 14 "port $j_port is in use by another program, so the trial server, now stopped, cannot take it again: free it or choose another with --port <n>, then run the line again"
 fi
@@ -1187,6 +1243,7 @@ j_added=0
 # is named, never called yours. Empty when no try answered: unknown, never taken for none
 j_account_read
 j_before=$j_got
+j_add_began=1
 trap ':' INT
 if [ "$j_add_done" = 1 ]; then j_added=1; else "$J_HOME/bin/ovis-machine" add && j_added=1; fi
 trap 'j_interrupted 130' INT
@@ -1229,8 +1286,8 @@ j_gate_open() {
     say "$j_lead_en $j_why_en, so the trial server was stopped. Undo the join: $(j_undo_line)"
     say "$j_lead_ko $j_why_ko 체험용 서버를 멈췄습니다. 모두 되돌리려면: $(j_undo_line)"
   else
-    say "$j_lead_en $j_why_en, and the trial server could not be seen stopped: stop it now: $J_HOME/bin/ovis-machine stop"
-    say "$j_lead_ko $j_why_ko 체험용 서버가 멈춘 것을 확인하지 못했습니다. 지금 멈추세요: $J_HOME/bin/ovis-machine stop"
+    say "$j_lead_en $j_why_en, and the trial server could not be seen stopped: stop it now: $(j_stop_line)"
+    say "$j_lead_ko $j_why_ko 체험용 서버가 멈춘 것을 확인하지 못했습니다. 지금 멈추세요: $(j_stop_line)"
   fi
   exit 34
 }
@@ -1273,7 +1330,7 @@ fi
 # j_kept_stopped <what could not be read>: exit 39: the trial server is stopped first, and the install kept for the undo
 j_kept_stopped() {
   if j_halt; then refuse 39 "$1, so the trial server was stopped; the install stays for the undo: $(j_undo_line)"
-  else refuse 39 "$1; the trial server could not be seen stopped: stop it now: $J_HOME/bin/ovis-machine stop"; fi
+  else refuse 39 "$1; the trial server could not be seen stopped: stop it now: $(j_stop_line)"; fi
 }
 j_account_read
 j_named=$j_got
