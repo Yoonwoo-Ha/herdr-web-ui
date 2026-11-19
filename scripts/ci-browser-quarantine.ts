@@ -12,7 +12,9 @@ export interface QuarantineEntry {
 export const QUARANTINE_MAX_DAYS = 30;
 
 export const QUARANTINE: Readonly<Record<string, QuarantineEntry>> = {
-  "scripts/file-viewer-regression.ts": { until: "2026-12-18", issue: 4185 },
-  "scripts/gjc-status-browser-regression.ts": { until: "2026-12-18", issue: 4184 },
-  "scripts/pane-mute-demo-regression.ts": { until: "2026-12-18", issue: 4131 },
+  // cause unknown; on a timeout the script logs the browser's roster status, the selected pane, the chat key,
+  // the scroll gap and the badge, so the next CI failure names the stage
+  "scripts/gjc-status-browser-regression.ts": { until: "2026-12-19", issue: 4184 },
+  // waits on #4131's design change, owned by another lane
+  "scripts/pane-mute-demo-regression.ts": { until: "2026-12-19", issue: 4131 },
 };
