@@ -28,6 +28,11 @@
   border-radius: 0;
 }
 
+.relay-shell-signin > .sheep-mascot {
+  align-self: center;
+  margin-bottom: var(--space-4);
+}
+
 .relay-shell-mark {
   display: block;
   width: calc(var(--mark-size) * 2);

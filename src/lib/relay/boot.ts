@@ -1,9 +1,12 @@
+import "../../components/SheepMascot.css";
+
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { AppCrash } from "../../components/AppCrash.tsx";
 import { moveQueryToFragment } from "../pageQuery.ts";
 import { loadRelayShell } from "../relay.ts";
+import { SHEEP_FOR } from "./sheepBadges.ts";
 
 interface Page {
   location: { href: string; pathname: string; search: string; hash: string };
@@ -30,8 +33,32 @@ function signInFragment(hash: string): boolean {
   return fields.has("state") && (fields.has("code") || fields.has("error"));
 }
 
+/**
+ * The start screen while the shell loads and reads this device's pairings: once the mascot is drawn, the page's
+ * loading ring gives way to it in its badge, nothing else; the shell's first screen replaces it.
+ */
+export function showStart(container: ParentNode, load: () => Promise<Pick<typeof import("./mascot.ts"), "playMascot" | "SMALL_BELOW_PX">> = () => import("./mascot.ts")): Promise<void> {
+  const boot = container.querySelector(".boot"), ring = boot?.querySelector(".boot-spinner");
+  if (!boot || !ring) return Promise.resolve();
+  const badge = document.createElement("span"), sheep = document.createElement("span");
+  badge.className = "sheep-badge sheep-badge-112";
+  sheep.className = "sheep-mascot sheep-mascot-112";
+  badge.append(sheep);
+  const quiet = window.matchMedia?.("(prefers-reduced-motion: reduce)") ?? null;
+  // the ring and its words stay until the sheep is there to take their place
+  return load()
+    .then(({ playMascot, SMALL_BELOW_PX }) => {
+      if (!ring.isConnected) return;
+      ring.replaceWith(badge);
+      boot.classList.add("relay-start");
+      playMascot(sheep, SHEEP_FOR.start, { small: 112 < SMALL_BELOW_PX, quiet });
+    })
+    .catch((error: unknown) => { console.warn("Ovis: the mascot was not drawn", error); });
+}
+
 export function bootRelayShell(container: HTMLElement, renderApp: () => Root, load: typeof loadRelayShell = loadRelayShell): void {
   const entryUrl = takeEntryUrl(window);
+  void showStart(container);
   // an older entry of this tab's history may still hold its query: it moves as the load's did, before the app reads it
   window.addEventListener("popstate", () => { moveQueryToFragment(window); });
   void load().then(({ mountRelayShell }) => mountRelayShell({ container, entryUrl, renderApp })).catch((error: unknown) => {

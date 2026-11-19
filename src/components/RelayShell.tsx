@@ -23,6 +23,8 @@ import { MyMachinesPage } from "./MyMachinesPage.tsx";
 import { RelayDashboard } from "./RelayDashboard.tsx";
 import { EnrollmentStatus } from "./EnrollmentStatus.tsx";
 import { INSTALLER_COMMAND, PLUGIN_COMMANDS, RelayShellCardContent, TypedDigits } from "./RelayShellScreens.tsx";
+import { RelayStepFrame, type RelayStepBack } from "./RelayStepFrame.tsx";
+import { SheepMascot } from "./SheepMascot.tsx";
 
 export { INSTALLER_COMMAND, PLUGIN_COMMANDS, TypedDigits };
 
@@ -177,7 +179,7 @@ export function RelayShell(props: RelayShellProps) {
   const stateName = state.kind === "failed" ? state.failure : state.kind === "outdated" ? "pc-outdated" : state.kind === "forged" ? "identity-changed" : state.kind;
   const devices = state.kind === "list" ? state.devices : [];
   const local = view === "saved" && state.kind === "list";
-  // a marked pairing's sign-in reads on the plain page with nothing around it
+  // a pairing's sign-in reads on the plain page, with nothing around it; its other steps are on the step frame
   const plain = state.kind === "failed" && state.failure === "sign-in-first" && onSignIn !== undefined;
 
   if (account && (account.kind === "signed-in" || local)) {
@@ -247,14 +249,46 @@ export function RelayShell(props: RelayShellProps) {
     );
   }
 
+  const content = <RelayShellCardContent props={props} view={view} signInFirst={signInFirst} saved={saved} addingPc={addingPc} setSignedOutView={setSignedOutView} setAddingPc={setAddingPc} />;
+  const step = plain ? undefined : pairingStep(state);
+  if (step !== undefined) {
+    // before this phone's press the comparison can still go back; after it, the pairing waits on the PC and only its own small Cancel ends it
+    const back: RelayStepBack | null = state.kind === "confirm" || (state.kind === "compare" && !state.confirmed) ? { label: t("Back"), onClick: onCancel }
+      : state.kind === "connecting" ? { label: t("Cancel"), onClick: onCancel } : null;
+    const note = state.kind === "connecting" ? t("Connecting…") : state.kind === "compare" && state.confirmed ? t("Waiting for approval…") : null;
+    return (
+      <main className="relay-step-screen" data-relay-state={stateName} {...(account ? { "data-account-state": account.kind } : {})}>
+        <RelayStepFrame step={step} back={back} note={note}>{content}</RelayStepFrame>
+      </main>
+    );
+  }
+
   return (
     <main className={plain ? "relay-shell-screen relay-shell-plain" : "relay-shell-screen"} data-relay-state={stateName} {...(account ? { "data-account-state": account.kind } : {})}>
-      <div className={signInFirst || state.kind === "compare" ? "relay-shell account-centered" : "relay-shell"}>
-        <img src="/icons/icon-192.png?v=sheep1" alt="" width="44" height="44" className="relay-shell-mark" />
-        <RelayShellCardContent props={props} view={view} signInFirst={signInFirst} saved={saved} addingPc={addingPc} setSignedOutView={setSignedOutView} setAddingPc={setAddingPc} />
+      <div className={signInFirst ? "relay-shell account-centered relay-shell-signin" : plain ? "relay-shell relay-shell-signin" : "relay-shell"}>
+        {signInFirst || plain
+          ? <SheepMascot screen="header" size={80} />
+          : <img src="/icons/icon-192.png?v=sheep1" alt="" width="44" height="44" className="relay-shell-mark" />}
+        {content}
       </div>
     </main>
   );
+}
+
+/**
+ * A pairing's steps, drawn on the step frame: the confirm (1), the comparison and the connection before
+ * the PC's approval (2), the connection after it (3), and a pairing that failed (no step). `undefined`:
+ * the screen is not a pairing step (the ready checkpoint too: a saved PC's enrollment retry reaches it).
+ */
+function pairingStep(state: RelayShellState): 1 | 2 | 3 | null | undefined {
+  switch (state.kind) {
+    case "confirm": return 1;
+    case "compare": return 2;
+    // a saved PC opening again connects, and fails, on the card: only a new pairing has steps
+    case "connecting": return state.pairing ? (state.approved ? 3 : 2) : undefined;
+    case "failed": return state.pairing ? null : undefined;
+    default: return undefined;
+  }
 }
 
 function addingPcOpen(state: RelayShellState): boolean {

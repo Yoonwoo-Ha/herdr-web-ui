@@ -297,11 +297,10 @@ describe("RelayShellScreens", () => {
 
     it("signed in with a PC the account does not list, says the pairing adds it to the account and shows the PC's ID", () => {
       const html = confirm("unlisted");
-      expect(html).toContain("Add Desk PC to your account?");
+      expect(html).toContain('<h1 class="relay-shell-title">Add Desk PC to your account?</h1>');
       expect(html).toContain("Pairing adds this PC to your Ovis account, so every device of your account can open it. Pair only with a PC you are setting up yourself.");
       expect(html).toContain(pcId);
       expect(html).toContain('<button type="button" class="btn btn-primary">Add and pair</button>');
-      expect(html).toContain(">Not now</button>");
       expect(html).not.toContain("Pair with Desk PC?");
       expect(html).not.toContain("a key of its own");
     });
@@ -327,7 +326,7 @@ describe("RelayShellScreens", () => {
 
     it("keeps the wording a press was made on while the press is checked, with its button held", () => {
       const adds = confirm("checking", "unlisted");
-      expect(adds).toContain("Add Desk PC to your account?");
+      expect(adds).toContain('<h1 class="relay-shell-title">Add Desk PC to your account?</h1>');
       expect(adds).toContain("Pairing adds this PC to your Ovis account");
       expect(adds).toContain(pcId);
       expect(adds).toContain('<button type="button" class="btn btn-primary" disabled="" aria-busy="true">Add and pair</button>');
@@ -426,6 +425,19 @@ describe("RelayShellScreens", () => {
       const expired = await draw({ kind: "failed", failure: "scan-expired", name: "Desk", detail: null }, offered);
       expect(providerButtons(expired)).toEqual([]);
       expect(textOf(expired.root.findByType("h1"))).toBe(relayFailureText(en, "scan-expired", "Desk").title);
+    });
+
+    it("keeps the PC's ID of an Add and pair confirm folded under Details, with the account on the PC's card", () => {
+      const offer = { v: 1 as const, server_id: "a3f9c2e17b4d5a6c8e9f0b1d2c3a4e5f", server_public_key: "key", relay: "wss://relay.example", name: "Desk", code: "123456" };
+      const confirm = (account: "unlisted" | "listed") => render(createElement(RelayShellCardContent, {
+        props: baseProps({ kind: "confirm", offer, account }), view: null, signInFirst: false, saved: 0, addingPc: false, setSignedOutView: none, setAddingPc: none,
+      }));
+      const adding = confirm("unlisted");
+      expect(adding).toContain('<span class="relay-step-card-name">Desk</span><span class="relay-step-card-detail">Your Ovis account</span>');
+      expect(adding).toMatch(/<details class="relay-step-details"><summary>Details<\/summary><p class="relay-shell-code-id">/);
+      expect(adding).not.toMatch(/<details[^>]*open/);
+      expect(adding).toContain("a3f9");
+      expect(confirm("listed")).not.toContain("relay-step-details");
     });
   });
 });
