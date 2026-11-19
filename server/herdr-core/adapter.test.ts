@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, jest } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, it, jest, setSystemTime } from "bun:test";
+import { closeSync, constants, existsSync, mkdirSync, mkdtempSync, openSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { HerdrError, herdrRpc, paneGet, paneProcessInfo, paneRead, paneSendKeys, paneSendText, sessionSnapshot, subscribeEvents, type EventFrame, paneClose, paneMoveBeside, paneMoveToNewTab, tabClose, tabCreate, tabRename, workspaceClose, workspaceCreate, workspaceRename, agentManifests, agentStart, ping, worktreeCreate, worktreeList, worktreeOpen, worktreeRemove } from "../herdr/client.ts";
+import { HerdrError, herdrRpc, paneGet, paneProcessInfo, paneRead, paneSendKeys, paneSendText, sessionSnapshot, subscribeEvents, type EventFrame, paneClose, paneMoveBeside, paneMoveToNewTab, tabClose, tabCreate, tabMove, tabRename, workspaceClose, workspaceCreate, workspaceRename, agentManifests, agentStart, ping, worktreeCreate, worktreeList, worktreeOpen, worktreeRemove } from "../herdr/client.ts";
 import { claudeInputDraft, viewportShowsLive } from "../claude-input.ts";
 import { type AdapterOptions, paintedScreen, type SeenObserver, sessionLabeler, startHerdrCoreAdapter } from "./adapter.ts";
 import { SeenMarker } from "./seen-label.ts";
@@ -886,7 +886,41 @@ describe("herdr-core adapter, new and closed terminals", () => {
       else process.env["PATH"] = path;
     });
   }
-  async function labeling(start: HcTerminal[]) {
+  /**
+   * A git first on the PATH until the test ends whose `rev-parse` answers only once released, as on a
+   * network folder or a huge repository: each call reads a fifo whose one writer the test holds open.
+   */
+  function gitHeld(dir: string): () => void {
+    const real = Bun.which("git")!;
+    const bin = join(dir, "git-held");
+    mkdirSync(bin);
+    const hold = join(bin, "hold");
+    expect(Bun.spawnSync(["mkfifo", hold]).exitCode).toBe(0);
+    const writer = openSync(hold, constants.O_RDWR);
+    writeFileSync(join(bin, "git"), [
+      "#!/bin/sh",
+      `case " $* " in *" rev-parse "*) [ -p '${hold}' ] && cat '${hold}' > /dev/null 2>&1 ;; esac`,
+      `exec '${real}' "$@"`,
+      "",
+    ].join("\n"), { mode: 0o755 });
+    const path = process.env["PATH"];
+    process.env["PATH"] = `${bin}:${path ?? ""}`;
+    let held = true;
+    // the fifo goes first, so no call opens it after the writer closes
+    const release = () => {
+      if (!held) return;
+      held = false;
+      rmSync(hold);
+      closeSync(writer);
+    };
+    cleanups.push(() => {
+      release();
+      if (path === undefined) delete process.env["PATH"];
+      else process.env["PATH"] = path;
+    });
+    return release;
+  }
+  async function labeling(start: HcTerminal[], extra: Record<string, Handler> = {}) {
     const ready = await living(start, {
       ...NO_DOC,
       "terminal.label": (params) => {
@@ -894,6 +928,7 @@ describe("herdr-core adapter, new and closed terminals", () => {
         found.labels = { ...found.labels, ...(params["labels"] as Record<string, string>) };
         return found;
       },
+      ...extra,
     });
     return ready;
   }
@@ -1020,12 +1055,177 @@ describe("herdr-core adapter, new and closed terminals", () => {
     const moving = start();
     const removing = await labeling(moving);
     await sessionSnapshot(removing.socket);
-    moving[1]!.cwd = repo;
+    moving[1]!.foreground = { pid: 12, name: "bash", cwd: repo };
     expect((await sessionSnapshot(removing.socket)).workspaces.find((workspace) => workspace.workspace_id === "W")?.worktree).toMatchObject({ checkout_path: linked, is_linked_worktree: true });
     expect(await worktreeRemove("W", false, removing.socket)).toMatchObject({ type: "worktree_removed", path: linked, forced: false });
     expect(existsSync(linked)).toBeFalse();
     expect(removing.ends).toEqual(["kill t2", "rm t2"]);
   });
+
+  it("keeps a workspace's checkout through a restart of Ovis: git is asked where its first terminal started, not where its shell went (#3890)", async () => {
+    const { dir, repo, git } = repository();
+    const linked = join(dir, "checkouts", "feature-x");
+    expect(git("-C", repo, "worktree", "add", "-q", "-b", "feature/x", linked).exitCode).toBe(0);
+    // a server that first sees the repository's workspace after its shell went into the checkout: a restart, an update
+    const { socket, ends } = await labeling([
+      terminal("t1", { cwd: repo, foreground: { pid: 11, name: "bash", cwd: linked }, labels: { "herdr.space": "S", "herdr.tab": "T" } }),
+      terminal("t2", { cwd: linked, labels: { "herdr.space": "W", "herdr.tab": "U" } }),
+    ]);
+    expect((await sessionSnapshot(socket)).workspaces.map((workspace) => [workspace.workspace_id, workspace.worktree?.checkout_path, workspace.worktree?.is_linked_worktree])).toEqual([["S", repo, false], ["W", linked, true]]);
+    await expect(worktreeRemove("S", true, socket)).rejects.toMatchObject({ code: "not_linked_worktree" });
+    expect(existsSync(linked)).toBeTrue();
+    expect(ends).toEqual([]);
+  });
+
+  it("deletes no checkout another workspace is open on (#3890)", async () => {
+    const { dir, repo, git } = repository();
+    const linked = join(dir, "linked");
+    expect(git("-C", repo, "worktree", "add", "-q", "-b", "linked", linked).exitCode).toBe(0);
+    const { socket, ends } = await labeling([
+      terminal("t1", { cwd: linked, labels: { "herdr.space": "A", "herdr.tab": "T" } }),
+      terminal("t2", { cwd: linked, labels: { "herdr.space": "B", "herdr.tab": "U", "ovis.workspace": "reviewer" } }),
+    ]);
+    expect((await sessionSnapshot(socket)).workspaces.map((workspace) => workspace.worktree?.checkout_path)).toEqual([linked, linked]);
+    await expect(worktreeRemove("A", true, socket)).rejects.toMatchObject({ code: "worktree_in_use", message: expect.stringContaining("reviewer") });
+    expect(existsSync(join(linked, "README.md"))).toBeTrue();
+    expect(ends).toEqual([]);
+    // nor one where another workspace, drawn elsewhere, has a terminal that went into it
+    mkdirSync(join(dir, "plain"));
+    const elsewhere = await labeling([
+      terminal("t1", { cwd: linked, labels: { "herdr.space": "A", "herdr.tab": "T" } }),
+      terminal("t2", { cwd: join(dir, "plain"), labels: { "herdr.space": "P", "herdr.tab": "U", "ovis.workspace": "notes" } }),
+      terminal("t3", { cwd: join(dir, "plain"), foreground: { pid: 13, name: "bash", cwd: join(linked, "src") }, labels: { "herdr.space": "P", "herdr.tab": "U" } }),
+    ]);
+    expect((await sessionSnapshot(elsewhere.socket)).workspaces.map((workspace) => workspace.worktree?.checkout_path ?? null)).toEqual([linked, null]);
+    await expect(worktreeRemove("A", true, elsewhere.socket)).rejects.toMatchObject({ code: "worktree_in_use", message: expect.stringContaining("notes") });
+    expect(existsSync(join(linked, "README.md"))).toBeTrue();
+    expect(elsewhere.ends).toEqual([]);
+    // nor one with a terminal that started there through a link to it
+    symlinkSync(linked, join(dir, "alias"));
+    const linkedTo = await labeling([
+      terminal("t1", { cwd: linked, labels: { "herdr.space": "A", "herdr.tab": "T" } }),
+      terminal("t2", { cwd: join(dir, "plain"), labels: { "herdr.space": "P", "herdr.tab": "U", "ovis.workspace": "aliased" } }),
+      terminal("t3", { cwd: join(dir, "alias", "src"), labels: { "herdr.space": "P", "herdr.tab": "V" } }),
+    ]);
+    mkdirSync(join(linked, "src"));
+    await expect(worktreeRemove("A", true, linkedTo.socket)).rejects.toMatchObject({ code: "worktree_in_use", message: expect.stringContaining("aliased") });
+    expect(existsSync(join(linked, "README.md"))).toBeTrue();
+  });
+
+  it("keeps a workspace's checkout while a tab of it started there, whichever tab is in front, and claims no checkout by where a shell went (#3890)", async () => {
+    const { dir, repo, git } = repository();
+    const [a, b] = [join(dir, "a"), join(dir, "b")];
+    expect(git("-C", repo, "worktree", "add", "-q", "-b", "a", a).exitCode).toBe(0);
+    expect(git("-C", repo, "worktree", "add", "-q", "-b", "b", b).exitCode).toBe(0);
+    mkdirSync(join(dir, "plain"));
+    const terminals = [
+      terminal("t1", { cwd: a, labels: { "herdr.space": "S", "herdr.tab": "T1" } }),
+      terminal("t2", { cwd: b, labels: { "herdr.space": "S", "herdr.tab": "T2" } }),
+      terminal("t3", { cwd: repo, labels: { "herdr.space": "R", "herdr.tab": "U" } }),
+      terminal("t4", { cwd: join(dir, "plain"), foreground: { pid: 14, name: "bash", cwd: b }, labels: { "herdr.space": "P", "herdr.tab": "V" } }),
+    ];
+    // Ovis's layout document, which a tab move writes
+    let kept: { value: unknown; version: number } = { value: null, version: 0 };
+    const { socket } = await labeling(terminals, {
+      "doc.get": (params) => params["name"] === "ovis-layout" ? kept : { value: null, version: 0 },
+      "doc.set": (params) => { kept = { value: params["value"], version: kept.version + 1 }; return { version: kept.version }; },
+    });
+    const checkoutOf = async (id: string) => (await sessionSnapshot(socket)).workspaces.find((workspace) => workspace.workspace_id === id)?.worktree?.checkout_path;
+    expect(await checkoutOf("S")).toBe(a);
+    // another client moves b's tab in front while a confirmation names a
+    await tabMove("T2", 0, socket);
+    const shown = await sessionSnapshot(socket);
+    expect(shown.panes.find((pane) => pane.workspace_id === "S")?.pane_id).toBe("t2");
+    expect(await checkoutOf("S")).toBe(a);
+    // a shell that went into b from outside git does not make its workspace b's
+    expect((await worktreeOpen({ workspaceId: "R", path: b }, socket)).already_open).toBeFalse();
+    expect(await worktreeRemove("S", true, socket)).toMatchObject({ type: "worktree_removed", path: a });
+    expect([existsSync(a), existsSync(join(b, "README.md"))]).toEqual([false, true]);
+  });
+
+  it("keeps the checkout a row was first drawn with from a cached answer while git is asked again (#3890)", async () => {
+    const { dir, repo, git } = repository();
+    const [a, b] = [join(dir, "a"), join(dir, "b")];
+    expect(git("-C", repo, "worktree", "add", "-q", "-b", "a", a).exitCode).toBe(0);
+    expect(git("-C", repo, "worktree", "add", "-q", "-b", "b", b).exitCode).toBe(0);
+    const terminals = [terminal("t1", { cwd: a, labels: { "herdr.space": "X", "herdr.tab": "T0" } })];
+    const find = (params: Record<string, unknown>) => terminals.find((entry) => entry.address === params["terminal"]) ?? (() => { throw new Error("no terminal"); })();
+    let kept: { value: unknown; version: number } = { value: null, version: 0 };
+    // the core's terminals as this test changes them
+    const { socket } = await labeling(terminals, {
+      "terminal.list": () => ({ terminals, hidden_finished: 0 }),
+      "terminal.get": find,
+      "terminal.kill": (params) => Object.assign(find(params), { state: "finished" }),
+      "terminal.rm": (params) => { terminals.splice(terminals.indexOf(find(params)), 1); return { removed: params["terminal"] }; },
+      "doc.get": (params) => params["name"] === "ovis-layout" ? kept : { value: null, version: 0 },
+      "doc.set": (params) => { kept = { value: params["value"], version: kept.version + 1 }; return { version: kept.version }; },
+    });
+    // git answered for a's folder once, for another workspace
+    expect((await sessionSnapshot(socket)).workspaces[0]?.worktree?.checkout_path).toBe(a);
+    terminals.splice(0, 1,
+      terminal("t2", { cwd: a, labels: { "herdr.space": "S", "herdr.tab": "T1" } }),
+      terminal("t3", { cwd: b, labels: { "herdr.space": "S", "herdr.tab": "T2" } }));
+    // past the time that answer is kept, and git slow to answer again: the row is drawn from the cached answer
+    setSystemTime(new Date(Date.now() + 60_000));
+    cleanups.push(() => setSystemTime());
+    const release = gitHeld(dir);
+    expect((await sessionSnapshot(socket)).workspaces.map((workspace) => workspace.worktree?.checkout_path)).toEqual([a]);
+    await tabMove("T2", 0, socket);
+    expect((await sessionSnapshot(socket)).workspaces.map((workspace) => workspace.worktree?.checkout_path)).toEqual([a]);
+    release();
+    expect(await worktreeRemove("S", true, socket)).toMatchObject({ type: "worktree_removed", path: a });
+    expect(existsSync(join(b, "README.md"))).toBeTrue();
+  }, 15_000);
+
+  it("deletes no checkout added again at the path after git was asked again (#3890)", async () => {
+    const { dir, repo, git } = repository();
+    const linked = join(dir, "linked");
+    expect(git("-C", repo, "worktree", "add", "-q", "-b", "first", linked).exitCode).toBe(0);
+    const { socket, cores } = await labeling([
+      terminal("t1", { cwd: repo, labels: { "herdr.space": "S", "herdr.tab": "T" } }),
+      terminal("t2", { cwd: linked, labels: { "herdr.space": "W", "herdr.tab": "U" } }),
+    ], { "events.subscribe": () => ({ channel: cores.at(-1)!.channel(), seq: 1, terminals: [] }) });
+    expect((await sessionSnapshot(socket)).workspaces.map((workspace) => workspace.worktree?.checkout_path)).toEqual([repo, linked]);
+    expect(git("-C", repo, "worktree", "remove", linked).exitCode).toBe(0);
+    expect(git("-C", repo, "worktree", "add", "-q", "-b", "second", linked).exitCode).toBe(0);
+    const started = Promise.withResolvers<void>();
+    const asked = Promise.withResolvers<void>();
+    const subscription = subscribeEvents([{ type: "layout.updated" }], { onEvent: (frame) => { if (frame.event === "layout.updated") asked.resolve(); }, onStarted: () => started.resolve(), onClose() {} }, socket);
+    cleanups.push(() => subscription.close());
+    await started.promise;
+    // past the time git's facts are kept: the next snapshot asks git again, and its new answer is told
+    setSystemTime(new Date(Date.now() + 60_000));
+    cleanups.push(() => setSystemTime());
+    await sessionSnapshot(socket);
+    await asked.promise;
+    await expect(worktreeRemove("W", true, socket)).rejects.toMatchObject({ code: "worktree_not_found" });
+    expect(existsSync(join(linked, "README.md"))).toBeTrue();
+  });
+
+  it("waits on a slow git once per folder, and asks for a fresh snapshot when it answers (#3890)", async () => {
+    const { dir, repo } = repository();
+    const release = gitHeld(dir);
+    const { socket, cores } = await living([terminal("t1", { cwd: repo, labels: { "herdr.space": "S", "herdr.tab": "T" } })], {
+      ...NO_DOC,
+      "events.subscribe": () => ({ channel: cores.at(-1)!.channel(), seq: 1, terminals: [] }),
+    });
+    const facts = async () => (await sessionSnapshot(socket)).workspaces[0]?.worktree ?? null;
+    expect(await facts()).toBeNull();
+    // waited out once: the row is drawn flat at once while git has still not answered
+    for (const _ of [1, 2]) {
+      const began = performance.now();
+      expect(await facts()).toBeNull();
+      expect(performance.now() - began).toBeLessThan(1_000);
+    }
+    const started = Promise.withResolvers<void>();
+    const updated = Promise.withResolvers<void>();
+    const subscription = subscribeEvents([{ type: "layout.updated" }], { onEvent: (frame) => { if (frame.event === "layout.updated") updated.resolve(); }, onStarted: () => started.resolve(), onClose() {} }, socket);
+    cleanups.push(() => subscription.close());
+    await started.promise;
+    release();
+    await updated.promise;
+    expect(await facts()).toMatchObject({ checkout_path: repo, is_linked_worktree: false });
+  }, 15_000);
 
   it("lists, makes and removes a worktree with a git before 2.36, whose worktree list has no -z", async () => {
     const { dir, git } = repository();
