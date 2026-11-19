@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium, type Locator, type Page } from "playwright-core";
+import { chromium, errors as playwrightErrors, type Locator, type Page } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { forgetPageMedia, PAGE_MEDIA_LIFETIME_MS, pageFileHooks, pageMediaResponse } from "../server/file-view.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
@@ -52,6 +52,44 @@ const reloadFollowingEnd = async (page: Page): Promise<void> => {
 // presented, which is what data-pane-content acknowledges.
 const activateInTranscript = (page: Page, link: Locator): Promise<void> =>
   transcriptLink(page, link).dispatchEvent("click");
+
+async function activateWithPaneDiagnostic(page: Page, link: Locator, expectedPane: string): Promise<void> {
+  try {
+    await activateInTranscript(page, link);
+  } catch (error) {
+    if (!(error instanceof playwrightErrors.TimeoutError)) throw error;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const snapshot = await Promise.race([
+      page.evaluate((expectedPane) => {
+        const frame = document.querySelector(".pane-frame.is-current");
+        const currentPane = frame?.getAttribute("data-layout-pane") ?? null;
+        const chat = frame?.querySelector(".chat-view");
+        const sideNotesPanes = new Set<string | null>();
+        for (const element of document.querySelectorAll("body *")) {
+          if (element.textContent?.trim() === "side notes") {
+            sideNotesPanes.add(element.closest(".pane-frame")?.getAttribute("data-layout-pane") ?? null);
+          }
+        }
+        return {
+          currentPane,
+          matchesExpectedPane: currentPane === expectedPane,
+          hasChatView: chat !== undefined && chat !== null,
+          paneContent: chat?.getAttribute("data-pane-content") ?? frame?.querySelector(".chat-frame")?.getAttribute("data-pane-content") ?? null,
+          chatRows: chat?.querySelectorAll("[data-chat-row]").length ?? 0,
+          conversationSource: chat?.getAttribute("data-conversation-source") ?? chat?.querySelector("[data-conversation-source]")?.getAttribute("data-conversation-source") ?? null,
+          sideNotesFound: sideNotesPanes.size > 0,
+          sideNotesPanes: [...sideNotesPanes],
+        };
+      }, expectedPane).catch((cause: unknown) => ({ snapshotError: cause instanceof Error ? cause.message : String(cause) })),
+      // Page.evaluate has no timeout and may never return if the renderer is stuck.
+      new Promise<{ snapshotError: string }>((resolve) => {
+        timer = setTimeout(() => resolve({ snapshotError: "DOM snapshot timed out" }), 2_000);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    console.error(`Transcript link timeout: ${JSON.stringify({ expectedPane, url: page.url(), ...snapshot })}`);
+    throw error;
+  }
+}
 
 const root = mkdtempSync(join(tmpdir(), "ovis-file-back-"));
 const reportServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(
@@ -880,11 +918,11 @@ try {
   const sideNotes = page.getByRole("button", { name: "side notes", exact: true });
   await rowOf(sidePane).click();
   await onPane(sidePane);
-  await activateInTranscript(page, sideNotes);
+  await activateWithPaneDiagnostic(page, sideNotes, sidePane);
   await panel.getByText("Side pane notes", { exact: true }).waitFor();
   await rowOf(pane).click();
   await onPane(pane);
-  await activateInTranscript(page, notesLink);
+  await activateWithPaneDiagnostic(page, notesLink, pane);
   await panel.getByText("File preview history regression", { exact: true }).waitFor();
   // the viewer showing the first pane's file is marked: a viewer the switch reused would keep that
   // file's loaded content, and show it for the side pane's file until it read its own
@@ -1347,7 +1385,10 @@ try {
       await readerPage.goto(`${origin}/?read=${encodeURIComponent(join(root, "long.md"))}`);
       const readerBody = readerPage.locator(".file-reader-body");
       await readerBody.locator(".file-viewer-markdown p").first().waitFor();
-      await readerBody.locator(".file-viewer-markdown .markdown-h1").nth(longPreviewHeadings - 1).waitFor();
+      const readerPreview = readerBody.locator('.file-viewer-markdown[data-drawn="complete"]');
+      // A loaded runner can take longer to draw this large file; the signal ends the wait early (#4185).
+      await readerPreview.waitFor({ timeout: 30_000 });
+      assert.equal(await readerPreview.locator(".markdown-h1").count(), longPreviewHeadings);
       const geometry = await readerBody.evaluate((element) => ({ height: element.clientHeight, scrollHeight: element.scrollHeight, viewport: innerHeight }));
       assert.ok(geometry.height < geometry.viewport, `${width}px: standalone reader body is bounded by the viewport`);
       assert.ok(geometry.scrollHeight > geometry.height, `${width}px: long document has an internal scroll range`);
@@ -1489,7 +1530,10 @@ try {
   const long = page.getByRole("dialog", { name: "long.md", exact: true });
   await long.locator(".file-viewer-markdown .markdown-h1").first().waitFor();
   assert.match(await long.locator(".file-viewer-meta .file-viewer-notice").getAttribute("title") ?? "", /^Showing the first 256 KB of /);
-  await long.locator(".file-viewer-markdown .markdown-h1").nth(longPreviewHeadings - 1).waitFor();
+  const longPreview = long.locator('.file-viewer-markdown[data-drawn="complete"]');
+  // A loaded runner can take longer to draw this large file; the signal ends the wait early (#4185).
+  await longPreview.waitFor({ timeout: 30_000 });
+  assert.equal(await longPreview.locator(".markdown-h1").count(), longPreviewHeadings);
   // The preview can contain thousands of file-link buttons. Query its toolbar, not every
   // accessible name in the document: the check itself must not monopolize the page.
   const longHeader = long.locator(".file-viewer-header");

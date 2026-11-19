@@ -473,7 +473,7 @@ export const ProgressiveMarkdown = memo(function ProgressiveMarkdown({ blocks, c
     const timer = setTimeout(() => setDrawn({ blocks, count: count + 1 }), 0);
     return () => clearTimeout(timer);
   }, [blocks, chunks.length, count]);
-  return <div className={className === undefined ? "markdown" : `markdown ${className}`}>
+  return <div className={className === undefined ? "markdown" : `markdown ${className}`} data-drawn={count >= chunks.length ? "complete" : "partial"}>
     {chunks.slice(0, count).map((chunk, index) => <BlockChunk key={index} blocks={chunk} />)}
   </div>;
 });
