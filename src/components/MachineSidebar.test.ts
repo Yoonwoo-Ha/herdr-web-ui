@@ -1,10 +1,37 @@
 import { describe, expect, it } from "bun:test";
 
 import { OWN_UPDATE_OFFER, type Machine, type RemoteOvis } from "../../shared/machines.ts";
-import { machineAway, manageActions, ownOvisAction, ownUpdateFailure, pcListExit, removablePc } from "./MachineSidebar.tsx";
+import { ADD_PC_FROM_KEY, addPcExit, machineAway, openAddPc, manageActions, ownOvisAction, ownUpdateFailure, pcListExit, removablePc } from "./MachineSidebar.tsx";
 
 const offer = (updatable: boolean): RemoteOvis => ({ version: "0.4.16", latest_version: updatable ? "0.4.18" : null, updatable, reason: updatable ? null : "it cannot", address: "pc.invalid:4000", url: null });
 const pc = (patch: Partial<Pick<Machine, "remote_ovis" | "action_required" | "error">>) => ({ remote_ovis: null, action_required: null, error: null, ...patch });
+
+describe("where a phone's More → Add a PC leads", () => {
+  const pcPage = `/s/${"a".repeat(32)}/`;
+  it("keeps a hosted PC page in the hosted app, also inside the phone app; sends a PC the app opened by its address back to the app; offers none elsewhere", () => {
+    expect(addPcExit({ nativeApp: false, relayShell: true, pathname: pcPage })).toBe("shell");
+    expect(addPcExit({ nativeApp: true, relayShell: true, pathname: pcPage })).toBe("shell");
+    expect(addPcExit({ nativeApp: true, relayShell: false, pathname: "/" })).toBe("app");
+    expect(addPcExit({ nativeApp: false, relayShell: false, pathname: "/" })).toBeNull();
+    expect(addPcExit({ nativeApp: false, relayShell: true, pathname: "/" })).toBeNull();
+  });
+
+  it("opens the hosted app's Add a PC marking the PC page it came from, for its Back", () => {
+    const saved = new Map<string, PropertyDescriptor | undefined>();
+    for (const key of ["window", "sessionStorage"]) saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    const store = new Map<string, string>();
+    const went: string[] = [];
+    Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); } } });
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { pathname: pcPage, assign: (url: string) => { went.push(url); } } } });
+    try {
+      openAddPc("shell");
+      expect(went).toEqual(["/#add"]);
+      expect(store.get(ADD_PC_FROM_KEY)).toBe(pcPage);
+    } finally {
+      for (const [key, descriptor] of saved) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+    }
+  });
+});
 
 describe("the way back to a phone's list of PCs", () => {
   const pcPage = `/s/${"ab".repeat(16)}/`;

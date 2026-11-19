@@ -515,6 +515,7 @@ const BASE: Record<string, string> = {
   "Offline": "오프라인",
   "Update Ovis on it": "Ovis 업데이트 필요",
   "Open": "열기",
+  "Add a PC": "PC 추가",
   "Relay": "릴레이",
   "Add": "추가",
   "Update": "업데이트",

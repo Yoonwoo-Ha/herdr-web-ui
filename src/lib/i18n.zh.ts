@@ -522,6 +522,7 @@ const BASE: Record<string, string> = {
   "Offline": "离线",
   "Update Ovis on it": "需要更新 Ovis",
   "Open": "打开",
+  "Add a PC": "添加电脑",
   "Relay": "中继",
   "Add": "添加",
   "Update": "更新",

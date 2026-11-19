@@ -159,7 +159,7 @@ function PairConfirm({ state, pc, onPair }: { state: Extract<RelayShellProps["st
 }
 
 /** Where a PC's QR code is, for a page with no scanner of its own, and the way to pair with a code instead. */
-function ScanQrStep({ onCodeStart, back }: { readonly onCodeStart: () => void; readonly back: ReactNode }) {
+export function ScanQrStep({ onCodeStart, back }: { readonly onCodeStart: () => void; readonly back: ReactNode }) {
   const t = useT();
   return (
     <>

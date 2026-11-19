@@ -46,7 +46,7 @@ import { pageSearch } from "./lib/pageQuery.ts";
 import { copyText } from "./lib/clipboard.ts";
 import { CommandPalette } from "./components/CommandPalette.tsx";
 import { AppLayoutContext, appLayoutOf, MachineContext } from "./lib/machineContext.tsx";
-import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
+import { addPcExit, MachineActionBanner, MachineSidebar, openAddPc } from "./components/MachineSidebar.tsx";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { type PanePresence, useSidebarActivityState } from "./lib/sidebarActivity.tsx";
 import { useAgentStateStamping } from "./lib/useAgentStateSince.ts";
@@ -56,6 +56,7 @@ import { MachineDialog } from "./components/MachineDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
 import { headerCrumb, showsChat } from "./lib/headerCrumb.ts";
 import { LOCAL_MACHINE, pairedPc, paneStorageId } from "../shared/machines.ts";
+import { inNativeApp } from "./lib/nativeApp.ts";
 import { serverIdOfPath, shellMode } from "./lib/shellMode.ts";
 import { usePairedNotices } from "./lib/usePairedNotices.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
@@ -268,6 +269,9 @@ export function App() {
   const { renameRequest, requestRename, clearRenameRequest } = useRenameRequest(selectedMachineId, selectedPaneId);
   const { renameRequest: closeTabRequest, requestRename: requestCloseTab, clearRenameRequest: clearCloseTabRequest } = useRenameRequest(selectedMachineId, selectedPaneId);
   const moreMenu = useMoreMenu();
+  // where Add a PC leads on a phone: a PC reached through the hosted app (in a browser or in the phone app, which opens
+  // it there) goes to the hosted app's Add a PC, one the phone app opened by its address to the app's own screens
+  const addPcTo = addPcExit({ nativeApp: inNativeApp(), relayShell: shellMode() === "relay", pathname: window.location.pathname });
   const { more, setMore, closeMore, group: moreGroup, openGroup: openMoreGroup, closeGroup: closeMoreGroup } = moreMenu;
   const paneActionsRef = useRef<((target: HerdrPane, options?: { counted?: boolean }) => RowMenuItem[]) | null>(null);
   const paneLocked = usePaneLocked(selectedMachineId);
@@ -778,6 +782,9 @@ export function App() {
   useGroupClosedWhenEmpty(moreMenu, groupItems.length === 0);
   const inboxBack = inbox.enabled && !inbox.shown && !drawerOpen && !guideShown && !inboxWide;
   const moreItems: RowMenuItem[] = [
+    // a phone's way to another PC (relay step 1): the hosted app's Add a PC, or the phone app's own screens
+    // on a phone only, as the approved flow draws it: a desktop adds a PC from Settings → Devices and PCs
+    ...(addPcTo !== null && isSheetWidth ? [{ id: "add-pc", label: t("Add a PC"), icon: Plus, run: () => openAddPc(addPcTo) }] : []),
     ...(waitingInMore && nextWaiting !== null ? [{ id: "next-waiting", label: t("Open the next session waiting for you"), hint: String(moreWaiting), icon: CircleHelp, run: openNextWaiting }] : []),
     { id: "palette", label: t("Search panes and actions"), icon: Search, ...(paletteKeys ? { hint: paletteKeys } : {}), run: () => openPalette() },
     ...(foldFind && more ? [{ id: "find-group", label: t("Find…"), icon: TextSearch, run: () => openMoreGroup("find", more.anchor) }] : findInTerminal),
@@ -798,6 +805,8 @@ export function App() {
     ...paneMoreItems.filter((item) => item.id === "mirror-width" || item.id === "recover-unsent"),
   ].map((item) => ({ ...item, divider: false }));
   const modeLeadItems: RowMenuItem[] = [
+    // a phone's way to another PC stays first in the inbox mode too
+    ...fromMore("add-pc"),
     { id: "exit-inbox", label: t("Back to Ovis"), icon: PanelsTopLeft, glyph: <OvisMark />, run: leaveMode },
     ...fromMore("palette"),
   ];

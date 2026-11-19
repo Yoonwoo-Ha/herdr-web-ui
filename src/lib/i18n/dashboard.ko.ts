@@ -1,5 +1,4 @@
 export const DASHBOARD_KO: Record<string, string> = {
-  "Add a PC": "PC 추가",
   "A PC joins through your account, or pairs with this device alone.": "PC는 계정을 통해 들어오거나, 이 기기와만 페어링합니다.",
   "Add {name} to your account": "계정에 {name} 추가",
   "Add this device to {name}": "{name}에 이 기기 추가",

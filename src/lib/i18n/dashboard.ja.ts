@@ -1,5 +1,4 @@
 export const DASHBOARD_JA: Record<string, string> = {
-  "Add a PC": "PC を追加",
   "A PC joins through your account, or pairs with this device alone.": "PC はアカウント経由で参加するか、このデバイスとだけペアリングします。",
   "Add {name} to your account": "{name} をアカウントに追加",
   "Add this device to {name}": "このデバイスを {name} に追加",

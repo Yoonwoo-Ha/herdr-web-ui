@@ -5,7 +5,7 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from "rea
 import { myPcs, type MyPc } from "../lib/account/myPcs.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { keyIdGroups } from "./KeyId.tsx";
-import { RelayShell, type RelayShellProps } from "./RelayShell.tsx";
+import { leaveAddEntry, RelayShell, type RelayShellProps } from "./RelayShell.tsx";
 
 const EXPECTED = "0123456789abcdef0123456789abcdef";
 const RECEIVED = "01234567ffffcdef0123456789abeeee";
@@ -714,6 +714,33 @@ describe("the dashboard", () => {
       expect(textOf(renderer!.root.findByType("h1"))).toBe("Your PCs, anywhere. Sign in to your Ovis account");
     });
 
+    it("takes Pair with a code from Add a PC opened by its address to the code field alone, signed out", async () => {
+      const shown = { ...props({ kind: "list", devices: [device(ids.desk, "p620", AP)], account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none, addEntry: true };
+      await mount(shown);
+      await act(async () => { renderer!.root.find((node) => node.type === "button" && node.props["data-action"] === "add-qr").props.onClick(); });
+      await act(async () => { button("Pair with a code").props.onClick(); });
+      await act(async () => { renderer!.update(createElement(SettingsProvider, { children: createElement(RelayShell, { ...shown, state: { kind: "code-entry", failure: null } }) })); });
+      expect(renderer!.root.findAllByType("h1").map(textOf)).toEqual(["Pair with a code"]);
+      expect(renderer!.root.findAll((node) => node.type === "input" && node.props.name === "code")).toHaveLength(1);
+    });
+
+    it("takes Pair with a code from Add a PC opened by its address to the code field, signed in too", async () => {
+      const shown = { ...signedIn(four()), addEntry: true };
+      await mount(shown);
+      await act(async () => { renderer!.root.find((node) => node.type === "button" && node.props["data-action"] === "add-qr").props.onClick(); });
+      await act(async () => { button("Pair with a code").props.onClick(); });
+      await act(async () => { renderer!.update(createElement(SettingsProvider, { children: createElement(RelayShell, { ...shown, state: { kind: "code-entry", failure: null } }) })); });
+      expect(renderer!.root.findAll((node) => node.type === "input" && node.props.name === "code")).toHaveLength(1);
+    });
+
+    it("opens on Add a PC when asked by its address, signed in too, and its Back leaves it", async () => {
+      await mount({ ...signedIn(four()), addEntry: true });
+      expect(textOf(renderer!.root.findByType("h1"))).toBe("Add a PC");
+      expect(renderer!.root.findAll((node) => node.props.className === "relay-dash")).toHaveLength(0);
+      await act(async () => { renderer!.root.find((node) => node.type === "button" && node.props["aria-label"] === "Back").props.onClick(); });
+      expect(renderer!.root.findAll((node) => node.props.className === "relay-dash")).toHaveLength(1);
+    });
+
     it("takes Start without signing in to Add a PC, which lists this device's own pairings by their pages, and Back to the sign-in", async () => {
       await mount({ ...props({ kind: "list", devices: [device(ids.desk, "p620", AP), device(ids.mac, "nuc", GLOBAL)], account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none });
       await act(async () => { button("Start without signing in").props.onClick(); });
@@ -791,5 +818,17 @@ describe("a pairing's step frame", () => {
     expect(html).toContain("Approve on the PC if it shows the same number");
     expect(html).not.toContain("relay-shell-digits");
     expect(html).toContain("Approve this device on Desk within 90 seconds to finish.");
+  });
+});
+
+describe("Back from Add a PC opened by its address", () => {
+  const history = () => { const calls: string[] = []; return { calls, back: () => { calls.push("back"); }, replaceState: (_state: unknown, _title: string, url?: string | URL | null) => { calls.push(`replace ${String(url)}`); } }; };
+  it("goes back to the PC page that opened it, and otherwise stays, dropping #add", () => {
+    const opened = history();
+    leaveAddEntry(`/s/${"a".repeat(32)}/`, opened);
+    expect(opened.calls).toEqual(["back"]);
+    const linked = history();
+    leaveAddEntry(null, linked);
+    expect(linked.calls).toEqual(["replace /"]);
   });
 });

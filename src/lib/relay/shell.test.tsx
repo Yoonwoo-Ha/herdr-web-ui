@@ -978,6 +978,13 @@ describe("the hosted shell's front page", () => {
       expect(went).toEqual([]);
     });
 
+    it("opens Add a PC for a front page entered at /#add, and never on a PC's own page", async () => {
+      await mountRelayShell(mountFor({ store: deviceStore([]), entryUrl: "https://app.ovis.sh/#add" }));
+      expect(last().addEntry).toBe(true);
+      await mountRelayShell(mountFor({ store: deviceStore([]), entryUrl: "https://app.ovis.sh/" }));
+      expect(last().addEntry).toBe(false);
+    });
+
     it("stays on a front page that came with a fragment, or after a PC's own page in this tab", async () => {
       const went: string[] = [];
       const store = deviceStore(await pcs("a".repeat(32)));

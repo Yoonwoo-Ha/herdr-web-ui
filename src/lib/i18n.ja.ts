@@ -517,6 +517,7 @@ const BASE: Record<string, string> = {
   "Offline": "オフライン",
   "Update Ovis on it": "Ovis の更新が必要",
   "Open": "開く",
+  "Add a PC": "PC を追加",
   "Relay": "リレー",
   "Add": "追加",
   "Update": "更新",

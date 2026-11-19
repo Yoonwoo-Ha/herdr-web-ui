@@ -1,5 +1,4 @@
 export const DASHBOARD_ZH: Record<string, string> = {
-  "Add a PC": "添加电脑",
   "A PC joins through your account, or pairs with this device alone.": "电脑可以通过你的账户加入，或只与此设备配对。",
   "Add {name} to your account": "将 {name} 添加到你的账户",
   "Add this device to {name}": "将此设备添加到 {name}",

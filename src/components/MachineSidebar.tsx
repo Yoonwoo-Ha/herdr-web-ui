@@ -51,6 +51,26 @@ export function leavePcList(exit: "app" | "shell"): void {
   if (exit === "app") void changePc(); else window.location.assign("/");
 }
 
+/**
+ * Where a phone's More → Add a PC leads (relay step 1): a PC page of the hosted app, in a browser or inside the phone
+ * app (which opens it there), goes to the hosted app's Add a PC ("shell"); a PC the phone app opened by its address
+ * goes back to the app's own screens ("app"); anywhere else there is none. Unlike pcListExit, the phone app does not
+ * come first: a hosted PC page inside it adds a PC on the hosted side, where its pairings are.
+ */
+export function addPcExit(page: { nativeApp: boolean; relayShell: boolean; pathname: string }): "app" | "shell" | null {
+  return pcListExit({ ...page, nativeApp: false }) ?? (page.nativeApp ? "app" : null);
+}
+
+/** The hosted app's Add a PC, opened from a PC's More: its Back comes back here (RelayShell's `addEntry`). */
+export const ADD_PC_FROM_KEY = "ovis-add-pc-from";
+
+/** Opens Add a PC where `exit` (addPcExit) leads. */
+export function openAddPc(exit: "app" | "shell"): void {
+  if (exit === "app") { void changePc(); return; }
+  try { sessionStorage.setItem(ADD_PC_FROM_KEY, window.location.pathname); } catch { /* no storage: Back drops #add and stays */ }
+  window.location.assign("/#add");
+}
+
 function asksWhatToConnect(machine: Machine): boolean {
   return machine.action_required === "choose_herdr" && asksChoice(machine.error, machine.found_herdr_sessions ?? [], machine.found_ovis ?? []);
 }

@@ -8,6 +8,7 @@ import { newPcs, type MyPc } from "../lib/account/myPcs.ts";
 import { useMyMachinesRoute } from "../lib/account/myMachinesRoute.ts";
 import type { AccountProvider } from "../lib/account/store.ts";
 import { useT } from "../lib/i18n.ts";
+import { serverIdOfPath } from "../lib/shellMode.ts";
 import { dashboardPcs } from "../lib/relay/dashboard.ts";
 import type { PcStatus } from "../lib/relay/pcStatus.ts";
 import type { AccountView, RelayShellState } from "../lib/relay/shellState.ts";
@@ -22,7 +23,9 @@ import { KeyId } from "./KeyId.tsx";
 import { MyMachinesPage } from "./MyMachinesPage.tsx";
 import { RelayDashboard } from "./RelayDashboard.tsx";
 import { EnrollmentStatus } from "./EnrollmentStatus.tsx";
-import { INSTALLER_COMMAND, PLUGIN_COMMANDS, RelayShellCardContent, TypedDigits } from "./RelayShellScreens.tsx";
+import { ADD_PC_FROM_KEY } from "./MachineSidebar.tsx";
+import { RelayAddPc } from "./RelayAddPc.tsx";
+import { INSTALLER_COMMAND, PLUGIN_COMMANDS, RelayShellCardContent, ScanQrStep, TypedDigits } from "./RelayShellScreens.tsx";
 import { RelayStepFrame, type RelayStepBack } from "./RelayStepFrame.tsx";
 import { SheepMascot } from "./SheepMascot.tsx";
 
@@ -58,6 +61,8 @@ export interface RelayShellProps {
   directoryRelays?: readonly { server_id: string; relay: string | null }[];
   defaultRelay?: string; meLabel?: string;
   onCodeStart: () => void; onCodeSubmit: (code: string) => void; onCodeMatch: () => void;
+  /** the front page was opened on Add a PC (`/#add`: the app's More → Add a PC), whatever the account's state */
+  addEntry?: boolean;
 }
 
 /** The field a code is typed in, kept in the input itself (src/AGENTS.md: secret input stays in the DOM). */
@@ -163,6 +168,9 @@ export function RelayShell(props: RelayShellProps) {
   const [signedOutView, setSignedOutView] = useState<"sign-in" | "pair">("sign-in");
   const [sheet, setSheet] = useState<{ pc: MyPc | null; mode: AddPcSheetMode } | null>(null);
   const [addingPc, setAddingPc] = useState(false);
+  const [addOpen, setAddOpen] = useState(props.addEntry === true);
+  // the PC page whose More opened Add a PC, read once as it opens: a mark left by an earlier one never sends Back elsewhere
+  const [addFrom] = useState(() => props.addEntry === true ? takeAddFrom() : null);
   const machinesRoute = useMyMachinesRoute();
   // a sheet opened on one of the two screens goes with it, whether by a link or the browser's Back
   const onMachines = machinesRoute !== null;
@@ -181,6 +189,25 @@ export function RelayShell(props: RelayShellProps) {
   const devices = state.kind === "list" ? state.devices : [];
   // a pairing's sign-in reads on the plain page, with nothing around it; its other steps are on the step frame
   const plain = state.kind === "failed" && state.failure === "sign-in-first" && onSignIn !== undefined;
+
+  // Add a PC asked for by its address stands alone over the front page; its Back goes back to where it was asked from
+  // Add a PC hands over to a screen of its own (a code to type): coming back from there lands on the front page
+  if (addOpen && state.kind !== "list" && state.kind !== "empty") setAddOpen(false);
+  if (addOpen && (state.kind === "list" || state.kind === "empty")) {
+    return (
+      <main className="relay-shell-screen relay-add-screen" data-relay-state={stateName} {...(account ? { "data-account-state": account.kind } : {})}>
+        <div className="relay-shell account-centered relay-shell-signin">
+          <RelayAddPc onBack={() => { setAddOpen(false); leaveAddEntry(addFrom); }} devices={devices}
+            qr={(qrBack) => <ScanQrStep onCodeStart={() => {
+              // signed in, the code is typed in the dashboard's own pairing dialog; signed out, on the way past the sign-in,
+              // as from Start without signing in: either takes the screens that follow
+              if (account?.kind === "signed-in") setAddingPc(true); else setSignedOutView("pair");
+              onCodeStart();
+            }} back={<button type="button" className="btn btn-ghost" onClick={qrBack}>{t("Back")}</button>} />} />
+        </div>
+      </main>
+    );
+  }
 
   if (account?.kind === "signed-in") {
     const signedIn = account;
@@ -289,6 +316,24 @@ function pairingStep(state: RelayShellState): 1 | 2 | 3 | null | undefined {
     case "failed": return state.pairing ? null : undefined;
     default: return undefined;
   }
+}
+
+/** The PC page that opened Add a PC by its address (MachineSidebar.openAddPc), taken off so it serves that one opening alone. */
+function takeAddFrom(): string | null {
+  try {
+    const from = sessionStorage.getItem(ADD_PC_FROM_KEY);
+    sessionStorage.removeItem(ADD_PC_FROM_KEY);
+    return from !== null && serverIdOfPath(from) !== null ? from : null;
+  } catch { return null; }
+}
+
+/**
+ * Back from Add a PC opened by its address (`/#add`): to the PC page whose More opened it (`from`), or, for a link or a
+ * bookmark from elsewhere, the front page itself, the `#add` dropped so a reload does not open it again.
+ */
+export function leaveAddEntry(from: string | null, history: Pick<History, "back" | "replaceState"> = window.history): void {
+  if (from !== null) history.back();
+  else history.replaceState(null, "", "/");
 }
 
 function addingPcOpen(state: RelayShellState): boolean {
