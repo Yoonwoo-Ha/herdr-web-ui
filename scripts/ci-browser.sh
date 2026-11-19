@@ -273,4 +273,5 @@ run_script scripts/herdr-profiles-browser-qa.ts
 run_script scripts/relay-e2e-regression.ts
 run_script scripts/relay-shell-browser-qa.ts
 run_script scripts/relay-dashboard-browser-qa.ts
+run_script scripts/sheet-history-late-step-regression.ts
 run_script scripts/relay-media-browser-qa.ts

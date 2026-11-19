@@ -9,6 +9,7 @@ import { formatDashboardHash, isDashboardHash, parseDashboardHash, type Dashboar
 import type { PcStatus } from "../lib/relay/pcStatus.ts";
 import type { ObservedVersion } from "../lib/relay/updateFlow.ts";
 import { uiFontSize, useSettings } from "../lib/settings.ts";
+import { sheetBackPending } from "../lib/sheetHistory.ts";
 import { UI_FONT_MAX, UI_FONT_MIN } from "../lib/typography.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { PROVIDER_NAMES, ProviderMark } from "./AccountPcs.tsx";
@@ -110,13 +111,50 @@ function SettingsSection() {
   );
 }
 
+interface TraversalEntry { readonly key: string; readonly index: number }
+interface TraversalApi { readonly currentEntry?: TraversalEntry | null; entries?(): TraversalEntry[] }
+const traversals = (): TraversalApi | undefined => (window as unknown as { navigation?: TraversalApi }).navigation;
+/**
+ * The dashboard's addresses written while a closed sheet's Back (sheetHistory) is still on its way, in order. That Back
+ * lands on the entry under the sheet's, so a push made now would sit under it and the address would follow the Back
+ * there; they are pushed once it lands, over the entry it landed on. Kept outside the dashboard, so a dashboard mounted
+ * meanwhile shows them, and settled by the first popstate whether one is mounted or not.
+ */
+const held: { hashes: string[]; onto: string | null } = { hashes: [], onto: null };
+/**
+ * Holds `hash` when the browser tells the entry the Back lands on (the Navigation API), so its landing is told from a
+ * traversal of the user's own by that entry's key; where it tells none, nothing is held and the address is written at once.
+ */
+function holdHash(hash: string): boolean {
+  if (held.hashes.length === 0) {
+    const api = traversals();
+    const at = api?.currentEntry;
+    const onto = at ? api?.entries?.().find((entry) => entry.index === at.index - 1)?.key : undefined;
+    if (onto === undefined) return false;
+    held.onto = onto;
+    window.addEventListener("popstate", settleHeld);
+  }
+  held.hashes.push(hash);
+  return true;
+}
+/** at a popstate: the held Back's landing writes them over it; the user's own Back or Forward elsewhere wins, and they go */
+function settleHeld(): void {
+  if (held.hashes.length === 0) return;
+  const landed = traversals()?.currentEntry?.key === held.onto;
+  const hashes = held.hashes;
+  held.hashes = [];
+  held.onto = null;
+  window.removeEventListener("popstate", settleHeld);
+  if (landed) for (const hash of hashes) if (window.location.hash !== hash) window.history.pushState(null, "", `${window.location.pathname}${window.location.search}${hash}`);
+}
+
 export function RelayDashboard({
   pcs, account, defaultRelay, meLabel, error = null, pcStatus, observedVersions,
   onCheckPcs, onCheckPc, onRefreshAccount, onAddPc, onPairByQr, onOpenSheet, onForgetPc, onSignIn, onSignOut, onLeave, onDeleteAccount, signedInAs, deleteError,
 }: RelayDashboardProps) {
   const t = useT(), phone = useMediaQuery(PHONE_QUERY), narrow = useMediaQuery(NARROW_DETAILS_QUERY), narrowSplitTable = useMediaQuery(NARROW_SPLIT_TABLE_QUERY);
   const mode: "account" | "local" = account ? "account" : "local";
-  const [route, setRoute] = useState<DashboardRoute>(() => typeof window === "undefined" ? { view: "overview", filter: "all", relay: null, pc: null } : parseDashboardHash(window.location.hash));
+  const [route, setRoute] = useState<DashboardRoute>(() => typeof window === "undefined" ? { view: "overview", filter: "all", relay: null, pc: null } : parseDashboardHash(held.hashes.at(-1) ?? window.location.hash));
   const [localFilter, setLocalFilter] = useState<DashboardFilter>("all");
   const [checkedByUser, setCheckedByUser] = useState(false);
   const titleRef = useRef<HTMLHeadingElement>(null), prevViewRef = useRef<DashboardView>(route.view);
@@ -124,7 +162,11 @@ export function RelayDashboard({
   const closedPcRef = useRef<string | null>(null), peersRef = useRef<readonly string[]>([]);
 
   useEffect(() => {
-    const sync = () => { if (!window.location.hash || window.location.hash === "#" || isDashboardHash(window.location.hash)) setRoute(parseDashboardHash(window.location.hash)); };
+    const sync = (event: Event) => {
+      if (event.type === "popstate") settleHeld();
+      else if (held.hashes.length > 0) return;
+      if (!window.location.hash || window.location.hash === "#" || isDashboardHash(window.location.hash)) setRoute(parseDashboardHash(window.location.hash));
+    };
     window.addEventListener("hashchange", sync); window.addEventListener("popstate", sync);
     return () => { window.removeEventListener("hashchange", sync); window.removeEventListener("popstate", sync); };
   }, []);
@@ -133,7 +175,9 @@ export function RelayDashboard({
 
   const navigateTo = (nextHash: string) => {
     setRoute(parseDashboardHash(nextHash));
-    if (typeof window !== "undefined" && window.location.hash !== nextHash) window.history.pushState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+    if (typeof window === "undefined") return;
+    if (sheetBackPending() && holdHash(nextHash)) return;
+    if (window.location.hash !== nextHash) window.history.pushState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
   };
   const activeFilter: DashboardFilter = route.view === "pcs" ? route.filter : localFilter;
   const setFilter = (next: DashboardFilter) => route.view === "pcs" ? navigateTo(formatDashboardHash({ view: "pcs", filter: next, relay: route.relay, pc: route.pc })) : setLocalFilter(next);
