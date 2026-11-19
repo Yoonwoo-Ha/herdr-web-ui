@@ -478,7 +478,7 @@ export class RelayService {
     try {
       this.identity = loadRelayIdentity(this.options.stateDir);
       // Authorization reaches disk before the first outbound socket.
-      if (services.token === "" && !services.devices.gated) services.devices.closeGate();
+      if (services.token === "") services.devices.closeGate();
       writePrivateState(join(this.options.stateDir, "relay", "state.json"), { enabled: true });
       this.enabled = true;
       this.blocked = null;

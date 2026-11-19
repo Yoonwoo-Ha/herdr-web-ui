@@ -449,7 +449,7 @@ export class DeviceStore {
   /** Keys removed through the account (docs/account.md, rule 5); only a pairing on this PC clears one. */
   private tombstones: AccountTombstone[] = [];
   /** Why account records cannot be applied: a tombstone file that will not parse is not an empty one. */
-  readonly accountError: string | null = null;
+  private accountProblem: string | null = null;
   readonly error: string | null = null;
 
   /**
@@ -458,15 +458,19 @@ export class DeviceStore {
    * damaged registry, while the devices it holds still get in.
    */
   /** `accountBlocked`: why account records cannot be trusted here (a sibling dir's tombstones that could not be merged). */
-  constructor(stateDir: string, blocked: string | null = null, accountBlocked: string | null = null) {
+  /**
+   * `safety`: the account safety log (server/account/safety-log.ts), with OVIS_ACCOUNT_OPENS_ALL on. While it fails
+   * closed no device signs in or pairs and account records are refused: only this PC itself gets in.
+   */
+  constructor(stateDir: string, blocked: string | null = null, accountBlocked: string | null = null, private readonly safety: { readonly strict: string | null } | null = null) {
     this.path = join(stateDir, "devices.json");
     this.tombstonePath = join(stateDir, "account-tombstones.json");
     this.pendingTombstonePath = join(stateDir, "account-tombstones.pending.json");
     const tombstones = readTombstones(this.tombstonePath);
     const pending = readTombstones(this.pendingTombstonePath) ?? [];
-    if (accountBlocked !== null) this.accountError = accountBlocked;
+    if (accountBlocked !== null) this.accountProblem = accountBlocked;
     if (tombstones === null) {
-      this.accountError = `Cannot read ${this.tombstonePath}: account records are refused until it is restored or fixed.`;
+      this.accountProblem = `Cannot read ${this.tombstonePath}: account records are refused until it is restored or fixed.`;
       this.tombstones = pending;
     } else this.tombstones = [...tombstones, ...pending.filter((t) => !tombstones.some((own) => own.key === t.key))];
     const read = readDeviceRegistry(this.path);
@@ -523,7 +527,22 @@ export class DeviceStore {
    * Whether the gate is closed to strangers: it is from the first pairing on, and stays so when
    * every device is revoked (revoking must never reopen the LAN); this PC itself always gets in.
    */
+  get accountError(): string | null {
+    return this.safety?.strict ?? this.accountProblem;
+  }
+
+  /** The safety log fails closed: no device gets in by a row or a code (S19). */
+  get failsClosed(): boolean {
+    return (this.safety?.strict ?? null) !== null;
+  }
+
   get gated(): boolean {
+    // what access reads: a PC that fails closed is closed to strangers, paired or not (S19)
+    return this.failsClosed || this.rawGated;
+  }
+
+  /** The gate as the registry holds it, for what is persisted and announced (closeGate, save); access reads gated. */
+  private get rawGated(): boolean {
     return this.error !== null || this.gateClosedAt !== null || this.devices.length > 0;
   }
 
@@ -540,14 +559,16 @@ export class DeviceStore {
 
   /** The end of what the open LAN alone let in: `close` when the gate closes, at once when it is closed already. */
   endWithGate(close: () => void): () => void {
-    if (this.gated) { close(); return () => {}; }
+    if (this.rawGated) { close(); return () => {}; }
     return this.onGateClosed(close);
   }
 
   /** Relay opt-in closes open LAN access before any outbound connection is made. */
+  /** Closes the registry's own gate, whatever the safety log says; closing a closed gate does nothing. */
   closeGate(): void {
+    // a registry that could not be read is closed already (rawGated): nothing to write, and nothing to throw
+    if (this.rawGated) return;
     this.assertWritable();
-    if (this.gated) return;
     const gate = new Date().toISOString();
     this.save(this.devices, gate);
     this.gateClosedAt = gate;
@@ -1049,6 +1070,7 @@ export class DeviceStore {
   }
 
   pair(code: string, label: string, role: DeviceRole, now = Date.now(), origin: readonly string[] = [], localCodeOnly = false): { token: string; device: DeviceMatch } | null {
+    if (this.failsClosed) return null;
     this.assertWritable();
     this.pruneUnconfirmedFirstPairs(now);
     // a code started through the relay is never redeemed on the LAN listener, nor are its guesses spent there:
@@ -1120,6 +1142,7 @@ export class DeviceStore {
    * key new to this PC (isNewKey).
    */
   pairRelay(code: string, label: string, publicKey: string, now = Date.now(), admit?: () => boolean): { device: DeviceMatch } | null {
+    if (this.failsClosed) return null;
     this.assertRelayPairing("code", now);
     // a code made for a PC in no account makes no device: the one that pairs with it waits to link
     const waiting = this.pending?.waiting;
@@ -1197,6 +1220,7 @@ export class DeviceStore {
    * a key new to this PC, false makes no device and counts no failure.
    */
   pairRelayApproved(label: string, publicKey: string, approval: { path: PairingPath; addedBy?: string; id?: string }, now = Date.now(), admit?: () => boolean): { device: DeviceMatch } | null {
+    if (this.failsClosed) return null;
     this.assertRelayPairing(approval.path, now);
     if (!isRelayPublicKey(publicKey)) { this.noteRelayFailure(approval.path, now); return null; }
     // an approver revoked or demoted while the device waited approves nothing
@@ -1268,7 +1292,7 @@ export class DeviceStore {
 
   /** The transport owns a fresh 32-byte nonce per session and consumes AUTH only once. */
   async matchRelay(deviceId: string, nonce: Uint8Array, signature: string, serverId: string, now = Date.now()): Promise<DeviceMatch | null> {
-    if (nonce.byteLength !== 32 || !/^[A-Za-z0-9_-]{86}$/.test(signature)) return null;
+    if (this.failsClosed || nonce.byteLength !== 32 || !/^[A-Za-z0-9_-]{86}$/.test(signature)) return null;
     const signed = Buffer.from(signature, "base64url");
     if (signed.length !== 64 || signed.toString("base64url") !== signature) return null;
     const device = this.devices.find((d) => d.id === deviceId && d.relay_public_key !== undefined);
@@ -1296,7 +1320,7 @@ export class DeviceStore {
 
   match(token: string | undefined, now = Date.now()): DeviceMatch | null {
     this.pruneUnconfirmedFirstPairs(now);
-    if (!token) return null;
+    if (!token || this.failsClosed) return null;
     const digest = hash(token);
     const candidateIndex = this.unconfirmedFirstPairs.findIndex(({ device }) => same(digest, device.token_hash));
     if (candidateIndex !== -1) {
@@ -1445,7 +1469,7 @@ export class DeviceStore {
   }
 
   private save(devices = this.devices, gateClosedAt = this.gateClosedAt): void {
-    const closes = !this.gated && (gateClosedAt !== null || devices.length > 0);
+    const closes = !this.rawGated && (gateClosedAt !== null || devices.length > 0);
     writePrivateState(this.path, { gate_closed_at: gateClosedAt, devices });
     // The write that closes the gate: onGateClosed. Told once the caller has set the store's own fields, which each
     // does right after this returns, and before anything else of this process runs (no frame of a connection is
