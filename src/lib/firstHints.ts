@@ -33,5 +33,14 @@ export function browserStorage(): Storage | null {
   try { return window.localStorage; } catch { return null; }
 }
 
-/** This browser's user pressed Continue on the setup guide's agent step: only then may the guide read the plan usage. */
+/**
+ * This browser's user pressed Continue on the setup guide's agent step: only then may the guide read the plan usage, and
+ * turn it on ("1"). Once usage is on, "on": the guide reads it only while it stays on, and only once the server's
+ * shared settings were read (`known`), so usage turned off on another device while this browser was closed is not read
+ * again from this browser's stale copy.
+ */
 export const USAGE_ARMED_KEY = "ovis:setup-usage-armed";
+
+export function usageReadAllowed(armed: string | null, showUsage: boolean, known: boolean): boolean {
+  return armed === "1" || (armed === "on" && showUsage && known);
+}

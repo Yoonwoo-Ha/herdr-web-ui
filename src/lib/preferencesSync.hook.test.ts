@@ -39,6 +39,7 @@ describe("preferences sync real send path", () => {
     ...doc, settings: Object.fromEntries(Object.entries(doc.settings).filter(([key]) => key !== "darkTheme" && key !== "lightTheme")),
   });
   interface Client {
+    known: boolean;
     settings: Settings;
     rendered: { id: string; mode: string };
     update: (patch: Partial<Settings>) => void;
@@ -152,13 +153,14 @@ describe("preferences sync real send path", () => {
     if (!again) records.clear();
     records.set("ovis:settings", JSON.stringify(raw));
     const unmounted = () => { throw new Error("not mounted"); };
-    const client: Client = { settings: sanitizeSettings(raw), rendered: { id: "amber", mode: "dark" }, update: unmounted, receive: unmounted, saveError: null, paused: false, retrying: false, retry: unmounted, resubscribed: unmounted, disconnected: unmounted, closed: unmounted, rerender: unmounted };
+    const client: Client = { known: false, settings: sanitizeSettings(raw), rendered: { id: "amber", mode: "dark" }, update: unmounted, receive: unmounted, saveError: null, paused: false, retrying: false, retry: unmounted, resubscribed: unmounted, disconnected: unmounted, closed: unmounted, rerender: unmounted };
     function Probe() {
       const context = useSettings();
       client.settings = context.settings;
       client.rendered = context.resolvedEntry;
       client.update = context.update;
       const sync = usePreferencesSync(syncEnabled);
+      client.known = sync.known;
       client.receive = sync.receive;
       client.saveError = sync.saveError;
       client.paused = sync.paused;
@@ -237,6 +239,20 @@ describe("preferences sync real send path", () => {
     expect(store.get().revision).toBe(2);
     expect(revisions).toEqual([]);
     expect(answers).toBe(0);
+  });
+
+  it("says the server's settings are known only once they were read, so a stale copy here is not taken for them", async () => {
+    store.set({ settings: { showUsage: false } });
+    const gate = Promise.withResolvers<void>();
+    releaseGet = () => gate.promise;
+    const client = await open({ ...DEFAULT_SETTINGS, showUsage: true });
+    expect(client.known).toBe(false);
+    expect(client.settings.showUsage).toBe(true);
+    const absorbed = nextAbsorbed();
+    await act(async () => { gate.resolve(); await absorbed; });
+    releaseGet = undefined;
+    expect(client.known).toBe(true);
+    expect(client.settings.showUsage).toBe(false);
   });
 
   it("keeps a migrated device-local System pair on upgrade without a correcting PUT (h3)", async () => {

@@ -278,7 +278,7 @@ export function App() {
   const { newSessionOpen, setNewSessionOpen, newPrefill, setNewPrefill, newFields, setNewFields, pendingCreate, newSessionPending, newTab, setNewTab, sessionHistory, setSessionHistory, worktreeFor, setWorktreeFor } = useNewSessionState({ initialLink, watching: auth?.role === "watch" });
   const { connected, setConnected, connectedBefore, setConnectedBefore, paneLost, outputStopped, setOutputStopped, reportedBy, setReportedBy } = useConnectionChip();
   const { notifications, setNotifications, pushOn, setPushOn, pushOnRef } = useNotificationState();
-  const { receive: receivePreferences, saveError: settingsSaveError, paused: settingsSavePaused, retrying: settingsSaveRetrying, retry: retrySettingsSave, resubscribed: preferencesResubscribed, disconnected: preferencesDisconnected, closed: preferencesClosed } = usePreferencesSync(locked === false);
+  const { receive: receivePreferences, saveError: settingsSaveError, paused: settingsSavePaused, retrying: settingsSaveRetrying, retry: retrySettingsSave, resubscribed: preferencesResubscribed, disconnected: preferencesDisconnected, closed: preferencesClosed, known: sharedSettingsKnown } = usePreferencesSync(locked === false);
   const tabLabelWatching = auth?.role === "watch";
   // a file is edited only from a browser that drives this PC, as the server checks too (server/file-edit.ts)
   const fileEditable = auth?.role === "drive" && auth.via !== "portal" && auth.via !== "open";
@@ -1122,7 +1122,7 @@ export function App() {
         {pairedNotices.length > 0 && <DevicePairedNotice events={pairedNotices} onDismiss={dismissPairedNotice} onOpen={(event) => { dismissPairedNotice(event); setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
         {removedNotices.length > 0 && <DeviceRemovedNotice events={removedNotices} onDismiss={dismissRemovedNotice} />}
         {setupGuide.guide === null && <FirstStartHints active={locked === false} />}
-        {setupGuide.guide !== null && <MachineContext.Provider value="local"><SetupGuide auth={auth} security={security} onEnableAlerts={enableNotifications} settingsOpen={settingsOpen} pushOn={pushOn} notifications={notifications} hidden={setupGuide.paused} state={setupGuide.guide} dispatch={setupGuide.dispatch} onClose={setupGuide.close} onOpenSettings={(page) => { setSettingsLinkPage(page); setSettingsOpen(true); }}
+        {setupGuide.guide !== null && <MachineContext.Provider value="local"><SetupGuide auth={auth} security={security} onEnableAlerts={enableNotifications} settingsOpen={settingsOpen} pushOn={pushOn} sharedSettingsKnown={sharedSettingsKnown} notifications={notifications} hidden={setupGuide.paused} state={setupGuide.guide} dispatch={setupGuide.dispatch} onClose={setupGuide.close} onOpenSettings={(page) => { setSettingsLinkPage(page); setSettingsOpen(true); }}
           onOpenTelemetry={() => { setSettingsLinkPage("about"); setSettingsLinkSection("telemetry"); setSettingsOpen(true); }}
           // the tab was just made: picked before the roster has it, the pick would be released as a closed pane
           onOpenTerminal={(paneId) => { const at = picks.current; const latest = setupGuide.ticket(); void load().finally(() => { if (latest() && picks.current === at) selectTarget("local", paneId, "terminal"); }); }}

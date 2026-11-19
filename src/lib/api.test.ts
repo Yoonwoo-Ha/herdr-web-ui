@@ -1,7 +1,7 @@
 import { afterEach, expect, it, jest } from "bun:test";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { NOTICE_VERSION } from "../../shared/telemetry-notice.ts";
-import { AttachmentTooLargeError, ApiError, cancelUsageLogin, changeTelemetry, fetchAgentCatalog, fetchAgentKinds, fetchPaneSummaries, fetchTelemetry, SUMMARY_REQUEST_MS, movePaneBeside, swapPaneWith, uploadPaneImage, verifySourceBoot } from "./api.ts";
+import { AttachmentTooLargeError, ApiError, cancelUsageLogin, changeTelemetry, fetchAgentCatalog, fetchAgentKinds, fetchPaneSummaries, fetchTelemetry, SUMMARY_REQUEST_MS, movePaneBeside, requestRelay, swapPaneWith, uploadPaneImage, verifySourceBoot } from "./api.ts";
 import { movingHerdrFocusOn } from "./followFocus.ts";
 import { DEFAULT_SETTINGS, telemetrySettingsSnapshot } from "./settings.ts";
 
@@ -249,6 +249,24 @@ it("ends a source boot check when the caller aborts it or after 20 s, without Ab
   expect(requests[2]!.signal.aborted).toBe(false);
   jest.advanceTimersByTime(1);
   expect(await slow).toMatchObject({ name: "AbortError" });
+});
+
+it("ends a relay start that never answers after 20 s, so Turn on can be pressed again", async () => {
+  withoutAbortSignalStatics("any", "timeout");
+  jest.useFakeTimers();
+  const requests = heldFetch();
+
+  const stalled = requestRelay("start").catch((error: unknown) => error);
+  jest.advanceTimersByTime(19_999);
+  expect(requests[0]!.signal.aborted).toBe(false);
+  jest.advanceTimersByTime(1);
+  // the deadline's own words, not the abort the browser answered with
+  expect(await stalled).toMatchObject({ name: "TimeoutError", message: "No answer" });
+
+  // a stop may take the server longer: it is waited for
+  void requestRelay("stop").catch(() => undefined);
+  jest.advanceTimersByTime(60_000);
+  expect(requests[1]!.signal.aborted).toBe(false);
 });
 
 it("ends an agent catalog read that never answers after 30 s, so Check again can try again", async () => {

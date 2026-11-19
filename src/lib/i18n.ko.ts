@@ -546,6 +546,7 @@ const BASE: Record<string, string> = {
   "Offline · {when}": "오프라인 · {when}",
   "The PC is off, or Ovis is not running on it.": "PC가 꺼져 있거나 Ovis가 실행 중이 아닙니다.",
   "The relay did not answer. Check this device's network.": "릴레이가 답하지 않습니다. 이 기기의 네트워크를 확인하세요.",
+  "No answer": "응답 없음",
   "Ready · not in the account yet": "준비됨 · 아직 계정에 없음",
   "Account setup is incomplete.": "계정 설정이 완료되지 않았습니다.",
   "Adding it to your account…": "계정에 추가하는 중…",

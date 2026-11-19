@@ -293,16 +293,27 @@ export interface RelayOffer {
  * The relay actions answer with the state they left the relay in, a refusal too: a start that
  * serve-only blocks is a 409 whose body is still the RelayStatus, so it is the answer, not an error.
  * Only a body without a phase (the origin gate, a watching device, an older server) is one.
+ * A start gives up after 20 s (the server starts the relay at once and answers), so one that never answers does not
+ * hold Turn on, or the setup guide's other ways. A stop or a reset may take the server longer, and is waited for.
  */
 export async function requestRelay(action: "start" | "stop" | "reset-identity"): Promise<RelayStatus> {
   const url = `/api/relay/${action}`;
-  const response = await apiFetch(url, { method: "POST", headers: { "x-herdr-update": "1" } });
-  if (!response.ok) {
-    const body: unknown = await response.clone().json().catch(() => null);
-    if (body !== null && typeof body === "object" && "phase" in body) return body as RelayStatus;
-    throw await errorFrom(url, response);
-  }
-  return (await response.json()) as RelayStatus;
+  const bounded = new AbortController();
+  // kept here too: Safari before 15.4 has no signal.reason
+  let gaveUp: DOMException | null = null;
+  const timer = action === "start" ? setTimeout(() => { gaveUp = new DOMException(t("No answer"), "TimeoutError"); bounded.abort(gaveUp); }, 20_000) : undefined;
+  try {
+    const response = await apiFetch(url, { method: "POST", headers: { "x-herdr-update": "1" }, signal: bounded.signal });
+    if (!response.ok) {
+      const body: unknown = await response.clone().json().catch(() => null);
+      if (body !== null && typeof body === "object" && "phase" in body) return body as RelayStatus;
+      throw await errorFrom(url, response);
+    }
+    return (await response.json()) as RelayStatus;
+  } catch (error) {
+    // a browser may answer the abort with its own words (Safari 14): the deadline's are ours
+    throw gaveUp ?? error;
+  } finally { clearTimeout(timer); }
 }
 
 /** POST /api/relay/direct: whether paired phones may connect straight to this PC on its networks while the relay is on. */

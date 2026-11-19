@@ -531,7 +531,12 @@ try {
       let inner = window.fetch.bind(window);
       const recorder = ((input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href);
-        if (url.pathname.startsWith("/api/")) sent.push(`${(init?.method ?? "GET").toUpperCase()} ${url.pathname}`);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url.pathname.startsWith("/api/")) sent.push(`${method} ${url.pathname}`);
+        // plan usage turned off on another device: the server's shared settings say so, this browser's copy does not
+        if (url.pathname === "/api/preferences" && method === "GET" && sessionStorage.getItem("usage-off-elsewhere") !== null) {
+          return Promise.resolve(Response.json({ revision: 1000, settings: { showUsage: false }, muted_panes: [] }));
+        }
         return inner(input, init);
       }) as typeof window.fetch;
       Object.defineProperty(window, "fetch", { configurable: true, get: () => recorder, set: (next: typeof window.fetch) => { inner = next; } });
@@ -566,8 +571,28 @@ try {
     assert.equal((await page.evaluate(() => (window as unknown as { sent: string[] }).sent)).includes("GET /api/usage"), false, "no usage read while the agent step only shows");
     await dialog.locator(".setup-foot").getByRole("button", { name: "Continue", exact: true }).click();
     await page.waitForFunction(() => (window as unknown as { sent: string[] }).sent.includes("GET /api/usage"));
+    // the guide turned plan usage on; then it is turned off on another device while this browser is closed: this
+    // browser's copy still says on, the server's settings say off, and the remembered Continue reads no usage
+    await page.waitForFunction(() => localStorage.getItem("ovis:setup-usage-armed") === "on");
+    await page.evaluate((guide) => {
+      sessionStorage.setItem("usage-off-elsewhere", "1");
+      localStorage.setItem("ovis:setup-guide", guide);
+    }, WELCOME);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:settings") ?? "{}").showUsage), true, "this browser's copy still says plan usage is on");
+    await page.reload();
+    await dialog.getByRole("heading", { name: "Pick an agent", exact: true }).waitFor();
+    await dialog.locator(".setup-found .setup-tile").first().waitFor();
+    await page.waitForFunction(() => localStorage.getItem("ovis:setup-usage-armed") === null);
+    await settled(page);
+    // the sidebar still reads the usage once from this browser's stale copy; the guide's steps draw only once the
+    // agent catalog is in, so a read after it is the guide's
+    const offElsewhere = await page.evaluate(() => (window as unknown as { sent: string[] }).sent);
+    const catalogAt = offElsewhere.indexOf("GET /api/agent-catalog");
+    assert.ok(catalogAt >= 0, `the guide read the agent catalog: ${offElsewhere.join(", ")}`);
+    const byGuide = offElsewhere.slice(catalogAt);
+    assert.equal(byGuide.includes("GET /api/usage"), false, `usage turned off while this browser was closed is not read again by the guide: ${offElsewhere.join(", ")}`);
     await context.close();
-    console.log("PASS opening the guide and Set up later read no usage, write no shared setting and leave the settings as they were; Continue reads the usage");
+    console.log("PASS opening the guide and Set up later read no usage, write no shared setting and leave the settings as they were; Continue reads the usage, until usage is turned off");
   }
 
   // Anywhere's QR code, then Tailscale (a new pairing code: the PC keeps one), then Anywhere again: the relay asks for a
@@ -608,7 +633,8 @@ try {
     await side.getByRole("tab", { name: /^Anywhere/ }).click();
     await page.waitForFunction((count) => (window as unknown as { sent: string[] }).sent.filter((request) => request === "POST /api/relay/offer").length > count, first);
     await side.locator(".setup-relay-tight .qr").waitFor();
-    assert.equal(await page.evaluate(() => localStorage.getItem("ovis:setup-usage-armed")), "1", "Continue on the agent step is remembered");
+    // "on" once the usage read turned plan usage on for the signed-in demo account
+    assert.ok(["1", "on"].includes(await page.evaluate(() => localStorage.getItem("ovis:setup-usage-armed") ?? "")), "Continue on the agent step is remembered");
     await page.evaluate(() => localStorage.setItem("ovis:settings", JSON.stringify({ ...JSON.parse(localStorage.getItem("ovis:settings") ?? "{}"), showUsage: true })));
     await page.reload();
     await dialog.waitFor();
@@ -647,6 +673,12 @@ try {
     await tailscale.click({ force: true });
     await page.keyboard.press("ArrowRight");
     assert.equal(await side.getByRole("tab", { name: /^Anywhere/ }).getAttribute("aria-selected"), "true", "no other way is picked while the relay starts");
+    // Back and Continue again mount the step afresh while the start is still out: the ways still wait for it
+    await dialog.locator(".setup-foot").getByRole("button", { name: "Back", exact: true }).click();
+    await dialog.getByRole("heading", { name: "Pick a look", exact: true }).waitFor();
+    await dialog.locator(".setup-foot").getByRole("button", { name: "Continue", exact: true }).click();
+    await tailscale.waitFor();
+    assert.equal(await tailscale.getAttribute("aria-disabled"), "true", "the ways still wait for the start after the step is left and come back to");
     await page.waitForFunction(() => typeof (globalThis as { releaseDemoRelayStart?: () => void }).releaseDemoRelayStart === "function");
     await page.evaluate(() => (globalThis as { releaseDemoRelayStart?: () => void }).releaseDemoRelayStart?.());
     await side.locator(".setup-relay-tight .qr").waitFor();

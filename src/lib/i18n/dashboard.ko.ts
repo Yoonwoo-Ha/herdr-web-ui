@@ -80,7 +80,6 @@ export const DASHBOARD_KO: Record<string, string> = {
   "Paired with this device": "이 기기와 페어링됨",
   "Not checked": "미확인",
   "Same network": "같은 네트워크",
-  "No answer": "응답 없음",
   "Route": "경로",
   "Reachable now: {direct} direct · {relay} via relay · {none} no answer": "지금 연결 가능: 직접 {direct} · 릴레이 경유 {relay} · 응답 없음 {none}",
   "Key ID": "키 ID",

@@ -80,7 +80,6 @@ export const DASHBOARD_JA: Record<string, string> = {
   "Paired with this device": "このデバイスとペアリング済み",
   "Not checked": "未確認",
   "Same network": "同じネットワーク",
-  "No answer": "応答なし",
   "Route": "経路",
   "Reachable now: {direct} direct · {relay} via relay · {none} no answer": "今すぐ到達可能: 直接 {direct} · リレー経由 {relay} · 応答なし {none}",
   "Key ID": "キー ID",

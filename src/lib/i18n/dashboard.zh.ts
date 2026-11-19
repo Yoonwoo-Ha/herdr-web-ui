@@ -80,7 +80,6 @@ export const DASHBOARD_ZH: Record<string, string> = {
   "Paired with this device": "已与此设备配对",
   "Not checked": "未检查",
   "Same network": "同一网络",
-  "No answer": "无响应",
   "Route": "路由",
   "Reachable now: {direct} direct · {relay} via relay · {none} no answer": "当前可达：直连 {direct} · 经中继 {relay} · 无响应 {none}",
   "Key ID": "密钥 ID",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type ReactNode } from "react";
 import { ArrowRight, Bell, BellRing, Check, ChevronLeft, Circle, CircleCheck, Copy, ExternalLink, TriangleAlert, Folder, Gauge, Globe, Info, KeyRound, LoaderCircle, Network, Play, RefreshCw, RotateCw, Smartphone, Wifi, X } from "lucide-react";
 
 import type { AgentCatalogEntry, AgentCatalogRow } from "../../shared/agent-catalog.ts";
@@ -22,7 +22,7 @@ import { agentRows, checkList, foundAgents, installedHere, phoneBoxMode, phoneBo
 import { focusInOtherModal, nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { inRelayShell, useRelay, type RelayState } from "../lib/useRelay.ts";
-import { browserStorage, USAGE_ARMED_KEY } from "../lib/firstHints.ts";
+import { browserStorage, USAGE_ARMED_KEY, usageReadAllowed } from "../lib/firstHints.ts";
 import { useOtherDevice, useSignedInUsage } from "../lib/useSetupGuide.ts";
 import { userErrorMessage, userFailure } from "../lib/userError.ts";
 import { AgentMark } from "./AgentMark.tsx";
@@ -65,6 +65,8 @@ export interface SetupGuideProps {
   onEnableAlerts: () => Promise<PushActionResult>;
   settingsOpen?: boolean;
   pushOn?: boolean;
+  /** the server's shared settings were read (lib/preferencesSync.ts `known`): plan usage this browser saw on may be off by now */
+  sharedSettingsKnown?: boolean;
   notifications: NotificationState;
   onStarting?: () => void;
   onOpened: (paneId: string, agentStarted: boolean) => void;
@@ -158,7 +160,7 @@ export function SetupGuide(props: SetupGuideProps) {
 
   const notice = <TelemetryNotice inline enabled={!hidden} onOpen={props.onOpenTelemetry} />;
   let body: ReactNode;
-  if (view === "agents" && catalog !== null) body = <Steps page={page} setPage={setPage} onEnableAlerts={props.onEnableAlerts} notifications={props.notifications} settingsOpen={props.settingsOpen} pushOn={props.pushOn} catalog={catalog} ready={ready} machineId={machineId} onClose={onClose} onInstalled={agentInstalled} onLookAgain={loadCatalog} onOpenTerminal={props.onOpenTerminal} onOpened={props.onOpened} onOpenSettings={props.onOpenSettings} auth={props.auth} security={props.security} onStarting={props.onStarting} onPaired={props.onPaired} usageOn={turnsUsageOn(props.state)} phoneFirst={!phoneClosed && phoneBoxOpensFirst(props.state, isLoopbackHost(window.location.hostname))} onPhoneClosed={() => setPhoneClosed(true)} notice={notice} firstFocus={firstFocus} />;
+  if (view === "agents" && catalog !== null) body = <Steps page={page} setPage={setPage} onEnableAlerts={props.onEnableAlerts} notifications={props.notifications} settingsOpen={props.settingsOpen} pushOn={props.pushOn} sharedSettingsKnown={props.sharedSettingsKnown} catalog={catalog} ready={ready} machineId={machineId} onClose={onClose} onInstalled={agentInstalled} onLookAgain={loadCatalog} onOpenTerminal={props.onOpenTerminal} onOpened={props.onOpened} onOpenSettings={props.onOpenSettings} auth={props.auth} security={props.security} onStarting={props.onStarting} onPaired={props.onPaired} usageOn={turnsUsageOn(props.state)} phoneFirst={!phoneClosed && phoneBoxOpensFirst(props.state, isLoopbackHost(window.location.hostname))} onPhoneClosed={() => setPhoneClosed(true)} notice={notice} firstFocus={firstFocus} />;
   else body = <CheckStep onClose={onClose} notice={notice} firstFocus={firstFocus}>{view === "failed" ? <CheckFailed error={catalogError} onLookAgain={loadCatalog} /> : <Checking known={known} catalog={catalog} />}</CheckStep>;
 
   return (
@@ -254,7 +256,7 @@ function CheckFailed({ error, onLookAgain }: { error: string | null; onLookAgain
   );
 }
 
-interface StepsProps extends Pick<StepState, "page" | "setPage">, Pick<SetupGuideProps, "onEnableAlerts" | "notifications" | "settingsOpen" | "pushOn" | "onOpenTerminal" | "onOpened" | "onOpenSettings" | "auth" | "security" | "onStarting" | "onPaired" | "onClose"> {
+interface StepsProps extends Pick<StepState, "page" | "setPage">, Pick<SetupGuideProps, "onEnableAlerts" | "notifications" | "settingsOpen" | "pushOn" | "sharedSettingsKnown" | "onOpenTerminal" | "onOpened" | "onOpenSettings" | "auth" | "security" | "onStarting" | "onPaired" | "onClose"> {
   notice: ReactNode;
   usageOn: boolean;
   phoneFirst: boolean;
@@ -267,7 +269,7 @@ interface StepsProps extends Pick<StepState, "page" | "setPage">, Pick<SetupGuid
   firstFocus: FirstFocus;
 }
 
-function Steps({ page, setPage, onEnableAlerts, notifications, settingsOpen = false, pushOn = false, catalog, ready, machineId, notice, onClose, onInstalled, onLookAgain, onOpenTerminal, onOpened, onOpenSettings, auth, security, onStarting, onPaired, usageOn, phoneFirst, onPhoneClosed, firstFocus }: StepsProps) {
+function Steps({ page, setPage, onEnableAlerts, notifications, settingsOpen = false, pushOn = false, sharedSettingsKnown = false, catalog, ready, machineId, notice, onClose, onInstalled, onLookAgain, onOpenTerminal, onOpened, onOpenSettings, auth, security, onStarting, onPaired, usageOn, phoneFirst, onPhoneClosed, firstFocus }: StepsProps) {
   const t = useT();
   const { settings, update } = useSettings();
   const agents = agentRows(catalog, ready);
@@ -283,12 +285,15 @@ function Steps({ page, setPage, onEnableAlerts, notifications, settingsOpen = fa
   }, [page]);
   // plan usage: nothing is read from the PC's sign-ins, nor turned on, before the user's own press on the agent step
   // (Continue); Set up later from the first step reads nothing
-  const [usageArmed, setUsageArmed] = useState(() => browserStorage()?.getItem(USAGE_ARMED_KEY) === "1");
+  // (usageReadAllowed: once usage is on, the guide reads it only while it stays on, as the server's settings say)
+  const [usageArmed, setUsageArmed] = useState(() => browserStorage()?.getItem(USAGE_ARMED_KEY) ?? null);
+  useEffect(() => { if (settings.showUsage && usageArmed === "1") setUsageArmed("on"); }, [settings.showUsage, usageArmed]);
   const armUsage = (): void => {
-    setUsageArmed(true);
-    try { browserStorage()?.setItem(USAGE_ARMED_KEY, "1"); } catch { /* not kept: the next press arms it again */ }
+    const armed = settings.showUsage ? "on" : "1";
+    setUsageArmed(armed);
+    try { browserStorage()?.setItem(USAGE_ARMED_KEY, armed); } catch { /* not kept: the next press arms it again */ }
   };
-  const signedIn = useSignedInUsage(ready, (refresh) => fetchUsage(refresh).then((report) => signedInAgents(report.providers)), settings.showUsage || !usageOn, () => update({ showUsage: true }), usageArmed);
+  const signedIn = useSignedInUsage(ready, (refresh) => fetchUsage(refresh).then((report) => signedInAgents(report.providers)), settings.showUsage || !usageOn, () => update({ showUsage: true }), usageReadAllowed(usageArmed, settings.showUsage, sharedSettingsKnown));
   // Accounts are read on the server's PC, so only its own guide offers it, and a
   // watching device signs in to nothing
   const [signedHere, setSignedHere] = useState<readonly string[]>([]);
@@ -726,6 +731,15 @@ let pairedHere = false;
 let pairingOut: Promise<PairingCode> | null = null;
 const guidePairingCode = (): Promise<PairingCode> => pairingOut ??= startPairing().finally(() => { pairingOut = null; });
 
+// the relay's start, while it is out, kept here too: Back or Continue mounts the phone step afresh, and its tabs
+// must still wait for a start a box since gone sent
+let relayStartOut = false;
+const relayStartWatchers = new Set<() => void>();
+const watchRelayStart = (watch: () => void): (() => void) => { relayStartWatchers.add(watch); return () => { relayStartWatchers.delete(watch); }; };
+const relayStarting = (): boolean => relayStartOut;
+const setRelayStartOut = (out: boolean): void => { relayStartOut = out; for (const watch of relayStartWatchers) watch(); };
+const useRelayStarting = (): boolean => useSyncExternalStore(watchRelayStart, relayStarting);
+
 interface PhoneBoxProps {
   opening: PhoneBoxOpening;
   onWithdraw: () => void;
@@ -741,6 +755,7 @@ function PhoneBox({ opening, onWithdraw, auth, security, onOpenSettings, onPaire
   const relay = useRelay();
   const [other, setOther] = useState(false);
   const way = other ? "other" : phoneWay(relay, inRelayShell(), auth);
+  const starting = useRelayStarting();
   const led = useRef(false);
   if (way === "relay") led.current = true;
   const stays = phoneBoxStays(other ? "tap" : opening, way, led.current);
@@ -749,7 +764,7 @@ function PhoneBox({ opening, onWithdraw, auth, security, onOpenSettings, onPaire
   if (way === "wait") return (
     <div className="setup-phone-relay">
       <p className="setup-muted"><LoaderCircle aria-hidden="true" className="setup-spin" /></p>
-      <button type="button" className="setup-link setup-phone-other" onClick={() => setOther(true)}>{t("Use Tailscale or Wi-Fi instead")}</button>
+      <button type="button" className="setup-link setup-phone-other" disabled={starting} onClick={() => setOther(true)}>{t("Use Tailscale or Wi-Fi instead")}</button>
     </div>
   );
   if (way === "other") return <PhoneQr auth={auth} onOpenSettings={onOpenSettings} onPaired={onPaired} onPhonePaired={onPhonePaired} />;
@@ -763,33 +778,39 @@ function PhoneBox({ opening, onWithdraw, auth, security, onOpenSettings, onPaire
  * gate still open, which would shut out a browser in only because nothing is paired yet (auth via
  * "open": a LAN or tailnet address, never the PC's loopback), so that browser pairs itself first.
  */
-function RelayBox({ relay, auth, closesGate, onPaired, onPhonePaired, onOther, onBusy, tight = false }: { relay: RelayState; auth: HealthAuth | null; closesGate: boolean; onPaired: () => void; onPhonePaired: (name: string) => void; onOther?: () => void; onBusy?: (busy: boolean) => void; tight?: boolean }) {
+function RelayBox({ relay, auth, closesGate, onPaired, onPhonePaired, onOther, tight = false }: { relay: RelayState; auth: HealthAuth | null; closesGate: boolean; onPaired: () => void; onPhonePaired: (name: string) => void; onOther?: () => void; tight?: boolean }) {
   const t = useT();
-  const { status, pending, request } = relay;
-  const [turning, setTurning] = useState(false);
+  const { status, pending, request, reread } = relay;
   const [error, setError] = useState<string | null>(null);
   const [pairedSelf, setPairedSelf] = useState(false);
-  // a start under way may close the device gate and spend a code another way shows: the step's tabs wait for it
-  const starting = pending || turning;
-  useEffect(() => { onBusy?.(starting); }, [starting]); // eslint-disable-line react-hooks/exhaustive-deps
+  const startOut = useRelayStarting();
+  // a start this box did not send (a box since gone did) answered only that box: read the relay again
+  const startWasOut = useRef(startOut);
+  useEffect(() => {
+    if (startWasOut.current && !startOut) reread();
+    startWasOut.current = startOut;
+  }, [startOut, reread]);
   if (status === null) return null;
   const step = relayStep(status);
-  const busy = pending || turning;
+  const busy = pending || startOut;
   const start = async (): Promise<void> => {
     if (busy) return;
-    setTurning(true);
+    setRelayStartOut(true);
     setError(null);
     try {
       if (auth?.via === "open" && !pairedHere) {
+        // not bounded here: a second pairing beside one still out could leave its void cookie in place of the good one
+        // (pairing.ts), so the ways wait for it as they wait for the start; Set up later, Back and Escape still work
         await pairThisBrowser();
         pairedHere = true;
         setPairedSelf(true);
         onPaired();
       }
+      // bounded by requestRelay itself: the ways wait as long as the start is out
       await request("start");
     } catch (reason: unknown) {
       setError(reason instanceof UnconfirmedPairing ? t("Couldn't connect this browser. Turn on cookies.") : failureText(reason));
-    } finally { setTurning(false); }
+    } finally { setRelayStartOut(false); }
   };
   return (
     <div className="setup-phone-relay">
@@ -1069,7 +1090,6 @@ interface MethodProps {
   onOpenSettings: () => void;
   onPaired: () => void;
   onPhonePaired: (name: string) => void;
-  onRelayBusy?: (busy: boolean) => void;
 }
 
 function MethodPanel({ method, shown = true, ...props }: MethodProps & { method: PhoneMethod; shown?: boolean }) {
@@ -1087,7 +1107,7 @@ function MethodPanel({ method, shown = true, ...props }: MethodProps & { method:
     if (phoneWay(relay, inRelayShell(), props.auth) === "other") return <p className="setup-note"><Info aria-hidden="true" />{t("Not available on this PC.")}</p>;
     if (relay.status === null) return <p className="setup-muted"><LoaderCircle aria-hidden="true" className="setup-spin" /></p>;
     const closesGate = props.security.state === "known" && props.security.summary.pairing_gate === "open" && !props.security.summary.token_configured;
-    return <RelayBox key={returns} tight relay={relay} auth={props.auth} closesGate={closesGate} onPaired={props.onPaired} onPhonePaired={props.onPhonePaired} onBusy={props.onRelayBusy} />;
+    return <RelayBox key={returns} tight relay={relay} auth={props.auth} closesGate={closesGate} onPaired={props.onPaired} onPhonePaired={props.onPhonePaired} />;
   }
   if (method === "wifi") {
     const address = wifiAddress();
@@ -1162,7 +1182,7 @@ function PhonePanel(props: MethodProps) {
   const [opened, setOpened] = useState<readonly PhoneMethod[]>([method]);
   useEffect(() => { setOpened((list) => list.includes(method) ? list : [...list, method]); }, [method]);
   // while the relay starts, no other way is picked (#3962 CodeRabbit): its start could close the gate and spend that way's code
-  const [relayBusy, setRelayBusy] = useState(false);
+  const relayBusy = useRelayStarting();
   const pick = (next: PhoneMethod): void => { if (relayBusy && next !== method) return; setStore(null); setMethod(next); };
   const onKey = (event: ReactKeyboardEvent, index: number): void => {
     const next = event.key === "ArrowRight" ? (index + 1) % facts.length : event.key === "ArrowLeft" ? (index + facts.length - 1) % facts.length : null;
@@ -1193,7 +1213,7 @@ function PhonePanel(props: MethodProps) {
         <div id="setup-path-panel" role="tabpanel" aria-labelledby={`setup-path-tab-${method}`} className="setup-method-area" ref={area}>
           {store !== null && <StoreQr store={store} />}
           {/* a way once opened stays mounted while hidden: going back to it asks for no new code (one only on New code) */}
-          {opened.map((way) => <div key={way} hidden={store !== null || way !== method}><MethodPanel method={way} shown={way === method} {...props} onRelayBusy={setRelayBusy} /></div>)}
+          {opened.map((way) => <div key={way} hidden={store !== null || way !== method}><MethodPanel method={way} shown={way === method} {...props} /></div>)}
         </div>
       </li>
     </ol>

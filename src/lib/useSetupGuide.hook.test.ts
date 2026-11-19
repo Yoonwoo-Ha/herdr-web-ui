@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createElement } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { GUIDE_STORAGE_KEY, FIRST_RUN, REOPENED, type GuideState } from "./setupGuideFlow.ts";
-import { SETUP_ROW_KEY } from "./firstHints.ts";
+import { SETUP_ROW_KEY, USAGE_ARMED_KEY } from "./firstHints.ts";
 import { SETTINGS_STORAGE_KEY } from "./themeBoot.ts";
 import { useOtherDevice, useSetupGuide, type SetupGuideFacts } from "./useSetupGuide.ts";
 
@@ -61,6 +61,21 @@ describe("the setup guide closed in another tab", () => {
     await resumeAt(FIRST_RUN);
     await act(async () => { hook.close(); });
     expect(records.get(SETUP_ROW_KEY)).toBe("on");
+  });
+
+  it("keeps a remembered Continue as spent once plan usage is on, and forgets it when usage goes off", async () => {
+    Object.assign(window.localStorage, { removeItem: (key: string) => records.delete(key) });
+    records.set(USAGE_ARMED_KEY, "1");
+    let showUsage = false;
+    function Usage() { hook = useSetupGuide({ enabled: true, workspaces: 0, pairingGate: "open", watching: false, showUsage }); return null; }
+    await act(async () => { renderer = create(createElement(Usage)); });
+    expect(records.get(USAGE_ARMED_KEY)).toBe("1");
+    showUsage = true;
+    await act(async () => { renderer!.update(createElement(Usage)); });
+    expect(records.get(USAGE_ARMED_KEY)).toBe("on");
+    showUsage = false;
+    await act(async () => { renderer!.update(createElement(Usage)); });
+    expect(records.has(USAGE_ARMED_KEY)).toBe(false);
   });
 
   it("is settled once another tab closes the guide, though this one never decided", async () => {
