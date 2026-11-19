@@ -4,7 +4,7 @@ import { ArrowLeftRight, ChevronDown, ChevronRight, Download, EyeOff, Monitor, P
 import { OWN_UPDATE_OFFER, pairedPc, type Machine, type MachineState, type MachineUpdate, type RemoteOvis } from "../../shared/machines.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { AppLayoutContext, FULL_LAYOUT, MachineContext, type LayoutOffer } from "../lib/machineContext.tsx";
-import { answerMachineSetup, machineRequest } from "../lib/api.ts";
+import { answerMachineSetup, askMachineRetry, machineRequest } from "../lib/api.ts";
 import { describeProgress } from "../lib/bridgeProgress.ts";
 import { keepDismissed, noticeKey, readDismissed, waitingMachines, writeDismissed } from "../lib/machineNotice.ts";
 import type { AppActions } from "../lib/actions.ts";
@@ -33,6 +33,8 @@ import { changePc, inNativeApp } from "../lib/nativeApp.ts";
 import { serverIdOfPath, shellMode } from "../lib/shellMode.ts";
 import { canHideMachine, HIDDEN_MACHINES_MAX, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
 import { ExternalLink } from "../lib/externalLink.ts";
+import { MachineOffLine, useRecheck } from "./MachineOffLine.tsx";
+import { outOfReachReason } from "./relayPcState.tsx";
 
 export const DRAWER_QUERY = "(max-width: 768px)";
 
@@ -257,6 +259,33 @@ function SidebarCount({ className, n, words, tooltip = true }: { className: stri
   return <span className={className} title={tooltip ? words : undefined}><span aria-hidden="true">{n}</span><span className="visually-hidden">{words}</span></span>;
 }
 
+// the server's words for a relay PC's failed connection (shared/relay-channel.ts, server/relay-pc.ts)
+const RELAY_UNREACHABLE = /^(The relay (could not be reached|connection failed|closed the connection|did not answer)|Relay carrier lost during admission)/;
+const RELAY_PC_SILENT = /^The PC did not answer through the relay/;
+
+export type MachineAway = "off" | "unreachable" | "refused" | "unresponsive";
+
+/**
+ * Whether a PC this server added keeps failing to connect for a reason a later try may clear (it retries on its
+ * own: `reconnecting` with the last failure), and which: the relay had nobody for it (`off`, as #4230's PCs list
+ * says it), the relay or ssh could not reach it (`unreachable`: ssh's refusal or silence does not prove it off),
+ * the relay turned this server away (`refused`), or it answered and did not finish connecting (`unresponsive`).
+ * Null for a failure that does not say which (a lost connection, until the next try's), anything a later try cannot
+ * clear (a refusal for good, a sign-in, a setup, an update), and a PC herdr or herdr-core manages.
+ */
+export function machineAway(machine: Pick<Machine, "kind" | "enabled" | "state" | "error" | "action_required" | "updating" | "herdr_profile_id">): MachineAway | null {
+  if (!machine.enabled || machine.state !== "reconnecting" || machine.error === null || machine.action_required || machine.updating || machine.herdr_profile_id) return null;
+  if (machine.kind === "relay") {
+    if (machine.error.startsWith("The relay turned this device away")) return "refused";
+    if (machine.error.startsWith("The PC did not finish the connection")) return "unresponsive";
+    if (RELAY_UNREACHABLE.test(machine.error)) return "unreachable";
+    return RELAY_PC_SILENT.test(machine.error) ? "off" : null;
+  }
+  if (machine.kind !== "ssh" || !/connect to host/i.test(machine.error)) return null;
+  const reason = sshFailure(machine.error)?.reason;
+  return reason === "refused" || reason === "timeout" || reason === "unreachable" ? "unreachable" : null;
+}
+
 export type ManageAction = "rename" | "toggle" | "setup" | "update" | "hide" | "remove";
 
 /** Settings → Devices and PCs offers Remove for a PC added here that is not connected (herdr's own and herdr-core's stay). */
@@ -286,6 +315,7 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(`ovis:pc-collapsed:${machine.id}`) === "1"; } catch { return false; } });
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const manageButton = useRef<HTMLButtonElement>(null);
+  const titleButton = useRef<HTMLButtonElement>(null);
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(machine.name);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -304,6 +334,13 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
       case "auth": return t("{where} did not accept this web server's SSH key or password.", { where });
     }
   })();
+  const away = machineAway(machine);
+  const awayReason = away === null ? null
+    : machine.kind === "ssh" ? sshWords
+    : away === "unresponsive" ? t("{name} answered but did not finish connecting in time. It may be busy or restarting. Try again; if it keeps happening, restart Ovis on {name}.", { name: machine.name })
+    : away === "off" ? outOfReachReason({ displayState: "offline", last_seen_at: null }, t)
+    // the relay's own words: #4230's reasons for it name the viewing device's network, and this is this server's
+    : machineErrorText(machine.error!, t);
   const nextStep = !noticed && machine.kind === "local" && machine.error !== null && saysHerdrAway(machine.error) ? t("Start herdr on this PC, or check HERDR_SOCKET.")
     : ssh !== null ? t("Reconnect or change its address from Manage PC, the sliders beside its name.") : null;
   // one request at a time: a double-clicked Disconnect/Connect can otherwise race and leave this
@@ -328,6 +365,7 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
     }
     finally { inFlight.current = false; setBusy(false); }
   };
+  const recheck = useRecheck(machine.id, () => askMachineRetry(machine.id), away !== null);
   const closeMenu = useCallback(() => setMenu(null), []);
   const endRename = (save: boolean) => {
     setRenaming(false);
@@ -390,25 +428,26 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
           }}
     /> : <span className="machine-name" title={machine.name}>{machine.name}</span>}
     {machine.kind === "local" && <span className="machine-kind" title={t("The computer this app runs on")}>{t("Host")}</span>}
-    <span className={`machine-dot is-${machine.action_required === "setup" || asksWhatToConnect(machine) ? "setup" : machine.state}`} title={stateWords} aria-hidden="true" />
+    <span className={`machine-dot is-${machine.action_required === "setup" || asksWhatToConnect(machine) ? "setup" : away !== null ? "disconnected" : machine.state}`} title={stateWords} aria-hidden="true" />
   </>;
   return <section className={`machine-group${current ? " is-current" : ""}${online ? "" : " is-offline"}${context ? " is-filter-context" : ""}${headerless ? " is-headerless" : ""}${folded ? " is-folded" : ""}${compact ? "" : " is-two-line"}`} hidden={hidden} aria-label={t("PC {name}", { name: machine.name })}>
     {!headerless && <header className={`machine-header${compact ? " is-compact" : ""}`}>
       {renaming
         ? <div className="machine-title">{titleBody}</div>
-        : <button type="button" className={`machine-title${current ? " is-current" : ""}`} aria-expanded={!folded} aria-label={foldLabel} title={machine.name} aria-current={current ? "true" : undefined} onClick={toggle}>{titleBody}</button>}
+        : <button ref={titleButton} type="button" className={`machine-title${current ? " is-current" : ""}`} aria-expanded={!folded} aria-label={foldLabel} title={machine.name} aria-current={current ? "true" : undefined} onClick={toggle}>{titleBody}</button>}
       {online && agentCount > 0 && <SidebarCount className="machine-agent-count" n={agentCount} words={agentCount === 1 ? t("1 agent") : t("{n} agents", { n: agentCount })} tooltip={false} />}
       {machine.kind !== "local" && <button ref={manageButton} type="button" className="sidebar-row-action machine-manage" aria-label={t("Manage {name}", { name: machine.name })} title={t("Manage PC")} aria-haspopup={sheet ? "dialog" : "menu"} aria-expanded={menu !== null} onClick={(event) => setMenu(menu === null ? event.currentTarget : null)}><SlidersHorizontal aria-hidden="true" /></button>}
       <button className="sidebar-row-action machine-toggle" tabIndex={-1} aria-hidden="true" aria-expanded={!folded} aria-label={foldLabel} title={foldLabel} onClick={toggle}>{folded ? <ChevronRight aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}</button>
       <button className="sidebar-row-action machine-new" disabled={!canCreate} aria-label={t("New workspace on {name}", { name: machine.name })} title={createTitle} onClick={() => props.onNew(machine.id)}><Plus aria-hidden="true" /></button>
     </header>}
     {noticed && <MachineActionNotice machine={machine} onSetup={props.onSetup} />}
-    <p className={`machine-state is-${machine.state}${online || stateWord === null ? " visually-hidden" : ""}`} role={machine.state === "error" ? "alert" : "status"} title={noticed || machine.error === null ? undefined : machineErrorText(machine.error, t)}>
+    {away !== null ? <MachineOffLine state={away === "off" ? "off" : "unreachable"} reason={awayReason} title={awayReason ?? machineErrorText(machine.error!, t)} checking={recheck.checking} failure={recheck.failure} onCheck={props.watching ? undefined : recheck.check} returnFocus={() => titleButton.current} />
+    : <p className={`machine-state is-${machine.state}${online || stateWord === null ? " visually-hidden" : ""}`} role={machine.state === "error" ? "alert" : "status"} title={noticed || machine.error === null ? undefined : machineErrorText(machine.error, t)}>
       <span className="machine-state-word">{stateWord}</span>
       {!noticed && machine.error && <span className="machine-state-detail">{sshWords ?? machineErrorText(machine.error, t)}</span>}
       {sshWords !== null && <code className="machine-state-raw">{machine.error}</code>}
       {nextStep !== null && <span className="machine-state-next">{nextStep}</span>}
-    </p>
+    </p>}
     {menu && <RowMenu anchor={menu} title={machine.name} items={manageItems()} onClose={closeMenu} header={<span className="machine-menu-head">
       <span className="machine-menu-name">{machine.name}</span>
       <span className="machine-menu-state">{stateLine}</span>

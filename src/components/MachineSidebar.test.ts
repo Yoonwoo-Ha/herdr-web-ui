@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { OWN_UPDATE_OFFER, type Machine, type RemoteOvis } from "../../shared/machines.ts";
-import { manageActions, ownOvisAction, ownUpdateFailure, pcListExit, removablePc } from "./MachineSidebar.tsx";
+import { machineAway, manageActions, ownOvisAction, ownUpdateFailure, pcListExit, removablePc } from "./MachineSidebar.tsx";
 
 const offer = (updatable: boolean): RemoteOvis => ({ version: "0.4.16", latest_version: updatable ? "0.4.18" : null, updatable, reason: updatable ? null : "it cannot", address: "pc.invalid:4000", url: null });
 const pc = (patch: Partial<Pick<Machine, "remote_ovis" | "action_required" | "error">>) => ({ remote_ovis: null, action_required: null, error: null, ...patch });
@@ -36,6 +36,44 @@ describe("a PC's own Ovis on its card", () => {
     expect(ownUpdateFailure(pc({ remote_ovis: offer(true), action_required: "update_bridge", error: `${OWN_UPDATE_OFFER} to v0.4.18.` }))).toBeNull();
     expect(ownUpdateFailure(pc({ remote_ovis: offer(true), action_required: "update_bridge" }))).toBeNull();
     expect(ownUpdateFailure(pc({ remote_ovis: offer(false), action_required: "setup", error: failed }))).toBeNull();
+  });
+});
+
+describe("a PC that does not answer", () => {
+  type Away = Parameters<typeof machineAway>[0];
+  const failing = (kind: Away["kind"], error: string, patch: Partial<Away> = {}): Away => ({ kind, enabled: true, state: "reconnecting", error, action_required: null, updating: undefined, herdr_profile_id: undefined, ...patch });
+
+  it("is off when the relay had nobody for it, and out of reach when ssh could not reach it", () => {
+    expect(machineAway(failing("relay", "The PC did not answer through the relay"))).toBe("off");
+    for (const error of ["ssh: connect to host pc port 22: Connection refused", "ssh: connect to host pc port 22: Operation timed out", "ssh: connect to host pc port 22: No route to host"]) expect(machineAway(failing("ssh", error))).toBe("unreachable");
+  });
+
+  it("is out of reach when the relay itself did not answer, or turned this server away", () => {
+    expect(machineAway(failing("relay", "The relay could not be reached"))).toBe("unreachable");
+    expect(machineAway(failing("relay", "The relay connection failed (1006)"))).toBe("unreachable");
+    expect(machineAway(failing("relay", "Relay carrier lost during admission"))).toBe("unreachable");
+    expect(machineAway(failing("relay", "The relay turned this device away (1013)"))).toBe("refused");
+  });
+
+  it("is not off when it answered: a relay PC that did not finish connecting, an SSH timeout after ssh connected", () => {
+    expect(machineAway(failing("relay", "The PC did not finish the connection (auth)"))).toBe("unresponsive");
+    expect(machineAway(failing("ssh", "SSH port forward timed out"))).toBeNull();
+  });
+
+  it("waits for the next try's words when a connection was only lost, which does not say which side went", () => {
+    expect(machineAway(failing("relay", "Relay connection to this PC was lost"))).toBeNull();
+  });
+
+  it("is not offered a re-check while connected, turned off here, refused for good, or waiting on a person", () => {
+    const off = "The PC did not answer through the relay";
+    expect(machineAway(failing("relay", off, { state: "connected" }))).toBeNull();
+    expect(machineAway(failing("relay", off, { state: "error" }))).toBeNull();
+    expect(machineAway(failing("relay", off, { enabled: false }))).toBeNull();
+    expect(machineAway(failing("relay", off, { action_required: "update_bridge" }))).toBeNull();
+    expect(machineAway(failing("relay", "That PC removed this PC's access. Add it again with a new pairing link."))).toBeNull();
+    expect(machineAway(failing("ssh", "pc: Permission denied (publickey)."))).toBeNull();
+    expect(machineAway(failing("ssh", "ssh: connect to host pc port 22: Connection refused", { herdr_profile_id: "p1" }))).toBeNull();
+    expect(machineAway(failing("hc", "This machine's server connection was lost"))).toBeNull();
   });
 });
 

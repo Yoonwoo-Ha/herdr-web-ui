@@ -264,6 +264,43 @@ button.machine-title:focus-visible { outline-offset: calc(var(--ring-offset) * -
   color: var(--text);
 }
 
+.machine-off {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: 0 var(--side-gutter) var(--space-2) var(--machine-indent);
+}
+
+/* a narrow sidebar puts Check again under the words rather than squeezing them */
+.machine-off .machine-state {
+  flex: 1 1 8rem;
+  min-width: 0;
+  padding: 0;
+}
+
+/* why it is off is the row's point, and a touch screen has no tooltip: shown whole */
+.machine-off .machine-state-detail {
+  display: block;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
+.machine-recheck {
+  flex: none;
+}
+
+.btn.machine-recheck[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .btn.machine-recheck[aria-disabled="true"]:hover {
+    background: var(--bg-elevated);
+  }
+}
+
 .machine-empty {
   padding: 0 var(--side-gutter) var(--space-2) var(--machine-indent);
 }

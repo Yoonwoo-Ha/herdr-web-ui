@@ -1434,6 +1434,17 @@ export async function machineRequest<T>(path: string, method = "GET", body?: unk
   if (!response.ok) throw await errorFrom("/api/machines", response);
   return response.json();
 }
+/**
+ * Asks the server to try a PC it is waiting to reconnect now: any read of a PC it has no connection to does
+ * (machine-api.ts `retryNow`), and only then; it leaves a connected PC and one a setup holds alone. The answer is
+ * that PC's roster or `machine_offline`, both expected; what the try finds arrives as the PC's next state.
+ */
+export async function askMachineRetry(id: string): Promise<void> {
+  const url = `/api/machines/${encodeURIComponent(id)}/session`;
+  const response = await apiFetch(url);
+  if (!response.ok && response.status !== 503) throw await errorFrom(url, response);
+  await response.body?.cancel();
+}
 export interface SshCandidate {
   readonly name: string; readonly destination: string; readonly detail: string | null; readonly source: "ssh_config" | "tailscale";
   readonly tailnet?: string;

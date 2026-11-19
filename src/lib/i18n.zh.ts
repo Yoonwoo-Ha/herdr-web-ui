@@ -556,6 +556,8 @@ const BASE: Record<string, string> = {
   "Ready · not in the account yet": "就绪 · 尚未加入账户",
   "Machine offline": "机器离线",
   "Could not reach this machine": "无法连接此机器",
+  "Switched off": "已关机",
+  "{name} answered but did not finish connecting in time. It may be busy or restarting. Try again; if it keeps happening, restart Ovis on {name}.": "{name} 有响应，但没有及时完成连接。它可能正忙或正在重启。请重试；如果一直这样，请在 {name} 上重启 Ovis。",
   "Last seen {when}.": "上次在线：{when}。",
   "It is off, has no network, or Ovis is not running on it.": "它已关机、没有网络，或者其上的 Ovis 没有运行。",
   "This device could not reach the relay. Check this device's network.": "此设备无法连接中继。请检查此设备的网络。",

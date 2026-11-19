@@ -20,7 +20,6 @@ export const RELAY_KO: Record<string, string> = {
   "Checking your account…": "계정을 확인하는 중…",
   "This device joins {name} with your account's key. The PC lists it under Settings → Devices and PCs, where it can be removed.": "이 기기는 계정의 키로 {name}에 참여합니다. PC의 설정 → 기기와 PC 목록에 나타나며 거기서 삭제할 수 있습니다.",
   "{name} is off, has no network, or Ovis is not running on it. Start it, or wait for it to come back, then try again.": "{name}의 전원이 꺼져 있거나, 네트워크가 없거나, Ovis가 실행되고 있지 않습니다. 켜거나 다시 연결될 때까지 기다린 뒤 다시 시도하세요.",
-  "{name} answered but did not finish connecting in time. It may be busy or restarting. Try again; if it keeps happening, restart Ovis on {name}.": "{name}에서 응답이 왔지만 제때 연결을 마치지 못했습니다. 바쁘거나 다시 시작하는 중일 수 있습니다. 다시 시도하고, 계속 그러면 {name}에서 Ovis를 다시 시작하세요.",
   "This device could not reach the relay. Check this device's network, then try again.": "이 기기에서 릴레이에 연결하지 못했습니다. 이 기기의 네트워크를 확인한 뒤 다시 시도하세요.",
   "The relay turned this device away. Wait a minute, then try again.": "릴레이가 이 기기의 연결을 거절했습니다. 1분 뒤 다시 시도하세요.",
   "{name} and this app speak different versions of the relay protocol. Update Ovis on the PC, then try again.": "{name}의 릴레이 프로토콜 버전이 이 앱과 다릅니다. PC의 Ovis를 업데이트한 뒤 다시 시도하세요.",
