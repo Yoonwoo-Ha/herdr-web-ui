@@ -292,23 +292,30 @@ export function peerUidOnLinux(listenerPort: number, peerPort: number): number |
 
 /** 127.0.0.1 as /proc/net/tcp writes it, in host (little-endian) order. */
 const LOOPBACK_HEX = "0100007F";
+/** TCP_ESTABLISHED as /proc/net/tcp writes the state. */
+const ESTABLISHED = "01";
 
 /**
- * The uid of the one row whose local end is the peer's own 127.0.0.1:port and whose remote end is this listener's
- * 127.0.0.1:port; the listener takes only 127.0.0.1 peers, so another address on the same ports is someone else.
+ * The uid of the one established row whose local end is the peer's own 127.0.0.1:port and whose remote end is this
+ * listener's 127.0.0.1:port; the listener takes only 127.0.0.1 peers, so another address on the same ports is someone
+ * else, and two such rows name nobody.
  */
 export function peerUidInTable(table: string, listenerPort: number, peerPort: number): number | null {
+  let found: number | null = null;
+  let matches = 0;
   for (const row of table.split("\n").slice(1)) {
     const fields = row.trim().split(/\s+/);
-    if (fields.length < 8) continue;
+    if (fields.length < 8 || fields[3] !== ESTABLISHED) continue;
     const [localAddress, localPort] = fields[1]!.split(":");
     const [remoteAddress, remotePort] = fields[2]!.split(":");
     if (localAddress !== LOOPBACK_HEX || remoteAddress !== LOOPBACK_HEX) continue;
     if (Number.parseInt(localPort!, 16) !== peerPort || Number.parseInt(remotePort!, 16) !== listenerPort) continue;
+    matches++;
     const uid = Number(fields[7]);
-    return Number.isSafeInteger(uid) ? uid : null;
+    found = Number.isSafeInteger(uid) ? uid : null;
   }
-  return null;
+  // more than one connection on the same exact ends cannot be told apart: nobody
+  return matches === 1 ? found : null;
 }
 
 const PAGE_HEADERS = {
