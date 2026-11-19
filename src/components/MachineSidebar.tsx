@@ -1,3 +1,12 @@
+/**
+ * Where a PC's folded header is kept: by its id, and in the hosted app also by the PC whose page this is, as every PC
+ * there names its own machine "local".
+ */
+export function collapsedKey(machineId: string, page: { relayShell: boolean; pathname: string } = { relayShell: shellMode() === "relay", pathname: window.location.pathname }): string {
+  const server = page.relayShell ? serverIdOfPath(page.pathname) : null;
+  return server === null ? `ovis:pc-collapsed:${machineId}` : `ovis:pc-collapsed:${server}:${machineId}`;
+}
+
 import { tally } from "../lib/usageCounters.ts";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from "react";
 import { ArrowLeftRight, ChevronDown, ChevronRight, Download, EyeOff, Monitor, Pencil, Plug, Plus, RefreshCw, Search, Settings, SlidersHorizontal, Trash2, Unplug, X } from "lucide-react";
@@ -17,6 +26,7 @@ import { filterSuggestions, machineFilter, sidebarFilter, type SidebarBranchLabe
 import { SidebarFilterProvider, useSidebarFilter } from "../lib/sidebarFilterContext.ts";
 import { UsageMeters } from "./UsageMeters.tsx";
 import { SidebarAccountPcs } from "./SidebarAccountPcs.tsx";
+import { ShellPcs, useShellPcs } from "./ShellPcs.tsx";
 import { RowMenu, rowMenuAnchor, type RowMenuItem } from "./RowMenu.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { sidebarAgents } from "../lib/sidebarAgents.ts";
@@ -103,9 +113,13 @@ export function MachineSidebar(props: Props) {
     return next;
   }), []);
   const loneHost = props.machines.length === 1 && props.machines[0]!.kind === "local" ? props.machines[0]!.id : null;
-  const unnamed = useMemo(() => new Set(loneHost === null ? [] : [loneHost]), [loneHost]);
+
   const exitToPcs = useMemo(() => pcListExit({ nativeApp: inNativeApp(), relayShell: shellMode() === "relay", pathname: window.location.pathname }), []);
   const drawerWidth = useMediaQuery(DRAWER_QUERY);
+  const shellPcs = useShellPcs(exitToPcs === "shell", drawerWidth ? props.drawerOpen === true : true);
+  // the lone host goes unnamed only while it is drawn without its header: beside other PCs its name is shown, and found
+  const headerless = loneHost !== null && shellPcs.pcs.length === 0;
+  const unnamed = useMemo(() => new Set(headerless ? [loneHost] : []), [headerless, loneHost]);
   const loneHostName = loneHost === null ? null : props.machines[0]!.name || null;
   const filter = useMemo(() => sidebarFilter(query, props.machines, { machineId: props.selectedMachineId, paneId: props.selectedPaneId }, t, branchLabels, unnamed), [query, props.machines, props.selectedMachineId, props.selectedPaneId, t, branchLabels, unnamed]);
   const filterView = useMemo(() => ({ filter, reportBranches }), [filter, reportBranches]);
@@ -250,10 +264,12 @@ export function MachineSidebar(props: Props) {
     <section className="pcs-sidebar" aria-label={t("PCs")}>
       <div ref={machineList} className="machine-list" id={listId} aria-label={t("PCs and workspaces")}>
         <p className={noMatchWords === null ? "visually-hidden" : "tree-state sidebar-filter-empty"} role="status">{noMatchWords}</p>
-        {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} headerless={machine.id === loneHost} canHide={canHideMachine(roster, hiddenIds, machine.id)} onHide={() => hideMachine(machine.id)} />)}
+        {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} headerless={headerless && machine.id === loneHost} canHide={canHideMachine(roster, hiddenIds, machine.id)} onHide={() => hideMachine(machine.id)} />)}
         {/* a PC's own window, driven by its owner: the account's PCs not added yet (the phone app and the hosted shell list their own) */}
         {exitToPcs === null && !props.watching && <SidebarAccountPcs machines={roster} hidden={filter.active} onAdded={props.actions.connectPc} />}
         <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
+        {/* the hosted app on a PC's page: the other PCs this device opens, a tap away (ShellPcs.tsx) */}
+        {exitToPcs === "shell" && <ShellPcs {...shellPcs} />}
       </div>
     </section>
     {!settings.agentGroups && <SidebarSplit shell={shell} order={order} split={splits[order]} controls={listId} onSplit={changeSplit} onFold={foldSections} />}
@@ -335,7 +351,7 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
   const compact = useSettings().settings.sidebarRows === "one";
   const drawer = useMediaQuery(DRAWER_QUERY);
   const sheet = useMediaQuery(SHEET_QUERY);
-  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(`ovis:pc-collapsed:${machine.id}`) === "1"; } catch { return false; } });
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(collapsedKey(machine.id)) === "1"; } catch { return false; } });
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const manageButton = useRef<HTMLButtonElement>(null);
   const titleButton = useRef<HTMLButtonElement>(null);
@@ -421,7 +437,7 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
   const toggle = () => {
     if (filtered !== null) { setFilterFold(!folded); return; }
     setCollapsed(!collapsed);
-    try { localStorage.setItem(`ovis:pc-collapsed:${machine.id}`, collapsed ? "0" : "1"); } catch {}
+    try { localStorage.setItem(collapsedKey(machine.id), collapsed ? "0" : "1"); } catch {}
   };
   const agentCount = useMemo(() => sidebarAgents(machine.snapshot).length, [machine.snapshot]);
   const current = props.selectedMachineId === machine.id;

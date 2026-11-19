@@ -4,7 +4,6 @@
  */
 export const RELAY_KO: Record<string, string> = {
   "Your PCs": "내 PC",
-  "Unnamed PC": "이름 없는 PC",
   "To add another PC, open Settings → Devices and PCs → Add a connection → Ovis relay on it and scan the QR code.": "다른 PC를 추가하려면 그 PC에서 설정 → 기기와 PC → 연결 추가 → Ovis 릴레이를 열고 QR 코드를 스캔하세요.",
   "Scan the QR code on your PC": "PC에서 QR 코드를 스캔하세요",
   "On the PC, open Settings → Devices and PCs → Add a connection → Ovis relay and scan the QR code.": "PC에서 설정 → 기기와 PC → 연결 추가 → Ovis 릴레이를 열고 QR 코드를 스캔하세요.",

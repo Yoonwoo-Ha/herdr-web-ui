@@ -21,7 +21,11 @@ function localStorageSet(key: string, value: string): void {
 
 interface QueuedCheck { readonly device: RelayDevice; readonly before: PcFinding | undefined; readonly settled: ReturnType<typeof Promise.withResolvers<void>> }
 
-export function createPcSweep(store: RelayDeviceStore, view: { readonly active: () => boolean; readonly redraw: () => void }, options: { readonly probe?: typeof checkPc; readonly directSocket?: (url: string) => RelaySocket } = {}) {
+/**
+ * `pauseOutOfSight`: a view that is out of sight starts no queued check (the sidebar's list, ShellPcs.tsx) and goes on
+ * from its queue on its next check; the front page's list keeps draining its queue while another screen is up, as before.
+ */
+export function createPcSweep(store: RelayDeviceStore, view: { readonly active: () => boolean; readonly redraw: () => void }, options: { readonly probe?: typeof checkPc; readonly directSocket?: (url: string) => RelaySocket; readonly pauseOutOfSight?: boolean } = {}) {
   const pcStatus = new Map<string, PcStatus>();
   const probe = options.probe ?? checkPc;
   const directSocket = options.directSocket;
@@ -47,9 +51,16 @@ export function createPcSweep(store: RelayDeviceStore, view: { readonly active: 
     if (where === "front") queue.unshift(entry); else queue.push(entry);
     return entry.settled.promise;
   };
+  let stopped = false;
+  const startsNow = (): boolean => !stopped && (options.pauseOutOfSight !== true || view.active());
+  /** the timers that let an answer lapse, let go with the sweep */
+  const expiries = new Set<ReturnType<typeof setTimeout>>();
   const probeNext = async (): Promise<void> => {
-    for (let next = queue.shift(); next; next = queue.shift()) {
+    // a view out of sight starts no new check: what is queued waits for the next time it is shown
+    for (let next = startsNow() ? queue.shift() : undefined; next; next = startsNow() ? queue.shift() : undefined) {
       const found = await probe(next.device, sockets).catch((): PcStatus => ({ kind: "offline", reason: "relay" }));
+      // stopped while this check ran: its answer goes nowhere
+      if (stopped) { next.settled.resolve(); return; }
       const serverId = next.device.server_id;
       // a relay that turned this device away, or that it could not reach, said nothing of the PC: the row keeps what it said
       // until a second such check in a row
@@ -60,7 +71,9 @@ export function createPcSweep(store: RelayDeviceStore, view: { readonly active: 
         refused.delete(serverId);
         pcStatus.set(serverId, found);
       }
-      if (found.kind === "answered") setTimeout(() => {
+      if (found.kind === "answered" && !stopped) {
+        const expiry = setTimeout(() => {
+        expiries.delete(expiry);
         lapsed.add(found);
         const shown = pcStatus.get(serverId);
         if (shown === found) pcStatus.delete(serverId);
@@ -68,11 +81,15 @@ export function createPcSweep(store: RelayDeviceStore, view: { readonly active: 
         else return;
         redraw();
       }, OFFLINE_AFTER_MS);
+        expiries.add(expiry);
+      }
       redraw();
       next.settled.resolve();
     }
   };
+  // only a view in sight starts checks; what waited for it starts here once it is shown again
   const drain = (): void => {
+    if (!startsNow()) return;
     for (let spare = Math.min(CHECK_AT_ONCE - workers, queue.length); spare > 0; spare -= 1) {
       workers += 1;
       void probeNext().finally(() => { workers -= 1; });
@@ -80,12 +97,16 @@ export function createPcSweep(store: RelayDeviceStore, view: { readonly active: 
   };
 
   const later = (wait: number): void => {
+    if (stopped) return;
     deferred ??= setTimeout(() => {
       deferred = undefined;
       if (view.active() && globalThis.document?.visibilityState !== "hidden") void checkPcs(); else later(CHECK_GAP_MS);
     }, wait);
   };
   const checkPcs = async (): Promise<void> => {
+    if (stopped) return;
+    // a sweep that paused while its view was out of sight goes on from its queue, before any wait on it
+    drain();
     if (sweeping) { void sweeping.then(checkPcs); return; }
     const stored = Number(localStorageGet(CHECK_KEY) ?? "");
     const wait = CHECK_GAP_MS - (Date.now() - Math.max(lastCheck, Number.isFinite(stored) ? stored : -Infinity));
@@ -105,6 +126,7 @@ export function createPcSweep(store: RelayDeviceStore, view: { readonly active: 
   const sweepPcs = async (): Promise<void> => {
     const cursor = cursorNow();
     const devices = await store.list();
+    if (stopped) return;
     const again = sweepOf(devices, 0, devices.length).filter((device) => refused.has(device.server_id)).slice(0, CHECK_PCS);
     const turn = CHECK_PCS - again.length;
     const saved = [...again, ...sweepOf(devices, cursor, turn).filter((device) => !again.includes(device))]
@@ -116,19 +138,30 @@ export function createPcSweep(store: RelayDeviceStore, view: { readonly active: 
     await Promise.all(settled);
   };
   const checkOne = async (serverId: string): Promise<void> => {
+    if (stopped) return;
     const waiting = queue.findIndex((entry) => entry.device.server_id === serverId);
     if (waiting >= 0) {
       const [entry] = queue.splice(waiting, 1);
-      if (entry) { queue.unshift(entry); return entry.settled.promise; }
+      if (entry) { queue.unshift(entry); drain(); return entry.settled.promise; }
     }
     if (pcStatus.get(serverId)?.kind === "checking") return;
     const device = await store.get(serverId);
-    if (device === undefined) return;
+    if (device === undefined || stopped) return;
     const settled = enqueue(device, "front");
     redraw();
     drain();
     await settled;
   };
 
-  return { status: pcStatus, check: checkPcs, checkOne };
+  /** The view that used this sweep is gone: nothing more is scheduled or started, and what waited is let go. */
+  const stop = (): void => {
+    stopped = true;
+    clearTimeout(deferred);
+    deferred = undefined;
+    for (const expiry of expiries) clearTimeout(expiry);
+    expiries.clear();
+    for (const entry of queue.splice(0)) entry.settled.resolve();
+  };
+
+  return { status: pcStatus, check: checkPcs, checkOne, stop };
 }

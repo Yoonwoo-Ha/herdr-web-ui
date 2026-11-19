@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { OWN_UPDATE_OFFER, type Machine, type RemoteOvis } from "../../shared/machines.ts";
-import { ADD_PC_FROM_KEY, addPcExit, machineAway, openAddPc, manageActions, ownOvisAction, ownUpdateFailure, pcListExit, removablePc } from "./MachineSidebar.tsx";
+import { ADD_PC_FROM_KEY, addPcExit, collapsedKey, machineAway, openAddPc, manageActions, ownOvisAction, ownUpdateFailure, pcListExit, removablePc } from "./MachineSidebar.tsx";
 
 const offer = (updatable: boolean): RemoteOvis => ({ version: "0.4.16", latest_version: updatable ? "0.4.18" : null, updatable, reason: updatable ? null : "it cannot", address: "pc.invalid:4000", url: null });
 const pc = (patch: Partial<Pick<Machine, "remote_ovis" | "action_required" | "error">>) => ({ remote_ovis: null, action_required: null, error: null, ...patch });
@@ -156,4 +156,10 @@ describe("Manage PC's menu", () => {
     expect(waiting(ssh(), true)).toEqual(["rename", "toggle", "hide", "remove"]);
     expect(waiting(ssh({ kind: "hc", target: undefined }), true)).toEqual(["hide"]);
   });
+});
+
+it("keeps each hosted PC page's folded header apart, as every PC there names its own machine local", () => {
+  const page = (id: string) => ({ relayShell: true, pathname: `/s/${id.repeat(32)}/` });
+  expect(collapsedKey("local", page("a"))).not.toBe(collapsedKey("local", page("b")));
+  expect(collapsedKey("local", { relayShell: false, pathname: "/" })).toBe("ovis:pc-collapsed:local");
 });

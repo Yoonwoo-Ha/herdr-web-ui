@@ -4,7 +4,6 @@
  */
 export const RELAY_ZH: Record<string, string> = {
   "Your PCs": "我的电脑",
-  "Unnamed PC": "未命名的电脑",
   "To add another PC, open Settings → Devices and PCs → Add a connection → Ovis relay on it and scan the QR code.": "要添加另一台电脑，请在那台电脑上打开“设置 → 设备和电脑 → 添加连接 → Ovis 中继”并扫描二维码。",
   "Scan the QR code on your PC": "请扫描电脑上的二维码",
   "On the PC, open Settings → Devices and PCs → Add a connection → Ovis relay and scan the QR code.": "在电脑上打开“设置 → 设备和电脑 → 添加连接 → Ovis 中继”并扫描二维码。",
