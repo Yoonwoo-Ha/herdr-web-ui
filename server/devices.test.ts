@@ -244,7 +244,9 @@ describe("relay device", () => {
     const signature = await relaySignature(keys.privateKey, nonce);
     store.revoke(first.device.id);
     expect(await store.matchRelay(first.device.id, nonce, signature, "server-a")).toBeNull();
-    expect(store.revokeAll()).toEqual([second.device.id]);
+    // the second pairing holds the key just revoked, so it went too
+    expect(store.has(second.device.id)).toBe(false);
+    expect(store.revokeAll()).toEqual([]);
     expect(store.gated).toBe(true);
     const fresh = new DeviceStore(root);
     expect(fresh.gated).toBe(true);
@@ -622,6 +624,90 @@ describe("revoking a device unless an account vouches for it", () => {
     store.linkAccountKey(member.id, member.key, member.key, "acct_1");
     expect((await revoke(store, member.id)).status).toBe(204);
     expect((await revoke(store, member.id, "acct_1")).status).toBe(404);
+  });
+});
+
+describe("a key held by a member row and a pairing made on this PC", () => {
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+  const member = "m000000000000001";
+  const twoRows = async () => {
+    const root = mkdtempSync(join(dir, "same-key-"));
+    const key = (await relayKeys()).publicKeySpki;
+    writeFileSync(join(root, "devices.json"), JSON.stringify({
+      gate_closed_at: ago(600_000),
+      devices: [
+        { id: "s000000000000001", label: "Signer", role: "drive", token_hash: "h1", relay_public_key: (await relayKeys()).publicKeySpki, created_at: ago(600_000), last_seen_at: null, account: "acct_1" },
+        { id: member, label: "Member", role: "drive", token_hash: "h2", relay_public_key: key, created_at: ago(300_000), last_seen_at: null, account: "acct_1", added_by: "s000000000000001" },
+      ],
+    }));
+    const store = new DeviceStore(root);
+    const closed: string[] = [];
+    store.onRevoke(member, () => closed.push(member));
+    return { root, key, store, closed };
+  };
+
+  it("revoking the pairing ends the member row of that key too", async () => {
+    const { root, key, store, closed } = await twoRows();
+    const local = store.pairRelayApproved("Local", key, { path: "code" })!.device;
+    const announced: string[] = [];
+    store.onRemoved((event) => announced.push(event.device_id));
+    expect(store.revoke(local.id)).toBe(true);
+    expect([closed, store.sessionRow(member), store.has(member)]).toEqual([[member], null, false]);
+    expect(announced.sort()).toEqual([local.id, member].sort());
+    expect(new DeviceStore(root).has(member)).toBe(false);
+  });
+
+  it("the revoke route hands every row it took to the cleanup", async () => {
+    const { key, store } = await twoRows();
+    const local = store.pairRelayApproved("Local", key, { path: "code" })!.device;
+    const cleaned: string[] = [];
+    const path = `/api/devices/${local.id}`;
+    const response = await handleDeviceRequest(new Request(`http://127.0.0.1${path}`, { method: "DELETE", headers: { origin: "http://127.0.0.1", "x-herdr-machine": "1" } }),
+      path, store, { level: "full", via: "local", role: "drive" }, null, (ids) => cleaned.push(...ids));
+    expect(response.status).toBe(204);
+    expect(cleaned.sort()).toEqual([local.id, member].sort());
+  });
+
+  it("a revoke unless the device is a member of an account leaves both rows when the key's other row is a member", async () => {
+    const { key, store, closed } = await twoRows();
+    const local = store.pairRelayApproved("Local", key, { path: "code" })!.device;
+    const path = `/api/devices/${local.id}`;
+    const response = await handleDeviceRequest(new Request(`http://127.0.0.1${path}`, { method: "DELETE", headers: { origin: "http://127.0.0.1", "x-herdr-machine": "1", "x-ovis-unless-account": "acct_1" } }),
+      path, store, { level: "full", via: "local", role: "drive" }, null);
+    expect(response.status).toBe(409);
+    expect([store.has(local.id), store.has(member), closed, store.isTombstoned(key)]).toEqual([true, true, [], false]);
+  });
+
+  it("a revoke leaves a row of the key that its tombstone does not cover", async () => {
+    const { key, store, closed } = await twoRows();
+    const local = store.pairRelayApproved("Local", key, { path: "code" })!.device;
+    const later = store.pairRelayApproved("Later", key, { path: "code" })!.device;
+    let laterClosed = 0;
+    store.onRevoke(later.id, () => { laterClosed++; });
+    // a clock set back before the pairings: the tombstone is older than both, so it covers the member row alone
+    setSystemTime(new Date(Date.now() - 3_600_000));
+    try { expect(store.revoke(local.id)).toBe(true); } finally { setSystemTime(); }
+    expect([store.has(local.id), store.has(member), store.has(later.id), closed, laterClosed]).toEqual([false, false, true, [member], 0]);
+  });
+
+  it("a revoke ends a pairing code that another row it took holds", async () => {
+    const { key, store } = await twoRows();
+    const local = store.pairRelayApproved("Local", key, { path: "code" })!.device;
+    store.startPairing(Date.now(), { remote: true, startedBy: local.id, memberRequired: false, by: local.id });
+    expect(store.activePairing()).not.toBeNull();
+    expect(store.revoke(member)).toBe(true);
+    expect([store.has(local.id), store.activePairing()]).toEqual([false, null]);
+  });
+
+  it("a remove signed before the pairing keeps the pairing and takes the member row", async () => {
+    const { root, key, store, closed } = await twoRows();
+    const issuedAt = ago(1000);
+    const local = store.pairRelayApproved("Local again", key, { path: "code" })!.device;
+    expect(store.removeAccountKey(key, "acct_1", { id: "rec_1", issuedAt })).toBe(true);
+    expect([closed, store.has(member), store.has(local.id), store.accountSigner(key, "acct_1"), store.isTombstoned(key)]).toEqual([[member], false, true, null, false]);
+    const restarted = new DeviceStore(root);
+    expect([restarted.has(member), restarted.has(local.id)]).toEqual([false, true]);
+    expect(store.removeAccountKey(key, "acct_1", { id: "rec_1", issuedAt })).toBe(false);
   });
 });
 

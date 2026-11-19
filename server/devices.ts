@@ -1228,8 +1228,10 @@ export class DeviceStore {
     return this.devices.find((d) => d.account !== undefined)?.account ?? null;
   }
 
+  /** Whether the row `id`, or another row of its key that a revoke of it would take too (revoke), is a member of `account`. */
   isMemberOf(id: string, account: string): boolean {
-    return this.devices.some((d) => d.id === id && d.account === account && d.relay_public_key !== undefined);
+    const key = this.relayKeyOf(id);
+    return this.devices.some((d) => (d.id === id || (key !== undefined && d.relay_public_key === key)) && d.account === account && d.relay_public_key !== undefined);
   }
 
   /** A drive account member whose session signed in with the row's current key: a session left from an older key acts as no member. */
@@ -1365,11 +1367,19 @@ export class DeviceStore {
 
   revoke(id: string, by: DeviceRemovedEvent["by"] = "pc"): boolean {
     this.assertWritable();
-    const next = this.devices.filter((d) => d.id !== id);
-    if (next.length === this.devices.length) return false;
-    const gone = this.devices.find((d) => d.id === id);
+    const target = this.devices.find((d) => d.id === id);
+    if (!target) return false;
     // a revoke on this PC wins over the account: its key cannot come back by a record (docs/account.md, rule 1)
-    this.tombstone(this.devices.filter((d) => d.id === id), Date.now());
+    this.tombstone([target], Date.now());
+    // the key's other rows that tombstone takes go with it now, as the next start would take them (finishInterruptedWrites)
+    const key = target.relay_public_key;
+    this.drop(this.devices.filter((d) => d === target || (key !== undefined && d.relay_public_key === key && this.stale(d))), by);
+    return true;
+  }
+
+  /** The rows `gone` lose their access in one write; their sessions close and each removal is announced. */
+  private drop(gone: readonly StoredDevice[], by: DeviceRemovedEvent["by"]): void {
+    const next = this.devices.filter((d) => !gone.includes(d));
     // A valid older/manual registry can have devices without a gate timestamp. Removing its
     // last device must still leave durable evidence that this store was once gated.
     const gate = this.gateClosedAt ?? this.devices[0]?.created_at ?? null;
@@ -1378,12 +1388,13 @@ export class DeviceStore {
     this.gateClosedAt = gate;
     // A code the device started or was handed goes with it. Whoever it passed the code to would otherwise pair after
     // it was removed, on a PC in no account with nobody approving (a member's code already needs its member)
-    if (this.pending?.holders.has(id)) this.endPairing(undefined, "revoked");
-    const listeners = this.revocations.get(id);
-    this.revocations.delete(id);
-    for (const close of listeners ?? []) close();
-    if (gone) this.announceRemoval(gone, by);
-    return true;
+    if (gone.some((d) => this.pending?.holders.has(d.id))) this.endPairing(undefined, "revoked");
+    for (const device of gone) {
+      const listeners = this.revocations.get(device.id);
+      this.revocations.delete(device.id);
+      for (const close of listeners ?? []) close();
+    }
+    for (const device of gone) this.announceRemoval(device, by);
   }
 
   /**
@@ -1557,8 +1568,14 @@ export class DeviceStore {
   removeAccountKey(key: string, account: string, record: { id: string; issuedAt: string; by?: { device_id: string; label: string }; signed?: RemoveRecord }, now = Date.now()): boolean {
     this.assertAccountWritable();
     // a pairing of this key made on this PC after the removal was signed wins: a replayed or late remove
-    // leaves it be. Any other row goes, however late the remove arrives (pairedHere).
-    if (this.devices.some((d) => d.relay_public_key === key && pairedHere(d) && d.created_at > record.issuedAt)) return false;
+    // leaves it and its key be, and takes only the key's other rows. Any other row goes, however late the remove
+    // arrives (pairedHere).
+    const newer = (d: StoredDevice) => d.relay_public_key === key && pairedHere(d) && d.created_at > record.issuedAt;
+    if (this.devices.some(newer)) {
+      const gone = this.devices.filter((d) => d.relay_public_key === key && !newer(d));
+      if (gone.length) this.drop(gone, record.by);
+      return gone.length > 0;
+    }
     const recordId = record.id;
     const fresh = !this.isTombstoned(key);
     const removal: AccountTombstone = { key, account, record_id: recordId, removed_at: new Date(now).toISOString(), ...(record.signed ? { records: [record.signed] } : {}) };
@@ -1765,8 +1782,14 @@ export async function handleDeviceRequest(request: Request, pathname: string, st
     // member linked itself and named its account, which nothing here proves (docs/account.md, rule 4)
     const unless = request.headers.get("x-ovis-unless-account");
     if (unless !== null && store.isMemberOf(id, unless)) return jsonResponse({ error: { code: "account_member", message: "that device is a member of the account by now" } }, 409);
-    if (!store.revoke(id, access.level === "full" && access.device ? { device_id: access.device.id, label: access.device.label } : "pc")) return jsonResponse({ error: { code: "not_found", message: "no such device" } }, 404);
-    onRevoked?.([id]);
+    // a revoke takes the key's other rows too (DeviceStore.revoke): each one's cleanup runs, not the named row's alone
+    const removed: string[] = [];
+    const unlisten = store.onRemoved((event) => removed.push(event.device_id));
+    let revoked: boolean;
+    try { revoked = store.revoke(id, access.level === "full" && access.device ? { device_id: access.device.id, label: access.device.label } : "pc"); }
+    finally { unlisten(); }
+    if (!revoked) return jsonResponse({ error: { code: "not_found", message: "no such device" } }, 404);
+    onRevoked?.(removed);
     return noContent();
   }
   if (request.method === "PATCH") {

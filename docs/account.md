@@ -531,7 +531,8 @@ answers every outcome, never failing the whole batch for one record:
 ```
 
 Outcomes: `applied`, `unchanged` (an `add` for a key already present; a `remove` for a key already
-removed and absent, or signed before this PC paired the key again) and `refused` with a code. A
+removed and absent, or signed before this PC paired the key again when no other row holds the key)
+and `refused` with a code. A
 `remove` for a key this PC never had still leaves its tombstone, so the key cannot be added later.
 A `remove` refused `signer_not_member` waits on the PC with the mailbox's own such records
 (`account-pending.json`) and applies once its signer becomes a member there; when that queue cannot
@@ -893,7 +894,10 @@ is what authenticates the PC.
   and lets nobody in once the member is revoked or demoted.
 - A `remove` writes its tombstone before it revokes the device; the device's relay connections
   close at once (`auth_revoked`). A `remove` signed before this PC itself paired the key again leaves
-  that pairing be (`unchanged`), so a late or replayed one cannot undo it. A row an `add` or a remote
+  that pairing be, so a late or replayed one cannot undo it; it still takes the key's other rows, such
+  as a member row an `add` made (`applied`), and is `unchanged` when there are none. That `remove`
+  writes no tombstone, as the key stays this PC's pairing: the rows it takes leave `devices.json`
+  only. A row an `add` or a remote
   approval made goes, however late the `remove` arrives, and so does a row a `link` moved onto the
   key from another one (`link_moved_key`): this PC paired its former key, never this one. A `link`
   whose `old_key` is its `key` leaves the row a pairing of that key.
