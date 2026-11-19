@@ -2,7 +2,8 @@ import { useLayoutEffect, useRef, type Dispatch, type RefObject, type SetStateAc
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { HerdrSocket } from "./ws.ts";
+import { HerdrSocket, markTyped } from "./ws.ts";
+import { sendInOrder } from "./sendInOrder.ts";
 import { MachineSession, type MachineSessionRegistry } from "./machineSession.ts";
 import { disposeAfterPendingFrame } from "./terminalDispose.ts";
 import { clipboardKey, hasModifiers, physicalKey, terminalChord, navigationSequence, keyFromData, ctrlEnterSequence, mirroredCtrlEnterKey, modifyOtherKeysLevel, NO_STICKY_MODIFIERS, type StickyModifiers } from "./keys.ts";
@@ -42,7 +43,7 @@ import { userInputTracker } from "./terminalReplies.ts";
 import { visibleTerminalInputBounds } from "./terminalViewport.ts";
 import type { PaneSubmitRetention } from "./paneSubmitRetention.ts";
 import type { ShortcutOverrides } from "./shortcutBindings.ts";
-import { takeTypeAhead, type TypeAheadItem } from "./typeAhead.ts";
+import { takeTypeAhead, type CaughtKey } from "./typeAhead.ts";
 import { RESIZE_SETTLE_MS, RELEASE_AFTER_MS, IDLE_RELEASE_MS, RESUME_INPUT_WAIT_MS, VIEW_BUFFER_MAX, afterSwitch, dropViewChange, holdViews, inUse, keepsCoreGrid as keptCoreGrid, takeKeptCoreGrid, connectedSockets, plainError, releaseViews, setTerminalTimeout, CONTROL_CHARACTER } from "./paneTerminalShared.ts";
 import { copyOnSelect, herdrUiKnown, loadHerdrUi } from "./herdrUi.ts";
 import { captureForGhostty } from "./ghostty/capture.ts";
@@ -55,7 +56,8 @@ import { holdForPictures } from "./terminalImages.ts";
 declare const __HERDR_TEST_HOOKS__: boolean;
 
 /** `automatic`: xterm made the input itself (a query's answer), nobody typed it */
-type Typed = { input: string; keys: string[] | null; chord: boolean; stop: boolean; secret: boolean; arrowModeEpoch?: number | null; automatic?: boolean };
+/** `typedAt`: when it was captured (markTyped): what waited goes only over a link up since then (HerdrSocket.takesKey) */
+type Typed = { input: string; keys: string[] | null; chord: boolean; stop: boolean; secret: boolean; typedAt: number; arrowModeEpoch?: number | null; automatic?: boolean };
 
 export interface TerminalMountDeps {
   activeRef: RefObject<boolean>;
@@ -1203,10 +1205,8 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         const resumed = takeResume();
         if (resumed === null) return;
         const late = performance.now() - resumed.since > RESUME_INPUT_WAIT_MS;
-        for (const typed of resumed.items) {
-          if (late) retainTyped(resumed.pane, typed, secretRef.current !== null);
-          else sendTyped(resumed.pane, typed);
-        }
+        sendInOrder(resumed.items, late || draftHeldForRef.current === resumed.pane, (typed) => sendTyped(resumed.pane, typed),
+          (typed) => retainTyped(resumed.pane, typed, secretRef.current !== null));
       };
       const startResume = (pane: string, since = performance.now()): void => {
         failResume();
@@ -1220,17 +1220,18 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       const adoptTypeAhead = (pane: string): void => {
         let at = 0;
         let held = false;
-        const take = (items: TypeAheadItem[], heldNow: boolean): void => {
+        const take = (items: CaughtKey[], heldNow: boolean): void => {
           held ||= heldNow || !socket.connected || (socket.connectedSince ?? Infinity) > at;
           for (const item of items) {
             // as typing here: a masked prompt on screen now makes it secret (never held, never kept for a receipt),
             // and a draft held for this pane (a late attach held what came first) takes what follows it
             const secret = secretRef.current !== null;
             const arrow = item.arrow !== undefined ? terminalChord(item.arrow, NO_STICKY_MODIFIERS) : null;
-            const typed: Typed = { input: item.input, keys: arrow !== null ? [arrow] : null, chord: false, stop: false, secret, ...(arrow !== null ? { arrowModeEpoch: null } : {}) };
+            const typed: Typed = { input: item.input, keys: arrow !== null ? [arrow] : null, chord: false, stop: false, secret, typedAt: item.typedAt, ...(arrow !== null ? { arrowModeEpoch: null } : {}) };
             if (held || draftHeldForRef.current === pane) retainTyped(pane, typed, secret);
             else if (!secret && resumeInput !== null && resumeInput.pane === pane) resumeInput.items.push(typed);
-            else if (paneRef.current === pane) sendTyped(pane, typed);
+            // a key held here holds every caught key after it, Enter included (lib/sendInOrder.ts)
+            else if (paneRef.current === pane) held = !sendTyped(pane, typed);
           }
         };
         const takeKeyboard = (focused: boolean, typed = true): void => {
@@ -1614,11 +1615,14 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       host.addEventListener("keydown", onTyped, true);
       host.addEventListener("input", onTyped, true);
       host.addEventListener("paste", onTyped, true);
-      // File paths and dropped text use xterm's programmatic paste without a DOM paste event.
-      const pasteText = (text: string): void => {
+      // File paths and dropped text use xterm's programmatic paste without a DOM paste event. `typedAt`: the mark
+      // (markTyped) of the pick, drop or paste it came from, so a path whose upload ends after an outage is held
+      let pasteMark: number | null = null;
+      const pasteText = (text: string, typedAt: number): void => {
         const previous = pasting;
         pasting = true;
-        try { term.paste(text); } finally { pasting = previous; }
+        pasteMark = typedAt;
+        try { term.paste(text); } finally { pasting = previous; pasteMark = null; }
       };
       // xterm ignores Cmd+arrows. Handle them on the bubble phase, after its textarea
       // keydown listener drains pending IME text, so movement never precedes that text.
@@ -1633,22 +1637,24 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       };
       host.addEventListener("keydown", onCommandArrow);
       // a key, a chord or text for the pane: sent now, or, when the pane cannot take it, told or held for review
-      const sendTyped = (current: string, typed: Typed): void => {
+      // true when sent; what is not sent is held or told here
+      const sendTyped = (current: string, typed: Typed): boolean => {
         // An arrow pressed after this attachment showed its DECCKM goes as text, also while output is still on its
         // way to xterm (#4123): a named key waits out hc's typing quiet period, and so does all typing behind it.
         // Logical type-ahead arrows and arrows pressed before that witness stay named.
         const rawArrow = typed.arrowModeEpoch !== undefined && typed.arrowModeEpoch !== null
           && typed.arrowModeEpoch === arrowModeEpoch && socket.typesArrows();
         if (typed.keys !== null && (typed.chord || !rawArrow)) {
-          if (socket.sendKeys(current, typed.keys)) return;
+          if (socket.sendKeys(current, typed.keys, typed.typedAt)) return true;
           // A named arrow that could not be sent must never fall through as its possibly stale CSI bytes.
           if (typed.arrowModeEpoch !== undefined) {
             retainTyped(current, typed, false);
-            return;
+            return false;
           }
         }
-        if (!typed.chord && !holdPendingTextRef.current && socket.sendInput(current, typed.input, typed.stop, typed.automatic === true, typed.secret)) return;
+        if (!typed.chord && !holdPendingTextRef.current && socket.sendInput(current, typed.input, typed.stop, typed.automatic === true, typed.secret, typed.typedAt)) return true;
         retainTyped(current, typed, false);
+        return false;
       };
       // what the pane could not take: told, or held for review (`secretNow`: a masked prompt is on screen now)
       const retainTyped = (current: string, typed: Typed, secretNow: boolean): void => {
@@ -1755,6 +1761,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         const arrow = chord === null && !pasting && !composingRef.current && !compositionCommitPendingRef.current && key?.startsWith("Arrow")
           ? terminalChord(key, NO_STICKY_MODIFIERS) : null;
         const typed: Typed = { input, keys: arrow !== null ? [arrow] : chord !== null ? [chord] : null, chord: chord !== null, stop: stopKey && input === "\u001b", secret,
+          typedAt: pasteMark ?? markTyped(),
           ...(arrow !== null ? { arrowModeEpoch: arrowModeWitness === arrowModeEpoch ? arrowModeEpoch : null } : {}), ...(automatic ? { automatic } : {}) };
         adoptTypeAhead(current);
         // typed into a tab taking its pane back from idleness: it waits for the new attach (never a password)
@@ -1774,9 +1781,10 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       const uploadFiles = (files: File[], still: () => boolean = () => true): void => {
         const pane = paneRef.current;
         if (!pane || !socket.connected || term.options.disableStdin) return;
-        fileQueue = fileQueue.then(() => uploadBatch(pane, files, still));
+        const typedAt = markTyped();
+        fileQueue = fileQueue.then(() => uploadBatch(pane, files, still, typedAt));
       };
-      const uploadBatch = async (pane: string, files: File[], still: () => boolean): Promise<void> => {
+      const uploadBatch = async (pane: string, files: File[], still: () => boolean, typedAt: number): Promise<void> => {
         if (paneRef.current !== pane || !socket.connected || term.options.disableStdin) return;
         try {
           for (const file of files) assertAttachable(file);
@@ -1790,7 +1798,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
             noteClipboard(t("Not pasted: the file's path holds a line break, which the terminal would take as Enter."));
             return;
           }
-          pasteText(paths.map((path) => `'${path.replaceAll("'", "'\\''")}'`).join(" ") + " ");
+          pasteText(paths.map((path) => `'${path.replaceAll("'", "'\\''")}'`).join(" ") + " ", typedAt);
           if (activeRef.current && !findOpenRef.current) term.focus();
         } catch (error) {
           if (paneRef.current === pane) noteClipboard(error instanceof AttachmentTooLargeError ? error.message : plainError(error));
@@ -1823,7 +1831,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         }
         const text = event.dataTransfer.getData("text/plain");
         if (text) {
-          pasteText(text);
+          pasteText(text, markTyped());
           if (activeRef.current) term.focus();
         }
       };
