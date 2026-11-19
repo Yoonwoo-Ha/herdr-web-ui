@@ -143,6 +143,9 @@ export function workspacePane(snapshot: Pick<SessionSnapshot, "workspaces" | "pa
 
 export type LinkNote = "pane-closed" | "workspace-closed" | "machine-missing";
 
+/** What a selection leaves of the header's note: a landing's note speaks of a pane left behind, Link copied of an action done */
+export const noteAfterSelection = (note: LinkNote | "copied" | null): "copied" | null => note === "copied" ? note : null;
+
 /**
  * The workspace is the id's when the slug still names it
  * (or the link has none); when another open workspace has the slug and this one does not, the id

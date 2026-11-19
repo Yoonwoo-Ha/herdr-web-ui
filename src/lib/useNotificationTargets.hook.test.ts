@@ -112,9 +112,10 @@ describe("a desktop link to a pane the cached roster lacks", () => {
   let saved: PropertyDescriptor | undefined;
   let renderer: ReactTestRenderer | undefined;
   let take: (target: NotificationTarget) => void;
+  let pick: (machineId: string, paneId: string | null) => void;
   let shown: { pane: string | null; note: LinkNote | "copied" | null };
   let misses: number;
-  let reads: number;
+  let reads = 0;
   let landed: Promise<void>;
 
   // workspace 3 "alpha" (t1 selected, t2 in front), workspace 4 "beta" (t4, herdr's focus), and
@@ -176,7 +177,7 @@ describe("a desktop link to a pane the cached roster lacks", () => {
       const selectionSince = useRef(0);
       const movingPanes = useRef(new Set<string>());
       const selectedMachine = machines.find((machine) => machine.id === selectedMachineId);
-      const { selectTargetRef } = useSelectTarget({
+      const { selectTargetRef, selectTarget } = useSelectTarget({
         selectedMachineId, setConnected: noop, setConnectedBefore: noop, setSelectedMachineId, setSelectedPaneId, setAutoSelected: noop,
         setDrawerOpen: noop, setOutputStopped: noop, setNotificationViewTarget: noop, setTerminalPeek: noop, pendingLink, pendingFile,
         setLinkLanded, selectionHint, selectionSince, rosterSeq, snapshot: selectedMachine?.snapshot ?? null, selectedMachine, selectedPaneId,
@@ -185,6 +186,7 @@ describe("a desktop link to a pane the cached roster lacks", () => {
       take = useNotificationTargets({
         machinesRef, selectTargetRef, selectionHint, pendingLink, pendingFile, setLinkLanded, linkSince, rosterSeq, setLinkTick, load: async () => {},
       } as Parameters<typeof useNotificationTargets>[0]).takeNotificationTarget;
+      pick = selectTarget;
       shown = { pane: selectedPaneId, note: headerNote };
       return null;
     }
@@ -259,5 +261,56 @@ describe("a desktop link to a pane the cached roster lacks", () => {
     expect(shown).toEqual({ pane: "t2", note: null });
     expect(reads).toBe(0);
     expect(misses).toBe(0);
+  });
+
+  it("keeps a landing's note while the same link comes again, as a tapped notification's second delivery does, though its own read fails", async () => {
+    answer("roster");
+    await mount();
+    await open(`?ws=${gamma}-gamma&pane=t99`);
+    expect(shown).toEqual({ pane: "t5", note: "pane-closed" });
+    const asked = reads;
+    answer("fails");
+    await act(async () => { take(linkTarget(`?ws=${gamma}-gamma&pane=t99`)!); });
+    expect(reads).toBeGreaterThan(asked);
+    expect(shown).toEqual({ pane: "t5", note: "pane-closed" });
+  });
+
+  it("keeps a landing's note when a link the roster lists selects another pane: a link selects, not the user", async () => {
+    answer("roster");
+    await mount();
+    await open(`?ws=${gamma}-gamma&pane=t99`);
+    expect(shown).toEqual({ pane: "t5", note: "pane-closed" });
+    await act(async () => { take(linkTarget("?ws=3-alpha&pane=t2")!); });
+    expect(shown).toEqual({ pane: "t2", note: "pane-closed" });
+  });
+
+  it("keeps a landing's note through a tapped notification's second delivery, though that delivery's read fails", async () => {
+    answer("roster");
+    await mount();
+    await open(`?ws=${gamma}-gamma&pane=t99`);
+    expect(shown).toEqual({ pane: "t5", note: "pane-closed" });
+    answer("fails");
+    await act(async () => { take({ machine_id: "local", pane_id: "t99", view: "chat", workspace_id: gamma }); });
+    expect(shown.note).toBe("pane-closed");
+  });
+
+  it("keeps a landing's note when a tapped notification names a pane the roster lists: a notification selects, not the user", async () => {
+    answer("roster");
+    await mount();
+    await open(`?ws=${gamma}-gamma&pane=t99`);
+    expect(shown).toEqual({ pane: "t5", note: "pane-closed" });
+    await act(async () => { take({ machine_id: "local", pane_id: "t2", view: "chat", workspace_id: "3" }); });
+    expect(shown).toEqual({ pane: "t2", note: "pane-closed" });
+  });
+
+  it("keeps a landing's note when the user picks the pane already shown, and takes it away when they pick another", async () => {
+    answer("roster");
+    await mount();
+    await open(`?ws=${gamma}-gamma&pane=t99`);
+    expect(shown).toEqual({ pane: "t5", note: "pane-closed" });
+    await act(async () => { pick("local", "t5"); });
+    expect(shown).toEqual({ pane: "t5", note: "pane-closed" });
+    await act(async () => { pick("local", "t2"); });
+    expect(shown).toEqual({ pane: "t2", note: null });
   });
 });

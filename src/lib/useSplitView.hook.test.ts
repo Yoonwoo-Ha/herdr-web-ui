@@ -8,6 +8,7 @@ describe("useSplitLayout", () => {
   let renderer: ReactTestRenderer | undefined;
   const saved = new Map<string, PropertyDescriptor | undefined>();
   let written: (SplitState | null)[];
+  let notes: unknown[];
   let layout: ReturnType<typeof useSplitLayout>;
   const splitShownRef = { current: false };
   const split: SplitState = {
@@ -21,6 +22,7 @@ describe("useSplitLayout", () => {
     Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
     Object.defineProperty(globalThis, "window", { configurable: true, value: { addEventListener() {}, removeEventListener() {} } });
     written = [];
+    notes = [];
     splitShownRef.current = false;
   });
 
@@ -40,7 +42,7 @@ describe("useSplitLayout", () => {
       machines: [], split, wideScreen, selectedPaneId: "w1:p1", selectedPane: null, selectedMachineId: "local", splitShownRef,
       health: null, machineRosterLoaded: false, endSplit: nothing, otherRecheck: { current: false }, otherRosterTick: 0,
       setSplit: (next) => { written.push(next); }, soloSlot: "a", setConnected: nothing, setConnectedBefore: nothing,
-      setSelectedMachineId: nothing, setSelectedPaneId: nothing, setAutoSelected: nothing, setOutputStopped: nothing,
+      setSelectedMachineId: nothing, setSelectedPaneId: nothing, setAutoSelected: nothing, setOutputStopped: nothing, setHeaderNote: (note) => { notes.push(typeof note === "function" ? note("pane-closed") : note); },
       splitRef: { current: split }, selectPane: nothing, paneAreaRef: { current: null }, gridDrop: null, gridDropRef: { current: null },
       clearDropPreview: nothing, tabDrag: null, showGridDrop: nothing, hideDropTarget: nothing, setPaneDragging: nothing,
       movingPanes: { current: new Set() }, draggedPaneRef: { current: null }, markSwap: nothing, markMove: nothing,
@@ -72,5 +74,11 @@ describe("useSplitLayout", () => {
       await act(async () => { layout.activateSlotOf({ machineId: "local", paneId: "w1:p2" }); });
       expect(written).toEqual([{ ...split, panes: { a: { machineId: "local", paneId: "w1:p1" } }, active: "b" }]);
     }
+  });
+
+  it("takes an earlier link's note away when another slot's pane is picked", async () => {
+    await draw({ wideScreen: true, threadDrawn: false });
+    await act(async () => { layout.activateSlot("b"); });
+    expect(notes).toEqual([null]);
   });
 });
