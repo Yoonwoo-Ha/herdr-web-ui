@@ -21,7 +21,7 @@ Extension, a later build; see [Later builds](#later-builds)).
 | Microphone text | "Dictate messages and commands to your agents with voice input." | `NSMicrophoneUsageDescription`, `Info.plist` |
 | Speech recognition text | "Turn what you say into text for your agents when no OpenAI key is set." | `NSSpeechRecognitionUsageDescription`, `Info.plist` |
 | Export compliance | no non-exempt encryption (only Apple's HTTPS) | `ITSAppUsesNonExemptEncryption = false`, so uploads skip the question |
-| Privacy manifest | no tracking; product interaction, device ID and coarse location collected for analytics, linked to the PC's install ID, not tracking (the PC's usage counts, section 5); UserDefaults for the app's own settings (reason `CA92.1`) | `app/ios/App/App/PrivacyInfo.xcprivacy` |
+| Privacy manifest | no tracking; product interaction, device ID and coarse location collected for analytics, linked to the PC's install ID, not tracking (the PC's usage counts, section 5); user ID collected for app functionality, linked, not tracking (the account sign-in, section 5); UserDefaults for the app's own settings (reason `CA92.1`) | `app/ios/App/App/PrivacyInfo.xcprivacy` |
 
 ## 2. Apple's sites, click by click (the owner)
 
@@ -140,6 +140,16 @@ paths or account names), the kinds of coding agents running, the kinds of screen
 the PC, how many prompt answers were sent and alerts delivered and tapped, once a day has ended how often the
 app's buttons were used that day (fixed names, each count a rough range, narrow and wide screens apart, for a few actions whether by button, menu, shortcut or palette,
 and the list of which of these controls were shown, never what was typed or which pane), and the country the receiver reads from the PC's address (the address is not stored).
+A second route reaches the developer only once the user signs in (signing in is optional): the
+app signs in with the developer's account service, `account.ovis.sh` (`docs/account.md`), which
+keeps a random account ID and, for each sign-in method added, a one-way hash of that provider's
+ID for the user (never the email, name or the provider's tokens); one-way hashes of each signed-in
+device's tokens and the push subscription it registered; for each PC added, its name, relay ID and
+public key; and, for a join or link-page request, the device's name and public key and the country
+and city Cloudflare saw it come from, deleted within about a day, so an approval can show roughly
+where it came from (`https://ovis.sh/privacy/#account` lists it all). The device and PC names the user types and the system a device reports (such as iOS or Linux) are
+labels for the approval card, not personal info or a device identifier, so they add no data type. Delete account (Devices >
+Account) erases it at once, as App Review asks of an app that lets people make an account.
 
 Get Started > *Do you or your third-party partners collect data from this app?* **Yes, we collect
 data from this app.** Then declare:
@@ -147,14 +157,16 @@ data from this app.** Then declare:
 | Data type | Use | Linked to the user | Tracking |
 |---|---|---|---|
 | Usage Data > Product Interaction (the settings chosen in the app, daily use, how often its buttons are used, whether by button, menu, shortcut or palette, and which of them were shown) | Analytics | Yes | No |
-| Identifiers > Device ID (the random install ID the PC makes) | Analytics | Yes | No |
-| Location > Coarse Location (the country, two letters) | Analytics | Yes | No |
+| Identifiers > Device ID (the random install ID the PC makes; once signed in, the account service's device push subscriptions and PC relay IDs and keys) | Analytics, App Functionality | Yes | No |
+| Location > Coarse Location (the country, two letters, of the usage counts; once signed in, the country and city of a join or link-page request) | Analytics, App Functionality | Yes | No |
+| Identifiers > User ID (the random account ID, only when signed in) | App Functionality | Yes | No |
 
-They count as linked: Apple's definition covers data tied to a device-level identifier, and the
+The usage counts count as linked: Apple's definition covers data tied to a device-level identifier, and the
 receiver stores them with the PC's persistent install ID (random, with no account, name or contact
 behind it). None is used for tracking: nothing is combined with other companies' data or shared
-with data brokers or advertisers. The privacy manifest lists the same three types, and
-`https://ovis.sh/privacy/` describes the same route. Privacy policy URL:
+with data brokers or advertisers. What the account service keeps is
+linked to the account. The privacy manifest lists the same four types with the same purposes, and
+`https://ovis.sh/privacy/` describes both routes in full. Privacy policy URL:
 `https://ovis.sh/privacy/`.
 
 ## 6. Age rating (App Information > Age Rating > Edit)
@@ -169,7 +181,7 @@ refuse addresses that are not an Ovis server, which is an app change, not a form
 
 ## 7. App Review information (version page > App Review Information)
 
-- Sign-in required: **No** (no account exists).
+- Sign-in required: **No** (signing in is optional, and the demo below needs no account).
 - Contact: your name, phone and email.
 - Notes:
 
