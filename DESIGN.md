@@ -3442,6 +3442,23 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - Layout: one column inside the Files sheet; bar, branches line, Checks, Open review threads,
   Merge, each separated by a hairline.
 
+### Browser side panel (`.browser-side-panel`)
+- The desktop app's built-in browser keeps a right panel, 232px, beside the pane and after the
+  docked file panel, on a wide window only and only while the browser's setting is on (main
+  answers the page's bridge, `window.ovisBrowser`, with null when it is off; `lib/desktopBrowser.ts`).
+  It follows the Claude and Codex apps' artifact rail: outputs sit beside the conversation, never
+  in it. GOAT's per-thread right panel was looked at for ideas; no code was taken.
+- **Results** (`결과물`): the files the browser kept and an agent's screenshots (from main), then
+  the pages the selected Claude Code pane published (`GET /api/pane/artifacts`, the Artifacts
+  chip's own read). A file row shows it in its folder; nothing is opened. Each row: icon,
+  name, `kind · size · time` in `--fs-xs` `--text-dim`.
+- **Tabs the agents use** (`에이전트가 쓰는 탭`): one card per agent-profile tab, title and **x**
+  (closes the tab), a 96px picture main takes on request when the page settles (only of a tab it
+  draws) and keeps nowhere, then `<agent> is using it` (the agent of the pane that opened it), or
+  **You have control** in `--accent` while a person holds the tab.
+- Empty sections say what will show there in one dim line. The panel never polls the browser:
+  it follows main's change events.
+
 ### Header context and connection
 - A selected pane shows agent mark + title (`--fs-md`), then on the same line the crumb
   PC › workspace › folder (`--fs-xs`, `--text-dim`); with one PC registered the PC is left out, as

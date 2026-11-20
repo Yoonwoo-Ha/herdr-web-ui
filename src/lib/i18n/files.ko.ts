@@ -4,7 +4,7 @@
  * components/TextFileView.tsx, components/TextFileEditor.tsx, components/FilePathLink.tsx, components/FilePanelResizer.tsx,
  * components/HighlightedCode.tsx, components/RepoDiffViewer.tsx, components/RepoChanges.tsx,
  * components/RepoDiff.tsx, lib/repoDiff.ts, lib/diffLineNotes.ts, components/WebPanel.tsx,
- * components/PullRequestPanel.tsx, lib/pullRequest.ts, components/MarkdownOutline.tsx.
+ * components/PullRequestPanel.tsx, lib/pullRequest.ts, components/MarkdownOutline.tsx, components/BrowserSidePanel.tsx.
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const FILES_KO: Record<string, string> = {
@@ -228,4 +228,16 @@ export const FILES_KO: Record<string, string> = {
   "Split": "나란히",
   "The text size of a file you open, in its preview and its source. It follows the chat font size until you set one here.": "열어 본 파일의 글자 크기입니다(미리보기와 소스 모두). 여기서 정하기 전까지는 채팅 글자 크기를 따릅니다.",
   "On a wide window, Browse files opens as a panel to the right of the pane and not as a popup. With Open files on Beside the pane, a file opened from the list takes its place, and closing the file brings the list back.": "넓은 창에서 파일 찾아보기를 팝업 대신 패널 오른쪽에 엽니다. 파일 열기가 '패널 옆에'이면 목록에서 연 파일이 그 자리에 보이고, 파일을 닫으면 목록이 돌아옵니다.",
+  "Browser panel": "브라우저 패널",
+  "Results": "결과물",
+  "Files the browser downloads, screenshots and published pages show here.": "브라우저가 받은 파일, 스크린샷, 게시된 페이지가 여기에 나옵니다.",
+  "Published page": "게시된 페이지",
+  "Tabs the agents use": "에이전트가 쓰는 탭",
+  "No agent is using a tab.": "탭을 쓰는 에이전트가 없습니다.",
+  "Screenshot": "스크린샷",
+  "Downloading…": "받는 중…",
+  "Show in folder": "폴더에서 보기",
+  "You have control": "내가 제어 중",
+  "{agent} is using it": "{agent} · 쓰는 중",
+  "An agent is using it": "에이전트가 쓰는 중",
 };
