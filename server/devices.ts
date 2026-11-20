@@ -15,7 +15,8 @@ import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { isRowOrigin, legacyOrigin, type RowOrigin } from "./account/admission-order.ts";
 import type { ClearReason, PcAccountState } from "./account/pc-binding.ts";
-import { AccountRecordError, parseAccountRecord, type AddRecord, type RemoveRecord } from "../shared/account-records.ts";
+import type { RemovalEvidence } from "./account/removal-evidence.ts";
+import { AccountRecordError, isIsoTime, parseAccountRecord, type AddRecord, type RemoveRecord } from "../shared/account-records.ts";
 import { type AccountPairing, type AccountPairingEnd, type AccountPairingState, type AccountPairingTurnedAway, type DevicePairedEvent, type DeviceRemovedEvent, type DevicePairToken, type DeviceRole, type DevicesRevokedAll, type PairedDevice, type DeviceConnection, STREAM_COOKIE_PREFIX } from "../shared/protocol.ts";
 import type { MuxClock } from "../shared/relay-mux-engine.ts";
 import type { Access } from "./access.ts";
@@ -168,6 +169,8 @@ export interface StoredDevice {
   origin?: RowOrigin;
   /** a copy a sibling merge brought into this dir with the release flag on: no row of this dir's own, never legacy (T50) */
   imported?: true;
+  /** the account removals of its key that its pairing on this PC knew, and stands over (P13) */
+  paired_over?: string[];
 }
 
 /**
@@ -309,6 +312,7 @@ export function readDeviceRegistry(path: string): DeviceRegistry {
       && (d.link_moved_key === undefined || typeof d.link_moved_key === "boolean")
       && (d.imported === undefined || d.imported === true)
       && (d.account_add === undefined || isJsonObject(d.account_add))
+      && (d.paired_over === undefined || (Array.isArray(d.paired_over) && d.paired_over.every((id) => typeof id === "string")))
       )) return { kind: "bad" };
   // an origin that cannot be read is no age (P22): the row stays, without it
   const devices = (parsed.devices as StoredDevice[]).map((d) => d.origin === undefined || isRowOrigin(d.origin) ? d : (({ origin: _unreadable, ...rest }) => rest)(d));
@@ -335,6 +339,11 @@ function withRecords(records: readonly unknown[] | undefined, more: readonly unk
   return kept.length ? kept : undefined;
 }
 
+/** Every tombstone a folder holds, its pending file's included, as read before any merge coalesces them (T48). */
+export function folderTombstones(dir: string): AccountTombstone[] {
+  return ["account-tombstones.json", "account-tombstones.pending.json"].flatMap((file) => readTombstones(join(dir, file)) ?? []);
+}
+
 /** Null for a file that exists and will not parse; an absent file holds no tombstones. */
 function readTombstones(path: string): AccountTombstone[] | null {
   let parsed: unknown;
@@ -352,7 +361,9 @@ function readTombstones(path: string): AccountTombstone[] | null {
  * a key removed in either stays removed in both. Per key the later removal is kept. A file that will
  * not parse is left as it is, and the store then refuses account records there.
  */
-export function mergeAccountTombstones(active: string, sibling: string): string | null {
+export function mergeAccountTombstones(active: string, sibling: string, opensAll = false): string | null {
+  // with the flag on every local time met isIsoTime; with it off, main's own string order
+  const after = (a: string, b: string) => opensAll ? Date.parse(a) > Date.parse(b) : a > b;
   const paths = [join(active, "account-tombstones.json"), join(sibling, "account-tombstones.json")];
   const read = paths.map(readTombstones);
   // the active dir's own unreadable file stops its store anyway; a sibling's must too, or its removals are lost
@@ -365,8 +376,8 @@ export function mergeAccountTombstones(active: string, sibling: string): string 
     if (!kept) { merged.set(tombstone.key, tombstone); continue; }
     // the account's removal outranks a revoke on the PC (only it keeps a relay code out), with the later of the two times
     const local = (t: AccountTombstone) => t.record_id === "local";
-    const winner = local(kept) && !local(tombstone) ? tombstone : !local(kept) && local(tombstone) ? kept : tombstone.removed_at > kept.removed_at ? tombstone : kept;
-    const removedAt = tombstone.removed_at > kept.removed_at ? tombstone.removed_at : kept.removed_at;
+    const winner = local(kept) && !local(tombstone) ? tombstone : !local(kept) && local(tombstone) ? kept : after(tombstone.removed_at, kept.removed_at) ? tombstone : kept;
+    const removedAt = after(tombstone.removed_at, kept.removed_at) ? tombstone.removed_at : kept.removed_at;
     const records = local(winner) ? undefined : withRecords(winner.records, [...kept.records ?? [], ...tombstone.records ?? []]);
     const { records: _records, ...rest } = winner;
     merged.set(tombstone.key, { ...rest, removed_at: removedAt, ...(records ? { records } : {}) });
@@ -416,6 +427,8 @@ interface WaitingRows {
 function pairedHere(device: StoredDevice): boolean {
   return device.added_by === undefined && device.link_moved_key !== true;
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export class DeviceStore {
   private devices: StoredDevice[] = [];
@@ -476,15 +489,23 @@ export class DeviceStore {
    */
   private readonly safety: { readonly strict: string | null } | null;
   private readonly pc: PcAccountState | null;
-  constructor(stateDir: string, blocked: string | null = null, accountBlocked: string | null = null, account: { safety?: { readonly strict: string | null } | null; pc?: PcAccountState | null } = {}) {
+  private readonly evidence: RemovalEvidence | null;
+  /** every tombstone of this folder and its sibling as read before any coalescing merge (T48): each is evidence */
+  private readonly carried: readonly AccountTombstone[];
+  constructor(stateDir: string, blocked: string | null = null, accountBlocked: string | null = null, account: { safety?: { readonly strict: string | null } | null; pc?: PcAccountState | null; removals?: RemovalEvidence | null; carried?: readonly AccountTombstone[] } = {}) {
     this.safety = account.safety ?? null;
     this.pc = account.pc ?? null;
+    this.evidence = account.removals ?? null;
+    this.carried = account.carried ?? [];
     this.path = join(stateDir, "devices.json");
     this.tombstonePath = join(stateDir, "account-tombstones.json");
     this.pendingTombstonePath = join(stateDir, "account-tombstones.pending.json");
     const tombstones = readTombstones(this.tombstonePath);
-    const pending = readTombstones(this.pendingTombstonePath) ?? [];
+    const pendingRead = readTombstones(this.pendingTombstonePath);
+    const pending = pendingRead ?? [];
     if (accountBlocked !== null) this.accountProblem = accountBlocked;
+    // a pending tombstone file that cannot be read holds Revokes nobody can tell: kept, and the PC refuses (S19)
+    if (pendingRead === null && this.evidence !== null) this.accountProblem = `Cannot read ${this.pendingTombstonePath}: account records are refused until it is restored or fixed.`;
     if (tombstones === null) {
       this.accountProblem = `Cannot read ${this.tombstonePath}: account records are refused until it is restored or fixed.`;
       this.tombstones = pending;
@@ -505,15 +526,97 @@ export class DeviceStore {
     }
     // the tombstone files' own repair asks only whether they could be read: a strict safety log is a separate refusal
     // a strict order changes nothing on disk, not even a repair: its damage stays visible (S29)
+    // a damaged pending file beside a readable tombstone file: the Revokes the readable one holds are evidence at once,
+    // and neither file is touched until the damaged one is repaired (T26, S19)
+    if (this.error === null && this.evidence !== null && this.evidence.strict === null && this.safety?.strict == null && this.pc?.strict == null && pendingRead === null && tombstones !== null) {
+      this.evidence.takeIn([...this.carried, ...tombstones], this.devices.map((d) => ({ relay_public_key: d.relay_public_key, created_at: d.created_at, pairedHere: pairedHere(d) })), Date.now());
+    }
+    // a time this PC wrote that lies more than a day ahead is no time it wrote: it would push every later stamp past it,
+    // so the PC fails closed until it is repaired (S19, P13)
+    if (this.evidence !== null) {
+      const ahead = [...this.ownTimes(), ...this.carried.filter((t) => t.record_id === "local").map((t) => t.removed_at)].find((t) => !isIsoTime(t) || Date.parse(t) > Date.now() + DAY_MS);
+      if (ahead !== undefined) this.accountProblem = `A time this PC wrote lies in the future (${ahead}): account records are refused until it is repaired.`;
+    }
     if (this.error === null && this.accountProblem === null && this.pc?.strict == null) {
-      if (pending.length) {
-        this.writeTombstones(this.tombstones);
-        rmSync(this.pendingTombstonePath, { force: true });
+      if (this.evidence !== null) this.takeInEvidence([...tombstones ?? [], ...pending]);
+      else {
+        if (pending.length) {
+          this.writeTombstones(this.tombstones);
+          rmSync(this.pendingTombstonePath, { force: true });
+        }
+        this.finishInterruptedWrites();
       }
-      this.finishInterruptedWrites();
     }
     // the one-time legacy pass asks only whether the registry could be read: nothing is admitted before it (T50)
     if (this.error === null) this.migrate();
+  }
+
+  /**
+   * At load (T26, P13): every tombstone of both files, the pending one's included, is taken in as evidence before
+   * anything is coalesced; the tombstone file is written again from the evidence; the pending file goes; and every row
+   * the evidence covers goes. Nothing of it is told to anyone: no session is open yet.
+   */
+  private takeInEvidence(found: readonly AccountTombstone[]): void {
+    // evidence that cannot be trusted is never written over, and nothing is taken in while the safety log cannot be
+    // read: a removal would record no forgettings it outranks, and an old forget redelivered later would end it (S19, T61)
+    if (this.evidence!.strict !== null || this.safety?.strict != null) return;
+    this.evidence!.takeIn([...this.carried, ...found], this.devices.map((d) => ({ relay_public_key: d.relay_public_key, created_at: d.created_at, pairedHere: pairedHere(d) })), Date.now());
+    // the tombstone file is written from the evidence before the pending file goes, so nothing pending is lost (T26)
+    this.writeTombstones(this.evidence!.tombstones());
+    rmSync(this.pendingTombstonePath, { force: true });
+    const kept = this.devices.filter((d) => !this.coveredByEvidence(d));
+    if (kept.length !== this.devices.length) {
+      const gate = this.gateClosedAt ?? this.devices[0]?.created_at ?? null;
+      this.save(kept, gate);
+      this.devices = kept;
+      this.gateClosedAt = gate;
+    }
+  }
+
+  /**
+   * The store's one sequence of times (T26, P13): never before `now`, and always after every time this store has
+   * ordered (a row's making, a Revoke, an unrevoke, a tombstone), so what is made after something is always later.
+   */
+  /**
+   * Whether time `a` is after (or with `orSame`, not before) time `b`. With the flag on both are parsed, as every time
+   * met isIsoTime at open; with it off, main's own string order, whatever the files hold.
+   */
+  private later(a: string, b: string, orSame = false): boolean {
+    if (this.evidence === null) return orSame ? a >= b : a > b;
+    return orSame ? Date.parse(a) >= Date.parse(b) : Date.parse(a) > Date.parse(b);
+  }
+
+  /** The times this PC wrote itself: rows' making, its own tombstones and Revokes; never a time a record carries (P13). */
+  private ownTimes(): string[] {
+    return [...this.devices.map((d) => d.created_at), ...this.tombstones.filter((t) => t.record_id === "local").map((t) => t.removed_at), ...this.evidence?.times() ?? []];
+  }
+
+  private nextStamp(now: number): string {
+    const times = this.ownTimes();
+    const last = Math.max(Number.NEGATIVE_INFINITY, ...times.map((t) => Date.parse(t)).filter((t) => Number.isFinite(t)));
+    return new Date(Math.max(now, last + 1)).toISOString();
+  }
+
+  /** The tombstone file as the evidence writes it (P13), written only when it changed. */
+  private refreshTombstones(): void {
+    const next = this.evidence!.tombstones();
+    if (JSON.stringify(next) !== JSON.stringify(this.tombstones)) this.writeTombstones(next);
+  }
+
+  /**
+   * Whether the evidence keeps this row out (P13): a Revoke of its key stands, or a standing marker of its key covers
+   * it. A marker covers a row of its account, or one that names no account while this PC is in that account, unless
+   * that row names no account and was paired here knowing every standing removal of the marker (`paired_over`).
+   */
+  private coveredByEvidence(device: StoredDevice): boolean {
+    const key = device.relay_public_key;
+    if (key === undefined || this.evidence === null) return false;
+    if (this.evidence.standingRevokes(key).length > 0) return true;
+    return this.evidence.standingMarkers(key).some(({ marker, standing }) => {
+      const ofAccount = device.account === marker.account || (device.account === undefined && this.account() === marker.account);
+      if (!ofAccount) return false;
+      return !(device.account === undefined && standing.every((removal) => device.paired_over?.includes(removal.id)));
+    });
   }
 
   /**
@@ -539,17 +642,22 @@ export class DeviceStore {
 
   /** A row whose key was removed at or after the row was made: revoked, whether or not its own write happened yet. */
   private stale(device: StoredDevice): boolean {
-    return device.relay_public_key !== undefined
-      && this.tombstones.some((t) => t.key === device.relay_public_key && (!pairedHere(device) || t.removed_at >= device.created_at));
+    // main's own rule stays the floor under the evidence: a tombstone of this PC keeps its key out, whatever path took
+    // the evidence in or skipped it (P13, rule 1)
+    const tombstoned = device.relay_public_key !== undefined
+      && this.tombstones.some((t) => t.key === device.relay_public_key && (!pairedHere(device) || this.later(t.removed_at, device.created_at, true)));
+    return tombstoned || (this.evidence !== null && this.coveredByEvidence(device));
   }
 
   get accountError(): string | null {
-    return this.safety?.strict ?? this.pc?.strict ?? this.accountProblem;
+    return this.safety?.strict ?? this.pc?.strict ?? this.evidence?.strict ?? this.accountProblem;
   }
 
   /** The safety log or the admission order fails closed: no device gets in by a row or a code. */
   get failsClosed(): boolean {
-    return (this.safety?.strict ?? this.pc?.strict ?? null) !== null;
+    // with the flag on, an account tombstone file that cannot be read is a key out nobody can tell: only this PC gets in (S19)
+    if (this.evidence !== null && this.accountProblem !== null) return true;
+    return (this.safety?.strict ?? this.pc?.strict ?? this.evidence?.strict ?? null) !== null;
   }
 
   /**
@@ -1158,7 +1266,7 @@ export class DeviceStore {
       id: row.id, label: row.label, role: "drive", token_hash: hash(randomBytes(32).toString("hex")), relay_public_key: link.key,
       // made at this write, not at its pairing, and after that removal even on a wall clock set back since: the row
       // is newer than the removal, so a stop before the tombstone is cleared leaves a row that the next start keeps
-      // (finishInterruptedWrites)
+      // (finishInterruptedWrites, or with the flag on RemovalEvidence.takeIn)
       created_at: removedAt !== undefined && removedAt >= at ? new Date(Date.parse(removedAt) + 1).toISOString() : at, last_seen_at: at, account: link.account, linked_at: at, link_moved_key: link.key !== link.oldKey, joined_by: vouched ? "service" : "code",
     };
     // no waiting row from here on: the end of its code, which this write brings, takes the rows that still wait
@@ -1234,7 +1342,9 @@ export class DeviceStore {
 
   /** One authorization write precedes every state change and enrollment announcement. */
   private enroll(admitting: StoredDevice, now: number, origin: readonly string[], codeSpent = true, path: { startedBy?: string | null; digits?: boolean } = {}): void {
-    const device = this.admitted(admitting, now, path);
+    const admitted = this.knowingRemovals(this.admitted(admitting, now, path));
+    // with the flag on a row is stamped after everything this store ordered before it (T26, P13)
+    const device = this.evidence === null ? admitted : { ...admitted, created_at: this.nextStamp(Date.parse(admitted.created_at)) };
     const next = [...this.devices, device];
     const gate = this.gateClosedAt ?? device.created_at;
     this.save(next, gate);
@@ -1342,7 +1452,8 @@ export class DeviceStore {
     if (approval.id !== undefined && this.has(approval.id)) { this.noteRelayFailure(approval.path, now); return null; }
     if (admit && this.isNewKey(publicKey) && !admit()) return null;
     const paired = this.enrollRelay(label, publicKey, now, false, { addedBy: approval.addedBy, approvedIn: approval.addedBy === undefined ? undefined : this.approverAccount(approval.addedBy) ?? undefined, digits: true }, approval.id);
-    // written after the row, so a stop between the two leaves a row newer than its tombstone (finishInterruptedWrites)
+    // written after the row, so a stop between the two leaves a row newer than its tombstone: the next start ends that
+    // Revoke (finishInterruptedWrites, or with the flag on RemovalEvidence.takeIn)
     if (approval.addedBy === undefined) this.clearTombstone(publicKey);
     return paired;
   }
@@ -1718,10 +1829,20 @@ export class DeviceStore {
    */
   removeAccountKey(key: string, account: string, record: { id: string; issuedAt: string; by?: { device_id: string; label: string }; signed?: RemoveRecord }, now = Date.now()): boolean {
     this.assertAccountWritable();
+    if (this.evidence !== null) {
+      // account-scoped evidence first, whatever rows this PC holds and with no time compared (T16 in 2d); every row
+      // it covers goes, row by row, and a Revoke this PC made is never coalesced into it (T22)
+      const added = this.evidence.addRemoval(key, account, { id: record.id, at: new Date(now).toISOString(), ...(record.signed ? { records: [record.signed] } : {}) });
+      this.refreshTombstones();
+      this.dropWaiting([key]);
+      const gone = this.devices.filter((d) => d.relay_public_key === key && this.coveredByEvidence(d));
+      if (gone.length) this.drop(gone, record.by);
+      return added || gone.length > 0;
+    }
     // a pairing of this key made on this PC after the removal was signed wins: a replayed or late remove
     // leaves it and its key be, and takes only the key's other rows. Any other row goes, however late the remove
     // arrives (pairedHere).
-    const newer = (d: StoredDevice) => d.relay_public_key === key && pairedHere(d) && d.created_at > record.issuedAt;
+    const newer = (d: StoredDevice) => d.relay_public_key === key && pairedHere(d) && this.later(d.created_at, record.issuedAt);
     if (this.devices.some(newer)) {
       const gone = this.devices.filter((d) => d.relay_public_key === key && !newer(d));
       if (gone.length) this.drop(gone, record.by);
@@ -1773,8 +1894,24 @@ export class DeviceStore {
     return this.list(null).find((d) => d.id === deviceId) ?? null;
   }
 
-  /** A pairing made on this PC (a code, or a comparison approved here) lets a removed key back in. */
+  /** A pairing of a key on this PC names the account removals it knew (`paired_over`), and stands over them (P13, T23). */
+  private knowingRemovals(device: StoredDevice): StoredDevice {
+    if (this.evidence === null || device.relay_public_key === undefined || !pairedHere(device)) return device;
+    const over = this.evidence.pairedOver(device.relay_public_key);
+    return over.length ? { ...device, paired_over: over } : device;
+  }
+
+  /**
+   * A pairing made on this PC (a code, or a comparison approved here) lets a removed key back in. With removal
+   * evidence it ends the Revokes of the key by name and leaves the account's markers standing (T21, T23).
+   */
   private clearTombstone(key: string): void {
+    if (this.evidence !== null) {
+      if (this.accountError !== null) return;
+      this.evidence.unrevoke(key, "pc", Date.now());
+      this.refreshTombstones();
+      return;
+    }
     if (this.accountError !== null || !this.isTombstoned(key)) return;
     this.writeTombstones(this.tombstones.filter((t) => t.key !== key));
   }
@@ -1784,6 +1921,21 @@ export class DeviceStore {
    * link with one of those keys go next, before the revoke as well (dropWaiting).
    */
   private tombstone(rows: readonly StoredDevice[], now: number): void {
+    // each Revoke is its own evidence, also of a key that already has a tombstone, and also while the tombstone files
+    // cannot be read, so it outlives their repair (P13)
+    // a Revoke is stamped after every row this store holds, whatever the wall clock says (P13)
+    if (this.evidence !== null) now = Date.parse(this.nextStamp(now));
+    if (this.evidence !== null && this.evidence.strict === null) {
+      for (const key of new Set(rows.flatMap((d) => d.relay_public_key ?? []))) this.evidence.addRevoke(key, rows.find((d) => d.relay_public_key === key)?.account ?? null, now);
+    }
+    // the evidence holds the Revoke when it is sound; a tombstone file that cannot be read is left as it is (S19)
+    if (this.evidence !== null && this.evidence.strict === null) {
+      if (this.accountError === null) this.refreshTombstones();
+      this.dropWaiting(rows.flatMap((d) => d.relay_public_key ?? []));
+      return;
+    }
+    // evidence that cannot be trusted holds nothing: the Revoke leaves main's tombstone, which keeps the key out at once
+    // (stale) and becomes a Revoke at the first start that takes the evidence in (P13, rule 1)
     const keys = [...new Set(rows.flatMap((d) => d.relay_public_key === undefined || this.isTombstoned(d.relay_public_key) ? [] : [d.relay_public_key]))];
     const removedAt = new Date(now).toISOString();
     const next = [...this.tombstones,

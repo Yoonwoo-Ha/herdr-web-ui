@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 import type { PendingMessage, SessionSnapshot } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { isLoopbackBind, lanExposed } from "./access.ts";
-import { DeviceStore, mergeAccountTombstones, readDeviceRegistry } from "./devices.ts";
+import { DeviceStore, folderTombstones, mergeAccountTombstones, readDeviceRegistry } from "./devices.ts";
 import { PreferenceStore } from "./preferences.ts";
 import { readOmpHeldFilesSetting } from "./omp.ts";
 import { SeenStore } from "./seen.ts";
@@ -57,6 +57,7 @@ import { accountOpensAll } from "../shared/account-devices-api.ts";
 import { mergeSafetyLogs, SafetyLog } from "./account/safety-log.ts";
 import { PcAccountState } from "./account/pc-binding.ts";
 import { savedServerId } from "./relay/identity.ts";
+import { RemovalEvidence } from "./account/removal-evidence.ts";
 import { AccountHolds } from "./account/holds.ts";
 import { AccountIntroductions } from "./account/introductions.ts";
 import { desktopOwnerChannel, desktopOwnerFdChannel, LOCAL_CONFIRM_FILE, LocalConfirms, openConfirmListener, takeDesktopOwnerFd } from "./account/local-confirm.ts";
@@ -279,9 +280,11 @@ export function createServer(
   const sameIdentity = (other: string) => { const [mine, theirs] = [savedServerId(stateDir), savedServerId(other)]; return mine === undefined || theirs === undefined || mine === theirs; };
   if (pcAccount !== null && options.siblingStateDir && !untouched && sameIdentity(options.siblingStateDir)) pcAccount.takeSibling(options.siblingStateDir);
   const merge = options.siblingStateDir && !untouched ? mergeSiblingState(stateDir, options.siblingStateDir) : null;
+  // every tombstone of both folders is evidence before the merge below coalesces them one per key (T48, P13)
+  const carried = opensAll && options.siblingStateDir && !untouched ? [...folderTombstones(stateDir), ...folderTombstones(options.siblingStateDir)] : [];
   let accountBlocked: string | null = null;
   if (options.siblingStateDir && !untouched) {
-    try { accountBlocked = mergeAccountTombstones(stateDir, options.siblingStateDir); }
+    try { accountBlocked = mergeAccountTombstones(stateDir, options.siblingStateDir, opensAll); }
     catch (error) { accountBlocked = `cannot merge the account tombstones of ${options.siblingStateDir}: ${error instanceof Error ? error.message : String(error)}`; }
     if (accountBlocked !== null) console.error(accountBlocked);
   }
@@ -291,8 +294,9 @@ export function createServer(
   const safetyLog = opensAll ? SafetyLog.open(stateDir, logMerge) : null;
   // what nothing rests on any more is folded once replayed; a fold that cannot be written leaves the log whole
   if (!untouched) try { safetyLog?.fold(); } catch (error) { console.error(`[account] the safety log could not be folded: ${error instanceof Error ? error.message : String(error)}`); }
-  const devices = new DeviceStore(stateDir, merge?.devicesBlocked ?? blocked, accountBlocked, { safety: safetyLog, pc: pcAccount });
-  for (const strict of [safetyLog?.strict, pcAccount?.strict]) if (strict) console.error(strict);
+  const removals = opensAll ? RemovalEvidence.open(stateDir, safetyLog) : null;
+  const devices = new DeviceStore(stateDir, merge?.devicesBlocked ?? blocked, accountBlocked, { safety: safetyLog, pc: pcAccount, removals, carried });
+  for (const strict of [safetyLog?.strict, pcAccount?.strict, removals?.strict]) if (strict) console.error(strict);
   // the machine profile has no open install: from its first answer only the caller on its owner's socket and a device through the relay with its proof get in
   if (options.profile === "machine") devices.closeGate();
   const preferences = new PreferenceStore(stateDir);

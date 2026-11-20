@@ -67,6 +67,11 @@ export function isAccountKeyEncoding(text: unknown): text is string {
 }
 
 const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/** A time as this PC writes it: a four-digit-year ISO string with milliseconds that reads back as itself. */
+export function isIsoTime(v: unknown): v is string {
+  return typeof v === "string" && ISO_MS.test(v) && !Number.isNaN(Date.parse(v)) && new Date(v).toISOString() === v;
+}
 const checks: Record<string, (value: unknown) => boolean> = {
   account: (v) => typeof v === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(v),
   key: isAccountKeyEncoding,
@@ -79,7 +84,7 @@ const checks: Record<string, (value: unknown) => boolean> = {
   role: (v) => v === "drive" || v === "watch",
   server_id: (v) => typeof v === "string" && /^[0-9a-f]{32}$/.test(v),
   device_id: (v) => typeof v === "string" && /^[0-9a-f]{16}$/.test(v),
-  issued_at: (v) => typeof v === "string" && ISO_MS.test(v) && !Number.isNaN(Date.parse(v)) && new Date(v).toISOString() === v,
+  issued_at: isIsoTime,
   id: (v) => typeof v === "string" && /^[0-9a-f]{32}$/.test(v),
   signature: (v) => typeof v === "string" && /^[A-Za-z0-9_-]{86}$/.test(v) && toBase64Url(fromBase64Url(v)) === v,
 };

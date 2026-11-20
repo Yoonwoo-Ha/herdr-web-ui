@@ -225,6 +225,12 @@ export class SafetyLog {
 
   entries(): readonly SafetyEntry[] { return this.file.entries; }
 
+  /** The ids of the `forget` records of `key` under `account`, folded ones included: what P13 asks of each removal. */
+  forgets(key: string, account: string): string[] {
+    return [...this.file.entries.map((entry) => entry.record), ...this.file.base]
+      .filter((record) => record.kind === "forget" && record.target === key && record.account === account).map((record) => record.id);
+  }
+
   /** The receipt of a record this log holds (T51): the same `applied` as often as it is asked, until it is folded. */
   receipt(id: string): SafetyReceipt | null {
     const entry = this.file.entries.find((candidate) => candidate.record.id === id);
