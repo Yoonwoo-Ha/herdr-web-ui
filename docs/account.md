@@ -685,7 +685,7 @@ typed and nothing is approved on the PC. Because the code admits whoever holds i
   app.ovis.sh, and is far easier to read off a screen, a recording or a clipboard than a QR code
   is to scan. Its six-digit code is its own, never one Phones and devices showed as digits, and
   **New code** ends it and asks for the offer again (no `POST /api/devices/pair/start`). A device
-  without a camera pairs from Phones and devices, or the PC is added by signing in on it (below).
+  without a camera pairs from Phones and devices → Without signing in, or the PC is added by signing in on it (below).
 - While the QR code is up, and while a notice is, the page reads `GET /api/account/status` and the
   device list every 3 seconds. When the PC goes from no account to one, by a scan or any other
   way (the PC then also takes the code back), the QR code gives way to which account, by its

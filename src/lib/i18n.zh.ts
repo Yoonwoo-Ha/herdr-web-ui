@@ -244,6 +244,8 @@ const BASE: Record<string, string> = {
   "Through the relay": "经由中继",
   "{n} ms": "{n} ms",
   "Check now": "立即检查",
+  "Run this once on this PC.": "在这台电脑上运行一次。",
+  "Tailscale isn't installed.": "没有安装 Tailscale。",
   "Check again": "重新检查",
   "Other PCs": "其他电脑",
   "Unnamed PC": "未命名的电脑",

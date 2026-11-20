@@ -247,6 +247,7 @@ try {
           const startCode = async (page: Page): Promise<void> => {
             await press(page.locator('.settings-dialog [data-section="devices"]').getByRole("button", { name: label("Add a connection"), exact: true }));
             await press(page.locator('.connect-phone-dialog .connect-ways [data-tab="devices"]'));
+            await press(page.locator('.connect-phone-dialog .connect-devices-ways [data-way="local"]'));
           };
           const shownCode = (page: Page): Locator => page.locator('.connect-phone-dialog [data-tab-panel="devices"] .compact-pair-code');
           const closeSettings = async (page: Page): Promise<void> => {

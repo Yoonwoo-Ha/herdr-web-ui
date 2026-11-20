@@ -242,6 +242,8 @@ const BASE: Record<string, string> = {
   "Through the relay": "リレー経由",
   "{n} ms": "{n} ms",
   "Check now": "今すぐ確認",
+  "Run this once on this PC.": "この PC で一度実行します。",
+  "Tailscale isn't installed.": "Tailscale が入っていません。",
   "Check again": "再確認",
   "Other PCs": "ほかの PC",
   "Unnamed PC": "名前のないPC",

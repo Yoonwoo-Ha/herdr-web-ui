@@ -240,6 +240,8 @@ const BASE: Record<string, string> = {
   "Through the relay": "릴레이",
   "{n} ms": "{n} ms",
   "Check now": "지금 확인",
+  "Run this once on this PC.": "이 PC에서 한 번 실행해요.",
+  "Tailscale isn't installed.": "Tailscale이 설치되어 있지 않아요.",
   "Check again": "다시 확인",
   "Other PCs": "다른 PC",
   "Unnamed PC": "이름 없는 PC",

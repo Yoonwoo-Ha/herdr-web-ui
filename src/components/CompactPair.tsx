@@ -24,7 +24,9 @@ export function CompactPair({ qr, qrLabel, code, shown = code, codeLabel, busy =
   };
   return (
     <div className="compact-pair">
-      {qr !== null ? <QrCode value={qr} label={qrLabel} size={QR_SIZE} /> : <div className="compact-pair-qr-empty" role="status">{qrNote ?? (busy ? t("Getting a code…") : "")}</div>}
+      {qr !== null ? <QrCode value={qr} label={qrLabel} size={QR_SIZE} />
+        // a code with no address to put in a QR code stands alone: no empty box beside it
+        : qrNote !== undefined || busy || code === null ? <div className="compact-pair-qr-empty" role="status">{qrNote ?? (busy ? t("Getting a code…") : "")}</div> : null}
       <div className="compact-pair-side">
         <p className="compact-pair-code" aria-label={codeLabel} aria-live="polite">{shown ?? "…"}</p>
         <div className="compact-pair-actions">
