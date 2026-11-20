@@ -160,4 +160,20 @@ describe("account removals and local Revokes kept apart (account-removed.json)",
     store(dir);
     expect(evidence(dir).revokes).toHaveLength(2);
   });
+
+  test("P13, T61: a ninth removal of one key never evicts a removal that still stands", async () => {
+    const dir = stateDir();
+    const evidence = RemovalEvidence.open(dir, null);
+    const k = await key();
+    for (let n = 0; n < 9; n++) evidence.addRemoval(k, ACCOUNT, { id: String(n).padStart(32, "0"), at: new Date(Date.UTC(2026, 9, 1 + n)).toISOString() });
+    expect(evidence.standingMarkers(k).flatMap((m) => m.standing.map((r) => r.id))).toContain("0".repeat(32));
+  });
+
+  test("S19, P13: removal evidence written once and then deleted fails the PC closed, also with no device journal", async () => {
+    const dir = stateDir();
+    const devices = store(dir);
+    devices.revoke(pairHere(devices, await key()));
+    rmSync(join(dir, REMOVAL_FILE));
+    expect(store(dir).failsClosed).toBe(true);
+  });
 });

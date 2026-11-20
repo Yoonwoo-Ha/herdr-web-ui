@@ -225,6 +225,11 @@ export class SafetyLog {
 
   entries(): readonly SafetyEntry[] { return this.file.entries; }
 
+  /** Writes the log as it stands when there is no file yet: a folder with a journal always has one (P24). */
+  ensureFile(): void {
+    if (this.readError === null && !existsSync(this.path)) writePrivateState(this.path, this.file);
+  }
+
   /** The ids of the `forget` records of `key` under `account`, folded ones included: what P13 asks of each removal. */
   forgets(key: string, account: string): string[] {
     return [...this.file.entries.map((entry) => entry.record), ...this.file.base]

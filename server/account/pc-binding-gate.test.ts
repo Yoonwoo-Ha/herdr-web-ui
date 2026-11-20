@@ -204,4 +204,24 @@ describe("the PC's account binding holds through upgrades, siblings and failures
     expect(devices.failsClosed).toBe(false);
     expect(devices.account()).toBe("acct_a");
   });
+
+  test("P12: Revoke all with the flag off clears the binding the flag-on PC left, so the next flag-on start is in no account", async () => {
+    const dir = stateDir();
+    await linked(store(dir));
+    new DeviceStore(dir).revokeAll();
+    expect(store(dir).account()).toBeNull();
+  });
+
+  test("P12: an identity reset with the flag off clears the binding the flag-on PC left", async () => {
+    const dir = stateDir();
+    await linked(store(dir));
+    const f = relayFixture(false, { stateDir: dir, accountOpensAll: false });
+    fixtures.push(f);
+    dirs.splice(dirs.indexOf(dir), 1);
+    await f.app.context.services.relay.resetIdentity();
+    f.app.stop();
+    fixtures.pop();
+    dirs.push(dir);
+    expect(store(dir).account()).toBeNull();
+  });
 });

@@ -35,6 +35,8 @@ interface PcDoc {
   others_ever: boolean;
   /** P14: raised by every denial and policy change; a decision that widens commits only at the gen it noted */
   gen: number;
+  /** the removal evidence was on disk once: its file missing since is damage, never a fresh start (S19) */
+  evidence_written?: true;
 }
 
 const REASONS: ReadonlySet<string> = new Set(["revoke_all", "identity_reset", "left_on_pc"]);
@@ -57,6 +59,7 @@ function parseDoc(value: unknown): (PcDoc & { counterOnly?: true }) | string {
   const first = doc.first;
   if (first !== null && !(typeof first === "object" && first !== undefined && typeof first.key === "string" && (first.list_key === null || typeof first.list_key === "string"))) return "invalid first";
   if (typeof doc.others_ever !== "boolean") return "invalid others_ever";
+  if (doc.evidence_written !== undefined && doc.evidence_written !== true) return "invalid evidence_written";
   if (doc.gen === undefined) return { ...doc, gen: 0 } as PcDoc;
   if (!Number.isSafeInteger(doc.gen) || doc.gen < 0) return "invalid gen";
   return doc as PcDoc;
@@ -231,6 +234,15 @@ export class PcAccountState {
   gen(): number { return this.doc.gen; }
 
   /** A denial or a policy change reached the disk (P14): a decision that noted the old gen does not commit. */
+  /** Whether this PC's removal evidence was on disk once (S19). */
+  evidenceWritten(): boolean { return this.doc.evidence_written === true; }
+
+  /** The removal evidence is on disk: from now on its file missing is damage (S19). Written once. */
+  noteEvidenceWritten(): void {
+    if (this.doc.evidence_written === true || this.problem !== null || this.fresh) return;
+    this.write({ ...this.doc, evidence_written: true });
+  }
+
   raiseGen(): void { this.write({ ...this.doc, gen: this.doc.gen + 1 }); }
 
   /** The first-device fact (T67): the key that bound the PC, and its proved sign-in key or null. */

@@ -10,7 +10,7 @@ import type { UsageLoginService } from "../usage-login.ts";
 import type { UsageService } from "../usage.ts";
 import { claudeBoxReads, createSubmitText } from "./composer.ts";
 import { claudeInputEmpty } from "../claude-input.ts";
-import { type Client, createConnections, type SocketData } from "./connections.ts";
+import { type Client, createConnections, send, type SocketData } from "./connections.ts";
 import { createInputLane } from "./input.ts";
 import { createPendingDelivery } from "./pending.ts";
 import { createPromptWatch } from "./prompt-watch.ts";
@@ -79,6 +79,7 @@ export function createCore({ options, devices, preferences, usage, usageLogin, b
   const socketHandlers = createSocket({
     herdrFailure: options.herdrFailure,
     clients, present, stopped: () => stopped, admit, setRole, watchable: () => capabilities().attach === "pty-cli", terminalHistory: () => capabilities().attach !== "pty-cli", terminalModes: () => capabilities().attach === "hc", watchPane, unwatchPane, end, holdPending, attachments, clientSnapshot, herdrLifetime: currentHerdrLifetime, browserSnapshot, countVisit, drainOutput,
+    notices: { replay: (deviceId) => devices.noticeReplay(deviceId), seen: (deviceId, seq) => devices.noticeSeen(deviceId, seq) },
     // each frame type by name, with the handler of the module that owns it: anything else on a frame object never
     // becomes a frame a client can send, and a type named twice fails the build instead of replacing a handler
     frames: {
@@ -97,6 +98,13 @@ export function createCore({ options, devices, preferences, usage, usageLogin, b
       submit: pendingFrames.submit,
       "pending-action": pendingFrames["pending-action"],
     },
+  });
+  // a journal entry goes at once to each connected row it concerns (P10); one not connected hears it at its next connect
+  devices.onNotice((entry) => {
+    for (const client of clients) {
+      const notice = client.data.deviceId === undefined ? null : devices.noticeFor(client.data.deviceId, entry);
+      if (notice) send(client, { type: "device-notice", notice });
+    }
   });
   const websocket: WebSocketHandler<SocketData> = {
     ...socketHandlers,

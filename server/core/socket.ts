@@ -1,5 +1,6 @@
 import type { WebSocketHandler } from "bun";
 import { ACCOUNT_OPENS_ALL_CAPABILITY, accountOpensAll } from "../../shared/account-devices-api.ts";
+import type { NoticeReplay } from "../../shared/account-devices-api.ts";
 import type { ClientMessage, ClientRole, ServerFeature, SessionSnapshot } from "../../shared/protocol.ts";
 import { ConnectionDiagnostics } from "../connection-diagnostics.ts";
 import { faultOf, HerdrError, type HerdrFailureView, LARGE_REPLY_BYTES } from "../herdr/client.ts";
@@ -43,7 +44,7 @@ function watchablePane(paneId: unknown): paneId is string {
   return typeof paneId === "string" && paneId.length <= 256 && paneId.trim() !== "" && !paneId.trim().startsWith("-") && !/[\u0000-\u001f\u007f]/.test(paneId);
 }
 
-export function createSocket({ clients, present, stopped, admit, setRole, watchable, terminalHistory, terminalModes, watchPane, unwatchPane, end, holdPending, attachments, clientSnapshot, herdrLifetime, browserSnapshot, countVisit, drainOutput, frames, herdrFailure }: {
+export function createSocket({ clients, present, stopped, admit, setRole, watchable, terminalHistory, terminalModes, watchPane, unwatchPane, end, holdPending, attachments, clientSnapshot, herdrLifetime, browserSnapshot, countVisit, drainOutput, frames, herdrFailure, notices }: {
   herdrFailure?: HerdrFailureView;
   clients: Set<Client>;
   present: Set<Client>;
@@ -70,6 +71,8 @@ export function createSocket({ clients, present, stopped, admit, setRole, watcha
   countVisit: (snapshot?: Promise<SessionSnapshot>, visit?: { surface?: TelemetrySurface; ingress?: TelemetryIngress }) => void;
   drainOutput: (client: Client) => void;
   frames: Omit<FrameHandlers, ConnectionFrame>;
+  /** the device journal's notices for a paired device (server/devices.ts), with OVIS_ACCOUNT_OPENS_ALL on */
+  notices?: { replay(deviceId: string): NoticeReplay | null; seen(deviceId: string, seq: number): void };
 }): SocketHandler {
   const websocketDiagnostics = new ConnectionDiagnostics("websocket");
   const connectionFrames = {
@@ -160,6 +163,9 @@ export function createSocket({ clients, present, stopped, admit, setRole, watcha
       // watch-only connection, which may list no folder, is not told where it is
       const pasteDir = client.data.readOnly ? undefined : pasteDirectoryForAll();
       send(client, { type: "features", features, connection: client.data.connectionId, server_time: Date.now(), ...(lifetime === undefined ? {} : { herdr_lifetime: lifetime }), ...(pasteDir === undefined ? {} : { paste_dir: pasteDir }) });
+      // what this device has not seen, before anything else on its stream (T57)
+      const replay = client.data.deviceId === undefined ? null : notices?.replay(client.data.deviceId);
+      if (replay) send(client, { type: "device-notice-replay", replay });
       const snapshot = clientSnapshot();
       countVisit(snapshot, { surface: client.data.surface, ingress: client.data.ingress });
       try {
@@ -185,6 +191,11 @@ export function createSocket({ clients, present, stopped, admit, setRole, watcha
         message = JSON.parse(String(raw)) as ClientMessage;
       } catch {
         send(client, { type: "error", code: "invalid_json", message: "message must be JSON" });
+        return;
+      }
+      if (message.type === "notice-seen") {
+        // an acknowledgement moves this device's `seen` and decides nothing (T57)
+        if (client.data.deviceId !== undefined && Number.isSafeInteger(message.seq)) notices?.seen(client.data.deviceId, message.seq);
         return;
       }
       try {

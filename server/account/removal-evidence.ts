@@ -85,6 +85,14 @@ export class RemovalEvidence {
     return evidence;
   }
 
+  /** Whether the file is on disk. */
+  get onDisk(): boolean { return existsSync(this.path); }
+
+  /** A missing file this PC once wrote is damage, not a fresh start (S19). */
+  missingAfterWritten(): void {
+    if (this.problem === null && !this.onDisk) this.problem = `${this.path} is missing, though this PC wrote it before`;
+  }
+
   /** Why this PC fails closed, or null: a key may be out that this PC cannot tell any more. */
   get strict(): string | null {
     return this.problem === null ? null : `${this.problem}: only this PC itself gets in until the removal evidence is restored.`;
@@ -116,9 +124,11 @@ export class RemovalEvidence {
     if (marker?.removals.some((r) => r.id === removal.id)) return false;
     const entry: Removal = { id: removal.id, over: [...this.forgets(key, account)], tomb: removal.id, at: removal.at, ...(removal.records ? { records: [...removal.records] } : {}) };
     let removals = [...marker?.removals ?? [], entry];
+    // only a removal a forget already ended makes room: one that stands is never dropped, however many there are (T61)
     while (removals.length > MARKER_REMOVALS_MAX) {
       const drop = removals.findIndex((r) => r !== entry && !this.removalStands({ key, account, removals }, r));
-      removals.splice(drop >= 0 ? drop : 0, 1);
+      if (drop < 0) break;
+      removals.splice(drop, 1);
     }
     const next = { key, account, removals };
     this.write({ ...this.doc, markers: marker ? this.doc.markers.map((m) => m === marker ? next : m) : [...this.doc.markers, next] });

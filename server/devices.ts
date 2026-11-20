@@ -14,8 +14,10 @@ import { createHash, createPublicKey, randomBytes, randomInt, timingSafeEqual } 
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { isRowOrigin, legacyOrigin, type RowOrigin } from "./account/admission-order.ts";
-import type { ClearReason, PcAccountState } from "./account/pc-binding.ts";
+import { type ClearReason, PcAccountState } from "./account/pc-binding.ts";
 import type { RemovalEvidence } from "./account/removal-evidence.ts";
+import type { DeviceJournal, JournalEntry } from "./account/device-journal.ts";
+import type { DeviceNotice, NoticeReplay } from "../shared/account-devices-api.ts";
 import { AccountRecordError, isIsoTime, parseAccountRecord, type AddRecord, type RemoveRecord } from "../shared/account-records.ts";
 import { type AccountPairing, type AccountPairingEnd, type AccountPairingState, type AccountPairingTurnedAway, type DevicePairedEvent, type DeviceRemovedEvent, type DevicePairToken, type DeviceRole, type DevicesRevokedAll, type PairedDevice, type DeviceConnection, STREAM_COOKIE_PREFIX } from "../shared/protocol.ts";
 import type { MuxClock } from "../shared/relay-mux-engine.ts";
@@ -430,6 +432,11 @@ function pairedHere(device: StoredDevice): boolean {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** What a thrown value says, for a log line; a value that cannot be told says so. */
+function describe(error: unknown): string {
+  try { return error instanceof Error ? error.message : String(error); } catch { return "an error that cannot be described"; }
+}
+
 export class DeviceStore {
   private devices: StoredDevice[] = [];
   /** when the first device was paired: from then on, only this PC, the owner's login, a device or the token get in */
@@ -492,14 +499,22 @@ export class DeviceStore {
   private readonly evidence: RemovalEvidence | null;
   /** every tombstone of this folder and its sibling as read before any coalescing merge (T48): each is evidence */
   private readonly carried: readonly AccountTombstone[];
+  private readonly journal: DeviceJournal | null;
+  private readonly noticeListeners = new Set<(entry: JournalEntry) => void>();
   /** A deny that could not reach the disk (P8 step 1): only this PC itself gets in until one is written. */
   private denyProblem: string | null = null;
   private readonly revokeAllPath: string;
-  constructor(stateDir: string, blocked: string | null = null, accountBlocked: string | null = null, account: { safety?: { readonly strict: string | null } | null; pc?: PcAccountState | null; removals?: RemovalEvidence | null; carried?: readonly AccountTombstone[] } = {}) {
+  private readonly stateDirPath: string;
+
+  constructor(stateDir: string, blocked: string | null = null, accountBlocked: string | null = null, account: { safety?: { readonly strict: string | null } | null; pc?: PcAccountState | null; removals?: RemovalEvidence | null; journal?: DeviceJournal | null; carried?: readonly AccountTombstone[] } = {}) {
     this.safety = account.safety ?? null;
     this.pc = account.pc ?? null;
+    this.stateDirPath = stateDir;
     this.evidence = account.removals ?? null;
+    // removal evidence this PC wrote once and that is gone now is damage, never a fresh start (S19)
+    if (this.evidence !== null && this.pc?.evidenceWritten() === true) this.evidence.missingAfterWritten();
     this.carried = account.carried ?? [];
+    this.journal = account.journal ?? null;
     this.path = join(stateDir, "devices.json");
     this.tombstonePath = join(stateDir, "account-tombstones.json");
     this.pendingTombstonePath = join(stateDir, "account-tombstones.pending.json");
@@ -565,6 +580,8 @@ export class DeviceStore {
     }
     // the one-time legacy pass asks only whether the registry could be read: nothing is admitted before it (T50)
     if (this.error === null) this.migrate();
+    // evidence on disk at start counts as written, also for a PC that wrote it before this mark existed (S19)
+    if (this.error === null && this.evidence?.onDisk === true && this.evidence.strict === null) this.pc?.noteEvidenceWritten();
   }
 
   /**
@@ -669,7 +686,7 @@ export class DeviceStore {
   }
 
   get accountError(): string | null {
-    return this.safety?.strict ?? this.pc?.strict ?? this.evidence?.strict ?? this.denyProblem ?? this.accountProblem;
+    return this.safety?.strict ?? this.pc?.strict ?? this.evidence?.strict ?? this.journal?.strict ?? this.denyProblem ?? this.accountProblem;
   }
 
   /** The safety log or the admission order fails closed: no device gets in by a row or a code. */
@@ -717,7 +734,10 @@ export class DeviceStore {
 
   /** The PC leaves its account, for one of the three named reasons (P12); nothing else clears the binding. */
   clearAccountBinding(reason: ClearReason, by: string): boolean {
-    return this.pc?.clear(reason, by) ?? false;
+    if (this.pc !== null) return this.pc.clear(reason, by);
+    // with the flag off nothing of the account is read, but a binding a flag-on run left is still cleared, so the next
+    // flag-on start is in no account (P12); a folder that never had one is not touched
+    return existsSync(join(this.stateDirPath, "account-pc.json")) ? PcAccountState.open(this.stateDirPath).clear(reason, by) : false;
   }
 
   /**
@@ -859,7 +879,12 @@ export class DeviceStore {
       type: "device-paired", event_id: randomBytes(8).toString("hex"), device_id: device.id, label: device.label, enrolled_at: new Date(enrolledAt).toISOString(),
       ...(approver ? { approved_by: { device_id: approver.id, label: approver.label } } : {}),
     };
-    for (const listener of this.pairings) listener(event, origin);
+    // with the flag off, main's own order: a listener that throws fails the pairing
+    if (this.safety === null) { for (const listener of this.pairings) listener(event, origin); return; }
+    // each on its own: one that throws skips nobody else (G14)
+    for (const listener of [...this.pairings]) {
+      try { listener(event, origin); } catch (error) { console.warn(`[devices] a pairing listener failed: ${describe(error)}`); }
+    }
   }
 
   private assertWritable(): void {
@@ -1367,6 +1392,7 @@ export class DeviceStore {
     const admitted = this.knowingRemovals(this.admitted(admitting, now, path));
     // with the flag on a row is stamped after everything this store ordered before it (T26, P13)
     const device = this.evidence === null ? admitted : { ...admitted, created_at: this.nextStamp(Date.parse(admitted.created_at)) };
+    this.journalAdmission(device);
     const next = [...this.devices, device];
     const gate = this.gateClosedAt ?? device.created_at;
     this.save(next, gate);
@@ -1574,6 +1600,7 @@ export class DeviceStore {
     if (candidateIndex !== -1) {
       const { device: candidate, origin } = this.unconfirmedFirstPairs[candidateIndex]!;
       const confirmed = this.admitted({ ...candidate, last_seen_at: new Date(now).toISOString() }, now);
+      this.journalAdmission(confirmed);
       const next = [...this.devices, confirmed];
       const gate = this.gateClosedAt ?? confirmed.created_at;
       // This is an authorization write, not last-seen telemetry: do not match the cookie
@@ -1634,8 +1661,65 @@ export class DeviceStore {
 
   private announceRemoval(device: StoredDevice, by: DeviceRemovedEvent["by"]): void {
     const event: DeviceRemovedEvent = { type: "device-removed", event_id: randomBytes(8).toString("hex"), device_id: device.id, label: device.label, removed_at: new Date().toISOString(), ...(by === undefined ? {} : { by }) };
-    for (const listener of [...this.removals]) listener(event);
+    if (this.safety === null) { for (const listener of [...this.removals]) listener(event); return; }
+    for (const listener of [...this.removals]) {
+      try { listener(event); } catch (error) { console.warn(`[devices] a removal listener failed: ${describe(error)}`); }
+    }
   }
+
+  /**
+   * An admission's journal entry, on disk before its row (G14): a journal that cannot be written throws, and nobody
+   * is admitted. Then every listener hears it, each on its own.
+   */
+  private journalAdmission(device: StoredDevice): void {
+    if (this.journal === null) return;
+    this.publish(this.journal.append({ kind: "admit", how: device.origin?.how ?? "code", key: device.relay_public_key ?? null, no: device.origin?.admit_no ?? null, row: device.id, label: device.label, by: device.added_by ?? null, account: device.account ?? null }));
+  }
+
+  /** A removal's journal entry, after its deny (P8 step 4). A journal that cannot be written stops no removal. */
+  private journalRemoval(device: StoredDevice, by: DeviceRemovedEvent["by"]): void {
+    if (this.journal === null) return;
+    try {
+      this.publish(this.journal.append({ kind: "remove", how: typeof by === "object" ? "member" : "pc", key: device.relay_public_key ?? null, no: device.origin?.admit_no ?? null, row: device.id, label: device.label, by: typeof by === "object" ? by.device_id : null, account: device.account ?? null }));
+    } catch (error) { console.error(`[devices] the removal of ${device.id} could not be journalled: ${describe(error)}`); }
+  }
+
+  private publish(entry: JournalEntry): void {
+    for (const listener of [...this.noticeListeners]) {
+      try { listener(entry); } catch (error) { console.warn(`[devices] a notice listener failed: ${describe(error)}`); }
+    }
+  }
+
+  /** Hears every journal entry once it is on disk, to send it to the rows connected now (P10). */
+  onNotice(listener: (entry: JournalEntry) => void): () => void {
+    this.noticeListeners.add(listener);
+    return () => { this.noticeListeners.delete(listener); };
+  }
+
+  /** Whether the row `id` is told of `entry`: entries about rows that joined this PC after it (T57); a row with no age hears none. */
+  private tells(id: string, entry: JournalEntry): boolean {
+    const row = this.devices.find((d) => d.id === id);
+    if (row?.origin === undefined || entry.row === id) return false;
+    if (row.origin.from === "legacy") return true;
+    return entry.no !== null && row.origin.admit_no < entry.no;
+  }
+
+  /** The notice of `entry` for the row `id`, or null when that row is not told of it. */
+  noticeFor(id: string, entry: JournalEntry): DeviceNotice | null {
+    return this.journal !== null && this.tells(id, entry) ? this.journal.notice(entry) : null;
+  }
+
+  /** What the row `id` is told at its connect, before anything else on its stream (T57); null with no journal. */
+  noticeReplay(id: string): NoticeReplay | null {
+    return this.journal === null || !this.has(id) ? null : this.journal.replay(id, (entry) => this.tells(id, entry));
+  }
+
+  /** The row `id` saw up to `seq`: it decides nothing (T57). */
+  noticeSeen(id: string, seq: number): void {
+    if (this.journal !== null && this.has(id)) this.journal.ack(id, seq);
+  }
+
+  openNotices(): readonly JournalEntry[] { return this.journal?.openNotices() ?? []; }
 
   revoke(id: string, by: DeviceRemovedEvent["by"] = "pc"): boolean {
     this.assertWritable();
@@ -1746,6 +1830,7 @@ export class DeviceStore {
     try {
       write();
       this.pc?.raiseGen();
+      if (this.evidence?.onDisk === true) this.pc?.noteEvidenceWritten();
       // only the deny of the very key that failed ends its closing, and never while a Revoke all is unfinished on disk
       for (const key of keys) this.failedDenies.delete(key);
       this.settleDenies();
@@ -1798,6 +1883,7 @@ export class DeviceStore {
       this.revocations.delete(device.id);
       for (const close of listeners ?? []) close();
     }
+    for (const device of gone) this.journalRemoval(device, by);
     // the registry write is these rows' own deny when they hold no key (cookie rows): one that fails keeps them out for
     // this run and the PC closed until a write lands (P8, S19); a removal is told once the write is tried (P8 step 5)
     try { this.save(next, gate); } catch (error) {
@@ -1845,6 +1931,7 @@ export class DeviceStore {
     if (gateWasOpen) this.tellGateClosed();
     if (denied !== null) throw denied;
     for (const device of gone) this.announceRemoval(device, "pc");
+    for (const device of gone) this.journalRemoval(device, "pc");
     // its intent is on disk: any write after it that fails leaves the PC closed until a start finishes it (P8, T20)
     try { this.finishRevokeAll(gone, gate); } catch (error) {
       this.denyProblem = `Revoke all could not be finished (${error instanceof Error ? error.message : String(error)}): only this PC itself gets in until it is.`;
