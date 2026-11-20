@@ -1,4 +1,26 @@
 {
+  "0.5.7": {
+    "en": {
+      "improved": [
+        "Groundwork for account device safety, still switched off for now."
+      ]
+    },
+    "ko": {
+      "improved": [
+        "계정 기기 보호를 위한 기반 작업이에요. 기능은 아직 꺼져 있어요."
+      ]
+    },
+    "ja": {
+      "improved": [
+        "アカウント端末の保護に向けた下準備です。機能はまだオフです。"
+      ]
+    },
+    "zh": {
+      "improved": [
+        "为账户设备安全做的基础工作，相关功能目前仍关闭。"
+      ]
+    }
+  },
   "0.5.6": {
     "en": {
       "new": [

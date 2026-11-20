@@ -7,6 +7,46 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-11-21
+
+### Maintenance
+- Groundwork for keeping an Ovis account's devices safe on every PC in it: a signed, append-only
+  safety log on each PC with one admission order, account removals kept apart from a PC's own
+  Revokes, blocks and freezes that each PC applies and lifts, `ovis recover` and a lock confirmed on
+  the PC's screen, a relay pairing that proves its key and waits for the PC's screen to approve it,
+  and the account screens in the app, Not me included. These safety controls are behind
+  `OVIS_ACCOUNT_OPENS_ALL`, which is off by default. One part runs with it off: after signing in to
+  the account, the app asks the account service to register this device's key before it reads the
+  PC list, and goes on as before when the service has no such route. Remote PCs reached over SSH
+  take the new bridge (bundle 51) once, by themselves where automatic bridge updates are on, else
+  through Update bridge.
+  ([#4278](https://github.com/devswha/ovis/pull/4278),
+  [#4286](https://github.com/devswha/ovis/pull/4286),
+  [#4290](https://github.com/devswha/ovis/pull/4290),
+  [#4293](https://github.com/devswha/ovis/pull/4293),
+  [#4297](https://github.com/devswha/ovis/pull/4297),
+  [#4300](https://github.com/devswha/ovis/pull/4300),
+  [#4303](https://github.com/devswha/ovis/pull/4303),
+  [#4307](https://github.com/devswha/ovis/pull/4307),
+  [#4308](https://github.com/devswha/ovis/pull/4308),
+  [#4309](https://github.com/devswha/ovis/pull/4309),
+  [#4310](https://github.com/devswha/ovis/pull/4310),
+  [#4318](https://github.com/devswha/ovis/pull/4318),
+  [#4319](https://github.com/devswha/ovis/pull/4319),
+  [#4301](https://github.com/devswha/ovis/pull/4301),
+  [#4312](https://github.com/devswha/ovis/pull/4312),
+  [#4283](https://github.com/devswha/ovis/pull/4283),
+  [#4322](https://github.com/devswha/ovis/pull/4322),
+  [#4324](https://github.com/devswha/ovis/pull/4324),
+  [#4311](https://github.com/devswha/ovis/pull/4311),
+  [#4327](https://github.com/devswha/ovis/pull/4327))
+- Browser regressions: the three races behind relay-offline-reasons-regression's occasional
+  failures are fixed in the script, without sleeps
+  ([#4313](https://github.com/devswha/ovis/pull/4313)), and workspace-touch-reorder-demo-regression
+  counts a pass on its second run until the reorder race in
+  [#4316](https://github.com/devswha/ovis/issues/4316) is fixed
+  ([#4317](https://github.com/devswha/ovis/pull/4317)).
+
 ## [0.5.6] - 2026-11-20
 
 ### Added
@@ -11965,7 +12005,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/ovis/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/devswha/ovis/compare/v0.5.7...HEAD
+[0.5.7]: https://github.com/devswha/ovis/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/devswha/ovis/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/devswha/ovis/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/devswha/ovis/compare/v0.5.3...v0.5.4
