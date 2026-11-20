@@ -153,6 +153,39 @@ export class AccountMailbox {
     const pending = readPending(options.pendingPath);
     this.pending = pending ?? [];
     this.pendingError = pending === null ? `Cannot read ${options.pendingPath}: account adds wait until it is restored or fixed.` : null;
+    if (options.devices.opensAll()) options.devices.onRemoved((_event, key) => {
+      if (key !== undefined) this.dropSignerRemovals(key);
+    });
+  }
+
+  /**
+   * Whether a waiting remove may hold its key back (P19): with the release flag on, only one the key signed of itself
+   * or that a drive member of the account here signed; any other holds nothing. Without the flag, every one does.
+   */
+  private authorized(record: unknown): boolean {
+    if (!this.options.devices.opensAll()) return true;
+    const { key, signer, account } = record as { key?: unknown; signer?: unknown; account?: unknown };
+    if (signer === key) return true;
+    return typeof signer === "string" && typeof account === "string" && this.options.devices.accountSigner(signer, account) !== null;
+  }
+
+  private holdsKey(key: string): boolean {
+    return this.waiting().some((record) => removedKey(record) === key && this.authorized(record));
+  }
+
+  /** What holds a key back from the account's list (P19): authorized waiting removes only; a full queue gates nothing there. */
+  listHeld(key: string): boolean { return this.pendingError !== null || this.holdsKey(key); }
+
+  private dropSignerRemovals(key: string): void {
+    if (this.pendingError !== null) return;
+    const keep = (record: unknown) => typeof record !== "object" || record === null
+      || !("signer" in record) || record.signer !== key || removedKey(record) === null;
+    const pending = this.pending.filter(keep);
+    const draining = this.draining.filter(keep);
+    if (pending.length === this.pending.length && draining.length === this.draining.length) return;
+    if (this.options.pendingPath) writePrivateState(this.options.pendingPath, [...draining, ...pending]);
+    this.draining.splice(0, this.draining.length, ...draining);
+    this.pending = pending;
   }
 
   /**
@@ -162,8 +195,8 @@ export class AccountMailbox {
   gates(): AddGates {
     return {
       enrolling: () => this.options.holds?.enrolling() ?? false,
-      held: (key) => this.pendingError !== null || this.waiting().some((record) => removedKey(record) === key) || (this.options.holds?.holds(key) ?? false),
-      removing: (key) => this.pendingError !== null || this.waiting().some((record) => removedKey(record) === key),
+      held: (key) => this.pendingError !== null || this.holdsKey(key) || (this.options.holds?.holds(key) ?? false),
+      removing: (key) => this.pendingError !== null || this.holdsKey(key),
     };
   }
 
@@ -172,7 +205,7 @@ export class AccountMailbox {
 
   /** The keys of the removes waiting here: /api/account/status lists them as `blocked`. */
   waitingRemoveKeys(): string[] {
-    return [...new Set(this.waiting().flatMap((record) => removedKey(record) ?? []))];
+    return [...new Set(this.waiting().flatMap((record) => this.authorized(record) ? removedKey(record) ?? [] : []))];
   }
 
   private waiting(): unknown[] { return [...this.draining, ...this.pending]; }
@@ -389,16 +422,18 @@ export class AccountMailbox {
   private async retry(early: unknown[], serverId: string): Promise<number> {
     let applied = 0;
     for (let progress = true; progress && early.length;) {
-      progress = false;
-      for (let start = 0; start < early.length;) {
-        const batch = early.slice(start, start + ACCOUNT_RECORDS_MAX);
+      // A removal listener can shrink `early` during apply. Walk a snapshot and never put its dropped entries back.
+      const pass = [...early];
+      for (let start = 0; start < pass.length; start += ACCOUNT_RECORDS_MAX) {
+        const batch = pass.slice(start, start + ACCOUNT_RECORDS_MAX).filter((record) => early.includes(record));
         const outcomes = await applyAccountRecords(this.options.devices, batch, serverId, Date.now(), this.gates());
-        const keep = batch.filter((_record, index) => waits(outcomes[index]));
         applied += outcomes.filter(({ outcome }) => outcome === "applied").length;
-        if (keep.length !== batch.length) progress = true;
-        early.splice(start, batch.length, ...keep);
-        start += keep.length;
+        const done = new Set(batch.filter((_record, index) => !waits(outcomes[index])));
+        for (let index = early.length - 1; index >= 0; index--) {
+          if (done.has(early[index])) early.splice(index, 1);
+        }
       }
+      progress = early.length !== pass.length;
     }
     return applied;
   }
@@ -473,7 +508,11 @@ export class AccountMailbox {
         for (let start = 0; start < entries.length; start += ACCOUNT_RECORDS_MAX) {
           const batch = entries.slice(start, start + ACCOUNT_RECORDS_MAX).map(({ record }) => record);
           // a remove waiting on its signer joins `early` at once, so an add for its key later in the page meets it
+          const queued = new Set<unknown>();
           const keep = (record: unknown) => {
+            // Do not requeue one the removal listener dropped between application and outcome processing.
+            if (queued.has(record)) return true;
+            queued.add(record);
             const text = JSON.stringify(record);
             if (!early.some((kept) => JSON.stringify(kept) === text)) early.push(record);
             return true;

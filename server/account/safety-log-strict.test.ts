@@ -31,11 +31,11 @@ describe("the safety log's endings and its failed writes (P24, S19)", () => {
     const block = await signSafetyRecord({ v: 1, kind: "block", account: "acct_1", target: (await signer()).spki, target_no: 3, signer: by.spki, signer_no: 1, signed_at: AT, nonce: newRecordId() }, by.keys.privateKey);
     const lock = pc("lock", "acct_1", null);
     for (const record of [block, lock]) log.append({ record, got: "pc", ...(record.kind === "block" ? { asof: { signer_no: 1, target_no: 3, after: 3, joined: 3, signer_removed: false } } : {}) });
-    log.append({ record: pc("lift", "acct_2", block.id), got: "pc" });
+    log.append({ record: pc("lift", "acct_2", block.id), got: "pc", cause: "screen" });
     log.append({ record: pc("unlock", "acct_2", lock.id), got: "pc" });
     expect(log.state().blocks.map((entry) => entry.record.id)).toEqual([block.id]);
     expect(log.state().locked).toBe(true);
-    log.append({ record: pc("lift", "acct_1", block.id), got: "pc" });
+    log.append({ record: pc("lift", "acct_1", block.id), got: "pc", cause: "screen" });
     log.append({ record: pc("unlock", "acct_1", lock.id), got: "pc" });
     expect(log.state().blocks).toEqual([]);
     expect(log.state().locked).toBe(false);
@@ -98,8 +98,8 @@ describe("the safety log's endings and its failed writes (P24, S19)", () => {
     const by = await signer();
     const block = await signSafetyRecord({ v: 1, kind: "block", account: "acct_1", target: (await signer()).spki, target_no: 3, signer: by.spki, signer_no: 1, signed_at: AT, nonce: newRecordId() }, by.keys.privateKey);
     log.append({ record: block, got: "handed", asof: { signer_no: 1, target_no: 3, after: 3, joined: 3, signer_removed: false } });
-    log.append({ record: pc("lift", "acct_1", block.id), got: "pc" });
-    log.append({ record: { ...pc("lift", "acct_2", block.id), forget: true } as SafetyRecord, got: "pc" });
+    log.append({ record: pc("lift", "acct_1", block.id), got: "pc", cause: "screen" });
+    log.append({ record: { ...pc("lift", "acct_2", block.id), forget: true } as SafetyRecord, got: "pc", cause: "screen" });
     expect(log.state().markers).toHaveLength(1);
     log.fold();
     expect(SafetyLog.open(at).state().markers).toHaveLength(1);

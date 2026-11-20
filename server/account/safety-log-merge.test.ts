@@ -60,7 +60,7 @@ describe("merging and folding the PC safety log", () => {
     // the same lock, taken another way; an ending the owner made in the other dir only; a block only it holds
     theirs.append({ record: lock, got: "merge" });
     const liftX = pc("lift", x.id);
-    theirs.append({ record: liftX, got: "pc" });
+    theirs.append({ record: liftX, got: "pc", cause: "screen" });
     theirs.append({ record: y, got: "mailbox", asof: asof(5) });
 
     expect(mergeSafetyLogs(own, other)).toBeNull();
@@ -138,9 +138,9 @@ describe("merging and folding the PC safety log", () => {
     // nothing folds while any record is in force
     expect(log.fold()).toBe(0);
     log.append({ record: pc("unlock", lock.id), got: "pc" });
-    log.append({ record: pc("lift", x.id), got: "pc" });
-    log.append({ record: pc("lift", x.id, true), got: "pc" });
-    log.append({ record: pc("lift", y.id), got: "pc" });
+    log.append({ record: pc("lift", x.id), got: "pc", cause: "screen" });
+    log.append({ record: pc("lift", x.id, true), got: "pc", cause: "screen" });
+    log.append({ record: pc("lift", y.id), got: "pc", cause: "screen" });
     expect(log.fold()).toBeGreaterThan(0);
     const reopened = SafetyLog.open(dir);
     const kept = reopened.entries().map((e) => e.record.id);
@@ -169,11 +169,11 @@ describe("merging and folding the PC safety log", () => {
     const log = SafetyLog.open(dir);
     const x = await block(await key(), await signer());
     expect(log.append({ record: x, got: "handed", asof: asof(3) })).toEqual({ outcome: "applied", id: x.id, n: 1 });
-    log.append({ record: pc("lift", x.id), got: "pc" });
+    log.append({ record: pc("lift", x.id), got: "pc", cause: "screen" });
     // lifted, not forgotten: still whole, still the same receipt
     expect(log.fold()).toBe(0);
     expect(log.append({ record: x, got: "mailbox", asof: asof(3) })).toEqual({ outcome: "applied", id: x.id, n: 1 });
-    log.append({ record: pc("lift", x.id, true), got: "pc" });
+    log.append({ record: pc("lift", x.id, true), got: "pc", cause: "screen" });
     expect(log.fold()).toBeGreaterThan(0);
     expect(log.receipt(x.id)).toEqual({ outcome: "already_applied", id: x.id });
     expect(log.append({ record: x, got: "mailbox", asof: asof(3) })).toEqual({ outcome: "already_applied", id: x.id });
@@ -185,7 +185,7 @@ describe("merging and folding the PC safety log", () => {
     const x = await block(await key(), await signer());
     log.append({ record: x, got: "handed", asof: asof(3) });
     log.append({ record: { v: 1, id: `f:${x.id}`, kind: "freeze", account: ACCOUNT, target: (x as { target: string }).target, after: 3, signer: "service", signed_at: AT, signature: "" } as SafetyRecord, got: "snapshot" });
-    log.append({ record: pc("lift", x.id), got: "pc" });
+    log.append({ record: pc("lift", x.id), got: "pc", cause: "screen" });
     expect(log.state().blocks).toHaveLength(0);
     log.fold();
     const reopened = SafetyLog.open(dir);
@@ -220,7 +220,7 @@ describe("merging and folding the PC safety log", () => {
     const x = await block(await key(), await signer());
     const mine = SafetyLog.open(own);
     mine.append({ record: { v: 1, id: `f:${x.id}`, kind: "freeze", account: ACCOUNT, target: (x as { target: string }).target, after: 3, signer: "service", signed_at: AT, signature: "" } as SafetyRecord, got: "snapshot" });
-    mine.append({ record: pc("lift", x.id), got: "pc" });
+    mine.append({ record: pc("lift", x.id), got: "pc", cause: "screen" });
     mine.fold();
     SafetyLog.open(other).append({ record: x, got: "handed", asof: asof(3) });
     expect(mergeSafetyLogs(own, other)).toBeNull();

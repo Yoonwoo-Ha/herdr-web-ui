@@ -108,14 +108,14 @@ describe("the PC safety log (account-log.json)", () => {
     log.append({ record: lock2, got: "pc" });
     // a lift ends the block it names and that block's freeze; its marker stands
     const liftA = await signedLift(blockA.id, by);
-    log.append({ record: liftA, got: "snapshot" });
+    log.append({ record: liftA, got: "snapshot", cause: "snapshot" });
     // a forgetting lift ends block B and its marker
-    log.append({ record: pcRecord("lift", blockB.id, true), got: "pc" });
+    log.append({ record: pcRecord("lift", blockB.id, true), got: "pc", cause: "screen" });
     // an unlock ends the one lock it names
     log.append({ record: pcRecord("unlock", lock1.id), got: "pc" });
     // endings that name a record of another kind end nothing
     log.append({ record: pcRecord("unlock", blockC.id), got: "pc" });
-    log.append({ record: pcRecord("lift", lock2.id), got: "pc" });
+    log.append({ record: pcRecord("lift", lock2.id), got: "pc", cause: "screen" });
     const replayed = (state: ReturnType<SafetyLog["state"]>) => ({
       locked: state.locked,
       locks: ids(state.locks),
@@ -136,17 +136,32 @@ describe("the PC safety log (account-log.json)", () => {
 
     // a lift of a service freeze's block ends that freeze (by `f:` and the block's id)
     const liftFreeze = pcRecord("lift", freeze.id.slice(2));
-    log.append({ record: liftFreeze, got: "pc" });
+    log.append({ record: liftFreeze, got: "pc", cause: "screen" });
     log.append({ record: pcRecord("unlock", lock2.id), got: "pc" });
     expect(replayed(SafetyLog.open(dir).state())).toEqual({ ...expected, locked: false, locks: [], freezes: [blockC.id] });
 
-    // the server replays it in createServer, before any listener answers
+    // T73: startup cannot lift a block just because its signer has no row here.
     const fixture = relayFixture(false, { stateDir: dir, accountOpensAll: true });
     fixtures.push(fixture);
     dirs.splice(dirs.indexOf(dir), 1);
     const served = fixture.app.context.services.safetyLog;
     expect(served).not.toBeNull();
     expect(replayed(served!.state())).toEqual({ ...expected, locked: false, locks: [], freezes: [blockC.id] });
+  });
+
+  test("T73: lifting a standalone service freeze notifies its target after the lift is durable", async () => {
+    const dir = stateDir();
+    const log = SafetyLog.open(dir);
+    const target = await key();
+    const blockId = createHash("sha256").update("standalone freeze").digest("hex");
+    const freeze = serviceFreeze(blockId, target);
+    expect(log.append({ record: freeze, got: "snapshot" }).outcome).toBe("applied");
+    const lift = pcRecord("lift", blockId);
+    const heard: unknown[] = [];
+    log.onLifted((key, cause) => heard.push([key, cause, SafetyLog.open(dir).receipt(lift.id)?.outcome]));
+    expect(log.append({ record: lift, got: "pc", cause: "screen" }).outcome).toBe("applied");
+    expect(log.state().freezes).toEqual([]);
+    expect(heard).toEqual([[target, "screen", "applied"]]);
   });
 
   test("T28: missing or invalid log fails closed once journal exists", async () => {
