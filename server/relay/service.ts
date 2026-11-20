@@ -637,6 +637,8 @@ export class RelayService {
       services.devices.endPairing();
       await this.disconnect();
       for (const device of services.devices.list(null)) if (device.via_relay) services.devices.revoke(device.id);
+      // a new relay identity is a new PC to the account: the binding of the old one is cleared (P12, T59)
+      services.devices.clearAccountBinding("identity_reset", "pc");
       this.identity = rotateRelayIdentity(this.options.stateDir);
       this.blocked = null;
     } finally { this.resetting = false; }

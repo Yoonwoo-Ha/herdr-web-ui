@@ -5,10 +5,13 @@ import { join } from "node:path";
 import { exportAccountKey } from "../../shared/account-records.ts";
 import { readDeviceRegistry, type StoredDevice } from "../devices.ts";
 import { relayFixture } from "../relay/test-helpers.ts";
-import { ADMISSION_FILE, AdmissionOrder } from "./admission-order.ts";
+import { ADMISSION_FILE } from "./admission-order.ts";
+import { PcAccountState } from "./pc-binding.ts";
 import { pcRecordId, SafetyLog } from "./safety-log.ts";
 import type { SafetyRecord } from "../../shared/account-records.ts";
 
+/** account-pc.json as S2-04 writes it, its binding empty */
+const accountState = (next_admit: number) => JSON.stringify({ v: 1, next_admit, binding: null, clears: [], first: null, others_ever: false });
 const AT = "2026-10-01T00:00:00.000Z";
 const dirs: string[] = [];
 const fixtures: ReturnType<typeof relayFixture>[] = [];
@@ -46,7 +49,7 @@ describe("a row's age is its own folder's word (P21, P22, T50)", () => {
   test("T50: only this folder's rows from before the upgrade are stamped legacy; a sibling's row keeps its own number there and none here", () => {
     const [a, b] = [dir(), dir()];
     put(a, [row("aaaaaaaaaaaaaaaa")]);
-    writeFileSync(join(b, ADMISSION_FILE), JSON.stringify({ v: 1, next_admit: 2 }), { mode: 0o600 });
+    writeFileSync(join(b, ADMISSION_FILE), accountState(2), { mode: 0o600 });
     put(b, [row("bbbbbbbbbbbbbbbb", { origin: { from: "remote", how: "code", by: null, admit_no: 1, at: AT } })]);
     start(a, b, true);
     expect(persisted(a)).toEqual({ aaaaaaaaaaaaaaaa: expect.objectContaining({ from: "legacy", admit_no: 0 }), bbbbbbbbbbbbbbbb: undefined });
@@ -58,8 +61,8 @@ describe("a row's age is its own folder's word (P21, P22, T50)", () => {
     const newKey = async () => exportAccountKey((await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign"])).publicKey);
     const [keyA, firstKey, movedKey, ourOld, ourNew] = [await newKey(), await newKey(), await newKey(), await newKey(), await newKey()];
     const at = (admit_no: number, how: "code" | "link" = "code") => ({ from: "remote" as const, how, by: null, admit_no, at: AT });
-    writeFileSync(join(a, ADMISSION_FILE), JSON.stringify({ v: 1, next_admit: 9 }), { mode: 0o600 });
-    writeFileSync(join(b, ADMISSION_FILE), JSON.stringify({ v: 1, next_admit: 9 }), { mode: 0o600 });
+    writeFileSync(join(a, ADMISSION_FILE), accountState(9), { mode: 0o600 });
+    writeFileSync(join(b, ADMISSION_FILE), accountState(9), { mode: 0o600 });
     const linked = { account: "acct", linked_at: "2026-10-02T00:00:00.000Z", link_moved_key: true };
     put(a, [row("aaaaaaaaaaaaaaaa", { relay_public_key: keyA, origin: at(1) }), row("cccccccccccccccc", { relay_public_key: firstKey, origin: at(2) }), row("dddddddddddddddd", { relay_public_key: ourNew, ...linked, origin: at(4, "link") })]);
     put(b, [row("aaaaaaaaaaaaaaaa", { relay_public_key: keyA, origin: at(3) }), row("cccccccccccccccc", { relay_public_key: movedKey, ...linked, origin: at(5, "link") }), row("dddddddddddddddd", { relay_public_key: ourOld, origin: at(6) })]);
@@ -113,7 +116,7 @@ describe("a row's age is its own folder's word (P21, P22, T50)", () => {
     const newKey = async () => exportAccountKey((await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign"])).publicKey);
     const [oldKey, linkedKey] = [await newKey(), await newKey()];
     put(a, [row("aaaaaaaaaaaaaaaa", { relay_public_key: oldKey })]);
-    writeFileSync(join(b, ADMISSION_FILE), JSON.stringify({ v: 1, next_admit: 5 }), { mode: 0o600 });
+    writeFileSync(join(b, ADMISSION_FILE), accountState(5), { mode: 0o600 });
     put(b, [row("aaaaaaaaaaaaaaaa", { relay_public_key: linkedKey, account: "acct", linked_at: "2026-10-02T00:00:00.000Z", link_moved_key: true, origin: { from: "remote", how: "link", by: null, admit_no: 4, at: AT } })]);
     // the key comes in by a flag-off merge (with the flag on, S2-17 drops a row whose keys differ); the first flag-on
     // start then finds a key this folder never held
@@ -151,7 +154,7 @@ describe("a row's age is its own folder's word (P21, P22, T50)", () => {
       for (const id of ids) there.app.context.services.devices.revoke(id);
       stop(there, b);
       if (damage === "missing") rmSync(join(a, ADMISSION_FILE));
-      else writeFileSync(join(a, ADMISSION_FILE), JSON.stringify({ v: 1, next_admit: 2 }), { mode: 0o600 });
+      else writeFileSync(join(a, ADMISSION_FILE), accountState(2), { mode: 0o600 });
       // the sibling's log holds a record this folder's does not, which a merge would copy here
       SafetyLog.open(b).append({ record: { v: 1, id: pcRecordId(), kind: "lock", account: "acct", target: null, signer: "pc", signed_at: AT, signature: "" } as SafetyRecord, got: "pc" });
       const logs = () => [a, b].map((at) => { try { return readFileSync(join(at, "account-log.json"), "utf8"); } catch { return null; } });
@@ -179,7 +182,7 @@ describe("a row's age is its own folder's word (P21, P22, T50)", () => {
     const newKey = async () => exportAccountKey((await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign"])).publicKey);
     const oldKey = await newKey();
     put(a, []);
-    writeFileSync(join(b, ADMISSION_FILE), JSON.stringify({ v: 1, next_admit: 2 }), { mode: 0o600 });
+    writeFileSync(join(b, ADMISSION_FILE), accountState(2), { mode: 0o600 });
     put(b, [row("bbbbbbbbbbbbbbbb", { relay_public_key: oldKey, origin: { from: "remote", how: "code", by: null, admit_no: 1, at: AT } })]);
     const first = start(a, b, true);
     first.app.context.services.devices.linkAccountKey("bbbbbbbbbbbbbbbb", oldKey, await newKey(), "acct");
@@ -195,7 +198,7 @@ describe("a row's age is its own folder's word (P21, P22, T50)", () => {
     const at = dir();
     const newKey = async () => exportAccountKey((await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign"])).publicKey);
     const oldKey = await newKey();
-    writeFileSync(join(at, ADMISSION_FILE), JSON.stringify({ v: 1, next_admit: 2 }), { mode: 0o600 });
+    writeFileSync(join(at, ADMISSION_FILE), accountState(2), { mode: 0o600 });
     put(at, [row("aaaaaaaaaaaaaaaa", { relay_public_key: oldKey, origin: { from: "remote", how: "code", by: null, admit_no: 1, at: AT } })]);
     start(at, undefined, false).app.context.services.devices.linkAccountKey("aaaaaaaaaaaaaaaa", oldKey, await newKey(), "acct");
     expect(persisted(at)).toEqual({ aaaaaaaaaaaaaaaa: undefined });
@@ -205,7 +208,7 @@ describe("a row's age is its own folder's word (P21, P22, T50)", () => {
     const [a, b] = [dir(), dir()];
     const one = { from: "remote" as const, how: "code" as const, by: null, admit_no: 1, at: AT };
     for (const [at, id] of [[a, "aaaaaaaaaaaaaaaa"], [b, "bbbbbbbbbbbbbbbb"]] as const) {
-      writeFileSync(join(at, ADMISSION_FILE), JSON.stringify({ v: 1, next_admit: 2 }), { mode: 0o600 });
+      writeFileSync(join(at, ADMISSION_FILE), accountState(2), { mode: 0o600 });
       put(at, [row(id, { origin: one })]);
     }
     stop(start(a, b, false), a);
@@ -233,7 +236,7 @@ describe("a row's age is its own folder's word (P21, P22, T50)", () => {
       const newKey = async () => exportAccountKey((await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign"])).publicKey);
       const keys = [await newKey(), await newKey()];
       put(at, keys.map((key, n) => row(`${"a".repeat(15)}${n}`, { relay_public_key: key, origin: { from: "remote", how: "code", by: null, admit_no: n + 1, at: AT } })));
-      if (damage === "behind") writeFileSync(join(at, ADMISSION_FILE), JSON.stringify({ v: 1, next_admit: 2 }), { mode: 0o600 });
+      if (damage === "behind") writeFileSync(join(at, ADMISSION_FILE), accountState(2), { mode: 0o600 });
       // a removal of the first row that a stop left pending: processing it would erase a numbered row
       writeFileSync(join(at, "account-tombstones.pending.json"), JSON.stringify({ v: 1, tombstones: [{ key: keys[0], account: "", record_id: "local", removed_at: "2026-10-02T00:00:00.000Z" }] }), { mode: 0o600 });
       SafetyLog.open(at).append({ record: { v: 1, id: pcRecordId(), kind: "lock", account: "acct", target: null, signer: "pc", signed_at: AT, signature: "" } as SafetyRecord, got: "pc" });
@@ -263,7 +266,7 @@ describe("a row's age is its own folder's word (P21, P22, T50)", () => {
     for (const flagOnFirst of ["sibling", "this"] as const) {
       const [a, b] = [dir(), dir()];
       const [numbered, plain] = flagOnFirst === "sibling" ? [b, a] : [a, b];
-      writeFileSync(join(numbered, ADMISSION_FILE), JSON.stringify({ v: 1, next_admit: 4 }), { mode: 0o600 });
+      writeFileSync(join(numbered, ADMISSION_FILE), accountState(4), { mode: 0o600 });
       put(numbered, [row("bbbbbbbbbbbbbbbb", { origin: at(3) })]);
       put(plain, []);
       stop(start(plain, numbered, false), plain);
@@ -280,7 +283,7 @@ describe("a row's age is its own folder's word (P21, P22, T50)", () => {
     const linked = `${at}-link`;
     symlinkSync(at, linked);
     dirs.push(linked);
-    expect(AdmissionOrder.open(linked)).toBe(AdmissionOrder.open(at));
+    expect(PcAccountState.open(linked)).toBe(PcAccountState.open(at));
   });
 
   test("P22: digits approved with no member name the path digits and no approver, whatever code is pending", async () => {
@@ -308,16 +311,16 @@ describe("a row's age is its own folder's word (P21, P22, T50)", () => {
 
   test("P21: one folder has one order handle, and no number is given twice", () => {
     const at = dir();
-    const first = AdmissionOrder.open(at);
-    const second = AdmissionOrder.open(at);
+    const first = PcAccountState.open(at);
+    const second = PcAccountState.open(at);
     expect(second).toBe(first);
-    first.settleFresh();
+    first.migrate(null, false);
     expect([first.admit("remote", "code", null, Date.now()).admit_no, second.admit("remote", "code", null, Date.now()).admit_no]).toEqual([1, 2]);
   });
 
   test("P21: an order file behind the numbers its rows carry is damage", () => {
     const at = dir();
-    writeFileSync(join(at, ADMISSION_FILE), JSON.stringify({ v: 1, next_admit: 2 }), { mode: 0o600 });
+    writeFileSync(join(at, ADMISSION_FILE), accountState(2), { mode: 0o600 });
     put(at, [row("aaaaaaaaaaaaaaaa", { origin: { from: "remote", how: "code", by: null, admit_no: 3, at: AT } })]);
     expect(start(at, undefined, true).app.context.services.devices.accountError).not.toBeNull();
   });

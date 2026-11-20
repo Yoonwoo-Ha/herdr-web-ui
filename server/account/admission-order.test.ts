@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { DeviceStore, readDeviceRegistry, type StoredDevice } from "../devices.ts";
 import { mergeRegistries } from "../state-merge.ts";
 import { relayFixture } from "../relay/test-helpers.ts";
-import { ADMISSION_FILE, AdmissionOrder, compareAdmission, isRowOrigin, remoteReach } from "./admission-order.ts";
+import { ADMISSION_FILE, compareAdmission, isRowOrigin, remoteReach } from "./admission-order.ts";
+import { PcAccountState } from "./pc-binding.ts";
 import { DEVICE_JOURNAL_FILE } from "./safety-log.ts";
 
 const dirs: string[] = [];
@@ -27,7 +28,7 @@ async function key(): Promise<string> {
   return Buffer.from(await crypto.subtle.exportKey("spki", pair.publicKey)).toString("base64url");
 }
 
-const store = (dir: string) => new DeviceStore(dir, null, null, { admissions: AdmissionOrder.open(dir) });
+const store = (dir: string) => new DeviceStore(dir, null, null, { pc: PcAccountState.open(dir) });
 
 async function pairRelay(devices: DeviceStore, now: number): Promise<string> {
   const paired = devices.pairRelay(devices.startPairing(now).code, "Phone", await key(), now);
@@ -100,9 +101,9 @@ describe("one admission order per PC (origin and admit_no)", () => {
     const journalled = stateDir();
     writeFileSync(join(journalled, "devices.json"), JSON.stringify({ gate_closed_at: older.created_at, devices: [older] }), { mode: 0o600 });
     writeFileSync(join(journalled, DEVICE_JOURNAL_FILE), JSON.stringify({ v: 1, entries: [] }), { mode: 0o600 });
-    const admissions = AdmissionOrder.open(journalled);
+    const admissions = PcAccountState.open(journalled);
     expect(admissions.strict).toContain(ADMISSION_FILE);
-    const closed = new DeviceStore(journalled, null, null, { admissions });
+    const closed = new DeviceStore(journalled, null, null, { pc: admissions });
     expect(closed.pair(closed.startPairing().code, "New", "drive")).toBeNull();
     expect(row(journalled, older.id).origin).toBeUndefined();
     expect(existsSync(join(journalled, ADMISSION_FILE))).toBe(false);
@@ -199,10 +200,10 @@ describe("one admission order per PC (origin and admit_no)", () => {
   });
 
   test("T50: nothing is numbered before the one-time legacy pass has run", () => {
-    const order = AdmissionOrder.open(stateDir());
-    expect(order.fresh).toBe(true);
+    const order = PcAccountState.open(stateDir());
+    expect(order.migrating).toBe(true);
     expect(() => order.admit("remote", "code", null, Date.now())).toThrow();
-    order.settleFresh();
+    order.migrate(null, false);
     expect(order.admit("remote", "code", null, Date.now()).admit_no).toBe(1);
   });
 

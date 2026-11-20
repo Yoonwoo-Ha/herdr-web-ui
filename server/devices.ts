@@ -13,7 +13,8 @@
 import { createHash, createPublicKey, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { AdmissionOrder, isRowOrigin, type RowOrigin } from "./account/admission-order.ts";
+import { isRowOrigin, legacyOrigin, type RowOrigin } from "./account/admission-order.ts";
+import type { ClearReason, PcAccountState } from "./account/pc-binding.ts";
 import { AccountRecordError, parseAccountRecord, type AddRecord, type RemoveRecord } from "../shared/account-records.ts";
 import { type AccountPairing, type AccountPairingEnd, type AccountPairingState, type AccountPairingTurnedAway, type DevicePairedEvent, type DeviceRemovedEvent, type DevicePairToken, type DeviceRole, type DevicesRevokedAll, type PairedDevice, type DeviceConnection, STREAM_COOKIE_PREFIX } from "../shared/protocol.ts";
 import type { MuxClock } from "../shared/relay-mux-engine.ts";
@@ -469,15 +470,15 @@ export class DeviceStore {
   /** `accountBlocked`: why account records cannot be trusted here (a sibling dir's tombstones that could not be merged). */
   /**
    * `account`: the account-opens-all state, with OVIS_ACCOUNT_OPENS_ALL on. `safety`, the safety log
-   * (server/account/safety-log.ts), and `admissions`, this PC's admission order (server/account/admission-order.ts):
-   * while either fails closed no device signs in or pairs and account records are refused, so only this PC itself
-   * gets in. With `admissions`, every row admitted gets its origin.
+   * (server/account/safety-log.ts), and `pc`, this PC's account state (server/account/pc-binding.ts): while either
+   * fails closed no device signs in or pairs and account records are refused, so only this PC itself gets in. With
+   * `pc`, every row admitted gets its origin and the PC's account is its binding, not its rows.
    */
   private readonly safety: { readonly strict: string | null } | null;
-  private readonly admissions: AdmissionOrder | null;
-  constructor(stateDir: string, blocked: string | null = null, accountBlocked: string | null = null, account: { safety?: { readonly strict: string | null } | null; admissions?: AdmissionOrder | null } = {}) {
+  private readonly pc: PcAccountState | null;
+  constructor(stateDir: string, blocked: string | null = null, accountBlocked: string | null = null, account: { safety?: { readonly strict: string | null } | null; pc?: PcAccountState | null } = {}) {
     this.safety = account.safety ?? null;
-    this.admissions = account.admissions ?? null;
+    this.pc = account.pc ?? null;
     this.path = join(stateDir, "devices.json");
     this.tombstonePath = join(stateDir, "account-tombstones.json");
     this.pendingTombstonePath = join(stateDir, "account-tombstones.pending.json");
@@ -504,7 +505,7 @@ export class DeviceStore {
     }
     // the tombstone files' own repair asks only whether they could be read: a strict safety log is a separate refusal
     // a strict order changes nothing on disk, not even a repair: its damage stays visible (S29)
-    if (this.error === null && this.accountProblem === null && this.admissions?.strict == null) {
+    if (this.error === null && this.accountProblem === null && this.pc?.strict == null) {
       if (pending.length) {
         this.writeTombstones(this.tombstones);
         rmSync(this.pendingTombstonePath, { force: true });
@@ -512,7 +513,7 @@ export class DeviceStore {
       this.finishInterruptedWrites();
     }
     // the one-time legacy pass asks only whether the registry could be read: nothing is admitted before it (T50)
-    if (this.error === null) this.stampLegacy();
+    if (this.error === null) this.migrate();
   }
 
   /**
@@ -543,36 +544,93 @@ export class DeviceStore {
   }
 
   get accountError(): string | null {
-    return this.safety?.strict ?? this.admissions?.strict ?? this.accountProblem;
+    return this.safety?.strict ?? this.pc?.strict ?? this.accountProblem;
   }
 
   /** The safety log or the admission order fails closed: no device gets in by a row or a code. */
   get failsClosed(): boolean {
-    return (this.safety?.strict ?? this.admissions?.strict ?? null) !== null;
+    return (this.safety?.strict ?? this.pc?.strict ?? null) !== null;
   }
 
   /**
-   * Rows from before the upgrade get `legacy` once (T50): on disk before the order file that ends the stamping, so a
-   * stop between the two stamps them again on the next start and never a row admitted since.
+   * The one-time migration of a PC from before the upgrade (T50): the rows' one account becomes the binding, and every
+   * row gets `legacy`. The rows go to disk before the account file that ends the migration, so a stop between the two
+   * runs it again on the next start and never stamps a row admitted since. Rows of two accounts fail closed first.
    */
-  private stampLegacy(): void {
-    if (this.admissions === null || this.error !== null) return;
-    if (!this.admissions.fresh) { this.admissions.checkAbove(this.devices.flatMap((d) => d.origin === undefined || d.origin.from === "legacy" ? [] : [d.origin.admit_no])); return; }
-    // a row numbered here means this folder had an order file: its loss is damage, and nothing is stamped (P21)
-    if (this.devices.some((d) => d.origin !== undefined && d.origin.from !== "legacy")) { this.admissions.missingBeside(); return; }
+  private migrate(): void {
+    if (this.pc === null || this.error !== null) return;
+    const numbered = this.devices.flatMap((d) => d.origin === undefined || d.origin.from === "legacy" ? [] : [d.origin.admit_no]);
+    try { this.pc.settlePending((binding, key) => this.devices.some((d) => d.account === binding.account && d.relay_public_key === key)); }
+    catch (error) { this.pc.unwritten(error); return; }
+    const members = [...new Set(this.devices.flatMap((d) => d.account === undefined ? [] : [d.account]))];
+    if (!this.pc.migrating) { this.pc.checkAbove(numbered); this.pc.checkMembers(members); return; }
+    // a PC that ever had a device, its rows revoked since, is no first-device PC (T67): its gate stayed closed
+    const hadDevices = this.devices.length > 0 || this.gateClosedAt !== null;
+    // S2-03's counter file: the rows are numbered already, and only the binding is migrated (T50)
+    if (this.pc.upgrading) {
+      this.pc.checkAbove(numbered);
+      const account = this.pc.migrationAccount(this.devices);
+      if (this.pc.strict !== null) return;
+      try { this.pc.migrate(account, hadDevices); } catch (error) { this.pc.unwritten(error); }
+      return;
+    }
+    // a row numbered here means this folder had an account file: its loss is damage, and nothing is stamped (P21)
+    if (numbered.length > 0) { this.pc.missingBeside(); return; }
+    const account = this.pc.migrationAccount(this.devices);
+    if (this.pc.strict !== null) return;
     const own = (d: StoredDevice) => d.origin === undefined && d.imported !== true;
     if (this.devices.some(own)) {
-      const next = this.devices.map((d) => own(d) ? { ...d, origin: AdmissionOrder.legacy(d.created_at) } : d);
-      // a pass that cannot be written leaves the order unknown: strict, as the log's fold does, never a failed start (S19)
-      try { this.save(next); } catch (error) { this.admissions.unwritten(error); return; }
+      const next = this.devices.map((d) => own(d) ? { ...d, origin: legacyOrigin(d.created_at) } : d);
+      // a pass that cannot be written leaves the account state unknown: strict, never a failed start (S19)
+      try { this.save(next); } catch (error) { this.pc.unwritten(error); return; }
       this.devices = next;
     }
-    try { this.admissions.settleFresh(); } catch (error) { this.admissions.unwritten(error); }
+    try { this.pc.migrate(account, hadDevices); } catch (error) { this.pc.unwritten(error); }
+  }
+
+  /** The PC leaves its account, for one of the three named reasons (P12); nothing else clears the binding. */
+  clearAccountBinding(reason: ClearReason, by: string): boolean {
+    return this.pc?.clear(reason, by) ?? false;
+  }
+
+  /**
+   * Writes `write` (the row of a link) with the binding of a PC in no account in the same turn, binding first: a row
+   * that is not written takes its binding back (T13, T59).
+   */
+  private bindingWith<T>(account: string, key: string, write: () => T): T {
+    if (this.pc === null) return write();
+    if (this.pc.account() !== null) {
+      const result = write();
+      // a key other than the one that bound the PC joined it: the PC has had other devices, for good (T67, H2)
+      if (this.pc.first()?.key !== key) this.pc.setOthersEver();
+      return result;
+    }
+    const { commit, takeBack } = this.pc.bind(account, key);
+    const onDisk = () => this.devices.some((d) => d.relay_public_key === key && d.account === account);
+    let result: T;
+    try { result = write(); } catch (error) {
+      // a failure after the row reached the disk takes nothing back: the admission is durable (T13)
+      if (!onDisk()) {
+        try { takeBack(); } catch (left) { console.error(`[devices] the binding of a link that was not written could not be taken back: ${left instanceof Error ? left.message : String(left)}`); }
+        throw error;
+      }
+      this.commitBinding(commit);
+      throw error;
+    }
+    this.commitBinding(commit);
+    return result;
+  }
+
+  /** The binding of a first link whose row is on disk stands; one that cannot be marked so leaves the PC strict (S19). */
+  private commitBinding(commit: () => void): void {
+    // the row is on disk but its binding cannot be made to stand: the PC fails closed and the link is no success; the
+    // next start finds the binding pending beside its row and makes it stand (settlePending)
+    try { commit(); } catch (error) { this.pc?.unwritten(error); throw error; }
   }
 
   /** The origin a row admitted now carries; none while the release flag is off. Every path is `remote` until a key confirm on this PC's screen exists (P22). */
   private admitted(device: StoredDevice, now: number, path: { startedBy?: string | null; digits?: boolean } = {}): StoredDevice {
-    if (this.admissions === null) return device;
+    if (this.pc === null) return device;
     // `by` is the account member who approved it, by its account key, and only a member (P22): the member named on the
     // row, or the one that started the code this pairing redeemed; a link approves nothing
     // a link that moves the key admits a key nobody approved (P22)
@@ -582,7 +640,7 @@ export class DeviceStore {
     const by = approver?.relay_public_key ?? null;
     // a key this folder numbers is its own here, whatever copy the row came in as (P21)
     const { imported: _copied, ...own } = device;
-    return { ...own, origin: this.admissions.admit("remote", how, by, now) };
+    return { ...own, origin: this.pc.admit("remote", how, by, now) };
   }
 
   /**
@@ -1107,7 +1165,7 @@ export class DeviceStore {
     waiting.rows.delete(row.id);
     // the end of its code, which this write brings, names the device it brought in
     waiting.joined = { device_id: row.id, label: row.label };
-    try { this.enroll(device, now, [], false); }
+    try { this.bindingWith(link.account, link.key, () => this.enroll(device, now, [], false)); }
     catch (error) {
       waiting.rows.set(row.id, row);
       delete waiting.joined;
@@ -1303,6 +1361,7 @@ export class DeviceStore {
   private isNewKey(key: string): boolean { return !this.hasKey(key); }
 
   account(): string | null {
+    if (this.pc !== null) return this.pc.account();
     return this.devices.find((d) => d.account !== undefined)?.account ?? null;
   }
 
@@ -1507,11 +1566,21 @@ export class DeviceStore {
     this.gateClosedAt = gate;
     this.voidPending("revoked");
     this.unconfirmedFirstPairs = [];
+    // the PC leaves its account with every row (P8, P12); one that could not be written keeps the PC bound, never less
+    let unbound: unknown = null;
+    try { this.clearAccountBinding("revoke_all", "pc"); }
+    catch (error) {
+      // the PC fails closed until its account state is written: Revoke all is not reported done (S19)
+      unbound = error;
+      this.pc?.unwritten(error);
+      console.error(`[devices] Revoke all could not clear this PC's account: ${error instanceof Error ? error.message : String(error)}`);
+    }
     const listeners = [...this.revocations.values()];
     this.revocations.clear();
     for (const closes of listeners) for (const close of closes) close();
     for (const listener of [...this.revokeAllListeners]) listener();
     for (const device of gone) this.announceRemoval(device, "pc");
+    if (unbound !== null) throw unbound;
     return revoked;
   }
 
@@ -1637,6 +1706,8 @@ export class DeviceStore {
       ...(entry.record === undefined ? {} : { account_add: entry.record }),
     };
     this.enroll(device, now, [], false);
+    // another key joined the account: the PC has had other devices, for good (T67, H2)
+    if (this.pc !== null && this.pc.first()?.key !== entry.key) this.pc.setOthersEver();
     return { id: device.id, label: device.label, role: device.role };
   }
 
@@ -1695,7 +1766,7 @@ export class DeviceStore {
     const { origin: _oldKeys, ...movedKey } = linked;
     const updated = key !== oldKey ? this.admitted(movedKey, Date.now()) : linked;
     const next = this.devices.map((d) => d === device ? updated : d);
-    this.save(next);
+    this.bindingWith(account, key, () => this.save(next));
     this.devices = next;
     this.endNoAccountCode();
     for (const listener of [...this.relinks.get(deviceId) ?? []]) listener(sessionId);
