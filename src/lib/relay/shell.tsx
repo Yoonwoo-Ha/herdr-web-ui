@@ -140,7 +140,8 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   let readWait: ReturnType<typeof setTimeout> | undefined;
   // a marked pairing that stopped for a sign-in, while the sign-in its failure screen started runs: it is asked about again after it
   let signInFor: PendingPairing | null = null;
-  // the providers that screen offers: the account service's own list, once read
+  // the providers every sign-in screen offers: the account service's own list, read when a sign-in screen is first drawn
+  // (a hosted build names none of its own, so its list is GitHub alone); the build's until then and when it does not answer
   let offered: readonly AccountProvider[] | null = null;
   // the offer on screen and when this device got it: a code is good for so long from its scan
   let scanned: PendingPairing | null = null;
@@ -244,9 +245,10 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const show = (state: RelayShellState): void => {
     shown = state;
     const signInFirst = state.kind === "failed" && state.failure === "sign-in-first";
-    if (signInFirst && offered === null && account.enabled) {
+    const signInShown = signInFirst || ((state.kind === "list" || state.kind === "empty") && state.account?.kind === "signed-out");
+    if (signInShown && offered === null && account.enabled) {
       offered = account.providers;
-      void account.offered().then((list) => { offered = list; if (shown?.kind === "failed" && shown.failure === "sign-in-first") show(shown); });
+      void account.offered().then((list) => { offered = list; if (shell !== null && app === null && !left && shown !== null) show(shown); });
     }
     shell ??= (mount.createRoot ?? createRoot)(mount.container);
     shell.render(createElement(StrictMode, null, createElement(SettingsProvider, null, createElement(RelayShell, {
@@ -256,7 +258,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
       directoryRelays: account.directory, sheetJoin,
       // a join a PC's own page started for itself stands alone: no list is drawn behind it (the tabs open the list)
       ...(sheetJoin?.alone ? {} : { continuedAccount: sheetJoin ? account.state : null }), observedVersions: observedVersions(),
-      ...(account.enabled ? { onSignIn: signInFirst ? signInToPair : account.signIn, accountProviders: signInFirst && offered !== null ? offered : account.providers, onJoin: joinPc, onSignOut: account.signOut, onLeave: account.leave, onDeleteAccount: account.deleteAccount, ...(account.signedInAs?.sign_in_id === undefined ? {} : { accountSignIn: account.signedInAs.sign_in_id }), onRefreshAccount: () => account.refreshNow() } : {}),
+      ...(account.enabled ? { onSignIn: signInFirst ? signInToPair : account.signIn, accountProviders: offered ?? account.providers, onJoin: joinPc, onSignOut: account.signOut, onLeave: account.leave, onDeleteAccount: account.deleteAccount, ...(account.signedInAs?.sign_in_id === undefined ? {} : { accountSignIn: account.signedInAs.sign_in_id }), onRefreshAccount: () => account.refreshNow() } : {}),
     })))); account.armRefresh();
   };
   const showFront = async (): Promise<void> => {

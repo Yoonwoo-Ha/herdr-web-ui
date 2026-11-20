@@ -176,6 +176,49 @@ describe("the hosted shell's front page", () => {
     opened.close();
   });
 
+  // the account service's provider list landing while a PC that turned this phone away is still being cleaned up draws
+  // nothing: the app is gone, and the screen it left behind (Connecting) is not the one to bring back
+  it("draws no stale screen when the provider list lands while a revoked PC's failure is still being read", async () => {
+    const offer = { v: 1 as const, ...keyFor(), relay: AP, code: "123456" };
+    class Admitted extends RelayTransport {
+      override get server() { return { version: "1.0.0", relayProtocol: RELAY_PROTOCOL }; }
+    }
+    const providers = Promise.withResolvers<Response>();
+    const reading = Promise.withResolvers<void>();
+    const held = Promise.withResolvers<void>();
+    const devices = deviceStore([]);
+    let holding = false, roots = 0, apps = 0;
+    let fatal: ((error: Error) => void) | undefined;
+    const opened: RelayTransport[] = [];
+    await mountRelayShell(mountFor({
+      store: { ...devices, async get(serverId) { if (holding) { reading.resolve(); await held.promise; } return devices.get(serverId); } },
+      shellVersion: "1.0.0", navigate() {}, accountStore: memoryAccountStore(), accountService: SERVICE, accountProviders: ["github"],
+      accountFetch: async (input) => new URL(String(input)).pathname === "/v1/providers" ? providers.promise : Response.json({ pcs: [] }),
+      createRoot: () => { roots++; return { render(element: ReactElement) { rendered.push(element); }, unmount() {} }; },
+      renderApp: () => { apps++; return { render() {}, unmount() {} }; },
+      pendingPush: { get: async () => undefined, clear: async () => {} },
+      open: async (_offer, options = {}) => { fatal = options.onFatal; const transport = new Admitted(offer); opened.push(transport); return transport; },
+    }));
+    expect(last().accountProviders).toEqual(["github"]);
+    const link = new URL(encodeOffer(offer, "https://app.ovis.sh"));
+    Object.assign(window.location, { href: link.href, hash: link.hash });
+    window.dispatchEvent(new Event("hashchange"));
+    await until(() => last().state.kind === "confirm", "the confirm");
+    last().onPair();
+    await until(() => apps === 1, "the app");
+    holding = true;
+    fatal!(new MuxProtocolError("auth_revoked", "fixture revoked"));
+    await reading.promise;
+    const before = { roots, drawn: rendered.length };
+    providers.resolve(Response.json({ providers: ["github", "apple"], device: ["github"] }));
+    await drain();
+    expect({ roots, drawn: rendered.length }).toEqual(before);
+    held.resolve();
+    await until(() => last().state.kind === "failed", "the reason");
+    expect(last().accountProviders).toEqual(["github", "apple"]);
+    for (const transport of opened) transport.close();
+  });
+
   // REGRESSION GUARD: only a consent stored one navigation earlier (the typed code's ID match, the Add-a-PC sheet)
   // skips the confirm. A link someone sends, with a code or without, never pairs by itself.
   it.each([["a code", "123456", false], ["no code", undefined, false], ["a code, signed in", "123456", true], ["no code, signed in", undefined, true]] as const)(
@@ -256,7 +299,11 @@ describe("the hosted shell's front page", () => {
     const mounted = mountRelayShell(mountFor({
       entryUrl: "https://app.ovis.sh/#code=good-code&state=state-1", store: deviceStore([]), navigate() {},
       accountStore, accountService: SERVICE, accountProviders: ["github"],
-      accountFetch: async (input) => { if (new URL(String(input)).pathname === "/v1/pcs") return Response.json({ pcs: [] }); exchanging = true; return token.promise; },
+      accountFetch: async (input) => {
+        if (new URL(String(input)).pathname === "/v1/pcs") return Response.json({ pcs: [] });
+        if (new URL(String(input)).pathname === "/v1/providers") return new Response(null, { status: 404 });
+        exchanging = true; return token.promise;
+      },
       open: async () => { attempts++; throw new MuxProtocolError("auth_failed", "fixture declined"); },
     }));
     await until(() => exchanging, "the token exchange");
@@ -931,7 +978,7 @@ describe("the hosted shell's front page", () => {
         accountStore, accountService: SERVICE, accountProviders: ["github"],
         accountFetch: async (input) => {
           if (new URL(String(input)).pathname === "/v1/pcs") return Response.json({ pcs: listed });
-          if (new URL(String(input)).pathname === "/v1/devices/challenge") return new Response(null, { status: 404 });
+          if (["/v1/devices/challenge", "/v1/providers"].includes(new URL(String(input)).pathname)) return new Response(null, { status: 404 });
           exchanged++;
           return Response.json({ access_token: "access", refresh_token: "refresh", expires_in: 3600, account: "acct-test", provider: "github" });
         },
