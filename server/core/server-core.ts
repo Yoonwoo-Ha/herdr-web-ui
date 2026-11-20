@@ -27,6 +27,7 @@ type CoreOptions = Parameters<typeof createTerminalRegistry>[0]["options"] & Par
     attachHeldRetryMs?: number;
     attachRelookupForMs?: number;
     attachHoldMs?: number;
+    accountOpensAll?: boolean;
   };
 
 export function createCore({ options, devices, preferences, usage, usageLogin, browserSnapshot, TYPED_SETTLE_MS, KEY_SETTLE_MS, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, DRAFT_CLEAR_WAIT_MS, DRAFT_CLEAR_POLL_MS }: {
@@ -78,8 +79,9 @@ export function createCore({ options, devices, preferences, usage, usageLogin, b
     paneMoved: (from, to) => { movePendingPane(from, to); paneMoved(from, to); } });
   const socketHandlers = createSocket({
     herdrFailure: options.herdrFailure,
+    accountEnabled: options.accountOpensAll,
     clients, present, stopped: () => stopped, admit, setRole, watchable: () => capabilities().attach === "pty-cli", terminalHistory: () => capabilities().attach !== "pty-cli", terminalModes: () => capabilities().attach === "hc", watchPane, unwatchPane, end, holdPending, attachments, clientSnapshot, herdrLifetime: currentHerdrLifetime, browserSnapshot, countVisit, drainOutput,
-    notices: { replay: (deviceId) => devices.noticeReplay(deviceId), seen: (deviceId, seq) => devices.noticeSeen(deviceId, seq) },
+    notices: { replay: (deviceId) => devices.noticeReplay(deviceId), seen: (deviceId, seq) => devices.noticeSeen(deviceId, seq), block: (record) => devices.applyBlock(record, "session"), decide: (id) => devices.decideNotice(id) },
     // each frame type by name, with the handler of the module that owns it: anything else on a frame object never
     // becomes a frame a client can send, and a type named twice fails the build instead of replacing a handler
     frames: {

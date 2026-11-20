@@ -116,10 +116,22 @@ export async function handleAccountRequest(request: Request, pathname: string, c
       const records = body.records;
       if (!Array.isArray(records) || records.length > ACCOUNT_RECORDS_MAX) return fail("record_invalid", `Send at most ${ACCOUNT_RECORDS_MAX} records`, 400);
       const mailbox = context.services.accountMailbox;
-      // a removal whose signer is not a member here yet waits for it, as one from the mailbox does; only
-      // a member's session (a client relaying the account's removals) may leave one waiting
+      // with the release flag on a block applies at once, each with its own receipt (T51, T60); an app that sends none
+      // gets today's answer
+      const blocks = context.services.safetyLog === null ? [] : records.filter((record) => (record as { kind?: unknown } | null)?.kind === "block");
+      const wasMember = blocks.length > 0 && peer.kind === "relay" && devices.isAccountApproverSession(peer.device.id, peer.key);
+      const receipts = [];
+      for (const block of blocks) receipts.push(await devices.applyBlock(block, "handed"));
+      const remaining = records.filter((record) => !blocks.includes(record));
+      // Only a current member's session may leave a removal waiting. A session blocked in this batch may do neither that nor apply any other record.
       const member = peer.kind === "relay" && devices.isAccountApproverSession(peer.device.id, peer.key);
-      return reply({ results: await applyAccountRecords(devices, records, serverId, Date.now(), mailbox.gates(), member ? (record) => mailbox.wait(record) : undefined) });
+      const results = wasMember && !member
+        ? remaining.map((record: unknown) => ({
+          id: typeof record === "object" && record !== null && "id" in record && typeof record.id === "string" ? record.id : null,
+          outcome: "refused", code: "account_required",
+        }))
+        : await applyAccountRecords(devices, remaining, serverId, Date.now(), mailbox.gates(), member ? (record) => mailbox.wait(record) : undefined);
+      return reply({ results, ...(blocks.length > 0 ? { receipts } : {}) });
     }
     case "/api/account/enroll": {
       setRequestRoute(pathname);

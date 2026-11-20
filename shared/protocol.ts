@@ -1,5 +1,5 @@
 import type { HerdrKeys } from "./herdr-keys.ts";
-import type { ACCOUNT_OPENS_ALL_CAPABILITY, DeviceNotice, NoticeAnswer, NoticeReplay, NoticeSeen } from "./account-devices-api.ts";
+import type { ACCOUNT_OPENS_ALL_CAPABILITY, BlockReceipt, DeviceNotice, NoticeAnswer, NoticeReplay, NoticeSeen } from "./account-devices-api.ts";
 import type { MachineEvent } from "./machines.ts";
 /**
  * Ovis's own HTTP/WebSocket contract, shared by the Bun server and the React client.
@@ -1483,6 +1483,11 @@ export type ServerMessage =
   /** device table T57 (feature "account-opens-all/1"): the unseen notices. Sent right after the `features` frame and before
    * any other frame (the snapshot included), never first, so the client already knows account-opens-all/1 when it arrives */
   | { type: "device-notice-replay"; replay: NoticeReplay }
+  /**
+   * account-opens-all/1: the answer to a `notice-answer` "Not me", one receipt per block it carried, in its order
+   * (device table T51, T60). Only `applied` and `already_applied` are done
+   */
+  | { type: "notice-answer-result"; id: string; receipts: readonly BlockReceipt[] }
   /** `pane_id` names the pane an error is about, when it is about one (`attach_held`) */
   | { type: "error"; code: string; message: string; pane_id?: string };
 

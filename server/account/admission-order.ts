@@ -26,19 +26,33 @@ export function isRowOrigin(value: unknown): value is RowOrigin {
 
 interface AdmissionRow { readonly id: string; readonly created_at: string; readonly origin?: RowOrigin | undefined }
 
+export interface AdmissionPosition {
+  readonly admit_no: number;
+  readonly legacy_created_at?: number;
+}
+
+export function admissionPosition(row: AdmissionRow): AdmissionPosition | null {
+  if (row.origin === undefined) return null;
+  const admit_no = row.origin.admit_no;
+  const created = row.origin.from === "legacy" ? Date.parse(row.created_at) : NaN;
+  return { admit_no, ...(Number.isFinite(created) ? { legacy_created_at: created } : {}) };
+}
+
+export function compareAdmissionPositions(a: AdmissionPosition | null, b: AdmissionPosition | null): "older" | "newer" | null {
+  if (a === null || b === null) return null;
+  if (a.admit_no !== b.admit_no) return a.admit_no < b.admit_no ? "older" : "newer";
+  const left = a.legacy_created_at;
+  const right = b.legacy_created_at;
+  if (left === undefined || right === undefined || left === right) return null;
+  return left < right ? "older" : "newer";
+}
+
 /**
  * Which of two rows joined this PC first: `older` when `a` did, `newer` when `b` did, null when they cannot be placed
  * against each other (a missing origin, or two legacy rows made at the same time). Null gives no authority either way.
  */
 export function compareAdmission(a: AdmissionRow, b: AdmissionRow): "older" | "newer" | null {
-  if (a.origin === undefined || b.origin === undefined || a.id === b.id) return null;
-  if (a.origin.from === "legacy" && b.origin.from === "legacy") {
-    const [left, right] = [Date.parse(a.created_at), Date.parse(b.created_at)];
-    if (Number.isNaN(left) || Number.isNaN(right) || left === right) return null;
-    return left < right ? "older" : "newer";
-  }
-  if (a.origin.admit_no === b.origin.admit_no) return null;
-  return a.origin.admit_no < b.origin.admit_no ? "older" : "newer";
+  return a.id === b.id ? null : compareAdmissionPositions(admissionPosition(a), admissionPosition(b));
 }
 
 /** What a remote caller may act on: its own row, and the rows that joined this PC after it (T19 in 2d). */

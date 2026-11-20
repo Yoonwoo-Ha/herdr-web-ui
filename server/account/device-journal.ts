@@ -148,7 +148,12 @@ export class DeviceJournal {
   /** An admission was decided ("It's me", "Not me", PC-local or a marker): it leaves `open`. */
   decide(id: string): boolean {
     if (!this.doc.open.some((entry) => entry.id === id)) return false;
-    this.write({ ...this.doc, open: this.doc.open.filter((entry) => entry.id !== id) });
+    try {
+      this.write({ ...this.doc, open: this.doc.open.filter((entry) => entry.id !== id) });
+    } catch (error) {
+      this.problem = `Cannot record a notice decision in ${this.path} (${error instanceof Error ? error.message : String(error)})`;
+      throw error;
+    }
     return true;
   }
 

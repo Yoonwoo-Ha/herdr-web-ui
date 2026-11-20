@@ -32,6 +32,7 @@ export interface BlockAsOf {
   readonly after: number | null;
   readonly joined: number | null;
   readonly signer_removed: boolean;
+  readonly legacy_created_at?: number;
 }
 
 /**
@@ -98,7 +99,10 @@ function recordProblem(record: unknown, asof: BlockAsOf | undefined): string | n
   if (parsed.kind === "block") {
     if (asof === undefined) return "a block keeps what this PC knew when it arrived";
     const a = asof as unknown as Record<string, unknown>;
-    if (typeof a !== "object" || a === null || Object.keys(a).length !== 5 || !isNo(a.signer_no) || !isNo(a.target_no) || !isNo(a.after) || !isNo(a.joined) || typeof a.signer_removed !== "boolean") return "invalid asof";
+    if (typeof a !== "object" || a === null || !isNo(a.signer_no) || !isNo(a.target_no) || !isNo(a.after) || !isNo(a.joined) || typeof a.signer_removed !== "boolean") return "invalid asof";
+    const hasLegacyDate = Object.hasOwn(a, "legacy_created_at");
+    if (Object.keys(a).length !== (hasLegacyDate ? 6 : 5)
+      || (hasLegacyDate && (a.joined !== 0 || !Number.isSafeInteger(a.legacy_created_at)))) return "invalid asof";
   } else if (asof !== undefined) return "only a block keeps asof";
   return null;
 }
