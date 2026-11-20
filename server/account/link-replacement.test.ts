@@ -100,9 +100,10 @@ describe("a key approved on this PC's screen is replaced only by a confirm of it
     devices.declineReplacement(approved.id);
     expect(devices.pendingReplacement(approved.id)).toBeNull();
 
-    const now = Date.now();
     devices.linkAccountKey(approved.id, approved.key, next, ACCOUNT, "", false, true);
-    expect(devices.replaceConfirmed({ row: approved.id, key: next, source: "screen" }, now + FIVE_MINUTES + 1)).toBeNull();
+    // past the time the replacement was stamped with, not a clock read before the link (it can be a millisecond later)
+    const { at } = devices.pendingReplacement(approved.id)!;
+    expect(devices.replaceConfirmed({ row: approved.id, key: next, source: "screen" }, at + FIVE_MINUTES + 1)).toBeNull();
     expect(devices.pendingReplacement(approved.id)).toBeNull();
 
     devices.linkAccountKey(approved.id, approved.key, next, ACCOUNT, "", false, true);
