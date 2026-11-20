@@ -51,9 +51,17 @@ Windows では PowerShell で：
 irm https://ovis.sh/install.ps1 | iex
 ```
 
-**スマートフォンで：** コンピューターで **設定 → デバイスと PC → 接続を追加 → Ovis リレー** を開いてスイッチをオンにし、表示された QR コードをスマートフォンで読み取ります。先にサインインするよう求められた場合は、サインインしてこのコンピューターをアカウントに追加してから **QR コードを表示する** を押し、同じアカウントにサインインしたスマートフォンで読み取ります。その場合は読み取るとコンピューターがそのアカウントに入り、それ以降は、ほかのスマートフォンを追加するときに QR コードの代わりにそのアカウントへのサインインを求められます。iPhone 版は [App Store](https://apps.apple.com/app/id6824664162)、Android 版は [Google Play](https://play.google.com/store/apps/details?id=sh.ovis.app) で配信中です。[スマートフォンの設定 →](docs/guide.md#on-your-phone)
+**スマートフォンで：** iPhone アプリは [App Store](https://apps.apple.com/app/id6824664162)、Android アプリは [Google Play](https://play.google.com/store/apps/details?id=sh.ovis.app) にあります。アプリはサインイン画面から始まります。[スマートフォンの設定 →](docs/guide.md#on-your-phone)
 
 <a href="https://apps.apple.com/app/id6824664162"><img src="ovis-site/assets/app-store/badge-ja.svg" alt="App Store からダウンロード" height="48"></a> <a href="https://play.google.com/store/apps/details?id=sh.ovis.app"><img src="ovis-site/assets/google-play/badge-ja.svg" alt="Google Play で手に入れよう" height="48"></a>
+
+## どこからでも自分の PC へ
+
+GitHub、Google、Apple のいずれかで Ovis アカウントにサインインすると（最初のサインインでアカウントができます）、アカウントに入っているコンピューターがほかのデバイスに表示されます。Mac・Windows・Linux のデスクトップアプリ、iPhone と Android のアプリ、そして [app.ovis.sh](https://app.ovis.sh) を開いた任意のブラウザです。アプリはコンピューターと同じ Wi-Fi や Tailscale にあれば直接つながり、そうでないときとブラウザではエンドツーエンドで暗号化された Ovis リレーを通ります。ネットワーク側の設定はいりません。[アカウントのしくみ →](docs/guide.md#through-an-account)
+
+- **コンピューターを追加。** そのコンピューターで **設定 → デバイスと PC → アカウント** を開き、サインインしてこの PC を追加します。新しいアカウントの最初のコンピューターや、2 段階サインインの直後に追加するコンピューターは、その一回で入れることがあります。そうでなければ、同じアカウントにサインインしたスマートフォンで仕上げます。コンピューターで **接続を追加 → スマホ・デバイス** を開いてリレーをオンにし、**QR コードを表示する** を押して読み取ります。
+- **スマートフォンやほかのデバイスを追加。** そのデバイスで同じアカウントにサインインし、コンピューターを開きます。承認を求められたら、そのコンピューター、またはすでにそのコンピューターを使っているデバイスで承認します。
+- **アカウントなしで。** Tailscale、同じ Wi-Fi、SSH でも使えます。スマートフォンでは **サインインせずに始める**、デスクトップでは **接続を追加 → Tailscale** または **直接接続** を選びます。Android アプリは SSH でコンピューターに直接つなぎ、そこに Ovis をインストールすることもできます。[リモート PC →](docs/remote-pcs.md)
 
 ## 機能
 
@@ -62,7 +70,8 @@ irm https://ovis.sh/install.ps1 | iex
 - **プッシュ通知。** アプリを閉じていても届きます。
 - **本物のターミナルをワンクリックで。** スマートフォンにはキーバー付き。
 - **どこからでも新しいエージェントを開始。** 選んだフォルダーで、デスクトップからでもスマートフォンからでも。
-- **すべてのワークスペースをひとつのリストに。** SSH でつないだ別の PC も。
+- **すべてのワークスペースをひとつのリストに。** リレーや SSH でつないだ自分の別の PC も。
+- **好きなブラウザで。** **設定 → エージェント** で Claude Code、Codex、GitHub Copilot にブラウザツール（Chrome DevTools MCP または Playwright MCP）を持たせ、デスクトップアプリでは選んだブラウザでリンクを開けます。
 
 [すべての機能 →](docs/guide.md#features)
 

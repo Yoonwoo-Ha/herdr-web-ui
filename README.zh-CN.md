@@ -51,9 +51,17 @@ curl -fsSL https://ovis.sh/install.sh | sh
 irm https://ovis.sh/install.ps1 | iex
 ```
 
-**在手机上：** 在电脑上打开 **设置 → 设备和电脑 → 添加连接 → Ovis 中继**，开启开关，再用手机扫描显示的二维码。如果这里提示先登录，就登录并把这台电脑添加到你的账户，然后点击 **显示这个二维码**，再用已登录同一账户的手机扫描。这样扫描后电脑就在这个账户中了，之后要添加其他手机时，这里会改为提示在手机上登录该账户。iPhone 应用已在 [App Store](https://apps.apple.com/app/id6824664162) 上架，Android 应用已在 [Google Play](https://play.google.com/store/apps/details?id=sh.ovis.app) 上架。[手机设置 →](docs/guide.md#on-your-phone)
+**在手机上：** iPhone 应用已在 [App Store](https://apps.apple.com/app/id6824664162) 上架，Android 应用已在 [Google Play](https://play.google.com/store/apps/details?id=sh.ovis.app) 上架。打开应用就是登录页。[手机设置 →](docs/guide.md#on-your-phone)
 
 <a href="https://apps.apple.com/app/id6824664162"><img src="ovis-site/assets/app-store/badge-zh.svg" alt="在 App Store 下载" height="48"></a> <a href="https://play.google.com/store/apps/details?id=sh.ovis.app"><img src="ovis-site/assets/google-play/badge-zh.svg" alt="去 Google Play 商店下载" height="48"></a>
+
+## 随时随地访问你的电脑
+
+用 GitHub、Google 或 Apple 登录你的 Ovis 账户（第一次登录即创建账户），账户里的电脑就会出现在你的其他设备上：Mac、Windows、Linux 上的桌面应用，iPhone 和 Android 应用，以及任意打开 [app.ovis.sh](https://app.ovis.sh) 的浏览器。应用与电脑在同一 Wi-Fi 或 Tailscale 上时直接连接；否则以及在浏览器中，通过端到端加密的 Ovis 中继连接，网络上无需任何设置。[账户如何工作 →](docs/guide.md#through-an-account)
+
+- **添加电脑。** 在这台电脑上打开 **设置 → 设备和电脑 → 账户**，登录并添加此电脑。新账户的第一台电脑，或刚完成两步登录后添加的电脑，可以一键加入。否则，用登录了同一账户的手机完成：在电脑上打开 **添加连接 → 手机和设备**，开启中继，点击 **显示这个二维码** 并扫描。
+- **添加手机或其他设备。** 在该设备上登录同一账户并打开电脑。如果电脑要求批准，就在这台电脑上，或在已经在用它的设备上批准。
+- **不用账户。** 也可以用 Tailscale、同一 Wi-Fi 或 SSH：在手机上选 **不登录直接开始**，在桌面上选 **添加连接 → Tailscale** 或 **直接连接**。Android 应用可以自己通过 SSH 连接电脑，还能在那里安装 Ovis。[远程电脑 →](docs/remote-pcs.md)
 
 ## 功能
 
@@ -62,7 +70,8 @@ irm https://ovis.sh/install.ps1 | iex
 - **推送通知。** 应用关闭时也能收到。
 - **真正的终端，一键即达。** 手机上还有按键栏。
 - **随时随地启动新智能体。** 在桌面或手机上选好文件夹即可。
-- **所有工作区，一个列表。** 也包括通过 SSH 连接的其他电脑。
+- **所有工作区，一个列表。** 也包括通过中继或 SSH 连接的你的其他电脑。
+- **用你选的浏览器。** 在 **设置 → Agent** 中给 Claude Code、Codex 或 GitHub Copilot 配上浏览器工具（Chrome DevTools MCP 或 Playwright MCP），桌面应用也能用你选的浏览器打开链接。
 
 [全部功能 →](docs/guide.md#features)
 

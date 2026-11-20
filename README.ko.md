@@ -51,9 +51,17 @@ Windows에서는 PowerShell에서:
 irm https://ovis.sh/install.ps1 | iex
 ```
 
-**휴대폰에서:** 컴퓨터에서 **설정 → 기기와 PC → 연결 추가 → Ovis 릴레이**를 열어 스위치를 켜고, 나온 QR 코드를 휴대폰으로 찍으세요. 먼저 로그인하라는 안내가 나오면 로그인해 이 컴퓨터를 내 계정에 추가한 뒤 **QR 코드 표시**를 누르고, 같은 계정으로 로그인한 휴대폰으로 찍으세요. 그렇게 찍고 나면 컴퓨터가 그 계정에 들어가고, 그 뒤로 다른 휴대폰에는 QR 코드 대신 그 계정으로 로그인하라고 안내합니다. iPhone 앱은 [App Store](https://apps.apple.com/app/id6824664162)에, Android 앱은 [Google Play](https://play.google.com/store/apps/details?id=sh.ovis.app)에 있습니다. [휴대폰 설정 →](docs/guide.md#on-your-phone)
+**휴대폰에서:** iPhone 앱은 [App Store](https://apps.apple.com/app/id6824664162)에, Android 앱은 [Google Play](https://play.google.com/store/apps/details?id=sh.ovis.app)에 있습니다. 앱을 열면 로그인 화면이 나옵니다. [휴대폰 설정 →](docs/guide.md#on-your-phone)
 
 <a href="https://apps.apple.com/app/id6824664162"><img src="ovis-site/assets/app-store/badge-ko.svg" alt="App Store에서 다운로드하기" height="48"></a> <a href="https://play.google.com/store/apps/details?id=sh.ovis.app"><img src="ovis-site/assets/google-play/badge-ko.svg" alt="Google Play에서 다운로드" height="48"></a>
+
+## 어디서든 내 PC로
+
+GitHub, Google, Apple 중 하나로 Ovis 계정에 로그인하세요(처음 로그인하면 계정이 만들어집니다). 그러면 계정에 든 컴퓨터가 내 다른 기기에 나타납니다. Mac, Windows, Linux의 데스크톱 앱, iPhone과 Android 앱, 그리고 [app.ovis.sh](https://app.ovis.sh)를 연 아무 브라우저에요. 앱은 컴퓨터와 같은 Wi-Fi나 Tailscale에 있으면 바로 연결되고, 그렇지 않을 때와 브라우저에서는 종단 간 암호화된 Ovis 릴레이를 거칩니다. 네트워크에는 따로 설정할 것이 없습니다. [계정이 하는 일 →](docs/guide.md#through-an-account)
+
+- **컴퓨터 추가.** 그 컴퓨터에서 **설정 → 기기와 PC → 계정**을 열어 로그인하고 이 PC를 추가하세요. 새 계정의 첫 컴퓨터나, 2단계 로그인을 막 마치고 추가하는 컴퓨터는 그 한 번으로 들어갈 수 있습니다. 아니라면 같은 계정으로 로그인한 휴대폰으로 마무리하세요. 컴퓨터에서 **연결 추가 → 폰·기기**를 열어 릴레이를 켜고, **QR 코드 표시**를 눌러 찍으면 됩니다.
+- **휴대폰이나 다른 기기 추가.** 그 기기에서 같은 계정으로 로그인하고 컴퓨터를 여세요. 컴퓨터가 승인을 요청하면 그 컴퓨터에서, 또는 이미 그 컴퓨터를 쓰는 기기에서 승인합니다.
+- **계정 없이.** Tailscale, 같은 Wi-Fi, SSH로도 됩니다. 휴대폰에서는 **로그인 없이 시작**, 데스크톱에서는 **연결 추가 → Tailscale** 또는 **직접 연결**을 고르세요. Android 앱은 SSH로 컴퓨터에 직접 접속하고, 그 컴퓨터에 Ovis를 설치할 수도 있습니다. [원격 PC →](docs/remote-pcs.md)
 
 ## 기능
 
@@ -62,7 +70,8 @@ irm https://ovis.sh/install.ps1 | iex
 - **푸시 알림.** 앱이 닫혀 있어도 옵니다.
 - **클릭 한 번이면 실제 터미널.** 휴대폰에는 키 바가 붙습니다.
 - **어디서든 새 에이전트 시작.** 데스크톱에서든 휴대폰에서든 폴더만 고르면 됩니다.
-- **모든 워크스페이스를 한 목록에.** SSH로 연결한 다른 PC까지.
+- **모든 워크스페이스를 한 목록에.** 릴레이나 SSH로 연결한 내 다른 PC까지.
+- **원하는 브라우저로.** **설정 → 에이전트**에서 Claude Code, Codex, GitHub Copilot에 브라우저 도구(Chrome DevTools MCP 또는 Playwright MCP)를 붙이고, 데스크톱 앱이 링크를 내가 고른 브라우저로 열게 할 수 있습니다.
 
 [전체 기능 →](docs/guide.md#features)
 
