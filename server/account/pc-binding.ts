@@ -33,6 +33,8 @@ interface PcDoc {
   first: { key: string; list_key: string | null } | null;
   /** set by the first admission of another account row and never unset (H2) */
   others_ever: boolean;
+  /** P14: raised by every denial and policy change; a decision that widens commits only at the gen it noted */
+  gen: number;
 }
 
 const REASONS: ReadonlySet<string> = new Set(["revoke_all", "identity_reset", "left_on_pc"]);
@@ -46,7 +48,7 @@ function parseDoc(value: unknown): (PcDoc & { counterOnly?: true }) | string {
   if (!Number.isSafeInteger(doc.next_admit) || doc.next_admit! < 1) return "invalid next_admit";
   // S2-03 wrote the counter alone: the binding is not migrated yet, and the upgrade takes it from the rows (T50)
   if (doc.binding === undefined && doc.clears === undefined && doc.first === undefined && doc.others_ever === undefined) {
-    return { v: 1, next_admit: doc.next_admit!, binding: null, clears: [], first: null, others_ever: false, counterOnly: true };
+    return { v: 1, next_admit: doc.next_admit!, binding: null, clears: [], first: null, others_ever: false, gen: 0, counterOnly: true };
   }
   const binding = doc.binding;
   if (binding !== null && !(typeof binding === "object" && binding !== undefined && typeof binding.account === "string" && ACCOUNT.test(binding.account) && typeof binding.bind_id === "string" && ID.test(binding.bind_id) && (binding.pending === undefined || binding.pending === true))) return "invalid binding";
@@ -55,6 +57,8 @@ function parseDoc(value: unknown): (PcDoc & { counterOnly?: true }) | string {
   const first = doc.first;
   if (first !== null && !(typeof first === "object" && first !== undefined && typeof first.key === "string" && (first.list_key === null || typeof first.list_key === "string"))) return "invalid first";
   if (typeof doc.others_ever !== "boolean") return "invalid others_ever";
+  if (doc.gen === undefined) return { ...doc, gen: 0 } as PcDoc;
+  if (!Number.isSafeInteger(doc.gen) || doc.gen < 0) return "invalid gen";
   return doc as PcDoc;
 }
 
@@ -67,7 +71,7 @@ function realFolder(stateDir: string): string {
 const HANDLES = new Map<string, PcAccountState>();
 
 export class PcAccountState {
-  private doc: PcDoc = { v: 1, next_admit: 1, binding: null, clears: [], first: null, others_ever: false };
+  private doc: PcDoc = { v: 1, next_admit: 1, binding: null, clears: [], first: null, others_ever: false, gen: 0 };
   private problem: string | null = null;
   /** no file and no journal: this folder's rows predate the release, and are migrated once (T50) */
   private fresh = false;
@@ -82,7 +86,7 @@ export class PcAccountState {
     const path = join(realFolder(stateDir), ADMISSION_FILE);
     const state = HANDLES.get(path) ?? new PcAccountState(path);
     HANDLES.set(path, state);
-    state.doc = { v: 1, next_admit: 1, binding: null, clears: [], first: null, others_ever: false };
+    state.doc = { v: 1, next_admit: 1, binding: null, clears: [], first: null, others_ever: false, gen: 0 };
     state.problem = null;
     state.fresh = false;
     state.upgradingFrom = false;
@@ -142,10 +146,11 @@ export class PcAccountState {
   }
 
   /** The one-time migration could not be written: this PC's account state is unknown, so it fails closed (S19). */
-  unwritten(error: unknown): void {
+  /** `what` could not be written to this file: the PC's account state is unknown until it is (S19). */
+  unwritten(error: unknown, what = "The rows from before the upgrade could not be migrated"): void {
     if (this.problem !== null) return;
     this.fresh = false;
-    this.problem = `The rows from before the upgrade could not be migrated in ${this.path} (${error instanceof Error ? error.message : String(error)})`;
+    this.problem = `${what} in ${this.path} (${error instanceof Error ? error.message : String(error)})`;
   }
 
   /** A folder whose rows already carry numbers lost this file: damage, not a migration (P21, S19). */
@@ -223,6 +228,11 @@ export class PcAccountState {
 
   clears(): readonly AccountClear[] { return this.doc.clears; }
 
+  gen(): number { return this.doc.gen; }
+
+  /** A denial or a policy change reached the disk (P14): a decision that noted the old gen does not commit. */
+  raiseGen(): void { this.write({ ...this.doc, gen: this.doc.gen + 1 }); }
+
   /** The first-device fact (T67): the key that bound the PC, and its proved sign-in key or null. */
   first(): { readonly key: string; readonly list_key: string | null } | null { return this.doc.first; }
 
@@ -253,7 +263,7 @@ export class PcAccountState {
     const binding = this.doc.binding;
     // a PC already strict writes nothing: what it was told to clear waits for its repair, and it serves nobody meanwhile
     if (binding === null || this.problem !== null) return false;
-    this.write({ ...this.doc, binding: null, clears: [...this.doc.clears, { bind_id: binding.bind_id, reason, by }] });
+    this.write({ ...this.doc, binding: null, clears: [...this.doc.clears, { bind_id: binding.bind_id, reason, by }], gen: this.doc.gen + 1 });
     return true;
   }
 

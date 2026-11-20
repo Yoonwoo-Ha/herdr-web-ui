@@ -11,7 +11,7 @@
  * its write succeeded, so every other session can hear of a device it did not pair.
  */
 import { createHash, createPublicKey, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
-import { readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { isRowOrigin, legacyOrigin, type RowOrigin } from "./account/admission-order.ts";
 import type { ClearReason, PcAccountState } from "./account/pc-binding.ts";
@@ -492,6 +492,9 @@ export class DeviceStore {
   private readonly evidence: RemovalEvidence | null;
   /** every tombstone of this folder and its sibling as read before any coalescing merge (T48): each is evidence */
   private readonly carried: readonly AccountTombstone[];
+  /** A deny that could not reach the disk (P8 step 1): only this PC itself gets in until one is written. */
+  private denyProblem: string | null = null;
+  private readonly revokeAllPath: string;
   constructor(stateDir: string, blocked: string | null = null, accountBlocked: string | null = null, account: { safety?: { readonly strict: string | null } | null; pc?: PcAccountState | null; removals?: RemovalEvidence | null; carried?: readonly AccountTombstone[] } = {}) {
     this.safety = account.safety ?? null;
     this.pc = account.pc ?? null;
@@ -500,6 +503,7 @@ export class DeviceStore {
     this.path = join(stateDir, "devices.json");
     this.tombstonePath = join(stateDir, "account-tombstones.json");
     this.pendingTombstonePath = join(stateDir, "account-tombstones.pending.json");
+    this.revokeAllPath = join(stateDir, "revoke-all.json");
     const tombstones = readTombstones(this.tombstonePath);
     const pendingRead = readTombstones(this.pendingTombstonePath);
     const pending = pendingRead ?? [];
@@ -525,7 +529,18 @@ export class DeviceStore {
       console.error(this.error);
     }
     // the tombstone files' own repair asks only whether they could be read: a strict safety log is a separate refusal
-    // a strict order changes nothing on disk, not even a repair: its damage stays visible (S29)
+    // a Revoke all that stopped half way is finished before anything is served, whatever else could not be read (P8, T41)
+    if (this.error === null && this.evidence !== null && existsSync(this.revokeAllPath)) {
+      const gate = this.gateClosedAt ?? new Date().toISOString();
+      // a deny recovered at start raises the generation, as the live path does (P8, T41)
+      try { this.pc?.raiseGen(); this.finishRevokeAll(this.revokeAllRows(), gate); } catch (error) {
+        // what could not be finished on disk is finished in memory, and the PC fails closed until a start finishes it
+        this.devices = [];
+        this.gateClosedAt = gate;
+        this.denyProblem = `Revoke all could not be finished (${error instanceof Error ? error.message : String(error)}): only this PC itself gets in until it is.`;
+      }
+    }
+    // a strict order changes nothing else on disk, not even a repair: its damage stays visible (S29)
     // a damaged pending file beside a readable tombstone file: the Revokes the readable one holds are evidence at once,
     // and neither file is touched until the damaged one is repaired (T26, S19)
     if (this.error === null && this.evidence !== null && this.evidence.strict === null && this.safety?.strict == null && this.pc?.strict == null && pendingRead === null && tombstones !== null) {
@@ -538,8 +553,9 @@ export class DeviceStore {
       if (ahead !== undefined) this.accountProblem = `A time this PC wrote lies in the future (${ahead}): account records are refused until it is repaired.`;
     }
     if (this.error === null && this.accountProblem === null && this.pc?.strict == null) {
-      if (this.evidence !== null) this.takeInEvidence([...tombstones ?? [], ...pending]);
-      else {
+      if (this.evidence !== null) {
+        this.takeInEvidence([...tombstones ?? [], ...pending]);
+      } else {
         if (pending.length) {
           this.writeTombstones(this.tombstones);
           rmSync(this.pendingTombstonePath, { force: true });
@@ -566,6 +582,8 @@ export class DeviceStore {
     rmSync(this.pendingTombstonePath, { force: true });
     const kept = this.devices.filter((d) => !this.coveredByEvidence(d));
     if (kept.length !== this.devices.length) {
+      // a deny recovered at start raises the generation, as the live path does (P8, T41)
+      this.pc?.raiseGen();
       const gate = this.gateClosedAt ?? this.devices[0]?.created_at ?? null;
       this.save(kept, gate);
       this.devices = kept;
@@ -642,6 +660,7 @@ export class DeviceStore {
 
   /** A row whose key was removed at or after the row was made: revoked, whether or not its own write happened yet. */
   private stale(device: StoredDevice): boolean {
+    if (this.failedRows.has(device.id) || (device.relay_public_key !== undefined && this.failedDenies.has(device.relay_public_key))) return true;
     // main's own rule stays the floor under the evidence: a tombstone of this PC keeps its key out, whatever path took
     // the evidence in or skipped it (P13, rule 1)
     const tombstoned = device.relay_public_key !== undefined
@@ -650,14 +669,14 @@ export class DeviceStore {
   }
 
   get accountError(): string | null {
-    return this.safety?.strict ?? this.pc?.strict ?? this.evidence?.strict ?? this.accountProblem;
+    return this.safety?.strict ?? this.pc?.strict ?? this.evidence?.strict ?? this.denyProblem ?? this.accountProblem;
   }
 
   /** The safety log or the admission order fails closed: no device gets in by a row or a code. */
   get failsClosed(): boolean {
     // with the flag on, an account tombstone file that cannot be read is a key out nobody can tell: only this PC gets in (S19)
     if (this.evidence !== null && this.accountProblem !== null) return true;
-    return (this.safety?.strict ?? this.pc?.strict ?? this.evidence?.strict ?? null) !== null;
+    return (this.safety?.strict ?? this.pc?.strict ?? this.evidence?.strict ?? this.denyProblem) !== null;
   }
 
   /**
@@ -1206,6 +1225,9 @@ export class DeviceStore {
    */
   sessionRow(id: string): { role: DeviceRole; key: string | undefined; provisional: boolean } | null {
     const device = this.devices.find((d) => d.id === id);
+    // a row its evidence covers serves no request, whatever session it holds (S14); while the PC fails closed no
+    // session opens another stream either: only this PC itself gets in (S19, P8)
+    if (this.evidence !== null && (this.failsClosed || (device !== undefined && this.stale(device)))) return null;
     if (device) return { role: device.role, key: device.relay_public_key, provisional: false };
     const waiting = this.pending?.waiting?.rows.get(id);
     return waiting ? { role: "watch", key: waiting.key, provisional: true } : null;
@@ -1619,6 +1641,16 @@ export class DeviceStore {
     this.assertWritable();
     const target = this.devices.find((d) => d.id === id);
     if (!target) return false;
+    if (this.evidence !== null) {
+      const key = target.relay_public_key;
+      const rows = this.devices.filter((d) => d === target || (key !== undefined && d.relay_public_key === key));
+      const denied = this.deny(key === undefined ? [] : [key], () => this.tombstone([target], Date.now()));
+      if (key !== undefined) this.dropWaiting([key]);
+      // a deny not on disk writes nothing else: the row stays where a restart still shows the Revoke failed (P8)
+      if (denied !== null) { this.keepOut(rows); throw denied; }
+      this.drop(rows, by);
+      return true;
+    }
     // a revoke on this PC wins over the account: its key cannot come back by a record (docs/account.md, rule 1)
     this.tombstone([target], Date.now());
     // the key's other rows that tombstone takes go with it now, as the next start would take them (finishInterruptedWrites)
@@ -1629,6 +1661,7 @@ export class DeviceStore {
 
   /** The rows `gone` lose their access in one write; their sessions close and each removal is announced. */
   private drop(gone: readonly StoredDevice[], by: DeviceRemovedEvent["by"]): void {
+    if (this.evidence !== null) { this.dropBeforeWrite(gone, by); return; }
     const next = this.devices.filter((d) => !gone.includes(d));
     // A valid older/manual registry can have devices without a gate timestamp. Removing its
     // last device must still leave durable evidence that this store was once gated.
@@ -1668,6 +1701,7 @@ export class DeviceStore {
    */
   revokeAll(): string[] {
     this.assertWritable();
+    if (this.evidence !== null) return this.revokeAllInOrder();
     this.tombstone(this.devices, Date.now());
     const gate = this.gateClosedAt ?? this.devices[0]?.created_at ?? new Date().toISOString();
     this.save([], gate);
@@ -1704,13 +1738,163 @@ export class DeviceStore {
     this.unconfirmedFirstPairs = this.unconfirmedFirstPairs.filter(({ expires }) => now <= expires);
   }
 
+  /**
+   * P8 step 1, the deny on disk with `gen` raised. One that cannot be written still lets the caller close what it
+   * removes, and makes this PC fail closed until a later deny is written; returned, never acknowledged.
+   */
+  private deny(keys: readonly string[], write: () => void): Error | null {
+    try {
+      write();
+      this.pc?.raiseGen();
+      // only the deny of the very key that failed ends its closing, and never while a Revoke all is unfinished on disk
+      for (const key of keys) this.failedDenies.delete(key);
+      this.settleDenies();
+      return null;
+    } catch (error) {
+      const failed = error instanceof Error ? error : new Error(String(error));
+      for (const key of keys) this.failedDenies.add(key);
+      this.denyProblem = `A removal could not be written (${failed.message}): only this PC itself gets in until one is.`;
+      return failed;
+    }
+  }
+
+  /** Keys whose deny could not be written this run: their rows stay on disk, out of every session here (P8). */
+  private readonly failedDenies = new Set<string>();
+
+  /** Rows, keyed or not (cookie rows), whose removal was not written this run: out until their own removal lands (P8). */
+  private readonly failedRows = new Set<string>();
+
+  /** The PC opens again only when no failed key, no failed row and no unfinished Revoke all is left (P8, S19). */
+  private settleDenies(): void {
+    if (this.failedDenies.size === 0 && this.failedRows.size === 0 && !existsSync(this.revokeAllPath)) this.denyProblem = null;
+  }
+
+  /**
+   * A deny that did not land: its rows' sessions end and the rows are out for this run; nothing is written (P8). An
+   * account removal's rows are kept out by their key (failedDenies) alone, since which rows it covers is not known.
+   */
+  private keepOut(rows: readonly StoredDevice[], byRow = true): void {
+    for (const device of rows) {
+      if (byRow) this.failedRows.add(device.id);
+      const listeners = this.revocations.get(device.id);
+      this.revocations.delete(device.id);
+      for (const close of listeners ?? []) close();
+    }
+  }
+
+  /**
+   * P8 steps 2 to 5 for rows the deny already covers: the gate in memory, the rows out of memory, their sessions and
+   * codes ended, each removal told; then the registry write, whose failure is thrown only after all of that.
+   */
+  private dropBeforeWrite(gone: readonly StoredDevice[], by: DeviceRemovedEvent["by"]): void {
+    if (gone.length === 0) return;
+    const next = this.devices.filter((d) => !gone.includes(d));
+    const gate = this.gateClosedAt ?? this.devices[0]?.created_at ?? new Date().toISOString();
+    this.devices = next;
+    this.gateClosedAt = gate;
+    if (gone.some((d) => this.pending?.holders.has(d.id))) this.endPairing(undefined, "revoked");
+    for (const device of gone) {
+      const listeners = this.revocations.get(device.id);
+      this.revocations.delete(device.id);
+      for (const close of listeners ?? []) close();
+    }
+    // the registry write is these rows' own deny when they hold no key (cookie rows): one that fails keeps them out for
+    // this run and the PC closed until a write lands (P8, S19); a removal is told once the write is tried (P8 step 5)
+    try { this.save(next, gate); } catch (error) {
+      for (const device of gone) this.failedRows.add(device.id);
+      this.denyProblem = `A removal could not be written (${error instanceof Error ? error.message : String(error)}): only this PC itself gets in until one is.`;
+      throw error;
+    }
+    // the removal is on disk: those rows' own failures end, and only now is it told (P8 step 5)
+    for (const device of gone) this.failedRows.delete(device.id);
+    this.settleDenies();
+    for (const device of gone) this.announceRemoval(device, by);
+  }
+
+  /**
+   * Revoke all in P8's order: `revoke-all.json` first, then the gate, the codes, the candidates and every row out of
+   * memory with its sessions, then the evidence, the empty registry and the PC's account. A write that fails is thrown
+   * after the closing; the file stays, and the next start finishes the work before serving (T20).
+   */
+  private revokeAllInOrder(): string[] {
+    const now = new Date().toISOString();
+    // the file names every row it covers, a pending one's too, so it is finished from itself and never from less (T20)
+    const gone = this.revokeAllRows();
+    const gateWasOpen = !this.rawGated;
+    const denied = this.deny(gone.flatMap((d) => d.relay_public_key ?? []), () => writePrivateState(this.revokeAllPath, { id: randomBytes(16).toString("hex"), by: "pc", at: now, rows: gone }));
+    const gate = this.gateClosedAt ?? this.devices[0]?.created_at ?? now;
+    // a file that could not be written holds nothing: the rows stay where the next Revoke all finds them, out of every
+    // session meanwhile, and the PC closed (P8, T20)
+    if (denied !== null) {
+      this.keepOut(gone);
+      this.gateClosedAt = gate;
+      this.voidPending("revoked");
+      this.unconfirmedFirstPairs = [];
+      if (gateWasOpen) this.tellGateClosed();
+      throw denied;
+    }
+    this.devices = [];
+    this.gateClosedAt = gate;
+    this.voidPending("revoked");
+    this.unconfirmedFirstPairs = [];
+    const listeners = [...this.revocations.values()];
+    this.revocations.clear();
+    for (const closes of listeners) for (const close of closes) close();
+    for (const listener of [...this.revokeAllListeners]) listener();
+    // a gate that was open closes here, whatever the writes below do: what the open LAN let in ends (T3)
+    if (gateWasOpen) this.tellGateClosed();
+    if (denied !== null) throw denied;
+    for (const device of gone) this.announceRemoval(device, "pc");
+    // its intent is on disk: any write after it that fails leaves the PC closed until a start finishes it (P8, T20)
+    try { this.finishRevokeAll(gone, gate); } catch (error) {
+      this.denyProblem = `Revoke all could not be finished (${error instanceof Error ? error.message : String(error)}): only this PC itself gets in until it is.`;
+      this.pc?.unwritten(error, "Revoke all could not clear this PC's account");
+      throw error;
+    }
+    return gone.map((device) => device.id);
+  }
+
+  /** The writes of a Revoke all whose file is on disk: its Revokes, the empty registry, the PC's account; then the file goes. */
+  private finishRevokeAll(rows: readonly StoredDevice[], gate: string): void {
+    this.tombstone(rows, Date.now());
+    this.save([], gate);
+    this.devices = [];
+    this.gateClosedAt = gate;
+    // the file goes only once the PC has left its account: a binding that cannot be read keeps it (P12)
+    if (this.pc?.strict != null) throw new Error(this.pc.strict);
+    this.clearAccountBinding("revoke_all", "pc");
+    rmSync(this.revokeAllPath, { force: true });
+    // every row and key it covered is revoked on disk now: their earlier failures end
+    for (const row of rows) {
+      this.failedRows.delete(row.id);
+      if (row.relay_public_key !== undefined) this.failedDenies.delete(row.relay_public_key);
+    }
+    this.settleDenies();
+    // the tombstone file follows the evidence once nothing keeps account records refused any more (P13)
+    if (this.evidence?.strict === null && this.accountError === null) this.refreshTombstones();
+  }
+
+  /** The rows a Revoke all covers: those its pending file names, and every row this store holds now (T20). */
+  private revokeAllRows(): StoredDevice[] {
+    let named: StoredDevice[] = [];
+    try {
+      const doc = JSON.parse(readFileSync(this.revokeAllPath, "utf8")) as { rows?: unknown };
+      if (Array.isArray(doc.rows)) named = doc.rows.filter((row): row is StoredDevice => typeof row === "object" && row !== null && typeof (row as { id?: unknown }).id === "string");
+    } catch { /* no pending file, or one that names no rows: the rows held now */ }
+    return [...named.filter((row) => !this.devices.some((d) => d.id === row.id)), ...this.devices];
+  }
+
   private save(devices = this.devices, gateClosedAt = this.gateClosedAt): void {
     const closes = !this.rawGated && (gateClosedAt !== null || devices.length > 0);
     writePrivateState(this.path, { gate_closed_at: gateClosedAt, devices });
     // The write that closes the gate: onGateClosed. Told once the caller has set the store's own fields, which each
     // does right after this returns, and before anything else of this process runs (no frame of a connection is
     // read in between). Each on its own: one that throws ends neither the others nor the pairing that closed the gate.
-    if (closes) queueMicrotask(() => {
+    if (closes) this.tellGateClosed();
+  }
+
+  private tellGateClosed(): void {
+    queueMicrotask(() => {
       for (const listener of [...this.gateListeners]) {
         try { listener(); } catch (error) { console.warn(`[devices] ending what the open LAN let in failed: ${error instanceof Error ? error.message : String(error)}`); }
       }
@@ -1828,15 +2012,25 @@ export class DeviceStore {
    * row holding the key is revoked, closing its sessions.
    */
   removeAccountKey(key: string, account: string, record: { id: string; issuedAt: string; by?: { device_id: string; label: string }; signed?: RemoveRecord }, now = Date.now()): boolean {
-    this.assertAccountWritable();
+    // a deny that failed earlier does not keep a removal from trying again: its landing is what ends the closing (P8)
+    if (this.evidence !== null) {
+      this.assertWritable();
+      const refused = this.safety?.strict ?? this.pc?.strict ?? this.evidence.strict ?? this.accountProblem;
+      if (refused !== null) throw new Error(refused);
+    } else this.assertAccountWritable();
     if (this.evidence !== null) {
       // account-scoped evidence first, whatever rows this PC holds and with no time compared (T16 in 2d); every row
       // it covers goes, row by row, and a Revoke this PC made is never coalesced into it (T22)
-      const added = this.evidence.addRemoval(key, account, { id: record.id, at: new Date(now).toISOString(), ...(record.signed ? { records: [record.signed] } : {}) });
-      this.refreshTombstones();
+      let added = false;
+      const denied = this.deny([key], () => {
+        added = this.evidence!.addRemoval(key, account, { id: record.id, at: new Date(now).toISOString(), ...(record.signed ? { records: [record.signed] } : {}) });
+        this.refreshTombstones();
+      });
       this.dropWaiting([key]);
+      // with no deny on disk the evidence cannot say which rows it covers: every row of the key goes for this run
+      if (denied !== null) { this.keepOut(this.devices.filter((d) => d.relay_public_key === key), false); throw denied; }
       const gone = this.devices.filter((d) => d.relay_public_key === key && this.coveredByEvidence(d));
-      if (gone.length) this.drop(gone, record.by);
+      this.drop(gone, record.by);
       return added || gone.length > 0;
     }
     // a pairing of this key made on this PC after the removal was signed wins: a replayed or late remove
