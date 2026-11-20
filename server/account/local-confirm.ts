@@ -100,6 +100,11 @@ export class LocalConfirms {
     return () => this.#listeners.delete(listener);
   }
 
+  /** Takes an act off the screen: what it asked for is gone. Its asker hears `expired`, and no answer to it counts. */
+  withdraw(id: string): void {
+    this.#end(id, "expired");
+  }
+
   isOpen(id: string): boolean {
     this.#sweep();
     return this.#entries.get(id)?.state === "open";

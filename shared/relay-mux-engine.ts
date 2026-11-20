@@ -8,9 +8,9 @@ type Payload<T extends MuxFrame["type"]> = Extract<MuxFrame, { type: T }>["paylo
 export type HttpRequest = Payload<typeof FrameType.HTTP_OPEN>;
 export type HttpResponse = Payload<typeof FrameType.HTTP_HEADERS>;
 export type WsRequest = Payload<typeof FrameType.WS_OPEN>;
-export type SessionFrame = Extract<MuxFrame, { type: 1 | 2 | 3 | 4 | 10 | 11 | 12 | 13 | 14 }>;
+export type SessionFrame = Extract<MuxFrame, { type: 1 | 2 | 3 | 4 | 10 | 11 | 12 | 13 | 14 | 0x40 | 0x41 | 0x42 }>;
 /** Setup frames only a phone sends; the others (WELCOME, PAIR_CHALLENGE, AUTH_OK) come from the PC. */
-const CLIENT_SETUP: readonly number[] = [FrameType.HELLO, FrameType.AUTH, FrameType.PAIR, FrameType.PAIR_REQUEST, FrameType.PAIR_REVEAL, FrameType.PAIR_CONFIRM];
+const CLIENT_SETUP: readonly number[] = [FrameType.HELLO, FrameType.AUTH, FrameType.PAIR, FrameType.PAIR_REQUEST, FrameType.PAIR_REVEAL, FrameType.PAIR_CONFIRM, FrameType.KEY_PROVE];
 type Traffic = "interactive" | "bulk" | "control";
 type CancelTimer = () => void;
 const U64_MAX = 0xffffffffffffffffn;
@@ -1009,7 +1009,8 @@ export class MuxEngine {
         this.timer(() => this.carrierLost(new MuxProtocolError("timeout", "GOAWAY drained")), frame.payload.drain_ms);
         return;
       case FrameType.HELLO: case FrameType.WELCOME: case FrameType.AUTH: case FrameType.AUTH_OK: case FrameType.PAIR:
-      case FrameType.PAIR_REQUEST: case FrameType.PAIR_CHALLENGE: case FrameType.PAIR_REVEAL: case FrameType.PAIR_CONFIRM: {
+      case FrameType.PAIR_REQUEST: case FrameType.PAIR_CHALLENGE: case FrameType.PAIR_REVEAL: case FrameType.PAIR_CONFIRM:
+      case FrameType.KEY_CHALLENGE: case FrameType.KEY_PROVE: case FrameType.KEY_PENDING: {
         const clientFrame = CLIENT_SETUP.includes(frame.type);
         check(this.deviceId === undefined && clientFrame === (this.options.role === "server"), "Unexpected setup frame");
         this.options.onSession?.(frame);

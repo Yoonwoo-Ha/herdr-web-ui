@@ -6,6 +6,7 @@ import { type ServerMessage, STREAM_COOKIE_PREFIX } from "../shared/protocol.ts"
 import { DEVICE_COOKIE } from "./auth.ts";
 import { createServer } from "./index.ts";
 import { authenticatedWebSocket } from "./remote-websocket.ts";
+import { withHeaders } from "./websocket.test-helpers.ts";
 import type { Machine } from "../shared/machines.ts";
 import type { SessionSnapshot } from "../shared/protocol.ts";
 import { expandMachine, expandMachineEvent, type WireMachine, type WireMachineEvent } from "../shared/compact-agents.ts";
@@ -26,9 +27,6 @@ async function connection(base: string, open?: (url: string) => WebSocket) {
   return { socket, frames, wait, features, fence };
 }
 
-/** Bun takes handshake headers; lib.dom's browser constructor does not list them. */
-const withHeaders = (headers: Record<string, string>) => (url: string) =>
-  new (WebSocket as unknown as new (url: string, options: { headers: Record<string, string> }) => WebSocket)(url, { headers });
 const pairings = (frames: ServerMessage[]) => frames.filter((frame) => frame.type === "machine-event" && frame.event.type === "device-paired");
 
 it("negotiates compact agents over HTTP, SSE and WS without changing legacy responses or restored rows", async () => {

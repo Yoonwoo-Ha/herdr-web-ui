@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { bounded } from "../relay/test-helpers.ts";
 import { LOCAL_CONFIRM_FILE, type LocalConfirms, type ScreenAction } from "./local-confirm.ts";
-import { ask, pairingPc, signedInWith, type Pc } from "./pairing.test-helpers.ts";
+import { ask, memberRow, pairingPc, signIn, type Pc } from "./pairing.test-helpers.ts";
 
 const pcs: Pc[] = [];
 afterEach(async () => { for (const pc of pcs.splice(0)) await pc.close(); });
@@ -16,7 +16,8 @@ afterEach(async () => { for (const pc of pcs.splice(0)) await pc.close(); });
 const BRIDGE_TOKEN = "b".repeat(64);
 
 async function pc(accountOpensAll: boolean, desktop?: { input: ReadableStream<Uint8Array>; write(line: string): void }) {
-  const made = await pairingPc({ server: { accountOpensAll, bridgeToken: BRIDGE_TOKEN, ...(desktop ? { desktopOwner: desktop } : {}) } });
+  const member = await memberRow("acct_1");
+  const made = Object.assign(await pairingPc({ rows: [member.row], server: { accountOpensAll, bridgeToken: BRIDGE_TOKEN, ...(desktop ? { desktopOwner: desktop } : {}) } }), { member });
   pcs.push(made);
   return made;
 }
@@ -34,7 +35,11 @@ test("T47: a relay session, a bare loopback window, a forwarded window or the br
     await made.local(path, { method: "POST", headers: { "x-herdr-machine": "1" }, body }),
     await made.local(path, { method: "POST", headers: { "x-herdr-machine": "1", "x-forwarded-for": "100.64.0.9" }, body }),
     await made.local(path, { method: "POST", headers: { "x-herdr-machine": "1", authorization: `Bearer ${BRIDGE_TOKEN}` }, body }),
-    await ask((await signedInWith(made, await made.offerCode())).session, path, { method: "POST", body }),
+    await (async () => {
+      const signed = await signIn(made, made.member.row.id, made.member.key);
+      if ("error" in signed) throw new Error(`The sign-in was refused: ${signed.error}`);
+      return ask(signed.link, path, { method: "POST", body });
+    })(),
   ];
   for (const tried of tries) expect([tried.status, tried.body.error?.code]).toEqual([403, "local_required"]);
   expect(confirms.pending().map((open) => open.id)).toEqual([id]);

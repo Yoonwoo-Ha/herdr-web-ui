@@ -61,6 +61,8 @@ import { RemovalEvidence } from "./account/removal-evidence.ts";
 import { DeviceJournal } from "./account/device-journal.ts";
 import { AccountHolds } from "./account/holds.ts";
 import { AccountIntroductions } from "./account/introductions.ts";
+import { PendingRedemptions, type PendingRedemption } from "./account/pending.ts";
+import { askScreenForKey, KeyProofPairings } from "./account/key-proof.ts";
 import { desktopOwnerChannel, desktopOwnerFdChannel, LOCAL_CONFIRM_FILE, LocalConfirms, openConfirmListener, takeDesktopOwnerFd } from "./account/local-confirm.ts";
 import { Telemetry } from "./telemetry.ts";
 import { UsageService } from "./usage.ts";
@@ -213,6 +215,8 @@ export function createServer(
     desktopActivity?: boolean;
     /** OVIS_ACCOUNT_OPENS_ALL, the Step 2 release flag (off by default): screen proof (server/account/local-confirm.ts) exists only with it */
     accountOpensAll?: boolean;
+    /** the platform the key confirm is decided by; tests name another than this machine's */
+    platform?: NodeJS.Platform;
     /** the desktop app's end of the desktop-owner channel (`takeDesktopOwnerFd`); used only with `accountOpensAll` */
     desktopOwner?: { input: ReadableStream<Uint8Array>; write(line: string): void };
     backgroundWait?: { grace: number; limit: number };
@@ -500,7 +504,7 @@ export function createServer(
   // a port file an earlier run left names a port anyone may have taken since
   try { rmSync(join(stateDir, LOCAL_CONFIRM_FILE), { force: true }); }
   catch (error) { console.error(`${LOCAL_CONFIRM_FILE} could not be removed: ${error instanceof Error ? error.message : String(error)}`); }
-  const localConfirms = (options.accountOpensAll ?? process.env["OVIS_ACCOUNT_OPENS_ALL"] === "1") ? new LocalConfirms() : undefined;
+  const localConfirms = (options.accountOpensAll ?? accountOpensAll()) ? new LocalConfirms() : undefined;
   // a page that cannot open leaves acts waiting for the desktop app's channel; it never fails the start
   const confirmListener = (() => {
     if (!localConfirms) return null;
@@ -508,6 +512,20 @@ export function createServer(
     catch (error) { console.error(`The local confirm page did not open: ${error instanceof Error ? error.message : String(error)}`); return null; }
   })();
   const desktopOwner = localConfirms && options.desktopOwner ? desktopOwnerChannel(localConfirms, options.desktopOwner) : null;
+  // devices that redeemed a code and proved their key, waiting for this PC's screen (server/account/pending.ts)
+  const pendingRedemptions = localConfirms ? new PendingRedemptions({
+    serverId: () => ovisRelay.currentIdentity()?.server_id ?? null,
+    // every drop is journalled (P24), with the key and the name it gave, so the device history names it
+    journalDrop: (entry) => { journal?.append({ kind: "drop", how: entry.reason, key: entry.key, no: null, row: null, label: entry.label, by: "pc", account: null }); },
+    release: (codeId, key) => devices.releaseRedemption(codeId, key),
+  }) : undefined;
+  // a code that ends takes what waits on it, however it ends
+  if (pendingRedemptions) devices.onPairingEnded((codeId) => pendingRedemptions.dropCode(codeId));
+  // a key confirm needs a screen this PC can prove: Linux in this release; elsewhere pairing is as before
+  const keyProofPairings = localConfirms && pendingRedemptions && (options.platform ?? process.platform) === "linux"
+    ? new KeyProofPairings({ pending: pendingRedemptions, seams: devices }) : undefined;
+  devices.onKeyRemoved((key, cause) => pendingRedemptions?.dropKey(key, cause));
+  const askScreen = localConfirms && keyProofPairings ? (entry: PendingRedemption) => askScreenForKey(localConfirms, keyProofPairings, entry) : undefined;
   const services: RequestServices = {
     runtimeMove: options.runtimeService ? moveService({
       stateDir, port: server.port ?? DEFAULT_PORT, serving: runtime, facts: () => options.runtimeService?.facts(),
@@ -522,7 +540,7 @@ export function createServer(
       switchRuntime: () => { const answer = options.runtimeService!.request("herdr-core"); return answer.ok ? null : answer.message; },
       ...(options.herdrCoreInstaller ? { installer: options.herdrCoreInstaller } : {}),
     }) : null,
-    options, relay: ovisRelay, relayReceiptIds: new RelayReceiptIds(), hostname, token, bridgeToken, bootId, devices, accountMailbox, accountIntroductions: new AccountIntroductions(Date.now, join(stateDir, "account-introductions.json")), accountHolds, safetyLog, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, cliProxyRoutes, usageLogin, usage, usageAccounts, systemSampler, fontsDir: join(stateDir, "fonts"), voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartup, localConfirms,
+    options, relay: ovisRelay, relayReceiptIds: new RelayReceiptIds(), hostname, token, bridgeToken, bootId, devices, accountMailbox, accountIntroductions: new AccountIntroductions(Date.now, join(stateDir, "account-introductions.json")), accountHolds, safetyLog, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, cliProxyRoutes, usageLogin, usage, usageAccounts, systemSampler, fontsDir: join(stateDir, "fonts"), voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartup, localConfirms, pendingRedemptions, keyProofPairings, askScreenForKey: askScreen,
     get portalStartupResult() { return portalStartupResult; },
   };
   ovisRelay.resume(services, server.port ?? DEFAULT_PORT);

@@ -447,7 +447,22 @@ export type MachineEvent = { type: "machines"; machines: Machine[] } | { type: "
   | DevicePairedEvent
   | DeviceRemovedEvent
   | RelayPairingsEvent
-  | RemotePairingsEvent;
+  | RemotePairingsEvent
+  | PendingRedemptionsEvent;
+/**
+ * A device that redeemed a code and proved its key, waiting for this PC's screen to approve that key (device table S31,
+ * T71). `label` is what the device says about itself; `fingerprint` is what its own screen shows for the same key.
+ */
+export interface PendingKey {
+  id: string;
+  label: string;
+  fingerprint: string;
+  via: "relay" | "address";
+  redeemed_at: string;
+  slots: { used: number; of: number };
+}
+/** every device waiting for this PC's screen, after each change; to streams that may drive (approving stays on the screen) */
+export interface PendingRedemptionsEvent { type: "pending-redemptions"; pending: PendingKey[] }
 /** every relay pairing waiting for approval, after each change; only to the PC's own windows that may approve one */
 export interface RelayPairingsEvent { type: "relay-pairings"; pairings: RelayPairingRequest[] }
 /** every relay pairing waiting for approval, after each change; only to drive account members connected through the relay */

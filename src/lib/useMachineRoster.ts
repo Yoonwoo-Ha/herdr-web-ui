@@ -318,6 +318,8 @@ export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRoster
       if (payload.type === "relay-pairings") { setRelayPairings(payload.pairings); return; }
       if (payload.type === "remote-pairings") { setRemotePairings(payload.pairings); return; }
       if (payload.type === "device-removed") { setRemovedNotices((list) => withPairedNotice(list, payload)); return; }
+      // the devices waiting for this PC's screen are shown by the settings screen that asks for them (S2-34)
+      if (payload.type === "pending-redemptions") return;
       const fresh = payload.type === "machines" ? payload.machines.filter((machine) => !kept.has(machine.id)) : [];
       const vouches = payload.type !== "machines" || kept.size === 0 || fresh.length > 0;
       if (vouches) snapshotRequests.current.invalidate();

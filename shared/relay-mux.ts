@@ -31,9 +31,13 @@ export const FrameType = {
   HTTP_DATA: 0x13, HTTP_END: 0x14, HTTP_STOP_REQUEST: 0x15,
   WS_OPEN: 0x20, WS_ACCEPT: 0x21, WS_DATA: 0x22, WS_CLOSE: 0x23,
   CREDIT: 0x30, RESET: 0x31,
+  // session frames again, past the stream ranges: 0x01-0x0f is full
+  KEY_CHALLENGE: 0x40, KEY_PROVE: 0x41, KEY_PENDING: 0x42,
 } as const;
 export type FrameType = typeof FrameType[keyof typeof FrameType];
 export const PAIR_SAS_FEATURE = "pair-sas";
+/** A device that offers it proves the key it pairs with over a challenge the PC makes after the key was named. */
+export const KEY_PROOF_FEATURE = "key-proof-1";
 export const ACCOUNT_FEATURE = "account";
 export const PAIR_INTENT_PC = "pair-intent-pc";
 export const PAIR_INTENT_ACCOUNT = "pair-intent-account";
@@ -141,6 +145,9 @@ type Payloads = {
   readonly 0x13: Uint8Array;
   readonly 0x14: { readonly trailers: HeaderList };
   readonly 0x15: null;
+  readonly 0x40: { readonly challenge: string };
+  readonly 0x41: { readonly signature: string };
+  readonly 0x42: Readonly<Record<string, never>>;
   readonly 0x20: { readonly device_id: string; readonly target: string; readonly headers: HeaderList; readonly protocols: readonly string[] };
   readonly 0x21: { readonly protocol: string | null; readonly headers: HeaderList };
   readonly 0x22: { readonly data: Uint8Array; readonly total_message_bytes?: number };
@@ -354,7 +361,7 @@ function envelope(type: unknown, flags: unknown, id: unknown, size: number): Fra
   const f = integer(flags, 0, 0xffff);
   const mask = t === FrameType.HTTP_END ? 1 : t === FrameType.WS_DATA ? 7 : 0;
   requireProtocol((f & ~mask) === 0 && (t !== FrameType.WS_DATA || !(f & 4) || !!(f & 1)), "Reserved flags");
-  if (t < FrameType.HTTP_OPEN) requireProtocol(id === 0, "Session frame needs stream zero");
+  if (t < FrameType.HTTP_OPEN || t >= FrameType.KEY_CHALLENGE) requireProtocol(id === 0, "Session frame needs stream zero");
   else streamId(id, false);
   return t;
 }
@@ -389,6 +396,13 @@ function metadata(type: FrameType, flags: number, stream_id: number, input: unkn
       return { ...common, type, payload: { label: pairLabel(v.label), public_key: p256Spki(v.public_key), commitment: base64url(v.commitment, 32) } };
     case FrameType.PAIR_CHALLENGE: case FrameType.PAIR_REVEAL:
       return { ...common, type, payload: { nonce: base64url(v.nonce, 32) } };
+    case FrameType.KEY_CHALLENGE:
+      return { ...common, type, payload: { challenge: base64url(v.challenge, 32) } };
+    case FrameType.KEY_PROVE:
+      return { ...common, type, payload: { signature: base64url(v.signature, 64) } };
+    // the wait names nothing: a fingerprint the PC or the relay sent could be shown for another key
+    case FrameType.KEY_PENDING:
+      return { ...common, type, payload: {} };
     case FrameType.PAIR_CONFIRM:
       requireProtocol(v.confirmed === true && Object.keys(v).length === 1, "Invalid pairing confirmation");
       return { ...common, type, payload: { confirmed: true } };

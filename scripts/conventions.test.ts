@@ -335,6 +335,8 @@ describe("demo transport", () => {
     "/api/account/introduction": "account linking: no screen of the app asks for it yet (the account screens come with their own demo answers)",
     "/api/account/link": "account linking: no screen of the app asks for it yet (the account screens come with their own demo answers)",
     "/api/account/records": "account linking: no screen of the app asks for it yet (the account screens come with their own demo answers)",
+    "/api/devices/pending": "devices waiting for this PC's screen: only with the release flag on, which the demo never is",
+    "/api/devices/pending/decline": "devices waiting for this PC's screen: only with the release flag on, which the demo never is",
     "/api/account/local-confirm": "refused to every caller (local_required): an act is confirmed on the PC's own screen, never through a route",
     "/api/account/relay-account": "relay pass: named by a signed-in owner's account screen, which the demo never reaches (no sign-in there)",
     "/api/devices/pair/cancel": "called by the plugin's terminal `link --code` only (scripts/plugin-link.ts); no screen of the app asks for it",

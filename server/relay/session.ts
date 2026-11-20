@@ -4,11 +4,13 @@ import type { SecureChannel } from "../../shared/relay-e2ee.ts";
 import { commitmentHolds, fromBase64Url, PAIR_APPROVAL_MS, pairDigits, randomPairNonce, toBase64Url } from "../../shared/relay-pair-sas.ts";
 import { MuxEngine, MuxStreamError } from "../../shared/relay-mux-engine.ts";
 import type { HttpStream, MuxClock, SessionFrame, WsStream } from "../../shared/relay-mux-engine.ts";
-import { ACCOUNT_FEATURE, DIRECT_CARRIER, DIRECT_TAILNET, FrameType, LARGE_WS_MESSAGES, LIMITS_V1, PAIR_INTENT_ACCOUNT, PAIR_INTENT_PC, PAIR_INTENT_VOUCHED, PAIR_SAS_FEATURE, RELAY_HINTS, RELAY_PROTOCOL, REQUEST_HEADERS, RESPONSE_HEADERS, SERVER_TIME_HEADER, WS_CONTINUATION_CAPACITY } from "../../shared/relay-mux.ts";
+import { ACCOUNT_FEATURE, DIRECT_CARRIER, DIRECT_TAILNET, FrameType, KEY_PROOF_FEATURE, LARGE_WS_MESSAGES, LIMITS_V1, PAIR_INTENT_ACCOUNT, PAIR_INTENT_PC, PAIR_INTENT_VOUCHED, PAIR_SAS_FEATURE, RELAY_HINTS, RELAY_PROTOCOL, REQUEST_HEADERS, RESPONSE_HEADERS, SERVER_TIME_HEADER, WS_CONTINUATION_CAPACITY } from "../../shared/relay-mux.ts";
 import type { HeaderList, SessionError } from "../../shared/relay-mux.ts";
 import { PairingRateLimitedError, type DeviceMatch, type PairingPath } from "../devices.ts";
 import { accountDeviceId } from "../../shared/account-records.ts";
 import { SIGN_IN_WAIT_MS } from "../account/mailbox.ts";
+import type { KeyProofPairings } from "../account/key-proof.ts";
+import { PENDING_MS } from "../account/pending.ts";
 import { handleRequest } from "../dispatch.ts";
 import type { RequestServices, ServerContext } from "../dispatch.ts";
 import { jsonResponse } from "../http.ts";
@@ -109,7 +111,7 @@ export interface RelayWebSocketRequest {
 export class RelaySession {
   readonly mux: MuxEngine;
   readonly sessionId = randomBytes(16).toString("hex");
-  private state: "hello" | "auth" | "pair-commit" | "pair-wait" | "verifying" | "refused" | "ready" | "closed" = "hello";
+  private state: "hello" | "auth" | "pair-commit" | "pair-wait" | "key-proof" | "key-wait" | "verifying" | "refused" | "ready" | "closed" = "hello";
   private readonly nonce = randomBytes(32);
   /** This session's channel binding, when the phone offered pairing by comparing digits and this PC selected it. */
   private sasBinding: Uint8Array | undefined;
@@ -124,6 +126,10 @@ export class RelaySession {
   private key = "";
   /** Whether the device signed in with AUTH, the only admission that proves it holds its key. */
   private keyProven = false;
+  /** the device offered KEY_PROOF_FEATURE: it can prove the key it pairs with (server/account/key-proof.ts) */
+  private keyProof = false;
+  /** this session's pairing that waits for the proof, then for this PC's screen */
+  private keyProofSession: string | undefined;
   private hinting = false;
   private directing = false;
   private tailnet = false;
@@ -157,6 +163,7 @@ export class RelaySession {
       close: (code) => options.channel.close(code),
       onClose: (error) => {
         this.state = "closed";
+        this.leaveKeyProof();
         this.endPairing(false);
         this.unwatch?.();
         this.unwatch = undefined;
@@ -228,7 +235,8 @@ export class RelaySession {
 
   get verifying(): boolean { return this.state === "verifying"; }
 
-  get pairing(): boolean { return this.state === "pair-commit" || this.state === "pair-wait"; }
+  /** a pairing under way, a key proof and its wait for the PC's screen too: the relay link keeps it past its setup deadline */
+  get pairing(): boolean { return this.state === "pair-commit" || this.state === "pair-wait" || this.state === "key-proof" || this.state === "key-wait"; }
 
   get bufferedBytes(): number { return this.sourceBytes + this.mux.stats.bufferedBytes; }
 
@@ -247,6 +255,7 @@ export class RelaySession {
   close(code: SessionError = "auth_revoked"): void {
     if (this.state === "closed") return;
     this.state = "closed";
+    this.leaveKeyProof();
     this.endPairing(false);
     this.unwatch?.();
     this.unwatch = undefined;
@@ -263,6 +272,38 @@ export class RelaySession {
     }
     if (closing.length) void Promise.all(closing).then(() => this.mux.flush()).then(() => this.mux.fail(code, code));
     else this.mux.fail(code, code);
+  }
+
+  /** A key proof ends with its session, however the session ends: the code's held use and the waiting entry go. */
+  private leaveKeyProof(): void {
+    const session = this.keyProofSession;
+    this.keyProofSession = undefined;
+    if (session !== undefined) this.options.services.keyProofPairings?.leave(session);
+  }
+
+  /**
+   * PAIR on a PC with screen proof: the code is checked and one use held for the named key, the PC then sends its
+   * challenge, and the session waits (KEY_PROVE, then the screen) until the key is admitted or the pairing ends.
+   */
+  private pairByProof(pairings: KeyProofPairings, pair: { code: string; label: string; public_key: string }): void {
+    // what a code pairing is held to before it makes a device holds before the proof too: a pairing paused for wrong
+    // codes (throws, answered auth_failed), and a relay pass that lets in no new session (nothing is answered)
+    this.options.services.devices.assertRelayPairing("code");
+    if (!this.admitNewDevice()) return;
+    const started = pairings.pair({ code: pair.code, label: pair.label, publicKey: pair.public_key, how: "code", via: "relay", keyProof: this.keyProof && !this.options.signInOnly, serverId: this.options.serverId, canAdmit: this.admitNewDevice });
+    if ("refuse" in started) { this.close(started.refuse); return; }
+    this.keyProofSession = started.session;
+    this.state = "key-proof";
+    this.mux.extendSetup(PENDING_MS + 10_000);
+    this.mux.sendSession({ type: FrameType.KEY_CHALLENGE, flags: 0, stream_id: 0, payload: { challenge: started.challenge } });
+    void pairings.decision(started.session).then(({ admitted }) => {
+      if (this.keyProofSession !== started.session) return;
+      this.keyProofSession = undefined;
+      // As with direct and SAS pairing, the pass keeper closes refused carriers without a session error.
+      if (admitted === null) { if (!this.refused) this.close("auth_failed"); return; }
+      this.keyProven = true;
+      this.enter(admitted);
+    });
   }
 
   /** The pairing would have made a device while new client sessions are refused: nothing is answered from here on. */
@@ -289,10 +330,12 @@ export class RelaySession {
         const large = frame.payload.features.includes(LARGE_WS_MESSAGES);
         if (large) this.mux.sendLargeMessages();
         this.serverTime = frame.payload.features.includes(SERVER_TIME_HEADER);
+        this.keyProof = frame.payload.features.includes(KEY_PROOF_FEATURE);
         // an intent is selected only with pair-sas, and only the one offered (docs/account.md, "Negotiation")
         const intents = frame.payload.features.filter((f) => f === PAIR_INTENT_PC || f === PAIR_INTENT_ACCOUNT || f === PAIR_INTENT_VOUCHED);
         if (intents.length > 1) { this.close("protocol_error"); return; }
-        const selected = [...this.sasBinding ? [PAIR_SAS_FEATURE, ...intents] : [], ...frame.payload.features.includes(ACCOUNT_FEATURE) ? [ACCOUNT_FEATURE] : []];
+        const selected = [...this.sasBinding ? [PAIR_SAS_FEATURE, ...intents] : [], ...frame.payload.features.includes(ACCOUNT_FEATURE) ? [ACCOUNT_FEATURE] : [],
+          ...this.keyProof && this.options.services.keyProofPairings !== undefined && !this.options.signInOnly ? [KEY_PROOF_FEATURE] : []];
         if (frame.payload.required_features.some((feature) => !selected.includes(feature) && !(feature === RELAY_HINTS && this.hinting) && !(feature === DIRECT_CARRIER && this.directing) && !(feature === DIRECT_TAILNET && this.tailnet) && !(feature === LARGE_WS_MESSAGES && large))) { this.close("unsupported_extension"); return; }
         this.state = "auth";
         if (this.sasBinding && intents[0] === PAIR_INTENT_ACCOUNT) this.intent = "account";
@@ -307,6 +350,9 @@ export class RelaySession {
         const devices = this.options.services.devices;
         if (this.options.services.serveOnly) { this.close("auth_failed"); return; }
         if (frame.type === FrameType.AUTH && !await this.pullForRefusedSignIn(frame.payload.device_id, frame.payload.signature)) return;
+        // a PC with screen proof admits a code's redeemer only once its screen approves the key it proved
+        const keyProofPairings = this.options.services.keyProofPairings;
+        if (frame.type === FrameType.PAIR && keyProofPairings !== undefined) { this.pairByProof(keyProofPairings, frame.payload); return; }
         this.keyProven = frame.type === FrameType.AUTH;
         const device = frame.type === FrameType.AUTH
           ? await devices.matchRelay(frame.payload.device_id, this.nonce, frame.payload.signature, this.options.serverId)
@@ -314,6 +360,17 @@ export class RelaySession {
         // no auth_failed: the code held and was not spent, and the relay closes this client for the pass
         if (this.refused) return;
         this.enter(device);
+        return;
+      }
+      case FrameType.KEY_PROVE: {
+        const keyProofPairings = this.options.services.keyProofPairings;
+        if (this.state !== "key-proof" || this.keyProofSession === undefined || keyProofPairings === undefined) { this.close("protocol_error"); return; }
+        this.state = "key-wait";
+        const proved = await keyProofPairings.prove(this.keyProofSession, frame.payload.signature);
+        if (!this.mux.active) return;
+        if ("refuse" in proved) { this.close(proved.refuse); return; }
+        this.mux.sendSession({ type: FrameType.KEY_PENDING, flags: 0, stream_id: 0, payload: {} });
+        this.options.services.askScreenForKey?.(proved.pending);
         return;
       }
       case FrameType.PAIR_REQUEST: {
@@ -381,7 +438,7 @@ export class RelaySession {
         this.finishPairing();
         return;
       }
-      case FrameType.WELCOME: case FrameType.AUTH_OK: case FrameType.PAIR_CHALLENGE:
+      case FrameType.WELCOME: case FrameType.AUTH_OK: case FrameType.PAIR_CHALLENGE: case FrameType.KEY_CHALLENGE: case FrameType.KEY_PENDING:
         this.close("protocol_error");
     }
   }
