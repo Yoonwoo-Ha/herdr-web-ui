@@ -3,7 +3,7 @@ import { app, autoUpdater as squirrel, BrowserWindow, ipcMain, Menu, nativeImage
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, rmSync, type WriteStream } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { choosePort, coreEnv, endLeftover, installCore, isFile, layout, openLog, processCommand, processStartSync, readSaved, serverEnv, startCore, startServer, stopServer, writeSaved, type RunningServer } from "./children.ts";
 import { accountServiceOf, startLoopbackSignIn, type LoopbackSignIn } from "./accountSignIn.ts";
 import { awakeLabel, DESKTOP_ACTIVITY_FILE, holdAwake, readAwakeSettings, readWorking, writeAwakeSettings, type AwakeSettings } from "./awake.ts";
@@ -13,6 +13,7 @@ import { desktopLocale, desktopText } from "./text.ts";
 import { hideWindow } from "./windowClose.ts";
 import { argvLinkQuery, LINK_SCHEME, openLinkQuery, tellsLink } from "./openLink.ts";
 import { openOutside } from "./openOutside.ts";
+import { findBrowsers, readLinkBrowser, webAddress, writeLinkBrowser, type FoundBrowsers, type LinkBrowser } from "./browsers.ts";
 
 type StepState = "pending" | "ok" | "failed";
 export interface Status {
@@ -63,6 +64,9 @@ const awakePath = join(app.getPath("userData"), "awake.json");
 let awake = readAwakeSettings(awakePath);
 let awakeBlocker: number | null = null;
 let awakeWorking = 0;
+const linkBrowserPath = join(app.getPath("userData"), "link-browser.json");
+let linkBrowser = readLinkBrowser(linkBrowserPath);
+let browsersFound: Promise<FoundBrowsers> | null = null;
 let text = desktopText("en");
 /** the pane an `ovis://open` link names (openLink.ts), as its query: told to the server's page once it shows */
 let pendingLink: string | null = null;
@@ -258,6 +262,48 @@ function guard(contents: Electron.WebContents, blank?: BrowserWindow): void {
     openOutside(url);
     blank?.close();
   });
+}
+
+/** the browsers as last found, or found now: Settings finds them again each time it lists them */
+function browsers(again = false): Promise<FoundBrowsers> {
+  if (again || browsersFound === null) browsersFound = findBrowsers();
+  return browsersFound;
+}
+
+/**
+ * A web link of the server's page, in the browser chosen in Settings. When that browser is gone or
+ * cannot start (or quits within two seconds with an error), the system browser opens it and a notification says so.
+ */
+async function openWebLink(url: string): Promise<void> {
+  const address = webAddress(url);
+  const chosen = linkBrowser;
+  if (address === null || chosen === null) return openOutside(url);
+  const browser = (await browsers()).browsers.find((found) => found.id === chosen);
+  if (browser === undefined) return openInstead(null, address);
+  const [program, ...args] = browser.command(address);
+  const started = Date.now();
+  let failed = false;
+  const fail = () => {
+    if (failed) return;
+    failed = true;
+    openInstead(browser, address);
+  };
+  try {
+    const child = spawn(program!, args, { detached: true, stdio: "ignore", windowsHide: true });
+    child.once("error", fail);
+    // a launcher that hands the link to a running browser exits at once with 0; one that cannot start fails (or crashes) within a moment
+    child.once("exit", (code, signal) => { if ((code !== 0 || signal !== null) && Date.now() - started < 2_000) fail(); });
+    child.unref();
+  } catch {
+    fail();
+  }
+}
+
+function openInstead(browser: LinkBrowser | null, address: string): void {
+  openOutside(address);
+  updateLog(`The browser chosen for links (${browser?.name ?? linkBrowser}) could not open a link: the system browser opened it.`);
+  if (!Notification.isSupported()) return;
+  new Notification({ title: text("The link opened in the system browser"), body: browser ? text("{name} could not open it.", { name: browser.name }) : text("The browser chosen for links is no longer on this computer."), silent: true }).show();
 }
 
 function updateAwake(): void {
@@ -588,6 +634,23 @@ if (!app.requestSingleInstanceLock()) {
     openOutside(url);
     try { return await waiting.returned; } finally { if (signIn === waiting) signIn = null; }
   });
+  // Settings → Browser for links: the server's own page lists the browsers, chooses one by its id and opens its web links in it.
+  // By the frame's real origin, not its address: the server also shows a file's HTML at its own address, in an opaque origin
+  const serverPage = (frame: Electron.WebFrameMain | null | undefined) => frame != null && frame.parent === null && frame.origin === serverOrigin() && ours(frame.url);
+  ipcMain.handle("ovis:browsers", async (event) => {
+    if (!serverPage(event.senderFrame)) return null;
+    const found = await browsers(true);
+    return { browsers: found.browsers.map(({ id, name }) => ({ id, name })), systemDefault: found.systemDefault, chosen: linkBrowser };
+  });
+  ipcMain.handle("ovis:browser-choose", async (event, id: unknown) => {
+    if (!serverPage(event.senderFrame)) throw new Error("Choosing a browser is not offered here");
+    if (id !== null && (typeof id !== "string" || !(await browsers()).browsers.some((browser) => browser.id === id))) throw new Error("That browser is not on this computer");
+    writeLinkBrowser(linkBrowserPath, id);
+    linkBrowser = id;
+  });
+  ipcMain.on("ovis:browser-open", (event, url: unknown) => {
+    if (serverPage(event.senderFrame) && typeof url === "string") void openWebLink(url);
+  });
   app.on("before-quit", (event) => {
     if (stopped) return;
     event.preventDefault();
@@ -621,6 +684,8 @@ if (!app.requestSingleInstanceLock()) {
       app.setAsDefaultProtocolClient(LINK_SCHEME, process.execPath, ["--"]);
     }
     pendingLink ??= argvLinkQuery(process.argv);
+    // found before the first link: on Windows that takes several registry reads
+    if (linkBrowser !== null) void browsers();
     allowPermissions();
     createMenu();
     createWindow();

@@ -4,14 +4,40 @@
  * The shell decides which browser shows it (a tab here; the system browser in the apps). `kind`
  * names what the address is, for the place that will route it: `link` a page on the web,
  * `sign-in` a sign-in page, `ovis` an Ovis page (another PC's, a file in a tab of its own).
- * Nothing reads it yet. src/conventions.test.ts keeps every other file off target="_blank" and
- * window.open.
+ * In the desktop and Mac apps a web `link` opens in the browser chosen in Settings (`linkBrowsers`); every
+ * other address keeps to the system browser. src/conventions.test.ts keeps every other file off
+ * target="_blank" and window.open.
  */
-import { createElement, type AnchorHTMLAttributes, type ReactElement, type Ref } from "react";
+import { createElement, type AnchorHTMLAttributes, type MouseEvent, type ReactElement, type Ref } from "react";
 
 import { inMacApp, inNativeApp } from "./nativeApp.ts";
 
 export type ExternalLinkKind = "link" | "sign-in" | "ovis";
+
+export interface LinkBrowserChoices {
+  browsers: { id: string; name: string }[];
+  systemDefault: string | null;
+  /** null: the system default */
+  chosen: string | null;
+}
+
+/** The desktop and Mac apps' browsers for web links (app/electron/src/browsers.ts, app/mac/.../LinkBrowsers.swift); a page names one by its id. */
+export interface LinkBrowsers {
+  list(): Promise<LinkBrowserChoices | null>;
+  choose(id: string | null): Promise<void>;
+  open(url: string): void;
+}
+
+/** A web address the chosen browser takes: never this app's own pages, which the app keeps (a new Ovis window). */
+function choosesBrowser(kind: ExternalLinkKind, url: string): boolean {
+  if (kind !== "link" || !isWebLink(url)) return false;
+  try { return typeof location === "undefined" || new URL(url).origin !== location.origin; } catch { return false; }
+}
+
+export function linkBrowsers(): LinkBrowsers | null {
+  const bridge = typeof window === "undefined" ? undefined : (window as Window & { ovisBrowsers?: Partial<LinkBrowsers> }).ovisBrowsers;
+  return typeof bridge?.list === "function" && typeof bridge.choose === "function" && typeof bridge.open === "function" ? bridge as LinkBrowsers : null;
+}
 
 /**
  * Whether this page can keep a browser tab to reuse. The iOS, Android, Mac and desktop apps hand an
@@ -72,8 +98,10 @@ const openWebLink = createWebLinkOpener();
  * `reuse` (the "Reuse tab for external links" setting, for a plain click); any other address gets
  * a tab of its own, with no opener or referrer.
  */
-export function openExternal(url: string, _kind: ExternalLinkKind, reuse = false): void {
-  if (isWebLink(url)) openWebLink(url, reuse);
+export function openExternal(url: string, kind: ExternalLinkKind, reuse = false): void {
+  const browsers = choosesBrowser(kind, url) ? linkBrowsers() : null;
+  if (browsers) browsers.open(url);
+  else if (isWebLink(url)) openWebLink(url, reuse);
   else window.open(url, "_blank", "noopener,noreferrer");
 }
 
@@ -96,6 +124,15 @@ type ExternalLinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "target" 
   ref?: Ref<HTMLAnchorElement>;
 };
 
-export function ExternalLink({ kind: _kind, referrer = false, href, ...props }: ExternalLinkProps): ReactElement {
-  return createElement("a", { href, target: "_blank", rel: referrer ? "noopener" : "noopener noreferrer", ...props });
+export function ExternalLink({ kind, referrer = false, href, onClick, ...props }: ExternalLinkProps): ReactElement {
+  const click = (event: MouseEvent<HTMLAnchorElement>) => {
+    onClick?.(event);
+    // only a plain click: a modified one keeps what the browser or the app does with it
+    if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || href === undefined || !choosesBrowser(kind, href)) return;
+    const browsers = linkBrowsers();
+    if (!browsers) return;
+    event.preventDefault();
+    browsers.open(href);
+  };
+  return createElement("a", { href, target: "_blank", rel: referrer ? "noopener" : "noopener noreferrer", ...props, onClick: click });
 }

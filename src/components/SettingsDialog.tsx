@@ -28,6 +28,7 @@ import { KeyBarSettings, KeyBarToggles } from "./KeyBarSettings.tsx";
 import { FileTextSizeRow } from "./FileTextSizeRow.tsx";
 import { FoldHelpersRow } from "./FoldHelpersRow.tsx";
 import { FilesPanelRow } from "./FilesPanelRow.tsx";
+import { LinkBrowserRow } from "./LinkBrowserRow.tsx";
 import { onSettingsHistory, recordSettings, settingsEntry, settingsLevels, type SettingsLevel } from "../lib/settingsHistory.ts";
 import { ThemeFiles, themeLabel } from "./ThemeFiles.tsx";
 import { THEME_NAMES, ThemeCard } from "./ThemeCard.tsx";
@@ -616,6 +617,7 @@ function ChatPage() {
           condition={<span className="settings-condition">{t(filePanelAvailable ? "Only pages this PC serves can open beside the pane." : "Only pages this PC serves can open in the app.")}</span>} wide reset={["webLinks"]}>
           <Segmented label={t("Web links")} value={settings.webLinks} onChange={(webLinks) => update({ webLinks })} options={WEB_LINK_TARGETS.map((webLinks) => ({ value: webLinks, label: webLinks === "panel" ? t(filePanelAvailable ? "Beside the pane" : "In the app") : t("In a new tab") }))} />
         </SettingsRow>
+        <LinkBrowserRow />
       </SettingsGroup>
 
       <VoiceMain />

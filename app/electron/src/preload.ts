@@ -35,6 +35,12 @@ if (isConnectionScreen) {
   contextBridge.exposeInMainWorld("ovisLink", {
     onOpen: (listener: (query: string) => void): void => links.onOpen(listener),
   });
+  // Settings → Browser for links (src/lib/externalLink.ts): a page names a browser main found by its id, never a program
+  contextBridge.exposeInMainWorld("ovisBrowsers", {
+    list: (): Promise<unknown> => ipcRenderer.invoke("ovis:browsers"),
+    choose: (id: string | null): Promise<void> => ipcRenderer.invoke("ovis:browser-choose", id),
+    open: (url: string): void => ipcRenderer.send("ovis:browser-open", url),
+  });
   // the server's pages sign in to the account through the system browser (src/accountSignIn.ts);
   // main answers only its own server's pages, and only while an account service is named
   const named = ipcRenderer.sendSync("ovis:account-service") as { service?: unknown; providers?: unknown } | null;

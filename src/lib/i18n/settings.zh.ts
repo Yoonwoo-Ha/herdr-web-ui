@@ -1,7 +1,7 @@
 /**
  * Simplified Chinese for the keys only the settings files use:
  * components/SettingsDialog.tsx (with THEME_NAMES), components/SignOutRow.tsx, components/KeyBarSettings.tsx,
- * components/SettingsControls.tsx, components/TelemetryControls.tsx, lib/paletteSettings.ts.
+ * components/SettingsControls.tsx, components/TelemetryControls.tsx, components/LinkBrowserRow.tsx, lib/paletteSettings.ts.
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const SETTINGS_ZH: Record<string, string> = {
@@ -182,6 +182,10 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Beside the pane": "在窗格旁",
   "In a new tab": "在新标签页中",
   "Reuse tab for external links": "重复使用外部链接标签页",
+  "Browser for links": "打开链接的浏览器",
+  "The browser a web link you click in Ovis opens in, on this computer. Sign-in pages always open in the system's default browser.": "在这台电脑上点击 Ovis 中的网页链接时使用的浏览器。登录页面始终在系统默认浏览器中打开。",
+  "System default": "系统默认",
+  "System default ({name})": "系统默认 ({name})",
   "theme themes palette dark light mode colors density language sidebar logos": "主题 调色板 palette 深色 浅色 模式 颜色 密度 语言 侧边栏 徽标",
   "chat message width composer enter send thinking code": "聊天 消息 宽度 输入框 回车 发送 思考 代码",
   "terminal key bar keyboard clipboard": "终端 按键栏 键盘 剪贴板",

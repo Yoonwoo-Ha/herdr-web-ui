@@ -1,7 +1,7 @@
 /**
  * Korean for the keys only the settings files use:
  * components/SettingsDialog.tsx (with THEME_NAMES), components/SignOutRow.tsx, components/KeyBarSettings.tsx,
- * components/SettingsControls.tsx, components/TelemetryControls.tsx, lib/paletteSettings.ts.
+ * components/SettingsControls.tsx, components/TelemetryControls.tsx, components/LinkBrowserRow.tsx, lib/paletteSettings.ts.
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const SETTINGS_KO: Record<string, string> = {
@@ -182,6 +182,10 @@ export const SETTINGS_KO: Record<string, string> = {
   "Beside the pane": "패널 옆에",
   "In a new tab": "새 탭에서",
   "Reuse tab for external links": "외부 링크에 탭 재사용",
+  "Browser for links": "링크 열 브라우저",
+  "The browser a web link you click in Ovis opens in, on this computer. Sign-in pages always open in the system's default browser.": "이 컴퓨터에서 Ovis 안의 웹 링크를 눌렀을 때 열 브라우저입니다. 로그인 페이지는 언제나 시스템 기본 브라우저로 열립니다.",
+  "System default": "시스템 기본",
+  "System default ({name})": "시스템 기본 ({name})",
   "theme themes palette dark light mode colors density language sidebar logos": "테마 팔레트 palette 다크 라이트 모드 색상 밀도 언어 사이드바 로고",
   "chat message width composer enter send thinking code": "채팅 메시지 너비 입력창 엔터 보내기 생각 코드",
   "terminal key bar keyboard clipboard": "터미널 키 바 키보드 클립보드",

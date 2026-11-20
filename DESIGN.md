@@ -864,6 +864,12 @@ floor of `--fs-meta` holds at scale 1 and only grows with it.
   takes the focus on the marked entry, centered; a choice, Escape or a press outside closes it and
   the focus goes back to the button.
 - Web links from every agent's chat and terminal open in a new tab by default. The device setting `reuseExternalLinkTab` follows the Codex app's reusable-tab choice: one Ovis page keeps one external tab and replaces its address on later clicks. A browser lets a page steer a tab of another site only as its opener, so that tab keeps Ovis as its opener: the site in it can see and navigate the Ovis tab, which is why the setting is off by default and says so (Ovis's `Referrer-Policy: no-referrer` still sends no address). A new tab has no opener. If the browser refuses to steer the tab, the link opens in a new tab. Reuse is best effort: a site that sets Cross-Origin-Opener-Policy cuts the link, and the next click opens a new tab. Ctrl, Cmd and Alt clicks still open a new tab, and the iOS, Android, Mac and desktop apps, which hand links to the system browser, neither show the setting nor reuse a tab. The Web links panel choice and Shift-click behavior stay independent.
+- Browser for links (the desktop and Mac apps only, Settings → Chat → Files, under Web links): one select, the
+  system default first and named when the system says which it is, then the browsers the app found
+  on the PC (app/electron/src/browsers.ts, app/mac/Sources/OvisMac/LinkBrowsers.swift). The Codex and Claude apps, Paseo and T3 Code hand every
+  link to the system default; the row follows the system's own default-browser list instead, and
+  only for web links (`kind` link): sign-ins, Ovis pages and mailto stay with the system default.
+  The row is missing where the browser itself shows the link (a browser tab, the phone apps).
 - New agents (Settings → Agents): `claudeLaunchMode` (`--permission-mode`: `acceptEdits`,
   `auto`, `plan`, `dontAsk`, `bypassPermissions`) and `codexLaunchMode` (`readOnly`, `auto`,
   `fullAccess`, each a `--sandbox` and `--ask-for-approval` pair) become the `agent.args` the new

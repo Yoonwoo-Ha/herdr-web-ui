@@ -38,6 +38,63 @@ describe("openExternal", () => {
   });
 });
 
+describe("the desktop app's browser for links", () => {
+  /** Runs `run` in a page the desktop app gave its ovisBrowsers bridge, and gives back what reached it, a new tab's link and window.open. */
+  function inDesktopApp(run: () => void): { bridged: string[]; tabs: unknown[][] } {
+    const bridged: string[] = [];
+    const tabs: unknown[][] = [];
+    const originals = { window: Object.getOwnPropertyDescriptor(globalThis, "window"), document: Object.getOwnPropertyDescriptor(globalThis, "document"), location: Object.getOwnPropertyDescriptor(globalThis, "location") };
+    const ovisBrowsers = { list: async () => null, choose: async () => {}, open: (url: string) => { bridged.push(url); } };
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { ovisBrowsers, open: (...args: unknown[]) => { tabs.push(args); return null; } } });
+    Object.defineProperty(globalThis, "location", { configurable: true, value: { origin: "http://127.0.0.1:7317" } });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => {
+      const link = { href: "", target: "", rel: "", click: () => tabs.push([link.href, link.target, link.rel]) };
+      return link;
+    } } });
+    try {
+      run();
+    } finally {
+      for (const name of ["window", "document", "location"] as const) {
+        if (originals[name]) Object.defineProperty(globalThis, name, originals[name]);
+        else Reflect.deleteProperty(globalThis, name);
+      }
+    }
+    return { bridged, tabs };
+  }
+
+  it("hands a web link to the app, and keeps sign-ins, this app's own pages and other schemes on their old path", () => {
+    const { bridged, tabs } = inDesktopApp(() => {
+      openExternal("https://example.com/", "link");
+      openExternal("https://github.com/login/device", "sign-in");
+      openExternal("http://127.0.0.1:7317/?pane=t3", "link");
+      openExternal("mailto:team@ovis.sh", "link");
+    });
+    expect(bridged).toEqual(["https://example.com/"]);
+    expect(tabs).toEqual([["https://github.com/login/device", "_blank", "noopener noreferrer"], ["http://127.0.0.1:7317/?pane=t3", "_blank", "noopener noreferrer"], ["mailto:team@ovis.sh", "_blank", "noopener,noreferrer"]]);
+  });
+
+  it("takes over a plain click on a web ExternalLink to another site only", () => {
+    const click = (props: Parameters<typeof ExternalLink>[0], event: { button: number; defaultPrevented?: boolean; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; shiftKey?: boolean }) => {
+      const fired = { ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...event, defaultPrevented: event.defaultPrevented ?? false, preventDefault() { fired.defaultPrevented = true; } };
+      (ExternalLink(props).props as { onClick: (event: unknown) => void }).onClick(fired);
+      return fired.defaultPrevented;
+    };
+    let seen = 0;
+    const { bridged } = inDesktopApp(() => {
+      expect(click({ kind: "link", href: "https://ovis.sh/", onClick: () => { seen++; } }, { button: 0 })).toBe(true);
+      expect(click({ kind: "link", href: "https://ovis.sh/middle" }, { button: 1 })).toBe(false);
+      for (const modifier of ["ctrlKey", "metaKey", "altKey", "shiftKey"] as const) expect(click({ kind: "link", href: "https://ovis.sh/modified" }, { button: 0, [modifier]: true })).toBe(false);
+      expect(click({ kind: "link", href: "http://127.0.0.1:7317/?pane=t3" }, { button: 0 })).toBe(false);
+      expect(click({ kind: "sign-in", href: "https://github.com/login/device" }, { button: 0 })).toBe(false);
+      expect(click({ kind: "ovis", href: "https://pc.example/" }, { button: 0 })).toBe(false);
+      expect(click({ kind: "link", href: "mailto:team@ovis.sh" }, { button: 0 })).toBe(false);
+      expect(click({ kind: "link", href: "https://ovis.sh/handled" }, { button: 0, defaultPrevented: true })).toBe(true);
+    });
+    expect(bridged).toEqual(["https://ovis.sh/"]);
+    expect(seen).toBe(1);
+  });
+});
+
 describe("reserveTab", () => {
   it("opens a blank tab the page it is sent to has no handle on, or answers null when the browser blocks it", () => {
     const tab = { opener: {} as unknown };

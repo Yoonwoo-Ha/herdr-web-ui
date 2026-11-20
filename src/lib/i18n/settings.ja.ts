@@ -1,7 +1,7 @@
 /**
  * Japanese for the keys only the settings files use:
  * components/SettingsDialog.tsx (with THEME_NAMES), components/SignOutRow.tsx, components/KeyBarSettings.tsx,
- * components/SettingsControls.tsx, components/TelemetryControls.tsx, lib/paletteSettings.ts.
+ * components/SettingsControls.tsx, components/TelemetryControls.tsx, components/LinkBrowserRow.tsx, lib/paletteSettings.ts.
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const SETTINGS_JA: Record<string, string> = {
@@ -182,6 +182,10 @@ export const SETTINGS_JA: Record<string, string> = {
   "Beside the pane": "ペインの横",
   "In a new tab": "新しいタブ",
   "Reuse tab for external links": "外部リンク用のタブを再利用",
+  "Browser for links": "リンクを開くブラウザ",
+  "The browser a web link you click in Ovis opens in, on this computer. Sign-in pages always open in the system's default browser.": "このコンピュータで Ovis の Web リンクを押したときに開くブラウザです。サインインのページは常にシステムの既定のブラウザで開きます。",
+  "System default": "システムの既定",
+  "System default ({name})": "システムの既定 ({name})",
   "theme themes palette dark light mode colors density language sidebar logos": "テーマ パレット palette ダーク ライト モード 色 密度 言語 サイドバー ロゴ",
   "chat message width composer enter send thinking code": "チャット メッセージ 幅 入力欄 エンター 送信 思考 コード",
   "terminal key bar keyboard clipboard": "ターミナル キーバー キーボード クリップボード",
