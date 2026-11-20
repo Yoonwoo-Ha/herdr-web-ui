@@ -119,7 +119,7 @@ describe("the safety log holds what it acknowledged (P24, T28, T41, S19)", () =>
   test("S19: a strict PC that was never paired is no open LAN: its gate stays closed to strangers", () => {
     const at = dir();
     writeFileSync(join(at, SAFETY_LOG_FILE), "not json", { mode: 0o600 });
-    const devices = new DeviceStore(at, null, null, SafetyLog.open(at));
+    const devices = new DeviceStore(at, null, null, { safety: SafetyLog.open(at) });
     expect(devices.list(null)).toEqual([]);
     expect(devices.gated).toBe(true);
   });
@@ -163,11 +163,11 @@ describe("the safety log holds what it acknowledged (P24, T28, T41, S19)", () =>
 
   test("S19: pairing_gate reads the safety log alone, not an old tombstone file it cannot read", () => {
     const at = dir();
-    const devices = new DeviceStore(at, null, "the account tombstones could not be merged", null);
+    const devices = new DeviceStore(at, null, "the account tombstones could not be merged");
     expect(devices.failsClosed).toBe(false);
     const strict = dir();
     writeFileSync(join(strict, SAFETY_LOG_FILE), "not json", { mode: 0o600 });
-    expect(new DeviceStore(strict, null, null, SafetyLog.open(strict)).failsClosed).toBe(true);
+    expect(new DeviceStore(strict, null, null, { safety: SafetyLog.open(strict) }).failsClosed).toBe(true);
   });
 });
 

@@ -195,7 +195,7 @@ describe("the PC safety log (account-log.json)", () => {
     const pairing = new DeviceStore(dir);
     const { token } = pairing.pair(pairing.startPairing().code, "Phone", "drive")!;
     expect(pairing.match(token)).not.toBeNull();
-    const closed = new DeviceStore(dir, null, null, SafetyLog.open(dir));
+    const closed = new DeviceStore(dir, null, null, { safety: SafetyLog.open(dir) });
     expect(closed.match(token)).toBeNull();
     expect(closed.accountError).not.toBeNull();
     expect(closed.gated).toBe(true);

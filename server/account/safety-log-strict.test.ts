@@ -44,7 +44,7 @@ describe("the safety log's endings and its failed writes (P24, S19)", () => {
   test.skipIf(NO_CHMOD)("S19: an append that cannot be written fails the PC closed until a reload finds the log whole, and every way in is refused meanwhile", async () => {
     const at = dir();
     const log = SafetyLog.open(at);
-    const devices = new DeviceStore(at, null, null, log);
+    const devices = new DeviceStore(at, null, null, { safety: log });
     const phone = await signer();
     const id = devices.pairRelay(devices.startPairing().code, "Phone", phone.spki)!.device.id;
     chmodSync(at, 0o500);
@@ -70,7 +70,7 @@ describe("the safety log's endings and its failed writes (P24, S19)", () => {
     writeFileSync(join(at, "account-tombstones.pending.json"), JSON.stringify({ v: 1, tombstones: [tombstone] }), { mode: 0o600 });
     const log = SafetyLog.open(at);
     expect(log.strict).not.toBeNull();
-    new DeviceStore(at, null, null, log);
+    new DeviceStore(at, null, null, { safety: log });
     // the pending tombstone joins the main file and the pending file goes, as it does with the log whole
     expect(existsSync(join(at, "account-tombstones.pending.json"))).toBe(false);
     expect((JSON.parse(readFileSync(join(at, "account-tombstones.json"), "utf8")) as { tombstones: unknown[] }).tombstones).toHaveLength(1);
@@ -79,7 +79,7 @@ describe("the safety log's endings and its failed writes (P24, S19)", () => {
   test.skipIf(NO_CHMOD)("S19: a sign-in whose proof was checked while the log turned strict is refused", async () => {
     const at = dir();
     const log = SafetyLog.open(at);
-    const devices = new DeviceStore(at, null, null, log);
+    const devices = new DeviceStore(at, null, null, { safety: log });
     const phone = await signer();
     const id = devices.pairRelay(devices.startPairing().code, "Phone", phone.spki)!.device.id;
     const nonce = crypto.getRandomValues(new Uint8Array(32));
@@ -108,12 +108,12 @@ describe("the safety log's endings and its failed writes (P24, S19)", () => {
   test("S19: a Revoke while the log is strict writes the main tombstone file", async () => {
     const at = dir();
     writeFileSync(join(at, "account-log.json"), "not json", { mode: 0o600 });
-    const devices = new DeviceStore(at, null, null, SafetyLog.open(at));
+    const devices = new DeviceStore(at, null, null, { safety: SafetyLog.open(at) });
     const phone = await signer();
     const row = devices.pairRelay(devices.startPairing().code, "Phone", phone.spki);
     expect(row).toBeNull();
     writeFileSync(join(at, "devices.json"), JSON.stringify({ gate_closed_at: AT, devices: [{ id: "0123456789abcdef", label: "Phone", role: "drive", token_hash: "x".repeat(64), relay_public_key: phone.spki, created_at: AT, last_seen_at: null, account: "acct_1" }] }), { mode: 0o600 });
-    const reopened = new DeviceStore(at, null, null, SafetyLog.open(at));
+    const reopened = new DeviceStore(at, null, null, { safety: SafetyLog.open(at) });
     expect(reopened.revoke("0123456789abcdef")).toBe(true);
     expect(existsSync(join(at, "account-tombstones.pending.json"))).toBe(false);
     expect((JSON.parse(readFileSync(join(at, "account-tombstones.json"), "utf8")) as { tombstones: { key: string }[] }).tombstones.map((t) => t.key)).toEqual([phone.spki]);

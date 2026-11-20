@@ -82,11 +82,13 @@ describe("merging and folding the PC safety log", () => {
     expect(mergeSafetyLogs(own, other)).toBeNull();
     expect(readFileSync(join(own, SAFETY_LOG_FILE), "utf8")).toBe(before);
 
-    // a merged log that cannot be written fails the PC closed and names the dir, instead of throwing out of the start
-    const blocked = stateDir();
-    rmSync(blocked, { recursive: true });
-    mkdirSync(blocked, { mode: 0o500 });
-    expect(mergeSafetyLogs(blocked, own)).toContain(blocked);
+    // a merged log that cannot be written fails the PC closed and names the dir (where a mode can refuse a write)
+    if (process.platform !== "win32" && process.getuid?.() !== 0) {
+      const blocked = stateDir();
+      rmSync(blocked, { recursive: true });
+      mkdirSync(blocked, { mode: 0o500 });
+      expect(mergeSafetyLogs(blocked, own)).toContain(blocked);
+    }
 
     // a dir with no log takes the other's records
     const empty = stateDir();

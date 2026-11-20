@@ -65,7 +65,11 @@ describe("paired devices of the install's other state dir", () => {
     const before = readFileSync(join(active, "devices.json"), "utf8");
     expect(mergeSiblingState(active, sibling, at(0)).devicesBlocked).toBeNull();
     expect(ids(active)).toEqual(["a", "b"]);
-    expect(registry(active)).toEqual(registry(sibling));
+    // each dir marks the rows it only copied (imported): a dir's own word, the rest alike (P22)
+    const alike = (dir: string) => ({ ...registry(dir), devices: registry(dir).devices.map(({ imported: _copied, ...device }) => device) });
+    expect(alike(active)).toEqual(alike(sibling));
+    expect(registry(active).devices.map((d) => d.imported === true)).toEqual([false, true]);
+    expect(registry(sibling).devices.map((d) => d.imported === true)).toEqual([true, false]);
     expect(registry(active).gate_closed_at).toBe("2026-10-25T05:19:00.000Z");
     // the device paired in the other dir gets in with its own cookie
     expect(new DeviceStore(active).match("token-b")?.id).toBe(device("b").id);
