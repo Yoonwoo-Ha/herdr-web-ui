@@ -249,11 +249,11 @@ describe("icon cache", () => {
 
 describe("UI wording", () => {
   it("says New workspace, never New session", () => {
-    const offenders = [...scan("src/**/*.{ts,tsx}"), ...scan("site/**/*.{ts,tsx,html}"), "index.html"]
+    const offenders = [...scan("src/**/*.{ts,tsx}"), ...scan("site/**/*.{ts,tsx,html}"), "index.html", ...scan("tui/**/*.ts").filter((file) => !file.startsWith("tui/testing/"))]
       .filter((file) => !file.endsWith(".test.ts"))
       .flatMap((file) => read(file).split("\n").flatMap((line, index) =>
         /^\s*(?:\/\/|\/?\*)/.test(line) || !/\bNew [Ss]ession\b/.test(line) ? [] : [`${file}:${index + 1}: ${line.trim()}`]));
-    fail(offenders, "UI text says \"New workspace\", not \"New session\" (AGENTS.md, UI wording). Change the string and its i18n entries in src/lib/i18n.*.ts or src/lib/i18n/*.ts.");
+    fail(offenders, "UI text says \"New workspace\", not \"New session\" (AGENTS.md, UI wording). Change the string, and in src/ its i18n entries in src/lib/i18n.*.ts or src/lib/i18n/*.ts.");
   });
 });
 

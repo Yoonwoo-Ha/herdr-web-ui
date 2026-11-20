@@ -809,7 +809,7 @@ describe("ci.yml", () => {
   ];
 
   it("reads the event from the runner's environment only where a push run may differ from Release's own", () => {
-    const reading = files("{src,shared,server,scripts,telemetry,push-relay,relay,integrations}/**/*.{ts,tsx,js,mjs,cjs,sh}")
+    const reading = files("{src,shared,server,scripts,telemetry,push-relay,relay,integrations,tui}/**/*.{ts,tsx,js,mjs,cjs,sh}")
       .filter((file) => file !== "scripts/release-ci-reuse.test.ts" && /\bGITHUB_EVENT_(?:NAME|PATH)\b/.test(read(file)));
     expect(reading, "A script or a test reads the event from the runner's environment somewhere new, or no longer where it did. What it does with it differs between main's push run and the Release run's own ci.yml: list the file in EVENT_VARIABLE_READS with why a Release run may still take main's run").toEqual([...EVENT_VARIABLE_READS].sort());
     expect(read(".github/actions/setup-ci/action.yml")).not.toMatch(/\bgithub\.event|\bGITHUB_EVENT_/);
