@@ -1195,6 +1195,7 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
   const [accountChecks, setAccountChecks] = useState(0);
   const searching = useContext(SettingsQuery).length > 0;
   const [devicesMore, setDevicesMore] = useState<HTMLDivElement | null>(null);
+  const [accountDelete, setAccountDelete] = useState<HTMLDivElement | null>(null);
   const [devicesCheck, setDevicesCheck] = useState<HTMLDivElement | null>(null);
   const closeConnect = useCallback(() => setConnecting(false), []);
   const pairingHeld = useRef(false);
@@ -1233,7 +1234,7 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
   return (
     <>
       {/* the account first: the sign-in the relay depends on is not left in More settings */}
-      <AccountSection onAccount={setAccount} recheck={accountChecks} {...(opensAll === undefined ? {} : { opensAll })} />
+      <AccountSection onAccount={setAccount} recheck={accountChecks} deleteSlot={accountDelete} {...(opensAll === undefined ? {} : { opensAll })} />
 
       {/* what is connected to this PC: its name atop one list of the other PCs, phones and browsers, the one in use first */}
       <SettingsGroup section="devices">
@@ -1304,6 +1305,9 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
         <AccessFacts facts={security} />
         <RemotePcsMore machines={machines} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={onPcSettings} />
       </SettingsFold>
+
+      {/* Delete account sits last on the page, away from the account's everyday rows */}
+      <div className="account-delete-foot" ref={setAccountDelete} />
 
       {connecting && (
         <ConnectPhoneDialog plan={plan} pairUrl={pairUrl}

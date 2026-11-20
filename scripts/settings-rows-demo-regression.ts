@@ -614,10 +614,24 @@ async function accountGoogle(browser: import("playwright-core").Browser, url: st
           } else {
             const methods = account.locator(".account-method");
             await methods.nth(1).waitFor();
-            assert.equal(await account.getByText("Signed in with Google").count(), 1, "the account row names Google");
+            assert.equal(await account.locator(".account-head").getByText("Google", { exact: true }).count(), 1, "the account row names Google");
             assert.deepEqual(await methods.evaluateAll((rows) => rows.map((row) => [row.getAttribute("data-provider"), row.querySelector("button") !== null])), [["github", true], ["google", false]],
               "every way to sign in can be removed but the one this page signed in with");
+            const foot = page.locator(".account-delete-foot");
+            assert.equal(await foot.locator("summary").textContent(), "Delete account", `Delete account sits at the foot of the page (${width}px)`);
+            assert.equal(await account.getByText("Delete account", { exact: true }).count(), 0, `Delete account is not in the Account card (${width}px)`);
+            assert.ok(await foot.evaluate((node) => [...document.querySelectorAll(".settings-body:not([hidden]) .settings-section")].every((group) => group.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)),
+              `Delete account comes after every group of the page (${width}px)`);
             await shot("account-google-methods");
+            if (width === 1280) {
+              // a search finds settings rows only: the account's own rows answer it
+              const search = dialogOf(page).getByRole("searchbox", { name: "Search settings", exact: true });
+              const found = (label: string) => page.getByRole("region", { name: "Search results", exact: true }).locator("[data-section='account'] .settings-row .settings-label", { hasText: label });
+              await search.fill("Delete account");
+              await found("Delete account").waitFor();
+              await search.fill("Sign out");
+              await found("Signed in with Google").waitFor();
+            }
           }
           assert.deepEqual(errors, []);
         } finally {

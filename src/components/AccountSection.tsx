@@ -4,7 +4,9 @@
  * (lib/account/deviceSignIn.ts): one button and the Ovis link page where the service has it, else the
  * provider's device flow.
  */
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useEffectEvent, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Check, Plus, X } from "lucide-react";
 
 import type { AccountLimits } from "../../shared/protocol.ts";
 import { AddPcWaitOver, addInOnePress, closeAddWindow, keepAddPcWaiting, listThisPc, onAddPcWaiting, pagePc, pcAnswers, readAddPcWaiting, reopenAddWindow, thisPcInNoAccount, thisPcMembership, type AddPcWaiting, type ListedPc } from "../lib/account/addThisPc.ts";
@@ -17,7 +19,7 @@ import { myPcs, type MyPc } from "../lib/account/myPcs.ts";
 import { AccountServiceError, DEVICE_PROVIDERS, indexedAccountService, offeredProviders, pcAccountServiceOf, sameSignIn, SignedOutError, type AccountIdentity, type AccountService, type DeviceProvider, type OfferedProviders } from "../lib/account/service.ts";
 import { SignInError } from "../lib/account/signin.ts";
 import { indexedAccountStore, type AccountProvider, type AccountSession, type AccountStore } from "../lib/account/store.ts";
-import { currentLocale, useT, type Translate } from "../lib/i18n.ts";
+import { useT, type Translate } from "../lib/i18n.ts";
 import { inMacApp, inNativeApp } from "../lib/nativeApp.ts";
 import { pairThisBrowser, UnconfirmedPairing } from "../lib/pairing.ts";
 import { deviceLabel, deviceOs } from "../lib/phone.ts";
@@ -25,7 +27,7 @@ import { ExternalLink } from "../lib/externalLink.ts";
 import { AccountPcList, AccountSignIn, PROVIDER_NAMES, ProviderMark } from "./AccountPcs.tsx";
 import { QrCode } from "./QrCode.tsx";
 import { statusText } from "./RelayPanel.tsx";
-import { SettingsGroup, SettingsRow } from "./SettingsControls.tsx";
+import { SettingsGroup, SettingsQuery, SettingsRow } from "./SettingsControls.tsx";
 
 /** A delete confirmed in this section, for the sign-in it was asked for (AccountSection's `deletion`). */
 interface Deletion { readonly session: AccountSession }
@@ -50,17 +52,15 @@ export function formatRelayBytes(bytes: number): string {
   return `${rounded} GB`;
 }
 
-export function formatAccountLimits(t: Translate, limits: AccountLimits, listedPcs: number): { label: string; summary: string } {
+/** The plan and its use on one line: "Free · 2/20 PCs", with the relay data when the plan caps it. */
+export function formatAccountLimits(t: Translate, limits: AccountLimits, listedPcs: number): string {
   const plan = limits.plan.length > 0 ? limits.plan[0]!.toUpperCase() + limits.plan.slice(1) : limits.plan;
   const usedPcs = limits.pcs_used ?? listedPcs;
   const pcsPart = t("{used}/{max} PCs", { used: usedPcs, max: limits.pcs_max });
   const dataPart = typeof limits.data_cap_bytes === "number" && limits.data_cap_bytes > 0 && typeof limits.data_used_bytes === "number"
     ? t("{used} / {cap} relay data", { used: formatRelayBytes(limits.data_used_bytes), cap: formatRelayBytes(limits.data_cap_bytes) })
     : null;
-  return {
-    label: t("Plan · {plan}", { plan }),
-    summary: dataPart !== null ? `${pcsPart} · ${dataPart}` : pcsPart,
-  };
+  return [plan, pcsPart, ...(dataPart !== null ? [dataPart] : [])].join(" · ");
 }
 
 /** The account's limits as `session` reads them; null when the service reports none, or once another sign-in (or none) is stored. */
@@ -726,13 +726,18 @@ const pcServiceHere = (): string | null => desktopAccount() === null && !inNativ
 
 export const accountServiceHere = (): string | null => desktopAccount()?.service ?? pcServiceHere();
 
-export function AccountSection({ onAccount, recheck = 0, opensAll }: {
+export function AccountSection({ onAccount, recheck = 0, opensAll, deleteSlot = null }: {
   onAccount?: (state: AccountState) => void;
   recheck?: number;
   /** this PC lists account-opens-all/1 now (App, from the local socket's features) */
   opensAll?: () => boolean;
+  /** where Delete account goes: the foot of the Devices and PCs page, below every other group; a row of the group without one */
+  deleteSlot?: HTMLElement | null;
 } = {}) {
   const t = useT();
+  // a search finds settings rows only: while one runs, Delete account is the group's row again
+  const searching = useContext(SettingsQuery).length > 0;
+  const foot = searching ? null : deleteSlot;
   const bridge = desktopAccount();
   const pcService = pcServiceHere();
   const offered = bridge !== null || pcService !== null;
@@ -753,6 +758,8 @@ export function AccountSection({ onAccount, recheck = 0, opensAll }: {
    */
   const deletion = useRef<Deletion | null>(null);
   const [deleteOut, setDeleteOut] = useState<Deletion | null>(null);
+  /** why the last delete was refused, said beside Delete account wherever it is drawn, for the account it was asked for */
+  const [deleteFailed, setDeleteFailed] = useState<{ readonly account: string; readonly message: string } | null>(null);
   /** the sign-in-again prompt, while it is for the account shown: a delete's prompt never carries over to another account */
   const reauthShown = reauth !== null && (reauth.action !== "delete" || (view.kind === "signed-in" && reauth.deletion.session.account === view.account)) ? reauth : null;
   const deviceSignIn = useRef<AbortController | null>(null);
@@ -1022,6 +1029,7 @@ export function AccountSection({ onAccount, recheck = 0, opensAll }: {
   const askDelete = (): void => {
     if (deleteOut !== null) return;
     setReauth(null);
+    setDeleteFailed(null);
     void indexedAccountService.session().then((session) => {
       // another tab signed out, or in as someone else: the section reads what is stored now instead of asking
       if (session === undefined || view.kind !== "signed-in" || session.account !== view.account) { void load(); return; }
@@ -1071,15 +1079,15 @@ export function AccountSection({ onAccount, recheck = 0, opensAll }: {
       if (needsReauth(error)) { setReauth({ action: "delete", provider: session.provider, deletion: mine }); return; }
       deletion.current = null;
       if (error instanceof SignedOutError) { void load(); return; }
-      const message = error instanceof AccountServiceError && error.code === "subscription_active"
-        ? t("Cancel your subscription first, then delete the account.") : t("The account could not be deleted. Try again.");
-      setView((current) => current.kind === "signed-in" ? { ...current, error: message } : current);
+      setDeleteFailed({ account: session.account, message: error instanceof AccountServiceError && error.code === "subscription_active"
+        ? t("Cancel your subscription first, then delete the account.") : t("The account could not be deleted. Try again.") });
     });
   };
 
   const signOut = (): void => {
     deletion.current = null;
     setDeleteAsked(null);
+    setDeleteFailed(null);
     setReauth(null);
     cancelDeviceSignIn();
     // a PC that waited to be added under this sign-in waits no longer under the next one
@@ -1143,44 +1151,102 @@ export function AccountSection({ onAccount, recheck = 0, opensAll }: {
     </>
   );
 
+  const whereToDelete = t("To delete your account, use the Ovis phone app, the desktop app or app.ovis.sh.");
+  const deleteSays = asked !== null
+    ? <span role="status" data-testid="delete-account-says">{t("This deletes your Ovis account for good: your sign-in methods, your list of PCs and your plan. It cannot be undone. Devices stay paired with your PCs until you revoke them on each PC. A subscription that still renews has to be cancelled first.")}</span>
+    : null;
+  const deleteActions = (
+    <>
+      <button type="button" className={asked !== null ? "btn btn-danger" : foot === null ? "btn" : "account-delete-link"} data-action="delete-account" data-confirm={asked !== null ? "delete-account" : undefined}
+        disabled={deleteOut !== null} aria-busy={deleteOut !== null ? "true" : undefined}
+        onClick={() => { if (asked !== null) confirmDelete(asked); else askDelete(); }}>{asked !== null ? t("Delete account for good?") : t("Delete account")}</button>
+      {asked !== null && <button type="button" className="btn btn-ghost" onClick={() => setDeleteAsked(null)}>{t("Cancel")}</button>}
+    </>
+  );
+  const plan = view.kind === "signed-in" && view.limits !== null ? formatAccountLimits(t, view.limits, view.pcs?.filter((pc) => pc.listed).length ?? 0) : null;
+  const deleteRefused = view.kind === "signed-in" && deleteFailed?.account === view.account ? deleteFailed.message : null;
+  const deleteParts = view.kind === "signed-in" && (
+    <>
+      {/* A PC's own page in a browser signs in with a device code or the link page, whose sign-in the service never lets
+          delete the account (web_sign_in_required): it says where to delete instead. */}
+      {foot === null
+        ? bridge === null
+          ? <SettingsRow label={t("Delete account")} description={whereToDelete}>{null}</SettingsRow>
+          : <SettingsRow label={t("Delete account")} description={deleteSays ?? undefined}>{deleteActions}</SettingsRow>
+        : bridge === null
+          ? (
+            <details className="settings-item account-delete">
+              <summary className="account-delete-link">{t("Delete account")}</summary>
+              <p className="settings-description">{whereToDelete}</p>
+            </details>
+          )
+          : (
+            <div className="settings-item account-delete">
+              {deleteSays !== null && <p className="settings-description">{deleteSays}</p>}
+              <div className="account-delete-actions">{deleteActions}</div>
+            </div>
+          )}
+      {deleteRefused !== null && <p className="settings-condition" role="alert">{deleteRefused}</p>}
+      {reauthShown?.action === "delete" && (
+        <div className="settings-item account-reauth" role="alert">
+          <p className="settings-description">{t("To delete your account, sign in again with {provider} first.", { provider: PROVIDER_NAMES[view.provider] })}</p>
+          <button type="button" className="btn btn-primary" onClick={signInAgain}>{t("Sign in again")}</button>
+        </div>
+      )}
+    </>
+  );
+
   return (
     <SettingsGroup title={t("Account")} section="account" keepNote note={view.kind === "signed-out" ? t("Sign in to use this PC from your phone and your other PCs.|account group") : undefined}>
       {signInParts}
       {view.kind === "signed-in" && (
         <>
-          {/* which account: the service keeps no login or email, so its id names it, whole in the tooltip (G-106) */}
-          <SettingsRow label={t("Signed in with {provider}", { provider: PROVIDER_NAMES[view.provider] })}
-            description={<span title={view.account}>{t("Account")} <code className="account-id">{view.account.length > 12 ? `${view.account.slice(0, 12)}…` : view.account}</code></span>}>
-            <button type="button" className="btn" onClick={signOut}>{t("Sign out of {provider}", { provider: PROVIDER_NAMES[view.provider] })}</button>
-          </SettingsRow>
-          {view.limits !== null && (() => {
-            const listed = view.pcs?.filter((pc) => pc.listed).length ?? 0;
-            const { label, summary } = formatAccountLimits(t, view.limits, listed);
-            return (
-              <div className="settings-row account-limits-row" data-testid="account-limits-row">
-                <span className="settings-label">{label}</span>
-                <span className="settings-fact account-limits-summary">{summary}</span>
+          {/* which account: the service keeps no login or email, so its id names it, in the tooltip only (G-106) */}
+          {searching
+            ? (
+              <SettingsRow label={t("Signed in with {provider}", { provider: PROVIDER_NAMES[view.provider] })} description={plan ?? undefined} keywords={t("Sign out")}>
+                <button type="button" className="btn" onClick={signOut}>{t("Sign out of {provider}", { provider: PROVIDER_NAMES[view.provider] })}</button>
+              </SettingsRow>
+            )
+            : (
+              <div className="settings-row account-head">
+                <span className="account-who" title={view.account}>
+                  <ProviderMark provider={view.provider} />
+                  <span className="settings-label" aria-hidden="true">{PROVIDER_NAMES[view.provider]}</span>
+                  <span className="visually-hidden">{t("Signed in with {provider}", { provider: PROVIDER_NAMES[view.provider] })}</span>
+                  {plan !== null && <span className="account-plan">{plan}</span>}
+                </span>
+                <button type="button" className="btn account-head-btn" aria-label={t("Sign out of {provider}", { provider: PROVIDER_NAMES[view.provider] })} onClick={signOut}>{t("Sign out")}</button>
               </div>
-            );
-          })()}
+            )}
           {view.methods !== null && (
             <div className="settings-item account-methods">
-              <p className="settings-label">{t("Ways to sign in")}</p>
-              <ul className="account-method-list">
-                {view.methods.map((method) => (
-                  <li key={method.provider} className="account-method" data-provider={method.provider}>
-                    <ProviderMark provider={method.provider} />
-                    <span className="account-method-text">
-                      <span>{PROVIDER_NAMES[method.provider]}</span>
-                      <span className="settings-description">{t("Added {date}", { date: new Date(method.added_at).toLocaleDateString(currentLocale()) })}</span>
-                    </span>
-                    {/* the method this device signed in with stays: removing it would end this sign-in. */}
-                    {view.methods !== null && view.methods.length > 1 && method.provider !== view.provider && (
-                      <button type="button" className="btn" onClick={() => removeMethod(method.provider)}>{t("Remove {provider}", { provider: PROVIDER_NAMES[method.provider] })}</button>
-                    )}
-                  </li>
-                ))}
-              </ul>
+              <div className="account-method-row" title={bridge === null ? t("Add another way to sign in from the Ovis desktop app.") : undefined}>
+                <span className="settings-label">{t("Ways to sign in")}{bridge === null && <span className="visually-hidden"> {t("Add another way to sign in from the Ovis desktop app.")}</span>}</span>
+                <ul className="account-method-list">
+                  {view.methods.map((method) => (
+                    <li key={method.provider} className="account-method account-chip" data-provider={method.provider} title={PROVIDER_NAMES[method.provider]}>
+                      <ProviderMark provider={method.provider} />
+                      <span className="visually-hidden">{t("{provider}, connected", { provider: PROVIDER_NAMES[method.provider] })}</span>
+                      <Check className="account-chip-icon" aria-hidden="true" />
+                      {/* the method this device signed in with stays: removing it would end this sign-in. */}
+                      {view.methods !== null && view.methods.length > 1 && method.provider !== view.provider && (
+                        <button type="button" className="account-chip-remove" title={t("Remove {provider}", { provider: PROVIDER_NAMES[method.provider] })} onClick={() => removeMethod(method.provider)}>
+                          <X aria-hidden="true" /><span className="visually-hidden">{t("Remove {provider}", { provider: PROVIDER_NAMES[method.provider] })}</span>
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                  {unlinked.map((provider) => (
+                    <li key={provider}>
+                      <button type="button" className="account-chip account-chip-add" data-provider={provider} title={t("Add {provider}", { provider: PROVIDER_NAMES[provider] })} onClick={() => addMethod(provider)}>
+                        <Plus className="account-chip-icon" aria-hidden="true" /><ProviderMark provider={provider} />
+                        <span className="visually-hidden">{t("Add {provider}", { provider: PROVIDER_NAMES[provider] })}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
               {reauthShown !== null && reauthShown.action !== "delete" && (
                 <div className="account-reauth" role="alert">
                   <p className="settings-description">{bridge === null
@@ -1190,39 +1256,11 @@ export function AccountSection({ onAccount, recheck = 0, opensAll }: {
                   {(bridge !== null || isDeviceProvider(view.provider)) && <button type="button" className="btn btn-primary" onClick={signInAgain}>{t("Sign in again")}</button>}
                 </div>
               )}
-              {bridge === null && <p className="settings-description">{t("Add another way to sign in from the Ovis desktop app.")}</p>}
-              {unlinked.length > 0 && (
-                <div className="account-method-add">
-                  {unlinked.map((provider) => (
-                    <button key={provider} type="button" className="btn" onClick={() => addMethod(provider)}>
-                      <ProviderMark provider={provider} />{t("Add {provider}", { provider: PROVIDER_NAMES[provider] })}
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
           )}
           <AddThisPc signedInHere={takeSignedInHere} onListed={() => { void load(); }} {...(opensAll === undefined ? {} : { opensAll })} />
           {view.pcs !== null && onAccount === undefined && <div className="settings-item"><AccountPcList pcs={view.pcs} /></div>}
-          {/* A PC's own page in a browser signs in with a device code or the link page, whose sign-in the service never lets
-              delete the account (web_sign_in_required): it says where to delete instead. */}
-          {bridge === null
-            ? <SettingsRow label={t("Delete account")} description={t("To delete your account, use the Ovis phone app, the desktop app or app.ovis.sh.")}>{null}</SettingsRow>
-            : <SettingsRow label={t("Delete account")}
-            description={asked !== null
-              ? <span role="status" data-testid="delete-account-says">{t("This deletes your Ovis account for good: your sign-in methods, your list of PCs and your plan. It cannot be undone. Devices stay paired with your PCs until you revoke them on each PC. A subscription that still renews has to be cancelled first.")}</span>
-              : t("Delete your Ovis account and everything the account service keeps for it.")}>
-            <button type="button" className={asked !== null ? "btn btn-danger" : "btn"} data-action="delete-account" data-confirm={asked !== null ? "delete-account" : undefined}
-              disabled={deleteOut !== null} aria-busy={deleteOut !== null ? "true" : undefined}
-              onClick={() => { if (asked !== null) confirmDelete(asked); else askDelete(); }}>{asked !== null ? t("Delete account for good?") : t("Delete account")}</button>
-            {asked !== null && <button type="button" className="btn btn-ghost" onClick={() => setDeleteAsked(null)}>{t("Cancel")}</button>}
-          </SettingsRow>}
-          {reauthShown?.action === "delete" && (
-            <div className="settings-item account-reauth" role="alert">
-              <p className="settings-description">{t("To delete your account, sign in again with {provider} first.", { provider: PROVIDER_NAMES[view.provider] })}</p>
-              <button type="button" className="btn btn-primary" onClick={signInAgain}>{t("Sign in again")}</button>
-            </div>
-          )}
+          {foot !== null ? deleteParts && createPortal(deleteParts, foot) : deleteParts}
           {view.error !== null && <p className="settings-condition" role="alert">{view.error}</p>}
         </>
       )}

@@ -165,7 +165,7 @@ describe("signing in on a PC's own page", () => {
     await press("Sign in and add this PC");
     await until(() => buttons().includes("Stop waiting"));
     await press("Stop waiting");
-    await press("Sign out of GitHub");
+    await press("Sign out");
     await until(() => buttons().includes("Sign in and add this PC"));
     approveWith = "google";
     await press("Sign in and add this PC");
@@ -193,7 +193,7 @@ describe("signing in on a PC's own page", () => {
     await until(() => buttons().includes("Sign in"));
     expect(buttons()).not.toContain("Sign in and add this PC");
     await press("Sign in");
-    await until(() => text(renderer!.root).includes("Signed in with GitHub"));
+    await until(() => buttons().includes("Sign out"));
     // fixed wait: proves that nothing is listed or opened after the sign-in
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     expect(links()).toHaveLength(0);
@@ -233,7 +233,7 @@ describe("signing in on a PC's own page", () => {
     await mount();
     await until(() => buttons().includes("Sign in"));
     await press("Sign in");
-    await until(() => text(renderer!.root).includes("Signed in with GitHub"));
+    await until(() => buttons().includes("Sign out"));
     // fixed wait: proves that nothing is listed, opened or offered after the sign-in
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     expect(links()).toHaveLength(0);
@@ -294,7 +294,7 @@ describe("signing in on a PC's own page", () => {
     await until(() => buttons().includes("Sign in and add this PC"));
     statusHangs = true;
     await press("Sign in and add this PC");
-    await until(() => text(renderer!.root).includes("Signed in with GitHub"));
+    await until(() => buttons().includes("Sign out"));
     refuses = true;
     await recheck(1);
     await until(() => text(renderer!.root).includes("Your sign-in ended."));

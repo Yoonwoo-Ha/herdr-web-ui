@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { createElement, type ReactNode } from "react";
+import * as ReactDom from "react-dom";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 
 import { FakeAccountService } from "../../shared/account-service-fake.ts";
@@ -6,7 +8,10 @@ import { indexedAccountStore } from "../lib/account/store.ts";
 import { fakeIndexedDB } from "../lib/indexedDB.fake.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { nativeTransport, setTransport } from "../lib/transport.ts";
-import { AccountSection } from "./AccountSection.tsx";
+
+// a portal is drawn in place inside a marker naming its target, so a test sees where Delete account went
+await mock.module("react-dom", () => ({ ...ReactDom, createPortal: (node: ReactNode, target: { id?: string }) => createElement("div", { "data-portal": target.id ?? "" }, node) }));
+const { AccountSection } = await import("./AccountSection.tsx");
 
 // In the desktop app, which signs in by redirect, the same button asks before it deletes, and the service's
 // refusals are said in the person's words. On a PC's own page in a browser, whose sign-in is a device code or the
@@ -108,8 +113,15 @@ describe("deleting the account from Settings", () => {
     expect(found).toHaveLength(1);
     await act(async () => { (found[0]!.props as { onClick: () => void }).onClick(); });
   };
-  const signedIn = async (): Promise<void> => {
-    await act(async () => { renderer = create(<SettingsProvider><AccountSection /></SettingsProvider>); });
+  const PAGE_FOOT = { id: "page-foot" } as unknown as HTMLElement;
+  const inFoot = (node: ReactTestInstance): boolean => {
+    for (let at: ReactTestInstance | null = node; at !== null; at = at.parent) if (at.props["data-portal"] === "page-foot") return true;
+    return false;
+  };
+  const foot = (): string => text(renderer!.root.find((node) => node.props["data-portal"] === "page-foot"));
+  const button = (label: string): ReactTestInstance => renderer!.root.find((node) => node.type === "button" && text(node) === label);
+  const signedIn = async (deleteSlot?: HTMLElement): Promise<void> => {
+    await act(async () => { renderer = create(<SettingsProvider><AccountSection deleteSlot={deleteSlot ?? null} /></SettingsProvider>); });
     await until(() => buttons().includes(SIGN_IN));
     await press(SIGN_IN);
     await until(() => buttons().includes("Delete account"));
@@ -162,7 +174,7 @@ describe("deleting the account from Settings", () => {
   it("drops the question when the person signs out, so the next sign-in starts unarmed", async () => {
     await signedIn();
     await press("Delete account");
-    await press("Sign out of GitHub");
+    await press("Sign out");
     await until(() => buttons().includes(SIGN_IN));
     await press(SIGN_IN);
     await until(() => buttons().includes("Delete account"));
@@ -176,7 +188,7 @@ describe("deleting the account from Settings", () => {
     await press("Delete account");
     await press("Delete account for good?");
     await until(() => shown().includes("To delete your account, sign in again"));
-    await press("Sign out of GitHub");
+    await press("Sign out");
     await until(() => buttons().includes(SIGN_IN));
     signsInAs = "acct_two";
     await press(SIGN_IN);
@@ -218,7 +230,7 @@ describe("deleting the account from Settings", () => {
     await act(async () => { renderer = create(<SettingsProvider><AccountSection /></SettingsProvider>); });
     await until(() => buttons().includes("Sign in"));
     await press("Sign in");
-    await until(() => buttons().includes("Sign out of GitHub"));
+    await until(() => buttons().includes("Sign out"));
     expect(shown()).toContain("To delete your account, use the Ovis phone app, the desktop app or app.ovis.sh.");
     expect(renderer!.root.findAll((node) => node.type === "button" && node.props["data-action"] === "delete-account")).toHaveLength(0);
     expect(fake.requests).not.toContain("DELETE /v1/account");
@@ -250,5 +262,35 @@ describe("deleting the account from Settings", () => {
     await until(() => shown().includes("Cancel your subscription first, then delete the account."));
     expect(fake.deleted(ACCOUNT)).toBe(false);
     expect(buttons()).toContain("Delete account");
+  });
+
+  it("asks, cancels and says a refusal at the page's foot when the page gives one, and a sign-out takes the refusal away", async () => {
+    await signedIn(PAGE_FOOT);
+    expect(inFoot(button("Delete account"))).toBe(true);
+    await press("Delete account");
+    expect(inFoot(button("Delete account for good?"))).toBe(true);
+    expect(foot()).toContain("This deletes your Ovis account for good");
+    await press("Cancel");
+    expect(foot()).not.toContain("for good");
+    fake.subscribe(ACCOUNT);
+    await press("Delete account");
+    await press("Delete account for good?");
+    await until(() => foot().includes("Cancel your subscription first, then delete the account."));
+    expect(fake.deleted(ACCOUNT)).toBe(false);
+    await press("Sign out");
+    await until(() => buttons().includes(SIGN_IN));
+    expect(shown()).not.toContain("Cancel your subscription first");
+  });
+
+  it("asks for a sign-in again at the page's foot, then deletes", async () => {
+    await signedIn(PAGE_FOOT);
+    ahead = 11 * 60_000;
+    await press("Delete account");
+    await press("Delete account for good?");
+    await until(() => foot().includes("To delete your account, sign in again with GitHub first."));
+    expect(inFoot(button("Sign in again"))).toBe(true);
+    await press("Sign in again");
+    await until(() => shown().includes("Your account was deleted."));
+    expect(fake.deleted(ACCOUNT)).toBe(true);
   });
 });

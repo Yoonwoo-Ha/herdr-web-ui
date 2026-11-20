@@ -107,12 +107,6 @@ it("formats account limits with server-provided plan name, PCs used/max, and opt
   expect(formatRelayBytes(5 * 1024 * 1024)).toBe("5 MB");
   expect(formatRelayBytes(5 * 1024 * 1024 * 1024)).toBe("5 GB");
 
-  expect(formatAccountLimits(t, { plan: "personal", pcs_max: 3 }, 1)).toEqual({
-    label: "Plan · Personal",
-    summary: "1/3 PCs",
-  });
-  expect(formatAccountLimits(t, { plan: "personal", pcs_max: 7, pcs_used: 3, data_cap_bytes: 50 * 1024 * 1024 * 1024, data_used_bytes: Math.round(4.2 * 1024 * 1024 * 1024) }, 1)).toEqual({
-    label: "Plan · Personal",
-    summary: "3/7 PCs · 4.2 GB / 50 GB relay data",
-  });
+  expect(formatAccountLimits(t, { plan: "personal", pcs_max: 3 }, 1)).toBe("Personal · 1/3 PCs");
+  expect(formatAccountLimits(t, { plan: "personal", pcs_max: 7, pcs_used: 3, data_cap_bytes: 50 * 1024 * 1024 * 1024, data_used_bytes: Math.round(4.2 * 1024 * 1024 * 1024) }, 1)).toBe("Personal · 3/7 PCs · 4.2 GB / 50 GB relay data");
 });
