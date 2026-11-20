@@ -22,6 +22,7 @@ public class HerdrShellPlugin extends Plugin {
         state.put("last", last == null ? "" : last);
         state.put("failure", PCStore.failure == null ? "" : PCStore.failure);
         state.put("kind", PCStore.failureKind == null ? "" : PCStore.failureKind);
+        state.put("command", PCStore.failureCommand == null ? "" : PCStore.failureCommand);
         call.resolve(state);
     }
 
@@ -32,6 +33,10 @@ public class HerdrShellPlugin extends Plugin {
         String key = text == null ? null : PCStore.origin(text);
         if (key == null) {
             call.reject("That is not an http or https address.");
+            return;
+        }
+        if (SshPcs.otherLoopbackPort(text)) {
+            call.reject("That address on this phone is kept for PCs added over SSH. Open the PC from Your PCs.");
             return;
         }
         String scope = call.getString("scope");
@@ -120,6 +125,12 @@ public class HerdrShellPlugin extends Plugin {
     @PluginMethod
     public void forget(PluginCall call) {
         String key = call.getString("url");
+        // an SSH PC forgotten takes its sealed key and host key with it (OvisSshPlugin.forgetRemoved): only the app's
+        // own pages do that, never a PC's page, which has this bridge too
+        if (key != null && getBridge().getServerUrl() != null && SshPcs.on(getContext()).get(key) != null) {
+            call.reject("Only the app's own pages manage SSH PCs.");
+            return;
+        }
         if (key != null) PCStore.forget(getContext(), key);
         call.resolve();
     }

@@ -204,9 +204,17 @@ final class PCStore {
 
     static volatile String failureKind;
 
+    /** A command to run on the PC that fixes the failure, which the error page shows to copy (an SSH PC's: SshFailure.command); else null. */
+    static volatile String failureCommand;
+
     static void fail(String reason, String kind) {
+        fail(reason, kind, null);
+    }
+
+    static void fail(String reason, String kind, String command) {
         failure = reason;
         failureKind = kind;
+        failureCommand = command;
     }
 
     static final int ANSWER_SECONDS = 20;

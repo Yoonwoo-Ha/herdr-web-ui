@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 // @ts-expect-error app/web is plain JavaScript the app carries as is, without types
-import { APP_ORIGIN, homeHost, listedProviders, loopbackHost, openFailure, parseAddress, relayLink, tailnetHost } from "../app/web/shell.js";
+import { APP_ORIGIN, homeHost, listedProviders, loopbackHost, openFailure, parseAddress, relayLink, sshDetails, tailnetHost } from "../app/web/shell.js";
 import { exportPublicKey, generateKeyPair } from "../shared/relay-e2ee.ts";
 import { encodeOffer } from "../shared/relay-offer.ts";
 
@@ -139,5 +139,26 @@ describe("why an address did not open", () => {
     for (const code of ["not-ovis", "refused", "timeout", "unknown-host", "no-answer", undefined]) {
       expect([code, openFailure(url, code, "x").length > 0]).toEqual([code, true]);
     }
+  });
+});
+
+describe("an SSH PC under Manage", () => {
+  const pc = { origin: "http://127.0.0.2:47317", host: "studio.lan", port: 22, user: "me", auth: "phone-key", keyType: "", hostKeyAlgorithm: "ssh-ed25519", fingerprint: "SHA256:abc" };
+
+  it("names its address, the pasted key's type, and its confirmed host key", () => {
+    const details = sshDetails(pc);
+    expect(details.address).toBe("me@studio.lan");
+    expect(details.confirmed).toBe(true);
+    expect(details.hostKey).toContain("ssh-ed25519 SHA256:abc");
+    const pasted = sshDetails({ ...pc, port: 2222, auth: "imported", keyType: "rsa 3072" });
+    expect(pasted.address).toBe("me@studio.lan:2222");
+    expect(pasted.how).toContain("rsa 3072");
+    expect(pasted.how).not.toBe(details.how);
+  });
+
+  it("is not confirmed once its host key was forgotten", () => {
+    const forgotten = sshDetails({ ...pc, hostKeyAlgorithm: "", fingerprint: "" });
+    expect(forgotten.confirmed).toBe(false);
+    expect(forgotten.hostKey).not.toContain("SHA256:");
   });
 });

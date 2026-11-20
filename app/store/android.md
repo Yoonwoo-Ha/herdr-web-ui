@@ -274,4 +274,35 @@ service's records, the only data that reaches the developer):
 - **Saving pictures**, from 1.0 (5): Download in Chat's picture viewer saves the picture to the
   phone's Downloads (MediaStore on Android 10 and later), with no storage permission, so the Data
   safety answers stay as they are.
+- **PCs over SSH**, from 1.0.6 (docs/native-app.md, PCs over SSH): the
+  phone signs in to the user's own SSH server and opens that PC's Ovis through a tunnel on the
+  phone's loopback. What Play's review needs to hear:
+  - **No new permission.** INTERNET and ACCESS_NETWORK_STATE were already there; no
+    FOREGROUND_SERVICE (the connection is made again when the app comes back, so nothing runs in
+    the background and no foreground-service type is declared), no VpnService, no
+    QUERY_ALL_PACKAGES. The loopback listener is an ordinary socket inside the app's own process,
+    reachable on the phone only, and answers nothing without the app's own cookie.
+  - **Keys.** The phone's own SSH key (ed25519) is made on the phone; its private half is sealed
+    with an AES-GCM key held in the Android Keystore and never leaves the app. A private key the
+    user pastes in, and its passphrase, are sealed the same way. A password is used once to sign
+    in and never stored. Backups stay off (`allowBackup="false"`), so none of it goes to a
+    Google backup either. Nothing of it reaches the developer.
+  - **Data safety**: Google counts what goes to the user's own PC as collected (above), and SSH
+    adds no data type: the content is the same app's, now over SSH (encrypted), and goes only
+    to the PC, with no relay, `app.ovis.sh` or developer service on the way. Two things are new
+    and both fit rows already declared: the public half of the phone's SSH key, which the app
+    adds to the PC's `~/.ssh/authorized_keys` when the user asks (Device or other IDs: name it
+    in that row), and the SSH password, which is not a Play data type and goes only to the PC's
+    sshd. The SSH account name the user types goes to that PC's sshd too: declare it under
+    Personal info > User IDs (collected, not shared, sent only to the user's own PC, required for
+    the SSH way only). Add "the public key of the phone's SSH key, kept by the user's own PC" to
+    the Device or other IDs row when this ships.
+  - **App access**: add to the instructions: *SSH under Add a PC (Android) needs a computer the
+    reviewer can reach over SSH, with Ovis on it; the demo shows the same app without one.* Do not
+    hand Google a login to a real machine.
+  - **Policy**: an SSH client is allowed (Device and Network Abuse covers apps that interfere
+    with other apps or networks, which this does not); the app reaches only the address the user
+    types, on the port the user types.
+  - Store listing: one line in the full description, under how to connect: *Or add a computer you
+    already reach over SSH: no relay, no account, no open port but SSH.*
 - Every new upload: raise `versionCode`, build as in section 2, upload to the track.
