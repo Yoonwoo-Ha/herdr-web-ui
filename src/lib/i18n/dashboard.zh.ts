@@ -1,4 +1,5 @@
 export const DASHBOARD_ZH: Record<string, string> = {
+  "Adding it to your account…": "正在添加到账户…",
   "A PC joins through your account, or pairs with this device alone.": "电脑可以通过你的账户加入，或只与此设备配对。",
   "Add {name} to your account": "将 {name} 添加到你的账户",
   "Add this device to {name}": "将此设备添加到 {name}",
@@ -7,10 +8,9 @@ export const DASHBOARD_ZH: Record<string, string> = {
   "Ask to join": "请求加入",
   "On the PC, open Settings → Devices and PCs → Account, sign in, then choose Add this PC to my account. It then shows here.": "在电脑上打开“设置 → 设备和电脑 → 账户”并登录，然后选择“将此电脑添加到我的账号”。之后它会显示在这里。",
   "Join · approve on a connected device of your account, or type the number the PC shows": "加入 · 在已连接的账户设备上批准，或输入电脑显示的数字",
-  "Approve this device on a device of your account connected to {name}, or on {name} if it shows this request.": "请在你账户中已连接到 {name} 的设备上批准此设备；如果 {name} 显示了此请求，也可以在那里批准。",
+  "Approve this device on a device of your account connected to {name}, or on {name} itself: Settings → Devices and PCs, then type the number this device shows.": "在已连接 {name} 的账号设备上批准此设备，或在 {name} 本机打开“设置 → 设备和电脑”，输入此设备显示的号码。",
   "Get approved on a device you already use": "在已在使用的设备上获得批准",
-  "Open {name} in Ovis on a device you already use. When the notice shows there, check the number and approve.": "请在你正在使用的设备上用 Ovis 打开 {name} 并保持打开。那里出现通知后，核对数字并批准。",
-  "Type the number": "输入数字",
+  "Open {name} in Ovis on a device you already use and approve there, or on {name} itself: Settings → Devices and PCs, then type the number this device shows.": "在你已在使用的设备上用 Ovis 打开 {name} 并在那里批准，或在 {name} 本机打开“设置 → 设备和电脑”，输入此设备显示的号码。",
   "{name} shows no number? Ask to join instead.": "{name} 没有显示数字？请改为请求加入。",
   "A new number is shown on {name} because the previous number changed.": "之前的数字已更改，{name} 上显示了新数字。",
   "Check that this number matches where you approve, then approve.": "请在批准的地方确认数字与这里一致，然后批准。",

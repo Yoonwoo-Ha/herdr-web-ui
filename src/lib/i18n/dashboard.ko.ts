@@ -1,4 +1,5 @@
 export const DASHBOARD_KO: Record<string, string> = {
+  "Adding it to your account…": "계정에 추가하는 중…",
   "A PC joins through your account, or pairs with this device alone.": "PC는 계정을 통해 들어오거나, 이 기기와만 페어링합니다.",
   "Add {name} to your account": "계정에 {name} 추가",
   "Add this device to {name}": "{name}에 이 기기 추가",
@@ -7,10 +8,9 @@ export const DASHBOARD_KO: Record<string, string> = {
   "Ask to join": "참여 요청",
   "On the PC, open Settings → Devices and PCs → Account, sign in, then choose Add this PC to my account. It then shows here.": "PC에서 설정 → 기기와 PC → 계정을 열어 로그인한 뒤 ‘이 PC를 내 계정에 추가’를 고르세요. 그러면 여기에 나타납니다.",
   "Join · approve on a connected device of your account, or type the number the PC shows": "참여 · 연결된 내 계정의 기기에서 승인하거나 PC의 숫자 입력",
-  "Approve this device on a device of your account connected to {name}, or on {name} if it shows this request.": "{name}에 연결된 내 계정의 기기에서 승인하거나, 이 요청이 {name}에 나오면 거기서 승인하세요.",
+  "Approve this device on a device of your account connected to {name}, or on {name} itself: Settings → Devices and PCs, then type the number this device shows.": "{name}에 연결된 계정의 기기에서 이 기기를 승인하거나, {name}에서 직접 설정 → 기기와 PC를 열고 이 기기에 보이는 번호를 입력하세요.",
   "Get approved on a device you already use": "쓰던 기기에서 승인받기",
-  "Open {name} in Ovis on a device you already use. When the notice shows there, check the number and approve.": "쓰던 기기에서 Ovis로 {name} 화면을 열어 두세요. 알림이 뜨면 숫자를 확인하고 승인하세요.",
-  "Type the number": "숫자 입력",
+  "Open {name} in Ovis on a device you already use and approve there, or on {name} itself: Settings → Devices and PCs, then type the number this device shows.": "이미 쓰고 있는 기기의 Ovis에서 {name}을 열고 거기서 승인하거나, {name}에서 직접 설정 → 기기와 PC를 열고 이 기기에 보이는 번호를 입력하세요.",
   "{name} shows no number? Ask to join instead.": "{name} 화면에 숫자가 없나요? 대신 참여를 요청하세요.",
   "A new number is shown on {name} because the previous number changed.": "이전 숫자가 바뀌어 {name} 화면에 새 숫자가 표시됩니다.",
   "Check that this number matches where you approve, then approve.": "승인하는 곳에서 이 숫자와 같은지 확인한 뒤 승인하세요.",

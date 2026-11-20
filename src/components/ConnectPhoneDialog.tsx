@@ -26,6 +26,7 @@ import { announcePairingCode, announceQrCodeEnded, DEVICES_CHANGED_EVENT, inRela
 import type { PairedDevice, PairingCode, PortalStatus } from "../../shared/protocol.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { PROVIDER_NAMES } from "./AccountPcs.tsx";
+import { AddThisPc, type SignedInHere } from "./AccountSection.tsx";
 import { PhonePanel, QrReveal, ShareLink } from "./PhonePanel.tsx";
 import { QrCode } from "./QrCode.tsx";
 import { failureText, openOwnOffer, RelayPairing, statusText } from "./RelayPanel.tsx";
@@ -92,6 +93,8 @@ export interface RelayAccount {
   service: string;
   onOpen: () => void;
   onSignedIn: () => void;
+  /** this PC's step-2 switch, as Settings reads it: only then does Add this PC try the one press */
+  opensAll?: () => boolean;
 }
 
 export interface ConnectPhoneDialogProps {
@@ -592,6 +595,12 @@ export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBy
   const [signedInProvider, setSignedInProvider] = useState<AccountSession["provider"] | null>(null);
   const [pcAccount, setPcAccount] = useState<string | null | undefined>(undefined);
   const signInView = useRef<HTMLDivElement>(null);
+  /** the sign-in that just finished on this tab, handed once to Add this PC below, which offers its one press at once */
+  const signedInHere = useRef<SignedInHere | null>(null);
+  const takeSignedInHere = useCallback((): SignedInHere | null => { const fresh = signedInHere.current; signedInHere.current = null; return fresh; }, []);
+  // a sheet opened already signed in gets the same next step as one signed in just now: the relay's own button when it is off
+  const mineNow = signedIn ? accountId : null;
+  const takeSignedInNow = useCallback((): SignedInHere | null => takeSignedInHere() ?? (mineNow === null ? null : { account: mineNow, adds: false }), [takeSignedInHere, mineNow]);
   useLayoutEffect(() => {
     const view = signInView.current;
     if (!signedIn || signedInProvider === null || view === null || view.closest("[hidden]") !== null) return;
@@ -635,7 +644,7 @@ export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBy
     <>
       <div ref={signInView} className="connect-signin" data-testid="connect-signin">
         {signInStatus}
-        <RelaySignIn service={account.service} onOpenAccount={account.onOpen} onSignedIn={(session) => { setSignedInProvider(session.provider); account.onSignedIn(); }} />
+        <RelaySignIn service={account.service} onOpenAccount={account.onOpen} onSignedIn={(session) => { signedInHere.current = { account: session.account, adds: false }; setSignedInProvider(session.provider); account.onSignedIn(); }} />
       </div>
       {qr(true)}
     </>
@@ -650,11 +659,10 @@ export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBy
           !bare && <>{relaySwitch}{switchFailure}{startFailure}</>
         ) : (
           <>
-            {switchable && <p className="settings-description">{t("Turn on the relay, then add this PC to your account.")}</p>}
             {relaySwitch}
             {switchFailure}
             {startFailure}
-            <button type="button" className="btn connect-signin-button" onClick={account.onOpen}>{t("Open the account")}</button>
+            <AddThisPc relayOn={on} gateNote={false} signedInHere={takeSignedInNow} {...(account.opensAll === undefined ? {} : { opensAll: account.opensAll })} />
           </>
         )}
       </div>
@@ -753,6 +761,21 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
   const [removing, setRemoving] = useState(false);
   const [settling, setSettling] = useState(false);
   const [late, setLate] = useState(accountQrPending);
+  /** the PC is in an account whose first member has not finished enrolling it: it does not read as done */
+  const [enrolling, setEnrolling] = useState(false);
+  useEffect(() => {
+    if (!enrolling) return;
+    let live = true;
+    const timer = setInterval(() => {
+      pcAccountStatus(apiFetch).then((status) => {
+        if (!live) return;
+        // the PC's account as read now: one that left it while enrolling is in no account again, and offers the add once more
+        onPcAccount(status.account);
+        setEnrolling(status.account !== null && status.enrolling === true);
+      }, () => undefined);
+    }, ACCOUNT_QR_POLL_MS);
+    return () => { live = false; clearInterval(timer); };
+  }, [enrolling, onPcAccount]);
   const before = useRef<AccountQrBaseline | null>(null);
   const run = useRef(0);
   /** the account this tab showed when Show the QR code was pressed: its codes' PC is listed there or nowhere */
@@ -766,7 +789,7 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
 
   useEffect(() => {
     let live = true;
-    pcAccountStatus(apiFetch).then((status) => { if (live) onPcAccount((known) => known === undefined ? status.account : known); }, () => undefined);
+    pcAccountStatus(apiFetch).then((status) => { if (live) { onPcAccount((known) => known === undefined ? status.account : known); setEnrolling(status.account !== null && status.enrolling === true); } }, () => undefined);
     return () => {
       live = false;
       run.current++;
@@ -1084,6 +1107,7 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
             : here === "other" ? t("This PC is in another Ovis account ({id}), not the one this browser is signed in to ({mine}).", { id: pcAccount.slice(0, 12), mine: accountId!.slice(0, 12) })
             : t("This PC is in an Ovis account ({id}).", { id: pcAccount.slice(0, 12) })}</p>
           <p className="settings-description">{t("To add a device, sign in to this PC's account on it and open this PC there. A device this PC does not know yet is approved once, by picking the matching number on a device that is already a member of this PC.")}</p>
+          {here === "mine" && enrolling && <p className="settings-description connect-account-qr-warning" role="status">{t("Not finished yet: the device that added this PC is still setting it up. If it stopped, open this PC on that device and choose Try again.")}</p>}
           {here === "unknown" && !signedIn && <p className="settings-description connect-account-qr-warning">{t("This browser is not signed in, so it cannot tell whether that account is yours: sign in above to check.")}</p>}
           {here === "other" && <p className="settings-description connect-account-qr-warning">{t("If that account is not yours, revoke every device (More settings → Devices and access): this PC then leaves it.")}</p>}
           <p className="settings-hint">{t("This PC shows a QR code only while it is in no account.")}</p>

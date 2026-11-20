@@ -278,8 +278,11 @@ it, only when all of these hold:
    signed in to the same account;
 3. the PC has at least one drive account member to approve it.
 
-Such a comparison is shown only to the account's members through the relay (`remote-pairings`,
-digits picked out of three, as always), never to the PC's own windows, and never approved by itself.
+Such a comparison is shown to the account's members through the relay (`remote-pairings`, digits
+picked out of three, as always) and, so a one-PC owner is never stuck, to this PC's own window only
+(`GET /api/relay/joins`, its screen, loopback and not forwarded): listed there without its digits and
+without a pop-up, and approved only by the owner typing the six digits the new device shows
+(`POST /api/relay/join`); one wrong entry ends that join. It is never approved by itself.
 Anything else is refused before any prompt and not counted as a failed pairing. A PC takes at most 5
 such joins a minute; refused requests do not count toward them. A request whose admission the PC has
 not seen yet makes it pull its mailbox, at most once every 10 seconds, so a device that asks right
@@ -1133,6 +1136,11 @@ OAuth's authorization code flow with PKCE, `S256` only:
    click so no popup blocker takes it (the desktop app hands it to the system browser), shows the code
    beside it, or the page's link and code alone when the tab was blocked, and stops polling when the
    sheet closes. Where the link page cannot start a sign-in it falls back to GitHub's device page.
+   This PC's own window in a browser on the PC (`own_window` in `GET /api/health?scope=bridge`, and the
+   page on exactly `http://127.0.0.1:` that port) signs in as an app instead, through step 1 with the
+   loopback redirect `http://127.0.0.1:<port>/callback`: the PC serves that path as the app's page,
+   which hands the return to the tab that started the sign-in over a `BroadcastChannel` of its origin,
+   and that tab redeems it with the verifier it kept. Every other window keeps the device flow.
 6. `POST /v1/signout` (Bearer) answers 204 and ends that sign-in's family.
 
 `GET /v1/providers` (no sign-in) answers `{ "providers": ["github", "google"], "device": ["github",

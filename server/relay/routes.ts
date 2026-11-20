@@ -10,7 +10,7 @@ import { ACCOUNT_ID, AccountServiceOffError, NoAccountNamedError } from "./servi
  * Drive authority and the outer origin gate are shared with Portal in dispatch.ts. `caller`: the paired device
  * the request came from, null for this PC itself: it holds the pairing code an offer or a typed code gives it.
  */
-export async function handleRelayRequest(request: Request, pathname: string, context: ServerContext, caller: string | null = null, local = false): Promise<Response> {
+export async function handleRelayRequest(request: Request, pathname: string, context: ServerContext, caller: string | null = null, local = false, own = false): Promise<Response> {
   const service = context.services.relay;
   const reply = (body: unknown, status = 200) => jsonResponse(body, status, { "cache-control": "no-store" });
   const fail = (code: string, message: string, status: number) => reply({ error: { code, message } }, status);
@@ -25,6 +25,12 @@ export async function handleRelayRequest(request: Request, pathname: string, con
     setRequestRoute("/api/relay/pairings");
     if (peer.kind === "relay") return remoteApprover ? reply({ pairings: service.approvals.remoteList() }) : fail("account_required", "Approve pairings on this PC, or from a device linked to your account.", 403);
     return reply({ pairings: service.approvals.list() });
+  }
+  // an account join taken outside the pairing window, listed for this PC's own window alone and never with its digits
+  if (pathname === "/api/relay/joins" && request.method === "GET") {
+    setRequestRoute("/api/relay/joins");
+    if (!own) return fail("own_window_required", "Only this PC's own window lists account joins.", 403);
+    return reply({ joins: service.approvals.ownJoins() });
   }
   if (request.method !== "POST") return fail("method_not_allowed", "Use GET for status and POST for relay actions.", 405);
   if (pathname === RELAY_CONTROLS.pairing && peer.kind === "relay") {
@@ -131,6 +137,19 @@ export async function handleRelayRequest(request: Request, pathname: string, con
         if (!service.approvals.decide(body.id, body.decision === "approve")) {
           return fail("relay_pairing_gone", "That phone is no longer waiting: it left, was decided, or its time ran out.", 404);
         }
+        return reply({ ok: true });
+      }
+      case RELAY_CONTROLS.join: {
+        setRequestRoute("/api/relay/join");
+        if (!own) return fail("own_window_required", "Approve an account join in this PC's own window.", 403);
+        const body = await readJsonObject(request);
+        if (body instanceof Response) return body;
+        if (typeof body.id !== "string" || typeof body.digits !== "string" || !/^[0-9]{6}$/.test(body.digits)) {
+          return fail("invalid_relay_join", "Send the join's id and the six digits the new device shows.", 400);
+        }
+        const outcome = service.approvals.decideTyped(body.id, body.digits);
+        if (outcome === "gone") return fail("relay_pairing_gone", "That device is no longer waiting: it left, was decided, or its time ran out.", 404);
+        if (outcome === "wrong_digits") return fail("wrong_digits", "Those are not the digits the new device shows; it was not let in.", 409);
         return reply({ ok: true });
       }
       case RELAY_CONTROLS.direct: {

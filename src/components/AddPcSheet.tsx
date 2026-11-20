@@ -135,13 +135,13 @@ export function AddPcSheet({ mode, pc, state, onJoin, onPair, onMatch, onRetry, 
     const joinStart = mode !== "new" && phase === "start";
     title = mode === "new" ? t("Add {name} to your account", { name }) : joinStart ? t("Get approved on a device you already use") : t("Add this device to {name}", { name });
     // the request reaches only a device with this PC open in Ovis (server/dispatch.ts remote-pairings): the line says so
-    sub = joinStart ? t("Open {name} in Ovis on a device you already use. When the notice shows there, check the number and approve.", { name }) : mode === "new"
+    sub = joinStart ? t("Open {name} in Ovis on a device you already use and approve there, or on {name} itself: Settings → Devices and PCs, then type the number this device shows.", { name }) : mode === "new"
       ? phase === "start" && onAskToJoin
         ? t("Type the number {name} shows on its own screen after you start Add, then approve there. If {name} is already in your account, ask to join instead.", { name })
         : t("Type the number {name} shows on its own screen, then approve there.", { name })
       // a device connected to the PC hears its join request (docs/account.md "Who may admit a device"), or the PC itself
       // while its own Add screen waits; an instruction, not a claim: the directory cannot say which, so both are named
-      : t("Approve this device on a device of your account connected to {name}, or on {name} if it shows this request.", { name });
+      : t("Approve this device on a device of your account connected to {name}, or on {name} itself: Settings → Devices and PCs, then type the number this device shows.", { name });
     switch (phase) {
       case "start":
         if (mode !== "new" && onTypeNumber) {

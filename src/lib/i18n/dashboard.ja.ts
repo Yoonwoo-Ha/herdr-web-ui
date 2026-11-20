@@ -1,4 +1,5 @@
 export const DASHBOARD_JA: Record<string, string> = {
+  "Adding it to your account…": "アカウントに追加中…",
   "A PC joins through your account, or pairs with this device alone.": "PC はアカウント経由で参加するか、このデバイスとだけペアリングします。",
   "Add {name} to your account": "{name} をアカウントに追加",
   "Add this device to {name}": "このデバイスを {name} に追加",
@@ -7,10 +8,9 @@ export const DASHBOARD_JA: Record<string, string> = {
   "Ask to join": "参加を申請",
   "On the PC, open Settings → Devices and PCs → Account, sign in, then choose Add this PC to my account. It then shows here.": "PC で「設定 → デバイスと PC → アカウント」を開いてサインインし、「このPCをアカウントに追加」を選びます。すると、ここに表示されます。",
   "Join · approve on a connected device of your account, or type the number the PC shows": "参加 · 接続しているアカウントのデバイスで承認するか、PC に表示された番号を入力",
-  "Approve this device on a device of your account connected to {name}, or on {name} if it shows this request.": "{name} に接続しているアカウントのデバイスか、このリクエストが表示されていれば {name} 自体で、このデバイスを承認してください。",
+  "Approve this device on a device of your account connected to {name}, or on {name} itself: Settings → Devices and PCs, then type the number this device shows.": "{name} に接続しているアカウントの端末でこの端末を承認するか、{name} 自身で「設定 → デバイスと PC」を開き、この端末に表示された番号を入力してください。",
   "Get approved on a device you already use": "使っているデバイスで承認を受ける",
-  "Open {name} in Ovis on a device you already use. When the notice shows there, check the number and approve.": "使っているデバイスの Ovis で {name} を開いておきます。そこに通知が出たら、番号を確かめて承認してください。",
-  "Type the number": "番号を入力",
+  "Open {name} in Ovis on a device you already use and approve there, or on {name} itself: Settings → Devices and PCs, then type the number this device shows.": "すでに使っている端末の Ovis で {name} を開いて承認するか、{name} 自身で「設定 → デバイスと PC」を開き、この端末に表示された番号を入力してください。",
   "{name} shows no number? Ask to join instead.": "{name} に番号が表示されていませんか？ 代わりに参加を申請してください。",
   "A new number is shown on {name} because the previous number changed.": "前の番号が変わったため、{name} に新しい番号が表示されています。",
   "Check that this number matches where you approve, then approve.": "承認する画面でこの番号と同じか確かめてから、承認してください。",

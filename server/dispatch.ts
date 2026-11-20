@@ -622,7 +622,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if (pathname.startsWith("/api/account/")) return handleAccountRequest(request, pathname, ctx, access);
   if (pathname === "/api/relay" || pathname.startsWith("/api/relay/")) {
     // the paired device that asks, when one does: a pairing code it starts or is handed goes with it (DeviceStore.revoke)
-    return handleRelayRequest(request, pathname, ctx, access.level === "full" ? access.device?.id ?? null : null, access.level === "full" && access.via === "local");
+    return handleRelayRequest(request, pathname, ctx, access.level === "full" ? access.device?.id ?? null : null, access.level === "full" && access.via === "local", ownWindow);
   }
   if (pathname === "/api/connection-diagnostics") { setRequestRoute(pathname); return clientConnectionLog.handle(request, client ?? "unknown"); }
   if (pathname === "/api/telemetry") { setRequestRoute(pathname); return handleTelemetryRequest(request, options.telemetry); }
@@ -714,7 +714,10 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
         ...(security ? { security } : {}), web_ui: { boot_id: bootId, ...(serverId ? { server_id: serverId } : {}) },
       }, 200, { "cache-control": "no-store" });
     }
-    if (url.searchParams.get("scope") === "bridge") return jsonResponse({ ok: true, auth, bridge_protocol: BRIDGE_PROTOCOL, ...relay, ...(security ? { security } : {}), web_ui: { boot_id: bootId }, runtime: runtime(), ...(options.launchAccepted ? { accepted: options.launchAccepted() } : {}), ...(herdr_runtime ? { herdr_runtime } : {}) }, 200, securityHeaders);
+    // this PC's own window, and the port it reaches this server on: where the page may sign in to the account through
+    // the loopback redirect, an app's own sign-in (src/lib/account/ownWindow.ts); any other window signs in with a code
+    const own_window = ownWindow && ctx.port !== undefined ? { port: ctx.port } : undefined;
+    if (url.searchParams.get("scope") === "bridge") return jsonResponse({ ok: true, auth, bridge_protocol: BRIDGE_PROTOCOL, ...relay, ...(own_window ? { own_window } : {}), ...(security ? { security } : {}), web_ui: { boot_id: bootId }, runtime: runtime(), ...(options.launchAccepted ? { accepted: options.launchAccepted() } : {}), ...(herdr_runtime ? { herdr_runtime } : {}) }, 200, securityHeaders);
     const herdr_core = owner ? options.herdrCoreFacts?.() : undefined;
     try {
       const info = await ping();

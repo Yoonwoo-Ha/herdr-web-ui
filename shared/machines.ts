@@ -393,6 +393,16 @@ export interface DevicePairedEvent {
 /** What a comparison asks for (docs/account.md, "Negotiation"): pairing this PC only, or joining the account. */
 export type PairingIntent = "pc" | "account";
 /**
+ * An account join taken outside the pairing window, as this PC's own window lists it (GET /api/relay/joins): never its
+ * digits, which the owner types from the new device's screen (POST /api/relay/join).
+ */
+export interface OwnJoinRequest {
+  id: string;
+  label: string;
+  asked_at: string;
+  left_ms: number;
+}
+/**
  * A phone asking to pair through the relay by comparing digits (docs/relay.md): the six digits its
  * screen shows too, waiting for the owner to approve it until `expires_at`.
  */
@@ -473,7 +483,11 @@ export interface RemotePairingsEvent { type: "remote-pairings"; pairings: Remote
  * serves. `accepted`: its launcher took it as its own past the startup check (absent when no launcher
  * runs it). All three absent from older servers.
  */
-export interface BridgeHealth { ok: true; auth: HealthAuth; bridge_protocol: number; security?: SecuritySummary; web_ui?: { boot_id: string }; runtime?: RuntimeName; accepted?: boolean; /** a driving owner only, as on the whole answer */ herdr_runtime?: HerdrRuntimeFacts }
+/**
+ * `own_window`: this request came from this PC's own window (its screen, loopback and not forwarded), with the port this
+ * server listens on; absent for every other window and from older servers.
+ */
+export interface BridgeHealth { ok: true; auth: HealthAuth; bridge_protocol: number; own_window?: { port: number }; security?: SecuritySummary; web_ui?: { boot_id: string }; runtime?: RuntimeName; accepted?: boolean; /** a driving owner only, as on the whole answer */ herdr_runtime?: HerdrRuntimeFacts }
 export interface BridgeIdentity {
   /** Only on an authenticated /api/bridge?discover=herdr request. */
   found_herdr_sessions?: FoundHerdrSession[];

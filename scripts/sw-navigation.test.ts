@@ -62,15 +62,16 @@ function worker(options: { shell: boolean; build: string; caches?: Record<string
   const code = stampServiceWorker(source, options.build, undefined, options.shell);
   new Function("self", "caches", "fetch", code)(self, cacheStorage, fetch);
 
-  async function navigate(): Promise<string> {
+  async function navigate(at = SCOPE): Promise<string> {
     let responded: Promise<Response> | undefined;
     const pending: Promise<unknown>[] = [];
     listeners.get("fetch")!({
-      request: new Request(SCOPE, { mode: "navigate" as RequestMode }),
+      request: new Request(at, { mode: "navigate" as RequestMode }),
       respondWith: (promise: Promise<Response>) => { responded = promise; },
       waitUntil: (promise: Promise<unknown>) => { pending.push(promise); },
     });
-    const body = await (await responded!).text();
+    if (responded === undefined) return "(left to the network)";
+    const body = await (await responded).text();
     while (pending.length) await pending.shift();
     return body;
   }
@@ -83,6 +84,13 @@ const KEPT = { "ovis-v4-sheep-0000000000aa": { "/": OLD_SHELL, "/assets/index-ol
 const NETWORK = { [new URL(SCOPE).pathname]: NEW_SHELL, "/assets/index-new.js": "new" };
 
 describe("service worker navigations", () => {
+  it("leaves a sign-in's return to the network and keeps nothing of it", async () => {
+    const sw = worker({ shell: false, build: "0000000000aa", network: { "/callback": NEW_SHELL, "/assets/index-new.js": "new" } });
+    expect(await sw.navigate(`${ORIGIN}/callback?code=secret-code&state=s`)).toBe("(left to the network)");
+    for (const store of sw.stores.values()) expect([...store.keys()].join(" ")).not.toContain("callback");
+    expect(sw.stores.size === 0 || [...sw.stores.values()].every((store) => !store.has(`${ORIGIN}/`))).toBe(true);
+  });
+
   it("opens the hosted shell from the shell it kept, and keeps the network's for the next open", async () => {
     const sw = worker({
       shell: true, build: "0000000000aa",

@@ -8,7 +8,7 @@ export const RELAY_CONTROLS = {
   offer: "/api/relay/offer", keep: "/api/relay/offer/keep",
   link: "/api/relay/link", close: "/api/relay/link/close",
   start: "/api/relay/start", stop: "/api/relay/stop", reset: "/api/relay/reset-identity",
-  direct: "/api/relay/direct", pairing: "/api/relay/pairing",
+  direct: "/api/relay/direct", pairing: "/api/relay/pairing", join: "/api/relay/join",
 } as const;
 
 // P5: driving the terminal on this PC, not administering its relay or other PCs.

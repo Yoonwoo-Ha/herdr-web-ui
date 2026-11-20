@@ -1,6 +1,6 @@
-import { randomBytes, randomInt } from "node:crypto";
+import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, rmSync, truncateSync } from "node:fs";
-import type { PairingIntent, RelayPairingRequest, RemotePairingRequest } from "../../shared/machines.ts";
+import type { OwnJoinRequest, PairingIntent, RelayPairingRequest, RemotePairingRequest } from "../../shared/machines.ts";
 import type { DeviceMatch } from "../devices.ts";
 import { writePrivateState } from "../private-state.ts";
 
@@ -17,8 +17,12 @@ export type PairingDecision = { approved: true; by?: DeviceMatch } | { approved:
 /** What a remote approval came to: done, nothing waiting under that id, or the wrong digits picked (which ends it). */
 export type RemoteDecision = { outcome: "decided"; device_id: string } | { outcome: "gone" | "wrong_digits" };
 
+/** What the owner's typed digits came to on this PC's own window: approved, nothing such waiting, or wrong (which ends it). */
+export type TypedDecision = "decided" | "gone" | "wrong_digits";
+
 interface Waiting {
   request: RelayPairingRequest & { intent: PairingIntent };
+  askedAt: number;
   expiresAt: number;
   key: string;
   deviceId: string;
@@ -31,6 +35,9 @@ interface Waiting {
   choices: [string, string, string];
   finish: (decision: PairingDecision) => void;
 }
+
+/** An account device's join no pairing window invited: what this PC's own window may list and decide, never a vouched PC. */
+const ownJoin = (entry: Waiting): boolean => entry.membersOnly && entry.request.intent === "account" && !entry.vouched;
 
 function decoys(digits: string): [string, string, string] {
   const picked = new Set([digits]);
@@ -235,6 +242,27 @@ export class RelayPairingApprovals {
     }));
   }
 
+  /**
+   * The account joins taken outside the pairing window, for this PC's own window alone (dispatch.ts, ownWindow): listed
+   * without their digits, which the owner types from the new device's screen (`decideTyped`), so no prompt the owner did
+   * not start can be waved through with a tap.
+   */
+  ownJoins(now = this.now()): OwnJoinRequest[] {
+    return [...this.waiting.values()].filter(ownJoin).map(({ request, askedAt, expiresAt }) => ({
+      id: request.id, label: request.label, asked_at: new Date(askedAt).toISOString(), left_ms: Math.max(0, expiresAt - now),
+    }));
+  }
+
+  /** On this PC's own window: the digits the new device shows, typed by the owner. One wrong entry ends that join. */
+  decideTyped(id: string, digits: string): TypedDecision {
+    const entry = this.waiting.get(id);
+    if (!entry || !ownJoin(entry)) return "gone";
+    const typed = Buffer.from(digits), shown = Buffer.from(entry.request.digits);
+    if (typed.length !== shown.length || !timingSafeEqual(typed, shown)) { entry.finish({ approved: false }); return "wrong_digits"; }
+    entry.finish({ approved: true });
+    return "decided";
+  }
+
   /** Told the whole list at once, so a window that reconnects drops what was decided meanwhile, then on every change. */
   subscribe(listener: (pairings: RelayPairingRequest[]) => void): () => void {
     this.listeners.add(listener);
@@ -261,7 +289,7 @@ export class RelayPairingApprovals {
     // fixed when the phone asked (session.ts), so a window that closes before its digits are shown changes nothing
     const localOnly = !(device.membersOnly ?? false) && (device.localOnly ?? this.localOnlyOpen());
     this.waiting.set(id, { request: { id, label, digits, expires_at: new Date(expiresAt).toISOString(), intent: device.intent, ...(localOnly ? { local_only: true as const } : {}) },
-      expiresAt, key: device.key, deviceId: device.deviceId, membersOnly: device.membersOnly ?? false, localOnly, vouched: device.vouched ?? false, choices: decoys(digits), finish });
+      askedAt: this.now(), expiresAt, key: device.key, deviceId: device.deviceId, membersOnly: device.membersOnly ?? false, localOnly, vouched: device.vouched ?? false, choices: decoys(digits), finish });
     this.changed();
     return { decision: decided.promise, withdraw: () => finish({ approved: false }) };
   }

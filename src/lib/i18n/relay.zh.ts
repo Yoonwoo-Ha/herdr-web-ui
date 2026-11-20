@@ -56,7 +56,6 @@ export const RELAY_ZH: Record<string, string> = {
   "The PCs this device is paired with still work.": "已与此设备配对的 PC 仍可正常使用。",
   "Checking {name}…": "正在检查 {name}…",
   "To open a PC of your account in a browser, sign in to this account at app.ovis.sh.": "要在浏览器中打开账户中的 PC，请在 app.ovis.sh 登录此账户。",
-  "Open app.ovis.sh": "打开 app.ovis.sh",
   "Remove {name} from the list": "从列表中移除 {name}",
   "Remove {name} from the list?": "从列表中移除 {name}？",
   "Takes {name} off your account's list of PCs on every device. It revokes nothing: devices paired with {name} keep their access, and a device you later remove from your account is not removed from it. If {name} is used again, it comes back on the list when a device of your account opens it. Until then it cannot use the Ovis relay where the relay needs an account.": "在所有设备上，将 {name} 从你账户的 PC 列表中去掉。这不会撤销任何访问：已与 {name} 配对的设备仍可访问，之后从账户中移除的设备也不会从这台 PC 上移除。如果再次使用 {name}，当账户中的设备打开它时，它会回到列表中。在那之前，在 Ovis 中继要求账户的情况下，它无法使用中继。",

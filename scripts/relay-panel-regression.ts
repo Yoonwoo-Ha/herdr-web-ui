@@ -82,10 +82,16 @@ const TAILNET: RemoteAccess = { port: 0, tailscale: { state: "running", dns_name
 
 const ACCOUNT_SERVICE = "https://account.ovis.sh";
 
-const englishContext = async (browser: Browser, access: RemoteAccess = NO_TAILSCALE, { account = false } = {}): Promise<BrowserContext> => {
+const englishContext = async (browser: Browser, access: RemoteAccess = NO_TAILSCALE, { account = false, ownWindow = true } = {}): Promise<BrowserContext> => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
   await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
   await context.route("**/api/access", (route) => route.fulfill({ json: access }));
+  // a window the PC does not call its own (a browser reaching it through a forward, say) signs in on the link page
+  if (!ownWindow) await context.route("**/api/health?scope=bridge", async (route) => {
+    const response = await route.fetch();
+    const { own_window: _own, ...body } = await response.json() as Record<string, unknown>;
+    await route.fulfill({ response, json: body });
+  });
   if (account) {
     const service = new FakeAccountService();
     service.offerLinkPage(["github", "google"]);
@@ -193,7 +199,21 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     const fixture = startRelayFixture();
     fixtures.push(fixture);
     const relayState = async (): Promise<RelayStatus> => (await fetch(`${fixture.origin}/api/relay`)).json() as Promise<RelayStatus>;
-    const context = await englishContext(browser, NO_TAILSCALE, { account: true });
+    // the PC's own window signs in at the provider and back: the relay tab offers the providers, not a code
+    const ownContext = await englishContext(browser, NO_TAILSCALE, { account: true });
+    contexts.push(ownContext);
+    const ownPage = await ownContext.newPage();
+    ownPage.setDefaultTimeout(15_000);
+    ownPage.on("pageerror", (error) => pageErrors.push(error.message));
+    await openPhoneSettings(ownPage, fixture.origin);
+    const own = relayUi(ownPage);
+    await own.connect.click();
+    await own.openTab("relay");
+    await own.relayTab.getByTestId("connect-signin").getByRole("button", { name: "Continue with Google", exact: true }).waitFor();
+    assert.equal(await own.relayTab.getByRole("button", { name: "Sign in to Ovis", exact: true }).count(), 0, "the PC's own window is offered no code sign-in");
+    await ownContext.close();
+
+    const context = await englishContext(browser, NO_TAILSCALE, { account: true, ownWindow: false });
     contexts.push(context);
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
@@ -259,7 +279,8 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     await approving.waitForURL(`${ACCOUNT_SERVICE}/link?code=*`);
     await waiting.locator("a").focus();
     await approving.getByRole("button", { name: "Approve", exact: true }).click();
-    await relayTab.getByRole("button", { name: "Open the account", exact: true }).waitFor();
+    // right after the sign-in, the next step is in the same tab: with the relay off, the one press that turns it on and adds the PC
+    await relayTab.getByRole("button", { name: "Turn on the relay and add this PC", exact: true }).waitFor();
     assert.equal(await sheet.evaluate((node) => node.contains(document.activeElement)), true, "approval keeps keyboard focus inside the sheet");
     assert.equal(await toggle.evaluate((node) => node === document.activeElement), true, "approval focuses the signed-in view's first control");
     await approving.close();
@@ -273,7 +294,7 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     assert.equal(await toggle.getAttribute("aria-checked"), "false", "the sheet's switch shows the relay off");
     assert.equal(await sheet.getByRole("button", { name: "Turn on the relay", exact: true }).count(), 0, "one way to turn it on: the switch");
     assert.equal(await sheet.getByRole("button", { name: "Sign in to Ovis", exact: true }).count(), 0, "signed in, no sign-in");
-    await relayTab.getByRole("button", { name: "Open the account", exact: true }).waitFor();
+    await relayTab.getByRole("button", { name: "Turn on the relay and add this PC", exact: true }).waitFor();
     assert.equal(await sheet.getByTestId("relay-owner-help").count(), 0, "the direct owner needs no relay restriction explanation");
     assert.equal(await gateNote.getAttribute("title"), GATE_NOTE, "with no token and nothing paired, the switch's tooltip says turning the relay on closes the gate");
     assert.equal(await relayTab.getByText(GATE_NOTE, { exact: true }).count(), 0, "and the sheet carries no warning paragraph for it");
@@ -360,7 +381,7 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     await accountQr.getByText("This PC shows a QR code only while it is in no account.", { exact: true }).waitFor();
     assert.equal(await accountQr.getAttribute("data-account"), "mine", "the part says the PC is in this browser's account");
     assert.equal(await accountQr.getByRole("button").count(), 0, "a PC that is in an account offers no QR code");
-    assert.equal(await relayTab.getByRole("button", { name: "Open the account", exact: true }).count(), 0, "and nothing says to add this PC to the account any more");
+    assert.equal(await relayTab.getByRole("button", { name: /^(Open the account|Add this PC to my account|Turn on the relay and add this PC)$/ }).count(), 0, "and nothing says to add this PC to the account any more");
     assert.equal(await accountQr.evaluate((node) => node.contains(document.activeElement)), true, "the answered notice hands the focus to what the part says now");
     // the PC itself makes no such code any more, whatever page asks for it
     const refused = await page.evaluate(async () => {

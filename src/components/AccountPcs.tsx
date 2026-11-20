@@ -20,6 +20,11 @@ import { StatusDot, type StatusDotState } from "./StatusDot.tsx";
 
 export const PROVIDER_NAMES: Record<AccountProvider, string> = { github: "GitHub", google: "Google", apple: "Apple" };
 
+/** The providers a sign-in page offers, as one choice in `locale` ("Google or Apple"). */
+export function providerChoice(locale: string, providers: readonly AccountProvider[]): string {
+  return new Intl.ListFormat(locale, { type: "disjunction" }).format(providers.map((provider) => PROVIDER_NAMES[provider]));
+}
+
 /**
  * The providers' own marks, as their brand rules ask for a sign-in button: GitHub's and Apple's in
  * one colour (currentColor), Google's "G" always in its four colours, never recoloured.

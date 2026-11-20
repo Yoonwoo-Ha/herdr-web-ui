@@ -382,3 +382,50 @@ describe("what the PC's own windows are told of a waiting request", () => {
     expect(approvals.list()[0]!.left_ms).toBe(0);
   });
 });
+
+describe("an account join on this PC's own window", () => {
+  const join = (approvals: RelayPairingApprovals, at: number) => approvals.ask("Tablet", "654321", at + 90_000, { intent: "account", key: "k2", deviceId: "d2", membersOnly: true })!;
+
+  it("is listed without its digits, apart from the window's own list", () => {
+    const f = fixture();
+    const approvals = f.open();
+    join(approvals, f.clock.at);
+    expect(approvals.list()).toEqual([]);
+    const [listed] = approvals.ownJoins(f.clock.at + 1_000);
+    expect(listed).toEqual({ id: expect.any(String), label: "Tablet", asked_at: new Date(f.clock.at).toISOString(), left_ms: 89_000 });
+    expect(JSON.stringify(approvals.ownJoins())).not.toContain("654321");
+  });
+
+  it("lets in only with the digits typed, and one wrong entry ends it for good", async () => {
+    const f = fixture();
+    const approvals = f.open();
+    const right = join(approvals, f.clock.at);
+    expect(approvals.decideTyped(approvals.ownJoins()[0]!.id, "654321")).toBe("decided");
+    expect(await right.decision).toEqual({ approved: true });
+    const wrong = join(approvals, f.clock.at);
+    const id = approvals.ownJoins()[0]!.id;
+    expect(approvals.decideTyped(id, "123456")).toBe("wrong_digits");
+    expect(await wrong.decision).toEqual({ approved: false });
+    expect(approvals.decideTyped(id, "654321")).toBe("gone");
+  });
+
+  it("never decides a comparison the window itself shows", () => {
+    const f = fixture();
+    const approvals = f.open();
+    approvals.openWindow(f.clock.at);
+    approvals.ask("Phone", "111111", f.clock.at + 90_000, { intent: "pc", key: "k", deviceId: "d" });
+    expect(approvals.decideTyped(approvals.list()[0]!.id, "111111")).toBe("gone");
+    expect(approvals.list()).toHaveLength(1);
+  });
+});
+
+describe("what this PC's own window may decide", () => {
+  it("is never a vouched PC or a plain pairing, even one taken outside the window", () => {
+    const f = fixture();
+    const approvals = f.open();
+    approvals.ask("Other PC", "111111", f.clock.at + 90_000, { intent: "pc", key: "k1", deviceId: "d1", membersOnly: true, vouched: true });
+    approvals.ask("Plain", "222222", f.clock.at + 90_000, { intent: "pc", key: "k2", deviceId: "d2", membersOnly: true });
+    expect(approvals.ownJoins()).toEqual([]);
+    for (const { id } of approvals.remoteList()) expect(approvals.decideTyped(id, "111111")).toBe("gone");
+  });
+});

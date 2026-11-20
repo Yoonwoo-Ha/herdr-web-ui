@@ -56,7 +56,6 @@ export const RELAY_JA: Record<string, string> = {
   "The PCs this device is paired with still work.": "このデバイスとペアリング済みの PC はそのまま使えます。",
   "Checking {name}…": "{name}を確認しています…",
   "To open a PC of your account in a browser, sign in to this account at app.ovis.sh.": "アカウントの PC をブラウザーで開くには、app.ovis.sh でこのアカウントにサインインしてください。",
-  "Open app.ovis.sh": "app.ovis.sh を開く",
   "Remove {name} from the list": "{name} を一覧から削除",
   "Remove {name} from the list?": "{name} を一覧から削除しますか？",
   "Takes {name} off your account's list of PCs on every device. It revokes nothing: devices paired with {name} keep their access, and a device you later remove from your account is not removed from it. If {name} is used again, it comes back on the list when a device of your account opens it. Until then it cannot use the Ovis relay where the relay needs an account.": "すべてのデバイスで、アカウントの PC 一覧から {name} を外します。何も取り消しません。{name} とペアリング済みのデバイスは引き続きアクセスでき、後でアカウントから削除するデバイスもこの PC からは削除されません。{name} をまた使うと、アカウントのデバイスがこの PC を開いたときに一覧に戻ります。それまでは、Ovis リレーがアカウントを必要とする場合、リレーを使えません。",

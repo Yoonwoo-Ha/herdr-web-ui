@@ -187,7 +187,7 @@ describe("AddThisPc", () => {
 
   test("after the press it says what to do on any signed-in device, and keeps the wait for a reload", async () => {
     const renderer = await waitingFrom();
-    expect(words(renderer)).toContain("On a device already signed in to this account (the Ovis app or app.ovis.sh), choose Add on desk. If it shows Join there instead, choose Join, then Type the number. This screen then shows a six-digit number: type it there, then press Approve here. Keep this page open.");
+    expect(words(renderer)).toContain("On a device signed in to this account (the Ovis app or app.ovis.sh), choose Add on desk. This screen then shows a six-digit number: type it there, then press Approve here. Keep this page open.");
     expect(words(renderer)).toContain("Waiting. The window reopens by itself if Ovis restarts.");
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
     expect(directory).toEqual(["putPc"]);
@@ -197,7 +197,7 @@ describe("AddThisPc", () => {
   test("one press: when the account service admits this PC, the press adds it with no digits and no wait", async () => {
     onePress.admits = true;
     const renderer = await waitingFrom();
-    expect(words(renderer)).toContain("This PC is in your account. Your other devices can open it now.");
+    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
     expect(words(renderer)).not.toContain("Waiting. The window reopens by itself if Ovis restarts.");
     expect([directory, admitted]).toEqual([["putPc"], [ACCOUNT]]);
     expect(asked.map((request) => request.path)).toContain("/api/account/one-press");
@@ -235,7 +235,7 @@ describe("AddThisPc", () => {
     renderers.push(renderer);
     await settle();
     await press(renderer, "Add this PC to my account");
-    expect(words(renderer)).toContain("This PC is in your account. Your other devices can open it now.");
+    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
     expect(told).toBe(1);
   });
 
@@ -321,7 +321,7 @@ describe("AddThisPc", () => {
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
     pc.account = ACCOUNT;
     await advance(ADDED_POLL_MS);
-    expect(words(renderer)).toContain("This PC is in your account. Your other devices can open it now.");
+    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
     expect(words(renderer)).toContain("Account acct_0123456…");
     expect(words(renderer)).not.toContain(ACCOUNT);
     expect(buttons(renderer)).toEqual([]);
@@ -359,7 +359,7 @@ describe("AddThisPc", () => {
     tab.set(MARKER, kept(20 * 60_000));
     pc.account = ACCOUNT;
     const renderer = await mount();
-    expect(words(renderer)).toContain("This PC is in your account. Your other devices can open it now.");
+    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
     expect(tab.has(MARKER)).toBe(false);
     expect(links()).toBe(0);
   });
@@ -461,7 +461,7 @@ describe("AddThisPc", () => {
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
     pc.healthId = undefined;
     await advance(ADDED_POLL_MS);
-    expect(words(renderer)).toContain("This PC is in your account. Your other devices can open it now.");
+    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
   });
 
   test("on the hosted app's page for the PC, which names it, a PC that does not say which PC it is still gets its window", async () => {
@@ -559,7 +559,7 @@ describe("AddThisPc", () => {
     await advance(WAITING_MS - 1);
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
     await advance(1);
-    expect(words(renderer)).toBe("This PC stopped waiting after 30 minutes.");
+    expect(words(renderer)).toBe("This PC stopped waiting after 30 minutes.\nNo other device? Open app.ovis.sh in a new tab here and sign in the same way. Choose Add there, then come back to this tab to approve.");
     expect(buttons(renderer)).toEqual(["Keep waiting"]);
     expect(tab.has(MARKER)).toBe(false);
     expect(jest.getTimerCount()).toBe(0);
@@ -1069,7 +1069,7 @@ describe("AddThisPc", () => {
     pc.account = ACCOUNT;
     tab.delete(MARKER);
     await advance(ADDED_POLL_MS);
-    for (const copy of [welcome, settings]) expect(words(copy)).toContain("This PC is in your account. Your other devices can open it now.");
+    for (const copy of [welcome, settings]) expect(words(copy)).toContain("This PC is in your account. A new device of your account may need one approval here.");
   });
 
   test("a sign-out or another sign-in in another tab ends the wait with the next reopen, not nine minutes later", async () => {
@@ -1107,7 +1107,7 @@ describe("AddThisPc", () => {
     await advance(ANSWER_MS);
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
     await advance(ADDED_POLL_MS);
-    expect(words(renderer)).toContain("This PC is in your account. Your other devices can open it now.");
+    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
   });
 
   test("a listing that never gets an answer is tried again", async () => {
@@ -1129,16 +1129,16 @@ describe("AddThisPc", () => {
     pc.account = ACCOUNT;
     pc.enrolling = true;
     await advance(ADDED_POLL_MS);
-    expect(words(renderer)).toContain("This PC is in your account. The device that added it is still letting your other devices in.");
-    expect(words(renderer)).not.toContain("Your other devices can open it now.");
+    expect(words(renderer)).toContain("Not finished yet: the device that added this PC is still setting it up. If it stopped, open this PC on that device and choose Try again.");
+    expect(words(renderer)).not.toContain("A new device of your account may need one approval here.");
     const opened = links();
     await advance(RELIST_MS);
     expect(links()).toBe(opened);
     expect(directory).toEqual(["putPc"]);
-    expect(words(renderer)).not.toContain("Your other devices can open it now.");
+    expect(words(renderer)).not.toContain("A new device of your account may need one approval here.");
     pc.enrolling = false;
     await advance(ADDED_POLL_MS);
-    expect(words(renderer)).toContain("This PC is in your account. Your other devices can open it now.");
+    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
     expect(jest.getTimerCount()).toBe(0);
   });
 
@@ -1147,10 +1147,10 @@ describe("AddThisPc", () => {
     pc.account = ACCOUNT;
     pc.enrolling = true;
     const renderer = await mount();
-    expect(words(renderer)).toContain("The device that added it is still letting your other devices in.");
+    expect(words(renderer)).toContain("the device that added this PC is still setting it up");
     pc.enrolling = false;
     await advance(ADDED_POLL_MS);
-    expect(words(renderer)).toContain("Your other devices can open it now.");
+    expect(words(renderer)).toContain("A new device of your account may need one approval here.");
   });
 
   test("a PC whose first member left before enrolling it offers the button again", async () => {
@@ -1189,7 +1189,7 @@ describe("AddThisPc", () => {
     const renderer = await mount();
     expect(renderer.toJSON()).toBeNull();
     await advance(2 * ADDED_POLL_MS);
-    expect(words(renderer)).toBe("This PC stopped waiting after 30 minutes.");
+    expect(words(renderer)).toBe("This PC stopped waiting after 30 minutes.\nNo other device? Open app.ovis.sh in a new tab here and sign in the same way. Choose Add there, then come back to this tab to approve.");
     expect(buttons(renderer)).toEqual(["Keep waiting"]);
     expect(tab.has(MARKER)).toBe(false);
     expect(jest.getTimerCount()).toBe(0);
@@ -1202,7 +1202,7 @@ describe("AddThisPc", () => {
     pc.account = ACCOUNT;
     const before = directory.length;
     await press(renderer, "Keep waiting");
-    expect(words(renderer)).toContain("This PC is in your account. Your other devices can open it now.");
+    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
     expect(directory.length).toBe(before);
 
     // the same after Stop waiting, and under another sign-in it is not called yours
@@ -1299,7 +1299,7 @@ describe("AddThisPc", () => {
     expect(links()).toBe(opened + 1);
     pc.account = ACCOUNT;
     await advance(ADDED_POLL_MS);
-    expect(words(welcome)).toContain("This PC is in your account. Your other devices can open it now.");
+    expect(words(welcome)).toContain("This PC is in your account. A new device of your account may need one approval here.");
     expect(tab.has(MARKER)).toBe(false);
   });
 
