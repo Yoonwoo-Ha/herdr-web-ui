@@ -3,7 +3,7 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 
 import { LOCAL_MACHINE, type Machine } from "../../shared/machines.ts";
 import { parseSafetyRecord, type BlockRecord } from "../../shared/account-records.ts";
-import { indexedAccountStore, memoryAccountStore, newKey } from "../lib/account/store.ts";
+import { indexedAccountStore, memoryAccountStore, newKey, type AccountSession } from "../lib/account/store.ts";
 import { DeviceNoticeWire, deviceNotice } from "../lib/deviceNoticeWire.fixture.ts";
 import { MachineSession, MachineSessionRegistry } from "../lib/machineSession.ts";
 import { SettingsProvider } from "../lib/settings.ts";
@@ -216,7 +216,22 @@ afterEach(async () => {
   globals.clear();
 });
 
-it("T53, T57: It's me uses only the admission PC's socket and retries only until that PC confirms", async () => {
+const itsMeSession = {
+  service: "https://account.ovis.sh", account: "acct", provider: "github",
+  access_token: "access", refresh_token: "refresh", sign_in_id: "this-sign-in",
+} as const;
+
+async function setupItsMe({
+  session = { ...itsMeSession, expires_at: Date.now() + 60_000 },
+  admission = deviceNotice({ row: "new-phone" }),
+  localOnly = false,
+  seed = true,
+}: {
+  readonly session?: AccountSession;
+  readonly admission?: ReturnType<typeof deviceNotice>;
+  readonly localOnly?: boolean;
+  readonly seed?: boolean;
+} = {}) {
   jest.useFakeTimers();
   const desk = new DeviceNoticeWire("ws://localhost/ws?pc=desk");
   const lab = new DeviceNoticeWire("ws://localhost/ws?pc=lab");
@@ -232,29 +247,44 @@ it("T53, T57: It's me uses only the admission PC's socket and retries only until
     Object.defineProperty(globalThis, key, { configurable: true, value });
   }
   const store = memoryAccountStore();
-  await store.set("session", {
-    service: "https://account.ovis.sh", account: "acct", provider: "github",
-    access_token: "access", refresh_token: "refresh", expires_at: Date.now() + 60_000, sign_in_id: "this-sign-in",
-  });
-  await store.set("signin_key", { account: "acct", sign_in_id: "this-sign-in", no: 1, key: await newKey() });
+  await store.set("session", session);
+  if (!localOnly && session.sign_in_id !== undefined) {
+    await store.set("signin_key", { account: session.account, sign_in_id: session.sign_in_id, no: 1, key: await newKey() });
+  }
   spyOn(indexedAccountStore, "get").mockImplementation(store.get);
-  const fetched = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () => new Response(null, { status: 500 }), { preconnect: fetch.preconnect }));
   const registry = new MachineSessionRegistry((id) => new MachineSession(id, { socket: new HerdrSocket(id === "local" ? desk.url : lab.url) }));
   sessions = registry;
-  for (const machine of itsMeMachines) registry.get(machine.id).socket.connect();
+  const machines = localOnly ? itsMeMachines.filter(({ id }) => id === "local") : itsMeMachines;
+  for (const machine of machines) registry.get(machine.id).socket.connect();
   desk.open();
-  lab.open();
+  if (!localOnly) lab.open();
   function Notices({ selected }: { selected: string }) {
-    return useAccountDeviceNotices({ machines: itsMeMachines, machineSessions: registry, selectedMachineId: selected, pageServerId: undefined });
+    return useAccountDeviceNotices({ machines, machineSessions: registry, selectedMachineId: selected, pageServerId: undefined });
   }
   await act(async () => { itsMeRenderer = create(<SettingsProvider><Notices selected="local" /></SettingsProvider>); });
   const view = itsMeRenderer;
   if (view === undefined) throw new TypeError("Missing notice view");
-  const admission = deviceNotice({ row: "new-phone" });
+  const select = (selected: string) => act(async () => { view.update(<SettingsProvider><Notices selected={selected} /></SettingsProvider>); });
+  const actions = () => view.root.findAll((node) => node.type === "button" && node.children.includes("It's me"));
+  const button = () => view.root.find((node) => node.type === "button" && node.children.includes("It's me"));
+  const refusal = () => view.root.findAll((node) => node.type === "p" && node.children.includes("Desk did not accept It's me from this device."));
+  const answers = (wire = desk) => wire.sent.filter(({ type }) => type === "notice-answer");
+  if (seed) await act(async () => {
+    desk.snapshot();
+    desk.read({ type: "device-notice", notice: admission });
+    if (!localOnly) {
+      lab.snapshot();
+      lab.read({ type: "device-notice", notice: admission });
+    }
+  });
+  return { desk, lab, session, store, view, admission, select, actions, button, refusal, answers };
+}
+
+it("T53, T57: It's me uses only the admission PC's socket and retries only until that PC confirms", async () => {
+  const fetched = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () => new Response(null, { status: 500 }), { preconnect: fetch.preconnect }));
+  const { desk, lab, view, admission, select, actions, answers } = await setupItsMe({ seed: false });
   const confirmation = deviceNotice({ ...admission, id: "b".repeat(32), seq: 2, kind: "confirm", how: "its_me", open: false });
   const answer = { type: "notice-answer", id: admission.id, answer: "its_me" };
-  const answers = (wire: DeviceNoticeWire) => wire.sent.filter(({ type }) => type === "notice-answer");
-  const actions = () => view.root.findAll((node) => node.type === "button" && node.children.includes("It's me"));
 
   await act(async () => {
     desk.snapshot();
@@ -270,8 +300,8 @@ it("T53, T57: It's me uses only the admission PC's socket and retries only until
   expect(button.props.disabled).toBe(true);
   expect(answers(desk)).toEqual([answer]);
   // away to Lab and back while it is out: still one answer out for this PC's notice
-  await act(async () => { view.update(<SettingsProvider><Notices selected="lab" /></SettingsProvider>); });
-  await act(async () => { view.update(<SettingsProvider><Notices selected="local" /></SettingsProvider>); });
+  await select("lab");
+  await select("local");
   const [again] = actions();
   expect(again?.props.disabled).toBe(true);
   const notMe = view.root.find((node) => node.type === "button" && node.children.includes("Not me"));
@@ -293,42 +323,10 @@ it.each([
   ["a confirm for another admission on the same PC leaves it waiting, and it is sent once more", "other", 2],
   ["a confirm on the first try sends it no second time", "first", 1],
 ] as const)("T53, P15: %s; no attempt goes to a records route", async (_name, reply, sentTimes) => {
-  jest.useFakeTimers();
-  const desk = new DeviceNoticeWire("ws://localhost/ws?pc=desk");
-  for (const [key, value] of Object.entries({
-    window: Object.assign(new EventTarget(), { location: new URL("http://localhost/"), setTimeout, clearTimeout, setInterval, clearInterval }),
-    document: Object.assign(new EventTarget(), { visibilityState: "visible", hasFocus: () => true, querySelector: () => null, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } } }),
-    navigator: { languages: ["en"] },
-    getComputedStyle: () => ({ getPropertyValue: () => "" }),
-    WebSocket: class { constructor() { return desk; } },
-    IS_REACT_ACT_ENVIRONMENT: true,
-  })) {
-    globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, { configurable: true, value });
-  }
-  const store = memoryAccountStore();
-  await store.set("session", {
-    service: "https://account.ovis.sh", account: "acct", provider: "github",
-    access_token: "access", refresh_token: "refresh", expires_at: Date.now() + 60_000, sign_in_id: "this-sign-in",
-  });
-  spyOn(indexedAccountStore, "get").mockImplementation(store.get);
   const fetched = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () => new Response(null, { status: 500 }), { preconnect: fetch.preconnect }));
-  const registry = new MachineSessionRegistry((id) => new MachineSession(id, { socket: new HerdrSocket(desk.url) }));
-  sessions = registry;
-  registry.get("local").socket.connect();
-  desk.open();
-  const local = itsMeMachines.filter((machine) => machine.id === "local");
-  function Notices() {
-    return useAccountDeviceNotices({ machines: local, machineSessions: registry, selectedMachineId: "local", pageServerId: undefined });
-  }
-  await act(async () => { itsMeRenderer = create(<SettingsProvider><Notices /></SettingsProvider>); });
-  const view = itsMeRenderer;
-  if (view === undefined) throw new TypeError("Missing notice view");
-  const admission = deviceNotice({ row: "new-phone" });
+  const { desk, view, admission, button: findButton, answers } = await setupItsMe({ localOnly: true });
   const confirm = deviceNotice({ ...admission, id: "b".repeat(32), seq: 2, kind: "confirm", how: "its_me", open: false, ...(reply === "other" ? { row: "another-phone" } : {}) });
-  const answers = () => desk.sent.filter(({ type }) => type === "notice-answer");
-  await act(async () => { desk.snapshot(); desk.read({ type: "device-notice", notice: admission }); });
-  const button = view.root.find((node) => node.type === "button" && node.children.includes("It's me"));
+  const button = findButton();
   await act(async () => { button.props.onClick(); });
   await act(async () => { desk.read({ type: "device-notice", notice: confirm }); });
   await act(async () => { jest.advanceTimersByTime(5_000); });
@@ -341,48 +339,7 @@ it.each([
 });
 
 it("T53: an It's me refusal survives switching PCs and clears on the next press", async () => {
-  jest.useFakeTimers();
-  const desk = new DeviceNoticeWire("ws://localhost/ws?pc=desk");
-  const lab = new DeviceNoticeWire("ws://localhost/ws?pc=lab");
-  for (const [key, value] of Object.entries({
-    window: Object.assign(new EventTarget(), { location: new URL("http://localhost/"), setTimeout, clearTimeout, setInterval, clearInterval }),
-    document: Object.assign(new EventTarget(), { visibilityState: "visible", hasFocus: () => true, querySelector: () => null, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } } }),
-    navigator: { languages: ["en"] },
-    getComputedStyle: () => ({ getPropertyValue: () => "" }),
-    WebSocket: class { constructor(url: string) { return url === desk.url ? desk : lab; } },
-    IS_REACT_ACT_ENVIRONMENT: true,
-  })) {
-    globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, { configurable: true, value });
-  }
-  const store = memoryAccountStore();
-  await store.set("session", {
-    service: "https://account.ovis.sh", account: "acct", provider: "github",
-    access_token: "access", refresh_token: "refresh", expires_at: Date.now() + 60_000, sign_in_id: "this-sign-in",
-  });
-  await store.set("signin_key", { account: "acct", sign_in_id: "this-sign-in", no: 1, key: await newKey() });
-  spyOn(indexedAccountStore, "get").mockImplementation(store.get);
-  const registry = new MachineSessionRegistry((id) => new MachineSession(id, { socket: new HerdrSocket(id === "local" ? desk.url : lab.url) }));
-  sessions = registry;
-  for (const machine of itsMeMachines) registry.get(machine.id).socket.connect();
-  desk.open();
-  lab.open();
-  function Notices({ selected }: { selected: string }) {
-    return useAccountDeviceNotices({ machines: itsMeMachines, machineSessions: registry, selectedMachineId: selected, pageServerId: undefined });
-  }
-  await act(async () => { itsMeRenderer = create(<SettingsProvider><Notices selected="local" /></SettingsProvider>); });
-  const view = itsMeRenderer;
-  if (view === undefined) throw new TypeError("Missing notice view");
-  const admission = deviceNotice({ row: "new-phone" });
-  const answers = () => desk.sent.filter(({ type }) => type === "notice-answer");
-  const button = () => view.root.find((node) => node.type === "button" && node.children.includes("It's me"));
-  const refusal = () => view.root.findAll((node) => node.type === "p" && node.children.includes("Desk did not accept It's me from this device."));
-  await act(async () => {
-    desk.snapshot();
-    lab.snapshot();
-    desk.read({ type: "device-notice", notice: admission });
-    lab.read({ type: "device-notice", notice: admission });
-  });
+  const { desk, view, admission, select, button, refusal, answers } = await setupItsMe();
   const notMe = () => view.root.find((node) => node.type === "button" && node.children.includes("Not me"));
   await act(async () => { button().props.onClick(); });
   expect(refusal()).toHaveLength(0);
@@ -392,11 +349,11 @@ it("T53: an It's me refusal survives switching PCs and clears on the next press"
   expect(answers()).toHaveLength(2);
   expect(refusal()).toHaveLength(0);
   // away to Lab while Desk still waits: Desk's last wait ends there, and its refusal is not Lab's
-  await act(async () => { view.update(<SettingsProvider><Notices selected="lab" /></SettingsProvider>); });
+  await select("lab");
   await act(async () => { jest.advanceTimersByTime(5_000); });
   expect(button().props.disabled).toBe(false);
   expect(view.root.findAllByProps({ className: "settings-hint its-me-refused" })).toHaveLength(0);
-  await act(async () => { view.update(<SettingsProvider><Notices selected="local" /></SettingsProvider>); });
+  await select("local");
   expect(refusal()).toHaveLength(1);
   expect(button().props.disabled).toBe(false);
   expect(notMe().props.disabled).toBe(false);
@@ -415,49 +372,9 @@ it.each([
   ["a sign-out and a sign-in to the same account after the refusal", "after"],
   ["a new sign-in that began while the request still waited", "during"],
 ] as const)("T53: an It's me refusal belongs to its sign-in: %s shows none", async (_name, when) => {
-  jest.useFakeTimers();
-  const desk = new DeviceNoticeWire("ws://localhost/ws?pc=desk");
-  const lab = new DeviceNoticeWire("ws://localhost/ws?pc=lab");
-  for (const [key, value] of Object.entries({
-    window: Object.assign(new EventTarget(), { location: new URL("http://localhost/"), setTimeout, clearTimeout, setInterval, clearInterval }),
-    document: Object.assign(new EventTarget(), { visibilityState: "visible", hasFocus: () => true, querySelector: () => null, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } } }),
-    navigator: { languages: ["en"] },
-    getComputedStyle: () => ({ getPropertyValue: () => "" }),
-    WebSocket: class { constructor(url: string) { return url === desk.url ? desk : lab; } },
-    IS_REACT_ACT_ENVIRONMENT: true,
-  })) {
-    globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, { configurable: true, value });
-  }
-  const store = memoryAccountStore();
-  await store.set("session", {
-    service: "https://account.ovis.sh", account: "acct", provider: "github",
-    access_token: "access", refresh_token: "refresh", expires_at: Date.now() + 60_000, sign_in_id: "this-sign-in",
-  });
-  await store.set("signin_key", { account: "acct", sign_in_id: "this-sign-in", no: 1, key: await newKey() });
-  spyOn(indexedAccountStore, "get").mockImplementation(store.get);
-  const registry = new MachineSessionRegistry((id) => new MachineSession(id, { socket: new HerdrSocket(id === "local" ? desk.url : lab.url) }));
-  sessions = registry;
-  for (const machine of itsMeMachines) registry.get(machine.id).socket.connect();
-  desk.open();
-  lab.open();
-  function Notices({ selected }: { selected: string }) {
-    return useAccountDeviceNotices({ machines: itsMeMachines, machineSessions: registry, selectedMachineId: selected, pageServerId: undefined });
-  }
-  await act(async () => { itsMeRenderer = create(<SettingsProvider><Notices selected="local" /></SettingsProvider>); });
-  const view = itsMeRenderer;
-  if (view === undefined) throw new TypeError("Missing notice view");
-  const admission = deviceNotice({ row: "new-phone" });
-  const button = () => view.root.find((node) => node.type === "button" && node.children.includes("It's me"));
-  const refusal = () => view.root.findAll((node) => node.type === "p" && node.children.includes("Desk did not accept It's me from this device."));
-  await act(async () => {
-    desk.snapshot();
-    lab.snapshot();
-    desk.read({ type: "device-notice", notice: admission });
-    lab.read({ type: "device-notice", notice: admission });
-  });
+  const { session, store, button, refusal } = await setupItsMe();
   const signInAgain = async () => {
-    await store.set("session", { ...(await store.get("session"))!, refresh_token: "refresh-2", sign_in_id: "a-later-sign-in" });
+    await store.set("session", { ...session, refresh_token: "refresh-2", sign_in_id: "a-later-sign-in" });
     window.dispatchEvent(new Event(ACCOUNT_SIGN_OUT_EVENT));
   };
   await act(async () => { button().props.onClick(); });
@@ -472,108 +389,116 @@ it.each([
 });
 
 it("S2P-6: a refusal goes with its notice even while another PC is shown: the same id opened again shows none", async () => {
-  jest.useFakeTimers();
-  const desk = new DeviceNoticeWire("ws://localhost/ws?pc=desk");
-  const lab = new DeviceNoticeWire("ws://localhost/ws?pc=lab");
-  for (const [key, value] of Object.entries({
-    window: Object.assign(new EventTarget(), { location: new URL("http://localhost/"), setTimeout, clearTimeout, setInterval, clearInterval }),
-    document: Object.assign(new EventTarget(), { visibilityState: "visible", hasFocus: () => true, querySelector: () => null, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } } }),
-    navigator: { languages: ["en"] },
-    getComputedStyle: () => ({ getPropertyValue: () => "" }),
-    WebSocket: class { constructor(url: string) { return url === desk.url ? desk : lab; } },
-    IS_REACT_ACT_ENVIRONMENT: true,
-  })) {
-    globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, { configurable: true, value });
-  }
-  const store = memoryAccountStore();
-  await store.set("session", {
-    service: "https://account.ovis.sh", account: "acct", provider: "github",
-    access_token: "access", refresh_token: "refresh", expires_at: Date.now() + 60_000, sign_in_id: "this-sign-in",
-  });
-  await store.set("signin_key", { account: "acct", sign_in_id: "this-sign-in", no: 1, key: await newKey() });
-  spyOn(indexedAccountStore, "get").mockImplementation(store.get);
-  const registry = new MachineSessionRegistry((id) => new MachineSession(id, { socket: new HerdrSocket(id === "local" ? desk.url : lab.url) }));
-  sessions = registry;
-  for (const machine of itsMeMachines) registry.get(machine.id).socket.connect();
-  desk.open();
-  lab.open();
-  function Notices({ selected }: { selected: string }) {
-    return useAccountDeviceNotices({ machines: itsMeMachines, machineSessions: registry, selectedMachineId: selected, pageServerId: undefined });
-  }
-  await act(async () => { itsMeRenderer = create(<SettingsProvider><Notices selected="local" /></SettingsProvider>); });
-  const view = itsMeRenderer;
-  if (view === undefined) throw new TypeError("Missing notice view");
-  const admission = deviceNotice({ row: "new-phone" });
-  const button = () => view.root.find((node) => node.type === "button" && node.children.includes("It's me"));
-  const refusal = () => view.root.findAll((node) => node.type === "p" && node.children.includes("Desk did not accept It's me from this device."));
-  await act(async () => {
-    desk.snapshot();
-    lab.snapshot();
-    desk.read({ type: "device-notice", notice: admission });
-    lab.read({ type: "device-notice", notice: admission });
-  });
+  const { desk, admission, select, button, refusal } = await setupItsMe();
   await act(async () => { button().props.onClick(); });
   await act(async () => { jest.advanceTimersByTime(5_000); });
   await act(async () => { jest.advanceTimersByTime(5_000); });
   expect(refusal()).toHaveLength(1);
-  await act(async () => { view.update(<SettingsProvider><Notices selected="lab" /></SettingsProvider>); });
+  await select("lab");
   // decided on Desk while Lab is shown, then the same notice id opened there again
   await act(async () => { desk.read({ type: "device-notice", notice: { ...admission, open: false } }); });
   await act(async () => { desk.read({ type: "device-notice", notice: admission }); });
-  await act(async () => { view.update(<SettingsProvider><Notices selected="local" /></SettingsProvider>); });
+  await select("local");
   expect(refusal()).toHaveLength(0);
 });
 
 it("S2P-6: an It's me still out when its notice closes records no refusal, also once the same id opens again", async () => {
-  jest.useFakeTimers();
-  const desk = new DeviceNoticeWire("ws://localhost/ws?pc=desk");
-  const lab = new DeviceNoticeWire("ws://localhost/ws?pc=lab");
-  for (const [key, value] of Object.entries({
-    window: Object.assign(new EventTarget(), { location: new URL("http://localhost/"), setTimeout, clearTimeout, setInterval, clearInterval }),
-    document: Object.assign(new EventTarget(), { visibilityState: "visible", hasFocus: () => true, querySelector: () => null, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } } }),
-    navigator: { languages: ["en"] },
-    getComputedStyle: () => ({ getPropertyValue: () => "" }),
-    WebSocket: class { constructor(url: string) { return url === desk.url ? desk : lab; } },
-    IS_REACT_ACT_ENVIRONMENT: true,
-  })) {
-    globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, { configurable: true, value });
-  }
-  const store = memoryAccountStore();
-  await store.set("session", {
-    service: "https://account.ovis.sh", account: "acct", provider: "github",
-    access_token: "access", refresh_token: "refresh", expires_at: Date.now() + 60_000, sign_in_id: "this-sign-in",
-  });
-  await store.set("signin_key", { account: "acct", sign_in_id: "this-sign-in", no: 1, key: await newKey() });
-  spyOn(indexedAccountStore, "get").mockImplementation(store.get);
-  const registry = new MachineSessionRegistry((id) => new MachineSession(id, { socket: new HerdrSocket(id === "local" ? desk.url : lab.url) }));
-  sessions = registry;
-  for (const machine of itsMeMachines) registry.get(machine.id).socket.connect();
-  desk.open();
-  lab.open();
-  function Notices({ selected }: { selected: string }) {
-    return useAccountDeviceNotices({ machines: itsMeMachines, machineSessions: registry, selectedMachineId: selected, pageServerId: undefined });
-  }
-  await act(async () => { itsMeRenderer = create(<SettingsProvider><Notices selected="local" /></SettingsProvider>); });
-  const view = itsMeRenderer;
-  if (view === undefined) throw new TypeError("Missing notice view");
-  const admission = deviceNotice({ row: "new-phone" });
-  const button = () => view.root.find((node) => node.type === "button" && node.children.includes("It's me"));
-  const refusal = () => view.root.findAll((node) => node.type === "p" && node.children.includes("Desk did not accept It's me from this device."));
-  await act(async () => {
-    desk.snapshot();
-    lab.snapshot();
-    desk.read({ type: "device-notice", notice: admission });
-    lab.read({ type: "device-notice", notice: admission });
-  });
+  const { desk, admission, select, button, refusal } = await setupItsMe();
   await act(async () => { button().props.onClick(); });
   await act(async () => { jest.advanceTimersByTime(5_000); });
-  await act(async () => { view.update(<SettingsProvider><Notices selected="lab" /></SettingsProvider>); });
+  await select("lab");
   // closed on Desk and opened again while the answer was still out, then its last wait ends
   await act(async () => { desk.read({ type: "device-notice", notice: { ...admission, open: false } }); });
   await act(async () => { desk.read({ type: "device-notice", notice: admission }); });
   await act(async () => { jest.advanceTimersByTime(5_000); });
-  await act(async () => { view.update(<SettingsProvider><Notices selected="local" /></SettingsProvider>); });
+  await select("local");
+  expect(refusal()).toHaveLength(0);
+});
+
+it("S2P-7: reopening offscreen releases the old press without letting it unlock the new press", async () => {
+  const { desk, lab, admission, select, button, answers } = await setupItsMe();
+  const answer = { type: "notice-answer", id: admission.id, answer: "its_me" };
+  await act(async () => { button().props.onClick(); });
+  expect(answers()).toEqual([answer]);
+  await act(async () => { jest.advanceTimersByTime(1_000); });
+  await select("lab");
+  await act(async () => { desk.read({ type: "device-notice", notice: { ...admission, open: false } }); });
+  await act(async () => { desk.read({ type: "device-notice", notice: admission }); });
+  await select("local");
+  expect(button().props.disabled).toBe(false);
+  await act(async () => { button().props.onClick(); });
+  expect(answers()).toEqual([answer, answer]);
+
+  // Only the first press's deadline has passed. The second press still owns the lock.
+  await act(async () => { jest.advanceTimersByTime(4_000); });
+  expect(button().props.disabled).toBe(true);
+  expect(answers()).toEqual([answer, answer]);
+  expect(answers(lab)).toEqual([]);
+  const confirmation = deviceNotice({ ...admission, id: "b".repeat(32), seq: 2, kind: "confirm", how: "its_me", open: false });
+  await act(async () => { desk.read({ type: "device-notice", notice: confirmation }); });
+});
+
+it("S2P-7: a closed press sends no retry, even after its notice reopens", async () => {
+  const { desk, admission, button, answers } = await setupItsMe();
+  await act(async () => { button().props.onClick(); });
+  expect(answers()).toHaveLength(1);
+  await act(async () => { desk.read({ type: "device-notice", notice: { ...admission, open: false } }); });
+  await act(async () => { desk.read({ type: "device-notice", notice: admission }); });
+  await act(async () => { jest.advanceTimersByTime(5_000); });
+  expect(answers()).toHaveLength(1);
+});
+
+it.each([
+  ["S2P-8: a close and reopen in one render batch drops the old refusal", "batched", "a".repeat(32)],
+  ["S2P-L3: closing a notice with a colon in its ID drops only that notice's refusal", "separate", "admission:phone"],
+] as const)("%s", async (_title, delivery, id) => {
+  const { desk, lab, admission, select, button, refusal } = await setupItsMe({ admission: deviceNotice({ id, row: "new-phone" }) });
+  await act(async () => { button().props.onClick(); });
+  await act(async () => { jest.advanceTimersByTime(5_000); });
+  await act(async () => { jest.advanceTimersByTime(5_000); });
+  expect(refusal()).toHaveLength(1);
+  await select("lab");
+  expect(button().props.disabled).toBe(false);
+  if (delivery === "separate") {
+    await act(async () => { button().props.onClick(); });
+    expect(button().props.disabled).toBe(true);
+  }
+  const close = () => desk.read({ type: "device-notice", notice: { ...admission, open: false } });
+  const reopen = () => desk.read({ type: "device-notice", notice: admission });
+  if (delivery === "batched") {
+    await act(async () => { close(); reopen(); });
+  } else {
+    await act(async () => { close(); });
+    await act(async () => { reopen(); });
+    expect(button().props.disabled).toBe(true);
+    const confirmation = deviceNotice({ ...admission, id: "b".repeat(32), seq: 2, kind: "confirm", how: "its_me", open: false });
+    await act(async () => { lab.read({ type: "device-notice", notice: confirmation }); });
+  }
+  await select("local");
+  expect(refusal()).toHaveLength(0);
+  expect(button().props.disabled).toBe(false);
+});
+
+it.each([
+  ["a different sign-in ID with the same refresh token", { ...itsMeSession }, { ...itsMeSession, sign_in_id: "a-later-sign-in" }],
+  ["neither a sign-in ID nor a refresh token", {
+    service: itsMeSession.service, account: itsMeSession.account, provider: itsMeSession.provider, access_token: "access", refresh_token: "",
+  }, undefined],
+] as const)("S2P-L2: records no refusal for %s", async (_name, initial, replacement) => {
+  const expires_at = Date.now() + 60_000;
+  const { session, store, button, refusal, answers } = await setupItsMe({ session: { ...initial, expires_at } });
+  await act(async () => { button().props.onClick(); });
+  await act(async () => { jest.advanceTimersByTime(5_000); });
+  expect(answers()).toHaveLength(2);
+  if (replacement !== undefined) await act(async () => {
+    await store.set("session", { ...replacement, expires_at });
+    window.dispatchEvent(new Event(ACCOUNT_SIGN_OUT_EVENT));
+  });
+  await act(async () => { jest.advanceTimersByTime(5_000); });
+  expect(button().props.disabled).toBe(false);
+  if (replacement !== undefined) await act(async () => {
+    await store.set("session", session);
+    window.dispatchEvent(new Event(ACCOUNT_SIGN_OUT_EVENT));
+  });
   expect(refusal()).toHaveLength(0);
 });

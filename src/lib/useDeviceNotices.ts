@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { DeviceNotice, NoticeAnswer, NoticeSeen } from "../../shared/account-devices-api.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
@@ -17,34 +17,52 @@ export interface NoticeSocket {
  * up to the newest one shown once that PC takes it, and dismissed here only; a dismiss sends nothing, and an open
  * admission is not dismissed (it stays until its PC says it was decided).
  */
-export function useDeviceNotices(sockets: readonly { id: string; socket: NoticeSocket }[], selectedPcId: string) {
+export function useDeviceNotices(
+  sockets: readonly { id: string; socket: NoticeSocket }[],
+  selectedPcId: string,
+  onClose?: (pcId: string, noticeId: string) => void,
+) {
+  // Process each frame against the latest feed, not the snapshot React last rendered.
+  const latest = useRef<ReadonlyMap<string, PcNotices>>(new Map());
   const [retained, setRetained] = useState<ReadonlyMap<string, PcNotices>>(new Map());
+  const updatePc = useCallback((id: string, update: (was: PcNotices | undefined) => PcNotices | undefined) => {
+    const was = latest.current.get(id);
+    const next = update(was);
+    if (next === undefined || next === was) return;
+    latest.current = new Map(latest.current).set(id, next);
+    setRetained(latest.current);
+  }, []);
   useEffect(() => {
     const offs = sockets.flatMap(({ id, socket }) => {
-      const hide = () => setRetained((current) => {
-        const notices = current.get(id);
-        if (notices === undefined) return current;
-        return new Map(current).set(id, { ...notices, notices: notices.notices.filter((item) => item.kind === "admit" && item.open), cut: 0 });
-      });
+      const hide = () => updatePc(id, (notices) => notices === undefined ? undefined :
+        { ...notices, notices: notices.notices.filter((item) => item.kind === "admit" && item.open), cut: 0 });
       return [socket.onDisconnect(hide), socket.on((message) => {
         if (message.type === "features" || message.type === "snapshot") {
-          if (socket.accountOpensAll()) setRetained((current) => current.has(id) ? new Map(current) : current);
-          else hide();
+          if (socket.accountOpensAll()) {
+            if (latest.current.has(id)) setRetained(new Map(latest.current));
+          } else hide();
           return;
         }
         if (!socket.accountOpensAll()) {
           return;
         }
         if (message.type !== "device-notice-replay" && message.type !== "device-notice") return;
-        setRetained((current) => {
-          const was = current.get(id);
+        updatePc(id, (was) => {
           const replay = message.type === "device-notice-replay" ? message.replay : { notices: [message.notice], cut: was?.cut ?? 0 };
-          return new Map(current).set(id, withNoticeReplay(was, replay));
+          const next = withNoticeReplay(was, replay);
+          if (onClose !== undefined && was !== undefined) {
+            const open = new Set(next.notices.filter((notice) => notice.open).map((notice) => notice.id));
+            const closed = new Set(replay.notices.filter((notice) => !notice.open).map((notice) => notice.id));
+            for (const notice of was.notices) {
+              if (notice.open && (!open.has(notice.id) || closed.has(notice.id))) onClose(id, notice.id);
+            }
+          }
+          return next;
         });
       })];
     });
     return () => { for (const off of offs) off(); };
-  }, [sockets]);
+  }, [sockets, onClose, updatePc]);
   const selectedSocket = sockets.find(({ id }) => id === selectedPcId)?.socket;
   const byPc = new Map<string, PcNotices>();
   for (const { id, socket } of sockets) {
@@ -55,18 +73,11 @@ export function useDeviceNotices(sockets: readonly { id: string; socket: NoticeS
   const acknowledgeShown = useCallback((seq: number) => {
     const seen = shown === undefined ? null : noticeSeen(shown, seq);
     if (seen === null || !selectedSocket?.sendNotice(seen)) return;
-    setRetained((current) => {
-      const notices = current.get(selectedPcId);
-      if (notices === undefined) return current;
-      return new Map(current).set(selectedPcId, withNoticeAcked(notices, seen.seq));
-    });
-  }, [shown, selectedPcId, selectedSocket]);
+    updatePc(selectedPcId, (notices) => notices === undefined ? undefined : withNoticeAcked(notices, seen.seq));
+  }, [shown, selectedPcId, selectedSocket, updatePc]);
   const dismiss = useCallback((id: string, notice: DeviceNotice) => {
-    setRetained((current) => {
-      const notices = current.get(id);
-      if (notices === undefined || !notices.notices.some((item) => item.id === notice.id && !item.open)) return current;
-      return new Map(current).set(id, withNoticeDecided(notices, notice.id));
-    });
-  }, []);
+    updatePc(id, (notices) => notices?.notices.some((item) => item.id === notice.id && !item.open) === true
+      ? withNoticeDecided(notices, notice.id) : notices);
+  }, [updatePc]);
   return { byPc, dismiss, acknowledgeShown, cut: shown?.cut ?? 0 };
 }
