@@ -402,6 +402,12 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     setRequestRoute("owner-refusal");
     return jsonResponse({ error: { code: "owner_only", message: "Manage the account from this PC itself, or from a paired device." } }, 403);
   }
+  // one press binds this PC to an account: only this PC's own window may ask it (security-triage), never another
+  // device on the LAN, through the relay or with the access token from elsewhere
+  if (pathname === "/api/account/one-press" && !ownWindow) {
+    setRequestRoute("owner-refusal");
+    return jsonResponse({ error: { code: "owner_only", message: "Add this PC to your account on this PC itself." } }, 403);
+  }
   // the list of waiting pairings shows their digits, so it goes only where the approval may come from
   if (access.level === "full" && (access.via === "open" || access.via === "portal") && pathname === "/api/relay/pairings") {
     setRequestRoute("owner-refusal");

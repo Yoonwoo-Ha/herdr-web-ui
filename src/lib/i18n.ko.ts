@@ -222,6 +222,11 @@ const BASE: Record<string, string> = {
   "Detached HEAD": "분리된 HEAD",
   "Delete": "삭제",
   "Close": "닫기",
+  "New PC added to your account: {name}": "새 PC가 계정에 추가됐어요: {name}",
+  "If you did not add it, remove it.": "직접 추가하지 않았다면 제거하세요.",
+  "I didn't add this": "내가 추가한 게 아니에요",
+  "The PC could not be removed. Try again.": "PC를 제거하지 못했어요. 다시 시도하세요.",
+  "New PC": "새 PC",
   "Rename failed: {reason}": "이름 바꾸기 실패: {reason}",
 
   "Filter workspaces and agents": "워크스페이스와 에이전트 필터",

@@ -6,6 +6,7 @@ import "./SidebarAccountPcs.css";
 
 import type { Machine } from "../../shared/machines.ts";
 import { pcAccountStatus } from "../lib/account/join.ts";
+import { isNewAccountPc } from "../lib/account/myPcs.ts";
 import { apiFetch } from "../lib/api-request-id.ts";
 import { fetchRelay } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
@@ -81,9 +82,18 @@ function JoinedAccountPcs({ account, reads, machines, onAdded, source, hidden }:
 }
 
 /** One PC of the account not in this app yet, as a PC group's header with its state under it. */
-function AccountPcRow({ pc, hidden, pcs: { stateOf, pairing, failure, add, cancel, recheck } }: { pc: AccountPcEntry; hidden: boolean; pcs: AccountPcs }) {
+function AccountPcRow({ pc, hidden, pcs: { stateOf, pairing, failure, add, cancel, recheck } }: { pc: AccountPcEntry & { readonly new_until?: string | null }; hidden: boolean; pcs: AccountPcs }) {
   const t = useT();
   const row = useRef<HTMLElement>(null);
+  const [expiredAt, setExpiredAt] = useState<string>();
+  const newUntil = pc.new_until;
+  useEffect(() => {
+    if (newUntil == null) return;
+    const remaining = Date.parse(newUntil) - Date.now();
+    if (!(remaining > 0)) return;
+    const timer = setTimeout(() => setExpiredAt(newUntil), remaining);
+    return () => clearTimeout(timer);
+  }, [newUntil]);
   const state = stateOf(pc.server_id);
   // the same hold as a PC of the roster: one check per PC however often it is pressed (MachineOffLine.tsx)
   const again = useRecheck(pc.server_id, () => recheck(pc), state === "offline");
@@ -94,6 +104,7 @@ function AccountPcRow({ pc, hidden, pcs: { stateOf, pairing, failure, add, cance
         <div className="machine-title">
           <span className="sidebar-mark" aria-hidden="true"><Monitor /></span>
           <span className="machine-name" title={pc.name}>{pc.name}</span>
+          {newUntil !== expiredAt && isNewAccountPc(pc, Date.now()) && <span className="machine-state-word">{t("New PC")}</span>}
           <span className={`machine-dot is-${state === undefined ? "connecting" : state === "ready" ? "connected" : "disconnected"}`} aria-hidden="true" />
         </div>
       </header>

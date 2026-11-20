@@ -8,10 +8,20 @@ import { importPublicKey } from "../../../shared/relay-e2ee.ts";
 import { decodeOffer, type RelayOffer } from "../../../shared/relay-offer.ts";
 import { closeRelayLink, fetchHealth, requestRelayLink } from "../api.ts";
 import { apiFetch } from "../api-request-id.ts";
+import { isLoopbackHost } from "../phone.ts";
 import { serverIdOfPath } from "../shellMode.ts";
 import { pcAccountStatus, within } from "./join.ts";
 import { NEW_PC_MS } from "./myPcs.ts";
-import type { AccountService } from "./service.ts";
+import { sameSignIn, type AccountService } from "./service.ts";
+
+/**
+ * Whether this window is this PC's own window, as the server's ownWindow judges it (server/dispatch.ts): its owner
+ * socket, or the access token on a loopback address (localhost and 127.x included, as the server sees a loopback peer). The server still decides; this only keeps a press it would refuse
+ * from costing the account a daily add (one-press PC add, docs/account.md).
+ */
+export function ownWindowHere(auth: { readonly via?: string } | null | undefined, hostname: string = typeof location === "undefined" ? "" : location.hostname): boolean {
+  return auth?.via === "local" || (auth?.via === "token" && isLoopbackHost(hostname));
+}
 
 export async function thisPcAccount(): Promise<string | null> {
   return (await pcAccountStatus(apiFetch)).account;
@@ -203,6 +213,39 @@ export async function listThisPc(service: AccountService, options: { relistMs: n
     );
   }
   return { name, serverId: offer.server_id, account: session?.account ?? null };
+}
+
+/**
+ * One press (docs/account.md, "One press"): the PC just listed under `account` joins it with no device typing digits,
+ * when the account service admits it (a fresh sign-in with two-step sign-in set, within the account's daily cap) and
+ * the PC then takes the service's word for that account. The account is the stored sign-in's, never the one the PC
+ * was named for: the PC is named it again first, and refuses a press for any other. False on every refusal, an
+ * older service or PC included, and once `running` says the attempt is over: the caller keeps today's digit wait.
+ * `opensAll`: this PC lists account-opens-all/1 (its step-2 switch is on); without it the service is not asked at all,
+ * so a PC that would refuse the press spends none of the account's daily adds and rings nobody.
+ */
+export async function addInOnePress(service: AccountService, serverId: string, account: string, running: () => boolean, opensAll: boolean): Promise<boolean> {
+  if (!opensAll) return false;
+  const session = await service.session();
+  if (session?.account !== account || !running()) return false;
+  try { await service.forSignIn(session).admitPc(serverId); } catch (error) {
+    console.warn("Ovis: the account service did not add this PC in one press", error instanceof Error ? error.name : error);
+    return false;
+  }
+  // another tab signed in to another account while the service answered: this PC is named for nobody
+  const still = await service.session();
+  if (still === undefined || !sameSignIn(still, session) || !running()) return false;
+  const post = (path: string) => apiFetch(path, { method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify({ account }) });
+  try {
+    if (!running() || !(await post("/api/account/relay-account")).ok || !running()) return false;
+    const pressed = await post("/api/account/one-press");
+    if (!pressed.ok) console.warn("Ovis: this PC did not join in one press", pressed.status);
+    return pressed.ok;
+  } catch (error) {
+    // the PC did not answer (it restarted, the connection dropped): the digit wait is still the way in
+    console.warn("Ovis: this PC could not be asked to join in one press", error instanceof Error ? error.name : error);
+    return false;
+  }
 }
 
 /**

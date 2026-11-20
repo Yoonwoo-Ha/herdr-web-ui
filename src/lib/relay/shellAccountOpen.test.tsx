@@ -32,13 +32,14 @@ let browser: ReturnType<typeof createShellTestPage>;
 beforeEach(() => { browser = createShellTestPage(); browser.setVisibility("hidden"); });
 afterEach(() => { jest.useRealTimers(); setTransport(nativeTransport); browser.dispose(); });
 
-async function accountPc({ release = true, loseRegistrationReply = false, open }: {
+async function accountPc({ release = true, loseRegistrationReply = false, newUntil = null, open }: {
   release?: boolean; loseRegistrationReply?: boolean;
+  newUntil?: string | null;
   open: (...args: [...Parameters<NonNullable<RelayShellMount["open"]>>, ReturnType<typeof generateKeyPair>]) => Promise<RelayTransport>;
 }) {
   const identity = generateKeyPair();
   const serverId = deriveServerId(identity.publicKey);
-  const entry = { server_id: serverId, label: "Desk", public_key: Buffer.from(identity.publicKey).toString("hex"), relay: RELAY, added_at: new Date().toISOString(), last_seen_at: new Date().toISOString() };
+  const entry = { server_id: serverId, label: "Desk", public_key: Buffer.from(identity.publicKey).toString("hex"), relay: RELAY, added_at: new Date().toISOString(), last_seen_at: new Date().toISOString(), new_until: newUntil };
   const accountStore = memoryAccountStore();
   const service = new FakeAccountService();
   service.signInAs("github", "acct_1");
@@ -91,8 +92,37 @@ async function accountPc({ release = true, loseRegistrationReply = false, open }
     const rows = dashboardModel(dashboardPcs(state.account.pcs, [], directoryRelays), { label: "Device" }, RELAY).rows;
     return renderToStaticMarkup(createElement(SettingsProvider, null, createElement(RelayPcTable, { rows, onSelect() {}, onOpenSheet() {} })));
   };
-  return { accountStore, serverId, requests, registrationKeys, navigations, navigated: navigated.promise, current, markup, apps: () => apps, reload: () => mountAt(`${APP}/`), openPage: () => mountAt(`${APP}/s/${serverId}/`) };
+  return { accountStore, serverId, requests, registrationKeys, navigations, navigated: navigated.promise, current, markup, apps: () => apps, reload: () => mountAt(`${APP}/`), openPage: () => mountAt(`${APP}/s/${serverId}/`), follow: (path: string) => mountAt(`${APP}${path}`) };
 }
+
+it("A3: a newly added account PC is marked New and its page waits for the Join press", async () => {
+  const attempts: boolean[] = [];
+  const pressed = Promise.withResolvers<void>();
+  const run = await accountPc({
+    newUntil: new Date(Date.now() + 23 * 60 * 60_000).toISOString(),
+    open: async (_offer, options) => {
+      attempts.push(options?.accountOpensAll === true);
+      pressed.resolve();
+      throw new RangeError("Stop after observing the requested connection");
+    },
+  });
+  const markup = run.markup();
+  await run.openPage();
+  expect(attempts).toEqual([]);
+  const path = run.navigations[0];
+  if (path === undefined) throw new TypeError("Missing the PC's join screen");
+  await run.follow(path);
+  expect(run.current().state.kind).toBe("confirm");
+  expect(attempts).toEqual([]);
+  expect(run.apps()).toBe(0);
+  run.current().onPair();
+  await pressed.promise;
+  expect(attempts).toEqual([false]);
+  // the overview shows nothing new (owner rule): no mark, and no quick Open
+  expect(markup).not.toContain(">New PC</");
+  expect(markup).toContain('data-pc-action="join"');
+  expect(markup).not.toContain('data-pc-action="open"');
+});
 
 it("T34, P18: a normal sign-in opens a listed unpaired PC as its registered account row", async () => {
   const admissions: { feature: boolean | undefined; row: string | null | undefined; key: string | undefined }[] = [];
@@ -106,6 +136,7 @@ it("T34, P18: a normal sign-in opens a listed unpaired PC as its registered acco
   } });
   const key = await run.accountStore.get("signin_key");
   const markup = run.markup();
+  expect(markup).not.toContain(">New PC</");
   await run.openPage();
   expect({
     number: key?.no, open: markup.includes('data-pc-action="open"'), join: markup.includes('data-pc-action="join"'),

@@ -15,13 +15,16 @@ import { writePrivateState } from "../private-state.ts";
 import { ADMISSION_FILE, type OriginFrom, type OriginHow, type RowOrigin } from "./admission-order.ts";
 import { DEVICE_JOURNAL_FILE } from "./safety-log.ts";
 
-export type ClearReason = "revoke_all" | "identity_reset" | "left_on_pc";
+/** `unlisted`: a PC bound on the account service's word that the account stopped listing (one press, docs/account.md) */
+export type ClearReason = "revoke_all" | "identity_reset" | "left_on_pc" | "unlisted";
 export interface AccountClear { readonly bind_id: string; readonly reason: ClearReason; readonly by: string }
 export interface AccountBinding {
   readonly account: string;
   readonly bind_id: string;
   /** a first link's binding, on disk before its row: it stands only once the row is (T13) */
   readonly pending?: true;
+  /** bound in one press, on the account service's word for the account this PC's owner named; no row made it */
+  readonly service?: true;
 }
 
 interface PcDoc {
@@ -39,7 +42,7 @@ interface PcDoc {
   evidence_written?: true;
 }
 
-const REASONS: ReadonlySet<string> = new Set(["revoke_all", "identity_reset", "left_on_pc"]);
+const REASONS: ReadonlySet<string> = new Set(["revoke_all", "identity_reset", "left_on_pc", "unlisted"]);
 const ID = /^[0-9a-f]{32}$/;
 const ACCOUNT = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -53,7 +56,7 @@ function parseDoc(value: unknown): (PcDoc & { counterOnly?: true }) | string {
     return { v: 1, next_admit: doc.next_admit!, binding: null, clears: [], first: null, others_ever: false, gen: 0, counterOnly: true };
   }
   const binding = doc.binding;
-  if (binding !== null && !(typeof binding === "object" && binding !== undefined && typeof binding.account === "string" && ACCOUNT.test(binding.account) && typeof binding.bind_id === "string" && ID.test(binding.bind_id) && (binding.pending === undefined || binding.pending === true))) return "invalid binding";
+  if (binding !== null && !(typeof binding === "object" && binding !== undefined && typeof binding.account === "string" && ACCOUNT.test(binding.account) && typeof binding.bind_id === "string" && ID.test(binding.bind_id) && (binding.pending === undefined || binding.pending === true) && (binding.service === undefined || (binding.service === true && binding.pending === undefined)))) return "invalid binding";
   if (!Array.isArray(doc.clears) || !doc.clears.every((clear) => typeof clear === "object" && clear !== null && typeof clear.bind_id === "string" && ID.test(clear.bind_id) && REASONS.has(clear.reason) && typeof clear.by === "string")) return "invalid clears";
   if (binding !== null && doc.clears.some((clear) => clear.bind_id === binding.bind_id)) return "a cleared binding stands";
   const first = doc.first;
@@ -282,7 +285,16 @@ export class PcAccountState {
   }
 
 
-  /** The PC leaves its account: only for one of the three named reasons. The clear is kept, and the file stays. */
+  /**
+   * One press binds a PC in no account on the account service's word for `account`, the one its owner named here: no row
+   * is written with it, so it stands at once, and no device is its first (T67).
+   */
+  bindByService(account: string): void {
+    if (this.doc.binding !== null) throw new Error("This PC is already in an account");
+    this.write({ ...this.doc, binding: { account, bind_id: randomBytes(16).toString("hex"), service: true }, first: null, others_ever: this.doc.others_ever || this.doc.clears.length > 0 });
+  }
+
+  /** The PC leaves its account: only for one of the named reasons. The clear is kept, and the file stays. */
   clear(reason: ClearReason, by: string): boolean {
     const binding = this.doc.binding;
     // a PC already strict writes nothing: what it was told to clear waits for its repair, and it serves nobody meanwhile

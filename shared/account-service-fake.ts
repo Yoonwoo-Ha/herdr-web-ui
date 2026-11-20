@@ -64,7 +64,11 @@ const PKCE = /^[A-Za-z0-9._~-]{43,128}$/;
 interface Session { account: string; provider: SignInProvider | "test"; family: string; expires: number }
 
 /** `public_key`: the PC's relay key (X25519, 64 hex), from which `server_id` derives; `relay`: the wss origin it is reached through. */
-export interface FakePc { server_id: string; label: string; public_key: string; relay: string; added_at: string; last_seen_at: string | null }
+export interface FakePc { server_id: string; label: string; public_key: string; relay: string; added_at: string; last_seen_at: string | null; new_until?: string | null; admitted_at?: string | null; exempt?: boolean }
+/** How long a PC added in one press stays new to the account's other devices. */
+export const PC_NEW_MS = 24 * 60 * 60_000;
+/** One-press PC adds one account may make per rolling day; past it 429 `pc_add_cap`. */
+export const PC_ADMITS_PER_DAY = 3;
 /** `key`: the waiting device's account key, which the PC matches against the comparison it is asked for. */
 export interface FakeAdmission { id: string; server_id: string; account: string; label: string; key: string; at: string; os: AccountOs | null; country: string | null; city: string | null }
 /** How long an admission reaches its PC's mailbox: the PC lets a waiting account device compare digits only within it. */
@@ -102,6 +106,19 @@ export class FakeAccountService {
   private readonly linkTokens = new Map<string, { account: string; family: string; provider: SignInProvider; expires: number }>();
   /** by refresh family: when that sign-in was made (a refresh keeps it), for what needs a recent one */
   private readonly signedInAt = new Map<string, number>();
+  /** by refresh family: the sign-in's two_step_set (null: unknown, as a Google sign-in without amr) */
+  private readonly twoStep = new Map<string, boolean | null>();
+  /** what a sign-in made through the sign-in routes says of two-step sign-in; tests set it */
+  signInTwoStep: boolean | null = null;
+  /** one-press admissions by account and PC (`box`), and each account's admit times, for the daily cap */
+  private readonly pcAdmissions = new Map<string, { at: number; taken: boolean; family: string }>();
+  private readonly admitTimes = new Map<string, number[]>();
+  /** accounts that admitted or removed a PC: never empty again for the first-PC exemption */
+  private readonly usedAccounts = new Set<string>();
+  /** by refresh family: when that sign-in registered its own account device key (registerSessionKey) */
+  private readonly keyRegisteredAt = new Map<string, number>();
+  /** by key: the refresh family that registered it with registerSessionKey */
+  private readonly keyFamily = new Map<string, string>();
   private offered: { providers: SignInProvider[]; device: SignInProvider[]; device_page?: SignInProvider[] } = { providers: ["github", "google", "apple"], device: ["github", "google"] };
   private readonly pushes = new Map<string, { account: string; endpoint: string }>();
   private readonly counters = new Map<string, { start: number; count: number }>();
@@ -129,11 +146,12 @@ export class FakeAccountService {
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  issueToken(account: string): string {
+  issueToken(account: string, { twoStep = null }: { twoStep?: boolean | null } = {}): string {
     const token = randomHex(32);
     const family = randomHex(16);
     this.tokens.set(token, { account, provider: "test", family, expires: Number.POSITIVE_INFINITY });
     this.signedInAt.set(family, this.now());
+    this.twoStep.set(family, twoStep);
     return token;
   }
 
@@ -206,6 +224,7 @@ export class FakeAccountService {
     if (family === undefined) {
       family = randomHex(16);
       this.signedInAt.set(family, this.now());
+      this.twoStep.set(family, this.signInTwoStep);
       if (device) this.deviceFamilies.add(family);
     }
     const access = randomHex(32);
@@ -332,6 +351,23 @@ export class FakeAccountService {
   }
 
   /** Device table P18, P21: registers a key for the account (S2-19 adds the route) and returns its `no`. */
+  /** The account device key the sign-in behind `token` registers now, as POST /v1/devices would. */
+  registerSessionKey(token: string, key: string, label: string): number {
+    const session = this.tokens.get(token);
+    if (session === undefined) throw new Error("no such token");
+    this.keyRegisteredAt.set(session.family, this.now());
+    this.keyFamily.set(key, session.family);
+    return this.registerDevice(session.account, key, label);
+  }
+
+  /** Whether the account was ever used: another PC listed, a one-press admit or removal, or any device key ever, revoked ones included. */
+  private everUsed(account: string, serverId: string, family: string): boolean {
+    const others = [...(this.directories.get(account)?.keys() ?? [])].some((id) => id !== serverId);
+    // a key the admitting sign-in registered itself is no other device
+    const keys = [...(this.registries.get(account)?.devices.keys() ?? [])].filter((key) => this.keyFamily.get(key) !== family);
+    return others || this.usedAccounts.has(account) || keys.length > 0;
+  }
+
   registerDevice(account: string, key: string, label: string, eligible = true): number {
     const registry = this.registry(account);
     const known = registry.devices.get(key);
@@ -489,7 +525,47 @@ export class FakeAccountService {
     }
     const directory = this.directories.get(account) ?? new Map<string, FakePc>();
     this.directories.set(account, directory);
-    if (path === "/v1/pcs" && request.method === "GET") return json({ pcs: [...directory.values()] });
+    if (path === "/v1/pcs" && request.method === "GET") {
+      // null while step 2 is off for the account, and once passed
+      const keyAt = this.keyRegisteredAt.get(session.family);
+      return json({ pcs: [...directory.values()].map(({ exempt, ...entry }) => ({
+        ...entry,
+        new_until: this.opensAll && entry.new_until != null && Date.parse(entry.new_until) > this.now() ? entry.new_until : null,
+        admitted_at: this.opensAll ? entry.admitted_at ?? null : null,
+        // the one admit no device was told about: shown to a device whose own key came after it
+        admitted_before_you: this.opensAll && exempt === true && keyAt !== undefined && entry.admitted_at != null && Date.parse(entry.admitted_at) < keyAt,
+      })) });
+    }
+    const admitted = /^\/v1\/pcs\/([0-9a-f]{32})\/admit$/.exec(path)?.[1];
+    if (admitted !== undefined && request.method === "POST" && this.opensAll) {
+      // C1: an app's own sign-in, made within REAUTH_MS, with two-step sign-in set (unknown is not enough)
+      if (this.deviceFamilies.has(session.family)) return problem(403, "own_sign_in_required", "Sign in in the app itself");
+      if (this.now() - (this.signedInAt.get(session.family) ?? Number.NEGATIVE_INFINITY) > REAUTH_MS) return problem(403, "session_not_fresh", "Sign in again on this device first");
+      // the first-PC exemption: an account never used (no other PC, no admit or removal, no device key ever) waives two-step
+      const exempt = this.twoStep.get(session.family) !== true;
+      if (exempt && this.everUsed(account, admitted, session.family)) return problem(403, "two_step_required", "Set up two-step sign-in first");
+      const entry = directory.get(admitted);
+      if (entry === undefined) return problem(400, "unknown_pc", "List PCs of this account only");
+      const open = this.pcAdmissions.get(box(admitted, account));
+      if (open !== undefined && !open.taken && this.now() - open.at <= ADMISSION_TTL_MS && entry.new_until != null) {
+        return json({ server_id: admitted, account, admitted_at: new Date(open.at).toISOString(), new_until: entry.new_until });
+      }
+      // C4: the account's one-press adds of the last day
+      const times = (this.admitTimes.get(account) ?? []).filter((at) => this.now() - at < PC_NEW_MS);
+      if (times.length >= PC_ADMITS_PER_DAY) {
+        const capped = problem(429, "pc_add_cap", "This account added enough PCs today");
+        capped.headers.set("retry-after", String(Math.ceil((times[0]! + PC_NEW_MS - this.now()) / 1000)));
+        return capped;
+      }
+      this.admitTimes.set(account, [...times, this.now()]);
+      this.pcAdmissions.set(box(admitted, account), { at: this.now(), taken: false, family: session.family });
+      this.usedAccounts.add(account);
+      entry.new_until = new Date(this.now() + PC_NEW_MS).toISOString();
+      entry.admitted_at = this.iso();
+      entry.exempt = exempt;
+      this.ring(account, session.family);
+      return json({ server_id: admitted, account, admitted_at: this.iso(), new_until: entry.new_until });
+    }
     const pc = /^\/v1\/pcs\/([0-9a-f]{32})$/.exec(path)?.[1];
     if (pc !== undefined && request.method === "PUT") {
       const body = await request.json() as { label?: unknown; public_key?: unknown; relay?: unknown };
@@ -500,13 +576,18 @@ export class FakeAccountService {
       if (typeof body.relay !== "string" || !isWssOrigin(body.relay)) return problem(400, "invalid_relay", "Give the relay's wss origin");
       const fresh = !directory.has(pc);
       if (fresh && directory.size >= DIRECTORY_MAX) return problem(409, "directory_full", "Remove a PC first");
-      const entry = { server_id: pc, label: body.label, public_key: body.public_key as string, relay: body.relay, added_at: directory.get(pc)?.added_at ?? this.iso(), last_seen_at: directory.get(pc)?.last_seen_at ?? null };
+      // a re-PUT (the nine-minute relist) keeps the PC's admission
+      const before = directory.get(pc);
+      const entry: FakePc = { server_id: pc, label: body.label, public_key: body.public_key as string, relay: body.relay, added_at: before?.added_at ?? this.iso(), last_seen_at: before?.last_seen_at ?? null,
+        ...(before?.new_until == null ? {} : { new_until: before.new_until, admitted_at: before.admitted_at ?? null, exempt: before.exempt ?? false }) };
       directory.set(pc, entry);
       if (fresh) this.ring(account, session.family);
       return json({ pc: entry });
     }
     if (pc !== undefined && request.method === "DELETE") {
       directory.delete(pc);
+      this.pcAdmissions.delete(box(pc, account));
+      this.usedAccounts.add(account);
       return new Response(null, { status: 204 });
     }
     if (path === "/v1/records" && request.method === "POST") {
@@ -562,13 +643,22 @@ export class FakeAccountService {
       this.challenges.set(challengeId, { server_id: body.server_id, expected, expires: this.now() + CHALLENGE_TTL_MS });
       return json({ challenge_id: challengeId, frame });
     }
-    if (path === "/v1/pc/mailbox" || (path === "/v1/pc/snapshot" && this.opensAll)) {
+    if (path === "/v1/pc/mailbox" || ((path === "/v1/pc/snapshot" || path === "/v1/pc/admission") && this.opensAll)) {
       const challenge = typeof body.challenge_id === "string" ? this.challenges.get(body.challenge_id) : undefined;
       if (typeof body.challenge_id === "string") this.challenges.delete(body.challenge_id);
       if (!challenge || challenge.server_id !== body.server_id || this.now() > challenge.expires || !verifyServerProof(body.proof, challenge.expected)) {
         return problem(401, "proof_invalid", "Ask for a new challenge and answer it");
       }
       if (typeof body.account !== "string") return problem(400, "invalid_account", "Name the account this PC belongs to");
+      if (path === "/v1/pc/admission") {
+        // G1: only the named account's own admission, while that account lists the PC; any other account's is invisible
+        const open = this.pcAdmissions.get(box(challenge.server_id, body.account));
+        const entry = this.directories.get(body.account)?.get(challenge.server_id);
+        // retry-safe for 10 minutes, inclusive; it ends with the sign-in that made it
+        if (open === undefined || this.now() - open.at > ADMISSION_TTL_MS || this.revokedFamilies.has(open.family) || entry?.new_until == null) return problem(404, "no_admission", "No account added this PC in one press");
+        open.taken = true;
+        return json({ account: body.account, admitted_at: new Date(open.at).toISOString(), new_until: entry.new_until });
+      }
       if (path === "/v1/pc/snapshot") {
         // P6: only a PC the account lists reads the account's devices and records
         if (this.directories.get(body.account)?.has(challenge.server_id) !== true) return problem(403, "not_listed", "This PC is not one of the account's");

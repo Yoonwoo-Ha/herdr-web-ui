@@ -1249,7 +1249,21 @@ export class DeviceStore {
   /** Whether the account-opens-all release flag is on for this store. */
   opensAll(): boolean { return this.safety !== null; }
 
-  /** The PC leaves its account, for one of the three named reasons (P12); nothing else clears the binding. */
+  /**
+   * One press (docs/account.md): binds this PC, in no account, to `account` on the account service's word for it. Only
+   * with the release flag on; a PC already in an account is refused here as at the route.
+   */
+  bindByService(account: string): void {
+    this.assertWritable();
+    if (this.pc === null) throw new Error("One press needs OVIS_ACCOUNT_OPENS_ALL");
+    if (this.account() !== null) throw new Error("This PC is already in an account");
+    this.pc.bindByService(account);
+  }
+
+  /** The id of this PC's binding when it stands on the account service's word alone (bindByService), else null. */
+  serviceBinding(): string | null { const binding = this.pc?.binding(); return binding?.service === true ? binding.bind_id : null; }
+
+  /** The PC leaves its account, for one of the named reasons (P12); nothing else clears the binding. */
   clearAccountBinding(reason: ClearReason, by: string): boolean {
     if (reason !== "revoke_all") this.resumeRevokeAll();
     if (this.pc !== null) {
@@ -1263,9 +1277,10 @@ export class DeviceStore {
   }
 
   /** Every account-joined row ends: its sessions close first, then it leaves account-devices.json (T44, P8 order). */
-  private endAccountRows(reason: "revoke_all" | "identity_reset" | "left_on_pc"): void {
+  private endAccountRows(reason: ClearReason): void {
     const ids = (this.joinedRows?.rows() ?? []).map((row) => row.id);
-    if (ids.length) this.joinedRows?.removeRows(ids, reason, id => this.closeAccountSessions(id));
+    // an account that stopped listing this PC removed it, as a removal of each of its rows would
+    if (ids.length) this.joinedRows?.removeRows(ids, reason === "unlisted" ? "remove" : reason, id => this.closeAccountSessions(id));
   }
 
   /**

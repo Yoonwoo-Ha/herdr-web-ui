@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, jest } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, jest, spyOn } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { myPcs, type MyPc } from "../lib/account/myPcs.ts";
+import { indexedAccountService } from "../lib/account/service.ts";
+import { indexedAccountStore, memoryAccountStore } from "../lib/account/store.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { keyIdGroups } from "./KeyId.tsx";
 import { leaveAddEntry, RelayShell, type RelayShellProps } from "./RelayShell.tsx";
@@ -353,6 +355,53 @@ describe("the dashboard", () => {
     const button = (label: string) => { const found = buttons(label); if (found.length !== 1) throw new Error(`${found.length} buttons say ${label}`); return found[0]!; };
     const rows = () => renderer!.root.findAll((node) => node.type === "tr" && node.props["data-pc-state"] !== undefined).map((row) => textOf(row.find((node) => node.props.className === "relay-pc-name-label")));
 
+    it("A2, A3: the overview, opened only on purpose, lists a new PC as a plain row: no notice card and no mark (owner rule)", async () => {
+      window.history.replaceState(null, "", "/#pcs");
+      Object.assign(window.location, { hash: "#pcs" });
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      const store = memoryAccountStore();
+      const session = { service: "https://account.ovis.sh", account: "acct-dashboard", provider: "github", sign_in_id: "dashboard-test",
+        access_token: "access", refresh_token: "refresh", expires_at: Date.now() + 3_600_000 } as const;
+      await store.set("session", session);
+      const get = spyOn(indexedAccountStore, "get").mockImplementation(store.get);
+      const update = spyOn(indexedAccountStore, "update").mockImplementation(store.update);
+      const added = { server_id: EXPECTED, label: "New desk", added_at: new Date(0).toISOString(), last_seen_at: null,
+        new_until: new Date(Date.now() + 3_600_000).toISOString(), admitted_at: null, admitted_before_you: false, public_key: null, relay: null };
+      let directory = [added];
+      const deletes: string[] = [];
+      const send = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        const path = new URL(String(input)).pathname;
+        if (init?.method === "GET" && path === "/v1/pcs") return Response.json({ pcs: directory });
+        if (init?.method === "DELETE" && path === `/v1/pcs/${EXPECTED}`) {
+          deletes.push(path);
+          directory = [];
+          return new Response(null, { status: 204 });
+        }
+        return new Response(null, { status: 404 });
+      }, { preconnect: fetch.preconnect }));
+      const refreshed = Promise.withResolvers<void>();
+      const draw = (pcs: MyPc[]): RelayShellProps => ({
+        ...props({ kind: "empty", account: { kind: "signed-in", provider: "github", error: null, pcs } }),
+        scoped: false, onSignIn: none, onRefreshAccount: async () => {
+          const fresh = await indexedAccountService.forSignIn(session).listPcs();
+          renderer?.update(createElement(SettingsProvider, { children: createElement(RelayShell, draw(myPcs(fresh, [], { now: Date.now() }))) }));
+          refreshed.resolve();
+        },
+      });
+      try {
+        await mount(draw(myPcs(directory, [], { now: Date.now() })));
+        expect(rows()).toEqual(["New desk"]);
+        // the overview is a page its owner opens on purpose: nothing new appears there; the notice and the mark are in the opened Ovis
+        expect(renderer!.root.findAll((instance) => instance.type === "div" && instance.props.role === "status" && textOf(instance).includes("New PC added to your account"))).toHaveLength(0);
+        expect(textOf(renderer!.root.findAll((node) => node.type === "tr" && node.props["data-pc-state"] !== undefined)[0]!)).not.toContain("New PC");
+        expect(deletes).toEqual([]);
+      } finally {
+        await act(async () => { renderer?.unmount(); });
+        renderer = undefined;
+        send.mockRestore(); update.mockRestore(); get.mockRestore();
+      }
+    });
+
     describe("a pairing's step frame", () => {
       const offer = { v: 1 as const, server_id: EXPECTED, server_public_key: "k", relay: "wss://relay.example", name: "Desk" };
       const backOf = (): ReactTestInstance[] => renderer!.root.findAll((node) => node.type === "button" && node.props.className === "relay-step-back");
@@ -559,7 +608,7 @@ describe("the dashboard", () => {
     });
 
     it("keeps the number on the PC's own screen as a way in from Join for a PC the directory saw once, which may wait there again after Revoke all", async () => {
-      const recorded = { server_id: "e185e94711a6d7f1eb7a12a582da9b04", label: "r2a-box", public_key: "ab".repeat(32), relay: "wss://relay.test", added_at: "2026-11-14T17:34:14.214Z", last_seen_at: "2026-11-14T17:39:14.119Z" };
+      const recorded = { server_id: "e185e94711a6d7f1eb7a12a582da9b04", label: "r2a-box", public_key: "ab".repeat(32), relay: "wss://relay.test", added_at: "2026-11-14T17:34:14.214Z", last_seen_at: "2026-11-14T17:39:14.119Z", new_until: null, admitted_at: null, admitted_before_you: false };
       const now = Date.now(), shift = now - Date.parse("2026-11-14T17:39:14.300Z");
       const moved = (iso: string) => new Date(Date.parse(iso) + shift).toISOString();
       const relisted = myPcs([{ ...recorded, added_at: moved(recorded.added_at), last_seen_at: moved(recorded.last_seen_at) }], [], { now });

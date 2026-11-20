@@ -226,6 +226,11 @@ const BASE: Record<string, string> = {
   "Detached HEAD": "游离 HEAD",
   "Delete": "删除",
   "Close": "关闭",
+  "New PC added to your account: {name}": "你的账号添加了新电脑：{name}",
+  "If you did not add it, remove it.": "如果不是你添加的，请移除。",
+  "I didn't add this": "不是我添加的",
+  "The PC could not be removed. Try again.": "无法移除这台电脑。请重试。",
+  "New PC": "新电脑",
   "Rename failed: {reason}": "重命名失败：{reason}",
 
   "Filter workspaces and agents": "筛选工作区和 Agent",

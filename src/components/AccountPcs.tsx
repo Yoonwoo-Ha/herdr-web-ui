@@ -1,11 +1,11 @@
 import "./RelayShell.css";
 import "./AccountPcs.css";
 
-import { useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { ChevronRight, Trash2 } from "lucide-react";
 
 import { GLOBAL_APP } from "../../shared/relay-regions.ts";
-import type { MyPc, MyPcState } from "../lib/account/myPcs.ts";
+import { ACCOUNT_PCS_CHANGED_EVENT, isNewAccountPc, type MyPc, type MyPcState } from "../lib/account/myPcs.ts";
 import { SignedOutError, type AccountService } from "../lib/account/service.ts";
 import type { AccountProvider } from "../lib/account/store.ts";
 import { useT } from "../lib/i18n.ts";
@@ -205,12 +205,18 @@ export function AccountPcRows({ pcs, watching, remove, onRemoved, now = Date.now
   const t = useT();
   const [removing, setRemoving] = useState<MyPc | null>(null);
   const group = useRef<HTMLElement | null>(null);
+  const refresh = useEffectEvent(onRemoved);
+  useEffect(() => {
+    const changed = () => refresh();
+    window.addEventListener(ACCOUNT_PCS_CHANGED_EVENT, changed);
+    return () => window.removeEventListener(ACCOUNT_PCS_CHANGED_EVENT, changed);
+  }, []);
   return (
     <>
       {pcs.map((pc) => (
         <li key={pc.server_id} className={pc.state === "paired" || pc.state === "needs-approval" ? "devices-row" : "devices-row is-away"} data-pc-state={pc.state}>
           <div className="devices-name">
-            <span className="settings-label">{pc.name}<span className="devices-kind">PC</span></span>
+            <span className="settings-label">{pc.name}<span className="devices-kind">{isNewAccountPc(pc, now) ? t("New PC") : "PC"}</span></span>
             <span className="settings-description">{listedPcStateText(pc, t)}</span>
           </div>
           {!watching && unusedPc(pc, now) && (

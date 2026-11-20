@@ -87,6 +87,8 @@ import { canReuseExternalLinkTab, ExternalLink } from "../lib/externalLink.ts";
 
 export interface SettingsDialogProps {
   open: boolean;
+  /** this PC lists account-opens-all/1 now (its step-2 switch is on), from the local socket's features */
+  opensAll?: () => boolean;
   section?: "updates" | null;
   linkPage?: string | null;
   linkSection?: string | null;
@@ -1165,7 +1167,8 @@ function deviceKind(label: string, t: ReturnType<typeof useT>): string | null {
 
 const groupedId = (id: string): string => id.match(/.{1,4}/g)?.join(" ") ?? id;
 
-function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSettings, pcSettingsError, onPcSettings, openAddPc, connectPc }: {
+function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSettings, pcSettingsError, onPcSettings, openAddPc, connectPc, opensAll }: {
+  opensAll?: (() => boolean) | undefined;
   auth: HealthAuth | null; security: SecurityFacts; onSignOut: (() => Promise<void>) | null; onRevokedAll: () => void;
   machines: readonly Machine[]; pcSettings: MachineSettings | null; pcSettingsError: string | null; onPcSettings: (patch: Partial<MachineSettings>) => void; openAddPc: (preset?: AddPcPreset) => void; connectPc: (machine: Machine) => void;
 }) {
@@ -1230,7 +1233,7 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
   return (
     <>
       {/* the account first: the sign-in the relay depends on is not left in More settings */}
-      <AccountSection onAccount={setAccount} recheck={accountChecks} />
+      <AccountSection onAccount={setAccount} recheck={accountChecks} {...(opensAll === undefined ? {} : { opensAll })} />
 
       {/* what is connected to this PC: its name atop one list of the other PCs, phones and browsers, the one in use first */}
       <SettingsGroup section="devices">
@@ -1675,7 +1678,7 @@ function matchedGroups(result: Element | null, words: readonly string[]): string
   return [...groups.filter(holdsAll), ...groups.filter((group) => !holdsAll(group))].map((group) => group.dataset["section"]).filter((name): name is string => name !== undefined);
 }
 
-function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, onUsageLogin, onOpenPane, actions, updates, auth, herdrVersion, herdrRuntime = null, herdrCore = null, herdrRuntimeFacts = null, picturesByDefault = false, bootId = null, onServerRestarted, security, onEnableNotifications, saveError, savePaused, saveRetrying, onRetrySave, overPreview = false, machines = [] }: SettingsDialogProps) {
+function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, onUsageLogin, onOpenPane, actions, updates, auth, herdrVersion, herdrRuntime = null, herdrCore = null, herdrRuntimeFacts = null, picturesByDefault = false, bootId = null, onServerRestarted, security, onEnableNotifications, saveError, savePaused, saveRetrying, onRetrySave, overPreview = false, machines = [], opensAll }: SettingsDialogProps) {
   const t = useT();
   const narrow = useNarrow();
   const pcExit = useMemo(() => pcListExit({ nativeApp: inNativeApp(), relayShell: shellMode() === "relay", pathname: window.location.pathname }), []);
@@ -1856,7 +1859,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
       case "agents": return <AgentsSettings watching={auth?.role === "watch"} onLocalLogin={onUsageLogin} onOpenPane={onOpenPane} onOpenGuide={onClose} />;
       case "shortcuts": return <ShortcutsPage />;
       // after every device went, its own pairing included, a browser asks the server where it stands: the roster answers, or the gate does
-      case "devices": return <DevicesPage auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh} openAddPc={actions.openAddPc} connectPc={actions.connectPc}
+      case "devices": return <DevicesPage opensAll={opensAll} auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh} openAddPc={actions.openAddPc} connectPc={actions.connectPc}
         machines={machines} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={(patch) => void updatePcSettings(patch)} />;
       case "experimental": return <ExperimentalPage />;
       case "about": return <AboutPage updates={updates} herdrVersion={herdrVersion} herdrRuntime={herdrRuntime} herdrCore={herdrCore} herdrRuntimeFacts={herdrRuntimeFacts} bootId={bootId} onServerRestarted={onServerRestarted} onOpenPane={onOpenPane} bridgesFollow={pcSettings?.auto_update_bridges === true} />;

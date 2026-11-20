@@ -152,6 +152,21 @@ describe("the account's PCs in the sidebar", () => {
     expect(text(renderer!.root)).toContain("Switched off");
   });
 
+  it("A3: marks only the sidebar PC whose admission has not expired", async () => {
+    jest.useFakeTimers();
+    const now = Date.now();
+    source.list = async () => ({ account: "acct", pcs: [
+      { ...DESK, new_until: new Date(now + 1_000).toISOString() },
+      { ...OLD, new_until: null },
+      { ...AWAY, new_until: new Date(now - 1).toISOString() },
+    ] });
+    await act(async () => { renderer = create(tree(() => {}, [local])); });
+    const marks = () => renderer?.root.findAllByType("section").filter((group) => group.findAll((node) => node.type === "span" && node.children.includes("New PC")).length > 0);
+    expect(marks()?.map((group) => group.props["aria-label"])).toEqual(["PC Desk"]);
+    await act(async () => { jest.advanceTimersByTime(1_000); });
+    expect(marks()).toHaveLength(0);
+  });
+
   it("asks only that PC again on Check again, and offers Add once it answers", async () => {
     awayAnswers = ["offline", "ready"];
     await mount();

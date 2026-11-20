@@ -162,6 +162,15 @@ export interface DirectoryPc {
   /** the PC's relay key (X25519, 64 hex) and relay, to compare digits with it; null from an entry without them */
   readonly public_key: string | null;
   readonly relay: string | null;
+  /**
+   * Until when a PC added in one press is new to the account (docs/account.md, "One press"): this device opens it only by
+   * hand meanwhile. Null for any other PC, and once that time has passed.
+   */
+  readonly new_until: string | null;
+  /** when the PC was added in one press (kept after its 24 hours), or null */
+  readonly admitted_at: string | null;
+  /** the PC was added in one press under the first-PC exemption before this device joined: nobody was told of it */
+  readonly admitted_before_you: boolean;
 }
 
 type Fetch = (input: Request | string | URL, init?: RequestInit) => Promise<Response>;
@@ -220,7 +229,9 @@ function parsePc(value: unknown): DirectoryPc | null {
   if (value.last_seen_at !== null && typeof value.last_seen_at !== "string") return null;
   const public_key = typeof value.public_key === "string" && /^[0-9a-f]{64}$/.test(value.public_key) ? value.public_key : null;
   const relay = typeof value.relay === "string" && isWssOrigin(value.relay) ? value.relay : null;
-  return { server_id: value.server_id, label: value.label, added_at: value.added_at, last_seen_at: value.last_seen_at, public_key, relay };
+  const new_until = typeof value.new_until === "string" && !Number.isNaN(Date.parse(value.new_until)) ? value.new_until : null;
+  const admitted_at = typeof value.admitted_at === "string" && !Number.isNaN(Date.parse(value.admitted_at)) ? value.admitted_at : null;
+  return { server_id: value.server_id, label: value.label, added_at: value.added_at, last_seen_at: value.last_seen_at, public_key, relay, new_until, admitted_at, admitted_before_you: admitted_at !== null && value.admitted_before_you === true };
 }
 
 export function sessionOf(body: unknown, service: string, now: number): AccountSession {
@@ -332,6 +343,16 @@ export class AccountService {
 
   async deletePc(serverId: string): Promise<void> {
     await this.call("DELETE", `/v1/pcs/${serverId}`);
+  }
+
+  /**
+   * Admits a PC this account lists in one press, from a fresh sign-in with two-step sign-in set: the service refuses
+   * anything else (`session_not_fresh`, `two_step_required`, `pc_add_cap`, or 404 where it has no such route).
+   */
+  async admitPc(serverId: string, signal?: AbortSignal): Promise<{ readonly account: string; readonly new_until: string }> {
+    const body = await this.call("POST", `/v1/pcs/${serverId}/admit`, {}, signal);
+    if (!isRecord(body) || typeof body.account !== "string" || typeof body.new_until !== "string") throw new AccountServiceError(502, "invalid_answer", "The account service sent no admission");
+    return { account: body.account, new_until: body.new_until };
   }
 
   /**

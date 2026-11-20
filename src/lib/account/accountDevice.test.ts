@@ -22,6 +22,16 @@ describe("signing in to a PC as the account's device", () => {
     expect(device.server_public_key).toBe("pc-key");
   });
 
+  it("C3 premise: an account open never makes a saved pairing, so a launch, which reopens only saved pairings, never opens such a PC", async () => {
+    const saved = new MemoryDeviceStore();
+    const store = withAccountDevice(saved, accountDevice(offer, await signIn()));
+    await store.update(SERVER, (current) => ({ ...current!, relay: "wss://relay2.ovis.example" } as RelayDevice));
+    await store.remove(SERVER);
+    expect((await store.list()).map((device) => device.server_id)).toEqual([SERVER]);
+    expect(await saved.get(SERVER)).toBeUndefined();
+    expect(await saved.list()).toEqual([]);
+  });
+
   it("T40: the sign-in key stays as it is: nothing may move it to another key or relink the row", async () => {
     const key = await signIn();
     const store = withAccountDevice(new MemoryDeviceStore(), accountDevice(offer, key));

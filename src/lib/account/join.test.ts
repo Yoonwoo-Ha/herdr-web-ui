@@ -73,7 +73,7 @@ it("moves QR pairings into the account one PC at a time, and calls a PC it has n
   expect(await pcAccountStatus(pcFetch(link))).toEqual({ account: ACCOUNT, unlinked: [], removals: [], adds: [], blocked: [], enrolling: true });
   // the linked pairing signs in with the account key from now on
   await connect(a, linked);
-  const listed = [a, b].map((at) => ({ server_id: at.identity.server_id, label: "pc", added_at: new Date().toISOString(), last_seen_at: null, public_key: null, relay: null }));
+  const listed = [a, b].map((at) => ({ server_id: at.identity.server_id, label: "pc", added_at: new Date().toISOString(), last_seen_at: null, new_until: null, admitted_at: null, admitted_before_you: false, public_key: null, relay: null }));
   const rows = myPcs(listed, await store.list(), { now: Date.now(), accountKey: key.public_spki });
   expect(rows.map(({ name, linked: covered }) => [name, covered])).toEqual([["nuc", false], ["p620", true]]);
   expect(b.f.app.context.services.devices.accountRows().unlinked).toHaveLength(1);

@@ -1,6 +1,6 @@
 import "./RelayPcTable.css";
 import type { MouseEvent, ReactNode } from "react";
-import { newPcs, type MyPc } from "../lib/account/myPcs.ts";
+import { isNewAccountPc, newPcs, type MyPc } from "../lib/account/myPcs.ts";
 import { useT } from "../lib/i18n.ts";
 import { lastSeen } from "../lib/lastSeen.ts";
 import { inDashboardFilter, relayHost, type DashboardFilter, type dashboardModel } from "../lib/relay/dashboard.ts";
@@ -108,7 +108,8 @@ export function RelayPcTable({
         onClick={(event) => { event.stopPropagation(); if (onOpenPc) { event.preventDefault(); onOpenPc(row); } }}>{label}</a>
     );
     const detailsBtn = <button type="button" className="btn relay-pc-action-btn" data-pc-action="details" onClick={(e) => { stop(e); onSelect(row.server_id); }}>{t("Details")}</button>;
-    if (mode === "account" && row.accountOpen) return openLink("open", t("Open"));
+    // a PC new to the account (one press) gets no quick Open here: it is opened from the PC's own page, on a press
+    if (mode === "account" && row.accountOpen && !isNewAccountPc(row, now)) return openLink("open", t("Open"));
     switch (row.displayState) {
       case "paired": case "unchecked": return openLink("open", t("Open"));
       case "needs-update": return row.paired ? openLink("update", t("Update")) : detailsBtn;

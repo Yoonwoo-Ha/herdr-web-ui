@@ -803,6 +803,43 @@ until someone signs in on it; the steps below are then the way.
 3. The device is then the PC's first member: it links, and enrolls the PC
    ([Enrolling a PC](#enrolling-a-pc)), so the account's other devices are let in and introduced.
 
+**In one press.** Off unless `OVIS_ACCOUNT_OPENS_ALL=1` on the PC and the account service's step-2
+switch is on for the account. **Add this PC to my account** then adds the PC with no other device
+and no digits, when the account service admits it: the browser on the PC's own page lists the PC
+(`PUT /v1/pcs`, as above), then asks `POST /v1/pcs/{server_id}/admit`. The service admits only a
+sign-in made in an app itself within the last 10 minutes with two-step sign-in set (unknown, as
+for a Google sign-in that does not say, is not enough), within a daily cap of PC adds per account,
+and writes who added it in the account's safety log. The one exception is an account's first PC:
+an account never used (no PC listed, added or removed before, and no device key ever registered,
+removed ones included) admits its first PC in one press under any sign-in, since no other device
+exists to protect or tell. The PC's own page registers no device key, so a new user's first press
+meets it. The page then names the account it is signed
+in to for the PC (`POST /api/account/relay-account`) and presses `POST /api/account/one-press`
+`{ "account" }`. The PC takes it only from its owner here (a device through the relay gets
+`owner_only`, a watching one `read_only`, as does a Portal visitor or an open LAN window), only for
+the account named for it (`409 account_mismatch` otherwise) and only while it is in no account
+(`409 in_account`). It asks the account service itself, with its relay key's proof
+(`POST /v1/pc/admission`, naming that account): an admission by any other account is never shown to
+it, and an answer for another account binds nothing (`502 account_mismatch`). Then it binds
+`account-pc.json` to the account (`service: true` on the binding) and reads the account's snapshot
+at once, so the account's devices are let in as on any PC of the account. `404 no_admission` and
+`503 account_unavailable` bind nothing. Any refusal, at the service or at the PC (an Ovis from
+before this has no route), leaves the page on the wait above, unchanged.
+
+The account's other devices are told: the service sends them its usual push, and at the top of the
+opened Ovis a notice names the new PC, with **I didn't add this**, which removes it from the
+account's list at once (`DELETE /v1/pcs/{server_id}`); its close button only hides it. The overview
+page lists the PC with its mark and shows no notice. A PC added under the first-PC exception is
+told, once, to the first devices that join the account after it (`admitted_before_you` on its
+directory entry), however much later. For 24 hours (`new_until` on its directory entry) the PC is
+marked new on them: it is never selected or opened by itself and no device signs in to it on its
+own, while a press on it opens it as usual. The account service admits the PC before the PC is
+asked, so a press the PC then refuses (it restarted, was put in another account meanwhile, or was
+not this PC's own window) still told the account's other devices and marked the PC new; such a PC is
+in no account and the page waits for the digits as before, and its notice says what to do if nobody
+added it. A PC bound this way leaves the account as soon as a read of the snapshot finds the account
+no longer lists it (the binding is cleared as `unlisted`, and the account's devices with it).
+
 A wrong number ends that comparison; the person starts again from **Add** on the dashboard. A device without an account
 pairs with a QR code or pairing code behind **Start without signing in** on the sign-in screen, which
 leads to **Add a PC**.

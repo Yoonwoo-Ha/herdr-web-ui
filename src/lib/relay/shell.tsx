@@ -7,7 +7,7 @@ import { GLOBAL_RELAY } from "../../../shared/relay-regions.ts";
 import { RelayShell } from "../../components/RelayShell.tsx";
 import { accountDevice, withAccountDevice } from "../account/accountDevice.ts";
 import { nextOpenStep, openRefusalOf } from "../account/openPc.ts";
-import type { MyPc } from "../account/myPcs.ts";
+import { isNewAccountPc, type MyPc } from "../account/myPcs.ts";
 import { sameSignIn, SignedOutError } from "../account/service.ts";
 import type { AccountProvider, AccountSession, PendingPairing } from "../account/store.ts";
 import { SIGN_IN_MS, signInReturn } from "../account/signin.ts";
@@ -61,14 +61,18 @@ function markLaunched(): void {
  * its page, or a reload lands on the front page and stays there. `signedIn`: the page a sign-in returned to, which
  * opens one once its sign-in is read, as the launch it continues would have.
  */
-function launchPc(devices: readonly { readonly server_id: string; readonly device_id: string | null }[], opens: boolean, signedIn = false): string | null {
+function launchPc(devices: readonly { readonly server_id: string; readonly device_id: string | null; readonly introduced_at?: number }[], opens: boolean, signedIn = false): string | null {
   try {
     const first = sessionStorage.getItem(LAUNCHED) === null;
     sessionStorage.setItem(LAUNCHED, "1");
-    // a row with no device id is a pairing that never finished: opening its page would ask to pair again
-    const paired = devices.filter((device) => device.device_id !== null);
+    // a row with no device id is a pairing that never finished: opening its page would ask to pair again. A row an account
+    // introduction alone saved (introduced_at) is a PC this device never chose: the app opens it only on a press, and that
+    // press marks it chosen (enterApp), never by itself (security-triage, condition 3)
+    const paired = devices.filter((device) => device.device_id !== null && device.introduced_at === undefined);
     if (!(opens && (first || signedIn)) || paired.length === 0) return null;
     const last = localStorage.getItem(LAST_PC);
+    // the PC opened last here was opened on this device; any other is one a person paired by hand here, never one an
+    // account introduction alone saved (security-triage, condition 3: no PC this device did not choose opens by itself)
     return paired.find((device) => device.server_id === last)?.server_id ?? paired[0]?.server_id ?? null;
   } catch { return null; }
 }
@@ -476,6 +480,10 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
 
   const enterApp = (opened: RelayTransport, attempt: Attempt): void => {
     rememberPc(attempt.offer.server_id);
+    // opened here: a PC an introduction alone saved is now one this device chose, which a later launch may reopen
+    void store.get(attempt.offer.server_id).then((saved) => saved?.introduced_at === undefined ? undefined
+      : store.update(attempt.offer.server_id, (current) => { const { introduced_at: _chosen, ...chosen } = current ?? saved; return chosen; }))
+      .catch((error: unknown) => { console.warn("Ovis: this PC could not be marked as opened here", error instanceof Error ? error.name : error); });
     // the pairing's own page opened the PC: a later load of it acts as whoever is signed in then
     keepDeviceOnlyPc(null);
     keepConfirmedSignIn(null);
@@ -760,7 +768,10 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
       const joinable = await accountPcToJoin(entry.serverId);
       if (entries !== loaded) return;
       const openKey = account.openKey;
-      if (joinable?.join && joinable.accountOpen && openKey !== null) {
+      // a PC added in one press is new to the account for 24 hours: on its own page, a PC this device never paired with
+      // by hand opens only on a press meanwhile (security-triage, condition 3); once that has passed it opens as before.
+      // A launch never comes here: it reopens only a pairing made on this device by hand.
+      if (joinable?.join && joinable.accountOpen && openKey !== null && !isNewAccountPc(joinable, Date.now())) {
         await connect({ offer: { v: 1, server_id: joinable.server_id, ...joinable.join, name: joinable.name }, code: false, paired: true, accountOpen: openKey });
       } else if (joinable !== undefined) joinPc(joinable, { sheet: "join", alone: true });
       else show({ kind: "empty" });

@@ -17,9 +17,15 @@ function joinRoute(pc: DirectoryPc): MyPc["join"] {
 }
 
 export const NEW_PC_MS = 10 * 60_000;
+export const ACCOUNT_PCS_CHANGED_EVENT = "ovis:account-pcs-changed";
+
+/** A one-press admission has its own lifetime, independent of the pairing-window freshness. */
+export function isNewAccountPc(pc: { readonly new_until?: string | null | undefined }, now: number): boolean {
+  return pc.new_until != null && Date.parse(pc.new_until) > now;
+}
 
 export function newPcs(pcs: readonly MyPc[], now: number): MyPc[] {
-  return pcs.filter((pc) => pc.state === "needs-approval" && pc.join !== undefined && pc.last_seen_at === null && pc.added_at !== null && now - Date.parse(pc.added_at) < NEW_PC_MS);
+  return pcs.filter((pc) => pc.state === "needs-approval" && pc.join !== undefined && pc.last_seen_at === null && pc.added_at !== null && now - Date.parse(pc.added_at) < NEW_PC_MS && !isNewAccountPc(pc, now));
 }
 
 /** The PC pulls its mailbox every five minutes while it belongs to the account; three missed pulls and it is called off. */
@@ -33,6 +39,7 @@ export interface MyPc {
   readonly state: MyPcState;
   readonly last_seen_at: string | null;
   readonly added_at: string | null;
+  readonly new_until?: string | null;
   readonly listed: boolean;
   /** this device holds an admitted key for it, so it can open; whatever its state says */
   readonly paired: boolean;
@@ -67,11 +74,11 @@ export function myPcs(directory: readonly DirectoryPc[], paired: readonly RelayD
     listed.delete(device.server_id);
     const lastSeen = entry?.last_seen_at ?? null;
     const enrollment = enrollmentOf(device, options.account);
-    rows.push({ server_id: device.server_id, name: device.name ?? device.server_id.slice(0, 8), state: stateOf(device.server_id, true, lastSeen), last_seen_at: lastSeen, added_at: entry?.added_at ?? null, listed: entry !== undefined, paired: true, linked: enrollment !== "pending" && enrollment !== "failed" && entry !== undefined && device.public_spki === options.accountKey && device.account !== undefined && device.account === (options.account ?? device.account), ...(enrollment ? { enrollment } : {}) });
+    rows.push({ server_id: device.server_id, name: device.name ?? device.server_id.slice(0, 8), state: stateOf(device.server_id, true, lastSeen), last_seen_at: lastSeen, added_at: entry?.added_at ?? null, ...(entry === undefined ? {} : { new_until: entry.new_until }), listed: entry !== undefined, paired: true, linked: enrollment !== "pending" && enrollment !== "failed" && entry !== undefined && device.public_spki === options.accountKey && device.account !== undefined && device.account === (options.account ?? device.account), ...(enrollment ? { enrollment } : {}) });
   }
   for (const pc of listed.values()) {
     const join = joinRoute(pc);
-    rows.push({ server_id: pc.server_id, name: pc.label, state: stateOf(pc.server_id, false, pc.last_seen_at), last_seen_at: pc.last_seen_at, added_at: pc.added_at, listed: true, paired: false, linked: false, ...(join ? { join, ...(options.registered ? { accountOpen: true as const } : {}) } : {}) });
+    rows.push({ server_id: pc.server_id, name: pc.label, state: stateOf(pc.server_id, false, pc.last_seen_at), last_seen_at: pc.last_seen_at, added_at: pc.added_at, new_until: pc.new_until, listed: true, paired: false, linked: false, ...(join ? { join, ...(options.registered ? { accountOpen: true as const } : {}) } : {}) });
   }
   return rows.sort((a, b) => ORDER[a.state] - ORDER[b.state] || a.name.localeCompare(b.name));
 }

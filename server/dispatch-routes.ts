@@ -28,7 +28,7 @@ export const DISPATCH_MUTATIONS = {
     ...Object.values(RELAY_CONTROLS), ...LOCAL_DRIVE_POSTS,
     "/api/devices/pair", "/api/devices/pair/start", "/api/devices/pair/cancel", "/api/devices/revoke-all",
     "/api/account/link", "/api/account/enroll", "/api/account/introduce", "/api/account/records",
-    "/api/account/relay-account", "/api/alerts/webhook", "/api/alerts/webhook/test",
+    "/api/account/relay-account", "/api/account/one-press", "/api/alerts/webhook", "/api/alerts/webhook/test",
     "/api/push/subscribe", "/api/push/status", "/api/push/test", "/api/runtime",
     "/api/runtime/move", "/api/runtime/move/install", "/api/runtime/move/stop", "/api/runtime/move/stop-all",
     "/api/updates/install", "/api/updates/check", "/api/updates/cancel", "/api/herdr/update",

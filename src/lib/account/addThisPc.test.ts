@@ -4,8 +4,8 @@ import { encodeOffer } from "../../../shared/relay-offer.ts";
 import { deriveServerId } from "../../../shared/relay-server-proof.ts";
 import { importPublicKey } from "../../../shared/relay-e2ee.ts";
 import { nativeTransport, setTransport } from "../transport.ts";
-import { AddPcWaitOver, keepAddPcWaiting, listOfferedPc, listThisPc, onAddPcWaiting, pagePc, pcAnswers, reopenAddWindow } from "./addThisPc.ts";
-import type { AccountService } from "./service.ts";
+import { AddPcWaitOver, addInOnePress, ownWindowHere, keepAddPcWaiting, listOfferedPc, listThisPc, onAddPcWaiting, pagePc, pcAnswers, reopenAddWindow } from "./addThisPc.ts";
+import { AccountServiceError, type AccountService } from "./service.ts";
 
 afterEach(() => setTransport(nativeTransport));
 
@@ -211,4 +211,95 @@ test.each([
     expect(written).toEqual([...writes]);
     expect(pcCalls).not.toHaveBeenCalled();
   } finally { pcCalls.mockRestore(); }
+});
+
+
+/** The account service and the PC as one press sees them: what each was asked, in order, and how each answers. */
+function onePress(answers: { admit?: () => Promise<unknown>; pc?: (path: string) => Response } = {}) {
+  const calls: string[] = [];
+  const answer = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const path = new URL(String(input instanceof Request ? input.url : input), "http://localhost").pathname;
+    calls.push(`${path} ${String(init?.body ?? "")}`);
+    return answers.pc?.(path) ?? Response.json({ account: "acct_1" }, { status: path === "/api/account/relay-account" ? 204 : 200 });
+  };
+  setTransport({ ...nativeTransport, fetch: answer });
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(answer as typeof fetch);
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const signedIn = { account: "acct_1" };
+  const service = {
+    session: async () => ({ account: signedIn.account, refresh_token: `refresh-${signedIn.account}` }),
+    forSignIn: (session: { account: string }) => ({ admitPc: async (id: string) => { calls.push(`admit ${id} as ${session.account}`); return await (answers.admit?.() ?? Promise.resolve({ account: session.account, new_until: "x" })); } }),
+  } as unknown as AccountService;
+  return { calls, signedIn, service, restore: () => { fetchSpy.mockRestore(); warn.mockRestore(); } };
+}
+
+const PC_ID = "0123456789abcdef0123456789abcdef";
+
+test("one press: the service admits the PC as the stored sign-in, then the PC is named that account and takes the press for it", async () => {
+  const f = onePress();
+  try {
+    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe(true);
+    expect(f.calls).toEqual([`admit ${PC_ID} as acct_1`, '/api/account/relay-account {"account":"acct_1"}', '/api/account/one-press {"account":"acct_1"}']);
+  } finally { f.restore(); }
+});
+
+test("one press asks nothing when the stored sign-in is not the account it was for, or the attempt is over", async () => {
+  const f = onePress();
+  try {
+    f.signedIn.account = "acct_2";
+    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe(false);
+    f.signedIn.account = "acct_1";
+    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => false, true)).toBe(false);
+    expect(f.calls).toEqual([]);
+  } finally { f.restore(); }
+});
+
+test("a refusal of the account service (no two-step, a stale sign-in, the daily cap, an older service) leaves the PC unasked", async () => {
+  const f = onePress({ admit: () => Promise.reject(new AccountServiceError(403, "two_step_required", "Set up two-step sign-in first")) });
+  try {
+    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe(false);
+    expect(f.calls).toEqual([`admit ${PC_ID} as acct_1`]);
+  } finally { f.restore(); }
+});
+
+test("a PC that refuses the press, or has no such route, is no one-press add", async () => {
+  for (const status of [404, 409, 502, 503]) {
+    const f = onePress({ pc: (path) => path === "/api/account/one-press" ? Response.json({ error: { code: "x", message: "x" } }, { status }) : new Response(null, { status: 204 }) });
+    try { expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe(false); }
+    finally { f.restore(); }
+  }
+});
+
+test("one press asks the account service nothing for a PC whose step-2 switch is off: no cap is spent and nobody is rung", async () => {
+  const f = onePress();
+  try {
+    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, false)).toBe(false);
+    expect(f.calls).toEqual([]);
+  } finally { f.restore(); }
+});
+
+test("the PC's own window, as the server judges it: its owner socket, or the access token on a loopback address", () => {
+  expect(ownWindowHere({ via: "local" }, "example.ts.net")).toBe(true);
+  expect(ownWindowHere({ via: "token" }, "127.0.0.1")).toBe(true);
+  expect(ownWindowHere({ via: "token" }, "[::1]")).toBe(true);
+  expect(ownWindowHere({ via: "token" }, "localhost")).toBe(true);
+  expect(ownWindowHere({ via: "token" }, "127.0.0.2")).toBe(true);
+  expect(ownWindowHere({ via: "token" }, "192.168.1.10")).toBe(false);
+  for (const via of ["device", "relay", "open", "portal"]) expect(ownWindowHere({ via }, "127.0.0.1")).toBe(false);
+  expect(ownWindowHere(null, "127.0.0.1")).toBe(false);
+});
+
+test("a PC that cannot be reached after the account service admitted it is no one press: the digit wait comes, nothing is thrown", async () => {
+  const f = onePress({ pc: () => { throw new TypeError("Disconnected"); } });
+  try {
+    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe(false);
+  } finally { f.restore(); }
+});
+
+test("one press names this PC for nobody when another tab signed in to another account while the service answered", async () => {
+  const f = onePress({ admit: async () => { f.signedIn.account = "acct_2"; return { account: "acct_1", new_until: "x" }; } });
+  try {
+    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe(false);
+    expect(f.calls).toEqual([`admit ${PC_ID} as acct_1`]);
+  } finally { f.restore(); }
 });
