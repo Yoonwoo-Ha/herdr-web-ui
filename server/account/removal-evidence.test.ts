@@ -43,10 +43,18 @@ const rows = (dir: string): StoredDevice[] => {
 };
 const removal = () => ({ id: newRecordId(), issuedAt: new Date().toISOString() });
 
+/** A pairing on this PC, using a screen confirm with the Revoke IDs when needed (P13). */
 function pairHere(devices: DeviceStore, publicKey: string): string {
-  const paired = devices.pairRelay(devices.startPairing().code, "Phone", publicKey);
-  if (!paired) throw new Error("pairing failed");
-  return paired.device.id;
+  const revokes = (devices as unknown as { evidence: RemovalEvidence }).evidence.standingRevokes(publicKey);
+  if (revokes.length === 0) {
+    const paired = devices.pairRelay(devices.startPairing().code, "Phone", publicKey);
+    if (!paired) throw new Error("pairing failed");
+    return paired.device.id;
+  }
+  const { codeId } = devices.redeemCode(devices.startPairing().code, "code", publicKey) as { codeId: string };
+  const confirmed = devices.admitConfirmed({ codeId, key: publicKey, label: "Phone", source: "screen", unrevokes: revokes.map((revoke) => revoke.id) });
+  if (!confirmed) throw new Error("confirm failed");
+  return confirmed.id;
 }
 
 describe("account removals and local Revokes kept apart (account-removed.json)", () => {
@@ -72,7 +80,7 @@ describe("account removals and local Revokes kept apart (account-removed.json)",
     expect(rows(dir).some((row) => row.id === id)).toBe(false);
   });
 
-  test("T21: re-pair names and ends the local Revoke without clearing account evidence", async () => {
+  test("T21: account removal blocks screen re-pair; an unrevoke never clears account evidence", async () => {
     const dir = stateDir();
     const devices = store(dir);
     const k = await key();
@@ -81,13 +89,16 @@ describe("account removals and local Revokes kept apart (account-removed.json)",
     expect(revoke).toMatchObject({ key: k });
     const signed = removal();
     devices.removeAccountKey(k, ACCOUNT, signed);
-    // a pairing on this PC ends that Revoke by name, and leaves the account's removal standing
-    const again = pairHere(devices, k);
+    const redeemed = devices.redeemCode(devices.startPairing().code, "code", k);
+    if (!redeemed.ok || revoke === undefined) throw new Error("Expected a reservation and a standing Revoke");
+    expect(devices.admitConfirmed({ codeId: redeemed.codeId, key: k, label: "Phone", source: "screen", unrevokes: [revoke.id] })).toBeNull();
+    expect(evidence(dir).unrevokes).toEqual([]);
+    expect(devices.hasKey(k)).toBe(false);
+    // The evidence operation itself ends only the local Revoke, even with both kinds of removal on disk.
+    expect(RemovalEvidence.open(dir, SafetyLog.open(dir)).unrevoke(k, "pc", Date.now())).toBe(1);
     expect(evidence(dir).unrevokes).toEqual([expect.objectContaining({ revoke: revoke!.id })]);
     expect(evidence(dir).markers[0]!.removals.map((r) => r.id)).toEqual([signed.id]);
     expect(tombstones(dir)).toEqual([expect.objectContaining({ key: k, record_id: signed.id })]);
-    expect(rows(dir).find((row) => row.id === again)).toMatchObject({ paired_over: [signed.id] });
-    expect(rows(dir).find((row) => row.id === again)?.account).toBeUndefined();
   });
 
   test("T22: taking an account removal preserves a pre-existing local Revoke", async () => {
@@ -114,23 +125,29 @@ describe("account removals and local Revokes kept apart (account-removed.json)",
     expect(folded.isTombstoned(k)).toBe(true);
   });
 
-  test("T23: re-pair over an account marker admits only an unlinked row", async () => {
+  test("T23: an account marker blocks fresh pairing but preserves an old unlinked row that knew it", async () => {
     const dir = stateDir();
     const devices = store(dir);
     const member = await key();
     devices.linkAccountKey(pairHere(devices, member), member, member, ACCOUNT);
     const k = await key();
-    devices.linkAccountKey(pairHere(devices, k), k, k, ACCOUNT);
-    devices.removeAccountKey(k, ACCOUNT, removal());
-    const again = pairHere(devices, k);
-    // a row that is no member, which the marker still keeps from linking or being added
-    expect(rows(dir).find((row) => row.id === again)?.account).toBeUndefined();
+    const id = pairHere(devices, k);
+    const unlinked = rows(dir).find((row) => row.id === id);
+    if (unlinked === undefined) throw new Error("Expected an unlinked row");
+    devices.linkAccountKey(id, k, k, ACCOUNT);
+    const signed = removal();
+    devices.removeAccountKey(k, ACCOUNT, signed);
+    expect(devices.pairRelay(devices.startPairing().code, "Phone", k)).toBeNull();
     expect(devices.removedByAccount(k)).toBe(true);
-    // the pairing knew the removal, so a restart keeps the row; a second removal it did not know takes it
+    // A registry from before G3 was tightened could already have an unlinked row recording this removal.
+    writeFileSync(join(dir, "devices.json"), JSON.stringify({
+      gate_closed_at: unlinked.created_at, devices: [...rows(dir), { ...unlinked, paired_over: [signed.id] }],
+    }), { mode: 0o600 });
     const reopened = store(dir);
-    expect(rows(dir).some((row) => row.id === again)).toBe(true);
+    expect(rows(dir).find((row) => row.id === id)).toMatchObject({ paired_over: [signed.id] });
+    expect(rows(dir).find((row) => row.id === id)?.account).toBeUndefined();
     expect(reopened.removeAccountKey(k, ACCOUNT, removal())).toBe(true);
-    expect(rows(dir).some((row) => row.id === again)).toBe(false);
+    expect(rows(dir).some((row) => row.id === id)).toBe(false);
   });
 
   test("T26: load rebuilds tombstones after importing pending local evidence", async () => {

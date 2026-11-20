@@ -37,6 +37,13 @@ function start(dir: string, sibling?: string) {
   return fixture.app.context.services.devices;
 }
 
+/** A re-pair of a revoked key here, as S2-08 allows it: a screen confirm that names the standing Revoke (P13). */
+function rePair(devices: DeviceStore, dir: string, k: string, label = "Again"): string {
+  const revokes = (JSON.parse(readFileSync(join(dir, REMOVAL_FILE), "utf8")) as { revokes: { id: string }[] }).revokes;
+  const { codeId } = devices.redeemCode(devices.startPairing().code, "code", k) as { codeId: string };
+  return devices.admitConfirmed({ codeId, key: k, label, source: "screen", unrevokes: revokes.map((r) => r.id) })!.id;
+}
+
 describe("removal evidence holds through crashes, siblings and damaged files (P13, T26, T48, S19)", () => {
   test("P13, T48: a local Revoke stands beside a sibling's account tombstone of the same key; the revoked row stays out", async () => {
     const [active, sibling] = [stateDir(), stateDir()];
@@ -57,7 +64,10 @@ describe("removal evidence holds through crashes, siblings and damaged files (P1
     const id = devices.pairRelay(devices.startPairing().code, "Phone", k)!.device.id;
     devices.revoke(id);
     const revoked = readFileSync(join(dir, REMOVAL_FILE));
-    const again = devices.pairRelay(devices.startPairing().code, "Again", k)!.device.id;
+    // the Revoke ends only by a confirm on this PC's screen that names it (P13, S2-08)
+    const revokeId = (JSON.parse(revoked.toString("utf8")) as { revokes: { id: string }[] }).revokes[0]!.id;
+    const { codeId } = devices.redeemCode(devices.startPairing().code, "code", k) as { codeId: string };
+    const again = devices.admitConfirmed({ codeId, key: k, label: "Again", source: "screen", unrevokes: [revokeId] })!.id;
     // the unrevoke never reached the disk
     writeFileSync(join(dir, REMOVAL_FILE), revoked, { mode: 0o600 });
     expect(open(dir).has(again)).toBe(true);
@@ -293,7 +303,7 @@ describe("removal evidence holds through crashes, siblings and damaged files (P1
       const id = devices.pairRelay(devices.startPairing().code, "Phone", k)!.device.id;
       devices.revoke(id);
       const revoked = readFileSync(join(dir, REMOVAL_FILE));
-      const again = devices.pairRelay(devices.startPairing().code, "Again", k)!.device.id;
+      const again = rePair(devices, dir, k);
       writeFileSync(join(dir, REMOVAL_FILE), revoked, { mode: 0o600 });
       expect(open(dir).has(again)).toBe(true);
     } finally { setSystemTime(); }
@@ -321,7 +331,7 @@ describe("removal evidence holds through crashes, siblings and damaged files (P1
     const store = first.app.context.services.devices;
     store.revoke(device.id);
     const revoked = readFileSync(join(dir, REMOVAL_FILE));
-    const again = store.pairRelay(store.startPairing().code, "Again", device.publicKey)!.device.id;
+    const again = rePair(store, dir, device.publicKey);
     stopAt(first);
     // the stop came before the re-pair's unrevoke
     writeFileSync(join(dir, REMOVAL_FILE), revoked, { mode: 0o600 });
