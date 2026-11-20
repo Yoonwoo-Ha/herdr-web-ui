@@ -50,6 +50,7 @@ async function accountPc({ release = true, loseRegistrationReply = false, newUnt
   const registrationKeys: string[] = [];
   const navigations: string[] = [];
   const navigated = Promise.withResolvers<string>();
+  const appOpened = Promise.withResolvers<void>();
   let props: RelayShellProps | undefined;
   let apps = 0;
   const render = (node: ReactNode): void => {
@@ -78,7 +79,7 @@ async function accountPc({ release = true, loseRegistrationReply = false, newUnt
       }
     },
     createRoot: () => ({ render, unmount() {} }),
-    renderApp: () => { apps++; return { render() {}, unmount() {} }; },
+    renderApp: () => { apps++; appOpened.resolve(); return { render() {}, unmount() {} }; },
     pendingPush: { get: async () => undefined, clear: async () => {} },
     checkPc: async () => ({ kind: "offline", reason: "relay" }),
     navigate: (path) => { navigations.push(path); navigated.resolve(path); },
@@ -92,7 +93,7 @@ async function accountPc({ release = true, loseRegistrationReply = false, newUnt
     const rows = dashboardModel(dashboardPcs(state.account.pcs, [], directoryRelays), { label: "Device" }, RELAY).rows;
     return renderToStaticMarkup(createElement(SettingsProvider, null, createElement(RelayPcTable, { rows, onSelect() {}, onOpenSheet() {} })));
   };
-  return { accountStore, serverId, requests, registrationKeys, navigations, navigated: navigated.promise, current, markup, apps: () => apps, reload: () => mountAt(`${APP}/`), openPage: () => mountAt(`${APP}/s/${serverId}/`), follow: (path: string) => mountAt(`${APP}${path}`) };
+  return { accountStore, serverId, requests, registrationKeys, navigations, navigated: navigated.promise, appOpened: appOpened.promise, current, markup, apps: () => apps, reload: () => mountAt(`${APP}/`), openPage: () => mountAt(`${APP}/s/${serverId}/`), follow: (path: string) => mountAt(`${APP}${path}`) };
 }
 
 it("A3: a newly added account PC is marked New and its page waits for the Join press", async () => {
@@ -254,7 +255,7 @@ it.each<HoldState>([{ reason: "catching_up" }, { reason: "join_hold", until: nul
   jest.advanceTimersByTime(999);
   expect({ kind: run.current().state.kind, attempts }).toEqual({ kind: "connecting", attempts: 1 });
   jest.advanceTimersByTime(1);
-  for (let turn = 0; turn < 100 && run.apps() === 0; turn++) await Promise.resolve();
+  await run.appOpened;
   expect({ attempts, apps: run.apps(), navigations: run.navigations }).toEqual({ attempts: 2, apps: 1, navigations: [] });
 });
 
@@ -309,28 +310,30 @@ it("T53, P17 wire: a held refusal whose notice is not published yet reaches the 
 });
 
 it("OD3, T53, P17 wire: a held device asks again within a second, so when the PC lets it in early (It's me) the app opens before the deadline", async () => {
-  class Admitted extends RelayTransport {
-    override get server() { return { version: "1.0.0", relayProtocol: RELAY_PROTOCOL }; }
-  }
-  let attempts = 0;
+  const rows: string[] = [];
   let until = "";
-  const run = await accountPc({ open: async (offer, options, identity) => {
-    attempts++;
-    if (attempts > 1) return new Admitted(offer);
-    return openRelayTransport(offer, {
-      ...options, socket: () => accountOpenPeer(identity, { features: [ACCOUNT_OPENS_ALL_FEATURE], provisional: true, auth: () => accountOpenRefusalFrame("held", "", { reason: "join_hold", until }) }),
-    });
-  } });
+  const run = await accountPc({ open: (offer, options, identity) => openRelayTransport(offer, {
+    ...options, socket: () => accountOpenPeer(identity, { features: [ACCOUNT_OPENS_ALL_FEATURE], provisional: true, auth: (frame) => {
+      const device_id = frame.payload.device_id;
+      rows.push(device_id);
+      return rows.length === 1
+        ? accountOpenRefusalFrame("held", "", { reason: "join_hold", until })
+        : encodeFrame({ type: FrameType.AUTH_OK, stream_id: 0, flags: 0, payload: { device_id, session_id: "cd".repeat(16), role: "drive" } });
+    } }),
+  }) });
+  const key = await run.accountStore.get("signin_key");
+  if (key === undefined) throw new TypeError("Missing registered key");
+  const row = accountDeviceId(run.serverId, key.key.public_spki);
   jest.useFakeTimers();
   until = new Date(Date.now() + 10_000).toISOString();
   await run.openPage();
-  expect({ attempts, apps: run.apps() }).toEqual({ attempts: 1, apps: 0 });
+  expect({ rows, apps: run.apps() }).toEqual({ rows: [row], apps: 0 });
   jest.advanceTimersByTime(999);
-  expect({ attempts, apps: run.apps() }).toEqual({ attempts: 1, apps: 0 });
+  expect({ rows, apps: run.apps() }).toEqual({ rows: [row], apps: 0 });
+  expect(run.current().state).toMatchObject({ kind: "connecting", hold: { reason: "join_hold", until } });
   jest.advanceTimersByTime(1);
-  // the retry's connect settles in microtasks: no timer is involved
-  for (let turn = 0; turn < 100 && run.apps() === 0; turn++) await Promise.resolve();
-  expect({ attempts, apps: run.apps(), navigations: run.navigations }).toEqual({ attempts: 2, apps: 1, navigations: [] });
+  await run.appOpened;
+  expect({ rows, apps: run.apps(), navigations: run.navigations }).toEqual({ rows: [row, row], apps: 1, navigations: [] });
 });
 
 it("T34 wire: the shell stays Connecting until the decoded hold deadline, then retries AUTH", async () => {

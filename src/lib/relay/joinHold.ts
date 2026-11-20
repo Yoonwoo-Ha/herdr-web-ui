@@ -1,7 +1,7 @@
 /**
- * The new device's wait and the older device's "It's me" (device table P17, T53, T57). The wait is the
- * PC's own deadline; "It's me" only ends it early where that PC's own checks pass, so it is sent to each
- * PC reached and kept for the ones that have not answered, apart from the acknowledgment of what was seen.
+ * The new device's wait and the older device's "It's me" (device table P17, T53, T57). The wait uses the
+ * PC's own deadline. "It's me" goes only to the PC that issued the admission notice and ends that hold
+ * early if the PC accepts it; acknowledging a notice as seen does not decide it.
  */
 import type { DeviceNotice, HoldState, NoticeAnswer } from "../../../shared/account-devices-api.ts";
 
