@@ -38,7 +38,7 @@ import { importPublicKey } from "../shared/relay-e2ee.ts";
 import { decodeOffer, type RelayOffer } from "../shared/relay-offer.ts";
 import { translate, type Language } from "../src/lib/i18n.ts";
 import { chromePath } from "./chrome-path.ts";
-import { servePagesSite } from "./pages-static.ts";
+import { loadPagesSite, pagesResponse, type PagesSite } from "./pages-static.ts";
 import { relayBrowserSocket } from "./relay-browser-bridge.ts";
 import { closeMarked, whileOpen } from "./relay-qa-teardown.ts";
 
@@ -95,14 +95,20 @@ const entries = [a, box];
 const directory = () => entries.map((entry) => ({ server_id: entry.server_id, label: entry.name, public_key: entry.public_key, relay: RELAY,
   added_at: new Date(PAGE_NOW - 3_600_000).toISOString(), last_seen_at: SEEN_AT }));
 
-/** Pairings each PC confirmed a member of the signed-in account, as lib/relay/accountController.ts writes them. */
+/**
+ * Pairings each PC confirmed a member of the signed-in account, as lib/relay/accountController.ts writes them. The key
+ * is stored before the page leaves for the provider, so only the session (stored once the return page traded its code)
+ * says the sign-in's navigations are over.
+ */
 async function seed(page: Page): Promise<void> {
   await page.waitForFunction(() => new Promise<boolean>((resolve) => {
     const request = indexedDB.open("ovis-account", 1);
     request.onupgradeneeded = () => request.result.createObjectStore("account");
     request.onsuccess = () => {
-      const read = request.result.transaction("account", "readonly").objectStore("account").get("key");
-      read.onsuccess = () => { request.result.close(); resolve(read.result !== undefined); };
+      const store = request.result.transaction("account", "readonly").objectStore("account");
+      const key = store.get("key");
+      const session = store.get("session");
+      session.onsuccess = () => { request.result.close(); resolve(key.result !== undefined && session.result !== undefined); };
     };
   }), null, { timeout: LOAD_MS });
   await page.evaluate(async ({ entries, relay }) => {
@@ -162,13 +168,13 @@ async function waitOnA<T>(act: () => Promise<T>): Promise<T> {
   }
 }
 
-async function walk(browser: Browser, site: string, run: Run): Promise<string> {
+async function walk(browser: Browser, site: PagesSite, run: Run): Promise<string> {
   let hasArrived = false;
   const once = (): void => { if (!hasArrived) { hasArrived = true; arrive(); } };
   try { return await walkOne(browser, site, run, once); } finally { once(); }
 }
 
-async function walkOne(browser: Browser, site: string, run: Run, arriveHere: () => void): Promise<string> {
+async function walkOne(browser: Browser, site: PagesSite, run: Run, arriveHere: () => void): Promise<string> {
   const t = (key: string, vars?: Record<string, string>) => translate(run.language, key, vars);
   const phone = run.width < 600;
   const tag = tagOf(run);
@@ -178,7 +184,14 @@ async function walkOne(browser: Browser, site: string, run: Run, arriveHere: () 
   const fake = new FakeAccountService();
   await context.route(/^https:\/\/app\.ovis\.sh\//, whileOpen(context, async (route) => {
     const url = new URL(route.request().url());
-    await route.fulfill({ response: await route.fetch({ url: `${site}${url.pathname}${url.search}` }) });
+    // answered in this process: route.fetch's pooled sockets to a local server can hang up mid-load and leave the page waiting
+    let answer = await pagesResponse(site, new Request(url));
+    // a redirect within the shell (`/s/<id>` to `/s/<id>/`) is followed here too, as route.fetch followed it: fulfilled as
+    // a 3xx, the browser would follow it past this route to the real host
+    for (let location = answer.headers.get("location"); answer.status >= 300 && answer.status < 400 && location?.startsWith("/"); location = answer.headers.get("location")) {
+      answer = await pagesResponse(site, new Request(new URL(location, url)));
+    }
+    await route.fulfill({ status: answer.status, headers: Object.fromEntries(answer.headers), body: Buffer.from(await answer.arrayBuffer()) });
   }));
   await context.route(/^https:\/\/account\.ovis\.sh\//, async (route) => {
     const request = route.request();
@@ -226,12 +239,13 @@ async function walkOne(browser: Browser, site: string, run: Run, arriveHere: () 
   page.on("pageerror", (error) => errors.push(error.message));
   const shot = async (name: string, fullPage = false): Promise<void> => { if (evidence) await page.screenshot({ path: join(evidence, `${name}-${tag}.png`), fullPage }); };
 
-  /** A fresh load of the PCs view, which reads the saved pairings again (on `/` already, a new hash alone would not load it). */
+  /**
+   * A fresh load of the PCs view, which reads the saved pairings again. Always a navigation of its own (a query, which boot.ts
+   * moves into the fragment), never a script in the page: a sign-in's return may still be loading it, and goto wins over that.
+   */
   const toPcs = async (): Promise<void> => {
-    if (new URL(page.url()).pathname === "/") {
-      await page.evaluate(() => { location.hash = "#pcs"; });
-      await page.reload();
-    } else await page.goto(`${APP}/#pcs`);
+    await page.goto(`${APP}/?pcs`);
+    assert.equal(new URL(page.url()).hash, "#pcs", "the PCs view's address");
     await page.locator('.relay-dash[data-dashboard-view="pcs"]').waitFor({ timeout: LOAD_MS });
     for (const entry of entries) await page.locator(`[data-pc-id="${entry.server_id}"]:visible`).first().waitFor({ timeout: LOAD_MS });
   };
@@ -275,7 +289,11 @@ async function walkOne(browser: Browser, site: string, run: Run, arriveHere: () 
     await checkOnce(entry);
     // a relay this device cannot reach is believed on the second such check in a row (pcSweep.ts)
     if (state === "unreachable" && await dot.count() === 0) await checkOnce(entry);
-    const found = await details(entry).locator(".relay-pc-details-location .status-dot").getAttribute("data-state");
+    // the list's own sweep may begin another check of it right after this one: its glyph is read once that one is done too
+    const found = await page.waitForFunction((id) => {
+      const state = document.querySelector(`[data-pc-details="${id}"] .relay-pc-details-location .status-dot`)?.getAttribute("data-state");
+      return state === "checking" ? null : state ?? "none";
+    }, entry.server_id).then((handle) => handle.jsonValue());
     assert.equal(found, glyph, `${entry.name}'s check found it ${state}`);
     const value = details(entry).locator(".relay-pc-details-row").first();
     return { state: await value.locator(".relay-pc-details-value").innerText(), why: await value.locator(".relay-pc-details-sub").allInnerTexts() };
@@ -384,11 +402,10 @@ const shellDir = process.argv[2] ?? join(import.meta.dir, "..", "dist-shell");
 try {
   if (!existsSync(join(shellDir, "index.html"))) throw new Error(`${shellDir} holds no shell build: run \`bun run build:shell\` first`);
   if (evidence) mkdirSync(evidence, { recursive: true });
-  const site = servePagesSite(shellDir, 0, "127.0.0.1");
-  cleanup.push(() => site.stop(true));
+  const site = loadPagesSite(shellDir);
   const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   cleanup.push(() => closeMarked(browser));
-  const results = await Promise.allSettled(runs.map((run) => walk(browser, `http://127.0.0.1:${site.port}`, run)));
+  const results = await Promise.allSettled(runs.map((run) => walk(browser, site, run)));
   for (const [index, result] of results.entries()) {
     if (result.status === "fulfilled") console.log(result.value);
     else {
