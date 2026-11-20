@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { exportAccountKey, newRecordId, signAccountRecord } from "../../shared/account-records.ts";
-import type { DeviceStore } from "../devices.ts";
+import { handleDeviceRequest, type DeviceStore } from "../devices.ts";
+import { handleRequest } from "../dispatch.ts";
 import { relayConnection, relayFixture } from "../relay/test-helpers.ts";
 import { applyAccountRecords } from "./records.ts";
 
@@ -90,13 +91,70 @@ describe("remote Revokes reach the caller itself and the rows that joined after 
     expect(devices.list(null)).toHaveLength(0);
   });
 
+  test.each([
+    ["Tailscale owner", "Revoke", "", "DELETE", 204],
+    ["Tailscale owner", "Revoke all", "", "POST", 200],
+    ["access-token owner", "Revoke", "test-revoke-token", "DELETE", 204],
+    ["access-token owner", "Revoke all", "test-revoke-token", "POST", 200],
+  ] as const)("S11-2, T20: %s can use PC-level %s only while unlocked", async (_login, action, token, method, status) => {
+    const owner = "owner@example.com";
+    const { f, devices } = pc(token);
+    const screen = await key();
+    const redemption = devices.redeemCode(devices.startPairing().code, "code", screen.spki);
+    if (!("codeId" in redemption)) throw new Error("Could not redeem a pairing");
+    const target = devices.admitConfirmed({ codeId: redemption.codeId, key: screen.spki, label: "Screen", source: "screen" });
+    const log = f.app.context.services.safetyLog;
+    if (!target || !log) throw new Error("Could not set up a screen-confirmed row and lock");
+    const other = await member(devices);
+    const path = action === "Revoke all" ? "/api/devices/revoke-all" : `/api/devices/${target.id}`;
+    const request = (credentials: Record<string, string> = {}, verb: string = method, route = path) =>
+      new Request(`http://127.0.0.1${route}`, {
+        method: verb, headers: { host: "127.0.0.1", origin: "http://127.0.0.1", "x-herdr-machine": "1", ...credentials },
+      });
+    const context = {
+      ...f.app.context,
+      requestIP: () => ({ address: "127.0.0.1" }),
+      timeout: () => {},
+      services: {
+        ...f.app.context.services,
+        identityOf: async () => ({ owner, soleLogin: null, dnsName: null, tailnetIp: null, tagged: false }),
+      },
+    };
+    const tailscale = { "tailscale-user-login": owner, "x-forwarded-for": "100.64.0.1" };
+    const credentials: Record<string, string> = token === "" ? tailscale : { authorization: `Bearer ${token}` };
+    const ask = () => handleRequest(request(credentials), context);
+
+    for (const via of ["open", "portal"] as const) {
+      const refused = await handleDeviceRequest(request(), path, devices, { level: "full", via, role: "drive" }, null);
+      expect(refused.status).toBe(403);
+    }
+    if (token === "") {
+      const otherUser = await handleRequest(request({ ...tailscale, "tailscale-user-login": "visitor@example.com" }), context);
+      expect(otherUser?.status).toBe(403);
+    }
+    const lock = log.appendLock({ account: ACCOUNT });
+    if (lock.outcome !== "applied") throw new Error("Could not lock the PC");
+    expect((await ask())?.status).toBe(403);
+    expect(devices.has(target.id)).toBe(true);
+    expect(log.appendUnlock(lock.id, { account: ACCOUNT }).outcome).toBe("applied");
+
+    const listed = await handleRequest(request(credentials, "GET", "/api/devices"), context);
+    expect((await ask())?.status).toBe(status);
+    expect(devices.has(target.id)).toBe(false);
+    expect(devices.has(other.id)).toBe(action === "Revoke");
+    const body = await listed?.json();
+    expect(body).not.toHaveProperty("revoke_all");
+    expect(body?.devices).toContainEqual(expect.objectContaining({ id: target.id }));
+    expect(body?.devices.find((row: { id: string }) => row.id === target.id)).not.toHaveProperty("remote_revoke");
+  });
+
   test("R1/T19: self-Revoke does not extend to an older twin", async () => {
     const { devices } = pc();
     const older = await member(devices);
     const later = devices.pairRelayApproved("Later", older.spki, { path: "account", addedBy: older.id });
     if (later === null) throw new Error("Could not set up duplicate rows");
 
-    expect(devices.remoteRevoke(later.device.id, later.device.id)).toBe("older");
+    expect(devices.remoteRevoke(later.device.id, later.device.id)).toBe("unorderable");
   });
 
   test("R1/T19: self-Revoke does not silently remove a newer twin either", async () => {
@@ -106,6 +164,18 @@ describe("remote Revokes reach the caller itself and the rows that joined after 
     if (later === null) throw new Error("Could not set up duplicate rows");
 
     expect(devices.remoteRevoke(older.id, older.id)).toBe("unorderable");
+  });
+
+  test("S11-3, R1: a caller cannot revoke a newer twin of its own key", async () => {
+    const { devices } = pc();
+    const caller = await member(devices);
+    const other = await member(devices);
+    expect(devices.remoteRevoke(caller.id, caller.id)).toBe("allowed");
+    expect(devices.remoteRevoke(caller.id, other.id)).toBe("allowed");
+    const twin = devices.pairRelayApproved("Twin", caller.spki, { path: "account", addedBy: caller.id });
+    if (twin === null) throw new Error("Could not set up duplicate rows");
+
+    expect(devices.remoteRevoke(caller.id, twin.device.id)).toBe("unorderable");
   });
 
   test("T19: a watch caller sees read_only for every row it cannot Revoke", async () => {

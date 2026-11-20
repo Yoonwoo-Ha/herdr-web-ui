@@ -72,8 +72,8 @@ function mergeHolds(active: string, sibling: string): void {
   for (const dir of [active, sibling]) writePrivateState(join(dir, HELD_FILE), merged);
 }
 
-/** The signed records waiting in either folder are waiting in both: a union by record id (T41, T48). */
-function mergePending(active: string, sibling: string): void {
+/** The union of waiting records by id (T41, T48), checked before either folder is written. */
+function mergePending(active: string, sibling: string): unknown[] | null {
   const lists = [active, sibling].flatMap((dir) => {
     const path = join(dir, PENDING_FILE);
     if (!existsSync(path)) return [];
@@ -81,18 +81,26 @@ function mergePending(active: string, sibling: string): void {
     if (!Array.isArray(value)) throw new Error(`${path} is not a list of waiting records`);
     return [value as unknown[]];
   });
-  if (lists.length === 0) return;
-  const key = (record: unknown) => typeof (record as { id?: unknown } | null)?.id === "string" ? (record as { id: string }).id : JSON.stringify(record);
-  const merged = [...new Map(lists.flat().map((record) => [key(record), record])).values()];
-  for (const dir of [active, sibling]) writePrivateState(join(dir, PENDING_FILE), merged);
+  if (lists.length === 0) return null;
+  const merged = new Map<string, unknown>();
+  for (const record of lists.flat()) {
+    const id = typeof record === "object" && record !== null && "id" in record && typeof record.id === "string" ? record.id : null;
+    const key = id === null ? `json:${JSON.stringify(record)}` : `id:${id}`;
+    if (id !== null && merged.has(key) && !Bun.deepEquals(merged.get(key), record, true)) {
+      throw new TypeError(`${PENDING_FILE} contains conflicting records with the same id`);
+    }
+    merged.set(key, record);
+  }
+  return [...merged.values()];
 }
 
 /** Merges the account state of `sibling` into `active` and back; why it could not, or null. */
 export function mergeAccountState(active: string, sibling: string): string | null {
   try {
+    const pending = mergePending(active, sibling);
     mergeEvidence(active, sibling);
     mergeHolds(active, sibling);
-    mergePending(active, sibling);
+    if (pending !== null) for (const dir of [active, sibling]) writePrivateState(join(dir, PENDING_FILE), pending);
     return null;
   } catch (error) {
     return `Cannot merge the account state of ${sibling} into ${active} (${error instanceof Error ? error.message : String(error)}): only this PC itself gets in until it is restored.`;
