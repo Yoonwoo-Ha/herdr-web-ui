@@ -10,7 +10,7 @@ import { applyAccountRecords, applyEnrollment, applyLink, type LinkRefusal } fro
 const LINK_STATUS: Record<LinkRefusal, number> = {
   record_invalid: 400, signature_invalid: 400, account_mismatch: 409, signer_not_member: 403,
   tombstoned: 409, link_not_owner: 403, key_in_use: 409, account_unavailable: 503, enrolling: 409, removal_pending: 409,
-  link_required: 403, unverified_device: 403, pairing_ended: 409, older_device: 403,
+  link_required: 403, unverified_device: 403, pairing_ended: 409, older_device: 403, replacement_needs_app: 409,
 };
 
 /**
@@ -159,6 +159,8 @@ export async function handleAccountRequest(request: Request, pathname: string, c
       // only the member that linked this PC ends its wait, with the last part of its enrollment, once every remove was decided
       const undecided = results.some((result) => result.outcome === "refused" && result.code === "account_unavailable");
       if (last !== false && !undecided && linker) {
+        // the hand-over is journalled before the barrier ends: a journal that cannot be written keeps it (T14)
+        devices.journalEvent({ kind: "account", how: "enrolled", key: peer.key, no: null, row: peer.device.id, label: peer.device.label, by: null, account: body.account });
         holds.endEnrolling();
         await mailbox.settle();
       }

@@ -105,6 +105,23 @@ test("a device links its row to the account over its own session, which gives th
   expect((await again.auth({ keys: key.keys, publicKey: key.spki, id: legacy.id })).device_id).toBe(legacy.id);
 });
 
+test("P22: the account link route refuses a key move for a screen-approved device", async () => {
+  const f = fixture({ accountOpensAll: true });
+  const devices = f.app.context.services.devices;
+  const old = await accountKey();
+  const redeemed = devices.redeemCode(devices.startPairing().code, "code", old.spki);
+  if (!redeemed.ok) throw new Error(redeemed.reason);
+  const approved = devices.admitConfirmed({ codeId: redeemed.codeId, key: old.spki, label: "Phone", source: "screen" });
+  if (approved === null) throw new Error("Screen confirmation failed");
+  const device = { id: approved.id, keys: old.keys, publicKey: old.spki };
+  const link = await signedIn(f, device);
+
+  const response = await post(link, "/api/account/link", { record: await linkRecord(device, await accountKey()) });
+
+  expect(response).toMatchObject({ status: 409, body: { error: { code: "replacement_needs_app" } } });
+  expect(registryRow(f, device.id)).toMatchObject({ relay_public_key: old.spki });
+});
+
 test("a link is refused for another row, another PC, a stale key, a key another row holds, or off the relay", async () => {
   const f = fixture();
   const mine = await relayDevice(f);

@@ -17,7 +17,7 @@ import { admissionPosition, compareAdmission, compareAdmissionPositions, isRowOr
 import { type ClearReason, PcAccountState } from "./account/pc-binding.ts";
 import type { BlockAsOf, LiftCause, SafetyGot, SafetyLog } from "./account/safety-log.ts";
 import type { RemovalEvidence } from "./account/removal-evidence.ts";
-import type { DeviceJournal, JournalEntry } from "./account/device-journal.ts";
+import type { DeviceJournal, JournalEntry, JournalInput } from "./account/device-journal.ts";
 import type { DeviceNotice, NoticeReplay } from "../shared/account-devices-api.ts";
 import { AccountRecordError, isIsoTime, parseAccountRecord, parseSafetyRecord, verifySafetyRecord, type AddRecord, type BlockRecord, type DeviceSafetyRecord, type RemoveRecord, type SafetyRecord } from "../shared/account-records.ts";
 import type { BlockReceipt } from "../shared/account-devices-api.ts";
@@ -68,6 +68,11 @@ export class PairingRateLimitedError extends Error {
  * round trip, a look-up of who asks). It gets no pairing code: a code held by a device that is already gone is one
  * no revoke ends.
  */
+/** A link would replace a key approved on this PC's screen, from an app that did not ask to (T7): nothing changed. */
+export class ReplacementNeedsAppError extends Error {
+  constructor() { super("Replacing a key approved on this PC's screen needs an app that shows the replacement's fingerprint"); }
+}
+
 export class DeviceGoneError extends Error {
   readonly code = "unauthorized";
   constructor() {
@@ -95,6 +100,8 @@ export class DeviceReadOnlyError extends Error {
 export interface ConfirmProof { readonly codeId: string; readonly key: string; readonly source: "screen" | "recover" }
 /** The proofs admitConfirmed made from a live reservation; admits() honours no other. */
 const MINTED_PROOFS = new WeakSet<ConfirmProof>();
+/** How long a key waiting to replace a screen-approved key waits for its confirm (P22). */
+const REPLACEMENT_TTL_MS = 5 * 60_000;
 
 export type KeyRemovedCause = "revoke" | "remove" | "block" | "revoke_all";
 
@@ -424,7 +431,8 @@ interface ProvisionalRow {
   links: number;
   /** what its last link is waiting for, or got: the account service's word, or no answer from it */
   link?: "asked" | "service_unreachable";
-  readonly cancel: () => void;
+  /** ends its link window: set again while a replacement of its key waits on the screen */
+  cancel: () => void;
 }
 
 /** What a code made for a PC in no account holds besides its six digits: the pairings it still takes, and the rows that wait to link. */
@@ -490,6 +498,8 @@ export class DeviceStore {
   private readonly path: string;
   private readonly revocations = new Map<string, Set<(waiting?: true) => void>>();
   private readonly relinks = new Map<string, Set<(sessionId: string) => void>>();
+  /** keys waiting to replace a screen-approved key, by row (T72): in memory only, so a restart drops them (P22) */
+  private readonly replacements = new Map<string, { key: string; account: string; at: number; challenge: string; sessionId: string; vouched: boolean; ownWord: boolean; waitingRow?: true }>();
   private readonly revokeAllListeners = new Set<() => void>();
   private readonly gateListeners = new Set<() => void>();
   private readonly pairings = new Set<(event: DevicePairedEvent, origin: readonly string[]) => void>();
@@ -592,6 +602,9 @@ export class DeviceStore {
     }
     if (this.error === null && this.accountProblem === null && this.pc?.strict == null) {
       if (this.evidence !== null) {
+        this.finishJournalledRemovals();
+        // a lock standing at open whose removals never ran ends its rows now, journalled, before anything is served
+        if (this.safety?.strict === null && this.safety.inForce.locked === true) this.endUnlockedRows();
         this.takeInEvidence([...tombstones ?? [], ...pending]);
         // the log is the truth (P24): a block in force whose marker never reached the disk gets it before anything is served
         this.markBlockTargets();
@@ -602,6 +615,11 @@ export class DeviceStore {
         }
         this.finishInterruptedWrites();
       }
+    }
+    // a start that cannot write still knows which rows a standing lock ended: they stay out for this whole run, also
+    // after an unlock, and an unlock waits until they are written (pendingLockRemovals, S2-18)
+    if (this.evidence !== null && this.safety?.strict === null && this.safety.inForce.locked === true) {
+      for (const device of this.devices) if (device.origin?.from !== "pc") this.lockHeld.add(device.id);
     }
     // the one-time legacy pass asks only whether the registry could be read: nothing is admitted before it (T50)
     if (this.error === null) this.migrate();
@@ -615,6 +633,39 @@ export class DeviceStore {
    * anything is coalesced; the tombstone file is written again from the evidence; the pending file goes; and every row
    * the evidence covers goes. Nothing of it is told to anyone: no session is open yet.
    */
+  /**
+   * The rows a lock standing at open ended but this start could not write out (S2-18): refused for the whole run, and
+   * an unlock is refused while any is left, so a later start without the lock cannot bring them back.
+   */
+  pendingLockRemovals(): string[] { return [...this.lockHeld]; }
+  private readonly lockHeld = new Set<string>();
+
+  /** Whether the last journal entry naming row `id` removed it (P24): read once, at open, from the journal on disk. */
+  private journalEnded(id: string): boolean {
+    if (this.journalEndedRows === null) {
+      const last = new Map<string, string>();
+      for (const entry of this.journal?.strict === null ? this.journal.entries() : []) if (entry.row !== null) last.set(entry.row, entry.kind);
+      this.journalEndedRows = new Set([...last].flatMap(([row, kind]) => kind === "drop" || kind === "remove" ? [row] : []));
+    }
+    return this.journalEndedRows.has(id);
+  }
+  private journalEndedRows: Set<string> | null = null;
+
+  /**
+   * The journal is the truth (P24): a removal is journalled before devices.json is written, so a stop between the two
+   * leaves a row whose last journal entry ends it. Every such row ends here, at open and before anything is served,
+   * whatever kind of removal it was; nothing is journalled again. The one finisher of journalled removals.
+   */
+  private finishJournalledRemovals(): void {
+    if (this.journal === null || this.journal.strict !== null) return;
+    const kept = this.devices.filter((d) => !this.journalEnded(d.id));
+    if (kept.length === this.devices.length) return;
+    const gate = this.gateClosedAt ?? this.devices[0]?.created_at ?? new Date().toISOString();
+    this.save(kept, gate);
+    this.devices = kept;
+    this.gateClosedAt = gate;
+  }
+
   private takeInEvidence(found: readonly AccountTombstone[]): void {
     // evidence that cannot be trusted is never written over, and nothing is taken in while the safety log cannot be
     // read: a removal would record no forgettings it outranks, and an old forget redelivered later would end it (S19, T61)
@@ -703,12 +754,14 @@ export class DeviceStore {
 
   /** A row whose key was removed at or after the row was made: revoked, whether or not its own write happened yet. */
   private stale(device: StoredDevice): boolean {
+    // while a lock stands only a row confirmed on this PC's screen gets in, whether or not its teardown ran (P11, T46)
+    // a row whose last journal entry removed it is out, whether or not the start could finish that removal (P24)
     if (this.failedRows.has(device.id) || (device.relay_public_key !== undefined && this.failedDenies.has(device.relay_public_key))) return true;
     // main's own rule stays the floor under the evidence: a tombstone of this PC keeps its key out, whatever path took
     // the evidence in or skipped it (P13, rule 1)
     const tombstoned = device.relay_public_key !== undefined
       && this.tombstones.some((t) => t.key === device.relay_public_key && (!pairedHere(device) || this.later(t.removed_at, device.created_at, true)));
-    return tombstoned || (this.evidence !== null && (this.coveredByEvidence(device) || this.frozen(device)));
+    return tombstoned || (this.evidence !== null && (this.lockHeld.has(device.id) || this.journalEnded(device.id) || this.coveredByEvidence(device) || this.frozen(device) || (this.safety?.inForce.locked === true && device.origin?.from !== "pc")));
   }
 
   get accountError(): string | null {
@@ -717,10 +770,10 @@ export class DeviceStore {
 
   /** No device gets in by a row or a code when the PC cannot trust its account state. */
   get failsClosed(): boolean {
-    // with the flag on, an account tombstone file that cannot be read is a key out nobody can tell: only this PC gets in (S19)
-    if (this.evidence !== null && this.accountProblem !== null) return true;
-    return (this.safety?.strict ?? this.pc?.strict ?? this.evidence?.strict ?? this.journal?.strict ?? this.denyProblem) !== null;
+    // one rule (S19): with the flag on, anything that makes account records refused makes only this PC get in
+    return (this.safety !== null || this.pc !== null || this.evidence !== null) && this.accountError !== null;
   }
+
 
   /**
    * The one-time migration of a PC from before the upgrade (T50): the rows' one account becomes the binding, and every
@@ -1047,6 +1100,22 @@ export class DeviceStore {
     const signers = this.memberRows(signer, account);
     const targets = this.devices.filter((d) => d.relay_public_key === key);
     return signers.length > 0 && targets.length > 0 && targets.every((target) => signers.every((row) => compareAdmission(row, target) === "older"));
+  }
+
+  /** The origin of the row `id` in devices.json (P22), or null for a row this PC holds no origin of. */
+  originOf(id: string): RowOrigin | null {
+    return this.devices.find((d) => d.id === id)?.origin ?? null;
+  }
+
+  /**
+   * The lock turned on (T46): every row not confirmed on this PC's screen (origin from `pc`) ends in this turn, its
+   * sessions closed first, each journalled as a drop for the lock. Returns the ids that went.
+   */
+  endUnlockedRows(): string[] {
+    if (this.evidence === null) return [];
+    const gone = this.devices.filter((d) => d.origin?.from !== "pc");
+    this.drop(gone, "pc", "locked");
+    return gone.map((d) => d.id);
   }
 
   /** Whether the account-opens-all release flag is on for this store. */
@@ -1642,18 +1711,29 @@ export class DeviceStore {
    * one made since would have taken the row (dropWaiting). That write's failure is logged and changes nothing of the
    * above; the next start clears it.
    */
-  private promote(id: string, link: { oldKey: string; key: string; account: string }, sessionId: string, vouched: boolean): PairedDevice | null {
+  private promote(id: string, link: { oldKey: string; key: string; account: string }, sessionId: string, vouched: boolean, replacement = false, screen?: ConfirmProof): PairedDevice | null {
     const row = this.provisional(id);
     const waiting = this.pending?.waiting;
     if (!row || !waiting || row.key !== link.oldKey || this.account() !== null || this.removedByAccount(link.key)) return null;
     if (waiting.confirmedId !== undefined && waiting.confirmedId !== row.id) return null;
-    // Only a same-key screen confirmation can carry the named-Revoke exception checked by admitConfirmed.
-    const confirm = link.key === row.key ? row.confirmed : undefined;
+    // Only a same-key screen confirmation, or this PC's screen confirm of a moved key as its replacement, carries a
+    // confirm proof (T72, P22)
+    const kept = link.key === row.key ? row.confirmed : undefined;
+    const confirm = screen !== undefined ? { proof: screen, how: "link" as const, by: undefined } : kept;
     const path = confirm === undefined ? {} : {
       confirm: confirm.proof, pairingHere: confirm.proof.source === "screen", ...(confirm.by === undefined ? {} : { by: confirm.by }),
     };
     if (!this.admits(link.key, confirm?.proof, path)) return null;
     const now = Date.now();
+    // a link that moves the key its PAIR named admits a key nobody here approved: with the flag on it waits, as a
+    // stored row's does, for a confirm of its own on this PC's screen, and the row waits with it (P22, T7, T72)
+    if (this.pc !== null && link.key !== link.oldKey && screen === undefined) {
+      if (!replacement) throw new ReplacementNeedsAppError();
+      this.replacements.set(id, { key: link.key, account: link.account, at: now, challenge: randomBytes(32).toString("base64url"), sessionId, vouched, ownWord: true, waitingRow: true });
+      row.cancel();
+      row.cancel = this.clock.setTimeout(() => this.dropProvisional(waiting, row, "link_timeout"), REPLACEMENT_TTL_MS);
+      return { id: row.id, label: row.label, role: "watch", created_at: new Date(now).toISOString(), last_seen_at: null, current: false, via_relay: true };
+    }
     const at = new Date(now).toISOString();
     // the removal of a key the row keeps, by this PC (removedByAccount refused the account's above)
     const removedAt = link.key === link.oldKey ? this.tombstones.find((t) => t.key === link.key)?.removed_at : undefined;
@@ -2057,11 +2137,10 @@ export class DeviceStore {
   }
 
   /** A removal's journal entry, after its deny (P8 step 4). A journal that cannot be written stops no removal. */
-  private journalRemoval(device: StoredDevice, by: DeviceRemovedEvent["by"]): void {
+  private journalRemoval(device: StoredDevice, by: DeviceRemovedEvent["by"], why?: string, user?: string): void {
     if (this.journal === null) return;
-    try {
-      this.publish(this.journal.append({ kind: "remove", how: typeof by === "object" ? "member" : "pc", key: device.relay_public_key ?? null, no: device.origin?.admit_no ?? null, row: device.id, label: device.label, by: typeof by === "object" ? by.device_id : null, account: device.account ?? null }));
-    } catch (error) { console.error(`[devices] the removal of ${device.id} could not be journalled: ${describe(error)}`); }
+    // the journal is first (P24): an entry that cannot be written throws, and the caller writes nothing after it
+    this.publish(this.journal.append({ kind: "remove", how: why ?? (typeof by === "object" ? "member" : "pc"), key: device.relay_public_key ?? null, no: device.origin?.admit_no ?? null, row: device.id, label: device.label, by: user ?? (typeof by === "object" ? by.device_id : null), account: device.account ?? null }));
   }
 
   private publish(entry: JournalEntry): void {
@@ -2101,6 +2180,12 @@ export class DeviceStore {
 
   openNotices(): readonly JournalEntry[] { return this.journal?.openNotices() ?? []; }
 
+  /** A journal entry of this PC's own, on disk before the change it records; nothing with the release flag off (P15). */
+  journalEvent(input: JournalInput): void {
+    if (this.journal === null) return;
+    this.publish(this.journal.append(input));
+  }
+
   /** An admission notice was decided ("Not me" applied, T51): it leaves `open`. */
   decideNotice(id: string): void { this.journal?.decide(id); }
 
@@ -2115,7 +2200,7 @@ export class DeviceStore {
       if (key !== undefined) this.dropWaiting([key]);
       // a deny not on disk writes nothing else: the row stays where a restart still shows the Revoke failed (P8)
       if (denied !== null) { this.keepOut(rows); throw denied; }
-      this.dropBeforeWrite(rows, by, { key });
+      this.dropBeforeWrite(rows, by, undefined, undefined, { key });
       return true;
     }
     // a revoke on this PC wins over the account: its key cannot come back by a record (docs/account.md, rule 1)
@@ -2126,9 +2211,41 @@ export class DeviceStore {
     return true;
   }
 
+  /**
+   * `ovis recover --remove` (T70, T73): a removal at this PC of a row, by its id, or of a key, with or without a row
+   * here. Its Revoke stands and is journalled before the rows go; the blocks that key signed here are lifted by the
+   * PC (liftOrphanedBlocks). `user` is the OS user who ran it, on each journal line (P24). Only with the release flag on,
+   * and refused while this PC's account state is unreadable.
+   */
+  removeKey(input: { target: string; by: "local"; user?: string }): { removed: string[] } | { refused: "log_unreadable" | "unknown" } {
+    if (this.evidence === null || this.failsClosed) return { refused: "log_unreadable" };
+    const named = this.devices.find((d) => d.id === input.target);
+    const key = named !== undefined ? named.relay_public_key : isRelayPublicKey(input.target) ? input.target : undefined;
+    if (named === undefined && key === undefined) return { refused: "unknown" };
+    const gone = this.devices.filter((d) => d === named || (key !== undefined && d.relay_public_key === key));
+    const now = Date.now();
+    const evidence = this.evidence;
+    const denied = this.deny(key === undefined ? [] : [key], () => {
+      if (gone.length > 0) this.tombstone(gone, now);
+      else { evidence.addRevoke(key!, null, now); this.refreshTombstones(); this.dropWaiting([key!], "revoke"); }
+    });
+    // a deny not on disk writes nothing else: the rows stay out by row for this run and the PC closed (P8)
+    if (denied !== null) { this.keepOut(gone); throw denied; }
+    // a removal of a signer here, by its own key: the blocks it signed go with it (P23 way 3, T73)
+    if (gone.length > 0) this.dropBeforeWrite(gone, "pc", "recover", input.user, { key });
+    else {
+      try { this.journalEvent({ kind: "remove", how: "recover", key: key!, no: null, row: null, label: "", by: input.user ?? null, account: null }); } catch (error) {
+        this.denyProblem = `A removal could not be journalled (${error instanceof Error ? error.message : String(error)}): only this PC itself gets in until one is.`;
+        throw error;
+      }
+      this.liftOrphanedBlocks(key!);
+    }
+    return { removed: gone.map((d) => d.id) };
+  }
+
   /** The rows `gone` lose their access in one write; their sessions close and each removal is announced. */
-  private drop(gone: readonly StoredDevice[], by: DeviceRemovedEvent["by"]): void {
-    if (this.evidence !== null) { this.dropBeforeWrite(gone, by); return; }
+  private drop(gone: readonly StoredDevice[], by: DeviceRemovedEvent["by"], why?: string, user?: string): void {
+    if (this.evidence !== null) { this.dropBeforeWrite(gone, by, why, user); return; }
     const next = this.devices.filter((d) => !gone.includes(d));
     // A valid older/manual registry can have devices without a gate timestamp. Removing its
     // last device must still leave durable evidence that this store was once gated.
@@ -2166,9 +2283,9 @@ export class DeviceStore {
    * The gate stays closed, with a timestamp even when nothing was ever confirmed (only first-pair
    * candidates existed): revoking must never reopen the LAN, not even after a restart.
    */
-  revokeAll(): string[] {
+  revokeAll(user?: string): string[] {
     this.assertWritable();
-    if (this.evidence !== null) return this.revokeAllInOrder();
+    if (this.evidence !== null) return this.revokeAllInOrder(user);
     this.tombstone(this.devices, Date.now());
     const gate = this.gateClosedAt ?? this.devices[0]?.created_at ?? new Date().toISOString();
     this.save([], gate);
@@ -2255,7 +2372,7 @@ export class DeviceStore {
    * P8 steps 2 to 5 for rows the deny already covers: the gate in memory, the rows out of memory, their sessions and
    * codes ended, each removal told; then the registry write, whose failure is thrown only after all of that.
    */
-  private dropBeforeWrite(gone: readonly StoredDevice[], by: DeviceRemovedEvent["by"], removedSigner?: { key: string | undefined; account?: string }): void {
+  private dropBeforeWrite(gone: readonly StoredDevice[], by: DeviceRemovedEvent["by"], why?: string, user?: string, removedSigner?: { key: string | undefined; account?: string }): void {
     if (gone.length === 0) return;
     const next = this.devices.filter((d) => !gone.includes(d));
     const gate = this.gateClosedAt ?? this.devices[0]?.created_at ?? new Date().toISOString();
@@ -2267,7 +2384,12 @@ export class DeviceStore {
       this.revocations.delete(device.id);
       for (const close of listeners ?? []) close();
     }
-    for (const device of gone) this.journalRemoval(device, by);
+    try { for (const device of gone) this.journalRemoval(device, by, why, user); } catch (error) {
+      // a removal its journal does not hold writes nothing more: its rows stay out by row and the PC closed (P24, P8)
+      for (const device of gone) this.failedRows.add(device.id);
+      this.denyProblem = `A removal could not be journalled (${error instanceof Error ? error.message : String(error)}): only this PC itself gets in until one is.`;
+      throw error;
+    }
     if (removedSigner !== undefined) this.liftOrphanedBlocks(removedSigner.key, removedSigner.account);
     // the registry write is these rows' own deny when they hold no key (cookie rows): one that fails keeps them out for
     // this run and the PC closed until a write lands (P8, S19); a removal is told once the write is tried (P8 step 5)
@@ -2285,9 +2407,10 @@ export class DeviceStore {
   /**
    * Revoke all in P8's order: `revoke-all.json` first, then the gate, the codes, the candidates and every row out of
    * memory with its sessions, then the evidence, the empty registry and the PC's account. A write that fails is thrown
-   * after the closing; the file stays, and the next start finishes the work before serving (T20).
+   * after the closing; the file stays, and the next start finishes the work before serving (T20). `user`: the OS user
+   * of `ovis recover --revoke-all`, journalled beside each removal (P24).
    */
-  private revokeAllInOrder(): string[] {
+  private revokeAllInOrder(user?: string): string[] {
     const now = new Date().toISOString();
     // the file names every row it covers, a pending one's too, so it is finished from itself and never from less (T20)
     const gone = this.revokeAllRows();
@@ -2315,10 +2438,13 @@ export class DeviceStore {
     // a gate that was open closes here, whatever the writes below do: what the open LAN let in ends (T3)
     if (gateWasOpen) this.tellGateClosed();
     if (denied !== null) throw denied;
-    for (const device of gone) this.announceRemoval(device, "pc");
-    for (const device of gone) this.journalRemoval(device, "pc");
-    // its intent is on disk: any write after it that fails leaves the PC closed until a start finishes it (P8, T20)
-    try { this.finishRevokeAll(gone, gate); } catch (error) {
+    // its intent is on disk: the journal first, then the removals told, then the writes; any that fails leaves the PC
+    // closed until a start finishes it (P8, P24, T20)
+    try {
+      for (const device of gone) this.journalRemoval(device, "pc", user === undefined ? undefined : "recover", user);
+      for (const device of gone) this.announceRemoval(device, "pc");
+      this.finishRevokeAll(gone, gate);
+    } catch (error) {
       this.denyProblem = `Revoke all could not be finished (${error instanceof Error ? error.message : String(error)}): only this PC itself gets in until it is.`;
       this.pc?.unwritten(error, "Revoke all could not clear this PC's account");
       throw error;
@@ -2502,7 +2628,7 @@ export class DeviceStore {
       // with no deny on disk the evidence cannot say which rows it covers: every row of the key goes for this run
       if (denied !== null) { this.keepOut(this.devices.filter((d) => d.relay_public_key === key), false); throw denied; }
       const gone = this.devices.filter((d) => d.relay_public_key === key && this.coveredByEvidence(d));
-      this.dropBeforeWrite(gone, record.by, { key, account });
+      this.dropBeforeWrite(gone, record.by, undefined, undefined, { key, account });
       return added || gone.length > 0;
     }
     // a pairing of this key made on this PC after the removal was signed wins: a replayed or late remove
@@ -2538,15 +2664,24 @@ export class DeviceStore {
    * (`auth_changed`); the linking one goes on until it signs in again with the new key. A row that waits to link
    * is no device yet: its link makes it one (promote).
    */
-  linkAccountKey(deviceId: string, oldKey: string, key: string, account: string, sessionId = "", vouched = false): PairedDevice | null {
+  linkAccountKey(deviceId: string, oldKey: string, key: string, account: string, sessionId = "", vouched = false, replacement = false): PairedDevice | null {
     this.assertAccountWritable();
     const device = this.devices.find((d) => d.id === deviceId && d.relay_public_key === oldKey);
-    if (!device) return this.promote(deviceId, { oldKey, key, account }, sessionId, vouched);
+    if (!device) return this.promote(deviceId, { oldKey, key, account }, sessionId, vouched, replacement);
     const moved = key !== oldKey || device.link_moved_key === true;
     // the link that takes a row from no account into one is on the device's own word unless a member of that same
     // account approved its pairing: a code started by a device outside the account names its starter in `added_by` and
     // approves nothing, and an approval for another account does not carry over
     const ownWord = device.account === undefined && device.member_approved_in !== account;
+    // a key approved on this PC's screen is never replaced by a link alone: the new key waits for a confirm of its own
+    // there, and nothing changes until then (P22, T7, T72)
+    if (this.pc !== null && key !== oldKey && device.origin?.from === "pc") {
+      // only an app that shows the fingerprint it computes itself may ask: to any other, a confirm is a blind yes
+      if (!replacement) throw new ReplacementNeedsAppError();
+      // the challenge the confirm's fingerprint is made over: this PC's own, new with each link, so none can be chosen
+      this.replacements.set(deviceId, { key, account, at: Date.now(), challenge: randomBytes(32).toString("base64url"), sessionId, vouched, ownWord });
+      return this.list(null).find((d) => d.id === deviceId) ?? null;
+    }
     const linked: StoredDevice = { ...device, relay_public_key: key, account, linked_at: new Date().toISOString(), link_moved_key: moved, ...(ownWord ? { joined_by: vouched ? "service" as const : "word" as const } : {}) };
     // Linking widens membership even if it keeps the key (G3); flag-off links retain the moved-key-only check.
     if ((this.safety !== null || key !== oldKey) && !this.admits(key)) return null;
@@ -2563,6 +2698,48 @@ export class DeviceStore {
     this.endNoAccountCode();
     for (const listener of [...this.relinks.get(deviceId) ?? []]) listener(sessionId);
     return this.list(null).find((d) => d.id === deviceId) ?? null;
+  }
+
+  /** The key waiting to replace the screen-approved key of row `id` (T72), or null: dropped after five minutes. */
+  pendingReplacement(id: string, now = Date.now()): { readonly key: string; readonly account: string; readonly at: number; readonly challenge: string } | null {
+    const waiting = this.replacements.get(id);
+    if (waiting === undefined) return null;
+    if (now - waiting.at > REPLACEMENT_TTL_MS) { this.replacements.delete(id); return null; }
+    return { key: waiting.key, account: waiting.account, at: waiting.at, challenge: waiting.challenge };
+  }
+
+  /** The replacement of row `id` was declined on this PC's screen: the approved key stays. */
+  declineReplacement(id: string): void { this.replacements.delete(id); }
+
+  /**
+   * The replacement of row `id` confirmed on this PC's screen (T72): only the very key waiting, within five minutes, and
+   * only when G3 admits it in this turn. The row takes the key and its account and keeps `pc`, with how `link` and a
+   * new number; the confirm is spent.
+   */
+  replaceConfirmed(confirm: { row: string; key: string; source: "screen" }, now = Date.now()): DeviceMatch | null {
+    const waiting = this.pendingReplacement(confirm.row, now);
+    if (waiting === null || waiting.key !== confirm.key || this.pc === null) return null;
+    const { sessionId, vouched, ownWord, waitingRow } = this.replacements.get(confirm.row)!;
+    this.replacements.delete(confirm.row);
+    const proof: ConfirmProof = { codeId: `replace:${confirm.row}`, key: confirm.key, source: confirm.source };
+    MINTED_PROOFS.add(Object.freeze(proof));
+    // a row waiting to link joins now, with the confirmed key: its link, held until this confirm (T72)
+    if (waitingRow === true) {
+      const row = this.provisional(confirm.row);
+      if (row === undefined) return null;
+      const joined = this.promote(confirm.row, { oldKey: row.key, key: confirm.key, account: waiting.account }, sessionId, vouched, false, proof);
+      return joined === null ? null : { id: joined.id, label: joined.label, role: joined.role };
+    }
+    const device = this.devices.find((d) => d.id === confirm.row);
+    if (device === undefined) return null;
+    if (!this.admits(confirm.key, proof)) return null;
+    const updated: StoredDevice = { ...device, relay_public_key: confirm.key, account: waiting.account, linked_at: new Date(now).toISOString(), link_moved_key: true, ...(ownWord ? { joined_by: vouched ? "service" as const : "word" as const } : {}), origin: this.pc.admit("pc", "link", null, now) };
+    const next = this.devices.map((d) => d === device ? updated : d);
+    this.bindingWith(waiting.account, confirm.key, () => this.save(next));
+    this.devices = next;
+    this.endNoAccountCode();
+    for (const listener of [...this.relinks.get(confirm.row) ?? []]) listener(sessionId);
+    return { id: updated.id, label: updated.label, role: updated.role };
   }
 
   /** A pairing of a key on this PC names the account removals it knew (`paired_over`), and stands over them (P13, T23). */

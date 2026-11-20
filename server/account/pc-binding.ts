@@ -198,6 +198,15 @@ export class PcAccountState {
     if (own !== null && theirs !== null && own.account !== theirs.account) { this.problem = `${this.path} and ${path} bind this PC to two accounts`; return; }
     this.siblingBinding = theirs;
     const doc = { ...this.doc, binding: own, clears, others_ever: this.doc.others_ever || parsed.others_ever };
+    // the clears are one set in both folders: the sibling learns every clear too, so starting it alone never brings a
+    // cleared account back (P12, T48)
+    if (parsed.clears.length !== clears.length) {
+      const siblingDoc: PcDoc = { ...parsed, clears, binding: standing(parsed.binding) ?? (parsed.binding?.pending === true && !clears.some((clear) => clear.bind_id === parsed.binding!.bind_id) ? parsed.binding : null) };
+      try { writePrivateState(path, siblingDoc); } catch (error) {
+        this.problem = `${path} cannot learn this PC's cleared account (${error instanceof Error ? error.message : String(error)})`;
+        return;
+      }
+    }
     if (this.fresh) { this.doc = doc; return; }
     // a folder in no account beside one that is: the PC is in that account (P12)
     if (own === null && theirs !== null) { doc.binding = theirs; doc.first = this.doc.first ?? parsed.first; }

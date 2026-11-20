@@ -4,7 +4,7 @@
  * a drive member of this PC's account, and never lets a removed key back in.
  */
 import { accountDeviceId, AccountRecordError, ACCOUNT_RECORDS_MAX, parseAccountRecord, verifyAccountRecord, type AccountRecord, type LinkRecord } from "../../shared/account-records.ts";
-import { AdmissionRefusedError, type DeviceStore, type LinkArrival } from "../devices.ts";
+import { AdmissionRefusedError, ReplacementNeedsAppError, type DeviceStore, type LinkArrival } from "../devices.ts";
 import type { PairedDevice } from "../../shared/protocol.ts";
 import type { Vouch } from "./mailbox.ts";
 
@@ -156,7 +156,7 @@ export async function applyEnrollment(store: DeviceStore, values: readonly unkno
   });
 }
 
-export type LinkRefusal = RecordRefusal | "key_in_use" | "link_required" | "unverified_device" | "pairing_ended";
+export type LinkRefusal = RecordRefusal | "key_in_use" | "link_required" | "unverified_device" | "pairing_ended" | "replacement_needs_app";
 
 /** What a link is held to on this PC besides its devices (server/account/routes.ts). */
 export interface LinkRules {
@@ -313,7 +313,10 @@ export async function applyLink(store: DeviceStore, value: unknown, session: { d
   const takeBack = waits ? rules.barrier?.() : undefined;
   let device: PairedDevice | null = null;
   try { device = store.linkAccountKey(deviceId, link.old_key, link.key, link.account, sessionId, vouched); }
-  finally {
+  catch (error) {
+    if (error instanceof ReplacementNeedsAppError) return { refused: "replacement_needs_app" };
+    throw error;
+  } finally {
     // the row was not written: what went to disk for it goes too. Whatever kept the row from being written is the
     // failure to report, so a barrier that could not be taken back either is said beside it
     if (device === null) {

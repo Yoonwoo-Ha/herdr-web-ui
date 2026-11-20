@@ -261,6 +261,54 @@ export class SafetyLog {
       .filter((record) => record.kind === "forget" && record.target === key && record.account === account).map((record) => record.id);
   }
 
+  /** The receipts of every block of `key` this log knows (T60): applied with its number while whole, already_applied once folded. */
+  receipts(key: string): SafetyReceipt[] {
+    const whole = this.file.entries.filter((entry) => entry.record.kind === "block" && entry.record.target === key).map((entry): SafetyReceipt => ({ outcome: "applied", id: entry.record.id, n: entry.n }));
+    const folded = this.file.base.filter((line) => line.kind === "block" && line.target === key).map((line): SafetyReceipt => ({ outcome: "already_applied", id: line.id }));
+    return [...whole, ...folded];
+  }
+
+  /**
+   * The receipts of every block `key` signed that this log holds whole (T60 (2)): a refused sign-in of that key carries
+   * them. A folded line keeps no signer, so a block folded here is no longer named this way. Only blocks signed under
+   * `account`, the PC's binding: one signed under an earlier binding is no receipt of this account (seam for S2-24).
+   */
+  receiptsBySigner(key: string, account: string): SafetyReceipt[] {
+    return this.file.entries.filter((entry) => entry.record.kind === "block" && entry.record.signer === key && entry.record.account === account).map((entry) => ({ outcome: "applied", id: entry.record.id, n: entry.n }));
+  }
+
+  /** Every block id this log knows, whole or folded: a snapshot's blocks this PC already holds. */
+  blockIds(): string[] {
+    return [...this.file.entries.filter((entry) => entry.record.kind === "block").map((entry) => entry.record.id), ...this.file.base.filter((line) => line.kind === "block").map((line) => line.id)];
+  }
+
+  /**
+   * The lock (P11): written by the log itself, signed `pc`, under the account this PC is bound to; refused with no
+   * binding, since a PC in no account has no strict mode in this release.
+   */
+  appendLock(binding: { readonly account: string } | null): SafetyReceipt {
+    if (binding === null) return { outcome: "refused", id: "", code: "record_invalid" };
+    return this.append({ record: { v: 1, id: pcRecordId(), kind: "lock", account: binding.account, target: null, signer: "pc", signed_at: new Date().toISOString(), signature: "" }, got: "pc" });
+  }
+
+  /** Ends the lock `lockId` (P11, T47), written by the log itself like the lock. */
+  appendUnlock(lockId: string, binding: { readonly account: string } | null): SafetyReceipt {
+    if (binding === null) return { outcome: "refused", id: "", code: "record_invalid" };
+    return this.append({ record: { v: 1, id: pcRecordId(), kind: "unlock", account: binding.account, target: lockId, signer: "pc", signed_at: new Date().toISOString(), signature: "" }, got: "pc" });
+  }
+
+  /**
+   * A lift at the PC (`ovis recover --lift`, T69): signed `pc` under this PC's account, of a block this log holds. It
+   * ends that block and its freeze only; `forget` also ends its marker. Refused with no binding, as a lock is.
+   */
+  appendLift(blockId: string, binding: { readonly account: string } | null, options: { readonly cause: LiftCause; readonly forget?: boolean }): SafetyReceipt {
+    // a service freeze this PC holds without its block is lifted by its own id, `f:` and that block's id (P23 way 2)
+    const freeze = this.inForce.freezes.find((entry) => entry.record.kind === "freeze" && entry.record.id === blockId && entry.record.account === binding?.account);
+    const target = freeze !== undefined ? blockId.slice(2) : blockId;
+    if (binding === null || (freeze === undefined && !this.blockIds().includes(blockId))) return { outcome: "refused", id: "", code: "record_invalid" };
+    return this.append({ record: { v: 1, id: pcRecordId(), kind: "lift", account: binding.account, target, signer: "pc", signed_at: new Date().toISOString(), forget: options.forget === true, signature: "" }, got: "pc", cause: options.cause });
+  }
+
   /** The receipt of a record this log holds (T51): the same `applied` as often as it is asked, until it is folded. */
   receipt(id: string): SafetyReceipt | null {
     const entry = this.file.entries.find((candidate) => candidate.record.id === id);

@@ -41,6 +41,9 @@ interface Doc { v: 1; markers: Marker[]; revokes: Revoke[]; unrevokes: Unrevoke[
 
 const isStrings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
 
+/** The removal evidence `value` holds, or null when it is not this PC's form of it. */
+export function parseEvidence(value: unknown): Doc | null { return parseDoc(value); }
+
 function parseDoc(value: unknown): Doc | null {
   if (typeof value !== "object" || value === null) return null;
   const doc = value as Partial<Doc>;
