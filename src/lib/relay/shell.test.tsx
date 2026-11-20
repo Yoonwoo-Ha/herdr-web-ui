@@ -1135,6 +1135,39 @@ describe("the hosted shell's front page", () => {
     transport.close();
   });
 
+  it("PADD-8: a Forget during the hand open of an introduced PC is not undone by marking it chosen", async () => {
+    const offer = { v: 1 as const, ...keyFor(), relay: AP };
+    const key = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
+    const rows: RelayDevice[] = [{ ...offer, device_id: "introduced", private_key: key.privateKey, public_spki: "fixture", label: "Phone", introduced_at: Date.now() }];
+    const base = deviceStore(rows);
+    // the person forgets the PC right as its page opens: the read the marker write starts from still sees it
+    const writes: string[] = [];
+    const store: ShellDeviceStore = { ...base, async update(serverId, change, source) {
+      const existing = rows.find((row) => row.server_id === serverId);
+      const marks = existing?.introduced_at !== undefined && change(existing).introduced_at === undefined;
+      if (!marks) return base.update(serverId, change, source);
+      // the person forgets the PC right as the write that marks it chosen runs
+      await base.remove(serverId);
+      const next = change(undefined);
+      writes.push(next.server_id);
+      rows.push(next);
+      return next;
+    } };
+    class Admitted extends RelayTransport {
+      override get server() { return { version: "1.0.0", relayProtocol: RELAY_PROTOCOL }; }
+      override async fetch() { return Response.json({ managed: false }); }
+    }
+    const transport = new Admitted(offer);
+    await mountRelayShell(mountFor({ store, entryUrl: `https://app.ovis.sh/s/${offer.server_id}/`, shellVersion: "1.0.0", open: async () => transport,
+      renderApp: () => ({ render() {}, unmount() {} }), pendingPush: { get: async () => undefined, clear: async () => {} } }));
+    await drain();
+    await settleSigned();
+    // nothing wrote the forgotten row back
+    expect(rows).toEqual([]);
+    expect(writes).toEqual([]);
+    transport.close();
+  });
+
   it("closes an admitted result that arrives after Cancel without rendering it", async () => {
     const offer = { v: 1 as const, ...keyFor(), relay: AP };
     const result = Promise.withResolvers<RelayTransport>();

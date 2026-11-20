@@ -46,6 +46,11 @@ const LAST_PC = "ovis-last-pc";
 const LAUNCHED = "ovis-launched";
 
 /** The PC this device opened last, kept by its id alone (no key), so the next launch opens it again. */
+/** The PC a hand open was marking as chosen was forgotten meanwhile: nothing is written for it. */
+class PcForgotten extends Error {
+  constructor() { super("This PC was forgotten on this device"); this.name = "PcForgotten"; }
+}
+
 function rememberPc(serverId: string): void {
   try { localStorage.setItem(LAST_PC, serverId); } catch { /* a page without storage opens on the front page */ }
 }
@@ -482,8 +487,13 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     rememberPc(attempt.offer.server_id);
     // opened here: a PC an introduction alone saved is now one this device chose, which a later launch may reopen
     void store.get(attempt.offer.server_id).then((saved) => saved?.introduced_at === undefined ? undefined
-      : store.update(attempt.offer.server_id, (current) => { const { introduced_at: _chosen, ...chosen } = current ?? saved; return chosen; }))
-      .catch((error: unknown) => { console.warn("Ovis: this PC could not be marked as opened here", error instanceof Error ? error.name : error); });
+      : store.update(attempt.offer.server_id, (current) => {
+        // forgotten meanwhile: a pairing the person removed is never written back
+        if (current === undefined) throw new PcForgotten();
+        const { introduced_at: _chosen, ...chosen } = current;
+        return chosen;
+      }))
+      .catch((error: unknown) => { if (!(error instanceof PcForgotten)) console.warn("Ovis: this PC could not be marked as opened here", error instanceof Error ? error.name : error); });
     // the pairing's own page opened the PC: a later load of it acts as whoever is signed in then
     keepDeviceOnlyPc(null);
     keepConfirmedSignIn(null);

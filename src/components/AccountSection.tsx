@@ -521,6 +521,8 @@ export function AddThisPc({ relayAbove = true, service, signedInHere, onListed, 
       if (account !== null && await addInOnePress(accountService(), serverId, account, current, opensAll())) {
         // an attempt given up or replaced meanwhile clears nothing that a newer one owns
         if (!current()) return null;
+        // the account lists this PC now: whoever shows the account's PCs reads them again
+        listed();
         keepAddPcWaiting(null);
         closeAddWindow().catch(warned("Ovis: this PC's pairing window could not be closed"));
         return await joinedAs(account, false);

@@ -1138,7 +1138,7 @@ export function App() {
         {remotePairings.length > 0 && <AccountApprovals pairings={remotePairings} />}
         {pairedNotices.length > 0 && <DevicePairedNotice events={pairedNotices} onDismiss={dismissPairedNotice} onOpen={(event) => { dismissPairedNotice(event); setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
         {deviceNotices}
-        {health !== null && <NewPcNotices ownWindowOf={ownWindowHere(health.auth) ? health.web_ui?.server_id : undefined} signIn={accountSignedIn ?? undefined} />}
+        {health !== null && <NewPcNotices enabled={machineSessions.peek("local")?.socket?.accountOpensAll() === true} ownWindowOf={ownWindowHere(health.auth) ? health.web_ui?.server_id : undefined} signIn={accountSignedIn ?? undefined} />}
         {/* The PC's pending-redemptions stream owns the list; a decline response can arrive after a newer event. */}
         <PendingKeys pending={pendingKeys} onDecline={(id) => { void declinePendingKey(id).catch((error: unknown) => console.warn("Ovis: the device was not declined", error instanceof Error ? error.name : error)); }} />
         {removedNotices.length > 0 && <DeviceRemovedNotice events={removedNotices} onDismiss={dismissRemovedNotice} />}

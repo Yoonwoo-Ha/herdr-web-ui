@@ -14,9 +14,18 @@ const READ_TIMEOUT_MS = 10_000;
 
 /** a PC still in its 24 hours, or one added under the first-PC exemption before this device joined (told once, with no end) */
 type NewPc = DirectoryPc;
+
+const newPcKey = (account: string, pc: NewPc): string => `ovis:new-pc:${JSON.stringify([account, pc.server_id, pc.admitted_at ?? pc.new_until])}`;
+
+function dismissed(key: string): boolean {
+  try { return localStorage.getItem(key) !== null; }
+  catch (error) { if (error instanceof DOMException) return false; throw error; }
+}
 type Listing = { readonly session: AccountSession; readonly pcs: readonly NewPc[] };
 
-export function NewPcNotices({ ownWindowOf, signIn, onRemoved }: {
+export function NewPcNotices({ enabled = true, ownWindowOf, signIn, onRemoved }: {
+  /** the account's step-2 switch is on here (this PC lists account-opens-all/1): off, the list is never read */
+  readonly enabled?: boolean;
   /** the PC this window is the own local window of: it added itself, so it is not told; every other window is, the relay's included */
   readonly ownWindowOf?: string | undefined;
   readonly signIn?: string | undefined;
@@ -24,6 +33,7 @@ export function NewPcNotices({ ownWindowOf, signIn, onRemoved }: {
 }) {
   const [listing, setListing] = useState<Listing | null>(null);
   useEffect(() => {
+    if (!enabled) { setListing(null); return; }
     let version = 0;
     let pending: AbortController | undefined;
     /** the last read listed a PC to tell of: only then is the list read every minute (a new one rings this device anyway) */
@@ -47,7 +57,8 @@ export function NewPcNotices({ ownWindowOf, signIn, onRemoved }: {
         if (mine !== version) return;
         const now = Date.now();
         const told = pcs.filter((pc) => pc.admitted_before_you || (pc.new_until !== null && Date.parse(pc.new_until) > now));
-        telling = told.length > 0;
+        // a notice this device already closed is nothing left to tell
+        telling = told.some((pc) => pc.server_id !== ownWindowOf && !dismissed(newPcKey(session.account, pc)));
         setListing(current !== undefined && sameSignIn(current, session) ? { session, pcs: told } : null);
       } catch (error) {
         if (mine !== version) return;
@@ -75,11 +86,11 @@ export function NewPcNotices({ ownWindowOf, signIn, onRemoved }: {
       window.removeEventListener(ACCOUNT_SIGN_OUT_EVENT, signInChanged);
       window.removeEventListener(ACCOUNT_PCS_CHANGED_EVENT, visibleRead);
     };
-  }, [signIn]);
+  }, [signIn, enabled, ownWindowOf]);
 
   if (listing === null) return null;
   return listing.pcs.filter((pc) => pc.server_id !== ownWindowOf).map((pc) => {
-    const dismissalKey = `ovis:new-pc:${JSON.stringify([listing.session.account, pc.server_id, pc.admitted_at ?? pc.new_until])}`;
+    const dismissalKey = newPcKey(listing.session.account, pc);
     return <NewPcNotice key={`${listing.session.sign_in_id}:${dismissalKey}`} pc={pc} session={listing.session} dismissalKey={dismissalKey} onRemoved={onRemoved} />;
   });
 }

@@ -84,10 +84,10 @@ afterEach(async () => {
 });
 
 /** `null`: a window that is no PC's own (a phone, the relay page); the default is another PC's own window */
-async function mount(ownWindowOf: string | null = OTHER, onRemoved?: () => void) {
+async function mount(ownWindowOf: string | null = OTHER, onRemoved?: () => void, enabled = true) {
   await act(async () => {
     renderer?.unmount();
-    renderer = create(<SettingsProvider><NewPcNotices ownWindowOf={ownWindowOf ?? undefined} onRemoved={onRemoved} /></SettingsProvider>);
+    renderer = create(<SettingsProvider><NewPcNotices enabled={enabled} ownWindowOf={ownWindowOf ?? undefined} onRemoved={onRemoved} /></SettingsProvider>);
   });
   if (renderer === undefined) throw new TypeError("Notice did not mount");
   return renderer.root;
@@ -234,4 +234,33 @@ it("A2: a page left open with no PC to tell of still reads the list every five m
   expect(reads()).toBe(before);
   await act(async () => { jest.advanceTimersByTime(60_000); });
   expect(reads()).toBe(before + 1);
+});
+
+it("PADD-11: where the step-2 switch is off the account's list is never read", async () => {
+  jest.useFakeTimers();
+  await mount(OTHER, undefined, false);
+  const reads = () => (globalThis.fetch as unknown as { mock: { calls: [unknown, RequestInit?][] } }).mock.calls.filter(([, init]) => init?.method === "GET").length;
+  await act(async () => { jest.advanceTimersByTime(10 * 60_000); browser.dispatchEvent(new Event("focus")); });
+  expect(reads()).toBe(0);
+});
+
+it("PADD-11: a dismissed notice is nothing left to tell: focus reads come at most once a minute again", async () => {
+  jest.useFakeTimers();
+  const root = await mount();
+  await act(async () => root.findByProps({ "aria-label": "Close" }).props.onClick());
+  await act(async () => { jest.advanceTimersByTime(60_000); });
+  const reads = () => (globalThis.fetch as unknown as { mock: { calls: [unknown, RequestInit?][] } }).mock.calls.filter(([, init]) => init?.method === "GET").length;
+  const before = reads();
+  for (let tab = 0; tab < 5; tab++) await act(async () => { browser.dispatchEvent(new Event("focus")); });
+  expect(reads()).toBeLessThanOrEqual(before + 1);
+});
+
+it("PADD-11: the PC whose own window this is, new or not, keeps no minute reads going: only notices shown here count", async () => {
+  jest.useFakeTimers();
+  // the only new PC is this window's own: nothing is shown, so the list is read only every five minutes
+  await mount(PC);
+  const reads = () => (globalThis.fetch as unknown as { mock: { calls: [unknown, RequestInit?][] } }).mock.calls.filter(([, init]) => init?.method === "GET").length;
+  const before = reads();
+  await act(async () => { jest.advanceTimersByTime(4 * 60_000); });
+  expect(reads()).toBe(before);
 });

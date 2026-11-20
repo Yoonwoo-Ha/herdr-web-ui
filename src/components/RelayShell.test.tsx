@@ -393,7 +393,8 @@ describe("the dashboard", () => {
         expect(rows()).toEqual(["New desk"]);
         // the overview is a page its owner opens on purpose: nothing new appears there; the notice and the mark are in the opened Ovis
         expect(renderer!.root.findAll((instance) => instance.type === "div" && instance.props.role === "status" && textOf(instance).includes("New PC added to your account"))).toHaveLength(0);
-        expect(textOf(renderer!.root.findAll((node) => node.type === "tr" && node.props["data-pc-state"] !== undefined)[0]!)).not.toContain("New PC");
+        // no mark, in the old wording ("New") or the new ("New PC"), beside the PC's own name
+        expect(textOf(renderer!.root.findAll((node) => node.type === "tr" && node.props["data-pc-state"] !== undefined)[0]!).replace("New desk", "")).not.toMatch(/\bNew\b/);
         expect(deletes).toEqual([]);
       } finally {
         await act(async () => { renderer?.unmount(); });

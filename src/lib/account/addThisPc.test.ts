@@ -220,7 +220,7 @@ function onePress(answers: { admit?: () => Promise<unknown>; pc?: (path: string)
   const answer = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const path = new URL(String(input instanceof Request ? input.url : input), "http://localhost").pathname;
     calls.push(`${path} ${String(init?.body ?? "")}`);
-    return answers.pc?.(path) ?? Response.json({ account: "acct_1" }, { status: path === "/api/account/relay-account" ? 204 : 200 });
+    return answers.pc?.(path) ?? (path === "/api/account/relay-account" ? new Response(null, { status: 204 }) : Response.json({ account: "acct_1" }));
   };
   setTransport({ ...nativeTransport, fetch: answer });
   const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(answer as typeof fetch);

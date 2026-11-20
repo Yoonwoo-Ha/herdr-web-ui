@@ -119,7 +119,7 @@ it("A3: a newly added account PC is marked New and its page waits for the Join p
   await pressed.promise;
   expect(attempts).toEqual([false]);
   // the overview shows nothing new (owner rule): no mark, and no quick Open
-  expect(markup).not.toContain(">New PC</");
+  expect(markup).not.toMatch(/>New( PC)?<\//);
   expect(markup).toContain('data-pc-action="join"');
   expect(markup).not.toContain('data-pc-action="open"');
 });

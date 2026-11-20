@@ -543,10 +543,12 @@ export class FakeAccountService {
       if (this.now() - (this.signedInAt.get(session.family) ?? Number.NEGATIVE_INFINITY) > REAUTH_MS) return problem(403, "session_not_fresh", "Sign in again on this device first");
       // the first-PC exemption: an account never used (no other PC, no admit or removal, no device key ever) waives two-step
       const exempt = this.twoStep.get(session.family) !== true;
-      if (exempt && this.everUsed(account, admitted, session.family)) return problem(403, "two_step_required", "Set up two-step sign-in first");
       const entry = directory.get(admitted);
-      if (entry === undefined) return problem(400, "unknown_pc", "List PCs of this account only");
       const open = this.pcAdmissions.get(box(admitted, account));
+      // a retry of this same sign-in's own admission, still open, gets the same answer: no second exemption is granted
+      const retry = entry !== undefined && open !== undefined && !open.taken && open.family === session.family && this.now() - open.at <= ADMISSION_TTL_MS && entry.new_until != null;
+      if (exempt && !retry && this.everUsed(account, admitted, session.family)) return problem(403, "two_step_required", "Set up two-step sign-in first");
+      if (entry === undefined) return problem(400, "unknown_pc", "List PCs of this account only");
       if (open !== undefined && !open.taken && this.now() - open.at <= ADMISSION_TTL_MS && entry.new_until != null) {
         return json({ server_id: admitted, account, admitted_at: new Date(open.at).toISOString(), new_until: entry.new_until });
       }
@@ -558,13 +560,15 @@ export class FakeAccountService {
         return capped;
       }
       this.admitTimes.set(account, [...times, this.now()]);
-      this.pcAdmissions.set(box(admitted, account), { at: this.now(), taken: false, family: session.family });
+      // one instant for the admission, its directory entry and this answer: a retry answers the same
+      const at = this.now();
+      this.pcAdmissions.set(box(admitted, account), { at, taken: false, family: session.family });
       this.usedAccounts.add(account);
       entry.new_until = new Date(this.now() + PC_NEW_MS).toISOString();
-      entry.admitted_at = this.iso();
+      entry.admitted_at = new Date(at).toISOString();
       entry.exempt = exempt;
       this.ring(account, session.family);
-      return json({ server_id: admitted, account, admitted_at: this.iso(), new_until: entry.new_until });
+      return json({ server_id: admitted, account, admitted_at: new Date(at).toISOString(), new_until: entry.new_until });
     }
     const pc = /^\/v1\/pcs\/([0-9a-f]{32})$/.exec(path)?.[1];
     if (pc !== undefined && request.method === "PUT") {

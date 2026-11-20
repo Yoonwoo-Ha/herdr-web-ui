@@ -227,6 +227,18 @@ describe("AddThisPc", () => {
     expect(words(renderer)).toContain("Waiting. The window reopens by itself if Ovis restarts.");
   });
 
+  test("PADD-5: a one-press success tells its owner once, so the account's list is read again", async () => {
+    onePress.admits = true;
+    let renderer!: ReactTestRenderer;
+    let told = 0;
+    act(() => { renderer = create(createElement(SettingsProvider, { children: createElement(AddThisPc, { service: unbound, signedInHere: () => null, onListed: () => { told++; }, opensAll: () => onePress.opensAll }) })); });
+    renderers.push(renderer);
+    await settle();
+    await press(renderer, "Add this PC to my account");
+    expect(words(renderer)).toContain("This PC is in your account. Your other devices can open it now.");
+    expect(told).toBe(1);
+  });
+
   test("one press refused by the account service (no two-step sign-in, a stale sign-in, the daily cap) keeps today's digit wait, and the PC is never asked", async () => {
     const renderer = await waitingFrom();
     expect([directory, admitted]).toEqual([["putPc"], [ACCOUNT]]);

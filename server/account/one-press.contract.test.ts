@@ -288,3 +288,50 @@ test("a not_listed refusal of anything but the snapshot route never unbinds a PC
   await f.app.context.services.accountMailbox.readSnapshot();
   expect(f.devices.account()).toBe("acct_1");
 });
+
+test("PADD-1: a Revoke all that finishes while the press waits on the account service binds nothing", async () => {
+  let revoke: (() => void) | null = null;
+  const f = await pc({ accountFetch: async (request, service) => {
+    if (new URL(request.url).pathname === "/v1/pc/admission" && revoke !== null) { const now = revoke; revoke = null; now(); }
+    return await service.fetch(request);
+  } });
+  await setUpFor(f, "acct_1");
+  await admitAt(f, "acct_1");
+  revoke = () => { f.devices.revokeAll(); };
+  const pressed = await press(f, "acct_1");
+  expect(pressed.status).toBe(409);
+  expect(f.devices.account()).toBeNull();
+});
+
+test("first-PC exemption: the same sign-in may repeat its admit before the PC reads it, and gets the same admission", async () => {
+  const f = await pc();
+  await setUpFor(f, "acct_retry");
+  const identity = f.app.context.services.relay.currentIdentity()!;
+  const token = f.account.issueToken("acct_retry", { twoStep: null });
+  const call = (path: string, method: string, body: unknown) => f.account.fetch(new Request(`https://account.test${path}`, { method, headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(body) }));
+  expect((await call(`/v1/pcs/${identity.server_id}`, "PUT", { label: "PC", public_key: bytesToHex(importPublicKey(identity.public_key)), relay: "wss://relay.ovis.sh" })).ok).toBe(true);
+  const first = await (await call(`/v1/pcs/${identity.server_id}/admit`, "POST", {})).json() as { admitted_at: string };
+  const again = await call(`/v1/pcs/${identity.server_id}/admit`, "POST", {});
+  expect(again.status).toBe(200);
+  expect(((await again.json()) as { admitted_at: string }).admitted_at).toBe(first.admitted_at);
+  // another sign-in of the account gets no exemption of its own
+  const other = f.account.issueToken("acct_retry", { twoStep: null });
+  expect((await f.account.fetch(new Request(`https://account.test/v1/pcs/${identity.server_id}/admit`, { method: "POST", headers: { authorization: `Bearer ${other}` }, body: "{}" }))).status).toBe(403);
+  expect((await press(f, "acct_retry")).status).toBe(200);
+});
+
+test("PADD-1: a relay identity reset that finishes while the press waits on the account service binds nothing", async () => {
+  let reset: (() => Promise<void>) | null = null;
+  const f = await pc({ accountFetch: async (request, service) => {
+    if (new URL(request.url).pathname === "/v1/pc/admission" && reset !== null) { const now = reset; reset = null; const answer = await service.fetch(request); await now(); return answer; }
+    return await service.fetch(request);
+  } });
+  await setUpFor(f, "acct_1");
+  await admitAt(f, "acct_1");
+  const before = f.app.context.services.relay.currentIdentity()!.server_id;
+  reset = async () => { await f.app.context.services.relay.resetIdentity(); };
+  const pressed = await press(f, "acct_1");
+  expect(f.app.context.services.relay.currentIdentity()?.server_id).not.toBe(before);
+  expect([pressed.status, pressed.body.error?.code]).toEqual([409, "identity_changed"]);
+  expect(f.devices.account()).toBeNull();
+});

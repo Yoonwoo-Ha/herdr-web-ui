@@ -811,12 +811,12 @@ sign-in made in an app itself within the last 10 minutes with two-step sign-in s
 for a Google sign-in that does not say, is not enough), within a daily cap of PC adds per account,
 and writes who added it in the account's safety log. The one exception is an account's first PC:
 an account never used (no PC listed, added or removed before, and no device key ever registered,
-removed ones included) admits its first PC in one press under any sign-in, since no other device
+removed ones included, apart from one the admitting sign-in registered itself) admits its first PC in one press under any sign-in, since no other device
 exists to protect or tell. The PC's own page registers no device key, so a new user's first press
 meets it. The page then names the account it is signed
 in to for the PC (`POST /api/account/relay-account`) and presses `POST /api/account/one-press`
 `{ "account" }`. The PC takes it only from its owner here (a device through the relay gets
-`owner_only`, a watching one `read_only`, as does a Portal visitor or an open LAN window), only for
+`owner_only`, as does a Portal visitor or an open LAN window, and a watching one `read_only`), only for
 the account named for it (`409 account_mismatch` otherwise) and only while it is in no account
 (`409 in_account`). It asks the account service itself, with its relay key's proof
 (`POST /v1/pc/admission`, naming that account): an admission by any other account is never shown to
@@ -824,21 +824,26 @@ it, and an answer for another account binds nothing (`502 account_mismatch`). Th
 `account-pc.json` to the account (`service: true` on the binding) and reads the account's snapshot
 at once, so the account's devices are let in as on any PC of the account. `404 no_admission` and
 `503 account_unavailable` bind nothing. Any refusal, at the service or at the PC (an Ovis from
-before this has no route), leaves the page on the wait above, unchanged.
+before this has no route), leaves the page on the wait above, unchanged. In this release the PC's
+own Settings signs in with a code typed on another device, which the service does not count as an
+app's own sign-in, so a press there still ends in that wait; it adds the PC in one press once the PC
+page signs in on its own window.
 
 The account's other devices are told: the service sends them its usual push, and at the top of the
 opened Ovis a notice names the new PC, with **I didn't add this**, which removes it from the
 account's list at once (`DELETE /v1/pcs/{server_id}`); its close button only hides it. The overview
-page lists the PC with its mark and shows no notice. A PC added under the first-PC exception is
-told, once, to the first devices that join the account after it (`admitted_before_you` on its
-directory entry), however much later. For 24 hours (`new_until` on its directory entry) the PC is
-marked new on them: it is never selected or opened by itself and no device signs in to it on its
-own, while a press on it opens it as usual. The account service admits the PC before the PC is
+page shows neither: it lists the PC as any other, with no quick **Open** while it is new unless this
+device paired with it by hand (then **Open** is the person's own tap). A PC added under the first-PC
+exception is told, once, to the first devices that join the account after it (`admitted_before_you`
+on its directory entry), however much later. For 24 hours (`new_until` on its directory entry) the
+PC is marked new on them: it is never selected or opened by itself and no device signs in to it on
+its own, while a press on it opens it as usual. The account service admits the PC before the PC is
 asked, so a press the PC then refuses (it restarted, was put in another account meanwhile, or was
 not this PC's own window) still told the account's other devices and marked the PC new; such a PC is
-in no account and the page waits for the digits as before, and its notice says what to do if nobody
-added it. A PC bound this way leaves the account as soon as a read of the snapshot finds the account
-no longer lists it (the binding is cleared as `unlisted`, and the account's devices with it).
+not in that account (in none, or in another one it joined meanwhile), and the page waits for the
+digits as before, and its notice says what to do if nobody added it. A PC bound this way leaves the
+account as soon as a read of the snapshot finds the account no longer lists it (the binding is
+cleared as `unlisted`, and the account's devices with it).
 
 A wrong number ends that comparison; the person starts again from **Add** on the dashboard. A device without an account
 pairs with a QR code or pairing code behind **Start without signing in** on the sign-in screen, which
@@ -917,6 +922,9 @@ entry for the same PC replaces it, at most 32 PCs and 256 devices). Answers 204.
 `GET /api/account/introduction`: over the new device's own signed-in session, watch access included
 (the one account route that needs no drive access, since it reads only the caller's own
 introduction); answers `{ "pcs" }` for its own key, or 404 `introduction_none`.
+
+A PC saved only by an introduction is one this device never chose: the app never opens it by itself
+(at a launch, or as the PC opened last) until the person opens it once, which marks it chosen.
 
 Known risk (T10 in the design): a compromised X can show the new device other PCs' keys than the
 member sent. It already holds X's sessions; what it gains is the new device trying those keys. Each

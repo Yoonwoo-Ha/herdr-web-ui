@@ -79,6 +79,10 @@ export async function handleAccountRequest(request: Request, pathname: string, c
       // the account the owner's browser is signed in to must be the one named for this PC, which a press never sets
       if (context.services.relay.savedRelayAccount() !== account) return fail("account_mismatch", "This PC was set up for another account. Sign in to that one, or add this PC again.", 409);
       if (devices.account() !== null) return fail("in_account", "This PC is already in an account", 409);
+      // a Revoke all, a reset or a denial while the service answers raises this: the press then binds nothing (PADD-1)
+      const generation = devices.gen();
+      // a relay identity reset meanwhile makes this another PC to the account service: its answer was for the old one
+      const identity = context.services.relay.currentIdentity()?.server_id ?? null;
       let admitted: Awaited<ReturnType<typeof context.services.accountMailbox.admission>>;
       try { admitted = await context.services.accountMailbox.admission(account); }
       catch (error) { return fail("account_unavailable", error instanceof Error ? error.message : String(error), 503); }
@@ -88,6 +92,8 @@ export async function handleAccountRequest(request: Request, pathname: string, c
       // what the PC was named for, or its account, may have changed while the service answered: decided again now
       if (context.services.relay.savedRelayAccount() !== account) return fail("account_mismatch", "This PC was set up for another account. Sign in to that one, or add this PC again.", 409);
       if (devices.account() !== null) return fail("in_account", "This PC is already in an account", 409);
+      if ((context.services.relay.currentIdentity()?.server_id ?? null) !== identity) return fail("identity_changed", "This PC's relay identity was reset while it was being added. Add it again.", 409);
+      if (devices.gen() !== generation) return fail("revoked", "Every device was revoked on this PC while it was being added. Add it again.", 409);
       devices.bindByService(account);
       await context.services.accountMailbox.readSnapshot();
       // the account may have stopped listing this PC during that first read: then it is in no account, and says so
