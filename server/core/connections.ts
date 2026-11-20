@@ -24,6 +24,8 @@ export interface SocketData {
   ingress?: TelemetryIngress;
   /** a visitor Portal signed in: the socket is closed after this many ms, and the page's reconnect meets Portal's sign-in again (server/portal.ts `recheckMs`) */
   recheckMs?: number;
+  /** let in on a grant a lock refuses: it ends when the screen's approval writes a lock (server/lock-boundary.ts LockSignal) */
+  untilLock?: (close: () => void) => () => void;
   connectionId: string;
   /** A fresh claim per attach lifetime; deleting it invalidates queued terminal keys. */
   attached: Map<string, { keepSize: boolean; receiptResumeId?: string }>;
@@ -46,6 +48,7 @@ interface ConnectionState {
   waiting: Map<string, { cols: number; rows: number }>;
   unwatchDevice?: () => void;
   unwatchGate?: () => void;
+  unwatchLock?: () => void;
   recheck?: ReturnType<typeof setTimeout>;
   excused?: { frames: ExcusedFrame[]; last: number };
 }
@@ -62,7 +65,7 @@ function stateOf(client: Client): ConnectionState {
 }
 
 /** The data for a connection's upgrade: it starts to interact unless its access is read-only. */
-export function connectionData(fields: { machineEvents?: MachineEventDocument; relay?: MachineRelay; deviceId: string | undefined; readOnly: boolean; open?: boolean; bridge?: boolean; surface?: TelemetrySurface; ingress?: TelemetryIngress; recheckMs?: number }): SocketData {
+export function connectionData(fields: { machineEvents?: MachineEventDocument; relay?: MachineRelay; deviceId: string | undefined; readOnly: boolean; open?: boolean; bridge?: boolean; surface?: TelemetrySurface; ingress?: TelemetryIngress; recheckMs?: number; untilLock?: (close: () => void) => () => void }): SocketData {
   const data: SocketData = { connectionId: crypto.randomUUID(), attached: new Map<string, { keepSize: boolean }>(), conversationInterests: new Set<string>(), conversationWatches: new Set<string>(), promptWatches: new Set<string>(), output: new Map(), ...fields };
   states.set(data, { closing: false, revoked: false, mode: fields.readOnly ? "observe" : "interact", roles: 0, watches: new Map<string, PaneView>(), waiting: new Map() });
   return data;
@@ -247,6 +250,10 @@ export function createConnections({ clients, present, pending, devices, detachCl
       if (!state.revoked && !client.data.readOnly && !devices.canDrive(client.data.deviceId)) end(client, "revoked");
       if (state.revoked) return false;
     }
+    if (client.data.untilLock) {
+      state.unwatchLock = client.data.untilLock(() => end(client, "revoked"));
+      if (state.revoked) return false;
+    }
     if (client.data.recheckMs !== undefined) state.recheck = setTimeout(() => client.close(1000, "Portal sign-in check"), client.data.recheckMs);
     return true;
   }
@@ -380,6 +387,7 @@ export function createConnections({ clients, present, pending, devices, detachCl
         state.excused = undefined;
         state.unwatchDevice?.();
         state.unwatchGate?.();
+        state.unwatchLock?.();
         clearTimeout(state.recheck);
         state.closing = true;
         present.delete(client);

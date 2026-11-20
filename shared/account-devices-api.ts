@@ -3,6 +3,7 @@
  * and the recovery acts. Shapes and validators only, and nothing here is sent while the release flag is off.
  */
 import { AccountRecordError, isAccountKeyEncoding, parseSafetyRecord, type BlockRecord, type SafetyRecord } from "./account-records.ts";
+import { PAIR_FINGERPRINT_PATTERN } from "./pair-fingerprint.ts";
 
 /**
  * The release flag of step 2: unset or anything but `1` keeps every existing path. Read only through
@@ -118,7 +119,8 @@ export type HoldState =
 
 /**
  * Device table R11: the acts of `ovis recover`, over the recovery socket only (and, one confirm each, on
- * the desktop app's own screen). `undo` with no rows ends every release; `admit` names one pending redemption.
+ * the desktop app's own screen). `undo` with no rows ends every release; `admit` names one pending redemption and the
+ * fingerprint of its key the terminal showed, which must match it.
  */
 export type RecoveryAction =
   | { readonly act: "list" }
@@ -127,10 +129,20 @@ export type RecoveryAction =
   | { readonly act: "remove"; readonly targets: readonly string[] }
   | { readonly act: "revoke_all" }
   | { readonly act: "lift"; readonly blocks: readonly string[] }
-  | { readonly act: "admit"; readonly pending: string };
+  | { readonly act: "admit"; readonly pending: string; readonly fingerprint: string };
+
+/** A safety record still in force, named by the ID the recovery socket accepts for a lift. */
+export type RecoveryStanding = {
+  readonly kind: "block" | "freeze";
+  readonly id: string;
+  readonly target: string;
+  readonly account: string;
+  readonly signer: string;
+};
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const HEX32 = /^[0-9a-f]{32}$/;
+const LIFT_ID = /^(?:f:)?[0-9a-f]{64}$/;
 /** A row id of either device file: 16 lowercase hex (server/devices.ts, accountDeviceId). */
 const ROW_ID = /^[0-9a-f]{16}$/;
 const ids = (value: unknown, pattern: RegExp): value is string[] =>
@@ -179,7 +191,7 @@ export function parseBlockReceipt(value: unknown): BlockReceipt {
 
 /** Device table R11: one recovery act; throws AccountDevicesApiError. Every list names 1-64 entries. */
 export function parseRecoveryAction(value: unknown): RecoveryAction {
-  const action = shape(value, ["act", "rows", "targets", "blocks", "pending"]);
+  const action = shape(value, ["act", "rows", "targets", "blocks", "pending", "fingerprint"]);
   const only = (...fields: string[]) => Object.keys(action).every((name) => name === "act" || fields.includes(name));
   const ok = (() => {
     switch (action.act) {
@@ -189,8 +201,9 @@ export function parseRecoveryAction(value: unknown): RecoveryAction {
       // a row id or an account key, nothing in between
       case "remove": return only("targets") && Array.isArray(action.targets) && action.targets.length >= 1 && action.targets.length <= 64
         && action.targets.every((target) => typeof target === "string" && (ROW_ID.test(target) || isAccountKeyEncoding(target)));
-      case "lift": return only("blocks") && ids(action.blocks, HEX64);
-      case "admit": return only("pending") && typeof action.pending === "string" && HEX32.test(action.pending);
+      case "lift": return only("blocks") && ids(action.blocks, LIFT_ID);
+      case "admit": return only("pending", "fingerprint") && typeof action.pending === "string" && HEX32.test(action.pending)
+        && typeof action.fingerprint === "string" && PAIR_FINGERPRINT_PATTERN.test(action.fingerprint);
       default: return false;
     }
   })();

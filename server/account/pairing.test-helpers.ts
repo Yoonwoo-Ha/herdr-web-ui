@@ -13,12 +13,13 @@ import { exportAccountKey, newRecordId, signAccountRecord } from "../../shared/a
 import { FakeAccountService } from "../../shared/account-service-fake.ts";
 import { importPublicKey } from "../../shared/relay-e2ee.ts";
 import type { HttpRequest } from "../../shared/relay-mux-engine.ts";
-import type { SessionError } from "../../shared/relay-mux.ts";
+import { FrameType, KEY_PROOF_FEATURE, type MuxFrame, type SessionError } from "../../shared/relay-mux.ts";
+import { pairFingerprint, signPairProof } from "../../shared/pair-fingerprint.ts";
 import { decodeOffer } from "../../shared/relay-offer.ts";
 import { readDeviceRegistry } from "../devices.ts";
 import { createServer } from "../index.ts";
 import { RelayService } from "../relay/service.ts";
-import { bounded, relayConnection, TestClock } from "../relay/test-helpers.ts";
+import { bounded, deferred, relayConnection, TestClock } from "../relay/test-helpers.ts";
 
 /** The relay id the harness's sessions sign in to (relayConnection), which a link names. */
 export const SERVER_ID = "0123456789abcdef0123456789abcdef";
@@ -67,14 +68,15 @@ export async function memberRow(account: string) {
  * itself by default. `accountService`: OVIS_ACCOUNT_SERVICE_URL's value (`off` turns it off). `server`: further options
  * of createServer.
  */
-export async function pairingPc(options: { rows?: readonly { created_at: string }[]; accountFetch?: (request: Request, service: FakeAccountService) => Promise<Response>; accountService?: string; server?: Partial<Parameters<typeof createServer>[0]> } = {}) {
+export async function pairingPc(options: { rows?: readonly { created_at: string }[]; accountFetch?: (request: Request, service: FakeAccountService) => Promise<Response>; accountService?: string; server?: Partial<Parameters<typeof createServer>[0]>; prepare?: (stateDir: string) => void; startRelay?: boolean } = {}) {
   const stateDir = mkdtempSync(join(tmpdir(), "ovis-pairing-"));
   const first = options.rows?.[0];
   if (first) writeFileSync(join(stateDir, "devices.json"), JSON.stringify({ gate_closed_at: first.created_at, devices: options.rows }), { mode: 0o600 });
+  options.prepare?.(stateDir);
   const account = new FakeAccountService();
   const accountFetch = options.accountFetch;
   const service = new RelayService({ stateDir, relay: "wss://relay.test", connect: () => idleSocket() });
-  const app = createServer({ ...options.server, port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, sidecar: false, relay: service,
+  const app = createServer({ ...options.server, port: 0, hostname: "127.0.0.1", stateDir, token: options.server?.token ?? "", tailscaleOwner: null, sidecar: false, relay: service,
     accountService: { url: options.accountService ?? "https://account.test", fetch: accountFetch ? (request) => accountFetch(request, account) : account.fetch } });
   const base = `http://127.0.0.1:${app.port}`;
   const closes: (() => void)[] = [];
@@ -95,8 +97,10 @@ export async function pairingPc(options: { rows?: readonly { created_at: string 
     if (offer.status !== 200 || code === undefined) throw new Error(`The offer gave no code: ${offer.status} ${JSON.stringify(offer.body)}`);
     return code;
   };
-  const started = await relayControl("/api/relay/start");
-  if (started.status !== 200) throw new Error(`The relay did not start: ${JSON.stringify(started.body)}`);
+  if (options.startRelay !== false) {
+    const started = await relayControl("/api/relay/start");
+    if (started.status !== 200) throw new Error(`The relay did not start: ${JSON.stringify(started.body)}`);
+  }
   return {
     stateDir, app, closes, local, account,
     devices: app.context.services.devices,
@@ -227,4 +231,21 @@ export function sendLink(link: Link, record: unknown): Promise<Answer> {
 
 export function ended(link: Link): Promise<SessionError> {
   return bounded(link.serverError);
+}
+
+/** A device that offers the proof: it pairs, answers the challenge, and reports what it saw. */
+export async function provingDevice(made: Pc, code: string) {
+  const device = await phone();
+  const link = await relayConnection(made);
+  const challenge = deferred<string>();
+  const pending = deferred<MuxFrame>();
+  link.onFrame = (frame) => {
+    if (frame.type === FrameType.KEY_CHALLENGE) challenge.resolve(frame.payload.challenge);
+    if (frame.type === FrameType.KEY_PENDING) pending.resolve(frame);
+  };
+  await link.hello([KEY_PROOF_FEATURE]);
+  link.mux.sendSession({ type: FrameType.PAIR, flags: 0, stream_id: 0, payload: { code, label: "New phone", public_key: device.spki } });
+  const sent = await bounded(challenge.promise);
+  link.mux.sendSession({ type: FrameType.KEY_PROVE, flags: 0, stream_id: 0, payload: { signature: await signPairProof(SERVER_ID, sent, device.spki, device.keys.privateKey) } });
+  return { device, link, challenge: sent, pending: bounded(pending.promise), fingerprint: await pairFingerprint(SERVER_ID, sent, device.spki) };
 }

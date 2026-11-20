@@ -85,7 +85,7 @@ describe("recovery actions (device table R11)", () => {
   test("every act survives JSON", () => {
     const acts = [
       { act: "list" }, { act: "release", rows: ["0123456789abcdef"] }, { act: "undo", rows: null }, { act: "undo", rows: ["0123456789abcdef"] },
-      { act: "remove", targets: [older.spki, "0123456789abcdef"] }, { act: "revoke_all" }, { act: "lift", blocks: [block.id] }, { act: "admit", pending: newRecordId() },
+      { act: "remove", targets: [older.spki, "0123456789abcdef"] }, { act: "revoke_all" }, { act: "lift", blocks: [block.id] }, { act: "admit", pending: newRecordId(), fingerprint: "AB12-CD34" },
     ];
     for (const act of acts) expect(parseRecoveryAction(JSON.parse(JSON.stringify(act)))).toEqual(act as never);
   });
@@ -94,7 +94,8 @@ describe("recovery actions (device table R11)", () => {
     const bad: unknown[] = [
       null, { act: "lock" }, { act: "unlock" }, { act: "list", rows: ["a"] }, { act: "release", rows: [] }, { act: "release" },
       { act: "release", rows: Array.from({ length: 65 }, (_, i) => `row${i}`) }, { act: "lift", blocks: ["a".repeat(32)] },
-      { act: "admit", pending: "x" }, { act: "revoke_all", targets: ["a"] }, { act: "remove", targets: ["../x"] },
+      { act: "admit", pending: "x" }, { act: "admit", pending: newRecordId() }, { act: "admit", pending: newRecordId(), fingerprint: "ab12-cd34" },
+      { act: "admit", pending: newRecordId(), fingerprint: "AB12-CD34", extra: 1 }, { act: "revoke_all", targets: ["a"] }, { act: "remove", targets: ["../x"] },
       // R11, T70: a target is a row id or an account key, nothing in between
       { act: "remove", targets: ["a".repeat(121)] }, { act: "remove", targets: ["a".repeat(65)] }, { act: "remove", targets: ["not_a_row"] }, { act: "remove", targets: ["a".repeat(64)] }, { act: "release", rows: ["not_a_row"] }, { act: "undo", rows: ["ABCDEF0123456789"] },
     ];

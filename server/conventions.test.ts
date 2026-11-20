@@ -147,6 +147,7 @@ describe("herdr socket", () => {
   const UNIX_CONNECT_ALLOWED: Record<string, string> = {
     "server/herdr/client.ts": "the one herdr RPC client: one connection per call, plus subscribeEvents",
     "server/herdr-marker.ts": "a liveness probe: connects and ends at once, sends no request",
+    "server/account/recovery.ts": "ovis recover's own private recovery socket in this PC's state folder, not herdr's",
   };
   const NET_CONNECT_ALLOWED: Record<string, string> = {
     "server/ssh-askpass.ts": "the SSH askpass helper's own private socket, not herdr's",

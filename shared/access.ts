@@ -1,7 +1,7 @@
 import type { PortalSignIn } from "./portal.ts";
 
 export type AccessVia = "local" | "tailscale" | "device" | "token" | "open" | "portal" | "relay";
-export type AccessRefusal = "other_user" | "pairing_required" | "token_required";
+export type AccessRefusal = "other_user" | "pairing_required" | "token_required" | "locked" | "strict";
 /** What a paired device may do: drive (type, answer, manage) or only watch. */
 export type DeviceRole = "drive" | "watch";
 

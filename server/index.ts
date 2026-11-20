@@ -62,8 +62,12 @@ import { DeviceJournal } from "./account/device-journal.ts";
 import { mergeAccountState } from "./account/account-merge.ts";
 import { AccountHolds } from "./account/holds.ts";
 import { AccountIntroductions } from "./account/introductions.ts";
+import { RecoveryReleases } from "./account/recovery.ts";
+import { openPcRecovery } from "./account/recovery-server.ts";
 import { PendingRedemptions, type PendingRedemption } from "./account/pending.ts";
 import { askScreenForKey, KeyProofPairings } from "./account/key-proof.ts";
+import { lockRoutes } from "./account/lock-routes.ts";
+import { LockSignal } from "./lock-boundary.ts";
 import { desktopOwnerChannel, desktopOwnerFdChannel, LOCAL_CONFIRM_FILE, LocalConfirms, openConfirmListener, takeDesktopOwnerFd } from "./account/local-confirm.ts";
 import { Telemetry } from "./telemetry.ts";
 import { UsageService } from "./usage.ts";
@@ -536,6 +540,38 @@ export function createServer(
     ? new KeyProofPairings({ pending: pendingRedemptions, seams: devices }) : undefined;
   devices.onKeyRemoved((key, cause) => pendingRedemptions?.dropKey(key, cause));
   const askScreen = localConfirms && keyProofPairings ? (entry: PendingRedemption) => askScreenForKey(localConfirms, keyProofPairings, entry) : undefined;
+  // `ovis recover` (server/account/recovery.ts): this PC's user, at its terminal or over SSH, on a socket no route reaches.
+  // Each release and undo is journalled per row before it takes effect; whether the log can be read is asked live
+  const recoveryReleases = opensAll && journal ? new RecoveryReleases({
+    journal: (entry) => {
+      if (entry.kind === "release") {
+        for (const row of entry.rows) journal.append({ kind: "release", how: "recover", key: row.key, no: null, row: row.id, label: row.id, by: entry.by, account: null });
+      } else {
+        for (const row of entry.rows) journal.append({ kind: "release", how: "recover", key: null, no: null, row, label: row, by: entry.by, account: null, undo: entry.releases.join(",") });
+      }
+    },
+  }) : undefined;
+  const recoverySocket = recoveryReleases && journal && safetyLog ? openPcRecovery({
+    stateDir, devices, pcAccount, journal, safetyLog, releases: recoveryReleases, pending: pendingRedemptions, pairings: keyProofPairings,
+  }) : null;
+  // the lock is written only after this PC's screen approves it, then the rows it does not let in end (T46)
+  const lockSignal = safetyLog ? new LockSignal() : undefined;
+  const lockHandler = localConfirms && safetyLog && pcAccount ? lockRoutes({ confirms: localConfirms, store: {
+    bound: () => pcAccount.binding() !== null,
+    state: () => ({ lock: safetyLog.state().locks.at(-1)?.record.id ?? null, strict: devices.failsClosed }),
+    preview: () => ({ rows: devices.list(null).filter((row) => devices.originOf(row.id)?.from !== "pc").map((row) => ({ id: row.id, label: row.label, origin: devices.originOf(row.id), file: "devices" as const })), grants: ["token", "portal", "tailscale", "open_lan", "loopback"] }),
+    lock: () => {
+      if (safetyLog.appendLock(pcAccount.binding()).outcome !== "applied") return;
+      devices.endUnlockedRows();
+      lockSignal?.fire();
+    },
+    // the unlock names the lock's own account: a lock stays until an unlock names it, whatever the binding did since (P11)
+    unlock: (lockId) => {
+      const lock = safetyLog.state().locks.find((entry) => entry.record.id === lockId);
+      safetyLog.appendUnlock(lockId, lock === undefined ? null : { account: lock.record.account });
+    },
+    removalsPending: () => devices.pendingLockRemovals().length > 0,
+  } }) : undefined;
   const services: RequestServices = {
     runtimeMove: options.runtimeService ? moveService({
       stateDir, port: server.port ?? DEFAULT_PORT, serving: runtime, facts: () => options.runtimeService?.facts(),
@@ -550,7 +586,7 @@ export function createServer(
       switchRuntime: () => { const answer = options.runtimeService!.request("herdr-core"); return answer.ok ? null : answer.message; },
       ...(options.herdrCoreInstaller ? { installer: options.herdrCoreInstaller } : {}),
     }) : null,
-    options, relay: ovisRelay, relayReceiptIds: new RelayReceiptIds(), hostname, token, bridgeToken, bootId, devices, accountMailbox, accountIntroductions: new AccountIntroductions(Date.now, join(stateDir, "account-introductions.json")), accountHolds, safetyLog, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, cliProxyRoutes, usageLogin, usage, usageAccounts, systemSampler, fontsDir: join(stateDir, "fonts"), voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartup, localConfirms, pendingRedemptions, keyProofPairings, askScreenForKey: askScreen,
+    options, relay: ovisRelay, relayReceiptIds: new RelayReceiptIds(), hostname, token, bridgeToken, bootId, devices, accountMailbox, accountIntroductions: new AccountIntroductions(Date.now, join(stateDir, "account-introductions.json")), accountHolds, safetyLog, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, cliProxyRoutes, usageLogin, usage, usageAccounts, systemSampler, fontsDir: join(stateDir, "fonts"), voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartup, localConfirms, recoveryReleases, pendingRedemptions, keyProofPairings, askScreenForKey: askScreen, lockRoutes: lockHandler, lockSignal,
     get portalStartupResult() { return portalStartupResult; },
   };
   ovisRelay.resume(services, server.port ?? DEFAULT_PORT);
@@ -650,6 +686,7 @@ export function createServer(
       ipv6?.stop(true);
       ownerListener?.stop(true);
       confirmListener?.stop();
+      recoverySocket?.stop();
       desktopOwner?.stop();
       for (const listener of lanListeners) listener.stop(true);
       releaseFilePool();
