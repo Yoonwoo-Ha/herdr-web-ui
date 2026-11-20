@@ -559,7 +559,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if (pathname.startsWith("/api/account/")) return handleAccountRequest(request, pathname, ctx, access);
   if (pathname === "/api/relay" || pathname.startsWith("/api/relay/")) {
     // the paired device that asks, when one does: a pairing code it starts or is handed goes with it (DeviceStore.revoke)
-    return handleRelayRequest(request, pathname, ctx, access.level === "full" ? access.device?.id ?? null : null);
+    return handleRelayRequest(request, pathname, ctx, access.level === "full" ? access.device?.id ?? null : null, access.level === "full" && access.via === "local");
   }
   if (pathname === "/api/connection-diagnostics") { setRequestRoute(pathname); return clientConnectionLog.handle(request, client ?? "unknown"); }
   if (pathname === "/api/telemetry") { setRequestRoute(pathname); return handleTelemetryRequest(request, options.telemetry); }

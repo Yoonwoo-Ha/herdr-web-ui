@@ -1024,6 +1024,31 @@ export class DeviceStore {
     return signers.length > 0 && signers.every((d) => d.origin!.admit_no < joined && !this.frozen(d));
   }
 
+  /**
+   * What a remote caller may Revoke here (R1/T19): its own row alone, or a target whose affected rows are all
+   * either its own row or newer. Revoke is key-wide for keyed rows, so a self-Revoke cannot take a duplicate along.
+   */
+  remoteRevoke(callerId: string | null, targetId: string): "allowed" | "older" | "unorderable" {
+    const caller = callerId === null ? undefined : this.devices.find((d) => d.id === callerId);
+    const target = this.devices.find((d) => d.id === targetId);
+    if (caller === undefined || target === undefined) return "unorderable";
+    const rows = target.relay_public_key === undefined ? [target] : this.devices.filter((d) => d.relay_public_key === target.relay_public_key);
+    const verdicts = rows.map((row) => row.id === caller.id ? "older" : compareAdmission(caller, row));
+    if ((caller.id !== target.id || rows.length === 1) && verdicts.every((verdict) => verdict === "older")) return "allowed";
+    return verdicts.includes("newer") ? "older" : "unorderable";
+  }
+
+  /**
+   * Admission-order authority (P21/T36): a self-leave needs no age; another key needs at least one target row,
+   * and every target row must be newer than every member row of the signer.
+   */
+  removeAuthority(signer: string, key: string, account: string): boolean {
+    if (signer === key) return true;
+    const signers = this.memberRows(signer, account);
+    const targets = this.devices.filter((d) => d.relay_public_key === key);
+    return signers.length > 0 && targets.length > 0 && targets.every((target) => signers.every((row) => compareAdmission(row, target) === "older"));
+  }
+
   /** Whether the account-opens-all release flag is on for this store. */
   opensAll(): boolean { return this.safety !== null; }
 
@@ -2669,9 +2694,13 @@ export async function handleDeviceRequest(request: Request, pathname: string, st
     const manager = drive && access.via !== "portal";
     if (manager && connections && new URL(request.url).searchParams.get("check") === "1") await connections.check(CHECK_MS);
     const live = manager ? connections?.list() ?? new Map<string, DeviceConnection>() : new Map<string, DeviceConnection>();
-    const devices = store.list(access.level === "full" ? access.device?.id ?? null : null, drive)
-      .map((device) => { const connection = live.get(device.id); return connection ? { ...device, connection } : device; });
-    return jsonResponse({ devices }, 200, { "cache-control": "no-store" });
+    // with the release flag on, a remote caller is told what it may Revoke from afar, row by row (T19, T20)
+    const remote = store.opensAll() && access.level === "full" && access.via !== "local";
+    const callerId = access.level === "full" ? access.device?.id ?? null : null;
+    const devices = store.list(callerId, drive)
+      .map((device) => { const connection = live.get(device.id); return connection ? { ...device, connection } : device; })
+      .map((device) => remote ? { ...device, remote_revoke: drive ? store.remoteRevoke(callerId, device.id) : "read_only" as const } : device);
+    return jsonResponse({ devices, ...(remote ? { revoke_all: "local_only" as const } : {}) }, 200, { "cache-control": "no-store" });
   }
   if (!sameOrigin(request) || request.headers.get("x-herdr-machine") !== "1") return jsonResponse({ error: { code: "invalid_origin", message: "Manage devices from this app" } }, 403);
   if (access.level === "full" && access.role === "watch") return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);
@@ -2717,6 +2746,8 @@ export async function handleDeviceRequest(request: Request, pathname: string, st
   if (pathname === "/api/devices/revoke-all") {
     setRequestRoute("/api/devices/revoke-all");
     if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+    // Revoke all is done at the PC: its screen, or `ovis recover` in a terminal there (T20 in 2d)
+    if (store.opensAll() && access.level === "full" && access.via !== "local") return jsonResponse({ error: { code: "local_required", message: "Revoke all is done at that PC" } }, 403);
     const revoked = store.revokeAll();
     onRevoked?.(revoked);
     // the caller's own device cookie, if it holds one, names a device that is gone, under either name
@@ -2734,6 +2765,10 @@ export async function handleDeviceRequest(request: Request, pathname: string, st
     // and the revoke are one step here, so no link comes between them. Membership is what the row says: a first
     // member linked itself and named its account, which nothing here proves (docs/account.md, rule 4)
     const unless = request.headers.get("x-ovis-unless-account");
+    // from afar, a caller Revokes itself and the rows that joined this PC after it, and nothing else (T19 in 2d)
+    if (store.opensAll() && access.level === "full" && access.via !== "local" && store.has(id) && store.remoteRevoke(access.device?.id ?? null, id) !== "allowed") {
+      return jsonResponse({ error: { code: "older_device", message: "removing an older device is done from that PC or from an older device" } }, 403);
+    }
     if (unless !== null && store.isMemberOf(id, unless)) return jsonResponse({ error: { code: "account_member", message: "that device is a member of the account by now" } }, 409);
     // a revoke takes the key's other rows too (DeviceStore.revoke): each one's cleanup runs, not the named row's alone
     const removed: string[] = [];

@@ -42,11 +42,17 @@ function pc() {
   return { dir, ...open(dir) };
 }
 
-async function member(devices: DeviceStore): Promise<Key & { id: string }> {
+async function paired(devices: DeviceStore): Promise<Key & { id: string }> {
   const k = await key();
-  const id = devices.pairRelay(devices.startPairing().code, "Phone", k.spki)!.device.id;
-  devices.linkAccountKey(id, k.spki, k.spki, ACCOUNT);
-  return { ...k, id };
+  const pairing = devices.pairRelay(devices.startPairing().code, "Phone", k.spki);
+  if (pairing === null) throw new Error("Fixture pairing was refused");
+  return { ...k, id: pairing.device.id };
+}
+
+async function member(devices: DeviceStore): Promise<Key & { id: string }> {
+  const k = await paired(devices);
+  devices.linkAccountKey(k.id, k.spki, k.spki, ACCOUNT);
+  return k;
 }
 
 const block = (target: string, by: Key): Promise<BlockRecord> =>
@@ -79,9 +85,9 @@ describe("a block holds only while its signer is a member here (P16, P19, T73)",
 
   test("P19, T36: a waiting removal survives an unrelated Revoke and applies when its signer joins", async () => {
     const { dir, devices } = pc();
+    const signer = await paired(devices);
     const target = await member(devices);
     const unrelated = await member(devices);
-    const signer = await key();
     const identity = loadRelayIdentity(dir);
     const mailbox = new AccountMailbox({ devices, identity: () => identity, service: "https://account.test", pendingPath: join(dir, "account-pending.json") });
     const removal = await remove(target.spki, signer);
@@ -89,11 +95,33 @@ describe("a block holds only while its signer is a member here (P16, P19, T73)",
       .toEqual([{ id: removal.id, outcome: "refused", code: "signer_not_member" }]);
     expect(devices.revoke(unrelated.id)).toBe(true);
 
-    const add = await signAccountRecord({ v: 1, kind: "add", account: ACCOUNT, key: signer.spki, label: "Signer", role: "drive", issued_at: new Date().toISOString(), id: newRecordId(), signer: target.spki }, target.keys.privateKey);
-    expect(await applyAccountRecords(devices, [add], identity.server_id, Date.now(), mailbox.gates()))
-      .toEqual([{ id: add.id, outcome: "applied" }]);
-    await mailbox.settle();
+    expect(devices.linkAccountKey(signer.id, signer.spki, signer.spki, ACCOUNT)).not.toBeNull();
+    expect(await mailbox.settle()).toBe(1);
     expect(devices.has(target.id)).toBe(false);
+  });
+
+  test("P21, T36: a waiting removal whose signer joins after its target is refused, not kept", async () => {
+    const { dir, devices } = pc();
+    const target = await member(devices);
+    const signer = await key();
+    const identity = loadRelayIdentity(dir);
+    const pendingPath = join(dir, "account-pending.json");
+    const mailbox = new AccountMailbox({ devices, identity: () => identity, service: "https://account.test", pendingPath });
+    const removal = await remove(target.spki, signer);
+    expect(await applyAccountRecords(devices, [removal], identity.server_id, Date.now(), mailbox.gates(), (record) => mailbox.wait(record)))
+      .toEqual([{ id: removal.id, outcome: "refused", code: "signer_not_member" }]);
+
+    const pairing = devices.pairRelay(devices.startPairing().code, "Signer", signer.spki);
+    if (pairing === null) throw new Error("Fixture pairing was refused");
+    expect(devices.linkAccountKey(pairing.device.id, signer.spki, signer.spki, ACCOUNT)).not.toBeNull();
+    expect(mailbox.waitingRemoveKeys()).toEqual([target.spki]);
+    expect(await applyAccountRecords(devices, [removal], identity.server_id, Date.now(), mailbox.gates()))
+      .toEqual([{ id: removal.id, outcome: "refused", code: "older_device" }]);
+
+    expect(await mailbox.settle()).toBe(0);
+    expect(devices.has(target.id)).toBe(true);
+    expect(mailbox.waitingRemoveKeys()).toEqual([]);
+    expect(JSON.parse(readFileSync(pendingPath, "utf8"))).toEqual([]);
   });
 
   test("P19, T36: revoking the signer discards its pending removal (T18)", async () => {
@@ -112,14 +140,15 @@ describe("a block holds only while its signer is a member here (P16, P19, T73)",
 
   test("P19, T36: removing the signer during retry discards its draining removal only", async () => {
     const { dir, devices } = pc();
-    const target = await member(devices);
+    const revoker = await member(devices);
     const signer = await member(devices);
+    const target = await member(devices);
     const absent = await key();
     const identity = loadRelayIdentity(dir);
     const pendingPath = join(dir, "account-pending.json");
     const mailbox = new AccountMailbox({ devices, identity: () => identity, service: "https://account.test", pendingPath });
     const unrelated = await remove(target.spki, absent);
-    expect(mailbox.wait(await remove(signer.spki, target))).toBe(true);
+    expect(mailbox.wait(await remove(signer.spki, revoker))).toBe(true);
     expect(mailbox.wait(await remove(target.spki, signer))).toBe(true);
     expect(mailbox.wait(unrelated)).toBe(true);
 

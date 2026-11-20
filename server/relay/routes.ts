@@ -9,7 +9,7 @@ import { ACCOUNT_ID, AccountServiceOffError, NoAccountNamedError } from "./servi
  * Drive authority and the outer origin gate are shared with Portal in dispatch.ts. `caller`: the paired device
  * the request came from, null for this PC itself: it holds the pairing code an offer or a typed code gives it.
  */
-export async function handleRelayRequest(request: Request, pathname: string, context: ServerContext, caller: string | null = null): Promise<Response> {
+export async function handleRelayRequest(request: Request, pathname: string, context: ServerContext, caller: string | null = null, local = false): Promise<Response> {
   const service = context.services.relay;
   const reply = (body: unknown, status = 200) => jsonResponse(body, status, { "cache-control": "no-store" });
   const fail = (code: string, message: string, status: number) => reply({ error: { code, message } }, status);
@@ -142,6 +142,8 @@ export async function handleRelayRequest(request: Request, pathname: string, con
       }
       case "/api/relay/reset-identity": {
         setRequestRoute("/api/relay/reset-identity");
+        // it ends every relay row whatever its age: with the release flag on, only this PC itself may ask (T20, rule B)
+        if (context.services.devices.opensAll() && !local) return fail("local_required", "Resetting the relay identity is done at that PC", 403);
         const status = await service.resetIdentity();
         return reply(status, status.blocked ? 409 : 200);
       }

@@ -195,7 +195,7 @@ export class AccountMailbox {
   gates(): AddGates {
     return {
       enrolling: () => this.options.holds?.enrolling() ?? false,
-      held: (key) => this.pendingError !== null || this.holdsKey(key) || (this.options.holds?.holds(key) ?? false),
+      held: (key, includeWaiting = true) => this.pendingError !== null || (includeWaiting && this.holdsKey(key)) || (this.options.holds?.holds(key) ?? false),
       removing: (key) => this.pendingError !== null || this.holdsKey(key),
     };
   }

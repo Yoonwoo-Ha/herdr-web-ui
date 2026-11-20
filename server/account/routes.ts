@@ -10,7 +10,7 @@ import { applyAccountRecords, applyEnrollment, applyLink, type LinkRefusal } fro
 const LINK_STATUS: Record<LinkRefusal, number> = {
   record_invalid: 400, signature_invalid: 400, account_mismatch: 409, signer_not_member: 403,
   tombstoned: 409, link_not_owner: 403, key_in_use: 409, account_unavailable: 503, enrolling: 409, removal_pending: 409,
-  link_required: 403, unverified_device: 403, pairing_ended: 409,
+  link_required: 403, unverified_device: 403, pairing_ended: 409, older_device: 403,
 };
 
 /**
