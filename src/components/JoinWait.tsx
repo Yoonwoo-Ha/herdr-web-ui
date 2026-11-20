@@ -39,7 +39,20 @@ function HoldLine({ pc, hold, now }: { readonly pc: string; readonly hold: HoldS
   return (
     <div className="join-wait" role="status">
       <span>{line}</span>
-      <button type="button" className="icon-button" aria-label={t("Dismiss")} title={t("Dismiss")} onClick={() => setHidden(true)}><X /></button>
+      {hold.reason === "join_hold" && <span className="settings-hint">{t("Your other devices are told first. One of them can let this device in now.")}</span>}
+      <button type="button" className="icon-button update-notice-dismiss" aria-label={t("Dismiss")} title={t("Dismiss")} onClick={() => setHidden(true)}><X /></button>
     </div>
   );
+}
+
+/**
+ * "It's me" on an undecided admission (device table T53): one press, held while it goes to the PC; `refusedBy` names
+ * the PC that took none of it, which answers a refusal with nothing.
+ */
+export function ItsMeButton({ sending, onPress, refusedBy = null }: { sending: boolean; onPress: () => void; refusedBy?: string | null }) {
+  const t = useT();
+  return <>
+    <button type="button" className="btn" disabled={sending} onClick={onPress}>{t("It's me")}</button>
+    {refusedBy !== null && <p className="settings-hint its-me-refused" role="status">{t("{pc} did not accept It's me from this device.", { pc: refusedBy })}</p>}
+  </>;
 }

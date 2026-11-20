@@ -18,17 +18,32 @@ function socket(stopped: boolean, notices?: Parameters<typeof createSocket>[0]["
   return { handler, client, ended };
 }
 
-it("T53 postponed: a socket refuses It's me even with the session's proved key", async () => {
-  const itsMe = mock(() => true);
-  const { handler, client } = socket(false, { replay: () => null, seen() {}, decide() {}, open: () => undefined, mayAnswer: () => false, block: async () => ({ outcome: "refused", id: "", reason: "record_invalid" }), itsMe });
+it("T53: a socket answers It's me only with the session's proved key, never with a bare device id", async () => {
+  const calls: string[][] = [];
+  const { handler, client } = socket(false, { replay: () => null, seen() {}, decide() {}, open: () => undefined, mayAnswer: () => false, block: async () => ({ outcome: "refused", id: "", reason: "record_invalid" }),
+    itsMe: (...args) => { calls.push(args); return true; } });
   const sent = spyOn(client, "send");
   client.data.deviceId = "member";
-  for (const provedKey of [undefined, "session-key"]) {
-    client.data.provedKey = provedKey;
+  const answer = JSON.stringify({ type: "notice-answer", id: "admission", answer: "its_me" });
+  await handler.message(client, answer);
+  expect(calls).toEqual([]);
+  client.data.provedKey = "session-key";
+  await handler.message(client, answer);
+  expect(calls).toEqual([["member", "admission", "session-key"]]);
+  expect(sent).not.toHaveBeenCalled();
+});
+
+it("T53: an It's me the PC cannot record (its journal or registry write throws) keeps the connection and says the notice stays open", async () => {
+  const { handler, client } = socket(false, { replay: () => null, seen() {}, decide() {}, open: () => undefined, mayAnswer: () => false, block: async () => ({ outcome: "refused", id: "", reason: "record_invalid" }),
+    itsMe: () => { throw new Error("EIO"); } });
+  const sent = spyOn(client, "send");
+  const logged = spyOn(console, "error").mockImplementation(() => {});
+  client.data.deviceId = "member";
+  client.data.provedKey = "session-key";
+  try {
     await handler.message(client, JSON.stringify({ type: "notice-answer", id: "admission", answer: "its_me" }));
-  }
-  expect(sent.mock.calls.map(([raw]) => JSON.parse(String(raw)).code)).toEqual(["not_supported", "not_supported"]);
-  expect(itsMe).not.toHaveBeenCalled();
+  } finally { logged.mockRestore(); }
+  expect(sent.mock.calls.map(([raw]) => JSON.parse(String(raw)).code)).toEqual(["notice_decision_failed"]);
 });
 
 it("flag off: a socket ignores It's me as before, without answering", async () => {

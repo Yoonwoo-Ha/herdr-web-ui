@@ -1,9 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, jest } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, jest, mock } from "bun:test";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 
 import { SettingsProvider } from "../lib/settings.ts";
-import { translate } from "../lib/i18n.ts";
-import { JoinWait } from "./JoinWait.tsx";
+import { ItsMeButton, JoinWait } from "./JoinWait.tsx";
 
 const NOW = Date.parse("2026-11-20T04:00:00.000Z");
 
@@ -55,9 +54,10 @@ describe("the new device's wait", () => {
     expect(await mount(<JoinWait pc="Desk" hold={{ reason: "catching_up" }} now={NOW} />)).not.toMatch(/\d/);
   });
 
-  it("P17: before the notice is published, the wait shows only the notice status", async () => {
+  it("P17: before the PC has told the other devices, it says so and shows no number", async () => {
     const shown = await mount(<JoinWait pc="Desk" hold={{ reason: "join_hold", until: null }} now={NOW} />);
-    expect(shown).toBe(translate("en", "{pc} is telling your other devices first", { pc: "Desk" }));
+    expect(shown).toContain("telling your other devices");
+    expect(shown).not.toMatch(/\d/);
   });
 
   it("T67: a PC that holds nothing shows no wait", async () => {
@@ -65,7 +65,8 @@ describe("the new device's wait", () => {
   });
 
   it("T53/T67: dismissal leaves the same hold hidden without answering, and a new reason shows", async () => {
-    const screen = (wait: React.ReactElement) => <SettingsProvider>{wait}</SettingsProvider>;
+    const onPress = mock();
+    const screen = (wait: React.ReactElement) => <SettingsProvider>{wait}<ItsMeButton sending={false} onPress={onPress} /></SettingsProvider>;
     const hold = { reason: "join_hold", until: null } as const;
     await act(async () => { renderer = create(screen(<JoinWait pc="Desk" hold={hold} now={NOW} />)); });
     const view = renderer;
@@ -73,9 +74,20 @@ describe("the new device's wait", () => {
     const dismiss = view.root.find((node) => node.type === "button" && node.props["aria-label"] === "Dismiss");
     await act(async () => { dismiss.props.onClick(); });
     expect(view.root.findAllByProps({ role: "status" })).toEqual([]);
+    expect(onPress).not.toHaveBeenCalled();
     await act(async () => { view.update(screen(<JoinWait pc="Desk" hold={{ ...hold, until: "2026-11-20T04:00:07.400Z" }} now={NOW + 1000} />)); });
     expect(view.root.findAllByProps({ role: "status" })).toEqual([]);
     await act(async () => { view.update(screen(<JoinWait pc="Desk" hold={{ reason: "catching_up" }} now={NOW} />)); });
     expect(text(view.root.findByProps({ role: "status" }))).toContain("checking your account");
+    expect(onPress).not.toHaveBeenCalled();
+  });
+
+  it("T53: It's me is one press, held while it goes to each PC", async () => {
+    let presses = 0;
+    await mount(<ItsMeButton sending={false} onPress={() => { presses += 1; }} />);
+    await act(async () => { renderer!.root.findByType("button").props.onClick(); });
+    expect(presses).toBe(1);
+    await act(async () => { renderer!.update(<SettingsProvider><ItsMeButton sending onPress={() => {}} /></SettingsProvider>); });
+    expect(renderer!.root.findByType("button").props.disabled).toBe(true);
   });
 });

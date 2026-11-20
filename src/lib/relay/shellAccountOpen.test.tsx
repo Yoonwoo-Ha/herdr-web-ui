@@ -277,8 +277,33 @@ it("T53, P17 wire: a held refusal whose notice is not published yet reaches the 
   expect(run.current().state).toMatchObject({ kind: "connecting", hold: { reason: "join_hold", until: null } });
 });
 
+it("OD3, T53, P17 wire: a held device asks again within a second, so when the PC lets it in early (It's me) the app opens before the deadline", async () => {
+  class Admitted extends RelayTransport {
+    override get server() { return { version: "1.0.0", relayProtocol: RELAY_PROTOCOL }; }
+  }
+  let attempts = 0;
+  let until = "";
+  const run = await accountPc({ open: async (offer, options, identity) => {
+    attempts++;
+    if (attempts > 1) return new Admitted(offer);
+    return openRelayTransport(offer, {
+      ...options, socket: () => accountOpenPeer(identity, { features: [ACCOUNT_OPENS_ALL_FEATURE], provisional: true, auth: () => accountOpenRefusalFrame("held", "", { reason: "join_hold", until }) }),
+    });
+  } });
+  jest.useFakeTimers();
+  until = new Date(Date.now() + 10_000).toISOString();
+  await run.openPage();
+  expect({ attempts, apps: run.apps() }).toEqual({ attempts: 1, apps: 0 });
+  jest.advanceTimersByTime(999);
+  expect({ attempts, apps: run.apps() }).toEqual({ attempts: 1, apps: 0 });
+  jest.advanceTimersByTime(1);
+  // the retry's connect settles in microtasks: no timer is involved
+  for (let turn = 0; turn < 100 && run.apps() === 0; turn++) await Promise.resolve();
+  expect({ attempts, apps: run.apps(), navigations: run.navigations }).toEqual({ attempts: 2, apps: 1, navigations: [] });
+});
+
 it("T34 wire: the shell stays Connecting until the decoded hold deadline, then retries AUTH", async () => {
-  const delay = 4_321;
+  const delay = 900;
   let until = "";
   const rows: string[] = [];
   const run = await accountPc({ open: (offer, options, identity) => openRelayTransport(offer, {

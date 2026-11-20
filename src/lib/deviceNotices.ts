@@ -24,14 +24,24 @@ export interface PcNotices {
   readonly acked: number;
 }
 
+/** A PC journals the confirmation as a new entry, with the original admission's identity and a new notice id. */
+export function confirmsAdmission(decision: DeviceNotice, admission: DeviceNotice): boolean {
+  return admission.kind === "admit" && admission.open && admission.row !== null && admission.key !== null &&
+    admission.no !== null && admission.account !== null && decision.kind === "confirm" && decision.how === "its_me" &&
+    !decision.open && decision.seq > admission.seq && decision.row === admission.row &&
+    decision.key === admission.key && decision.no === admission.no && decision.account === admission.account;
+}
+
 export function withNoticeReplay(current: PcNotices | undefined, replay: NoticeReplay): PcNotices {
   const dismissed = current?.dismissed ?? new Set<string>();
   const notices = new Map(current?.notices.map((item) => [item.id, item]));
   for (const item of replay.notices) {
     if (!dismissed.has(item.id)) notices.set(item.id, item);
   }
+  const rows = [...notices.values()];
+  const confirmations = rows.filter((item) => item.kind === "confirm" && item.how === "its_me");
   return {
-    notices: [...notices.values()].sort((a, b) => a.seq - b.seq),
+    notices: rows.filter((item) => !confirmations.some((decision) => confirmsAdmission(decision, item))).sort((a, b) => a.seq - b.seq),
     dismissed,
     cut: replay.cut,
     acked: current?.acked ?? 0,

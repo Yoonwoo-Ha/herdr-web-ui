@@ -6,6 +6,7 @@
 import type { DeviceNotice, NoticeAnswer } from "../../../shared/account-devices-api.ts";
 import type { BlockRecord } from "../../../shared/account-records.ts";
 import type { ServerMessage } from "../../../shared/protocol.ts";
+import { confirmsAdmission } from "../deviceNotices.ts";
 import type { BlockSend } from "./fleet-block.ts";
 
 export interface AnswerSocket {
@@ -13,17 +14,29 @@ export interface AnswerSocket {
   sendNotice(message: NoticeAnswer): boolean;
 }
 
-export function answerOnPc(socket: AnswerSocket, answer: NoticeAnswer, timeoutMs: number): Promise<readonly unknown[]> {
+export function answerOnPc(socket: AnswerSocket, request: NoticeAnswer | {
+  readonly answer: Extract<NoticeAnswer, { answer: "its_me" }>;
+  readonly notice: DeviceNotice;
+}, timeoutMs: number): Promise<readonly unknown[]> {
   return new Promise((resolve, reject) => {
     const off = socket.on((message) => {
+      if ("notice" in request) {
+        const notices = message.type === "device-notice" ? [message.notice]
+          : message.type === "device-notice-replay" ? message.replay.notices : [];
+        if (!notices.some((decision) => confirmsAdmission(decision, request.notice))) return;
+        clearTimeout(timer);
+        off();
+        resolve([]);
+        return;
+      }
       const frame = message as { type?: unknown; id?: unknown; receipts?: unknown };
-      if (frame.type !== "notice-answer-result" || frame.id !== answer.id || !Array.isArray(frame.receipts)) return;
+      if (frame.type !== "notice-answer-result" || frame.id !== request.id || !Array.isArray(frame.receipts)) return;
       clearTimeout(timer);
       off();
       resolve(frame.receipts);
     });
     const timer = setTimeout(() => { off(); reject(new Error("The PC did not answer")); }, timeoutMs);
-    if (!socket.sendNotice(answer)) { clearTimeout(timer); off(); reject(new Error("The PC does not take account answers")); }
+    if (!socket.sendNotice("notice" in request ? request.answer : request)) { clearTimeout(timer); off(); reject(new Error("The PC does not take account answers")); }
   });
 }
 
