@@ -10,17 +10,45 @@ import { SettingsProvider } from "../lib/settings.ts";
 import { HerdrSocket } from "../lib/ws.ts";
 import { useAccountDeviceNotices } from "./AccountDeviceNotices.tsx";
 
-it.each(["lost response", "503 after dismissal", "wrong record ID"] as const)("T51, T60: retry the exact signed block after %s", async (failure) => {
+it.each([
+  ["T51, T60: retry the exact signed block after a lost response", "lost response"],
+  ["T51, T60: retry the exact signed block after a 503 after dismissal", "503 after dismissal"],
+  ["T51, T60: retry the exact signed block after a wrong record ID", "wrong record ID"],
+  ["T51, T60, T65: show unopened and flag-off roster PCs without posting to them", "roster"],
+  ["T51, T60, T65: a flag-off route outranks an unopened route to the same PC listed after it", "roster twin after"],
+  ["T51, T60, T65: a flag-off route outranks an unopened route to the same PC listed before it", "roster twin before"],
+] as const)("%s", async (_title, failure) => {
+  const showRoster = failure.startsWith("roster");
   const dismissWhilePending = failure === "503 after dismissal";
   const notice = deviceNotice({ key: (await newKey()).public_spki });
   const wire = new DeviceNoticeWire("ws://localhost/ws");
   const events = new EventTarget();
   const posted: BlockRecord[] = [];
+  const pcPosts: string[] = [];
   const onPc: string[] = [];
   const started = Promise.withResolvers<void>();
   const pendingReply = Promise.withResolvers<Response>();
   const serverId = "a".repeat(32);
-  const machines: readonly Machine[] = [{ id: LOCAL_MACHINE, name: "Desk", kind: "local", enabled: true, state: "connected", error: null, snapshot: null }];
+  const roster = [
+    { id: "study", name: "Study", server_id: "b".repeat(32) },
+    { id: "studio", name: "Studio", server_id: "c".repeat(32) },
+    { id: "lab", name: "Lab", server_id: "d".repeat(32) },
+  ] as const;
+  const machines: readonly Machine[] = [
+    { id: LOCAL_MACHINE, name: "Desk", kind: "local", enabled: true, state: "connected", error: null, snapshot: null },
+    ...(showRoster ? [
+      ...(failure === "roster twin before" ? [{ id: "lab-relay", name: "Lab", server_id: "d".repeat(32) }] : []),
+      ...roster,
+      ...(failure === "roster twin after" ? [{ id: "lab-relay", name: "Lab", server_id: "d".repeat(32) }] : []),
+      { id: "other", name: "Other", server_id: "e".repeat(32) },
+    ].map((machine): Machine => ({
+      ...machine, kind: "relay", enabled: true, state: "connected", error: null, snapshot: null,
+    })) : []),
+  ];
+  const wires = new Map([
+    [wire.url, wire],
+    ...(["studio", "lab"] as const).map(id => [`ws://localhost/ws?pc=${id}`, new DeviceNoticeWire(`ws://localhost/ws?pc=${id}`)] as const),
+  ]);
   const session = { account: "acct", provider: "github", service: "https://account.example", sign_in_id: "test", access_token: "access", refresh_token: "refresh", expires_at: Date.now() + 3600_000 } as const;
   const store = memoryAccountStore();
   await store.set("session", session);
@@ -31,7 +59,13 @@ it.each(["lost response", "503 after dismissal", "wrong record ID"] as const)("T
     document: Object.assign(new EventTarget(), { visibilityState: "visible", hasFocus: () => true, querySelector: () => null, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } } }),
     navigator: { languages: ["en"] },
     getComputedStyle: () => ({ getPropertyValue: () => "" }),
-    WebSocket: class { constructor() { return wire; } },
+    WebSocket: class {
+      constructor(url: string) {
+        const connection = wires.get(url);
+        if (connection === undefined) throw new Error(`Unexpected WebSocket: ${url}`);
+        return connection;
+      }
+    },
     IS_REACT_ACT_ENVIRONMENT: true,
   })) {
     replaced.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
@@ -40,7 +74,18 @@ it.each(["lost response", "503 after dismissal", "wrong record ID"] as const)("T
   const get = spyOn(indexedAccountStore, "get").mockImplementation(store.get);
   const update = spyOn(indexedAccountStore, "update").mockImplementation(store.update);
   const postBlock: typeof fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-    expect(String(input)).toBe(`${session.service}/v1/safety-records`);
+    const url = String(input);
+    if (url === `${session.service}/v1/pcs` && init?.method === "GET") {
+      return Response.json({ pcs: showRoster ? [...roster, { id: "attic", name: "Attic", server_id: "f".repeat(32) }].map(row => ({
+        server_id: row.server_id, label: row.name, added_at: new Date(0).toISOString(), last_seen_at: null,
+      })) : [] });
+    }
+    if (url.startsWith("/api/machines/") && init?.method === "POST") {
+      pcPosts.push(url);
+      const record = parseSafetyRecord(JSON.parse(String(init.body)).records[0]);
+      return Response.json({ receipts: [{ outcome: "applied", id: record.id, n: 2 }] });
+    }
+    expect(url).toBe(`${session.service}/v1/safety-records`);
     const record = parseSafetyRecord(JSON.parse(String(init?.body)).record);
     if (record.kind !== "block") throw new TypeError("Expected a block");
     posted.push(record);
@@ -50,6 +95,7 @@ it.each(["lost response", "503 after dismissal", "wrong record ID"] as const)("T
         case "503 after dismissal": return pendingReply.promise;
         case "wrong record ID": return Response.json({ id: "another-record" });
         case "lost response": throw new TypeError("The account response was lost");
+        case "roster": case "roster twin after": case "roster twin before": break;
       }
     }
     return Response.json({ id: record.id });
@@ -64,13 +110,25 @@ it.each(["lost response", "503 after dismissal", "wrong record ID"] as const)("T
     wire.read({ type: "notice-answer-result", id: notice.id, receipts: [{ outcome: "applied", id: record.id, n: 2 }] });
   });
   const socket = new HerdrSocket(wire.url);
-  const machineSessions = new MachineSessionRegistry((id) => new MachineSession(id, { socket }));
+  const machineSessions = new MachineSessionRegistry((id) => new MachineSession(id, {
+    socket: id === LOCAL_MACHINE ? socket : new HerdrSocket(`ws://localhost/ws?pc=${id}`),
+  }));
   function Probe() {
     return useAccountDeviceNotices({ machines, machineSessions, selectedMachineId: LOCAL_MACHINE, pageServerId: serverId });
   }
   let renderer: ReactTestRenderer | undefined;
   try {
     machineSessions.get(LOCAL_MACHINE);
+    if (showRoster) {
+      for (const [id, capable] of [["studio", true], ["lab", false]] as const) {
+        const remote = machineSessions.get(id).socket;
+        remote.connect();
+        const connection = wires.get(`ws://localhost/ws?pc=${id}`);
+        if (connection === undefined) throw new Error(`Missing wire for ${id}`);
+        connection.open();
+        if (capable) connection.snapshot(); else connection.snapshot([]);
+      }
+    }
     await act(async () => { renderer = create(<SettingsProvider><Probe /></SettingsProvider>); });
     socket.connect();
     wire.open();
@@ -81,6 +139,18 @@ it.each(["lost response", "503 after dismissal", "wrong record ID"] as const)("T
 
     const notMe = button("Not me");
     if (notMe === undefined) throw new TypeError("Missing Not me button");
+    if (showRoster) {
+      await act(async () => { await notMe.props.onClick(); });
+      expect(pcPosts).toEqual(["/api/machines/studio/account/records"]);
+      const lines = root.findAllByType("li").map(node => node.children.join(""));
+      expect(lines).toContain("Study: not reached; it applies the block at its next check");
+      expect(lines).toContain("Lab: needs an Ovis update to block");
+      expect(lines.filter(line => line.startsWith("Lab:"))).toHaveLength(1);
+      // a PC of the account this browser has never listed is still named, and still gets no request
+      expect(lines).toContain("Attic: not reached; it applies the block at its next check");
+      expect(lines.some(line => line.startsWith("Other:"))).toBe(false);
+      return;
+    }
     if (dismissWhilePending) {
       let delivery: Promise<void> | undefined;
       await act(async () => { delivery = notMe.props.onClick(); await started.promise; });

@@ -1,10 +1,10 @@
 /** T51, T60, T65: answer an admission with the current sign-in's key and show only PC-authenticated receipts. */
 import { useEffect, useRef, useState } from "react";
-import type { DeviceNotice } from "../../shared/account-devices-api.ts";
+import type { DeviceNotice, PcBlockOutcome } from "../../shared/account-devices-api.ts";
 import { LOCAL_MACHINE, machinePath, type Machine } from "../../shared/machines.ts";
 import { canBlockAdmission, notMeBlocks, sendBlocks, type FleetBlock, type OwnKey } from "../lib/account/fleet-block.ts";
 import { notMeTransports } from "../lib/account/noticeAnswer.ts";
-import { ACCOUNT_SIGN_OUT_EVENT, indexedAccountService } from "../lib/account/service.ts";
+import { ACCOUNT_SIGN_OUT_EVENT, AccountServiceError, AccountServiceUnreachableError, indexedAccountService, SignedOutError } from "../lib/account/service.ts";
 import { indexedAccountStore, type AccountSession } from "../lib/account/store.ts";
 import { apiFetch } from "../lib/api-request-id.ts";
 import type { MachineSessionRegistry } from "../lib/machineSession.ts";
@@ -100,11 +100,36 @@ function BlockNoticeAction({ notice, pc, socket, fleet, own, inFlight, onResult 
         routes.pcs.delete(ownId);
       }
       const service = indexedAccountService.forSignIn(session);
-      const sent = await sendBlocks(blocks, {
+      // Every route to a skipped PC: one that is open and reports no capability decides its line, whatever the order.
+      const skipped = new Map<string, Machine[]>();
+      for (const machine of fleet.machines) {
+        const serverId = serverIdOf(machine);
+        if (serverId !== undefined && !rows.has(serverId)) skipped.set(serverId, [...skipped.get(serverId) ?? [], machine]);
+      }
+      // Directory lookup supplies display rows only; never put it in front of block delivery.
+      const directory = service.listPcs(AbortSignal.timeout(ANSWER_TIMEOUT_MS)).catch((error: unknown) => {
+        if (error instanceof AccountServiceError || error instanceof AccountServiceUnreachableError || error instanceof SignedOutError ||
+            error instanceof SyntaxError || (error instanceof DOMException && error.name === "TimeoutError")) return [];
+        throw error;
+      });
+      const [sent, roster] = await Promise.all([sendBlocks(blocks, {
         ...routes,
         service: async (records) => { await Promise.all(records.map((record) => service.postSafetyRecord(record))); },
-      });
-      onResult({ pc: pc.id, notice, signer: current.public_spki, fleet: sent, names: new Map([...rows].map(([id, machine]) => [id, machine.name])) });
+      }), directory]);
+      const outcomes = new Map<string, PcBlockOutcome>(sent.outcomes);
+      const names = new Map([...rows].map(([id, machine]) => [id, machine.name]));
+      // Every PC of the account gets a line, including one this browser has never listed; none of them gets a request.
+      for (const { server_id, label } of roster) {
+        if (rows.has(server_id) || outcomes.has(server_id)) continue;
+        const routes = skipped.get(server_id) ?? [];
+        const unsupported = routes.some((machine) => {
+          const remote = fleet.machineSessions.peek(machine.id)?.socket;
+          return remote?.connected && remote.featuresListed() && !remote.accountOpensAll();
+        });
+        outcomes.set(server_id, { server_id, state: unsupported ? "unsupported" : "unreachable" });
+        names.set(server_id, routes[0]?.name ?? label);
+      }
+      onResult({ pc: pc.id, notice, signer: current.public_spki, fleet: { ...sent, outcomes }, names });
     } catch (error) {
       if (!(error instanceof DOMException)) throw error;
       console.warn("Ovis: could not sign a device block", error.name);
