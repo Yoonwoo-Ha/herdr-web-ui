@@ -416,7 +416,7 @@ it("S2P-6: an It's me still out when its notice closes records no refusal, also 
 });
 
 it("S2P-7: reopening offscreen releases the old press without letting it unlock the new press", async () => {
-  const { desk, lab, admission, select, button, answers } = await setupItsMe();
+  const { desk, lab, admission, select, button, view, answers } = await setupItsMe();
   const answer = { type: "notice-answer", id: admission.id, answer: "its_me" };
   await act(async () => { button().props.onClick(); });
   expect(answers()).toEqual([answer]);
@@ -436,6 +436,7 @@ it("S2P-7: reopening offscreen releases the old press without letting it unlock 
   expect(answers(lab)).toEqual([]);
   const confirmation = deviceNotice({ ...admission, id: "b".repeat(32), seq: 2, kind: "confirm", how: "its_me", open: false });
   await act(async () => { desk.read({ type: "device-notice", notice: confirmation }); });
+  expect(view.root.findAllByProps({ "data-testid": "device-notice" })).toHaveLength(0);
 });
 
 it("S2P-7: a closed press sends no retry, even after its notice reopens", async () => {
@@ -479,17 +480,28 @@ it.each([
   expect(button().props.disabled).toBe(false);
 });
 
+it("S2P-9, T53: replacing the sign-in ID before the first timeout prevents a resend with the same refresh token", async () => {
+  const { session, store, button, refusal, answers } = await setupItsMe();
+  await act(async () => { button().props.onClick(); });
+  expect(answers()).toHaveLength(1);
+  await act(async () => { await store.set("session", { ...session, sign_in_id: "a-later-sign-in" }); });
+  await act(async () => { jest.advanceTimersByTime(5_000); });
+  expect(answers()).toHaveLength(1);
+  expect(button().props.disabled).toBe(false);
+  expect(refusal()).toHaveLength(0);
+});
+
 it.each([
-  ["a different sign-in ID with the same refresh token", { ...itsMeSession }, { ...itsMeSession, sign_in_id: "a-later-sign-in" }],
+  ["a different sign-in ID with the same refresh token", { ...itsMeSession }, { ...itsMeSession, sign_in_id: "a-later-sign-in" }, 2],
   ["neither a sign-in ID nor a refresh token", {
     service: itsMeSession.service, account: itsMeSession.account, provider: itsMeSession.provider, access_token: "access", refresh_token: "",
-  }, undefined],
-] as const)("S2P-L2: records no refusal for %s", async (_name, initial, replacement) => {
+  }, undefined, 1],
+] as const)("S2P-L2, S2P-9: records no refusal for %s", async (_name, initial, replacement, sent) => {
   const expires_at = Date.now() + 60_000;
   const { session, store, button, refusal, answers } = await setupItsMe({ session: { ...initial, expires_at } });
   await act(async () => { button().props.onClick(); });
   await act(async () => { jest.advanceTimersByTime(5_000); });
-  expect(answers()).toHaveLength(2);
+  expect(answers()).toHaveLength(sent);
   if (replacement !== undefined) await act(async () => {
     await store.set("session", { ...replacement, expires_at });
     window.dispatchEvent(new Event(ACCOUNT_SIGN_OUT_EVENT));

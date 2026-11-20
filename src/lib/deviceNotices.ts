@@ -1,7 +1,7 @@
 /**
  * The journal notices one PC sends this device (device table P15, T57): replayed on each connect until
  * acknowledged, in journal order. An acknowledgment only says what was shown; an `open` admission stays
- * answerable here until the PC says it was decided, even once a later replay leaves it out or its row is gone.
+ * answerable here until the PC says it was decided or a replay with missing history no longer lists it as open.
  */
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
@@ -34,7 +34,8 @@ export function confirmsAdmission(decision: DeviceNotice, admission: DeviceNotic
 
 export function withNoticeReplay(current: PcNotices | undefined, replay: NoticeReplay): PcNotices {
   const dismissed = current?.dismissed ?? new Set<string>();
-  const notices = new Map(current?.notices.map((item) => [item.id, item]));
+  // A reconnect replay includes every eligible open admission, even when its decision history was trimmed.
+  const notices = new Map(current?.notices.filter((item) => replay.cut === 0 || !item.open).map((item) => [item.id, item]));
   for (const item of replay.notices) {
     if (!dismissed.has(item.id)) notices.set(item.id, item);
   }

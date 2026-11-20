@@ -32,8 +32,8 @@ type Own = Awaited<ReturnType<typeof noticeIdentity>>;
 
 const noticeKey = (pcId: string, noticeId: string): string => JSON.stringify([pcId, noticeId]);
 
-/** Refusals require identified sign-ins; a refresh token only identifies legacy sessions without a sign-in ID. */
-function sameRefusalSignIn(a: AccountSession, b: AccountSession): boolean {
+/** Retries and refusals require the same sign-in, using a refresh token only for legacy sessions without an ID. */
+function sameAnswerSignIn(a: AccountSession, b: AccountSession): boolean {
   if (a.account !== b.account) return false;
   if (a.sign_in_id !== undefined || b.sign_in_id !== undefined) return !!a.sign_in_id && a.sign_in_id === b.sign_in_id;
   return !!a.refresh_token && a.refresh_token === b.refresh_token;
@@ -74,7 +74,9 @@ function ItsMeAction({ notice, pc, socket, own, inFlight, refusedItsMe, changed 
       for (let tries = 0; tries < 2; tries++) {
         const current = await indexedAccountStore.get("session");
         if (inFlight.get(id) !== press) return;
-        if (current === undefined || current.account !== notice.account || !sameSignIn(started, current) || !socket.accountOpensAll()) break;
+        if (current === undefined || current.account !== notice.account || !socket.accountOpensAll()) break;
+        const sameIdentity = tries === 0 ? sameSignIn : sameAnswerSignIn;
+        if (!sameIdentity(started, current)) break;
         const [outcome] = await Promise.allSettled([answerOnPc(socket, { notice, answer: itsMeAnswer(notice) }, ANSWER_TIMEOUT_MS)]);
         if (outcome.status === "fulfilled") break;
         unanswered++;
@@ -82,7 +84,7 @@ function ItsMeAction({ notice, pc, socket, own, inFlight, refusedItsMe, changed 
       // The PC answers a refused It's me with nothing (too new, held or not caught up): say so rather than go quiet,
       // to the sign-in that asked, and only while it is still the one here
       const now = await indexedAccountStore.get("session");
-      if (unanswered === 2 && now !== undefined && sameRefusalSignIn(started, now) && inFlight.get(id) === press) refusedItsMe.set(id, started);
+      if (unanswered === 2 && now !== undefined && sameAnswerSignIn(started, now) && inFlight.get(id) === press) refusedItsMe.set(id, started);
     } catch (error) {
       if (!(error instanceof DOMException)) throw error;
       console.warn("Ovis: could not read the sign-in for an admission answer", error.name);
@@ -95,7 +97,7 @@ function ItsMeAction({ notice, pc, socket, own, inFlight, refusedItsMe, changed 
   };
 
   const refused = refusedItsMe.get(id);
-  return canAnswer ? <ItsMeButton sending={inFlight.has(id)} onPress={confirm} refusedBy={refused !== undefined && sameRefusalSignIn(refused, own.session) ? pc.name : null} /> : null;
+  return canAnswer ? <ItsMeButton sending={inFlight.has(id)} onPress={confirm} refusedBy={refused !== undefined && sameAnswerSignIn(refused, own.session) ? pc.name : null} /> : null;
 }
 
 type NoticeFleet = {

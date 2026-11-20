@@ -48,7 +48,8 @@ export function useDeviceNotices(
         }
         if (message.type !== "device-notice-replay" && message.type !== "device-notice") return;
         updatePc(id, (was) => {
-          const replay = message.type === "device-notice-replay" ? message.replay : { notices: [message.notice], cut: was?.cut ?? 0 };
+          const live = message.type === "device-notice";
+          const replay = live ? { notices: [message.notice], cut: 0 } : message.replay;
           const next = withNoticeReplay(was, replay);
           if (onClose !== undefined && was !== undefined) {
             const open = new Set(next.notices.filter((notice) => notice.open).map((notice) => notice.id));
@@ -57,7 +58,7 @@ export function useDeviceNotices(
               if (notice.open && (!open.has(notice.id) || closed.has(notice.id))) onClose(id, notice.id);
             }
           }
-          return next;
+          return live && was !== undefined ? { ...next, cut: was.cut } : next;
         });
       })];
     });

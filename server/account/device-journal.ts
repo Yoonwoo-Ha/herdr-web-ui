@@ -44,6 +44,8 @@ interface Doc {
   v: 1;
   next_seq: number;
   entries: JournalEntry[];
+  /** Replay-only closes have their own sequence, but are not events in a row's admission/removal history. */
+  closed?: JournalEntry[];
   seen: Record<string, number>;
   open: JournalEntry[];
   /** the highest seq trimmed so far: a row that had not seen up to it is told how many it missed */
@@ -73,6 +75,7 @@ function isDoc(value: unknown): value is Doc {
   if (!Array.isArray(doc.entries) || !Array.isArray(doc.open) || typeof doc.seen !== "object" || doc.seen === null || Array.isArray(doc.seen)) return false;
   const below = (entry: JournalEntry) => entry.seq < doc.next_seq!;
   if (!doc.entries.every((entry) => isEntry(entry) && below(entry)) || !doc.open.every((entry) => isEntry(entry) && below(entry))) return false;
+  if (doc.closed !== undefined && (!Array.isArray(doc.closed) || !doc.closed.every((entry) => isEntry(entry) && entry.kind === "admit" && below(entry)))) return false;
   return Object.values(doc.seen).every((seq) => isCount(seq) && seq < doc.next_seq!);
 }
 
@@ -129,7 +132,7 @@ export class DeviceJournal {
 
   openNotices(): readonly JournalEntry[] { return this.doc.open; }
 
-  /** Only outstanding list admissions with a registry owner take a slot. Never change history or access. */
+  /** Only outstanding list admissions with a registry owner take a slot. This never changes access. */
   settleList(owns: (notice: JournalEntry) => boolean): void {
     const open = this.doc.open.filter(n => n.how !== "list" || owns(n));
     const entries = this.doc.entries.filter(n => n.seq > this.doc.trimmed || owns(n));
@@ -161,9 +164,13 @@ export class DeviceJournal {
         return null;
       }
     }
-    const written = this.append({ kind: entry.kind === "drop" ? "drop" : "admit", how: drop?.how ?? entry.reason ?? "list", key: entry.key, no: entry.no ?? null,
+    // Receipt-less drops still name a specific admission, without widening the drop event's audience.
+    const decides = entry.kind === "drop" && entry.no !== undefined && drop === undefined
+      ? this.doc.open.find(notice => notice.how === "list" && notice.key === entry.key && notice.row === entry.row &&
+        notice.no === entry.no && notice.account === entry.account)?.id : undefined;
+    const written = this.append({ kind: entry.kind === "drop" ? "drop" : "admit", how: drop?.how ?? entry.reason ?? "list", key: entry.key, no: entry.kind === "drop" ? null : entry.no ?? null,
       row: entry.row, label: entry.label ?? "", by: null, account: entry.account,
-      ...(entry.kind === "admit" ? { awaitingListCheck: true, two_step: entry.two_step ?? "unknown", ...(entry.provider === undefined ? {} : { provider: entry.provider }) } : {}) }, undefined, drop);
+      ...(entry.kind === "admit" ? { awaitingListCheck: true, two_step: entry.two_step ?? "unknown", ...(entry.provider === undefined ? {} : { provider: entry.provider }) } : {}) }, decides, drop);
     if (drop) evidence.markJournalled(drop, written.seq);
     return written;
   }
@@ -200,26 +207,19 @@ export class DeviceJournal {
   private appendEntry(input: JournalInput, liftNumber?: number, decides?: string, drop?: RowDrop): JournalEntry {
     if (this.problem !== null) throw new Error(this.strict!);
     const entry: JournalEntry = { ...input, seq: this.doc.next_seq, id: randomBytes(16).toString("hex"), at: new Date().toISOString() };
-    let entries = [...this.doc.entries, entry];
-    let trimmed = this.doc.trimmed;
-    if (entries.length > JOURNAL_MAX) {
-      trimmed = Math.max(trimmed, entry.seq - JOURNAL_MAX);
-      // An unpublished admission is pending work, not replay history. Keep only
-      // the current admission for each row until activation moves it to open.
-      const latest = new Map(entries.filter(n => n.kind === "admit" || n.kind === "promote" || n.kind === "drop").map(n => [n.row, n.seq]));
-      entries = entries.filter(n => n.seq > trimmed || (n.awaitingListCheck && n.kind === "admit" && latest.get(n.row) === n.seq));
-    }
     const remaining = this.doc.open.filter(notice => {
       if (notice.id === decides) return false;
-      if (notice.how !== "list" || notice.key === null || notice.key !== input.key) return true;
+      if (notice.how !== "list" || notice.key === null || notice.key !== entry.key) return true;
       // Local recovery revokes the key on this PC. A row receipt ends only its numbered admission.
-      if (input.kind === "remove" && input.how === "recover") return false;
-      return !drop || notice.row !== drop.row || notice.no !== drop.admit_no || notice.account !== input.account;
+      if (entry.kind === "remove" && entry.how === "recover") return false;
+      return !drop || notice.row !== drop.row || notice.no !== drop.admit_no || notice.account !== entry.account;
     });
     const open = entry.kind === "admit" && !entry.awaitingListCheck ? [...remaining, entry] : remaining;
     if (!this.exists) this.companions();
-    this.write({ ...this.doc, next_seq: entry.seq + 1, entries, open, trimmed, ...(drop && { last_row_drop: { ...drop, journalled: entry.seq } }),
-      ...(liftNumber === undefined ? {} : { snapshot_lift_n: liftNumber }) });
+    this.write({ ...this.doc, next_seq: entry.seq + 1, entries: [...this.doc.entries, entry], open,
+      ...(drop && { last_row_drop: { ...drop, journalled: entry.seq } }),
+      ...(liftNumber === undefined ? {} : { snapshot_lift_n: liftNumber }) },
+    entry.kind === "confirm" && entry.how === "its_me" ? decides : undefined);
     this.exists = true;
     return entry;
   }
@@ -230,11 +230,11 @@ export class DeviceJournal {
    */
   replay(row: string, tells: (entry: JournalEntry) => boolean): NoticeReplay {
     const seen = this.doc.seen[row] ?? 0;
-    const unseen = this.doc.entries.filter((entry) => !entry.awaitingListCheck && entry.seq > seen && tells(entry));
-    const undecided = this.doc.open.filter((entry) => tells(entry) && !unseen.some((other) => other.id === entry.id));
+    const unseen = [...this.doc.entries, ...(this.doc.closed ?? [])].filter((entry) => !entry.awaitingListCheck && entry.seq > seen && tells(entry));
+    const notices = new Map([...this.doc.open.filter(tells), ...unseen].map(entry => [entry.id, entry]));
     const missedOpen = this.doc.open.filter((entry) => entry.seq > seen && entry.seq <= this.doc.trimmed).length;
     return {
-      notices: [...undecided, ...unseen].sort((a, b) => a.seq - b.seq).map((entry) => this.notice(entry)),
+      notices: [...notices.values()].sort((a, b) => a.seq - b.seq).map((entry) => this.notice(entry)),
       cut: Math.max(0, this.doc.trimmed - seen - missedOpen),
     };
   }
@@ -252,11 +252,13 @@ export class DeviceJournal {
     this.write({ ...this.doc, seen: { ...this.doc.seen, [row]: seq } });
   }
 
-  /** An admission was decided ("It's me", "Not me", PC-local or a marker): it leaves `open`. */
+  /** Close an admission atomically with a replay entry, even for rows that already acknowledged it. */
   decide(id: string): boolean {
-    if (!this.doc.open.some((entry) => entry.id === id)) return false;
+    const open = this.doc.open.filter((entry) => entry.id !== id);
+    if (open.length === this.doc.open.length) return false;
     try {
-      this.write({ ...this.doc, open: this.doc.open.filter((entry) => entry.id !== id) });
+      if (this.strict !== null) throw new Error(this.strict);
+      this.write({ ...this.doc, open });
     } catch (error) {
       this.problem = `Cannot record a notice decision in ${this.path} (${error instanceof Error ? error.message : String(error)})`;
       throw error;
@@ -264,8 +266,24 @@ export class DeviceJournal {
     return true;
   }
 
-  private write(doc: Doc): void {
-    writePrivateState(this.path, doc);
-    this.doc = doc;
+  private write(doc: Doc, confirmed?: string): void {
+    let next = doc;
+    if (doc.open !== this.doc.open) {
+      const kept = new Set(doc.open.map(entry => entry.id));
+      // A T53 confirmation is already a replayable close. Every other ID leaving open needs its own delivery sequence.
+      const closes = this.doc.open.filter(entry => entry.id !== confirmed && !kept.has(entry.id))
+        .map((entry, index) => ({ ...entry, seq: doc.next_seq + index }));
+      if (closes.length) next = { ...doc, next_seq: doc.next_seq + closes.length, closed: [...(doc.closed ?? []), ...closes] };
+    }
+    if (next.next_seq > this.doc.next_seq && next.entries.length + (next.closed?.length ?? 0) > JOURNAL_MAX) {
+      const trimmed = Math.max(next.trimmed, next.next_seq - 1 - JOURNAL_MAX);
+      // An unpublished admission is pending work, not replay history. Keep only the current one for each row.
+      const latest = new Map(next.entries.filter(n => n.kind === "admit" || n.kind === "promote" || n.kind === "drop").map(n => [n.row, n.seq]));
+      const entries = next.entries.filter(n => n.seq > trimmed || (n.awaitingListCheck && n.kind === "admit" && latest.get(n.row) === n.seq));
+      const closed = next.closed?.filter(n => n.seq > trimmed);
+      next = { ...next, entries, trimmed, ...(closed && { closed }) };
+    }
+    writePrivateState(this.path, next);
+    this.doc = next;
   }
 }

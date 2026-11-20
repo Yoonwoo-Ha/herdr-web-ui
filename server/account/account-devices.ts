@@ -100,7 +100,7 @@ export class AccountDeviceStore implements AccountRowSource {
 
   private dropEntry(row: AccountRow, account: string | null, reason: DropReason): JournalEntry {
     const drop = reason === "remove" || reason === "block" || reason === "revoke" || reason === "revoke_all" ? rowDrop(row, reason) : undefined;
-    return { kind: "drop", row: row.id, key: row.key, account, reason, drop };
+    return { kind: "drop", row: row.id, key: row.key, account, no: row.origin.admit_no, reason, drop };
   }
 
   removeRows(ids: readonly string[], reason: Exclude<DropReason, "list">, close?: (id: string) => void): void {
@@ -163,7 +163,7 @@ export class AccountDeviceStore implements AccountRowSource {
     const idle = this.file.devices.filter(row => expiresAt(row) <= now);
     for (const row of idle) {
       this.ports.closeSessions(row.id, "expired");
-      this.ports.journal({ kind: "drop", key: row.key, row: row.id, account: this.file.account, reason: "expired" });
+      this.ports.journal(this.dropEntry(row, this.file.account, "expired"));
     }
     const ids = new Set(idle.map((row) => row.id));
     if (ids.size > 0) this.write({ ...this.file, devices: this.file.devices.map((row) => ids.has(row.id) ? { ...row, state: "expired", hold_until: null } : row) });

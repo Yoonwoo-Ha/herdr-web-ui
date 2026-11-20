@@ -256,8 +256,8 @@ describe("each PC's device notices in the app", () => {
     if (descriptor) Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", descriptor); else Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");
   });
 
-  function Probe({ sockets }: { sockets: readonly { id: string; socket: NoticeSocket }[] }) {
-    const current = useDeviceNotices(sockets, "desk");
+  function Probe({ sockets, onClose }: { sockets: readonly { id: string; socket: NoticeSocket }[]; onClose?: (pcId: string, noticeId: string) => void }) {
+    const current = useDeviceNotices(sockets, "desk", onClose);
     seen = current;
     const notices = current.byPc.get("desk")?.notices;
     const newest = notices?.at(-1)?.seq;
@@ -273,6 +273,20 @@ describe("each PC's device notices in the app", () => {
     await act(async () => { desk.receive({ type: "device-notice", notice: notice(3, false) }); });
     expect(seen!.byPc.get("desk")?.notices.map((item) => item.seq)).toEqual([2, 3]);
     expect(desk.sent).toEqual([{ type: "notice-seen", seq: 3 }]);
+  });
+
+  it("S2P-9: onClose reports the PC and admission ID removed by a matching confirmation", async () => {
+    const desk = new FakeSocket();
+    const admission = notice(1);
+    const confirmed = deviceNotice({ ...admission, id: "b".repeat(32), seq: 2, kind: "confirm", how: "its_me", open: false });
+    const closed: [string, string][] = [];
+    await act(async () => {
+      renderer = create(<Probe sockets={[{ id: "desk", socket: desk }]} onClose={(pc, id) => closed.push([pc, id])} />);
+    });
+    await act(async () => { desk.receive({ type: "device-notice", notice: admission }); });
+    expect(closed).toEqual([]);
+    await act(async () => { desk.receive({ type: "device-notice", notice: confirmed }); });
+    expect(closed).toEqual([["desk", admission.id]]);
   });
 
   it("T57: dismissing a told notice decides nothing on the PC, and an open admission stays", async () => {

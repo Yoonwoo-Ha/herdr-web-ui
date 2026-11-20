@@ -375,19 +375,21 @@ test("P8/T41/P10: offline Revoke recovery allocates no new drop after the origin
   const original = DeviceJournal.open(dir).entries().at(-1);
   expect(original).toMatchObject({ kind: "drop", how: "revoke", row: device.id });
   fixture.app.stop();
-  // Fill unused capacity in one write. Only real appends evict the original entries, including the drop.
+  // Replay closes consume capacity too. Fill the rest in one write, then rotate past the drop and its close.
   const path = join(dir, JOURNAL_FILE);
   const doc = JSON.parse(readFileSync(path, "utf8"));
   const link = { kind: "account", how: "link", key: member.publicKey, row: member.id, account: ACCOUNT, no: null, label: "", by: null } as const;
-  const fill = Array.from({ length: JOURNAL_MAX - doc.entries.length }, (_, i) => ({
+  const fill = Array.from({ length: JOURNAL_MAX - doc.entries.length - (doc.closed?.length ?? 0) }, (_, i) => ({
     ...link, seq: doc.next_seq + i, id: i.toString(16).padStart(32, "0"), at: new Date().toISOString(),
   }));
   writeFileSync(path, JSON.stringify({ ...doc, next_seq: doc.next_seq + fill.length, entries: [...doc.entries, ...fill] }));
   const journal = DeviceJournal.open(dir);
   for (let index = fill.length; index < JOURNAL_MAX; index++) journal.append(link);
   const retained = DeviceJournal.open(dir).entries();
-  expect(retained[0]?.seq).toBe((original?.seq ?? 0) + 1);
+  expect(retained[0]?.seq).toBe(doc.next_seq);
+  expect(retained.some(entry => entry.id === original?.id)).toBe(false);
   restartOffline(dir);
   expect(rows(dir)).toEqual([]);
+  expect(drops(dir).filter(entry => entry.row === device.id)).toEqual([]);
   expect(DeviceJournal.open(dir).entries().at(-1)?.seq).toBe(retained.at(-1)?.seq);
 });

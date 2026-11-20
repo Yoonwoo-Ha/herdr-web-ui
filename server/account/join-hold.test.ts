@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AccountDeviceStore, type AccountRowPorts } from "./account-devices.ts";
+import { AccountDeviceStore, EXPIRY_DAYS, type AccountRowPorts } from "./account-devices.ts";
 import { DeviceJournal, JOURNAL_FILE, JOURNAL_MAX } from "./device-journal.ts";
 import { listNotices } from "./list-notices.ts";
 import { RemovalEvidence } from "./removal-evidence.ts";
@@ -85,6 +85,8 @@ describe("S2-29 the join hold and the first device (T34, T53, T67)", () => {
     const [row] = prior.rows();
     const [obsolete] = journal.openNotices();
     if (!row || !obsolete) throw new Error("Missing pre-fix admission");
+    const observer = "member-who-saw-old-notice";
+    journal.ack(observer, obsolete.seq);
     clock.now += JOIN_HOLD_MS * 2;
     const disk = DeviceJournal.open(dir);
     const reopened = new AccountDeviceStore(dir, SERVER, { ...ports, ...listNotices(disk, RemovalEvidence.open(dir, null), () => {}) });
@@ -96,7 +98,38 @@ describe("S2-29 the join hold and the first device (T34, T53, T67)", () => {
     if (!replacement) throw new Error("The repaired notice was not replayed");
     expect(disk.openNotices().map((entry) => entry.id)).toEqual([replacement.id]);
     expect(replacement.id).not.toBe(obsolete.id);
+    expect(DeviceJournal.open(dir).replay(observer, () => true).notices.find(entry => entry.id === obsolete.id)).toMatchObject({ open: false });
   });
+  test.each(["list change", "catch-up guard", "idle expiry", "PC leave", "identity reset"] as const)(
+    "S2P-10: a listed drop after %s persists the acknowledged admission's close", (reason) => {
+      const { dir, clock, ports } = machine();
+      const journal = DeviceJournal.open(dir);
+      const observer = "older-device";
+      const notices = listNotices(journal, RemovalEvidence.open(dir, null), () => {});
+      let allowed = true;
+      let atDrop: ReturnType<DeviceJournal["replay"]> | undefined;
+      const store = new AccountDeviceStore(dir, SERVER, { ...ports, ...notices, admits: () => allowed, journal(entry) {
+        notices.journal(entry);
+        if (entry.kind === "drop") atDrop = DeviceJournal.open(dir).replay(observer, () => true);
+      } });
+      store.commitList(list(["k-held"]));
+      const [admission] = journal.openNotices();
+      if (!admission) throw new Error("Missing listed admission");
+      journal.ack(observer, admission.seq);
+      if (reason === "list change") store.commitList(list([], [], 2));
+      else if (reason === "catch-up guard") {
+        allowed = false;
+        store.commitList(list(["k-held"], [], 2));
+      } else if (reason === "idle expiry") {
+        clock.now += EXPIRY_DAYS * 24 * 60 * 60_000;
+        store.expire();
+      } else {
+        store.clear(reason === "PC leave" ? "left_on_pc" : "identity_reset");
+      }
+      expect(store.access(admission.row ?? "")).not.toEqual({ ok: true });
+      expect(atDrop?.notices.find(entry => entry.id === admission.id)).toMatchObject({ open: false });
+    },
+  );
   test("H1/T42: reopening a held row requires a whole read and a new uninterrupted ten seconds", () => {
     const { store, clock, dir, ports } = machine();
     const read = list(["k-new"]);

@@ -2512,7 +2512,7 @@ export class DeviceStore {
   private journalRemoval(device: StoredDevice, by: DeviceRemovedEvent["by"], why?: string, user?: string): void {
     if (this.journal === null) return;
     // the journal is first (P24): an entry that cannot be written throws, and the caller writes nothing after it
-    this.publish(this.journal.append({ kind: "remove", how: why ?? (typeof by === "object" ? "member" : "pc"), key: device.relay_public_key ?? null, no: device.origin?.admit_no ?? null, row: device.id, label: device.label, by: user ?? (typeof by === "object" ? by.device_id : null), account: device.account ?? null }));
+    this.publish(this.journal.append({ kind: "remove", how: why ?? (typeof by === "object" ? "member" : "pc"), key: device.relay_public_key ?? null, no: device.origin?.admit_no ?? null, row: device.id, label: device.label, by: user ?? (typeof by === "object" ? by.device_id : null), account: device.account ?? null }, device.held ?? device.carried_notice));
   }
 
   publish(entry: JournalEntry): void {

@@ -1,5 +1,9 @@
-import { expect, it, spyOn } from "bun:test";
+import { expect, it, jest, spyOn } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { DeviceJournal, JOURNAL_MAX } from "../server/account/device-journal.ts";
 import { parseNoticeAnswer, type DeviceNotice } from "../shared/account-devices-api.ts";
 import { parseSafetyRecord, verifySafetyRecord, type BlockRecord } from "../shared/account-records.ts";
 import { FakeAccountService } from "../shared/account-service-fake.ts";
@@ -13,10 +17,12 @@ import { translate } from "./lib/i18n.ts";
 import { MachineSessionRegistry } from "./lib/machineSession.ts";
 import { SettingsProvider } from "./lib/settings.ts";
 import { storeSelection } from "./lib/useSplitView.ts";
+import { backoffDelay } from "./lib/ws.ts";
 
 async function withDeviceNotices(
-  options: { readonly no?: number | null; readonly laptopId?: string; readonly remoteNotice?: boolean; readonly deskFeatures?: Parameters<DeviceNoticeWire["snapshot"]>[0]; readonly admission?: Pick<DeviceNotice, "method" | "two_step">; readonly decline?: () => Promise<Response>; readonly role?: () => DeviceRole },
+  options: { readonly no?: number | null; readonly laptopId?: string; readonly remoteNotice?: boolean; readonly deskFeatures?: Parameters<DeviceNoticeWire["snapshot"]>[0]; readonly admission?: Partial<DeviceNotice>; readonly decline?: () => Promise<Response>; readonly role?: () => DeviceRole },
   check: (fixture: { readonly tree: ReactTestRenderer; readonly laptop: DeviceNoticeWire; readonly desk: DeviceNoticeWire;
+    readonly admission: DeviceNotice;
     readonly delivered: readonly BlockRecord[]; readonly servicePosts: readonly { readonly body: unknown; readonly status: number }[] }) => void | Promise<void>,
 ) {
   const keys = memoryAccountStore();
@@ -127,15 +133,16 @@ async function withDeviceNotices(
     const laptop = wires.get("local");
     const desk = wires.get("desk");
     if (!tree || !laptop || !desk) throw new Error(`App sockets not connected: ${[...wires.keys()]}`);
+    const admission = deviceNotice({ label: "Laptop phone", key: target.public_spki, ...options.admission });
     await act(async () => {
       laptop.open();
       desk.open();
       laptop.snapshot();
       desk.snapshot(options.deskFeatures);
-      laptop.read({ type: "device-notice", notice: deviceNotice({ label: "Laptop phone", key: target.public_spki, ...options.admission }) });
+      laptop.read({ type: "device-notice", notice: admission });
       desk.read({ type: "device-notice", notice: deviceNotice({ label: "Desk phone", key: target.public_spki }) });
     });
-    await check({ tree, laptop, desk, delivered, servicePosts });
+    await check({ tree, get laptop() { return wires.get("local") ?? laptop; }, desk, admission, delivered, servicePosts });
   } finally {
     await act(async () => { tree?.unmount(); });
     sessions.mockRestore();
@@ -241,6 +248,111 @@ it("T53: an open admission offers It's me and Not me", async () => {
     expect(actionLabels).toEqual([translate("en", "It's me"), translate("en", "Not me")]);
   });
 });
+
+it("S2P-10, T53: replayed closes clear a refusal and stop a locked press from retrying", async () => {
+  jest.useFakeTimers();
+  try {
+    await withDeviceNotices({}, async (fixture) => {
+      const { tree, laptop, admission } = fixture;
+      const pending = deviceNotice({ id: "b".repeat(32), seq: 2, label: "Second phone" });
+      const actions = () => tree.root.findAllByType("button").filter((button) => button.children.includes("It's me"));
+      const refusals = () => tree.root.findAllByProps({ className: "settings-hint its-me-refused" });
+      const [first] = actions();
+      if (!first) throw new TypeError("Missing first admission action");
+      await act(async () => { first.props.onClick(); });
+      await act(async () => { jest.advanceTimersByTime(5_000); });
+      await act(async () => { jest.advanceTimersByTime(5_000); });
+      expect(refusals()).toHaveLength(1);
+
+      await act(async () => { laptop.read({ type: "device-notice", notice: pending }); });
+      expect(laptop.seen()).toEqual([{ type: "notice-seen", seq: 1 }, { type: "notice-seen", seq: 2 }]);
+      const [, second] = actions();
+      if (!second) throw new TypeError("Missing second admission action");
+      await act(async () => { second.props.onClick(); });
+      expect(second.props.disabled).toBe(true);
+      expect(laptop.sent.filter((frame) => frame.type === "notice-answer")).toHaveLength(3);
+
+      await act(async () => { laptop.close(); jest.advanceTimersByTime(backoffDelay(0)); });
+      const reconnect = fixture.laptop;
+      expect(reconnect).not.toBe(laptop);
+      await act(async () => {
+        reconnect.open();
+        reconnect.read({ type: "features", features: [DEVICE_NOTICE_FEATURE], connection: "laptop-reconnect" });
+        reconnect.read({ type: "device-notice-replay", replay: { notices: [
+          { ...admission, seq: 3, open: false },
+          { ...pending, seq: 4, open: false },
+        ], cut: 0 } });
+        reconnect.snapshot();
+      });
+      expect(refusals()).toHaveLength(0);
+      expect(actions()).toHaveLength(0);
+      expect(reconnect.seen()).toEqual([{ type: "notice-seen", seq: 4 }]);
+      await act(async () => { jest.advanceTimersByTime(5_000); });
+      expect(reconnect.sent.filter((frame) => frame.type === "notice-answer")).toEqual([]);
+    });
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+it.each(["refused", "locked"] as const)("S2P-10: a reconnect cut clears a %s open card after its close was trimmed", async (state) => {
+  const dir = mkdtempSync(join(tmpdir(), "ovis-app-notice-cut-"));
+  jest.useFakeTimers();
+  try {
+    const journal = DeviceJournal.open(dir);
+    const input = { kind: "admit", how: "list", account: "acct", key: null, by: null, row: "phone", no: 2, label: "Decided phone" } as const;
+    const stale = journal.append(input);
+    const survivor = journal.notice(journal.append({ ...input, row: "other", no: 3, label: "Still open phone" }));
+    await withDeviceNotices({ admission: journal.notice(stale) }, async (fixture) => {
+      const { tree, laptop } = fixture;
+      const actions = () => tree.root.findAllByType("button").filter(button => button.children.includes("It's me"));
+      const refusals = () => tree.root.findAllByProps({ className: "settings-hint its-me-refused" });
+      await act(async () => { laptop.read({ type: "device-notice", notice: survivor }); });
+      const [press] = actions();
+      if (!press) throw new Error("Missing admission action");
+      await act(async () => { press.props.onClick(); });
+      if (state === "refused") {
+        await act(async () => { jest.advanceTimersByTime(5_000); });
+        await act(async () => { jest.advanceTimersByTime(5_000); });
+        expect(refusals()).toHaveLength(1);
+      } else {
+        expect(press.props.disabled).toBe(true);
+      }
+      const observer = "observer";
+      const ack = laptop.seen().at(-1)?.seq;
+      expect(ack).toBe(survivor.seq);
+      if (ack === undefined) throw new Error("Missing observer acknowledgment");
+      journal.ack(observer, ack);
+      await act(async () => { laptop.close(); });
+      expect(journal.decide(stale.id)).toBe(true);
+      for (let i = 0; i < JOURNAL_MAX; i++) journal.append({ ...input, kind: "drop", row: "unrelated" });
+      const replay = DeviceJournal.open(dir).replay(observer, entry => entry.row !== "unrelated");
+      expect(replay).toEqual({ notices: [survivor], cut: 1 });
+
+      await act(async () => { jest.advanceTimersByTime(backoffDelay(0)); });
+      const reconnect = fixture.laptop;
+      expect(reconnect).not.toBe(laptop);
+      await act(async () => {
+        reconnect.open();
+        reconnect.read({ type: "features", features: [DEVICE_NOTICE_FEATURE], connection: "laptop-reconnect" });
+        reconnect.read({ type: "device-notice-replay", replay });
+        reconnect.snapshot();
+      });
+      expect(actions().map(action => action.props.disabled)).toEqual([false]);
+      expect(JSON.stringify(tree.toJSON())).not.toContain("Decided phone");
+      expect(refusals()).toHaveLength(0);
+      await act(async () => {
+        reconnect.read({ type: "device-notice", notice: deviceNotice({ id: "c".repeat(32), seq: ack + JOURNAL_MAX + 2, kind: "method", open: false }) });
+        jest.advanceTimersByTime(5_000);
+      });
+      expect(actions().map(action => action.props.disabled)).toEqual([false]);
+      expect(reconnect.sent.filter(frame => frame.type === "notice-answer")).toEqual([]);
+    });
+  } finally {
+    jest.useRealTimers();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 30_000);
 
 it("T71, T72: a delayed decline reply cannot restore a key removed by a newer PC event", async () => {
   const reply = Promise.withResolvers<Response>();
