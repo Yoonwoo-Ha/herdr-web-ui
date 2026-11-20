@@ -40,8 +40,8 @@ Extension, a later build; see [Later builds](#later-builds)).
 ## 3. Build and upload (the owner, on his Mac with Xcode)
 
 The last upload is version 1.0.2 build 11, built from main at `d30527fd` (the app opens on the
-account sign-in, #4256, with the privacy manifest of #4273), submitted for App Review on
-2026-11-20; build 10, from `0c4f0673`, came before it. Version 1.0.1 build 9 is on the App Store. Check App Store Connect before uploading in case a later build has already been uploaded. The App and OvisNotifications targets inherit the same project-level
+account sign-in, #4256, with the privacy manifest of #4273), approved and on the App Store
+since 2026-11-20; build 10, from `0c4f0673`, came before it. Check App Store Connect before uploading in case a later build has already been uploaded. The App and OvisNotifications targets inherit the same project-level
 build number in Debug and Release.
 
 ```bash
