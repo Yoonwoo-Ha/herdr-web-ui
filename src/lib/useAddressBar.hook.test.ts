@@ -223,6 +223,30 @@ it("Back off the New workspace dialog's entry closes it while its fields are on 
   expect(addresses()).toEqual([P1, held]);
 });
 
+it("writes New workspace's fields onto the dialog's entry once the sheets' way back is over, never onto the entry under it", async () => {
+  let pending = false;
+  let over: (() => void) | null = null;
+  mock.module("./sheetHistory.ts", () => ({
+    ...loaded.sheet, sheetSteppedOff: () => sheetStep, sheetTraversalPending: () => pending,
+    onSheetTraversalOver: (listener: () => void) => { over = listener; return () => { over = null; }; },
+  }));
+  try {
+    place = { ...place, paneId: "p1" };
+    await mount([P1]);
+    pending = true;
+    await act(async () => { place.newSessionOpen = true; place.newFields = { cwd: "/updated", name: null, agent: null }; draw(); });
+    expect(addresses()).toEqual([P1]);
+    // the dialog's entry made again by a tap, after its way back was dropped
+    window.history.pushState({ "ovis:sheet": "sheet-1" }, "");
+    pending = false;
+    await act(async () => { over?.(); });
+    expect(addresses()[0]).toBe(P1);
+    expect(readLink(addresses()[1]!).create).toMatchObject({ kind: "workspace", cwd: "/updated" });
+  } finally {
+    mock.module("./sheetHistory.ts", () => ({ ...loaded.sheet, sheetSteppedOff: () => sheetStep }));
+  }
+});
+
 async function dialogOverList(): Promise<string> {
   place = { ...place, newSessionOpen: true, newFields: { cwd: null, name: "New", agent: null }, inbox: { open: true, enabled: true } };
   window.addEventListener("popstate", () => { if (refs.newSessionPending.current) window.history.pushState({ "ovis:sheet": "sheet-1" }, ""); });

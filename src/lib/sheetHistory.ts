@@ -39,6 +39,8 @@ const heirs = new Map<string, string>();
 const SKIPS = typeof navigator !== "undefined" && "userActivation" in navigator && /Chrome\/|Chromium\//.test(navigator.userAgent);
 let tapped = !SKIPS;
 const waiting = new Set<string>();
+/** sheets still up whose way back onto their entry the browser dropped: they wait for the next tap to make one */
+const stranded = new Set<string>();
 let seen: string | null = null;
 let returning: { entry: string; owner: string; href: string } | null = null;
 interface NavigationApi {
@@ -139,15 +141,41 @@ let steppedOff = false;
 let asked: ReturnType<typeof setTimeout> | null = null;
 const LANDING_MS = 1000;
 function makeWaiting(): void {
-  for (const id of [...waiting]) { waiting.delete(id); if (open.has(id)) write(id); }
+  for (const id of [...waiting]) { waiting.delete(id); if (open.has(id)) write(id); else stranded.delete(id); }
 }
 
 export function sheetSteppedOff(): boolean {
   return steppedOff;
 }
 
-export function sheetBackPending(): boolean {
-  return stepping !== null;
+/**
+ * Whether the history is off the entry of what is shown for a traversal of the sheets' own: a closed
+ * sheet's step off its entry on its way, or a sheet still up whose way back onto the entry a Back left
+ * is on its way, or was dropped and waits for the next tap to make its entry. An address written now
+ * would land on the entry under it. A way back counts only while the sheet it is for is up: one the
+ * browser drops with no word (no Navigation API) holds nothing once that sheet closed.
+ */
+export function sheetTraversalPending(): boolean {
+  return stepping !== null || (returning !== null && open.has(returning.owner)) || (climbing !== null && open.has(climbing.owner))
+    || stood?.pending === true || [...stranded].some((id) => open.has(id));
+}
+
+const traversalOver = new Set<() => void>();
+
+/**
+ * Calls `listener` when a sheet made its entry and nothing is pending then: the history is on the
+ * entry of what is shown with no landing to tell it. A way back that only ended (dropped, given up,
+ * or its sheet closed) tells nothing: after Back past more than one entry the history may still be
+ * on another pane's entry.
+ */
+export function onSheetTraversalOver(listener: () => void): () => void {
+  traversalOver.add(listener);
+  return () => { traversalOver.delete(listener); };
+}
+
+function tellTraversalOver(): void {
+  if (sheetTraversalPending()) return;
+  for (const listener of [...traversalOver]) listener();
 }
 
 /** The key of the entry the step on its way lands on; null with no step on its way, or where the browser tells no entries. */
@@ -217,7 +245,7 @@ function climb(id: string, key: string): void {
   const dropped = (): void => {
     if (climbing?.owner !== id) return;
     climbing = null;
-    if (open.has(id)) waiting.add(id);
+    if (open.has(id)) { waiting.add(id); stranded.add(id); }
   };
   const way = navigation()!.traverseTo(key);
   way.committed.catch(dropped);
@@ -244,6 +272,8 @@ function write(id: string): void {
   addresses.set(id, window.location.href);
   seen = id;
   keep(id);
+  stranded.delete(id);
+  tellTraversalOver();
 }
 
 function remake(id: string, onBack: () => boolean | void): void {
@@ -264,6 +294,7 @@ export function leaveSheet(id: string): void {
   underNavigation.delete(id);
   staying.delete(id);
   waiting.delete(id);
+  stranded.delete(id);
   if (!open.delete(id)) return;
   leaving.set(id, setTimeout(() => {
     leaving.delete(id);
@@ -437,7 +468,7 @@ if (typeof window !== "undefined") {
       const dropped = (): void => {
         if (returning?.entry !== from) return;
         returning = null;
-        for (const kept of again) { covered.delete(kept.id); waiting.add(kept.id); }
+        for (const kept of again) { covered.delete(kept.id); waiting.add(kept.id); if (open.has(kept.id)) stranded.add(kept.id); }
       };
       const way = navigation()!.traverseTo(left);
       way.committed.catch(dropped);
