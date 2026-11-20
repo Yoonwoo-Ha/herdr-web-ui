@@ -232,7 +232,7 @@ describe("the offer fragment", () => {
       WebSocket: function () { order.push("socket"); },
     });
     try {
-      bootRelayShell({ querySelector: () => null } as unknown as HTMLElement, () => ({}) as Root, () => {
+      bootRelayShell({ querySelector: () => null, dataset: {} } as unknown as HTMLElement, () => ({}) as Root, () => {
         order.push("load");
         const shell = { mountRelayShell: async ({ entryUrl }: RelayShellMount) => { mounted.resolve(entryUrl); } };
         return Promise.resolve(shell as Awaited<ReturnType<typeof loadRelayShell>>);

@@ -265,7 +265,7 @@ describe("a link that opens the hosted shell on a provider's sign-in (#sign-in=<
       let mounted: Promise<void> | undefined;
       const options = mountOptions(fake, memoryAccountStore(), signIns);
       // a page with no start screen of its own: boot's start badge has nothing to replace
-      const container = { querySelector: () => null } as unknown as HTMLElement;
+      const container = { querySelector: () => null, dataset: {} } as unknown as HTMLElement;
       bootRelayShell(container, () => { throw new Error("the app is not expected here"); }, (async () => {
         await loading;
         return { mountRelayShell: (mount: Parameters<typeof mountRelayShell>[0]) => { mounted = mountRelayShell({ ...mount, ...options }); changed(); return mounted; } };

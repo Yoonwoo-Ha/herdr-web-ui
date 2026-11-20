@@ -77,7 +77,9 @@ export function bootRelayShell(container: HTMLElement, renderApp: () => Root, lo
   void showStart(container);
   // an older entry of this tab's history may still hold its query: it moves as the load's did, before the app reads it
   window.addEventListener("popstate", () => { moveQueryToFragment(window); });
-  void load().then(({ mountRelayShell }) => mountRelayShell({ container, entryUrl, renderApp, navigatedSinceEntry })).catch((error: unknown) => {
+  // data-relay-shell="mounted": the shell has read its entry to the end (a sign-in's return included), so whatever it
+  // opens by itself has started; a test that changes the saved PCs waits for it
+  void load().then(({ mountRelayShell }) => mountRelayShell({ container, entryUrl, renderApp, navigatedSinceEntry })).then(() => { container.dataset["relayShell"] = "mounted"; }).catch((error: unknown) => {
     console.error("Ovis: the relay shell did not start", error);
     createRoot(container).render(createElement(AppCrash, { error }));
   });

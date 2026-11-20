@@ -143,6 +143,9 @@ export async function relayDashboardQa({ browser, origin, evidence }: DashboardQ
     await page.locator(".account-provider").first().click();
     await page.locator('.relay-dash[data-dashboard-mode="account"]').waitFor({ timeout: LOAD_MS });
     await page.locator("[data-qa-account-key-committed]").waitFor({ state: "attached" });
+    // the sign-in's return opens a saved PC by itself once it has read them (#4358): seeded before that read, the PC it
+    // opens aborts the reload below, so the pairings wait until the shell has read its entry to the end
+    await page.locator('[data-relay-shell="mounted"]').waitFor({ state: "attached" });
     if (fleet.seeds.length > 0) {
       await seedPairings(page, fleet.seeds, ACCOUNT);
       await page.reload();
