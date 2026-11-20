@@ -289,10 +289,15 @@ describe("parallel browser script deadline", () => {
   it.skipIf(process.platform !== "linux")("takes a process's name from its executable, never from the argv[0] it sets", async () => {
     // a process this test starts, which calls itself by a credential
     for (const argv0 of ["user:SECRET@host", "curl https://user:SECRET@h", "https://x-access-token:SECRET@h/x"]) {
-      const child = Bun.spawn(["sleep", "1000"], { argv0, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+      const child = Bun.spawn(["cat"], { argv0, stdin: "pipe", stdout: "pipe", stderr: "ignore" });
       try {
+        // Spawn can return before /proc/<pid>/exe changes. Only cat can echo the byte after exec.
+        const ready = child.stdout.getReader().read();
+        child.stdin.write(Uint8Array.of(1));
+        child.stdin.flush();
+        expect((await ready).value).toEqual(Uint8Array.of(1));
         const name = processName(child.pid);
-        expect(name).toBe("sleep");
+        expect(name).toBe("cat");
         expect(name).not.toContain("SECRET");
       } finally {
         child.kill("SIGKILL");
