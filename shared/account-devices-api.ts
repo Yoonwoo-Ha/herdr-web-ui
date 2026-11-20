@@ -10,6 +10,9 @@ import { PAIR_FINGERPRINT_PATTERN } from "./pair-fingerprint.ts";
  * accountOpensAll, by the PC's server and the account service; an app follows what a PC advertises
  * (ACCOUNT_OPENS_ALL_CAPABILITY) and has no switch of its own.
  */
+/** How long this PC's screen keeps an asked act open (server/account/local-confirm.ts); the app shows its deadline. */
+export const CONFIRM_MS = 2 * 60_000;
+
 export const OVIS_ACCOUNT_OPENS_ALL = "OVIS_ACCOUNT_OPENS_ALL";
 /** The capability a PC advertises once the flag is on; an app shows nothing of step 2 to a PC without it. */
 export const ACCOUNT_OPENS_ALL_CAPABILITY = "account-opens-all/1";

@@ -281,6 +281,11 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   // this PC's own window may still read the lock and ask for an unlock: both only ask the screen, which grants
   // (on a PC with an access token, that window comes in with the token: the same window, loopback and not forwarded)
   const ownWindow = access.level === "full" && (access.via === "local" || (access.via === "token" && loopback && !forwarded));
+  // a lock or unlock is asked only from this PC's own window: any other is told so, before any other refusal (S36-1)
+  if (ctx.services.lockRoutes !== undefined && !ownWindow && request.method === "POST" && (pathname === "/api/account/lock" || pathname === "/api/account/unlock")) {
+    setRequestRoute(pathname);
+    return jsonResponse({ error: { code: "local_required", message: "Turn the lock on or off on this PC's own screen." } }, 403, { "cache-control": "no-store" });
+  }
   const askingTheScreen = ownWindow
     && ((pathname === "/api/account/lock" && request.method === "GET") || (pathname === "/api/account/unlock" && request.method === "POST"));
   // strict is every source the store fails closed on (the log, the admission order, removal evidence, the journal: S19)
@@ -606,7 +611,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     return handlePortalRequest(request, pathname, options.portal, { port: ctx.port ?? DEFAULT_PORT, ...portalGuards() });
   }
   if (ctx.services.lockRoutes !== undefined && (pathname === "/api/account/lock" || pathname === "/api/account/unlock")) {
-    return ctx.services.lockRoutes(request, pathname, access, ctx.peer.kind === "relay");
+    return ctx.services.lockRoutes(request, pathname, access, ownWindow);
   }
   if (pathname.startsWith("/api/account/")) return handleAccountRequest(request, pathname, ctx, access);
   if (pathname === "/api/relay" || pathname.startsWith("/api/relay/")) {
@@ -659,9 +664,11 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
 
   if (pathname === "/api/health") {
     setRequestRoute(pathname);
+    const own = ctx.services.lockRoutes !== undefined && ownWindow ? { own_window: true as const } : {};
     const auth: HealthAuth = access.level === "full"
-      ? { required: false, authenticated: true, via: access.via, role: access.role, ...(access.via === "token" && bearerMatches(request, token) ? { bearer: true as const } : {}), ...(access.portal ? { portal: access.portal } : {}) }
-      : { required: true, authenticated, ...(authenticated ? {} : { reason: access.reason }) };
+      ? { required: false, authenticated: true, via: access.via, role: access.role, ...(access.via === "token" && bearerMatches(request, token) ? { bearer: true as const } : {}), ...(access.portal ? { portal: access.portal } : {}), ...own }
+      // a window refused at the door of a locked PC is told the PC is locked, never offered a pairing it cannot use (T47, N4)
+      : { required: true, authenticated, ...(authenticated ? {} : { reason: ctx.services.safetyLog?.state().locked === true && access.reason === "pairing_required" ? "locked" as const : access.reason }), ...own };
     // this server is open to the network with no token and nothing paired, told to a client
     // that got in and to nobody else: naming it to an anonymous caller would be
     // reconnaissance, not help. Nothing here changes who is let in (server/access.ts).

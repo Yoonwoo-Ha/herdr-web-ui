@@ -987,7 +987,12 @@ answers one but these two:
   `local-confirm.json` in the state folder (readable by your user only). It is opened only on
   Linux, where the kernel names the user behind a connection, and answers only that user, with no
   proxy header, a Host of exactly its address and, for an answer, its own Origin and the one-time
-  value its page was given. On Windows neither path exists yet.
+  value its page was given. On Windows neither path exists yet. Run `ovis confirm` on the PC to
+  open it: as the user Ovis runs as, the command reads the port from that file (refusing a file
+  or folder another account owns, or one it cannot make yours alone), prints `http://127.0.0.1:<port>/` and opens it in a browser
+  where there is a desktop. It never opens an address the file names, only the one it builds.
+  Strict mode in Settings → Devices points there after you ask to turn it on or off: nothing changes
+  until the act is approved on that page, within its 2 minutes.
 
 Every route of the server refuses these answers (`local_required`), through the relay, the access
 token, a paired device, a loopback window or the bridge credential alike. A restart ends every
@@ -1009,6 +1014,9 @@ Off unless `OVIS_ACCOUNT_OPENS_ALL=1`, like everything in this part.
 - **Strict mode and key confirmations are Linux only for now.** Turning strict mode on or off,
   and approving a new key on the PC's screen, need the PC's own screen, which this release has
   only on Linux. On macOS and Windows neither is available yet; pairing works as before.
+- **A clock that ran ahead keeps the PC closed.** If this PC's clock ran more than a day ahead, it
+  stays closed to account devices until real time comes within a day of the times it wrote and Ovis
+  is restarted; there is no repair command yet.
 - **A locked PC is driven only from the PC itself.** While strict mode is on, the PC takes its
   orders only from the desktop app that started it (its owner channel) or from the confirm page
   on its own screen. No other device, browser window, access token or relay connection can change

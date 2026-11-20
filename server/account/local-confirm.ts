@@ -11,9 +11,11 @@
  */
 import { dlopen, FFIType } from "bun:ffi";
 import { randomBytes } from "node:crypto";
-import { chmodSync, closeSync, fstatSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, fstatSync, readFileSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import { CONFIRM_MS } from "../../shared/account-devices-api.ts";
 import { machineForwardingHeaders } from "../access.ts";
+import { writePrivateState } from "../private-state.ts";
 
 export type ScreenAction =
   | { kind: "lock" }
@@ -31,7 +33,7 @@ export interface ConfirmShown { title: string; lines: readonly string[]; fingerp
 export type ConfirmAnswer = "approved" | "declined" | "expired";
 export interface OpenConfirm { id: string; action: ScreenAction; shown: ConfirmShown; expiresAt: number }
 
-export const CONFIRM_MS = 2 * 60_000;
+export { CONFIRM_MS };
 export const CONFIRMS_OPEN_MAX = 16;
 export const LOCAL_CONFIRM_FILE = "local-confirm.json";
 const DESKTOP_OWNER_ARGUMENT = "--desktop-owner-fd";
@@ -387,8 +389,7 @@ export function openConfirmListener(confirms: LocalConfirms, options: {
   });
   const file = join(options.stateDir, LOCAL_CONFIRM_FILE);
   try {
-    writeFileSync(file, JSON.stringify({ port: server.port }), { mode: 0o600 });
-    chmodSync(file, 0o600);
+    writePrivateState(file, { port: server.port });
   } catch (error) {
     server.stop(true);
     throw error;

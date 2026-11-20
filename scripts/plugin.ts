@@ -1281,6 +1281,17 @@ async function recover(): Promise<number> {
   } finally { lines?.close(); }
 }
 
+/** `ovis confirm` (scripts/plugin-confirm.ts): this PC's confirm page, opened in a browser where there is a desktop. */
+async function confirm(): Promise<number> {
+  const { runConfirm } = await import("./plugin-confirm.ts");
+  return await runConfirm({
+    stateDir: runningStateDir(APP_STATE_DIR), platform: process.platform, uid: process.getuid?.(),
+    env: { DISPLAY: process.env["DISPLAY"], WAYLAND_DISPLAY: process.env["WAYLAND_DISPLAY"] },
+    out: (text) => process.stdout.write(text),
+    open: (url) => { spawn("xdg-open", [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref(); },
+  });
+}
+
 export async function runPlugin(): Promise<void> {
   const named = process.argv[2] ?? "status";
   const command = Object.hasOwn(COMMAND_ALIASES, named) ? COMMAND_ALIASES[named] : named;
@@ -1290,6 +1301,7 @@ export async function runPlugin(): Promise<void> {
   else if (command === "pair") process.exit(await pair());
   else if (command === "link") process.exit(await linkCommand());
   else if (command === "recover" && accountOpensAll()) process.exit(await recover());
+  else if (command === "confirm" && accountOpensAll()) process.exit(await confirm());
   else if (command === "phone") process.exit(await phone());
   else if (command === "phone-setup") process.exit(await phoneSetup());
   else if (command === "tui") process.exit(await runTui(process.argv.slice(3), { platform: platform(), where: { root: ROOT, home: homedir() }, caller: process.env, settings: env, err: (text) => process.stderr.write(text), on: (signal, handler) => { process.on(signal, handler); return () => process.off(signal, handler); } }));
@@ -1297,11 +1309,11 @@ export async function runPlugin(): Promise<void> {
     const active = activePluginScript(ROOT, port, APP_STATE_DIR);
     if (active !== join(resolve(ROOT), "scripts", "plugin.ts") && resolve(active) !== resolve(import.meta.filename)) process.exit(await handOn(active, process.argv.slice(2)));
     process.stderr.write([
-      `usage: bun scripts/plugin.ts <start|stop|status|pair|link|add|login|${accountOpensAll() ? "recover|" : ""}phone|phone-setup|tui>`,
+      `usage: bun scripts/plugin.ts <start|stop|status|pair|link|add|login|${accountOpensAll() ? "recover|confirm|" : ""}phone|phone-setup|tui>`,
       "add (also login, link): sign this PC in, then scan its QR code with a device of your Ovis account to add it (--approve: approve that device here instead; --print: write the QR code where there is no terminal).",
       "link --code: show a code and a QR code to pair one device instead.",
       "tui: herdr-core's terminals in this terminal, as herdr shows them.",
-      ...(accountOpensAll() ? ["recover: list the devices that wait for this PC's account to be read; --release <id>... lets them in until then, --undo ends that."] : []),
+      ...(accountOpensAll() ? ["recover: list the devices that wait for this PC's account to be read; --release <id>... lets them in until then, --undo ends that.", "confirm: open this PC's confirm page, where turning strict mode on or off waits for your approval."] : []),
       "",
     ].join("\n"));
     process.exit(2);

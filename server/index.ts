@@ -603,6 +603,8 @@ export function createServer(
     preview: () => ({ rows: devices.list(null).filter((row) => devices.originOf(row.id)?.from !== "pc").map((row) => ({ id: row.id, label: row.label, origin: devices.originOf(row.id), file: "devices" as const })), grants: ["token", "portal", "tailscale", "open_lan", "loopback"] }),
     lock: () => {
       if (safetyLog.appendLock(pcAccount.binding()).outcome !== "applied") return;
+      // a code started before the lock pairs nobody after it: it ends in the same turn (T46)
+      devices.endPairing();
       devices.endUnlockedRows();
       lockSignal?.fire();
     },

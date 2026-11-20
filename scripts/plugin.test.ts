@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
+import { watch } from "node:fs";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { platform, tmpdir, uptime } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
@@ -919,11 +920,12 @@ describe("add and login", () => {
     const result = await run("constructor", { HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_ACCOUNT_OPENS_ALL: "1" });
     expect(result.exitCode).toBe(2);
     expect(result.err).toBe([
-      "usage: bun scripts/plugin.ts <start|stop|status|pair|link|add|login|recover|phone|phone-setup|tui>",
+      "usage: bun scripts/plugin.ts <start|stop|status|pair|link|add|login|recover|confirm|phone|phone-setup|tui>",
       "add (also login, link): sign this PC in, then scan its QR code with a device of your Ovis account to add it (--approve: approve that device here instead; --print: write the QR code where there is no terminal).",
       "link --code: show a code and a QR code to pair one device instead.",
       "tui: herdr-core's terminals in this terminal, as herdr shows them.",
       "recover: list the devices that wait for this PC's account to be read; --release <id>... lets them in until then, --undo ends that.",
+      "confirm: open this PC's confirm page, where turning strict mode on or off waits for your approval.",
       "",
     ].join("\n"));
   });
@@ -932,6 +934,39 @@ describe("add and login", () => {
     const result = await run("recover", { HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_ACCOUNT_OPENS_ALL: "0" });
     expect(result.exitCode).toBe(2);
     expect(result.err).not.toContain("recover");
+  });
+
+  it("with the release flag on, confirm prints this PC's confirm page from its state folder and opens nothing without a desktop", async () => {
+    const state = join(scratch, "app-state");
+    mkdirSync(state, { recursive: true, mode: 0o700 });
+    writeFileSync(join(state, "local-confirm.json"), JSON.stringify({ port: 41234 }), { mode: 0o600 });
+    const result = await run("confirm", { HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_ACCOUNT_OPENS_ALL: "1", OVIS_STATE_DIR: state, DISPLAY: undefined, WAYLAND_DISPLAY: undefined });
+    expect({ code: result.exitCode, out: result.out }).toEqual({ code: process.platform === "linux" ? 0 : 1, out: expect.stringContaining(process.platform === "linux" ? "http://127.0.0.1:41234/" : "Linux") });
+  });
+
+  it("with the release flag on under Wayland, confirm opens the page it built with xdg-open", async () => {
+    const state = join(scratch, "app-state");
+    mkdirSync(state, { recursive: true, mode: 0o700 });
+    writeFileSync(join(state, "local-confirm.json"), JSON.stringify({ port: 41234 }), { mode: 0o600 });
+    const opened = join(scratch, "opened");
+    writeFileSync(join(scratch, "bin", "xdg-open"), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${opened}"\n`);
+    chmodSync(join(scratch, "bin", "xdg-open"), 0o755);
+    const result = await run("confirm", { HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_ACCOUNT_OPENS_ALL: "1", OVIS_STATE_DIR: state, DISPLAY: undefined, WAYLAND_DISPLAY: "wayland-0" });
+    if (process.platform !== "linux") { expect(result.exitCode).toBe(1); return; }
+    expect(result.exitCode).toBe(0);
+    // the opener is started detached: wait for what it writes, not for a time
+    const written = (): boolean => existsSync(opened) && readFileSync(opened, "utf8").endsWith("\n");
+    await new Promise<void>((resolve) => {
+      const watcher = watch(scratch, () => { if (written()) { watcher.close(); resolve(); } });
+      if (written()) { watcher.close(); resolve(); }
+    });
+    expect(readFileSync(opened, "utf8")).toBe("http://127.0.0.1:41234/\n");
+  });
+
+  it("with the release flag off, confirm is not a command and the usage does not offer it (flag off)", async () => {
+    const result = await run("confirm", { HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_ACCOUNT_OPENS_ALL: "0" });
+    expect(result.exitCode).toBe(2);
+    expect(result.err).not.toContain("confirm");
   });
 
   it("T70: recover uses the release flag from the same config as the server", async () => {

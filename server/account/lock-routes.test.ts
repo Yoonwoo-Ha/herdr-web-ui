@@ -40,7 +40,7 @@ function routes(options: { platform?: NodeJS.Platform; store?: ReturnType<typeof
 }
 
 const ask = (handle: ReturnType<typeof routes>["handle"], method: string, path: string, access: Access, body?: unknown) =>
-  handle(new Request(`http://localhost${path}`, { method, headers: { origin: "http://localhost", host: "localhost", "x-herdr-machine": "1", ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) }), path, access, false);
+  handle(new Request(`http://localhost${path}`, { method, headers: { origin: "http://localhost", host: "localhost", "x-herdr-machine": "1", ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) }), path, access, access.level === "full" && access.via === "local");
 
 test("T46: the PC tells whether it can lock, what a lock would end, and that it confirms on its screen", async () => {
   const { handle } = routes();
@@ -95,6 +95,31 @@ test("R10: nothing from afar locks or unlocks, even a device that drives this PC
     expect([tried.status, (await tried.json() as { error: { code: string } }).error.code]).toEqual([403, "local_required"]);
   }
   expect(confirms.pending()).toEqual([]);
+});
+
+test("R10, S36-1: only this PC's own window asks: a Tailscale login, a token from elsewhere and the open network get local_required, and nothing reaches the screen", async () => {
+  const { handle, confirms } = routes({ store: store({ locked: "lock-1" }) });
+  for (const via of ["tailscale", "token", "open"] as const) {
+    const caller: Access = { level: "full", via, role: "drive" };
+    for (const path of ["/api/account/lock", "/api/account/unlock"]) {
+      const tried = await handle(new Request(`http://localhost${path}`, { method: "POST", headers: { origin: "http://localhost", host: "localhost", "x-herdr-machine": "1", "content-type": "application/json" }, body: JSON.stringify({ lock: "lock-1" }) }), path, caller, false);
+      expect({ via, path, status: tried.status, code: (await tried.json() as { error: { code: string } }).error.code }).toEqual({ via, path, status: 403, code: "local_required" });
+    }
+  }
+  expect(confirms.pending()).toEqual([]);
+  const asked = await ask(handle, "POST", "/api/account/unlock", local, { lock: "lock-1" });
+  expect(asked.status).toBe(202);
+});
+
+test("t13r S36-1 (3): the screen says what the act does, that a browser on this PC asked, and until when", async () => {
+  for (const [path, locked, title] of [["/api/account/lock", null, "Turn strict mode ON"], ["/api/account/unlock", "lock-1", "Turn strict mode OFF"]] as const) {
+    const { handle, confirms } = routes({ store: store({ locked }) });
+    expect((await ask(handle, "POST", path, local, locked === null ? {} : { lock: locked })).status).toBe(202);
+    const [open] = confirms.pending();
+    expect(open?.shown.title).toBe(title);
+    expect(open?.shown.lines.join("\n")).toContain("A browser on this PC asked for this.");
+    expect(open?.shown.lines.join("\n")).toMatch(/Approve by \d{1,2}:\d{2}/);
+  }
 });
 
 test("T46: a PC in no account, an already locked PC, or one without screen proof offers no lock", async () => {

@@ -23,6 +23,11 @@ export interface HealthAuth {
   /** with `via: "portal"`: who signed in through Portal */
   readonly portal?: PortalLogin;
   readonly reason?: AccessRefusal;
+  /**
+   * account-opens-all/1: this request is this PC's own window (loopback with no proxy, or the access token from there),
+   * the rule the lock routes apply themselves. A display hint for the window about itself: it grants nothing.
+   */
+  readonly own_window?: true;
 }
 
 /**
