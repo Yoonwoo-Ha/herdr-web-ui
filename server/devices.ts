@@ -487,7 +487,8 @@ export class DeviceStore {
       this.error = blocked;
       console.error(this.error);
     }
-    if (this.error === null && this.accountError === null) {
+    // the tombstone files' own repair asks only whether they could be read: a strict safety log is a separate refusal
+    if (this.error === null && this.accountProblem === null) {
       if (pending.length) {
         this.writeTombstones(this.tombstones);
         rmSync(this.pendingTombstonePath, { force: true });
@@ -523,10 +524,6 @@ export class DeviceStore {
       && this.tombstones.some((t) => t.key === device.relay_public_key && (!pairedHere(device) || t.removed_at >= device.created_at));
   }
 
-  /**
-   * Whether the gate is closed to strangers: it is from the first pairing on, and stays so when
-   * every device is revoked (revoking must never reopen the LAN); this PC itself always gets in.
-   */
   get accountError(): string | null {
     return this.safety?.strict ?? this.accountProblem;
   }
@@ -536,6 +533,10 @@ export class DeviceStore {
     return (this.safety?.strict ?? null) !== null;
   }
 
+  /**
+   * Whether the gate is closed to strangers: it is from the first pairing on, and stays so when
+   * every device is revoked (revoking must never reopen the LAN); this PC itself always gets in.
+   */
   get gated(): boolean {
     // what access reads: a PC that fails closed is closed to strangers, paired or not (S19)
     return this.failsClosed || this.rawGated;
@@ -1305,6 +1306,8 @@ export class DeviceStore {
     try {
       const key = await crypto.subtle.importKey("spki", Buffer.from(publicKey, "base64url"), { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
       const verified = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, signed, message);
+      // a log that turned strict while the proof was checked refuses it too (S19)
+      if (this.failsClosed) return null;
       // the row went, or linked, while its signature was checked: the proof was for a row that is no more
       if (waiting !== undefined) return verified && this.provisional(deviceId) === waiting ? { id: waiting.id, label: waiting.label, role: "watch" } : null;
       // Authorization changes during WebCrypto invalidate the proof; a rename does not.
@@ -1659,7 +1662,7 @@ export class DeviceStore {
       ...keys.map((key) => ({ key, account: rows.find((d) => d.relay_public_key === key)?.account ?? "", record_id: "local", removed_at: removedAt }))];
     if (keys.length) {
       // with the main file unreadable the revoke still wins: its tombstone waits beside it
-      if (this.accountError !== null) {
+      if (this.accountProblem !== null) {
         writePrivateState(this.pendingTombstonePath, { v: 1, tombstones: next });
         this.tombstones = next;
       } else this.writeTombstones(next);

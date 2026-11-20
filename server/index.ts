@@ -54,7 +54,7 @@ import { PortalService } from "./portal.ts";
 import { RelayService } from "./relay/service.ts";
 import { AccountMailbox, accountServiceUrl, passAccountService } from "./account/mailbox.ts";
 import { accountOpensAll } from "../shared/account-devices-api.ts";
-import { SafetyLog } from "./account/safety-log.ts";
+import { mergeSafetyLogs, SafetyLog } from "./account/safety-log.ts";
 import { AccountHolds } from "./account/holds.ts";
 import { AccountIntroductions } from "./account/introductions.ts";
 import { desktopOwnerChannel, desktopOwnerFdChannel, LOCAL_CONFIRM_FILE, LocalConfirms, openConfirmListener, takeDesktopOwnerFd } from "./account/local-confirm.ts";
@@ -262,7 +262,12 @@ export function createServer(
     if (accountBlocked !== null) console.error(accountBlocked);
   }
   // the account safety log is replayed before any listener: what it holds in force decides who may get in (P24, T41)
-  const safetyLog = (provided.accountOpensAll ?? accountOpensAll()) ? SafetyLog.open(stateDir) : null;
+  const opensAll = provided.accountOpensAll ?? accountOpensAll();
+  // a sibling folder's log is merged into both before this one is read: nothing in force is lost, nothing ended comes back (T48)
+  const logMerge = opensAll && options.siblingStateDir ? mergeSafetyLogs(stateDir, options.siblingStateDir) : null;
+  const safetyLog = opensAll ? SafetyLog.open(stateDir, logMerge) : null;
+  // what nothing rests on any more is folded once replayed; a fold that cannot be written leaves the log whole
+  try { safetyLog?.fold(); } catch (error) { console.error(`[account] the safety log could not be folded: ${error instanceof Error ? error.message : String(error)}`); }
   if (safetyLog?.strict) console.error(safetyLog.strict);
   const devices = new DeviceStore(stateDir, merge?.devicesBlocked ?? null, accountBlocked, safetyLog);
   // the machine profile has no open install: from its first answer only the caller on its owner's socket and a device through the relay with its proof get in
