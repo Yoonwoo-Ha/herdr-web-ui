@@ -112,6 +112,22 @@ async function dragged(coordinator: ReorderCoordinator, moves: ReturnType<typeof
   await done;
 }
 const flush = () => new Promise<void>((resolve) => queueMicrotask(resolve));
+const drain = () => new Promise<void>((resolve) => setImmediate(resolve));
+/** a proof endpoint that, like the demo's and a remote PC's, answers at most once per second and refuses with null */
+function interval() {
+  let last = -Infinity;
+  const proof = {
+    clock: 0, boot: "E1", ids: O, requests: [] as string[],
+    verify: async () => {
+      const allowed = proof.clock - last >= 1000;
+      proof.requests.push(`${proof.clock}:${proof.boot}:${allowed ? "start" : "refused"}`);
+      if (!allowed) return null;
+      last = proof.clock;
+      return { boot_id: proof.boot, machines: [entry("remote", proof.ids, proof.boot, 1)] };
+    },
+  };
+  return proof;
+}
 
 describe("ReorderCoordinator", () => {
   test("a pre-move read delivered after confirmation stays fenced", async () => {
@@ -370,6 +386,174 @@ describe("ReorderCoordinator", () => {
     await flush();
     expect(coordinator.state("local")).toMatchObject({ retired: ["E2"], guard: { epoch: "E3" } });
     expect(coordinator.order("local", O)).toEqual(B);
+  });
+
+  test("a restarted server's roster that arrived before the move's receipt is verified once the receipt lands", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    const moves = mover();
+    const done = coordinator.reorder("local", O, A, moves.move);
+    const step = await moves.next();
+    coordinator.roster([entry("local", A, "E2", 0)], event);
+    expect(asks.count()).toBe(0);
+    step.resolve({ ok: true, order_epoch: "E1", moved_seq: 1 });
+    await done;
+    expect(coordinator.state("local")).toMatchObject({ held: true, checking: true });
+    const ask = await asks.next();
+    expect(ask.id).toBe("local");
+    ask.resolve({ machines: [entry("local", B, "E2", 0)], boot_id: "E2" });
+    await flush();
+    expect(coordinator.state("local")).toMatchObject({ retired: ["E1"], guard: { epoch: "E2" } });
+    expect(coordinator.order("local", O)).toEqual(B);
+  });
+
+  test("a roster read before the move was sent asks no verification when its receipt lands", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    coordinator.roster([entry("local", O, "E1", 0)], event);
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E2", moved_seq: 1 });
+    expect(asks.count()).toBe(0);
+    expect(coordinator.state("local")).toMatchObject({ checking: false, floors: { E2: 1 } });
+  });
+
+  test("a restarted roster that arrived mid-batch is verified once the batch settles, also after a later step fails", async () => {
+    const asks = verifier();
+    const settled: string[] = [];
+    const coordinator = new ReorderCoordinator({ verify: asks.verify, onSettled: (id) => settled.push(id) });
+    const moves = mover();
+    const done = coordinator.reorder("local", O, ["c", "b", "a"], moves.move);
+    const failed = done.then(() => null, (error: unknown) => error);
+    const first = await moves.next();
+    coordinator.roster([entry("local", A, "E2", 0)], event);
+    first.resolve({ ok: true, order_epoch: "E1", moved_seq: 1 });
+    const second = await moves.next();
+    expect(asks.count()).toBe(0);
+    second.reject(new Error("herdr refused"));
+    expect(await failed).toBeInstanceOf(Error);
+    expect(settled).toEqual(["local"]);
+    (await asks.next()).resolve({ machines: [entry("local", B, "E2", 0)], boot_id: "E2" });
+    await flush();
+    expect(coordinator.state("local")).toMatchObject({ held: false, retired: ["E1"], guard: { epoch: "E2" } });
+    expect(coordinator.order("local", O)).toEqual(B);
+  });
+
+  test("a PC that left before its move's receipt asks no verification", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    const moves = mover();
+    const done = coordinator.reorder("local", O, A, moves.move);
+    const step = await moves.next();
+    coordinator.roster([entry("local", A, "E2", 0)], event);
+    coordinator.roster([], event);
+    step.resolve({ ok: true, order_epoch: "E1", moved_seq: 1 });
+    await done;
+    await flush();
+    expect(asks.count()).toBe(0);
+    expect(coordinator.state("local")).toMatchObject({ held: false, checking: false });
+  });
+
+  test("an event repeating the roster read before the move asks no verification when its receipt lands", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    coordinator.roster([entry("local", O, "E1", 0)], event);
+    const moves = mover();
+    const done = coordinator.reorder("local", O, A, moves.move);
+    const step = await moves.next();
+    coordinator.roster([entry("local", O, "E1", 0)], event);
+    step.resolve({ ok: true, order_epoch: "E2", moved_seq: 1 });
+    await done;
+    await flush();
+    expect(asks.count()).toBe(0);
+    expect(coordinator.state("local")).toMatchObject({ checking: false, floors: { E2: 1 } });
+  });
+
+  test("a roster read before a chained batch's move was sent spends no verification the next restart needs", async () => {
+    const proof = interval();
+    const coordinator = new ReorderCoordinator({ verify: proof.verify });
+    const moves = mover();
+    coordinator.roster([entry("remote", O, "E1", 0)], event);
+    const first = coordinator.reorder("remote", O, A, moves.move);
+    const step = await moves.next();
+    const second = coordinator.reorder("remote", A, B, moves.move);
+    coordinator.roster([entry("remote", A, "E1", 1)], event);
+    step.resolve({ ok: true, order_epoch: "E1", moved_seq: 1 });
+    proof.boot = "E2"; proof.ids = B;
+    await first;
+    (await moves.next()).resolve({ ok: true, order_epoch: "E2", moved_seq: 1 });
+    await second;
+    proof.clock = 1; proof.boot = "E3"; proof.ids = O;
+    coordinator.roster([entry("remote", O, "E3", 1)], event);
+    await flush();
+    expect(proof.requests).toEqual(["1:E3:start"]);
+    expect(coordinator.order("remote", O)).toEqual(O);
+  });
+
+  test("a failed step does not repeat a verification already answered for the same roster", async () => {
+    const proof = interval();
+    const coordinator = new ReorderCoordinator({ verify: proof.verify });
+    const moves = mover();
+    coordinator.roster([entry("remote", O, "E1", 0)], event);
+    const done = coordinator.reorder("remote", O, ["c", "b", "a"], moves.move).catch((error: unknown) => error);
+    (await moves.next()).resolve({ ok: true, order_epoch: "E1", moved_seq: 1 });
+    const second = await moves.next();
+    coordinator.roster([entry("remote", A, "unseen-old", 0)], event);
+    await flush();
+    proof.clock = 1100;
+    second.reject(new Error("herdr refused"));
+    expect(await done).toBeInstanceOf(Error);
+    proof.clock = 1101; proof.boot = "E2"; proof.ids = B;
+    coordinator.roster([entry("remote", B, "E2", 1)], event);
+    await flush();
+    expect(proof.requests).toEqual(["0:E1:start", "1101:E2:start"]);
+    expect(coordinator.order("remote", O)).toEqual(B);
+  });
+
+  test("a delayed older read of the server lifetime read before the move spends no verification", async () => {
+    const proof = interval();
+    const coordinator = new ReorderCoordinator({ verify: proof.verify });
+    const moves = mover();
+    coordinator.roster([entry("remote", O, "before", 5)], { kind: "load", started: coordinator.loadStarted() });
+    const done = coordinator.reorder("remote", O, A, moves.move);
+    const step = await moves.next();
+    coordinator.roster([entry("remote", O, "before", 4)], event);
+    proof.boot = "moved"; proof.ids = A;
+    step.resolve({ ok: true, order_epoch: "moved", moved_seq: 1 });
+    await done;
+    proof.clock = 1; proof.boot = "restart"; proof.ids = B;
+    coordinator.roster([entry("remote", B, "restart", 1)], event);
+    await flush();
+    expect(proof.requests).toEqual(["1:restart:start"]);
+    expect(coordinator.order("remote", O)).toEqual(B);
+  });
+
+  test("a later read of a server lifetime a verification already answered for asks no second one", async () => {
+    const proof = interval();
+    const reading = Promise.withResolvers<void>();
+    let calls = 0;
+    const coordinator = new ReorderCoordinator({ verify: async () => {
+      if (++calls === 1) await reading.promise;
+      return proof.verify();
+    } });
+    const moves = mover();
+    coordinator.roster([entry("remote", O, "E1", 0)], event);
+    const done = coordinator.reorder("remote", O, ["c", "b", "a"], moves.move).catch((error: unknown) => error);
+    const first = await moves.next();
+    proof.ids = movedTabOrder(O, first.step.workspaceId, first.step.insertIndex)!;
+    first.resolve({ ok: true, order_epoch: "E1", moved_seq: 1 });
+    const second = await moves.next();
+    coordinator.roster([entry("remote", O, "earlier", 4)], event);
+    coordinator.roster([entry("remote", A, "earlier", 5)], event);
+    reading.resolve();
+    await drain();
+    proof.clock = 1100;
+    second.reject(new Error("herdr refused"));
+    expect(await done).toBeInstanceOf(Error);
+    await drain();
+    proof.clock = 1101; proof.boot = "restart"; proof.ids = B;
+    coordinator.roster([entry("remote", B, "restart", 1)], event);
+    await drain();
+    expect(proof.requests).toEqual(["0:E1:start", "1101:restart:start"]);
+    expect(coordinator.order("remote", O)).toEqual(B);
   });
 
   test("passive older boot proof never retires a newer receipt epoch", async () => {
