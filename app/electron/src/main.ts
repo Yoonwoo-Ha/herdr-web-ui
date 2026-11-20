@@ -148,8 +148,8 @@ function watchState(): void {
   }
 }
 
-function browserView(): { tabs: ReturnType<BrowserTabs["list"]> } | null {
-  return browser ? { tabs: browser.list() } : null;
+function browserView(): { tabs: ReturnType<BrowserTabs["list"]>; results: ReturnType<BrowserTabs["results"]> } | null {
+  return browser ? { tabs: browser.list(), results: browser.results() } : null;
 }
 
 /** to the server's own page alone */
@@ -737,6 +737,11 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.handle("ovis:tabs-thumbnail", (event, id: unknown) => {
     const tab = tabId(id);
     return tab === null ? null : browserFor(event)?.thumbnail(tab) ?? null;
+  });
+  // shows a kept download in its folder; main never opens it
+  ipcMain.on("ovis:tabs-reveal", (event, id: unknown) => {
+    const path = typeof id === "string" ? browserFor(event)?.resultPath(id) ?? null : null;
+    if (path !== null) shell.showItemInFolder(path);
   });
   ipcMain.on("ovis:tabs-close", (event, id: unknown) => {
     const tab = tabId(id);

@@ -10,6 +10,7 @@
 import { BrowserWindow, session as sessions, WebContentsView, type Session, type WebContents } from "electron";
 import { mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
+import { BrowserResults, type BrowserResult } from "./browserResults.ts";
 import { isIP } from "node:net";
 import { canonicalHost, decide, machineHost, ovisAt, shownAddress, urlPort, type Allowed, type BrowserPolicy } from "../../../shared/browser-policy.ts";
 import { hostForm } from "./browserState.ts";
@@ -43,6 +44,9 @@ export interface BrowserTab {
   /** the pane whose agent opened it; null for a tab of the person's own */
   owner: string | null;
 }
+
+/** the downloads of this run of the app, of both profiles */
+const results = new BrowserResults();
 
 export interface BrowserBounds {
   x: number;
@@ -100,6 +104,22 @@ export class BrowserTabs {
       const url = tab.view.webContents.getURL();
       if (url !== "" && !this.decide(url, null).allowed) this.close(tab.id);
     }
+  }
+
+  /** the tab whose page `contents` is, null for another */
+  tabOf(contents: WebContents): number | null {
+    for (const tab of this.tabs.values()) if (tab.view.webContents === contents) return tab.id;
+    return null;
+  }
+
+  /** the downloads of this run of the app, newest first */
+  results(): BrowserResult[] {
+    return results.list();
+  }
+
+  /** where a finished download was kept, for the person to see in its folder (main never opens it) */
+  resultPath(id: string): string | null {
+    return results.path(id);
   }
 
   list(): BrowserTab[] {
@@ -278,7 +298,7 @@ export class BrowserTabs {
     }
   }
 
-  private tell(): void {
+  tell(): void {
     this.changed(this.list());
   }
 
@@ -306,7 +326,7 @@ export class BrowserTabs {
     // a download is kept in the app's folder for it and never opened; no site fills the disk: a size and a count cap
     if (downloadsWatched.has(partition)) return;
     downloadsWatched.add(partition);
-    partition.on("will-download", (_event, item) => {
+    partition.on("will-download", (_event, item, from) => {
       const tabs = owners.get(partition);
       const count = (downloads.get(partition) ?? 0) + 1;
       downloads.set(partition, count);
@@ -314,7 +334,17 @@ export class BrowserTabs {
       item.on("updated", () => { if (item.getReceivedBytes() > tabs.maxDownloadBytes) item.cancel(); });
       const folder = join(tabs.downloads, profile);
       mkdirSync(folder, { recursive: true });
-      item.setSavePath(join(folder, `${Date.now()}-${basename(item.getFilename()).replace(/[^\w.-]+/g, "_").slice(-120) || "download"}`));
+      const path = join(folder, `${Date.now()}-${basename(item.getFilename()).replace(/[^\w.-]+/g, "_").slice(-120) || "download"}`);
+      item.setSavePath(path);
+      const tab = tabs.tabOf(from);
+      const id = `d${count}-${profile}`;
+      results.add({ id, kind: "download", name: item.getFilename().slice(0, 200), at: Date.now(), bytes: item.getTotalBytes() || null, done: false, tab, profile }, path);
+      tabs.tell();
+      item.once("done", (_done, state) => {
+        if (state === "completed") results.finish(id, item.getReceivedBytes());
+        else results.drop(id);
+        owners.get(partition)?.tell();
+      });
     });
   }
 

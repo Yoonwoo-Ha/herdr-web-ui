@@ -84,6 +84,8 @@ void app.whenReady().then(async () => {
   const waitingTab = await tab(`${A}/blank`, "mine");
   result["bigDownload"] = await downloadState(`${A}/big`);
   result["smallDownload"] = await downloadState(`${A}/small`);
+  result["results"] = tabs.results().map(({ kind, name, done, tab: from, profile }) => ({ kind, name, done, fromTab: from === waitingTab.id, profile }));
+  result["resultPath"] = tabs.results().every(({ id, done }) => (tabs.resultPath(id) !== null) === done);
   // a site blocked while a request's name resolves: the request is decided again by the policy as it is then
   tabs.closeAll();
   const waiting = await tab(`${A}/blank`, "mine");
