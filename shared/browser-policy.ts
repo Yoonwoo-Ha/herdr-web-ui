@@ -97,6 +97,15 @@ export function blockedSite(entry: string): string | null {
   }
 }
 
+export const BLOCKED_SITES_MAX = 200;
+
+/** the block list as the shared setting `browserBlockedSites` keeps it: entries as `blockedSite` reads them, distinct, at most BLOCKED_SITES_MAX */
+export function browserBlockedSites(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const sites = value.flatMap((entry) => typeof entry === "string" && entry.length <= 300 ? [blockedSite(entry)] : []);
+  return [...new Set(sites.filter((site): site is string => site !== null))].slice(0, BLOCKED_SITES_MAX);
+}
+
 export function hostBlocked(host: string, blocked: readonly string[]): boolean {
   return blocked.some((site) => host === site || (!site.startsWith("[") && host.endsWith(`.${site}`)));
 }

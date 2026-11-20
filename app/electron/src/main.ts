@@ -1,6 +1,6 @@
 /** The core and its terminals keep running, as for every hc client. */
 import { app, autoUpdater as squirrel, BrowserWindow, ipcMain, Menu, nativeImage, Notification, powerMonitor, powerSaveBlocker, session, shell, Tray, type MenuItemConstructorOptions } from "electron";
-import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, rmSync, type WriteStream } from "node:fs";
+import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, rmSync, watch, type FSWatcher, type WriteStream } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -14,6 +14,9 @@ import { hideWindow } from "./windowClose.ts";
 import { argvLinkQuery, LINK_SCHEME, openLinkQuery, tellsLink } from "./openLink.ts";
 import { openOutside } from "./openOutside.ts";
 import { findBrowsers, readLinkBrowser, webAddress, writeLinkBrowser, type FoundBrowsers, type LinkBrowser } from "./browsers.ts";
+import { BrowserTabs, type BrowserBounds } from "./browserTabs.ts";
+import { debuggingSwitch, ownAddresses, readBrowserState } from "./browserState.ts";
+import { networkInterfaces } from "node:os";
 
 type StepState = "pending" | "ok" | "failed";
 export interface Status {
@@ -70,6 +73,10 @@ let browsersFound: Promise<FoundBrowsers> | null = null;
 let text = desktopText("en");
 /** the pane an `ovis://open` link names (openLink.ts), as its query: told to the server's page once it shows */
 let pendingLink: string | null = null;
+/** the built-in browser while its setting is on (browserTabs.ts), and the port of the server it keeps out */
+let browser: BrowserTabs | null = null;
+let browserPort: number | null = null;
+let stateWatch: FSWatcher | null = null;
 
 const accountService = accountServiceOf(process.env);
 
@@ -83,6 +90,14 @@ function ours(url: string): boolean {
   try { return new URL(url).origin === serverOrigin(); } catch { return false; }
 }
 
+/**
+ * The server's own page, by its frame's real origin, not its address: the server also shows a file's HTML at its
+ * own address, in an opaque origin.
+ */
+function serverPage(frame: Electron.WebFrameMain | null | undefined): boolean {
+  return frame != null && frame.parent === null && frame.origin === serverOrigin() && ours(frame.url);
+}
+
 function setStatus(next: Partial<Status>): void {
   status = { ...status, ...next };
   window?.webContents.send("ovis:status", status);
@@ -90,7 +105,47 @@ function setStatus(next: Partial<Status>): void {
 }
 
 function showConnect(): void {
+  browser?.hide();
   if (window && !window.webContents.getURL().startsWith("file:")) void window.loadFile(connectPage);
+}
+
+/**
+ * The built-in browser follows its setting in the server's state folder, read again on each change
+ * there: off, it has no tab and no profile in use; on, a new block list closes the tabs it refuses.
+ */
+function updateBrowser(): void {
+  const state = readBrowserState(stateDir, browserPort, debuggingSwitch((name) => app.commandLine.hasSwitch(name)));
+  const was = browser !== null;
+  if (!state.enabled) {
+    browser?.closeAll();
+    browser = null;
+  } else if (browser) {
+    browser.setPolicy(state.policy);
+  } else {
+    browser = new BrowserTabs(() => window, state.policy, join(app.getPath("userData"), "browser-downloads"), tellBrowser, () => ownAddresses(networkInterfaces()));
+  }
+  if (was !== (browser !== null)) tellBrowser();
+}
+
+function watchState(): void {
+  if (stateWatch) return;
+  try {
+    stateWatch = watch(stateDir, (_event, name) => {
+      if (name === null || name === "preferences.json" || name === "address-pcs.json") updateBrowser();
+    });
+  } catch (error) {
+    console.error(`Watching ${stateDir} failed: ${message(error)}`);
+  }
+}
+
+function browserView(): { tabs: ReturnType<BrowserTabs["list"]> } | null {
+  return browser ? { tabs: browser.list() } : null;
+}
+
+/** to the server's own page alone */
+function tellBrowser(): void {
+  const contents = window?.webContents;
+  if (contents && serverPage(contents.mainFrame)) contents.send("ovis:tabs", browserView());
 }
 
 function showWindow(): void {
@@ -173,6 +228,9 @@ async function launch(): Promise<void> {
         return;
       }
       server = running;
+      browserPort = port;
+      watchState();
+      updateBrowser();
       const runLog = log;
       void running.exited.then((code) => {
         runLog.end();
@@ -239,6 +297,7 @@ function createWindow(): void {
   window.on("closed", () => { window = null; cancelHide = null; });
   guard(window.webContents);
   window.webContents.on("did-finish-load", () => tellLink(true));
+  window.webContents.on("did-start-navigation", (details) => { if (details.isMainFrame && !details.isSameDocument) browser?.hide(); });
   void window.loadFile(connectPage);
 }
 
@@ -635,8 +694,6 @@ if (!app.requestSingleInstanceLock()) {
     try { return await waiting.returned; } finally { if (signIn === waiting) signIn = null; }
   });
   // Settings → Browser for links: the server's own page lists the browsers, chooses one by its id and opens its web links in it.
-  // By the frame's real origin, not its address: the server also shows a file's HTML at its own address, in an opaque origin
-  const serverPage = (frame: Electron.WebFrameMain | null | undefined) => frame != null && frame.parent === null && frame.origin === serverOrigin() && ours(frame.url);
   ipcMain.handle("ovis:browsers", async (event) => {
     if (!serverPage(event.senderFrame)) return null;
     const found = await browsers(true);
@@ -650,6 +707,37 @@ if (!app.requestSingleInstanceLock()) {
   });
   ipcMain.on("ovis:browser-open", (event, url: unknown) => {
     if (serverPage(event.senderFrame) && typeof url === "string") void openWebLink(url);
+  });
+
+  // the built-in browser (browserTabs.ts): only the server's own page reaches it, and only while its setting is on.
+  // The page opens tabs of the person's own profile; it steers an agent's tab only while the person holds it
+  const browserFor = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) => serverPage(event.senderFrame) ? browser : null;
+  const tabId = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) ? value : null;
+  const steered = (tabs: BrowserTabs, id: number | null) => id !== null && tabs.list().some((tab) => tab.id === id && (tab.profile === "mine" || tab.held));
+  ipcMain.handle("ovis:tabs", (event) => browserFor(event) ? browserView() : null);
+  ipcMain.handle("ovis:tabs-open", (event, url: unknown) => typeof url === "string" ? browserFor(event)?.open(url, "mine") ?? null : null);
+  ipcMain.on("ovis:tabs-show", (event, id: unknown, bounds: unknown) => {
+    const box = bounds as Partial<BrowserBounds> | null;
+    const numbers = box !== null && typeof box === "object" && [box.x, box.y, box.width, box.height].every((value) => typeof value === "number" && Number.isFinite(value));
+    const tabs = browserFor(event), tab = tabId(id);
+    if (tabs && tab !== null && numbers) tabs.show(tab, box as BrowserBounds);
+  });
+  ipcMain.on("ovis:tabs-hide", (event) => browserFor(event)?.hide());
+  ipcMain.on("ovis:tabs-close", (event, id: unknown) => {
+    const tab = tabId(id);
+    if (tab !== null) browserFor(event)?.close(tab);
+  });
+  ipcMain.handle("ovis:tabs-navigate", (event, id: unknown, url: unknown) => {
+    const tabs = browserFor(event), tab = tabId(id);
+    return tabs !== null && tab !== null && typeof url === "string" && steered(tabs, tab) && tabs.navigate(tab, url);
+  });
+  ipcMain.on("ovis:tabs-go", (event, id: unknown, step: unknown) => {
+    const tabs = browserFor(event), tab = tabId(id);
+    if (tabs && tab !== null && steered(tabs, tab) && (step === "back" || step === "forward" || step === "reload" || step === "stop")) tabs.go(tab, step);
+  });
+  ipcMain.on("ovis:tabs-hold", (event, id: unknown, held: unknown) => {
+    const tab = tabId(id);
+    if (tab !== null && typeof held === "boolean") browserFor(event)?.hold(tab, held);
   });
   app.on("before-quit", (event) => {
     if (stopped) return;

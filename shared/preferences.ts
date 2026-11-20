@@ -12,6 +12,7 @@ export const SHARED_SETTING_KEYS = [
   "showThinking", "quickReplies", "showQuickReplies", "showUsage", "usageCount",
   "usageGlance", "usageOrder", "usageHidden", "claudeLaunchMode", "codexLaunchMode",
   "claudeLaunchModel", "claudeLaunchEffort", "codexLaunchModel", "codexLaunchEffort", "agentBrowserTools",
+  "builtInBrowser", "browserBlockedSites",
 ] as const;
 export type SharedSettingKey = (typeof SHARED_SETTING_KEYS)[number];
 

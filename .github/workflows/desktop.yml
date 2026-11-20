@@ -92,6 +92,12 @@ jobs:
       - name: Install the app's packages
         working-directory: app/electron
         run: bun install --frozen-lockfile
+      # the built-in browser's tests run a real Electron without a display (Linux only): its binary, which
+      # electron-builder fetches on its own later, is not there after bun install
+      - name: Electron for the built-in browser tests
+        if: inputs.tag == '' && startsWith(matrix.target, 'linux-')
+        working-directory: app/electron
+        run: node node_modules/electron/install.js
       - name: Unit tests
         if: inputs.tag == ''
         working-directory: app/electron
