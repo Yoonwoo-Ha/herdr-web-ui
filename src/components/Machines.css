@@ -359,6 +359,18 @@ button.machine-title:focus-visible { outline-offset: calc(var(--ring-offset) * -
 
 .machine-advanced { padding-top: var(--space-3); }
 
+.machine-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--pointer-target);
+  cursor: pointer;
+}
+
+@media (pointer: coarse) {
+  .machine-check { min-height: var(--touch-target); }
+}
+
 .machine-dialog summary {
   padding: var(--space-2) 0;
   cursor: pointer;
@@ -508,6 +520,10 @@ button.machine-title:focus-visible { outline-offset: calc(var(--ring-offset) * -
 .machine-action-reason {
   overflow-wrap: anywhere;
 }
+
+.machine-action-more { align-self: stretch; }
+.machine-action-more summary { cursor: pointer; color: var(--text-dim); }
+.machine-action-more[open] summary { margin-bottom: var(--space-2); }
 
 .machine-action.is-updating {
   border-color: var(--border);

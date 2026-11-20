@@ -196,14 +196,14 @@ export const posixHost: RemoteHost = {
     const result: unknown = JSON.parse(text);
     if (typeof result !== "object" || result === null || !("code" in result) || (result.code !== "herdr_sessions_found" && result.code !== "herdr_session_gone") || !("sessions" in result)) throw new Error("The PC returned an invalid startup result");
     const gone = result.code === "herdr_session_gone";
-    return { gone, sessions: gone && Array.isArray(result.sessions) && result.sessions.length === 0 ? [] : parseFoundHerdrSessions(result.sessions) };
+    return { gone, sessions: gone && Array.isArray(result.sessions) && result.sessions.length === 0 ? [] : parseFoundHerdrSessions(result.sessions, inspection.home) };
   },
   async discoverSessions(ssh, inspection) {
     const server = shellQuote(inspection.runtimeDir + "/ovis-server");
     // at most 256 sessions of a few hundred bytes each: an answer past the cap is stopped and refused, never parsed
     const text = await ssh.run(`if test -x ${server}; then ${server} remote --discover; else printf '[]'; fi`, undefined, undefined, DISCOVERY_OUTPUT_BYTES);
     const sessions: unknown = JSON.parse(text);
-    return Array.isArray(sessions) && sessions.length === 0 ? [] : parseFoundHerdrSessions(sessions);
+    return Array.isArray(sessions) && sessions.length === 0 ? [] : parseFoundHerdrSessions(sessions, inspection.home);
   },
   async chosenSocketStatus(ssh, inspection, socket) {
     // the installed bundle holds the rule; an older or missing one cannot say
