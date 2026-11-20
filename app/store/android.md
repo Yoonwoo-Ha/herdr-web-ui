@@ -66,7 +66,7 @@ keytool -printcert -jarfile app/build/outputs/bundle/release/app-release.aab   #
 | Field | Now | Rule |
 |---|---|---|
 | `applicationId` | `sh.ovis.app` | never changes once uploaded |
-| `versionCode` | `14` | raise it by one for every upload, test tracks included (`defaultConfig` in `app/android/app/build.gradle`); 1.0.6 (14) is the next, with PCs added over SSH (#3862); 1.0.5 (13), built from main at `d30527fd` (the scanned QR code lands on its PC, #4231; the app opens on the account sign-in, #4256; the app's list opens the hosted app on its PCs, #4266), is the version live on Google Play |
+| `versionCode` | `14` | raise it by one for every upload, test tracks included (`defaultConfig` in `app/android/app/build.gradle`); the last upload is 1.0.6 (14), built from main at `ab037b30` with PCs added over SSH (#3862), published to internal testing and sent to Google Play's production review on 2026-11-21; 1.0.5 (13), built from main at `d30527fd` (the scanned QR code lands on its PC, #4231; the app opens on the account sign-in, #4256; the app's list opens the hosted app on its PCs, #4266), is the version live on Google Play |
 | `versionName` | `1.0.6` | what people see; raise it for each public release |
 | `targetSdkVersion` | 36 | Play asks new apps for a recent target |
 
@@ -117,7 +117,7 @@ emulator; no real PC or session is in them.
 | Section | Answer |
 |---|---|
 | Privacy policy | `https://ovis.sh/privacy/` |
-| App access | "All or some functionality is restricted". Instructions: *Signing in is optional; no account is needed to review. The app opens a computer that runs the Ovis server (open source, ovis.sh). Without one, tap "Start without signing in", then "Enter an address", type demo and tap Open: it shows the whole app with made-up agents and terminals, on the phone only.* No login details. |
+| App access | "All or some functionality is restricted". Instructions (500 characters at most), as sent with 1.0.6: *On the first screen, tap "Start without signing in", then "Enter an address", type demo and tap Open. The offline demo opens the full app with sample agents and terminals: chat, approval cards, terminal, workspaces and Settings. No login, payment, network, QR code or PC is needed. Signing in is optional. Live use pairs with the user's own computer running Ovis (QR code, address, the end-to-end encrypted relay, or SSH to the user's own machine; SSH keys stay on the phone). No paid content.* No login details. |
 | Ads | No, the app has no ads |
 | Content rating | Category "All other app types" (utility). Every question No: no violence, sexual content, profanity, drugs, gambling; no user-to-user chat or sharing between users; no location sharing; no digital purchases. Expected rating: Everyone / PEGI 3 |
 | Target audience | 18 and over only (a developer tool; the privacy policy says it is not for children) |
@@ -297,9 +297,11 @@ service's records, the only data that reaches the developer):
     Personal info > User IDs (collected, not shared, sent only to the user's own PC, required for
     the SSH way only). Add "the public key of the phone's SSH key, kept by the user's own PC" to
     the Device or other IDs row when this ships.
-  - **App access**: add to the instructions: *SSH under Add a PC (Android) needs a computer the
-    reviewer can reach over SSH, with Ovis on it; the demo shows the same app without one.* Do not
-    hand Google a login to a real machine.
+  - **App access**: the instructions sent with 1.0.6 (section 4) name SSH among the ways to pair
+    and say its keys stay on the phone; the demo shows the same app without a PC (the field holds
+    500 characters, so there is no room for more). The next time the text is sent, say "private
+    keys stay on the phone" (497 characters): the public key goes to the PC's `authorized_keys`.
+    Do not hand Google a login to a real machine.
   - **Policy**: an SSH client is allowed (Device and Network Abuse covers apps that interfere
     with other apps or networks, which this does not); the app reaches only the address the user
     types, on the port the user types.
