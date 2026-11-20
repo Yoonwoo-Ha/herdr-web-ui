@@ -1,10 +1,11 @@
 import { describe, expect, it } from "bun:test";
 
 import { AGENT_CATALOG, catalogRow, type AgentCatalogRow, type AgentInstallState } from "../../shared/agent-catalog.ts";
+import type { SecuritySummary } from "../../shared/access.ts";
 import type { HealthAuth, RelayStatus } from "../../shared/protocol.ts";
 import type { ProviderUsage } from "../../shared/usage.ts";
 import { onSetupGuideRequest, openSetupGuide } from "./setupGuide.ts";
-import { agentRows, alertsFailed, alertsHere, alertsSurfaces, type AlertsFacts, type AlertsHere, autoOpen, CHECK_SETTLE_MS, checkList, checkStatus, foundAgents, guideStep, INSTALL_GIVE_UP_MS, installedHere, openInFolder, otherDevice, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, preferredAgent, GUIDE_STORAGE_KEY, readGuide, readSignedIn, relayStep, REOPENED, saveGuide, settleDelay, setupLeft, setupView, signedInAgents, tileState, turnsUsageOn, FIRST_RUN, type FreshFacts, type PcCheck } from "./setupGuideFlow.ts";
+import { agentRows, alertsFailed, alertsHere, alertsSurfaces, type AlertsFacts, type AlertsHere, autoOpen, CHECK_SETTLE_MS, checkList, checkStatus, foundAgents, guideStep, INSTALL_GIVE_UP_MS, installedHere, openInFolder, otherDevice, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, preferredAgent, relayOnlyPc, GUIDE_STORAGE_KEY, readGuide, readSignedIn, relayStep, REOPENED, saveGuide, settleDelay, setupLeft, setupView, signedInAgents, tileState, turnsUsageOn, FIRST_RUN, type FreshFacts, type PcCheck } from "./setupGuideFlow.ts";
 
 const FRESH: FreshFacts = { workspaces: 0, savedSettings: false, sharedRevision: 0, pairingGate: "open", watching: false };
 
@@ -440,3 +441,23 @@ describe("a guide opened at a later step", () => {
   });
 });
 
+
+describe("relayOnlyPc", () => {
+  const facts = (bind_scope: SecuritySummary["bind_scope"], observed_ingress: SecuritySummary["observed_ingress"]): SecuritySummary => ({ token_configured: true, pairing_gate: "closed", bind_scope, observed_ingress, public_exposure: "unknown" });
+
+  it("T70: a PC bound to its loopback and opened on it directly has only the relay for other devices", () => {
+    expect(relayOnlyPc(facts("loopback", "direct"))).toBe(true);
+  });
+
+  it("T70: a PC on the local network, on the tailnet, or fronted by Tailscale or a proxy has another route", () => {
+    expect(relayOnlyPc(facts("other", "direct"))).toBe(false);
+    expect(relayOnlyPc(facts("tailnet", "direct"))).toBe(false);
+    expect(relayOnlyPc(facts("loopback", "tailscale"))).toBe(false);
+    expect(relayOnlyPc(facts("loopback", "funnel"))).toBe(false);
+    expect(relayOnlyPc(facts("loopback", "proxy"))).toBe(false);
+  });
+
+  it("T70: an ingress the PC cannot name (a forwarding proxy that says nothing) is not taken as relay-only", () => {
+    expect(relayOnlyPc(facts("loopback", "unknown"))).toBe(false);
+  });
+});

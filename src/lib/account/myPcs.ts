@@ -1,8 +1,7 @@
 /**
  * My PCs: the account's directory, which this client does not trust, merged with the PCs this
- * client is paired with, which it does. A PC in the directory alone still needs this device
- * approved; its name there is only a label, and its key comes from comparing digits, never from
- * the directory (docs/account.md, rule 6).
+ * client is paired with, which it does. The directory cannot admit a device; the PC decides
+ * whether it accepts its registered sign-in key or requires pairing.
  */
 import type { RelayDevice } from "../relay/device.ts";
 import { enrollmentOf, type EnrollmentState } from "../relay/device.ts";
@@ -37,6 +36,7 @@ export interface MyPc {
   readonly listed: boolean;
   /** this device holds an admitted key for it, so it can open; whatever its state says */
   readonly paired: boolean;
+  readonly accountOpen?: true;
   /**
    * this device signs in to it with the account key, so removing the device through the account
    * reaches it; a pairing from before the account is not covered until it is linked
@@ -53,7 +53,7 @@ export interface MyPc {
 
 const ORDER: Record<MyPcState, number> = { paired: 0, "needs-update": 1, "needs-approval": 2, offline: 3 };
 
-export function myPcs(directory: readonly DirectoryPc[], paired: readonly RelayDevice[], options: { now: number; outdated?: ReadonlySet<string>; accountKey?: string; account?: string }): MyPc[] {
+export function myPcs(directory: readonly DirectoryPc[], paired: readonly RelayDevice[], options: { now: number; outdated?: ReadonlySet<string>; accountKey?: string; account?: string; registered?: boolean }): MyPc[] {
   const listed = new Map(directory.map((pc) => [pc.server_id, pc]));
   const rows: MyPc[] = [];
   const stateOf = (serverId: string, isPaired: boolean, lastSeen: string | null): MyPcState => {
@@ -70,7 +70,8 @@ export function myPcs(directory: readonly DirectoryPc[], paired: readonly RelayD
     rows.push({ server_id: device.server_id, name: device.name ?? device.server_id.slice(0, 8), state: stateOf(device.server_id, true, lastSeen), last_seen_at: lastSeen, added_at: entry?.added_at ?? null, listed: entry !== undefined, paired: true, linked: enrollment !== "pending" && enrollment !== "failed" && entry !== undefined && device.public_spki === options.accountKey && device.account !== undefined && device.account === (options.account ?? device.account), ...(enrollment ? { enrollment } : {}) });
   }
   for (const pc of listed.values()) {
-    rows.push({ server_id: pc.server_id, name: pc.label, state: stateOf(pc.server_id, false, pc.last_seen_at), last_seen_at: pc.last_seen_at, added_at: pc.added_at, listed: true, paired: false, linked: false, ...(joinRoute(pc) ? { join: joinRoute(pc) } : {}) });
+    const join = joinRoute(pc);
+    rows.push({ server_id: pc.server_id, name: pc.label, state: stateOf(pc.server_id, false, pc.last_seen_at), last_seen_at: pc.last_seen_at, added_at: pc.added_at, listed: true, paired: false, linked: false, ...(join ? { join, ...(options.registered ? { accountOpen: true as const } : {}) } : {}) });
   }
   return rows.sort((a, b) => ORDER[a.state] - ORDER[b.state] || a.name.localeCompare(b.name));
 }

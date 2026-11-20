@@ -6,9 +6,9 @@
  */
 import { randomBytes } from "node:crypto";
 import type { PendingKey } from "../../shared/machines.ts";
-import { pairChallenge, pairFingerprint, verifyPairProof } from "../../shared/pair-fingerprint.ts";
+import { PENDING_MS, pairChallenge, pairFingerprint, verifyPairProof } from "../../shared/pair-fingerprint.ts";
 
-export const PENDING_MS = 5 * 60_000;
+export { PENDING_MS } from "../../shared/pair-fingerprint.ts";
 export const PENDING_PER_CODE = 5;
 export const PENDING_TOTAL = 8;
 

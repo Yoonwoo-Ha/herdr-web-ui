@@ -391,7 +391,9 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   // pairing without a code ends in an approval only a window that hears of it can give (relay-pairings below):
   // an ungated LAN window never does, so it neither makes such a link nor answers one
   // the account's members are standing access, like devices: never a Portal visitor's or an open LAN window's
-  if (access.level === "full" && (access.via === "open" || access.via === "portal") && pathname.startsWith("/api/account/")) {
+  const postingAccountRecords = request.method === "POST" && pathname === "/api/account/records";
+  if (access.level === "full" && pathname.startsWith("/api/account/") &&
+      (postingAccountRecords && access.role === "drive" ? !ownerAccess(access) : access.via === "open" || access.via === "portal")) {
     setRequestRoute("owner-refusal");
     return jsonResponse({ error: { code: "owner_only", message: "Manage the account from this PC itself, or from a paired device." } }, 403);
   }
@@ -498,7 +500,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
       const endsWith = deviceId ? (close: () => void) => devices.onRevoke(deviceId, close) : openAccess ? (close: () => void) => devices.endWithGate(close) : portalRecheckMs !== undefined ? (close: () => void) => { const timer = setTimeout(close, portalRecheckMs); return () => clearTimeout(timer); } : undefined;
       // and with a lock, when what let it in is a grant the lock refuses
       const ends = untilLock === undefined ? endsWith : (close: () => void) => { const stops = [untilLock(close), endsWith?.(close)]; return () => { for (const stop of stops) stop?.(); }; };
-      const response = await handleMachineRequest(request, machines, ends, preferences, readOnly, herdrSidebar, seen, pairings, ctx.relayBodyBudget, ownerAccess(access));
+      const response = await handleMachineRequest(request, machines, ends, preferences, readOnly, herdrSidebar, seen, pairings, ctx.relayBodyBudget, ownerAccess(access), ctx.services.safetyLog !== null);
       response.headers.set("cache-control", "no-store");
       if (issuedKey !== null && response.ok) response.headers.append("set-cookie", streamCookie(issuedKey, isSecureRequest(request)));
       return response;

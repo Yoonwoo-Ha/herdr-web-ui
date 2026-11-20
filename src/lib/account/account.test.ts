@@ -2,12 +2,13 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEVICE_CODE_TTL_S, FakeAccountService, WEB_REDIRECT } from "../../../shared/account-service-fake.ts";
+import { newRecordId, signSafetyRecord } from "../../../shared/account-records.ts";
 import { startDeviceSignIn, startLinkPageSignIn } from "./deviceSignIn.ts";
 import type { RelayDevice } from "../relay/device.ts";
 import { myPcs, OFFLINE_AFTER_MS } from "./myPcs.ts";
 import { accountProvidersOf, AccountService, AccountServiceError, accountServiceOf, pcAccountServiceOf, shellAccountServiceOf, SignedOutError } from "./service.ts";
 import { beginSignIn, finishOwnSignIn, finishSignIn, SignInError, signInReturn } from "./signin.ts";
-import { memoryAccountStore, memoryLock } from "./store.ts";
+import { memoryAccountStore, memoryLock, newKey } from "./store.ts";
 import { desktopProviders } from "./desktop.ts";
 
 const SERVICE = "https://account.example";
@@ -106,6 +107,31 @@ describe("signing in", () => {
     await expect(client.listPcs()).rejects.toBeInstanceOf(SignedOutError);
     expect(await store.get("session")).toBeUndefined();
   });
+});
+
+it("T60: posts a safety record to the account service that retains the signed block", async () => {
+  const service = serviceWithSignIn();
+  service.fake.opensAll = true;
+  const { store, session } = await signIn(service);
+  const [older, newer] = await Promise.all([newKey(), newKey()]);
+  const signerNo = service.fake.registerDevice(session.account, older.public_spki, "Phone");
+  const targetNo = service.fake.registerDevice(session.account, newer.public_spki, "Laptop");
+  const signed = { v: 1 as const, account: session.account, signer: older.public_spki, signer_no: signerNo, signed_at: new Date().toISOString() };
+  const block = await signSafetyRecord({
+    ...signed, kind: "block", target: newer.public_spki, target_no: targetNo, nonce: newRecordId(),
+  }, older.private_key);
+  const client = new AccountService({ store, fetch: service.fetch });
+
+  await client.postSafetyRecord(block);
+
+  // Only a block the fake kept under this id can be lifted.
+  const lift = await signSafetyRecord({ ...signed, kind: "lift", target: block.id }, older.private_key);
+  const lifted = await service.fetch(new URL("/v1/safety-records", SERVICE), {
+    method: "POST",
+    headers: { authorization: `Bearer ${session.access_token}`, "content-type": "application/json" },
+    body: JSON.stringify({ record: lift }),
+  });
+  expect({ status: lifted.status, body: await lifted.json() }).toEqual({ status: 200, body: { id: lift.id } });
 });
 
 describe("a sign-in shared by tabs", () => {

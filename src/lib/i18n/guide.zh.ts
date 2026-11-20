@@ -101,4 +101,5 @@ export const GUIDE_ZH: Record<string, string> = {
   "Setup isn't finished.": "设置还没完成。",
   "Reach this PC from anywhere.": "随处连接这台电脑。",
   "Set up later": "稍后设置",
+  "Keep SSH or a screen working on this PC: reached only through the relay, one stolen older device could lock you out of it.": "请在这台 PC 上保留 SSH 或屏幕访问：如果只能通过中继访问，一台较早的设备被盗就可能让你无法进入。",
 };

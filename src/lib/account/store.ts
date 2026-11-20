@@ -74,6 +74,16 @@ interface Records {
   leaving: Readonly<Record<string, string>>;
   /** by link id: the PC a link of this device's account key may be on its way to, read by a leave's snapshot */
   linking: Readonly<Record<string, string>>;
+  /** the key this sign-in registered with the account service (account/signInKey.ts) and its place in the account's order */
+  signin_key: SignInKey;
+}
+
+export interface SignInKey {
+  readonly account: string;
+  readonly sign_in_id: string;
+  readonly key: AccountKey;
+  /** its place in the account's order; null while the service has not confirmed the registration */
+  readonly no: number | null;
 }
 
 export interface PlannedEnroll {
@@ -109,7 +119,7 @@ export interface AccountStore {
   clear(keep?: (session: AccountSession) => boolean, options?: { readonly only?: (session: AccountSession | undefined) => boolean; readonly spare?: readonly Exclude<Name, "key" | "session">[] }): Promise<void>;
 }
 
-async function newKey(): Promise<AccountKey> {
+export async function newKey(): Promise<AccountKey> {
   const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
   return { private_key: pair.privateKey, public_spki: await exportAccountKey(pair.publicKey) };
 }

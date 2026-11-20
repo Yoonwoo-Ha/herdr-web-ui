@@ -6,6 +6,9 @@
  */
 import { fromBase64Url, toBase64Url } from "./relay-pair-sas.ts";
 
+/** Time the PC allows for on-screen confirmation of a pending key. */
+export const PENDING_MS = 5 * 60_000;
+
 const FINGERPRINT_DOMAIN = "ovis-pair-fp/1";
 const PROOF_DOMAIN = "ovis-pair-proof/1";
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";

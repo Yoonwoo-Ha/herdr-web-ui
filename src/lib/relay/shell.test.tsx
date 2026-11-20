@@ -931,6 +931,7 @@ describe("the hosted shell's front page", () => {
         accountStore, accountService: SERVICE, accountProviders: ["github"],
         accountFetch: async (input) => {
           if (new URL(String(input)).pathname === "/v1/pcs") return Response.json({ pcs: listed });
+          if (new URL(String(input)).pathname === "/v1/devices/challenge") return new Response(null, { status: 404 });
           exchanged++;
           return Response.json({ access_token: "access", refresh_token: "refresh", expires_in: 3600, account: "acct-test", provider: "github" });
         },

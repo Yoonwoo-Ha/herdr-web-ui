@@ -1,4 +1,5 @@
 import type { Root } from "react-dom/client";
+import type { HoldState } from "../../../shared/account-devices-api.ts";
 import type { PendingPushStore } from "../push.ts";
 import type { AccountStore } from "../account/store.ts";
 import type { EnrollmentState, ShellDeviceStore } from "./device.ts";
@@ -14,7 +15,7 @@ import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import type { UpdateStep } from "../../../shared/update.ts";
 import type { RelayOffer } from "../../../shared/relay-offer.ts";
 import type { MyPc } from "../account/myPcs.ts";
-import { ACCOUNT_PROVIDERS, type AccountProvider, type AccountSession } from "../account/store.ts";
+import { ACCOUNT_PROVIDERS, type AccountProvider, type AccountSession, type SignInKey } from "../account/store.ts";
 import { inNativeApp } from "../nativeApp.ts";
 import { serverIdOfPath } from "../shellMode.ts";
 import { RelayAdmissionTimeoutError, RelayNewSessionsRefusedError, RelayRefusedError, RelayUnreachableError, UnsafeRelayDestinationError } from "./channel.ts";
@@ -93,9 +94,9 @@ export type RelayShellState =
   | { kind: "confirm"; offer: RelayOffer; account?: "checking" | "unlisted" | "listed"; pressed?: "unlisted" | "listed" | "own"; /** a join a PC's own page offers: its one press, drawn alone */ alone?: true }
   /**
    * `approved`: the PC accepted the pairing, and the account steps go on behind this screen; absent before that.
-   * `pairing`: a new pairing, not a saved PC opening again
+   * `hold`: the PC's structured account-open refusal; `pairing`: a new pairing, not a saved PC opening again
    */
-  | { kind: "connecting"; name: string | null; approved?: true; pairing?: true }
+  | { kind: "connecting"; name: string | null; approved?: true; pairing?: true; readonly hold?: HoldState; readonly keyFingerprint?: string }
   | { kind: "ready"; name: string | null; server_id: string; enrollment?: EnrollmentState | "local" | EnrollmentCompletion }
   | { kind: "code-entry"; failure: TypedCodeFailure | null }
   | { kind: "code-looking" }
@@ -244,6 +245,9 @@ export interface Attempt {
   accountless?: boolean;
   /** the sign-in the confirm before this pairing was drawn for: the pairing uses its account key and joins its account, and no other's */
   signIn?: AccountSession;
+  readonly accountOpen?: SignInKey;
+  readonly retriedAccountOpen?: true;
+  readonly holdRetryMs?: number;
   retryEnrollment?: boolean;
   retriedPending?: boolean;
   /**

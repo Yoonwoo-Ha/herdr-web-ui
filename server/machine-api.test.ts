@@ -1,9 +1,105 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { exportAccountKey, newRecordId, signSafetyRecord } from "../shared/account-records.ts";
 import type { Machine, MachineEvent } from "../shared/machines.ts";
+import { createServer } from "./index.ts";
 import { handleMachineRequest, machineEventsClock, machineEventsQueuedBytes } from "./machine-api.ts";
 import type { MachineManager } from "./machines.ts";
 
 const STREAM_BYTES = 4 * 1024 * 1024;
+
+it("T60: the machine router forwards only the records POST with the target PC credential", async () => {
+  const calls: { method: string; path: string; authorization: string | null; body: unknown }[] = [];
+  using target = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    calls.push({ method: request.method, path: new URL(request.url).pathname, authorization: request.headers.get("authorization"), body: await request.json() });
+    return Response.json({ receipts: [] });
+  } });
+  const manager = {
+    endpoint: (id: string) => id === "desk" ? { url: target.url.origin, token: "target" } : undefined,
+    trackTerminal: () => () => {},
+  } as unknown as MachineManager;
+  const records = { records: [{ kind: "block", id: "signed-id" }] };
+  const send = (method: string, suffix = "account/records", origin = "https://app.example", readOnly = false, owner = true) =>
+    handleMachineRequest(new Request(`https://app.example/api/machines/desk/${suffix}`, {
+      method, headers: { origin, "x-herdr-machine": "1", "content-type": "application/json", authorization: "Bearer caller" },
+      body: method === "GET" ? undefined : JSON.stringify(records),
+    }), manager, undefined, undefined, readOnly, undefined, undefined, undefined, undefined, owner, true);
+
+  expect((await send("POST", "account/records", "https://other.example")).status).toBe(403);
+  expect((await send("POST", "account/records", "https://app.example", true)).status).toBe(403);
+  expect((await send("GET")).status).toBe(404);
+  expect((await send("POST", "account/records/extra")).status).toBe(403);
+  const visitor = await send("POST", "account/records", "https://app.example", false, false);
+  expect(visitor.status).toBe(403);
+  expect(calls).toEqual([]);
+  expect((await send("POST")).status).toBe(200);
+  expect(calls).toEqual([{ method: "POST", path: "/api/account/records", authorization: "Bearer target", body: records }]);
+});
+
+it("G5: with the account release off, an owner's roster records POST is refused as on main and nothing is forwarded", async () => {
+  let forwarded = 0;
+  using target = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch() { forwarded++; return Response.json({ results: [] }); } });
+  const manager = {
+    endpoint: (id: string) => id === "desk" ? { url: target.url.origin, token: "target" } : undefined,
+    trackTerminal: () => () => {},
+  } as unknown as MachineManager;
+  const response = await handleMachineRequest(new Request("https://app.example/api/machines/desk/account/records", {
+    method: "POST", headers: { origin: "https://app.example", "x-herdr-machine": "1", "content-type": "application/json" },
+    body: JSON.stringify({ records: [] }),
+  }), manager, undefined, undefined, false, undefined, undefined, undefined, undefined, true, false);
+  expect(response.status).toBe(403);
+  expect(((await response.json()) as { error: { code: string } }).error.code).toBe("forbidden");
+  expect(forwarded).toBe(0);
+});
+
+it("T60: a signed roster block passes the receiving PC's real account route", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "ovis-roster-block-"));
+  const account = "acct_1";
+  // two members admitted well before this run (devices.json rows), so neither is in a fresh join hold
+  const member = async (index: number) => {
+    const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
+    const spki = await exportAccountKey(keys.publicKey);
+    const at = `2026-10-0${index + 1}T00:00:00.000Z`;
+    return { id: `member-${index}`, keys, spki, row: { id: `member-${index}`, relay_public_key: spki, account, linked_at: at, created_at: at,
+      label: `Phone ${index}`, role: "drive", token_hash: String(index).repeat(64), last_seen_at: null } };
+  };
+  const signer = await member(0);
+  const blocked = await member(1);
+  writeFileSync(join(stateDir, "devices.json"), JSON.stringify({ gate_closed_at: signer.row.created_at, devices: [signer.row, blocked.row] }), { mode: 0o600 });
+  const target = createServer({ hostname: "127.0.0.1", port: 0, token: "target", stateDir, sidecar: false, machines: false, tailscaleOwner: null, accountOpensAll: true });
+  try {
+    const { devices } = target.context.services;
+    // the receiving PC has read its account once (S2-27): a PC still catching up takes no signature
+    target.context.services.catchUp?.wholeRead();
+    const record = await signSafetyRecord({
+      v: 1, kind: "block", account, target: blocked.spki, target_no: 2, signer: signer.spki, signer_no: 1,
+      signed_at: new Date().toISOString(), nonce: newRecordId(),
+    }, signer.keys.privateKey);
+    const manager = {
+      endpoint: () => ({ url: `http://127.0.0.1:${target.port}`, token: "target" }),
+      trackTerminal: () => () => {},
+    } as unknown as MachineManager;
+    const response = await handleMachineRequest(new Request("https://app.example/api/machines/desk/account/records", {
+      method: "POST", headers: { origin: "https://app.example", "x-herdr-machine": "1", "content-type": "application/json" },
+      body: JSON.stringify({ records: [record] }),
+    }), manager, undefined, undefined, false, undefined, undefined, undefined, undefined, true, true);
+    const receipt: unknown = await response.json();
+    expect({ status: response.status, body: receipt }).toEqual({
+      status: 200,
+      // Track A's S2-09 adds block receipts; older PCs still return their own per-record result.
+      body: "applyBlock" in devices
+        ? { results: [], receipts: [{ id: record.id, outcome: "applied", n: 1 }] }
+        : { results: [{ id: record.id, outcome: "refused", code: "record_invalid" }] },
+    });
+    expect(devices.has(blocked.id)).toBe(!("applyBlock" in devices));
+  } finally {
+    target.stop();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 const TOTAL_BYTES = 32 * 1024 * 1024;
 const CEILING_BYTES = 64 * 1024 * 1024;
 const STALL_MS = 30_000;

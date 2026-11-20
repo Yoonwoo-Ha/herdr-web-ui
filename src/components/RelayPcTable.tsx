@@ -108,6 +108,7 @@ export function RelayPcTable({
         onClick={(event) => { event.stopPropagation(); if (onOpenPc) { event.preventDefault(); onOpenPc(row); } }}>{label}</a>
     );
     const detailsBtn = <button type="button" className="btn relay-pc-action-btn" data-pc-action="details" onClick={(e) => { stop(e); onSelect(row.server_id); }}>{t("Details")}</button>;
+    if (mode === "account" && row.accountOpen) return openLink("open", t("Open"));
     switch (row.displayState) {
       case "paired": case "unchecked": return openLink("open", t("Open"));
       case "needs-update": return row.paired ? openLink("update", t("Update")) : detailsBtn;

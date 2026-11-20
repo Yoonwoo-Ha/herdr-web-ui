@@ -2,10 +2,13 @@
 import { createElement, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { encodeOffer, type RelayOffer } from "../../../shared/relay-offer.ts";
+import { AccountOpenUnsupportedError } from "../../../shared/relay-channel.ts";
 import { GLOBAL_RELAY } from "../../../shared/relay-regions.ts";
 import { RelayShell } from "../../components/RelayShell.tsx";
+import { accountDevice, withAccountDevice } from "../account/accountDevice.ts";
+import { nextOpenStep, openRefusalOf } from "../account/openPc.ts";
 import type { MyPc } from "../account/myPcs.ts";
-import { sameSignIn } from "../account/service.ts";
+import { sameSignIn, SignedOutError } from "../account/service.ts";
 import type { AccountProvider, AccountSession, PendingPairing } from "../account/store.ts";
 import { SIGN_IN_MS, signInReturn } from "../account/signin.ts";
 import { deviceLabel } from "../phone.ts";
@@ -31,6 +34,8 @@ export type { RelayShellMount } from "./shellState.ts";
 export { forgetSavedPc } from "./updateFlow.ts";
 declare const __APP_VERSION__: string;
 const INTRODUCED_GRACE_MS = 15 * 60_000;
+const HOLD_RETRY_MIN_MS = 1_000;
+const HOLD_RETRY_MAX_MS = 30_000;
 /** How long a confirm waits for the account service before it stops saying "checking": a service that never answers must not hold the Pair button. */
 export const ACCOUNT_READ_WAIT_MS = 8_000;
 /** How long a fresh account pairing waits for its link and sign-in before the PC opens anyway: a PC slow to answer must not hold the app. */
@@ -91,6 +96,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const iosTab = iosBrowserTab({ userAgent: navigator.userAgent, maxTouchPoints: navigator.maxTouchPoints ?? 0, standalone: "standalone" in navigator && navigator.standalone === true });
   let shell: Root | null = null, app: Root | null = null, transport: RelayTransport | null = null;
   let last: Attempt | null = null, opening: AbortController | null = null;
+  let holdTimer: ReturnType<typeof setTimeout> | undefined;
   let shown: RelayShellState | null = null, sheetJoin: SheetJoin | null = null, codeOffer: RelayOffer | null = null;
   let comparison: { name: string | null; digits: string; matched: () => void; typed: boolean } | null = null;
   let challenge = 0, checked = false;
@@ -266,9 +272,9 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     show(devices.length ? { kind: "list", devices, account: account.state } : { kind: "empty", account: account.state });
     if (devices.length && !checked) { checked = true; void sweep.check(); }
   };
-  const joinPc = (pc: MyPc, options: { typed?: boolean; sheet?: "new" | "join"; alone?: true } = {}): void => {
+  const joinPc = (pc: Pick<MyPc, "server_id" | "join"> & { readonly name?: string }, options: { typed?: boolean; sheet?: "new" | "join"; alone?: true } = {}): void => {
     if (!pc.join) return;
-    const link = new URL(encodeOffer({ v: 1, server_id: pc.server_id, ...pc.join, name: pc.name }, window.location.origin));
+    const link = new URL(encodeOffer({ v: 1, server_id: pc.server_id, ...pc.join, ...(pc.name === undefined ? {} : { name: pc.name }) }, window.location.origin));
     keepTypedJoin(options.typed ? pc.server_id : null);
     if (options.sheet) {
       keepSheetContext({ mode: options.sheet, server_id: pc.server_id, returnHash: returnHash(window.location.hash), ...(options.alone ? { alone: true } : {}) });
@@ -289,6 +295,33 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const failed = async (error: unknown, attempt: Attempt): Promise<void> => {
     if (last !== attempt) return;
     comparison = null;
+    const refusal = attempt.accountOpen === undefined ? null : openRefusalOf(error);
+    const step = attempt.accountOpen !== undefined && error instanceof AccountOpenUnsupportedError ? { kind: "pair" as const }
+      : refusal === null ? null : nextOpenStep(refusal, attempt.retriedAccountOpen === true);
+    if (step !== null) {
+      switch (step.kind) {
+        case "retry": await connect({ ...attempt, retriedAccountOpen: true }); return;
+        case "pair":
+          cancelAttempt();
+          joinPc({ ...attempt.offer, join: attempt.offer }, { sheet: "join", alone: true });
+          return;
+        case "wait": {
+          show({ kind: "connecting", name: attempt.offer.name ?? null, hold: step.hold });
+          if (step.hold.reason === "frozen") return;
+          const remainingMs = "until" in step.hold && step.hold.until !== null ? Date.parse(step.hold.until) - Date.now() : 0;
+          const retryMs = attempt.holdRetryMs ?? HOLD_RETRY_MIN_MS;
+          // A temporary refusal closes the channel; only another attempt can learn that the hold changed.
+          holdTimer = setTimeout(() => {
+            if (last === attempt) void connect({ ...attempt, holdRetryMs: Math.min(HOLD_RETRY_MAX_MS, retryMs * 2) });
+          }, remainingMs > 0 ? remainingMs : retryMs);
+          return;
+        }
+        default: {
+          const exhaustive: never = step;
+          return exhaustive;
+        }
+      }
+    }
     if (pairsAgainWithoutKey(error, { ...attempt, codeless: attempt.codeless === true })) {
       await forgetRow(attempt);
       if (last !== attempt) return;
@@ -338,6 +371,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   };
 
   const connect = async (attempt: Attempt): Promise<void> => {
+    clearTimeout(holdTimer);
     if (!attempt.paired && codeLapsed(attempt.offer)) { askNewScan(attempt.offer); return; }
     attempt.compared = false;
     // nor does a link refused before a new pairing
@@ -350,11 +384,17 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     let opened: RelayTransport;
     try {
       // a saved pairing signs in with the row its record names: that row is the one this attempt may forget
-      if (attempt.paired && attempt.row === undefined) {
+      if (attempt.paired && attempt.accountOpen === undefined && attempt.row === undefined) {
         attempt.row = (await store.get(attempt.offer.server_id))?.device_id ?? null;
         if (controller.signal.aborted) return;
       }
-      const prepared = await account.prepare(attempt.offer, controller.signal, consentOf(attempt));
+      const accountOpen = attempt.accountOpen;
+      if (accountOpen !== undefined) {
+        const session = await account.stored();
+        controller.signal.throwIfAborted();
+        if (session?.sign_in_id !== accountOpen.sign_in_id || session.account !== accountOpen.account) throw new SignedOutError();
+      }
+      const prepared = accountOpen === undefined ? await account.prepare(attempt.offer, controller.signal, consentOf(attempt)) : {};
       attempt.accountEnrollment = prepared.accountKey !== undefined;
       if (!attempt.paired) {
         const marked = attempt.offer.code !== undefined && attempt.offer.admission === 1;
@@ -367,7 +407,13 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
       opened = await open(attempt.offer, {
         store, label, signal: controller.signal,
         ...prepared,
+        ...(accountOpen === undefined ? {} : { store: withAccountDevice(store, accountDevice(attempt.offer, accountOpen.key)), accountOpensAll: true }),
         ...(directSocket ? { directSocket, ...(directTailnet ? { directTailnet } : {}) } : {}),
+        ...(!attempt.paired && attempt.offer.code !== undefined ? {
+          keyProof: (keyFingerprint: string) => {
+            if (!controller.signal.aborted && last === attempt && shown?.kind === "connecting") show({ ...shown, keyFingerprint });
+          },
+        } : {}),
         // a link without a code: the digits wait on screen until this phone says they match
         compare: (digits) => new Promise<void>((resolve) => {
           if (controller.signal.aborted) return;
@@ -417,7 +463,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     // the update screen included) signs with the saved device key instead of pairing again
     const { code, ...saved } = attempt.offer;
     const fresh = !attempt.paired || attempt.fresh === true;
-    const enrolled: Attempt = { offer: saved, code: false, paired: true, accountEnrollment: attempt.accountEnrollment === true, retryEnrollment: attempt.retryEnrollment === true, ...(attempt.row === undefined ? {} : { row: attempt.row }), ...(fresh ? { fresh: true, introducible: attempt.paired ? attempt.introducible === true : !attempt.code } : {}), ...(attempt.accountless ? { accountless: true } : {}), ...(attempt.signIn ? { signIn: attempt.signIn } : {}) };
+    const enrolled: Attempt = { offer: saved, code: false, paired: true, accountEnrollment: attempt.accountEnrollment === true, retryEnrollment: attempt.retryEnrollment === true, ...(attempt.row === undefined ? {} : { row: attempt.row }), ...(fresh ? { fresh: true, introducible: attempt.paired ? attempt.introducible === true : !attempt.code } : {}), ...(attempt.accountless ? { accountless: true } : {}), ...(attempt.signIn ? { signIn: attempt.signIn } : {}), ...(attempt.accountOpen ? { accountOpen: attempt.accountOpen } : {}), ...(attempt.retriedAccountOpen ? { retriedAccountOpen: true } : {}) };
     last = enrolled;
     if (code !== undefined && entry.offer !== null) entry = { ...entry, offer: null };
     transport = opened;
@@ -453,7 +499,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   };
   /** Forgets the attempt's own row (Attempt.row), or the saved record when the attempt never knew one. */
   const forgetRow = async (attempt: Attempt): Promise<void> => {
-    if (attempt.row === null) return;
+    if (attempt.accountOpen !== undefined || attempt.row === null) return;
     if (attempt.row === undefined) await store.remove(attempt.offer.server_id);
     else await store.removeRow(attempt.offer.server_id, attempt.row);
   };
@@ -485,7 +531,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   };
   const enroll = (opened: RelayTransport, attempt: Attempt, settled?: () => void, signal?: AbortSignal): void => {
     // the confirm said this device gets a key of its own: a sign-in stored since then adds nothing to its account here
-    if (attempt.accountless) return;
+    if (attempt.accountless || attempt.accountOpen !== undefined) return;
     enrolling.add(opened);
     const done = account.enroll(opened, attempt.offer.server_id, attempt.fresh === true, attempt.fresh === true && attempt.introducible === true, { consent: consentOf(attempt), ...(settled ? { settled } : {}), ...(signal ? { signal } : {}) }).then((enrollment) => {
       // the new row's link passed (or none was needed): the record it replaced is no longer kept
@@ -589,7 +635,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     entry = { ...entry, offer: kept.offer, damaged: false };
     arrived();
   };
-  const cancelAttempt = (): void => { signInFor = null; press++; confirming = false; comparison = null; last = null; opening?.abort(); opening = null; frontSteps?.abort(); frontSteps = null; updates.cancel(); if (transport && !enrolling.has(transport)) transport.close(); transport = null; };
+  const cancelAttempt = (): void => { signInFor = null; press++; confirming = false; comparison = null; last = null; clearTimeout(holdTimer); opening?.abort(); opening = null; frontSteps?.abort(); frontSteps = null; updates.cancel(); if (transport && !enrolling.has(transport)) transport.close(); transport = null; };
   const retry = (): void => {
     if (shown?.kind === "ready" && shown.enrollment === "failed" && transport && last) { show({ ...shown, enrollment: "pending" }); enroll(transport, last); return; }
     if (last === null || !(shown?.kind === "failed" || shown?.kind === "outdated" || shown?.kind === "compare" && shown.wrong)) return;
@@ -710,7 +756,10 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
       // right here, on a screen of its own, and never the list (which only the tabs open)
       const joinable = await accountPcToJoin(entry.serverId);
       if (entries !== loaded) return;
-      if (joinable !== undefined) joinPc(joinable, { sheet: "join", alone: true });
+      const openKey = account.openKey;
+      if (joinable?.join && joinable.accountOpen && openKey !== null) {
+        await connect({ offer: { v: 1, server_id: joinable.server_id, ...joinable.join, name: joinable.name }, code: false, paired: true, accountOpen: openKey });
+      } else if (joinable !== undefined) joinPc(joinable, { sheet: "join", alone: true });
       else show({ kind: "empty" });
     }
     // a key saved from a forged link (an earlier build saved before admission): Forget removes it

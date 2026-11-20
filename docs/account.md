@@ -995,6 +995,25 @@ open confirm. What this does not prove: that a person sat there. A program that 
 on this PC, a terminal that a driving device opened included, or anyone who logs in to this PC,
 reaches the same screen as you do.
 
+### Limits of this release
+
+Off unless `OVIS_ACCOUNT_OPENS_ALL=1`, like everything in this part.
+
+- **Lifting a block needs a two-step sign-in.** Only a device that is older than the block, and
+  whose own sign-in has two-step sign-in set on the account, can lift a block from the app. A
+  Google sign-in whose two-step state the account cannot see ("Two-step sign-in not confirmed")
+  can block a device but cannot lift a block. If every device you still have is like that, lift
+  the block on the PC itself: run `ovis recover` to list what stands there, then
+  `ovis recover --lift <block id>` for the one to lift. `ovis recover` asks you to confirm in
+  that terminal.
+- **Strict mode and key confirmations are Linux only for now.** Turning strict mode on or off,
+  and approving a new key on the PC's screen, need the PC's own screen, which this release has
+  only on Linux. On macOS and Windows neither is available yet; pairing works as before.
+- **A locked PC is driven only from the PC itself.** While strict mode is on, the PC takes its
+  orders only from the desktop app that started it (its owner channel) or from the confirm page
+  on its own screen. No other device, browser window, access token or relay connection can change
+  what it lets in until strict mode is turned off there.
+
 ## Account service API
 
 The service the apps and PCs call; a self-hosted install can point both at its own. Clients

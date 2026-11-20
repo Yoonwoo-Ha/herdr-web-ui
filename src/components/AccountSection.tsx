@@ -14,7 +14,7 @@ import { ApiError, fetchBridgeHealth, fetchRelay, requestRelay } from "../lib/ap
 import { startDeviceSignIn, startLinkPageSignIn, type DeviceSignInProvider } from "../lib/account/deviceSignIn.ts";
 import { AccountPcError, within } from "../lib/account/join.ts";
 import { myPcs, type MyPc } from "../lib/account/myPcs.ts";
-import { AccountService, AccountServiceError, DEVICE_PROVIDERS, offeredProviders, pcAccountServiceOf, sameSignIn, SignedOutError, type AccountIdentity, type DeviceProvider, type OfferedProviders } from "../lib/account/service.ts";
+import { AccountServiceError, DEVICE_PROVIDERS, indexedAccountService, offeredProviders, pcAccountServiceOf, sameSignIn, SignedOutError, type AccountIdentity, type AccountService, type DeviceProvider, type OfferedProviders } from "../lib/account/service.ts";
 import { SignInError } from "../lib/account/signin.ts";
 import { indexedAccountStore, type AccountProvider, type AccountSession, type AccountStore } from "../lib/account/store.ts";
 import { currentLocale, useT, type Translate } from "../lib/i18n.ts";
@@ -189,7 +189,7 @@ export function AddThisPc({ relayAbove = true, service, signedInHere, onListed }
 }) {
   const t = useT();
   const [state, setState] = useState<AddThisPcState>({ kind: "hidden" });
-  const accountService = useCallback((): AccountService => service?.() ?? new AccountService({ store: indexedAccountStore }), [service]);
+  const accountService = useCallback((): AccountService => service?.() ?? indexedAccountService, [service]);
   /** What the screen shows of a PC that has an account: "in your account" only when it is the one signed in to now, else nothing here is true of it. */
   const joinedAs = useCallback(async (account: string, enrolling: boolean): Promise<AddThisPcState> => {
     const session = await accountService().session();
@@ -778,7 +778,7 @@ export function AccountSection({ onAccount, recheck = 0 }: {
   const load = useCallback(async function read(): Promise<void> {
     const generation = ++loads.current;
     const show = (next: View) => { if (loads.current === generation) setView(next); };
-    const service = new AccountService({ store: indexedAccountStore });
+    const service = indexedAccountService;
     const session = await service.session();
     if (session === undefined) { signedInHere.current = null; show({ kind: "signed-out", error: null }); return; }
     const signedIn = { kind: "signed-in", provider: session.provider, account: session.account } as const;
@@ -943,7 +943,7 @@ export function AccountSection({ onAccount, recheck = 0 }: {
   const addMethod = (provider: AccountProvider): void => {
     if (bridge === null) return;
     setView({ kind: "signing-in" });
-    new AccountService({ store: indexedAccountStore }).addMethod(provider, (linkToken, bearer) => desktopSignIn(provider, bridge, indexedAccountStore, { linkToken, bearer }))
+    indexedAccountService.addMethod(provider, (linkToken, bearer) => desktopSignIn(provider, bridge, indexedAccountStore, { linkToken, bearer }))
       .then(() => load(), async (error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
         console.warn("Ovis: the sign-in method was not added", error instanceof SignInError || error instanceof AccountServiceError ? error.code : error instanceof Error ? error.name : error);
@@ -955,7 +955,7 @@ export function AccountSection({ onAccount, recheck = 0 }: {
   };
 
   const removeMethod = (provider: AccountProvider): void => {
-    new AccountService({ store: indexedAccountStore }).removeIdentity(provider).then(() => load(), (error: unknown) => {
+    indexedAccountService.removeIdentity(provider).then(() => load(), (error: unknown) => {
       console.warn("Ovis: the sign-in method was not removed", error instanceof AccountServiceError ? error.code : error instanceof Error ? error.name : error);
       if (needsReauth(error)) { setReauth({ action: "remove", provider }); return; }
       const message = error instanceof AccountServiceError && error.code === "last_identity"
@@ -1007,7 +1007,7 @@ export function AccountSection({ onAccount, recheck = 0 }: {
   const askDelete = (): void => {
     if (deleteOut !== null) return;
     setReauth(null);
-    void new AccountService({ store: indexedAccountStore }).session().then((session) => {
+    void indexedAccountService.session().then((session) => {
       // another tab signed out, or in as someone else: the section reads what is stored now instead of asking
       if (session === undefined || view.kind !== "signed-in" || session.account !== view.account) { void load(); return; }
       setDeleteAsked(session);
@@ -1031,7 +1031,7 @@ export function AccountSection({ onAccount, recheck = 0 }: {
   const runDelete = (mine: Deletion, session: AccountSession): void => {
     setDeleteAsked(null);
     setDeleteOut(mine);
-    const service = new AccountService({ store: indexedAccountStore });
+    const service = indexedAccountService;
     void deleteAccount({ service, accountStore: indexedAccountStore, session }).finally(() => {
       setDeleteOut((out) => out === mine ? null : out);
     }).then(() => {
@@ -1071,7 +1071,7 @@ export function AccountSection({ onAccount, recheck = 0 }: {
     keepAddPcWaiting(null);
     signedInHere.current = null;
     loads.current++;
-    void new AccountService({ store: indexedAccountStore }).signOut()
+    void indexedAccountService.signOut()
       .catch((error: unknown) => console.warn("Ovis: the account service did not confirm the sign-out", error instanceof Error ? error.name : error))
       .finally(() => setView({ kind: "signed-out", error: null }));
   };

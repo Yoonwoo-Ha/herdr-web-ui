@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
-import type { DevicePairedEvent, DeviceRemovedEvent, Machine, MachineEvent, RelayPairingRequest, RemotePairingRequest } from "../../shared/machines.ts";
+import type { DevicePairedEvent, DeviceRemovedEvent, Machine, MachineEvent, PendingKey, RelayPairingRequest, RemotePairingRequest } from "../../shared/machines.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import { ApiError, authenticate, fetchMachines, observePaneSessions, paneSessionEvents, paneSessionsMoving, verifySourceBoot } from "./api.ts";
 import { passingFolder, recentDirectories } from "./recent-directories.ts";
@@ -265,7 +265,7 @@ export function useRosterLoader({ locked, healthFailing, rosterIn, setMachines, 
   return { snapshotRequests, recovery, reorderCoordinator, load, scheduleRefetch, onRosterStream, rosterConnection };
 }
 
-export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRosterStream, receivePreferencesRef, snapshotRequests, recovery, onRoster, reorderCoordinator, setMachines, rosterIn, setMachineRosterLoaded, machinesRef, onPaneStatus, onPaneExited, followFocusRef, selectionRef, splitShownRef, splitRef, pendingLink, selectionHint, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, scheduleRefetch, preferencesResubscribedRef, preferencesDisconnectedRef, preferencesClosedRef, dropIn, chime, setPairedNotices, setRelayPairings, setRemotePairings, setRemovedNotices, getTakeNotificationTargetRef }: {
+export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRosterStream, receivePreferencesRef, snapshotRequests, recovery, onRoster, reorderCoordinator, setMachines, rosterIn, setMachineRosterLoaded, machinesRef, onPaneStatus, onPaneExited, followFocusRef, selectionRef, splitShownRef, splitRef, pendingLink, selectionHint, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, scheduleRefetch, preferencesResubscribedRef, preferencesDisconnectedRef, preferencesClosedRef, dropIn, chime, setPairedNotices, setRelayPairings, setRemotePairings, setRemovedNotices, setPendingKeys, getTakeNotificationTargetRef }: {
   machineSessions: MachineSessionRegistry;
   locked: boolean | null;
   onRosterStream: (update: RosterStreamUpdate) => void;
@@ -299,6 +299,8 @@ export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRoster
   dropIn: ReturnType<typeof useAlertSignals>["dropIn"];
   chime: ReturnType<typeof useAlertSignals>["chime"];
   setPairedNotices: Dispatch<SetStateAction<readonly DevicePairedEvent[]>>;
+  /** the devices waiting for this PC's screen (S2-34), as the PC lists them after each change */
+  setPendingKeys: (pending: readonly PendingKey[]) => void;
   setRelayPairings: Dispatch<SetStateAction<readonly RelayPairingRequest[]>>;
   setRemotePairings: Dispatch<SetStateAction<readonly RemotePairingRequest[]>>;
   setRemovedNotices: Dispatch<SetStateAction<readonly DeviceRemovedEvent[]>>;
@@ -318,8 +320,7 @@ export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRoster
       if (payload.type === "relay-pairings") { setRelayPairings(payload.pairings); return; }
       if (payload.type === "remote-pairings") { setRemotePairings(payload.pairings); return; }
       if (payload.type === "device-removed") { setRemovedNotices((list) => withPairedNotice(list, payload)); return; }
-      // the devices waiting for this PC's screen are shown by the settings screen that asks for them (S2-34)
-      if (payload.type === "pending-redemptions") return;
+      if (payload.type === "pending-redemptions") { setPendingKeys(payload.pending); return; }
       const fresh = payload.type === "machines" ? payload.machines.filter((machine) => !kept.has(machine.id)) : [];
       const vouches = payload.type !== "machines" || kept.size === 0 || fresh.length > 0;
       if (vouches) snapshotRequests.current.invalidate();

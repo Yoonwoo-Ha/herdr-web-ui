@@ -18,7 +18,7 @@ import { pageNotifications, showTestNotification, type NotificationState } from 
 import { refreshPushHealth, usePushHealth, type PushActionResult } from "../lib/pushHealth.ts";
 import { pickTheme, rowFor, THEME_IDS, type Mode, type ThemeId } from "../lib/themes.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
-import { agentRows, checkList, foundAgents, installedHere, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, openInFolder, preferredAgent, relayStep, settleDelay, setupView, signedInAgents, turnsUsageOn, type CheckStatus, type GuideEvent, type GuideState, type PcCheck, type PhoneBoxOpening } from "../lib/setupGuideFlow.ts";
+import { agentRows, checkList, foundAgents, installedHere, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, openInFolder, preferredAgent, relayOnlyPc, relayStep, settleDelay, setupView, signedInAgents, turnsUsageOn, type CheckStatus, type GuideEvent, type GuideState, type PcCheck, type PhoneBoxOpening } from "../lib/setupGuideFlow.ts";
 import { focusInOtherModal, nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { inRelayShell, useRelay, type RelayState } from "../lib/useRelay.ts";
@@ -46,6 +46,7 @@ import { copyText } from "../lib/clipboard.ts";
 import { ExternalLink } from "../lib/externalLink.ts";
 import { failureText, RelayPairing, statusText } from "./RelayPanel.tsx";
 import "./SetupGuide.css";
+import { RelayOnlyWarning } from "./RelayOnlyWarning.tsx";
 
 type KnownAgent = Pick<AgentCatalogEntry, "id" | "name" | "kind">;
 const HOME = "~";
@@ -71,6 +72,8 @@ export interface SetupGuideProps {
   notifications: NotificationState;
   onStarting?: () => void;
   onOpened: (paneId: string, agentStarted: boolean) => void;
+  /** this PC lists account-opens-all/1: the relay box warns a relay-only PC (RelayOnlyWarning) */
+  opensAll?: boolean;
 }
 
 export function SetupGuide(props: SetupGuideProps) {
@@ -161,7 +164,7 @@ export function SetupGuide(props: SetupGuideProps) {
 
   const notice = <TelemetryNotice inline enabled={!hidden} onOpen={props.onOpenTelemetry} />;
   let body: ReactNode;
-  if (view === "agents" && catalog !== null) body = <Steps page={page} setPage={setPage} onEnableAlerts={props.onEnableAlerts} notifications={props.notifications} settingsOpen={props.settingsOpen} pushOn={props.pushOn} sharedSettingsKnown={props.sharedSettingsKnown} catalog={catalog} ready={ready} machineId={machineId} onClose={onClose} onInstalled={agentInstalled} onLookAgain={loadCatalog} onOpenTerminal={props.onOpenTerminal} onOpened={props.onOpened} onOpenSettings={props.onOpenSettings} auth={props.auth} security={props.security} onStarting={props.onStarting} onPaired={props.onPaired} usageOn={turnsUsageOn(props.state)} phoneFirst={!phoneClosed && phoneBoxOpensFirst(props.state, isLoopbackHost(window.location.hostname))} onPhoneClosed={() => setPhoneClosed(true)} notice={notice} firstFocus={firstFocus} />;
+  if (view === "agents" && catalog !== null) body = <Steps page={page} setPage={setPage} onEnableAlerts={props.onEnableAlerts} notifications={props.notifications} settingsOpen={props.settingsOpen} pushOn={props.pushOn} sharedSettingsKnown={props.sharedSettingsKnown} catalog={catalog} ready={ready} machineId={machineId} onClose={onClose} onInstalled={agentInstalled} onLookAgain={loadCatalog} onOpenTerminal={props.onOpenTerminal} onOpened={props.onOpened} onOpenSettings={props.onOpenSettings} auth={props.auth} security={props.security} opensAll={props.opensAll} onStarting={props.onStarting} onPaired={props.onPaired} usageOn={turnsUsageOn(props.state)} phoneFirst={!phoneClosed && phoneBoxOpensFirst(props.state, isLoopbackHost(window.location.hostname))} onPhoneClosed={() => setPhoneClosed(true)} notice={notice} firstFocus={firstFocus} />;
   else body = <CheckStep onClose={onClose} notice={notice} firstFocus={firstFocus}>{view === "failed" ? <CheckFailed error={catalogError} onLookAgain={loadCatalog} /> : <Checking known={known} catalog={catalog} />}</CheckStep>;
 
   return (
@@ -257,7 +260,7 @@ function CheckFailed({ error, onLookAgain }: { error: string | null; onLookAgain
   );
 }
 
-interface StepsProps extends Pick<StepState, "page" | "setPage">, Pick<SetupGuideProps, "onEnableAlerts" | "notifications" | "settingsOpen" | "pushOn" | "sharedSettingsKnown" | "onOpenTerminal" | "onOpened" | "onOpenSettings" | "auth" | "security" | "onStarting" | "onPaired" | "onClose"> {
+interface StepsProps extends Pick<StepState, "page" | "setPage">, Pick<SetupGuideProps, "onEnableAlerts" | "notifications" | "settingsOpen" | "pushOn" | "sharedSettingsKnown" | "onOpenTerminal" | "onOpened" | "onOpenSettings" | "auth" | "security" | "onStarting" | "onPaired" | "onClose" | "opensAll"> {
   notice: ReactNode;
   usageOn: boolean;
   phoneFirst: boolean;
@@ -270,7 +273,7 @@ interface StepsProps extends Pick<StepState, "page" | "setPage">, Pick<SetupGuid
   firstFocus: FirstFocus;
 }
 
-function Steps({ page, setPage, onEnableAlerts, notifications, settingsOpen = false, pushOn = false, sharedSettingsKnown = false, catalog, ready, machineId, notice, onClose, onInstalled, onLookAgain, onOpenTerminal, onOpened, onOpenSettings, auth, security, onStarting, onPaired, usageOn, phoneFirst, onPhoneClosed, firstFocus }: StepsProps) {
+function Steps({ page, setPage, onEnableAlerts, notifications, settingsOpen = false, pushOn = false, sharedSettingsKnown = false, catalog, ready, machineId, notice, onClose, onInstalled, onLookAgain, onOpenTerminal, onOpened, onOpenSettings, auth, security, onStarting, onPaired, usageOn, phoneFirst, onPhoneClosed, firstFocus, opensAll = false }: StepsProps) {
   const t = useT();
   const { settings, update } = useSettings();
   const agents = agentRows(catalog, ready);
@@ -408,7 +411,7 @@ function Steps({ page, setPage, onEnableAlerts, notifications, settingsOpen = fa
         <aside className="setup-side setup-side-phone" aria-labelledby="setup-phone-label">
           <span className="setup-label" id="setup-phone-label">{t("On your phone")}</span>
           {phoneName !== null && <p className="setup-paired"><CircleCheck aria-hidden="true" />{t("{name} is connected.", { name: phoneName })}</p>}
-          <PhonePanel auth={auth} security={security} onOpenSettings={() => onOpenSettings("devices")} onPaired={onPaired} onPhonePaired={setPairedNow} />
+          <PhonePanel auth={auth} security={security} opensAll={opensAll} onOpenSettings={() => onOpenSettings("devices")} onPaired={onPaired} onPhonePaired={setPairedNow} />
         </aside>
       </div>
       <footer className="modal-footer setup-foot">
@@ -503,7 +506,7 @@ function Steps({ page, setPage, onEnableAlerts, notifications, settingsOpen = fa
               <div className="setup-actions">
                 <button type="button" className="btn" aria-expanded={phone !== null} onClick={() => setPhone(phone === null ? "tap" : null)}><Smartphone aria-hidden="true" />{t("Connect your phone")}</button>
               </div>
-              {phone !== null && <PhoneBox opening={phone} auth={auth} security={security} onOpenSettings={() => { setPhone(null); onOpenSettings("devices"); }} onPaired={onPaired} onPhonePaired={setPairedNow} onWithdraw={() => setPhone(null)} />}
+              {phone !== null && <PhoneBox opening={phone} auth={auth} security={security} opensAll={opensAll} onOpenSettings={() => { setPhone(null); onOpenSettings("devices"); }} onPaired={onPaired} onPhonePaired={setPairedNow} onWithdraw={() => setPhone(null)} />}
             </>
           )}
         </aside>
@@ -749,9 +752,10 @@ interface PhoneBoxProps {
   onOpenSettings: () => void;
   onPaired: () => void;
   onPhonePaired: (name: string) => void;
+  opensAll: boolean;
 }
 
-function PhoneBox({ opening, onWithdraw, auth, security, onOpenSettings, onPaired, onPhonePaired }: PhoneBoxProps) {
+function PhoneBox({ opening, onWithdraw, auth, security, onOpenSettings, onPaired, onPhonePaired, opensAll }: PhoneBoxProps) {
   const t = useT();
   const relay = useRelay();
   const [other, setOther] = useState(false);
@@ -771,7 +775,7 @@ function PhoneBox({ opening, onWithdraw, auth, security, onOpenSettings, onPaire
   if (way === "other") return <PhoneQr auth={auth} onOpenSettings={onOpenSettings} onPaired={onPaired} onPhonePaired={onPhonePaired} />;
   // as Settings → Phone works it out: the relay closes a gate still open with no token set (server/relay/service.ts)
   const closesGate = security.state === "known" && security.summary.pairing_gate === "open" && !security.summary.token_configured;
-  return <RelayBox relay={relay} auth={auth} closesGate={closesGate} onPaired={onPaired} onPhonePaired={onPhonePaired} onOther={() => setOther(true)} />;
+  return <RelayBox relay={relay} auth={auth} closesGate={closesGate} opensAll={opensAll} relayOnly={security.state === "known" && relayOnlyPc(security.summary)} onPaired={onPaired} onPhonePaired={onPhonePaired} onOther={() => setOther(true)} />;
 }
 
 /**
@@ -779,7 +783,7 @@ function PhoneBox({ opening, onWithdraw, auth, security, onOpenSettings, onPaire
  * gate still open, which would shut out a browser in only because nothing is paired yet (auth via
  * "open": a LAN or tailnet address, never the PC's loopback), so that browser pairs itself first.
  */
-function RelayBox({ relay, auth, closesGate, onPaired, onPhonePaired, onOther, tight = false }: { relay: RelayState; auth: HealthAuth | null; closesGate: boolean; onPaired: () => void; onPhonePaired: (name: string) => void; onOther?: () => void; tight?: boolean }) {
+function RelayBox({ relay, auth, closesGate, opensAll, relayOnly, onPaired, onPhonePaired, onOther, tight = false }: { relay: RelayState; auth: HealthAuth | null; closesGate: boolean; opensAll: boolean; relayOnly: boolean; onPaired: () => void; onPhonePaired: (name: string) => void; onOther?: () => void; tight?: boolean }) {
   const t = useT();
   const { status, pending, request, reread } = relay;
   const [error, setError] = useState<string | null>(null);
@@ -834,6 +838,7 @@ function RelayBox({ relay, auth, closesGate, onPaired, onPhonePaired, onOther, t
         </>
       )}
       {step === "online" && (tight ? <TightRelayQr onPhonePaired={onPhonePaired} /> : <RelayQr onPhonePaired={onPhonePaired} />)}
+      <RelayOnlyWarning opensAll={opensAll} relayOnly={relayOnly} />
       {pairedSelf && <span className="setup-paired" role="status"><Check aria-hidden="true" />{t("This browser is connected first.")}</span>}
       {/* a failed start's reason shows once, in its own line, when the relay says it did not start; any other failure (a retry's own pairing) shows here */}
       {error !== null && (step !== "not-started" || error !== status.error) && <p className="setup-error" role="alert">{error}</p>}
@@ -1091,6 +1096,7 @@ interface MethodProps {
   onOpenSettings: () => void;
   onPaired: () => void;
   onPhonePaired: (name: string) => void;
+  opensAll: boolean;
 }
 
 function MethodPanel({ method, shown = true, ...props }: MethodProps & { method: PhoneMethod; shown?: boolean }) {
@@ -1108,7 +1114,7 @@ function MethodPanel({ method, shown = true, ...props }: MethodProps & { method:
     if (phoneWay(relay, inRelayShell(), props.auth) === "other") return <p className="setup-note"><Info aria-hidden="true" />{t("Not available on this PC.")}</p>;
     if (relay.status === null) return <p className="setup-muted"><LoaderCircle aria-hidden="true" className="setup-spin" /></p>;
     const closesGate = props.security.state === "known" && props.security.summary.pairing_gate === "open" && !props.security.summary.token_configured;
-    return <RelayBox key={returns} tight relay={relay} auth={props.auth} closesGate={closesGate} onPaired={props.onPaired} onPhonePaired={props.onPhonePaired} />;
+    return <RelayBox key={returns} tight relay={relay} auth={props.auth} closesGate={closesGate} opensAll={props.opensAll} relayOnly={props.security.state === "known" && relayOnlyPc(props.security.summary)} onPaired={props.onPaired} onPhonePaired={props.onPhonePaired} />;
   }
   if (method === "wifi") {
     const address = wifiAddress();

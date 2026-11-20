@@ -11,7 +11,7 @@ import type { SystemReport } from "../../shared/system.ts";
 import type { MovePlanResponse, MoveStartRequest, MoveStopAllOffer, MoveStopAllRequest, MoveStopRequest } from "../../shared/runtime-move.ts";
 import type { EditableText, PaneDocuments, TextSaved, TextSaveRequest } from "../../shared/files.ts";
 import { parseSystemReport } from "./systemReport.ts";
-import { machinePath, type BridgeHealth, type HerdrCoreFacts, type HerdrIdentity, type HerdrRuntimeFacts, type Machine, type MachineRoster, type RuntimeName, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
+import { machinePath, type BridgeHealth, type HerdrCoreFacts, type HerdrIdentity, type HerdrRuntimeFacts, type Machine, type MachineRoster, type PendingKey, type RuntimeName, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
 import type {
   WorkspaceMoved,
   HerdrPane,
@@ -365,6 +365,14 @@ export async function decideRelayPairing(id: string, decision: "approve" | "decl
   // an account member approving through the relay names the digits it picked (docs/account.md, "Who may admit a device")
   const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify({ id, decision, ...(digits === undefined ? {} : { digits }) }) });
   if (!response.ok) throw await errorFrom(url, response);
+}
+
+/** Declines one device waiting for this PC's screen (S2-34, T72); the PC answers the list that is left. Approving stays on the screen. */
+export async function declinePendingKey(id: string): Promise<readonly PendingKey[]> {
+  const url = "/api/devices/pending/decline";
+  const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify({ id }) });
+  if (!response.ok) throw await errorFrom(url, response);
+  return ((await response.json()) as { pending: PendingKey[] }).pending;
 }
 
 export async function fetchPreferences(): Promise<SharedPreferences | null> {

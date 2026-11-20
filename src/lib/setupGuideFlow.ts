@@ -1,4 +1,5 @@
 import type { AgentCatalogEntry, AgentCatalogRow } from "../../shared/agent-catalog.ts";
+import type { SecuritySummary } from "../../shared/access.ts";
 import type { HealthAuth, PairedDevice, RelayStatus } from "../../shared/protocol.ts";
 import type { SetupStep } from "./agentSetup.ts";
 import type { ProviderUsage } from "../../shared/usage.ts";
@@ -74,6 +75,11 @@ export function phoneWay(relay: { unsupported: boolean; status: Pick<RelayStatus
   if (auth.role === "watch" || auth.via === "portal") return "other";
   if (relay.status === null) return "wait";
   return relay.status.blocked === null ? "relay" : "other";
+}
+
+/** Device table T70: other devices reach this PC only through the relay when it is bound to its loopback and this page came in on it directly; any other or unnamed ingress may be a route of its own (SSH this setup cannot see). */
+export function relayOnlyPc(summary: Pick<SecuritySummary, "bind_scope" | "observed_ingress">): boolean {
+  return summary.bind_scope === "loopback" && summary.observed_ingress === "direct";
 }
 
 export type PhoneBoxOpening = "tap" | "first-run";

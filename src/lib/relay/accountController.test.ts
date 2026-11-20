@@ -94,6 +94,7 @@ describe("the hosted shell's front page", () => {
       await mountRelayShell(mountFor({
         accountService: SERVICE, accountProviders: ["github", "apple"], accountStore, store: deviceStore([]),
         accountFetch: async (input) => {
+          if (new URL(String(input)).pathname === "/v1/devices/challenge") return new Response(null, { status: 404 });
           if (new URL(String(input)).pathname === "/v1/signout") return Response.json({});
           return ++reads === 2 ? stale.promise : Response.json({ pcs: [] });
         },

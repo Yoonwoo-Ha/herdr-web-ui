@@ -3354,3 +3354,45 @@ it("backoffDelay keeps main's steps up to 2s whatever the draw, and jitters from
     random.mockRestore();
   }
 });
+
+it("G5: offers the account to open every PC only on a PC that lists account-opens-all/1, from its snapshot or a trusted frame", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  try {
+    socket.receive({ type: "features", features: ["submit", "account-opens-all/1"], connection: "c1" });
+    expect(client.accountOpensAll()).toBe(false);
+    socket.receive(snapshot(["submit"]));
+    expect(client.accountOpensAll()).toBe(false);
+    socket.receive(snapshot(["submit", "account-opens-all/1"]));
+    expect(client.accountOpensAll()).toBe(true);
+    socket.disconnect();
+    expect(client.accountOpensAll()).toBe(false);
+  } finally {
+    client.close();
+  }
+});
+
+it("T57: a PC's notice replay reaches listeners, and seen or answer frames go only to a PC that lists account-opens-all/1", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  const heard: string[] = [];
+  client.on((message) => { if (message.type === "device-notice-replay" || message.type === "device-notice") heard.push(message.type); });
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  try {
+    socket.receive(snapshot(["submit"]));
+    expect(client.sendNotice({ type: "notice-seen", seq: 4 })).toBe(false);
+    socket.receive(snapshot(["submit", "account-opens-all/1"]));
+    socket.receive({ type: "device-notice-replay", replay: { notices: [], cut: 0 } });
+    expect(heard).toEqual(["device-notice-replay"]);
+    expect(client.sendNotice({ type: "notice-seen", seq: 4 })).toBe(true);
+    expect(client.sendNotice({ type: "notice-answer", id: "c".repeat(32), answer: "its_me" })).toBe(true);
+    expect(socket.sent.filter((frame) => frame.type.startsWith("notice-"))).toEqual([
+      { type: "notice-seen", seq: 4 }, { type: "notice-answer", id: "c".repeat(32), answer: "its_me" },
+    ]);
+  } finally {
+    client.close();
+  }
+});

@@ -2,7 +2,7 @@ import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, us
 import { Bell, ChevronDown, ChevronLeft, Eye, Plus, CircleHelp, Ellipsis, FolderOpen, Inbox, Link, Menu, MessageCircle, MessageSquare, PanelLeft, PanelsTopLeft, Search, Settings as SettingsGlyph, SquareTerminal, Target, TextSearch, X } from "lucide-react";
 
 import type { HerdrPane, PaneDirection } from "../shared/protocol.ts";
-import { authenticate, createTab, movePaneBeside, moveTabToWorkspace, paneSessionKey, shareSeen, swapPaneWith } from "./lib/api.ts";
+import { authenticate, createTab, declinePendingKey, movePaneBeside, moveTabToWorkspace, paneSessionKey, shareSeen, swapPaneWith } from "./lib/api.ts";
 import { openGroupItems, useGroupClosedWhenEmpty, useMoreMenu } from "./lib/moreMenu.ts";
 import { layoutActions } from "./lib/layoutActions.ts";
 import { displayPaneTitle, storedBackgroundFolded, storedWorktreeCollapsed, tabPaneTitle } from "./components/Sidebar.tsx";
@@ -86,6 +86,8 @@ import { PushHealthNotice } from "./components/PushHealthNotice.tsx";
 import { RelayNotice } from "./components/RelayNotice.tsx";
 import { InstallHint } from "./components/InstallHint.tsx";
 import { DevicePairedNotice, DeviceRemovedNotice } from "./components/DevicePairedNotice.tsx";
+import { useAccountDeviceNotices } from "./components/AccountDeviceNotices.tsx";
+import { PendingKeys } from "./components/PendingKeys.tsx";
 import { RelayPairingPrompt } from "./components/RelayPairingPrompt.tsx";
 import { AccountApprovals } from "./components/AccountApprovals.tsx";
 import { TelemetryNotice } from "./components/TelemetryControls.tsx";
@@ -245,7 +247,8 @@ export function App() {
   const { error, setError } = useRosterError();
   const { layoutNotice, setLayoutNotice } = useLayoutNotice();
   const { locked, setLocked, lockReason, pairCode, consumePairCode, pairingUnconfirmed, onPaired, auth, canSignOut, security, readBridgeHealth } = useAccessState({ ui: settings.uiFontFamily, chat: settings.chatFontFamily });
-  const { pairedNotices, setPairedNotices, dismissPairedNotice, relayPairings, setRelayPairings, remotePairings, setRemotePairings, removedNotices, setRemovedNotices, dismissRemovedNotice } = usePairedNotices();
+  const pendingAccess = locked === true ? false : auth === null ? undefined : auth.authenticated && auth.role === "drive" && auth.via !== "open";
+  const { pairedNotices, setPairedNotices, dismissPairedNotice, relayPairings, setRelayPairings, remotePairings, setRemotePairings, removedNotices, setRemovedNotices, dismissRemovedNotice, pendingKeys, setPendingKeys, clearPendingKeys } = usePairedNotices(pendingAccess);
   const updates = useUpdates(locked === false);
   const desktopUpdate = useDesktopUpdate();
   const { selectedPaneId, setSelectedPaneId, notificationViewTarget, setNotificationViewTarget, terminalPeek, setTerminalPeek, endPeek, pendingLink, linkLanded, setLinkLanded, rosterSeq, linkSince, selectionSince, rosterTick, setRosterTick, linkTick, setLinkTick } = useSelectionState({ initialLink });
@@ -314,7 +317,7 @@ export function App() {
   const { dropIn, chime, onRoster, onPaneStatus, onPaneExited } = useAlertSignals({ settings, selectionRef, drawerOpenRef: inbox.coveredRef, splitRef, splitShownRef, machinesRef, alertsRef, alertsOnRef, pushOnRef, statusRef, turnStartRef, lastTurnRef, alertSoundRef });
 
   // herdr moved a pane under a new ID, from anywhere (the server's pane-moved): followPaneMove below, called at the event
-  useRosterEvents({ onPaneMoved: (machineId, from, to) => followPaneMove(machineId, from, to), machineSessions, locked, onRosterStream, receivePreferencesRef, snapshotRequests, recovery, onRoster, reorderCoordinator, setMachines, rosterIn, setMachineRosterLoaded, machinesRef, onPaneStatus, onPaneExited, followFocusRef, selectionRef, splitShownRef, splitRef, pendingLink, selectionHint, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, scheduleRefetch, preferencesResubscribedRef, preferencesDisconnectedRef, preferencesClosedRef, dropIn, chime, setPairedNotices, setRelayPairings, setRemotePairings, setRemovedNotices, getTakeNotificationTargetRef: () => takeNotificationTargetRef });
+  useRosterEvents({ onPaneMoved: (machineId, from, to) => followPaneMove(machineId, from, to), machineSessions, locked, onRosterStream, receivePreferencesRef, snapshotRequests, recovery, onRoster, reorderCoordinator, setMachines, rosterIn, setMachineRosterLoaded, machinesRef, onPaneStatus, onPaneExited, followFocusRef, selectionRef, splitShownRef, splitRef, pendingLink, selectionHint, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, scheduleRefetch, preferencesResubscribedRef, preferencesDisconnectedRef, preferencesClosedRef, dropIn, chime, setPairedNotices, setRelayPairings, setRemotePairings, setRemovedNotices, setPendingKeys, getTakeNotificationTargetRef: () => takeNotificationTargetRef });
 
   const handleServerMessage = useServerMessageHandler(setOutputStopped);
 
@@ -332,6 +335,7 @@ export function App() {
   const rowFacts = setupGuide.guide === null && auth?.role !== "watch" && localSnapshot !== null;
   const rowStore = browserStorage();
   const rowOn = rowFacts && rowStore !== null && setupRowState(rowStore) === "on";
+  const deviceNotices = useAccountDeviceNotices({ machines, machineSessions, selectedMachineId, pageServerId: health?.web_ui?.server_id });
   const otherDevicePaired = useOtherDevice(rowOn, [...pairedNotices, ...removedNotices].map((notice) => notice.event_id).join(" "), true);
   const alertsHealth = usePushHealth();
   const rowAlerts = alertsSurfaces(alertsHere({ alertsOn, notifications, desktop: desktopUpdateBridge() !== null, pushSupported: pushSupported(), pushOn, push: { checked: alertsHealth.checked, problem: alertsHealth.health.problem, delivered: alertsHealth.delivered }, confirmed: confirmation(registeredPushEndpoint()) })).row;
@@ -389,6 +393,7 @@ export function App() {
 
   const lock = useCallback(async () => {
     setDrawerOpen(false);
+    clearPendingKeys();
     // before signOut: the unsubscribe call needs the cookie, and a locked device must stop
     // receiving pane titles
     await removePushSubscription().catch(() => undefined);
@@ -404,7 +409,7 @@ export function App() {
       if (!reload) await loadHealth();
     }
     if (reload) window.location.reload();
-  }, [auth?.via, loadHealth, t]);
+  }, [auth?.via, clearPendingKeys, loadHealth, t]);
 
   const { selectedMachineRef, selectTarget, selectTargetRef, picks } = useSelectTarget({ selectedMachineId, setConnected, setConnectedBefore, setSelectedMachineId, setSelectedPaneId, setAutoSelected, setDrawerOpen, setOutputStopped, setNotificationViewTarget, setTerminalPeek, pendingLink, pendingFile, setLinkLanded, selectionHint, selectionSince, rosterSeq, snapshot, selectedMachine, selectedPaneId, setHeaderNote, linkTick, movingPanes, onPick: (paneId) => { setupGuide.stepAside(); if (paneId !== null) inbox.leave(); },
     onLinkMiss: () => { if (inbox.enabled) inbox.show(); } });
@@ -1130,9 +1135,12 @@ export function App() {
         {relayPairings.length > 0 && <RelayPairingPrompt pairings={relayPairings} />}
         {remotePairings.length > 0 && <AccountApprovals pairings={remotePairings} />}
         {pairedNotices.length > 0 && <DevicePairedNotice events={pairedNotices} onDismiss={dismissPairedNotice} onOpen={(event) => { dismissPairedNotice(event); setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
+        {deviceNotices}
+        {/* The PC's pending-redemptions stream owns the list; a decline response can arrive after a newer event. */}
+        <PendingKeys pending={pendingKeys} onDecline={(id) => { void declinePendingKey(id).catch((error: unknown) => console.warn("Ovis: the device was not declined", error instanceof Error ? error.name : error)); }} />
         {removedNotices.length > 0 && <DeviceRemovedNotice events={removedNotices} onDismiss={dismissRemovedNotice} />}
         {setupGuide.guide === null && <FirstStartHints active={locked === false} />}
-        {setupGuide.guide !== null && <MachineContext.Provider value="local"><SetupGuide auth={auth} security={security} onEnableAlerts={enableNotifications} settingsOpen={settingsOpen} pushOn={pushOn} sharedSettingsKnown={sharedSettingsKnown} notifications={notifications} hidden={setupGuide.paused} state={setupGuide.guide} dispatch={setupGuide.dispatch} onClose={setupGuide.close} onOpenSettings={(page) => { setSettingsLinkPage(page); setSettingsOpen(true); }}
+        {setupGuide.guide !== null && <MachineContext.Provider value="local"><SetupGuide auth={auth} security={security} opensAll={machineSessions.peek("local")?.socket?.accountOpensAll() === true} onEnableAlerts={enableNotifications} settingsOpen={settingsOpen} pushOn={pushOn} sharedSettingsKnown={sharedSettingsKnown} notifications={notifications} hidden={setupGuide.paused} state={setupGuide.guide} dispatch={setupGuide.dispatch} onClose={setupGuide.close} onOpenSettings={(page) => { setSettingsLinkPage(page); setSettingsOpen(true); }}
           onOpenTelemetry={() => { setSettingsLinkPage("about"); setSettingsLinkSection("telemetry"); setSettingsOpen(true); }}
           // the tab was just made: picked before the roster has it, the pick would be released as a closed pane
           onOpenTerminal={(paneId) => { const at = picks.current; const latest = setupGuide.ticket(); void load().finally(() => { if (latest() && picks.current === at) selectTarget("local", paneId, "terminal"); }); }}

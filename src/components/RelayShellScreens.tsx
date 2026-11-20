@@ -10,7 +10,9 @@ import { serverScopePath } from "../lib/shellMode.ts";
 import { describeUpdate } from "../lib/updateProgress.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { AccountSignIn, CheckPcsButton, PcStatusLine } from "./AccountPcs.tsx";
+import { JoinWait } from "./JoinWait.tsx";
 import { KeyId } from "./KeyId.tsx";
+import { KeyFingerprintWait } from "./PendingKeys.tsx";
 import { relayFailureText } from "./relayFailureText.ts";
 import { CodeEntry, ReadyCheckpoint, type RelayShellProps } from "./RelayShell.tsx";
 import { RelayAddPc } from "./RelayAddPc.tsx";
@@ -262,13 +264,13 @@ export function RelayShellCardContent({ props, view, signInFirst, addingPc, setS
           <SheepMascot screen="connecting" size={56} badge />
           <h1 className="relay-shell-title">{t("Connecting to {name}…", { name: pc })}</h1>
           {state.approved && <p className="relay-shell-copy">{t("Approved. {name} opens in a moment.", { name: pc })}</p>}
-          <PcCard name={pc} />
+          {state.keyFingerprint === undefined ? <PcCard name={pc} /> : <KeyFingerprintWait pc={pc} fingerprint={state.keyFingerprint} />}
         </>
       )}
       {state.kind === "connecting" && !state.pairing && (
         <>
           <h1 className="relay-shell-title">{t("Connecting to {name}…", { name: pc })}</h1>
-          <div className="relay-shell-wait"><div className="boot-spinner" aria-hidden="true" /></div>
+          {state.hold === undefined ? <div className="relay-shell-wait"><div className="boot-spinner" aria-hidden="true" /></div> : <JoinWait pc={pc} hold={state.hold} />}
           <div className="relay-shell-actions"><button type="button" className="btn" onClick={onCancel}>{t("Cancel")}</button></div>
         </>
       )}
