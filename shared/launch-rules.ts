@@ -67,6 +67,30 @@ export function firstMessageFault(value: unknown, agent: unknown): string | null
   return null;
 }
 
+/**
+ * The flag that adds an MCP server to an agent's launch, which only the server sets, from the browser tool chosen
+ * for that agent (shared/browser-tools.ts): a client names no MCP command. Codex's `-c mcp_servers…` is refused below. Their `mcp` subcommands, which add a server to the agent's own settings, are refused too.
+ */
+const MCP_FLAGS: Readonly<Record<string, string>> = { claude: "--mcp-config", copilot: "--additional-mcp-config" };
+/**
+ * Where an agent's own `mcp` subcommand could be read, which adds a server to its settings: Codex reads everything after
+ * `--` as its prompt, while Claude Code's and Copilot's parsers may still take a subcommand there, and a launch from the
+ * dialogs gives them nothing after it. The word as the value of a flag the dialogs send is no command.
+ */
+const MCP_COMMAND_AFTER_END: Readonly<Record<string, boolean>> = { claude: true, copilot: true, codex: false };
+/** each agent's own: Claude Code's `-c` is `--continue`, which takes no value, so a word after it may be a subcommand */
+const VALUE_FLAGS: Readonly<Record<string, ReadonlySet<string>>> = {
+  claude: new Set(["--model", "--effort", "--permission-mode", "--settings"]),
+  codex: new Set(["--model", "-m", "--config", "-c"]),
+  copilot: new Set(["--model"]),
+};
+function runsMcpCommand(kind: string, args: readonly string[], options: readonly string[]): boolean {
+  const after = MCP_COMMAND_AFTER_END[kind];
+  if (after === undefined) return false;
+  const read = after ? args : options;
+  return read.some((arg, at) => arg === "mcp" && (at === 0 || !VALUE_FLAGS[kind]!.has(read[at - 1]!)));
+}
+
 type LaunchFlag = "model" | "effort" | "config";
 /** the flags whose values are checked, by agent: Codex's `-c`/`--config` sets `model` and `model_reasoning_effort` too */
 const LAUNCH_FLAGS: Record<"claude" | "codex" | "dsh-tui", Record<string, LaunchFlag>> = {
@@ -106,6 +130,10 @@ const configValue = (value: string): string => {
  */
 export function launchArgsFault(kind: string, args: readonly string[]): string | null {
   if (!args.every(hasNoControlCharacters)) return "agent.args must not contain control characters (a tab or a line break included)";
+  const options = args.includes("--") ? args.slice(0, args.indexOf("--")) : args;
+  const mcpFlag = MCP_FLAGS[kind];
+  if (mcpFlag !== undefined && options.some((arg) => arg === mcpFlag || arg.startsWith(`${mcpFlag}=`))) return `agent.args must not carry ${mcpFlag}: the PC adds the browser tool from its settings`;
+  if (runsMcpCommand(kind, args, options)) return "agent.args must not run the agent's mcp command, which writes its own settings";
   if (kind !== "claude" && kind !== "codex" && kind !== "dsh-tui") return null;
   const efforts = LAUNCH_EFFORTS[kind];
   for (let at = 0; at < args.length; at++) {
@@ -129,6 +157,7 @@ export function launchArgsFault(kind: string, args: readonly string[]): string |
       const setting = split < 0 ? "" : configValue(value.slice(split + 1));
       if (key === "model") model = setting;
       if (key === "model_reasoning_effort") effort = setting;
+      if (/^(["']?)mcp_servers\1\s*(\.|$)/u.test(key)) return "agent.args must not set mcp_servers: the PC adds the browser tool from its settings";
     }
     if (model !== null && !MODEL_NAME.test(model)) return "agent.args --model must name one model";
     if (effort !== null && !efforts.includes(effort)) {

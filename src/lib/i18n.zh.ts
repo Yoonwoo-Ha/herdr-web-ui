@@ -475,6 +475,7 @@ const BASE: Record<string, string> = {
   "Model": "模型",
   "One model name, without spaces.": "填写一个不含空格的模型名称。",
   "Effort": "推理强度",
+  "Browser tool": "浏览器工具",
   "Sandbox and approvals": "沙箱与审批",
   "Add this PC to my account": "将此电脑添加到我的账号",
   "Signed in. Adding this PC to your account…": "已登录。正在将此电脑添加到你的账号…",

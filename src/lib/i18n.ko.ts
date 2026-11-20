@@ -468,6 +468,7 @@ const BASE: Record<string, string> = {
   "Model": "모델",
   "One model name, without spaces.": "띄어쓰기 없는 모델 이름 하나를 적으세요.",
   "Effort": "노력 수준",
+  "Browser tool": "브라우저 도구",
   "Sandbox and approvals": "샌드박스와 승인",
   "Add this PC to my account": "이 PC를 내 계정에 추가",
   "Signed in. Adding this PC to your account…": "로그인했습니다. 이 PC를 계정에 추가하는 중…",

@@ -52,6 +52,7 @@ import type { StatusIndicators } from "./status.ts";
 import { sanitizeGroupNames, sanitizeGroupOf } from "./namedAgentGroups.ts";
 import { WEB_LINK_TARGETS, type WebLinkTarget } from "./webPanel.ts";
 import { FILE_OPEN_TARGETS, type FilePresentation } from "./filePresentation.ts";
+import { browserToolChoices, type BrowserToolChoices } from "../../shared/browser-tools.ts";
 import { CLAUDE_EFFORTS, CLAUDE_LAUNCH_MODES, CODEX_EFFORTS, CODEX_LAUNCH_MODES, launchChoiceFault, type ClaudeLaunchMode, type CodexLaunchMode } from "./agentLaunchMode.ts";
 
 export interface Settings {
@@ -194,6 +195,8 @@ export interface Settings {
   codexLaunchModel: string;
   /** and Codex's effort (`-c model_reasoning_effort=`) */
   codexLaunchEffort: (typeof CODEX_EFFORTS)[number] | "";
+  /** the browser tool each agent this PC's server starts is given (shared/browser-tools.ts); an agent absent gets none */
+  agentBrowserTools: BrowserToolChoices;
 }
 
 export const DIFF_STYLES = ["unified", "split"] as const;
@@ -204,7 +207,7 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
 type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "keyBarExpanded" | "shortcutOverrides" | "herdrPrefixKeys" | "terminalFontFamily" | "chatFontFamily" | "uiFontFamily"
   | "quickReplies" | "agentLocks" | "lockedAgents" | "opencodeParentEnds" | "ompHeldFiles" | "restoreReplacedServer" | "agentNamedGroups" | "agentGroupNames" | "agentGroupOf" | "usageOrder" | "usageHidden" | "fileOpen" | "filesPanel" | "webLinks" | "reuseExternalLinkTab" | "claudeLaunchMode" | "codexLaunchMode"
-  | "claudeLaunchModel" | "claudeLaunchEffort" | "codexLaunchModel" | "codexLaunchEffort"
+  | "claudeLaunchModel" | "claudeLaunchEffort" | "codexLaunchModel" | "codexLaunchEffort" | "agentBrowserTools"
   | "followHerdrFocus" | "sidebarPeek" | "phoneInbox" | "sidebarBackgroundWorkspaces" | "codexDrag" | "composerArtifacts" | "composerPasteSend" | "composerBtw" | "terminalMirrorWrap" | "sidebarFilter" | "sidebarContext" | "sidebarAgentTree" | "foldHelpers" | "pcLoad"
   | "expandThinking" | "foldWork" | "customThemes" | "autoTabNames" | "voiceEngine" | "agentGroups" | "agentGroupSort" | "terminalImages" | "terminalAttachButton"
   | "terminalKeyboardOnRequest" | "terminalFoldKeyBar" | "fileFontSize" | "fileFontBase" | "editTextFiles" | "reopenFileOnReturn" | "phoneTabs">;
@@ -308,6 +311,7 @@ export const SETTING_SCOPE = {
   wrapCode: "device", editTextFiles: "device", reopenFileOnReturn: "device", diffStyle: "device", fileOpen: "device", filesPanel: "device", webLinks: "device", reuseExternalLinkTab: "device",
   claudeLaunchMode: "shared", codexLaunchMode: "shared",
   claudeLaunchModel: "shared", claudeLaunchEffort: "shared", codexLaunchModel: "shared", codexLaunchEffort: "shared",
+  agentBrowserTools: "shared",
   customThemes: "shared",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
 
@@ -415,6 +419,7 @@ export const DEFAULT_SETTINGS: Settings = {
   claudeLaunchEffort: "",
   codexLaunchModel: "",
   codexLaunchEffort: "",
+  agentBrowserTools: {},
 };
 
 export const QUICK_REPLIES_MAX = 12;
@@ -629,6 +634,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     claudeLaunchEffort: CLAUDE_EFFORTS.find((level) => level === record["claudeLaunchEffort"]) ?? DEFAULT_SETTINGS.claudeLaunchEffort,
     codexLaunchModel: launchModel("codex", record["codexLaunchModel"]),
     codexLaunchEffort: CODEX_EFFORTS.find((level) => level === record["codexLaunchEffort"]) ?? DEFAULT_SETTINGS.codexLaunchEffort,
+    agentBrowserTools: browserToolChoices(record["agentBrowserTools"]),
   };
 }
 

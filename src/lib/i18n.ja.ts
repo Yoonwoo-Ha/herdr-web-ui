@@ -470,6 +470,7 @@ const BASE: Record<string, string> = {
   "Model": "モデル",
   "One model name, without spaces.": "空白を含まないモデル名を一つ指定してください。",
   "Effort": "推論レベル",
+  "Browser tool": "ブラウザツール",
   "Sandbox and approvals": "サンドボックスと承認",
   "Add this PC to my account": "このPCをアカウントに追加",
   "Signed in. Adding this PC to your account…": "サインインしました。このPCをアカウントに追加しています…",

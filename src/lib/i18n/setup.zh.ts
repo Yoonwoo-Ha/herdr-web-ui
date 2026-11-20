@@ -85,4 +85,6 @@ export const SETUP_ZH: Record<string, string> = {
   "Accounts of providers that none of the agents listed above signs in to, such as Cursor or an agent this PC does not have.": "上方列出的 Agent 都不登录的服务的账号，例如 Cursor，或此 PC 上没有的 Agent 的账号。",
   "Old record": "旧记录",
   "Install another agent ({count})": "安装其他代理（{count}）",
+  "None": "无",
+  "A browser the agent can drive: Ovis adds an MCP server at a fixed version when it starts this agent. That browser uses a profile of its own, without your sign-ins, and Ovis does not watch or limit it. Applies from the next start; an agent started from a terminal is not changed.": "代理可以操作的浏览器：Ovis 启动该代理时会加上固定版本的 MCP 服务器。该浏览器使用单独的配置文件，不会用到你的登录信息，Ovis 也不会查看或限制它。从下次启动起生效；从终端直接启动的代理不受影响。",
 };
