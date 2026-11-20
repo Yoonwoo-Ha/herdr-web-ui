@@ -3,8 +3,9 @@
  * conditions), end to end through a relay session: HELLO with key-proof-1, PAIR, KEY_CHALLENGE, KEY_PROVE,
  * KEY_PENDING, and a row only when this PC's screen approves that very key.
  */
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { FrameType, KEY_PROOF_FEATURE } from "../../shared/relay-mux.ts";
+import { MuxEngine } from "../../shared/relay-mux-engine.ts";
 import { bounded, deferred, relayConnection, TestClock } from "../relay/test-helpers.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -256,4 +257,25 @@ test("T71/T72: a code that runs out drops the devices waiting on it and withdraw
   expect(prompts(made)).toEqual([]);
   expect(await bounded(paired.link.serverError)).toBe("auth_failed");
   expect((await made.local("/api/devices/pending")).body.pending).toEqual([]);
+});
+
+test("S13-1: a code that ends after the proof is published, before the relay goes on, sends no KEY_PENDING and puts no prompt up", async () => {
+  const made = await pc(true, "linux");
+  const code = await made.offerCode();
+  const sent: number[] = [];
+  const asks = spyOn(made.app.context.services, "askScreenForKey");
+  const send = MuxEngine.prototype.sendSession;
+  const outbound = spyOn(MuxEngine.prototype, "sendSession").mockImplementation(function (this: MuxEngine, frame) { sent.push(frame.type); return send.call(this, frame); });
+  // the code ends two turns after the entry is published: after KeyProofPairings.prove has named it for the session
+  // and resolved, before the relay session goes on to KEY_PENDING (the gate's handoff; one turn sooner the session is
+  // still unnamed and the prove() check refuses, one turn later KEY_PENDING has gone out legitimately)
+  const stop = made.app.context.services.pendingRedemptions!.onChange(() => { stop(); queueMicrotask(() => queueMicrotask(() => { made.devices.endPairing({ code }); })); });
+  try {
+    const paired = await provingDevice(made, code);
+    expect(await bounded(paired.link.serverError)).toBe("auth_failed");
+    expect(sent).not.toContain(FrameType.KEY_PENDING);
+    expect(asks).not.toHaveBeenCalled();
+    expect(made.screen.keyConfirm()).toBeUndefined();
+    expect((await made.local("/api/devices/pending")).body.pending).toEqual([]);
+  } finally { outbound.mockRestore(); asks.mockRestore(); }
 });

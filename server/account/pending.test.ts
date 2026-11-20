@@ -6,7 +6,7 @@
 import { expect, test } from "bun:test";
 import { exportAccountKey } from "../../shared/account-records.ts";
 import { signPairProof } from "../../shared/pair-fingerprint.ts";
-import { PENDING_MS, PENDING_PER_CODE, PENDING_TOTAL, PendingRedemptions } from "./pending.ts";
+import { PENDING_MS, PENDING_PER_CODE, PENDING_TOTAL, PendingLimitError, PendingRedemptions } from "./pending.ts";
 
 const SERVER = "0123456789abcdef0123456789abcdef";
 
@@ -112,6 +112,31 @@ test("T71/S31: dropping a named key releases its code use and its challenge cann
   expect(released).toEqual([{ codeId: "use-1", key: phone.spki }]);
 });
 
+test.each([
+  ["its code ends (Revoke all, identity reset, expiry)", "code"],
+  ["its key is removed, blocked or Revoked", "key"],
+  ["its session closes (KeyProofPairings.leave)", "session"],
+] as const)("S13-1: a proof in flight when %s never reaches the waiting list or the screen, and gives its use back once", async (_name, end) => {
+  const released: { codeId: string; key: string }[] = [];
+  const pending = new PendingRedemptions({ serverId: SERVER, journalDrop: () => {}, release: (codeId, key) => { released.push({ codeId, key }); } });
+  const phone = await device();
+  const codeId = "use-1";
+  const { challenge } = pending.name("code1", "Phone", phone.spki, "relay", undefined, { codeId });
+  const signature = await signPairProof(SERVER, challenge, phone.spki, phone.keys.privateKey);
+  const screenUpdates: number[] = [];
+  pending.onChange(() => { screenUpdates.push(pending.view().length); });
+
+  // verification yields before the proof can publish an entry: the code or key ends in that same turn
+  const verifying = pending.prove(challenge, signature);
+  if (end === "code") pending.dropCode(codeId);
+  else if (end === "key") pending.dropKey(phone.spki, "revoked");
+  else pending.forget(challenge);
+
+  const result = await verifying;
+  expect({ proved: result?.label ?? null, waiting: pending.view().map((entry) => entry.label), screenUpdates, released })
+    .toEqual({ proved: null, waiting: [], screenUpdates: [], released: [{ codeId, key: phone.spki }] });
+});
+
 test("T71: the PC's screen sees every redemption of a code side by side, with how each came", async () => {
   const { pending } = store();
   await proved(pending, "code1", "Phone");
@@ -152,4 +177,16 @@ test("T71: a redemption that ends unapproved gives its code's use back, and an a
   now += PENDING_MS + 1;
   pending.list();
   expect(released).toEqual(["use-1", "use-3", "use-4"]);
+});
+
+test("T71: a proof being checked holds its slot, so a code's limit counts it", async () => {
+  const { pending } = store();
+  const phone = await device();
+  const { challenge } = pending.name("code1", "Phone", phone.spki, "relay", undefined, { codeId: "use-1" });
+  const proving = pending.prove(challenge, await signPairProof(SERVER, challenge, phone.spki, phone.keys.privateKey));
+  for (let i = 1; i < PENDING_PER_CODE; i++) pending.name("code1", `Phone ${i}`, (await device()).spki, "relay", undefined, { codeId: `use-${i + 1}` });
+  let refused = false;
+  try { pending.name("code1", "One more", (await device()).spki, "relay", undefined, { codeId: "use-x" }); } catch (error) { refused = error instanceof PendingLimitError; }
+  expect(refused).toBe(true);
+  await proving;
 });

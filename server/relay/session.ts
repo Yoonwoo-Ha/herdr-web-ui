@@ -407,6 +407,8 @@ export class RelaySession {
         const proved = await keyProofPairings.prove(this.keyProofSession, frame.payload.signature);
         if (!this.mux.active) return;
         if ("refuse" in proved) { this.close(proved.refuse); return; }
+        // its code ended between the proof and here (endPairing): the device is told no, and nothing is put on the screen
+        if (!keyProofPairings.isWaiting(proved.pending.id)) { this.close("auth_failed"); return; }
         this.mux.sendSession({ type: FrameType.KEY_PENDING, flags: 0, stream_id: 0, payload: {} });
         this.options.services.askScreenForKey?.(proved.pending);
         return;

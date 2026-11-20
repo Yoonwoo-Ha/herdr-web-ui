@@ -32,5 +32,8 @@ export async function provingDevice(made: Pc, code: string, options?: Parameters
   link.mux.sendSession({ type: FrameType.PAIR, flags: 0, stream_id: 0, payload: { code, label: "New phone", public_key: device.spki } });
   const sent = await bounded(challenge.promise);
   link.mux.sendSession({ type: FrameType.KEY_PROVE, flags: 0, stream_id: 0, payload: { signature: await signPairProof(SERVER_ID, sent, device.spki, device.keys.privateKey) } });
-  return { device, link, challenge: sent, pending: bounded(pending.promise), fingerprint: await pairFingerprint(SERVER_ID, sent, device.spki) };
+  const fingerprint = await pairFingerprint(SERVER_ID, sent, device.spki);
+  // the bounded wait starts only when a test asks for KEY_PENDING: one that must never come leaves no timer behind
+  let waited: Promise<MuxFrame> | undefined;
+  return { device, link, challenge: sent, get pending() { return waited ??= bounded(pending.promise); }, fingerprint };
 }

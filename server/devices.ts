@@ -1441,6 +1441,12 @@ export class DeviceStore {
     return () => { this.codeStarts.delete(listener); };
   }
 
+  /** Whether the code `codeId` is the one pending and not over, even before its expiry timer has run (S13-1). */
+  codeLive(codeId: string, now = Date.now()): boolean {
+    const pending = this.pending;
+    return pending !== null && pending.id === codeId && !this.codeOver(pending, now);
+  }
+
   activePairing(now = Date.now()): PairingCode | null {
     const pending = this.pending;
     if (pending === null || this.codeOver(pending, now) || pending.attempts >= CODE_ATTEMPTS) return null;

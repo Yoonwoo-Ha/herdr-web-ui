@@ -31,6 +31,8 @@ interface Reservation {
   readonly codeId: string;
   readonly serverId?: string;
   readonly release?: () => void;
+  /** whether its code is still in force now: one that ran out before its timer ended it puts nothing on the screen (S13-1) */
+  readonly live?: () => boolean;
 }
 
 interface Named { code: string; label: string; key: string; via: PendingVia; at: number; reservation?: Reservation & { readonly release: () => void } }
@@ -44,6 +46,8 @@ export class PendingRedemptions {
   readonly #release: (codeId: string, key: string) => void;
   /** challenges sent and not yet answered, each for the one key named before it was made */
   readonly #named = new Map<string, Named>();
+  /** answered challenges whose proof is still being checked: a code or key that ends meanwhile ends them too (S13-1) */
+  readonly #proving = new Map<string, Named>();
   readonly #waiting = new Map<string, PendingRedemption>();
   readonly #releaseWaiting = new WeakMap<PendingRedemption, () => void>();
   readonly #listeners = new Set<() => void>();
@@ -64,15 +68,15 @@ export class PendingRedemptions {
 
   /**
    * A device named its key for `code`: a fresh challenge for that key alone. Naming a key again (`previous`) spends the
-   * challenge it had, so a key changed after a challenge was seen starts over with a new one.
+   * challenge it had, so a key changed after a challenge was seen starts over with a new one. `reservation.serverId`:
+   * the relay identity the device paired to; this PC's own by default.
    */
-  /** `reservation.serverId`: the relay identity the device paired to; this PC's own by default. */
   name(code: string, label: string, key: string, via: PendingVia, previous?: string, reservation?: Reservation): { challenge: string } {
     this.#sweep();
     if (previous !== undefined) this.#forgetNamed(previous);
-    const forCode = [...this.#waiting.values(), ...this.#named.values()].filter((entry) => entry.code === code).length;
+    const forCode = [...this.#waiting.values(), ...this.#named.values(), ...this.#proving.values()].filter((entry) => entry.code === code).length;
     if (forCode >= PENDING_PER_CODE) throw new PendingLimitError("This code has as many devices waiting as it may");
-    if (this.#waiting.size + this.#named.size >= PENDING_TOTAL) throw new PendingLimitError("As many devices wait for this PC's screen as may");
+    if (this.#waiting.size + this.#named.size + this.#proving.size >= PENDING_TOTAL) throw new PendingLimitError("As many devices wait for this PC's screen as may");
     const challenge = pairChallenge();
     const use = reservation === undefined ? {} : {
       reservation: { ...reservation, release: reservation.release ?? (() => this.#release(reservation.codeId, key)) },
@@ -87,16 +91,21 @@ export class PendingRedemptions {
     const named = this.#named.get(challenge);
     this.#named.delete(challenge);
     if (named === undefined) return null;
+    this.#proving.set(challenge, named);
     const reservation = named.reservation;
     const serverId = reservation?.serverId ?? this.#serverId();
-    if (serverId === null || !await verifyPairProof(serverId, challenge, named.key, signature)) {
+    const proved = serverId !== null && await verifyPairProof(serverId, challenge, named.key, signature);
+    const fingerprint = proved ? await pairFingerprint(serverId, challenge, named.key) : null;
+    // ended while it was checked: dropCode or dropKey already gave its use back
+    if (!this.#proving.delete(challenge)) return null;
+    if (fingerprint === null || reservation?.live?.() === false) {
       reservation?.release();
       return null;
     }
     const entry: PendingRedemption = Object.freeze({
       id: randomBytes(16).toString("hex"), code: named.code, label: named.label, key: named.key, via: named.via, redeemedAt: this.#now(),
       ...(reservation === undefined ? {} : { codeId: reservation.codeId }),
-      fingerprint: await pairFingerprint(serverId, challenge, named.key),
+      fingerprint,
     });
     if (reservation !== undefined) this.#releaseWaiting.set(entry, reservation.release);
     this.#waiting.set(entry.id, entry);
@@ -143,21 +152,32 @@ export class PendingRedemptions {
     this.#drop((entry) => entry.id === id, "declined");
   }
 
-  /** A challenge whose device went away before answering: its slot and its held use come back. */
+  /** A challenge whose device went away before its proof was taken in: its slot and its held use come back. */
   forget(challenge: string): void {
     this.#forgetNamed(challenge);
+    this.#endProving((_named, at) => at === challenge);
   }
 
   /** A removal, block or Revoke of `key` drops its unanswered challenges and waiting entries. */
   dropKey(key: string, reason: string): void {
     for (const [challenge, named] of this.#named) if (named.key === key) this.#forgetNamed(challenge);
+    this.#endProving((named) => named.key === key);
     this.#drop((entry) => entry.key === key, reason);
   }
 
   /** The code ended (cancelled, run out, used by an admission, Revoke all): what waits on it goes (DeviceStore.onPairingEnded). */
   dropCode(codeId: string): void {
     for (const [challenge, named] of this.#named) if (named.reservation?.codeId === codeId) this.#forgetNamed(challenge);
+    this.#endProving((named) => named.reservation?.codeId === codeId);
     this.#drop((entry) => entry.codeId === codeId, "code_ended");
+  }
+
+  #endProving(which: (named: Named, challenge: string) => boolean): void {
+    for (const [challenge, named] of this.#proving) {
+      if (!which(named, challenge)) continue;
+      this.#proving.delete(challenge);
+      named.reservation?.release();
+    }
   }
 
   #drop(which: (entry: PendingRedemption) => boolean, reason: string): void {
