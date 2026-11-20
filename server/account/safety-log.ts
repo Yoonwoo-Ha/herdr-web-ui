@@ -13,7 +13,7 @@
  * change the log through the server's recovery socket (S2-15), never by writing this file.
  */
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, type Stats, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, type Stats, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { AccountRecordError, parseSafetyRecord, type BlockRecord, type DeviceLiftRecord, type PcLiftRecord, type SafetyRecord, type SafetyRecordKind } from "../../shared/account-records.ts";
 import { privateStateRefusal, writePrivateState } from "../private-state.ts";
@@ -21,6 +21,11 @@ import { privateStateRefusal, writePrivateState } from "../private-state.ts";
 export const SAFETY_LOG_FILE = "account-log.json";
 /** The device journal (P15, S2-07). A state folder that has one has had a log since, so a missing log there is damage. */
 export const DEVICE_JOURNAL_FILE = "device-journal.json";
+/**
+ * Beside the log: a block was dropped by a full waiting queue and the log could not take that mark (S10-2). The PC
+ * then fails closed at every open, as the log's own `overflowed` would make it, until the queue's repair (S10-1).
+ */
+export const SAFETY_OVERFLOW_FILE = "account-log-overflowed.json";
 
 /** How the record reached this PC; noted once and never compared (P24). */
 export type SafetyGot = "handed" | "mailbox" | "snapshot" | "pc" | "session" | "merge";
@@ -227,16 +232,23 @@ export class SafetyLog {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.readError = `Cannot read ${this.path} (${(error as NodeJS.ErrnoException).code ?? String(error)})`;
       else if (existsSync(join(this.stateDir, DEVICE_JOURNAL_FILE))) this.readError = `${this.path} is missing beside the device journal`;
       else if (this.file.next !== 1 || this.file.waiting.length !== 0) this.readError = `${this.path} is missing after this PC wrote it`;
+      else if (this.overflowMarked()) this.file = { ...this.file, overflowed: true };
       else { this.inForce = this.state(); return true; }
       return false;
     }
     let parsed: LogFile | string;
     try { parsed = parseLog(JSON.parse(text)); } catch { parsed = "it is not JSON"; }
     if (typeof parsed === "string") { this.readError = `${this.path} cannot be trusted: ${parsed}`; return false; }
-    this.file = parsed;
-    if (parsed.overflowed) return false;
+    this.file = this.overflowMarked() ? { ...parsed, overflowed: true } : parsed;
+    if (this.file.overflowed) return false;
     this.inForce = this.state();
     return true;
+  }
+
+  /** Whether the overflow marker stands beside the log: anything but a clean "no such file" counts (S10-2). */
+  private overflowMarked(): boolean {
+    try { lstatSync(join(this.stateDir, SAFETY_OVERFLOW_FILE)); return true; }
+    catch (error) { return (error as NodeJS.ErrnoException).code !== "ENOENT"; }
   }
 
   /**
@@ -469,7 +481,15 @@ export class SafetyLog {
     if (this.strict !== null || !this.load()) return false;
     if (this.file.waiting.some((kept) => kept.record.id === item.record.id)) return true;
     if (this.file.waiting.length >= WAITING_MAX) {
-      this.writeFile({ ...this.file, overflowed: true });
+      // the mark is durable before the block is dropped, or a restart forgets that one was (S10-2): the log, else the side file
+      if (this.writeFile({ ...this.file, overflowed: true })) return false;
+      try { writePrivateState(join(this.stateDir, SAFETY_OVERFLOW_FILE), { v: 1, at: new Date().toISOString() }); }
+      catch (error) {
+        // no mark could be written: nothing is dropped. The block stays, over capacity and in memory only, and the PC is
+        // closed for this run (the failed log write above made it strict)
+        console.error(`The waiting queue's overflow could not be marked, so the block is kept: ${error instanceof Error ? error.message : String(error)}`);
+        this.file = { ...this.file, waiting: [...this.file.waiting, item] };
+      }
       return false;
     }
     return this.writeFile({ ...this.file, waiting: [...this.file.waiting, item] });
