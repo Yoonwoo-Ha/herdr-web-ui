@@ -163,6 +163,22 @@ describe("the device journal (P10, P15)", () => {
     expect(reopened.replay(device, tells).notices).toEqual([]);
   });
 
+  test("dori LOW 2: a second decision on a strict journal preserves the first write failure", () => {
+    const dir = stateDir();
+    const journal = DeviceJournal.open(dir);
+    const admission = admit(journal, "aaaaaaaaaaaaaaaa", 5);
+    const file = join(dir, JOURNAL_FILE);
+    rmSync(file);
+    mkdirSync(file);
+
+    expect(() => journal.decide(admission.id)).toThrow();
+    const original = journal.strict;
+    if (original === null) throw new Error("The failed write did not make the journal strict");
+    expect(() => journal.decide(admission.id)).toThrow(original);
+    expect(journal.strict).toBe(original);
+    expect(journal.openNotices()).toEqual([admission]);
+  });
+
   test("S2P-10: owner reconciliation records a close for the orphan but keeps an owned admission open", () => {
     const dir = stateDir();
     const journal = DeviceJournal.open(dir);

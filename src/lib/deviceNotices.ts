@@ -24,11 +24,11 @@ export interface PcNotices {
   readonly acked: number;
 }
 
-/** A PC journals the confirmation as a new entry, with the original admission's identity and a new notice id. */
+/** A PC journals the confirmation under a new ID, after the open admission and before its replay-only close. */
 export function confirmsAdmission(decision: DeviceNotice, admission: DeviceNotice): boolean {
-  return admission.kind === "admit" && admission.open && admission.row !== null && admission.key !== null &&
+  return admission.kind === "admit" && admission.row !== null && admission.key !== null &&
     admission.no !== null && admission.account !== null && decision.kind === "confirm" && decision.how === "its_me" &&
-    !decision.open && decision.seq > admission.seq && decision.row === admission.row &&
+    !decision.open && (admission.open ? decision.seq > admission.seq : decision.seq < admission.seq) && decision.row === admission.row &&
     decision.key === admission.key && decision.no === admission.no && decision.account === admission.account;
 }
 

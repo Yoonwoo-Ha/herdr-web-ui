@@ -289,6 +289,18 @@ describe("each PC's device notices in the app", () => {
     expect(closed).toEqual([["desk", admission.id]]);
   });
 
+  it("S2P-11: replay of It's me and its same-ID close does not bring back the admission card", async () => {
+    const desk = new FakeSocket();
+    const admission = notice(1);
+    const confirmed = deviceNotice({ ...admission, id: "b".repeat(32), seq: 2, kind: "confirm", how: "its_me", open: false });
+    const close = { ...admission, seq: 3, open: false };
+    const unrelated = { ...notice(4), no: 5, open: false };
+    await act(async () => { renderer = create(<Probe sockets={[{ id: "desk", socket: desk }]} />); });
+    await act(async () => { desk.receive({ type: "device-notice", notice: admission }); });
+    await act(async () => { desk.receive({ type: "device-notice-replay", replay: { notices: [confirmed, close, unrelated], cut: 0 } }); });
+    expect(seen?.byPc.get("desk")?.notices.map(item => item.id)).toEqual([confirmed.id, unrelated.id]);
+  });
+
   it("T57: dismissing a told notice decides nothing on the PC, and an open admission stays", async () => {
     const desk = new FakeSocket();
     await act(async () => { renderer = create(<Probe sockets={[{ id: "desk", socket: desk }]} />); });

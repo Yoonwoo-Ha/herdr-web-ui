@@ -17,6 +17,7 @@ import type { RemovalEvidence } from "./removal-evidence.ts";
 import { isRowDrop, type RowDrop } from "./row-drop-evidence.ts";
 
 export const JOURNAL_FILE = DEVICE_JOURNAL_FILE;
+// Replay-only closes count toward this cap alongside the journal events.
 export const JOURNAL_MAX = 1_000;
 export const OPEN_NOTICES_MAX = 64;
 
@@ -218,8 +219,7 @@ export class DeviceJournal {
     if (!this.exists) this.companions();
     this.write({ ...this.doc, next_seq: entry.seq + 1, entries: [...this.doc.entries, entry], open,
       ...(drop && { last_row_drop: { ...drop, journalled: entry.seq } }),
-      ...(liftNumber === undefined ? {} : { snapshot_lift_n: liftNumber }) },
-    entry.kind === "confirm" && entry.how === "its_me" ? decides : undefined);
+      ...(liftNumber === undefined ? {} : { snapshot_lift_n: liftNumber }) });
     this.exists = true;
     return entry;
   }
@@ -254,10 +254,11 @@ export class DeviceJournal {
 
   /** Close an admission atomically with a replay entry, even for rows that already acknowledged it. */
   decide(id: string): boolean {
+    const strict = this.strict;
+    if (strict !== null) throw new Error(strict);
     const open = this.doc.open.filter((entry) => entry.id !== id);
     if (open.length === this.doc.open.length) return false;
     try {
-      if (this.strict !== null) throw new Error(this.strict);
       this.write({ ...this.doc, open });
     } catch (error) {
       this.problem = `Cannot record a notice decision in ${this.path} (${error instanceof Error ? error.message : String(error)})`;
@@ -266,12 +267,11 @@ export class DeviceJournal {
     return true;
   }
 
-  private write(doc: Doc, confirmed?: string): void {
+  private write(doc: Doc): void {
     let next = doc;
     if (doc.open !== this.doc.open) {
       const kept = new Set(doc.open.map(entry => entry.id));
-      // A T53 confirmation is already a replayable close. Every other ID leaving open needs its own delivery sequence.
-      const closes = this.doc.open.filter(entry => entry.id !== confirmed && !kept.has(entry.id))
+      const closes = this.doc.open.filter(entry => !kept.has(entry.id))
         .map((entry, index) => ({ ...entry, seq: doc.next_seq + index }));
       if (closes.length) next = { ...doc, next_seq: doc.next_seq + closes.length, closed: [...(doc.closed ?? []), ...closes] };
     }
