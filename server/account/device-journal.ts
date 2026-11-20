@@ -11,13 +11,16 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DeviceNotice, NoticeKind, NoticeReplay } from "../../shared/account-devices-api.ts";
 import { writePrivateState } from "../private-state.ts";
-import { DEVICE_JOURNAL_FILE } from "./safety-log.ts";
+import { DEVICE_JOURNAL_FILE, type SafetyLog } from "./safety-log.ts";
+import type { JournalEntry as AccountRowEntry } from "./account-devices.ts";
+import type { RemovalEvidence } from "./removal-evidence.ts";
+import { isRowDrop, type RowDrop } from "./row-drop-evidence.ts";
 
 export const JOURNAL_FILE = DEVICE_JOURNAL_FILE;
 export const JOURNAL_MAX = 1_000;
 export const OPEN_NOTICES_MAX = 64;
 
-export interface JournalEntry {
+export interface JournalEntry extends Pick<AccountRowEntry, "provider" | "two_step"> {
   readonly seq: number;
   readonly id: string;
   readonly at: string;
@@ -32,6 +35,8 @@ export interface JournalEntry {
   readonly account: string | null;
   /** a recovery's undo names the release it ends (kind `release`) */
   readonly undo?: string;
+  /** A list admission recorded before its row passed waiting blocks; history, not yet a notice. */
+  readonly awaitingListCheck?: true;
 }
 export type JournalInput = Omit<JournalEntry, "seq" | "id" | "at">;
 
@@ -43,6 +48,10 @@ interface Doc {
   open: JournalEntry[];
   /** the highest seq trimmed so far: a row that had not seen up to it is told how many it missed */
   trimmed: number;
+  /** Safety-log number of the last snapshot lift journalled, even after its notice is trimmed. */
+  snapshot_lift_n?: number;
+  /** Transfer slot: written with the notice, retained until its evidence receipt is durable. */
+  last_row_drop?: RowDrop & { readonly journalled: number };
 }
 
 const isCount = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
@@ -85,7 +94,15 @@ export class DeviceJournal {
     try {
       const doc = JSON.parse(text) as Partial<Doc>;
       if (!isDoc(doc)) journal.problem = `${journal.path} is not this PC's device journal`;
-      else { journal.doc = doc; journal.exists = true; }
+      else if (doc.last_row_drop !== undefined && (!isRowDrop(doc.last_row_drop) || doc.last_row_drop.journalled === undefined)) {
+        journal.problem = `${journal.path} has an invalid account row receipt`;
+      } else if (doc.snapshot_lift_n !== undefined && (!Number.isSafeInteger(doc.snapshot_lift_n) || doc.snapshot_lift_n < 1)) {
+        journal.problem = `${journal.path} has an invalid snapshot lift number`;
+      } else {
+        journal.doc = doc;
+        journal.exists = true;
+        if (doc.last_row_drop) journal.checkRowReceipts([doc.last_row_drop]);
+      }
     } catch { journal.problem = `${journal.path} is not JSON`; }
     return journal;
   }
@@ -96,25 +113,113 @@ export class DeviceJournal {
 
   entries(): readonly JournalEntry[] { return this.doc.entries; }
 
+  /** A trimmed notice need not survive its receipt, but an unallocated or contradictory sequence proves nothing. */
+  checkRowReceipts(drops: readonly RowDrop[]): void {
+    if (this.problem !== null || drops.length === 0) return;
+    const known = new Map([...this.doc.open, ...this.doc.entries].map(entry => [entry.seq, entry]));
+    for (const { row, how, journalled: seq } of drops) {
+      if (seq === undefined) continue;
+      const entry = known.get(seq);
+      if (seq >= this.doc.next_seq || (entry ? entry.kind !== "drop" || entry.row !== row || entry.how !== how : seq > this.doc.trimmed)) {
+        this.problem = `${this.path} contradicts the account row receipt for ${row} at sequence ${seq}`;
+        return;
+      }
+    }
+  }
+
   openNotices(): readonly JournalEntry[] { return this.doc.open; }
+
+  /** Only outstanding list admissions with a registry owner take a slot. Never change history or access. */
+  settleList(owns: (notice: JournalEntry) => boolean): void {
+    const open = this.doc.open.filter(n => n.how !== "list" || owns(n));
+    const entries = this.doc.entries.filter(n => n.seq > this.doc.trimmed || owns(n));
+    if (open.length !== this.doc.open.length || entries.length !== this.doc.entries.length) this.write({ ...this.doc, open, entries });
+  }
 
   /** Whether the list may admit anybody new: fewer than OPEN_NOTICES_MAX join notices wait for an answer (G15). */
   admitsFromList(): boolean { return this.problem === null && this.doc.open.length < OPEN_NOTICES_MAX; }
 
   /** Appends one entry, on disk when this returns; throws when it cannot be written, so what it records does not happen. */
-  append(input: JournalInput): JournalEntry {
+  append(input: JournalInput, decides?: string, drop?: RowDrop): JournalEntry {
+    return this.appendEntry(input, undefined, decides, drop);
+  }
+
+  /** A registry write may be replayed. Row IDs are reused, so a new admission reopens the row's history. */
+  /** The entry written, or null when the row's drop is already journalled. */
+  recordAccountRow(entry: AccountRowEntry, evidence: RemovalEvidence): JournalEntry | null {
+    if (this.strict !== null) throw new Error(this.strict);
+    // If the process stopped between the two replacements, finish the earlier receipt before reusing its slot.
+    const prior = this.doc.last_row_drop;
+    if (prior) evidence.markJournalled(prior, prior.journalled);
+    const drop = entry.drop && (evidence.dropFor(entry.row, entry.drop.admit_no) ?? entry.drop);
+    if (drop?.journalled !== undefined) return null;
+    if (entry.kind === "drop") {
+      // Older journals and interrupted upgrades have no receipt; migrate a still-retained drop once.
+      const last = this.doc.entries.filter(event => event.row === entry.row && (event.kind === "admit" || event.kind === "drop")).at(-1);
+      if (last?.kind === "drop") {
+        if (drop) evidence.markJournalled(drop, last.seq);
+        return null;
+      }
+    }
+    const written = this.append({ kind: entry.kind === "drop" ? "drop" : "admit", how: drop?.how ?? entry.reason ?? "list", key: entry.key, no: entry.no ?? null,
+      row: entry.row, label: entry.label ?? "", by: null, account: entry.account,
+      ...(entry.kind === "admit" ? { awaitingListCheck: true, two_step: entry.two_step ?? "unknown", ...(entry.provider === undefined ? {} : { provider: entry.provider }) } : {}) }, undefined, drop);
+    if (drop) evidence.markJournalled(drop, written.seq);
+    return written;
+  }
+
+  /** Make only the surviving admissions visible to notice replay and the open set. */
+  openListedRows(ids: readonly string[]): void {
+    if (!ids.length) return;
+    const open = [...this.doc.open];
+    const latest = new Map(this.doc.entries.filter(entry => entry.kind === "admit" || entry.kind === "promote" || entry.kind === "drop").map(entry => [entry.row, entry.seq]));
+    const entries = this.doc.entries.map((entry): JournalEntry => {
+      if (!entry.awaitingListCheck || !entry.row || !ids.includes(entry.row) || latest.get(entry.row) !== entry.seq) return entry;
+      const { awaitingListCheck: _, ...notice } = entry;
+      if (notice.kind === "admit") open.push(notice);
+      return notice;
+    });
+    if (entries.some((entry, i) => entry !== this.doc.entries[i])) {
+      this.write({ ...this.doc, entries: entries.filter(n => n.seq > this.doc.trimmed || n.awaitingListCheck), open });
+    }
+  }
+
+  /** Catch up after a committed batch or interrupted journal write. Each notice and its cursor share one write. */
+  recordSnapshotLifts(log: SafetyLog): void {
+    const after = this.doc.snapshot_lift_n ?? 0;
+    const lifts = log.entries().flatMap(({ n, got, record }) => n > after && got === "snapshot" && record.kind === "lift" ? [{ n, record }] : []);
+    if (lifts.length === 0) return;
+    const entries = new Map(log.entries().map((entry) => [entry.record.id, entry]));
+    for (const { n, record } of lifts.sort((a, b) => a.n - b.n)) {
+      const ended = entries.get(record.target) ?? entries.get(`f:${record.target}`);
+      this.appendEntry({ kind: "lift", how: "snapshot", key: ended?.record.target ?? null, no: ended?.asof?.joined ?? null,
+        row: null, label: "Account block lifted", by: record.signer, account: record.account }, n);
+    }
+  }
+
+  private appendEntry(input: JournalInput, liftNumber?: number, decides?: string, drop?: RowDrop): JournalEntry {
     if (this.problem !== null) throw new Error(this.strict!);
     const entry: JournalEntry = { ...input, seq: this.doc.next_seq, id: randomBytes(16).toString("hex"), at: new Date().toISOString() };
     let entries = [...this.doc.entries, entry];
     let trimmed = this.doc.trimmed;
     if (entries.length > JOURNAL_MAX) {
-      const cut = entries.slice(0, entries.length - JOURNAL_MAX);
-      trimmed = cut.at(-1)!.seq;
-      entries = entries.slice(cut.length);
+      trimmed = Math.max(trimmed, entry.seq - JOURNAL_MAX);
+      // An unpublished admission is pending work, not replay history. Keep only
+      // the current admission for each row until activation moves it to open.
+      const latest = new Map(entries.filter(n => n.kind === "admit" || n.kind === "promote" || n.kind === "drop").map(n => [n.row, n.seq]));
+      entries = entries.filter(n => n.seq > trimmed || (n.awaitingListCheck && n.kind === "admit" && latest.get(n.row) === n.seq));
     }
-    const open = entry.kind === "admit" ? [...this.doc.open, entry] : this.doc.open;
+    const remaining = this.doc.open.filter(notice => {
+      if (notice.id === decides) return false;
+      if (notice.how !== "list" || notice.key === null || notice.key !== input.key) return true;
+      // Local recovery revokes the key on this PC. A row receipt ends only its numbered admission.
+      if (input.kind === "remove" && input.how === "recover") return false;
+      return !drop || notice.row !== drop.row || notice.no !== drop.admit_no || notice.account !== input.account;
+    });
+    const open = entry.kind === "admit" && !entry.awaitingListCheck ? [...remaining, entry] : remaining;
     if (!this.exists) this.companions();
-    this.write({ ...this.doc, next_seq: entry.seq + 1, entries, open, trimmed });
+    this.write({ ...this.doc, next_seq: entry.seq + 1, entries, open, trimmed, ...(drop && { last_row_drop: { ...drop, journalled: entry.seq } }),
+      ...(liftNumber === undefined ? {} : { snapshot_lift_n: liftNumber }) });
     this.exists = true;
     return entry;
   }
@@ -125,7 +230,7 @@ export class DeviceJournal {
    */
   replay(row: string, tells: (entry: JournalEntry) => boolean): NoticeReplay {
     const seen = this.doc.seen[row] ?? 0;
-    const unseen = this.doc.entries.filter((entry) => entry.seq > seen && tells(entry));
+    const unseen = this.doc.entries.filter((entry) => !entry.awaitingListCheck && entry.seq > seen && tells(entry));
     const undecided = this.doc.open.filter((entry) => tells(entry) && !unseen.some((other) => other.id === entry.id));
     const missedOpen = this.doc.open.filter((entry) => entry.seq > seen && entry.seq <= this.doc.trimmed).length;
     return {
@@ -135,8 +240,10 @@ export class DeviceJournal {
   }
 
   notice(entry: JournalEntry): DeviceNotice {
-    const { undo: _undo, ...fields } = entry;
-    return { ...fields, open: this.doc.open.some((open) => open.id === entry.id), method: null, two_step: null };
+    const { undo: _undo, provider, two_step, ...fields } = entry;
+    const listAdmission = entry.kind === "admit" && entry.how === "list";
+    return { ...fields, open: this.doc.open.some((open) => open.id === entry.id),
+      method: listAdmission ? provider ?? null : null, two_step: listAdmission ? two_step ?? "unknown" : null };
   }
 
   /** `row` saw everything up to `seq` (T57). Decides nothing. */

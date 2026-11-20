@@ -10,6 +10,7 @@ import { privateStateFs } from "../private-state.ts";
 import { loadRelayIdentity } from "../relay/identity.ts";
 import { bounded, deferred, relayConnection, relayDevice, relayFixture } from "../relay/test-helpers.ts";
 import { DeviceJournal } from "./device-journal.ts";
+import { memberSnapshotPc } from "./listed-pc.test-helpers.ts";
 import { AccountHolds } from "./holds.ts";
 import { AccountMailbox } from "./mailbox.ts";
 import { PcAccountState } from "./pc-binding.ts";
@@ -249,8 +250,8 @@ describe("a block holds only while its signer is a member here (P16, P19, T73)",
       expect(log.wait({ record: queued, got: "mailbox", signer_removed: false })).toBe(true);
     }
     const screen = new TransformStream<Uint8Array>();
-    const fixture = relayFixture(false, {
-      stateDir, accountOpensAll: true,
+    const { fixture, firstRead } = memberSnapshotPc({
+      stateDir,
       ...(path === "relay pairing" ? { platform: "linux", desktopOwner: { input: screen.readable, write() {} } } : {}),
     });
     fixtures.push(fixture);
@@ -258,6 +259,7 @@ describe("a block holds only while its signer is a member here (P16, P19, T73)",
     if (path !== "startup") {
       const signer = await relayDevice(fixture);
       devices.linkAccountKey(signer.id, signer.publicKey, signer.publicKey, ACCOUNT);
+      await firstRead();
       queued = await block(target.spki, { keys: signer.keys, spki: signer.publicKey });
       expect(await devices.applyBlock(queued, "mailbox")).toMatchObject({ outcome: "refused", reason: "unknown_target" });
       if (path === "account add") {

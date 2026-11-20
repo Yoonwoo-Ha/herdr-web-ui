@@ -81,7 +81,7 @@ export function createCore({ options, devices, preferences, usage, usageLogin, b
     herdrFailure: options.herdrFailure,
     accountEnabled: options.accountOpensAll,
     clients, present, stopped: () => stopped, admit, setRole, watchable: () => capabilities().attach === "pty-cli", terminalHistory: () => capabilities().attach !== "pty-cli", terminalModes: () => capabilities().attach === "hc", watchPane, unwatchPane, end, holdPending, attachments, clientSnapshot, herdrLifetime: currentHerdrLifetime, browserSnapshot, countVisit, drainOutput,
-    notices: { replay: (deviceId) => devices.noticeReplay(deviceId), seen: (deviceId, seq) => devices.noticeSeen(deviceId, seq), block: (record) => devices.applyBlock(record, "session"), decide: (id) => devices.decideNotice(id) },
+    notices: { replay: (deviceId) => devices.noticeReplay(deviceId), seen: (deviceId, seq) => devices.noticeSeen(deviceId, seq), block: (record, onApplied) => devices.applyBlock(record, "session", onApplied), open: id => devices.openNotices().find(n => n.id === id), mayAnswer: (caller, id) => devices.mayAnswerNotice(caller, id), decide: (id, replay) => devices.decideNotice(id, replay), itsMe: (deviceId, id, provedKey) => devices.itsMe(deviceId, id, provedKey) },
     // each frame type by name, with the handler of the module that owns it: anything else on a frame object never
     // becomes a frame a client can send, and a type named twice fails the build instead of replacing a handler
     frames: {

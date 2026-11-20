@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportAccountKey } from "../../shared/account-records.ts";
@@ -38,6 +38,23 @@ async function screenApproved(devices: DeviceStore): Promise<{ id: string; key: 
   const id = devices.admitConfirmed({ codeId: redeemed.codeId, key: k, label: "Phone", source: "screen" })!.id;
   return { id, key: k };
 }
+
+test("flag off: a key move preserves a legacy registry's null gate timestamp", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ovis-legacy-link-"));
+  dirs.push(dir);
+  const path = join(dir, "devices.json");
+  const old = await key();
+  const next = await key();
+  const device = { id: "0011223344556677", label: "Phone", role: "drive", token_hash: "a".repeat(64),
+    relay_public_key: old, created_at: "2026-10-01T00:00:00.000Z", last_seen_at: null };
+  writeFileSync(path, JSON.stringify({ gate_closed_at: null, devices: [device] }), { mode: 0o600 });
+  const store = new DeviceStore(dir);
+  expect(store.linkAccountKey(device.id, old, next, ACCOUNT)?.id).toBe(device.id);
+  expect(readDeviceRegistry(path)).toMatchObject({
+    gateClosedAt: null, devices: [{ id: device.id, relay_public_key: next }],
+  });
+  expect(store.gated).toBe(true);
+});
 
 describe("a key approved on this PC's screen is replaced only by a confirm of its own (P22, T7, T11, T72, T59)", () => {
   test("T7: a link that moves a screen-approved key changes nothing at once: the new key waits as a replacement", async () => {

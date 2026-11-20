@@ -8,7 +8,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PcAccountState } from "./pc-binding.ts";
 import { LockSignal, untilLockFrom } from "../lock-boundary.ts";
-import { pairingPc, memberRow, signIn, type Pc } from "./pairing.test-helpers.ts";
+import { firstPairingRead, pairingPc, memberRow, signIn, type Pc } from "./pairing.test-helpers.ts";
 import { bounded, deferred } from "../relay/test-helpers.ts";
 
 const pcs: Pc[] = [];
@@ -38,6 +38,7 @@ test("T46: a locked PC refuses relay sign-in from a row that could sign in befor
   const member = await memberRow("acct_1");
   const made = await pairingPc({ rows: [member.row], server: { accountOpensAll: true } });
   pcs.push(made);
+  await firstPairingRead(made);
   const signed = await signIn(made, member.row.id, member.key);
   if ("error" in signed) throw new Error(`The relay fixture could not sign in before locking: ${signed.error}`);
   const receipt = made.app.context.services.safetyLog?.appendLock({ account: "acct_1" });

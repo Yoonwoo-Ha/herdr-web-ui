@@ -70,8 +70,28 @@ describe("Mux frame roundtrip", () => {
     backing.set(encoded, 3);
     expect(decodeFrame(backing.subarray(3, 3 + encoded.length))).toEqual(frame);
   });
+  it("S25: a held refusal carries its hold state, and only a held refusal does", () => {
+    const holds = [{ reason: "join_hold", until: null }, { reason: "join_hold", until: "2026-11-20T05:00:10.000Z" }, { reason: "catching_up" }, { reason: "frozen", block: "b".repeat(64) }] as const;
+    for (const hold of holds) {
+      const frame: MuxFrame = { ...session, type: FrameType.SESSION_ERROR, payload: { code: "held", message: "", hold } };
+      expect(decodeFrame(encodeFrame(frame))).toEqual(frame);
+    }
+    for (const code of ["not_listed", "admission"] as const) {
+      const frame: MuxFrame = { ...session, type: FrameType.SESSION_ERROR, payload: { code, message: "" } };
+      expect(decodeFrame(encodeFrame(frame))).toEqual(frame);
+    }
+    for (const payload of [{ code: "held", message: "" }, { code: "held", message: "", hold: { reason: "soon" } }, { code: "not_listed", message: "", hold: { reason: "catching_up" } }, { code: "auth_failed", message: "", hold: { reason: "catching_up" } }]) {
+      rejects(() => decodeFrame(wire(FrameType.SESSION_ERROR, JSON.stringify(payload))));
+    }
+  });
+  it("S25: an app that predates a session error code takes it as a protocol error, its generic failure", () => {
+    expect(() => decodeFrame(wire(FrameType.SESSION_ERROR, JSON.stringify({ code: "a_code_from_a_later_release", message: "" })))).toThrow(MuxProtocolError);
+    try { decodeFrame(wire(FrameType.SESSION_ERROR, JSON.stringify({ code: "a_code_from_a_later_release", message: "" }))); } catch (error) {
+      expect((error as MuxProtocolError).code).toBe("protocol_error");
+    }
+  });
   it("accepts every session and stream error vocabulary entry", () => {
-    for (const code of SESSION_ERRORS) {
+    for (const code of SESSION_ERRORS.filter((candidate) => candidate !== "held")) {
       const frame: MuxFrame = { ...session, type: FrameType.SESSION_ERROR, payload: { code, message: "" } };
       expect(decodeFrame(encodeFrame(frame))).toEqual(frame);
     }

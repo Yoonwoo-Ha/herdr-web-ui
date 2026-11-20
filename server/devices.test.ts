@@ -6,6 +6,7 @@ import type { DevicePairedEvent } from "../shared/protocol.ts";
 import { CODE_TTL_MS, DeviceGoneError, DeviceStore, handleDeviceRequest, newStreamKey, normalizeLabel, PAIRING_LINK_MS, PairingFinishingError, PairingRateLimitedError, PcInAccountError, readDeviceRegistry, sameBrowser, streamCookie, streamKeys } from "./devices.ts";
 import { TestClock } from "./relay/test-helpers.ts";
 import { privateStateFs, privateStateRefusal } from "./private-state.ts";
+import { SafetyLog } from "./account/safety-log.ts";
 import { isTaggedNode, parseTailscaleOwner } from "./tailscale.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "herdr-devices-"));
@@ -66,6 +67,29 @@ describe("regression: a registry another account could write", () => {
     expect(new DeviceStore(fresh).gated).toBe(false);
     expect(mode(fresh)).toBe(0o755);
   });
+});
+
+it("flag off: canDrive finds a non-held drive row after a watch row with the same id", () => {
+  const root = mkdtempSync(join(dir, "duplicate-id-"));
+  const watch = { id: "0011223344556677", label: "Phone", role: "watch", token_hash: "a".repeat(64), created_at: "2026-10-10", last_seen_at: null };
+  writeFileSync(join(root, "devices.json"), JSON.stringify({ gate_closed_at: watch.created_at,
+    devices: [watch, { ...watch, role: "drive", token_hash: "b".repeat(64) }] }), { mode: 0o600 });
+  const store = new DeviceStore(root);
+  expect(store.error).toBeNull();
+  expect(store.canDrive(watch.id)).toBe(true);
+});
+
+it("flag off: reading a PC-confirmed row leaves its carried notice on disk", () => {
+  const root = mkdtempSync(join(dir, "carried-notice-"));
+  const path = join(root, "devices.json");
+  const at = "2026-10-01T00:00:00.000Z";
+  const row = { id: "0011223344556677", label: "Phone", role: "watch", token_hash: "a".repeat(64),
+    created_at: at, last_seen_at: null, carried_notice: "b".repeat(32),
+    origin: { from: "pc", how: "confirmed", by: null, admit_no: 1, at } };
+  const bytes = JSON.stringify({ gate_closed_at: at, devices: [row] });
+  writeFileSync(path, bytes, { mode: 0o600 });
+  expect(new DeviceStore(root).sessionRow(row.id)?.role).toBe("watch");
+  expect(readFileSync(path, "utf8")).toBe(bytes);
 });
 
 describe("the gate closing", () => {
@@ -368,6 +392,23 @@ describe("relay device", () => {
       expect(() => fresh.startPairing()).toThrow();
       expect(readFileSync(path, "utf8")).toBe(contents);
     }
+  });
+
+  it("flag off: malformed hold metadata leaves the registry readable but held rows unadmitted", () => {
+    const root = mkdtempSync(join(dir, "rollback-registry-"));
+    const path = join(root, "devices.json");
+    const live = { id: "notice", label: "Phone", role: "watch", token_hash: "a".repeat(64),
+      created_at: new Date(0).toISOString(), last_seen_at: null, carried_notice: { old: true } };
+    const held = [null, false, "", {}, "invalid"].map((value, index) => ({ ...live, id: `held-${index}`, held: value }));
+    const bytes = JSON.stringify({ gate_closed_at: null, devices: [live, ...held] });
+    writeFileSync(path, bytes, { mode: 0o600 });
+    const rollback = new DeviceStore(root);
+    expect(rollback.error).toBeNull();
+    expect(rollback.sessionRow(live.id)?.role).toBe("watch");
+    expect(rollback.list(null).map(row => row.id)).toEqual([live.id, ...held.map(row => row.id)]);
+    for (const row of held) expect(rollback.sessionRow(row.id)).toBeNull();
+    expect(new DeviceStore(root, null, null, { safety: SafetyLog.open(root) }).error).not.toBeNull();
+    expect(readFileSync(path, "utf8")).toBe(bytes);
   });
 
   it("limits code issues to ten in a sliding window without extending refusals", () => {

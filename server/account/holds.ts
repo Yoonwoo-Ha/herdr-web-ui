@@ -116,8 +116,10 @@ export class AccountHolds {
     this.overflowed = true;
   }
 
-  /** Whether an add for `key` is held back: a held key, a list that overflowed, or holds that cannot be read. */
-  holds(key: string): boolean { return this.error !== null || this.overflowed || this.keys.has(key); }
+  /** Unreadable holds and named keys bar both paths; overflow alone bars signed adds, not list admissions (T17). */
+  holds(key: string, source: "add" | "list" = "add"): boolean {
+    return this.error !== null || this.keys.has(key) || (source === "add" && this.overflowed);
+  }
 
   list(): string[] { return [...this.keys]; }
 

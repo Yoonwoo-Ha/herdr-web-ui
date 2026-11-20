@@ -66,7 +66,8 @@ export function openPcRecovery(options: {
     },
     revokeAll: (user) => devices.revokeAll(user),
   };
-  const handle = recoveryActs({ releases, logReadable: () => !devices.failsClosed && SafetyLog.open(stateDir).readable, user: userInfo().username, seams });
+  const handle = recoveryActs({ releases, logReadable: act => (act === "revoke_all" ? devices.revokeAllError === null : !devices.failsClosed)
+    && SafetyLog.open(stateDir).readable, user: userInfo().username, seams });
   const opened = openRecoverySocket({ stateDir, handle });
   if ("refused" in opened) {
     if (opened.refused !== "windows") console.error(`ovis recover is not available: ${opened.refused}`);

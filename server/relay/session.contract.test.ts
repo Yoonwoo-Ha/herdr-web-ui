@@ -2,15 +2,18 @@ import { afterEach, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { decodeFrame, encodeFrame, FrameType, LIMITS_V1, SERVER_TIME_HEADER } from "../../shared/relay-mux.ts";
+import { accountDeviceId } from "../../shared/account-records.ts";
+import { channelBinding } from "../../shared/relay-e2ee.ts";
+import { decodeFrame, encodeFrame, FrameType, LIMITS_V1, PAIR_SAS_FEATURE, SERVER_TIME_HEADER } from "../../shared/relay-mux.ts";
 import { MuxStreamError } from "../../shared/relay-mux-engine.ts";
+import { fromBase64Url, pairCommitment, pairDigits, randomPairNonce, toBase64Url } from "../../shared/relay-pair-sas.ts";
 import type { MachineEvent } from "../../shared/machines.ts";
 import { handleRequest } from "../dispatch.ts";
 import { PairingRateLimitedError, readDeviceRegistry } from "../devices.ts";
 import { machineEventsClock, machineEventsQueuedBytes } from "../machine-api.ts";
 import { PortalService } from "../portal.ts";
 import { relayHeaders, RELAY_ORIGIN } from "./session.ts";
-import { bounded, deferred, relayConnection, relayDevice, relayFixture, TestClock } from "./test-helpers.ts";
+import { bounded, deferred, relayAccountFixture, relayConnection, relayDevice, relayFixture, TestClock } from "./test-helpers.ts";
 
 const fixtures: ReturnType<typeof relayFixture>[] = [];
 function fixture(serveOnly = false) {
@@ -441,6 +444,102 @@ it("closes a device revoked during listener registration before publishing AUTH_
     link.stop();
     expect(await admission).toBeInstanceOf(Error);
   } finally { raced.mockRestore(); }
+});
+
+it("flag off: a missing row after AUTH proof stops watching without closing the relay session", async () => {
+  const f = relayFixture(false, { accountOpensAll: false });
+  fixtures.push(f);
+  const device = await relayDevice(f);
+  const { devices } = f.app.context.services;
+  const link = await relayConnection(f, { clock: new TestClock() });
+  const lookedUp = deferred<string>();
+  const row = spyOn(devices, "sessionRow").mockImplementationOnce((id) => {
+    lookedUp.resolve(id);
+    return null;
+  });
+  const admission = link.auth(device).catch((error: unknown) => error);
+  try {
+    expect(await bounded(lookedUp.promise)).toBe(device.id);
+    await link.flush();
+    expect(link.frames.map(({ type }) => type).filter(type => type !== FrameType.RECEIVED)).toEqual([FrameType.WELCOME]);
+    expect(link.channel.isOpen()).toBe(true);
+
+    devices.revoke(device.id);
+    await link.flush();
+    expect(link.channel.isOpen()).toBe(true);
+  } finally {
+    row.mockRestore();
+    link.stop();
+    await admission;
+  }
+});
+
+it("flag off: the relay delivers a selected mux PING even when the session closes before send", async () => {
+  const f = relayFixture(false, { accountOpensAll: false });
+  fixtures.push(f);
+  const link = await relayConnection(f);
+  await link.auth(await relayDevice(f));
+  await link.flush();
+  const beforePing = link.frames.length;
+
+  const freshness = spyOn(f.app.context.services, "checkAccountFreshness").mockImplementationOnce(() => {
+    link.session.close("auth_revoked");
+  });
+  try {
+    link.session.mux.ping();
+    await link.flush();
+    expect(link.frames.slice(beforePing).map(({ type }) => type)).toEqual([FrameType.PING, FrameType.SESSION_ERROR]);
+    expect(await bounded(link.serverError)).toBe("auth_revoked");
+  } finally { freshness.mockRestore(); }
+});
+
+it("flag off: an approved relay pairing is not rechecked for its approver's standing", async () => {
+  const { fixture: f, member } = await relayAccountFixture("drive", "acct_1", { accountOpensAll: false });
+  fixtures.push(f);
+  const { devices, accountMailbox, relay: { approvals } } = f.app.context.services;
+  const serverId = "0123456789abcdef0123456789abcdef";
+  const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
+  const publicKey = Buffer.from(await crypto.subtle.exportKey("spki", keys.publicKey)).toString("base64url");
+  const id = accountDeviceId(serverId, publicKey);
+  const label = "Returning phone";
+  const existing = devices.pairRelayApproved(label, publicKey, { path: "code", id });
+  if (!existing) throw new Error("Expected an existing device");
+  approvals.openWindow();
+
+  const link = await relayConnection(f, { serverId });
+  await link.hello([PAIR_SAS_FEATURE]);
+  const binding = channelBinding(link.channel);
+  if (!binding) throw new Error("Expected a SAS channel binding");
+  const phoneNonce = randomPairNonce();
+  const challenge = deferred<string>();
+  const admitted = deferred<string>();
+  link.onFrame = (frame) => {
+    if (frame.type === FrameType.PAIR_CHALLENGE) challenge.resolve(frame.payload.nonce);
+    if (frame.type === FrameType.AUTH_OK) admitted.resolve(frame.payload.device_id);
+  };
+  link.mux.sendSession({ type: FrameType.PAIR_REQUEST, flags: 0, stream_id: 0,
+    payload: { label, public_key: publicKey, commitment: toBase64Url(pairCommitment(binding, publicKey, phoneNonce)) } });
+  const pcNonce = fromBase64Url(await bounded(challenge.promise));
+  link.mux.sendSession({ type: FrameType.PAIR_REVEAL, flags: 0, stream_id: 0, payload: { nonce: toBase64Url(phoneNonce) } });
+  await link.flush();
+  const [prompt] = approvals.list();
+  if (!prompt) throw new Error("Expected a SAS pairing prompt");
+  const digits = pairDigits(binding, publicKey, phoneNonce, pcNonce);
+
+  const gates = spyOn(accountMailbox, "gates").mockReturnValue({ ...accountMailbox.gates(), enrolling: () => true });
+  // Isolate the session recheck from the store's separate collision policy.
+  const paired = spyOn(devices, "pairRelayApproved").mockReturnValue(existing);
+  try {
+    expect(approvals.decideRemote(prompt.id, true, digits, { id: member.id, label: "Account phone", role: "drive" }))
+      .toEqual({ outcome: "decided", device_id: id });
+    link.mux.sendSession({ type: FrameType.PAIR_CONFIRM, flags: 0, stream_id: 0, payload: { confirmed: true } });
+    expect(await bounded(Promise.race([admitted.promise, link.serverError]))).toBe(id);
+    expect(paired).toHaveBeenCalledWith(label, publicKey, { path: "code", id, addedBy: member.id }, undefined, expect.any(Function));
+    expect(link.channel.isOpen()).toBe(true);
+  } finally {
+    paired.mockRestore();
+    gates.mockRestore();
+  }
 });
 
 it("sends WELCOME behind the protected handshake, before HELLO, and still requires HELLO before AUTH", async () => {

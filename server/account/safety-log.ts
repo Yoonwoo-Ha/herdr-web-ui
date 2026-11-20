@@ -15,7 +15,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, type Stats, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { AccountRecordError, parseSafetyRecord, type BlockRecord, type PcLiftRecord, type SafetyRecord, type SafetyRecordKind } from "../../shared/account-records.ts";
+import { AccountRecordError, parseSafetyRecord, type BlockRecord, type DeviceLiftRecord, type PcLiftRecord, type SafetyRecord, type SafetyRecordKind } from "../../shared/account-records.ts";
 import { privateStateRefusal, writePrivateState } from "../private-state.ts";
 
 export const SAFETY_LOG_FILE = "account-log.json";
@@ -351,6 +351,40 @@ export class SafetyLog {
       }
     }
     return { outcome: "applied", id, n: entry.n };
+  }
+
+  /** Number a whole read's lifts together; no new receipt counts until the single replacement succeeds. */
+  commitLifts(lifts: readonly DeviceLiftRecord[], cause: Extract<LiftCause, "snapshot">): { added: number; receipts: SafetyReceipt[] } {
+    if (lifts.length === 0) return { added: 0, receipts: [] };
+    const unavailable = () => ({ added: 0, receipts: lifts.map((record): SafetyReceipt => ({ outcome: "refused", id: record?.id ?? "", code: "log_unavailable" })) });
+    if (this.strict !== null || !this.load()) return unavailable();
+    const next = { ...this.file, entries: [...this.file.entries] };
+    const receipts = lifts.map((record): SafetyReceipt => {
+      const id = typeof record?.id === "string" ? record.id : "";
+      if (recordProblem(record, undefined) !== null || record.kind !== "lift" || record.signer === "pc") return { outcome: "refused", id, code: "record_invalid" };
+      const held = next.entries.find((entry) => entry.record.id === id);
+      if (held) return sameRecord(held.record, record) ? { outcome: "applied", id, n: held.n } : { outcome: "refused", id, code: "conflict" };
+      if (next.base.some((line) => line.id === id)) return { outcome: "already_applied", id };
+      const n = next.next++;
+      next.entries.push({ n, record: { ...record }, got: "snapshot" });
+      return { outcome: "applied", id, n };
+    });
+    const refused = receipts.filter((receipt) => receipt.outcome === "refused");
+    if (refused.length) return { added: 0, receipts: refused };
+    const added = next.next - this.file.next;
+    if (added) {
+      if (!this.writeFile(next)) return unavailable();
+      for (const { record } of next.entries.slice(-added)) {
+        const ended = next.entries.find(({ record: parent }) => parent.account === record.account &&
+          ((parent.kind === "block" && parent.id === record.target) || (parent.kind === "freeze" && parent.id === `f:${record.target}`)));
+        const target = ended?.record.target;
+        if (target == null) continue;
+        for (const listener of [...this.liftListeners]) {
+          try { listener(target, cause); } catch (error) { console.warn(`[account] a lift listener failed: ${error instanceof Error ? error.message : String(error)}`); }
+        }
+      }
+    }
+    return { added, receipts };
   }
 
 

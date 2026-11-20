@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DeviceNotice, NoticeReplay } from "../../shared/account-devices-api.ts";
+import { parseSnapshotPage } from "../../shared/account-snapshot.ts";
 import { DEVICE_COOKIE } from "../auth.ts";
 import { DeviceStore, readDeviceRegistry } from "../devices.ts";
 import { relayFixture } from "../relay/test-helpers.ts";
@@ -50,6 +51,41 @@ async function frames(port: number, cookie: string, count: number): Promise<{ li
 }
 
 describe("the device journal (P10, P15)", () => {
+  test.each([
+    ["recognized claims", { provider: "google", two_step: "set" }, "google", "set"],
+    ["missing claims", {}, null, "unknown"],
+    ["unrecognized claims", { provider: "garbage", two_step: "garbage" }, null, "unknown"],
+    ["unknown two-step without a provider", { two_step: "unknown" }, null, "unknown"],
+  ] as const)("T34: replay projects %s from a list admission", async (_scenario, claims, method, two_step) => {
+    const dir = stateDir();
+    const journal = DeviceJournal.open(dir);
+    const evidence = RemovalEvidence.open(dir, SafetyLog.open(dir));
+    const phone = await key();
+    const page = parseSnapshotPage({
+      v: 1, snapshot: "a".repeat(32), account: "acct_1", server_id: "b".repeat(32), version: 1, methods_version: 0, page: 0, last: true,
+      devices: [{ key: phone, no: 2, label: "Phone", eligible: true, ...claims }], removed: [], blocks: [], lifts: [], freezes: [],
+    });
+    const [device] = page.devices;
+    if (!device) throw new Error("The snapshot lost its listed device");
+    const row = "aaaaaaaaaaaaaaaa";
+    journal.recordAccountRow({ ...device, kind: "admit", row, account: page.account }, evidence);
+    journal.openListedRows([row]);
+
+    const replay = DeviceJournal.open(dir).replay("bbbbbbbbbbbbbbbb", () => true);
+    expect(replay.notices).toMatchObject([{ kind: "admit", how: "list", key: phone, method, two_step }]);
+    expect(replay.notices[0]).not.toHaveProperty("provider");
+  });
+
+  test("T34: replay carries no sign-in claim for a non-list pairing", async () => {
+    const dir = stateDir();
+    const devices = store(dir);
+    const phone = await key();
+    const paired = devices.pairRelay(devices.startPairing().code, "Phone", phone);
+    if (!paired) throw new Error("The phone was not paired");
+    const replay = DeviceJournal.open(dir).replay("bbbbbbbbbbbbbbbb", () => true);
+    expect(replay.notices).toMatchObject([{ kind: "admit", row: paired.device.id, method: null, two_step: null }]);
+  });
+
   test("T57: reconnect replays unseen notices before other events and ack never decides a notice", async () => {
     const f = relayFixture(false, { accountOpensAll: true, token: "a-token-long-enough-to-be-a-real-one" });
     fixtures.push(f);

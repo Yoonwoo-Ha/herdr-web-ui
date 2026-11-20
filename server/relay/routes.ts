@@ -2,6 +2,7 @@ import { DeviceGoneError, DeviceReadOnlyError, PairingFinishingError, PairingGon
 import { MachineCodeForAccountError } from "../machine-profile.ts";
 import { errorResponse, jsonResponse, readJsonObject, setRequestRoute } from "../http.ts";
 import type { ServerContext } from "../dispatch.ts";
+import { RELAY_CONTROLS } from "../dispatch-routes.ts";
 import { updateRequestAllowed } from "../update-api.ts";
 import { ACCOUNT_ID, AccountServiceOffError, NoAccountNamedError } from "./service.ts";
 
@@ -26,7 +27,7 @@ export async function handleRelayRequest(request: Request, pathname: string, con
     return reply({ pairings: service.approvals.list() });
   }
   if (request.method !== "POST") return fail("method_not_allowed", "Use GET for status and POST for relay actions.", 405);
-  if (pathname === "/api/relay/pairing" && peer.kind === "relay") {
+  if (pathname === RELAY_CONTROLS.pairing && peer.kind === "relay") {
     setRequestRoute("/api/relay/pairing");
     if (!remoteApprover) return fail("account_required", "Approve pairings on this PC, or from a device linked to your account.", 403);
     const body = await readJsonObject(request);
@@ -59,15 +60,15 @@ export async function handleRelayRequest(request: Request, pathname: string, con
       throw new MachineCodeForAccountError();
     }
     switch (pathname) {
-      case "/api/relay/start": {
+      case RELAY_CONTROLS.start: {
         setRequestRoute("/api/relay/start");
         const status = service.start();
         return reply(status, status.blocked ? 409 : !service.linked ? 500 : 200);
       }
-      case "/api/relay/stop":
+      case RELAY_CONTROLS.stop:
         setRequestRoute("/api/relay/stop");
         return reply(await service.stop());
-      case "/api/relay/offer":
+      case RELAY_CONTROLS.offer:
         setRequestRoute("/api/relay/offer");
         if (service.status().phase === "off" || service.status().blocked) return fail("relay_off", "Start the relay before pairing.", 409);
         if (service.status().phase === "error") return fail("relay_offline", "The relay is not reachable; wait until it is online before pairing.", 409);
@@ -81,21 +82,21 @@ export async function handleRelayRequest(request: Request, pathname: string, con
         if (want !== null && !/^(new|[0-9a-f]{32})$/.test(want)) return fail("invalid_pairing", "x-ovis-pairing names no pairing.", 400);
         const carry = want === null ? {} : { pairing: want };
         return reply(service.offer(caller, account !== null ? { account, ...carry } : { noAccountOnly: request.headers.get("x-ovis-no-account-only") === "1", ...carry }));
-      case "/api/relay/offer/keep": {
+      case RELAY_CONTROLS.keep: {
         setRequestRoute("/api/relay/offer/keep");
         // whatever the relay's state: a code made for an account is read by the id its answer gave
         const body = await readJsonObject(request);
         if (body instanceof Response) return body;
         if (typeof body.id !== "string") return fail("invalid_body", "Send the pairing's id.", 400);
         // the device that asks may have been removed, or made one that only watches, while its body was on its way
-        if (caller !== null && !context.services.devices.canDrive(caller)) {
+        if (caller !== null && !context.services.devices.canHoldCode(caller)) {
           if (!context.services.devices.has(caller)) throw new DeviceGoneError();
           return fail("read_only", "this device can only watch", 403);
         }
         const state = context.services.devices.accountPairingState(body.id);
         return reply(state.state === "live" ? { ...state, service_retry_ms: context.services.accountMailbox.serviceRetryMs() } : state);
       }
-      case "/api/relay/code": {
+      case RELAY_CONTROLS.code: {
         setRequestRoute("/api/relay/code");
         if (service.status().phase === "off" || service.status().blocked) return fail("relay_off", "Start the relay before pairing.", 409);
         if (service.status().phase === "error") return fail("relay_offline", "The relay is not reachable; wait until it is online before pairing.", 409);
@@ -104,23 +105,23 @@ export async function handleRelayRequest(request: Request, pathname: string, con
         if (code === null) return fail("code_unavailable", "Pairing with a typed code works through Ovis's relay only; scan the QR code instead.", 409);
         return reply(code);
       }
-      case "/api/relay/code/cancel":
+      case RELAY_CONTROLS.cancelCode:
         setRequestRoute("/api/relay/code/cancel");
         service.cancelPairCode();
         return reply({ ok: true });
-      case "/api/relay/link":
+      case RELAY_CONTROLS.link:
         setRequestRoute("/api/relay/link");
         if (service.status().phase === "off" || service.status().blocked) return fail("relay_off", "Start the relay before pairing.", 409);
         // the PC's own screen waiting to be added to an account: what that link brings is approved here only
         // a query string is refused for every relay control (updateRequestAllowed), so the flag travels as a header,
         // which another site cannot set without a preflight the PC never answers
         return reply(service.pairingLink({ localOnly: request.headers.get("x-ovis-local-only") === "1" }));
-      case "/api/relay/link/close":
+      case RELAY_CONTROLS.close:
         setRequestRoute("/api/relay/link/close");
         // the owner stopped waiting: nothing more is taken, whatever the relay's state
         if (!service.approvals.closeWindow()) return fail("internal_error", "The pairing window is closed, but its saved state could not be cleared.", 500);
         return reply({ ok: true });
-      case "/api/relay/pairing": {
+      case RELAY_CONTROLS.pairing: {
         setRequestRoute("/api/relay/pairing");
         const body = await readJsonObject(request);
         if (body instanceof Response) return body;
@@ -132,7 +133,7 @@ export async function handleRelayRequest(request: Request, pathname: string, con
         }
         return reply({ ok: true });
       }
-      case "/api/relay/direct": {
+      case RELAY_CONTROLS.direct: {
         setRequestRoute("/api/relay/direct");
         const body = await readJsonObject(request);
         if (body instanceof Response) return body;
@@ -140,7 +141,7 @@ export async function handleRelayRequest(request: Request, pathname: string, con
         if (typeof body.on !== "boolean") return fail("invalid_relay_direct", "Send { on: true } or { on: false }.", 400);
         return reply(await service.setDirect(body.on));
       }
-      case "/api/relay/reset-identity": {
+      case RELAY_CONTROLS.reset: {
         setRequestRoute("/api/relay/reset-identity");
         // it ends every relay row whatever its age: with the release flag on, only this PC itself may ask (T20, rule B)
         if (context.services.devices.opensAll() && !local) return fail("local_required", "Resetting the relay identity is done at that PC", 403);

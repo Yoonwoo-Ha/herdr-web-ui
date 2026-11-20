@@ -2,7 +2,9 @@ import {
   decodeFrame, encodeFrame, FrameType, HTTP_END_FLAGS, LIMITS_V1, MAX_FRAME_BYTES, MAX_LARGE_WS_MESSAGE_BYTES,
   MuxProtocolError, WS_CONTINUATION_CAPACITY, WS_DATA_FLAGS, WS_START_CAPACITY,
 } from "./relay-mux.ts";
+import type { HoldState } from "./account-devices-api.ts";
 import type { HeaderList, LimitsV1, MuxFrame, SessionError, StreamError } from "./relay-mux.ts";
+import type { BlockReceipt } from "./account-devices-api.ts";
 
 type Payload<T extends MuxFrame["type"]> = Extract<MuxFrame, { type: T }>["payload"];
 export type HttpRequest = Payload<typeof FrameType.HTTP_OPEN>;
@@ -867,7 +869,7 @@ export class MuxEngine {
       while (this.generation === generation) {
         if (this.fatal) {
           const error = this.fatal;
-          const entry = this.entry({ type: FrameType.SESSION_ERROR, flags: 0, stream_id: 0, payload: { code: error.code, message: error.message } }, "control");
+          const entry = this.entry({ type: FrameType.SESSION_ERROR, flags: 0, stream_id: 0, payload: { code: error.code, message: error.message, ...(error.hold === undefined ? {} : { hold: error.hold }), ...(error.receipts?.length ? { receipts: error.receipts } : {}) } }, "control");
           if (this.fits(entry)) await this.options.send(entry.bytes);
           this.shutdown(error);
           return;
@@ -991,7 +993,7 @@ export class MuxEngine {
   private dispatch(frame: MuxFrame, size: number): void {
     switch (frame.type) {
       case FrameType.RECEIVED: this.receipt(frame.payload); return;
-      case FrameType.SESSION_ERROR: this.shutdown(new MuxProtocolError(frame.payload.code, frame.payload.message)); return;
+      case FrameType.SESSION_ERROR: this.shutdown(new MuxProtocolError(frame.payload.code, frame.payload.message, frame.payload.receipts, frame.payload.hold)); return;
       case FrameType.PING: this.enqueueControl({ ...frame, type: FrameType.PONG }); return;
       case FrameType.PONG:
         if (frame.payload === this.probe) {
@@ -1259,14 +1261,14 @@ export class MuxEngine {
     }
     if (!hidden) this.ping();
   }
-  fail(code: SessionError, message: string): void {
+  fail(code: SessionError, message: string, receipts?: readonly BlockReceipt[], hold?: HoldState): void {
     if (!this.active) return;
     this.state = "failing";
-    this.fatal = new MuxProtocolError(code, message);
+    this.fatal = new MuxProtocolError(code, message, receipts, hold);
     for (const stream of this.streams) this.reset(stream, "upstream_lost", false);
     this.urgent.length = 0;
     this.controlQueued = 0;
-    this.timer(() => this.shutdown(this.fatal ?? new MuxProtocolError(code, message)), 5000);
+    this.timer(() => this.shutdown(this.fatal ?? new MuxProtocolError(code, message, receipts, hold)), 5000);
     this.kick();
   }
   carrierLost(error = new MuxProtocolError("internal_error", "Carrier lost")): void { this.shutdown(error); }

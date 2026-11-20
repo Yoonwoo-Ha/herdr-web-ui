@@ -251,7 +251,7 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
       const bytes = new Uint8Array(data);
       if (phase === "ready") { mux?.receive(bytes); return; }
       const frame = decodeFrame(bytes);
-      if (frame.type === FrameType.SESSION_ERROR) throw new MuxProtocolError(frame.payload.code, frame.payload.message);
+      if (frame.type === FrameType.SESSION_ERROR) throw new MuxProtocolError(frame.payload.code, frame.payload.message, frame.payload.receipts, frame.payload.hold);
       if (frame.type === FrameType.RECEIVED) {
         if (!mux || frame.payload > mux.stats.submitted) throw new MuxProtocolError("protocol_error", "Receipt exceeds submitted frames");
         receipt = bytes;

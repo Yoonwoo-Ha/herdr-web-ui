@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { exportAccountKey, newRecordId, signSafetyRecord } from "./account-records.ts";
 import {
-  AccountDevicesApiError, accountOpensAll, blockOutcome, parseBlockReceipt, parseNoticeAnswer, parseRecoveryAction, type HoldState, type PcBlockOutcome,
+  AccountDevicesApiError, accountOpensAll, blockOutcome, parseBlockReceipt, parseHoldState, parseNoticeAnswer, parseRecoveryAction, type HoldState, type PcBlockOutcome,
 } from "./account-devices-api.ts";
 
 async function key() {
@@ -100,5 +100,24 @@ describe("recovery actions (device table R11)", () => {
       { act: "remove", targets: ["a".repeat(121)] }, { act: "remove", targets: ["a".repeat(65)] }, { act: "remove", targets: ["not_a_row"] }, { act: "remove", targets: ["a".repeat(64)] }, { act: "release", rows: ["not_a_row"] }, { act: "undo", rows: ["ABCDEF0123456789"] },
     ];
     for (const value of bad) expect(() => parseRecoveryAction(value)).toThrow(AccountDevicesApiError);
+  });
+});
+
+describe("hold states (device table S22, S25, T53, T56)", () => {
+  test("S25: the three hold states parse back as sent, a join hold with or without its deadline", () => {
+    const holds: HoldState[] = [
+      { reason: "join_hold", until: null },
+      { reason: "join_hold", until: "2026-11-20T05:00:10.000Z" },
+      { reason: "catching_up" },
+      { reason: "frozen", block: "a".repeat(64) },
+    ];
+    for (const hold of holds) expect(parseHoldState(JSON.parse(JSON.stringify(hold)))).toEqual(hold);
+  });
+
+  test("S25: anything else is refused", () => {
+    for (const hold of [
+      null, [], { reason: "join_hold" }, { reason: "join_hold", until: "soon" }, { reason: "join_hold", until: null, block: "a".repeat(64) },
+      { reason: "catching_up", until: null }, { reason: "frozen", block: "a".repeat(63) }, { reason: "frozen" }, { reason: "expired" },
+    ]) expect(() => parseHoldState(hold)).toThrow(AccountDevicesApiError);
   });
 });

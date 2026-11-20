@@ -17,6 +17,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { writePrivateState } from "../private-state.ts";
 import { DEVICE_JOURNAL_FILE } from "./safety-log.ts";
+import { isRowDrop, withRowDrop, type RowDrop } from "./row-drop-evidence.ts";
 
 export const REMOVAL_FILE = "account-removed.json";
 /** Removals kept per marker; past it one that no longer stands goes first, the oldest first. */
@@ -37,7 +38,7 @@ export interface Unrevoke { readonly id: string; readonly revoke: string; readon
 /** The tombstone shape of server/devices.ts, written from the evidence. */
 export interface EvidenceTombstone { key: string; account: string; record_id: string; removed_at: string; records?: unknown[] }
 
-interface Doc { v: 1; markers: Marker[]; revokes: Revoke[]; unrevokes: Unrevoke[] }
+interface Doc { v: 1; markers: Marker[]; revokes: Revoke[]; unrevokes: Unrevoke[]; row_drops?: readonly RowDrop[] }
 
 const isStrings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
 
@@ -48,6 +49,7 @@ function parseDoc(value: unknown): Doc | null {
   if (typeof value !== "object" || value === null) return null;
   const doc = value as Partial<Doc>;
   if (doc.v !== 1 || !Array.isArray(doc.markers) || !Array.isArray(doc.revokes) || !Array.isArray(doc.unrevokes)) return null;
+  if (doc.row_drops !== undefined && !(Array.isArray(doc.row_drops) && doc.row_drops.every(isRowDrop))) return null;
   const removalOk = (r: Removal) => typeof r === "object" && r !== null && typeof r.id === "string" && isStrings(r.over) && typeof r.tomb === "string" && typeof r.at === "string" && (r.records === undefined || Array.isArray(r.records));
   if (!doc.markers.every((m) => typeof m === "object" && m !== null && typeof m.key === "string" && typeof m.account === "string" && Array.isArray(m.removals) && m.removals.every(removalOk))) return null;
   if (!doc.revokes.every((r) => typeof r === "object" && r !== null && typeof r.id === "string" && typeof r.key === "string" && (r.account === null || typeof r.account === "string") && typeof r.at === "string")) return null;
@@ -101,6 +103,14 @@ export class RemovalEvidence {
     return this.problem === null ? null : `${this.problem}: only this PC itself gets in until the removal evidence is restored.`;
   }
 
+  /** Before serving: a replay that cannot finish stays strict until a fresh start can retry it. */
+  recover(replay: () => void): void {
+    try { replay(); } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      this.problem = `Cannot finish removal recovery for ${this.path} (${error.message})`;
+    }
+  }
+
   private forgets(key: string, account: string): readonly string[] { return this.log?.forgets(key, account) ?? []; }
 
   private removalStands(marker: Marker, removal: Removal): boolean {
@@ -118,11 +128,33 @@ export class RemovalEvidence {
 
   standingRevokes(key: string): Revoke[] { return this.doc.revokes.filter((r) => r.key === key && this.revokeStands(r)); }
 
+  get rowDrops(): readonly RowDrop[] { return this.doc.row_drops ?? []; }
+
+  dropFor(row: string, admission: number): RowDrop | undefined {
+    return this.doc.row_drops?.find(drop => drop.row === row && drop.admit_no === admission);
+  }
+
+  markJournalled(drop: RowDrop, seq: number): void {
+    const next = withRowDrop(this.doc, { ...drop, journalled: seq });
+    if (next !== this.doc) this.write(next);
+  }
+
+  /** What first denied this listed row. Later records for an already absent key don't drop it again. */
+  accountRowDrop(key: string, account: string): "revoke" | "remove" | "block" | null {
+    if (this.standingRevokes(key).length) return "revoke";
+    const removal = this.standingMarkers(key).find(({ marker }) => marker.account === account)?.standing[0];
+    if (!removal) return null;
+    // Imported tombstones can carry several records; only this removal's record identifies its act.
+    const blocked = removal.records?.some(record => typeof record === "object" && record !== null &&
+      "id" in record && record.id === removal.id && "kind" in record && record.kind === "block");
+    return blocked ? "block" : "remove";
+  }
+
   /** The removal ids a pairing of `key` on this PC knew: it stands over every one of them (`paired_over`). */
   pairedOver(key: string): string[] { return this.standingMarkers(key).flatMap(({ standing }) => standing.map((r) => r.id)); }
 
   /** A signed `remove` (or, later, a block) of `key` under `account`. False when this marker already holds that removal. */
-  addRemoval(key: string, account: string, removal: { id: string; at: string; records?: readonly unknown[] }): boolean {
+  addRemoval(key: string, account: string, removal: { id: string; at: string; records?: readonly unknown[]; drop?: RowDrop | undefined }): boolean {
     const marker = this.doc.markers.find((m) => m.key === key && m.account === account);
     if (marker?.removals.some((r) => r.id === removal.id)) return false;
     const entry: Removal = { id: removal.id, over: [...this.forgets(key, account)], tomb: removal.id, at: removal.at, ...(removal.records ? { records: [...removal.records] } : {}) };
@@ -134,7 +166,7 @@ export class RemovalEvidence {
       removals.splice(drop, 1);
     }
     const next = { key, account, removals };
-    this.write({ ...this.doc, markers: marker ? this.doc.markers.map((m) => m === marker ? next : m) : [...this.doc.markers, next] });
+    this.write({ ...withRowDrop(this.doc, removal.drop), markers: marker ? this.doc.markers.map((m) => m === marker ? next : m) : [...this.doc.markers, next] });
     return true;
   }
 
@@ -144,10 +176,10 @@ export class RemovalEvidence {
     return [...this.doc.revokes.map((r) => r.at), ...this.doc.unrevokes.map((u) => u.at)];
   }
 
-  addRevoke(key: string, account: string | null, now: number): void {
+  addRevoke(key: string, account: string | null, now: number, drop?: RowDrop): void {
     const at = new Date(now).toISOString();
     // the id a later start reads this Revoke back under from the tombstone file, so it is taken in once (P13)
-    this.write({ ...this.doc, revokes: [...this.doc.revokes, { id: localRevokeId(key, account ?? "", at), key, account, at }] });
+    this.write({ ...withRowDrop(this.doc, drop), revokes: [...this.doc.revokes, { id: localRevokeId(key, account ?? "", at), key, account, at }] });
   }
 
   /** A pairing of `key` on this PC: it ends each Revoke of that key by name, and never touches a marker (T21, T23). */
@@ -170,6 +202,8 @@ export class RemovalEvidence {
     const at = new Date(now).toISOString();
     for (const tombstone of tombstones) {
       if (tombstone.record_id === "local") {
+        // The compatibility projection of a standing Revoke is not a second Revoke to import.
+        if (this.standingRevokes(tombstone.key).some(r => (r.account ?? "") === tombstone.account && r.at === tombstone.removed_at)) continue;
         const id = localRevokeId(tombstone.key, tombstone.account, tombstone.removed_at);
         if (doc.revokes.some((r) => r.id === id)) continue;
         const ended = rows.some((row) => row.relay_public_key === tombstone.key && row.pairedHere && Date.parse(row.created_at) > Date.parse(tombstone.removed_at));

@@ -6,6 +6,7 @@ import { exportAccountKey } from "../../shared/account-records.ts";
 import { readDeviceRegistry, type StoredDevice } from "../devices.ts";
 import { relayFixture } from "../relay/test-helpers.ts";
 import { ADMISSION_FILE } from "./admission-order.ts";
+import { ACCOUNT, memberSnapshotPc } from "./listed-pc.test-helpers.ts";
 import { PcAccountState } from "./pc-binding.ts";
 import { pcRecordId, SafetyLog } from "./safety-log.ts";
 import type { SafetyRecord } from "../../shared/account-records.ts";
@@ -130,13 +131,16 @@ describe("a row's age is its own folder's word (P21, P22, T50)", () => {
     const [a, b] = [dir(), dir()];
     const newKey = async () => exportAccountKey((await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign"])).publicKey);
     const memberKey = await newKey();
-    put(a, [row("aaaaaaaaaaaaaaaa", { relay_public_key: memberKey, account: "acct", linked_at: AT })]);
+    put(a, [row("aaaaaaaaaaaaaaaa", { relay_public_key: memberKey, account: ACCOUNT, linked_at: AT })]);
     put(b, []);
-    const devices = start(a, b, true).app.context.services.devices;
+    const { fixture, firstRead } = memberSnapshotPc({ stateDir: a, siblingStateDir: b });
+    fixtures.push(fixture);
+    await firstRead();
+    const { devices } = fixture.app.context.services;
     const oldKey = await newKey();
     const id = devices.pairRelay(devices.startPairing(Date.now(), { remote: true, startedBy: "aaaaaaaaaaaaaaaa", memberRequired: true, by: null }).code, "Phone", oldKey)!.device.id;
     expect(persisted(a)?.[id]).toMatchObject({ how: "member", by: memberKey, admit_no: 1 });
-    devices.linkAccountKey(id, oldKey, await newKey(), "acct");
+    devices.linkAccountKey(id, oldKey, await newKey(), ACCOUNT);
     expect(persisted(a)?.[id]).toMatchObject({ how: "link", by: null, admit_no: 2 });
   });
 

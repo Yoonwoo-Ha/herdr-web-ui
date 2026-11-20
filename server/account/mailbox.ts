@@ -14,7 +14,10 @@ import { answerServerChallenge } from "../../shared/relay-server-proof.ts";
 import type { DeviceStore } from "../devices.ts";
 import type { RelayIdentity } from "../relay/identity.ts";
 import type { AccountHolds } from "./holds.ts";
-import { applyAccountRecords, type AddGates, type RecordOutcome } from "./records.ts";
+import type { Readmission } from "./readmission.ts";
+import type { UsedReport } from "../../shared/account-snapshot.ts";
+import { readSnapshot, type PageAnswer, type ReadOutcome, type SnapshotPorts } from "./snapshot-read.ts";
+import { applyAccountRecords, stageMailboxAdds, type AddGates, type RecordOutcome } from "./records.ts";
 
 export const MAILBOX_PULL_MS = 5 * 60_000;
 /** How old an admission may be for the PC to take an account join outside the pairing window. */
@@ -124,6 +127,11 @@ export interface AccountMailboxOptions {
   readonly service: string | Error;
   readonly fetch?: (request: Request) => Promise<Response>;
   readonly holds?: AccountHolds;
+  /**
+   * The account's whole snapshot read (Step 2, S2-24), run after each pull: the account it reads and the ports that
+   * apply it, or null for none now. The server gives it only while OVIS_ACCOUNT_OPENS_ALL is on.
+   */
+  readonly snapshot?: { account(): string | null; ports(readmission?: Readmission): SnapshotPorts | null; used?(): UsedReport };
 }
 
 export class AccountMailbox {
@@ -135,6 +143,7 @@ export class AccountMailbox {
   private drainedScope: string | null = null;
   error: string | null = null;
   private timer: ReturnType<typeof setInterval> | undefined;
+  private stopped = false;
   private pulling: Promise<number> | undefined;
 
   private pending: unknown[];
@@ -169,12 +178,11 @@ export class AccountMailbox {
     return typeof signer === "string" && typeof account === "string" && this.options.devices.accountSigner(signer, account) !== null;
   }
 
-  private holdsKey(key: string): boolean {
-    return this.waiting().some((record) => removedKey(record) === key && this.authorized(record));
+  /** A list candidate meets the same enrollment, held-key and counted-removal checks as a signed add. */
+  listHeld(key: string): boolean {
+    const gates = this.gates("list");
+    return gates.enrolling() || gates.held(key);
   }
-
-  /** What holds a key back from the account's list (P19): authorized waiting removes only; a full queue gates nothing there. */
-  listHeld(key: string): boolean { return this.pendingError !== null || this.holdsKey(key); }
 
   private dropSignerRemovals(key: string): void {
     if (this.pendingError !== null) return;
@@ -192,11 +200,12 @@ export class AccountMailbox {
    * What holds an add back here (docs/account.md, "Enrolling a PC"): the enrollment barrier, a waiting
    * remove for its key (whatever its signer), a held key, and a queue that is full or cannot be read.
    */
-  gates(): AddGates {
+  gates(source: "add" | "list" = "add"): AddGates {
+    const removing = (key: string) => this.pendingError !== null || this.waiting().some(record => removedKey(record) === key && this.authorized(record));
     return {
       enrolling: () => this.options.holds?.enrolling() ?? false,
-      held: (key, includeWaiting = true) => this.pendingError !== null || (includeWaiting && this.holdsKey(key)) || (this.options.holds?.holds(key) ?? false),
-      removing: (key) => this.pendingError !== null || this.holdsKey(key),
+      held: (key, includeWaiting = true) => this.pendingError !== null || (includeWaiting && removing(key)) || (this.options.holds?.holds(key, source) ?? false),
+      removing,
     };
   }
 
@@ -210,9 +219,56 @@ export class AccountMailbox {
 
   private waiting(): unknown[] { return [...this.draining, ...this.pending]; }
 
-  pull(): Promise<number> {
-    this.pulling ??= this.exclusively(() => this.drain()).finally(() => { this.pulling = undefined; });
+  pull(readmission?: Readmission): Promise<number> {
+    this.pulling ??= this.exclusively(async () => {
+      const applied = await this.drain();
+      return applied + (await this.readSnapshotNow(readmission)).adds;
+    }).finally(() => { this.pulling = undefined; });
     return this.pulling;
+  }
+
+  /** One whole snapshot read now, in turn with pulls; null when the server gave no snapshot ports or there is nothing to read for. */
+  readSnapshot(): Promise<ReadOutcome | null> {
+    return this.exclusively(async () => (await this.readSnapshotNow()).outcome);
+  }
+
+  private async readSnapshotNow(readmission?: Readmission): Promise<{ outcome: ReadOutcome | null; adds: number }> {
+    const empty = { outcome: null, adds: 0 };
+    const snapshot = this.options.snapshot;
+    if (!snapshot || this.stopped) return empty;
+    const account = snapshot.account();
+    const ports = snapshot.ports(readmission);
+    if (account === null || ports === null) return empty;
+    let adds = 0;
+    const used = snapshot.used?.();
+    try {
+      let staged: Awaited<ReturnType<typeof stageMailboxAdds>> = [];
+      const outcome = await readSnapshot(async (cursor) => {
+        if (cursor.page === 0) staged = await stageMailboxAdds(this.pending);
+        return this.snapshotPage(account, cursor, used);
+      }, { ...ports, scope: () => this.stopped ? null : ports.scope(), commit: (stage) => {
+        // Validate pins and persist the safety decisions before applying staged adds.
+        const committedLifts = ports.commit(stage);
+        const removed = new Set(stage.snapshot.removed.map((row) => row.key));
+        const settled = new Set<unknown>();
+        for (const add of staged) {
+          if (removed.has(add.key) || !this.pending.includes(add.value)) continue;
+          const result = add.commit(this.options.devices, stage.snapshot.server_id, this.gates());
+          if (!waits(result)) settled.add(add.value);
+          if (result.outcome === "applied") adds++;
+        }
+        if (settled.size > 0) {
+          const pending = this.pending.filter((value) => !settled.has(value));
+          if (this.options.pendingPath) writePrivateState(this.options.pendingPath, pending);
+          this.pending = pending;
+        }
+        return committedLifts;
+      } });
+      return { outcome, adds };
+    } catch (error) {
+      this.error = error instanceof Error ? error.message : String(error);
+      return empty;
+    }
   }
 
   /** The waiting records are retried by one run at a time (a pull, or settle), so none of them is ever out of the gate's sight. */
@@ -225,7 +281,7 @@ export class AccountMailbox {
   }
 
   start(): void {
-    if (this.timer) return;
+    if (this.timer || this.stopped) return;
     void this.pull();
     this.timer = setInterval(() => { void this.pull(); }, MAILBOX_PULL_MS);
     this.timer.unref?.();
@@ -364,13 +420,13 @@ export class AccountMailbox {
    * nothing out, so after it the next may start 10 seconds after it began. What the pull finds is
    * checked and applied like any other record; the caller checks the sign-in again. Never throws.
    */
-  async pullForRefusedSignIn(waitMs = SIGN_IN_WAIT_MS, now = Date.now()): Promise<void> {
+  async pullForRefusedSignIn(waitMs = SIGN_IN_WAIT_MS, now = Date.now(), readmission?: Readmission): Promise<void> {
     if (this.options.devices.account() === null) return;
     let pull = this.pulling;
     if (!pull) {
       if (now < this.nextSignInPull) return;
       this.nextSignInPull = now + SIGN_IN_PULL_MS;
-      pull = this.pull();
+      pull = this.pull(readmission);
       void pull.then(() => {
         if (this.error !== null) this.nextSignInPull = Math.min(this.nextSignInPull, now + SIGN_IN_PULL_RETRY_MS);
       }, () => undefined);
@@ -426,7 +482,7 @@ export class AccountMailbox {
       const pass = [...early];
       for (let start = 0; start < pass.length; start += ACCOUNT_RECORDS_MAX) {
         const batch = pass.slice(start, start + ACCOUNT_RECORDS_MAX).filter((record) => early.includes(record));
-        const outcomes = await applyAccountRecords(this.options.devices, batch, serverId, Date.now(), this.gates());
+        const outcomes = await applyAccountRecords(this.options.devices, batch, serverId, Date.now(), { ...this.gates(), deferAdd: this.options.devices.opensAll() ? () => true : undefined });
         applied += outcomes.filter(({ outcome }) => outcome === "applied").length;
         const done = new Set(batch.filter((_record, index) => !waits(outcomes[index])));
         for (let index = early.length - 1; index >= 0; index--) {
@@ -453,6 +509,7 @@ export class AccountMailbox {
     const next = [...this.pending, record];
     // full: a waiting add makes room (it can come again); with none, the remove is undecided and its sender tries again
     if (waiting.length >= PENDING_MAX) {
+      if (this.options.devices.opensAll() && removedKey(record) === null) return false;
       const add = next.findIndex((kept) => removedKey(kept) === null);
       if (add === -1) {
         // nowhere to keep it: its key stays out of every add until a pairing here settles it
@@ -469,6 +526,7 @@ export class AccountMailbox {
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
   }
@@ -505,8 +563,22 @@ export class AccountMailbox {
         for (const admission of waiting) admissions.set(scope(account, identity.server_id, admission.key), Date.parse(admission.at));
         if (entries.length === 0) { complete = true; break; }
         if (page === MAX_PAGES) break;
-        for (let start = 0; start < entries.length; start += ACCOUNT_RECORDS_MAX) {
-          const batch = entries.slice(start, start + ACCOUNT_RECORDS_MAX).map(({ record }) => record);
+        const opensAll = this.options.devices.opensAll();
+        const batchSize = opensAll ? 1 : ACCOUNT_RECORDS_MAX;
+        for (let start = 0; start < entries.length; start += batchSize) {
+          const batch = entries.slice(start, start + batchSize).map(({ record }) => record);
+          const record = batch[0];
+          if (opensAll && typeof record === "object" && record !== null && "kind" in record && record.kind === "block") {
+            // applyBlock owns parseSafetyRecord and signature verification. Never ack an unwritten deny.
+            const receipt = await this.options.devices.applyBlock(record, "mailbox");
+            if (receipt.outcome === "refused") {
+              // Disk/queue failures also return record_invalid, but leave the PC strict.
+              if (receipt.reason === "record_invalid" && !this.options.devices.failsClosed) continue;
+              throw new Error(`Mailbox block not applied: ${receipt.reason}`);
+            }
+            if (receipt.outcome === "applied") applied++;
+            continue;
+          }
           // a remove waiting on its signer joins `early` at once, so an add for its key later in the page meets it
           const queued = new Set<unknown>();
           const keep = (record: unknown) => {
@@ -517,7 +589,8 @@ export class AccountMailbox {
             if (!early.some((kept) => JSON.stringify(kept) === text)) early.push(record);
             return true;
           };
-          const outcomes = await applyAccountRecords(this.options.devices, batch, identity.server_id, Date.now(), this.gates(), keep);
+          const gates = this.gates();
+          const outcomes = await applyAccountRecords(this.options.devices, batch, identity.server_id, Date.now(), opensAll ? { ...gates, deferAdd: () => true } : gates, keep);
           applied += outcomes.filter(({ outcome }) => outcome === "applied").length;
           outcomes.forEach((outcome, index) => { if (waits(outcome)) keep(batch[index]); });
         }
@@ -553,21 +626,40 @@ export class AccountMailbox {
     early.splice(0, over);
   }
 
-  private async page(identity: RelayIdentity, account: string, ack: number | null): Promise<{ entries: { seq: number; record: unknown }[]; waiting: { key: string; at: string }[] }> {
-    const call = async (path: string, body: unknown) => {
-      const response = await (this.options.fetch ?? fetch)(new Request(String(this.options.service) + path, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(15_000),
-      }));
-      if (!response.ok) throw new Error(`The account service answered ${response.status} to ${path}`);
-      return await response.json() as Record<string, unknown>;
-    };
-    const publicKey = bytesToHex(importPublicKey(identity.public_key));
-    const challenge = await call("/v1/pc/challenge", { server_id: identity.server_id, public_key: publicKey });
-    if (typeof challenge.challenge_id !== "string") throw new Error("The account service sent no challenge");
+  /** One POST to the account service; `gone` answers 410 with null instead of throwing. */
+  private async call(path: string, body: unknown, gone = false): Promise<Record<string, unknown> | null> {
+    const response = await (this.options.fetch ?? fetch)(new Request(String(this.options.service) + path, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(15_000),
+    }));
+    if (gone && response.status === 410) return null;
+    if (!response.ok) throw new Error(`The account service answered ${response.status} to ${path}`);
+    return await response.json() as Record<string, unknown>;
+  }
+
+  /** A PC route called with a fresh proof of this PC's relay key for the `account` role. */
+  private async proved(identity: RelayIdentity, path: string, body: Record<string, unknown>, gone = false): Promise<Record<string, unknown> | null> {
+    const challenge = (await this.call("/v1/pc/challenge", { server_id: identity.server_id, public_key: bytesToHex(importPublicKey(identity.public_key)) }))!;
+    // Rollback exposes the original native property-read error for a JSON null response.
+    if ((this.options.devices.opensAll() && challenge === null) || typeof challenge.challenge_id !== "string") throw new Error("The account service sent no challenge");
     const proof = answerServerChallenge(challenge.frame, importSecretKey(identity.secret_key),
       { server_id: identity.server_id, role: "account", connection_id: challenge.challenge_id });
     if (!proof) throw new Error("The account service sent a malformed challenge");
-    const mailbox = await call("/v1/pc/mailbox", { server_id: identity.server_id, challenge_id: challenge.challenge_id, proof, account, ack });
+    return await this.call(path, { server_id: identity.server_id, challenge_id: challenge.challenge_id, proof, ...body }, gone);
+  }
+
+  /**
+   * One page of the account's snapshot (Step 2, G1; only with OVIS_ACCOUNT_OPENS_ALL): page 0 asks for a new snapshot,
+   * every later page names the first page's id. The page is checked by readSnapshot, never here.
+   */
+  async snapshotPage(account: string, cursor: { snapshot: string | null; page: number }, used?: UsedReport): Promise<PageAnswer> {
+    const identity = this.options.identity();
+    if (!identity) throw new Error("This PC has no relay identity");
+    const page = await this.proved(identity, "/v1/pc/snapshot", { account, page: cursor.page, ...(cursor.snapshot === null ? {} : { snapshot: cursor.snapshot }), ...(cursor.page === 0 && used !== undefined ? { used } : {}) }, true);
+    return page === null ? { snapshot_gone: true } : { page };
+  }
+
+  private async page(identity: RelayIdentity, account: string, ack: number | null): Promise<{ entries: { seq: number; record: unknown }[]; waiting: { key: string; at: string }[] }> {
+    const mailbox = (await this.proved(identity, "/v1/pc/mailbox", { account, ack }))!;
     const records = mailbox.records;
     if (!Array.isArray(records) || !records.every((entry) => typeof entry === "object" && entry !== null && Number.isSafeInteger((entry as { seq?: unknown }).seq))) {
       throw new Error("The account service sent a malformed mailbox");

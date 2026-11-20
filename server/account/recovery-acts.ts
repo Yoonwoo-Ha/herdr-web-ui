@@ -3,7 +3,7 @@
  * contract; this PC's user, not the request, is named in the journal. Removing keys, lifting blocks and admitting keys
  * come with the device and log changes they need.
  */
-import { AccountDevicesApiError, parseRecoveryAction, type RecoveryStanding } from "../../shared/account-devices-api.ts";
+import { AccountDevicesApiError, parseRecoveryAction, type RecoveryAction, type RecoveryStanding } from "../../shared/account-devices-api.ts";
 import type { DeviceMatch } from "../devices.ts";
 import { AlreadyReleasedError, ReleaseJournalError, releaseRefusal, type RecoveryReleases } from "./recovery.ts";
 
@@ -24,7 +24,7 @@ export interface RecoverySeams {
 
 const UNREADABLE = { error: "This PC cannot read its safety log, so nothing is changed: log_unreadable" };
 
-export function recoveryActs(options: { releases: RecoveryReleases; logReadable(): boolean; user: string; seams?: RecoverySeams }): (request: unknown) => Promise<unknown> {
+export function recoveryActs(options: { releases: RecoveryReleases; logReadable(act: RecoveryAction["act"]): boolean; user: string; seams?: RecoverySeams }): (request: unknown) => Promise<unknown> {
   const { releases } = options;
   return async (request) => {
     let action;
@@ -33,7 +33,7 @@ export function recoveryActs(options: { releases: RecoveryReleases; logReadable(
       if (error instanceof AccountDevicesApiError) return { error: error.message };
       throw error;
     }
-    const pc = { logReadable: options.logReadable() };
+    const pc = { logReadable: options.logReadable(action.act) };
     // Read the log for each request (S19), before any write can inspect or change its targets.
     if (action.act !== "list" && !pc.logReadable) {
       return action.act === "release" ? { error: `${action.rows[0]} cannot be released: log_unreadable` } : UNREADABLE;

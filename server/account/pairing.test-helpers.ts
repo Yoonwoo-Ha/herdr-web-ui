@@ -20,6 +20,7 @@ import { readDeviceRegistry } from "../devices.ts";
 import { createServer } from "../index.ts";
 import { RelayService } from "../relay/service.ts";
 import { bounded, deferred, relayConnection, TestClock } from "../relay/test-helpers.ts";
+import { registerSnapshotPc } from "./listed-pc.test-helpers.ts";
 
 /** The relay id the harness's sessions sign in to (relayConnection), which a link names. */
 export const SERVER_ID = "0123456789abcdef0123456789abcdef";
@@ -44,6 +45,14 @@ export interface Body {
 export interface Answer { status: number; headers: Headers; body: Body }
 
 export type Pc = Awaited<ReturnType<typeof pairingPc>>;
+
+/** Establish standing for a bound member before it signs in or signs a record. */
+export async function firstPairingRead(pc: Pc): Promise<void> {
+  pc.account.opensAll = true;
+  await registerSnapshotPc(pc.account, pc, pc.app.context.services.relay.currentIdentity());
+  const read = await pc.app.context.services.accountMailbox.readSnapshot();
+  if (!read?.committed) throw new Error("The member fixture did not commit its first whole read");
+}
 export type Link = Awaited<ReturnType<typeof relayConnection>>;
 type SessionOptions = Parameters<typeof relayConnection>[1];
 

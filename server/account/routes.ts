@@ -10,7 +10,8 @@ import { applyAccountRecords, applyEnrollment, applyLink, type LinkRefusal } fro
 const LINK_STATUS: Record<LinkRefusal, number> = {
   record_invalid: 400, signature_invalid: 400, account_mismatch: 409, signer_not_member: 403,
   tombstoned: 409, link_not_owner: 403, key_in_use: 409, account_unavailable: 503, enrolling: 409, removal_pending: 409,
-  link_required: 403, unverified_device: 403, pairing_ended: 409, older_device: 403, replacement_needs_app: 409,
+  link_required: 403, unverified_device: 403, pairing_ended: 409, older_device: 403, closed: 409, read_pending: 409,
+  replacement_needs_app: 409,
 };
 
 /**
@@ -122,6 +123,8 @@ export async function handleAccountRequest(request: Request, pathname: string, c
       const wasMember = blocks.length > 0 && peer.kind === "relay" && devices.isAccountApproverSession(peer.device.id, peer.key);
       const receipts = [];
       for (const block of blocks) receipts.push(await devices.applyBlock(block, "handed"));
+      const gates = { ...mailbox.gates(), safetyLog: context.services.safetyLog, deferAdd: devices.opensAll() ? (record: unknown) => mailbox.wait(record) : undefined,
+        requestRead: devices.opensAll() ? () => { void mailbox.readSnapshot(); } : undefined };
       const remaining = records.filter((record) => !blocks.includes(record));
       // Only a current member's session may leave a removal waiting. A session blocked in this batch may do neither that nor apply any other record.
       const member = peer.kind === "relay" && devices.isAccountApproverSession(peer.device.id, peer.key);
@@ -130,7 +133,7 @@ export async function handleAccountRequest(request: Request, pathname: string, c
           id: typeof record === "object" && record !== null && "id" in record && typeof record.id === "string" ? record.id : null,
           outcome: "refused", code: "account_required",
         }))
-        : await applyAccountRecords(devices, remaining, serverId, Date.now(), mailbox.gates(), member ? (record) => mailbox.wait(record) : undefined);
+        : await applyAccountRecords(devices, remaining, serverId, Date.now(), gates, member ? (record) => mailbox.wait(record) : undefined);
       return reply({ results, ...(blocks.length > 0 ? { receipts } : {}) });
     }
     case "/api/account/enroll": {

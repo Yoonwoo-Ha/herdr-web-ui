@@ -242,6 +242,9 @@ export class PcAccountState {
 
   gen(): number { return this.doc.gen; }
 
+  /** All admissions already numbered here are strictly below this boundary, even with the PC clock set back. */
+  nextAdmission(): number { return this.doc.next_admit; }
+
   /** A denial or a policy change reached the disk (P14): a decision that noted the old gen does not commit. */
   /** Whether this PC's removal evidence was on disk once (S19). */
   evidenceWritten(): boolean { return this.doc.evidence_written === true; }

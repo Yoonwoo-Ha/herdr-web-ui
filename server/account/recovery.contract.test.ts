@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { newRecordId, signSafetyRecord, type BlockRecord, type SafetyRecord } from "../../shared/account-records.ts";
 import { bounded } from "../relay/test-helpers.ts";
 import { JOURNAL_FILE } from "./device-journal.ts";
-import { memberRow, pairingPc, phone, provingDevice, setUpFor, type Pc } from "./pairing.test-helpers.ts";
+import { firstPairingRead, memberRow, pairingPc, phone, provingDevice, setUpFor, type Pc } from "./pairing.test-helpers.ts";
 import { pcRecordId } from "./safety-log.ts";
 import { askRecovery, RECOVER_DIR, RECOVER_SOCKET } from "./recovery.ts";
 
@@ -207,6 +207,7 @@ test.if(unix)("T69/P24: a lift at the PC ends the block, and the journal says re
     const id = made.devices.pairRelay(made.devices.startPairing().code, "Phone", key.spki)!.device.id;
     made.devices.linkAccountKey(id, key.spki, key.spki, "acct_1");
   }
+  await firstPairingRead(made);
   const block = await signSafetyRecord({ v: 1, kind: "block", account: "acct_1", target: target.spki, target_no: 9, signer: signer.spki, signer_no: 1, signed_at: new Date().toISOString(), nonce: newRecordId() }, signer.keys.privateKey) as BlockRecord;
   await made.devices.applyBlock(block, "handed");
   expect(await bounded(askRecovery(made.stateDir, { act: "lift", blocks: [block.id] }))).toEqual({ lifted: [block.id] });

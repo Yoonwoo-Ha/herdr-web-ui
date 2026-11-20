@@ -8,10 +8,14 @@ import { AdmissionRefusedError, ReplacementNeedsAppError, type DeviceStore, type
 import type { PairedDevice } from "../../shared/protocol.ts";
 import type { Vouch } from "./mailbox.ts";
 
-export type RecordRefusal = "record_invalid" | "signature_invalid" | "account_mismatch" | "signer_not_member" | "tombstoned" | "link_not_owner" | "account_unavailable" | "enrolling" | "removal_pending" | "older_device";
+import type { SafetyLog } from "./safety-log.ts";
+
+export type RecordRefusal = "record_invalid" | "signature_invalid" | "account_mismatch" | "signer_not_member" | "tombstoned" | "link_not_owner" | "account_unavailable" | "enrolling" | "removal_pending" | "closed" | "read_pending" | "older_device";
 
 /** What holds an `add` back on this PC (mailbox.ts `gates`, docs/account.md "Enrolling a PC"). */
 export interface AddGates {
+  /** A flag-on mailbox keeps signed adds pending until its whole snapshot commits. */
+  readonly deferAdd?: (record: AccountRecord) => boolean;
   /** the PC waits for the member that linked it first to hand it the account's devices */
   enrolling(): boolean;
   /** T36: a self-leave is not held by a queued remove for its own key. */
@@ -38,10 +42,12 @@ function apply(store: DeviceStore, record: AccountRecord, serverId: string | nul
   if (store.accountError !== null) return refused("account_unavailable");
   const account = store.account();
   if (account !== null && account !== record.account) return refused("account_mismatch");
+  // A lock can hide the signer as well. It is a final refusal, not a missing signer to retry.
+  const closed = record.kind === "add" && !store.admits(record.key);
   // a member of any role may sign the remove of its own key: that is how a device leaves (docs/account.md)
   const leaving = record.kind === "remove" && record.signer === record.key;
   const signer = store.accountSigner(record.signer, record.account, leaving);
-  if (!signer) return refused("signer_not_member");
+  if (!signer) return refused(closed ? "closed" : "signer_not_member");
   if (record.kind === "remove" && store.opensAll()) {
     if (gates?.held(record.signer, !leaving)) return refused("removal_pending");
     if (!store.removeAuthority(record.signer, record.key, record.account)) return refused("older_device");
@@ -50,6 +56,7 @@ function apply(store: DeviceStore, record: AccountRecord, serverId: string | nul
   // the signature covers the signer only: a key off the curve would leave a devices.json no store can read
   if (!store.acceptsRelayKey(record.key)) return refused("record_invalid");
   if (store.isTombstoned(record.key)) return refused("tombstoned");
+  if (closed) return refused("closed");
   if (store.hasKey(record.key)) {
     store.keepAccountAdd(record, signer.id);
     return { id: record.id, outcome: "unchanged" };
@@ -57,11 +64,9 @@ function apply(store: DeviceStore, record: AccountRecord, serverId: string | nul
   if (gates?.enrolling()) return refused("enrolling");
   // a key this PC holds back, or a signer it holds back (a remove for it waits here): the add waits for that to settle
   if (gates?.held(record.key) || gates?.removing?.(record.signer)) return refused("removal_pending");
-  // the final guard (G3): a lock, or a block or freeze this key is newer than, holds the add back, and it is not kept
-  if (!store.admits(record.key)) return refused("removal_pending");
   if (serverId === null) return refused("account_unavailable");
   const id = accountDeviceId(serverId, record.key);
-  if (store.has(id)) return refused("record_invalid");
+  if (!store.canAddAt(id, record.key)) return refused("record_invalid");
   try { store.addAccountDevice({ id, key: record.key, label: record.label, role: record.role, account: record.account, addedBy: signer.id, record }, now); }
   catch (error) {
     if (error instanceof AdmissionRefusedError) return refused("removal_pending");
@@ -88,18 +93,30 @@ function withUndecided(gates: AddGates | undefined, undecided: ReadonlySet<strin
   return { enrolling: () => gates?.enrolling() ?? false, held: (key, includeWaiting = true) => (includeWaiting && undecided.has(key)) || (gates?.held(key, includeWaiting) ?? false), removing: (key) => undecided.has(key) || (gates?.removing?.(key) ?? false) };
 }
 
-export async function applyAccountRecords(store: DeviceStore, values: readonly unknown[], serverId: string | null, now = Date.now(), gates?: AddGates, wait?: (record: unknown) => boolean): Promise<RecordOutcome[]> {
+function deferAdd(record: AccountRecord, keep?: (record: AccountRecord) => boolean): RecordOutcome {
+  return { id: record.id, outcome: "refused", code: keep?.(record) === false ? "account_unavailable" : "removal_pending" };
+}
+
+export async function applyAccountRecords(store: DeviceStore, values: readonly unknown[], serverId: string | null, now = Date.now(), gates?: AddGates & { safetyLog?: SafetyLog | null; requestRead?(): void }, wait?: (record: unknown) => boolean): Promise<RecordOutcome[]> {
   if (values.length > ACCOUNT_RECORDS_MAX) throw new RangeError(`At most ${ACCOUNT_RECORDS_MAX} records at once`);
   const outcomes: RecordOutcome[] = [];
   const undecided = new Set<string>();
   const batchGates = withUndecided(gates, undecided);
   for (const value of values) {
     // a denial while this record is verified means its add no longer stands on what was checked (P14)
+    if (gates?.safetyLog && typeof value === "object" && value !== null && "kind" in value && value.kind === "lift") {
+      outcomes.push(await store.handedLifts.receive(value, store, gates.safetyLog));
+      continue;
+    }
     const noted = store.gen();
     const record = await read(value);
-    if (!("refused" in record) && record.kind === "add" && store.gen() !== noted) { outcomes.push({ id: record.id, outcome: "refused", code: "removal_pending" }); continue; }
+    if (!("refused" in record) && record.kind === "add" && (gates?.deferAdd || store.gen() !== noted)) {
+      outcomes.push(deferAdd(record, gates?.deferAdd));
+      continue;
+    }
     outcomes.push("refused" in record ? { id: record.id, outcome: "refused", code: record.refused } : waited(apply(store, record, serverId, now, batchGates), record, value, wait, undecided));
   }
+  if (outcomes.some((result) => result.outcome === "refused" && result.code === "read_pending")) gates?.requestRead?.();
   return outcomes;
 }
 
@@ -142,7 +159,10 @@ export async function applyEnrollment(store: DeviceStore, values: readonly unkno
     progress = false;
     const next: number[] = [];
     for (const index of adds) {
-      const outcome: RecordOutcome = moved ? { id: record(index).id, outcome: "refused", code: "removal_pending" } : apply(store, record(index), serverId, now, gates);
+      const verified = record(index);
+      const heldBack = moved || (store.opensAll() && verified.kind === "add" && (undecided.has(verified.signer) || undecided.has(verified.key)));
+      const outcome = heldBack ? deferAdd(verified) : verified.kind === "add" && store.opensAll()
+        ? deferAdd(verified, options.wait) : apply(store, verified, serverId, now, gates);
       outcomes[index] = outcome;
       if (outcome.outcome === "refused" && outcome.code === "signer_not_member") next.push(index);
       else if (outcome.outcome === "applied") progress = true;
@@ -154,6 +174,19 @@ export async function applyEnrollment(store: DeviceStore, values: readonly unkno
     if (outcome === undefined) throw new Error("Every record of an enrollment has an outcome");
     return outcome;
   });
+}
+
+/** Verify mailbox signatures before the whole read; local authority is checked only by the returned commit. */
+export async function stageMailboxAdds(values: readonly unknown[]) {
+  const staged = [];
+  for (const value of values) {
+    if (typeof value !== "object" || value === null || !("kind" in value) || value.kind !== "add") continue;
+    const record = await read(value);
+    if (!("refused" in record) && record.kind === "add") staged.push({ value, key: record.key,
+      commit: (store: DeviceStore, serverId: string, gates: AddGates) => apply(store, record, serverId, Date.now(), gates),
+    });
+  }
+  return staged;
 }
 
 export type LinkRefusal = RecordRefusal | "key_in_use" | "link_required" | "unverified_device" | "pairing_ended" | "replacement_needs_app";

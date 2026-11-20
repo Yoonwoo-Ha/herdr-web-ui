@@ -50,6 +50,35 @@ function memberRow(account: string): StoredDevice {
 }
 
 describe("the PC's account binding (account-pc.json)", () => {
+  test("T59/T67: neither a current nor stale relay challenge binds a first-device list key", async () => {
+    for (const fresh of [true, false]) {
+      const f = relayFixture(false, { accountOpensAll: true });
+      fixtures.push(f);
+      const device = await relayDevice(f);
+      const listKey = await accountKey();
+      const link = await relayConnection(f);
+      await link.auth(device);
+      const nonce = Buffer.from((await link.welcome).payload.nonce, "base64url");
+      if (!fresh) nonce[0] = (nonce[0] ?? 0) ^ 1;
+      const signature = Buffer.from(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, listKey.keys.privateKey,
+        Buffer.concat([Buffer.from("ovis-relay-auth/1"), nonce, Buffer.from(SERVER_ID)]))).toString("base64url");
+      const record = await signAccountRecord({ v: 1, kind: "link", account: ACCOUNT, key: device.publicKey, server_id: SERVER_ID, device_id: device.id, old_key: device.publicKey, issued_at: new Date().toISOString(), id: newRecordId(), signer: device.publicKey }, device.keys.privateKey);
+      const request = link.open("/api/account/link", { method: "POST", headers: [["content-type", "application/json"], ["x-herdr-machine", "1"]], body: "stream" });
+      await request.stream.sendBody(new Response(JSON.stringify({ record, list_key: listKey.spki, list_signature: signature })).body!);
+      expect((await request.response).status).toBe(200);
+      expect(pcFile(f.stateDir).first).toEqual({ key: device.publicKey, list_key: null });
+    }
+  });
+
+  test("T67/H2: another linked member permanently consumes first-device status", async () => {
+    const dir = stateDir();
+    const devices = store(dir);
+    await linked(devices);
+    expect(pcFile(dir).others_ever).toBe(false);
+    const second = await linked(devices);
+    expect(devices.revoke(second.id)).toBe(true);
+    expect(PcAccountState.open(dir).othersEver()).toBe(true);
+  });
   test("T13: first link and enrollment barrier commit together", async () => {
     const f = relayFixture(false, { accountOpensAll: true });
     fixtures.push(f);

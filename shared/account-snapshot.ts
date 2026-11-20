@@ -22,7 +22,10 @@ function fail(message: string): never {
 }
 
 /** Device table P6, P21: a registered key with its place in the account's order and whether the list may admit it. */
-export interface SnapshotDevice { readonly key: string; readonly no: number; readonly eligible: boolean; readonly label: string }
+export interface SnapshotDevice {
+  readonly key: string; readonly no: number; readonly eligible: boolean; readonly label: string;
+  readonly two_step?: "set" | "unknown"; readonly provider?: "google" | "github" | "apple";
+}
 /** Device table P6, P21: a removed key keeps its `no`, with no end date. */
 export interface SnapshotRemoved { readonly key: string; readonly no: number }
 /** Device table P16, G12: the service's freeze line for one block; keys above `after` are not listed. */
@@ -73,18 +76,23 @@ const isIso = (v: unknown): v is string => typeof v === "string" && ISO_MS.test(
 const isLabel = (v: unknown): v is string => typeof v === "string" && v.length >= 1 && v.length <= 48 && !/[\p{Cc}\p{Cs}]/u.test(v);
 const isDay = (v: unknown): v is string => typeof v === "string" && DAY.test(v) && isIso(`${v}T00:00:00.000Z`);
 
-function object(value: unknown, fields: readonly string[], what: string): Record<string, unknown> {
+/** With a projection, keep only declared wire fields. Safety and on-disk objects remain exact. */
+function object(value: unknown, fields: readonly string[], what: string, projection?: { optional: readonly string[] }): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) fail(`${what} is a JSON object`);
   const record = value as Record<string, unknown>;
+  for (const name of fields) if (!Object.hasOwn(record, name)) fail(`${what} has no ${name}`);
+  if (projection) {
+    const names = [...fields, ...projection.optional.filter(name => Object.hasOwn(record, name))];
+    return Object.fromEntries(names.map(name => [name, record[name]]));
+  }
   for (const name of Object.keys(record)) if (!fields.includes(name)) fail(`Unexpected field ${name} in ${what}`);
-  for (const name of fields) if (!(name in record)) fail(`${what} has no ${name}`);
   return record;
 }
 
-function list(value: unknown, what: string, max: number, item: (entry: unknown) => void): void {
+function list<T>(value: unknown, what: string, max: number, item: (entry: unknown) => T): T[] {
   if (!Array.isArray(value)) fail(`${what} is a list`);
   if (value.length > max) fail(`${what} has more than ${max} entries`);
-  for (const entry of value) item(entry);
+  return Array.from(value, item);
 }
 
 /** A nested safety record of this page's account; its own parse error is this page's. */
@@ -106,9 +114,9 @@ function check(ok: boolean, message: string): void {
 
 const PAGE_FIELDS = ["v", "snapshot", "account", "server_id", "version", "methods_version", "page", "last", "devices", "removed", "blocks", "lifts", "freezes"];
 
-/** One page from the wire, every field checked and nothing extra; throws AccountSnapshotError. A missing part is not an empty one. */
+/** Unknown page and device fields are extensions. A missing required part is not an empty one. */
 export function parseSnapshotPage(value: unknown): AccountSnapshotPage {
-  const page = object(value, PAGE_FIELDS, "A snapshot page");
+  const page = object(value, PAGE_FIELDS, "A snapshot page", { optional: [] });
   check(page.v === ACCOUNT_SNAPSHOT_V, "Unknown snapshot version");
   check(typeof page.snapshot === "string" && SNAPSHOT_ID.test(page.snapshot), "Invalid snapshot id");
   check(typeof page.account === "string" && ACCOUNT.test(page.account), "Invalid account");
@@ -117,9 +125,11 @@ export function parseSnapshotPage(value: unknown): AccountSnapshotPage {
   check(Number.isSafeInteger(page.methods_version) && (page.methods_version as number) >= 0, "Invalid methods_version");
   check(Number.isSafeInteger(page.page) && (page.page as number) >= 0, "Invalid page");
   check(typeof page.last === "boolean", "Invalid last");
-  list(page.devices, "devices", SNAPSHOT_PAGE_MAX, (entry) => {
-    const device = object(entry, ["key", "no", "eligible", "label"], "A device");
-    check(isAccountKeyEncoding(device.key) && isOrder(device.no) && typeof device.eligible === "boolean" && isLabel(device.label), "Invalid device");
+  const devices = list(page.devices, "devices", SNAPSHOT_PAGE_MAX, (entry): SnapshotDevice => {
+    const { key, no, eligible, label, provider, two_step } = object(entry, ["key", "no", "eligible", "label"], "A device", { optional: ["two_step", "provider"] });
+    if (!isAccountKeyEncoding(key) || !isOrder(no) || typeof eligible !== "boolean" || !isLabel(label)) fail("Invalid device");
+    return { key, no, eligible, label, two_step: two_step === "set" ? "set" : "unknown",
+      ...(provider === "google" || provider === "github" || provider === "apple" ? { provider } : {}) };
   });
   list(page.removed, "removed", SNAPSHOT_PAGE_MAX, (entry) => {
     const removed = object(entry, ["key", "no"], "A removed key");
@@ -134,15 +144,16 @@ export function parseSnapshotPage(value: unknown): AccountSnapshotPage {
     const line = object(entry, ["block", "target", "after"], "A freeze line");
     check(typeof line.block === "string" && /^[0-9a-f]{64}$/.test(line.block) && isAccountKeyEncoding(line.target) && isOrder(line.after), "Invalid freeze line");
   });
-  return page as unknown as AccountSnapshotPage;
+  return { ...(page as unknown as AccountSnapshotPage), devices };
 }
 
 /**
  * Device table P6, G1, T58: pages 0..n in order, each with the same snapshot id, account, PC, version and methods_version,
  * and only the last saying so. `lastApplied` is the version of the last snapshot this PC applied.
- * A key appears once across `devices` and `removed`, and one `no` names one key.
+ * Keys and numbers are unique across `devices` and `removed`; blocks and lifts are unique in the read.
+ * G12: each freeze line names a block from the snapshot or the PC's safety log (`knownBlocks`).
  */
-export function assembleSnapshot(pages: readonly AccountSnapshotPage[], expected: { account: string; server_id: string; lastApplied: number | null }): AccountSnapshot {
+export function assembleSnapshot(pages: readonly AccountSnapshotPage[], expected: { account: string; server_id: string; lastApplied: number | null; knownBlocks?: ReadonlySet<string> }): AccountSnapshot {
   const first = pages[0];
   if (first === undefined) fail("A read has at least one page");
   pages.forEach((page, index) => {
@@ -164,6 +175,10 @@ export function assembleSnapshot(pages: readonly AccountSnapshotPage[], expected
     keys.add(key);
     numbers.add(no);
   }
+  const blocks = new Set(snapshot.blocks.map((record) => record.id));
+  check(blocks.size === snapshot.blocks.length, "A block appears twice");
+  check(new Set(snapshot.lifts.map((record) => record.id)).size === snapshot.lifts.length, "A lift appears twice");
+  for (const line of snapshot.freezes) check(blocks.has(line.block) || (expected.knownBlocks?.has(line.block) ?? false), "A freeze line names a block nobody holds");
   return snapshot;
 }
 
@@ -209,7 +224,7 @@ export type AccountDevicesFile =
   | { readonly v: 1; readonly account: string; readonly server_id: string; readonly snapshot: string; readonly version: number; readonly devices: readonly AccountJoinedRow[] }
   | { readonly v: 1; readonly account: null; readonly server_id: string; readonly snapshot: null; readonly version: number; readonly devices: readonly [] };
 
-/** Device table P22: an origin as stored; one that does not parse counts as `remote` with no age, which the caller decides. */
+/** Device table P22: an origin as stored; throws AccountSnapshotError for one that does not parse, and the caller decides what that row may do. */
 export function parseAdmissionOrigin(value: unknown): AdmissionOrigin {
   const origin = object(value, ["from", "how", "by", "admit_no", "at"], "An origin");
   check(FROM.includes(origin.from as string) && HOW.includes(origin.how as string), "Invalid origin path");
@@ -246,4 +261,24 @@ export function parseAccountDevicesFile(value: unknown): AccountDevicesFile {
     check(row.state === "hold" ? row.hold_until === null || isIso(row.hold_until) : (row.state === "live" || row.state === "expired") && row.hold_until === null, "Invalid state");
   });
   return file as unknown as AccountDevicesFile;
+}
+
+/**
+ * Device table P9, section 5, T54: the days this PC saw each key used, sent with page 0 of a snapshot read. A UTC day per
+ * key, each key once, at most SNAPSHOT_PAGE_MAX. The service keeps the latest day per (account, key), and a day only
+ * delays an expiry: it never makes a key eligible. A breached or hostile PC of the account can keep a still signed-in
+ * key from expiring for lack of use; it cannot add, lift or bring back a key.
+ */
+export interface UsedDay { readonly key: string; readonly day: string }
+export type UsedReport = readonly UsedDay[];
+
+/** Throws AccountSnapshotError. */
+export function parseUsedReport(value: unknown): UsedReport {
+  const seen = new Set<string>();
+  list(value, "used", SNAPSHOT_PAGE_MAX, (entry) => {
+    const used = object(entry, ["key", "day"], "A used day");
+    check(isAccountKeyEncoding(used.key) && isDay(used.day) && !seen.has(used.key as string), "Invalid used day");
+    seen.add(used.key as string);
+  });
+  return value as UsedReport;
 }

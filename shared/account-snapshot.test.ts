@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { accountDeviceId, exportAccountKey, newRecordId, signSafetyRecord } from "./account-records.ts";
-import { ACCOUNT_ROWS_MAX, AccountSnapshotError, SNAPSHOT_PAGE_MAX, assembleSnapshot, parseAccountDevicesFile, parseAdmissionOrigin, parseSnapshotPage, type AccountSnapshotPage } from "./account-snapshot.ts";
+import { ACCOUNT_ROWS_MAX, AccountSnapshotError, SNAPSHOT_PAGE_MAX, assembleSnapshot, parseAccountDevicesFile, parseAdmissionOrigin, parseSnapshotPage, type AccountSnapshotPage, parseUsedReport } from "./account-snapshot.ts";
 
 async function key() {
   const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
@@ -26,11 +26,20 @@ const expected = { account: "acct_1", server_id: serverId, lastApplied: 7 };
 
 describe("account snapshot pages (device table P6, G1)", () => {
   test("a page survives JSON and one page is a whole read", () => {
-    const read = parseSnapshotPage(JSON.parse(JSON.stringify(page())));
-    expect(read).toEqual(page());
+    const read = parseSnapshotPage(JSON.parse(JSON.stringify({ ...page(), extra: 1 })));
+    expect(read).toEqual({ ...page(), devices: page().devices.map((device) => ({ ...device, two_step: "unknown" })) });
     const whole = assembleSnapshot([read], expected);
     expect({ snapshot: whole.snapshot, version: whole.version, methods_version: whole.methods_version, devices: whole.devices.map((d) => d.no), removed: whole.removed.map((r) => r.no), blocks: whole.blocks.map((b) => b.id) })
       .toEqual({ snapshot: "a".repeat(32), version: 7, methods_version: 2, devices: [1, 2], removed: [3], blocks: [block.id] });
+  });
+
+  test.each([
+    ["recognized values", { two_step: "set", provider: "google" }, { two_step: "set", provider: "google" }],
+    ["missing values", {}, { two_step: "unknown" }],
+    ["unrecognized values", { two_step: "garbage", provider: "garbage" }, { two_step: "unknown" }],
+  ] as const)("a device entry normalizes %s without refusing the page", (_scenario, fields, normalized) => {
+    const device = { key: older.spki, no: 1, eligible: true, label: "Phone" };
+    expect(parseSnapshotPage({ ...page(), devices: [{ ...device, ...fields }] }).devices).toEqual([{ ...device, ...normalized }]);
   });
 
   test("pages of one snapshot join in order", () => {
@@ -62,7 +71,7 @@ describe("account snapshot pages (device table P6, G1)", () => {
   test("malformed pages are refused, and a missing part is not an empty one", () => {
     const { removed: _removed, ...noRemoved } = page();
     const bad: unknown[] = [
-      null, noRemoved, { ...page(), v: 2 }, { ...page(), extra: 1 }, { ...page(), snapshot: "A".repeat(32) }, { ...page(), version: 0 }, { ...page(), methods_version: -1 }, { ...page(), methods_version: 1.5 },
+      null, noRemoved, { ...page(), v: 2 }, { ...page(), snapshot: "A".repeat(32) }, { ...page(), version: 0 }, { ...page(), methods_version: -1 }, { ...page(), methods_version: 1.5 },
       { ...page(), page: -1 }, { ...page(), devices: [{ key: older.spki, no: 0, eligible: true, label: "Phone" }] },
       { ...page(), devices: [{ key: "nope", no: 1, eligible: true, label: "Phone" }] }, { ...page(), blocks: [lift] }, { ...page(), lifts: [block] },
       { ...page(), freezes: [{ block: block.id, target: newer.spki, after: 0 }] }, { ...page(), blocks: [{ ...block, id: "c".repeat(64) }] },
@@ -164,5 +173,34 @@ describe("account-devices.json (device table S21, S25, P22)", () => {
       { ...file, devices: Array.from({ length: ACCOUNT_ROWS_MAX + 1 }, (_, i) => ({ ...row, id: i.toString(16).padStart(16, "0") })) },
     ];
     for (const value of bad) expect(() => parseAccountDevicesFile(value)).toThrow(AccountSnapshotError);
+  });
+});
+
+describe("a whole read names each record once and every freeze line's block (device table P6, P16, G12)", () => {
+  test("G1: a block or a lift repeated across pages is refused", () => {
+    const first = page({ last: false, devices: page().devices.slice(0, 1) });
+    for (const repeat of [{ blocks: [block], lifts: [], freezes: [] }, { blocks: [], lifts: [lift], freezes: [] }]) {
+      const second = page({ page: 1, devices: page().devices.slice(1), removed: [], ...repeat });
+      expect(() => assembleSnapshot([first, second], expected)).toThrow(AccountSnapshotError);
+    }
+  });
+
+  test("G12: a freeze line whose block is in neither the snapshot nor this PC's known blocks is refused", () => {
+    const orphan = page({ blocks: [], lifts: [] });
+    expect(() => assembleSnapshot([orphan], expected)).toThrow(AccountSnapshotError);
+    expect(assembleSnapshot([orphan], { ...expected, knownBlocks: new Set([block.id]) }).freezes).toEqual(orphan.freezes);
+  });
+});
+
+describe("the days a PC saw each key used (device table P9, section 5, T54)", () => {
+  test("P9: a used report is a list of a key and a real UTC day, each key once, at most a page of them", () => {
+    const report = [{ key: older.spki, day: "2026-11-20" }, { key: newer.spki, day: "2026-09-22" }];
+    expect(parseUsedReport(JSON.parse(JSON.stringify(report)))).toEqual(report);
+    expect(parseUsedReport([])).toEqual([]);
+    for (const bad of [
+      null, {}, [{ key: older.spki }], [{ key: older.spki, day: "2026-02-30" }], [{ key: "not-a-key", day: "2026-11-20" }],
+      [{ key: older.spki, day: "2026-11-20", at: 1 }], [{ key: older.spki, day: "2026-11-20" }, { key: older.spki, day: "2026-11-19" }],
+      Array.from({ length: SNAPSHOT_PAGE_MAX + 1 }, () => ({ key: older.spki, day: "2026-11-20" })),
+    ]) expect(() => parseUsedReport(bad)).toThrow(AccountSnapshotError);
   });
 });

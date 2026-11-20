@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { bounded } from "../relay/test-helpers.ts";
 import { LOCAL_CONFIRM_FILE, type LocalConfirms, type ScreenAction } from "./local-confirm.ts";
-import { ask, memberRow, pairingPc, signIn, type Pc } from "./pairing.test-helpers.ts";
+import { ask, memberRow, pairingPc, signIn, vouchFor, type Pc } from "./pairing.test-helpers.ts";
 
 const pcs: Pc[] = [];
 afterEach(async () => { for (const pc of pcs.splice(0)) await pc.close(); });
@@ -27,6 +27,9 @@ const UNLOCK: ScreenAction = { kind: "unlock", lock: "lock-1" };
 
 test("T47: a relay session, a bare loopback window, a forwarded window or the bridge credential cannot answer a screen confirmation", async () => {
   const made = await pc(true);
+  made.account.opensAll = true;
+  await vouchFor(made, "acct_1", made.member.key);
+  expect(await made.app.context.services.accountMailbox.readSnapshot()).toMatchObject({ committed: true });
   const confirms = confirmsOf(made);
   const { id } = confirms.request(UNLOCK, { title: "Unlock this PC", lines: [] });
   const path = `/api/account/local-confirm/${id}`;

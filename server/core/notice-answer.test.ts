@@ -9,7 +9,7 @@ import { PcAccountState } from "../account/pc-binding.ts";
 import { RemovalEvidence } from "../account/removal-evidence.ts";
 import { SafetyLog } from "../account/safety-log.ts";
 import { DeviceStore } from "../devices.ts";
-import { relayConnection, relayFixture } from "../relay/test-helpers.ts";
+import { caughtUp, relayConnection, relayFixture } from "../relay/test-helpers.ts";
 import { connectionData, type Client } from "./connections.ts";
 import { createSocket } from "./socket.ts";
 
@@ -50,18 +50,19 @@ async function signIn(devices: DeviceStore, row: Key & { id: string }) {
   return devices.matchRelay(row.id, nonce, signature, serverId);
 }
 
-function noticeSocket(devices: DeviceStore, submit = (value: unknown) => devices.applyBlock(value, "session")) {
+function noticeSocket(devices: DeviceStore, deviceId: string, submit = (value: unknown) => devices.applyBlock(value, "session")) {
   const handler = createSocket({
     clients: new Set(), present: new Set(), stopped: () => false, admit: () => true, setRole() {},
     watchable: () => false, terminalHistory: () => false, terminalModes: () => false, watchPane() {}, unwatchPane() {},
     end() {}, holdPending() {}, attachments: new Map(), clientSnapshot: async () => { throw new Error("Snapshot not used"); },
     herdrLifetime: () => undefined, browserSnapshot: (snapshot) => snapshot, countVisit() {}, drainOutput() {}, frames: {} as never,
     accountEnabled: true,
-    notices: { replay: (id) => devices.noticeReplay(id), seen: (id, seq) => devices.noticeSeen(id, seq), block: submit, decide: (id) => devices.decideNotice(id) },
+    notices: { replay: (id) => devices.noticeReplay(id), seen: (id, seq) => devices.noticeSeen(id, seq), block: submit, decide: (id) => devices.decideNotice(id), itsMe: () => false,
+      open: id => devices.openNotices().find(entry => entry.id === id), mayAnswer: (caller, id) => devices.mayAnswerNotice(caller, id) },
   });
   const replies: ServerMessage[] = [];
   const client: Client = {
-    data: connectionData({ deviceId: undefined, readOnly: false }), readyState: WebSocket.OPEN, getBufferedAmount: () => 0,
+    data: connectionData({ deviceId, readOnly: false }), readyState: WebSocket.OPEN, getBufferedAmount: () => 0,
     send: (raw) => { replies.push(JSON.parse(String(raw))); return 1; }, close() {},
   };
   return { send: (frame: unknown) => handler.message(client, JSON.stringify(frame)), replies };
@@ -71,11 +72,14 @@ describe("blocks and freezes on the PC (P16, P21, T51)", () => {
   test("T51: a notice rewrite failure keeps the notice open and reports the committed block", async () => {
     const { dir, devices } = pc();
     const signer = await member(devices);
-    const target = await member(devices);
+    const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
+    const spki = await exportAccountKey(keys.publicKey);
+    // The notice itself must name the account. A pre-link pairing notice grants no authority to decide it.
+    const target = { ...devices.addAccountDevice({ id: "2222222222222222", key: spki, label: "Target", role: "drive", account: ACCOUNT, addedBy: signer.id }), spki };
     const notice = devices.openNotices().find((entry) => entry.row === target.id);
     if (!notice) throw new Error("Missing target admission notice");
     const record = await block(target.spki, signer);
-    const socket = noticeSocket(devices, async (value) => {
+    const socket = noticeSocket(devices, signer.id, async (value) => {
       const receipt = await devices.applyBlock(value, "session");
       const path = join(dir, JOURNAL_FILE);
       renameSync(path, `${path}.saved`);
@@ -99,7 +103,7 @@ describe("blocks and freezes on the PC (P16, P21, T51)", () => {
     const signer = await member(devices);
     const target = await member(devices);
     const record = await block(target.spki, signer);
-    const socket = noticeSocket(devices);
+    const socket = noticeSocket(devices, signer.id);
 
     await socket.send({ type: "notice-answer", id: 51, answer: "not_me", blocks: [record] });
 
@@ -141,6 +145,7 @@ describe("blocks and freezes on the PC (P16, P21, T51)", () => {
     const devices = f.app.context.services.devices;
     const [older, target, another] = [await member(devices), await member(devices), await member(devices)];
     const link = await relayConnection(f);
+    caughtUp(f);
     await link.auth({ keys: older.keys, publicKey: older.spki, id: older.id });
     const post = async (body: unknown) => {
       const request = link.open("/api/account/records", { method: "POST", headers: [["content-type", "application/json"], ["x-herdr-machine", "1"]], body: "stream" });

@@ -2,8 +2,9 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { exportAccountKey, newRecordId, signAccountRecord } from "../../shared/account-records.ts";
 import { handleDeviceRequest, type DeviceStore } from "../devices.ts";
 import { handleRequest } from "../dispatch.ts";
-import { relayConnection, relayFixture } from "../relay/test-helpers.ts";
+import { relayConnection, relayFixture, caughtUp } from "../relay/test-helpers.ts";
 import { applyAccountRecords } from "./records.ts";
+import { memberSnapshotPc } from "./listed-pc.test-helpers.ts";
 
 const ACCOUNT = "acct_1";
 const SERVER_ID = "0123456789abcdef0123456789abcdef";
@@ -22,6 +23,12 @@ function pc(token = "") {
   return { f, devices: f.app.context.services.devices };
 }
 
+function snapshotPc() {
+  const { fixture: f, firstRead } = memberSnapshotPc();
+  fixtures.push(f);
+  return { f, devices: f.app.context.services.devices, firstRead };
+}
+
 /** A drive member of the account here, admitted now: each one joins this PC after the ones before it. */
 async function member(devices: DeviceStore): Promise<Key & { id: string }> {
   const k = await key();
@@ -33,6 +40,7 @@ async function member(devices: DeviceStore): Promise<Key & { id: string }> {
 /** A request from `caller` through the relay, signed in with its key. */
 async function remote(f: ReturnType<typeof relayFixture>, caller: Key & { id: string }) {
   const link = await relayConnection(f);
+  caughtUp(f);
   await link.auth({ keys: caller.keys, publicKey: caller.spki, id: caller.id });
   return async (method: "GET" | "POST" | "DELETE", target: string) => {
     const response = await link.open(target, { method, headers: [["content-type", "application/json"], ["x-herdr-machine", "1"]] }).response;
@@ -149,8 +157,9 @@ describe("remote Revokes reach the caller itself and the rows that joined after 
   });
 
   test("R1/T19: self-Revoke does not extend to an older twin", async () => {
-    const { devices } = pc();
+    const { devices, firstRead } = snapshotPc();
     const older = await member(devices);
+    await firstRead();
     const later = devices.pairRelayApproved("Later", older.spki, { path: "account", addedBy: older.id });
     if (later === null) throw new Error("Could not set up duplicate rows");
 
@@ -158,8 +167,9 @@ describe("remote Revokes reach the caller itself and the rows that joined after 
   });
 
   test("R1/T19: self-Revoke does not silently remove a newer twin either", async () => {
-    const { devices } = pc();
+    const { devices, firstRead } = snapshotPc();
     const older = await member(devices);
+    await firstRead();
     const later = devices.pairRelayApproved("Later", older.spki, { path: "account", addedBy: older.id });
     if (later === null) throw new Error("Could not set up duplicate rows");
 
@@ -167,9 +177,10 @@ describe("remote Revokes reach the caller itself and the rows that joined after 
   });
 
   test("S11-3, R1: a caller cannot revoke a newer twin of its own key", async () => {
-    const { devices } = pc();
+    const { devices, firstRead } = snapshotPc();
     const caller = await member(devices);
     const other = await member(devices);
+    await firstRead();
     expect(devices.remoteRevoke(caller.id, caller.id)).toBe("allowed");
     expect(devices.remoteRevoke(caller.id, other.id)).toBe("allowed");
     const twin = devices.pairRelayApproved("Twin", caller.spki, { path: "account", addedBy: caller.id });
@@ -203,9 +214,10 @@ describe("remote Revokes reach the caller itself and the rows that joined after 
   });
 
   test.each(["a newer key", "its own key"])("T36: a mailbox-held member cannot sign a remove for %s", async (targetKind) => {
-    const { f, devices } = pc();
+    const { f, devices, firstRead } = snapshotPc();
     const signer = await member(devices);
     const target = targetKind === "its own key" ? signer : await member(devices);
+    await firstRead();
     f.app.context.services.accountHolds.hold([signer.spki]);
     const gates = f.app.context.services.accountMailbox.gates();
     expect(gates.held(signer.spki)).toBe(true);
@@ -222,8 +234,11 @@ describe("remote Revokes reach the caller itself and the rows that joined after 
   });
 
   test("T36: signed leave or an older member's authorized remove can commit, with all duplicates checked", async () => {
-    const { devices } = pc();
+    const { fixture, firstRead } = memberSnapshotPc();
+    fixtures.push(fixture);
+    const { devices } = fixture.app.context.services;
     const [older, target, leaving] = [await member(devices), await member(devices), await member(devices)];
+    await firstRead();
     const remove = (of: string, by: Key) => signAccountRecord({ v: 1, kind: "remove", account: ACCOUNT, key: of, issued_at: new Date().toISOString(), id: newRecordId(), signer: by.spki }, by.keys.privateKey);
     // a newer member signs the remove of an older one: refused, nothing changes
     expect((await applyAccountRecords(devices, [await remove(older.spki, leaving)], SERVER_ID))[0]).toMatchObject({ outcome: "refused", code: "older_device" });
@@ -245,8 +260,11 @@ describe("remote Revokes reach the caller itself and the rows that joined after 
   });
 
   test("T37: account-joined row Revoke of a newer row grants no signed remove authority", async () => {
-    const { f, devices } = pc();
+    const { fixture: f, firstRead } = memberSnapshotPc();
+    fixtures.push(f);
+    const { devices } = f.app.context.services;
     const [first, caller] = [await member(devices), await member(devices)];
+    await firstRead();
     const added = devices.pairRelayApproved("Added", (await key()).spki, { path: "account", addedBy: first.id })!.device.id;
     // the caller may Revoke the row that joined after it, from afar
     expect((await (await remote(f, caller))("DELETE", `/api/devices/${added}`)).status).toBe(204);

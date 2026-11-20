@@ -329,6 +329,12 @@ describe("demo transport", () => {
   const answered = (route: string) => exact.has(route) || prefixes.some((prefix) => route.startsWith(prefix));
 
   const DEMO_404: Record<string, string> = {
+    "/api/account/confirm": "a PC-local screen confirmation (the PC's own confirm page); a browser over the demo never answers one",
+    "/api/account/forget": "a PC-local recovery act (ovis recover / the PC's screen); the demo's browser never asks for it",
+    "/api/account/leave": "the PC leaving its account is a PC-local act; the app's own leave goes through the account service",
+    "/api/runtime/move/install": "the demo reports runtime move unavailable (not_herdr), so the app never offers an install",
+    "/api/runtime/move/stop": "the demo reports runtime move unavailable (not_herdr), so the app never offers a stop",
+    "/api/runtime/move/stop-all": "the demo reports runtime move unavailable (not_herdr), so the app never offers a stop",
     "/api/account/enroll": "account linking: no screen of the app asks for it yet (the account screens come with their own demo answers)",
     "/api/updates/cancel": "a connection server asks a PC's own Ovis to stop its update; the demo's browser never does",
     "/api/account/introduce": "account linking: no screen of the app asks for it yet (the account screens come with their own demo answers)",

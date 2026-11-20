@@ -524,4 +524,31 @@ describe("the fake's snapshot wire (device table P6, G1, P16)", () => {
     const lifted = parseSnapshotPage((await read(service, pc(), {})).body);
     expect({ freezes: lifted.freezes, lifts: lifted.lifts.map((l) => l.id), version: lifted.version > after.version }).toEqual({ freezes: [], lifts: [lift.id], version: true });
   });
+
+  test("P16, G12: a key above an active freeze line is left off the list, and a frozen key's block or lift is refused frozen", async () => {
+    const service = new FakeAccountService();
+    service.opensAll = true;
+    const token = service.issueToken("acct_1");
+    const [older, target, newest, later] = [await client(), await client(), await client(), await client()];
+    const olderNo = service.registerDevice("acct_1", older.spki, "Phone");
+    const targetNo = service.registerDevice("acct_1", target.spki, "Laptop");
+    const newestNo = service.registerDevice("acct_1", newest.spki, "Tablet");
+    const laterNo = service.registerDevice("acct_1", later.spki, "Watch");
+    const signed = { v: 1 as const, account: "acct_1", signed_at: new Date().toISOString() };
+    const send = async (record: unknown) => {
+      const response = await service.fetch(post("/v1/safety-records", { record }, token));
+      return { status: response.status, code: ((await response.json()) as { error?: { code: string } }).error?.code };
+    };
+    const block = await signSafetyRecord({ ...signed, kind: "block", target: target.spki, target_no: targetNo, signer: older.spki, signer_no: olderNo, nonce: newRecordId() }, older.pair.privateKey);
+    expect((await send(block)).status).toBe(200);
+    const frozen = parseSnapshotPage((await read(service, pc(), {})).body);
+    expect(frozen.devices.filter((device) => device.eligible).map((device) => device.no)).toEqual([olderNo]);
+    const byFrozen = await signSafetyRecord({ ...signed, kind: "block", target: later.spki, target_no: laterNo, signer: newest.spki, signer_no: newestNo, nonce: newRecordId() }, newest.pair.privateKey);
+    expect(await send(byFrozen)).toEqual({ status: 403, code: "frozen" });
+    const liftByFrozen = await signSafetyRecord({ ...signed, kind: "lift", target: block.id, signer: newest.spki, signer_no: newestNo }, newest.pair.privateKey);
+    expect(await send(liftByFrozen)).toEqual({ status: 403, code: "frozen" });
+    const lift = await signSafetyRecord({ ...signed, kind: "lift", target: block.id, signer: older.spki, signer_no: olderNo }, older.pair.privateKey);
+    expect((await send(lift)).status).toBe(200);
+    expect(parseSnapshotPage((await read(service, pc(), {})).body).devices.filter((device) => device.eligible).map((device) => device.no)).toEqual([olderNo, newestNo, laterNo]);
+  });
 });
