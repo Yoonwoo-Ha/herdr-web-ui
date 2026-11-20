@@ -121,6 +121,10 @@
   text-decoration: none;
 }
 
-.relay-add-saved-pc > svg { width: var(--space-4); height: var(--space-4); color: var(--text-dim); }
+.relay-add-saved-pc > svg { flex: none; width: var(--space-4); height: var(--space-4); color: var(--text-dim); }
+
+.relay-add-saved-name { flex: 1; min-width: 0; text-align: start; overflow-wrap: anywhere; }
+
+.relay-add-saved-note { margin-inline: var(--space-2); color: var(--text-dim); font-size: var(--fs-sm); white-space: nowrap; }
 
 .relay-add .account-error { margin-top: var(--space-3); }

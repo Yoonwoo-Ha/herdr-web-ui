@@ -291,4 +291,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "Remove PC {name}": "{name} PC 제거",
 
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "이 PC의 외부 알림 설정을 읽지 못했습니다({error}). 설정을 닫았다가 다시 여세요.",
+  "Opens the page of every PC this device reaches through the relay, to check, join or forget them.": "이 기기가 릴레이로 연결하는 모든 PC의 페이지를 열어 확인하거나 참여하거나 지울 수 있어요.",
+  "Manage|relayed connections": "관리",
 };

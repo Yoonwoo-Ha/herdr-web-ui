@@ -141,8 +141,12 @@ export async function relayDashboardQa({ browser, origin, evidence }: DashboardQ
       await page.waitForFunction(() => document.querySelectorAll('.status-dot[data-state="checking"]').length === 0, null, { timeout: LOAD_MS });
     };
     await page.locator(".account-provider").first().click();
+    // a sign-in lands on Add a PC, never the dashboard: that opens only by its own address, as here
+    await page.locator('main.relay-add-screen[data-account-state="signed-in"] .relay-add, [data-add-pc-mode]').first().waitFor({ timeout: LOAD_MS });
+    expect(await page.locator(".relay-dash").count() === 0, "the sign-in landed on the dashboard");
+    // a fresh load that draws the signed-in dashboard read the account key back from storage: it was committed
+    await page.goto(`${APP}/#overview`);
     await page.locator('.relay-dash[data-dashboard-mode="account"]').waitFor({ timeout: LOAD_MS });
-    await page.locator("[data-qa-account-key-committed]").waitFor({ state: "attached" });
     // the sign-in's return opens a saved PC by itself once it has read them (#4358): seeded before that read, the PC it
     // opens aborts the reload below, so the pairings wait until the shell has read its entry to the end
     await page.locator('[data-relay-shell="mounted"]').waitFor({ state: "attached" });

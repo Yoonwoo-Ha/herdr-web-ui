@@ -60,6 +60,7 @@ import { RuntimeMove } from "./RuntimeMove.tsx";
 import { SignOutRow } from "./SignOutRow.tsx";
 import { failureText, openOwnOffer, RelayDirectRow, statusText } from "./RelayPanel.tsx";
 import { AccountSection, accountServiceHere, type AccountState } from "./AccountSection.tsx";
+import { shellAccountServiceOf } from "../lib/account/service.ts";
 import { AccountPcRows, NoAccountPcHint, removePcFromAccount } from "./AccountPcs.tsx";
 import { DRAWER_QUERY, leavePcList, pcListExit, removablePc, STATE_WORD } from "./MachineSidebar.tsx";
 import { pcAccountStatus } from "../lib/account/join.ts";
@@ -1273,6 +1274,10 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
                 <SettingsRow label={t("Change PC")} description={t("This page shows one PC. The front page lists every PC this phone is paired with.")}>
                   <button type="button" className="btn" onClick={() => window.location.assign("/")}>{t("Change PC")}</button>
                 </SettingsRow>
+                {/* the dashboard of the account's PCs, opened only on purpose: no launch or sign-in lands on it */}
+                {shellAccountServiceOf(document, window.location.origin, nativeApp) !== null && <SettingsRow label={t("Relayed connections")} description={t("Opens the page of every PC this device reaches through the relay, to check, join or forget them.")}>
+                  <button type="button" className="btn" data-action="manage-relayed" onClick={() => window.location.assign("/#overview")}>{t("Manage|relayed connections")}</button>
+                </SettingsRow>}
                 <SettingsRow label={t("Forget this PC")} description={t("Deletes this phone's key for this PC. Pairing again takes a new QR code from the PC.")}>
                   <button type="button" className="btn" onClick={() => setConfirmForget(true)}>{t("Forget this PC")}</button>
                 </SettingsRow>

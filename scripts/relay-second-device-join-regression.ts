@@ -99,6 +99,9 @@ try {
 
         await page.goto(`${APP}/`);
         await page.locator(".account-provider").first().click();
+        // a sign-in lands on Add a PC, never the dashboard: that opens only by its own address
+        await page.locator('main.relay-add-screen[data-account-state="signed-in"] .relay-add, [data-add-pc-mode]').first().waitFor({ timeout: 45_000 });
+        await page.goto(`${APP}/#overview`);
         await page.locator('.relay-dash[data-dashboard-mode="account"]').waitFor({ timeout: 45_000 });
 
         const card = (label: string) => page.locator(".relay-overview-attention-row").filter({ hasText: label }).locator("[data-attention-action]");

@@ -442,6 +442,7 @@ const BASE: Record<string, string> = {
   // t3code ports (a)
   // t3code ports (d)
   "Change PC": "切换电脑",
+  "Relayed connections": "中继连接",
   "Forget this PC": "忘记这台电脑",
   "Selected": "已选择",
   "Unsent text · {destination}": "未发送的文本 · {destination}",

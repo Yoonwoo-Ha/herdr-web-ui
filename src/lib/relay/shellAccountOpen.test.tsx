@@ -17,6 +17,7 @@ import { dashboardModel, dashboardPcs } from "./dashboard.ts";
 import { accountOpenPeer, accountOpenRefusalFrame } from "./accountOpenPeer.fixture.ts";
 import type { ShellDeviceStore } from "./device.ts";
 import { createShellTestPage } from "./shell.test.tsx";
+import { AccountOpenUnsupportedError } from "../../../shared/relay-channel.ts";
 import { mountRelayShell, type RelayShellMount } from "./shell.tsx";
 import { openRelayTransport, RelayTransport } from "./transport.ts";
 
@@ -32,14 +33,14 @@ let browser: ReturnType<typeof createShellTestPage>;
 beforeEach(() => { browser = createShellTestPage(); browser.setVisibility("hidden"); });
 afterEach(() => { jest.useRealTimers(); setTransport(nativeTransport); browser.dispose(); });
 
-async function accountPc({ release = true, loseRegistrationReply = false, newUntil = null, open }: {
-  release?: boolean; loseRegistrationReply?: boolean;
+async function accountPc({ release = true, loseRegistrationReply = false, newUntil = null, seen = true, open }: {
+  release?: boolean; loseRegistrationReply?: boolean; seen?: boolean;
   newUntil?: string | null;
   open: (...args: [...Parameters<NonNullable<RelayShellMount["open"]>>, ReturnType<typeof generateKeyPair>]) => Promise<RelayTransport>;
 }) {
   const identity = generateKeyPair();
   const serverId = deriveServerId(identity.publicKey);
-  const entry = { server_id: serverId, label: "Desk", public_key: Buffer.from(identity.publicKey).toString("hex"), relay: RELAY, added_at: new Date().toISOString(), last_seen_at: new Date().toISOString(), new_until: newUntil };
+  const entry = { server_id: serverId, label: "Desk", public_key: Buffer.from(identity.publicKey).toString("hex"), relay: RELAY, added_at: new Date().toISOString(), last_seen_at: seen ? new Date().toISOString() : null, new_until: newUntil };
   const accountStore = memoryAccountStore();
   const service = new FakeAccountService();
   service.signInAs("github", "acct_1");
@@ -60,6 +61,8 @@ async function accountPc({ release = true, loseRegistrationReply = false, newUnt
   };
   const mountAt = (entryUrl: string) => mountRelayShell({
     container: Object.create(null), entryUrl, shellVersion: "1.0.0", store, accountStore,
+    // these read the account's rows on the front page: a launch that leaves it for the PC (shell.test.tsx) does not run
+    ...(new URL(entryUrl).pathname === "/" ? { navigatedSinceEntry: () => true } : {}),
     accountService: SERVICE, accountFetch: async (input, init) => {
       const path = new URL(input instanceof Request ? input.url : input).pathname;
       requests.push(path);
@@ -147,6 +150,37 @@ it("T34, P18: a normal sign-in opens a listed unpaired PC as its registered acco
     admissions: key ? [{ feature: true, row: accountDeviceId(run.serverId, key.key.public_spki), key: key.key.public_spki }] : [],
     apps: 1, navigations: [],
   });
+});
+
+it("C3: a reload of the join card a launch put up, not pressed yet, asks again and opens nothing by the account's key", async () => {
+  const run = await accountPc({ open: () => { throw new TypeError("nothing may open before the press"); } });
+  browser.sessionStore.set("ovis-launch-join", run.serverId);
+  await run.openPage();
+  expect({ apps: run.apps(), navigations: run.navigations }).toEqual({ apps: 0, navigations: [expect.stringContaining(`/s/${run.serverId}/#offer=`)] });
+  expect(browser.sessionStore.get("ovis-launch-join")).toBe(run.serverId);
+  // back on the front page (Back, Forward or a reload into the card keep it), only a press on that PC's link ends it
+  await run.reload();
+  expect(browser.sessionStore.get("ovis-launch-join")).toBe(run.serverId);
+  const click = new Event("click");
+  Object.defineProperty(click, "target", { value: { closest: () => ({ getAttribute: () => `/s/${run.serverId}/` }) } });
+  browser.page.dispatchEvent(click);
+  expect(browser.sessionStore.has("ovis-launch-join")).toBe(false);
+});
+
+it("a PC just added to the account that no device is in yet opens on its own page as a new PC, typing the number it shows", async () => {
+  const run = await accountPc({ release: false, seen: false, open: () => { throw new TypeError("nothing opens before the number"); } });
+  await run.openPage();
+  expect(run.navigations).toEqual([expect.stringContaining(`/s/${run.serverId}/#offer=`)]);
+  expect(JSON.parse(browser.sessionStore.get("ovis-add-pc-sheet") ?? "null")).toMatchObject({ mode: "new", server_id: run.serverId, alone: true });
+  expect(browser.sessionStore.get("ovis-typed-join")).toBe(run.serverId);
+});
+
+it("a just-added PC that does not take the account's way in falls back to the new-PC pairing, typing its number", async () => {
+  const run = await accountPc({ seen: false, open: async () => { throw new AccountOpenUnsupportedError(); } });
+  await run.openPage();
+  expect(run.navigations).toEqual([expect.stringContaining(`/s/${run.serverId}/#offer=`)]);
+  expect(JSON.parse(browser.sessionStore.get("ovis-add-pc-sheet") ?? "null")).toMatchObject({ mode: "new", server_id: run.serverId, alone: true });
+  expect(browser.sessionStore.get("ovis-typed-join")).toBe(run.serverId);
 });
 
 it("P18: an account service without the release only receives the challenge probe and still offers Join", async () => {

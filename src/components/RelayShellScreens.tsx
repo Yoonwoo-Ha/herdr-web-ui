@@ -167,7 +167,7 @@ export function ScanQrStep({ onCodeStart, back }: { readonly onCodeStart: () => 
     <>
       <h1 className="relay-shell-title">{t("Scan the QR code on your PC")}</h1>
       <p className="relay-shell-copy">{t("On the PC, open Settings → Devices and PCs → Add a connection → Ovis relay and scan the QR code.")}</p>
-      <div className="relay-shell-actions"><button type="button" className="btn btn-primary" onClick={onCodeStart}>{t("Pair with a code")}</button>{back}</div>
+      <div className="relay-shell-actions"><button type="button" className="btn btn-primary" data-action="add-code" onClick={onCodeStart}>{t("Pair with a code")}</button>{back}</div>
     </>
   );
 }

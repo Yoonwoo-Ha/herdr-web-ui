@@ -30,6 +30,10 @@ const render = (shown: RelayShellProps): string => {
   }
 };
 describe("the front page's account part", () => {
+  // the dashboard is a page opened on purpose, by its address: a front page with none is Add a PC
+  let windowBefore: PropertyDescriptor | undefined;
+  beforeEach(() => { windowBefore = Object.getOwnPropertyDescriptor(globalThis, "window"); Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { hash: "#overview" } } }); });
+  afterEach(() => { if (windowBefore) Object.defineProperty(globalThis, "window", windowBefore); else Reflect.deleteProperty(globalThis, "window"); });
   const pc = (server_id: string, name: string, state: "paired" | "needs-approval" | "offline" | "needs-update", paired = state === "paired") => ({ server_id, name, state, last_seen_at: null, added_at: null, listed: true, paired, linked: paired });
 
   it("offers GitHub alone until the service is set up for Apple", () => {
@@ -75,6 +79,25 @@ describe("the front page's account part", () => {
     expect(after).not.toContain("Sign out");
     expect(after).not.toContain("relay-shell-pc");
     expect(signInAlternatives(after)).toEqual(["Start without signing in"]);
+  });
+
+  it("opens a signed-in front page on Add a PC, never the dashboard, which only its own address opens", () => {
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { hash: "" } } });
+    const devices = [saved("a".repeat(32), "p620"), saved("b".repeat(32), "nuc")];
+    const pcStatus = new Map([["b".repeat(32), { kind: "offline", reason: "pc" }]] as const);
+    const join = { server_public_key: "k", relay: "wss://relay.example" };
+    // a row with no way to join (no key or relay in the directory) is no link: its page would open on nothing
+    const account = { kind: "signed-in" as const, provider: "github" as const, error: null, pcs: [pc("a".repeat(32), "p620", "paired"), { ...pc("c".repeat(32), "desk", "needs-approval"), join }, { ...pc("d".repeat(32), "attic", "offline"), join }, pc("e".repeat(32), "keyless", "needs-approval")] };
+    const html = render({ ...props({ kind: "list", devices, account }), scoped: false, onSignIn: none, onSignOut: none, pcStatus });
+    expect(html).not.toContain("keyless");
+    const failed = render({ ...props({ kind: "list", devices, account: { ...account, error: "The account service did not answer." } }), scoped: false, onSignIn: none, onSignOut: none, onRefreshAccount: none });
+    expect(failed).toMatch(/role="alert">The account service did not answer\. <button[^>]*>Try again<\/button>/);
+    expect(html).toContain('data-account-state="signed-in"');
+    expect(html).not.toContain("relay-dash");
+    const rows = [...html.matchAll(/<a class="relay-add-saved-pc" href="([^"]+)">([\s\S]*?)<\/a>/g)].map(([, href, inner]) => [href, inner!.replace(/<svg[\s\S]*?<\/svg>/g, "").replace(/<[^>]+>/g, " ").trim().replace(/\s+/g, " ")]);
+    expect(rows).toEqual([[`/s/${"a".repeat(32)}/`, "p620"], [`/s/${"b".repeat(32)}/`, "nuc Off"], [`/s/${"c".repeat(32)}/`, "desk Needs approval"], [`/s/${"d".repeat(32)}/`, "attic Off"]]);
+    (window.location as { hash: string }).hash = "#pcs";
+    expect(render({ ...props({ kind: "list", devices, account }), scoped: false, onSignIn: none, onSignOut: none })).toContain("relay-dash");
   });
 
   it("opens a pairing link straight into pairing, without the sign-in", () => {
@@ -156,6 +179,10 @@ describe("the front page's account part", () => {
 });
 
 describe("the dashboard", () => {
+  // the dashboard is a page opened on purpose, by its address: a front page with none is Add a PC
+  let windowBefore: PropertyDescriptor | undefined;
+  beforeEach(() => { windowBefore = Object.getOwnPropertyDescriptor(globalThis, "window"); Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { hash: "#overview" } } }); });
+  afterEach(() => { if (windowBefore) Object.defineProperty(globalThis, "window", windowBefore); else Reflect.deleteProperty(globalThis, "window"); });
   const pc = (server_id: string, name: string, state: MyPc["state"], over: Partial<MyPc> = {}): MyPc => ({ server_id, name, state, last_seen_at: null, added_at: null, listed: true, paired: state === "paired", linked: true, ...over });
   const device = (server_id: string, name: string, relay: string) => ({ server_id, server_public_key: "k", relay, name, device_id: "0".repeat(16), label: "Phone" }) as unknown as Extract<RelayShellProps["state"], { kind: "list" }>["devices"][number];
   const AP = "wss://relay-ap.ovis.sh";
@@ -321,7 +348,8 @@ describe("the dashboard", () => {
       Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
       Object.defineProperty(globalThis, "matchMedia", { configurable: true, value: matchMedia });
       Object.defineProperty(globalThis, "window", { configurable: true, value: {
-        location: { href: "https://app.ovis.sh/", search: "", origin: "https://app.ovis.sh", pathname: "/" },
+        // the dashboard is a page opened on purpose, by its address
+        location: { href: "https://app.ovis.sh/#overview", search: "", hash: "#overview", origin: "https://app.ovis.sh", pathname: "/" },
         history: { state: null, replaceState() {}, pushState() {}, back() {} },
         localStorage: storage, matchMedia, innerWidth: 1440,
         addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events), dispatchEvent: events.dispatchEvent.bind(events),
@@ -765,6 +793,7 @@ describe("the dashboard", () => {
     });
 
     it("takes Pair with a code from Add a PC opened by its address to the code field alone, signed out", async () => {
+      (window.location as { hash?: string }).hash = "#add";
       const shown = { ...props({ kind: "list", devices: [device(ids.desk, "p620", AP)], account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none, addEntry: true };
       await mount(shown);
       await act(async () => { renderer!.root.find((node) => node.type === "button" && node.props["data-action"] === "add-qr").props.onClick(); });
@@ -775,6 +804,7 @@ describe("the dashboard", () => {
     });
 
     it("takes Pair with a code from Add a PC opened by its address to the code field, signed in too", async () => {
+      (window.location as { hash?: string }).hash = "#add";
       const shown = { ...signedIn(four()), addEntry: true };
       await mount(shown);
       await act(async () => { renderer!.root.find((node) => node.type === "button" && node.props["data-action"] === "add-qr").props.onClick(); });
@@ -784,10 +814,23 @@ describe("the dashboard", () => {
     });
 
     it("opens on Add a PC when asked by its address, signed in too, and its Back leaves it", async () => {
+      (window.location as { hash?: string }).hash = "#add";
       await mount({ ...signedIn(four()), addEntry: true });
       expect(textOf(renderer!.root.findByType("h1"))).toBe("Add a PC");
       expect(renderer!.root.findAll((node) => node.props.className === "relay-dash")).toHaveLength(0);
       await act(async () => { renderer!.root.find((node) => node.type === "button" && node.props["aria-label"] === "Back").props.onClick(); });
+      // the front page it leaves for is Add a PC itself, with no Back, and never the dashboard
+      expect(renderer!.root.findAll((node) => node.props.className === "relay-dash")).toHaveLength(0);
+      expect(renderer!.root.findAll((node) => node.type === "button" && node.props["aria-label"] === "Back")).toHaveLength(0);
+      expect(textOf(renderer!.root.findByType("h1"))).toBe("Add a PC");
+    });
+
+    it("leaves Add a PC for the dashboard when its address is taken on purpose", async () => {
+      (window.location as { hash?: string }).hash = "#add";
+      await mount({ ...signedIn(four()), addEntry: true });
+      const manage = renderer!.root.find((node) => node.type === "a" && node.props.className === "account-link relay-add-manage");
+      expect(manage.props.href).toBe("#overview");
+      await act(async () => { (window.location as { hash?: string }).hash = "#overview"; window.dispatchEvent(new Event("hashchange")); });
       expect(renderer!.root.findAll((node) => node.props.className === "relay-dash")).toHaveLength(1);
     });
 

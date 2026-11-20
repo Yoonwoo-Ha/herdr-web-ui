@@ -213,6 +213,8 @@ export interface RelayShellMount {
   pendingPush?: PendingPushStore;
   open?: typeof openRelayTransport;
   navigate?: (path: string) => void;
+  /** a navigation that takes the current history entry's place (a PC's own page going on to its join); `navigate` when it is given */
+  replace?: (path: string) => void;
   label?: string;
   shellVersion?: string;
   reload?: () => Promise<void>;
@@ -247,6 +249,8 @@ export interface Attempt {
   signIn?: AccountSession;
   readonly accountOpen?: SignInKey;
   readonly retriedAccountOpen?: true;
+  /** a PC new in the account that no device is in yet: a pairing it falls back to takes the number its screen shows */
+  readonly freshPc?: true;
   readonly holdRetryMs?: number;
   retryEnrollment?: boolean;
   retriedPending?: boolean;

@@ -63,12 +63,13 @@ function Way({ icon: Icon, title, sub, onClick, action }: { readonly icon: Lucid
 
 /**
  * Add a PC, the one screen behind "Start without signing in" and the app's Add a PC: scan the PC's QR code, enter an
- * address on Tailscale or Wi-Fi, or SSH where the phone app can, then the PCs this device paired before. `qr`: the
- * screen that says where the QR code is and offers a code, for a page with no scanner of its own (a browser).
+ * address on Tailscale or Wi-Fi, or SSH where the phone app can, then the PCs this device paired before and, signed in,
+ * the account's PCs not on it yet, each with what is known of it (`note`: off, needs approval). `qr`: the screen that
+ * says where the QR code is and offers a code, for a page with no scanner of its own (a browser).
  */
 export function RelayAddPc({ onBack, devices, qr }: {
   readonly onBack?: (() => void) | undefined;
-  readonly devices: readonly { readonly server_id: string; readonly name?: string | undefined }[];
+  readonly devices: readonly { readonly server_id: string; readonly name?: string | undefined; readonly note?: string | undefined }[];
   readonly qr: (back: () => void) => ReactNode;
 }) {
   const t = useT(), fieldId = useId(), title = useRef<HTMLHeadingElement>(null);
@@ -142,7 +143,7 @@ export function RelayAddPc({ onBack, devices, qr }: {
               <h2 className="relay-add-saved-title">{t("Your PCs")}</h2>
               <ul>
                 {devices.map((device) => (
-                  <li key={device.server_id}><a className="relay-add-saved-pc" href={serverScopePath(device.server_id)}>{device.name ?? t("Unnamed PC")}<ChevronRight aria-hidden="true" /></a></li>
+                  <li key={device.server_id}><a className="relay-add-saved-pc" href={serverScopePath(device.server_id)}><span className="relay-add-saved-name">{device.name ?? t("Unnamed PC")}</span>{device.note !== undefined && <span className="relay-add-saved-note">{device.note}</span>}<ChevronRight aria-hidden="true" /></a></li>
                 ))}
               </ul>
             </section>

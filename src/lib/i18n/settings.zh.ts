@@ -291,4 +291,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Remove PC {name}": "移除 PC {name}",
 
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "无法读取此 PC 的外部提醒设置（{error}）。请关闭设置后重新打开。",
+  "Opens the page of every PC this device reaches through the relay, to check, join or forget them.": "打开此设备通过中继连接的所有电脑的页面，可以检查、加入或移除它们。",
+  "Manage|relayed connections": "管理",
 };

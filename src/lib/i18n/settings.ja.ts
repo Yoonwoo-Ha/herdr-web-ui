@@ -291,4 +291,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "Remove PC {name}": "PC {name} を削除",
 
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "この PC の外部通知の設定を読み取れませんでした（{error}）。設定を閉じてもう一度開いてください。",
+  "Opens the page of every PC this device reaches through the relay, to check, join or forget them.": "このデバイスがリレーでつなぐすべてのPCのページを開き、確認・参加・削除ができます。",
+  "Manage|relayed connections": "管理",
 };

@@ -363,3 +363,5 @@
 .relay-shell-code-id {
   margin: var(--space-4) 0;
 }
+
+.relay-add-manage { display: block; margin-top: var(--space-4); text-align: center; }

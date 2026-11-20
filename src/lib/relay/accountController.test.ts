@@ -52,7 +52,13 @@ describe("the hosted shell's front page", () => {
   };
   const last = (): RelayShellProps => shellProps(rendered.at(-1)!);
   const account = () => { const { state } = last(); if ((state.kind !== "list" && state.kind !== "empty") || state.account?.kind !== "signed-in") throw new Error(`not the signed-in front page: ${state.kind}`); return state.account; };
-  const rows = (): number => renderToStaticMarkup(rendered.at(-1)!).match(/<tr[^>]*data-pc-state="/g)?.length ?? 0;
+  // the rows of the dashboard, which a front page draws only at its own address
+  const rows = (): number => {
+    const location = window.location as { hash: string };
+    const before = location.hash;
+    location.hash = "#overview";
+    try { return renderToStaticMarkup(rendered.at(-1)!).match(/<tr[^>]*data-pc-state="/g)?.length ?? 0; } finally { location.hash = before; }
+  };
   const visible = (next: "visible" | "hidden"): void => { browser.setVisibility(next); browser.page.dispatchEvent(new Event("visibilitychange")); };
 
   it("invalidates an in-flight directory read as soon as sign-out starts", async () => {

@@ -101,12 +101,13 @@ it("checks exactly the PC asked for, ahead of a sweep's remaining PCs and within
   expect(checked).toEqual([outside, ids[0] ?? ""]);
   const movedUp = sweep.checkOne(queued);
   const another = sweep.checkOne(ids[11] ?? "");
-  await sweep.checkOne(outside);
+  // asked again while its check runs: no second check, and it settles with that one
+  const repeat = sweep.checkOne(outside);
   expect(checked).toHaveLength(2);
   pending[0]?.resolve({ kind: "answered", route: "lan", rttMs: 4 });
   await arrived(3);
   expect(checked[2]).toBe(ids[11]);
-  await asked;
+  await Promise.all([asked, repeat]);
   expect(sweep.status.get(outside)).toEqual({ kind: "answered", route: "lan", rttMs: 4 });
   pending[1]?.resolve({ kind: "answered", route: "relay", rttMs: 20 });
   await arrived(4);
@@ -412,4 +413,21 @@ it("lets the answers it was keeping go when stopped, with no timer left", async 
   await swept;
   sweep.stop();
   expect(jest.getTimerCount()).toBe(0);
+});
+
+it("lets a check asked for while that PC's check is under way settle with that one's answer", async () => {
+  const { devices, store } = await savedPcs(1);
+  const id = devices[0]?.server_id ?? "";
+  const { pending, checked, arrived, probe } = heldProbe();
+  const sweep = createPcSweep(store, { active: () => true, redraw() {} }, { probe });
+  const first = sweep.checkOne(id);
+  await arrived(1);
+  let settled = false;
+  const again = sweep.checkOne(id).then(() => { settled = true; });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  pending[0]?.resolve({ kind: "answered", route: "relay", rttMs: 20 });
+  await Promise.all([first, again]);
+  expect([checked.length, sweep.status.get(id)?.kind]).toEqual([1, "answered"]);
+  sweep.stop();
 });

@@ -527,6 +527,11 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
     };
     const signIn = async (page: Page): Promise<void> => {
       await page.getByRole("button", { name: "Continue with GitHub" }).click();
+      // a sign-in lands on Add a PC, or on the join card of an account PC this device is not in yet, never the dashboard:
+      // that opens only by its own address
+      await page.locator('main.relay-add-screen[data-account-state="signed-in"] .relay-add, [data-add-pc-mode]').first().waitFor();
+      assert.equal(await page.locator(".relay-dash").count(), 0, "the sign-in landed on the dashboard");
+      await page.goto(`${APP}/#overview`);
       await page.locator('.relay-dash[data-dashboard-mode="account"]').waitFor();
     };
     const row = (page: Page, name: string) => page.locator("[data-pc-list] [data-pc-id]", { hasText: name });
@@ -598,7 +603,12 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
       seenDesk.last_seen_at = new Date(Date.now() - 5 * 60_000).toISOString();
       const seenFirst = pc1.lastSeen();
       assert.equal(seenFirst, seenDesk.last_seen_at, "Desk PC's last_seen_at is five minutes ago");
+      // signed in, the front page is Add a PC, listing Desk PC; the dashboard opens only by its own address
       await a.goto(`${APP}/`);
+      await a.locator('main.relay-add-screen[data-account-state="signed-in"]').locator(".relay-add-saved-pc", { hasText: "Desk PC" }).waitFor();
+      assert.equal(await a.locator(".relay-dash").count(), 0, "the signed-in front page is not the dashboard");
+      await capture(a, "front-signed-in-1440-dark");
+      await a.goto(`${APP}/#overview`);
       await stateWord(a, "Desk PC").and(a.getByText("Ready", { exact: true })).waitFor();
       await row(a, "Desk PC").locator(".relay-pc-cell-seen", { hasText: /^\d+ min ago$/ }).waitFor();
       assert.equal(await row(a, "Desk PC").getAttribute("data-pc-state"), "paired");
@@ -645,7 +655,7 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
       }));
       assert.equal(put.status, 200, `Mac mini listed itself: ${await put.text()}`);
       assert.equal((await pc2.local("/api/relay/link", { headers: { "x-ovis-local-only": "1" } })).status, 200);
-      await a.goto(`${APP}/`);
+      await a.goto(`${APP}/#overview`);
       await row(a, "Mac mini").locator('[data-pc-action="add"]').waitFor();
       assert.equal(await row(a, "Mac mini").getAttribute("data-pc-state"), "needs-approval");
       await row(a, "Mac mini").getByRole("button", { name: "Add", exact: true }).click();
@@ -669,7 +679,7 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
       await inApp(a);
       await until(async () => pc2.joined() && (await saved(a, pc2.id))?.enrollment === "complete", "Mac mini joined the account and this device recorded completion", 75_000);
       await pc2.mailbox.pull();
-      await a.goto(`${APP}/`);
+      await a.goto(`${APP}/#overview`);
       await row(a, "Mac mini").and(a.locator('[data-pc-state="paired"]')).waitFor();
       log9(`new PC: Mac mini ${pc2.id} listed itself and opened its local-only window -> row Add -> sheet (new) -> Add this PC (no confirm step, no second Pair) -> typed the ${asked!.digits.length} digits its own screen listed -> approved on the PC -> app -> row Ready`);
 
@@ -706,7 +716,7 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
       await until(async () => (await pc1.pairings()).length === 0 && pc1.joined() && (await saved(b, pc1.id))?.enrollment === "complete", "Desk PC settled and this device recorded completion after the member's approval", 75_000);
       await pc1.mailbox.pull();
       await pc2.mailbox.pull();
-      await b.goto(`${APP}/`);
+      await b.goto(`${APP}/#overview`);
       await row(b, "Desk PC").and(b.locator('[data-pc-state="paired"]')).waitFor();
       log9(`account join: Desk PC added 11 min ago, its window closed -> second device (390) Join -> Ask to join (no confirm step, no second Pair) -> showed ${shown.length} digits; the first device (another member, in Desk PC's app) got the prompt with 3 choices and picked them; Desk PC's own GET /api/relay/pairings = []; -> app -> row Ready`);
 
@@ -715,7 +725,7 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
         [b, 390, () => b.locator(".relay-dash-brand-bar").getByRole("button", { name: "Add a PC", exact: true }).click()],
       ] as const) {
         for (const theme of ["dark", "light"] as const) {
-          await page.goto(`${APP}/`);
+          await page.goto(`${APP}/#overview`);
           await setTheme(page, theme);
           await row(page, "Desk PC").and(page.locator('[data-pc-state="paired"]')).waitFor();
           await capture(page, `dashboard-${width}-${theme}`);

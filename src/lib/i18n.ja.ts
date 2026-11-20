@@ -437,6 +437,7 @@ const BASE: Record<string, string> = {
   // t3code ports (a)
   // t3code ports (d)
   "Change PC": "PCを切り替え",
+  "Relayed connections": "リレー接続",
   "Forget this PC": "このPCを削除",
   "Selected": "選択中",
   "Unsent text · {destination}": "未送信のテキスト · {destination}",

@@ -435,6 +435,7 @@ const BASE: Record<string, string> = {
   // t3code ports (a)
   // t3code ports (d)
   "Change PC": "PC 바꾸기",
+  "Relayed connections": "릴레이 연결",
   "Forget this PC": "이 PC 잊기",
   "Selected": "선택됨",
   "Unsent text · {destination}": "보내지 않은 글 · {destination}",
