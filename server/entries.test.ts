@@ -65,7 +65,7 @@ describe("server entries", () => {
   });
 
   it("serves every entry the installers, bundles and Windows task name", () => {
-    expect(Object.keys(ENTRIES).sort()).toEqual(["askpass", "machine", "managed", "plugin", "remote", "serve", "supervisor", "windows-launch"]);
+    expect(Object.keys(ENTRIES).sort()).toEqual(["askpass", "browser-mcp", "machine", "managed", "plugin", "remote", "serve", "supervisor", "windows-launch"]);
   });
 
   it("roots the server in its checkout from source and in the binary's folder when compiled", () => {

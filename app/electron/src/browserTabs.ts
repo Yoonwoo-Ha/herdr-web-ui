@@ -17,6 +17,7 @@ import { hostForm } from "./browserState.ts";
 export const BROWSER_PROFILES = ["mine", "agent"] as const;
 export type BrowserProfile = (typeof BROWSER_PROFILES)[number];
 export const MAX_BROWSER_TABS = 8;
+const AGENT_OPEN_MS = 30_000;
 /** a download larger than this is cancelled, and a profile keeps at most MAX_DOWNLOADS from one start of the app */
 export const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024;
 export const MAX_DOWNLOADS = 50;
@@ -39,6 +40,8 @@ export interface BrowserTab {
   canGoForward: boolean;
   /** an agent tab a person holds: the agent's tools wait, and the tab takes the person's input */
   held: boolean;
+  /** the pane whose agent opened it; null for a tab of the person's own */
+  owner: string | null;
 }
 
 export interface BrowserBounds {
@@ -51,10 +54,20 @@ export interface BrowserBounds {
 interface Tab {
   id: number;
   profile: BrowserProfile;
+  /** the pane whose agent opened it (browserBroker.ts); its tools see no other tab */
+  owner: string | null;
   view: WebContentsView;
   allowed: Allowed | null;
   title: string;
   held: boolean;
+}
+
+/** what the agents' tools may hold of a tab: one of the owner's, while the person does not hold it */
+export interface AgentTab {
+  id: number;
+  contents: WebContents;
+  address: string;
+  shown: boolean;
 }
 
 const PARTITION: Record<BrowserProfile, string> = { mine: "persist:ovis-browser-mine", agent: "persist:ovis-browser-agent" };
@@ -99,18 +112,21 @@ export class BrowserTabs {
       canGoBack: tab.view.webContents.navigationHistory.canGoBack(),
       canGoForward: tab.view.webContents.navigationHistory.canGoForward(),
       held: tab.held,
+      owner: tab.owner,
     }]);
   }
 
   /** a tab of `profile` on `url`, or null when the address is refused or the tabs are at their limit */
-  open(url: string, profile: BrowserProfile): number | null {
+  open(url: string, profile: BrowserProfile, owner: string | null = null): number | null {
     // each profile has its own limit: a person's tabs never leave an agent without one, nor the other way round
     const sameProfile = [...this.tabs.values()].filter((tab) => tab.profile === profile).length;
     if (sameProfile >= MAX_BROWSER_TABS || !this.decide(url, null).allowed) return null;
     const partition = sessions.fromPartition(PARTITION[profile]);
     this.guard(partition, profile);
     const view = new WebContentsView({ webPreferences: { session: partition, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, devTools: false, safeDialogs: true } });
-    const tab: Tab = { id: this.nextId++, profile, view, allowed: null, title: "", held: false };
+    // a page lays out at its view's size, drawn or not: one no person has placed yet gets a desktop window's
+    view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+    const tab: Tab = { id: this.nextId++, profile, owner: profile === "agent" ? owner : null, view, allowed: null, title: "", held: false };
     this.tabs.set(tab.id, tab);
     this.watch(tab);
     void view.webContents.loadURL(url).catch(() => {});
@@ -152,6 +168,14 @@ export class BrowserTabs {
     if (tab && window && !window.isDestroyed()) window.contentView.removeChildView(tab.view);
   }
 
+  /** a picture of the tab as PNG data, or null while it is not drawn (a tab nobody looks at paints nothing) */
+  async thumbnail(id: number): Promise<string | null> {
+    const tab = this.tabs.get(id);
+    if (!tab || tab.allowed === null || this.shown !== id) return null;
+    const image = await tab.view.webContents.capturePage().catch(() => null);
+    return image === null || image.isEmpty() ? null : image.resize({ width: 320 }).toDataURL();
+  }
+
   navigate(id: number, url: string): boolean {
     const tab = this.tabs.get(id);
     if (!tab || !this.decide(url, null).allowed) return false;
@@ -174,6 +198,48 @@ export class BrowserTabs {
     if (!tab || tab.profile !== "agent" || tab.held === held) return;
     tab.held = held;
     this.tell();
+  }
+
+  /**
+   * An agent tab for `owner` on `url`: its id once the first address it commits is allowed, or null
+   * when it is refused, fails to load or the tabs are at their limit (and then it is gone).
+   */
+  async openFor(owner: string, url: string): Promise<number | null> {
+    const id = this.open(url, "agent", owner);
+    const tab = id === null ? undefined : this.tabs.get(id);
+    if (!tab) return null;
+    const contents = tab.view.webContents;
+    const listed = await new Promise<boolean>((settle) => {
+      const stopped = () => done(tab.allowed !== null);
+      const failed = (_event: unknown, code: number, _text: string, _url: string, isMainFrame: boolean) => { if (isMainFrame && code !== -3) done(false); };
+      const gone = () => done(false);
+      // a page that never stops loading is listed if its first address was allowed, by then
+      const timer = setTimeout(() => done(tab.allowed !== null), AGENT_OPEN_MS);
+      function done(result: boolean): void {
+        clearTimeout(timer);
+        contents.off("did-stop-loading", stopped);
+        contents.off("did-fail-load", failed);
+        contents.off("destroyed", gone);
+        settle(result);
+      }
+      contents.on("did-stop-loading", stopped);
+      contents.on("did-fail-load", failed);
+      contents.on("destroyed", gone);
+    });
+    if (!listed) this.close(tab.id);
+    return listed ? tab.id : null;
+  }
+
+  ownTabs(owner: string): BrowserTab[] {
+    return this.list().filter((tab) => this.tabs.get(tab.id)?.owner === owner);
+  }
+
+  /** An owner's tab its tools may use now, or the reason they may not. */
+  agentTab(owner: string, id: number): AgentTab | string {
+    const tab = this.tabs.get(id);
+    if (!tab || tab.owner !== owner || tab.allowed === null) return "No such tab of yours: list them with browser_tabs.";
+    if (tab.held) return "The user has taken control of this tab: wait until they hand it back.";
+    return { id, contents: tab.view.webContents, address: shownAddress(tab.allowed), shown: this.shown === id };
   }
 
   private decide(url: string, frameOrigin: string | null) {
@@ -257,7 +323,8 @@ export class BrowserTabs {
     if (tab.profile === "agent") contents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
     contents.setWindowOpenHandler(({ url }) => {
       if (!this.tabs.has(tab.id)) return { action: "deny" };
-      this.open(url, tab.profile);
+      // a window the page opens is a tab of the same profile and, for an agent's, of the same pane
+      this.open(url, tab.profile, tab.owner);
       this.tell();
       return { action: "deny" };
     });

@@ -17,6 +17,8 @@ import { findBrowsers, readLinkBrowser, webAddress, writeLinkBrowser, type Found
 import { BrowserTabs, type BrowserBounds } from "./browserTabs.ts";
 import { debuggingSwitch, ownAddresses, readBrowserState } from "./browserState.ts";
 import { networkInterfaces } from "node:os";
+import { BrowserBroker, brokerPath } from "./browserBroker.ts";
+import { BROWSER_TOKENS_DIR } from "../../../shared/browser-broker.ts";
 
 type StepState = "pending" | "ok" | "failed";
 export interface Status {
@@ -77,6 +79,9 @@ let pendingLink: string | null = null;
 let browser: BrowserTabs | null = null;
 let browserPort: number | null = null;
 let stateWatch: FSWatcher | null = null;
+/** the agents' way into it (browserBroker.ts), open only while it is on; none where there is no local-only socket (Windows) */
+const brokerSocket = brokerPath(app.getPath("userData"), process.platform);
+const broker = brokerSocket === null ? null : new BrowserBroker(() => browser, join(stateDir, BROWSER_TOKENS_DIR), brokerSocket);
 
 const accountService = accountServiceOf(process.env);
 
@@ -117,12 +122,17 @@ function updateBrowser(): void {
   const state = readBrowserState(stateDir, browserPort, debuggingSwitch((name) => app.commandLine.hasSwitch(name)));
   const was = browser !== null;
   if (!state.enabled) {
+    if (browser) broker?.stop();
     browser?.closeAll();
     browser = null;
   } else if (browser) {
     browser.setPolicy(state.policy);
+    // a quit that did not happen (a refused update) stopped the socket: it listens again once that quit is over (start
+    // is a no-op while it listens); never while the app is on its way out
+    if (!quitting) broker?.start().catch((error: unknown) => console.error(`The built-in browser's agent socket did not open: ${message(error)}`));
   } else {
     browser = new BrowserTabs(() => window, state.policy, join(app.getPath("userData"), "browser-downloads"), tellBrowser, () => ownAddresses(networkInterfaces()));
+    broker?.start().catch((error: unknown) => console.error(`The built-in browser's agent socket did not open: ${message(error)}`));
   }
   if (was !== (browser !== null)) tellBrowser();
 }
@@ -263,6 +273,7 @@ async function waitUntilEnded(pid: number, timeoutMs: number): Promise<void> {
 
 async function stopForQuit(): Promise<void> {
   quitting = true;
+  broker?.stop(true);
   spawning?.kill("SIGTERM");
   await busy;
   const running = server;
@@ -723,6 +734,10 @@ if (!app.requestSingleInstanceLock()) {
     if (tabs && tab !== null && numbers) tabs.show(tab, box as BrowserBounds);
   });
   ipcMain.on("ovis:tabs-hide", (event) => browserFor(event)?.hide());
+  ipcMain.handle("ovis:tabs-thumbnail", (event, id: unknown) => {
+    const tab = tabId(id);
+    return tab === null ? null : browserFor(event)?.thumbnail(tab) ?? null;
+  });
   ipcMain.on("ovis:tabs-close", (event, id: unknown) => {
     const tab = tabId(id);
     if (tab !== null) browserFor(event)?.close(tab);

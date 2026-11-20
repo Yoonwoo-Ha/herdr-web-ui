@@ -64,6 +64,14 @@ validation approach from
 The MIT license text below applies. Ovis uses independent server IDs,
 bounded private storage and absent-only response defaults.
 
+## orca accessibility snapshot
+
+`app/electron/src/browserAxTree.ts` adapts the accessibility-tree walk (its role sets and the
+outline it makes) from [stablyai/orca](https://github.com/stablyai/orca),
+`src/main/browser/cdp/snapshots/snapshot-ax-tree-walk.ts`, at revision
+`0854480f88dbc495dc7c2b95dc35844916e4b296`, under MIT, Copyright (c) 2026 Lovecast Inc. The MIT
+license text below applies.
+
 ## Agent of Empires IME rewrite sequences
 
 The dictation hypotheses and SwiftKey word-commit sequences in

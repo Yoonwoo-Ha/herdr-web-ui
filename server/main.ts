@@ -9,6 +9,7 @@ const RUN: Record<EntryName, () => Promise<unknown>> = {
   plugin: () => import("../scripts/plugin.ts").then((entry) => entry.runPlugin()),
   askpass: () => import("./ssh-askpass.ts"),
   "windows-launch": () => import("./windows-launch.ts"),
+  "browser-mcp": () => import("./browser-mcp.ts").then((entry) => entry.runBrowserMcp()),
 };
 
 const name = process.argv[2];
