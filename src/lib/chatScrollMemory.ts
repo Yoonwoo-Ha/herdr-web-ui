@@ -68,7 +68,7 @@ function load(): void {
 }
 
 function save(): void {
-  if (saveTimer !== null) { window.clearTimeout(saveTimer); saveTimer = null; }
+  if (saveTimer !== null) { clearTimeout(saveTimer); saveTimer = null; }
   try { storage()?.setItem(STORAGE_KEY, JSON.stringify([...positions])); } catch {}
 }
 
