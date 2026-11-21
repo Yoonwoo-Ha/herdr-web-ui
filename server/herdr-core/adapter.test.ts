@@ -1970,6 +1970,156 @@ describe("herdr-core adapter, Ovis's layout document", () => {
     await herdrRpc("pane.rename", { pane_id: "t1", label: null }, socket);
     expect((await paneGet("t1", socket)).label).toBe("shell");
   });
+
+  // What each layout method asks hc today, in order: the behaviour of record for moving the layout
+  // operations out of the adapter. Workspace A holds tab A1 (t1 beside t2) and tab A2 (t3), B holds B1 (t4).
+  describe("the hc calls of each layout method", () => {
+    const known = (zoomed: string | null = null, ratio = 0.5) => ({ schema: 1, workspaces: [
+      { id: "A", tabs: [
+        { id: "A1", zoomed, root: { split: "right", ratio, first: { leaf: "t1" }, second: { leaf: "t2" } } },
+        { id: "A2", zoomed: null, root: { leaf: "t3" } },
+      ] },
+      { id: "B", tabs: [{ id: "B1", zoomed: null, root: { leaf: "t4" } }] },
+    ] });
+    /**
+     * One request on a core holding `layout` at version 1 in `docs`, its handlers changed by `adjust`: its answer (or refusal
+     * code), the store, and the hc calls it made, a document's name after `doc.*`.
+     */
+    const callsOf = async (method: string, params: Record<string, unknown>, layout: unknown = known(), docs = documents(), adjust = (handlers: Record<string, Handler>) => handlers) => {
+      docs.docs.set("ovis-layout", { value: layout, version: 1 });
+      const store = { ...docs, handlers: adjust({ ...docs.handlers, "terminal.kill": () => ({}), "terminal.rm": () => ({}) }) as typeof docs.handlers };
+      const { socket, cores } = await core([
+        terminal("t1", { labels: { "herdr.space": "A", "herdr.tab": "A1", "ovis.pane": "logs" } }), labeled("t2", "A", "A1"), labeled("t3", "A", "A2"), labeled("t4", "B", "B1"),
+      ], store);
+      const from = cores.flatMap((held) => held.calls).length;
+      const answer = await herdrRpc(method, params, socket).catch((error: unknown) => ({ refused: error instanceof HerdrError ? error.code : String(error) }));
+      const steps = cores.flatMap((held) => held.calls).slice(from).map((call) => (call.method.startsWith("doc.") ? `${call.method} ${String(call.params["name"])}` : call.method));
+      return { answer, store, steps };
+    };
+    /** a snapshot: the terminals and both documents at once */
+    const SNAPSHOT = ["terminal.list", "doc.get herdr-app", "doc.get ovis-layout"];
+    /** an edit: Ovis's document first, then the terminals and the app's document, then the write at the version read */
+    const EDIT = ["doc.get ovis-layout", "terminal.list", "doc.get herdr-app", "doc.set ovis-layout"];
+    const EDIT_UNCHANGED = ["doc.get ovis-layout", "terminal.list", "doc.get herdr-app"];
+
+    const edits: [string, Record<string, unknown>, string[]][] = [
+      ["pane.split", { target_pane_id: "t1", direction: "down" }, [...SNAPSHOT, "terminal.get", "doc.get ovis-layout", "terminal.run", ...SNAPSHOT, ...EDIT, ...SNAPSHOT]],
+      ["layout.set_split_ratio", { tab_id: "A1", path: [], ratio: 0.3 }, [...EDIT]],
+      ["pane.resize", { pane_id: "t1", direction: "right", amount: 0.1 }, [...EDIT, ...SNAPSHOT]],
+      ["pane.swap", { pane_id: "t1", direction: "right" }, [...EDIT, ...SNAPSHOT]],
+      ["pane.zoom", { pane_id: "t1" }, [...EDIT, ...SNAPSHOT]],
+      ["pane.move", { pane_id: "t1", destination: { type: "tab", tab_id: "A1", target_pane_id: "t2", split: "down" } }, [...EDIT, ...SNAPSHOT]],
+      ["tab.move", { tab_id: "A2", insert_index: 0 }, [...SNAPSHOT, ...EDIT, ...SNAPSHOT]],
+      ["workspace.move", { workspace_id: "B", insert_index: 0 }, [...SNAPSHOT, ...EDIT]],
+    ];
+    // a name, a move to another workspace and a close are labels and ends: the document follows the terminals
+    const relabels: [string, Record<string, unknown>, string[]][] = [
+      ["pane.move", { pane_id: "t3", destination: { type: "new_tab", workspace_id: "B" } }, [...SNAPSHOT, "terminal.label", ...SNAPSHOT]],
+      ["workspace.rename", { workspace_id: "A", label: "api" }, [...SNAPSHOT, "terminal.label", "terminal.label", "terminal.label"]],
+      ["tab.rename", { tab_id: "A1", label: "main" }, [...SNAPSHOT, "terminal.label", "terminal.label"]],
+      ["pane.rename", { pane_id: "t2", label: "build" }, [...SNAPSHOT, "terminal.label"]],
+      ["pane.close", { pane_id: "t3" }, [...SNAPSHOT, "terminal.kill", "terminal.rm"]],
+      ["tab.close", { tab_id: "A2" }, [...SNAPSHOT, "terminal.kill", "terminal.rm"]],
+      ["workspace.close", { workspace_id: "B" }, [...SNAPSHOT, "terminal.kill", "terminal.rm"]],
+    ];
+    // a new workspace or tab is a shell labeled into place: the document follows it too
+    const shells: [string, Record<string, unknown>, string[]][] = [
+      ["workspace.create", { label: "web" }, ["terminal.run", ...SNAPSHOT]],
+      ["tab.create", { workspace_id: "A" }, [...SNAPSHOT, "terminal.run", ...SNAPSHOT]],
+    ];
+    for (const [method, params, expected] of [...edits, ...relabels, ...shells]) {
+      const destination = (params["destination"] as { type: string } | undefined)?.type;
+      it(`${method}${destination ? ` to ${destination}` : ""} asks hc in today's order`, async () => {
+        const { answer, steps } = await callsOf(method, params);
+        expect(answer).not.toHaveProperty("refused");
+        expect(steps).toEqual(expected);
+      });
+    }
+
+    it("reads Ovis's document before the terminals in every edit it writes", async () => {
+      for (const [method, params] of edits) {
+        const { steps } = await callsOf(method, params);
+        const write = steps.indexOf("doc.set ovis-layout");
+        const read = steps.lastIndexOf("doc.get ovis-layout", write);
+        expect([method, write > -1, read > -1, read < steps.lastIndexOf("terminal.list", write)]).toEqual([method, true, true, true]);
+      }
+    });
+
+    it("makes the whole edit again, Ovis's document first, when one other writer came first", async () => {
+      const { answer, steps, store } = await callsOf("layout.set_split_ratio", { tab_id: "A1", path: [], ratio: 0.3 }, known(), documents(1));
+      expect(answer).toEqual({ type: "ok" });
+      expect(steps).toEqual([...EDIT, ...EDIT]);
+      expect(store.docs.get("ovis-layout")!.version).toBe(3);
+    });
+
+    it("makes the edit once when the write fails for any reason but another writer", async () => {
+      const unavailable = (): never => { throw Object.assign(new Error("busy"), { kind: "unavailable" }); };
+      const { answer, steps } = await callsOf("layout.set_split_ratio", { tab_id: "A1", path: [], ratio: 0.3 }, known(), documents(), (handlers) => ({ ...handlers, "doc.set": unavailable }));
+      expect(answer).toEqual({ refused: "server_unavailable" });
+      expect(steps).toEqual([...EDIT]);
+    });
+
+    // FakeCore answers a call as it arrives, so an answer cannot be held: an edit whose first read fails shows
+    // instead that the terminals are asked only once Ovis's document has been answered
+    it("asks nothing more in an edit whose read of Ovis's document fails", async () => {
+      const { answer, steps } = await callsOf("layout.set_split_ratio", { tab_id: "A1", path: [], ratio: 0.3 }, known(), documents(), (handlers) => ({
+        ...handlers,
+        "doc.get": (params) => {
+          if (params["name"] === "ovis-layout") throw Object.assign(new Error("busy"), { kind: "unavailable" });
+          return handlers["doc.get"]!(params);
+        },
+      }));
+      expect(answer).toEqual({ refused: "server_unavailable" });
+      expect(steps).toEqual(["doc.get ovis-layout"]);
+    });
+
+    it("asks hc nothing for an edit on a core that writes no documents", async () => {
+      const { answer, steps } = await callsOf("pane.zoom", { pane_id: "t1" }, known(), documents(), (handlers) => Object.fromEntries(Object.entries(handlers).filter(([name]) => name !== "doc.set")));
+      expect(answer).toEqual({ refused: "unsupported" });
+      expect(steps).toEqual([]);
+    });
+
+    // each edit that finds nothing to change: its answer, and no write
+    const unchanged: [string, string, Record<string, unknown>, Record<string, unknown>, ReturnType<typeof known>?][] = [
+      ["pane.resize", "a pane with no border", { pane_id: "t3", direction: "right" }, { resize: { changed: false, reason: "unchanged" } }],
+      ["pane.resize", "a divider at its limit", { pane_id: "t1", direction: "left", amount: 0.5 }, { resize: { changed: false, reason: "unchanged" } }, known(null, 0.1)],
+      ["pane.swap", "toward no neighbour", { pane_id: "t1", direction: "left" }, { swap: { changed: false, reason: "no_neighbor", target_pane_id: null } }],
+      ["pane.swap", "with itself", { pane_id: "t1", target_pane_id: "t1" }, { swap: { changed: false, reason: "same_pane", target_pane_id: "t1" } }],
+      ["pane.swap", "with another tab's pane", { pane_id: "t1", target_pane_id: "t3" }, { swap: { changed: false, reason: "cross_tab", target_pane_id: "t3" } }],
+      ["pane.zoom", "of a tab's only pane", { pane_id: "t3" }, { zoom: { changed: false, reason: "single_pane", zoomed: false } }],
+      ["pane.zoom", "off where nothing is zoomed", { pane_id: "t1", mode: "off" }, { zoom: { changed: false, reason: "already_unzoomed", zoomed: false } }],
+      ["pane.zoom", "on where it is zoomed", { pane_id: "t1", mode: "on" }, { zoom: { changed: false, reason: "already_zoomed", zoomed: true } }, known("t1")],
+      ["pane.move", "beside itself", { pane_id: "t1", destination: { type: "tab", tab_id: "A1", target_pane_id: "t1", split: "down" } }, { move_result: { changed: false, reason: "same_pane" } }],
+      ["layout.set_split_ratio", "where no split is", { tab_id: "A2", path: [], ratio: 0.3 }, { refused: "split_not_found" }],
+      // a name as it is: labeled again, never a document
+      ["pane.rename", "to the name it has", { pane_id: "t1", label: "logs" }, { type: "ok" }],
+    ];
+    for (const [method, what, params, answered, layout] of unchanged) {
+      it(`${method} ${what} writes no document`, async () => {
+        const { answer, steps, store } = await callsOf(method, params, layout);
+        expect(answer).toMatchObject(answered);
+        expect(steps.filter((step) => step.startsWith("doc.set"))).toEqual([]);
+        expect(steps.slice(0, 3)).toEqual(method === "pane.rename" ? SNAPSHOT : EDIT_UNCHANGED);
+        expect(store.writes).toEqual([]);
+      });
+    }
+
+    // Today these write the document again even though it comes out the same: pinned as they are.
+    const rewrites: [string, Record<string, unknown>, Record<string, unknown>][] = [
+      ["layout.set_split_ratio", { tab_id: "A1", path: [], ratio: 0.5 }, { type: "ok" }],
+      ["tab.move", { tab_id: "A1", insert_index: 0 }, { type: "tab_list" }],
+      ["workspace.move", { workspace_id: "A", insert_index: 0 }, { type: "ok" }],
+      ["pane.move", { pane_id: "t2", destination: { type: "tab", tab_id: "A1", target_pane_id: "t1", split: "right" } }, { move_result: { changed: true, reason: null } }],
+    ];
+    for (const [method, params, answered] of rewrites) {
+      it(`${method} to where it already is writes the same document again`, async () => {
+        const { answer, steps, store } = await callsOf(method, params);
+        expect(answer).toMatchObject(answered);
+        expect(steps.filter((step) => step.startsWith("doc.set"))).toEqual(["doc.set ovis-layout"]);
+        expect(store.docs.get("ovis-layout")).toEqual({ value: known(), version: 2 });
+      });
+    }
+  });
 });
 
 describe("another machine of the core, as its own PC (#2497)", () => {
