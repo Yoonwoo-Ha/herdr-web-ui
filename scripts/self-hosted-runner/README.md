@@ -500,6 +500,41 @@ second host, so two runs' spikes at once fit on either.
 
 A manual run can override the variable with the `self_hosted_labels` workflow_dispatch input. Fork PRs always use `ubuntu-24.04`; Windows/macOS jobs, `remote-bundles.yml` and `windows-install.yml` stay GitHub-hosted, except the `macos-15` jobs that hold no secret (`ci.yml`'s Native macOS session identity job, and for pull requests from this repository the `macos-15` entries of `remote-bundles.yml` and `pty-sidecar.yml`), which follow the repository variable `CI_MAC_LABELS` to the self-hosted Mac when it is set ([docs](../../docs/development.md)).
 
+## Offering a runner only when there is room
+
+A registered runner is an offer: GitHub hands it any job whose labels it matches, so a host that is
+already busy keeps taking work. `run.sh --offer-when-room` makes a slot wait until this host has room
+before it fetches a registration token and starts its runner:
+
+- no other runner of this host in the same pool is idle (a pool is a repository and a label set: an
+  idle runner of another repository never takes this one's jobs, whatever its labels; both pull
+  request pools and a launcher copy's own runners count: the host's containers are `herdr-ci-<host>-*`, and a runner counts as idle until a
+  `Runner.Worker` process is in it, one still registering included), so the host offers at most one
+  idle runner per pool;
+- no job started on this host in the last 30 s and no runner of it started in the last 30 s (both
+  delays exist because pressure rises after a job begins, not when it is handed out);
+- CPU and memory pressure are under the host's thresholds, if it sets any.
+
+Slots started with `--reserved` skip the gate: main's jobs start at once. Without the flag nothing
+changes, and `--count` is still the hard maximum.
+
+The two thresholds live in the host's env file beside the other `CHECK_HOST_*` values, whole numbers,
+in percent of `/proc/pressure/cpu` and `/proc/pressure/memory` "some avg10":
+
+```sh
+CHECK_HOST_OFFER_CPU_PSI=25
+CHECK_HOST_OFFER_MEMORY_PSI=10
+```
+
+Leave one out and that half of the pressure condition does not exist; leave both out and the gate
+keeps the first two conditions only. A kernel without `/proc/pressure` (PSI off) skips the pressure
+condition with one line in the launcher's log. A gate that waits says so once per reason, not every
+poll.
+
+The gate is not a limit on jobs: a host's `--count` still has to fit its `CHECK_HOST_MAX_RUNS` (at most
+8, the most herdr-backed lanes `scripts/check.ts` admits), and the two thresholds are what a person
+tunes to keep a loaded host out of the pool.
+
 ## Cloud VM runners
 
 `vm-runner.sh` turns a 4-vCPU cloud VM without systemd (a Cursor cloud agent's VM, say) into a runner of this

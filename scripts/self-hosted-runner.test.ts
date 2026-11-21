@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -168,12 +168,20 @@ async function runHookIsolated(
   }
 }
 
+type Peer = { name: string; labels: string; worker?: boolean; age?: number; repo?: string };
+
 function runRunner(options: {
   count?: number;
   ghTokenExitCode?: number;
   dockerExitCode?: number;
   failedSlot?: number;
-  envFile?: "present" | "missing" | "bare" | "secret" | "nul" | "twice" | "shards";
+  envFile?: "present" | "missing" | "bare" | "secret" | "nul" | "twice" | "shards" | "offer" | "offer-refused" | "offer-zero";
+  offer?: boolean;
+  offerPause?: string;
+  offerPoll?: string;
+  offerDir?: string;
+  psi?: { cpu?: string; memory?: string } | "absent";
+  peers?: Peer[];
   grepReadError?: boolean;
   args?: string[];
   cacheHome?: string;
@@ -206,6 +214,49 @@ function runRunner(options: {
 }
 
 type RunnerOptions = NonNullable<Parameters<typeof runRunner>[0]>;
+
+/**
+ * A launcher left running, for what only shows while it waits: its stderr and its docker/gh calls
+ * are read as they come, and the caller releases what holds it rather than waiting out a timer.
+ */
+function launchRunner(options: RunnerOptions) {
+  const prepared = prepareRunner(options);
+  const { tempDir, args, env, logPath } = prepared;
+  const stdout = openSync(join(tempDir, "stdout"), "w");
+  const stderr = openSync(join(tempDir, "stderr"), "w");
+  // its own process group, so stop() reaches the slot loops too, and nothing else
+  const child = spawn("bash", args, { env, stdio: ["ignore", stdout, stderr], detached: true });
+  const exited = new Promise<number | null>((resolve) => child.once("exit", (code) => resolve(code)));
+  const calls = () => (existsSync(logPath) ? readFileSync(logPath, "utf8") : "");
+  const stderrText = () => (existsSync(join(tempDir, "stderr")) ? readFileSync(join(tempDir, "stderr"), "utf8") : "");
+  const until = async (pattern: RegExp, what: string, source: () => string = calls) => {
+    const deadline = Date.now() + LOADED_BOUND_MS;
+    while (!pattern.test(source()) && Date.now() < deadline) await Bun.sleep(25);
+    if (!pattern.test(source())) throw new Error(`the launcher never ${what}:\ncalls: ${calls()}\nstderr: ${stderrText()}`);
+    return source();
+  };
+  return {
+    ...prepared,
+    child,
+    calls,
+    stderr: stderrText,
+    until,
+    ended: () => Promise.race([exited, Bun.sleep(LOADED_BOUND_MS).then(() => "still running" as const)]),
+    async stop() {
+      // the whole group: its slot loops outlive a SIGKILL of the launcher alone (no EXIT trap runs) and would
+      // poll the fixtures deleted below
+      try {
+        process.kill(-child.pid!, "SIGKILL");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+      await exited;
+      closeSync(stdout);
+      closeSync(stderr);
+      rmSync(tempDir, { recursive: true, force: true });
+    },
+  };
+}
 
 /** The hung stub (120 s) outlasts it, so a launcher that waits for the hang still ends late. */
 const LOADED_BOUND_MS = 30_000;
@@ -347,9 +398,42 @@ case "$1" in
       [ "$(wc -l < "$RUNNER_TEST_LOG.keeper-looks")" -ge 3 ] || { echo false; exit 0; }
       : > "$RUNNER_TEST_LOG.keeper"; echo true; exit 0 ;;
     esac
+    # a runner container a test names in RUNNER_TEST_PEERS: its environment, as docker prints it
+    case "$*" in
+      *Config.Env*)
+        if [ -n "\${RUNNER_TEST_PEERS:-}" ] && [ -f "$RUNNER_TEST_PEERS" ]; then
+          peer="$(awk -F'\t' -v n="$last" '$1 == n { print $2 }' "$RUNNER_TEST_PEERS")"
+          repo="$(awk -F'\t' -v n="$last" '$1 == n { print $5 }' "$RUNNER_TEST_PEERS")"
+          if [ -n "$peer" ]; then
+            printf 'RUNNER_URL=https://github.com/%s\nRUNNER_NAME=%s\nRUNNER_LABELS=%s\n' "\${repo:-owner/repo}" "$last" "$peer"
+            exit 0
+          fi
+        fi ;;
+    esac
+    # any other look at a runner container a test names in RUNNER_TEST_PEERS: it exists, running
+    if [ -n "\${RUNNER_TEST_PEERS:-}" ] && [ -f "$RUNNER_TEST_PEERS" ] && awk -F'\t' -v n="$last" '$1 == n { found = 1 } END { exit !found }' "$RUNNER_TEST_PEERS"; then echo true; exit 0; fi
     # a slot's container an earlier launcher left running, while this file exists
     # (its State.Running is the file's content: true while it runs its job, false once it stopped)
     [ -n "\${RUNNER_TEST_SLOT_HELD:-}" ] && [ -e "$RUNNER_TEST_SLOT_HELD" ] && { cat "$RUNNER_TEST_SLOT_HELD"; exit 0; }; exit 1 ;;
+  # this host's runner containers as the offer gate lists them (RUNNER_TEST_PEERS: name, labels,
+  # and 1 for one running a job): what docker ps --filter name=... --format {{.Names}} prints
+  ps)
+    [ -n "\${RUNNER_TEST_PEERS:-}" ] && [ -f "$RUNNER_TEST_PEERS" ] || exit 0
+    awk -F'\t' 'NF > 0 { print $1 }' "$RUNNER_TEST_PEERS" ;;
+  # a runner container's processes, as ps prints them in it: a job's Runner.Worker line with the
+  # seconds it has run (RUNNER_TEST_PEERS: name, labels, 1 for a job, and how many seconds ago it started)
+  top)
+    # as docker does: ps options without a pid column are refused; with -eo pid,etimes,args, a header and
+    # one line per process
+    case " $* " in *" -eo "*pid*) ;; *" -eo "*) echo "Error response from daemon: Couldn't find PID field in ps output" >&2; exit 1 ;; esac
+    printf 'PID                 ELAPSED             COMMAND\n'
+    printf '4170136             600                 tini -- /entrypoint.sh\n'
+    printf '4173958             600                 /home/runner/actions-runner/bin/Runner.Listener run\n'
+    [ -n "\${RUNNER_TEST_PEERS:-}" ] && [ -f "$RUNNER_TEST_PEERS" ] || exit 0
+    if [ "$(awk -F'\t' -v n="$2" '$1 == n { print $3 }' "$RUNNER_TEST_PEERS")" = 1 ]; then
+      age="$(awk -F'\t' -v n="$2" '$1 == n { print ($4 == "" ? 600 : $4) }' "$RUNNER_TEST_PEERS")"
+      printf '4181708             %s                 /home/runner/actions-runner/bin/Runner.Worker spawnclient 151 154\n' "$age"
+    fi ;;
   # removing slot 1's own container (the launcher's other docker rm calls name the Bun cache build's)
   rm) case "$last" in *-1) [ -n "\${RUNNER_TEST_SLOT_HELD:-}" ] && rm -f "$RUNNER_TEST_SLOT_HELD" ;; esac; exit 0 ;;
   run)
@@ -520,6 +604,9 @@ for arg; do case "$arg" in /*) [ -z "$(find "$arg" -maxdepth "$depth" -name fore
     if (options.envFile === "nul") writeFileSync(envFile, "CHECK_HOST_MAX_RUNS=6\nCHECK_HOST_TEST_SHARDS=6\u0000\n");
     if (options.envFile === "twice") writeFileSync(envFile, "CHECK_HOST_MAX_RUNS=3\nCHECK_HOST_TEST_SHARDS=6\nCHECK_HOST_MAX_RUNS=5\n");
     if (options.envFile === "shards") writeFileSync(envFile, "CHECK_HOST_TEST_SHARDS=6\n");
+    if (options.envFile === "offer") writeFileSync(envFile, "CHECK_HOST_OFFER_CPU_PSI=10\nCHECK_HOST_OFFER_MEMORY_PSI=5\n");
+    if (options.envFile === "offer-zero") writeFileSync(envFile, "CHECK_HOST_OFFER_CPU_PSI=00\nCHECK_HOST_OFFER_MEMORY_PSI=5\n");
+    if (options.envFile === "offer-refused") writeFileSync(envFile, "CHECK_HOST_OFFER_CPU_PSI=10\nCHECK_HOST_OFFER_MEMORY_PSI=5.5\nCHECK_HOST_OFFER_DISK=1\n");
     if (options.grepReadError) {
       writeFileSync(join(binDir, "grep"), "#!/bin/sh\necho 'grep: read error' >&2\nexit 2\n");
       chmodSync(join(binDir, "grep"), 0o755);
@@ -533,6 +620,7 @@ for arg; do case "$arg" in /*) [ -z "$(find "$arg" -maxdepth "$depth" -name fore
       "--count",
       String(options.count ?? 1),
       ...(options.args ?? []),
+      ...(options.offer ? ["--offer-when-room"] : []),
       ...(options.envFile ? ["--env-file", envFile] : []),
     ];
     const env: Record<string, string> = {
@@ -564,10 +652,28 @@ for arg; do case "$arg" in /*) [ -z "$(find "$arg" -maxdepth "$depth" -name fore
       GH_TOKEN_EXIT_CODE: String(options.ghTokenExitCode ?? 0),
       DOCKER_EXIT_CODE: String(options.dockerExitCode ?? 42),
       DOCKER_FAIL_SLOT: String(options.failedSlot ?? ""),
+      ...(options.offer || options.offerPause !== undefined || options.offerPoll !== undefined || options.offerDir !== undefined || options.psi !== undefined
+        ? { OVIS_RUNNER_OFFER_DIR: options.offerDir ?? join(tempDir, "offer"), OVIS_RUNNER_OFFER_POLL: options.offerPoll ?? "1", OVIS_RUNNER_OFFER_PAUSE: options.offerPause ?? "0" }
+        : {}),
+      ...(options.psi === undefined ? {} : { OVIS_RUNNER_PSI_DIR: join(tempDir, "psi") }),
+      ...(options.peers === undefined ? {} : { RUNNER_TEST_PEERS: join(tempDir, "peers") }),
     };
+    if (options.psi !== undefined && options.psi !== "absent") {
+      mkdirSync(join(tempDir, "psi"), { recursive: true });
+      const psi = (avg10: string) => `some avg10=${avg10} avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n`;
+      for (const resource of ["cpu", "memory"] as const) {
+        const value = options.psi[resource];
+        if (value !== undefined) writeFileSync(join(tempDir, "psi", resource), psi(value));
+      }
+    }
+    if (options.peers !== undefined) writePeers(join(tempDir, "peers"), options.peers);
     if (options.networkBlock === undefined) delete env.OVIS_CI_NETWORK_BLOCK;
-    return { tempDir, args, env, logPath, envFile };
+    return { tempDir, args, env, logPath, envFile, peers: join(tempDir, "peers") };
   }
+}
+
+function writePeers(path: string, peers: Peer[]) {
+  writeFileSync(path, peers.map((peer) => `${peer.name}\t${peer.labels}\t${peer.worker ? 1 : 0}\t${peer.age ?? ""}\t${peer.repo ?? "owner/repo"}\n`).join(""));
 }
 
 const runnerRun = /^docker run (?:--cpuset-cpus \S+ )?(?:--cgroup-parent \S+ )?--rm -i /;
@@ -578,6 +684,13 @@ const otherLock = "4".repeat(40);
 const cacheBuild = /^docker run --rm --init --name herdr-ci-.+-cache /;
 
 describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () => {
+  it("prints its header as --help, and no shell of its own", () => {
+    const result = spawnSync("bash", [script, "--help"], { encoding: "utf8" });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("[--offer-when-room]");
+    expect(result.stdout).not.toContain("set -euo pipefail");
+  });
+
   it("runs without CPU or memory quotas by default", () => {
     const { result, calls } = runRunner();
     expect(result.status).toBe(0);
@@ -1443,6 +1556,243 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
     } finally {
       rmSync(cacheHome, { recursive: true, force: true });
     }
+  });
+
+  describe("the offer gate", () => {
+    const host = spawnSync("hostname", ["-s"], { encoding: "utf8" }).stdout.trim();
+    const runnerRuns = (calls: string) => calls.split("\n").filter((call) => runnerRun.test(call));
+    const peer = (slot: number, labels = "self-hosted-ovis", worker = false, age?: number) => ({ name: `herdr-ci-${host}-${slot}`, labels, worker, age });
+    /** A pool as the gate names it: the runner's repository URL and its labels. */
+    const pool = (labels: string, repo = "owner/repo") => `https://github.com/${repo} ${labels}`;
+
+    it("starts every slot at once without --offer-when-room, whatever this host runs and how loaded it is", () => {
+      const { result, calls } = runRunner({ count: 2, psi: { cpu: "99.00", memory: "99.00" }, peers: [peer(9)] });
+      expect(result.status).toBe(0);
+      expect(runnerRuns(calls)).toHaveLength(2);
+      expect(calls).not.toContain("docker top");
+      expect(result.stderr).not.toContain("waiting for room");
+    });
+
+    it("holds a slot while a runner of its own pool on this host is idle, and starts it once that is offered a job", async () => {
+      // pr-9 is another launcher copy's runner on this host: every launcher copy's runners count
+      const copy = (worker = false) => ({ ...peer(9, "self-hosted-ovis", worker), name: `herdr-ci-${host}-pr-9` });
+      const runner = launchRunner({ count: 1, offer: true, offerPause: undefined, peers: [copy()] });
+      try {
+        await runner.until(/waiting for room on this host: the runner herdr-ci-\S+-pr-9 of this pool is idle/, "saw the idle runner", runner.stderr);
+        expect(runner.stderr()).toContain(`[herdr-ci-${host}-1] waiting for room on this host`);
+        expect(runner.calls()).not.toContain("registration-token");
+        expect(runnerRuns(runner.calls())).toEqual([]);
+        // the idle runner takes a job: no runner of this pool is idle any more
+        writePeers(runner.peers, [copy(true)]);
+        expect(await runner.ended()).toBe(0);
+        expect(runnerRuns(runner.calls())).toHaveLength(1);
+        expect(runner.stderr()).toContain(`[herdr-ci-${host}-1] there is room on this host: starting a runner`);
+        expect(runner.calls()).toContain("docker top herdr-ci-");
+      } finally {
+        await runner.stop();
+      }
+    }, HUNG_RUN_MS);
+
+    it("ignores an idle runner of another pool, and the check slots' keeper", () => {
+      const { result, calls } = runRunner({ count: 1, offer: true, peers: [peer(9, "self-hosted-ovis-main"), { name: `herdr-ci-${host}-check-slots`, labels: "" }] });
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain("waiting for room");
+      expect(runnerRuns(calls)).toHaveLength(1);
+    });
+
+    it("ignores an idle runner of another repository with the same labels: it never takes this repository's jobs", () => {
+      const { result, calls } = runRunner({ count: 1, offer: true, peers: [{ ...peer(9), name: `herdr-ci-${host}-appb-9`, repo: "owner/app" }] });
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain("waiting for room");
+      expect(runnerRuns(calls)).toHaveLength(1);
+    });
+
+    it("holds a slot while a job started on this host less than 30 s ago, whatever pool it belongs to", async () => {
+      // a runner of the other pool has just taken a job: its pressure shows up late, so the offer waits
+      const runner = launchRunner({ count: 1, offer: true, offerPause: "30", peers: [peer(9, "self-hosted-ovis-main", true, 5)] });
+      try {
+        await runner.until(/waiting for room on this host: a job started on this host \d+s ago, less than 30s/, "saw the young job", runner.stderr);
+        expect(runner.calls()).not.toContain("registration-token");
+        writePeers(runner.peers, [peer(9, "self-hosted-ovis-main", true, 3600)]);
+        expect(await runner.ended()).toBe(0);
+        expect(runnerRuns(runner.calls())).toHaveLength(1);
+      } finally {
+        await runner.stop();
+      }
+    }, HUNG_RUN_MS);
+
+    it("holds a slot while this host's CPU or memory pressure is over its threshold, and starts it when both are under", async () => {
+      const runner = launchRunner({
+        count: 1, offer: true, offerPause: undefined, envFile: "offer",
+        psi: { cpu: "50.00", memory: "1.00" },
+      });
+      try {
+        await runner.until(/waiting for room on this host: CPU pressure is 50\.00% \(this host's limit is under 10%\)/, "saw the CPU pressure", runner.stderr);
+        expect(runner.calls()).not.toContain("registration-token");
+        writeFileSync(join(runner.tempDir, "psi", "cpu"), "some avg10=9.99 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
+        writeFileSync(join(runner.tempDir, "psi", "memory"), "some avg10=4.99 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
+        expect(await runner.ended()).toBe(0);
+        expect(runnerRuns(runner.calls())).toHaveLength(1);
+        // the memory threshold is the other half: over it, the slot waits again for that reason
+        const memory = launchRunner({ count: 1, offer: true, offerPause: undefined, envFile: "offer", psi: { cpu: "0.00", memory: "5.01" } });
+        try {
+          await memory.until(/waiting for room on this host: memory pressure is 5\.01% \(this host's limit is under 5%\)/, "saw the memory pressure", memory.stderr);
+          expect(memory.calls()).not.toContain("registration-token");
+        } finally {
+          await memory.stop();
+        }
+      } finally {
+        await runner.stop();
+      }
+    }, HUNG_RUN_MS);
+
+    it("holds a slot for 30 s after this host started a runner container, and starts it once that is over", async () => {
+      const offerDir = mkdtempSync(join(tmpdir(), "herdr-runner-offer-state-"));
+      try {
+        const stamp = join(offerDir, `offer-${host}.started`);
+        // a start in the future (a clock that went back) counts as now, so the hold lasts however slow this run is
+        writeFileSync(stamp, `${Math.floor(Date.now() / 1000) + 3600}\n`);
+        const runner = launchRunner({ count: 1, offer: true, offerPause: "30", offerDir });
+        try {
+          await runner.until(/waiting for room on this host: this host started a runner \d+s ago, less than 30s/, "saw the recent start", runner.stderr);
+          expect(runner.calls()).not.toContain("registration-token");
+          writeFileSync(stamp, `${Math.floor(Date.now() / 1000) - 3600}\n`);
+          expect(await runner.ended()).toBe(0);
+          expect(runnerRuns(runner.calls())).toHaveLength(1);
+        } finally {
+          await runner.stop();
+        }
+      } finally {
+        rmSync(offerDir, { recursive: true, force: true });
+      }
+    }, HUNG_RUN_MS);
+
+    it("holds a slot while another slot of its pool has claimed room and not started its container yet", async () => {
+      const offerDir = mkdtempSync(join(tmpdir(), "herdr-runner-offer-state-"));
+      try {
+        const claim = join(offerDir, `offer-${host}.claim.herdr-ci-${host}-pr-7`);
+        writeFileSync(claim, `${pool("self-hosted-ovis")}\n`);
+        writeFileSync(join(offerDir, `offer-${host}.claim.herdr-ci-${host}-pr-8`), `${pool("self-hosted-ovis-main")}\n`);
+        writeFileSync(join(offerDir, `offer-${host}.claim.herdr-ci-${host}-pr-6`), `${pool("self-hosted-ovis", "owner/app")}\n`);
+        const stale = join(offerDir, `offer-${host}.claim.herdr-ci-${host}-pr-9`);
+        writeFileSync(stale, `${pool("self-hosted-ovis")}\n`);
+        utimesSync(stale, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
+        const runner = launchRunner({ count: 1, offer: true, offerPause: undefined, offerDir, peers: [] });
+        try {
+          await runner.until(/waiting for room on this host: the slot herdr-ci-\S+-pr-7 of this pool is starting its runner/, "saw the claim", runner.stderr);
+          expect(runner.calls()).not.toContain("registration-token");
+          // pr-7's container shows up: its claim goes, and the slot no longer waits for it
+          writePeers(runner.peers, [{ ...peer(7, "self-hosted-ovis", true), name: `herdr-ci-${host}-pr-7` }]);
+          expect(await runner.ended()).toBe(0);
+          expect(existsSync(claim)).toBe(false);
+          expect(existsSync(stale)).toBe(false);
+          expect(runnerRuns(runner.calls())).toHaveLength(1);
+          expect(existsSync(join(offerDir, `offer-${host}.claim.herdr-ci-${host}-1`))).toBe(false);
+        } finally {
+          await runner.stop();
+        }
+      } finally {
+        rmSync(offerDir, { recursive: true, force: true });
+      }
+    }, HUNG_RUN_MS);
+
+    it("does not start a runner while the gate cannot write its state", async () => {
+      const offerDir = mkdtempSync(join(tmpdir(), "herdr-runner-offer-state-"));
+      try {
+        writeFileSync(join(offerDir, `offer-${host}.lock`), "");
+        chmodSync(offerDir, 0o555);
+        const runner = launchRunner({ count: 1, offer: true, offerPause: undefined, offerDir, peers: [] });
+        try {
+          await runner.until(/waiting for room on this host: the gate cannot write its state/, "saw the write fail", runner.stderr);
+          expect(runner.calls()).not.toContain("registration-token");
+          chmodSync(offerDir, 0o755);
+          expect(await runner.ended()).toBe(0);
+          expect(runnerRuns(runner.calls())).toHaveLength(1);
+        } finally {
+          await runner.stop();
+        }
+      } finally {
+        chmodSync(offerDir, 0o755);
+        rmSync(offerDir, { recursive: true, force: true });
+      }
+    }, HUNG_RUN_MS);
+
+    it("refuses a pressure threshold of 0, under which no pressure ever is", () => {
+      const { result, calls } = runRunner({ count: 1, offer: true, envFile: "offer-zero" });
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("CHECK_HOST_OFFER_CPU_PSI must be 1 or more");
+      expect(calls).not.toContain("registration-token");
+    });
+
+    it("starts a reserved slot at once, with the gate on and an idle runner of the pull request pool waiting", async () => {
+      const runner = launchRunner({ count: 2, args: ["--reserved", "1"], offer: true, offerPause: undefined, peers: [peer(9)] });
+      try {
+        await runner.until(/\[herdr-ci-\S+-2\] waiting for room on this host/, "saw the pull request slot wait", runner.stderr);
+        // the reserved slot is not gated: it starts while the other waits
+        await runner.until(/--name herdr-ci-\S+-1 /, "started the reserved slot", runner.calls);
+        const started = runnerRuns(runner.calls());
+        expect(started).toHaveLength(1);
+        expect(started[0]).toContain(`--name herdr-ci-${host}-1 `);
+        expect(started[0]).toContain("-e RUNNER_LABELS=self-hosted-ovis-main ");
+        expect(runner.stderr()).not.toContain(`[herdr-ci-${host}-1] waiting for room`);
+        writePeers(runner.peers, []);
+        expect(await runner.ended()).toBe(0);
+        expect(runnerRuns(runner.calls())).toHaveLength(2);
+      } finally {
+        await runner.stop();
+      }
+    }, HUNG_RUN_MS);
+
+    it("fetches a slot's registration token only after the gate passes", async () => {
+      const runner = launchRunner({ count: 1, offer: true, offerPause: undefined, peers: [peer(9)] });
+      try {
+        await runner.until(/waiting for room on this host/, "saw the gate hold the slot", runner.stderr);
+        expect(runner.calls()).not.toContain("registration-token");
+        expect(runner.calls()).not.toMatch(/docker network (create|inspect)/);
+        writePeers(runner.peers, []);
+        expect(await runner.ended()).toBe(0);
+        const lines = runner.calls().split("\n");
+        expect(lines.filter((call) => call.includes("registration-token"))).toHaveLength(1);
+        expect(lines.indexOf("docker ps --filter name=herdr-ci-" + host + "- --format {{.Names}}")).toBeGreaterThanOrEqual(0);
+        expect(lines.findIndex((call) => call.includes("registration-token"))).toBeGreaterThan(lines.lastIndexOf("docker ps --filter name=herdr-ci-" + host + "- --format {{.Names}}"));
+        expect(runnerRuns(runner.calls())).toHaveLength(1);
+      } finally {
+        await runner.stop();
+      }
+    }, HUNG_RUN_MS);
+
+    it("skips the pressure condition where the kernel has no /proc/pressure, and says so once", () => {
+      const { result, calls } = runRunner({ count: 1, offer: true, envFile: "offer", psi: "absent" });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("[offer] PSI is off on this host");
+      expect(result.stderr.split("[offer] PSI is off on this host")).toHaveLength(2);
+      expect(runnerRuns(calls)).toHaveLength(1);
+    });
+
+    it("takes the two offer thresholds in the host env file and still refuses any other CHECK_HOST name", () => {
+      const { result, calls } = runRunner({ envFile: "offer" });
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain("refused line");
+      expect(runnerRuns(calls)).toHaveLength(1);
+      const refused = runRunner({ envFile: "offer-refused" });
+      expect(refused.result.status).toBe(2);
+      expect(refused.result.stderr).toContain("refused line(s): 2,3\n");
+      expect(refused.result.stderr).not.toContain("CHECK_HOST_OFFER_DISK");
+      expect(refused.calls).not.toContain("docker run");
+    });
+
+    it("needs a whole poll interval and a lock file it can use before it will gate anything", () => {
+      // an empty variable is the default, as for every other setting here: only a named, wrong value is refused
+      for (const poll of ["0", "x"] as const) {
+        const { result, calls } = runRunner({ offer: true, offerPoll: poll });
+        expect(result.status).toBe(2);
+        expect(result.stderr).toContain("OVIS_RUNNER_OFFER_POLL");
+        expect(calls).toBe("");
+      }
+      const { result } = runRunner({ offer: true, offerDir: "/proc/1/nope" });
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("OVIS_RUNNER_OFFER_DIR");
+    });
   });
 
   it("propagates a failed slot's status when multiple one-shot slots run", () => {
