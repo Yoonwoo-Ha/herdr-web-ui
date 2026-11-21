@@ -10,6 +10,8 @@
     ]
   },
   "include": [
-    "**/*.ts"
+    "**/*.ts",
+    "../shared/ghostty/engine.ts",
+    "../shared/ghostty/engine.test.ts"
   ]
 }
