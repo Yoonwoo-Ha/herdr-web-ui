@@ -88,7 +88,7 @@ export class GhosttyVt {
   private constructor(module: GhosttyModule, cols: number, rows: number) {
     this.cols = cols;
     this.rows = rows;
-    this.engine = new GhosttyEngine(module, cols, rows, { imageStorageBytes: IMAGE_STORAGE_BYTES });
+    this.engine = new GhosttyEngine(module, cols, rows, { widths: "xterm", images: IMAGE_STORAGE_BYTES });
     this.setScrollback(0);
   }
 
