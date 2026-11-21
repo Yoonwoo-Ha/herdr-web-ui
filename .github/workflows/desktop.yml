@@ -1,11 +1,16 @@
 name: Desktop app
 # The feed is the latest release's assets, so an installed app sees a version once it
 # is GitHub's latest (docs/development.md#releasing).
+# A pull request that changes the app runs desktop-check.yml: the tests, the type check and the build on Linux
+# x64 and Windows x64. The five builds run here: for a pull request that changes this file, every day on main
+# (so a macOS or Linux arm64 build that broke shows the next day, unless a release is cut first), from Actions,
+# and at a release.
 on:
   pull_request:
     paths:
-      - 'app/electron/**'
       - '.github/workflows/desktop.yml'
+  schedule:
+    - cron: '47 18 * * *'
   workflow_dispatch:
     inputs:
       tag:
@@ -45,6 +50,8 @@ env:
 jobs:
   build:
     name: build (${{ matrix.target }})
+    # a fork's copy of this file has the schedule too: only this repository builds every day
+    if: github.event_name != 'schedule' || github.repository == 'devswha/ovis'
     strategy:
       fail-fast: false
       matrix:
