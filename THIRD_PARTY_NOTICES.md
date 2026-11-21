@@ -1571,7 +1571,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## libghostty-vt
 
-`src/lib/ghostty/ghostty-vt.wasm` is libghostty-vt from [Ghostty](https://github.com/ghostty-org/ghostty) at
+`shared/ghostty/ghostty-vt.wasm` is libghostty-vt from [Ghostty](https://github.com/ghostty-org/ghostty) at
 commit e95bed6, built for wasm32 by `scripts/ghostty-vt/build.sh` with the small change in
 `scripts/ghostty-vt/kitty-on-wasm.patch` (Kitty graphics on, file media off). It draws every terminal, under the
 MIT License below. The module links two

@@ -125,7 +125,7 @@ function loadModule(): Promise<{ exports: Exports; layout: TypeLayout }> {
     };
     // compiled from the bytes, not streamed: that needs `application/wasm`, which neither this PC's server
     // nor the relay's resource worker promises
-    const wasmUrl = new URL("./ghostty-vt.wasm", import.meta.url);
+    const wasmUrl = new URL("../../../shared/ghostty/ghostty-vt.wasm", import.meta.url);
     const response = await fetch(wasmUrl);
     if (!response.ok) throw new Error(`ghostty-vt: ${wasmUrl.href} answered ${response.status}`);
     const { instance } = await WebAssembly.instantiate(await response.arrayBuffer(), { env });
