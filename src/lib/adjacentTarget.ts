@@ -1,8 +1,9 @@
 import type { PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
+import { worktreeGroups } from "../../shared/worktree-groups.ts";
 import { rosterPanes } from "./dagPane.ts";
 import type { ViewedScope } from "./lastViewedPane.ts";
 import { splitPinnedGroups, type WorkspaceGroup } from "./sidebarPins.ts";
-import { splitBackgroundGroups, worktreeGroups } from "./workspaceOrder.ts";
+import { splitBackgroundGroups } from "./workspaceOrder.ts";
 
 type Roster = Pick<SessionSnapshot, "workspaces" | "tabs" | "panes" | "layouts">;
 export type ViewedPane = (scope: ViewedScope, id: string) => string | undefined;

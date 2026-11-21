@@ -11,6 +11,7 @@ import { DEFAULT_THEME, terminalColors, themeColor as themeTableColor, type Draw
 import { bootRows, drawnTheme, NO_CUSTOM_THEMES, sanitizeCustomThemes, type CustomThemes } from "./customThemes.ts";
 import { LANGUAGE_SETTINGS, LOCALE_TAGS, resolveLanguage, setCurrentLanguage, type Language, type LanguageSetting } from "./i18n.ts";
 import type { AlertPrefs, DoneAlerts } from "../../shared/notify-policy.ts";
+import { AGENT_GROUP_SORTS, type AgentGroupSort } from "../../shared/attention.ts";
 import { chatFontStack, sanitizeFontFamily } from "./fontFamily.ts";
 import { fontScale, sanitizeUiFontSize, uiFontStack } from "./typography.ts";
 import { sanitizeKeyBarExtras, type KeyBarExtra } from "./keys.ts";
@@ -23,8 +24,7 @@ export type Density = "compact" | "comfortable";
 export type PhoneTabs = "row" | "header";
 export type SidebarRows = "one" | "two";
 export type AgentOrder = "waiting" | "workspace" | "activity";
-export const AGENT_GROUP_SORTS = ["wait", "recent", "name"] as const;
-export type AgentGroupSort = (typeof AGENT_GROUP_SORTS)[number];
+export { AGENT_GROUP_SORTS, type AgentGroupSort } from "../../shared/attention.ts";
 export type AgentMarks = "color" | "mono";
 export type UsageCount = "used" | "left";
 /** the limit a plan meter shows: the plan's week, or its short session (5 hours on Claude and Codex) */
