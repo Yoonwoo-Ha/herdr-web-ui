@@ -1,4 +1,78 @@
 {
+  "0.5.9": {
+    "en": {
+      "new": [
+        "Sign in once and your account's PCs open from any of your devices.",
+        "A device new to a PC usually waits through a 10-second check.",
+        "Your older devices get a notice, with Not me to shut a new one out.",
+        "PCs that are not in an account work as before.",
+        "To turn it off on a PC, set OVIS_ACCOUNT_OPENS_ALL=0 and restart."
+      ],
+      "improved": [
+        "Adding a PC on the relay tab is a few buttons, not paragraphs.",
+        "Settings shows your account as one line, with Manage account."
+      ],
+      "fixed": [
+        "app.ovis.sh no longer gets stuck on an error after an update.",
+        "A PC opened from app.ovis.sh shows Sign out in Settings again.",
+        "Add this PC again on a PC already in your account keeps it there."
+      ]
+    },
+    "ko": {
+      "new": [
+        "로그인 한 번이면 계정의 PC를 내 어느 기기에서든 열 수 있어요.",
+        "PC에 처음 들어오는 기기는 보통 10초 확인을 거쳐요.",
+        "먼저 쓰던 기기에 알림이 오고, '내가 아니에요'로 막을 수 있어요.",
+        "계정에 없는 PC는 예전처럼 동작해요.",
+        "끄려면 PC에 OVIS_ACCOUNT_OPENS_ALL=0을 설정하고 다시 시작하세요."
+      ],
+      "improved": [
+        "릴레이 탭에서 PC 추가가 긴 설명 대신 버튼 몇 개로 끝나요.",
+        "설정에서 계정이 한 줄로 보이고, 나머지는 '계정 관리'에 있어요."
+      ],
+      "fixed": [
+        "app.ovis.sh가 업데이트 뒤 오류 화면에 멈춰 있지 않아요.",
+        "app.ovis.sh에서 연 PC의 설정에 다시 로그아웃이 보여요.",
+        "이미 계정에 있는 PC에서 다시 추가해도 계정에서 빠지지 않아요."
+      ]
+    },
+    "ja": {
+      "new": [
+        "一度サインインすれば、アカウントの PC をどの端末からでも開けます。",
+        "PC に初めて来る端末は、ふつう 10 秒の確認を経ます。",
+        "先に使っていた端末に通知が届き、「自分ではない」で締め出せます。",
+        "アカウントに入っていない PC はこれまでどおり動きます。",
+        "オフにするには PC で OVIS_ACCOUNT_OPENS_ALL=0 にして再起動します。"
+      ],
+      "improved": [
+        "リレータブでの PC 追加が、長い説明ではなくボタン数個になりました。",
+        "設定のアカウントは 1 行になり、残りは「アカウント管理」にあります。"
+      ],
+      "fixed": [
+        "app.ovis.sh が更新後にエラー画面で止まらなくなりました。",
+        "app.ovis.sh から開いた PC の設定に、サインアウトがまた表示されます。",
+        "アカウントにある PC でもう一度追加しても、アカウントから外れません。"
+      ]
+    },
+    "zh": {
+      "new": [
+        "登录一次，就能在你的任何设备上打开账户里的电脑。",
+        "首次访问电脑的设备，通常需要经过 10 秒确认。",
+        "你之前的设备会收到通知，可用“不是我”将其拒之门外。",
+        "不在账户中的电脑照旧工作。",
+        "要关闭此功能，在电脑上设置 OVIS_ACCOUNT_OPENS_ALL=0 并重启。"
+      ],
+      "improved": [
+        "在中继标签页添加电脑，只需几个按钮，不再是大段说明。",
+        "设置中的账号显示为一行，其余内容在“管理账号”里。"
+      ],
+      "fixed": [
+        "app.ovis.sh 更新后不再卡在错误页面。",
+        "从 app.ovis.sh 打开的电脑，设置里又能看到“退出登录”了。",
+        "已在账号中的电脑再次添加，也不会被移出账号。"
+      ]
+    }
+  },
   "0.5.8": {
     "en": {
       "new": [

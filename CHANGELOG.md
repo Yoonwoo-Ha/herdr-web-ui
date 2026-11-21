@@ -7,6 +7,55 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-11-21
+
+### Added
+- The desktop app has a built-in browser, off until Built-in browser is turned on in Settings: its
+  tabs are listed under Browser in the sidebar and open beside the pane, in a profile signed in to
+  nothing else, and an agent's tabs keep cookies of their own and take input only once you take
+  control. Blocked sites (and their subdomains) are never loaded, and no tab can reach an Ovis server.
+  Beside the conversation, a panel lists the files the browser kept and a card with a live picture of
+  each tab an agent uses (refreshed every few seconds, more slowly with many agent tabs; on Linux under
+  X11, elsewhere only for the tab you have open).
+  ([#4405](https://github.com/devswha/ovis/pull/4405))
+
+### Changed
+- Ovis account Step 2 safety controls are on by default. To opt out on one PC, see
+  [Turning Step 2 off](docs/account.md#turning-step-2-off) for the herdr plugin’s `.env` and
+  plugin-only restart, or the desktop app’s launch environment.
+  ([#4377](https://github.com/devswha/ovis/pull/4377))
+- Settings → Devices and PCs → Add a connection → Ovis relay shows buttons instead of paragraphs:
+  signed out, the sign-in buttons; signed in, one **Add this PC to my account** that also turns the
+  relay on and then says **Added**; with this PC in your account, your account's PCs with one button
+  each. The phone's QR code is a small **Phone QR code** link under them.
+  ([#4416](https://github.com/devswha/ovis/pull/4416))
+- Add this PC's wait offers **Sign in again** once when the account wanted a fresh two-step sign-in:
+  signing in again on this PC adds it in one press.
+  ([#4416](https://github.com/devswha/ovis/pull/4416))
+- Settings → Devices and PCs shows the account as one line, **Signed in with GitHub** with **Manage
+  account** and **Sign out**; the ways to sign in, the plan and **Delete account** are in **Manage
+  account**. Signed out, the page shows no account card where Add a connection signs in, this PC
+  shows no ID line, and the page has no sentence under its title.
+  ([#4416](https://github.com/devswha/ovis/pull/4416))
+- Settings → Devices and PCs shows strict mode as one row of More settings, **Strict mode (Linux)**
+  with its switch; what it ends is named when you turn it on. The account's PCs there carry no line
+  or link to app.ovis.sh.
+  ([#4416](https://github.com/devswha/ovis/pull/4416))
+
+### Fixed
+- **Add this PC to my account** pressed again on a PC already in your account keeps it in the
+  account and ends with **Added**, instead of taking it out and listing it again.
+  ([#4412](https://github.com/devswha/ovis/pull/4412))
+- A PC opened from app.ovis.sh shows who is signed in to the hosted app, with Sign out, at the top of
+  Settings → Devices and PCs, and More holds Sign out on a phone: since the app opens a PC instead
+  of the overview, the overview's Sign out was out of sight.
+  ([#4416](https://github.com/devswha/ovis/pull/4416))
+- app.ovis.sh no longer stops at "Something went wrong" (Unable to preload CSS) on every start after
+  a phone asked for one of its files during a deployment: a file the site lacks is now a 404 the
+  browser asks for again, not the page kept as that file for a year. When the app's code still
+  fails to load, the page reloads once by itself, then offers Try again instead of the crash screen.
+  ([#4413](https://github.com/devswha/ovis/pull/4413))
+
 ## [0.5.8] - 2026-11-21
 
 ### Added
@@ -12096,7 +12145,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/ovis/compare/v0.5.8...HEAD
+[Unreleased]: https://github.com/devswha/ovis/compare/v0.5.9...HEAD
+[0.5.9]: https://github.com/devswha/ovis/compare/v0.5.8...v0.5.9
 [0.5.8]: https://github.com/devswha/ovis/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/devswha/ovis/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/devswha/ovis/compare/v0.5.5...v0.5.6
