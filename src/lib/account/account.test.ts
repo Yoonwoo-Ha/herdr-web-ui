@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { BlockRecord } from "../../../shared/account-records.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEVICE_CODE_TTL_S, FakeAccountService, WEB_REDIRECT } from "../../../shared/account-service-fake.ts";
@@ -225,6 +226,24 @@ describe("a sign-in shared by tabs", () => {
     await inner.set("session", old);
     const full: typeof inner = { ...inner, update: (async () => { throw new DOMException("full", "QuotaExceededError"); }) as typeof inner.update };
     expect(await new AccountService({ store: full, fetch: service.fetch, lock: memoryLock() }).session()).toEqual(old);
+  });
+
+  it("S32-1: signing out keeps every unsent block, also one stored while the sign-out was on its way", async () => {
+    const service = serviceWithSignIn();
+    const { store, session } = await signIn(service, memoryAccountStore());
+    const record = { id: "r1" } as unknown as BlockRecord;
+    const late = { id: "r2" } as unknown as BlockRecord;
+    await store.set("unsent_blocks", { r1: { account: session.account, sign_in_id: session.sign_in_id, records: [record] } });
+    const answered = Promise.withResolvers<void>();
+    const signOut = new AccountService({ store, fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (new URL(input instanceof Request ? input.url : String(input)).pathname === "/v1/signout") await answered.promise;
+      return service.fetch(input, init);
+    }) as typeof fetch }).signOut();
+    await store.update("unsent_blocks", (current) => ({ ...current, r2: { account: session.account, sign_in_id: session.sign_in_id, records: [late] } }));
+    answered.resolve();
+    await signOut;
+    expect(await store.get("session")).toBeUndefined();
+    expect(Object.keys(await store.get("unsent_blocks") ?? {}).sort()).toEqual(["r1", "r2"]);
   });
 
   it("ends the sign-in on the service even when its access token has run out", async () => {

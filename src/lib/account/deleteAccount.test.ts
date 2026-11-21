@@ -46,6 +46,67 @@ describe("deleting the account", () => {
     await expect(service.listPcs()).rejects.toBeInstanceOf(SignedOutError);
   });
 
+  it("S32-1: forgets the deleted account's unsent blocks and keeps another account's", async () => {
+    const { store, session, service } = await signedIn();
+    await store.set("unsent_blocks", {
+      mine: { account: session.account, sign_in_id: session.sign_in_id, records: [] },
+      theirs: { account: "acct_2", sign_in_id: "another-sign-in", records: [] },
+    });
+    await deleteAccount({ service, accountStore: store, session });
+    expect(Object.keys(await store.get("unsent_blocks") ?? {})).toEqual(["theirs"]);
+  });
+
+  it("S32-1: forgets the deleted account's unsent blocks even when another sign-in took its place during the delete", async () => {
+    const { fake, store, session } = await signedIn();
+    await store.set("unsent_blocks", {
+      mine: { account: session.account, sign_in_id: session.sign_in_id, records: [] },
+      theirs: { account: "acct_2", sign_in_id: "another-sign-in", records: [] },
+    });
+    const fetch = async (input: Request | string | URL, init?: RequestInit): Promise<Response> => {
+      if (new URL(String(input)).pathname === "/v1/account") await store.set("session", { ...session, account: "acct_2", sign_in_id: "another-sign-in", refresh_token: "r-2" });
+      return fake.fetch(input, init);
+    };
+    await deleteAccount({ service: new AccountService({ store, fetch, lock: memoryLock() }), accountStore: store, session });
+    expect((await store.get("session"))?.account).toBe("acct_2");
+    expect(Object.keys(await store.get("unsent_blocks") ?? {})).toEqual(["theirs"]);
+  });
+
+  it("S32-1: a 202 pending is no deletion: the sign-in and the account's unsent blocks stay; only a 204 deletes", async () => {
+    const { fake, store, session } = await signedIn();
+    await store.set("unsent_blocks", { mine: { account: session.account, sign_in_id: session.sign_in_id, records: [] } });
+    const fetch = async (input: Request | string | URL, init?: RequestInit): Promise<Response> =>
+      new URL(String(input)).pathname === "/v1/account" ? Response.json({ status: "pending" }, { status: 202 }) : fake.fetch(input, init);
+    await expect(deleteAccount({ service: new AccountService({ store, fetch, lock: memoryLock() }), accountStore: store, session })).rejects.toThrow();
+    expect((await store.get("session"))?.account).toBe(session.account);
+    expect(Object.keys(await store.get("unsent_blocks") ?? {})).toEqual(["mine"]);
+  });
+
+  it("S32-1: a redirect is no answer: a 303 the browser would follow to a 204 deletes nothing here", async () => {
+    const { fake, store, session } = await signedIn();
+    await store.set("unsent_blocks", { mine: { account: session.account, sign_in_id: session.sign_in_id, records: [] } });
+    // as a browser does: a redirect it may follow comes back as the next request's answer
+    const fetch = async (input: Request | string | URL, init?: RequestInit): Promise<Response> => {
+      if (new URL(String(input)).pathname !== "/v1/account") return fake.fetch(input, init);
+      if (init?.redirect === "error") throw new TypeError("redirected");
+      return new Response(null, { status: 204 });
+    };
+    await expect(deleteAccount({ service: new AccountService({ store, fetch, lock: memoryLock() }), accountStore: store, session })).rejects.toThrow();
+    expect((await store.get("session"))?.account).toBe(session.account);
+    expect(Object.keys(await store.get("unsent_blocks") ?? {})).toEqual(["mine"]);
+  });
+
+  it("S32-1: a DELETE refused twice around a refresh that worked says so and keeps the sign-in", async () => {
+    const { fake, store, session } = await signedIn();
+    const fetch = async (input: Request | string | URL, init?: RequestInit): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/v1/account") return Response.json({ error: { code: "unauthorized", message: "x" } }, { status: 401 });
+      if (path === "/v1/token") return Response.json({ access_token: "fresh", refresh_token: "fresh-r", expires_in: 3600, account: session.account, provider: "github" });
+      return fake.fetch(input, init);
+    };
+    await expect(deleteAccount({ service: new AccountService({ store, fetch, lock: memoryLock() }), accountStore: store, session })).rejects.toMatchObject({ status: 401 });
+    expect((await store.get("session"))?.account).toBe(session.account);
+  });
+
   it("ends the account's other sign-ins too", async () => {
     const { fake, store, session, service } = await signedIn();
     const elsewhere = memoryAccountStore();

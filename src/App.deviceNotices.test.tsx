@@ -127,6 +127,7 @@ async function withDeviceNotices(
   });
   const account = spyOn(indexedAccountStore, "get").mockImplementation(keys.get);
   const accountUpdate = spyOn(indexedAccountStore, "update").mockImplementation(keys.update);
+  const accountUpdateMany = spyOn(indexedAccountStore, "updateMany").mockImplementation(keys.updateMany);
   try {
     storeSelection(options.remoteNotice ? "desk" : "local", null);
     await act(async () => { tree = create(<SettingsProvider><App /></SettingsProvider>); });
@@ -148,6 +149,7 @@ async function withDeviceNotices(
     sessions.mockRestore();
     account.mockRestore();
     accountUpdate.mockRestore();
+    accountUpdateMany.mockRestore();
     for (const [key, previous] of originals) {
       if (previous) Object.defineProperty(globalThis, key, previous);
       else Reflect.deleteProperty(globalThis, key);

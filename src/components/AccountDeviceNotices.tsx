@@ -8,8 +8,10 @@ import { LOCAL_MACHINE, machinePath, type Machine } from "../../shared/machines.
 import { canBlockAdmission, notMeBlocks, sendBlocks, type FleetBlock, type OwnKey } from "../lib/account/fleet-block.ts";
 import { answerOnPc, notMeTransports } from "../lib/account/noticeAnswer.ts";
 import { ACCOUNT_SIGN_OUT_EVENT, AccountServiceError, AccountServiceUnreachableError, indexedAccountService, sameSignIn, SignedOutError } from "../lib/account/service.ts";
-import { indexedAccountStore, type AccountSession } from "../lib/account/store.ts";
+import { ACCOUNT_SESSION_EVENT, indexedAccountStore, type AccountSession } from "../lib/account/store.ts";
+import { keepUnsent, postKept, refusalShown, unsentBlocks } from "../lib/account/unsentBlocks.ts";
 import { apiFetch } from "../lib/api-request-id.ts";
+import { useT } from "../lib/i18n.ts";
 import type { MachineSessionRegistry } from "../lib/machineSession.ts";
 import { itsMeAnswer } from "../lib/relay/joinHold.ts";
 import { useDeviceNotices, type NoticeSocket } from "../lib/useDeviceNotices.ts";
@@ -112,6 +114,8 @@ type BlockResult = {
   readonly signer: string;
   readonly fleet: FleetBlock;
   readonly names: ReadonlyMap<string, string>;
+  /** set once the account service refused the block for good, on the press or a later Try again (S32-1) */
+  readonly delivery: { refused: boolean };
 };
 
 function BlockNoticeAction({ notice, pc, socket, fleet, own, inFlight, changed, onResult }: {
@@ -124,7 +128,10 @@ function BlockNoticeAction({ notice, pc, socket, fleet, own, inFlight, changed, 
   readonly changed: () => void;
   readonly onResult: (result: BlockResult) => void;
 }) {
+  const t = useT();
   const id = noticeKey(pc.id, notice.id);
+  // the block could not be stored first, so nothing was sent (S32-1: never send unstored)
+  const [unstored, setUnstored] = useState(false);
   const canAnswer = own !== null && own.key !== null && notice.account === own.account && canBlockAdmission(notice, own.key) && socket.accountOpensAll();
 
   const press = async () => {
@@ -138,6 +145,17 @@ function BlockNoticeAction({ notice, pc, socket, fleet, own, inFlight, changed, 
       if (current === null || current.key === null || current.account !== notice.account || !socket.accountOpensAll()) return;
       const blocks = await notMeBlocks(notice, current.key);
       if (blocks.length === 0) return;
+      // kept before any PC or the service gets one, so a closed tab loses none (S32-1)
+      setUnstored(false);
+      let kept: boolean;
+      try { kept = await keepUnsent(indexedAccountStore, session, blocks); }
+      catch (error) {
+        console.warn("Ovis: the block could not be stored, so it was not sent", error instanceof Error ? error.name : error);
+        setUnstored(true);
+        return;
+      }
+      if (!kept) return;
+      const delivery = { refused: false };
 
       const serverIdOf = (machine: Machine) =>
         (machine.id === LOCAL_MACHINE ? fleet.pageServerId : undefined) ?? machine.server_id ?? machine.relay?.server_id;
@@ -192,7 +210,16 @@ function BlockNoticeAction({ notice, pc, socket, fleet, own, inFlight, changed, 
       });
       const [sent, roster] = await Promise.all([sendBlocks(blocks, {
         ...routes,
-        service: async (records) => { await Promise.all(records.map((record) => service.postSafetyRecord(record))); },
+        service: async (records) => {
+          // asked right before each send, a Try again's too and after any token refresh: once the PC says it no longer
+          // offers the account release, nothing goes and the block stays (a PC gone offline says nothing: the service decides)
+          const ready = () => {
+            const remote = fleet.machineSessions.peek(pc.id)?.socket;
+            // its last feature list's word, through a disconnect and a reconnect that has listed nothing yet
+            if (remote?.accountReleaseWithdrawn() === true) throw new RangeError("PC does not offer account block delivery");
+          };
+          if (await postKept(indexedAccountStore, session, records, (record) => service.postSafetyRecord(record, ready)) === "refused") delivery.refused = true;
+        },
       }), directory]);
       const outcomes = new Map<string, PcBlockOutcome>(sent.outcomes);
       const names = new Map([...rows].map(([id, machine]) => [id, machine.name]));
@@ -207,7 +234,7 @@ function BlockNoticeAction({ notice, pc, socket, fleet, own, inFlight, changed, 
         outcomes.set(server_id, { server_id, state: unsupported ? "unsupported" : "unreachable" });
         names.set(server_id, routes[0]?.name ?? label);
       }
-      onResult({ pc: pc.id, notice, signer: current.key.public_spki, fleet: { ...sent, outcomes }, names });
+      onResult({ pc: pc.id, notice, signer: current.key.public_spki, fleet: { ...sent, outcomes }, names, delivery });
     } catch (error) {
       if (!(error instanceof DOMException)) throw error;
       console.warn("Ovis: could not sign a device block", error.name);
@@ -217,7 +244,12 @@ function BlockNoticeAction({ notice, pc, socket, fleet, own, inFlight, changed, 
     }
   };
 
-  return canAnswer ? <NotMeButton sending={inFlight.has(id)} onPress={press} /> : null;
+  if (!canAnswer) return null;
+  return <>
+    <NotMeButton sending={inFlight.has(id)} onPress={press} />
+    {unstored && <p className="settings-hint" role="status">{t("The block was not sent. Try again.")}{" "}
+      <button type="button" className="btn" disabled={inFlight.has(id)} onClick={() => { void press(); }}>{t("Try again")}</button></p>}
+  </>;
 }
 
 /** A notice's two answers, one out at a time per PC and notice (T51, T53). */
@@ -252,6 +284,101 @@ export function useAccountDeviceNotices({ machines, machineSessions, selectedMac
   // The lock and refusal are app-wide per PC and notice, even when an answer finishes offscreen.
   const [, answersChanged] = useReducer((count: number) => count + 1, 0);
   const [own, setOwn] = useState<Own>(null);
+  // S32-1: blocks an earlier page or sign-in signed that the account service never answered for, sent again once a PC
+  // here offers the account release (with it off, the queue stays as it is), by their ids: a retry, or a final refusal
+  // shown once. They belong to the stored sign-in: another one's page never shows them.
+  const [unsent, setUnsent] = useState<ReadonlyMap<string, (() => Promise<void>) | null>>(new Map());
+  // whether a PC here offers the account release now: replay, its lines and a Try again follow it as it changes
+  const [capable, setCapable] = useState(false);
+  // a sign-out ends what its replay was doing: an answer that comes after it settles nothing
+  const signOuts = useRef(0);
+  // the stored sign-in, `account\nsign_in_id` (null when none): read again after this page writes it, on a sign-out and on
+  // focus (another tab's); a change restarts the replay for the sign-in now stored
+  const [signIn, setSignIn] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    let version = 0;
+    const read = () => {
+      const asked = ++version;
+      void indexedAccountStore.get("session").then(
+        (session) => { if (live && asked === version) setSignIn(session === undefined ? null : `${session.account}\n${session.sign_in_id ?? ""}`); },
+        (error: unknown) => console.warn("Ovis: the sign-in could not be read", error instanceof Error ? error.name : error),
+      );
+    };
+    read();
+    for (const name of [ACCOUNT_SESSION_EVENT, ACCOUNT_SIGN_OUT_EVENT, "focus"]) window.addEventListener(name, read);
+    return () => {
+      live = false;
+      for (const name of [ACCOUNT_SESSION_EVENT, ACCOUNT_SIGN_OUT_EVENT, "focus"]) window.removeEventListener(name, read);
+    };
+  }, []);
+  // record ids a press on this page shows, by the sign-in that pressed: its own line and Try again carry them
+  const pressed = useRef(new Map<string, string | null>());
+  const socketIds = sockets.map(({ id }) => id).join("\n");
+  useEffect(() => {
+    setUnsent(new Map());
+    if (signIn === null) return;
+    let live = true;
+    let started = false;
+    const epoch = signOuts.current;
+    const current = () => live && epoch === signOuts.current;
+    // asked at each send, a Try again's too
+    const offered = () => sockets.some(({ socket }) => socket.accountOpensAll());
+    const settle = (id: string, delivered: Awaited<ReturnType<typeof postKept>>) => {
+      if (current()) setUnsent((now) => { const next = new Map(now); if (delivered === "refused") next.set(id, null); else next.delete(id); return next; });
+    };
+    const resend = async () => {
+      const session = await indexedAccountService.session();
+      if (session === undefined || `${session.account}\n${session.sign_in_id ?? ""}` !== signIn) return;
+      const service = indexedAccountService.forSignIn(session);
+      for (const entry of await unsentBlocks(indexedAccountStore, session)) {
+        const id = entry.records.map((record) => record.id).join(",");
+        if (!current()) return;
+        // refused for good while no page of this account showed it: shown now, once (then it leaves the store)
+        if (entry.refused === true) { setUnsent((now) => new Map(now).set(id, null)); continue; }
+        if (entry.records.every((record) => pressed.current.get(record.id) === signIn)) continue;
+        const ready = () => { if (!offered()) throw new RangeError("No PC here offers account block delivery"); };
+        const send = () => postKept(indexedAccountStore, session, entry.records, (record) => service.postSafetyRecord(record, ready));
+        const retry = async () => {
+          if (!current() || !offered()) return;
+          try { settle(id, await send()); }
+          catch (error) { console.warn("Ovis: the account service did not confirm the block", error instanceof Error ? error.name : error); }
+        };
+        // the release went while this ran: the rest goes when a PC offers it again
+        if (!offered()) { started = false; return; }
+        try { settle(id, await send()); }
+        catch (error) {
+          console.warn("Ovis: the account service did not confirm the block", error instanceof Error ? error.name : error);
+          if (current()) setUnsent((now) => new Map(now).set(id, retry));
+        }
+      }
+    };
+    // as soon as a PC here says it offers the account release (its features or snapshot): replay once
+    const look = () => {
+      const now = offered();
+      if (live) setCapable(now);
+      if (started || !now) return;
+      started = true;
+      void resend().catch((error: unknown) => console.warn("Ovis: unsent blocks could not be read", error instanceof Error ? error.name : error));
+    };
+    const offs = sockets.map(({ socket }) => socket.on((message) => { if (message.type === "features" || message.type === "snapshot") look(); }));
+    look();
+    return () => { live = false; for (const off of offs) off(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the PCs, by id: a new array each render names the same sockets
+  }, [socketIds, signIn]);
+  // a sign-out takes its blocks' lines and their Try again off this page; the queue stays for a later sign-in to that account
+  useEffect(() => {
+    const signedOut = () => {
+      signOuts.current++;
+      setUnsent(new Map());
+      setResults((current) => new Map([...current].map(([id, result]) => {
+        const { retryService: _gone, ...fleet } = result.fleet;
+        return [id, { ...result, fleet }];
+      })));
+    };
+    window.addEventListener(ACCOUNT_SIGN_OUT_EVENT, signedOut);
+    return () => window.removeEventListener(ACCOUNT_SIGN_OUT_EVENT, signedOut);
+  }, []);
   const readKey = results.size > 0 || shown?.notices.some((notice) => notice.kind === "admit" && notice.open) === true;
   useEffect(() => {
     if (!readKey) return;
@@ -265,14 +392,17 @@ export function useAccountDeviceNotices({ machines, machineSessions, selectedMac
       );
     };
     read();
-    window.addEventListener("focus", read);
-    window.addEventListener(ACCOUNT_SIGN_OUT_EVENT, read);
+    for (const name of [ACCOUNT_SESSION_EVENT, ACCOUNT_SIGN_OUT_EVENT, "focus"]) window.addEventListener(name, read);
     return () => {
       live = false;
-      window.removeEventListener("focus", read);
-      window.removeEventListener(ACCOUNT_SIGN_OUT_EVENT, read);
+      for (const name of [ACCOUNT_SESSION_EVENT, ACCOUNT_SIGN_OUT_EVENT, "focus"]) window.removeEventListener(name, read);
     };
   }, [readKey, shown?.notices]);
+  // a final refusal leaves the store only on its owner's OK, while that account is signed in; its line goes with it (S32-1)
+  const seen = (account: string | undefined, ids: readonly string[], gone: () => void) => account === undefined ? undefined : () => {
+    void refusalShown(indexedAccountStore, account, ids).then(gone,
+      (error: unknown) => console.warn("Ovis: a shown refusal could not be cleared", error instanceof Error ? error.name : error));
+  };
 
   const pc = machines.find((machine) => machine.id === selectedMachineId);
   const socket = sockets.find(({ id }) => id === selectedMachineId)?.socket;
@@ -282,7 +412,7 @@ export function useAccountDeviceNotices({ machines, machineSessions, selectedMac
   for (const [id, result] of results) {
     if (result.pc !== pc.id || result.signer !== own?.key?.public_spki) continue;
     if (hidden.has(id)) {
-      if (result.fleet.retryService !== undefined) detachedRetries.push([id, result]);
+      if (result.fleet.retryService !== undefined || result.delivery.refused) detachedRetries.push([id, result]);
     } else if (!notices.has(result.notice.id)) notices.set(result.notice.id, result.notice);
   }
   for (const id of notices.keys()) {
@@ -290,7 +420,10 @@ export function useAccountDeviceNotices({ machines, machineSessions, selectedMac
   }
   const renderOutcomes = (id: string, result: BlockResult, dismissed = false) => {
     const { retryService, ...delivered } = result.fleet;
-    return <BlockOutcomes outcomes={dismissed ? [] : [...result.fleet.outcomes.values()]} names={result.names} {...(retryService === undefined ? {} : {
+    return <BlockOutcomes outcomes={dismissed ? [] : [...result.fleet.outcomes.values()]} names={result.names} {...(retryService === undefined ? result.delivery.refused ? { accountFailed: true, onRefusalShown: seen(own?.account, result.fleet.ids, () => setResults((current) => {
+      const latest = current.get(id);
+      return latest === undefined ? current : new Map(current).set(id, { ...latest, delivery: { refused: false } });
+    })) } : {} : {
       accountRetry: async () => {
         if (!await retryService()) return;
         setResults((current) => {
@@ -300,7 +433,7 @@ export function useAccountDeviceNotices({ machines, machineSessions, selectedMac
       },
     })} />;
   };
-  if (notices.size === 0 && feed.cut === 0 && detachedRetries.length === 0) return null;
+  if (notices.size === 0 && feed.cut === 0 && detachedRetries.length === 0 && (unsent.size === 0 || !capable)) return null;
   return <>
     <DeviceNotices key={pc.id} pc={pc.name} notices={[...notices.values()]} cut={feed.cut}
       onDismiss={(notice) => feed.dismiss(pc.id, notice)}
@@ -311,9 +444,13 @@ export function useAccountDeviceNotices({ machines, machineSessions, selectedMac
         const result = results.get(id);
         if (result !== undefined && result.signer === own?.key?.public_spki) return renderOutcomes(id, result);
         return socket === undefined ? null : <AdmissionActions notice={notice} pc={pc} socket={socket} fleet={{ machines, machineSessions, pageServerId }} own={own}
-          inFlight={sending.current} refusedItsMe={refusedItsMe.current} changed={answersChanged} onResult={(result) => setResults((current) => new Map(current).set(id, result))} />;
+          inFlight={sending.current} refusedItsMe={refusedItsMe.current} changed={answersChanged} onResult={(result) => {
+            for (const record of result.fleet.ids) pressed.current.set(record, signIn);
+            setResults((current) => new Map(current).set(id, result));
+          }} />;
       }}
     />
     {detachedRetries.map(([id, result]) => <div key={id} role="status">{renderOutcomes(id, result, true)}</div>)}
+    {capable && [...unsent].map(([id, retry]) => <div key={id} role="status"><BlockOutcomes outcomes={[]} names={new Map()} {...(retry === null ? { accountFailed: true, onRefusalShown: seen(signIn?.split("\n")[0], id.split(","), () => setUnsent((now) => { const next = new Map(now); next.delete(id); return next; })) } : { accountRetry: retry })} /></div>)}
   </>;
 }

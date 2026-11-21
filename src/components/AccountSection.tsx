@@ -20,6 +20,7 @@ import { ownWindowSignIn, useOwnWindowRedirect } from "../lib/account/ownWindow.
 import { AccountServiceError, DEVICE_PROVIDERS, indexedAccountService, offeredProviders, pcAccountServiceOf, sameSignIn, SignedOutError, type AccountIdentity, type AccountService, type DeviceProvider, type OfferedProviders } from "../lib/account/service.ts";
 import { SignInError } from "../lib/account/signin.ts";
 import { indexedAccountStore, type AccountProvider, type AccountSession, type AccountStore } from "../lib/account/store.ts";
+import { postKept, refusalShown, unsentBlocks, type UnsentBlocks } from "../lib/account/unsentBlocks.ts";
 import { currentLocale, useT, type Translate } from "../lib/i18n.ts";
 import { inMacApp, inNativeApp } from "../lib/nativeApp.ts";
 import { pairThisBrowser, UnconfirmedPairing } from "../lib/pairing.ts";
@@ -759,11 +760,13 @@ const pcServiceHere = (): string | null => desktopAccount() === null && !inNativ
 
 export const accountServiceHere = (): string | null => desktopAccount()?.service ?? pcServiceHere();
 
-export function AccountSection({ onAccount, recheck = 0, opensAll, deleteSlot = null }: {
+export function AccountSection({ onAccount, recheck = 0, opensAll, withdrawn, deleteSlot = null }: {
   onAccount?: (state: AccountState) => void;
   recheck?: number;
   /** this PC lists account-opens-all/1 now (App, from the local socket's features) */
   opensAll?: () => boolean;
+  /** this PC's last feature list lacked the account release (an explicit withdrawal, S32-1): no block goes to the service */
+  withdrawn?: () => boolean;
   /** where Delete account goes: the foot of the Devices and PCs page, below every other group; a row of the group without one */
   deleteSlot?: HTMLElement | null;
 } = {}) {
@@ -1136,7 +1139,72 @@ export function AccountSection({ onAccount, recheck = 0, opensAll, deleteSlot = 
     });
   };
 
+  // S32-1: a block that has not reached the account is sent only by a later sign-in to it, so a sign-out asks first while
+  // any waits, or while that cannot be read (the queue itself stays either way).
+  // The question belongs to the sign-in that asked: a switch to another one voids it.
+  // A final refusal (`refused`, by record id) is said before the sign-out, and leaves the store once said.
+  const [unsentAsked, setUnsentAsked] = useState<{ readonly session: AccountSession; readonly state: "waiting" | "unknown" | "retry" | "refused"; readonly refused?: readonly string[] } | null>(null);
+  /** Says the final refusals `entries` hold, if any; whether there were. */
+  const sayRefused = (session: AccountSession, entries: readonly UnsentBlocks[]): boolean => {
+    const refused = entries.filter((entry) => entry.refused === true).flatMap((entry) => entry.records.map((record) => record.id));
+    if (refused.length > 0) setUnsentAsked({ session, state: "refused", refused });
+    return refused.length > 0;
+  };
   const signOut = (): void => {
+    void indexedAccountStore.get("session").then(async (session) => {
+      if (session === undefined) { endSignIn(); return; }
+      let entries: UnsentBlocks[];
+      try { entries = await unsentBlocks(indexedAccountStore, session); }
+      catch (error) {
+        console.warn("Ovis: the unsent blocks could not be read", error instanceof Error ? error.name : error);
+        setUnsentAsked({ session, state: "unknown" });
+        return;
+      }
+      if (entries.some((entry) => entry.refused !== true)) setUnsentAsked({ session, state: "waiting" });
+      else if (!sayRefused(session, entries)) endSignIn(session);
+    }, () => endSignIn());
+  };
+  /** The asking sign-in, while it is still the stored one; otherwise the question goes and nothing happens. */
+  const stillAsking = async (): Promise<AccountSession | null> => {
+    const asking = unsentAsked?.session;
+    const stored = await indexedAccountStore.get("session");
+    if (asking === undefined || stored === undefined || !sameSignIn(asking, stored)) { setUnsentAsked(null); return null; }
+    return asking;
+  };
+  const sendUnsentThenSignOut = async (): Promise<void> => {
+    const session = await stillAsking();
+    if (session === null) return;
+    const service = indexedAccountService.forSignIn(session);
+    // asked right before each send, after any token refresh, as Not me's Try again asks
+    const ready = () => { if (withdrawn?.() === true) throw new RangeError("This PC does not offer account block delivery"); };
+    let entries: UnsentBlocks[];
+    try {
+      for (const entry of await unsentBlocks(indexedAccountStore, session)) {
+        if (entry.refused !== true) await postKept(indexedAccountStore, session, entry.records, (record) => service.postSafetyRecord(record, ready));
+      }
+      entries = await unsentBlocks(indexedAccountStore, session);
+    } catch (error) {
+      console.warn("Ovis: the account service did not confirm the block", error instanceof Error ? error.name : error);
+      if (await stillAsking() !== null) setUnsentAsked({ session, state: "retry" });
+      return;
+    }
+    // signed out or switched while it went: its answer is said at that account's next sign-in, not here
+    if (await stillAsking() === null) return;
+    // a final refusal, this send's or an earlier one's, is said; the person decides whether to sign out anyway
+    if (!sayRefused(session, entries)) endSignIn(session);
+  };
+  const checkAgain = async (): Promise<void> => {
+    if (await stillAsking() === null) return;
+    setUnsentAsked(null);
+    signOut();
+  };
+  const signOutAnyway = async (): Promise<void> => {
+    const session = await stillAsking();
+    if (session !== null) endSignIn(session);
+  };
+  /** Ends `asked`'s sign-in (the stored one when none is named): another sign-in that took its place stays. */
+  const endSignIn = (asked?: AccountSession): void => {
+    setUnsentAsked(null);
     deletion.current = null;
     setDeleteAsked(null);
     setDeleteFailed(null);
@@ -1146,7 +1214,7 @@ export function AccountSection({ onAccount, recheck = 0, opensAll, deleteSlot = 
     keepAddPcWaiting(null);
     signedInHere.current = null;
     loads.current++;
-    void indexedAccountService.signOut()
+    void (asked === undefined ? indexedAccountService : indexedAccountService.forSignIn(asked)).signOut()
       .catch((error: unknown) => console.warn("Ovis: the account service did not confirm the sign-out", error instanceof Error ? error.name : error))
       .finally(() => setView({ kind: "signed-out", error: null }));
   };
@@ -1285,6 +1353,25 @@ export function AccountSection({ onAccount, recheck = 0, opensAll, deleteSlot = 
                 <button type="button" className="btn account-head-btn" aria-label={t("Sign out of {provider}", { provider: PROVIDER_NAMES[view.provider] })} onClick={signOut}>{t("Sign out")}</button>
               </div>
             )}
+          {/* the question is its own sign-in's: under another account's view it is not drawn */}
+          {unsentAsked !== null && unsentAsked.session.account === view.account && (
+            <div className="settings-item" role="status">
+              <p className="settings-hint">{unsentAsked.state === "unknown" ? t("Could not check whether a block still waits to reach the account.")
+                : unsentAsked.state === "waiting" ? t("A block has not reached the account yet.")
+                : unsentAsked.state === "refused" ? t("The block was refused. Block it again from this device.") : t("The block did not go through yet.")}</p>
+              {unsentAsked.state === "unknown" && <button type="button" className="btn" onClick={() => { void checkAgain(); }}>{t("Check again")}</button>}
+              {unsentAsked.state === "waiting" && <button type="button" className="btn" onClick={() => { void sendUnsentThenSignOut(); }}>{t("Send it now")}</button>}
+              {unsentAsked.state === "retry" && <button type="button" className="btn" onClick={() => { void sendUnsentThenSignOut(); }}>{t("Try again")}</button>}
+              <button type="button" className="btn" onClick={() => { void signOutAnyway(); }}>{t("Sign out anyway")}</button>
+              {/* the refused block leaves the queue only on its owner's OK (S32-1) */}
+              {unsentAsked.state === "refused" && unsentAsked.refused !== undefined && <button type="button" className="btn" onClick={() => {
+                const asked = unsentAsked;
+                void refusalShown(indexedAccountStore, asked.session.account, asked.refused ?? [])
+                  .then(() => setUnsentAsked((now) => now === asked ? null : now))
+                  .catch((error: unknown) => console.warn("Ovis: a shown refusal could not be cleared", error instanceof Error ? error.name : error));
+              }}>{t("OK")}</button>}
+            </div>
+          )}
           {view.methods !== null && (
             <div className="settings-item account-methods">
               <div className="account-method-row" title={bridge === null ? t("Add another way to sign in from the Ovis desktop app.") : undefined}>

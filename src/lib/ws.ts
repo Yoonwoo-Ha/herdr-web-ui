@@ -144,6 +144,8 @@ export class HerdrSocket {
   private readonly disconnectHandlers = new Set<() => void>();
   private readonly beforeReplayHandlers = new Set<() => void>();
   private featuresKnown = false;
+  /** what the last feature list said of the account release, kept across reconnects (accountReleaseWithdrawn) */
+  private accountOpensAllSaid: boolean | null = null;
   /** `terminal-history` from this connection's latest features frame (trusted or not) or snapshot: it says how to draw, not what to send */
   private terminalHistory = false;
   private machineEventsOffered: boolean | null = null;
@@ -445,6 +447,7 @@ export class HerdrSocket {
         const first = !this.featuresKnown;
         this.features = new Set(message.features ?? []);
         this.featuresKnown = true;
+        this.accountOpensAllSaid = this.features.has(ACCOUNT_OPENS_ALL_CAPABILITY);
         // typing lost on another herdr, or on one never proven, is not this herdr's pane's, whatever its ID
         this.lifetime = message.type === "snapshot" ? message.snapshot.herdr_lifetime : message.herdr_lifetime;
         for (const [paneId, lost] of this.lostInput) if (lost.lifetime !== this.lifetime) this.lostInput.delete(paneId);
@@ -959,6 +962,14 @@ export class HerdrSocket {
   /** Device table G5: this PC opens to the account's sign-in (ACCOUNT_OPENS_ALL_CAPABILITY), as its trusted features say; never offline. */
   accountOpensAll(): boolean {
     return this.connected && this.features.has(ACCOUNT_OPENS_ALL_CAPABILITY);
+  }
+
+  /**
+   * This PC's last feature list lacked the account release (S32-1): an explicit withdrawal, which holds through a
+   * disconnect and a reconnect that has listed nothing yet, until a list offers it again. False before any list.
+   */
+  accountReleaseWithdrawn(): boolean {
+    return this.accountOpensAllSaid === false;
   }
 
   /** Device table T57: says what was seen, or answers one notice; only to a PC that offers it. True when sent. */

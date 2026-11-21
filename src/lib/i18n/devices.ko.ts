@@ -298,7 +298,6 @@ export const DEVICES_KO: Record<string, string> = {
   "{pc}: waiting for its answer": "{pc}: 응답 기다리는 중",
   "{pc}: not reached; it applies the block at its next check": "{pc}: 연결 안 됨, 다음 확인 때 차단돼요",
   "{pc}: needs an Ovis update to block": "{pc}: 차단하려면 Ovis 업데이트가 필요해요",
-  "The block did not go through yet.": "차단이 아직 전달되지 않았어요.",
   "It's me": "나예요",
   "{pc} did not accept It's me from this device.": "{pc}에서 이 기기의 '나예요'를 받지 않았어요.",
   "{pc} opens in {seconds} s": "{seconds}초 후 {pc} 열림",

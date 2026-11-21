@@ -4,7 +4,7 @@ import * as ReactDom from "react-dom";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 
 import { FakeAccountService } from "../../shared/account-service-fake.ts";
-import { indexedAccountStore } from "../lib/account/store.ts";
+import { type AccountSession, indexedAccountStore } from "../lib/account/store.ts";
 import { fakeIndexedDB } from "../lib/indexedDB.fake.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { nativeTransport, setTransport } from "../lib/transport.ts";
@@ -22,6 +22,11 @@ let signsInAs = ACCOUNT;
 let desktop = true;
 const SIGN_IN = "Continue with GitHub";
 let onDelete: (() => Promise<void>) | null = null;
+/** the account service's answer to a Not me block post, when a test sets one */
+let safetyAnswer: ((id: string) => Response | Promise<Response>) | null = null;
+/** this PC explicitly withdrew the account release (its last feature list lacked it) */
+let withdrawnNow = false;
+let safetyPosts = 0;
 
 describe("deleting the account from Settings", () => {
   const descriptors = new Map<string, PropertyDescriptor | undefined>();
@@ -36,6 +41,9 @@ describe("deleting the account from Settings", () => {
     signsInAs = ACCOUNT;
     desktop = true;
     onDelete = null;
+    safetyAnswer = null;
+    withdrawnNow = false;
+    safetyPosts = 0;
     fake = new FakeAccountService(() => Date.now() + ahead);
     fake.offerLinkPage(["github", "google"]);
     for (const key of ["window", "document", "navigator", "indexedDB", "getComputedStyle", "location", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
@@ -76,6 +84,8 @@ describe("deleting the account from Settings", () => {
         if (url.pathname === "/api/account/status") return Response.json({ account: ACCOUNT, unlinked: [], removals: [], adds: [], blocked: [] });
         return Response.json({ error: { code: "not_found", message: "no such route" } }, { status: 404 });
       }
+      if (url.pathname === "/v1/safety-records") safetyPosts++;
+      if (url.pathname === "/v1/safety-records" && safetyAnswer !== null) return safetyAnswer(String((JSON.parse(String(init?.body)) as { record: { id: unknown } }).record.id));
       if (url.pathname === "/v1/token" && userCode !== null) { fake.approveOnLinkPage(userCode, signsInAs, "github"); fake.approveDevice(userCode, signsInAs); userCode = null; }
       const answer = await fake.fetch(input, init);
       if (url.pathname === "/v1/account" && onDelete !== null) await onDelete();
@@ -121,7 +131,7 @@ describe("deleting the account from Settings", () => {
   const foot = (): string => text(renderer!.root.find((node) => node.props["data-portal"] === "page-foot"));
   const button = (label: string): ReactTestInstance => renderer!.root.find((node) => node.type === "button" && text(node) === label);
   const signedIn = async (deleteSlot?: HTMLElement): Promise<void> => {
-    await act(async () => { renderer = create(<SettingsProvider><AccountSection deleteSlot={deleteSlot ?? null} /></SettingsProvider>); });
+    await act(async () => { renderer = create(<SettingsProvider><AccountSection deleteSlot={deleteSlot ?? null} withdrawn={() => withdrawnNow} /></SettingsProvider>); });
     await until(() => buttons().includes(SIGN_IN));
     await press(SIGN_IN);
     await until(() => buttons().includes("Delete account"));
@@ -169,6 +179,150 @@ describe("deleting the account from Settings", () => {
     expect(fake.deleted("acct_two")).toBe(false);
     expect(fake.deleted(ACCOUNT)).toBe(false);
     expect((await indexedAccountStore.get("session"))?.account).toBe("acct_two");
+  });
+
+  it("S32-1: signing out with a block the account has not confirmed says so first, signs out only when asked again, and keeps the block", async () => {
+    await signedIn();
+    const session = await indexedAccountStore.get("session");
+    if (session === undefined) throw new Error("Not signed in");
+    await indexedAccountStore.set("unsent_blocks", { b1: { account: session.account, sign_in_id: session.sign_in_id, records: [{ id: "b1" } as never] } });
+    await press("Sign out");
+    await until(() => shown().includes("A block has not reached the account yet."));
+    expect(buttons()).toEqual(expect.arrayContaining(["Send it now", "Sign out anyway"]));
+    expect((await indexedAccountStore.get("session"))?.account).toBe(ACCOUNT);
+    await press("Sign out anyway");
+    await until(() => buttons().includes(SIGN_IN));
+    expect(Object.keys(await indexedAccountStore.get("unsent_blocks") ?? {})).toEqual(["b1"]);
+  });
+
+  const queueFor = async (sign: { account: string; sign_in_id?: string | undefined }, id: string) => {
+    await indexedAccountStore.update("unsent_blocks", (current) => ({ ...current, [id]: { account: sign.account, sign_in_id: sign.sign_in_id, records: [{ id } as never] } }));
+  };
+
+  it("S32-1: the sign-out question belongs to the sign-in that asked: after a switch to another sign-in it signs nobody out and keeps that one's queue", async () => {
+    await signedIn();
+    const a = (await indexedAccountStore.get("session"))!;
+    await queueFor(a, "a1");
+    await press("Sign out");
+    await until(() => shown().includes("A block has not reached the account yet."));
+    const b = { ...a, sign_in_id: "another-sign-in", refresh_token: "r-b" };
+    await indexedAccountStore.set("session", b);
+    await queueFor(b, "b1");
+    await press("Sign out anyway");
+    await until(() => !shown().includes("A block has not reached the account yet."));
+    expect((await indexedAccountStore.get("session"))?.sign_in_id).toBe("another-sign-in");
+    expect(Object.keys(await indexedAccountStore.get("unsent_blocks") ?? {})).toContain("b1");
+  });
+
+  it("S32-1: a queue that cannot be read is not empty: sign-out asks, keeps the session, and offers to check again", async () => {
+    await signedIn();
+    const get = indexedAccountStore.get;
+    const failing = spyOn(indexedAccountStore, "get").mockImplementation((async (name: string) => {
+      if (name === "unsent_blocks") throw new DOMException("busy", "UnknownError");
+      return await get.call(indexedAccountStore, name as never);
+    }) as typeof indexedAccountStore.get);
+    await press("Sign out");
+    await until(() => shown().includes("Could not check whether a block still waits to reach the account."));
+    expect(buttons()).toEqual(expect.arrayContaining(["Check again", "Sign out anyway"]));
+    expect(await get.call(indexedAccountStore, "session")).toBeDefined();
+    await queueFor((await get.call(indexedAccountStore, "session")) as AccountSession, "kept-1");
+    await press("Sign out anyway");
+    await until(() => buttons().includes(SIGN_IN));
+    failing.mockRestore();
+    // the sign-out ended the session and took no block with it
+    expect(Object.keys(await indexedAccountStore.get("unsent_blocks") ?? {})).toContain("kept-1");
+  });
+
+  it.each([
+    ["a passing failure keeps the session and offers Try again", 503, true],
+    ["a final refusal says so once and does not sign out by itself", 403, false],
+  ] as const)("S32-1: Send it now uses its result: %s", async (_name, status, retry) => {
+    await signedIn();
+    const a = (await indexedAccountStore.get("session"))!;
+    await queueFor(a, "a1");
+    safetyAnswer = () => Response.json({ error: { code: status === 403 ? "signer_not_older" : "unavailable", message: "x" } }, { status });
+    await press("Sign out");
+    await until(() => buttons().includes("Send it now"));
+    await press("Send it now");
+    await until(() => shown().includes(retry ? "The block did not go through yet." : "The block was refused. Block it again from this device."));
+    expect((await indexedAccountStore.get("session"))?.sign_in_id).toBe(a.sign_in_id);
+    expect(buttons().includes("Try again")).toBe(retry);
+    expect(buttons()).toContain("Sign out anyway");
+  });
+
+  it("S32-1: a final refusal for one block is still said after a Try again sends the other, and leaves only once said", async () => {
+    await signedIn();
+    const a = (await indexedAccountStore.get("session"))!;
+    await queueFor(a, "refused-1");
+    await queueFor(a, "busy-1");
+    let busy = 503;
+    safetyAnswer = (id) => id === "refused-1" ? Response.json({ error: { code: "signer_not_older", message: "x" } }, { status: 403 })
+      : busy === 200 ? Response.json({ id }) : Response.json({ error: { code: "unavailable", message: "x" } }, { status: busy });
+    await press("Sign out");
+    await until(() => buttons().includes("Send it now"));
+    await press("Send it now");
+    await until(() => buttons().includes("Try again"));
+    busy = 200;
+    await press("Try again");
+    await until(() => !buttons().includes("Try again"));
+    expect(shown()).toContain("The block was refused. Block it again from this device.");
+    expect(buttons()).toContain("Sign out anyway");
+    expect((await indexedAccountStore.get("session"))?.sign_in_id).toBe(a.sign_in_id);
+    // the refusal stays queued until its owner presses OK
+    expect(Object.keys(await indexedAccountStore.get("unsent_blocks") ?? {})).toEqual(["refused-1"]);
+    await press("OK");
+    await until(() => !shown().includes("The block was refused. Block it again from this device."));
+    expect(await indexedAccountStore.get("unsent_blocks")).toBeUndefined();
+  });
+
+  it("S32-1: a final refusal that answers after Sign out anyway is said to nobody, so the block stays for its account's next sign-in", async () => {
+    await signedIn();
+    const a = (await indexedAccountStore.get("session"))!;
+    await queueFor(a, "late-1");
+    const answer = Promise.withResolvers<Response>();
+    const asked = Promise.withResolvers<void>();
+    safetyAnswer = () => { asked.resolve(); return answer.promise; };
+    await press("Sign out");
+    await until(() => buttons().includes("Send it now"));
+    await press("Send it now");
+    await asked.promise;
+    await press("Sign out anyway");
+    await until(() => buttons().includes(SIGN_IN));
+    // the send's answer is written, then the sign-in it asked for is read again before anything is said
+    const { update, get } = indexedAccountStore;
+    let written = false;
+    const checked = Promise.withResolvers<void>();
+    spyOn(indexedAccountStore, "update").mockImplementation((async (name: string, change: never) => {
+      await update.call(indexedAccountStore, name as never, change);
+      if (name === "unsent_blocks") written = true;
+    }) as typeof indexedAccountStore.update);
+    spyOn(indexedAccountStore, "get").mockImplementation((async (name: string) => {
+      const value = await get.call(indexedAccountStore, name as never);
+      if (written && name === "session") checked.resolve();
+      return value;
+    }) as typeof indexedAccountStore.get);
+    await act(async () => {
+      answer.resolve(Response.json({ error: { code: "signer_not_older", message: "x" } }, { status: 403 }));
+      await checked.promise;
+    });
+    await act(async () => {});
+    expect(shown()).not.toContain("The block was refused. Block it again from this device.");
+    expect(Object.values(await indexedAccountStore.get("unsent_blocks") ?? {}).map((entry) => [entry.records[0]?.id, entry.refused])).toEqual([["late-1", true]]);
+  });
+
+  it("S32-1: Send it now posts nothing once this PC explicitly withdrew the account release, and keeps the block", async () => {
+    await signedIn();
+    const a = (await indexedAccountStore.get("session"))!;
+    await queueFor(a, "w1");
+    safetyAnswer = (id) => Response.json({ id });
+    withdrawnNow = true;
+    await press("Sign out");
+    await until(() => buttons().includes("Send it now"));
+    await press("Send it now");
+    await until(() => buttons().includes("Try again"));
+    expect(safetyPosts).toBe(0);
+    expect(Object.keys(await indexedAccountStore.get("unsent_blocks") ?? {})).toEqual(["w1"]);
+    expect((await indexedAccountStore.get("session"))?.sign_in_id).toBe(a.sign_in_id);
   });
 
   it("drops the question when the person signs out, so the next sign-in starts unarmed", async () => {

@@ -298,7 +298,6 @@ export const DEVICES_ZH: Record<string, string> = {
   "{pc}: waiting for its answer": "{pc}：等待回应",
   "{pc}: not reached; it applies the block at its next check": "{pc}：未连接，下次检查时会阻止",
   "{pc}: needs an Ovis update to block": "{pc}：需要更新 Ovis 才能阻止",
-  "The block did not go through yet.": "阻止请求尚未送达。",
   "It's me": "是我",
   "{pc} did not accept It's me from this device.": "{pc} 没有接受这台设备的“是我”。",
   "{pc} opens in {seconds} s": "{seconds} 秒后打开 {pc}",

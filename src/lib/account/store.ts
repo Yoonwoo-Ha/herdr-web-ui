@@ -6,6 +6,7 @@
  * opens this one.
  */
 import { exportAccountKey } from "../../../shared/account-records.ts";
+import type { UnsentBlocks } from "./unsentBlocks.ts";
 import type { AddRecord, RemoveRecord } from "../../../shared/account-records.ts";
 import type { RelayOffer } from "../../../shared/relay-offer.ts";
 
@@ -76,6 +77,8 @@ interface Records {
   linking: Readonly<Record<string, string>>;
   /** the key this sign-in registered with the account service (account/signInKey.ts) and its place in the account's order */
   signin_key: SignInKey;
+  /** by the ids of the records: Not me's signed blocks the account service has not confirmed (account/unsentBlocks.ts) */
+  unsent_blocks: Readonly<Record<string, UnsentBlocks>>;
 }
 
 export interface SignInKey {
@@ -114,9 +117,15 @@ export interface AccountStore {
    * Forgets the key, the sign-in and every record but `leaving`, in one transaction: a new key is made
    * on next use, which no PC knows. A sign-in `keep` accepts stays (one made after a leave began). With `only`,
    * nothing is cleared unless it accepts the sign-in stored then (read in the same transaction); the records
-   * `spare` names stay as `leaving` does.
+   * `spare` names stay as `leaving` does, and so do the unsent blocks `unsent` accepts (another sign-in's, S32-1).
    */
-  clear(keep?: (session: AccountSession) => boolean, options?: { readonly only?: (session: AccountSession | undefined) => boolean; readonly spare?: readonly Exclude<Name, "key" | "session">[] }): Promise<void>;
+  clear(keep?: (session: AccountSession) => boolean, options?: { readonly only?: (session: AccountSession | undefined) => boolean; readonly spare?: readonly Exclude<Name, "key" | "session">[]; readonly unsent?: (entry: UnsentBlocks) => boolean }): Promise<void>;
+}
+
+function keptUnsent(current: Records["unsent_blocks"] | undefined, accept: ((entry: UnsentBlocks) => boolean) | undefined): Records["unsent_blocks"] | undefined {
+  if (current === undefined || accept === undefined) return undefined;
+  const kept = Object.fromEntries(Object.entries(current).filter(([, entry]) => accept(entry)));
+  return Object.keys(kept).length === 0 ? undefined : kept;
 }
 
 export async function newKey(): Promise<AccountKey> {
@@ -150,8 +159,10 @@ export function memoryAccountStore(): AccountStore {
       const session = records.get("session") as AccountSession | undefined;
       if (options?.only !== undefined && !options.only(session)) return;
       const kept = (["leaving", ...options?.spare ?? []] as const).map((name) => [name, records.get(name)] as const);
+      const unsent = keptUnsent(records.get("unsent_blocks") as Records["unsent_blocks"] | undefined, options?.unsent);
       records.clear();
       for (const [name, value] of kept) if (value !== undefined) records.set(name, value);
+      if (unsent !== undefined) records.set("unsent_blocks", unsent);
       if (session !== undefined && keep?.(session) === true) records.set("session", session);
     },
   };
@@ -198,6 +209,16 @@ async function transact<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore
   } finally { db.close(); }
 }
 
+/**
+ * Fired on this page's window once a write that may change the stored sign-in is done (a sign-in, a refresh, a sign-out,
+ * one ended by the service): what reads the sign-in reads it again. Another tab's write is read again on focus.
+ */
+export const ACCOUNT_SESSION_EVENT = "ovis:account-session";
+
+function sessionWritten<T>(written: Promise<T>): Promise<T> {
+  return written.finally(() => { globalThis.window?.dispatchEvent?.(new Event(ACCOUNT_SESSION_EVENT)); });
+}
+
 export const indexedAccountStore: AccountStore = {
   async key() {
     // made outside the transaction, which would commit while WebCrypto works; another tab's key, saved first, wins
@@ -215,14 +236,15 @@ export const indexedAccountStore: AccountStore = {
     });
   },
   set(name, value) {
-    return transact("readwrite", (store) => {
+    const written = transact("readwrite", (store) => {
       if (value === undefined) store.delete(name);
       else store.put(value, name);
       return () => undefined;
     });
+    return name === "session" ? sessionWritten(written) : written;
   },
   update(name, change) {
-    return transact("readwrite", (store) => {
+    const written = transact("readwrite", (store) => {
       const request = store.get(name);
       request.onsuccess = () => {
         const next = change(request.result as never);
@@ -231,9 +253,10 @@ export const indexedAccountStore: AccountStore = {
       };
       return () => undefined;
     });
+    return name === "session" ? sessionWritten(written) : written;
   },
   updateMany(names, change) {
-    return transact("readwrite", (store) => {
+    const written = transact("readwrite", (store) => {
       const current: Record<string, unknown> = {};
       let left = names.length;
       for (const name of names) {
@@ -250,19 +273,23 @@ export const indexedAccountStore: AccountStore = {
       }
       return () => undefined;
     });
+    return (names as readonly string[]).includes("session") ? sessionWritten(written) : written;
   },
   clear(keep, options) {
-    return transact("readwrite", (store) => {
+    return sessionWritten(transact("readwrite", (store) => {
       const kept = (["leaving", ...options?.spare ?? []] as const).map((name) => [name, store.get(name)] as const);
+      const unsent: IDBRequest<Records["unsent_blocks"] | undefined> = store.get("unsent_blocks");
       const session: IDBRequest<AccountSession | undefined> = store.get("session");
       // requests run in order: every read is done when the last answers
       session.onsuccess = () => {
         if (options?.only !== undefined && !options.only(session.result)) return;
         store.clear();
         for (const [name, read] of kept) if (read.result !== undefined) store.put(read.result, name);
+        const others = keptUnsent(unsent.result, options?.unsent);
+        if (others !== undefined) store.put(others, "unsent_blocks");
         if (session.result !== undefined && keep?.(session.result) === true) store.put(session.result, "session");
       };
       return () => undefined;
-    });
+    }));
   },
 };
