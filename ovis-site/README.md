@@ -91,6 +91,11 @@ A preview deploy serves it too, so a pull request can check `/demo/` on its prev
   Mac's, or the AppImages for Linux beyond Debian and Ubuntu; on Windows, how to get past
   SmartScreen while the desktop app is not code-signed). The install command stays a second
   way in the download row.
+  Right under each row, the `.dl-version` line names that newest release and its day, with a
+  "What's new" link to its notes: `assets/platform.js` reads it from GitHub's
+  `releases/latest` (the release `releases/latest/download/` hands out), and shows nothing when
+  that answer does not come, when that release lacks one of the installers the rows link
+  (`INSTALLERS` there), or on a phone, whose button opens the store instead.
   The sections carry `id="iphone"` and `id="android"`; the home page's FAQ links to `/beta/#iphone`
   for the TestFlight test. Its App Store and Google Play icons, and the download button on an
   iPhone or an Android phone (`assets/platform.js`), link straight to the app's App Store and
