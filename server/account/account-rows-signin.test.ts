@@ -228,7 +228,7 @@ describe("S2-25 an account-joined row signs in by relay AUTH (S21, S25, T35)", (
   });
 
   for (const [name, leave] of [
-    ["binding clear", (devices: DeviceStore) => { devices.clearAccountBinding("left_on_pc", "pc"); }],
+    ["binding clear", (devices: DeviceStore) => { devices.clearAccountBinding("unlisted", "account"); }],
     ["Revoke all", (devices: DeviceStore) => { devices.revokeAll(); }],
   ] as const) {
     test(`T44: ${name} ends every account row: its session closes and it is gone from the file, also after a restart`, async () => {

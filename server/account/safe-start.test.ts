@@ -96,7 +96,7 @@ describe("a safe PC state before any listener (T41, T48)", () => {
     const dir = stateDir();
     const first = store(dir);
     await member(first);
-    first.clearAccountBinding("left_on_pc", "pc");
+    first.clearAccountBinding("unlisted", "account");
     // a code started, and a device that redeemed a code made for a PC in no account and waits to link
     const pending = first.startPairing();
     const waitingKey = await key();
@@ -118,7 +118,7 @@ describe("a safe PC state before any listener (T41, T48)", () => {
     // the sibling holds a row this dir does not, an enrollment barrier, a held key and a clear of an old binding
     const other = store(sibling);
     const onlyThere = await member(other);
-    other.clearAccountBinding("left_on_pc", "pc");
+    other.clearAccountBinding("unlisted", "account");
     writeFileSync(join(sibling, "account-enrolling.json"), JSON.stringify({ by: onlyThere.id }), { mode: 0o600 });
     const heldKey = (await key()).spki;
     writeFileSync(join(sibling, "account-held.json"), JSON.stringify({ keys: [heldKey], full: false }), { mode: 0o600 });

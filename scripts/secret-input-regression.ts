@@ -168,11 +168,13 @@ process.stdin.on("data", chunk => {
     assert.deepEqual(sent, ["secret", "secret", "secret", "secret", "secret", "secret"]);
     rmSync(result, { force: true });
     await paneSendText(pane, "\u0016");
-    await field.waitFor();
-    await field.fill("below-secret");
-    await page.locator(".secret-input").getByRole("button", { name: "Send", exact: true }).click();
-    await field.waitFor({ state: "detached" });
+    // A previous prompt can still appear as its terminal frame is replaced. Enter the secret
+    // only into the form that shows this command's new prompt.
+    const below = page.locator(".secret-input").filter({ has: page.getByText("Password:", { exact: true }) });
+    await below.getByLabel("Password or PIN", { exact: true }).fill("below-secret");
+    await below.getByRole("button", { name: "Send", exact: true }).click();
     await accepted("below-secret");
+    await below.waitFor({ state: "detached" });
     assert.deepEqual(sent, ["secret", "secret", "secret", "secret", "secret", "secret", "secret"]);
     await paneSendText(pane, "\u0010");
     await field.waitFor();

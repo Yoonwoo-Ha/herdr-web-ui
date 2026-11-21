@@ -19,7 +19,7 @@ function failureText(t: ReturnType<typeof useT>, error: unknown): string {
   }
 }
 
-export function RelaySignIn({ service, onSignedIn, onOpenAccount }: { service: string; onSignedIn: (session: AccountSession) => void; onOpenAccount: () => void }) {
+export function RelaySignIn({ service, onSignedIn, onOpenAccount, boundPc = false }: { service: string; onSignedIn: (session: AccountSession) => void; onOpenAccount: () => void; boundPc?: boolean }) {
   const t = useT();
   const locale = useLocale();
   const { state, ready, own, linkPage, start, cancel } = useLinkPageSignIn(service, onSignedIn, onOpenAccount);
@@ -78,7 +78,7 @@ export function RelaySignIn({ service, onSignedIn, onOpenAccount }: { service: s
   const failure = state.kind === "failed" ? failureText(t, state.error) : null;
   return (
     <>
-      <p className="settings-description">{t("Connect from anywhere through your Ovis account.")}</p>
+      <p className="settings-description">{boundPc ? t("Sign in to this PC's account.") : t("Connect from anywhere through your Ovis account.")}</p>
       {own !== null ? <AccountSignIn providers={own} onSignIn={start} error={failure} /> : <>
       <button ref={signInButton} type="button" className="btn btn-primary connect-signin-button" aria-disabled={!ready || state.kind === "starting"} onClick={() => { if (ready && state.kind !== "starting") start(); }}>{state.kind === "starting" ? t("Signing in…") : t("Sign in to Ovis")}</button>
       {failure !== null && <p className="account-error" role="alert">{failure}</p>}

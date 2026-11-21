@@ -397,15 +397,17 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     await fixture.joinAccount("fixture", "Owner's phone");
     assert.equal(fixture.pendingCode(), null, "the PC took the QR code's code back as it joined the account");
     const joined = accountQr.getByTestId("connect-account-joined");
-    await joined.getByText("This PC is in your account (fixture).", { exact: true }).waitFor();
+    await joined.getByText("This PC is in your account.", { exact: true }).waitFor();
     await joined.getByText("Added by Owner's phone.", { exact: true }).waitFor();
     assert.equal(await relayQr.count(), 0, "the QR code left as the PC joined an account");
     assert.equal(await sheet.isVisible(), true, "the sheet stays open to say which account the PC joined");
     assert.deepEqual(await joined.getByRole("button").allInnerTexts(), ["Done", "Not me: revoke every device"], "the account is this browser's own: Done, then Not me");
     await joined.getByRole("button", { name: "Done", exact: true }).click();
-    await accountQr.getByText("This PC is in your Ovis account (fixture).", { exact: true }).waitFor();
-    await accountQr.getByText("To add a device, sign in to this PC's account on it and open this PC there. A device this PC does not know yet is approved once, by picking the matching number on a device that is already a member of this PC.", { exact: true }).waitFor();
-    await accountQr.getByText("This PC shows a QR code only while it is in no account.", { exact: true }).waitFor();
+    // The transient join notice and the settled panel now use the same heading.
+    // Wait for the notice (and its still-live revoke action) to leave before checking the settled view.
+    await joined.waitFor({ state: "detached" });
+    await accountQr.getByText("This PC is in your account.", { exact: true }).waitFor();
+    assert.ok(!(await accountQr.innerText()).includes("(fixture)"), "the tab does not expose an account id");
     assert.equal(await accountQr.getAttribute("data-account"), "mine", "the part says the PC is in this browser's account");
     assert.equal(await accountQr.getByRole("button").count(), 0, "a PC that is in an account offers no QR code");
     assert.equal(await relayTab.getByRole("button", { name: /^(Open the account|Add this PC to my account|Turn on the relay and add this PC)$/ }).count(), 0, "and nothing says to add this PC to the account any more");
@@ -423,7 +425,7 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     page.on("request", noteOffer);
     await connect.click();
     await ui.openTab("relay");
-    await accountQr.getByText("This PC is in your Ovis account (fixture).", { exact: true }).waitFor();
+    await accountQr.getByText("This PC is in your account.", { exact: true }).waitFor();
     assert.equal(await accountQr.getByRole("button").count(), 0, "opened again, a PC in an account still offers no QR code");
     assert.equal(await relayQr.count(), 0, "and shows none");
     assert.equal(await relayTab.getByRole("switch").count(), 0, "online and in the account, the tab has nothing to switch");

@@ -377,8 +377,9 @@ describe("S2-24 a whole read applied to this PC's real state (G1, T15, T52, T58)
       expect(result).toMatchObject({ committed: true, liftsRefused: 1 });
       expect(current.safetyLog.state().blocks.map(({ record }) => record.id)).toEqual([blocked.id]);
       const table = await Bun.file(join(first.dir, ACCOUNT_ORDER_FILE)).json();
-      expect(table.keys[target.spki]).toEqual({ no: 2, removed: true, late: false, joined: 2 });
-      expect(table.keys[signer.spki]).toEqual({ no: 1, removed: true, late: false, joined: 1 });
+      const listed_in = PcAccountState.open(first.dir).binding()?.bind_id;
+      expect(table.keys[target.spki]).toEqual({ no: 2, removed: true, late: false, joined: 2, listed_in });
+      expect(table.keys[signer.spki]).toEqual({ no: 1, removed: true, late: false, joined: 1, listed_in });
     });
   }
 

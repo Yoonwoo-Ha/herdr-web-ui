@@ -10,7 +10,41 @@ import { handleRequest } from "../dispatch.ts";
 import { ask, ended, linkRecord, memberRow, pair, pairingPc, phone, sendLink, SERVER_ID, setUpFor, signedInWith, vouchFor, type Link, type Pc } from "./pairing.test-helpers.ts";
 
 const pcs: Pc[] = [];
+
+test("Linux relay phone pairing switches with this PC's binding, without restart", async () => {
+  const f = await pc({ server: { accountOpensAll: true, platform: "linux" } });
+  const phoneKey = await phone();
+  const code = f.devices.startPairing().code;
+  const first = await pair(f, code, phoneKey);
+  if ("error" in first) throw new Error(`Unbound phone pairing refused: ${first.error}`);
+  expect(f.app.context.services.localConfirms).toBeUndefined();
+  expect(f.devices.linkAccountKey(first.id, phoneKey.spki, phoneKey.spki, "acct_phone")).not.toBeNull();
+  expect(f.devices.account()).toBe("acct_phone");
+  expect(f.app.context.services.localConfirms).toBeDefined();
+  expect(await pair(f, f.devices.startPairing().code, await phone())).toEqual({ error: "unsupported_version" });
+  expect(f.devices.clearAccountBinding("unlisted", "account")).toBe(true);
+  expect(f.app.context.services.localConfirms).toBeUndefined();
+  expect(f.stored().find(row => row.id === first.id)).toMatchObject({ role: "drive", origin: { from: "remote", how: "code" } });
+  expect(f.stored().find(row => row.id === first.id)).not.toHaveProperty("account");
+  expect(await pair(f, f.devices.startPairing().code, await phone())).not.toHaveProperty("error");
+});
 afterEach(async () => { for (const pc of pcs.splice(0)) await pc.close(); });
+
+test("on an unbound PC a driving phone's fresh code may re-pair a locally revoked phone", async () => {
+  const f = await pc();
+  const keeper = await phone(), returning = await phone();
+  const owner = await pair(f, await f.startedCode(), keeper);
+  const old = await pair(f, await f.startedCode(), returning);
+  if ("error" in owner || "error" in old) throw new Error("Could not pair fixture phones");
+  expect((await f.local(`/api/devices/${old.id}`, { method: "DELETE", headers: { "x-herdr-machine": "1" }, body: {} })).status).toBe(204);
+  expect(f.devices.isTombstoned(returning.spki)).toBe(true);
+  const fresh = f.devices.startPairing(Date.now(), { remote: true, startedBy: owner.id, memberRequired: false, ownPc: false, by: owner.id });
+  const admitted = await pair(f, fresh.code, returning);
+  if ("error" in admitted) throw new Error(`Fresh pairing was refused: ${admitted.error}`);
+  expect(admitted.id).not.toBe(old.id);
+  expect(f.devices.originOf(admitted.id)?.from).toBe("remote");
+  expect(f.devices.isTombstoned(returning.spki)).toBe(false);
+});
 
 async function pc(options: Parameters<typeof pairingPc>[0] = {}): Promise<Pc> {
   const made = await pairingPc(options);
@@ -39,11 +73,16 @@ const pcFetch = (link: Link) => async (path: string, init?: RequestInit): Promis
 };
 
 for (const [where, account] of [["in an account", "acct_1"], ["in no account", undefined]] as const) {
-  test(`on a PC ${where}, the code started on the PC and carried by a relay offer pairs a device that drives at once`, async () => {
-    const f = await pc(account === undefined ? {} : { rows: [(await memberRow(account)).row] });
+  test.each([false, true])(`on a Linux PC ${where}, a legacy client redeeming a local code follows the configured pairing mode (Step 2: %s)`, async accountOpensAll => {
+    const f = await pc({ server: { accountOpensAll, platform: "linux" }, rows: account === undefined ? [] : [(await memberRow(account)).row] });
     const code = await f.startedCode();
     const key = await phone();
     const made = await pair(f, code, key);
+    if (accountOpensAll && account !== undefined) {
+      expect(made).toEqual({ error: "unsupported_version" });
+      expect(f.stored().some(row => row.relay_public_key === key.spki)).toBe(false);
+      return;
+    }
     if ("error" in made) throw new Error(`The pairing was refused: ${made.error}`);
     expect(made.role).toBe("drive");
     // over the session that paired, with nothing more to do: a read only a device that drives gets
@@ -58,7 +97,7 @@ for (const [where, account] of [["in an account", "acct_1"], ["in no account", u
 }
 
 test("a signed-in app joins a PC set up for its account through the relay tab's code: it pairs with its account key, signs in, reads its status and links, and is then a member that drives", async () => {
-  const f = await pc();
+  const f = await pc({ server: { accountOpensAll: false } });
   await setUpFor(f, "acct_1");
   const reached: string[] = [];
   const dispatch: typeof handleRequest = (request, context) => {
@@ -87,7 +126,7 @@ test("a signed-in app joins a PC set up for its account through the relay tab's 
 });
 
 test("a paired device's first link gives a PC in no account its first member; a link that names another account afterwards is refused, and its device drives on", async () => {
-  const f = await pc();
+  const f = await pc({ server: { accountOpensAll: false } });
   const first = await signedInWith(f, await f.startedCode());
   expect((await sendLink(first.session, await linkRecord(first.id, "acct_7", first.key))).status).toBe(200);
   expect(await f.status()).toMatchObject({ account: "acct_7", members: 1 });
@@ -97,9 +136,9 @@ test("a paired device's first link gives a PC in no account its first member; a 
   expect((await ask(second.session, "/api/account/status")).body).toMatchObject({ account: "acct_7", members: 1, unlinked: [second.id] });
 });
 
-test("this PC itself lists its devices, reads its account, starts and ends a code and removes a device, with no token and no pairing", async () => {
+test.each([false, true])("the PC itself lists devices, reads its account, manages a code and removes a device without a token (Step 2: %s)", async accountOpensAll => {
   const member = await memberRow("acct_1");
-  const f = await pc({ rows: [member.row] });
+  const f = await pc({ rows: [member.row], server: { accountOpensAll } });
   expect((await f.listed()).map((device) => [device.id, device.role, device.account])).toEqual([[member.row.id, "drive", "acct_1"]]);
   expect(await f.status()).toMatchObject({ account: "acct_1", members: 1, unlinked: [] });
   const started = await f.local("/api/devices/pair/start", { method: "POST", headers: { "x-herdr-machine": "1" }, body: {} });
@@ -107,5 +146,5 @@ test("this PC itself lists its devices, reads its account, starts and ends a cod
   const ended = await f.local("/api/devices/pair/cancel", { method: "POST", headers: { "x-herdr-machine": "1" }, body: { code: started.body.code } });
   expect([ended.status, ended.body.cancelled]).toEqual([200, true]);
   expect((await f.local(`/api/devices/${member.row.id}`, { method: "DELETE", headers: { "x-herdr-machine": "1" } })).status).toBe(204);
-  expect(await f.status()).toMatchObject({ account: null, members: 0 });
+  expect(await f.status()).toMatchObject({ account: accountOpensAll ? "acct_1" : null, members: 0 });
 });

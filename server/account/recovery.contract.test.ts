@@ -8,10 +8,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import { newRecordId, signSafetyRecord, type BlockRecord, type SafetyRecord } from "../../shared/account-records.ts";
-import { bounded } from "../relay/test-helpers.ts";
+import { bounded, relayConnection } from "../relay/test-helpers.ts";
+import { ask } from "./pairing.test-helpers.ts";
+import { provingDevice as proveKey } from "./key-proof.test-helpers.ts";
 import { JOURNAL_FILE } from "./device-journal.ts";
 import { firstPairingRead, memberRow, pairingPc, phone, provingDevice, setUpFor, type Pc } from "./pairing.test-helpers.ts";
 import { pcRecordId } from "./safety-log.ts";
+import { PcAccountState } from "./pc-binding.ts";
 import { askRecovery, RECOVER_DIR, RECOVER_SOCKET } from "./recovery.ts";
 
 const pcs: Pc[] = [];
@@ -147,6 +150,92 @@ async function waitingDevice(made: Pc) {
   return { paired, waiting: listed.pending.find((entry) => entry.fingerprint === paired.fingerprint)! };
 }
 
+for (const later of ["different block", "different freeze", "same freeze", "targeted freeze", "same block after freeze", "different block after freeze"] as const)
+test.if(unix).each(["new", "existing"] as const)(`recovery of a %s key is scoped to its admission: ${later}`, async history => {
+  const account = "acct_1";
+  const member = await memberRow(account);
+  const made = await pairingPc({ rows: [member.row], server: { accountOpensAll: true, platform: "linux" } });
+  pcs.push(made);
+  const key = await phone();
+  const old = history === "existing" ? made.devices.pairRelay(made.devices.startPairing().code, "Old phone", key.spki) : null;
+  if (history === "existing" && !old) throw new Error("Could not establish prior pairing");
+  const log = made.app.context.services.safetyLog;
+  if (!log) throw new Error("Missing safety log");
+  const makeBlock = async () => {
+    const other = await phone();
+    return signSafetyRecord({ v: 1, kind: "block", account, signer: member.key.spki, signer_no: 1,
+      target: other.spki, target_no: 2, nonce: newRecordId(), signed_at: new Date().toISOString() }, member.key.keys.privateKey);
+  };
+  const appendBlock = (record: Awaited<ReturnType<typeof makeBlock>>) => {
+    expect(log.append({ got: "handed", record, asof: { signer_no: 0, target_no: 0, joined: 0, after: 0, signer_removed: false } }).outcome).toBe("applied");
+  };
+  const original = await makeBlock();
+  if (later === "same block after freeze" || later === "different block after freeze") {
+    expect(log.append({ got: "snapshot", record: { v: 1, kind: "freeze", account, signer: "service", signature: "",
+      id: `f:${original.id}`, target: original.target, signed_at: original.signed_at, after: 1 } }).outcome).toBe("applied");
+  } else appendBlock(original);
+  await firstPairingRead(made);
+  if (old) expect(made.devices.catchingUp(old.device.id)).toBe(true);
+  const pending = await proveKey(made, made.devices.startPairing().code, {}, key);
+  await pending.pending;
+  const list = await askRecovery(made.stateDir, { act: "list" }) as { pending: { id: string; fingerprint: string }[] };
+  const entry = list.pending.find(row => row.fingerprint === pending.fingerprint);
+  if (!entry) throw new Error("Missing exact-key recovery request");
+  const answer = await askRecovery(made.stateDir, { act: "admit", pending: entry.id, fingerprint: entry.fingerprint }) as { admitted?: { id: string } };
+  expect(answer).toHaveProperty("admitted");
+  const id = made.stored().find(row => row.relay_public_key === key.spki)?.id;
+  if (!id) throw new Error("Admitted key was not stored");
+  const status = async () => {
+    const link = await relayConnection(made);
+    return bounded(link.auth({ id, keys: key.keys, publicKey: key.spki }).then(async () => (await ask(link, "/api/devices")).status, () => 401));
+  };
+  const immediately = await status();
+  await firstPairingRead(made);
+  const afterRead = await status();
+  if (later === "same block after freeze") appendBlock(original);
+  else if (later === "different block" || later === "different block after freeze") appendBlock(await makeBlock());
+  else expect(log.append({ got: "snapshot", record: { v: 1, kind: "freeze", account, signer: "service", signature: "",
+    id: `f:${later === "different freeze" ? "a".repeat(64) : original.id}`, signed_at: original.signed_at,
+    target: later === "targeted freeze" ? key.spki : original.target, after: 1 } }).outcome).toBe("applied");
+  await firstPairingRead(made);
+  expect([immediately, afterRead, await status()]).toEqual([200, 200, later === "same freeze" || later === "same block after freeze" ? 200 : 401]);
+});
+
+test.if(unix)("recover --admit cannot undo a local Revoke of the exact waiting key", async () => {
+  const member = await memberRow("acct_1");
+  const made = await pairingPc({ rows: [member.row], server: { accountOpensAll: true, platform: "linux" } });
+  pcs.push(made);
+  const key = await phone();
+  const old = made.devices.pairRelay(made.devices.startPairing().code, "Phone", key.spki);
+  if (!old) throw new Error("Missing phone to revoke");
+  const pending = await proveKey(made, made.devices.startPairing().code, {}, key);
+  await pending.pending;
+  const list = await askRecovery(made.stateDir, { act: "list" }) as { pending: { id: string; fingerprint: string }[] };
+  const row = list.pending.find(item => item.fingerprint === pending.fingerprint);
+  if (!row) throw new Error("Missing pending fingerprint");
+  expect(made.devices.removeKey({ target: key.spki, by: "local" })).toEqual({ removed: [old.device.id] });
+  expect(await askRecovery(made.stateDir, { act: "admit", pending: row.id, fingerprint: row.fingerprint })).not.toHaveProperty("admitted");
+  expect(made.devices.isTombstoned(key.spki)).toBe(true);
+  expect(made.devices.sessionRow(old.device.id)).toBeNull();
+});
+
+test.if(unix)("a copied screen origin is not a screen confirmation on this PC", async () => {
+  const member = await memberRow("acct_1"), copy = await memberRow("acct_1");
+  const imported = { ...copy.row, imported: true, origin: { from: "pc", how: "link", by: null, admit_no: 2, at: copy.row.created_at } };
+  const made = await pairingPc({ rows: [member.row, imported], prepare(dir) {
+    const state = PcAccountState.open(dir);
+    state.migrate("acct_1", true);
+    state.admit("pc", "link", null, Date.now()); state.admit("pc", "link", null, Date.now());
+  },
+    server: { accountOpensAll: true, platform: "linux" } });
+  pcs.push(made);
+  const { safetyLog, devices } = made.app.context.services;
+  expect(devices.admits(copy.key.spki, undefined, { retainId: copy.row.id })).toBe(true);
+  expect(safetyLog?.append({ got: "snapshot", record: { v: 1, kind: "freeze", account: "acct_1",
+    id: `f:${"b".repeat(64)}`, target: member.key.spki, after: 1, signer: "service", signed_at: new Date().toISOString(), signature: "" } }).outcome).toBe("applied");
+  expect(devices.admits(copy.key.spki, undefined, { retainId: copy.row.id })).toBe(false);
+});
+
 for (const kind of ["block", "freeze"] as const) {
   test.if(unix)(`P23/T70: admit leaves a waiting key targeted by a standing ${kind} untouched`, async () => {
     const member = await memberRow("acct_1");
@@ -176,7 +265,7 @@ for (const kind of ["block", "freeze"] as const) {
 }
 
 test.if(unix)("P22/T70: the fingerprint the terminal showed admits the waiting device once, with origin recover; a wrong one admits nobody", async () => {
-  const made = await pairingPc({ server: { accountOpensAll: true, platform: "linux" } });
+  const made = await pairingPc({ rows: [(await memberRow("acct_1")).row], server: { accountOpensAll: true, platform: "linux" } });
   pcs.push(made);
   const { paired, waiting } = await waitingDevice(made);
   expect(waiting.label).toBe("New phone");
@@ -190,7 +279,7 @@ test.if(unix)("P22/T70: the fingerprint the terminal showed admits the waiting d
 });
 
 test.if(unix)("P22: while the PC is locked, the right fingerprint admits nobody, and the waiting device is gone", async () => {
-  const made = await pairingPc({ server: { accountOpensAll: true, platform: "linux" } });
+  const made = await pairingPc({ rows: [(await memberRow("acct_1")).row], server: { accountOpensAll: true, platform: "linux" } });
   pcs.push(made);
   const { paired, waiting } = await waitingDevice(made);
   made.app.context.services.safetyLog!.append({ record: { v: 1, id: pcRecordId(), kind: "lock", account: "acct_1", target: null, signer: "pc", signed_at: new Date().toISOString(), signature: "" } as SafetyRecord, got: "pc" });

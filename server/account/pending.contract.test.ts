@@ -7,12 +7,13 @@ import { exportAccountKey } from "../../shared/account-records.ts";
 import { signPairProof } from "../../shared/pair-fingerprint.ts";
 import type { PendingKey } from "../../shared/machines.ts";
 import { pairingPc, type Pc } from "./pairing.test-helpers.ts";
+import { bindTestPc } from "../pc-add-policy.test-helpers.ts";
 
 const pcs: Pc[] = [];
 afterEach(async () => { for (const pc of pcs.splice(0)) await pc.close(); });
 
 async function pc(accountOpensAll: boolean) {
-  const made = await pairingPc({ server: { accountOpensAll } });
+  const made = await pairingPc({ prepare: bindTestPc, server: { accountOpensAll } });
   pcs.push(made);
   return made;
 }

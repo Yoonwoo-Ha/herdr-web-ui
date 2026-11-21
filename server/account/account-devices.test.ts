@@ -118,7 +118,7 @@ describe("S2-25 account-joined rows in their own file (T34, T35, T44, T49)", () 
   });
 
   test("T44: clearing binding or resetting identity drops account rows, but the last member leaving does not", () => {
-    for (const reason of ["left_on_pc", "revoke_all", "identity_reset"] as const) {
+    for (const reason of ["remove", "revoke_all", "identity_reset"] as const) {
       const dir = stateDir();
       const { events, ports: p } = ports(dir);
       const store = new AccountDeviceStore(dir, SERVER, p);

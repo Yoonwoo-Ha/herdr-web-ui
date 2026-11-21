@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { exportAccountKey, newRecordId, signSafetyRecord } from "./account-records.ts";
 import {
-  AccountDevicesApiError, accountOpensAll, blockOutcome, parseBlockReceipt, parseHoldState, parseNoticeAnswer, parseRecoveryAction, type HoldState, type PcBlockOutcome,
+  AccountDevicesApiError, OVIS_ACCOUNT_OPENS_ALL, accountOpensAll, blockOutcome, parseBlockReceipt, parseHoldState, parseNoticeAnswer, parseRecoveryAction, type HoldState, type PcBlockOutcome,
 } from "./account-devices-api.ts";
 
 async function key() {
@@ -14,8 +14,19 @@ const at = "2026-11-05T01:02:03.456Z";
 const paired = await key();
 const block = await signSafetyRecord({ v: 1, kind: "block", account: "acct_1", target: newer.spki, target_no: 2, signer: older.spki, signer_no: 1, signed_at: at, nonce: newRecordId() }, older.pair.privateKey);
 
-test("the release flag is on only for 1", () => {
-  expect(["", "0", "true", "on", " 1", "1"].map((value) => accountOpensAll(value))).toEqual([false, false, false, false, false, true]);
+test.each([
+  [undefined, true], ["0", false], ["1", true], ["", true], ["false", true],
+  ["true", true], ["on", true], [" 1", true], [" 0", true],
+] as const)("the PC Step 2 flag %j enables Step 2: %s", (value, enabled) => {
+  const saved = process.env[OVIS_ACCOUNT_OPENS_ALL];
+  if (value === undefined) delete process.env[OVIS_ACCOUNT_OPENS_ALL];
+  else process.env[OVIS_ACCOUNT_OPENS_ALL] = value;
+  try {
+    expect(accountOpensAll()).toBe(enabled);
+  } finally {
+    if (saved === undefined) delete process.env[OVIS_ACCOUNT_OPENS_ALL];
+    else process.env[OVIS_ACCOUNT_OPENS_ALL] = saved;
+  }
 });
 
 describe("notice answers (device table T51, T57)", () => {

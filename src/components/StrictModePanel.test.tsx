@@ -57,9 +57,10 @@ describe("the strict-mode screen", () => {
     expect(shown).toContain("older Ovis");
   });
 
-  it("T47: unlocking names the lock that is on", async () => {
+  it.each([true, false])("T47: unlocking names the standing lock (bound: %s)", async (bound) => {
     const asked: string[] = [];
-    const { buttons } = await mount(locked, true, asked);
+    const { buttons } = await mount({ ...locked, bound }, true, asked);
+    expect(buttons.map(text)).toEqual(["Turn off strict mode"]);
     await act(async () => { buttons[0]!.props.onClick(); });
     expect(asked).toEqual(["off l1"]);
   });

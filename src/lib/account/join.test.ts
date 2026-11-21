@@ -27,7 +27,7 @@ const fixtures: Fixture[] = [];
 afterEach(() => { for (const fixture of fixtures.splice(0)) fixture.close(); });
 
 function pc(options: Parameters<typeof relayFixture>[1] = {}): { f: Fixture; identity: RelayIdentity } {
-  const f = relayFixture(false, options);
+  const f = relayFixture(false, { accountOpensAll: false, ...options });
   fixtures.push(f);
   return { f, identity: rotateRelayIdentity(f.stateDir) };
 }

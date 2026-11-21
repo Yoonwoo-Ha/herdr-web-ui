@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 async function pc(options: Parameters<typeof pairingPc>[0] = {}) {
-  const made = await pairingPc(options);
+  const made = await pairingPc({ ...options, server: { accountOpensAll: false, ...options.server } });
   pcs.push(made);
   const clock = new TestClock();
   made.devices.useClock(clock);

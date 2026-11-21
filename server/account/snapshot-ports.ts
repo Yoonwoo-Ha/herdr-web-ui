@@ -25,6 +25,7 @@ export interface SnapshotDeps {
   requestRead(): void;
   /** The account-joined rows' store, given the whole read's list in its commit turn (S2-25); absent without one. */
   commitList?(snapshot: AccountSnapshot): void;
+  step2Off?(): void;
 }
 
 
@@ -34,6 +35,8 @@ const fencedThrough = new WeakMap<SafetyLog, number>();
 
 export function snapshotPorts(deps: SnapshotDeps): SnapshotPorts {
   const { devices, safetyLog, pc, journal } = deps;
+  const bindId = pc.binding()?.bind_id;
+  const serverId = deps.serverId();
   const orders = new WeakMap<StagedRead["snapshot"], LiftOrder>();
   const fenceFreezes = () => {
     const fenced = fencedThrough.get(safetyLog) ?? 0;
@@ -68,7 +71,7 @@ export function snapshotPorts(deps: SnapshotDeps): SnapshotPorts {
     async liftAuthority(lift: DeviceLiftRecord, snapshot) {
       let order = orders.get(snapshot);
       if (!order) {
-        try { order = deps.order.preview(snapshot); } catch (error) {
+        try { order = deps.order.preview(snapshot, pc.binding()?.bind_id); } catch (error) {
           if (error instanceof OrderConflict) return false; // The commit journals the conflict and rejects the read.
           throw error;
         }
@@ -77,7 +80,9 @@ export function snapshotPorts(deps: SnapshotDeps): SnapshotPorts {
       const entry = safetyLog.state().freezes.find(({ record }) => record.account === lift.account &&
         (record.kind === "block" ? record.id === lift.target : record.kind === "freeze" && record.id === `f:${lift.target}`));
       const target = entry?.record.target;
-      if (!target || order.late(lift.signer) || !order.registered(lift.signer, lift.account)) return false;
+      const bound = pc.binding()?.bind_id;
+      if (!target || bound === undefined || !order.listedOn(lift.signer, bound) || !order.listedOn(target, bound)
+        || order.late(lift.signer) || !order.registered(lift.signer, lift.account)) return false;
       const signerNo = order.no(lift.signer);
       const targetNo = order.no(target);
       return signerNo !== null && targetNo !== null && signerNo < targetNo && devices.liftAuthority(lift, order);
@@ -95,7 +100,10 @@ export function snapshotPorts(deps: SnapshotDeps): SnapshotPorts {
       fenceFreezes();
       for (const line of stage.snapshot.freezes) {
         const block = blocks.get(line.block);
-        if (!block || safetyLog.receipt(line.block) || devices.isTombstoned(block.signer)) continue;
+        if (!block || devices.isTombstoned(block.signer)) continue;
+        // An exact-key decision supplies no local cutoff for numbered rows; retain its service cutoff too.
+        if (safetyLog.receipt(line.block) && !safetyLog.inForce.blocks.some(entry =>
+          entry.record.id === line.block && entry.asof?.target_only === true)) continue;
         const id = `f:${line.block}`;
         if (safetyLog.receipt(id)) continue;
         const receipt = safetyLog.append({ got: "snapshot", record: { v: 1, kind: "freeze", id, account: block.account,
@@ -130,11 +138,16 @@ export function snapshotPorts(deps: SnapshotDeps): SnapshotPorts {
       }
       journal.recordSnapshotLifts(safetyLog);
       devices.handedLifts.decide(stage.snapshot.lifts);
+      // Take away access using the now-reconciled order before the mailbox or account list can grant new access.
+      devices.applyWaitingBlocks(true);
       return lifts.length;
     },
     commitList(snapshot) {
       devices.resumePromotedHolds();
       deps.commitList?.(snapshot);
+    },
+    step2Off() {
+      if (bindId !== undefined && pc.binding()?.bind_id === bindId && deps.serverId() === serverId) deps.step2Off?.();
     },
     methodsVersion: () => deps.order.methodsVersion(),
     journalMethod(version) {

@@ -11,6 +11,11 @@ import { LockSignal, untilLockFrom } from "../lock-boundary.ts";
 import { firstPairingRead, pairingPc, memberRow, signIn, type Pc } from "./pairing.test-helpers.ts";
 import { bounded, deferred, relayFixture } from "../relay/test-helpers.ts";
 import { handleRequest } from "../dispatch.ts";
+import { runConfirm } from "../../scripts/plugin-confirm.ts";
+import { provingDevice } from "./key-proof.test-helpers.ts";
+import { FrameType } from "../../shared/relay-mux.ts";
+import type { ClearReason } from "./pc-binding.ts";
+import { newRecordId, signSafetyRecord } from "../../shared/account-records.ts";
 
 const pcs: Pc[] = [];
 afterEach(async () => { for (const pc of pcs.splice(0)) await pc.close(); });
@@ -60,7 +65,7 @@ test("N6: this PC's own programs keep working while it is locked", async () => {
 });
 
 test("T46: an unlocked PC is as before", async () => {
-  const made = await pairingPc({ server: { accountOpensAll: true } });
+  const made = await pairingPc({ prepare: bindTestPc, server: { accountOpensAll: true } });
   pcs.push(made);
   expect((await made.local("/api/devices")).status).toBe(200);
 });
@@ -69,8 +74,8 @@ test("T46: a PC in no account offers no lock", async () => {
   const made = await pairingPc({ server: { accountOpensAll: true } });
   pcs.push(made);
   const tried = await made.local("/api/account/lock", { method: "POST", headers: { "x-herdr-machine": "1" }, body: {} });
-  expect([tried.status, tried.body.error?.code]).toEqual([409, "not_bound"]);
-  expect((await made.local("/api/account/lock")).body.bound).toBe(false);
+  expect([tried.status, tried.body.error?.code]).toEqual([404, "not_found"]);
+  expect(made.app.context.services.localConfirms).toBeUndefined();
 });
 
 test("T47: on a locked PC, this PC's own window may read the lock and ask for an unlock, which only the screen grants", async () => {
@@ -112,7 +117,7 @@ test("S19: a log that cannot be read is stricter than locked: no window without 
 test("P11: a lock taken under the PC's account holds after that binding is cleared and the PC bound to another account", async () => {
   const made = await lockedPc();
   const binding = PcAccountState.open(made.stateDir);
-  binding.clear("left_on_pc", "pc");
+  binding.clear("identity_reset", "pc");
   binding.bind("acct_2", made.member.key.spki);
   expect((await made.local("/api/devices")).body.error?.code).toBe("locked");
 });
@@ -136,6 +141,31 @@ test("N4: no browser window drives a locked PC this release, whatever cookie it 
   }
 });
 
+test("ordinary requests enforce the lock without looking up the lock or confirm controls", async () => {
+  const f = relayFixture(false, { accountOpensAll: true });
+  try {
+    const lookups: string[] = [];
+    const services = new Proxy(f.app.context.services, { get(target, key, receiver) {
+      if (key === "lockRoutes" || key === "localConfirms" || key === "pendingRedemptions") lookups.push(key);
+      return Reflect.get(target, key, receiver);
+    } });
+    const read = (path: string) => handleRequest(new Request(`http://127.0.0.1${path}`, { headers: { host: "127.0.0.1" } }),
+      { ...f.app.context, services, requestIP: () => ({ address: "127.0.0.1" }), timeout() {} });
+    services.devices.bindByService("acct_bench");
+    expect((await read("/api/devices"))?.status).toBe(200);
+    expect(lookups).toEqual([]);
+    expect(services.safetyLog?.appendLock({ account: "acct_bench" }).outcome).toBe("applied");
+    const denied = await read("/api/devices");
+    expect(denied?.status).toBe(403);
+    expect(await denied?.json()).toMatchObject({ error: { code: "locked" } });
+    expect(lookups).toEqual([]);
+    expect(await (await read("/api/health"))?.json()).toMatchObject({ auth: { own_window: true } });
+    expect(lookups.splice(0)).toEqual(["lockRoutes"]);
+    expect((await read("/api/account/local-confirm"))?.status).toBe(403);
+    expect(lookups).toEqual(["localConfirms"]);
+  } finally { f.close(); }
+});
+
 test("N4: on a locked PC, a direct loopback window gets 403 locked on everything but reading the lock and asking for an unlock", async () => {
   const made = await lockedPc();
   for (const [path, method] of [["/api/devices", "GET"], ["/api/session", "GET"], ["/api/account/status", "GET"], ["/api/account/lock", "POST"], ["/api/relay/offer", "POST"]] as const) {
@@ -146,12 +176,16 @@ test("N4: on a locked PC, a direct loopback window gets 403 locked on everything
 });
 
 /** A bound PC whose screen a test answers through the desktop owner channel. */
-async function screenedPc() {
+async function screenedPc(serviceBound = false) {
   const member = await memberRow("acct_1");
   const told: { pending: { id: string; action: { kind: string } }[] }[] = [];
   let push!: (line: string) => void;
   const input = new ReadableStream<Uint8Array>({ start(controller) { push = (line) => controller.enqueue(new TextEncoder().encode(line)); } });
-  const made = await pairingPc({ rows: [member.row], server: { accountOpensAll: true, desktopOwner: { input, write: (line) => { told.push(JSON.parse(line)); } } } });
+  const made = await pairingPc({ rows: [member.row], ...(serviceBound ? { prepare(dir: string) {
+    const state = PcAccountState.open(dir);
+    state.migrate(null, true);
+    state.bindByService("acct_1");
+  } } : {}), server: { accountOpensAll: true, desktopOwner: { input, write: (line) => { told.push(JSON.parse(line)); } } } });
   pcs.push(made);
   const approve = (kind: string) => {
     const open = told.at(-1)?.pending.find((entry) => entry.action.kind === kind);
@@ -215,6 +249,115 @@ test("T47/N4: on a PC with an access token, the owner's own window (loopback, th
   expect(forwarded.status).toBeGreaterThanOrEqual(400);
 });
 
+const clearReasons = ["unlisted", "identity_reset", "revoke_all"] as const satisfies readonly ClearReason[];
+test.skipIf(process.platform !== "linux")("a standing Not me after unlisting accepts only a screen-confirmed phone", async () => {
+  const made = await screenedPc();
+  await firstPairingRead(made);
+  const { devices, safetyLog } = made.app.context.services;
+  const target = await memberRow("acct_1");
+  const block = await signSafetyRecord({ v: 1, kind: "block", account: "acct_1", signer: made.member.key.spki, signer_no: 1,
+    target: target.key.spki, target_no: 2, signed_at: new Date().toISOString(), nonce: newRecordId() }, made.member.key.keys.privateKey);
+  expect(safetyLog?.append({ record: block, got: "handed", asof: { signer_no: 1, target_no: 2, joined: 0, after: 0, signer_removed: false } }).outcome).toBe("applied");
+  expect(safetyLog?.append({ got: "snapshot", record: { kind: "freeze", v: 1, id: `f:${block.id}`, account: "acct_1",
+    target: target.key.spki, after: 1, signed_at: block.signed_at, signer: "service", signature: "" } }).outcome).toBe("applied");
+  expect(devices.clearAccountBinding("unlisted", "account")).toBe(true);
+  expect(devices.pairRelay(devices.startPairing().code, "Target", target.key.spki)).toBeNull();
+  expect((await made.local("/api/account/lock")).body.bound).toBe(false);
+  const fresh = await provingDevice(made, devices.startPairing().code);
+  await fresh.pending;
+  const admitted = deferred<string>();
+  fresh.link.onFrame = frame => { if (frame.type === FrameType.AUTH_OK) admitted.resolve(frame.payload.device_id); };
+  made.approve("approve_key");
+  const id = await bounded(admitted.promise);
+  expect(await signIn(made, id, fresh.device)).toHaveProperty("role", "drive");
+  expect(safetyLog?.inForce.blocks.map(entry => entry.record.id)).toContain(block.id);
+  expect(devices.pairRelay(devices.startPairing().code, "Still blocked", target.key.spki)).toBeNull();
+});
+for (const reason of clearReasons) for (const channel of ["screen", "terminal"] as const) {
+  test.skipIf(process.platform !== "linux")(`a standing lock remains owner-unlockable after ${reason} via ${channel}`, async () => {
+    const made = await screenedPc(reason === "unlisted");
+    await firstPairingRead(made);
+    const { devices, safetyLog } = made.app.context.services;
+    const kept = await provingDevice(made, await made.offerCode());
+    await kept.pending;
+    const admitted = deferred<string>();
+    kept.link.onFrame = frame => { if (frame.type === FrameType.AUTH_OK) admitted.resolve(frame.payload.device_id); };
+    made.approve("approve_key");
+    const id = await bounded(admitted.promise);
+    expect(devices.removeKey({ target: made.member.key.spki, by: "local" })).toHaveProperty("removed");
+    const phoneRoles = async () => {
+      const roles = [];
+      for (const [row, key] of [[id, kept.device], [made.member.row.id, made.member.key]] as const) {
+        const result = await signIn(made, row, key);
+        roles.push("error" in result ? result.error : result.role);
+        if ("link" in result) result.link.stop();
+      }
+      return roles;
+    };
+    const before = await phoneRoles();
+    expect(before).toEqual(["drive", "auth_failed"]);
+    const post = (path: string, body: Record<string, string> = {}) => made.local(path, {
+      method: "POST", headers: { "x-herdr-machine": "1" }, body,
+    });
+    const on = await post("/api/account/lock");
+    expect(on.status).toBe(202);
+    const onAnswer = made.app.context.services.localConfirms!.answer(String(on.body.confirm));
+    made.approve("lock");
+    expect(await bounded(onAnswer)).toBe("approved");
+    const lock = safetyLog?.state().locks.at(-1)?.record.id;
+    if (!lock) throw new Error("Owner approval did not establish a lock");
+    if (reason === "unlisted") {
+      const serverId = made.app.context.services.relay.currentIdentity()?.server_id;
+      if (!serverId) throw new Error("Missing identity of listed PC");
+      const deleted = await made.account.fetch(new Request(`https://account.test/v1/pcs/${serverId}`, { method: "DELETE",
+        headers: { authorization: `Bearer ${made.account.issueToken("acct_1")}` } }));
+      expect(deleted.status).toBe(204);
+      await made.app.context.services.accountMailbox.readSnapshot();
+      expect(PcAccountState.open(made.stateDir).clears().at(-1)).toMatchObject({ reason: "unlisted", by: "account" });
+    } else expect(devices.clearAccountBinding(reason, "pc")).toBe(true);
+    expect(devices.account()).toBeNull();
+    expect(safetyLog?.state().locked).toBe(true);
+    expect(made.app.context.services.keyProofPairings).toBeDefined();
+    expect(made.app.context.services.pendingRedemptions).toBeDefined();
+    expect((await made.local("/api/devices")).body.error?.code).toBe("locked");
+
+    let page = "";
+    const confirmExit = await runConfirm({ stateDir: made.stateDir, platform: "linux", uid: process.getuid?.(),
+      env: { DISPLAY: "fixture" }, out() {}, open: url => { page = url; } });
+    const health = await made.local("/api/health");
+    const state = await made.local("/api/account/lock");
+    const off = await post("/api/account/unlock", { lock });
+    expect({ ownWindow: (health.body.auth as { own_window?: boolean }).own_window, state: state.status, lock: state.body.locked,
+      bound: state.body.bound, unlock: off.status, confirmExit }).toEqual({ ownWindow: true, state: 200, lock, bound: false, unlock: 202, confirmExit: 0 });
+    expect((await made.local("/api/account/lock", { headers: { "x-forwarded-for": "100.64.0.7" } })).status).toBeGreaterThanOrEqual(400);
+    const remote = await made.local("/api/account/unlock", { method: "POST", headers: { "x-herdr-machine": "1", "x-forwarded-for": "100.64.0.7" }, body: { lock } });
+    expect([remote.status, remote.body.error?.code]).toEqual([403, "local_required"]);
+    expect((await post("/api/account/lock")).status).not.toBe(202);
+    expect(safetyLog?.state().locked).toBe(true);
+    const confirmId = String(off.body.confirm);
+    const done = made.app.context.services.localConfirms!.answer(confirmId);
+    if (channel === "screen") made.approve("unlock");
+    else {
+      const listed = await fetch(page);
+      expect(await listed.text()).toContain(`/confirm/${confirmId}`);
+      const form = new URL(`confirm/${confirmId}`, page);
+      const detail = await fetch(form);
+      expect(detail.status).toBe(200);
+      const nonce = /name="nonce" value="([^"]+)"/.exec(await detail.text())?.[1];
+      if (!nonce) throw new Error("The local confirmation form did not offer an answer");
+      const approved = await fetch(form, { method: "POST", headers: { origin: form.origin }, body: new URLSearchParams({ nonce, answer: "approve" }) });
+      expect(approved.status).toBe(200);
+    }
+    expect(await bounded(done)).toBe("approved");
+    expect(safetyLog?.state().locked).toBe(false);
+    expect(await phoneRoles()).toEqual(before);
+    expect(devices.isTombstoned(made.member.key.spki)).toBe(true);
+    expect((await post("/api/account/lock")).status).not.toBe(202);
+    expect(((await made.local("/api/health")).body.auth as { own_window?: boolean }).own_window).toBeUndefined();
+    expect(await runConfirm({ stateDir: made.stateDir, platform: "linux", uid: process.getuid?.(), env: { DISPLAY: "fixture" }, out() {}, open() {} })).toBe(1);
+  });
+}
+
 test("T46/S24: a connection whose upgrade was admitted before a lock's approval and opens after it ends as it opens", () => {
   const signal = new LockSignal();
   const lifetime = untilLockFrom(signal);
@@ -268,6 +411,7 @@ test("T46, t13r: a code a member started from afar ends with the screen-approved
 test("S36-1: through dispatch, a Tailscale login, a token from another address, the open LAN and a gated LAN all get local_required for both requests, locked or not, and nothing reaches the screen", async () => {
   for (const [via, token, gated] of [["tailscale", "", true], ["remote token", "owner-token", true], ["open LAN", "", false], ["gated LAN", "", true]] as const) {
     const f = relayFixture(false, { accountOpensAll: true, token });
+    f.app.context.services.devices.bindByService("acct_lock");
     try {
       const { devices, safetyLog, localConfirms } = f.app.context.services;
       if (gated) devices.pairRelay(devices.startPairing().code, "Phone", "k".repeat(43));
@@ -302,3 +446,4 @@ test("T47, N4: a window that is not this PC's own gets health 'locked' on a lock
   const forwarded = await made.local("/api/health", { headers: { "x-forwarded-for": "100.64.0.9" } });
   expect((forwarded.body.auth as { reason?: string } | undefined)?.reason).toBe("locked");
 });
+import { bindTestPc } from "../pc-add-policy.test-helpers.ts";

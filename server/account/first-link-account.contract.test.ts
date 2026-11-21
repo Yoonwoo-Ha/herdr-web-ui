@@ -12,7 +12,7 @@ const pcs: Pc[] = [];
 afterEach(async () => { for (const pc of pcs.splice(0)) await pc.close(); });
 
 async function pc(options: Parameters<typeof pairingPc>[0] = {}): Promise<Pc> {
-  const made = await pairingPc(options);
+  const made = await pairingPc({ ...options, server: { accountOpensAll: false, ...options.server } });
   pcs.push(made);
   return made;
 }

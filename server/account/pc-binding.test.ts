@@ -8,6 +8,8 @@ import { DeviceStore, type StoredDevice } from "../devices.ts";
 import { relayConnection, relayDevice, relayFixture } from "../relay/test-helpers.ts";
 import { ADMISSION_FILE } from "./admission-order.ts";
 import { PcAccountState } from "./pc-binding.ts";
+import { PendingRedemptions } from "./pending.ts";
+import { signPairProof } from "../../shared/pair-fingerprint.ts";
 
 const SERVER_ID = "0123456789abcdef0123456789abcdef";
 const ACCOUNT = "acct_1";
@@ -23,6 +25,37 @@ function stateDir(): string {
   dirs.push(dir);
   return dir;
 }
+
+test("a rolled-back first link does not publish a binding change or cancel another pending pairing", async () => {
+  const dir = stateDir();
+  const binding = PcAccountState.open(dir);
+  const devices = new DeviceStore(dir, null, null, { pc: binding });
+  const key = await accountKey(), waitingKey = await accountKey();
+  const row = devices.pairRelay(devices.startPairing().code, "First link", key.spki);
+  if (!row) throw new Error("First link fixture did not pair");
+  const pending = new PendingRedemptions({ serverId: SERVER_ID, journalDrop() {} });
+  const { challenge } = pending.name("123456", "Other phone", waitingKey.spki, "relay");
+  const entry = await pending.prove(challenge, await signPairProof(SERVER_ID, challenge, waitingKey.spki, waitingKey.keys.privateKey));
+  if (!entry) throw new Error("Unrelated proven key did not enter the pending queue");
+  const changes: (string | null)[] = [];
+  const stop = binding.onBindingChange(() => {
+    changes.push(binding.account());
+    for (const item of pending.list()) pending.decline(item.id);
+  });
+  try {
+    rmSync(join(dir, "devices.json"));
+    mkdirSync(join(dir, "devices.json"));
+    expect(() => devices.linkAccountKey(row.device.id, key.spki, key.spki, ACCOUNT)).toThrow();
+    expect(pcFile(dir).binding).toBeNull();
+    expect({ changes, pending: pending.list().map(item => item.id) }).toEqual({ changes: [], pending: [entry.id] });
+    binding.bind(ACCOUNT, key.spki).commit();
+    expect(changes).toEqual([ACCOUNT]);
+    expect(pending.list()).toEqual([]);
+    expect(binding.clear("unlisted", "account")).toBe(true);
+    binding.bindByService(ACCOUNT);
+    expect(changes).toEqual([ACCOUNT, null, ACCOUNT]);
+  } finally { stop(); }
+});
 
 async function accountKey() {
   const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
@@ -50,6 +83,49 @@ function memberRow(account: string): StoredDevice {
 }
 
 describe("the PC's account binding (account-pc.json)", () => {
+  test("unlisting retains only owned pairing origins and never retains an imported or invalid origin", async () => {
+    const dir = stateDir();
+    const binding = PcAccountState.open(dir);
+    binding.migrate(null, true);
+    binding.bindByService(ACCOUNT);
+    const makeRow = (from: "legacy" | "pc" | "remote", how: "code" | "digits" | "add" = "code", extra: Partial<StoredDevice> = {}, by: string | null = null) => {
+      const row = memberRow(ACCOUNT);
+      return { ...row, linked_at: row.created_at, origin: from === "legacy"
+        ? { from, how: "legacy" as const, at: row.created_at, admit_no: 0, by: null }
+        : binding.admit(from, how, by, Date.parse(row.created_at)), ...extra };
+    };
+    const keep = [makeRow("pc"), makeRow("legacy"), makeRow("remote", "code", { role: "watch" }), makeRow("remote", "digits")];
+    const drop = [makeRow("pc", "code", { imported: true }), makeRow("legacy", "code", { invalid_origin: true }),
+      makeRow("remote", "add"), makeRow("remote", "code", { added_by: keep[0]!.id }), makeRow("remote", "code", { link_moved_key: true }),
+      makeRow("remote", "code", {}, (await accountKey()).spki), makeRow("remote", "digits", {}, (await accountKey()).spki),
+      makeRow("remote", "digits", { imported: true })];
+    writeFileSync(join(dir, "devices.json"), JSON.stringify({ gate_closed_at: keep[0]!.created_at, devices: [...keep, ...drop] }), { mode: 0o600 });
+    const devices = store(dir);
+    expect(devices.accountError).toBeNull();
+    const closed: string[] = [];
+    for (const row of drop) devices.onRevoke(row.id, () => closed.push(row.id));
+    expect(devices.clearAccountBinding("unlisted", "account")).toBe(true);
+    expect(closed.sort()).toEqual(drop.map(row => row.id).sort());
+    const rows = JSON.parse(readFileSync(join(dir, "devices.json"), "utf8")).devices as StoredDevice[];
+    expect(rows.map(d => [d.id, d.role, d.origin, d.account, d.linked_at])).toEqual(keep.map(d => [d.id, d.role, d.origin, undefined, undefined]));
+    expect(store(dir).accountError).toBeNull();
+  });
+  test.each(["active", "sibling"] as const)("T48: a service opt-out in the %s folder persists in both folders of the same binding", side => {
+    const active = stateDir();
+    const sibling = stateDir();
+    const source = PcAccountState.open(active);
+    source.migrate(ACCOUNT, true);
+    const other = PcAccountState.open(sibling);
+    other.takeSibling(active);
+    other.migrate(ACCOUNT, true);
+    expect(other.binding()).toEqual(source.binding());
+    expect((side === "active" ? source : other).setServiceStep2Off(true)).toBe(true);
+
+    PcAccountState.open(active).takeSibling(sibling);
+
+    expect([PcAccountState.open(active).serviceStep2Off(), PcAccountState.open(sibling).serviceStep2Off()]).toEqual([true, true]);
+  });
+
   test("T59/T67: neither a current nor stale relay challenge binds a first-device list key", async () => {
     for (const fresh of [true, false]) {
       const f = relayFixture(false, { accountOpensAll: true });
@@ -123,9 +199,9 @@ describe("the PC's account binding (account-pc.json)", () => {
     expect(pcFile(dir).binding).toEqual({ account: ACCOUNT, bind_id: bindId });
 
     // a named clear at the PC: the binding goes, the clear is kept, and the file stays
-    devices.clearAccountBinding("left_on_pc", "pc");
+    devices.clearAccountBinding("unlisted", "account");
     expect(devices.account()).toBeNull();
-    expect(pcFile(dir)).toMatchObject({ binding: null, clears: [{ bind_id: bindId, reason: "left_on_pc", by: "pc" }] });
+    expect(pcFile(dir)).toMatchObject({ binding: null, clears: [{ bind_id: bindId, reason: "unlisted", by: "account" }] });
     // the next first link makes a new binding; the earlier clear is never cut
     await linked(devices, "acct_2");
     const rebound = pcFile(dir);
@@ -133,7 +209,7 @@ describe("the PC's account binding (account-pc.json)", () => {
     expect(rebound.binding?.bind_id).not.toBe(bindId);
     // Revoke all clears too
     devices.revokeAll();
-    expect(pcFile(dir).clears.map((clear) => clear.reason)).toEqual(["left_on_pc", "revoke_all"]);
+    expect(pcFile(dir).clears.map((clear) => clear.reason)).toEqual(["unlisted", "revoke_all"]);
     expect(store(dir).account()).toBeNull();
 
     // a relay identity reset clears it

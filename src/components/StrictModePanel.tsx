@@ -101,7 +101,7 @@ export function StrictUnlockAsk() {
  */
 export function StrictModePanel({ state, local, status = null, onTurnOn, onTurnOff }: { state: LockState; local: boolean; status?: ReturnType<typeof useLockRequest>["status"]; onTurnOn: () => void; onTurnOff: (lock: string) => void }) {
   const t = useT();
-  if (!state.bound) return <p className="settings-hint">{t("Strict mode needs this PC signed in to an Ovis account.")}</p>;
+  if (!state.bound && state.locked === null) return <p className="settings-hint">{t("Strict mode needs this PC signed in to an Ovis account.")}</p>;
   if (state.confirm === "unsupported" && state.locked === null) return <p className="settings-hint">{t("Strict mode needs a confirmation on this PC's screen, which only Linux has for now.")}</p>;
   const grantName = { token: t("access token"), portal: "Portal", tailscale: "Tailscale", open_lan: t("open local network"), loopback: t("this PC's browser without proof") } as const;
   return (

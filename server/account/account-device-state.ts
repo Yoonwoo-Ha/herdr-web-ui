@@ -5,10 +5,10 @@ import type { RowDrop } from "./row-drop-evidence.ts";
 import type { Sayer } from "./join-hold.ts";
 import type { Readmission } from "./readmission.ts";
 
-export type DropReason = "list" | "left_on_pc" | "revoke_all" | "identity_reset" | "remove" | "block" | "revoke" | "expired" | "catching_up" | "promoted";
+export type DropReason = "list" | "revoke_all" | "identity_reset" | "remove" | "block" | "revoke" | "expired" | "catching_up" | "promoted";
 
 /**
- * What Track A's deny path (DeviceStore.attachAccountRows, set only with OVIS_ACCOUNT_OPENS_ALL=1) asks of the
+ * What Track A's deny path (DeviceStore.attachAccountRows, set only while Step 2 is on) asks of the
  * account-joined rows: they are target and signer candidates of blocks, removes and Revokes like devices.json rows.
  * Removal detaches the whole batch before notifying session owners or writing the journal (P8 step 3).
  */
@@ -55,6 +55,7 @@ export interface AccountRowPorts {
   admitListedRows(write: () => readonly string[]): string[];
   checkFreshness?(): void;
   releaseOf?(id: string): string | null;
+  serviceStep2Off?(): boolean;
   readonly evidence?: RemovalEvidence;
   /** On disk when it returns; a drop already recorded for this admission is not repeated. */
   journal(entry: JournalEntry): void;

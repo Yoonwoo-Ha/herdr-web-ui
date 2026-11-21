@@ -1,9 +1,9 @@
 /**
  * The wait after a start (Step 2, rows P7, T41, T42, T65, T70) for devices.json rows: a block may have been signed while
  * the PC was off, so on a PC in an account every row whose key was not approved on this PC's screen waits for the first
- * whole read, with no time limit and whatever metadata it carries (legacy rows too). Binding the PC to an account starts
- * the same wait. `ovis recover` may release rows by name until that read (`released`, the recovery's releases, S2-15).
- * All of it is in memory: a restart starts the wait again.
+ * whole read. Binding the PC to an account starts the same wait. A pre-Step-2 pairing keeps its existing
+ * credential access, subject to denials; it does not inherit Step-2 authority before a read.
+ * Otherwise a restart starts the wait again. `ovis recover` can release named rows (S2-15).
  */
 import type { AdmissionOrigin } from "../../shared/account-snapshot.ts";
 
@@ -20,20 +20,21 @@ export class CatchUpGate {
   /** The binding the last whole read was for: a new binding waits for a read of its own (T59). */
   private caughtUpFor: string | null = null;
   /** A lift changes the next read's decision, never the result of the previous one. */
-  private waiting: ReadonlySet<string> = new Set();
+  private waiting = new Set<string>();
   private readonly frozenByTarget = new Map<string, Set<string>>();
   private readonly lifted = new Set<string>();
 
   /** `binding`: this PC's binding id now, null in no account, where nobody waits (no block can name it). */
   constructor(private readonly binding: () => string | null, private readonly released: (id: string) => boolean = () => false) {}
 
-  waits(row: GatedRow): boolean {
+  waits(row: GatedRow, legacyCredential?: () => boolean): boolean {
     const binding = this.binding();
-    if (binding === null || this.released(row.id)) return false;
+    if (binding === null) return false;
     if (this.lifted.has(row.id)) return true;
-    if (pairedAtPc(row.origin)) return false;
-    if (this.caughtUpFor !== binding) return true;
-    return this.waiting.has(row.id);
+    if (legacyCredential !== undefined) return !legacyCredential();
+    if (this.released(row.id) || pairedAtPc(row.origin)) return false;
+    if (this.caughtUpFor === binding) return this.waiting.has(row.id);
+    return true;
   }
 
   /** T42: record the rows that the whole read's admission check refused. */
@@ -41,6 +42,11 @@ export class CatchUpGate {
     this.caughtUpFor = this.binding();
     this.waiting = new Set(refused);
     this.lifted.clear();
+  }
+
+  /** An exact recovery can supersede this read's refusal, never the first read or a wait after a lift. */
+  recoveredHere(id: string): void {
+    if (this.caughtUpFor !== null && this.caughtUpFor === this.binding()) this.waiting.delete(id);
   }
 
   /** The lift identifies its target key, not the newer rows this block froze between reads. */

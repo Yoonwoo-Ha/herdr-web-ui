@@ -7,6 +7,7 @@
  * itself admits nobody, and no account membership comes from it.
  */
 import { HTTPS_PORTS, tailscaleBinary } from "./tailscale.ts";
+import { TargetAccountPcError } from "../shared/relay-channel.ts";
 
 const PROBE_MS = 2500;
 /** an address the list found stays addable this long */
@@ -168,7 +169,7 @@ export class TailnetPcs {
     if (TailnetPcs.outdated(health)) throw new TailnetPcError("outdated", OUTDATED);
     let response: Response;
     try {
-      response = await fetch(`${url}/api/relay/code`, { method: "POST", headers: { "x-herdr-update": "1" }, signal: AbortSignal.timeout(15_000), redirect: "error" });
+      response = await fetch(`${url}/api/relay/code`, { method: "POST", headers: { "x-herdr-update": "1", "x-ovis-pc-add": "1" }, signal: AbortSignal.timeout(15_000), redirect: "error" });
     } catch {
       throw new TailnetPcError("unreachable", "That PC did not answer. Check that it is on, then try again.");
     }
@@ -177,6 +178,7 @@ export class TailnetPcs {
       // that PC's own words never reach the person. Its health named its relay ID, so it is a current Ovis: a 404 or
       // 405 here comes from something in between, not from its version
       const refusal = body?.error?.code;
+      if (refusal === "pc_add_target_bound") throw new TargetAccountPcError();
       if (refusal === "relay_off") throw new TailnetPcError("relay_off", "Turn the relay on on that PC first, under Add a connection.");
       if (refusal === "relay_offline") throw new TailnetPcError("relay_offline", "That PC's relay cannot be reached right now. Try again in a moment.");
       if (refusal === "code_unavailable") throw new TailnetPcError("code_unavailable", "That PC uses its own relay, which cannot give a code. Add it with its QR code instead.");

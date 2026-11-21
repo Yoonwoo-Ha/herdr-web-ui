@@ -397,7 +397,8 @@ export function openConfirmListener(confirms: LocalConfirms, options: {
   return {
     port: server.port!,
     stop() {
-      server.stop(true);
+      // The approval of the last standing unlock can close this listener. Finish its HTTP reply.
+      server.stop();
       try { rmSync(file, { force: true }); }
       catch (error) { console.error(`${file} was not removed: ${error instanceof Error ? error.message : String(error)}`); }
     },

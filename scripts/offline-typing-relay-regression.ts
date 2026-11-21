@@ -50,7 +50,8 @@ const service = new RelayService({ stateDir, relay: RELAY, connect: (url) => {
   socket.addEventListener("message", (event) => { if (typeof event.data === "string" && event.data.includes('"sync"')) synced.resolve(); });
   return socket;
 } });
-const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, relay: service, pushLoopbackHttp: true });
+// This transport test pairs an unsigned browser by the Step 1 code, not a Step 2 screen confirmation.
+const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, relay: service, pushLoopbackHttp: true, accountOpensAll: false });
 /** Every terminal connection the PC's server opens and closes: a relay session calls these for each browser socket. */
 const sockets = { opened: 0, closed: 0 };
 const handlers = app.context.services.core.socketHandlers;

@@ -18,6 +18,8 @@ interface OrderEntry {
   /** Unknown for a local-only key or a pin from before membership was recorded. */
   readonly removed: boolean | null;
   readonly joined: number | null;
+  /** The binding whose latest whole read listed the key; a pin carried from another binding places nothing there. */
+  readonly listed_in?: string;
 }
 interface OrderDoc {
   readonly v: 1;
@@ -45,7 +47,7 @@ export class OrderConflict extends Error {
   constructor(readonly key: string) { super("Snapshot changes a pinned account number"); }
 }
 
-export type LiftOrder = Pick<AccountOrder, "late" | "registered" | "no">;
+export type LiftOrder = Pick<AccountOrder, "late" | "registered" | "no" | "listedOn">;
 
 function parse(value: unknown): OrderDoc | null {
   if (typeof value !== "object" || value === null) return null;
@@ -60,6 +62,7 @@ function parse(value: unknown): OrderDoc | null {
     if (!entry || (entry.no !== null && (!Number.isSafeInteger(entry.no) || entry.no > doc.max_no)) || typeof entry.late !== "boolean") return null;
     if (entry.removed != null && typeof entry.removed !== "boolean") return null;
     if (entry.joined != null && (!Number.isSafeInteger(entry.joined) || entry.joined < 0)) return null;
+    if (entry.listed_in !== undefined && typeof entry.listed_in !== "string") return null;
     keys[key] = { ...entry, removed: entry.removed ?? null, joined: entry.joined ?? null };
   }
   return { ...doc as OrderDoc, keys };
@@ -86,6 +89,11 @@ export class AccountOrder {
   /** The key's number in the account's order as this PC saw it, null for a key no whole read listed. */
   no(key: string): number | null {
     return this.doc.keys[key]?.no ?? null;
+  }
+
+  /** Whether a whole read for binding `bindId` itself listed `key`, as a device or a removal. */
+  listedOn(key: string, bindId: string): boolean {
+    return this.problem === null && this.doc.keys[key]?.listed_in === bindId;
   }
 
   registered(key: string, account: string): boolean {
@@ -131,11 +139,11 @@ export class AccountOrder {
   }
 
   /** A read-only view for authority checks, using exactly the pins the commit will publish. */
-  preview(read: OrderedRead): LiftOrder {
-    return new AccountOrder(this.path, this.project(read), null);
+  preview(read: OrderedRead, bindId: string | undefined): LiftOrder {
+    return new AccountOrder(this.path, this.project(read, bindId), null);
   }
 
-  private project(read: OrderedRead): OrderDoc {
+  private project(read: OrderedRead, bindId: string | undefined): OrderDoc {
     if (this.problem !== null) throw new Error(this.problem);
     const base = this.doc.account === read.account ? this.doc : { ...EMPTY, account: read.account };
     const keys: Record<string, OrderEntry> = { ...base.keys };
@@ -148,7 +156,7 @@ export class AccountOrder {
       const pinned = keys[key];
       if (pinned?.no != null && pinned.no !== no) throw new OrderConflict(key);
       keys[key] = { no, late: pinned?.no == null ? no <= base.max_no : pinned.late,
-        removed: removed || pinned?.removed === true, joined: pinned?.joined ?? null };
+        removed: removed || pinned?.removed === true, joined: pinned?.joined ?? null, ...(bindId === undefined ? {} : { listed_in: bindId }) };
       max = Math.max(max, no);
     }
     return { ...base, max_no: max, keys };
@@ -156,7 +164,7 @@ export class AccountOrder {
 
   /** Validate before any widening. Publishing the watermark returns its undo for a refused lift batch. */
   prepare(read: OrderedRead, bindId: string): () => () => void {
-    const next: OrderDoc = { ...this.project(read), bind_id: bindId, server_id: read.server_id, last_version: read.version };
+    const next: OrderDoc = { ...this.project(read, bindId), bind_id: bindId, server_id: read.server_id, last_version: read.version };
     return () => {
       const previous = this.doc;
       writePrivateState(this.path, next);

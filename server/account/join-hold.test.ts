@@ -124,7 +124,7 @@ describe("S2-29 the join hold and the first device (T34, T53, T67)", () => {
         clock.now += EXPIRY_DAYS * 24 * 60 * 60_000;
         store.expire();
       } else {
-        store.clear(reason === "PC leave" ? "left_on_pc" : "identity_reset");
+        store.clear(reason === "PC leave" ? "remove" : "identity_reset");
       }
       expect(store.access(admission.row ?? "")).not.toEqual({ ok: true });
       expect(atDrop?.notices.find(entry => entry.id === admission.id)).toMatchObject({ open: false });

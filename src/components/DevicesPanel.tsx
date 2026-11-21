@@ -297,6 +297,7 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
                       : d.via_relay && !watching && !guest && !seenLately(d.last_seen_at)
                         ? <ConnectionLine state={{ kind: "offline", text: t("Offline · last seen {when}", { when: lastSeen(d.last_seen_at) }) }} reason={t("The app is closed, or its network is off.")} />
                         : <span className="settings-description">{t("Last seen {when}", { when: lastSeen(d.last_seen_at) })}</span>}
+                    {d.not_me_waiting && <span className="settings-description" role="status">{t("Not me is waiting. Revoke this device to stop its access now.")}</span>}
                   </div>
                   {d.current && currentAction}
                   {!guest && (

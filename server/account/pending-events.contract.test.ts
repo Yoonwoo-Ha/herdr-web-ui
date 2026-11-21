@@ -4,7 +4,7 @@ import { isJsonObject } from "../http.ts";
 import { bounded } from "../relay/test-helpers.ts";
 import { withHeaders } from "../websocket.test-helpers.ts";
 import { provingDevice } from "./key-proof.test-helpers.ts";
-import { pairingPc, type Pc } from "./pairing.test-helpers.ts";
+import { firstPairingRead, memberRow, pairingPc, type Pc } from "./pairing.test-helpers.ts";
 
 async function* sseEvents(response: Response): AsyncGenerator<unknown> {
   if (!response.ok || response.body === null) throw new Error(`SSE rejected: ${response.status}`);
@@ -54,11 +54,13 @@ async function throughPreferences(next: () => Promise<{ readonly done?: boolean;
 
 for (const transport of ["SSE", "WebSocket"] as const) {
   test(`S31/T71: late ${transport} drive subscribers see waiting keys and changes, watch subscribers see neither`, async () => {
-    const made = await pairingPc({ server: { accountOpensAll: true, platform: "linux" } });
+    const made = await pairingPc({ rows: [(await memberRow("acct_1")).row], server: { accountOpensAll: true, platform: "linux" } });
     const abort = new AbortController();
     try {
+      await firstPairingRead(made);
       const observer = made.devices.pair(made.devices.startPairing().code, "Observer", "watch");
       if (!observer) throw new Error("Could not pair the watch fixture");
+      expect(made.devices.match(observer.token)?.role).toBe("watch");
       const paired = await provingDevice(made, await made.offerCode());
       await paired.pending;
 

@@ -29,7 +29,7 @@ afterEach(async () => {
  * was named for, with the clock its waiting devices are bounded on in the test's hand.
  */
 async function pc() {
-  const made = await pairingPc();
+  const made = await pairingPc({ server: { accountOpensAll: false } });
   pcs.push(made);
   await setUpFor(made, "acct_1");
   const clock = new TestClock();

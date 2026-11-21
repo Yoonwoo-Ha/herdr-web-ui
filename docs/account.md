@@ -809,9 +809,9 @@ until someone signs in on it; the steps below are then the way.
 3. The device is then the PC's first member: it links, and enrolls the PC
    ([Enrolling a PC](#enrolling-a-pc)), so the account's other devices are let in and introduced.
 
-**In one press.** Off unless `OVIS_ACCOUNT_OPENS_ALL=1` on the PC and the account service's step-2
-switch is on for the account. **Add this PC to my account** then adds the PC with no other device
-and no digits, when the account service admits it: the browser on the PC's own page lists the PC
+**In one press.** Step 2 is on by default on the PC ([how to turn it off](#turning-step-2-off)).
+The account service's Step 2 switch must also be on. **Add this PC to my account** then adds the PC
+with no other device and no digits, when the account service admits it: the browser on the PC's own page lists the PC
 (`PUT /v1/pcs`, as above), then asks `POST /v1/pcs/{server_id}/admit`. The service admits only a
 sign-in made in an app itself within the last 10 minutes with two-step sign-in set (unknown, as
 for a Google sign-in that does not say, is not enough), within a daily cap of PC adds per account,
@@ -848,14 +848,32 @@ asked, so a press the PC then refuses (it restarted, was put in another account 
 not this PC's own window) still told the account's other devices and marked the PC new; such a PC is
 not in that account (in none, or in another one it joined meanwhile), and the page waits for the
 digits as before, and its notice says what to do if nobody added it. A PC bound this way leaves the
-account as soon as a read of the snapshot finds the account no longer lists it (the binding is
-cleared as `unlisted`, and the account's devices with it).
+account as soon as a snapshot read finds the account no longer lists it. Before recording the
+`unlisted` clear, the PC ends account-only rows and removes membership from credentials whose
+recorded origin proves they paired here. Those pairings keep their keys and roles, including
+after an offline restart from either state folder. A pairing by code or digits counts as local
+only when this PC approved the current key; one an account member device started or approved
+does not qualify.
+The sibling's old membership or signed add does not restore the cleared binding. An imported or
+invalid origin does not qualify. Unlisting does not
+lift a lock, block, freeze, Revoke or tombstone.
 
 A wrong number ends that comparison; the person starts again from **Add** on the dashboard. A device without an account
 pairs with a QR code or pairing code behind **Start without signing in** on the sign-in screen, which
 leads to **Add a PC**.
 
 ### Adding a PC of your account
+
+If this PC cannot read its account state, it refuses a PC add rather than assuming it is
+outside an account. Try again in a moment. If the refusal persists, run `ovis recover` in a
+terminal on this PC to inspect its local state. Do not delete its account files to retry:
+they also record which devices must stay out.
+
+The target-bound refusal is part of the **PC-add protocol**, not proof that every
+client with a pairing code is a PC. On a bound non-Linux target, older clients and
+clients that do not identify a PC add can still use legacy code pairing. Full
+PC-to-PC key proof remains a follow-up. This limitation does not change the source
+PC's refusal or the Tailscale tab's SSH connection.
 
 **Add a connection → Ovis relay** on a PC (A) whose page is signed in, with A in that account, lists
 the account's other PCs: **Connect** for one already in A's machine list,
@@ -1020,11 +1038,33 @@ is what authenticates the PC.
   what the row says, which for an account's first member on a PC is that device's own claim
   ([What this does not protect against](#what-this-does-not-protect-against)).
 
+### Turning Step 2 off
+
+Phones paired before Step 2 keep their existing connection across upgrades and offline restarts,
+subject to the PC's local denials. The old credential does not confer Step 2 authority before a
+whole snapshot. If the account service disables Step 2, a listed PC gets `step2_off` on its snapshot
+read. Account-joined phones wait until a whole snapshot succeeds again; a named recovery release
+cannot override that wait.
+
+A PC that was offline cannot know about a new account block until it contacts the service.
+It reads its mailbox before reconciling the account list. If a **Not me** targets a legacy
+device whose local pairing time cannot be trusted, the PC keeps the request until a reconciled
+read can establish the order of both keys. On that PC, **Settings → Devices and PCs** shows
+the pending request beside the device. Choose **Revoke** there to stop its access immediately.
+
+Step 2 is on by default. Only the exact value `0` turns it off. An unset or empty value, `1`,
+`false`, and all other values leave it on.
+
+- **herdr plugin:** Set `OVIS_ACCOUNT_OPENS_ALL=0` in
+  `~/.config/herdr/plugins/config/devswha.ovis/.env`, then restart only the Ovis plugin.
+- **Desktop app:** There is no in-app switch yet. If you launch Ovis yourself, set
+  `OVIS_ACCOUNT_OPENS_ALL=0` in the launch environment and restart Ovis from that environment.
+
 ### Confirmed on this PC
 
-Off unless `OVIS_ACCOUNT_OPENS_ALL=1`; nothing below exists without it. Some acts are taken only
-when they are confirmed on this PC's own screen (`server/account/local-confirm.ts`). The server
-puts the act on the screen; it is answered there, once, within 2 minutes, and the approval is
+With Step 2 on, some acts are taken only when they are confirmed on this PC's own screen
+(`server/account/local-confirm.ts`). The server puts the act on the screen; it is answered
+there, once, within 2 minutes, and the approval is
 used up by that one act and no other (an approval of one key approves no other key). Nothing
 answers one but these two:
 
@@ -1053,7 +1093,7 @@ reaches the same screen as you do.
 
 ### Limits of this release
 
-Off unless `OVIS_ACCOUNT_OPENS_ALL=1`, like everything in this part.
+These limits apply while Step 2 is on, which is the default.
 
 - **Lifting a block needs a two-step sign-in.** Only a device that is older than the block, and
   whose own sign-in has two-step sign-in set on the account, can lift a block from the app. A
@@ -1065,9 +1105,10 @@ Off unless `OVIS_ACCOUNT_OPENS_ALL=1`, like everything in this part.
 - **Strict mode and key confirmations are Linux only for now.** Turning strict mode on or off,
   and approving a new key on the PC's screen, need the PC's own screen, which this release has
   only on Linux. On macOS and Windows neither is available yet; pairing works as before.
-- **A clock that ran ahead keeps the PC closed.** If this PC's clock ran more than a day ahead, it
-  stays closed to account devices until real time comes within a day of the times it wrote and Ovis
-  is restarted; there is no repair command yet.
+- **A legacy pairing made with a clock more than a day ahead keeps its existing connection but
+  cannot authorize Step 2 actions.** Correcting the clock does not give that old timestamp
+  authority. Other phones and account reconciliation are unaffected. A clock fault in new Step 2
+  state still makes the PC refuse account access until that state can be read safely.
 - **A locked PC is driven only from the PC itself.** While strict mode is on, the PC takes its
   orders only from the desktop app that started it (its owner channel) or from the confirm page
   on its own screen. No other device, browser window, access token or relay connection can change

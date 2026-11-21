@@ -105,10 +105,10 @@ it("names the folder OVIS_PASTE_DIR sends uploads to in the features frame, and 
   }
 });
 
-it("lists account-opens-all/1 only while OVIS_ACCOUNT_OPENS_ALL is 1", async () => {
+it("lists account-opens-all/1 by default but not with OVIS_ACCOUNT_OPENS_ALL=0", async () => {
   const previous = process.env["OVIS_ACCOUNT_OPENS_ALL"];
   try {
-    for (const [flag, listed] of [[undefined, false], ["0", false], ["1", true]] as const) {
+    for (const [flag, listed] of [[undefined, true], ["0", false], ["1", true]] as const) {
       if (flag === undefined) delete process.env["OVIS_ACCOUNT_OPENS_ALL"]; else process.env["OVIS_ACCOUNT_OPENS_ALL"] = flag;
       const handler = createSocket({
         clients: new Set(), present: new Set(), stopped: () => false, admit: () => true, setRole() {}, watchable: () => true, terminalHistory: () => false, terminalModes: () => false, watchPane() {}, unwatchPane() {},

@@ -10,7 +10,7 @@ import { bounded, deferred, relayConnection, TestClock } from "../relay/test-hel
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { JOURNAL_FILE } from "./device-journal.ts";
-import { pairingPc, phone, setUpFor, type Pc } from "./pairing.test-helpers.ts";
+import { memberRow, pair, pairingPc, phone, setUpFor, vouchFor, type Pc } from "./pairing.test-helpers.ts";
 import { keyProofPc, provingDevice } from "./key-proof.test-helpers.ts";
 
 const pcs: Pc[] = [];
@@ -68,7 +68,7 @@ test("T71: with the release flag off, pairing is today's: no challenge, the devi
 });
 
 test("T71: on Linux, a pairing waits for the screen even when no screen path answers, and is never let in by its code alone", async () => {
-  const made = await pairingPc({ server: { accountOpensAll: true, platform: "linux" } });
+  const made = await pairingPc({ rows: [(await memberRow("acct_1")).row], server: { accountOpensAll: true, platform: "linux" } });
   pcs.push(made);
   const paired = await provingDevice(made, await made.offerCode());
   await paired.pending;
@@ -77,7 +77,8 @@ test("T71: on Linux, a pairing waits for the screen even when no screen path ans
 
 test("T71: on a PC with no screen proof (macOS, Windows), pairing is today's, flag on or off", async () => {
   for (const platform of ["darwin", "win32"] as const) {
-    const made = await pc(true, platform);
+    const made = await pairingPc({ server: { accountOpensAll: true, platform } });
+    pcs.push(made);
     const device = await phone();
     const link = await relayConnection(made);
     const admitted = await link.pair(await made.offerCode(), device.spki);
@@ -141,12 +142,14 @@ test("T71: a code that ends (cancelled here) drops the devices that wait on it",
   expect(await bounded(paired.link.serverError)).toBe("auth_failed");
 });
 
-test("T71/T72: a first-link QR, from a PC set up for an account and not in it yet, starts the key proof", async () => {
-  const made = await pc(true, "linux");
+test("a first-link QR on an unbound Linux PC keeps Step 1's account-vouched first link", async () => {
+  const made = await pairingPc({ server: { accountOpensAll: true, platform: "linux" } });
+  pcs.push(made);
   await setUpFor(made, "acct_1");
-  const paired = await provingDevice(made, await made.tabCode());
-  expect((await paired.pending).payload).toEqual({});
-  expect(made.stored().some((row) => row.relay_public_key === paired.device.spki)).toBe(false);
+  const key = await phone();
+  await vouchFor(made, "acct_1", key);
+  expect(await pair(made, await made.tabCode(), key)).not.toHaveProperty("error");
+  expect(made.app.context.services.localConfirms).toBeUndefined();
 });
 
 test("T5/T71: a PC whose code pairing is paused for too many wrong codes starts no key proof", async () => {
@@ -263,7 +266,7 @@ test("S13-1: a code that ends after the proof is published, before the relay goe
   const made = await pc(true, "linux");
   const code = await made.offerCode();
   const sent: number[] = [];
-  const asks = spyOn(made.app.context.services, "askScreenForKey");
+  const asks = spyOn(made.app.context.services.localConfirms!, "request");
   const send = MuxEngine.prototype.sendSession;
   const outbound = spyOn(MuxEngine.prototype, "sendSession").mockImplementation(function (this: MuxEngine, frame) { sent.push(frame.type); return send.call(this, frame); });
   // the code ends two turns after the entry is published: after KeyProofPairings.prove has named it for the session

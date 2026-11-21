@@ -268,9 +268,11 @@ test("T41/S19/P8/P10: an unwritable drop receipt starts strict and retries the o
     try {
       const repaired = repairedApp.context.services.devices;
       expect(repaired.accountError).toBeNull();
-      // after a start the member waits only for the first whole read (S2-27, P7), then signs in
-      expect(repaired.catchingUp(member.id)).toBe(true);
+      // The repaired PC keeps the old credential; its Step 2 authority still waits for a whole read.
+      expect(repaired.sessionRow(member.id)?.key).toBe(member.publicKey);
+      expect(repaired.catchingUp(member.id, false)).toBe(true);
       repairedApp.context.services.catchUp?.wholeRead();
+      expect(repaired.catchingUp(member.id, false)).toBe(false);
       expect(repaired.sessionRow(member.id)?.key).toBe(member.publicKey);
     } finally { repairedApp.stop(); }
     expect(rows(dir)).toEqual([]);

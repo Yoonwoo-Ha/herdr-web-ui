@@ -14,11 +14,12 @@ import { PAIR_FINGERPRINT_PATTERN } from "./pair-fingerprint.ts";
 export const CONFIRM_MS = 2 * 60_000;
 
 export const OVIS_ACCOUNT_OPENS_ALL = "OVIS_ACCOUNT_OPENS_ALL";
-/** The capability a PC advertises once the flag is on; an app shows nothing of step 2 to a PC without it. */
+/** The capability a PC advertises while Step 2 is on; an app shows nothing of Step 2 for a PC without it. */
 export const ACCOUNT_OPENS_ALL_CAPABILITY = "account-opens-all/1";
 
 export function accountOpensAll(value = process.env[OVIS_ACCOUNT_OPENS_ALL]): boolean {
-  return value === "1";
+  // Require an explicit opt-out: a padded or otherwise mistyped value must not disable Step 2.
+  return value !== "0";
 }
 
 export class AccountDevicesApiError extends Error {

@@ -6,7 +6,7 @@ import { PENDING_MS, pairFingerprint, signPairProof } from "./pair-fingerprint.t
 import { channelBinding, openClientSecureChannel } from "./relay-e2ee.ts";
 import { fromBase64Url, PAIR_APPROVAL_MS, pairCommitment, pairDigits, randomPairNonce, toBase64Url } from "./relay-pair-sas.ts";
 import type { SecureChannel, Transport } from "./relay-e2ee.ts";
-import { ACCOUNT_FEATURE, ACCOUNT_OPENS_ALL_FEATURE, decodeFrame, DIRECT_CARRIER, DIRECT_TAILNET, FrameType, isDirectCarrier, isTailnetCarrier, KEY_PROOF_FEATURE, LARGE_WS_MESSAGES, LIMITS_V1, MuxProtocolError, PAIR_INTENT_ACCOUNT, PAIR_INTENT_PC, PAIR_INTENT_VOUCHED, PAIR_SAS_FEATURE, RELAY_HINTS, RELAY_PROTOCOL, SERVER_TIME_HEADER } from "./relay-mux.ts";
+import { ACCOUNT_FEATURE, ACCOUNT_OPENS_ALL_FEATURE, decodeFrame, DIRECT_CARRIER, DIRECT_TAILNET, FrameType, isDirectCarrier, isTailnetCarrier, KEY_PROOF_FEATURE, LARGE_WS_MESSAGES, LIMITS_V1, MuxProtocolError, PAIR_INTENT_ACCOUNT, PAIR_INTENT_PC, PAIR_INTENT_VOUCHED, PAIR_SAS_FEATURE, PC_CODE_ACCOUNT_ONLY, RELAY_HINTS, RELAY_PROTOCOL, SERVER_TIME_HEADER } from "./relay-mux.ts";
 import { hintedRelay } from "./relay-regions.ts";
 import { MuxEngine, MUX_SETUP_MS } from "./relay-mux-engine.ts";
 import type { MuxOptions, SessionFrame } from "./relay-mux-engine.ts";
@@ -30,6 +30,10 @@ export class UnsafeRelayDestinationError extends Error {
     super(`Invalid relay destination: ${field}`);
     this.name = "UnsafeRelayDestinationError";
   }
+}
+
+export class TargetAccountPcError extends Error {
+  constructor() { super("That PC is in an account. Add it from that account."); }
 }
 
 export class RelayUnreachableError extends Error {
@@ -128,6 +132,7 @@ export interface RelayChannelOptions {
    * `vouched`: a PC's server pairing with another PC of its account (PAIR_INTENT_VOUCHED).
    */
   readonly intent?: "pc" | "account" | "vouched";
+  readonly pcCodeAdd?: boolean;
   /**
    * A comparison only: told what the PC selected in its answer to HELLO, before PAIR_REQUEST goes out. A throw
    * ends the attempt there with that error, and nothing is sent to pair.
@@ -211,7 +216,8 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
     // an older PC selects none of these; a comparison names what it asks for, so the PC's prompt can say it
     const offered: readonly string[] = comparing
       ? [ACCOUNT_FEATURE, PAIR_SAS_FEATURE, options.intent === "account" ? PAIR_INTENT_ACCOUNT : options.intent === "vouched" ? PAIR_INTENT_VOUCHED : PAIR_INTENT_PC]
-      : [ACCOUNT_FEATURE, ...options.accountOpensAll === true ? [ACCOUNT_OPENS_ALL_FEATURE] : [], ...options.keyProof !== undefined && offer.code !== undefined ? [KEY_PROOF_FEATURE] : []];
+      : [ACCOUNT_FEATURE, ...options.accountOpensAll === true ? [ACCOUNT_OPENS_ALL_FEATURE] : [], ...options.keyProof !== undefined && offer.code !== undefined ? [KEY_PROOF_FEATURE] : [],
+        ...options.pcCodeAdd && offer.code !== undefined ? [PC_CODE_ACCOUNT_ONLY] : []];
     const hinted: readonly string[] = [RELAY_HINTS, ...options.offerDirect ? [DIRECT_CARRIER, ...options.offerTailnet ? [DIRECT_TAILNET] : []] : []];
     let phoneNonce: Uint8Array | undefined;
     let binding: Uint8Array | undefined;
@@ -307,6 +313,7 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
           await send({ type: FrameType.PAIR_REQUEST, flags: 0, stream_id: 0,
             payload: { label: device.label, public_key: device.public_spki, commitment: toBase64Url(pairCommitment(binding, device.public_spki, phoneNonce)) } });
         } else if (offer.code !== undefined) {
+          if (options.pcCodeAdd && frame.payload.features.includes(PC_CODE_ACCOUNT_ONLY)) throw new TargetAccountPcError();
           await send({ type: FrameType.PAIR, flags: 0, stream_id: 0,
             payload: { code: offer.code, label: device.label, public_key: device.public_spki } });
         } else {

@@ -38,6 +38,8 @@ export interface BlockAsOf {
   readonly joined: number | null;
   readonly signer_removed: boolean;
   readonly legacy_created_at?: number;
+  /** Account order proved the removal, not the target's place in this folder's admission order. */
+  readonly target_only?: true;
 }
 
 /**
@@ -76,7 +78,7 @@ export interface SafetyState {
   readonly locks: readonly SafetyEntry[];
   readonly blocks: readonly SafetyEntry[];
   /** service freezes and blocks in force: each closes this PC to the keys newer than its target (P23) */
-  readonly freezes: readonly SafetyEntry[];
+  readonly freezes: readonly (SafetyEntry & { readonly targetOnlyCompanion?: true })[];
   /** blocks whose marker stands: no lift that says `forget` names them, whether or not they are in force */
   readonly markers: readonly SafetyEntry[];
 }
@@ -123,7 +125,9 @@ function recordProblem(record: unknown, asof: BlockAsOf | undefined): string | n
     const a = asof as unknown as Record<string, unknown>;
     if (typeof a !== "object" || a === null || !isNo(a.signer_no) || !isNo(a.target_no) || !isNo(a.after) || !isNo(a.joined) || typeof a.signer_removed !== "boolean") return "invalid asof";
     const hasLegacyDate = Object.hasOwn(a, "legacy_created_at");
-    if (Object.keys(a).length !== (hasLegacyDate ? 6 : 5)
+    const targetOnly = Object.hasOwn(a, "target_only");
+    if (Object.keys(a).length !== 5 + Number(hasLegacyDate) + Number(targetOnly)
+      || (targetOnly && (a.target_only !== true || a.joined !== null || hasLegacyDate))
       || (hasLegacyDate && (a.joined !== 0 || !Number.isSafeInteger(a.legacy_created_at)))) return "invalid asof";
   } else if (asof !== undefined) return "only a block keeps asof";
   return null;
@@ -422,12 +426,14 @@ export class SafetyLog {
     const of = (kind: SafetyRecordKind) => byN.filter((entry) => entry.record.kind === kind);
     const locks = of("lock").filter((entry) => !unlocked.has(at(entry.record.account, entry.record.id)));
     const blocks = of("block").filter((entry) => !lifted.has(at(entry.record.account, entry.record.id)));
-    const serviceFreezes = of("freeze").filter((entry) => !lifted.has(at(entry.record.account, entry.record.id.slice(2))));
+    const exactKeys = new Set(blocks.filter(entry => entry.asof?.target_only === true).map(entry => at(entry.record.account, entry.record.id)));
+    const serviceFreezes = of("freeze").filter(entry => !lifted.has(at(entry.record.account, entry.record.id.slice(2))))
+      .map(entry => exactKeys.has(at(entry.record.account, entry.record.id.slice(2))) ? { ...entry, targetOnlyCompanion: true as const } : entry);
     return {
       locked: locks.length > 0,
       locks,
       blocks,
-      freezes: [...blocks, ...serviceFreezes].sort((a, b) => a.n - b.n),
+      freezes: [...blocks.filter(entry => entry.asof?.target_only !== true), ...serviceFreezes].sort((a, b) => a.n - b.n),
       markers: of("block").filter((entry) => !forgotten.has(at(entry.record.account, entry.record.id))),
     };
   }

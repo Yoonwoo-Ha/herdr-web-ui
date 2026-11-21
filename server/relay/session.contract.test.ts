@@ -16,8 +16,8 @@ import { relayHeaders, RELAY_ORIGIN } from "./session.ts";
 import { bounded, deferred, relayAccountFixture, relayConnection, relayDevice, relayFixture, TestClock } from "./test-helpers.ts";
 
 const fixtures: ReturnType<typeof relayFixture>[] = [];
-function fixture(serveOnly = false) {
-  const value = relayFixture(serveOnly);
+function fixture(serveOnly = false, accountOpensAll = false) {
+  const value = relayFixture(serveOnly, { accountOpensAll });
   fixtures.push(value);
   return value;
 }
@@ -25,8 +25,8 @@ afterEach(() => { for (const item of fixtures.splice(0)) item.close(); });
 const guard = [["content-type", "application/json"], ["x-herdr-machine", "1"]] as const;
 const fileTarget = (path: string) => `/api/fs/file?path=${encodeURIComponent(path)}`;
 
-it("serves health through real protected channels and records the route template", async () => {
-  const f = fixture();
+it.each([false, true])("serves health through real protected channels and records the route template (Step 2: %s)", async accountOpensAll => {
+  const f = fixture(false, accountOpensAll);
   const device = await relayDevice(f);
   const link = await relayConnection(f);
   await link.auth(device);
@@ -68,8 +68,8 @@ it("names no relays to a phone that did not offer relay hints", async () => {
   expect(auth).not.toHaveProperty("relays");
 });
 
-it("keeps a renamed relay device admitted and still revokes its session", async () => {
-  const f = fixture();
+it.each([false, true])("keeps a renamed relay device admitted and still revokes its session (Step 2: %s)", async accountOpensAll => {
+  const f = fixture(false, accountOpensAll);
   const device = await relayDevice(f);
   const link = await relayConnection(f);
   await link.auth(device);

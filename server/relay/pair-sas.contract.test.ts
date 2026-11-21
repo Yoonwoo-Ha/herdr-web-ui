@@ -24,7 +24,7 @@ const fixtures: Fixture[] = [];
 afterEach(() => { for (const fixture of fixtures.splice(0)) fixture.close(); });
 
 function fixture(): Fixture {
-  const made = relayFixture();
+  const made = relayFixture(false, { accountOpensAll: false });
   made.app.context.services.relay.approvals.openWindow();
   fixtures.push(made);
   return made;
@@ -584,7 +584,7 @@ test("a relay in the middle that runs its own comparison with the PC shows the o
 const guard = [["content-type", "application/json"], ["x-herdr-machine", "1"]] as const;
 
 async function accountFixture(role: "drive" | "watch" = "drive") {
-  const made = await relayAccountFixture(role);
+  const made = await relayAccountFixture(role, "acct_1", { accountOpensAll: false });
   fixtures.push(made.fixture);
   made.fixture.app.context.services.relay.approvals.openWindow();
   return { f: made.fixture, member: made.member };
@@ -801,7 +801,7 @@ test("a watch device on the PC's own address cannot read the digits of a waiting
 
 async function joinFixture(clock: () => number = Date.now) {
   const service = new FakeAccountService(clock);
-  const made = await relayAccountFixture("drive", "acct_1", { accountService: { url: "https://account.test", fetch: service.fetch } });
+  const made = await relayAccountFixture("drive", "acct_1", { accountOpensAll: false, accountService: { url: "https://account.test", fetch: service.fetch } });
   fixtures.push(made.fixture);
   const identity = rotateRelayIdentity(made.fixture.stateDir);
   const tokens = { acct_1: service.issueToken("acct_1"), acct_2: service.issueToken("acct_2") };

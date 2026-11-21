@@ -41,6 +41,7 @@ export async function post(fetch: PcFetch, path: string, body: unknown): Promise
 }
 
 export interface PcAccountStatus {
+  readonly pcAddFromAccount?: true | "unavailable";
   readonly account: string | null;
   readonly unlinked: readonly string[];
   /** the signed `remove`s behind its tombstones, as it says: unchecked until keepRemovals verifies them */
@@ -65,6 +66,8 @@ export async function pcAccountStatus(fetch: PcFetch, options: { fresh?: boolean
   const unlinked = Array.isArray(body.unlinked) ? body.unlinked.filter((id): id is string => typeof id === "string") : [];
   return {
     account: typeof body.account === "string" ? body.account : null, unlinked,
+    ...("pc_add_from_account" in body && (body.pc_add_from_account === true || body.pc_add_from_account === "unavailable")
+      ? { pcAddFromAccount: body.pc_add_from_account } : {}),
     removals: Array.isArray(body.removals) ? body.removals : [], adds: Array.isArray(body.adds) ? body.adds : [],
     blocked: Array.isArray(body.blocked) ? body.blocked.filter(isAccountKeyEncoding) : [],
     // an Ovis from before enrollments sends no `fresh` at all

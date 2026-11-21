@@ -32,6 +32,7 @@ const INCOMPLETE = "state-merge-devices-incomplete.json";
 export interface SiblingMerge {
   /** why the device registries could not be merged: the store must stay gated (devices.ts) */
   devicesBlocked: string | null;
+  legacyCredential?: (row: StoredDevice) => boolean;
 }
 
 export function siblingStateDir(active: string, env: Record<string, string | undefined> = process.env): string | null {
@@ -61,6 +62,10 @@ interface MergeRecord {
   at: string;
   dirs: string[];
   devices: string[];
+  /** Exact credentials witnessed in both folders by an ordinary Step 1 merge. Never an admission order. */
+  legacy_credentials?: string[];
+  /** The relay identity those credentials were witnessed under: a later reset or a foreign sibling does not unwitness them. */
+  legacy_identity?: string;
   preferences: Record<string, PreferencesSnapshot>;
   preferences_target?: PreferencesSnapshot;
   push: Record<string, string[]>;
@@ -94,7 +99,10 @@ const earliest = (values: (string | null | undefined)[]): string | null =>
  * a freeze in force, so a row only the other dir holds is no import now and stays in that dir's file; and
  * `dropConflictingKeys`, so a row whose key differs between the two copies is dropped rather than given either key.
  */
-export interface MergeRules { readonly holdImports?: boolean; readonly dropConflictingKeys?: boolean; readonly onDropped?: (device: StoredDevice) => void }
+export interface MergeRules { readonly boundAccount?: string | null; readonly holdImports?: boolean; readonly dropConflictingKeys?: boolean; readonly onDropped?: (device: StoredDevice) => void; readonly sharedLegacyIdentity?: string }
+
+const credentialFingerprint = (identity: string, row: StoredDevice): string =>
+  createHash("sha256").update(text([identity, row.id, row.relay_public_key, row.token_hash])).digest("base64url");
 
 // Rollback cannot transfer a held credential to a live twin, in either direction.
 function separateHeldTwins(own: StoredDevice, other: StoredDevice): boolean {
@@ -111,18 +119,27 @@ export function mergeRegistries(own: Registry | null, other: Registry | null,
   const myIds = new Set(mine.map((device) => device.id));
   const devices: StoredDevice[] = [];
   const held: StoredDevice[] = [];
-  for (const device of mine) {
+  for (const original of mine) {
     // revoked through the other dir since the last merge
-    if (other !== null && !incomplete.other && bases.other?.has(device.id) && !theirIds.has(device.id)) continue;
-    const twin = theirs.find((candidate) => candidate.id === device.id);
+    if (other !== null && !incomplete.other && bases.other?.has(original.id) && !theirIds.has(original.id)) continue;
+    const twin = theirs.find((candidate) => candidate.id === original.id);
     if (!twin) {
-      devices.push(device);
+      devices.push(original);
       continue;
+    }
+    let device = original;
+    // The other folder can still contain the settled pairing after this folder's link was cleared.
+    // Require the same credential: the mere absence of a binding does not turn a member into a paired row.
+    if (rules.boundAccount !== undefined && original.account !== undefined && original.account !== rules.boundAccount &&
+      twin.account === undefined && original.token_hash === twin.token_hash && original.relay_public_key === twin.relay_public_key) {
+      const { account: _account, linked_at: _linked, account_add: _add, member_approved_in: _member, joined_by: _joined, ...paired } = original;
+      device = paired;
     }
     if (rules.dropConflictingKeys && twin.relay_public_key !== device.relay_public_key) { rules.onDropped?.(device); continue; }
     const history = {
       role: device.role === "watch" || twin.role === "watch" ? "watch" : "drive",
-      created_at: earliest([device.created_at, twin.created_at])!,
+      // Step 2 uses a keyless cookie's own pairing time against a freeze. Never backdate it from its twin.
+      created_at: rules.dropConflictingKeys && device.relay_public_key === undefined ? device.created_at : earliest([device.created_at, twin.created_at])!,
       last_seen_at: [device.last_seen_at, twin.last_seen_at].filter((seen): seen is string => seen !== null).sort().at(-1) ?? null,
     } satisfies Pick<StoredDevice, "role" | "created_at" | "last_seen_at">;
     if (!rules.dropConflictingKeys && separateHeldTwins(device, twin)) {
@@ -133,12 +150,16 @@ export function mergeRegistries(own: Registry | null, other: Registry | null,
     if (twin.token_hash !== device.token_hash) console.error(`Paired device ${device.id} has another credential in the other state dir; the one in use is kept`);
     // a link done in the other dir moved the row to the account key (docs/account.md); an older copy must not undo it
     // the later link wins: an unlinked copy, or one linked earlier, takes the other's account key
-    const takes = twin.account !== undefined && (device.account === undefined || (twin.linked_at ?? "") > (device.linked_at ?? ""));
+    const staleMembership = rules.boundAccount !== undefined && twin.account !== undefined && twin.account !== rules.boundAccount;
+    const takes = twin.account !== undefined && !staleMembership
+      && (device.account === undefined || (twin.linked_at ?? "") > (device.linked_at ?? ""));
     // how the row joined is merged apart from the account and key: a link on the device's own word (any mark but a
     // vouched one, `null` included) is kept whichever copy holds it and whichever account the row takes, as no later
     // link undoes it. Otherwise the kept copy's mark, or, where both copies are in that account, the other's when the
     // kept one has none: a vouched mark goes with its own account only. Only a missing mark is none
-    const { joined_by: own, origin: ownOrigin, ...rest } = device;
+    const { joined_by: own, origin: ownOrigin, account_add: ownAdd, ...rest } = device;
+    const add = [ownAdd, twin.account_add].find(record => record !== undefined &&
+      (rules.boundAccount === undefined || (rules.boundAccount !== null && isObject(record) && record["account"] === rules.boundAccount)));
     // this dir keeps its own origin for the key it admitted; only a copy that carries another origin, or another key,
     // takes it away: a copy with none erases nothing, and the sibling's never comes here (P22, T27 in 2d). Main never
     // writes an origin, so this holds with the release flag off too
@@ -147,7 +168,7 @@ export function mergeRegistries(own: Registry | null, other: Registry | null,
     // a key this dir never held is no row of its own here: its one-time legacy pass never stamps it (T50)
     const notOwnKey = mergedKey !== device.relay_public_key;
     const keptMark = takes ? twin.joined_by : own;
-    const otherMark = takes ? own : twin.joined_by;
+    const otherMark = takes ? own : staleMembership ? undefined : twin.joined_by;
     const marks = [keptMark, otherMark].filter((mark) => mark !== undefined);
     const word = marks.findIndex((mark) => !VOUCHED.has(mark));
     const joinedBy = word >= 0 ? marks[word] : device.account !== undefined && device.account === twin.account ? marks[0] : keptMark;
@@ -159,7 +180,7 @@ export function mergeRegistries(own: Registry | null, other: Registry | null,
       ...(notOwnKey ? { imported: true as const } : {}),
       ...history,
       // the signed add behind the row, kept from either copy (/api/account/status lists it)
-      ...(device.account_add === undefined && twin.account_add !== undefined ? { account_add: twin.account_add } : {}),
+      ...(add === undefined ? {} : { account_add: add }),
       ...(takes
         ? { relay_public_key: twin.relay_public_key, account: twin.account, ...(twin.added_by === undefined ? {} : { added_by: twin.added_by }), ...(twin.linked_at === undefined ? {} : { linked_at: twin.linked_at }), ...(twin.link_moved_key === undefined ? {} : { link_moved_key: twin.link_moved_key }) } : {}),
     });
@@ -185,6 +206,8 @@ const isSnapshot = (value: unknown): value is PreferencesSnapshot =>
 const isRecord = (value: unknown): value is MergeRecord =>
   isObject(value) && value["version"] === 1 && Number.isSafeInteger(value["seq"]) && typeof value["at"] === "string"
   && isStrings(value["dirs"]) && isStrings(value["devices"])
+  && (value["legacy_credentials"] === undefined || isStrings(value["legacy_credentials"]))
+  && (value["legacy_identity"] === undefined || typeof value["legacy_identity"] === "string")
   && isObject(value["preferences"]) && Object.values(value["preferences"]).every(isSnapshot)
   && (value["preferences_target"] === undefined || isSnapshot(value["preferences_target"]))
   && isObject(value["push"]) && Object.values(value["push"]).every(isStrings)
@@ -276,7 +299,7 @@ function keptOrigin(copy: StoredDevice, other: StoredDevice, key: string | undef
   return own.from === theirs.from && own.how === theirs.how && own.by === theirs.by && own.admit_no === theirs.admit_no && own.at === theirs.at ? own : undefined;
 }
 
-function mergeDevices(active: string, sibling: string, base: MergeRecord | null, stamp: string, intend: Intent, now: Date, rules: MergeRules): { blocked: string | null; ids: string[] | null; changed: number; gated?: boolean } {
+function mergeDevices(active: string, sibling: string, base: MergeRecord | null, stamp: string, intend: Intent, now: Date, rules: MergeRules, identity: string | undefined, legacy: Set<string>): { blocked: string | null; ids: string[] | null; changed: number; gated?: boolean } {
   const ownPath = join(active, "devices.json");
   const otherPath = join(sibling, "devices.json");
   const baseOf = (dir: string, path: string): ReadonlySet<string> | null => {
@@ -300,6 +323,20 @@ function mergeDevices(active: string, sibling: string, base: MergeRecord | null,
   const registry = (read: typeof own): Registry | null => read.kind === "ok" ? { gate_closed_at: read.gateClosedAt, devices: read.devices } : null;
   const mine = registry(own);
   const theirs = registry(other);
+  if (rules.dropConflictingKeys && identity !== undefined && base !== null && !ownIncomplete && !otherIncomplete) {
+    const eligible = (row: StoredDevice): boolean => !row.invalid_origin && row.held === undefined
+      && (row.origin === undefined || row.origin.from === "legacy")
+      && row.carried_notice === undefined && row.paired_over === undefined;
+    const twins = new Map(theirs?.devices.filter(eligible).map(row => [row.id, row]));
+    const previouslyVerified = new Set(base.legacy_credentials);
+    for (const row of mine?.devices ?? []) {
+      const twin = twins.get(row.id);
+      if (!twin || !eligible(row) || row.imported && twin.imported || !bases.own?.has(row.id) || !bases.other?.has(row.id)) continue;
+      const fingerprint = credentialFingerprint(identity, row);
+      if (fingerprint === credentialFingerprint(identity, twin)
+        && (base.legacy_credentials === undefined || previouslyVerified.has(fingerprint))) legacy.add(fingerprint);
+    }
+  }
   if (mine === null && theirs === null) {
     // both gone after a merge that knew paired devices or a closed gate: this is no first installation
     if (base !== null && (base.devices.length > 0 || base.gated === true || (base.pending?.ids.length ?? 0) > 0)) {
@@ -312,13 +349,23 @@ function mergeDevices(active: string, sibling: string, base: MergeRecord | null,
   // and mark there, a twin the origin both copies agree on, and a row only this dir held is a copy there (P22, T50)
   const myCopy = new Map((mine?.devices ?? []).map((device) => [device.id, device]));
   const theirCopy = new Map((theirs?.devices ?? []).map((device) => [device.id, device]));
-  const otherMerged = { ...merged, devices: merged.devices.map(({ origin: _here, imported: _marked, ...device }) => {
+  const otherMerged = { ...merged, devices: merged.devices.map(({ origin: _here, imported: _marked, recovered_over: _hereRecovery, ...device }) => {
     const copy = theirCopy.get(device.id);
     if (copy === undefined) return { ...device, imported: true as const };
     const mineToo = myCopy.get(device.id);
     if (!rules.dropConflictingKeys && mineToo && separateHeldTwins(mineToo, copy)) return { ...copy, role: device.role };
     const kept = mineToo === undefined ? copy.origin : keptOrigin(copy, mineToo, device.relay_public_key);
-    const other = { ...device, ...(kept === undefined ? {} : { origin: kept }), ...(copy.imported || copy.relay_public_key !== device.relay_public_key ? { imported: true as const } : {}) };
+    const other = { ...device, ...(kept === undefined ? {} : { origin: kept }),
+      ...(kept?.from === "recover" && copy.recovered_over ? { recovered_over: copy.recovered_over } : {}),
+      ...(copy.imported || copy.relay_public_key !== device.relay_public_key ? { imported: true as const } : {}) };
+    if (rules.dropConflictingKeys && device.relay_public_key === undefined) {
+      other.created_at = copy.created_at;
+      if (copy.token_hash !== device.token_hash) other.untrusted_created_at = copy.created_at;
+      else if (copy.untrusted_created_at === undefined) delete other.untrusted_created_at;
+      else other.untrusted_created_at = copy.untrusted_created_at;
+      if (copy.token_hash === device.token_hash && copy.off_pair_binding !== undefined) other.off_pair_binding = copy.off_pair_binding;
+      else delete other.off_pair_binding;
+    }
     if (!rules.dropConflictingKeys && mineToo) {
       if (Object.hasOwn(copy, "held")) other.held = copy.held;
       else delete other.held;
@@ -560,6 +607,16 @@ function mergePush(active: string, sibling: string, base: MergeRecord | null, st
   }
 }
 
+/** The exact credentials this folder's last successful merge witnessed. */
+export function recordedLegacyCredential(active: string): ((row: StoredDevice) => boolean) | undefined {
+  const read = readStateDocument(join(active, RECORD));
+  const record = read.kind === "json" && isRecord(read.value) ? read.value : null;
+  const identity = record?.legacy_identity;
+  if (!record?.dirs.includes(realpath(active)) || identity === undefined || !record.legacy_credentials?.length) return undefined;
+  const verified = new Set(record.legacy_credentials);
+  return row => verified.has(credentialFingerprint(identity, row));
+}
+
 export function mergeSiblingState(active: string, sibling: string, now = new Date(), rules: MergeRules = {}): SiblingMerge {
   const stamp = now.toISOString().replace(/[:.]/g, "-");
   let blocked: string | null;
@@ -570,7 +627,8 @@ export function mergeSiblingState(active: string, sibling: string, now = new Dat
     blocked = `Cannot merge the state of ${sibling} into ${active} (${error instanceof Error ? error.message : String(error)}). External access without a token or trusted Tailscale login remains blocked; restart the server once it is fixed.`;
   }
   if (blocked !== null) closeGateOnDisk(active, stamp, now, rules.dropConflictingKeys === true);
-  return { devicesBlocked: blocked };
+  const legacyCredential = blocked === null && rules.dropConflictingKeys ? recordedLegacyCredential(active) : undefined;
+  return { devicesBlocked: blocked, ...(legacyCredential ? { legacyCredential } : {}) };
 }
 
 function merge(active: string, sibling: string, now: Date, stamp: string, rules: MergeRules): string | null {
@@ -582,9 +640,17 @@ function merge(active: string, sibling: string, now: Date, stamp: string, rules:
     // without the last merge a revoked device could come back: nothing is merged, and the store stays gated
     return `${error instanceof Error ? error.message : String(error)}, so the paired devices of ${active} and ${sibling} cannot be merged. Restore or remove it, then restart the server. External access without a token or trusted Tailscale login remains blocked.`;
   }
+  // Reset does not change the identity used to hash old witnesses. Revalidate those exact twins;
+  // only a merge without a previous witness list may establish witnesses with today's shared identity.
+  const identity = (base?.legacy_credentials !== undefined ? base.legacy_identity : undefined) ?? rules.sharedLegacyIdentity;
+  const legacy = new Set<string>();
+  const witnessed = () => !rules.dropConflictingKeys ? {} : {
+    legacy_credentials: [...legacy], ...(identity === undefined ? {} : { legacy_identity: identity }),
+  };
   let intent: MergeRecord | null = null;
   const intend: Intent = (ids, sides, gated) => {
     intent = { version: 1, seq: (base?.seq ?? 0) + 1, at: now.toISOString(), dirs: pair, devices: base?.devices ?? [],
+      ...witnessed(),
       gated: gated || base?.gated === true, preferences: base?.preferences ?? {},
       ...(base?.preferences_target ? { preferences_target: base.preferences_target } : {}), push: base?.push ?? {}, pending: { ids, sides } };
     try { writePrivateState(join(active, RECORD), intent); }
@@ -595,7 +661,7 @@ function merge(active: string, sibling: string, now: Date, stamp: string, rules:
     try { writePrivateState(join(sibling, RECORD), intent); } catch {}
     return null;
   };
-  const devices = mergeDevices(active, sibling, base, stamp, intend, now, rules);
+  const devices = mergeDevices(active, sibling, base, stamp, intend, now, rules, identity, legacy);
   const written = intent as MergeRecord | null;
   const preferences = mergePreferences(active, sibling, base, stamp);
   const push = mergePush(active, sibling, base, stamp);
@@ -608,6 +674,7 @@ function merge(active: string, sibling: string, now: Date, stamp: string, rules:
     at: now.toISOString(),
     dirs: pair,
     devices: devices.ids ?? base?.devices ?? [],
+    ...witnessed(),
     ...(devices.ids === null && (written?.pending ?? base?.pending) ? { pending: written?.pending ?? base?.pending } : {}),
     gated: devices.gated === true || base?.gated === true,
     preferences: preferences?.snapshots ?? base?.preferences ?? {},

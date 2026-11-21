@@ -45,7 +45,11 @@ if (provider === "claude" && home.endsWith("-private")) {
   for await (const line of console) { await Bun.write(join(home, "pasted-code"), line); break; }
 }
 if (provider === "claude") {
-  await Bun.write(join(home, ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "fixture-local-token:" + home } }));
+  // A simultaneous re-login must see the old credential or its replacement, never a truncated fixture file.
+  const path = join(home, ".credentials.json");
+  const temporary = path + "." + process.pid + ".tmp";
+  await Bun.write(temporary, JSON.stringify({ claudeAiOauth: { accessToken: "fixture-local-token:" + home } }));
+  renameSync(temporary, path);
   // signing in again keeps the account the home already names
   if (!await Bun.file(join(home, ".claude.json")).exists()) await Bun.write(join(home, ".claude.json"), JSON.stringify({ oauthAccount: { accountUuid: "local-work", emailAddress: "work@example.test" } }));
 } else if (provider === "codex") {

@@ -43,6 +43,8 @@ export interface SnapshotPorts {
   commit(stage: StagedRead): number;
   /** List admissions follow the safety writes and staged signed adds in the same synchronous turn. */
   commitList?(snapshot: AccountSnapshot): void;
+  /** An explicit service opt-out for this read's binding, not a whole read. */
+  step2Off?(): void;
   methodsVersion(): number | null;
   journalMethod(version: number): void;
   requestRead(): void;

@@ -8,7 +8,7 @@ import "./DevicesPanel.css";
 import { ADDRESS_PC_FAILURES, type AddressPcFailure, type Machine } from "../../shared/machines.ts";
 import type { AddPcPreset } from "../lib/actions.ts";
 import { indexedAccountStore, type AccountSession } from "../lib/account/store.ts";
-import { pcAccountStatus } from "../lib/account/join.ts";
+import { pcAccountStatus, type PcAccountStatus } from "../lib/account/join.ts";
 import { listOfferedPc } from "../lib/account/addThisPc.ts";
 import { decodeOffer } from "../../shared/relay-offer.ts";
 import { AccountService } from "../lib/account/service.ts";
@@ -98,6 +98,8 @@ export interface RelayAccount {
 }
 
 export interface ConnectPhoneDialogProps {
+  pcAddFromAccount?: PcAccountStatus["pcAddFromAccount"];
+  onAccountSetup?: () => void;
   plan: PhonePlan;
   pairUrl: string | null;
   relay: RelayState;
@@ -129,7 +131,7 @@ export interface ConnectPhoneDialogProps {
   onClose: () => void;
 }
 
-export function ConnectPhoneDialog({ plan, pairUrl, relay, readOnly, closesGate, canPair, signedIn, accountId = null, joinBySignIn, account, onAddPc, machines, onConnectMachine, onPairingHeld, onRevokedAll, onClose }: ConnectPhoneDialogProps) {
+export function ConnectPhoneDialog({ plan, pairUrl, relay, readOnly, closesGate, canPair, signedIn, accountId = null, joinBySignIn, account, onAddPc, machines, onConnectMachine, pcAddFromAccount, onAccountSetup, onPairingHeld, onRevokedAll, onClose }: ConnectPhoneDialogProps) {
   const t = useT();
   const id = useId();
   const surface = useFocusTrap<HTMLDivElement>(true);
@@ -211,7 +213,9 @@ export function ConnectPhoneDialog({ plan, pairUrl, relay, readOnly, closesGate,
           )}
           {opened.current.has("relay") && tabs.includes("relay") && (
             <div className="connect-tab" data-tab-panel="relay" hidden={!relayShown}>
-              <RelayTab relay={relay} closesGate={closesGate} signedIn={signedIn} accountId={accountId} joinBySignIn={joinBySignIn} account={account} phone={phone} active={relayShown} onPairingHeld={onPairingHeld} onRevokedAll={onRevokedAll} machines={machines} onConnectMachine={onConnectMachine} />
+              <RelayTab relay={relay} closesGate={closesGate} signedIn={signedIn} accountId={accountId} joinBySignIn={joinBySignIn} account={account} phone={phone}
+                pcAddFromAccount={pcAddFromAccount} onAccountSetup={onAccountSetup}
+                active={relayShown} onPairingHeld={onPairingHeld} onRevokedAll={onRevokedAll} machines={machines} onConnectMachine={onConnectMachine} />
             </div>
           )}
         </div>
@@ -249,7 +253,7 @@ export function useFoundPcs(machines: readonly Machine[], enabled = true) {
     let live = true;
     setTailnetRead(false);
     findTailnetPcs().then(({ pcs }) => {
-      if (live) setOutdated(new Set(pcs.filter((pc) => pc.outdated).map((pc) => new URL(pc.url).hostname.toLowerCase())));
+      if (live) setOutdated(new Set(pcs.filter(pc => pc.outdated).map(pc => new URL(pc.url).hostname.toLowerCase())));
     }, () => undefined).finally(() => { if (live) setTailnetRead(true); });
     return () => { live = false; };
   }, [reads, enabled]);
@@ -298,11 +302,9 @@ function FoundPcsTrouble({ failed, withheld, retry }: { failed: boolean; withhel
   );
 }
 
-/**
- * Tailscale: the other PCs of this PC's Tailscale login (a config host that reaches one stands for it). Connect opens
- * Add PC with its address, which goes over SSH with nothing to install there first; never through the relay.
- */
-export function TailscaleTab({ found: { found, unread, failed, withheld, stateOf, retry }, onAddPc }: { found: FoundPcs; onAddPc: (preset?: AddPcPreset) => void }) {
+export function TailscaleTab({ found: { found, unread, failed, withheld, stateOf, retry }, onAddPc }: {
+  found: FoundPcs; onAddPc: (preset?: AddPcPreset) => void;
+}) {
   const t = useT();
   const pcs = found?.filter((pc) => pc.source === "tailscale" || pc.tailnet !== undefined) ?? null;
   return (
@@ -582,7 +584,8 @@ function CommandToCopy({ command }: { command: string }) {
  * The Ovis relay, the owner's on a direct page. With an account, either state ends in AccountQr: the relay's QR code
  * behind a press for a PC in no account, and for a PC that is in one how a device is added instead, with no QR code.
  */
-export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBySignIn, account, phone, active = true, onPairingHeld, onRevokedAll, machines = [], onConnectMachine }: {
+export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBySignIn, account, phone, active = true, onPairingHeld, onRevokedAll, machines = [], onConnectMachine, pcAddFromAccount, onAccountSetup }: {
+  pcAddFromAccount?: PcAccountStatus["pcAddFromAccount"]; onAccountSetup?: (() => void) | undefined;
   relay: RelayState; closesGate: boolean; signedIn: boolean; joinBySignIn: boolean; account: RelayAccount | null; phone: boolean;
   accountId?: string | null;
   active?: boolean;
@@ -591,10 +594,28 @@ export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBy
   machines?: readonly Machine[]; onConnectMachine?: (machine: Machine) => void;
 }) {
   const t = useT();
+  const [showAccountPcs, setShowAccountPcs] = useState(false);
+  const accountAdd = pcAddFromAccount === true && onConnectMachine ? (
+    showAccountPcs && signedIn && joinBySignIn ? <RelayAccountPcs machines={machines} onConnectMachine={onConnectMachine} /> :
+      <div className="connect-found" data-testid="pc-add-source-bound">
+        <p className="settings-hint">{t("This PC is in an account. Add PCs from your account.")}</p>
+        <button type="button" className="btn btn-secondary" onClick={() => {
+          if (!signedIn && account !== null) {
+            setShowAccountPcs(true);
+            return;
+          }
+          if (signedIn && joinBySignIn) setShowAccountPcs(true);
+          else (onAccountSetup ?? account?.onOpen)?.();
+        }}>{t("Add from account")}</button>
+      </div>
+  ) : null;
   const [switchError, setSwitchError] = useState<string | null>(null);
   const [signedInProvider, setSignedInProvider] = useState<AccountSession["provider"] | null>(null);
   const [pcAccount, setPcAccount] = useState<string | null | undefined>(undefined);
   const signInView = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (showAccountPcs && !signedIn) signInView.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  }, [showAccountPcs, signedIn]);
   /** the sign-in that just finished on this tab, handed once to Add this PC below, which offers its one press at once */
   const signedInHere = useRef<SignedInHere | null>(null);
   const takeSignedInHere = useCallback((): SignedInHere | null => { const fresh = signedInHere.current; signedInHere.current = null; return fresh; }, []);
@@ -625,8 +646,16 @@ export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBy
     </div>
   );
   const switchFailure = switchError !== null && <p className="settings-hint relay-error" role="alert">{switchError}</p>;
+  if (pcAddFromAccount === "unavailable") return (
+    <>
+      <p className="settings-hint" role="status">{t("Can't add a PC right now. Try again in a moment.")}</p>
+      {relaySwitch}
+      {switchFailure}
+    </>
+  );
   if (account === null) return (
     <>
+      {accountAdd}
       {relaySwitch}
       {switchFailure}
       <RelayRoute relay={relay} readOnly={false} phone={phone} compact />
@@ -644,7 +673,8 @@ export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBy
     <>
       <div ref={signInView} className="connect-signin" data-testid="connect-signin">
         {signInStatus}
-        <RelaySignIn service={account.service} onOpenAccount={account.onOpen} onSignedIn={(session) => { signedInHere.current = { account: session.account, adds: false }; setSignedInProvider(session.provider); account.onSignedIn(); }} />
+        {!showAccountPcs && accountAdd}
+        <RelaySignIn service={account.service} boundPc={pcAddFromAccount === true || pcIn !== null} onOpenAccount={account.onOpen} onSignedIn={(session) => { signedInHere.current = { account: session.account, adds: false }; setSignedInProvider(session.provider); account.onSignedIn(); }} />
       </div>
       {qr(true)}
     </>
@@ -653,7 +683,8 @@ export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBy
     <>
       <div ref={signInView} className="connect-signin" data-testid="connect-signin" data-bare={bare || undefined}>
         {signInStatus}
-        {joinBySignIn && onConnectMachine && <RelayAccountPcs machines={machines} onConnectMachine={onConnectMachine} />}
+        {accountAdd}
+        {!pcAddFromAccount && joinBySignIn && onConnectMachine && <RelayAccountPcs machines={machines} onConnectMachine={onConnectMachine} />}
         {joinBySignIn && <p className="settings-hint">{t("On another PC, sign in with the same account.")}</p>}
         {pcIn !== null ? (
           !bare && <>{relaySwitch}{switchFailure}{startFailure}</>
@@ -1103,14 +1134,9 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
     <section className="connect-account-qr" aria-labelledby={id} data-testid="connect-account-qr" data-account={here ?? undefined} data-first={first || undefined}>
       {standing ? (
         <>
-          <p ref={heading} className="settings-label" id={id} title={pcAccount} tabIndex={-1}>{here === "mine" ? t("This PC is in your Ovis account ({id}).", { id: pcAccount.slice(0, 12) })
-            : here === "other" ? t("This PC is in another Ovis account ({id}), not the one this browser is signed in to ({mine}).", { id: pcAccount.slice(0, 12), mine: accountId!.slice(0, 12) })
-            : t("This PC is in an Ovis account ({id}).", { id: pcAccount.slice(0, 12) })}</p>
-          <p className="settings-description">{t("To add a device, sign in to this PC's account on it and open this PC there. A device this PC does not know yet is approved once, by picking the matching number on a device that is already a member of this PC.")}</p>
+          {signedIn && <p ref={heading} className="settings-label" id={id} tabIndex={-1}>{here === "mine" ? t("This PC is in your account.") : t("Sign in to this PC's account.")}</p>}
           {here === "mine" && enrolling && <p className="settings-description connect-account-qr-warning" role="status">{t("Not finished yet: the device that added this PC is still setting it up. If it stopped, open this PC on that device and choose Try again.")}</p>}
-          {here === "unknown" && !signedIn && <p className="settings-description connect-account-qr-warning">{t("This browser is not signed in, so it cannot tell whether that account is yours: sign in above to check.")}</p>}
           {here === "other" && <p className="settings-description connect-account-qr-warning">{t("If that account is not yours, revoke every device (More settings → Devices and access): this PC then leaves it.")}</p>}
-          <p className="settings-hint">{t("This PC shows a QR code only while it is in no account.")}</p>
           {!online && <>{relayControls}{relayState}</>}
         </>
       ) : (
@@ -1121,12 +1147,9 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
       )}
       {standing ? null : view.kind === "joined" ? (
         <div className="connect-account-qr-notice" role="status" data-testid="connect-account-joined" data-account={whose}>
-          <p className="settings-label" title={view.account}>{whose === "mine" ? t("This PC is in your account ({id}).", { id: view.account.slice(0, 12) })
-            : whose === "other" ? t("This PC joined another Ovis account ({id}), not the one this browser is signed in to ({mine}).", { id: view.account.slice(0, 12), mine: accountId!.slice(0, 12) })
-            : t("This PC joined an Ovis account ({id}).", { id: view.account.slice(0, 12) })}</p>
+          <p className="settings-label">{whose === "mine" ? t("This PC is in your account.") : whose === "other" ? t("This PC joined a different account.") : t("Sign in to this PC's account.")}</p>
           {view.device !== null && <p className="settings-description">{t("Added by {device}.", { device: view.device })}</p>}
           {whose === "other" && <p className="settings-description connect-account-qr-warning">{t("If that was not you, revoke every device: this PC then leaves that account.")}</p>}
-          {whose === "unknown" && !signedIn && <p className="settings-description connect-account-qr-warning">{t("This browser is not signed in, so it cannot tell whether that account is yours: sign in above to check.")}</p>}
           {whose === "unknown" && <p className="settings-description connect-account-qr-warning">{t("If your own device did not just say that it added this PC, this was not you: revoke every device, and this PC leaves that account.")}</p>}
           {strays.length > 0 && <p className="settings-description connect-account-qr-warning" data-testid="connect-account-strays">{t("Paired with this PC while its QR code was up, and not in that account: {devices}.", { devices: names(strays) })}</p>}
           {checkingLine}

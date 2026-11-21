@@ -5,8 +5,10 @@ import type { AgentRowTokens } from "../shared/pane-tokens.ts";
 import type { SharedPreferences } from "../shared/preferences.ts";
 import type { PanePromptResponse, SessionSnapshot } from "../shared/protocol.ts";
 import type { SeenFinish } from "../shared/seen.ts";
+import type { DeviceStore } from "./devices.ts";
 import { AccountPcError, MachineActionRequired, MachineManager, PcUpdateRefused, type AccountPcFailure } from "./machines.ts";
 import { TypedCodeError, type TypedCodeFailure } from "../shared/relay-code-offer.ts";
+import { TargetAccountPcError } from "../shared/relay-channel.ts";
 import { TailnetPcError } from "./tailnet-pcs.ts";
 import { canSendSecret, sameOrigin } from "./machine-security.ts";
 import { isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
@@ -125,7 +127,7 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
   /** this PC's owner (access.ts ownerAccess): only they may start or stop updates of its PCs */
   owner = false,
   /** OVIS_ACCOUNT_OPENS_ALL is on here: only then does the roster carry a block to another PC's account records */
-  accountOpensAll = false): Promise<Response> {
+  accountOpensAll = false, source?: Pick<DeviceStore, "accountPolicyActive" | "accountError">): Promise<Response> {
   const url = new URL(request.url);
   // A PC's file opens as this PC's /api/fs/file does, from any navigation: reading it changes
   // nothing, and Chrome on Android shows a PDF in the viewer's frame as an "Open" button whose
@@ -147,6 +149,10 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
   if (accountRecords && !owner) return fail("owner_only", "Manage the account from this PC itself, or from a paired device.", 403);
   const managing = !["GET", "HEAD", "OPTIONS"].includes(request.method) && !proxyPath;
   if (managing && !(owner && updateRequestAllowed(request))) return fail("forbidden", OWNER_ONLY, 403);
+  if (request.method === "POST" && (parts.join("/") === "relay" || parts.join("/") === "relay/code" || parts.join("/") === "tailnet") && source?.accountPolicyActive()) {
+    if (source.accountError !== null) return fail("pc_add_account_unavailable", "Can't add a PC right now. Try again in a moment.", 409);
+    return fail("pc_add_source_bound", "This PC is in an account. Add PCs from your account.", 409);
+  }
   try {
     if (!parts.length && request.method === "GET") {
       setRequestRoute("/api/machines");
@@ -567,5 +573,8 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       finally { untrack(); }
     }
     return fail("not_found", "Unknown PC endpoint", 404);
-  } catch (e) { return fail("machine_request_failed", e instanceof Error ? e.message : String(e), 400); }
+  } catch (e) {
+    if (e instanceof TargetAccountPcError) return fail("pc_add_target_bound", e.message, 409);
+    return fail("machine_request_failed", e instanceof Error ? e.message : String(e), 400);
+  }
 }

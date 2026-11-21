@@ -62,7 +62,7 @@ export function lockRoutes(options: { confirms: LocalConfirms; store: LockStore;
       if (lock !== null) return fail("already_locked", "This PC is locked already.", 409);
       const preview = store.preview();
       return onScreen({ kind: "lock" }, "Turn strict mode ON", [`${preview.rows.length} device(s) will be signed out`], () => {
-        if (store.state().lock === null) store.lock();
+        if (store.bound() && store.state().lock === null) store.lock();
       });
     }
     if (pathname === "/api/account/unlock") {

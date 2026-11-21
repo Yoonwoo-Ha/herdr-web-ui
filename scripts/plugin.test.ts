@@ -936,11 +936,11 @@ describe("add and login", () => {
     expect(result.err).not.toContain("recover");
   });
 
-  it("with the release flag on, confirm prints this PC's confirm page from its state folder and opens nothing without a desktop", async () => {
+  it.each([undefined, "1", "", "false"])("with Step 2 flag %j, confirm prints this PC's confirm page without a desktop", async (flag) => {
     const state = join(scratch, "app-state");
     mkdirSync(state, { recursive: true, mode: 0o700 });
     writeFileSync(join(state, "local-confirm.json"), JSON.stringify({ port: 41234 }), { mode: 0o600 });
-    const result = await run("confirm", { HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_ACCOUNT_OPENS_ALL: "1", OVIS_STATE_DIR: state, DISPLAY: undefined, WAYLAND_DISPLAY: undefined });
+    const result = await run("confirm", { HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_ACCOUNT_OPENS_ALL: flag, OVIS_STATE_DIR: state, DISPLAY: undefined, WAYLAND_DISPLAY: undefined });
     expect({ code: result.exitCode, out: result.out }).toEqual({ code: process.platform === "linux" ? 0 : 1, out: expect.stringContaining(process.platform === "linux" ? "http://127.0.0.1:41234/" : "Linux") });
   });
 

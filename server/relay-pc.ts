@@ -239,7 +239,7 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
     // whoever asks through the forward sets the deadline (the machine proxy: 75 s, 165 s for its slow routes)
     // a server can dial a Tailscale address whenever this PC is on Tailscale, and fails fast when not: always asked
     // for, so the carriers kept with the key stay right when Tailscale comes and goes
-    requestTimeoutMs: () => 0, offerDirect: true, offerTailnet: true,
+    requestTimeoutMs: () => 0, offerDirect: true, offerTailnet: true, pcCodeAdd: true,
   });
   /**
    * The deadline is the admission's only:

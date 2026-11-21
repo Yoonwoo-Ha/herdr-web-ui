@@ -260,6 +260,10 @@
   border-top: var(--hairline) solid var(--border);
 }
 
+.connect-account-qr:empty {
+  display: none;
+}
+
 .connect-account-qr[data-first] {
   padding-top: 0;
   border-top: 0;

@@ -38,7 +38,7 @@ import { appRelease, INSTALLER, installPlanFor, PcInstaller, registeredIn, sameP
 import { warmSshAddresses } from "./ssh-address.ts";
 import { readMoveOffer } from "./remote-move.ts";
 
-import type { RelaySocket } from "../shared/relay-channel.ts";
+import { TargetAccountPcError, type RelaySocket } from "../shared/relay-channel.ts";
 import { newRouteProbes, openRelayPcTunnel, RelayPcKey, RelayPcOutdated, RelayPcRefused, relayPcLabel, removeRelayPcKey, vouchedSupport, type RelayPcTunnel, type RouteProbes, type VouchedSupport } from "./relay-pc.ts";
 import { importPublicKey } from "../shared/relay-e2ee.ts";
 import { deriveServerId } from "../shared/relay-server-proof.ts";
@@ -2487,6 +2487,7 @@ export class MachineManager {
     try { tunnel = await openRelayPcTunnel(offer, key, this.tunnelOptions(runtime, generation)); }
     catch (error) {
       removeRelayPcKey(keyPath);
+      if (error instanceof TargetAccountPcError) throw error;
       throw new Error(error instanceof RelayPcRefused ? error.message : `That PC could not be reached through the relay: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
     return this.adoptRelayPc(runtime, tunnel, keyPath);

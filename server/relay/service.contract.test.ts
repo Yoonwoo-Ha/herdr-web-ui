@@ -85,8 +85,11 @@ async function fixture(serveOnly?: boolean, options: Partial<RelayServiceOptions
     }, ...options,
   };
   let service = new RelayService(relayOptions);
-  let app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null,
-    sidecar: false, tailscaleServeOnly: serveOnly, ...appOptions, relay: service });
+  // The transport fixtures use the released Step 1 QR/code admission, not screen-confirmed Step 2 grants.
+  const account = new FakeAccountService();
+  const accountService = { url: "https://account.fixture.test", fetch: (request: Request) => account.fetch(request) };
+  let app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, accountOpensAll: false,
+    sidecar: false, tailscaleServeOnly: serveOnly, accountService, ...appOptions, relay: service });
   cleanup.push(async () => { await service.shutdown(); app.stop(); });
   return {
     stateDir,
@@ -127,7 +130,7 @@ async function fixture(serveOnly?: boolean, options: Partial<RelayServiceOptions
       app.stop();
       synced = deferred<void>();
       service = new RelayService(relayOptions);
-      app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, sidecar: false, ...appOptions, relay: service });
+      app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, sidecar: false, accountOpensAll: false, accountService, ...appOptions, relay: service });
     },
     async interruptRelay(clock: TestClock) {
       synced = deferred<void>();
@@ -758,6 +761,23 @@ it("rejects CSRF before connecting or closing the device gate", async () => {
   expect(f.app.context.services.devices.gated).toBe(false);
 });
 
+it("a bound PC with an unreadable registry refuses identity reset before closing its relay or changing its binding", async () => {
+  const f = await fixture(false, {}, { accountOpensAll: true });
+  await f.start();
+  f.app.context.services.devices.bindByService("acct_fixture");
+  const binding = () => readFileSync(join(f.stateDir, "account-pc.json"), "utf8");
+  const identity = () => readFileSync(relayIdentityPath(f.stateDir), "utf8");
+  const before = [binding(), identity()];
+  const registry = join(f.stateDir, "devices.json");
+  writeFileSync(registry, "not JSON", { mode: 0o600 });
+  await f.restart();
+  expect(f.app.context.services.devices.error).not.toBeNull();
+  const priorPhase = f.service.status().phase;
+  const response = await f.request("/reset-identity", "POST");
+  expect([response.status, (await response.json()).error?.code, f.service.status().phase, binding() === before[0],
+    identity() === before[1], readFileSync(registry, "utf8") === "not JSON"]).toEqual([503, "gate_unavailable", priorPhase, true, true, true]);
+});
+
 it("rotates identity, closes old sessions, revokes only relay devices and reconnects", async () => {
   const f = await fixture();
   await f.start();
@@ -1026,7 +1046,7 @@ async function regionalFixture({ rtt = { global: 130, regional: 13 } as { global
       return socket;
     },
   });
-  const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir: dir, token: "", tailscaleOwner: null, sidecar: false, relay: service });
+  const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir: dir, token: "", tailscaleOwner: null, sidecar: false, relay: service, accountOpensAll: false });
   cleanup.push(async () => { await service.shutdown(); app.stop(); });
   const base = `http://127.0.0.1:${app.port}`;
   const post = (path: string) => fetch(`${base}/api/relay${path}`, { method: "POST", headers: { origin: base, "x-herdr-update": "1" } });

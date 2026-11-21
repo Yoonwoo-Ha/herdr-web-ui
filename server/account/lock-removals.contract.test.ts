@@ -19,6 +19,7 @@ afterEach(() => {
 });
 const folder = () => { const dir = mkdtempSync(join(tmpdir(), "ovis-lock-removals-")); dirs.push(dir); return dir; };
 const start = (dir: string, sibling?: string) => {
+  bindTestPc(dir);
   const made = relayFixture(false, { stateDir: dir, accountOpensAll: true, ...(sibling ? { siblingStateDir: sibling } : {}) });
   fixtures.push(made);
   return made;
@@ -65,3 +66,4 @@ test("S19/T41: on a PC whose only damage is an unreadable device journal, a loop
   expect([tried.status, ((await tried.json()) as { error?: { code?: string } }).error?.code]).toEqual([403, "strict"]);
   expect(((await (await fetch(`${base}/api/account/lock`)).json()) as { strict: boolean }).strict).toBe(true);
 });
+import { bindTestPc } from "../pc-add-policy.test-helpers.ts";

@@ -141,6 +141,8 @@ export class FakeAccountService {
   private readonly snapshots = new Map<string, SnapshotState>();
   /** OVIS_ACCOUNT_OPENS_ALL at the service: off, the snapshot and safety-record routes do not exist. */
   opensAll = false;
+  /** Newer services distinguish a listed PC's snapshot opt-out from a hidden 404. */
+  reportsStep2Off = false;
   private seq = 0;
   readonly requests: string[] = [];
 
@@ -647,7 +649,8 @@ export class FakeAccountService {
       this.challenges.set(challengeId, { server_id: body.server_id, expected, expires: this.now() + CHALLENGE_TTL_MS });
       return json({ challenge_id: challengeId, frame });
     }
-    if (path === "/v1/pc/mailbox" || ((path === "/v1/pc/snapshot" || path === "/v1/pc/admission") && this.opensAll)) {
+    if (path === "/v1/pc/mailbox" || (path === "/v1/pc/admission" && this.opensAll)
+      || (path === "/v1/pc/snapshot" && (this.opensAll || this.reportsStep2Off))) {
       const challenge = typeof body.challenge_id === "string" ? this.challenges.get(body.challenge_id) : undefined;
       if (typeof body.challenge_id === "string") this.challenges.delete(body.challenge_id);
       if (!challenge || challenge.server_id !== body.server_id || this.now() > challenge.expires || !verifyServerProof(body.proof, challenge.expected)) {
@@ -665,6 +668,9 @@ export class FakeAccountService {
       }
       if (path === "/v1/pc/snapshot") {
         // P6: only a PC the account lists reads the account's devices and records
+        if (!this.opensAll) return this.directories.get(body.account)?.has(challenge.server_id) === true
+          ? problem(404, "step2_off", "Step 2 is off for this account")
+          : problem(404, "not_found", "Unknown request");
         if (this.directories.get(body.account)?.has(challenge.server_id) !== true) return problem(403, "not_listed", "This PC is not one of the account's");
         return this.snapshotPage(challenge.server_id, body.account, body.snapshot, body.page);
       }

@@ -56,7 +56,7 @@ describe("the PC's account binding holds through upgrades, siblings and failures
     one.migrate(null, false);
     one.bind(ACCOUNT, "first").commit();
     writeFileSync(join(b, ADMISSION_FILE), readFileSync(join(a, ADMISSION_FILE)), { mode: 0o600 });
-    one.clear("left_on_pc", "pc");
+    one.clear("unlisted", "account");
     // the stale copy starts beside the folder that cleared its binding
     expect(start(b, true, a).account()).toBeNull();
     expect(pcFile(b).clears).toHaveLength(1);
@@ -75,7 +75,7 @@ describe("the PC's account binding holds through upgrades, siblings and failures
     active.migrate(null, false);
     active.bind(ACCOUNT, "first").commit();
     writeFileSync(join(b, ADMISSION_FILE), readFileSync(join(a, ADMISSION_FILE)), { mode: 0o600 });
-    expect(active.clear("left_on_pc", "pc")).toBe(true);
+    expect(active.clear("unlisted", "account")).toBe(true);
 
     const merged = start(a, true, b);
 

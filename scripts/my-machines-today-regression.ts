@@ -32,6 +32,9 @@ import { decodeOffer, encodeOffer, type RelayOffer } from "../shared/relay-offer
 import { chromePath } from "./chrome-path.ts";
 import { servePagesSite } from "./pages-static.ts";
 
+// These scenarios pin Step 1's direct pairing and Join-by-approval flow, not Step 2's fingerprint confirmation.
+process.env["OVIS_ACCOUNT_OPENS_ALL"] = "0";
+
 const started = Date.now();
 const APP = "https://app.ovis.sh";
 const RELAY = "wss://relay.test";

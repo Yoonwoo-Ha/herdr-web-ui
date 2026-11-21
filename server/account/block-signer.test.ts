@@ -255,7 +255,7 @@ describe("a block holds only while its signer is a member here (P16, P19, T73)",
       ...(path === "relay pairing" ? { platform: "linux", desktopOwner: { input: screen.readable, write() {} } } : {}),
     });
     fixtures.push(fixture);
-    const { devices, localConfirms, safetyLog } = fixture.app.context.services;
+    const { devices, safetyLog } = fixture.app.context.services;
     if (path !== "startup") {
       const signer = await relayDevice(fixture);
       devices.linkAccountKey(signer.id, signer.publicKey, signer.publicKey, ACCOUNT);
@@ -286,7 +286,7 @@ describe("a block holds only while its signer is a member here (P16, P19, T73)",
       link.mux.sendSession({ type: FrameType.KEY_PROVE, flags: 0, stream_id: 0, payload: { signature } });
       await bounded(pending.promise);
       // The waiting block needs the target's row; approve the proved key so enrollment reaches it.
-      const prompt = localConfirms?.pending().find(({ action }) => action.kind === "approve_key");
+      const prompt = fixture.app.context.services.localConfirms?.pending().find(({ action }) => action.kind === "approve_key");
       if (!prompt) throw new Error("The proved key did not reach the PC screen");
       const writer = screen.writable.getWriter();
       await writer.write(new TextEncoder().encode(`${JSON.stringify({ approve: prompt.id })}\n`));

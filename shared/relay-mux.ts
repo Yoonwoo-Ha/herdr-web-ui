@@ -42,6 +42,8 @@ export type FrameType = typeof FrameType[keyof typeof FrameType];
 export const PAIR_SAS_FEATURE = "pair-sas";
 /** A device that offers it proves the key it pairs with over a challenge the PC makes after the key was named. */
 export const KEY_PROOF_FEATURE = "key-proof-1";
+/** A code-adding PC asks before sending PAIR; only an account-bound Step 2 target selects it. */
+export const PC_CODE_ACCOUNT_ONLY = "pc-code-account-only-1";
 export const ACCOUNT_FEATURE = "account";
 export const PAIR_INTENT_PC = "pair-intent-pc";
 export const PAIR_INTENT_ACCOUNT = "pair-intent-account";
@@ -69,7 +71,7 @@ export const SESSION_ERRORS = [
   "unsupported_version", "unsupported_extension", "unsupported_transport",
   "protocol_error", "auth_failed", "auth_revoked", "auth_changed",
   "flow_control_error", "resource_exhausted", "timeout", "internal_error",
-  // Step 2, sent only by a PC with OVIS_ACCOUNT_OPENS_ALL=1 to an account-joined sign-in; `held` carries its HoldState
+  // Step 2, sent only by a PC with Step 2 on to an account-joined sign-in; `held` carries its HoldState
   "held", "not_listed", "admission",
 ] as const;
 export type SessionError = typeof SESSION_ERRORS[number];

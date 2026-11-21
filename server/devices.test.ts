@@ -7,6 +7,7 @@ import { CODE_TTL_MS, DeviceGoneError, DeviceStore, handleDeviceRequest, newStre
 import { TestClock } from "./relay/test-helpers.ts";
 import { privateStateFs, privateStateRefusal } from "./private-state.ts";
 import { SafetyLog } from "./account/safety-log.ts";
+import { RevokeAllIntent } from "./account/revoke-all-intent.ts";
 import { isTaggedNode, parseTailscaleOwner } from "./tailscale.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "herdr-devices-"));
@@ -93,6 +94,35 @@ it("flag off: reading a PC-confirmed row leaves its carried notice on disk", () 
 });
 
 describe("the gate closing", () => {
+  it("Step 1 confirms the first local pairing when only the account subsystem is unavailable", () => {
+    const root = mkdtempSync(join(dir, "off-first-local-"));
+    const store = new DeviceStore(root, null, "Account state unavailable");
+    expect(store.opensAll()).toBe(false);
+    expect(store.failsClosed).toBe(false);
+    const paired = store.pair(store.startPairing().code, "Local browser", "drive");
+    if (!paired) throw new Error("Local Step 1 pairing failed");
+    expect(store.match(paired.token)?.id).toBe(paired.device.id);
+    expect(store.gated).toBe(true);
+  });
+
+  it("Step 1 confirms a fresh browser cookie without consuming a Step 2 listed-only removal", () => {
+    const root = mkdtempSync(join(dir, "off-listed-intent-"));
+    const intent = new RevokeAllIntent(root, []);
+    intent.begin([], new Date().toISOString(), 1, 2);
+    intent.awaitListed();
+    const path = join(root, "revoke-all.json");
+    const pending = readFileSync(path, "utf8");
+    const store = new DeviceStore(root);
+    expect(store.opensAll()).toBe(false);
+    const paired = store.pair(store.startPairing().code, "Local browser", "drive");
+    if (!paired) throw new Error("Local Step 1 pairing failed");
+    expect(store.gated).toBe(false);
+    expect(store.match(paired.token)?.id).toBe(paired.device.id);
+    expect(store.gated).toBe(true);
+    expect(new DeviceStore(root).match(paired.token)?.id).toBe(paired.device.id);
+    expect(readFileSync(path, "utf8")).toBe(pending);
+  });
+
   it("is told once, when the first device's cookie came back or the relay closed it, never for a later device or a revoke", async () => {
     const store = new DeviceStore(mkdtempSync(join(dir, "gate-closed-")));
     let told = 0;

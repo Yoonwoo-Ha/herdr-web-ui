@@ -5,7 +5,7 @@
  * answer must both be it, and nothing is bound otherwise.
  */
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bytesToHex } from "@noble/hashes/utils.js";
@@ -13,7 +13,9 @@ import { accountDeviceId, exportAccountKey } from "../../shared/account-records.
 import { importPublicKey } from "../../shared/relay-e2ee.ts";
 import { handleRequest, type ServerContext } from "../dispatch.ts";
 import { createServer } from "../index.ts";
-import { pairingPc, setUpFor, type Pc } from "./pairing.test-helpers.ts";
+import { ask, linkRecord, memberRow, pairingPc, phone, provingDevice, sendLink, setUpFor, vouchFor, type Pc } from "./pairing.test-helpers.ts";
+import { bounded, relayConnection } from "../relay/test-helpers.ts";
+import { FrameType } from "../../shared/relay-mux.ts";
 
 const pcs: Pc[] = [];
 afterEach(async () => { for (const pc of pcs.splice(0)) await pc.close(); });
@@ -152,22 +154,143 @@ test("a PC bound in one press keeps its account when the snapshot route answers 
   expect(f.devices.account()).toBe("acct_1");
 });
 
-test("a PC bound in one press that the account stops listing leaves the account at its next read", async () => {
-  const f = await pc();
+test("service unlisting clears one-press status without a screen channel", async () => {
+  const f = await pc({ server: { platform: "darwin" } });
   await setUpFor(f, "acct_1");
   await admitAt(f, "acct_1");
-  const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
-  const laptop = await exportAccountKey(keys.publicKey);
-  f.account.registerDevice("acct_1", laptop, "Laptop");
   expect((await press(f, "acct_1")).status).toBe(200);
   const serverId = f.app.context.services.relay.currentIdentity()!.server_id;
-  expect(f.devices.has(accountDeviceId(serverId, laptop))).toBe(true);
+  expect((await f.account.fetch(new Request(`https://account.test/v1/pcs/${serverId}`, { method: "DELETE",
+    headers: { authorization: `Bearer ${f.account.issueToken("acct_1")}` } }))).status).toBe(204);
+  await f.app.context.services.accountMailbox.readSnapshot();
+  expect(await f.status()).toMatchObject({ account: null });
+});
+
+test.skipIf(process.platform !== "linux").each(["herdr-web-ui", "ovis"])("sibling unlisting: offline restart from %s keeps only this PC's pairings", async restartFolder => {
+  const screen = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = screen.writable.getWriter();
+  const legacy = await memberRow("acct_1");
+  const { account: _, ...plain } = legacy.row;
+  const f = await pc({ rows: [plain], server: { desktopOwner: { input: screen.readable, write() {} } } });
+  await setUpFor(f, "acct_1");
+  await admitAt(f, "acct_1");
+  expect((await press(f, "acct_1")).status).toBe(200);
+  const { devices, relay, accountMailbox, localConfirms } = f.app.context.services;
+  const serverId = relay.currentIdentity()!.server_id;
+  const listed = await phone();
+  f.account.registerDevice("acct_1", listed.spki, "Listed only");
+  expect(await accountMailbox.readSnapshot()).toMatchObject({ committed: true });
+  const link = (id: string, key: string) => expect(devices.linkAccountKey(id, key, key, "acct_1")).not.toBeNull();
+  link(plain.id, legacy.key.spki);
+  const code = await phone(), localDigits = await phone(), memberDigits = await phone(), memberCode = await phone();
+  const coded = devices.pairRelay(devices.startPairing().code, "Local code", code.spki)!;
+  link(coded.device.id, code.spki);
+  const memberCoded = devices.pairRelay(devices.startPairing().code, "Member code", memberCode.spki)!;
+  link(memberCoded.device.id, memberCode.spki);
+  expect(devices.originOf(memberCoded.device.id)).toMatchObject({ from: "remote", how: "code", by: null });
+  const digits = devices.pairRelayApproved("Local digits", localDigits.spki, { path: "account" })!;
+  link(digits.device.id, localDigits.spki);
+  const member = devices.pairRelayApproved("Member digits", memberDigits.spki, { path: "account", addedBy: plain.id })!;
+  const proof = await provingDevice(f, await f.offerCode());
+  await proof.pending;
+  const approval = localConfirms!.pending().find(e => e.action.kind === "approve_key")!;
+  const admitted = Promise.withResolvers<string>();
+  proof.link.onFrame = frame => { if (frame.type === FrameType.AUTH_OK) admitted.resolve(frame.payload.device_id); };
+  await writer.write(new TextEncoder().encode(`${JSON.stringify({ approve: approval.id })}\n`));
+  const screened = await bounded(admitted.promise);
+  link(screened, proof.device.spki);
+  expect(devices.originOf(digits.device.id)).toMatchObject({ from: "remote", how: "digits", by: null });
+  expect(devices.originOf(member.device.id)).toMatchObject({ from: "remote", how: "member", by: legacy.key.spki });
+  await f.app.stop();
+  // a code a member device started names that member as `by`: it stood on the account's authority, not this PC's
+  const rowsFile = join(f.stateDir, "devices.json");
+  const rows = JSON.parse(readFileSync(rowsFile, "utf8")) as { devices: { id: string; origin?: object }[] };
+  rows.devices = rows.devices.map(row => row.id === memberCoded.device.id ? { ...row, origin: { ...row.origin, by: legacy.key.spki } } : row);
+  writeFileSync(rowsFile, JSON.stringify(rows), { mode: 0o600 });
+  const root = mkdtempSync(join(tmpdir(), "unlisting-siblings-"));
+  try {
+    const active = join(root, "herdr-web-ui"), sibling = join(root, "ovis");
+    for (const dest of [active, sibling]) cpSync(f.stateDir, dest, { recursive: true });
+    const opts = { port: 0, hostname: "127.0.0.1", token: "", tailscaleOwner: null, registerBridge: false, sidecar: false };
+    const bound = createServer({ ...opts, stateDir: active, siblingStateDir: sibling, accountService: { url: "https://account.test", fetch: f.account.fetch } });
+    try {
+      expect(bound.context.services.devices.account()).toBe("acct_1");
+      expect(bound.context.services.devices.serviceBinding()).not.toBeNull();
+      expect((await f.account.fetch(new Request(`https://account.test/v1/pcs/${serverId}`, { method: "DELETE",
+        headers: { authorization: `Bearer ${f.account.issueToken("acct_1")}` } }))).status).toBe(204);
+      await bound.context.services.accountMailbox.readSnapshot();
+      expect(bound.context.services.devices.account()).toBeNull();
+    } finally { await bound.stop(); }
+    const stateDir = join(root, restartFolder);
+    const offline = createServer({ ...opts, stateDir, siblingStateDir: stateDir === active ? sibling : active, accountService: { url: "off" } });
+    const closes: (() => void)[] = [];
+    try {
+      const statuses: number[] = [];
+      for (const [id, key] of [[plain.id, legacy.key], [coded.device.id, code], [memberCoded.device.id, memberCode], [screened, proof.device],
+        [digits.device.id, localDigits], [member.device.id, memberDigits], [accountDeviceId(serverId, listed.spki), listed]] as const) {
+        const session = await relayConnection({ app: offline, stateDir, closes, close() {} });
+        statuses.push(await session.auth({ id, keys: key.keys, publicKey: key.spki })
+          .then(async () => (await ask(session, "/api/devices")).status, () => 401));
+      }
+      const own = await fetch(`http://127.0.0.1:${offline.port}/api/account/status`);
+      expect({ own: own.status, account: (await own.json()).account, statuses }).toEqual({ own: 200, account: null, statuses: [200, 200, 401, 200, 200, 401, 401] });
+    } finally { for (const close of closes) close(); await offline.stop(); }
+  } finally { rmSync(root, { recursive: true, force: true }); writer.releaseLock(); }
+});
+
+test.skipIf(process.platform !== "linux").each([false, true])("service unlisting keeps a locally paired linked phone through offline restart (locked: %s)", async locked => {
+  const screen = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = screen.writable.getWriter();
+  const f = await pc({ server: { desktopOwner: { input: screen.readable, write() {} } } });
+  await setUpFor(f, "acct_1");
+  await admitAt(f, "acct_1");
+  const laptop = await phone();
+  f.account.registerDevice("acct_1", laptop.spki, "Laptop");
+  expect((await press(f, "acct_1")).status).toBe(200);
+  const serverId = f.app.context.services.relay.currentIdentity()!.server_id;
+  const listedId = accountDeviceId(serverId, laptop.spki);
+  expect(f.devices.has(listedId)).toBe(true);
+  const pairing = await provingDevice(f, await f.offerCode());
+  await pairing.pending;
+  const confirm = f.app.context.services.localConfirms?.pending().find(e => e.action.kind === "approve_key");
+  if (!confirm) throw new Error("Missing local pairing approval");
+  const admitted = Promise.withResolvers<string>();
+  pairing.link.onFrame = frame => { if (frame.type === FrameType.AUTH_OK) admitted.resolve(frame.payload.device_id); };
+  await writer.write(new TextEncoder().encode(`${JSON.stringify({ approve: confirm.id })}\n`));
+  const id = await bounded(admitted.promise);
+  await vouchFor(f, "acct_1", pairing.device);
+  expect((await sendLink(pairing.link, await linkRecord(id, "acct_1", pairing.device))).status).toBe(200);
+  expect(f.stored().find(d => d.id === id)).toMatchObject({ account: "acct_1", origin: { from: "pc" } });
+  const lock = locked ? f.app.context.services.safetyLog!.appendLock({ account: "acct_1" }).id : null;
   const removed = await f.account.fetch(new Request(`https://account.test/v1/pcs/${serverId}`, { method: "DELETE", headers: { authorization: `Bearer ${f.account.issueToken("acct_1")}` } }));
   expect(removed.status).toBe(204);
   await f.app.context.services.accountMailbox.readSnapshot();
   expect(f.devices.account()).toBeNull();
-  expect(f.devices.has(accountDeviceId(serverId, laptop))).toBe(false);
-  expect(await f.status()).toMatchObject({ account: null });
+  expect(f.devices.has(listedId)).toBe(false);
+  const atClear = f.stored().find(d => d.id === id);
+  await f.app.context.services.relay.stop();
+  await f.app.stop();
+  const offline = createServer({ stateDir: f.stateDir, port: 0, hostname: "127.0.0.1", token: "", tailscaleOwner: null,
+    registerBridge: false, sidecar: false, accountService: { url: "off" } });
+  const closes: (() => void)[] = [];
+  try {
+    const base = `http://127.0.0.1:${offline.port}`;
+    const local = await fetch(`${base}/api/devices`);
+    const signed = await relayConnection({ stateDir: f.stateDir, app: offline, closes, close() {} });
+    const pairedStatus = await signed.auth({ id, keys: pairing.device.keys, publicKey: pairing.device.spki })
+      .then(async () => (await ask(signed, "/api/devices")).status, () => 401);
+    expect({ pairedStatus, local: local.status, account: atClear?.account, linked: atClear?.linked_at,
+      stored: atClear?.id }).toEqual({ pairedStatus: 200, local: locked ? 403 : 200, account: undefined, linked: undefined, stored: id });
+    expect(offline.context.services.devices.accountError).toBeNull();
+    const listed = await relayConnection({ stateDir: f.stateDir, app: offline, closes, close() {} });
+    await expect(listed.auth({ id: listedId, keys: laptop.keys, publicKey: laptop.spki })).rejects.toThrow();
+    if (lock !== null) {
+      expect(await local.json()).toMatchObject({ error: { code: "locked" } });
+      expect(await (await fetch(`${base}/api/account/lock`)).json()).toMatchObject({ locked: lock, bound: false });
+      expect((await fetch(`${base}/api/account/unlock`, { method: "POST", headers: { origin: base, "x-herdr-machine": "1" },
+        body: JSON.stringify({ lock }) })).status).toBe(202);
+    }
+  } finally { for (const close of closes) close(); await offline.stop(); writer.releaseLock(); }
 });
 
 test("first-PC exemption: an account never used, signed in with Google whose two-step is unknown, adds its first PC in one press", async () => {

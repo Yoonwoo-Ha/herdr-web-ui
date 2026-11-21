@@ -448,7 +448,7 @@ describe("signed-in sessions over every way in", () => {
     let measured = 0;
     sessions.admit("00112233445566aa", () => {}, { route: "tailscale", since: 0, mux: { active: true, rttMs: 33, measure: async () => { measured++; return 33; } } });
     const row: PairedDevice = { id: "00112233445566aa", label: "Phone", role: "drive", created_at: "2026-11-01T00:00:00.000Z", last_seen_at: null, current: false, via_relay: true };
-    const store = { error: null, list: () => [row], opensAll: () => false } as unknown as DeviceStore;
+    const store = { error: null, list: () => [row], opensAll: () => false, accountPolicyActive: () => false } as unknown as DeviceStore;
     const connections = { list: () => sessions.connections(), check: (ms: number) => sessions.check(ms) };
     const read = async (access: Access) => ((await (await handleDeviceRequest(new Request("http://127.0.0.1/api/devices?check=1"), "/api/devices", store, access, null, undefined, false, connections)).json()) as { devices: PairedDevice[] }).devices[0]?.connection;
     expect(await read({ level: "full", via: "relay", role: "watch" })).toBeUndefined();

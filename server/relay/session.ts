@@ -6,6 +6,7 @@ import { MuxEngine, MuxStreamError } from "../../shared/relay-mux-engine.ts";
 import type { HttpStream, MuxClock, SessionFrame, WsStream } from "../../shared/relay-mux-engine.ts";
 import { ACCOUNT_FEATURE, ACCOUNT_OPENS_ALL_FEATURE, AUTH_RECEIPTS_MAX, DIRECT_CARRIER, DIRECT_TAILNET, FrameType, KEY_PROOF_FEATURE, LARGE_WS_MESSAGES, LIMITS_V1, MuxProtocolError, PAIR_INTENT_ACCOUNT, PAIR_INTENT_PC, PAIR_INTENT_VOUCHED, PAIR_SAS_FEATURE, RELAY_HINTS, RELAY_PROTOCOL, REQUEST_HEADERS, RESPONSE_HEADERS, SERVER_TIME_HEADER, WS_CONTINUATION_CAPACITY } from "../../shared/relay-mux.ts";
 import type { HeaderList, SessionError } from "../../shared/relay-mux.ts";
+import { PC_CODE_ACCOUNT_ONLY } from "../../shared/relay-mux.ts";
 import type { BlockReceipt } from "../../shared/account-devices-api.ts";
 import { PairingRateLimitedError, type DeviceMatch, type PairingPath } from "../devices.ts";
 import { accountDeviceId } from "../../shared/account-records.ts";
@@ -130,11 +131,12 @@ export class RelaySession {
   private keyProven = false;
   /** the device offered KEY_PROOF_FEATURE: it can prove the key it pairs with (server/account/key-proof.ts) */
   private keyProof = false;
+  private pcCodeAdd = false;
   /** this session's pairing that waits for the proof, then for this PC's screen */
   private keyProofSession: string | undefined;
   private authReceipts = false;
   private hinting = false;
-  /** The app offered the account-opens-all mux feature on a PC with OVIS_ACCOUNT_OPENS_ALL=1: it reads the account refusal codes. */
+  /** The app offered the account-opens-all mux feature on a PC with Step 2 on: it reads the account refusal codes. */
   private accountCodes = false;
   private directing = false;
   private tailnet = false;
@@ -343,12 +345,14 @@ export class RelaySession {
         if (large) this.mux.sendLargeMessages();
         this.serverTime = frame.payload.features.includes(SERVER_TIME_HEADER);
         this.keyProof = frame.payload.features.includes(KEY_PROOF_FEATURE);
+        this.pcCodeAdd = frame.payload.features.includes(PC_CODE_ACCOUNT_ONLY);
         // an intent is selected only with pair-sas, and only the one offered (docs/account.md, "Negotiation")
         const intents = frame.payload.features.filter((f) => f === PAIR_INTENT_PC || f === PAIR_INTENT_ACCOUNT || f === PAIR_INTENT_VOUCHED);
         if (intents.length > 1) { this.close("protocol_error"); return; }
         const selected = [...this.sasBinding ? [PAIR_SAS_FEATURE, ...intents] : [], ...frame.payload.features.includes(ACCOUNT_FEATURE) ? [ACCOUNT_FEATURE] : [],
           ...this.keyProof && this.options.services.keyProofPairings !== undefined && !this.options.signInOnly ? [KEY_PROOF_FEATURE] : []];
-        this.authReceipts = this.options.services.devices.opensAll() && frame.payload.features.includes(ACCOUNT_OPENS_ALL_FEATURE);
+        if (this.pcCodeAdd && this.options.services.devices.accountPolicyActive()) selected.push(PC_CODE_ACCOUNT_ONLY);
+        this.authReceipts = this.options.services.devices.accountPolicyActive() && frame.payload.features.includes(ACCOUNT_OPENS_ALL_FEATURE);
         if (this.authReceipts) selected.push(ACCOUNT_OPENS_ALL_FEATURE);
         this.accountCodes = this.authReceipts;
         if (frame.payload.required_features.some((feature) => !selected.includes(feature) && !(feature === RELAY_HINTS && this.hinting) && !(feature === DIRECT_CARRIER && this.directing) && !(feature === DIRECT_TAILNET && this.tailnet) && !(feature === LARGE_WS_MESSAGES && large))) { this.close("unsupported_extension"); return; }
@@ -367,6 +371,7 @@ export class RelaySession {
         if (frame.type === FrameType.AUTH && !await this.pullForRefusedSignIn(frame.payload.device_id, frame.payload.signature)) return;
         // a PC with screen proof admits a code's redeemer only once its screen approves the key it proved
         const keyProofPairings = this.options.services.keyProofPairings;
+        if (frame.type === FrameType.PAIR && this.pcCodeAdd && this.options.services.devices.accountPolicyActive()) { this.close("unsupported_version"); return; }
         if (frame.type === FrameType.PAIR && keyProofPairings !== undefined) { this.pairByProof(keyProofPairings, frame.payload); return; }
         this.keyProven = frame.type === FrameType.AUTH;
         const device = frame.type === FrameType.AUTH

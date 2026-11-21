@@ -8,6 +8,7 @@ import { decodeOffer, encodeOffer } from "../../shared/relay-offer.ts";
 import type { PairedDevice, PortalStatus, RelayStatus } from "../../shared/protocol.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { indexedAccountStore } from "../lib/account/store.ts";
+import { pcAccountStatus, type PcAccountStatus } from "../lib/account/join.ts";
 import { fakeIndexedDB } from "../lib/indexedDB.fake.ts";
 import type { RelayState } from "../lib/useRelay.ts";
 import type { Machine } from "../../shared/machines.ts";
@@ -15,6 +16,7 @@ import type { AddPcPreset } from "../lib/actions.ts";
 import { PhonePanel } from "./PhonePanel.tsx";
 import { RelayPairing } from "./RelayPanel.tsx";
 import { QrCode } from "./QrCode.tsx";
+import { RelayAccountPcs } from "./RelayAccountPcs.tsx";
 
 // the confirmation before Revoke all is a portal on document.body, which this renderer has none of
 await mock.module("react-dom", () => ({ ...ReactDom, createPortal: (node: ReactNode) => node }));
@@ -37,6 +39,7 @@ describe("Connect a phone on a phone", () => {
   let shellMeta: boolean;
   let tailnetAnswer: Promise<void>;
   let tailnetOutdated: boolean;
+  let tailnetRelay: string | null;
   let extraCandidates: object[];
   let candidatesRefused: string | null;
   /** the bodies of POST /api/machines/address, and whether the next one is refused as a wrong code */
@@ -72,6 +75,7 @@ describe("Connect a phone on a phone", () => {
     shellMeta = false;
     tailnetAnswer = Promise.resolve();
     tailnetOutdated = true;
+    tailnetRelay = "online";
     extraCandidates = [];
     candidatesRefused = null;
     addressAsked = [];
@@ -122,7 +126,10 @@ describe("Connect a phone on a phone", () => {
         await held.gate;
         return Response.json({ code: held.code, expires_at });
       }
-      if (path === "/api/machines/tailnet") { await tailnetAnswer; return Response.json({ pcs: [{ name: "winvm", url: "https://winvm.tail.ts.net:8443", relay: "online", outdated: tailnetOutdated }] }); }
+      if (path === "/api/machines/tailnet") {
+        await tailnetAnswer;
+        return Response.json({ pcs: [{ name: "winvm", url: "https://winvm.tail.ts.net:8443", relay: tailnetRelay, outdated: tailnetOutdated }] });
+      }
       if (path === "/api/machines/ssh-candidates" && candidatesRefused !== null) return Response.json({ error: { code: candidatesRefused, message: "refused" } }, { status: 403 });
       if (path === "/api/machines/ssh-candidates") return Response.json({ pcs: [
         { name: "nuc12", destination: "nuc12", detail: "rise@100.127.218.1", source: "ssh_config" },
@@ -516,6 +523,7 @@ describe("Connect a phone on a phone", () => {
 
   it("lists only the PCs of the Tailscale login: Connect opens Add PC with that address, an added one says so", async () => {
     tailnetOutdated = false;
+    tailnetRelay = null;
     const added: (AddPcPreset | undefined)[] = [];
     await mount(<Tailscale machines={[]} onAddPc={(preset) => { added.push(preset); }} />);
     await flushReads();
@@ -528,6 +536,18 @@ describe("Connect a phone on a phone", () => {
     await flushReads();
     expect(renderer!.root.findAllByProps({ "aria-label": "Connect winvm" })).toHaveLength(0);
     expect(text(renderer!.root)).toContain("Added");
+  });
+
+  it("Connect opens SSH without requesting a relay add even when the Tailscale peer is online", async () => {
+    tailnetOutdated = false;
+    const ssh = mock(() => {});
+    await mount(<Tailscale machines={[]} onAddPc={ssh} />);
+    await flushReads();
+    requests.length = 0;
+    await act(async () => { renderer!.root.findByProps({ "aria-label": "Connect winvm" }).props.onClick(); });
+    await flushReads();
+    expect(ssh).toHaveBeenCalledWith({ destination: "winvm.tail.ts.net", name: "winvm" });
+    expect(requests).not.toContain("/api/machines/tailnet");
   });
 
   it("holds a Tailscale PC's Connect until its Ovis is known, so an older one is not added meanwhile", async () => {
@@ -921,10 +941,11 @@ describe("the relay tab's QR code behind a press", () => {
     descriptors.clear();
   });
 
-  interface TabOptions { signedIn?: boolean; accountId?: string | null; joinBySignIn?: boolean; relay?: RelayState; active?: boolean }
-  const tab = ({ signedIn = true, accountId = signedIn ? ACCOUNT_ID : null, joinBySignIn = false, relay = relayState(), active = true }: TabOptions = {}) => (
+  interface TabOptions { signedIn?: boolean; accountId?: string | null; joinBySignIn?: boolean; relay?: RelayState; active?: boolean; pcAdd?: PcAccountStatus["pcAddFromAccount"] }
+  const tab = ({ signedIn = true, accountId = signedIn ? ACCOUNT_ID : null, joinBySignIn = false, relay = relayState(), active = true, pcAdd }: TabOptions = {}) => (
     <SettingsProvider>
-      <RelayTab relay={relay} closesGate={false} signedIn={signedIn} accountId={accountId} joinBySignIn={joinBySignIn} account={SERVICE} phone={false} active={active}
+      <RelayTab relay={relay} closesGate={false} signedIn={signedIn} accountId={accountId} joinBySignIn={joinBySignIn} account={pcAdd ? { ...SERVICE, opensAll: () => true } : SERVICE} phone={false} active={active}
+        {...(pcAdd ? { onConnectMachine: () => {}, pcAddFromAccount: pcAdd } : {})}
         onPairingHeld={(next) => { held.push(next); }} onRevokedAll={() => { revokedAll += 1; }} />
     </SettingsProvider>
   );
@@ -945,7 +966,26 @@ describe("the relay tab's QR code behind a press", () => {
     await flush();
   };
   const qrCodes = () => renderer!.root.findAllByType(QrCode);
+  it("a bound source opens the existing account PC picker from its Add a connection action", async () => {
+    pcAccount = ACCOUNT_ID;
+    await mount({ pcAdd: true, joinBySignIn: true });
+    expect(text(renderer!.root)).toContain("This PC is in an account. Add PCs from your account.");
+    expect(renderer!.root.findAllByType(RelayAccountPcs)).toHaveLength(0);
+    const action = renderer!.root.findAll(node => node.type === "button" && text(node) === "Add from account");
+    expect(action).toHaveLength(1);
+    await act(async () => { action[0]!.props.onClick(); });
+    expect(renderer!.root.findAllByType(RelayAccountPcs)).toHaveLength(1);
+  });
   const minted = () => requests.filter((path) => path === "/api/relay/code" || path === "/api/relay/offer" || path === "/api/devices/pair/start");
+  it("unreadable PC add state shows the retry line instead of either pairing path", async () => {
+    const status = await pcAccountStatus(async () => Response.json({ account: null, pc_add_from_account: "unavailable" }));
+    await mount({ pcAdd: status.pcAddFromAccount, joinBySignIn: true });
+    expect(text(renderer!.root)).toContain("Can't add a PC right now. Try again in a moment.");
+    expect(text(renderer!.root)).not.toContain("Add from account");
+    expect(text(renderer!.root)).not.toContain("Show the QR code");
+    expect(renderer!.root.findAllByType(RelayAccountPcs)).toHaveLength(0);
+    expect(minted()).toEqual([]);
+  });
   const count = (path: string) => requests.filter((request) => request === path).length;
 
   for (const [name, options] of [
@@ -1047,18 +1087,17 @@ describe("the relay tab's QR code behind a press", () => {
 
   // the owner's decision (2026-11-11): a PC that is in an account shows no QR code and has no code made for one
   for (const [name, options, whose, heading] of [
-    ["this browser signed in to the PC's account", { signedIn: true, joinBySignIn: true }, "mine", "This PC is in your Ovis account (acct_0123456)."],
-    ["this browser signed in to another account", { signedIn: true, accountId: "acct_mine_0000000000000" }, "other", "This PC is in another Ovis account (acct_0123456), not the one this browser is signed in to (acct_mine_00)."],
-    ["this browser signed out", { signedIn: false }, "unknown", "This PC is in an Ovis account (acct_0123456)."],
+    ["this browser signed in to the PC's account", { signedIn: true, joinBySignIn: true }, "mine", "This PC is in your account."],
+    ["this browser signed in to another account", { signedIn: true, accountId: "acct_mine_0000000000000" }, "other", "Sign in to this PC's account."],
+    ["this browser signed out", { signedIn: false }, "unknown", "Sign in to this PC's account."],
   ] as const) {
     it(`on a PC already in an account, ${name}: no QR code, no button and no code asked of the PC, and how a device is added instead`, async () => {
       pcAccount = ACCOUNT_ID;
       await mount(options);
       expect(section().props["data-account"]).toBe(whose);
-      expect(text(section())).toContain(heading);
-      expect(text(section())).toContain("To add a device, sign in to this PC's account on it and open this PC there.");
-      expect(text(section())).toContain("This PC shows a QR code only while it is in no account.");
-      expect(text(section()).includes("This browser is not signed in, so it cannot tell whether that account is yours")).toBe(whose === "unknown");
+      expect(text(renderer!.root)).toContain(heading);
+      expect(text(renderer!.root)).not.toContain("acct_");
+      if (whose === "unknown") expect(text(section())).toBe("");
       expect(text(section()).includes("If that account is not yours, revoke every device (More settings → Devices and access)")).toBe(whose === "other");
       expect(text(section())).not.toContain("Add with a QR code");
       expect(text(renderer!.root)).not.toContain("On the new device, sign in to the same Ovis account.");
@@ -1070,12 +1109,12 @@ describe("the relay tab's QR code behind a press", () => {
     });
   }
 
-  it("on a PC already in an account whose relay is off, signed out, still shows the relay's switch under how a device is added", async () => {
+  it("a signed-out browser on a bound PC offers sign-in and the offline relay switch, not a code", async () => {
     pcAccount = ACCOUNT_ID;
     await mount({ signedIn: false, relay: relayState({ ...ONLINE, phase: "off" }) });
-    expect(text(section())).toContain("This PC is in an Ovis account (acct_0123456).");
+    expect(text(renderer!.root)).toContain("Sign in to this PC's account.");
     expect(section().findAllByProps({ label: "Ovis relay", checked: false })).toHaveLength(1);
-    expect(buttons()).toEqual([""]);
+    expect(minted()).toEqual([]);
     expect(text(section())).not.toContain("this PC can show its QR code");
   });
 
@@ -1100,7 +1139,7 @@ describe("the relay tab's QR code behind a press", () => {
     expect(minted()).toEqual([]);
     expect(qrCodes()).toHaveLength(0);
     expect(buttons()).toEqual([]);
-    expect(text(section())).toContain("This PC is in your Ovis account (acct_0123456).");
+    expect(text(section())).toContain("This PC is in your account.");
     expect(section().findAllByProps({ role: "alert" })).toHaveLength(0);
     expect(held.at(-1)).toBe(false);
   });
@@ -1116,7 +1155,7 @@ describe("the relay tab's QR code behind a press", () => {
     await flush();
     expect(qrCodes()).toHaveLength(0);
     const notice = renderer!.root.findByProps({ "data-testid": "connect-account-joined" });
-    expect(text(notice)).toContain("This PC is in your account (acct_0123456).");
+    expect(text(notice)).toContain("This PC is in your account.");
     expect(text(notice)).toContain("Added by Laptop · Chrome.");
     expect(count("/api/relay/offer")).toBe(1);
     expect(section().findAllByProps({ role: "alert" })).toHaveLength(0);
@@ -1124,7 +1163,7 @@ describe("the relay tab's QR code behind a press", () => {
     expect(count("/api/relay/code/cancel")).toBe(0);
     await press("Done");
     expect(buttons()).toEqual([]);
-    expect(text(section())).toContain("This PC is in your Ovis account (acct_0123456).");
+    expect(text(section())).toContain("This PC is in your account.");
   });
 
   it("when the PC joins an account another way while the QR code is up, the QR code leaves, its code is ended, and none is offered again", async () => {
@@ -1138,7 +1177,7 @@ describe("the relay tab's QR code behind a press", () => {
     expect(text(renderer!.root.findByProps({ "data-testid": "connect-account-joined" }))).toContain("Added by Laptop · Chrome.");
     await press("Done");
     expect(buttons()).toEqual([]);
-    expect(text(section())).toContain("This PC is in your Ovis account (acct_0123456).");
+    expect(text(section())).toContain("This PC is in your account.");
     const before = minted().length;
     await advance(ACCOUNT_QR_MAX_MS);
     expect(minted()).toHaveLength(before);
@@ -1453,7 +1492,7 @@ describe("the relay tab's QR code behind a press", () => {
       pcAccount = ACCOUNT_ID;
       await advance(ACCOUNT_QR_POLL_MS);
       const notice = renderer!.root.findByProps({ "data-testid": "connect-account-joined" });
-      expect(text(notice)).toContain("This PC is in your account (acct_0123456).");
+      expect(text(notice)).toContain("This PC is in your account.");
       expect(text(notice)).toContain("Added by iPhone · Safari.");
       expect(buttons()).toEqual(["Done", "Not me: revoke every device"]);
       expect(held.at(-1)).toBe(true);
@@ -1570,15 +1609,15 @@ describe("the relay tab's QR code behind a press", () => {
     await advance(ACCOUNT_QR_POLL_MS);
     expect(qrCodes()).toHaveLength(0);
     const notice = renderer!.root.findByProps({ "data-testid": "connect-account-joined" });
-    expect(text(notice)).toContain("This PC is in your account (acct_0123456).");
+    expect(text(notice)).toContain("This PC is in your account.");
     expect(text(notice)).toContain("Added by iPhone · Safari.");
     expect(buttons()).toEqual(["Done", "Not me: revoke every device"]);
     expect(held.at(-1)).toBe(true);
     await press("Done");
     // the PC is in an account now: no QR code is offered for it again
     expect(buttons()).toEqual([]);
-    expect(text(section())).toContain("This PC is in your Ovis account (acct_0123456).");
-    expect(text(section())).toContain("To add a device, sign in to this PC's account on it");
+    expect(text(section())).toContain("This PC is in your account.");
+    expect(text(section())).not.toContain("acct_");
     expect(held.at(-1)).toBe(false);
     expect(minted()).toEqual(["/api/relay/offer"]);
   });
@@ -1791,7 +1830,7 @@ describe("the relay tab's QR code behind a press", () => {
     devices = [devices[0]!, phoneDevice({ account: "acct_stranger_000000000" })];
     pcAccount = "acct_stranger_000000000";
     await advance(ACCOUNT_QR_POLL_MS);
-    expect(text(renderer!.root.findByProps({ "data-testid": "connect-account-joined" }))).toContain("This PC joined another Ovis account (acct_strange), not the one this browser is signed in to (acct_0123456).");
+    expect(text(renderer!.root.findByProps({ "data-testid": "connect-account-joined" }))).toContain("This PC joined a different account.");
   });
 
   it("says so when the PC joined an account that is not the one this browser is signed in to, with Not me first", async () => {
@@ -1802,7 +1841,7 @@ describe("the relay tab's QR code behind a press", () => {
     await advance(ACCOUNT_QR_POLL_MS);
     const notice = renderer!.root.findByProps({ "data-testid": "connect-account-joined" });
     expect(notice.props["data-account"]).toBe("other");
-    expect(text(notice)).toContain("This PC joined another Ovis account (acct_strange), not the one this browser is signed in to (acct_0123456).");
+    expect(text(notice)).toContain("This PC joined a different account.");
     expect(text(notice)).toContain("Added by iPhone · Safari.");
     expect(text(notice)).not.toContain("This PC is in your account");
     expect(buttons()).toEqual(["Not me: revoke every device", "Keep it"]);
@@ -1819,8 +1858,8 @@ describe("the relay tab's QR code behind a press", () => {
     await advance(ACCOUNT_QR_POLL_MS);
     const notice = () => renderer!.root.findByProps({ "data-testid": "connect-account-joined" });
     expect(notice().props["data-account"]).toBe("unknown");
-    expect(text(notice())).toContain("This PC joined an Ovis account (acct_0123456).");
-    expect(text(notice())).toContain("This browser is not signed in, so it cannot tell whether that account is yours: sign in above to check.");
+    expect(text(notice())).toContain("Sign in to this PC's account.");
+    expect(text(notice())).not.toContain("acct_");
     // something the owner can answer without knowing an account id, and Not me first: whoever scanned may be a stranger
     expect(text(notice())).toContain("If your own device did not just say that it added this PC, this was not you: revoke every device, and this PC leaves that account.");
     expect(buttons()).toEqual(["Not me: revoke every device", "Keep it"]);
@@ -1831,7 +1870,7 @@ describe("the relay tab's QR code behind a press", () => {
     expect(notice().props["data-account"]).toBe("other");
     await update({ signedIn: true, accountId: ACCOUNT_ID });
     expect(notice().props["data-account"]).toBe("mine");
-    expect(text(notice())).toContain("This PC is in your account (acct_0123456).");
+    expect(text(notice())).toContain("This PC is in your account.");
     expect(buttons()).toEqual(["Done", "Not me: revoke every device"]);
   });
 
@@ -1844,8 +1883,8 @@ describe("the relay tab's QR code behind a press", () => {
     await press("Keep it");
     expect(buttons()).toEqual([]);
     expect(section().props["data-account"]).toBe("unknown");
-    expect(text(section())).toContain("This PC is in an Ovis account (acct_strange).");
-    expect(text(section())).toContain("This browser is not signed in, so it cannot tell whether that account is yours: sign in above to check.");
+    expect(text(renderer!.root)).toContain("Sign in to this PC's account.");
+    expect(text(section())).toBe("");
   });
 
   // (4) only a member of the account is named as the one that added the PC; a device that only holds the code is asked about

@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import type { Machine, MachineEvent, PendingKey } from "../../shared/machines.ts";
 import { signPairProof } from "../../shared/pair-fingerprint.ts";
-import { pairingPc, phone } from "../../server/account/pairing.test-helpers.ts";
+import { memberRow, pairingPc, phone } from "../../server/account/pairing.test-helpers.ts";
 import { bounded } from "../../server/relay/test-helpers.ts";
 import { PendingKeys } from "../components/PendingKeys.tsx";
 import { declinePendingKey } from "./api.ts";
@@ -149,7 +149,7 @@ describe("roster and health polling beside the event stream", () => {
   });
 
   it.each(["SSE", "WebSocket"])("T71: a real %s subscription replaces the list with the keys already waiting on the PC", async (carrier) => {
-    const made = await pairingPc({ server: { accountOpensAll: true } });
+    const made = await pairingPc({ rows: [(await memberRow("acct_1")).row], server: { accountOpensAll: true } });
     const base = `http://127.0.0.1:${made.app.port}`;
     const ws = new HerdrSocket(`ws://127.0.0.1:${made.app.port}/ws`);
     const abort = new AbortController();

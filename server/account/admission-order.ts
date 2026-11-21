@@ -24,7 +24,12 @@ export function isRowOrigin(value: unknown): value is RowOrigin {
   }
 }
 
-interface AdmissionRow { readonly id: string; readonly created_at: string; readonly origin?: RowOrigin | undefined }
+interface AdmissionRow {
+  readonly id: string;
+  readonly created_at: string;
+  readonly origin?: RowOrigin | undefined;
+  readonly untrusted_created_at?: string;
+}
 
 export interface AdmissionPosition {
   readonly admit_no: number;
@@ -32,7 +37,7 @@ export interface AdmissionPosition {
 }
 
 export function admissionPosition(row: AdmissionRow): AdmissionPosition | null {
-  if (row.origin === undefined) return null;
+  if (row.origin === undefined || row.untrusted_created_at === row.created_at) return null;
   const admit_no = row.origin.admit_no;
   const created = row.origin.from === "legacy" ? Date.parse(row.created_at) : NaN;
   return { admit_no, ...(Number.isFinite(created) ? { legacy_created_at: created } : {}) };

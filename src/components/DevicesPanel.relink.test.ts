@@ -49,6 +49,17 @@ describe("reading the list again after this client's pairing joined the account 
   const changed = async () => { await act(async () => { window.dispatchEvent(new Event(DEVICES_CHANGED_EVENT)); }); };
   const text = () => JSON.stringify(renderer!.toJSON());
 
+  it("shows a pending Not me only beside its device and keeps local Revoke available", async () => {
+    const waiting = { ...row("victim", "Phone"), not_me_waiting: true as const };
+    await mount();
+    await answer(0, [...before, waiting]);
+    expect(text()).toContain("Not me is waiting. Revoke this device to stop its access now.");
+    expect(renderer!.root.findAllByProps({ "aria-label": "Revoke Phone" })).toHaveLength(1);
+    await changed();
+    await answer(1, before);
+    expect(text()).not.toContain("Not me is waiting.");
+  });
+
   it("shows the list read after the link, even when the read before it answers last", async () => {
     await mount();
     await changed();

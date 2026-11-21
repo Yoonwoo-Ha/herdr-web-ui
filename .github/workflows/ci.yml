@@ -348,6 +348,12 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = push ]; then base=$LAST_GREEN; else base=$(git cat-file -p HEAD | awk '/^parent /{print $2; exit}'); fi
           git fetch --no-tags --depth=1 origin "$base"
           echo "RATCHET_BASE=$base" >> "$GITHUB_ENV"
+      - id: upgrade-fixtures
+        name: Fetch the pinned upgrade fixtures
+        run: |
+          git fetch --no-tags --depth=1 origin refs/tags/v0.5.6:refs/tags/v0.5.6 refs/tags/v0.5.7:refs/tags/v0.5.7
+          git cat-file -e 'c482ad601132ebb80c0013f9d9063d474eac96c1^{commit}'
+          git cat-file -e 'acab7685663bebc0ce2e93c75b4e3c4048d9f0bb^{commit}'
       - run: bun run check fast
       - name: Release guards
         env:
@@ -398,6 +404,12 @@ jobs:
           cache: ${{ inputs.hosted_only && 'none' || 'save' }}
       - run: bun install --frozen-lockfile
         if: needs.changes.outputs.draft != 'true'
+      - name: Fetch the pinned upgrade fixtures
+        if: needs.changes.outputs.draft != 'true'
+        run: |
+          git fetch --no-tags --depth=1 origin refs/tags/v0.5.6:refs/tags/v0.5.6 refs/tags/v0.5.7:refs/tags/v0.5.7
+          git cat-file -e 'c482ad601132ebb80c0013f9d9063d474eac96c1^{commit}'
+          git cat-file -e 'acab7685663bebc0ce2e93c75b4e3c4048d9f0bb^{commit}'
       - name: Integration tests (updater restart and rollback included)
         if: needs.changes.outputs.draft != 'true'
         env:

@@ -27,11 +27,18 @@ export class AccountServiceRefusal extends Error {
   }
 }
 
+/** The service's JSON problem envelope, including a listed PC's `step2_off` refusal. */
 async function refusalCode(response: Response): Promise<string | null> {
+  let body: unknown;
   try {
-    const body = await response.json() as { error?: { code?: unknown } };
-    return typeof body.error?.code === "string" ? body.error.code : null;
-  } catch { return null; }
+    body = await response.json();
+  } catch (error) {
+    if (error instanceof Error) return null;
+    throw error;
+  }
+  if (typeof body !== "object" || body === null || !("error" in body)) return null;
+  const problem = body.error;
+  return typeof problem === "object" && problem !== null && "code" in problem && typeof problem.code === "string" ? problem.code : null;
 }
 
 export const MAILBOX_PULL_MS = 5 * 60_000;
@@ -259,13 +266,17 @@ export class AccountMailbox {
     // the binding this read is for: a refusal answers for it alone, never for one made after it to the same account
     const binding = this.options.devices.serviceBinding();
     let unlisted = false;
+    let step2Off = false;
     try {
       let staged: Awaited<ReturnType<typeof stageMailboxAdds>> = [];
       const outcome = await readSnapshot(async (cursor) => {
         if (cursor.page === 0) staged = await stageMailboxAdds(this.pending);
         return await this.snapshotPage(account, cursor, used).catch((error: unknown) => {
-          // 403 not_listed alone: a 404 (step 2 off for the account, an older service) never unbinds
-          if (error instanceof AccountServiceRefusal && error.path === "/v1/pc/snapshot" && error.status === 403 && error.code === "not_listed") unlisted = true;
+          if (error instanceof AccountServiceRefusal && error.path === "/v1/pc/snapshot") {
+            // A hidden 404 is ambiguous. Only the named refusal can excuse legacy catch-up.
+            unlisted = error.status === 403 && error.code === "not_listed";
+            step2Off = error.status === 404 && error.code === "step2_off";
+          }
           throw error;
         });
       }, { ...ports, scope: () => this.stopped ? null : ports.scope(), commit: (stage) => {
@@ -286,6 +297,7 @@ export class AccountMailbox {
         }
         return committedLifts;
       } });
+      if (step2Off && !this.stopped) ports.step2Off?.();
       // a PC bound in one press stands on the account's listing alone: once the account stops listing it, it leaves
       if (unlisted && binding !== null && this.options.devices.serviceBinding() === binding) this.options.devices.clearAccountBinding("unlisted", "account");
       return { outcome, adds };
@@ -613,6 +625,8 @@ export class AccountMailbox {
             // applyBlock owns parseSafetyRecord and signature verification. Never ack an unwritten deny.
             const receipt = await this.options.devices.applyBlock(record, "mailbox");
             if (receipt.outcome === "refused") {
+              // The verified block is already in the durable safety queue. Do not postpone later records or the read.
+              if (receipt.reason === "unknown_target") continue;
               // Disk/queue failures also return record_invalid, but leave the PC strict.
               if (receipt.reason === "record_invalid" && !this.options.devices.failsClosed) continue;
               throw new Error(`Mailbox block not applied: ${receipt.reason}`);
