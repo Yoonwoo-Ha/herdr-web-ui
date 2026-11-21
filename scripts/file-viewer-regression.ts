@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium, errors as playwrightErrors, type Locator, type Page } from "playwright-core";
+import { chromium, errors as playwrightErrors, type BrowserContext, type Locator, type Page } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { forgetPageMedia, PAGE_MEDIA_LIFETIME_MS, pageFileHooks, pageMediaResponse } from "../server/file-view.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
@@ -15,6 +15,21 @@ import { openSettingsPage } from "./settings-page.ts";
  * spot Settings comes to cover would open that row's sentence (SettingsControls' useRowSentence), which takes the next
  * Escape for itself, as it should, and a check that Escape closes Settings would wait on it.
  */
+/**
+ * The browser scripts of a lane share one herdr test session, so another script's agent that turns blocked raises
+ * an alert droplet on this script's pages too, at any moment and above an open dialog: it once took the click meant
+ * for the Files dialog's Changes tab (#4270). No check here is about droplets, so these pages draw none. A sheet
+ * the page adopts, not a style element: the app's own document only, and nothing its content policy reads.
+ */
+async function drawsNoDroplet(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    if (window.top !== window) return;
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(".droplet { visibility: hidden !important; }");
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+  });
+}
+
 async function openSettingsByKeys(page: Page): Promise<void> {
   await page.mouse.move(0, 0);
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
@@ -250,6 +265,7 @@ try {
   const origin = `http://127.0.0.1:${server.port}`;
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  await drawsNoDroplet(context);
   const page = await context.newPage();
   await page.addInitScript(() => {
     // the app's own document only: a sandboxed HTML page the viewer frames has no storage to seed
@@ -269,6 +285,12 @@ try {
   await page.goto(`${origin}/api/health`);
   await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
   await page.locator(".conn-live").waitFor();
+  assert.equal(await page.evaluate(() => {
+    const probe = document.body.appendChild(Object.assign(document.createElement("div"), { className: "droplet" }));
+    const visibility = getComputedStyle(probe).visibility;
+    probe.remove();
+    return visibility;
+  }), "hidden", "this script's pages draw no alert droplet");
   const videoLink = page.getByRole("button", { name: "demo video", exact: true });
   await videoLink.waitFor();
   await page.locator(".markdown-code").first().locator(".hl-keyword", { hasText: "const" }).waitFor();
@@ -1298,6 +1320,7 @@ try {
   for (const width of [390, 1440]) {
     for (const theme of ["dark", "light"]) {
       const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width === 390, hasTouch: width === 390 });
+      await drawsNoDroplet(context);
       await context.addInitScript((theme) => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme })), theme);
       const page = await context.newPage();
       page.setDefaultTimeout(10_000);
@@ -1380,6 +1403,7 @@ try {
   }
   for (const width of [1280, 601, 600, 390]) {
     const readerContext = await browser.newContext({ viewport: { width, height: 800 } });
+    await drawsNoDroplet(readerContext);
     try {
       const readerPage = await readerContext.newPage();
       await readerPage.goto(`${origin}/?read=${encodeURIComponent(join(root, "long.md"))}`);
@@ -1435,6 +1459,7 @@ try {
   const remote: Machine = { ...local, id: "remote-fixture", name: "Remote fixture", snapshot: { ...local.snapshot, panes: [], workspaces: [], tabs: [], layouts: [], agents: [] } };
   for (const target of ["remote-fixture", "local", "missing-fixture"]) {
     const ownerContext = await browser.newContext();
+    await drawsNoDroplet(ownerContext);
     const fileRequests: string[] = [];
     await ownerContext.addInitScript(({ stored, pane }) => {
       localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
