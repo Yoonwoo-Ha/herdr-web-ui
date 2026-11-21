@@ -1244,7 +1244,16 @@ export async function checkFocusedWindowReclaimsTerminalSize(browser: Browser, o
     const desktop = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 1280, height: 800 } }, settings, false, asking);
     await attached(desktop);
     const desktopSize = await tookAskedGrid(desktop, "the desktop took the pane at its own size");
-    const phone = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, { ...settings, terminalInputMode: "line" }, false, asking);
+    // The phone's first health answer is held until the desktop has taken the pane back (#4378): a page attaches
+    // from the server's cached roster before it knows whether herdr can attach, and learning that later is no
+    // reason to size the pane again.
+    let answerHealth = (): void => {};
+    const healthHeld = new Promise<void>((resolve) => { answerHealth = resolve; });
+    const lateHealth = async (page: Page) => {
+      await asking(page);
+      await page.route((url) => url.pathname === "/api/health" && url.search === "", async (route) => { await healthHeld; await route.continue().catch(() => {}); });
+    };
+    const phone = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, { ...settings, terminalInputMode: "line" }, false, lateHealth);
     await attached(phone);
     const phoneSize = await tookAskedGrid(phone, "the phone took the pane at its own size");
     // A window takes the pane back on a click or a key only once it has heard that another took it: the server's
@@ -1262,6 +1271,12 @@ export async function checkFocusedWindowReclaimsTerminalSize(browser: Browser, o
 
     await desktop.locator(".xterm").click();
     await took(desktopSize, "a click in the desktop terminal");
+    const beforeHealth = (await framesOf(phone)).length;
+    answerHealth();
+    await phone.waitForFunction(() => [...document.querySelectorAll("[title]")].some((el) => /protocol \d/.test(el.getAttribute("title") ?? "")), undefined, { timeout: 10_000 });
+    await phone.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)))));
+    assert.deepEqual((await framesOf(phone)).slice(beforeHealth).filter((f) => f.dir === "out" && (f.type === "resize" || f.type === "attach")), [], "the phone's first health answer, come after the desktop took the pane back, sends no size of its own");
+    assert.equal(await size(), desktopSize, "the phone's late health answer leaves the pane at the desktop's size");
     await phone.locator(".xterm").tap();
     await took(phoneSize, "a tap in the phone terminal");
     await desktop.locator(".xterm").click({ button: "right" });
