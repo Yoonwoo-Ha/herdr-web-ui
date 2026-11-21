@@ -61,7 +61,7 @@ class AdapterError extends Error {
 const STATUS_EVENT = "pane.agent_status_changed";
 const NOT_STRUCTURE = new Set([STATUS_EVENT, "pane.focused", "pane.output_matched"]);
 /**
- * What of a status the rows draw beyond its state, as `subscribe` compares reports: the kind and
+ * What of a status the rows draw beyond its state, as `coreModel` compares reports: the kind and
  * message of a blocked agent, and its progress, which the rows print as its exact percent.
  */
 function shownFacts(report: unknown): string {
@@ -1423,15 +1423,216 @@ function labelsOf(labels: unknown): Record<string, string> {
   return Object.fromEntries(Object.entries(labels).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
 }
 
+/** What an event says of a terminal's OpenCode session (startHerdrCoreAdapter `noteSession`), so a turn too short for any read is still remembered. */
+type SessionNote = (address: string, status: HcStatus | null | undefined, records: unknown, labels: Readonly<Record<string, string>> | undefined) => unknown;
+
+/**
+ * What the core model learned from hc's snapshot or one event, each change in the order it
+ * happened, whoever subscribed to it:
+ * - `status`: what a terminal shows changed, or its program reported a status that did not wait
+ *   for the turn's end: `shown` as the snapshot shows it (snapshot.ts `shownStatusOf`), `agent` the
+ *   agent it runs (snapshot.ts `agentOf`), `status` its program's own report;
+ * - `created`, `exited` (a program that ended by itself, always followed by `closed`), `closed`
+ *   (also a terminal killed or removed), `updated` (what a fresh snapshot shows of it changed),
+ *   each naming the terminal when hc named one;
+ * - `layout`: the arrangement or the labels of terminals changed.
+ */
+type CoreChange =
+  | { type: "status"; terminal: string; status: HcStatus | null; shown: AgentStatus; agent: string | null }
+  | { type: "created" | "exited" | "closed" | "updated"; terminal?: string }
+  | { type: "layout" };
+
+/**
+ * What the core model is told from outside: `firstTurn`, the turn each terminal had when this
+ * process first saw it; `host`, where the core's terminals run; `observeSeen`, told each terminal's
+ * turn and labels as they are learned (seen-label.ts SeenMarker); `noteSession`, told what each
+ * report says of an OpenCode session.
+ */
+interface CoreModelOptions {
+  firstTurn: FirstTurn;
+  host: CoreHost;
+  observeSeen?: (address: string, turn: number, labels: Record<string, string>) => void;
+  noteSession?: SessionNote;
+}
+
+/**
+ * What hc's snapshot and events say of this core's terminals, as change records. `seed` takes the
+ * terminals of hc's snapshot at the start of the stream; `event` each event after it. Events given
+ * before the seed wait for it and are answered by it; another machine's are none of this core's.
+ */
+function coreModel({ firstTurn, host, observeSeen, noteSession }: CoreModelOptions): { seed: (terminals: unknown) => CoreChange[]; event: (event: HcEvent) => CoreChange[] } {
+  /**
+   * What each terminal's status is shown from, as the snapshot shows it (snapshot.ts
+   * `shownStatusOf`): its program's word, its turn and its labels, from hc's snapshot and then its
+   * events, with the status last told. Until hc's snapshot is in, events wait in `early`.
+   */
+  type Known = { status: HcStatus | null; front: HcForeground | null; cwd: string | undefined; argv: string[] | undefined; pid: number | null; title: string | null; turn: number; first: number; labels: Record<string, string>; shown: AgentStatus };
+  const known = new Map<string, Known>();
+  /** the agent a terminal runs, read as the snapshot reads it (snapshot.ts `agentOf`) */
+  const agentNow = (status: HcStatus | null, entry: Known | undefined) => agentOf({ status, foreground: entry?.front ?? null, cwd: entry?.cwd, argv: entry?.argv, pid: entry?.pid }, host);
+  let early: HcEvent[] | null = [];
+  const remember = (record: unknown) => {
+    if (!isRecord(record) || typeof record["address"] !== "string") return;
+    const status = statusOf(record["status"]);
+    const turn = typeof record["turn"] === "number" ? record["turn"] : 0;
+    const labels = labelsOf(record["labels"]);
+    const first = firstTurn({ address: record["address"], turn });
+    noteSession?.(record["address"], status, record["records"], labels);
+    known.set(record["address"], { status, front: foregroundOf(record["foreground"]), cwd: typeof record["cwd"] === "string" ? record["cwd"] : undefined, argv: Array.isArray(record["argv"]) && record["argv"].every((word) => typeof word === "string") ? record["argv"] : undefined, pid: typeof record["pid"] === "number" ? record["pid"] : null, title: typeof record["title"] === "string" ? record["title"] : null, turn, first, labels, shown: shownStatusOf(status, turn, labels, first) });
+    observeSeen?.(record["address"], turn, labels);
+  };
+  const told = (paneId: string, status: HcStatus | null, shown: AgentStatus): CoreChange => ({ type: "status", terminal: paneId, status, shown, agent: agentNow(status, known.get(paneId)) });
+  const changed = (type: "created" | "exited" | "closed" | "updated", paneId: string | undefined): CoreChange => (paneId ? { type, terminal: paneId } : { type });
+  /** A turn or a look (the `herdr.seen` label) that changes what a terminal shows is told as its status. */
+  const retell = (paneId: string): CoreChange[] => {
+    const entry = known.get(paneId);
+    if (!entry) return [];
+    const shown = shownStatusOf(entry.status, entry.turn, entry.labels, entry.first);
+    if (shown === entry.shown) return [];
+    entry.shown = shown;
+    return [told(paneId, entry.status, shown)];
+  };
+  /** what each terminal's last report said beyond its state (kind, message, progress), which only a snapshot carries */
+  const reported = new Map<string, string>();
+  const event = (event: HcEvent): CoreChange[] => {
+    // another machine's terminal is none of this PC's panes (snapshot.ts `onOtherMachine`)
+    if (event.machine !== undefined || (event.terminal !== undefined && onOtherMachine(event.terminal))) return [];
+    if (early) { early.push(event); return []; }
+    const paneId = event.terminal;
+    switch (event.type) {
+      case "status": {
+        if (!paneId) return [];
+        const report = event.data?.["status"];
+        // a new kind, message or progress step (or one gone) reaches the rows through a fresh snapshot
+        const facts = shownFacts(report);
+        const before = reported.get(paneId) ?? NO_FACTS;
+        reported.set(paneId, facts);
+        const changes = facts !== before ? [changed("updated", paneId)] : [];
+        const status = statusOf(report);
+        noteSession?.(paneId, status, event.data?.["records"], known.get(paneId)?.labels);
+        const entry = known.get(paneId);
+        if (!entry) return [...changes, told(paneId, status, agentStatusOf(status))];
+        const was = entry.status?.state;
+        entry.status = status;
+        const shown = shownStatusOf(status, entry.turn, entry.labels, entry.first);
+        // a turn ends with this status, then the `turn` event that counts it: whether it is done
+        // is decided there (herdr-app docs/labels.md)
+        if (was === "working" && (shown === "idle" || shown === "done")) return changes;
+        entry.shown = shown;
+        return [...changes, told(paneId, status, shown)];
+      }
+      case "turn": {
+        const entry = paneId ? known.get(paneId) : undefined;
+        if (!entry || typeof event.data?.["turn"] !== "number") return [];
+        entry.turn = event.data["turn"];
+        observeSeen?.(paneId!, entry.turn, entry.labels);
+        return retell(paneId!);
+      }
+      case "created":
+        remember(event.data);
+        return [changed("created", paneId)];
+      case "finished":
+        // herdr says pane_exited only for a program that ended by itself; a pane someone closed is
+        // pane_closed alone, so it raises no "terminal ended" alert. hc's `killed` is a
+        // terminal.kill (the Herdr app closing a tab, Ovis's pane.close, `hc kill`); a signal sent
+        // from anywhere else finishes as `exited`
+        if (event.data?.["reason"] !== "killed") return [changed("exited", paneId), changed("closed", paneId)];
+        return [changed("closed", paneId)];
+      case "removed":
+        if (paneId) { known.delete(paneId); reported.delete(paneId); }
+        return [changed("closed", paneId)];
+      case "lost":
+      case "restarted":
+        return [changed("updated", paneId)];
+      case "labels": {
+        const entry = paneId ? known.get(paneId) : undefined;
+        if (!entry) return [{ type: "layout" }];
+        entry.labels = labelsOf(event.data?.["labels"]);
+        observeSeen?.(paneId!, entry.turn, entry.labels);
+        return [...retell(paneId!), { type: "layout" }];
+      }
+      case "foreground": {
+        // a program that reports nothing is named from the process in front of it (snapshot.ts `agentOf`)
+        const entry = paneId ? known.get(paneId) : undefined;
+        if (!entry) return [];
+        const before = agentNow(entry.status, entry);
+        entry.front = foregroundOf(event.data);
+        if (agentNow(entry.status, entry) === before) return [];
+        return [changed("updated", paneId), told(paneId!, entry.status, entry.shown)];
+      }
+      case "title": {
+        // an agent that reports nothing may say in its own title whether it works (agent-identity.ts `titleStatus`):
+        // a change there reaches the rows through a fresh snapshot; any other title shows in the next one
+        const entry = paneId ? known.get(paneId) : undefined;
+        if (!entry) return [];
+        const title = typeof event.data?.["title"] === "string" ? event.data["title"] : null;
+        // only where no report gives a status: none, or a word that says nothing (an error)
+        const agent = agentStatusOf(entry.status) === "unknown" ? agentNow(entry.status, entry) : null;
+        const before = titleStatus(agent, entry.title);
+        entry.title = title;
+        return titleStatus(agent, title) !== before ? [changed("updated", paneId)] : [];
+      }
+      case "doc":
+        return event.data?.["name"] === LAYOUT_DOC || event.data?.["name"] === OVIS_LAYOUT_DOC ? [{ type: "layout" }] : [];
+      default:
+        // size changes many times a second and shows in the next snapshot
+        return [];
+    }
+  };
+  const seed = (terminals: unknown): CoreChange[] => {
+    // what each terminal reported as the stream starts: a first event that drops a message or progress is a change
+    const here = (Array.isArray(terminals) ? terminals : []).filter((terminal) => !isRecord(terminal) || typeof terminal["address"] !== "string" || !onOtherMachine(terminal["address"]));
+    for (const terminal of here) {
+      if (!isRecord(terminal) || typeof terminal["address"] !== "string" || reported.has(terminal["address"])) continue;
+      reported.set(terminal["address"], shownFacts(terminal["status"]));
+    }
+    for (const record of here) remember(record);
+    const waiting = early ?? [];
+    early = null;
+    return waiting.flatMap((next) => event(next));
+  };
+  return { seed, event };
+}
+
+/** What an hc event stream tells its reader. */
+interface EventStreamHandlers {
+  /** an event, this core's own or another machine's */
+  event: (event: HcEvent) => void;
+  /** what was read can no longer be trusted (hc says events were `missed`, a line is not JSON, or the stream closed): read the state afresh */
+  resync: () => void;
+  /** a line passed EVENT_LINE_BYTES: the stream reads nothing more */
+  tooLong: () => void;
+}
+
+/** Opens hc's event stream: its answer carries hc's snapshot (`result.terminals`) and the stream's channel. */
+function openEventStream(hc: Pick<HcConnection, "open">, on: EventStreamHandlers) {
+  const read = makeLineReader(EVENT_LINE_BYTES, (line) => {
+    let message: unknown;
+    try { message = JSON.parse(line); } catch { on.resync(); return; }
+    if (!isRecord(message)) return;
+    if (message["method"] === "missed") { on.resync(); return; }
+    const params = message["params"];
+    if (message["method"] !== "event" || !isRecord(params) || typeof params["type"] !== "string") return;
+    on.event({ type: params["type"], ...(typeof params["terminal"] === "string" ? { terminal: params["terminal"] } : {}), ...(typeof params["machine"] === "string" ? { machine: params["machine"] } : {}), ...(isRecord(params["data"]) ? { data: params["data"] } : {}) });
+  }, () => on.tooLong());
+  return hc.open("events.subscribe", {}, { onData: read, onClose: () => on.resync() });
+}
+
+/** herdr's lifecycle event, and its `type`, for each change of a terminal or the layout. */
+const LIFECYCLE = {
+  created: ["pane.created", "pane_created"],
+  exited: ["pane.exited", "pane_exited"],
+  closed: ["pane.closed", "pane_closed"],
+  updated: ["pane.updated", "pane_updated"],
+  layout: ["layout.updated", "layout_updated"],
+} as const;
+
 /**
  * An events subscription: herdr's acknowledgement once hc's own stream is open, so nothing that
  * happens after the server's next snapshot is missed, then herdr's frames for what hc reports. A
  * subscriber that fell behind on hc (`missed`), or a line to hc that ended, ends this connection:
  * the status collector reopens it and reads what it missed from a fresh snapshot.
  */
-/** What an event says of a terminal's OpenCode session (startHerdrCoreAdapter `noteSession`), so a turn too short for any read is still remembered. */
-type SessionNote = (address: string, status: HcStatus | null | undefined, records: unknown, labels: Readonly<Record<string, string>> | undefined) => unknown;
-
 async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, request: Request, firstTurn: FirstTurn, host: CoreHost, layoutWatchers: Set<() => void>, observeSeen?: SeenObserver, noteSession?: SessionNote): Promise<void> {
   const subscriptions = Array.isArray(request.params["subscriptions"]) ? request.params["subscriptions"].filter(isRecord) : [];
   const statusPanes = new Set(subscriptions.flatMap((entry) => entry["type"] === STATUS_EVENT && typeof entry["pane_id"] === "string" ? [entry["pane_id"]] : []));
@@ -1461,170 +1662,30 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
       flush(socket);
     }
   };
-  const lifecycle = (event: string, type: string, paneId?: string) => {
-    if (structure) emit(event, { type, ...(paneId ? { pane_id: paneId } : {}) });
+  const lifecycle = (change: Exclude<CoreChange, { type: "status" }>) => {
+    const [event, type] = LIFECYCLE[change.type];
+    if (structure) emit(event, { type, ...("terminal" in change && change.terminal ? { pane_id: change.terminal } : {}) });
   };
-  /**
-   * What each terminal's status is shown from, as the snapshot shows it (snapshot.ts
-   * `shownStatusOf`): its program's word, its turn and its labels, from hc's snapshot and then its
-   * events, with the status last told. Until hc's snapshot is in, events wait in `early`.
-   */
-  type Known = { status: HcStatus | null; front: HcForeground | null; cwd: string | undefined; argv: string[] | undefined; pid: number | null; title: string | null; turn: number; first: number; labels: Record<string, string>; shown: AgentStatus };
-  const known = new Map<string, Known>();
-  /** the agent a terminal runs, read as the snapshot reads it (snapshot.ts `agentOf`) */
-  const agentNow = (status: HcStatus | null, entry: Known | undefined) => agentOf({ status, foreground: entry?.front ?? null, cwd: entry?.cwd, argv: entry?.argv, pid: entry?.pid }, host);
-  let early: HcEvent[] | null = [];
-  const remember = (record: unknown) => {
-    if (!isRecord(record) || typeof record["address"] !== "string") return;
-    const status = statusOf(record["status"]);
-    const turn = typeof record["turn"] === "number" ? record["turn"] : 0;
-    const labels = labelsOf(record["labels"]);
-    const first = firstTurn({ address: record["address"], turn });
-    noteSession?.(record["address"], status, record["records"], labels);
-    known.set(record["address"], { status, front: foregroundOf(record["foreground"]), cwd: typeof record["cwd"] === "string" ? record["cwd"] : undefined, argv: Array.isArray(record["argv"]) && record["argv"].every((word) => typeof word === "string") ? record["argv"] : undefined, pid: typeof record["pid"] === "number" ? record["pid"] : null, title: typeof record["title"] === "string" ? record["title"] : null, turn, first, labels, shown: shownStatusOf(status, turn, labels, first) });
-    observeSeen?.(record["address"], turn, labels);
+  const tell = (change: Extract<CoreChange, { type: "status" }>) => {
+    if (statusPanes.has(change.terminal)) emit(STATUS_EVENT, { pane_id: change.terminal, agent_status: change.shown, agent: change.agent });
   };
-  const tell = (paneId: string, status: HcStatus | null, shown: AgentStatus) => {
-    const entry = known.get(paneId);
-    emit(STATUS_EVENT, { pane_id: paneId, agent_status: shown, agent: agentNow(status, entry) });
-  };
-  /** A turn or a look (the `herdr.seen` label) that changes what a terminal shows is told as its status. */
-  const retell = (paneId: string) => {
-    const entry = known.get(paneId);
-    if (!entry) return;
-    const shown = shownStatusOf(entry.status, entry.turn, entry.labels, entry.first);
-    if (shown === entry.shown) return;
-    entry.shown = shown;
-    if (statusPanes.has(paneId)) tell(paneId, entry.status, shown);
-  };
-  /** what each terminal's last report said beyond its state (kind, message, progress), which only a snapshot carries */
-  const reported = new Map<string, string>();
-  const onEvent = (event: HcEvent) => {
-    // another machine's terminal is none of this PC's panes (snapshot.ts `onOtherMachine`)
-    if (event.machine !== undefined || (event.terminal !== undefined && onOtherMachine(event.terminal))) return;
-    if (early) { early.push(event); return; }
-    const paneId = event.terminal;
-    switch (event.type) {
-      case "status": {
-        if (!paneId) return;
-        const report = event.data?.["status"];
-        // a new kind, message or progress step (or one gone) reaches the rows through a fresh snapshot
-        const facts = shownFacts(report);
-        const before = reported.get(paneId) ?? NO_FACTS;
-        reported.set(paneId, facts);
-        if (facts !== before) lifecycle("pane.updated", "pane_updated", paneId);
-        const status = statusOf(report);
-        noteSession?.(paneId, status, event.data?.["records"], known.get(paneId)?.labels);
-        const entry = known.get(paneId);
-        if (!entry) {
-          if (statusPanes.has(paneId)) tell(paneId, status, agentStatusOf(status));
-          return;
-        }
-        const was = entry.status?.state;
-        entry.status = status;
-        const shown = shownStatusOf(status, entry.turn, entry.labels, entry.first);
-        // a turn ends with this status, then the `turn` event that counts it: whether it is done
-        // is decided there (herdr-app docs/labels.md)
-        if (was === "working" && (shown === "idle" || shown === "done")) return;
-        entry.shown = shown;
-        if (statusPanes.has(paneId)) tell(paneId, status, shown);
-        return;
-      }
-      case "turn": {
-        const entry = paneId ? known.get(paneId) : undefined;
-        if (!entry || typeof event.data?.["turn"] !== "number") return;
-        entry.turn = event.data["turn"];
-        observeSeen?.(paneId!, entry.turn, entry.labels);
-        retell(paneId!);
-        return;
-      }
-      case "created":
-        remember(event.data);
-        lifecycle("pane.created", "pane_created", paneId);
-        return;
-      case "finished":
-        // herdr says pane_exited only for a program that ended by itself; a pane someone closed is
-        // pane_closed alone, so it raises no "terminal ended" alert. hc's `killed` is a
-        // terminal.kill (the Herdr app closing a tab, Ovis's pane.close, `hc kill`); a signal sent
-        // from anywhere else finishes as `exited`
-        if (event.data?.["reason"] !== "killed") lifecycle("pane.exited", "pane_exited", paneId);
-        lifecycle("pane.closed", "pane_closed", paneId);
-        return;
-      case "removed":
-        if (paneId) { known.delete(paneId); reported.delete(paneId); }
-        lifecycle("pane.closed", "pane_closed", paneId);
-        return;
-      case "lost":
-      case "restarted":
-        lifecycle("pane.updated", "pane_updated", paneId);
-        return;
-      case "labels": {
-        const entry = paneId ? known.get(paneId) : undefined;
-        if (entry) {
-          entry.labels = labelsOf(event.data?.["labels"]);
-          observeSeen?.(paneId!, entry.turn, entry.labels);
-          retell(paneId!);
-        }
-        lifecycle("layout.updated", "layout_updated");
-        return;
-      }
-      case "foreground": {
-        // a program that reports nothing is named from the process in front of it (snapshot.ts `agentOf`)
-        const entry = paneId ? known.get(paneId) : undefined;
-        if (!entry) return;
-        const before = agentNow(entry.status, entry);
-        entry.front = foregroundOf(event.data);
-        if (agentNow(entry.status, entry) === before) return;
-        lifecycle("pane.updated", "pane_updated", paneId);
-        if (statusPanes.has(paneId!)) tell(paneId!, entry.status, entry.shown);
-        return;
-      }
-      case "title": {
-        // an agent that reports nothing may say in its own title whether it works (agent-identity.ts `titleStatus`):
-        // a change there reaches the rows through a fresh snapshot; any other title shows in the next one
-        const entry = paneId ? known.get(paneId) : undefined;
-        if (!entry) return;
-        const title = typeof event.data?.["title"] === "string" ? event.data["title"] : null;
-        // only where no report gives a status: none, or a word that says nothing (an error)
-        const agent = agentStatusOf(entry.status) === "unknown" ? agentNow(entry.status, entry) : null;
-        const before = titleStatus(agent, entry.title);
-        entry.title = title;
-        if (titleStatus(agent, title) !== before) lifecycle("pane.updated", "pane_updated", paneId);
-        return;
-      }
-      case "doc":
-        if (event.data?.["name"] === LAYOUT_DOC || event.data?.["name"] === OVIS_LAYOUT_DOC) lifecycle("layout.updated", "layout_updated");
-        return;
-      default:
-        // size changes many times a second and shows in the next snapshot
-        return;
+  const deliver = (changes: readonly CoreChange[]) => {
+    for (const change of changes) {
+      if (change.type === "status") tell(change);
+      else lifecycle(change);
     }
   };
-  const read = makeLineReader(EVENT_LINE_BYTES, (line) => {
-    if (ended) return;
-    let message: unknown;
-    try { message = JSON.parse(line); } catch { end(); return; }
-    if (!isRecord(message)) return;
-    if (message["method"] === "missed") { end(); return; }
-    const params = message["params"];
-    if (message["method"] !== "event" || !isRecord(params) || typeof params["type"] !== "string") return;
-    onEvent({ type: params["type"], ...(typeof params["terminal"] === "string" ? { terminal: params["terminal"] } : {}), ...(typeof params["machine"] === "string" ? { machine: params["machine"] } : {}), ...(isRecord(params["data"]) ? { data: params["data"] } : {}) });
-  }, () => {
-    socket.data.unsubscribe?.();
-    send(socket, `${JSON.stringify({ id: request.id, error: { code: "bad_frame", message: `hc event line exceeds ${EVENT_LINE_BYTES} bytes` } })}\n`, true);
-  });
+  const model = coreModel({ firstTurn, host, observeSeen, noteSession });
   try {
-    const { result, channel } = await hc.open("events.subscribe", {}, { onData: read, onClose: end });
-    // what each terminal reported as the stream starts: a first event that drops a message or progress is a change
-    const here = (Array.isArray(result.terminals) ? result.terminals : []).filter((terminal) => !isRecord(terminal) || typeof terminal["address"] !== "string" || !onOtherMachine(terminal["address"]));
-    for (const terminal of here) {
-      if (!isRecord(terminal) || typeof terminal["address"] !== "string" || reported.has(terminal["address"])) continue;
-      reported.set(terminal["address"], shownFacts(terminal["status"]));
-    }
-    for (const record of here) remember(record);
-    const waiting = early ?? [];
-    early = null;
-    for (const event of waiting) onEvent(event);
+    const { result, channel } = await openEventStream(hc, {
+      event: (event) => { if (!ended) deliver(model.event(event)); },
+      resync: end,
+      tooLong: () => {
+        socket.data.unsubscribe?.();
+        send(socket, `${JSON.stringify({ id: request.id, error: { code: "bad_frame", message: `hc event line exceeds ${EVENT_LINE_BYTES} bytes` } })}\n`, true);
+      },
+    });
+    deliver(model.seed(result.terminals));
     // the herdr side went, or hc's stream did (`missed` can come with the answer), before the
     // acknowledgement: nothing is started, and hc's stream goes too
     if (ended || socket.data.closed || socket.data.ending) {
@@ -1633,7 +1694,7 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
       return;
     }
     // a change hc has no event for (a late git answer): the rows refresh as for a label
-    const layoutChanged = () => lifecycle("layout.updated", "layout_updated");
+    const layoutChanged = () => lifecycle({ type: "layout" });
     if (structure) layoutWatchers.add(layoutChanged);
     socket.data.unsubscribe = () => {
       layoutWatchers.delete(layoutChanged);
