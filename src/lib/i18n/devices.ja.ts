@@ -65,7 +65,6 @@ export const DEVICES_JA: Record<string, string> = {
   "A public HTTPS address for this PC through a Portal relay. Anyone on the internet can open it, so it needs an access token.": "Portal リレーを経由する、この PC の公開 HTTPS アドレスです。インターネット上の誰でも開けるため、アクセストークンが必要です。",
   "Portal serves this PC": "Portal がこの PC を公開しています",
   "Open it on your phone and sign in with the access token, or pair the phone with a pairing code.": "スマートフォンで開いてアクセストークンでサインインするか、ペアリングコードでスマートフォンをペアリングしてください。",
-  "Stop": "停止",
   "Stopping…": "停止しています…",
   "Recovering…": "復旧しています…",
   "A relay you trust, from portal list: it holds the address's certificate, so one set up to intercept could read the traffic.": "portal list に出てくるリレーのうち、信頼できるものを使ってください。リレーはこのアドレスの証明書を持つため、傍受するよう設定されたリレーは通信内容を読めます。",

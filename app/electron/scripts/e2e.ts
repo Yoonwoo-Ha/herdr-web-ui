@@ -227,7 +227,7 @@ const HOOK = `(() => {
   // the hourly update check, scheduled as the app does and also kept here to be run at once
   const setTimer = globalThis.setInterval;
   globalThis.setInterval = function (run, ms, ...rest) { if (ms === ${UPDATE_CHECK_INTERVAL_MS}) e2e.updateChecks.push(run); return setTimer.call(this, run, ms, ...rest); };
-  e2e.window = () => electron.BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.getParentWindow() === null) ?? null;
+  e2e.window = () => electron.BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.getParentWindow() === null && w.isFocusable()) ?? null;
   e2e.tray = () => (e2e.trayMenu ? e2e.trayMenu.items.map((item) => item.type === "separator" ? "-" : item.label + (item.enabled ? "" : " (off)")) : null);
   e2e.press = (label) => { const item = e2e.trayMenu?.items.find((entry) => entry.label === label); if (!item) throw new Error("no tray item " + label); if (!item.enabled) throw new Error("tray item " + label + " is off"); item.click(); return true; };
   return true;

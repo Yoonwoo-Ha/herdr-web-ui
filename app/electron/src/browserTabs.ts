@@ -7,10 +7,11 @@
  * tab is listed only once an address it committed was allowed, with that address shown without
  * its query.
  */
-import { BrowserWindow, session as sessions, WebContentsView, type Session, type WebContents } from "electron";
+import { BrowserWindow, screen, session as sessions, WebContentsView, type Session, type WebContents } from "electron";
 import { mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { BrowserResults, type BrowserResult } from "./browserResults.ts";
+import { stageSupported } from "./browserState.ts";
 import { isIP } from "node:net";
 import { canonicalHost, decide, machineHost, ovisAt, shownAddress, urlPort, type Allowed, type BrowserPolicy } from "../../../shared/browser-policy.ts";
 import { hostForm } from "./browserState.ts";
@@ -18,6 +19,34 @@ import { hostForm } from "./browserState.ts";
 export const BROWSER_PROFILES = ["mine", "agent"] as const;
 export type BrowserProfile = (typeof BROWSER_PROFILES)[number];
 export const MAX_BROWSER_TABS = 8;
+/** what `work` settles to, or null when it fails or takes longer than PICTURE_MS */
+async function settledWithin<T>(work: Promise<T>): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((done) => { timer = setTimeout(() => done(null), PICTURE_MS); });
+  return Promise.race([work.catch(() => null), late]).finally(() => clearTimeout(timer));
+}
+
+/** a 320 px wide picture of a page as it is drawn, or null when it has none or does not answer in time */
+async function capture(contents: WebContents): Promise<string | null> {
+  const image = await settledWithin(contents.capturePage(undefined, { stayHidden: true }));
+  return image === null || image.isEmpty() ? null : image.resize({ width: 320 }).toDataURL();
+}
+
+/** whether `bounds` overlap any screen */
+function onScreen(bounds: { x: number; y: number; width: number; height: number }): boolean {
+  return screen.getAllDisplays().some(({ bounds: area }) => bounds.x < area.x + area.width && bounds.x + bounds.width > area.x && bounds.y < area.y + area.height && bounds.y + bounds.height > area.y);
+}
+
+/** how many frames, this far apart, a tab brought to the top of the stage gets to paint before its picture is given up */
+const STAGE_FRAMES = 8;
+/** how long one capture may take before it is given up (one that never answers would hold every later picture) */
+const PICTURE_MS = 1000;
+/** the isolated world a picture waits for the page's frames in (none of the page's own scripts run there) */
+const PICTURE_WORLD = 1_017;
+/** a tab smaller than this on a side has no room to draw a picture in, and is laid out as a desktop window first */
+const MIN_PICTURED = 100;
+const DESKTOP_SIZE = { width: 1280, height: 800 };
+const STAGE_FRAME_MS = 50;
 const AGENT_OPEN_MS = 30_000;
 /** a download larger than this is cancelled, and a profile keeps at most MAX_DOWNLOADS from one start of the app */
 export const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024;
@@ -82,6 +111,17 @@ export class BrowserTabs {
   private tabs = new Map<number, Tab>();
   private nextId = 1;
   private shown: number | null = null;
+  /**
+   * Where an agent's tab nobody looks at is drawn while its picture is taken (thumbnail): a window of its own, off the
+   * screen and closed to the pointer (Linux ignores a window's opacity, so off the screen is what hides it). None on a
+   * Wayland desktop, which does not place a window off the screen: there a tab has a picture only while shown.
+   */
+  private stage: BrowserWindow | null = null;
+  /** the stage turned out visible here (the window manager placed it on a screen): it is not made again */
+  private noStage = false;
+  /** the picture being taken, which the next one waits for, and each tab's picture asked for and not yet taken */
+  private pictures: Promise<void> = Promise.resolve();
+  private waitingPictures = new Map<number, Promise<string | null>>();
   /** the sessions this BrowserTabs has guarded: webRequest and permission handlers replace the previous ones */
   private guarded = new Set<Session>();
 
@@ -145,7 +185,7 @@ export class BrowserTabs {
     this.guard(partition, profile);
     const view = new WebContentsView({ webPreferences: { session: partition, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, devTools: false, safeDialogs: true } });
     // a page lays out at its view's size, drawn or not: one no person has placed yet gets a desktop window's
-    view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+    view.setBounds({ x: 0, y: 0, ...DESKTOP_SIZE });
     const tab: Tab = { id: this.nextId++, profile, owner: profile === "agent" ? owner : null, view, allowed: null, title: "", held: false };
     this.tabs.set(tab.id, tab);
     this.watch(tab);
@@ -158,12 +198,17 @@ export class BrowserTabs {
     if (!tab) return;
     this.tabs.delete(id);
     if (this.shown === id) this.hide();
+    if (this.stage && !this.stage.isDestroyed()) this.stage.contentView.removeChildView(tab.view);
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
     this.tell();
   }
 
   closeAll(): void {
     for (const id of [...this.tabs.keys()]) this.close(id);
+    // let go of it first: its "closed" handler gives up the stage only when something else closed it
+    const stage = this.stage;
+    this.stage = null;
+    if (stage && !stage.isDestroyed()) stage.destroy();
   }
 
   /** Draws the tab in `bounds` of the window (in the page's CSS pixels), over the place the page keeps for it. */
@@ -176,6 +221,7 @@ export class BrowserTabs {
     const [width = 0, height = 0] = window.getContentSize();
     const x = Math.max(0, Math.round(bounds.x * zoom)), y = Math.max(0, Math.round(bounds.y * zoom));
     tab.view.setBounds({ x, y, width: Math.max(0, Math.min(Math.round(bounds.width * zoom), width - x)), height: Math.max(0, Math.min(Math.round(bounds.height * zoom), height - y)) });
+    if (this.stage && !this.stage.isDestroyed()) this.stage.contentView.removeChildView(tab.view);
     // a window made anew (the old one closed) holds no view yet
     if (!window.contentView.children.includes(tab.view)) window.contentView.addChildView(tab.view);
     this.shown = id;
@@ -188,12 +234,90 @@ export class BrowserTabs {
     if (tab && window && !window.isDestroyed()) window.contentView.removeChildView(tab.view);
   }
 
-  /** a picture of the tab as PNG data, or null while it is not drawn (a tab nobody looks at paints nothing) */
-  async thumbnail(id: number): Promise<string | null> {
+  /**
+   * A picture of the tab as PNG data, or null when it cannot be drawn. A tab nobody looks at paints nothing, so it is put
+   * on the stage (an off-screen window) only while its picture is taken, and taken off again: it costs nothing between
+   * pictures. Pictures are taken one at a time and each waits for a frame the page drew on the stage (up to PICTURE_MS),
+   * so with many agent tabs the right panel's cards refresh more slowly than every 4 s: correct pictures over cadence.
+   */
+  thumbnail(id: number): Promise<string | null> {
+    // one picture of a tab asked for while another is waiting is that one
+    const waiting = this.waitingPictures.get(id);
+    if (waiting) return waiting;
+    // one picture at a time: two tabs on the stage at once would cover each other
+    const taken = this.pictures.then(() => this.takePicture(id));
+    this.waitingPictures.set(id, taken);
+    this.pictures = taken.then(() => undefined, () => undefined);
+    void taken.finally(() => this.waitingPictures.delete(id));
+    return taken;
+  }
+
+  private async takePicture(id: number): Promise<string | null> {
     const tab = this.tabs.get(id);
-    if (!tab || tab.allowed === null || this.shown !== id) return null;
-    const image = await tab.view.webContents.capturePage().catch(() => null);
-    return image === null || image.isEmpty() ? null : image.resize({ width: 320 }).toDataURL();
+    if (!tab || tab.allowed === null) return null;
+    if (this.shown === id) return capture(tab.view.webContents);
+    // only an agent's tab is pictured while nobody looks at it (the right panel's cards); a person's own tab only shown
+    if (tab.profile !== "agent") return null;
+    const stage = this.stageWindow();
+    if (stage === null) return null;
+    stage.contentView.addChildView(tab.view);
+    try {
+      // put in as it is, not resized (a page the agent works on gets no resize event from a picture), unless it was
+      // left with no room to draw in (hidden while its window had none). The first frame it has there may still be the
+      // one from when it was last drawn, so the picture is the frame after it.
+      const { width, height } = tab.view.getBounds();
+      if (width < MIN_PICTURED || height < MIN_PICTURED) tab.view.setBounds({ x: 0, y: 0, ...DESKTOP_SIZE });
+      // two animation frames in the page (in a world of its own, which the page never sees) mean a frame drawn since it
+      // came on the stage; a page that does not answer in time is taken from the second frame it has, as below
+      const painted = await settledWithin(tab.view.webContents.executeJavaScriptInIsolatedWorld(PICTURE_WORLD, [{ code: "new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(true))))" }]));
+      let primed = painted === true;
+      for (let attempt = 0; attempt < STAGE_FRAMES; attempt++) {
+        await new Promise((next) => setTimeout(next, STAGE_FRAME_MS));
+        // shown or closed meanwhile: show() has placed it, or it is gone
+        if (!this.onStage(tab) || tab.view.webContents.isDestroyed()) return null;
+        const picture = await capture(tab.view.webContents);
+        if (picture !== null && primed) return picture;
+        primed ||= picture !== null;
+      }
+      return null;
+    } finally {
+      if (this.onStage(tab)) this.stage?.contentView.removeChildView(tab.view);
+    }
+  }
+
+  private onStage(tab: Tab): boolean {
+    const stage = this.stage;
+    return stage !== null && !stage.isDestroyed() && stage.contentView.children.includes(tab.view);
+  }
+
+  private stageWindow(): BrowserWindow | null {
+    if (this.noStage) return null;
+    if (this.stage && !this.stage.isDestroyed()) return this.stage;
+    if (!stageSupported(process.platform, process.env)) return null;
+    const stage = new BrowserWindow({ show: false, x: -20000, y: -20000, width: 1280, height: 800, frame: false, focusable: false, skipTaskbar: true, hasShadow: false, title: "Ovis browser stage" });
+    // nor in macOS's Window menu
+    stage.excludedFromShownWindowsMenu = true;
+    stage.setIgnoreMouseEvents(true);
+    stage.showInactive();
+    stage.setPosition(-20000, -20000);
+    // closed from outside (a window manager): its tabs are not staged again, as on Wayland
+    stage.on("closed", () => { if (this.stage === stage) { this.stage = null; this.noStage = true; } });
+    // a window manager that keeps windows on the screen would show it: then no stage, as on Wayland
+    // dropped after the window manager's move is done: destroying a window inside its own move crashes Electron
+    const check = () => { if (!stage.isDestroyed() && onScreen(stage.getBounds())) setImmediate(() => { if (this.stage === stage) this.dropStage(); }); };
+    stage.on("move", check);
+    this.stage = stage;
+    check();
+    return this.stage;
+  }
+
+  /**
+   * Gives up the stage for good: tabs nobody looks at have no picture from then on. The window is hidden, not destroyed
+   * (a picture being taken may still hold a tab in it); closeAll destroys it.
+   */
+  private dropStage(): void {
+    this.noStage = true;
+    if (this.stage && !this.stage.isDestroyed()) this.stage.hide();
   }
 
   navigate(id: number, url: string): boolean {

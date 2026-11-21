@@ -133,7 +133,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "Auto ({language})": "自動（{language}）",
   "No OpenAI key: the browser's speech recognition is used": "OpenAI キーがないため、ブラウザーの音声認識を使用します",
   "Speech recognition": "音声認識",
-  "Browser": "ブラウザー",
   "API key": "API キー",
   "Save an API key to use the mic": "マイクを使うには API キーを保存してください",
   "No OpenAI key saved": "OpenAI キーが保存されていません",
@@ -293,4 +292,8 @@ export const SETTINGS_JA: Record<string, string> = {
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "この PC の外部通知の設定を読み取れませんでした（{error}）。設定を閉じてもう一度開いてください。",
   "Opens the page of every PC this device reaches through the relay, to check, join or forget them.": "このデバイスがリレーでつなぐすべてのPCのページを開き、確認・参加・削除ができます。",
   "Manage|relayed connections": "管理",
+  "Built-in browser": "内蔵ブラウザー",
+  "Blocked sites": "ブロックするサイト",
+  "Opens web pages in tabs inside this app: they are listed under Browser in the sidebar and open beside the pane. Its tabs are signed in to nothing you use elsewhere, and an agent's tabs keep cookies of their own.": "ウェブページをこのアプリ内のタブで開きます。タブはサイドバーの「ブラウザー」に並び、ペインの横に開きます。これらのタブは他でのログインを使わず、エージェントのタブは別の Cookie を使います。",
+  "The built-in browser never loads these sites or their subdomains, in your tabs or an agent's. One site per line.": "内蔵ブラウザーは、自分のタブでもエージェントのタブでも、これらのサイトとそのサブドメインを読み込みません。1 行に 1 サイトずつ入力します。",
 };

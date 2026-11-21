@@ -16,7 +16,6 @@ export const MY_MACHINES_ZH: Record<string, string> = {
   "It joined a moment ago and is getting ready. It turns ready by itself.": "它刚刚加入，正在准备。稍后会自行变为就绪。",
   "Removed {when} on {device}. Its terminals keep running on the machine.": "{when}在 {device} 上移除。它的终端仍在机器上继续运行。",
   "No machines yet": "还没有机器",
-  "Open {name}": "打开 {name}",
   "Try to reach {name} again": "再次尝试连接 {name}",
   "Details of {name}": "{name} 的详情",
   "Ovis does not start or restart the engine: start herdr or herdr-core on the machine.": "Ovis 不会启动或重启引擎：请在机器上启动 herdr 或 herdr-core。",

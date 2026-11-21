@@ -10,7 +10,7 @@ describe("desktopBrowserView", () => {
 
   it("reads P3a's tabs before main sends owners or results", () => {
     expect(desktopBrowserView({ tabs: [{ id: 1, profile: "agent", address: "https://a.example/x", title: "A", loading: false, canGoBack: false, canGoForward: false, held: false }] })).toEqual({
-      tabs: [{ id: 1, profile: "agent", address: "https://a.example/x", title: "A", loading: false, held: false, owner: null }],
+      tabs: [{ id: 1, profile: "agent", address: "https://a.example/x", title: "A", loading: false, canGoBack: false, canGoForward: false, held: false, owner: null }],
       results: [],
     });
   });
@@ -18,7 +18,7 @@ describe("desktopBrowserView", () => {
   it("keeps the owner and results main sends, and drops rows it cannot read", () => {
     const view = desktopBrowserView({
       tabs: [
-        { id: 2, profile: "agent", address: "https://b.example/", title: "B", loading: true, held: true, owner: "w1:p2" },
+        { id: 2, profile: "agent", address: "https://b.example/", title: "B", loading: true, canGoBack: false, canGoForward: false, held: true, owner: "w1:p2" },
         { id: 3, profile: "other", address: "https://c.example/" },
         { id: "4", profile: "mine", address: "https://d.example/" },
         { id: 5, profile: "mine", address: "https://e.example/", owner: 7 },

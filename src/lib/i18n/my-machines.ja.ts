@@ -16,7 +16,6 @@ export const MY_MACHINES_JA: Record<string, string> = {
   "It joined a moment ago and is getting ready. It turns ready by itself.": "少し前に参加し、準備中です。そのまま待つと自動的に準備完了になります。",
   "Removed {when} on {device}. Its terminals keep running on the machine.": "{device} で削除しました（{when}）。ターミナルはマシン上で引き続き実行されます。",
   "No machines yet": "マシンはまだありません",
-  "Open {name}": "{name} を開く",
   "Try to reach {name} again": "{name} への接続を再試行",
   "Details of {name}": "{name} の詳細",
   "Ovis does not start or restart the engine: start herdr or herdr-core on the machine.": "Ovis はエンジンの起動も再起動も行いません。マシンで herdr または herdr-core を起動してください。",

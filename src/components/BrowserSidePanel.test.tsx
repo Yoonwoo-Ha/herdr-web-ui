@@ -19,6 +19,8 @@ interface Stub {
   tell: (view: unknown) => void;
 }
 
+let pictures = 0;
+
 function stub(current: () => Promise<unknown>): Stub {
   const listeners = new Set<(view: unknown) => void>();
   return {
@@ -26,7 +28,7 @@ function stub(current: () => Promise<unknown>): Stub {
     onChange: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     close: jest.fn(),
     reveal: jest.fn(),
-    thumbnail: async () => "data:image/jpeg;base64,AAAA",
+    thumbnail: async () => { pictures += 1; return "data:image/jpeg;base64,AAAA"; },
     tell: (view) => { for (const listener of listeners) listener(view); },
   };
 }
@@ -43,9 +45,11 @@ function install(bridge: Stub | undefined): void {
   });
 }
 
+const opened: number[] = [];
+
 function Harness({ pane }: { pane: BrowserSidePanelPane | null }) {
   const browser = useDesktopBrowser();
-  return browser === null ? null : createElement(BrowserSidePanel, { browser, pane, agentOf: (paneId: string) => paneId === "w1:p1" ? "claude" : null });
+  return browser === null ? null : createElement(BrowserSidePanel, { browser, pane, agentOf: (paneId: string) => paneId === "w1:p1" ? "claude" : null, onOpen: (tab: number) => opened.push(tab) });
 }
 
 const render = async (pane: BrowserSidePanelPane | null = null) => {
@@ -95,25 +99,66 @@ test("follows main's changes, and keeps an off main sent over an older answer st
   expect(renderer?.root.findAllByProps({ className: "browser-side-card" })).toHaveLength(1);
 });
 
-test("lists agent tabs only, closes one with x and shows a kept file in its folder", async () => {
+test("lists agent tabs only, opens one large from its card, closes one with x and shows a kept file in its folder", async () => {
+  opened.length = 0;
   const bridge = stub(async () => view);
   install(bridge);
   await render();
   const cards = renderer!.root.findAllByProps({ className: "browser-side-card" });
   expect(cards.map((card) => card.props["aria-label"])).toEqual(["Agent tab"]);
   expect(cards[0]!.findByProps({ className: "browser-side-card-who" }).children.join("")).toContain("Claude Code");
+  await act(async () => { cards[0]!.findByProps({ className: "browser-side-card-open" }).props.onClick(); });
+  expect(opened).toEqual([2]);
   await act(async () => { cards[0]!.findByProps({ "aria-label": "Close tab" }).props.onClick(); });
   expect(bridge.close).toHaveBeenCalledWith(2);
-  await act(async () => { renderer!.root.findByProps({ title: "Show in folder" }).props.onClick(); });
+  await act(async () => { renderer!.root.findByProps({ className: "browser-side-result" }).props.onClick(); });
   expect(bridge.reveal).toHaveBeenCalledWith("r1");
+});
+
+test("takes a card's picture again every few seconds while it is shown, and stops once it is gone", async () => {
+  pictures = 0;
+  install(stub(async () => view));
+  await render();
+  const first = pictures;
+  await act(async () => { jest.advanceTimersByTime(8_000); });
+  expect(pictures).toBe(first + 2);
+  await act(async () => renderer?.unmount());
+  renderer = undefined;
+  await act(async () => { jest.advanceTimersByTime(8_000); });
+  expect(pictures).toBe(first + 2);
+});
+
+test("drops a card's picture once three in a row do not come", async () => {
+  const bridge = stub(async () => view);
+  let answer: string | null = "data:image/jpeg;base64,AAAA";
+  bridge.thumbnail = async () => answer;
+  install(bridge);
+  await render();
+  const card = () => renderer!.root.findByProps({ className: "browser-side-card-shot" });
+  expect(card().findAllByType("img")).toHaveLength(1);
+  answer = null;
+  await act(async () => { jest.advanceTimersByTime(8_000); });
+  expect(card().findAllByType("img")).toHaveLength(1);
+  await act(async () => { jest.advanceTimersByTime(4_000); });
+  expect(card().findAllByType("img")).toHaveLength(0);
+});
+
+test("takes no card picture while the app is hidden", async () => {
+  pictures = 0;
+  install(stub(async () => view));
+  (globalThis.document as unknown as { visibilityState: string }).visibilityState = "hidden";
+  await render();
+  await act(async () => { jest.advanceTimersByTime(8_000); });
+  expect(pictures).toBe(0);
 });
 
 test("asks a Claude pane for its pages once per status, never again while the answer is empty", async () => {
   const fetch = jest.spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () => Response.json({ artifacts: [] }), globalThis.fetch));
   install(stub(async () => view));
   await render({ id: "w1:p1", agent: "claude", status: "working" });
+  // the cards' picture timer runs on; the pages are still asked for once, however long the panel stays
+  await act(async () => { jest.advanceTimersByTime(600_000); });
   expect(fetch).toHaveBeenCalledTimes(1);
-  expect(jest.getTimerCount()).toBe(0);
 });
 
 test("asks no pages for a pane that does not run Claude Code", async () => {

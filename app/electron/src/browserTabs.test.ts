@@ -75,7 +75,7 @@ describe.skipIf(!linux)("the built-in browser in Electron", () => {
     const electron = resolve(import.meta.dir, "..", "node_modules", "electron", "dist", "electron");
     if (!existsSync(electron)) throw new Error(`No Electron binary at ${electron}: bun install does not fetch it; run node node_modules/electron/install.js in app/electron`);
     const run = Bun.spawn([electron, "--no-sandbox", "--ozone-platform=headless", "--disable-gpu", "--host-resolver-rules=MAP rebind.test 127.0.0.1, MAP own.test 127.0.0.2, MAP late.test 127.0.0.1", join(build, "browserTabs.harness.js")], {
-      env: { ...process.env, OVIS_TEST_PORT: String(site.port), OVIS_TEST_OVIS_PORT: String(ovis.port), OVIS_TEST_OWN_PORT: String(own.port), ELECTRON_ENABLE_LOGGING: "" },
+      env: { ...process.env, OVIS_TEST_PORT: String(site.port), OVIS_TEST_OVIS_PORT: String(ovis.port), OVIS_TEST_OWN_PORT: String(own.port), ELECTRON_ENABLE_LOGGING: "", XDG_SESSION_TYPE: "x11", WAYLAND_DISPLAY: "" },
       stdout: "pipe",
       stderr: "ignore",
       timeout: 45_000,
@@ -105,6 +105,12 @@ describe.skipIf(!linux)("the built-in browser in Electron", () => {
     expect(result.late).toBe("ERR_BLOCKED_BY_CLIENT");
     expect(result.bigDownload).toBe("cancelled");
     expect(result.smallDownload).toBe("completed");
+    expect(result.hiddenThumbnail).toBe(true);
+    expect(result.hiddenMine).toBeNull();
+    expect(result.pictureResizes).toBe(0);
+    expect(result.pictureColours).toEqual(["rgb(0, 200, 0)", "rgb(0, 0, 200)"]);
+    expect(result.afterShown).toEqual({ picture: true, staged: false });
+    expect(result.stageGivenUp).toEqual({ had: true, hidden: true, picture: null });
     // the kept download is listed for the page's right panel, the cancelled one is not
     expect(result.results).toEqual([{ kind: "download", name: "small.bin", done: true, fromTab: true, profile: "mine" }]);
     expect(result.resultPath).toBe(true);

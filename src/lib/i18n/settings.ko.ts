@@ -133,7 +133,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "Auto ({language})": "자동 ({language})",
   "No OpenAI key: the browser's speech recognition is used": "OpenAI 키가 없어 브라우저의 음성 인식을 사용합니다",
   "Speech recognition": "음성 인식",
-  "Browser": "브라우저",
   "API key": "API 키",
   "Save an API key to use the mic": "마이크를 쓰려면 API 키를 저장하세요",
   "No OpenAI key saved": "저장된 OpenAI 키가 없습니다",
@@ -293,4 +292,8 @@ export const SETTINGS_KO: Record<string, string> = {
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "이 PC의 외부 알림 설정을 읽지 못했습니다({error}). 설정을 닫았다가 다시 여세요.",
   "Opens the page of every PC this device reaches through the relay, to check, join or forget them.": "이 기기가 릴레이로 연결하는 모든 PC의 페이지를 열어 확인하거나 참여하거나 지울 수 있어요.",
   "Manage|relayed connections": "관리",
+  "Built-in browser": "내장 브라우저",
+  "Blocked sites": "차단한 사이트",
+  "Opens web pages in tabs inside this app: they are listed under Browser in the sidebar and open beside the pane. Its tabs are signed in to nothing you use elsewhere, and an agent's tabs keep cookies of their own.": "웹페이지를 이 앱 안의 탭으로 엽니다. 탭은 사이드바의 '브라우저' 아래에 나오고 패널 옆에 열립니다. 이 탭들은 다른 곳의 로그인을 쓰지 않고, 에이전트 탭은 쿠키를 따로 씁니다.",
+  "The built-in browser never loads these sites or their subdomains, in your tabs or an agent's. One site per line.": "내장 브라우저는 이 사이트와 하위 도메인을 내 탭에서도 에이전트 탭에서도 열지 않습니다. 한 줄에 사이트 하나씩 적습니다.",
 };

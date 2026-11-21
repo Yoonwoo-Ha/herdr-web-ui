@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decide } from "../../../shared/browser-policy.ts";
-import { debuggingSwitch, ownAddresses, readBrowserState } from "./browserState.ts";
+import { debuggingSwitch, ownAddresses, readBrowserState, stageSupported } from "./browserState.ts";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -52,5 +52,15 @@ describe("the built-in browser's state", () => {
     expect(debuggingSwitch((name) => name === "remote-debugging-port")).toBe(true);
     expect(debuggingSwitch((name) => name === "remote-debugging-pipe")).toBe(true);
     expect(debuggingSwitch(() => false)).toBe(false);
+  });
+});
+
+describe("drawing tabs nobody looks at off the screen", () => {
+  it("is done on Linux under X11 only", () => {
+    expect(stageSupported("linux", { XDG_SESSION_TYPE: "x11", DISPLAY: ":0" })).toBe(true);
+    expect(stageSupported("linux", { XDG_SESSION_TYPE: "wayland" })).toBe(false);
+    expect(stageSupported("linux", { WAYLAND_DISPLAY: "wayland-0" })).toBe(false);
+    expect(stageSupported("darwin", {})).toBe(false);
+    expect(stageSupported("win32", {})).toBe(false);
   });
 });

@@ -65,7 +65,6 @@ export const DEVICES_KO: Record<string, string> = {
   "A public HTTPS address for this PC through a Portal relay. Anyone on the internet can open it, so it needs an access token.": "Portal 릴레이를 거치는 이 PC의 공개 HTTPS 주소입니다. 인터넷의 누구나 열 수 있으므로 접근 토큰이 필요합니다.",
   "Portal serves this PC": "Portal이 이 PC를 서빙하고 있습니다",
   "Open it on your phone and sign in with the access token, or pair the phone with a pairing code.": "폰에서 열고 접근 토큰으로 로그인하거나, 페어링 코드로 폰을 페어링하세요.",
-  "Stop": "중지",
   "Stopping…": "중지 중…",
   "Recovering…": "복구 중…",
   "A relay you trust, from portal list: it holds the address's certificate, so one set up to intercept could read the traffic.": "portal list에 나오는 릴레이 중 신뢰하는 것을 쓰세요. 릴레이는 이 주소의 인증서를 가지므로, 가로채도록 설정된 릴레이는 트래픽을 읽을 수 있습니다.",

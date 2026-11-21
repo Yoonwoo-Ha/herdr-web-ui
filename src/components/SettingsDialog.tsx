@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { ALargeSmall, AppWindow, ArrowDownUp, ArrowLeftRight, ArrowLeft, AudioLines, Bell, Bot, Box, Brain, ChevronLeft, ChevronRight, CircleDot, ClipboardCopy, ClipboardPaste, Command, CornerDownLeft, ExternalLink as ExternalLinkIcon, FileClock, FilePen, Filter, FlaskConical, Gauge, Globe, Image as ImageIcon, Inbox, Info, Keyboard, Languages, Layers, ListCollapse, ListTree, Lock, MessageSquare, MessageSquareReply, MessagesSquare, Mic, Monitor, Mouse, MousePointer2, MoveHorizontal, Palette, PanelLeft, PanelRight, Plus, Puzzle, Rows3, Search, Send, Server, Shapes, Smartphone, Sparkles, SquareTerminal, Star, SunMoon, Tag, Tags, TextCursorInput, Trash2, Type, Volume2, WandSparkles, WrapText, X, type LucideIcon } from "lucide-react";
+import { ALargeSmall, AppWindow, ArrowDownUp, ArrowLeftRight, ArrowLeft, AudioLines, Ban, Bell, Bot, Box, Brain, ChevronLeft, ChevronRight, CircleDot, ClipboardCopy, ClipboardPaste, Command, CornerDownLeft, ExternalLink as ExternalLinkIcon, FileClock, FilePen, Filter, FlaskConical, Gauge, Globe, Image as ImageIcon, Inbox, Info, Keyboard, Languages, Layers, ListCollapse, ListTree, Lock, MessageSquare, MessageSquareReply, MessagesSquare, Mic, Monitor, Mouse, MousePointer2, MoveHorizontal, Palette, PanelLeft, PanelRight, Plus, Puzzle, Rows3, Search, Send, Server, Shapes, Smartphone, Sparkles, SquareTerminal, Star, SunMoon, Tag, Tags, TextCursorInput, Trash2, Type, Volume2, WandSparkles, WrapText, X, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
 
@@ -86,6 +86,9 @@ import { requestedSettingsPage, requestSettingsPage, type SettingsPageId } from 
 import { currentSettingsPage } from "../lib/deepLink.ts";
 import { HERDR_WINDOW_CHOICES, type HerdrWindowChoice } from "../lib/herdrWindow.ts";
 import { canReuseExternalLinkTab, ExternalLink } from "../lib/externalLink.ts";
+import { hasDesktopBrowser } from "../lib/desktopBrowser.ts";
+import { browserBlockedSites } from "../../shared/browser-policy.ts";
+import "./BrowserPanel.css";
 
 export interface SettingsDialogProps {
   open: boolean;
@@ -624,6 +627,7 @@ function ChatPage() {
           <Segmented label={t("Web links")} value={settings.webLinks} onChange={(webLinks) => update({ webLinks })} options={WEB_LINK_TARGETS.map((webLinks) => ({ value: webLinks, label: webLinks === "panel" ? t(filePanelAvailable ? "Beside the pane" : "In the app") : t("In a new tab") }))} />
         </SettingsRow>
         <LinkBrowserRow />
+        {hasDesktopBrowser() && <BuiltInBrowserRows />}
       </SettingsGroup>
 
       <VoiceMain />
@@ -654,6 +658,37 @@ function ChatPage() {
       </SettingsFold>
     </SettingsBare.Provider>
   );
+}
+
+/** The desktop app's built-in browser (app/electron/src/browserTabs.ts): only the desktop app offers it. */
+function BuiltInBrowserRows() {
+  const t = useT();
+  const { settings, update } = useSettings();
+  // what is typed in the blocked-sites box is kept when it goes away too (Settings closed with Escape before a blur);
+  // a box only replaced (the list saved, or reset to its default) has no edit of its own to keep
+  const update$ = useRef(update);
+  update$.current = update;
+  const holdBlockedBox = useCallback((box: HTMLTextAreaElement | null) => {
+    if (box === null) return;
+    return () => {
+      if (box.dataset["edited"] === "true") update$.current({ browserBlockedSites: browserBlockedSites(box.value.split("\n")) });
+    };
+  }, []);
+  return <>
+    <SettingsRow icon={AppWindow} label={t("Built-in browser")} description={t("Opens web pages in tabs inside this app: they are listed under Browser in the sidebar and open beside the pane. Its tabs are signed in to nothing you use elsewhere, and an agent's tabs keep cookies of their own.")} reset={["builtInBrowser"]}>
+      <Toggle label={t("Built-in browser")} checked={settings.builtInBrowser} onChange={(builtInBrowser) => update({ builtInBrowser })} />
+    </SettingsRow>
+    {settings.builtInBrowser && <SettingsRow icon={Ban} label={t("Blocked sites")} description={t("The built-in browser never loads these sites or their subdomains, in your tabs or an agent's. One site per line.")} wide reset={["browserBlockedSites"]}>
+      <textarea ref={holdBlockedBox} key={settings.browserBlockedSites.join("\n")} className="input settings-blocked-sites" rows={4} aria-label={t("Blocked sites")} placeholder="bank.example" defaultValue={settings.browserBlockedSites.join("\n")}
+        autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} onInput={(event) => { event.currentTarget.dataset["edited"] = "true"; }} onBlur={(event) => {
+          // what is kept, shown as kept: lines that are not a site are dropped from the box too
+          const kept = browserBlockedSites(event.currentTarget.value.split("\n"));
+          event.currentTarget.value = kept.join("\n");
+          delete event.currentTarget.dataset["edited"];
+          update({ browserBlockedSites: kept });
+        }} />
+    </SettingsRow>}
+  </>;
 }
 
 function TerminalPage({ keyBarButtonRef, onEditKeyBar, picturesByDefault }: { keyBarButtonRef: RefObject<HTMLButtonElement | null>; onEditKeyBar: () => void; picturesByDefault: boolean }) {

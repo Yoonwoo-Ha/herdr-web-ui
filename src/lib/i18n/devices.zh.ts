@@ -65,7 +65,6 @@ export const DEVICES_ZH: Record<string, string> = {
   "A public HTTPS address for this PC through a Portal relay. Anyone on the internet can open it, so it needs an access token.": "经由 Portal 中继为此 PC 提供的公开 HTTPS 地址。互联网上任何人都能打开它，因此需要访问令牌。",
   "Portal serves this PC": "Portal 正在为此 PC 提供服务",
   "Open it on your phone and sign in with the access token, or pair the phone with a pairing code.": "在手机上打开它并用访问令牌登录，或用配对码配对手机。",
-  "Stop": "停止",
   "Stopping…": "正在停止…",
   "Recovering…": "正在恢复…",
   "A relay you trust, from portal list: it holds the address's certificate, so one set up to intercept could read the traffic.": "使用 portal list 中你信任的中继：中继持有该地址的证书，因此被设置为拦截的中继可以读取流量。",

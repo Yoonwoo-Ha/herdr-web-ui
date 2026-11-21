@@ -16,7 +16,6 @@ export const MY_MACHINES_KO: Record<string, string> = {
   "It joined a moment ago and is getting ready. It turns ready by itself.": "방금 참가해 준비하는 중입니다. 기다리면 저절로 준비됨으로 바뀝니다.",
   "Removed {when} on {device}. Its terminals keep running on the machine.": "{when} {device}에서 제거했습니다. 터미널은 머신에서 계속 실행됩니다.",
   "No machines yet": "아직 머신이 없습니다",
-  "Open {name}": "{name} 열기",
   "Try to reach {name} again": "{name}에 다시 연결 시도",
   "Details of {name}": "{name} 자세히 보기",
   "Ovis does not start or restart the engine: start herdr or herdr-core on the machine.": "Ovis는 엔진을 시작하거나 다시 시작하지 않습니다. 머신에서 herdr 또는 herdr-core를 직접 시작하세요.",

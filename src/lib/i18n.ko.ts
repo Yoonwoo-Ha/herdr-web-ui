@@ -36,6 +36,7 @@ const BASE: Record<string, string> = {
   "Open app.ovis.sh": "app.ovis.sh 열기",
   "A key may not have reached the terminal: the connection ended before it was confirmed.": "키가 터미널에 닿지 않았을 수 있습니다: 확인되기 전에 연결이 끊겼습니다.",
   "Open PC": "PC 열기",
+  "Open {name}": "{name} 열기",
   "View only": "보기 전용",
   "Not pasted: the file's path holds a line break, which the terminal would take as Enter.": "붙여넣지 않았습니다: 파일 경로에 줄바꿈이 있어 터미널이 Enter로 받아들입니다.",
   "Attach files": "파일 첨부",
@@ -643,6 +644,18 @@ const BASE: Record<string, string> = {
   "From every workspace.": "모든 워크스페이스에서 모아요.",
   "Pick a folder to start in.": "시작할 폴더를 골라요.",
   "Show QR code": "QR 코드 보기",
+  "Address": "주소",
+  "Agent's tab": "에이전트 탭",
+  "An agent is using this tab": "에이전트가 쓰는 중",
+  "Take control": "제어 가져오기",
+  "You have control · the agent waits": "내가 제어 중 · 에이전트는 멈춤",
+  "Forward": "앞으로",
+  "Type an address": "주소 입력",
+  "This address can't be opened in the built-in browser.": "이 주소는 내장 브라우저에서 열 수 없습니다.",
+  "Type an address to open it in a tab of your own. Its cookies stay apart from the agents' tabs.": "주소를 입력하면 내 탭으로 열립니다. 쿠키는 에이전트 탭과 따로 보관됩니다.",
+  "Browser": "브라우저",
+  "Reload page": "페이지 새로고침",
+  "Stop": "중지",
 };
 
 export const KO_PARTS: Record<string, Record<string, string>> = {

@@ -168,6 +168,7 @@ run_script scripts/file-viewer-page-scripts-browser-qa.ts
 run_script scripts/text-file-edit-regression.ts
 run_script scripts/web-panel-mobile-regression.ts
 run_script scripts/palette-local-page-demo-regression.ts
+run_script scripts/built-in-browser-demo-regression.ts
 run_script scripts/pwa-update-browser-qa.ts
 run_script scripts/install-state-demo-regression.ts
 run_script scripts/revision-bound-update-demo-regression.ts

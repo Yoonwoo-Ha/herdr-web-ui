@@ -40,6 +40,7 @@ const BASE: Record<string, string> = {
   "Open app.ovis.sh": "打开 app.ovis.sh",
   "A key may not have reached the terminal: the connection ended before it was confirmed.": "按键可能未送达终端：确认之前连接已断开。",
   "Open PC": "打开 PC",
+  "Open {name}": "打开 {name}",
   "View only": "仅查看",
   "Not pasted: the file's path holds a line break, which the terminal would take as Enter.": "未粘贴：文件路径中含有换行，终端会将其当作 Enter。",
   "Attach files": "附加文件",
@@ -650,6 +651,18 @@ const BASE: Record<string, string> = {
   "From every workspace.": "来自所有工作区。",
   "Pick a folder to start in.": "选择要启动的文件夹。",
   "Show QR code": "显示二维码",
+  "Address": "地址",
+  "Agent's tab": "Agent 的标签页",
+  "An agent is using this tab": "Agent 正在使用",
+  "Take control": "接管控制",
+  "You have control · the agent waits": "由你控制 · Agent 暂停",
+  "Forward": "前进",
+  "Type an address": "输入地址",
+  "This address can't be opened in the built-in browser.": "此地址无法在内置浏览器中打开。",
+  "Type an address to open it in a tab of your own. Its cookies stay apart from the agents' tabs.": "输入地址即可在你自己的标签页中打开。其 Cookie 与 Agent 的标签页分开保存。",
+  "Browser": "浏览器",
+  "Reload page": "重新加载页面",
+  "Stop": "停止",
 };
 
 export const ZH_PARTS: Record<string, Record<string, string>> = {

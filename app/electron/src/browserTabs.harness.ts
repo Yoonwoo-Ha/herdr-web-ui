@@ -1,5 +1,5 @@
 // Run by browserTabs.test.ts as an Electron main process: drives BrowserTabs against the test's server and prints what happened.
-import { app, BrowserWindow, session, type WebContents } from "electron";
+import { app, BrowserWindow, session, type WebContents, screen, nativeImage } from "electron";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,7 +22,8 @@ void app.whenReady().then(async () => {
   const tabs = new BrowserTabs(() => window, { blocked: ["b.localhost"], ovis: [{ host: "localhost", port: ovisPort }] }, join(app.getPath("userData"), "downloads"), () => {}, () => ["127.0.0.2"], (url) => { for (const listener of heard) listener(url); }, 1024);
   const reached = (url: string) => new Promise<void>((done) => heard.push((seen) => { if (seen === url) done(); }));
   const opened: WebContents[] = [];
-  app.on("web-contents-created", (_event, contents) => opened.push(contents));
+  // a tab's page only: windows (the stage that draws a tab nobody looks at among them) use the default session
+  app.on("web-contents-created", (_event, contents) => { if (contents.session !== session.defaultSession) opened.push(contents); });
   const tab = async (url: string, profile: BrowserProfile) => {
     const before = opened.length;
     const id = tabs.open(url, profile);
@@ -84,6 +85,40 @@ void app.whenReady().then(async () => {
   const waitingTab = await tab(`${A}/blank`, "mine");
   result["bigDownload"] = await downloadState(`${A}/big`);
   result["smallDownload"] = await downloadState(`${A}/small`);
+  // an agent's tab nobody has shown still has a picture for the right panel, under a newer one too; a person's own
+  // tab has one only while shown
+  const pictured = await tab(`${A}/blank`, "agent");
+  const cover = await tab(`${A}/blank`, "agent");
+  await pictured.contents.executeJavaScript("window.__resizes = 0; addEventListener('resize', () => window.__resizes++); true");
+  result["hiddenThumbnail"] = (await tabs.thumbnail(pictured.id))?.startsWith("data:image/png") ?? false;
+  result["hiddenMine"] = await tabs.thumbnail(waitingTab.id);
+  // a picture never resizes the page an agent works on
+  result["pictureResizes"] = await pictured.contents.executeJavaScript("window.__resizes");
+  // the page as it is now, not the frame from its last picture: each colour shows in the picture taken after it
+  const colours: string[] = [];
+  for (const colour of ["rgb(0, 200, 0)", "rgb(0, 0, 200)"]) {
+    await pictured.contents.executeJavaScript(`document.documentElement.style.background = document.body.style.background = "${colour}"; true`);
+    const shot = await tabs.thumbnail(pictured.id);
+    const pixels = shot === null ? null : nativeImage.createFromDataURL(shot).toBitmap();
+    colours.push(pixels === null ? "none" : `rgb(${pixels[2]}, ${pixels[1]}, ${pixels[0]})`);
+  }
+  result["pictureColours"] = colours;
+  // shown, hidden again, then pictured: it is on the stage only while its picture is taken
+  tabs.show(cover.id, { x: 0, y: 0, width: 400, height: 300 });
+  tabs.hide();
+  result["afterShown"] = {
+    picture: (await tabs.thumbnail(cover.id))?.startsWith("data:image/png") ?? false,
+    staged: BrowserWindow.getAllWindows().some((found) => !found.isFocusable() && found.contentView.children.length > 0),
+  };
+  tabs.close(cover.id);
+  // a window manager that puts the stage on a screen: the stage is given up (after its move), the app lives on
+  const stage = BrowserWindow.getAllWindows().find((found) => !found.isFocusable());
+  const display = screen.getPrimaryDisplay().bounds;
+  stage?.setPosition(display.x, display.y);
+  stage?.emit("move");
+  await new Promise((done) => setTimeout(done, 100));
+  result["stageGivenUp"] = { had: stage !== undefined, hidden: stage?.isVisible() === false, picture: await tabs.thumbnail(pictured.id) };
+  tabs.close(pictured.id);
   result["results"] = tabs.results().map(({ kind, name, done, tab: from, profile }) => ({ kind, name, done, fromTab: from === waitingTab.id, profile }));
   result["resultPath"] = tabs.results().every(({ id, done }) => (tabs.resultPath(id) !== null) === done);
   // a site blocked while a request's name resolves: the request is decided again by the policy as it is then

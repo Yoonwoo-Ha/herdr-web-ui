@@ -133,7 +133,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Auto ({language})": "自动（{language}）",
   "No OpenAI key: the browser's speech recognition is used": "未设置 OpenAI 密钥，将使用浏览器的语音识别",
   "Speech recognition": "语音识别",
-  "Browser": "浏览器",
   "API key": "API 密钥",
   "Save an API key to use the mic": "保存 API 密钥后才能使用麦克风",
   "No OpenAI key saved": "未保存 OpenAI 密钥",
@@ -293,4 +292,8 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "无法读取此 PC 的外部提醒设置（{error}）。请关闭设置后重新打开。",
   "Opens the page of every PC this device reaches through the relay, to check, join or forget them.": "打开此设备通过中继连接的所有电脑的页面，可以检查、加入或移除它们。",
   "Manage|relayed connections": "管理",
+  "Built-in browser": "内置浏览器",
+  "Blocked sites": "屏蔽的网站",
+  "Opens web pages in tabs inside this app: they are listed under Browser in the sidebar and open beside the pane. Its tabs are signed in to nothing you use elsewhere, and an agent's tabs keep cookies of their own.": "在此应用内的标签页中打开网页：标签页列在侧边栏的“浏览器”下，并在窗格旁打开。这些标签页不使用你在别处的登录，Agent 的标签页使用各自的 Cookie。",
+  "The built-in browser never loads these sites or their subdomains, in your tabs or an agent's. One site per line.": "内置浏览器不会在你的标签页或 Agent 的标签页中加载这些网站及其子域名。每行一个网站。",
 };

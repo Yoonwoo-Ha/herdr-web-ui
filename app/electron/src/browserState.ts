@@ -57,3 +57,12 @@ export function ownAddresses(interfaces: Record<string, { address: string; inter
 export function hostForm(address: string): string {
   return canonicalHost(address.includes(":") ? `[${address}]` : address);
 }
+
+/**
+ * Whether tabs nobody looks at may be drawn off the screen (browserTabs.ts's stage): Linux under X11 only so far. macOS
+ * and Windows may list such a window (Mission Control, Alt+Tab) or stop painting it as occluded, until checked there;
+ * Wayland does not place a window off the screen.
+ */
+export function stageSupported(platform: string, env: Record<string, string | undefined>): boolean {
+  return platform === "linux" && env["XDG_SESSION_TYPE"] !== "wayland" && !env["WAYLAND_DISPLAY"];
+}
