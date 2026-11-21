@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -698,11 +698,11 @@ describe("ci.yml", () => {
   });
 
   it("gives a job only a condition that a push run meets", () => {
-    const met = [undefined, "needs.changes.outputs.code == 'true'", "always()"];
+    const met = [undefined, "needs.changes.outputs.code == 'true'", "needs.changes.outputs.code == 'true' && needs.changes.outputs.browser != 'false'", "always()"];
     const conditional = Object.entries(ci.jobs).filter(([, job]) => !met.includes(job.if)).map(([id, job]) => `${id}: ${job.if}`);
     expect(conditional, "A push run of main may skip these jobs, and a skipped job is not a passed one: a Release run would then never take main's run. Give the job a condition a push always meets, or teach scripts/release-ci-reuse.ts which jobs a push run skips").toEqual([]);
     expect(ci.jobs["changes"]!.if).toBeUndefined();
-    expect(ci.jobs["changes"]!.outputs).toMatchObject({ code: "${{ steps.filter.outputs.code }}", draft: "${{ steps.filter.outputs.draft }}" });
+    expect(ci.jobs["changes"]!.outputs).toMatchObject({ code: "${{ steps.filter.outputs.code }}", browser: "${{ steps.filter.outputs.browser }}", draft: "${{ steps.filter.outputs.draft }}" });
   });
 
   const HOSTED_ONLY_READS = [
@@ -831,6 +831,8 @@ describe("ci.yml", () => {
       git("init", "-q");
       git("commit", "-q", "--allow-empty", "-m", "code");
       const base = git("rev-parse", "HEAD");
+      mkdirSync(join(dir, "scripts"));
+      copyFileSync(join(root, "scripts/ci-browser-reach.sh"), join(dir, "scripts/ci-browser-reach.sh"));
       mkdirSync(join(dir, "docs"));
       writeFileSync(join(dir, "docs/guide.md"), "# Guide\n");
       git("add", "docs/guide.md");
@@ -842,21 +844,35 @@ describe("ci.yml", () => {
         expect(result.code).toBe(0);
         return readFileSync(output, "utf8");
       };
-      for (const event of ["push", "workflow_dispatch"]) expect(await decided({ EVENT_NAME: event, PR_DRAFT: "", BASE_SHA: "" })).toBe("draft=false\ncode=true\n");
-      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: base })).toBe("draft=false\ncode=false\n");
-      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "true", BASE_SHA: base })).toBe("draft=true\ncode=false\n");
+      for (const event of ["push", "workflow_dispatch"]) expect(await decided({ EVENT_NAME: event, PR_DRAFT: "", BASE_SHA: "" })).toBe("draft=false\ncode=true\nbrowser=true\n");
+      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: base })).toBe("draft=false\ncode=false\nbrowser=true\n");
+      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "true", BASE_SHA: base })).toBe("draft=true\ncode=false\nbrowser=true\n");
 
       const docsCommit = git("rev-parse", "HEAD");
       mkdirSync(join(dir, "server/fixtures"), { recursive: true });
       writeFileSync(join(dir, "server/fixtures/prompt.txt"), "Continue?\n");
       git("add", "server/fixtures/prompt.txt");
       git("commit", "-q", "-m", "update prompt fixture");
-      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: docsCommit })).toBe("draft=false\ncode=true\n");
+      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: docsCommit })).toBe("draft=false\ncode=true\nbrowser=true\n");
 
       const fixtureCommit = git("rev-parse", "HEAD");
       git("mv", "server/fixtures/prompt.txt", "docs/prompt.txt");
       git("commit", "-q", "-m", "move prompt to docs");
-      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: fixtureCommit })).toBe("draft=false\ncode=true\n");
+      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: fixtureCommit })).toBe("draft=false\ncode=true\nbrowser=true\n");
+
+      const moved = git("rev-parse", "HEAD");
+      mkdirSync(join(dir, "server"), { recursive: true });
+      writeFileSync(join(dir, "server/store.test.ts"), "export {};\n");
+      git("add", "server/store.test.ts");
+      git("commit", "-q", "-m", "a unit test");
+      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: moved })).toBe("draft=false\ncode=true\nbrowser=false\n");
+      const tested = git("rev-parse", "HEAD");
+      mkdirSync(join(dir, "src"));
+      writeFileSync(join(dir, "src/App.tsx"), "export {};\n");
+      git("add", "src/App.tsx");
+      git("commit", "-q", "-m", "client code");
+      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: tested })).toBe("draft=false\ncode=true\nbrowser=true\n");
+      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: moved })).toBe("draft=false\ncode=true\nbrowser=true\n");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -44,6 +44,7 @@ jobs:
       actions: read
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      browser: ${{ steps.filter.outputs.browser }}
       draft: ${{ steps.filter.outputs.draft }}
       linux: ${{ steps.route.outputs.linux }}
       fast: ${{ steps.route.outputs.fast }}
@@ -125,11 +126,13 @@ jobs:
           # not skip release validation.
           if [ "$EVENT_NAME" != "pull_request" ] || [ -z "$BASE_SHA" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "browser=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           CHANGED=$(git diff --no-renames --name-only "$BASE_SHA" HEAD || echo "")
           if [ -z "$CHANGED" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "browser=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if grep -q '^server/fixtures/' <<< "$CHANGED" || grep -qvE '^docs/|\.(md|txt)$|^LICENSE$|^\.github/ISSUE_TEMPLATE/' <<< "$CHANGED"; then
@@ -138,6 +141,9 @@ jobs:
             echo "code=false" >> "$GITHUB_OUTPUT"
             echo "Only documentation changes detected, skipping heavy tests"
           fi
+          # Only a pull request may skip the Browser regression jobs, and only when none of its paths can
+          # reach them (scripts/ci-browser-reach.sh, which keeps them for any path it does not name).
+          printf '%s\n' "$CHANGED" | bash scripts/ci-browser-reach.sh >> "$GITHUB_OUTPUT"
   windows-install:
     name: Native Windows install
     needs: changes
@@ -440,7 +446,7 @@ jobs:
   browser-main:
     name: Browser regression (ui-regression)
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.browser != 'false'
     runs-on: ${{ inputs.hosted_only && 'ubuntu-24.04' || fromJSON(needs.changes.outputs.linux) }}
     # a wait for a slot counts against it
     timeout-minutes: 50
@@ -500,7 +506,7 @@ jobs:
   browser-other:
     name: Browser regression (other scripts${{ strategy.job-total > 1 && format(' {0}/{1}', matrix.shard, strategy.job-total) || '' }})
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.browser != 'false'
     runs-on: ${{ inputs.hosted_only && 'ubuntu-24.04' || fromJSON(needs.changes.outputs.linux) }}
     # A hosted runner has 4 CPUs: one job running every script there took about 28 minutes, and
     # frame-timing checks failed under the load. So hosted runs split the scripts over four jobs
@@ -600,6 +606,7 @@ jobs:
       - name: Check results
         env:
           CODE: ${{ needs.changes.outputs.code }}
+          BROWSER: ${{ needs.changes.outputs.browser }}
           DRAFT: ${{ needs.changes.outputs.draft }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
           BROWSER_MAIN_RESULT: ${{ needs.browser-main.result }}
@@ -618,6 +625,16 @@ jobs:
           if [ "$INTEGRATION_RESULT" != "success" ]; then
             echo "Integration tests failed"
             exit 1
+          fi
+          # A change that cannot reach the browser jobs skipped them (Detect changes): only a skip counts
+          # then, never a job that failed or was cancelled.
+          if [ "$BROWSER" = "false" ]; then
+            if [ "$BROWSER_MAIN_RESULT" != "skipped" ] || [ "$BROWSER_OTHER_RESULT" != "skipped" ]; then
+              echo "Browser regression was to be skipped and ended as $BROWSER_MAIN_RESULT and $BROWSER_OTHER_RESULT"
+              exit 1
+            fi
+            echo "Integration tests passed; Browser regression skipped: the change cannot reach it"
+            exit 0
           fi
           if [ "$BROWSER_MAIN_RESULT" != "success" ]; then
             echo "Browser regression (ui-regression) failed"
