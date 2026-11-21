@@ -815,6 +815,18 @@ describe("a screen engine's size, slot and hold", () => {
     expect(freed).toBe(2);
   });
 
+  it("answers a size report and bounds the mouse by the grid a program switched to, not the size it was given", () => {
+    const { engine, replies } = screenEngine(80, 24);
+    const click = () => text(engine.encodeMouse({ action: "press", button: "left", col: 100, row: 0 }));
+    engine.resize(80, 24, 8, 16);
+    engine.write(bytesOf("\x1b[?40h\x1b[?3h\x1b[?1000h\x1b[?1006h\x1b[18t"));
+    expect({ replies, click: click() }).toEqual({ replies: ["\x1b[8;24;132t"], click: "\x1b[<0;101;1M" });
+    // back to 80 columns: column 101 is off the grid again
+    engine.write(bytesOf("\x1b[?3l\x1b[18t"));
+    expect({ replies, click: click() }).toEqual({ replies: ["\x1b[8;24;132t", "\x1b[8;24;80t"], click: "" });
+    engine.dispose();
+  });
+
   it("begins and ends a hold through setMode(2026) as the program's own bytes would, each reported once", () => {
     const { engine, holds } = screenEngine(20, 2);
     const row = () => rowText(screenRows(engine).get(0)!);

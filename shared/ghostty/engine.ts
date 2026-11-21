@@ -130,7 +130,7 @@ export const ENGINE_ENUMS = {
   GhosttyResult: ["OUT_OF_SPACE", "NO_VALUE"],
   GhosttyTerminalOption: ["USERDATA", "WRITE_PTY", "BELL", "SIZE", "COLOR_FOREGROUND", "COLOR_BACKGROUND", "COLOR_CURSOR", "COLOR_PALETTE",
     "KITTY_IMAGE_STORAGE_LIMIT", "CLIPBOARD_WRITE", "SCROLLBACK_MAX_BYTES", "SCROLLBACK_MAX_LINES", "MODE_DEFAULT", "MODE", "RENDER_HOLD"],
-  GhosttyTerminalData: ["ACTIVE_SCREEN", "KITTY_KEYBOARD_FLAGS", "SCROLLBAR", "SCROLLBACK_ROWS", "KITTY_GRAPHICS", "MODE"],
+  GhosttyTerminalData: ["COLS", "ROWS", "ACTIVE_SCREEN", "KITTY_KEYBOARD_FLAGS", "SCROLLBAR", "SCROLLBACK_ROWS", "KITTY_GRAPHICS", "MODE"],
   GhosttyTerminalScreen: ["ALTERNATE"],
   GhosttyTerminalScrollViewportTag: ["BOTTOM", "DELTA"],
   GhosttyRenderStateData: ["DIRTY", "ROW_ITERATOR", "CURSOR_VISUAL_STYLE", "CURSOR_VISIBLE", "CURSOR_VIEWPORT_HAS_VALUE",
@@ -643,10 +643,11 @@ export class GhosttyEngine {
       const { userdata, slots } = module.connect({
         reply: (ptr, len) => this.callback(() => this.events?.onReply?.(new Uint8Array(this.x.memory.buffer, ptr, len).slice())),
         size: (out) => {
+          const grid = this.grid();
           const dv = this.view();
           const report = this.f.GhosttySizeReportSize;
-          dv.setUint16(out + report.rows, this.size.rows, true);
-          dv.setUint16(out + report.columns, this.size.cols, true);
+          dv.setUint16(out + report.rows, grid.rows, true);
+          dv.setUint16(out + report.columns, grid.cols, true);
           dv.setUint32(out + report.cell_width, this.size.cellW, true);
           dv.setUint32(out + report.cell_height, this.size.cellH, true);
           return true;
@@ -843,6 +844,19 @@ export class GhosttyEngine {
     this.view().setUint32(this.scratch, 0, true);
     this.check(this.x.ghostty_terminal_get(this.terminal, key, this.scratch), `terminal_get ${key}`);
     return this.view().getUint32(this.scratch, true);
+  }
+
+  /**
+   * The grid the terminal has now, which a program can switch from the size it was given (DECCOLM: 80 or 132
+   * columns), or that size where the module cannot say. It never throws: the module's size callback asks it.
+   */
+  private grid(): { cols: number; rows: number } {
+    const read = (key: number): number | undefined => {
+      this.view().setUint16(this.scratch, 0, true);
+      return this.x.ghostty_terminal_get(this.terminal, key, this.scratch) === 0 ? this.view().getUint16(this.scratch, true) : undefined;
+    };
+    const data = this.e.GhosttyTerminalData;
+    return { cols: read(data.COLS) ?? this.size.cols, rows: read(data.ROWS) ?? this.size.rows };
   }
 
   modes(): EngineModes {
@@ -1287,11 +1301,12 @@ export class GhosttyEngine {
       x.ghostty_mouse_encoder_setopt_from_terminal(encoder, this.terminal);
       // the encoder takes surface pixels: a pane-local cell is its top-left pixel
       const cellW = Math.max(1, this.size.cellW), cellH = Math.max(1, this.size.cellH);
+      const grid = this.grid();
       const dv = this.view();
       const size = this.scratch + AT.mouseSize, s = this.f.GhosttyMouseEncoderSize;
       dv.setUint32(size + s.size, this.module.sizes.GhosttyMouseEncoderSize, true);
-      dv.setUint32(size + s.screen_width, this.size.cols * cellW, true);
-      dv.setUint32(size + s.screen_height, this.size.rows * cellH, true);
+      dv.setUint32(size + s.screen_width, grid.cols * cellW, true);
+      dv.setUint32(size + s.screen_height, grid.rows * cellH, true);
       dv.setUint32(size + s.cell_width, cellW, true);
       dv.setUint32(size + s.cell_height, cellH, true);
       for (const padding of [s.padding_top, s.padding_bottom, s.padding_left, s.padding_right]) dv.setUint32(size + padding, 0, true);
