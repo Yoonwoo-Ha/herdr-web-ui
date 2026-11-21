@@ -6,7 +6,7 @@
  *                                                           (OVIS_HERDR_BIN picks the herdr binary)
  *   bun run scripts/generate-protocol-types.ts --refresh-hc  # re-read herdr-core's from `hc schema`
  *                                                           (OVIS_HC_BIN picks the hc binary; use the
- *                                                           version ci.yml's herdr-core-live job pins)
+ *                                                           newest version in the HC_RELEASES list of ci.yml's herdr-core-live job)
  *
  * - String enums become unions widened with `(string & {})`. herdr gives no
  *   stability guarantee, so a value from a future version must still flow through

@@ -243,6 +243,9 @@ jobs:
   herdr-core-live:
     # hc is pinned by version and sha256 from herdr-core's
     # release server, and only this step sees it: a failed download or checksum fails the job.
+    # Every supported hc runs in this one job: the oldest (0.1.17, what the installer and the desktop
+    # app ship) and the newest (0.1.18, what the generated types come from). It is not a matrix:
+    # a matrix would rename the job's check run, which scripts/release-ci-reuse.ts looks up by name.
     name: herdr-core live contract
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -251,8 +254,10 @@ jobs:
     timeout-minutes: 10
     env:
       HERDR_TEST_MODE: unit
-      HC_VERSION: 0.1.14
-      HC_SHA256: e9dbabdead0ce0ce3de51b6f54cc9549efedbb41b2f8448b6932ab0d1442343e
+      # "<version> <sha256 of its linux-x86_64 archive>", one per line: a new hc is added by adding its line
+      HC_RELEASES: |-
+        0.1.17 82ec44043f6894bfdb716b979b87cda43fd7fa46b0104e7b7bd93e64d1a9b877
+        0.1.18 5b2f97cb4b2a9d7a6b2cc5942628203ed9fbb7cc0c2b4b09ad8a6f5648e246b7
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -271,28 +276,43 @@ jobs:
         id: hc-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/hc.tar.gz
-          key: hc-${{ env.HC_VERSION }}-linux-x86_64-${{ env.HC_SHA256 }}
+          path: ${{ runner.temp }}/hc-archives
+          key: hc-linux-x86_64-${{ hashFiles('.github/workflows/ci.yml') }}
       - name: Download hc
         if: needs.changes.outputs.draft != 'true' && steps.hc-cache.outputs.cache-hit != 'true'
-        run: curl -fsSL --retry 3 "https://releases.herdr.dev/core/$HC_VERSION/herdr-core-linux-x86_64.tar.gz" -o "$RUNNER_TEMP/hc.tar.gz"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hc-archives"
+          while read -r version sha256; do
+            [ -n "$version" ] || continue
+            curl -fsSL --retry 3 "https://releases.herdr.dev/core/$version/herdr-core-linux-x86_64.tar.gz" -o "$RUNNER_TEMP/hc-archives/$version.tar.gz"
+          done <<< "$HC_RELEASES"
       - name: Verify and unpack hc
         if: needs.changes.outputs.draft != 'true'
         run: |
           set -euo pipefail
-          echo "$HC_SHA256  $RUNNER_TEMP/hc.tar.gz" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/hc"
-          tar -xzf "$RUNNER_TEMP/hc.tar.gz" -C "$RUNNER_TEMP/hc" herdr-core
+          while read -r version sha256; do
+            [ -n "$version" ] || continue
+            echo "$sha256  $RUNNER_TEMP/hc-archives/$version.tar.gz" | sha256sum -c -
+            mkdir -p "$RUNNER_TEMP/hc/$version"
+            tar -xzf "$RUNNER_TEMP/hc-archives/$version.tar.gz" -C "$RUNNER_TEMP/hc/$version" herdr-core
+          done <<< "$HC_RELEASES"
       - run: bun install --frozen-lockfile
         if: needs.changes.outputs.draft != 'true'
       - name: hc client against a real hc
         if: needs.changes.outputs.draft != 'true'
-        env:
-          OVIS_TEST_HC_BIN: ${{ runner.temp }}/hc/herdr-core
         run: |
           set -euo pipefail
-          "$OVIS_TEST_HC_BIN" --version | grep -Fx "hc $HC_VERSION"
-          bun test ./server/herdr-core/live.test.ts
+          # one file per line: a new live test file is added by adding its line
+          files=(
+            ./server/herdr-core/live.test.ts
+          )
+          while read -r version sha256; do
+            [ -n "$version" ] || continue
+            export OVIS_TEST_HC_BIN="$RUNNER_TEMP/hc/$version/herdr-core"
+            "$OVIS_TEST_HC_BIN" --version | grep -Fx "hc $version"
+            bun test "${files[@]}"
+          done <<< "$HC_RELEASES"
   fast:
     name: Fast checks
     needs: changes
