@@ -12,14 +12,12 @@ export interface QuarantineEntry {
 export const QUARANTINE_MAX_DAYS = 30;
 
 export const QUARANTINE: Readonly<Record<string, QuarantineEntry>> = {
-  // cause unknown; on a timeout the script logs the browser's roster status, the selected pane, the chat key,
-  // the scroll gap and the badge, so the next CI failure names the stage
-  "scripts/gjc-status-browser-regression.ts": { until: "2026-12-19", issue: 4184 },
   // waits on #4131's design change, owned by another lane
   "scripts/pane-mute-demo-regression.ts": { until: "2026-12-19", issue: 4131 },
   // a long press on a pinned row in checkPinned's touch pass sometimes never lifts it (#4343)
   "scripts/workspace-touch-reorder-demo-regression.ts": { until: "2026-12-20", issue: 4343 },
-  // cause unknown (no failure in 53 runs, CI image included); on a timeout openPhoneSettings now names the page's
-  // header chip, terminals, dialogs and every WebSocket it opened, so the next CI failure names the stage (#4357)
+  // cause unknown (one failure, run 44793002896, none in the runs since); on a timeout openPhoneSettings names the
+  // page's visibility, header chip and pills, terminals, alerts, dialogs, its console and page errors and every
+  // WebSocket it opened with its first frame, so the next CI failure names the stage (#4357)
   "scripts/ui-access-regression.ts": { until: "2026-12-20", issue: 4357 },
 };

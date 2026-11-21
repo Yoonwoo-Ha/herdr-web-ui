@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Browser, BrowserContext, Page, Request, Response, WebSocket } from "playwright-core";
+import type { Browser, BrowserContext, ConsoleMessage, Page, Request, Response, WebSocket } from "playwright-core";
 import { startBunRelay } from "../relay/bun.ts";
 import { createServer } from "../server/index.ts";
 import { RelayService } from "../server/relay/service.ts";
@@ -146,10 +146,18 @@ export async function openPhoneSettings(page: Page, origin: string): Promise<voi
   const noteSocket = (socket: WebSocket): void => {
     const at = (what: string): void => { sockets.push(`${Date.now() - started}ms ${what} ${new URL(socket.url()).pathname}`); };
     at("created");
+    // a socket that heard a frame finished its handshake: "created" alone fits one still connecting too
+    socket.once("framereceived", () => at("first frame"));
     socket.on("close", () => at("closed"));
     socket.on("socketerror", (error) => at(`error ${error}`));
   };
+  // a crash while a pane region draws turns the chip off and is logged to the console, not thrown as a page error
+  const errors: string[] = [];
+  const noteError = (error: Error): void => { errors.push(`${Date.now() - started}ms pageerror ${error.message.slice(0, 300)}`); };
+  const noteConsole = (message: ConsoleMessage): void => { if (message.type() === "error") errors.push(`${Date.now() - started}ms console ${message.text().slice(0, 300)}`); };
   page.on("websocket", noteSocket);
+  page.on("pageerror", noteError);
+  page.on("console", noteConsole);
   try {
     await page.goto(origin, { waitUntil: "domcontentloaded" });
     await page.locator(".conn-live").waitFor({ state: "attached" });
@@ -159,15 +167,20 @@ export async function openPhoneSettings(page: Page, origin: string): Promise<voi
     const shown = await Promise.race([
       page.evaluate(() => ({
         url: location.href,
+        visibility: document.visibilityState,
         conn: [...document.querySelectorAll(".conn")].map((chip) => `${chip.className}: ${chip.textContent ?? ""}`),
         terminals: document.querySelectorAll(".xterm").length,
+        alerts: [...document.querySelectorAll("[role=alert]")].map((alert) => (alert.textContent ?? "").slice(0, 120)),
+        pills: [...document.querySelectorAll(".header-meta .pill")].map((pill) => pill.textContent ?? ""),
         dialogs: [...document.querySelectorAll("[role=dialog], [role=alertdialog]")].map((dialog) => dialog.getAttribute("aria-label") ?? dialog.className),
       })),
       new Promise<never>((_, reject) => { gaveUp = setTimeout(() => reject(new Error("the page did not answer within 5 s")), 5_000); }),
     ]).catch((readError: unknown) => ({ unreadable: String(readError) })).finally(() => clearTimeout(gaveUp));
-    throw new Error(`${error instanceof Error ? error.message.split("\n")[0] : String(error)}; page ${JSON.stringify(shown)}; sockets ${JSON.stringify(sockets)}`, { cause: error });
+    throw new Error(`${error instanceof Error ? error.message.split("\n")[0] : String(error)}; page ${JSON.stringify(shown)}; sockets ${JSON.stringify(sockets)}; errors ${JSON.stringify(errors)}`, { cause: error });
   } finally {
     page.off("websocket", noteSocket);
+    page.off("pageerror", noteError);
+    page.off("console", noteConsole);
   }
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   await openSettingsPage(page, "Devices and PCs");
