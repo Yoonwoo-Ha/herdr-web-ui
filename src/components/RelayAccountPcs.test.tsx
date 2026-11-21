@@ -6,8 +6,8 @@ import type { AccountPcEntry } from "../lib/api.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { RelayAccountPcs, type AccountPcsSource } from "./RelayAccountPcs.tsx";
 
-// Add a connection → Ovis relay, signed in with this PC in the account: the account's other PCs, each with Connect
-// (already in this app), Add (it would pair) or what keeps it from pairing; Add posts the admission naming the key this
+// Add a connection → Ovis relay, signed in with this PC in the account: this PC first, then the account's other PCs, each
+// with Open (already in this app), Add (it would pair) or what keeps it from pairing; Add posts the admission naming the key this
 // PC's server made, shows the digits while a member approves elsewhere, and opens the PC once it is added.
 const pc = (id: string, name: string): AccountPcEntry => ({ server_id: id.repeat(32).slice(0, 32), server_public_key: "key", relay: "wss://relay.ovis.example", name });
 const OWN = pc("0", "This PC");
@@ -94,14 +94,14 @@ describe("the account's PCs in the relay tab", () => {
     await act(async () => { renderer = create(tree(machines, onConnect)); });
   };
 
-  it("lists the account's other PCs as the SSH tab does: Connect, Add, or why not, never this PC", async () => {
+  it("lists the account's other PCs as the SSH tab does: Open, Add, or why not, never this PC", async () => {
     const connected: Machine[] = [];
     await mount((machine) => connected.push(machine));
     expect(rows()).toEqual([
-      ["Desk", "Online", "Add"], ["Lab", "In this app", "Connect"], ["Old box", "Update Ovis on that PC", ""], ["Away", "Offline", ""],
+      ["Desk", "Online", "Add"], ["Lab", "In this app", "Open"], ["Old box", "Update Ovis on that PC", ""], ["Away", "Offline", ""],
     ]);
     expect(requests.filter((request) => request.path.endsWith("/check")).map((request) => request.body)).toEqual([{ pcs: [DESK] }, { pcs: [OLD] }, { pcs: [AWAY] }]);
-    await act(async () => { button("Connect").props.onClick(); });
+    await act(async () => { button("Open").props.onClick(); });
     expect(connected).toEqual([lab]);
   });
 
@@ -146,10 +146,23 @@ describe("the account's PCs in the relay tab", () => {
     expect(renderer!.toJSON()).toBeNull();
   });
 
+  it("names this PC first as one of the account's PCs, with no button, above the others", async () => {
+    await act(async () => { renderer = create(<SettingsProvider><RelayAccountPcs machines={[local, lab]} onConnectMachine={() => {}} source={source} self="Studio" /></SettingsProvider>); });
+    expect(rows()).toEqual([
+      ["StudioThis PC", "Online", ""], ["Desk", "Online", "Add"], ["Lab", "In this app", "Open"], ["Old box", "Update Ovis on that PC", ""], ["Away", "Offline", ""],
+    ]);
+  });
+
+  it("still names this PC while the account lists no other", async () => {
+    source = { ...source, list: async () => ({ account: "acct", pcs: [OWN] }) };
+    await act(async () => { renderer = create(<SettingsProvider><RelayAccountPcs machines={[local]} onConnectMachine={() => {}} source={source} self="Studio" /></SettingsProvider>); });
+    expect(rows()).toEqual([["StudioThis PC", "Online", ""]]);
+  });
+
   it("leaves out only a PC whose entry this PC cannot use", async () => {
     invalid.add(OLD.server_id);
     await mount();
-    expect(rows()).toEqual([["Desk", "Online", "Add"], ["Lab", "In this app", "Connect"], ["Away", "Offline", ""]]);
+    expect(rows()).toEqual([["Desk", "Online", "Add"], ["Lab", "In this app", "Open"], ["Away", "Offline", ""]]);
   });
 
   it("shows each PC's state as it comes: one slow to answer holds no other row on Checking…", async () => {
@@ -157,7 +170,7 @@ describe("the account's PCs in the relay tab", () => {
     slow.set(AWAY.server_id, { promise: new Promise<void>((resolve) => { release = resolve; }) });
     await mount();
     expect(rows()).toEqual([
-      ["Desk", "Online", "Add"], ["Lab", "In this app", "Connect"], ["Old box", "Update Ovis on that PC", ""], ["Away", "Checking…", ""],
+      ["Desk", "Online", "Add"], ["Lab", "In this app", "Open"], ["Old box", "Update Ovis on that PC", ""], ["Away", "Checking…", ""],
     ]);
     await act(async () => { release(); });
     expect(rows()[3]).toEqual(["Away", "Offline", ""]);
@@ -165,7 +178,7 @@ describe("the account's PCs in the relay tab", () => {
 
   it("asks about a PC once another window removed it from this app", async () => {
     await mount();
-    expect(rows()[1]).toEqual(["Lab", "In this app", "Connect"]);
+    expect(rows()[1]).toEqual(["Lab", "In this app", "Open"]);
     await act(async () => { renderer!.update(tree([local], () => {})); });
     expect(rows()[1]).toEqual(["Lab", "Online", "Add"]);
     expect(requests.filter((request) => request.path.endsWith("/check")).map((request) => request.body)).toContainEqual({ pcs: [LAB] });
@@ -185,7 +198,7 @@ describe("the account's PCs in the relay tab", () => {
     failing.add(AWAY.server_id);
     await mount();
     expect(rows()).toEqual([
-      ["Desk", "Online", "Add"], ["Lab", "In this app", "Connect"], ["Old box", "Update Ovis on that PC", ""], ["Away", "Offline", ""],
+      ["Desk", "Online", "Add"], ["Lab", "In this app", "Open"], ["Old box", "Update Ovis on that PC", ""], ["Away", "Offline", ""],
     ]);
   });
 });

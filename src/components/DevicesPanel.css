@@ -55,6 +55,20 @@
   overflow-wrap: anywhere;
 }
 
+/* this PC's name stands alone on its row (no ID line): it takes the row's height, so Check now beside it is never
+   the taller of the two (a finger-sized button on a phone included), and sits centred in it */
+.devices-row.my-device-self {
+  align-items: stretch;
+}
+
+.my-device-self .devices-name {
+  justify-content: center;
+}
+
+.my-device-self .my-device-check {
+  align-self: center;
+}
+
 .my-device-check .btn {
   height: calc(var(--control-h) - var(--space-2));
   padding: 0 var(--space-2);
@@ -183,11 +197,6 @@
 .devices-kind.is-self {
   background: var(--accent-tint);
   color: var(--accent);
-}
-
-.my-device-id {
-  font-family: var(--font-mono);
-  overflow-wrap: anywhere;
 }
 
 .my-devices {

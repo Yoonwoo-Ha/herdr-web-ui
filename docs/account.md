@@ -647,7 +647,7 @@ Tailnet Lock follow the same idea: an existing device approves once, and the ser
 messages):
 
 **By QR code.** On the new PC, Settings → Devices and PCs → Add a connection → Ovis relay →
-**Show the QR code**, with the relay on and an account named for the PC: signing in on the PC's
+**Phone QR code**, with the relay on and an account named for the PC: signing in on the PC's
 own page and adding it there names one, and so does `ovis add`. A device that is signed in to that
 account scans it: it is paired with its account key, links itself as the PC's first member, lists
 the PC in the account's directory and enrolls it ([Enrolling a PC](#enrolling-a-pc)). Nothing is
@@ -741,8 +741,9 @@ until someone signs in on it; the steps below are then the way.
 
 **By signing in on the PC:**
 
-1. On the new PC, Settings → Devices and PCs → Account (or the first-run welcome): press
-   **Sign in and add this PC**. A PC in no account is added by that sign-in, in the same step: the
+1. On the new PC, Settings → Devices and PCs → Add a connection → Ovis relay: sign in, then press
+   **Add this PC to my account** (a page without that tab keeps **Sign in and add this PC** in its
+   Account card, which does both in one press). A PC in no account is then added: the
    PC lists itself in the account's directory (`PUT /v1/pcs`, its relay key and relay) and opens a
    pairing window with `POST /api/relay/link` and the header `x-ovis-local-only: 1`. The PC is
    added only by a press of a button that says so. The link page's one button reads
@@ -765,8 +766,8 @@ until someone signs in on it; the steps below are then the way.
    lists it again. A sign-in that was already there when the screen opened lists nothing by itself
    and gets the offer; so does a sign-in again for the same account, one that ended before the PC
    answered, and one whose PC answered only after the minute. The sign-in never turns the relay
-   on: with the relay off it lists nothing and offers **Turn on the relay and add this PC**, one
-   press for both, which lists under that sign-in only. A device that only watches this PC
+   on: with the relay off it lists nothing and offers **Add this PC to my account**, which then turns
+   the relay on too, one press for both, which lists under that sign-in only. A device that only watches this PC
    (`role: watch`) can list nothing: its sign-in adds nothing and it is shown no button; while
    what this browser may do cannot be read, nothing is listed without a press. A browser the PC
    refuses its account (`owner_only`: in only through an open device gate, or a Portal visitor) is
@@ -834,6 +835,15 @@ before this has no route), leaves the page on the wait above, unchanged. In this
 own Settings signs in with a code typed on another device, which the service does not count as an
 app's own sign-in, so a press there still ends in that wait; it adds the PC in one press once the PC
 page signs in on its own window.
+
+**Sign in again from the wait.** When the service refuses the press for the sign-in itself
+(`two_step_required`, `session_not_fresh` or `own_sign_in_required`) and the page signs in its own way
+(the desktop app, the PC's own window), the wait offers **Sign in again** once. It signs in afresh
+with the stored provider; the new sign-in is kept only for the same account and only while the wait
+still runs (Stop waiting in any window of the PC ends it). The press is then made again inside that
+wait: for the PC the wait listed (the PC's address must still answer for it, and nothing is listed
+again), with exactly the sign-in just made, never one another tab stored meanwhile. A second refusal
+leaves the plain wait, with no offer: the wait offers it once.
 
 The account's other devices are told: the service sends them its usual push, and at the top of the
 opened Ovis a notice names the new PC, with **I didn't add this**, which removes it from the
@@ -1253,7 +1263,7 @@ one stored meanwhile, then forgets that sign-in and its account key; a pairing k
 of the key. A delete that finds the sign-in already gone (another tab signed out, or the answer to an
 earlier delete was lost and the service now refuses the sign-in) shows the signed-out page and keeps
 the key: nothing here proves the account went, and a key kept too long costs nothing. It is offered behind a second press on the same button that says what goes and what
-stays, wherever the sign-in is one the service lets delete: **Settings → Devices and PCs → Account**
+stays, wherever the sign-in is one the service lets delete: **Settings → Devices and PCs → Manage account**
 in the desktop app, and **Devices → Account** in the hosted shell and the phone apps. A PC's own page
 in a browser signs in with a device code or the link page, so its Account section offers no delete
 and names those places instead. On `reauth_required` the desktop app signs in again and repeats the

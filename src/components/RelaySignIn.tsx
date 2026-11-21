@@ -19,12 +19,14 @@ function failureText(t: ReturnType<typeof useT>, error: unknown): string {
   }
 }
 
-export function RelaySignIn({ service, onSignedIn, onOpenAccount, boundPc = false }: { service: string; onSignedIn: (session: AccountSession) => void; onOpenAccount: () => void; boundPc?: boolean }) {
+export function RelaySignIn({ service, onSignedIn, boundPc = false }: { service: string; onSignedIn: (session: AccountSession) => void; boundPc?: boolean }) {
   const t = useT();
   const locale = useLocale();
-  const { state, ready, own, linkPage, start, cancel } = useLinkPageSignIn(service, onSignedIn, onOpenAccount);
+  const { state, ready, own, unavailable, linkPage, start, cancel } = useLinkPageSignIn(service, onSignedIn);
   const providers = providerChoice(locale, linkPage);
   const signInButton = useRef<HTMLButtonElement>(null);
+  const providerButtons = useRef<HTMLDivElement>(null);
+  const focusSignIn = (): void => { (signInButton.current ?? providerButtons.current?.querySelector<HTMLButtonElement>("button:not(:disabled)"))?.focus(); };
   const signInPage = useRef<HTMLAnchorElement>(null);
   const previous = useRef(state.kind);
   useLayoutEffect(() => {
@@ -32,8 +34,8 @@ export function RelaySignIn({ service, onSignedIn, onOpenAccount, boundPc = fals
     previous.current = state.kind;
     switch (state.kind) {
       case "waiting": signInPage.current?.focus(); break;
-      case "idle": if (before !== "idle") signInButton.current?.focus(); break;
-      case "failed": signInButton.current?.focus(); break;
+      case "idle": if (before !== "idle") focusSignIn(); break;
+      case "failed": focusSignIn(); break;
       case "redirecting":
       case "starting":
       case "signed-in": break;
@@ -78,8 +80,9 @@ export function RelaySignIn({ service, onSignedIn, onOpenAccount, boundPc = fals
   const failure = state.kind === "failed" ? failureText(t, state.error) : null;
   return (
     <>
-      <p className="settings-description">{boundPc ? t("Sign in to this PC's account.") : t("Connect from anywhere through your Ovis account.")}</p>
-      {own !== null ? <AccountSignIn providers={own} onSignIn={start} error={failure} /> : <>
+      {boundPc && <p className="settings-description">{t("Sign in to this PC's account.")}</p>}
+      {unavailable ? <p className="settings-hint">{t("Sign in on this PC's own screen, or in the Ovis app.")}</p>
+        : own !== null ? <div ref={providerButtons}><AccountSignIn providers={own} onSignIn={start} error={failure} busy={state.kind === "starting"} /></div> : <>
       <button ref={signInButton} type="button" className="btn btn-primary connect-signin-button" aria-disabled={!ready || state.kind === "starting"} onClick={() => { if (ready && state.kind !== "starting") start(); }}>{state.kind === "starting" ? t("Signing in…") : t("Sign in to Ovis")}</button>
       {failure !== null && <p className="account-error" role="alert">{failure}</p>}
       </>}

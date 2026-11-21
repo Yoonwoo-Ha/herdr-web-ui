@@ -51,7 +51,7 @@ import { relayBrowserSocket, relayServerTree } from "./relay-browser-bridge.ts";
 import { closeMarked, whileOpen } from "./relay-qa-teardown.ts";
 import type { RelayServerTree } from "./relay-browser-bridge.ts";
 import { relayShellQaVersions } from "./relay-shell-qa-versions.ts";
-import { openSettingsPage } from "./settings-page.ts";
+import { openSettingsFolds, openSettingsPage } from "./settings-page.ts";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { answerServerChallenge, deriveServerId } from "../shared/relay-server-proof.ts";
 
@@ -79,7 +79,9 @@ export async function defaultStep2BrowserQa({ createServer }: RelayServerTree): 
         await page.reload();
         await page.locator(".sidebar-footer").getByRole("button", { name: "Settings", exact: true }).click();
         await openSettingsPage(page, "Devices and PCs");
-        await page.getByRole("button", { name: "Turn on strict mode", exact: true }).waitFor();
+        // one row of More settings, its switch; what it ends is named once it is turned on
+        await openSettingsFolds(page);
+        await page.getByRole("switch", { name: "Strict mode (Linux)", exact: true }).waitFor();
         console.log("default Step 2: only the bound PC offers to turn on strict mode");
       } finally { await closeMarked(browser); }
     } finally { await app.stop(); }

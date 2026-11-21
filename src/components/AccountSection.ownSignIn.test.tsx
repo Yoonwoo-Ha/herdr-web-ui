@@ -157,7 +157,7 @@ describe("signing in on the PC's own window", () => {
 describe("the relay tab reopened already signed in", () => {
   const ACCOUNT = "acct_first";
   const status = (phase: "online" | "off"): RelayStatus => ({ phase, relay: "wss://relay.ovis.example", app: "https://app.ovis.example", sessions: 0, blocked: null, error: null });
-  const relayOf = (phase: "online" | "off"): RelayState => ({ status: status(phase), unsupported: false, pending: false, request: async () => status("online"), reread: () => {} });
+  const relayOf = (phase: "online" | "off"): RelayState => ({ status: status(phase), unsupported: false, readFailed: false, pending: false, request: async () => status("online"), reread: () => {} });
   const descriptors = new Map<string, PropertyDescriptor | undefined>();
   let renderer: ReactTestRenderer | undefined;
   let state: { relay: "online" | "off"; pcAccount: string | null; enrolling: boolean };
@@ -237,11 +237,14 @@ describe("the relay tab reopened already signed in", () => {
     await act(async () => { renderer = create(tabAt(phase), { createNodeMock: () => ({ closest: () => null, querySelector: () => null, focus() {} }) }); });
   };
   const button = (label: string) => renderer!.root.findAll((node) => node.type === "button" && text(node) === label);
+  /** Add this PC reads the same either way: the press that also turns the relay on is marked apart */
+  const relayButton = () => renderer!.root.findAll((node) => node.type === "button" && node.props["data-relay"] === "off");
+  const plainButton = () => button("Add this PC to my account").filter((node) => node.props["data-relay"] === undefined);
 
   it("with the relay off, offers the relay's own add button rather than a plain Add that would fail", async () => {
     await mount("off");
-    await until(() => renderer!.root.findAll((node) => node.type === "button" && text(node) === "Turn on the relay and add this PC").length === 1);
-    expect(renderer!.root.findAll((node) => node.type === "button" && text(node) === "Add this PC to my account")).toHaveLength(0);
+    await until(() => relayButton().length === 1);
+    expect(plainButton()).toHaveLength(0);
   });
 
   it("says the PC is not finished while its enrollment runs, and stops saying so once it ends", async () => {
@@ -264,9 +267,9 @@ describe("the relay tab reopened already signed in", () => {
 
   it("offers the plain add once the relay's switch turns it on", async () => {
     await mount("off");
-    await until(() => button("Turn on the relay and add this PC").length === 1);
+    await until(() => relayButton().length === 1);
     await act(async () => { renderer!.update(tabAt("online")); });
-    await until(() => button("Add this PC to my account").length === 1);
+    await until(() => plainButton().length === 1);
   });
 
   it("offers the one press again when the relay's switch turns it off, and that press adds the PC", async () => {
@@ -275,16 +278,16 @@ describe("the relay tab reopened already signed in", () => {
     await until(() => button("Add this PC to my account").length === 1);
     state.relay = "off";
     await act(async () => { renderer!.update(tabAt("off")); });
-    await until(() => button("Turn on the relay and add this PC").length === 1);
-    await act(async () => { button("Turn on the relay and add this PC")[0]!.props.onClick(); });
+    await until(() => relayButton().length === 1);
+    await act(async () => { relayButton()[0]!.props.onClick(); });
     await until(() => button("Stop waiting").length === 1);
   });
 
-  it("goes on with a press of Turn on the relay and add this PC while the relay's state is read again", async () => {
+  it("goes on with a press of the add that turns the relay on while the relay's state is read again", async () => {
     await mount("off");
-    await until(() => button("Turn on the relay and add this PC").length === 1);
+    await until(() => relayButton().length === 1);
     linkGate = Promise.withResolvers<void>();
-    await act(async () => { button("Turn on the relay and add this PC")[0]!.props.onClick(); });
+    await act(async () => { relayButton()[0]!.props.onClick(); });
     await act(async () => { renderer!.update(tabAt("online")); });
     linkGate.resolve();
     await until(() => button("Stop waiting").length === 1);

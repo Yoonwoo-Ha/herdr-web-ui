@@ -11,7 +11,7 @@ import { SettingsProvider } from "../lib/settings.ts";
 
 // the confirmation is a portal into document.body: drawn in place here, so the test renderer holds it
 await mock.module("react-dom", () => ({ ...ReactDom, createPortal: (node: ReactNode) => node }));
-const { AccountPcRows, HOSTED_APP_URL, NoAccountPcHint, removePcFromAccount, unusedPc } = await import("./AccountPcs.tsx");
+const { AccountPcRows, NoAccountPcHint, removePcFromAccount, unusedPc } = await import("./AccountPcs.tsx");
 
 const DESK = "a".repeat(32);
 const LAPTOP = "b".repeat(32);
@@ -85,21 +85,14 @@ describe("the account's PCs in a PC's own Settings", () => {
   };
   const dialogs = (root: ReactTestInstance) => root.findAll((node) => node.props.role === "alertdialog");
 
-  it("gives the rows no action of their own, and one link under them to the hosted app's front page", async () => {
+  it("gives the rows no action of their own, and no sentence or link under them", async () => {
     const root = await mount(createElement(AccountPcRows, { pcs: [pc(DESK, "Desk"), pc(LAPTOP, "Laptop")], watching: false, now: NOW, remove: async () => {}, onRemoved: () => {} }));
-    // a PC's own page cannot tell whether this browser is paired with that PC at app.ovis.sh, where /s/<id>/ opens
-    // only a paired one: the link goes to the front page, which is right for every browser, and is named for it
-    const links = root.findAll((node) => node.type === "a");
-    expect(links.map((link) => [textOf(link), link.props.href, link.props.target, link.props.rel])).toEqual([["Open app.ovis.sh", "https://app.ovis.sh/", "_blank", "noopener noreferrer"]]);
-    expect(HOSTED_APP_URL).toBe("https://app.ovis.sh/");
-    expect(root.findAll((node) => node.type === "li").map(textOf)).toEqual([
-      "DeskPCIn your account", "LaptopPCIn your account",
-      "To open a PC of your account in a browser, sign in to this account at app.ovis.sh.Open app.ovis.sh",
-    ]);
+    expect(root.findAll((node) => node.type === "a")).toHaveLength(0);
+    expect(root.findAll((node) => node.type === "li").map(textOf)).toEqual(["DeskPCIn your account", "LaptopPCIn your account"]);
     expect(root.findAll((node) => node.type === "button")).toHaveLength(0);
   });
 
-  it("draws no link when the account lists no other PC", async () => {
+  it("draws nothing when the account lists no other PC", async () => {
     const root = await mount(createElement(AccountPcRows, { pcs: [], watching: false, now: NOW, remove: async () => {}, onRemoved: () => {} }));
     expect(root.findAll((node) => node.type === "a" || node.type === "li")).toHaveLength(0);
   });

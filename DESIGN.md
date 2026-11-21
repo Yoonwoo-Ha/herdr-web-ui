@@ -4887,7 +4887,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   **Alerts** (the test, sound and other destinations; which alerts come is the **Alert me when**
   group of its More settings, as almost every install keeps them), **Agents**, **Shortcuts** (the
   platform-resolved global bindings), **Devices and PCs**
-  (**Account**; **My devices**: Connect a device, this PC with its ID, the other PCs and the paired
+  (**Account**, one line; **My devices**: Connect a device, this PC, the other PCs and the paired
   phones and browsers in one list; its More settings: This device, Ovis relay, Show in sidebar,
   Access, the PCs' bridge updates and load line), **About** (Updates,
   herdr, the repository links). Each page's other rows are in its folds (above). Voice input was a
@@ -5034,13 +5034,23 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   per keystroke.
 - Devices and PCs follows WhatsApp's **Linked devices**: the account on top, then one list of
   everything connected (**My devices**) under one **Connect a device** row whose **Connect** button
-  opens every way in, as Tailscale's admin **Add device** does. Devices and other PCs are one list
+  opens every way in, as Tailscale's admin **Add device** does. The page has no sentence of its own
+  under its title. The account is one line, as the ChatGPT and Claude apps keep the signed-in
+  account to one row with its sign-out: signed in, **Signed in with GitHub** (the provider's mark,
+  no account id anywhere), a neutral **Manage account** and **Sign out**; **Manage account** opens
+  a `.modal` sheet (`ManageAccountSheet` in `components/AccountHead.tsx`) with the ways to sign in,
+  the plan and **Delete account** at its foot. Where Add a connection's relay tab signs in (a page
+  of this PC that offers the relay), a signed-out page draws no account card at all: only why a
+  sign-in ended, when one did. A page without that tab keeps its sign-in in the card, and Add this
+  PC under it. Strict mode is one row of More settings → Devices and access, **Strict mode (Linux)**
+  with its switch and at most one line of why it is off; what it ends and what it cannot cover is
+  said in the confirmation that turning it on asks (`ConfirmDialog`), not on the page. The account's
+  PCs under My devices carry no sentence or link to the hosted app. Devices and other PCs are one list
   because to the person they are one thing: something connected to this PC. Rows are as short as
   the page allows; what pairing means is one folded sentence, and what few people change is in
   More settings. Old links to the Phone, Remote PCs and Portal groups land on My devices.
 - My devices (`MyPcRows` in SettingsDialog.tsx, then `components/DevicesPanel.tsx`): this PC
-  first (its name, a **This PC** pill in the accent and its relay ID in `--font-mono` under it: the
-  ID a device that typed this PC's code compares, so it is shown here and not in the dialog), then
+  first (its name and a **This PC** pill in the accent; no ID line), then
   the PCs this app shows (a neutral **PC** pill and their state; one that is not connected is
   dimmed, and one this app added over SSH or the relay carries a **Remove PC** trash button that asks
   once, as the sidebar's PC menu does), then signed in the account's other PCs (their
@@ -5059,12 +5069,22 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   typed address close Settings and open the PC setup dialog with the address filled in. **Phones and
   devices** stacks, under a hairline each, the Tailscale address and QR code, the six-digit pairing
   code (`components/CompactPair.tsx`, started when the tab first opens) and Portal where the server
-  offers it. **Ovis relay** is the account's: signed out one sentence and **Sign in to Ovis** (which
-  opens the account's sign-in in More settings), signed in the relay's switch and **Open the
-  account** while this PC is in no account. Under either, behind a hairline (none where nothing is
+  offers it. **Ovis relay** is the account's, and draws buttons, not sentences, by state: signed
+  out, the sign-in buttons alone (GitHub, Google and Apple where the page signs in itself, the
+  desktop app and the PC's own window; one **Sign in to Ovis** that opens the link page elsewhere);
+  signed in with this PC in no account, one full-width primary **Add this PC to my account**
+  (`.account-add-pc-button`), which also turns the relay on when it is off, and then **Added** in
+  the done green (`--status-done` on `--status-done-tint`), or, where the one press does not
+  apply, one line naming the device to choose Add on and **Stop waiting** (when the service refused
+  the sign-in itself and the page signs in its own way, once per wait also **Sign in again**, whose
+  fresh sign-in of the same account presses again); signed in with this PC
+  in the account and the relay online, **Your account's PCs**: this PC first with a **This PC**
+  pill, then the account's others, one row and at most one button each (**Open**, **Add**). The
+  relay's own switch is in More settings, and on this tab only while a PC in the account has its
+  relay off. Under either, behind a hairline (none where nothing is
   drawn above it), one part (`.connect-account-qr`) that depends on the PC, not on the sign-in. On a PC in no account it is
-  **Add with a QR code**: one sentence and a neutral **Show the QR code**, which draws the relay's
-  QR code alone (`--qr-size`, its countdown, **New code**; no code to type). The QR code gives way
+  a small accent text button, **Phone QR code** (`.connect-qr-link`), which draws the relay's
+  QR code alone under **Add with a QR code** (`--qr-size`, its countdown, **New code**; no code to type). The QR code gives way
   to a notice box (`.connect-account-qr-notice`: `--bg-elevated`, a hairline, `--radius-md`) that
   says which account the PC joined and which device added it, or asks about a device nobody
   vouched for. In a notice the `.btn-danger` (**Not me: remove it**, **Not me: revoke every
@@ -5076,9 +5096,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   another one, or one it cannot tell while signed out), one sentence says to sign in to that
   account on the device, and a hint says the QR code is only for a PC in no account; the
   relay's switch stays above while the relay is not online. On a PC that no account was named
-  for, one hint line (`.settings-hint`) stands where the button would be: to sign in above first,
-  or, signed in, to add the PC to the account first. It is the line the part already shows when
-  the relay asks for a pass, so the tab says in one way that an account comes first.
+  for, nothing stands where the button would be: the sign-in or **Add this PC to my account**
+  above names one. Only a relay that asks for a pass keeps its one hint line, to sign in above first.
   Linked-device apps draw the same
   line (WhatsApp shows its linking QR code on the device being added, never on one already
   linked), and it is deliberate here: a QR code on a PC with members would let in whoever scans
@@ -6048,8 +6067,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   starts pairing at once on `/s/<id>/` (`start` -> `connecting` -> `compare`) without a second
   "Pair with {name}?" step; "Pair with {name}?" with **Pair** remains only for pairing links and QR
   codes opened from outside the dashboard (or when `sessionStorage` is blocked). **Add a
-  PC** with no PC says how one is added ("On the PC, open Settings → Devices and PCs → Account, sign
-  in, then choose Add this PC to my account. It then shows here.") and leads to the QR and code
+  PC** with no PC says how one is added ("On the PC, open Settings → Devices and PCs → Add a connection →
+  Ovis relay, sign in, then choose Add this PC to my account. It then shows here.") and leads to the QR and code
   modal sheet (`PairQrDialog`, over the scrimmed inert dashboard), whose QR and code screens name
   only the current path ("On the PC, open Settings → Devices and PCs → Add a connection → Ovis relay
   and scan the QR code." and "On the PC, open Settings → Devices and PCs → Add a connection → Ovis

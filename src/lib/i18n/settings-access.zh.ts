@@ -41,7 +41,6 @@ export const SETTINGS_ACCESS_ZH: Record<string, string> = {
   "The server cannot see whether a proxy, tunnel or router makes it reachable from the internet.": "服务器无法判断代理、隧道或路由器是否使其可从互联网访问。",
   "Named agent groups": "自命名代理分组",
   "Agents under workspaces": "在工作区下显示代理",
-  "ID {id}": "ID {id}",
   "Sign out of this PC": "从此 PC 退出登录",
   "This app": "此应用",
   "Use the relay": "使用中继",

@@ -28,6 +28,7 @@ import type { AccountView, Attempt, RelayShellMount, RelayShellState, SheetJoin 
 import { openRelayTransport, type RelayTransport } from "./transport.ts";
 import { offerFromCode, TypedCodeError } from "./pairCode.ts";
 import { ADMISSION_WAIT_MS, ConsentChangedError, createAccountController } from "./accountController.ts";
+import { keepShellSignOut } from "../account/hostedSignIn.ts";
 import { AccountPcError } from "../account/join.ts";
 import { refusalOf } from "./firstLink.ts";
 import { createPcSweep } from "./pcSweep.ts";
@@ -284,6 +285,8 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const askNewScan = (offer: RelayOffer): void => { show({ kind: "failed", failure: "scan-expired", name: offer.name ?? null, detail: null, server_id: offer.server_id }); };
   const account = createAccountController(mount, { active: frontUp, changed: accountChanged, outdated: () => new Set([...observedVersions()].filter(([, value]) => value.outdated).map(([id]) => id)) });
   accountRead = !account.enabled;
+  // the PC page this shell opens signs out with the overview's own Sign out, offered where the overview offers it
+  keepShellSignOut(account.enabled ? account.signOut : null);
   /**
    * What the confirm says now. Signed in, nothing can be confirmed until the directory is read: before that, whether
    * the pairing adds the PC to the account is not known. A directory whose read failed, or was not answered in time,

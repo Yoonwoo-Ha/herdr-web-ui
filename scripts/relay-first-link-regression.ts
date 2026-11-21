@@ -10,7 +10,7 @@
  *   owner listed, Pair does the same with no listing); when the account service refuses it (429), it stops before any
  *   relay connection and says why. No PC stands behind the relay here, so a pairing that goes on ends there.
  * - A PC's own page (createServer, its relay on a local Bun relay), signed in, in no account, with the account named
- *   for it as `ovis add` names it but the PC not listed in the account: Show the QR code draws the code and, beside
+ *   for it as `ovis add` names it but the PC not listed in the account: Phone QR code draws the code and, beside
  *   it, lists the PC in the account (PUT /v1/pcs/:id) from the code's own offer, when the account does not list it
  *   yet; it opens or closes no pairing window of the PC (POST /api/relay/link, /api/relay/link/close).
  *
@@ -205,7 +205,7 @@ async function pcPageAt(browser: Browser, origin: string, size: (typeof WIDTHS)[
   const listedBefore = new Set(fake.pcs(ACCOUNT).map((pc) => pc.server_id));
   // the listing, which runs beside the code: a PUT of the PC's entry
   const putAnswered = page.waitForResponse((response) => response.request().method() === "PUT" && /^\/v1\/pcs\/[0-9a-f]{32}$/.test(new URL(response.url()).pathname));
-  await part.getByRole("button", { name: "Show the QR code", exact: true }).click();
+  await part.getByRole("button", { name: "Phone QR code", exact: true }).click();
   await part.getByRole("img", { name: "QR code that pairs a phone through the relay" }).waitFor();
   const serverId = decodeOffer((await (await offered).json() as { url: string }).url)?.server_id;
   assert.ok(serverId !== undefined, `${size.width}: the QR code names a PC`);

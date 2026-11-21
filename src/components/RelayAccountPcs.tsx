@@ -221,19 +221,27 @@ export function useAccountPcs({ machines, source, enabled = true, expect, refres
 }
 
 /**
- * One already in this app reads Connect; one that would pair reads Add (useAccountPcs); an older or offline one says so
+ * One already in this app reads Open; one that would pair reads Add (useAccountPcs); an older or offline one says so
  * and gets no button.
  */
-export function RelayAccountPcs({ machines, onConnectMachine, source }: { machines: readonly Machine[]; onConnectMachine: (machine: Machine) => void; source?: AccountPcsSource }) {
+export function RelayAccountPcs({ machines, onConnectMachine, source, self = null }: { machines: readonly Machine[]; onConnectMachine: (machine: Machine) => void; source?: AccountPcsSource; /** this PC's name, listed first as one of the account's PCs */ self?: string | null }) {
   const t = useT();
   const { pcs, added, stateOf, pairing, failure, add, cancel } = useAccountPcs({ machines, source, onAdded: onConnectMachine });
 
-  if (pcs === null || pcs.length === 0) return null;
+  if (self === null && (pcs === null || pcs.length === 0)) return null;
   return (
     <div className="connect-found relay-account-pcs">
       <p className="settings-label">{t("Your account's PCs")}</p>
       <ul className="connect-found-list">
-        {pcs.map((pc) => {
+        {self !== null && (
+          <li className="relay-account-pc" data-pc-state="self" data-testid="relay-account-self">
+            <div className="connect-found-row">
+              <span className="connect-found-name">{self}<span className="connect-found-source">{t("This PC")}</span></span>
+              <span className="connect-found-detail">{t("Online")}</span>
+            </div>
+          </li>
+        )}
+        {(pcs ?? []).map((pc) => {
           const machine = added(pc.server_id);
           const state = stateOf(pc.server_id);
           const waiting = pairing?.server_id === pc.server_id;
@@ -245,7 +253,7 @@ export function RelayAccountPcs({ machines, onConnectMachine, source }: { machin
                 <span className="connect-found-name">{pc.name}</span>
                 <span className="connect-found-detail">{isNewAccountPc(pc, Date.now()) ? `${t("New PC")} · ` : ""}{detail}</span>
                 {machine !== undefined
-                  ? <button type="button" className="btn" onClick={() => onConnectMachine(machine)}>{t("Connect")}</button>
+                  ? <button type="button" className="btn" onClick={() => onConnectMachine(machine)}>{t("Open")}</button>
                   : state === "ready" && (waiting
                     ? <button type="button" className="btn" onClick={cancel}>{t("Cancel")}</button>
                     : <button type="button" className="btn" disabled={pairing !== null} aria-label={t("Add {name}", { name: pc.name })} onClick={() => void add(pc)}>{t("Add")}</button>)}

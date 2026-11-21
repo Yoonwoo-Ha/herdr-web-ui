@@ -13,7 +13,7 @@ import { RelayTab } from "./ConnectPhoneDialog.tsx";
 
 const SERVICE = "https://account.ovis.example";
 const ONLINE: RelayStatus = { phase: "online", relay: "wss://relay.ovis.example", app: "https://app.ovis.example", sessions: 0, blocked: null, error: null };
-const relay: RelayState = { status: ONLINE, unsupported: false, pending: false, request: async () => ONLINE, reread: () => {} };
+const relay: RelayState = { status: ONLINE, unsupported: false, readFailed: false, pending: false, request: async () => ONLINE, reread: () => {} };
 
 interface FakeTab { opener: unknown; closed: boolean; location: { href: string }; close(): void }
 
@@ -171,7 +171,7 @@ describe("the relay tab's Sign in", () => {
     let actions: ReturnType<typeof useLinkPageSignIn> | undefined;
     const gate = Promise.withResolvers<void>();
     if (phase === "starting") startGate = gate.promise;
-    function SignInHarness() { actions = useLinkPageSignIn(SERVICE, () => undefined, () => undefined); return null; }
+    function SignInHarness() { actions = useLinkPageSignIn(SERVICE, () => undefined); return null; }
     await act(async () => { renderer = create(<SignInHarness />); });
     await act(async () => { actions?.start(); });
     if (phase === "waiting") await act(async () => { await firstPoll; });
@@ -204,14 +204,33 @@ describe("the relay tab's Sign in", () => {
     expect(after[0]).toBe(before?.[0]);
   });
 
-  it("uses the offered Google device page when the link page is unavailable", async () => {
+  it("offers each provider's device page as its own button where the service has no link page", async () => {
     fake.offerSignIns(["google"], ["google"]);
     linkPageAvailable = false;
     await mount();
-    await signIn();
+    expect(renderer!.root.findAll((node) => node.type === "button" && text(node).trim() === "Sign in to Ovis")).toHaveLength(0);
+    const google = renderer!.root.findAll((node) => node.type === "button" && text(node).trim() === "Continue with Google");
+    expect(google).toHaveLength(1);
+    await act(async () => { google[0]!.props.onClick(); });
     await act(async () => { await firstPoll; });
     expect(tab?.location.href).toBe("https://www.google.com/device");
     expect(renderer?.root.findAllByType("a").map(text)).toEqual(["Open Google"]);
+  });
+
+  it("starts one device sign-in when a provider's button is pressed twice while it starts", async () => {
+    fake.offerSignIns(["google"], ["google"]);
+    linkPageAvailable = false;
+    const gate = Promise.withResolvers<void>();
+    startGate = gate.promise;
+    await mount();
+    const google = () => renderer!.root.findAll((node) => node.type === "button" && text(node).trim() === "Continue with Google")[0]!;
+    await act(async () => { google().props.onClick(); });
+    // the second press, as a double click lands, before the first one's answer
+    await act(async () => { google().props.onClick(); });
+    expect(opened).toEqual(["about:blank"]);
+    await act(async () => { gate.resolve(); });
+    await act(async () => { await firstPoll; });
+    expect(tab?.location.href).toBe("https://www.google.com/device");
   });
 
   it("opens the link page with its code filled in, in a new tab, and comes back signed in here", async () => {

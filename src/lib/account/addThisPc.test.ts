@@ -241,7 +241,7 @@ const PC_ID = "0123456789abcdef0123456789abcdef";
 test("one press: the service admits the PC as the stored sign-in, then the PC is named that account and takes the press for it", async () => {
   const f = onePress();
   try {
-    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe(true);
+    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe("added");
     expect(f.calls).toEqual([`admit ${PC_ID} as acct_1`, '/api/account/relay-account {"account":"acct_1"}', '/api/account/one-press {"account":"acct_1"}']);
   } finally { f.restore(); }
 });
@@ -250,9 +250,9 @@ test("one press asks nothing when the stored sign-in is not the account it was f
   const f = onePress();
   try {
     f.signedIn.account = "acct_2";
-    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe(false);
+    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe("refused");
     f.signedIn.account = "acct_1";
-    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => false, true)).toBe(false);
+    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => false, true)).toBe("refused");
     expect(f.calls).toEqual([]);
   } finally { f.restore(); }
 });
@@ -260,7 +260,7 @@ test("one press asks nothing when the stored sign-in is not the account it was f
 test("a refusal of the account service (no two-step, a stale sign-in, the daily cap, an older service) leaves the PC unasked", async () => {
   const f = onePress({ admit: () => Promise.reject(new AccountServiceError(403, "two_step_required", "Set up two-step sign-in first")) });
   try {
-    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe(false);
+    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe("sign-in-again");
     expect(f.calls).toEqual([`admit ${PC_ID} as acct_1`]);
   } finally { f.restore(); }
 });
@@ -268,7 +268,7 @@ test("a refusal of the account service (no two-step, a stale sign-in, the daily 
 test("a PC that refuses the press, or has no such route, is no one-press add", async () => {
   for (const status of [404, 409, 502, 503]) {
     const f = onePress({ pc: (path) => path === "/api/account/one-press" ? Response.json({ error: { code: "x", message: "x" } }, { status }) : new Response(null, { status: 204 }) });
-    try { expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe(false); }
+    try { expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe("refused"); }
     finally { f.restore(); }
   }
 });
@@ -276,7 +276,7 @@ test("a PC that refuses the press, or has no such route, is no one-press add", a
 test("one press asks the account service nothing for a PC whose step-2 switch is off: no cap is spent and nobody is rung", async () => {
   const f = onePress();
   try {
-    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, false)).toBe(false);
+    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, false)).toBe("refused");
     expect(f.calls).toEqual([]);
   } finally { f.restore(); }
 });
@@ -295,14 +295,14 @@ test("the PC's own window, as the server judges it: its owner socket, or the acc
 test("a PC that cannot be reached after the account service admitted it is no one press: the digit wait comes, nothing is thrown", async () => {
   const f = onePress({ pc: () => { throw new TypeError("Disconnected"); } });
   try {
-    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe(false);
+    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe("refused");
   } finally { f.restore(); }
 });
 
 test("one press names this PC for nobody when another tab signed in to another account while the service answered", async () => {
   const f = onePress({ admit: async () => { f.signedIn.account = "acct_2"; return { account: "acct_1", new_until: "x" }; } });
   try {
-    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe(false);
+    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe("refused");
     expect(f.calls).toEqual([`admit ${PC_ID} as acct_1`]);
   } finally { f.restore(); }
 });

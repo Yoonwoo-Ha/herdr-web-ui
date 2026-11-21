@@ -164,7 +164,8 @@ async function openRelayTab(page: Page, expected = "This PC is in an account. Ad
   const sheet = page.getByRole("dialog", { name: "Add a connection", exact: true });
   await sheet.locator('.connect-tabs [data-tab="relay"]').click();
   const tab = sheet.locator('[data-tab-panel="relay"]');
-  await tab.getByText(expected, { exact: true }).waitFor();
+  // the account's PCs at once for this PC's own account, the prompt for any other sign-in
+  await tab.locator(".relay-account-pcs").or(tab.getByText(expected, { exact: true })).first().waitFor();
   assert.ok(!(await tab.innerText()).includes("acct_"), "no raw account ID");
   assert.equal(await tab.getByText(/This PC shows a QR code only|This browser is not signed in, so it cannot tell|To add a device, sign in to this PC's account/).count(), 0);
   return tab;
@@ -226,10 +227,11 @@ try {
   const connecting = await accountWindow(browser, pageErrors);
   assert.equal(await connecting.page.locator('.machine-title[aria-current="true"][title="Desk"]').count(), 0, "a new window starts on another PC");
   const mine = await openRelayTab(connecting.page);
-  await mine.getByRole("button", { name: "Add from account", exact: true }).click();
+  // signed in to this PC's own account, the tab lists the account's PCs at once
+  assert.equal(await mine.getByRole("button", { name: "Add from account", exact: true }).count(), 0, "no prompt stands before the account's PCs");
   const added = mine.locator(".relay-account-pc").filter({ has: connecting.page.locator(".connect-found-name", { hasText: /^Desk$/ }) });
   await added.locator(".connect-found-detail", { hasText: /^In this app$/ }).waitFor();
-  await added.getByRole("button", { name: "Connect", exact: true }).click();
+  await added.getByRole("button", { name: "Open", exact: true }).click();
   await opened(connecting.page, "Desk");
   await shot(connecting.page, "after-connect");
 
@@ -260,7 +262,7 @@ try {
     if (!strict) await shot(page, "unavailable");
   }
   assert.deepEqual(pageErrors, [], "no page error");
-  console.log("PASS the account's PCs: the sidebar lists those not in this app yet with nothing opened, Switched off with Check again for one that does not answer, and its Add pairs once a member approves; Add a connection → Ovis relay's Connect opens one already added; both select it in the sidebar with no SSH setup dialog");
+  console.log("PASS the account's PCs: the sidebar lists those not in this app yet with nothing opened, Switched off with Check again for one that does not answer, and its Add pairs once a member approves; Add a connection → Ovis relay's Open opens one already added; both select it in the sidebar with no SSH setup dialog");
 } catch (error) {
   code = 1;
   console.error("FAIL relay account PCs:", error);

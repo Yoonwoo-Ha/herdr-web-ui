@@ -186,6 +186,49 @@
   font-variant-numeric: tabular-nums;
 }
 
+.account-head-actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+}
+
+.account-manage-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.account-plan-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.account-add-pc-button.btn {
+  width: 100%;
+  min-height: calc(var(--pointer-target) + var(--space-3));
+  font-size: var(--fs-md);
+}
+
+.account-add-pc-done {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--status-done-tint);
+  color: var(--status-done);
+  font-weight: 600;
+}
+
+.account-add-pc-done svg {
+  width: 16px;
+  height: 16px;
+}
+
 .btn.account-head-btn {
   height: auto;
   min-height: var(--pointer-target);
@@ -286,10 +329,6 @@
   inset: min(0px, calc((100% - var(--account-hit)) / 2));
 }
 
-.account-delete-foot:not(:empty) {
-  padding: var(--space-2) var(--space-4) var(--space-4);
-}
-
 .account-delete-actions {
   display: flex;
   flex-wrap: wrap;
@@ -327,17 +366,3 @@
   padding-top: var(--space-2);
 }
 
-.devices-row.account-pcs-open {
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.account-pcs-open > .settings-description {
-  flex: 1 1 12em;
-  min-width: 0;
-  margin: 0;
-}
-
-.account-pcs-open > .btn {
-  flex: none;
-}

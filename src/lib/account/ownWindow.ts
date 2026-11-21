@@ -94,6 +94,16 @@ export function ownWindowSignIn(provider: AccountProvider, options: { readonly s
   return desktopSignIn(provider, ownWindowBridge(options.service, options.redirect, tab, options.signal, options.blocked), options.store);
 }
 
+/**
+ * A provider's own sign-in on this page, in the press itself: through the desktop app's bridge, else from this PC's own
+ * window (`redirect`); a page with neither has none. The desktop app's ends in the system browser, not by `signal`.
+ */
+export function ownSignIn(provider: AccountProvider, options: { readonly bridge: DesktopAccountBridge | null; readonly service: string; readonly redirect: string | null; readonly store: AccountStore; readonly signal: AbortSignal; readonly blocked: (url: string) => void }): Promise<AccountSession> {
+  if (options.bridge !== null) return desktopSignIn(provider, options.bridge, options.store);
+  if (options.redirect === null) return Promise.reject(new Error("no own sign-in here"));
+  return ownWindowSignIn(provider, { ...options, redirect: options.redirect });
+}
+
 /** Whether a callback page's address carried a sign-in's return at all (a reloaded one no longer does). */
 export const carriesReturn = (params: string): boolean => stateOf(params) !== null;
 

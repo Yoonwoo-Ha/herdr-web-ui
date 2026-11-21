@@ -251,8 +251,8 @@ export function RelayOverview(props: RelayOverviewProps) {
                   <InstallCommand os={t("On Windows, in PowerShell:")} command={WINDOWS_INSTALLER_COMMAND} action="copy-install-windows" />
                 </li>
                 <li>{pcCanSignIn
-                  ? t("On that PC, open Settings → Devices and PCs → Account and sign in with the same {provider} account as on this device.", { provider: providerName })
-                  : t("On that PC, open Settings → Devices and PCs → Account and sign in with a GitHub or Google sign-in that is linked to this account.")}</li>
+                  ? t("On that PC, open Settings → Devices and PCs → Add a connection → Ovis relay and sign in with the same {provider} account as on this device.", { provider: providerName })
+                  : t("On that PC, open Settings → Devices and PCs → Add a connection → Ovis relay and sign in with a GitHub or Google sign-in that is linked to this account.")}</li>
                 <li>{t("Choose Add this PC to my account there. It then shows here.")}</li>
               </ol>
               <p className="relay-overview-empty-copy" data-empty-provider="">{pcCanSignIn

@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { createElement, type ReactNode } from "react";
+import * as ReactDom from "react-dom";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 
 import { FakeAccountService } from "../../shared/account-service-fake.ts";
@@ -10,7 +12,10 @@ import { indexedAccountStore, type AccountSession } from "../lib/account/store.t
 import { fakeIndexedDB } from "../lib/indexedDB.fake.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { nativeTransport, setTransport } from "../lib/transport.ts";
-import { AccountSection } from "./AccountSection.tsx";
+
+// a portal is drawn in place, so the test renderer sees Manage account's sheet
+await mock.module("react-dom", () => ({ ...ReactDom, createPortal: (node: ReactNode) => createElement("div", { "data-portal": "" }, node) }));
+const { AccountSection } = await import("./AccountSection.tsx");
 
 // Signing in on a PC's own page adds the PC in the same step (docs/account.md, "Adding a PC"): the sign-in
 // that finishes on this screen lists the PC and waits; one that was already there only offers the button.
@@ -55,7 +60,9 @@ describe("signing in on a PC's own page", () => {
     boundOnDirectoryRead = false;
     tab = new Map();
     userCode = null;
-    for (const key of ["window", "document", "navigator", "indexedDB", "getComputedStyle", "location", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    for (const key of ["window", "document", "navigator", "indexedDB", "getComputedStyle", "location", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    // Manage account's sheet keeps the focus in it, which asks what an element is
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: class {} });
     Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, writable: true, value: true });
     Object.defineProperty(globalThis, "getComputedStyle", { configurable: true, value: () => ({ getPropertyValue: () => "" }) });
     Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: fakeIndexedDB().factory });
@@ -140,6 +147,8 @@ describe("signing in on a PC's own page", () => {
     expect(found).toHaveLength(1);
     await act(async () => { (found[0]!.props as { onClick: () => void }).onClick(); });
   };
+  /** the one button that also turns the relay on: it reads like the plain one, and is marked apart */
+  const relayButtons = (): ReactTestInstance[] => renderer!.root.findAll((node) => node.type === "button" && node.props["data-relay"] === "off");
   const links = (): { path: string; localOnly: boolean }[] => asked.filter((request) => request.path === "/api/relay/link");
 
   it("lists the PC and waits once the sign-in finishes, with no second press, and only then", async () => {
@@ -149,8 +158,7 @@ describe("signing in on a PC's own page", () => {
     await press("Sign in and add this PC");
     await until(() => buttons().includes("Stop waiting"));
     expect((await indexedAccountStore.get("session"))?.account).toBe(ACCOUNT);
-    expect(text(renderer!.root)).toContain("Signed in. Adding this PC to your account…");
-    expect(text(renderer!.root)).toContain("choose Add on desk.");
+    expect(text(renderer!.root)).toContain("On another device of your account, choose Add on desk.");
     // listed once in the account's directory, behind a window only this PC approves; the relay was not asked to start
     expect(links()).toEqual([{ path: "/api/relay/link", localOnly: true }]);
     expect(asked.some((request) => request.path === "/api/relay/start")).toBe(false);
@@ -185,14 +193,14 @@ describe("signing in on a PC's own page", () => {
       directoryWrites.length = 0;
       boundOnDirectoryRead = bound;
       await press("Add this PC to my account");
-      await until(() => text(renderer!.root).includes("This PC is in your account.") || buttons().includes("Stop waiting"));
+      await until(() => text(renderer!.root).includes("Added") || buttons().includes("Stop waiting"));
       expect(directoryWrites).toEqual(bound ? [] : ["DELETE", "PUT"]);
       const [after] = await service.listPcs();
       expect(after?.server_id).toBe(SERVER);
       if (bound) {
         expect(after?.added_at).toBe(listed?.added_at);
         expect(pcAccount).toBe(ACCOUNT);
-        expect(text(renderer!.root)).toContain("This PC is in your account.");
+        expect(text(renderer!.root)).toContain("Added");
         expect(buttons()).not.toContain("Stop waiting");
       } else {
         expect(Date.parse(after?.added_at ?? "")).toBeGreaterThan(Date.parse(listed?.added_at ?? ""));
@@ -215,6 +223,8 @@ describe("signing in on a PC's own page", () => {
     await press("Sign in and add this PC");
     await until(() => buttons().includes("Stop waiting"));
     await press("Stop waiting");
+    await until(() => buttons().includes("Manage account"));
+    await press("Manage account");
     await until(() => buttons().includes("Remove GitHub"));
 
     // later than the service takes a sign-in for recent: removing a method asks for a sign-in again
@@ -253,10 +263,10 @@ describe("signing in on a PC's own page", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     expect(buttons()).not.toContain("Sign in and add this PC");
     await press("Sign in");
-    await until(() => buttons().includes("Turn on the relay and add this PC"));
+    await until(() => relayButtons().length === 1);
     expect(asked.some((request) => request.path === "/api/relay/start")).toBe(false);
     expect(await new AccountService({ store: indexedAccountStore }).listPcs()).toEqual([]);
-    await press("Turn on the relay and add this PC");
+    await act(async () => { (relayButtons()[0]!.props as { onClick: () => void }).onClick(); });
     await until(() => buttons().includes("Stop waiting"));
     expect(asked.filter((request) => request.path === "/api/relay/start")).toHaveLength(1);
     expect(links().every((request) => request.localOnly)).toBe(true);
@@ -284,7 +294,7 @@ describe("signing in on a PC's own page", () => {
     expect(text(renderer!.root)).not.toContain("Adding this PC");
     expect(text(renderer!.root)).not.toContain("could not be listed");
     expect(buttons()).not.toContain("Add this PC to my account");
-    expect(buttons()).not.toContain("Turn on the relay and add this PC");
+    expect(relayButtons()).toHaveLength(0);
   });
 
   it("a press of a button that read only Sign in adds nothing, though the relay was turned on since the button was drawn", async () => {

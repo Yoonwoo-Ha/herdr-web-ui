@@ -10,9 +10,10 @@ import { decodeOffer, encodeOffer } from "../../shared/relay-offer.ts";
 import { deriveServerId } from "../../shared/relay-server-proof.ts";
 import { CLOSE_ANSWER_MS } from "../lib/account/addThisPc.ts";
 import { AccountServiceError, SignedOutError, type AccountService } from "../lib/account/service.ts";
+import type { AccountSession } from "../lib/account/store.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { nativeTransport, setTransport } from "../lib/transport.ts";
-import { ADDED_POLL_MS, ADDING_MS, AddThisPc, ANSWER_MS, REOPEN_MS, SIGNED_IN_RETRY_MS, WAITING_MS } from "./AccountSection.tsx";
+import { ADDED_POLL_MS, ADDING_MS, AddThisPc, ANSWER_MS, REOPEN_MS, SIGNED_IN_RETRY_MS, WAITING_MS, type SignInAgain } from "./AccountSection.tsx";
 
 // the real PC of realRelay reads no herdr: its status reads would put their timeouts on this suite's fake timer queue
 afterAll(unitHerdrOnly());
@@ -48,6 +49,8 @@ describe("AddThisPc", () => {
     healthId?: string | null;
   };
   let signedIn: string | null;
+  /** which sign-in of that account is stored: a sign-in again, or another one, stores the next */
+  let signInNo: number;
   /** whether the account service admits this PC in one press (a fresh two-step sign-in), and what the PC answers the press with */
   let onePress: { admits: boolean; pcStatus: number; opensAll: boolean };
   let admitted: string[];
@@ -61,15 +64,15 @@ describe("AddThisPc", () => {
   const loopbackFetch = globalThis.fetch;
   let held: { listPcs: Promise<void> | null; putPc: Promise<void> | null; session: Promise<void> | null; link: Promise<void> | null; start: Promise<void> | null; close: Promise<void> | null; press: Promise<void> | null };
   /** the account service; `bound` is the account of the one sign-in it acts for (forSignIn), which refuses once another is stored */
-  const service = (bound?: string): AccountService => {
-    const mine = (): void => { if (bound !== undefined && signedIn !== bound) throw new SignedOutError(); };
+  const service = (bound?: string, boundSignIn?: string): AccountService => {
+    const mine = (): void => { if (bound !== undefined && (signedIn !== bound || (boundSignIn !== undefined && boundSignIn !== `r-${signInNo}`))) throw new SignedOutError(); };
     return {
       listPcs: async () => { mine(); await held.listPcs; return []; },
       putPc: async (id: string) => { mine(); directory.push("putPc"); puts.push(`${signedIn}/${id}`); await held.putPc; },
       deletePc: async () => { mine(); directory.push("deletePc"); },
       admitPc: async () => { mine(); admitted.push(signedIn ?? ""); if (!onePress.admits) throw new AccountServiceError(403, "two_step_required", "Set up two-step sign-in first"); return { account: signedIn, new_until: new Date(at + 86_400_000).toISOString() }; },
-      session: async () => { await held.session; return signedIn === null ? undefined : { account: signedIn }; },
-      forSignIn: (session: { account: string }) => service(session.account),
+      session: async () => { await held.session; return signedIn === null ? undefined : { account: signedIn, refresh_token: `r-${signInNo}` }; },
+      forSignIn: (session: { account: string; refresh_token?: string }) => service(session.account, session.refresh_token),
     } as unknown as AccountService;
   };
   const hold = (what: "listPcs" | "putPc" | "session" | "link" | "start" | "close" | "press"): (() => void) => {
@@ -82,6 +85,7 @@ describe("AddThisPc", () => {
     renderers = [];
     pc = { account: null, enrolling: false, linkError: null, statusDown: false, offer: offerOf(publicKey, "desk"), hang: null, relay: "on", blocked: null, start: "ok", closeMissing: false, gate: "closed", via: "loopback", paired: false, cookieSticks: true, healthDown: false, role: "drive" };
     signedIn = ACCOUNT;
+    signInNo = 0;
     onePress = { admits: false, pcStatus: 200, opensAll: true };
     admitted = [];
     asked = [];
@@ -183,12 +187,14 @@ describe("AddThisPc", () => {
     const text = (node: ReactTestInstance | string): string => typeof node === "string" ? node : node.children.map(text).join("");
     return renderer.root.findAll((node) => node.type === "p").map(text).join("\n");
   };
+  /** a button as these tests name it: the relay-off offer reads like the plain one, and is told apart by its mark */
+  const named = (node: ReactTestInstance): string => `${node.children.join("")}${node.props["data-relay"] === "off" ? " (relay off)" : ""}`;
   const press = async (renderer: ReactTestRenderer, label: string): Promise<void> => {
-    const button = renderer.root.find((node) => node.type === "button" && node.children.join("") === label);
+    const button = renderer.root.find((node) => node.type === "button" && named(node) === label);
     act(() => { (button.props as { onClick: () => void }).onClick(); });
     await settle();
   };
-  const buttons = (renderer: ReactTestRenderer): string[] => renderer.root.findAll((node) => node.type === "button").map((node) => node.children.join(""));
+  const buttons = (renderer: ReactTestRenderer): string[] => renderer.root.findAll((node) => node.type === "button").map(named);
   const links = (): number => asked.filter((request) => request.path === "/api/relay/link").length;
   const show = (hidden: boolean): void => { page.hidden = hidden; act(() => { page.events.dispatchEvent(new Event("visibilitychange")); }); };
   const waitingFrom = async (): Promise<ReactTestRenderer> => {
@@ -220,8 +226,8 @@ describe("AddThisPc", () => {
 
   test("after the press it says what to do on any signed-in device, and keeps the wait for a reload", async () => {
     const renderer = await waitingFrom();
-    expect(words(renderer)).toContain("On a device signed in to this account (the Ovis app or app.ovis.sh), choose Add on desk. This screen then shows a six-digit number: type it there, then press Approve here. Keep this page open.");
-    expect(words(renderer)).toContain("Waiting. The window reopens by itself if Ovis restarts.");
+    expect(words(renderer)).toContain("On another device of your account, choose Add on desk.");
+    expect(words(renderer)).toContain("On another device of your account, choose Add on desk.");
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
     expect(directory).toEqual(["putPc"]);
     expect(JSON.parse(tab.get(MARKER)!)).toEqual({ name: "desk", until: at + WAITING_MS, serverId: SERVER, account: ACCOUNT, listedAt: at });
@@ -230,8 +236,8 @@ describe("AddThisPc", () => {
   test("one press: when the account service admits this PC, the press adds it with no digits and no wait", async () => {
     onePress.admits = true;
     const renderer = await waitingFrom();
-    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
-    expect(words(renderer)).not.toContain("Waiting. The window reopens by itself if Ovis restarts.");
+    expect(words(renderer)).toContain("Added");
+    expect(words(renderer)).not.toContain("On another device of your account, choose Add on desk.");
     expect([directory, admitted]).toEqual([["putPc"], [ACCOUNT]]);
     expect(asked.map((request) => request.path)).toContain("/api/account/one-press");
     // the window the listing opened is closed again, and no wait is kept for a reload
@@ -257,7 +263,7 @@ describe("AddThisPc", () => {
     await settle();
     expect(tab.has(MARKER)).toBe(true);
     expect(asked.filter((request) => request.path === "/api/relay/link/close").length).toBe(closes);
-    expect(words(renderer)).toContain("Waiting. The window reopens by itself if Ovis restarts.");
+    expect(words(renderer)).toContain("On another device of your account, choose Add on desk.");
   });
 
   test("PADD-5: a one-press success tells its owner once, so the account's list is read again", async () => {
@@ -268,7 +274,7 @@ describe("AddThisPc", () => {
     renderers.push(renderer);
     await settle();
     await press(renderer, "Add this PC to my account");
-    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
+    expect(words(renderer)).toContain("Added");
     expect(told).toBe(1);
   });
 
@@ -276,7 +282,180 @@ describe("AddThisPc", () => {
     const renderer = await waitingFrom();
     expect([directory, admitted]).toEqual([["putPc"], [ACCOUNT]]);
     expect(asked.map((request) => request.path)).not.toContain("/api/account/one-press");
-    expect(words(renderer)).toContain("Waiting. The window reopens by itself if Ovis restarts.");
+    expect(words(renderer)).toContain("On another device of your account, choose Add on desk.");
+  });
+
+  describe("sign in again from the wait", () => {
+    const WAIT = "On another device of your account, choose Add on desk.";
+    const OFFER = "Sign in again now to add it right away.";
+    /**
+     * this page's own sign-in again, as these tests make it: `comes` says what the fresh sign-in comes to (a two-step
+     * one or a plain one stored in the old one's place, another account's stored nowhere, a failure, no end yet, a
+     * two-step one held until `release`, or a two-step one that another sign-in of the account replaces at once)
+     */
+    let comes: "two-step" | "plain" | "other" | "fail" | "open" | "held" | "replaced";
+    let calls: { account: string; signal: AbortSignal }[];
+    let installs: number;
+    let release: () => void;
+    /** stores the fresh sign-in in the old one's place, only while it is still wanted at that write */
+    const install = (wanted: () => boolean): AccountSession | null => {
+      if (!wanted()) return null;
+      installs++;
+      signInNo++;
+      return { account: ACCOUNT, refresh_token: `r-${signInNo}` } as AccountSession;
+    };
+    const signInAgain: SignInAgain = (from, { signal, wanted }) => {
+      calls.push({ account: from.account, signal });
+      switch (comes) {
+        case "two-step": onePress.admits = true; return Promise.resolve(install(wanted));
+        case "plain": return Promise.resolve(install(wanted));
+        case "other": return Promise.resolve(null);
+        case "fail": return Promise.reject(new Error("no sign-in"));
+        case "open": return new Promise<AccountSession | null>((_, reject) => signal.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError"))));
+        case "held": return new Promise<AccountSession | null>((done) => { release = () => { onePress.admits = true; done(install(wanted)); }; });
+        case "replaced": {
+          onePress.admits = true;
+          const fresh = install(wanted);
+          signInNo++;
+          return Promise.resolve(fresh);
+        }
+      }
+    };
+    const waitingWithOffer = async (): Promise<ReactTestRenderer> => {
+      let renderer!: ReactTestRenderer;
+      act(() => { renderer = create(createElement(SettingsProvider, { children: createElement(AddThisPc, { service: unbound, signedInHere: () => null, opensAll: () => onePress.opensAll, signInAgain }) })); });
+      renderers.push(renderer);
+      await settle();
+      await press(renderer, "Add this PC to my account");
+      return renderer;
+    };
+    beforeEach(() => { comes = "two-step"; calls = []; installs = 0; });
+    const pressedOnce = (renderer: ReactTestRenderer): void => {
+      expect(admitted).toEqual([ACCOUNT]);
+      expect(asked.map((request) => request.path)).not.toContain("/api/account/one-press");
+      expect(words(renderer)).not.toContain("Added");
+    };
+
+    test("Stop waiting in another copy of the screen while the sign-in is out: the fresh sign-in is not stored and nothing is pressed", async () => {
+      comes = "held";
+      const renderer = await waitingWithOffer();
+      const other = await mount();
+      expect(buttons(other)).toEqual(["Stop waiting"]);
+      await press(renderer, "Sign in again");
+      await press(other, "Stop waiting");
+      act(() => { release(); });
+      await settle();
+      expect(installs).toBe(0);
+      pressedOnce(renderer);
+    });
+
+    test("Stop waiting in another copy before Sign in again is pressed here: no sign-in starts, nothing is stored or pressed", async () => {
+      const renderer = await waitingWithOffer();
+      const other = await mount();
+      await press(other, "Stop waiting");
+      // this copy has not polled since: it still shows the offer, and the press finds the wait gone
+      await press(renderer, "Sign in again");
+      await settle();
+      expect(installs).toBe(0);
+      pressedOnce(renderer);
+      expect(words(renderer)).not.toContain("Added");
+      expect(buttons(renderer)).not.toContain("Sign in again");
+    });
+
+    test("a screen closed while its sign-in again is out stores nothing and presses nothing", async () => {
+      comes = "held";
+      const renderer = await waitingWithOffer();
+      await press(renderer, "Sign in again");
+      act(() => { renderer.unmount(); });
+      act(() => { release(); });
+      await settle();
+      expect(installs).toBe(0);
+      // the screen is gone: what reached the service and the PC says it all (only the first, refused press)
+      expect(admitted).toEqual([ACCOUNT]);
+      expect(asked.map((request) => request.path)).not.toContain("/api/account/one-press");
+    });
+
+    test("another sign-in of the account stored after the fresh one: the retry presses with no sign-in but the fresh one", async () => {
+      comes = "replaced";
+      const renderer = await waitingWithOffer();
+      await press(renderer, "Sign in again");
+      expect(installs).toBe(1);
+      pressedOnce(renderer);
+      expect(words(renderer)).toContain(WAIT);
+    });
+
+    test("the address answers for another PC once the sign-in is back: nothing is listed or pressed for that PC", async () => {
+      comes = "held";
+      const renderer = await waitingWithOffer();
+      await press(renderer, "Sign in again");
+      pc.offer = offerOf(otherKey, "other");
+      act(() => { release(); });
+      await settle();
+      expect(puts).toEqual([`${ACCOUNT}/${SERVER}`]);
+      pressedOnce(renderer);
+      expect(buttons(renderer)).toEqual(["Stop waiting"]);
+    });
+
+    test("a one press refused for the sign-in itself offers to sign in again, beside Stop waiting", async () => {
+      const renderer = await waitingWithOffer();
+      expect(words(renderer)).toContain(WAIT);
+      expect(words(renderer)).toContain(OFFER);
+      expect(buttons(renderer)).toEqual(["Sign in again", "Stop waiting"]);
+      expect(calls).toEqual([]);
+    });
+
+    test("a fresh two-step sign-in adds the PC in one press, under the same account", async () => {
+      const renderer = await waitingWithOffer();
+      await press(renderer, "Sign in again");
+      expect(calls.map((call) => call.account)).toEqual([ACCOUNT]);
+      expect(admitted).toEqual([ACCOUNT, ACCOUNT]);
+      expect(asked.map((request) => request.path)).toContain("/api/account/one-press");
+      expect(words(renderer)).toContain("Added");
+      expect(tab.has(MARKER)).toBe(false);
+    });
+
+    test("a fresh sign-in that is still not two-step goes back to the plain wait, with no second offer", async () => {
+      comes = "plain";
+      const renderer = await waitingWithOffer();
+      await press(renderer, "Sign in again");
+      expect(admitted).toEqual([ACCOUNT, ACCOUNT]);
+      expect(words(renderer)).toContain(WAIT);
+      expect(words(renderer)).not.toContain(OFFER);
+      expect(buttons(renderer)).toEqual(["Stop waiting"]);
+    });
+
+    test("another account's sign-in adds nothing: the plain wait goes on", async () => {
+      comes = "other";
+      const renderer = await waitingWithOffer();
+      await press(renderer, "Sign in again");
+      expect(admitted).toEqual([ACCOUNT]);
+      expect(words(renderer)).toContain(WAIT);
+      expect(words(renderer)).not.toContain(OFFER);
+      expect(buttons(renderer)).toEqual(["Stop waiting"]);
+    });
+
+    test("a failed sign-in adds nothing: the plain wait goes on, and the failure is said", async () => {
+      comes = "fail";
+      const failed = await waitingWithOffer();
+      await press(failed, "Sign in again");
+      expect(admitted).toEqual([ACCOUNT]);
+      expect(words(failed)).toContain(WAIT);
+      expect(words(failed)).toContain("The sign-in did not finish. Try again.");
+      expect(buttons(failed)).toEqual(["Stop waiting"]);
+    });
+
+    test("Stop waiting still stops, also while the sign-in again is under way, which then adds nothing", async () => {
+      comes = "open";
+      const renderer = await waitingWithOffer();
+      await press(renderer, "Sign in again");
+      expect(words(renderer)).toContain("Finish signing in in your browser.");
+      expect(buttons(renderer)).toEqual(["Cancel", "Stop waiting"]);
+      await press(renderer, "Stop waiting");
+      expect(calls[0]!.signal.aborted).toBe(true);
+      expect(buttons(renderer)).toEqual(["Add this PC to my account"]);
+      expect(tab.has(MARKER)).toBe(false);
+      expect(admitted).toEqual([ACCOUNT]);
+    });
   });
 
   test("a PC whose step-2 switch is off is never tried in one press: the account service is not asked, and the digit wait comes", async () => {
@@ -285,14 +464,14 @@ describe("AddThisPc", () => {
     const renderer = await waitingFrom();
     expect(admitted).toEqual([]);
     expect(asked.map((request) => request.path)).not.toContain("/api/account/one-press");
-    expect(words(renderer)).toContain("Waiting. The window reopens by itself if Ovis restarts.");
+    expect(words(renderer)).toContain("On another device of your account, choose Add on desk.");
   });
 
   test("a PC without the one-press route (an older Ovis, or the step-2 switch off) keeps today's digit wait", async () => {
     onePress.admits = true;
     onePress.pcStatus = 404;
     const renderer = await waitingFrom();
-    expect(words(renderer)).toContain("Waiting. The window reopens by itself if Ovis restarts.");
+    expect(words(renderer)).toContain("On another device of your account, choose Add on desk.");
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
   });
 
@@ -361,7 +540,7 @@ describe("AddThisPc", () => {
     await settle();
 
     expect(directory).toEqual(["putPc"]);
-    expect(words(renderer)).toContain("This PC is in your account.");
+    expect(words(renderer)).toContain("Added");
     expect(buttons(renderer)).toEqual([]);
     expect(tab.has(MARKER)).toBe(false);
     expect(asked.filter(({ path }) => path === "/api/relay/link" || path === "/api/relay/link/close").map(({ path }) => path))
@@ -378,7 +557,7 @@ describe("AddThisPc", () => {
     release();
     await settle();
 
-    expect(words(renderer)).toContain("This PC is in your account.");
+    expect(words(renderer)).toContain("Added");
     expect(directory).toEqual([]);
     expect(tab.has(MARKER)).toBe(false);
     expect(asked.filter(({ path }) => path === "/api/relay/link" || path === "/api/relay/link/close").map(({ path }) => path))
@@ -398,7 +577,7 @@ describe("AddThisPc", () => {
       release();
       await settle();
 
-      expect(words(renderer)).toContain("This PC is in your account.");
+      expect(words(renderer)).toContain("Added");
       expect(relay.approvals.windowOpen()).toBe(true);
     } finally { await relay.close(); }
   });
@@ -419,7 +598,7 @@ describe("AddThisPc", () => {
       release();
       await settle();
 
-      expect(words(renderer)).toContain("This PC is in your account.");
+      expect(words(renderer)).toContain("Added");
       expect(relay.approvals.windowOpen()).toBe(false);
     } finally { await relay.close(); }
   });
@@ -430,7 +609,7 @@ describe("AddThisPc", () => {
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
     pc.account = ACCOUNT;
     await advance(ADDED_POLL_MS);
-    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
+    expect(words(renderer)).toContain("Added");
     expect(words(renderer)).not.toContain("acct_");
     expect(buttons(renderer)).toEqual([]);
     expect(tab.has(MARKER)).toBe(false);
@@ -438,7 +617,7 @@ describe("AddThisPc", () => {
     await advance(WAITING_MS);
     expect(asked.length).toBe(before);
     expect(jest.getTimerCount()).toBe(0);
-    expect(words(renderer)).toContain("This PC is in your account.");
+    expect(words(renderer)).toContain("Added");
   });
 
   test("a reloaded tab that was waiting goes on waiting and opens the window, without a press or a directory write", async () => {
@@ -467,7 +646,7 @@ describe("AddThisPc", () => {
     tab.set(MARKER, kept(20 * 60_000));
     pc.account = ACCOUNT;
     const renderer = await mount();
-    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
+    expect(words(renderer)).toContain("Added");
     expect(tab.has(MARKER)).toBe(false);
     expect(links()).toBe(0);
   });
@@ -569,7 +748,7 @@ describe("AddThisPc", () => {
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
     pc.healthId = undefined;
     await advance(ADDED_POLL_MS);
-    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
+    expect(words(renderer)).toContain("Added");
   });
 
   test("on the hosted app's page for the PC, which names it, a PC that does not say which PC it is still gets its window", async () => {
@@ -659,7 +838,7 @@ describe("AddThisPc", () => {
   test("a PC already in the signed-in account shows Added without opening or listing", async () => {
     pc.account = ACCOUNT;
     const renderer = await mount();
-    expect(words(renderer)).toContain("This PC is in your account.");
+    expect(words(renderer)).toContain("Added");
     expect(buttons(renderer)).toEqual([]);
     expect(links()).toBe(0);
     expect(directory).toEqual([]);
@@ -677,7 +856,7 @@ describe("AddThisPc", () => {
     await advance(WAITING_MS - 1);
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
     await advance(1);
-    expect(words(renderer)).toBe("This PC stopped waiting after 30 minutes.\nNo other device? Open app.ovis.sh in a new tab here and sign in the same way. Choose Add there, then come back to this tab to approve.");
+    expect(words(renderer)).toBe("This PC stopped waiting after 30 minutes.");
     expect(buttons(renderer)).toEqual(["Keep waiting"]);
     expect(tab.has(MARKER)).toBe(false);
     expect(jest.getTimerCount()).toBe(0);
@@ -747,7 +926,7 @@ describe("AddThisPc", () => {
 
   test("a sign-in that just finished here lists the PC once and waits, with no press", async () => {
     const renderer = await mount(ACCOUNT);
-    expect(words(renderer).split("\n")[0]).toBe("Signed in. Adding this PC to your account…");
+    expect(words(renderer).split("\n")[0]).toBe("On another device of your account, choose Add on desk.");
     expect(words(renderer)).toContain("choose Add on desk.");
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
     expect(directory).toEqual(["putPc"]);
@@ -806,7 +985,7 @@ describe("AddThisPc", () => {
   test("a sign-in that just finished on a PC already in that account shows Added and lists nothing", async () => {
     pc.account = ACCOUNT;
     const renderer = await mount(ACCOUNT);
-    expect(words(renderer)).toContain("This PC is in your account.");
+    expect(words(renderer)).toContain("Added");
     expect(buttons(renderer)).toEqual([]);
     expect(links()).toBe(0);
     expect(directory).toEqual([]);
@@ -866,14 +1045,14 @@ describe("AddThisPc", () => {
   test("with the relay off the sign-in starts nothing: one button turns the relay on and lists", async () => {
     pc.relay = "off";
     const renderer = await mount(ACCOUNT);
-    expect(buttons(renderer)).toEqual(["Turn on the relay and add this PC"]);
-    expect(words(renderer)).toContain("The Ovis relay lets your devices reach this PC from anywhere.");
+    expect(buttons(renderer)).toEqual(["Add this PC to my account (relay off)"]);
+    expect(words(renderer)).toBe("");
     expect(words(renderer)).not.toContain("closes the device gate");
     expect(asked.some((request) => request.path === "/api/relay/start")).toBe(false);
     expect(directory).toEqual([]);
     expect(tab.has(MARKER)).toBe(false);
 
-    await press(renderer, "Turn on the relay and add this PC");
+    await press(renderer, "Add this PC to my account (relay off)");
     expect(asked.filter((request) => request.path === "/api/relay/start").length).toBe(1);
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
     expect(directory).toEqual(["putPc"]);
@@ -887,10 +1066,10 @@ describe("AddThisPc", () => {
     const renderer = await mount(ACCOUNT, false);
     pc.account = ACCOUNT;
 
-    await press(renderer, "Turn on the relay and add this PC");
+    await press(renderer, "Add this PC to my account (relay off)");
 
     expect(asked.filter(({ path }) => path === "/api/relay/start")).toEqual([]);
-    expect(words(renderer)).toContain("This PC is in your account.");
+    expect(words(renderer)).toContain("Added");
     expect(links()).toBe(0);
     expect(directory).toEqual([]);
   });
@@ -898,7 +1077,7 @@ describe("AddThisPc", () => {
   test("a copy offering the relay button takes up the wait another copy begins", async () => {
     pc.relay = "off";
     const welcome = await mount(ACCOUNT);
-    expect(buttons(welcome)).toEqual(["Turn on the relay and add this PC"]);
+    expect(buttons(welcome)).toEqual(["Add this PC to my account (relay off)"]);
     pc.relay = "on";
     const settings = await mount();
     await press(settings, "Add this PC to my account");
@@ -918,9 +1097,9 @@ describe("AddThisPc", () => {
     pc.relay = "off";
     pc.blocked = "serve_only";
     const renderer = await mount(ACCOUNT);
-    await press(renderer, "Turn on the relay and add this PC");
+    await press(renderer, "Add this PC to my account (relay off)");
     expect(words(renderer)).toContain("Blocked: OVIS_TAILSCALE_SERVE_ONLY says tailscale serve is the only way in.");
-    expect(buttons(renderer)).toEqual(["Turn on the relay and add this PC"]);
+    expect(buttons(renderer)).toEqual(["Add this PC to my account (relay off)"]);
     expect(directory).toEqual([]);
     expect(tab.has(MARKER)).toBe(false);
   });
@@ -931,7 +1110,7 @@ describe("AddThisPc", () => {
     const renderer = await mount(ACCOUNT);
     // the PC refuses such a browser its account, so the button is never offered to one: this one came to be in that way since
     pc.via = "open";
-    await press(renderer, "Turn on the relay and add this PC");
+    await press(renderer, "Add this PC to my account (relay off)");
     const paths = asked.map((request) => request.path);
     expect(paths.filter((path) => path === "/api/devices/pair").length).toBe(1);
     expect(paths.indexOf("/api/devices/pair/start")).toBeGreaterThan(-1);
@@ -944,7 +1123,7 @@ describe("AddThisPc", () => {
     pc.relay = "off";
     pc.gate = "open";
     const renderer = await mount(ACCOUNT);
-    await press(renderer, "Turn on the relay and add this PC");
+    await press(renderer, "Add this PC to my account (relay off)");
     expect(asked.some((request) => request.path.startsWith("/api/devices"))).toBe(false);
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
   });
@@ -955,10 +1134,10 @@ describe("AddThisPc", () => {
     pc.cookieSticks = false;
     const renderer = await mount(ACCOUNT);
     pc.via = "open";
-    await press(renderer, "Turn on the relay and add this PC");
+    await press(renderer, "Add this PC to my account (relay off)");
     expect(words(renderer)).toContain("Could not confirm this browser is paired. Check that cookies are enabled, then try again.");
     expect(asked.some((request) => request.path === "/api/relay/start")).toBe(false);
-    expect(buttons(renderer)).toEqual(["Turn on the relay and add this PC"]);
+    expect(buttons(renderer)).toEqual(["Add this PC to my account (relay off)"]);
     expect(links()).toBe(1);
     expect(directory).toEqual([]);
   });
@@ -967,10 +1146,10 @@ describe("AddThisPc", () => {
     pc.relay = "off";
     const renderer = await mount(ACCOUNT);
     pc.healthDown = true;
-    await press(renderer, "Turn on the relay and add this PC");
+    await press(renderer, "Add this PC to my account (relay off)");
     expect(words(renderer)).toContain("The relay could not be turned on. Try again.");
     expect(asked.some((request) => request.path === "/api/relay/start")).toBe(false);
-    expect(buttons(renderer)).toEqual(["Turn on the relay and add this PC"]);
+    expect(buttons(renderer)).toEqual(["Add this PC to my account (relay off)"]);
   });
 
   for (const start of ["off", "broken"] as const) {
@@ -979,11 +1158,11 @@ describe("AddThisPc", () => {
       pc.start = start;
       const renderer = await mount(ACCOUNT);
       const opened = links();
-      await press(renderer, "Turn on the relay and add this PC");
+      await press(renderer, "Add this PC to my account (relay off)");
       expect(asked.filter((request) => request.path === "/api/relay/start").length).toBe(1);
       const alerts = renderer.root.findAll((node) => node.type === "p" && (node.props as { role?: string }).role === "alert").map((node) => node.children.join(""));
       expect(alerts).toEqual(["The relay could not be turned on. Try again."]);
-      expect(buttons(renderer)).toEqual(["Turn on the relay and add this PC"]);
+      expect(buttons(renderer)).toEqual(["Add this PC to my account (relay off)"]);
       expect(directory).toEqual([]);
       expect(links()).toBe(opened);
       expect(tab.has(MARKER)).toBe(false);
@@ -1021,9 +1200,9 @@ describe("AddThisPc", () => {
   test("the relay button lists only under the sign-in it was offered to: with another stored, the relay is not started and nothing is listed", async () => {
     pc.relay = "off";
     const renderer = await mount(ACCOUNT);
-    expect(buttons(renderer)).toEqual(["Turn on the relay and add this PC"]);
+    expect(buttons(renderer)).toEqual(["Add this PC to my account (relay off)"]);
     signedIn = "acct_someone_else";
-    await press(renderer, "Turn on the relay and add this PC");
+    await press(renderer, "Add this PC to my account (relay off)");
     expect(asked.some((request) => request.path === "/api/relay/start")).toBe(false);
     expect(puts).toEqual([]);
     expect(buttons(renderer)).toEqual(["Add this PC to my account"]);
@@ -1033,7 +1212,7 @@ describe("AddThisPc", () => {
     pc.relay = "off";
     const renderer = await mount(ACCOUNT);
     const release = hold("start");
-    await press(renderer, "Turn on the relay and add this PC");
+    await press(renderer, "Add this PC to my account (relay off)");
     signedIn = "acct_someone_else";
     release();
     await settle();
@@ -1075,18 +1254,18 @@ describe("AddThisPc", () => {
     pc.relay = "off";
     const renderer = await mount(ACCOUNT);
     const release = hold("start");
-    await press(renderer, "Turn on the relay and add this PC");
+    await press(renderer, "Add this PC to my account (relay off)");
     expect(words(renderer)).toBe("Signed in. Adding this PC to your account…");
     expect(buttons(renderer)).toEqual([]);
     await advance(ADDING_MS);
-    expect(buttons(renderer)).toEqual(["Turn on the relay and add this PC"]);
+    expect(buttons(renderer)).toEqual(["Add this PC to my account (relay off)"]);
     expect(words(renderer)).toContain("The relay could not be turned on. Try again.");
     const opened = links();
     release();
     await settle();
     expect(links()).toBe(opened);
     expect(directory).toEqual([]);
-    expect(buttons(renderer)).toEqual(["Turn on the relay and add this PC"]);
+    expect(buttons(renderer)).toEqual(["Add this PC to my account (relay off)"]);
   });
 
   test("a sign-in that just finished while the PC's account cannot be read is taken by that mount alone", async () => {
@@ -1142,7 +1321,7 @@ describe("AddThisPc", () => {
     pc.statusDown = false;
     pc.account = ACCOUNT;
     await advance(ADDED_POLL_MS);
-    expect(words(renderer)).toContain("This PC is in your account.");
+    expect(words(renderer)).toContain("Added");
     expect(buttons(renderer)).toEqual([]);
     expect(links()).toBe(0);
     expect(directory).toEqual([]);
@@ -1202,7 +1381,7 @@ describe("AddThisPc", () => {
     pc.account = ACCOUNT;
     tab.delete(MARKER);
     await advance(ADDED_POLL_MS);
-    for (const copy of [welcome, settings]) expect(words(copy)).toContain("This PC is in your account. A new device of your account may need one approval here.");
+    for (const copy of [welcome, settings]) expect(words(copy)).toContain("Added");
   });
 
   test("a sign-out or another sign-in in another tab ends the wait with the next reopen, not nine minutes later", async () => {
@@ -1240,7 +1419,7 @@ describe("AddThisPc", () => {
     await advance(ANSWER_MS);
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
     await advance(ADDED_POLL_MS);
-    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
+    expect(words(renderer)).toContain("Added");
   });
 
   test("a listing that never gets an answer is tried again", async () => {
@@ -1263,15 +1442,15 @@ describe("AddThisPc", () => {
     pc.enrolling = true;
     await advance(ADDED_POLL_MS);
     expect(words(renderer)).toContain("Not finished yet: the device that added this PC is still setting it up. If it stopped, open this PC on that device and choose Try again.");
-    expect(words(renderer)).not.toContain("A new device of your account may need one approval here.");
+    expect(words(renderer)).not.toContain("Added");
     const opened = links();
     await advance(RELIST_MS);
     expect(links()).toBe(opened);
     expect(directory).toEqual(["putPc"]);
-    expect(words(renderer)).not.toContain("A new device of your account may need one approval here.");
+    expect(words(renderer)).not.toContain("Added");
     pc.enrolling = false;
     await advance(ADDED_POLL_MS);
-    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
+    expect(words(renderer)).toContain("Added");
     expect(jest.getTimerCount()).toBe(0);
   });
 
@@ -1283,7 +1462,7 @@ describe("AddThisPc", () => {
     expect(words(renderer)).toContain("the device that added this PC is still setting it up");
     pc.enrolling = false;
     await advance(ADDED_POLL_MS);
-    expect(words(renderer)).toContain("A new device of your account may need one approval here.");
+    expect(words(renderer)).toContain("Added");
   });
 
   test("a PC whose first member left before enrolling it offers the button again", async () => {
@@ -1322,7 +1501,7 @@ describe("AddThisPc", () => {
     const renderer = await mount();
     expect(renderer.toJSON()).toBeNull();
     await advance(2 * ADDED_POLL_MS);
-    expect(words(renderer)).toBe("This PC stopped waiting after 30 minutes.\nNo other device? Open app.ovis.sh in a new tab here and sign in the same way. Choose Add there, then come back to this tab to approve.");
+    expect(words(renderer)).toBe("This PC stopped waiting after 30 minutes.");
     expect(buttons(renderer)).toEqual(["Keep waiting"]);
     expect(tab.has(MARKER)).toBe(false);
     expect(jest.getTimerCount()).toBe(0);
@@ -1335,7 +1514,7 @@ describe("AddThisPc", () => {
     pc.account = ACCOUNT;
     const before = directory.length;
     await press(renderer, "Keep waiting");
-    expect(words(renderer)).toContain("This PC is in your account. A new device of your account may need one approval here.");
+    expect(words(renderer)).toContain("Added");
     expect(directory.length).toBe(before);
 
     // the same after Stop waiting, and under another sign-in it is not called yours
@@ -1432,7 +1611,7 @@ describe("AddThisPc", () => {
     expect(links()).toBe(opened + 1);
     pc.account = ACCOUNT;
     await advance(ADDED_POLL_MS);
-    expect(words(welcome)).toContain("This PC is in your account. A new device of your account may need one approval here.");
+    expect(words(welcome)).toContain("Added");
     expect(tab.has(MARKER)).toBe(false);
   });
 
@@ -1491,10 +1670,10 @@ describe("AddThisPc", () => {
   test("a sign-in whose button did not say it adds the PC, with the relay off, is offered the one button for both", async () => {
     pc.relay = "off";
     const renderer = await mount(ACCOUNT, false);
-    expect(buttons(renderer)).toEqual(["Turn on the relay and add this PC"]);
+    expect(buttons(renderer)).toEqual(["Add this PC to my account (relay off)"]);
     expect(links()).toBe(0);
     expect(asked.some((request) => request.path === "/api/relay/start")).toBe(false);
-    await press(renderer, "Turn on the relay and add this PC");
+    await press(renderer, "Add this PC to my account (relay off)");
     expect(buttons(renderer)).toEqual(["Stop waiting"]);
     expect(puts).toEqual([`${ACCOUNT}/${SERVER}`]);
   });
@@ -1594,7 +1773,7 @@ describe("AddThisPc", () => {
     pc.relay = "off";
     const renderer = await mount(ACCOUNT);
     const release = hold("start");
-    await press(renderer, "Turn on the relay and add this PC");
+    await press(renderer, "Add this PC to my account (relay off)");
     act(() => { renderer.unmount(); });
     const opened = links();
     release();

@@ -14,7 +14,7 @@ export const ACCOUNT_QR_ALONE_MS = 10_000;
 export const ACCOUNT_QR_LATE_MS = 10 * 60_000;
 
 /**
- * The PC's devices as the press on Show the QR code found them, on a PC in no account (the QR code is shown for no
+ * The PC's devices as the press on Phone QR code found them, on a PC in no account (the QR code is shown for no
  * other): a device the person kept since counts in `ids`. `seen`: when each device that came since was first seen,
  * filled in by every read (dueStrays). It travels with the press, to the watch and to a notice that waits, so a notice
  * drawn again later does not give a device its ten seconds anew.

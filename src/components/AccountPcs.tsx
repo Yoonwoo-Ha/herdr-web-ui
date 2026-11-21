@@ -4,7 +4,6 @@ import "./AccountPcs.css";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { ChevronRight, Trash2 } from "lucide-react";
 
-import { GLOBAL_APP } from "../../shared/relay-regions.ts";
 import { ACCOUNT_PCS_CHANGED_EVENT, isNewAccountPc, type MyPc, type MyPcState } from "../lib/account/myPcs.ts";
 import { SignedOutError, type AccountService } from "../lib/account/service.ts";
 import type { AccountProvider } from "../lib/account/store.ts";
@@ -12,7 +11,6 @@ import { useT } from "../lib/i18n.ts";
 import { lastSeen } from "../lib/lastSeen.ts";
 import type { PcStatus } from "../lib/relay/pcStatus.ts";
 import { serverScopePath } from "../lib/shellMode.ts";
-import { ExternalLink } from "../lib/externalLink.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { ConnectionLine } from "./ConnectionLine.tsx";
 import { outOfReachReason, outOfReachWord } from "./relayPcState.tsx";
@@ -161,15 +159,6 @@ export function listedPcStateText(pc: MyPc, t: ReturnType<typeof useT>): string 
   return pc.state === "needs-approval" && !pc.paired ? t("In your account") : accountPcStateText(pc, t);
 }
 
-/**
- * The hosted app's front page, where a browser signed in to the account sees its PCs: it opens the
- * ones it is paired with there and asks the others for an approval. A PC's own page links here and
- * not to one PC's address (`/s/<id>/`): that address opens only in a browser already paired with
- * that PC on the hosted app's origin, which this page cannot know, and shows any other browser a
- * pairing screen that names no PC. Sign-in is offered on the global app only (docs/account.md).
- */
-export const HOSTED_APP_URL = `${GLOBAL_APP}/`;
-
 /** How long the account must not have heard from a PC before its row offers Remove: the life of a relay pass (docs/relay.md, "Relay pass"). */
 export const UNUSED_AFTER_MS = 48 * 60 * 60_000;
 
@@ -232,12 +221,6 @@ export function AccountPcRows({ pcs, watching, remove, onRemoved, now = Date.now
           )}
         </li>
       ))}
-      {pcs.length > 0 && (
-        <li className="devices-row account-pcs-open">
-          <span className="settings-description">{t("To open a PC of your account in a browser, sign in to this account at app.ovis.sh.")}</span>
-          <ExternalLink kind="ovis" className="btn" href={HOSTED_APP_URL}>{t("Open app.ovis.sh")}</ExternalLink>
-        </li>
-      )}
       {removing !== null && (
         <ConfirmDialog title={t("Remove {name} from the list?", { name: removing.name })}
           body={t("Takes {name} off your account's list of PCs on every device. It revokes nothing: devices paired with {name} keep their access, and a device you later remove from your account is not removed from it. If {name} is used again, it comes back on the list when a device of your account opens it. Until then it cannot use the Ovis relay where the relay needs an account.", { name: removing.name })}

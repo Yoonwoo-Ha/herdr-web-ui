@@ -199,6 +199,11 @@
   margin-inline-start: auto;
 }
 
+/* a pill inside the name (This PC among the account's PCs) keeps a gap from it */
+.connect-found-name > .connect-found-source {
+  margin-inline-start: var(--space-2);
+}
+
 .connect-found-source {
   flex: none;
   padding: 0 var(--space-2);
@@ -215,6 +220,21 @@
   gap: var(--space-1);
   color: var(--status-done);
   font-size: var(--fs-sm);
+}
+
+.connect-qr-link {
+  align-self: flex-start;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.connect-qr-link:hover:not(:disabled) {
+  text-decoration: underline;
 }
 
 .connect-found-added svg {

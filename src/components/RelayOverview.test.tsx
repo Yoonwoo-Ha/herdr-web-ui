@@ -538,7 +538,7 @@ describe("RelayOverview", () => {
     expect(empty.findAll((node) => node.type === "ol")).toHaveLength(1);
     expect(empty.findAll((node) => node.type === "li").map(textOf)).toEqual([
       `Install Ovis on the PC.On macOS or Linux:${INSTALLER_COMMAND}CopyOn Windows, in PowerShell:${WINDOWS_INSTALLER_COMMAND}Copy`,
-      "On that PC, open Settings → Devices and PCs → Account and sign in with the same Google account as on this device.",
+      "On that PC, open Settings → Devices and PCs → Add a connection → Ovis relay and sign in with the same Google account as on this device.",
       "Choose Add this PC to my account there. It then shows here.",
     ]);
     expect(empty.findAll((node) => node.type === "code").map(textOf)).toEqual([INSTALLER_COMMAND, WINDOWS_INSTALLER_COMMAND]);
@@ -634,7 +634,7 @@ describe("RelayOverview", () => {
     const empty = root.find((node) => node.props["data-dashboard-empty"] === "");
     const steps = empty.findAll((node) => node.type === "li").map(textOf);
     expect(steps).toHaveLength(3);
-    expect(steps[1]).toBe("On that PC, open Settings → Devices and PCs → Account and sign in with a GitHub or Google sign-in that is linked to this account.");
+    expect(steps[1]).toBe("On that PC, open Settings → Devices and PCs → Add a connection → Ovis relay and sign in with a GitHub or Google sign-in that is linked to this account.");
     expect(textOf(empty)).not.toContain("sign in with Apple");
     expect(textOf(empty)).not.toContain("the other way");
     expect(textOf(empty.find((node) => node.props["data-empty-provider"] === ""))).toBe("Signed in with Apple. A PC signs in with GitHub or Google only, and each is a separate Ovis account until you link it to this one. Without a linked sign-in, pair with a QR or code instead.");

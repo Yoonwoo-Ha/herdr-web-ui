@@ -87,6 +87,8 @@ import { RelayNotice } from "./components/RelayNotice.tsx";
 import { InstallHint } from "./components/InstallHint.tsx";
 import { DevicePairedNotice, DeviceRemovedNotice } from "./components/DevicePairedNotice.tsx";
 import { NewPcNotices } from "./components/NewPcNotices.tsx";
+import { hostedSignOutItems } from "./components/AccountHead.tsx";
+import { useHostedSignIn } from "./lib/account/hostedSignIn.ts";
 import { ownWindowHere } from "./lib/account/addThisPc.ts";
 import { useAccountDeviceNotices } from "./components/AccountDeviceNotices.tsx";
 import { PendingKeys } from "./components/PendingKeys.tsx";
@@ -278,6 +280,7 @@ export function App() {
   const { renameRequest, requestRename, clearRenameRequest } = useRenameRequest(selectedMachineId, selectedPaneId);
   const { renameRequest: closeTabRequest, requestRename: requestCloseTab, clearRenameRequest: clearCloseTabRequest } = useRenameRequest(selectedMachineId, selectedPaneId);
   const moreMenu = useMoreMenu();
+  const hostedSignIn = useHostedSignIn();
   // where Add a PC leads on a phone: a PC reached through the hosted app (in a browser or in the phone app, which opens
   // it there) goes to the hosted app's Add a PC, one the phone app opened by its address to the app's own screens
   const addPcTo = addPcExit({ nativeApp: inNativeApp(), relayShell: shellMode() === "relay", pathname: window.location.pathname });
@@ -817,6 +820,8 @@ export function App() {
       .map((item, index) => index === 0 ? { ...item, divider: true } : item),
     ...(foldPane && more ? [{ id: "pane-group", label: t("Pane and tab…"), icon: PanelsTopLeft, divider: true, run: () => openMoreGroup("pane", more.anchor) }] : []),
     ...(modeOffered && !markEnters ? [{ id: "enter-inbox", label: t("Open agent inbox"), icon: Inbox, divider: true, run: () => { actions.counted?.("inbox", "menu"); enterInbox(); } }] : []),
+    // a phone's Sign out of the hosted app, last, as the overview's foot had it: a desktop has it in Settings → Devices and PCs
+    ...(isSheetWidth ? hostedSignOutItems(hostedSignIn, t) : []),
   ];
   const fromMore = (id: string): RowMenuItem[] => moreItems.filter((item) => item.id === id);
   const moreOnList = inbox.shown;
@@ -835,6 +840,7 @@ export function App() {
   const modeEndItems: RowMenuItem[] = [
     ...fromMore("alerts").map((item) => ({ ...item, divider: false })),
     { id: "settings", label: t("Settings"), icon: SettingsGlyph, divider: true, run: () => { actions.counted?.("settings", "menu"); actions.openSettings(); } },
+    ...fromMore("sign-out"),
   ];
   const modeAppItems: RowMenuItem[] = [...modeLeadItems, ...modeEndItems];
   const paletteOnly = inboxWide && (inbox.shown || selectedPane === null);

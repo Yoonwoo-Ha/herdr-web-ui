@@ -26,7 +26,7 @@ import { announcePairingCode, announceQrCodeEnded, DEVICES_CHANGED_EVENT, inRela
 import type { PairedDevice, PairingCode, PortalStatus } from "../../shared/protocol.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { PROVIDER_NAMES } from "./AccountPcs.tsx";
-import { AddThisPc, type SignedInHere } from "./AccountSection.tsx";
+import { AddThisPc, useSignInAgainHere, type SignedInHere } from "./AccountSection.tsx";
 import { PhonePanel, QrReveal, ShareLink } from "./PhonePanel.tsx";
 import { QrCode } from "./QrCode.tsx";
 import { failureText, openOwnOffer, RelayPairing, statusText } from "./RelayPanel.tsx";
@@ -67,6 +67,12 @@ export function sameNameRelayDevice(devices: readonly PairedDevice[], label: str
 }
 
 export const relayOffered = (relay: RelayState): boolean => !relay.unsupported && relay.status !== null && !inRelayShell();
+
+/**
+ * the relay's first state is still on its way on a page that may offer it: the tab may come, so nothing is drawn in its
+ * stead. A read that failed is no longer pending, so a relay that never answers leaves the account card in place.
+ */
+export const relayPending = (relay: RelayState): boolean => !relay.unsupported && relay.status === null && !relay.readFailed && !inRelayShell();
 
 const relayOn = (relay: RelayState): boolean => relay.status !== null && relay.status.blocked === null && relay.status.phase !== "off";
 
@@ -595,8 +601,8 @@ export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBy
 }) {
   const t = useT();
   const [showAccountPcs, setShowAccountPcs] = useState(false);
-  const accountAdd = pcAddFromAccount === true && onConnectMachine ? (
-    showAccountPcs && signedIn && joinBySignIn ? <RelayAccountPcs machines={machines} onConnectMachine={onConnectMachine} /> :
+  // signed in to the PC's own account, the account's PCs are listed at once (below); the prompt is for anyone else
+  const accountAdd = pcAddFromAccount === true && onConnectMachine && !(signedIn && joinBySignIn) ? (
       <div className="connect-found" data-testid="pc-add-source-bound">
         <p className="settings-hint">{t("This PC is in an account. Add PCs from your account.")}</p>
         <button type="button" className="btn btn-secondary" onClick={() => {
@@ -604,8 +610,7 @@ export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBy
             setShowAccountPcs(true);
             return;
           }
-          if (signedIn && joinBySignIn) setShowAccountPcs(true);
-          else (onAccountSetup ?? account?.onOpen)?.();
+          (onAccountSetup ?? account?.onOpen)?.();
         }}>{t("Add from account")}</button>
       </div>
   ) : null;
@@ -622,11 +627,15 @@ export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBy
   // a sheet opened already signed in gets the same next step as one signed in just now: the relay's own button when it is off
   const mineNow = signedIn ? accountId : null;
   const takeSignedInNow = useCallback((): SignedInHere | null => takeSignedInHere() ?? (mineNow === null ? null : { account: mineNow, adds: false }), [takeSignedInHere, mineNow]);
+  /** signed in, the tab has no sign-in of its own: Add this PC's one sign-in again is this page's own */
+  const signInAgain = useSignInAgainHere();
   useLayoutEffect(() => {
     const view = signInView.current;
     if (!signedIn || signedInProvider === null || view === null || view.closest("[hidden]") !== null) return;
+    // the add button comes a moment after the sign-in (it reads the PC first): until then the sheet's own title holds the focus
+    const dialog = view.closest('[role="dialog"]');
     const next = view.querySelector<HTMLElement>("button:not(:disabled), a[href]")
-      ?? view.closest('[role="dialog"]')?.querySelector<HTMLElement>("h2");
+      ?? dialog?.querySelector<HTMLElement>("h2") ?? dialog?.querySelector<HTMLElement>(".modal-title");
     next?.focus();
   }, [signedIn, signedInProvider, joinBySignIn]);
   const signInStatus = <p key="sign-in-status" className="visually-hidden" role="status" aria-live="polite">{signedInProvider === null ? null : t("Signed in with {provider}", { provider: PROVIDER_NAMES[signedInProvider] })}</p>;
@@ -665,35 +674,36 @@ export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBy
   const mine = signedIn ? accountId : null;
   const pcIn = pcAccount !== undefined ? pcAccount : joinBySignIn ? mine : null;
   const bare = signedIn && pcIn !== null && relay.status?.phase === "online";
+  const pcsAbove = signedIn && joinBySignIn && onConnectMachine !== undefined;
   const qr = (ownSwitch: boolean) => (
     <AccountQr relay={relay} phone={phone} active={active} signedIn={signedIn} accountId={mine} pcAccount={pcIn} onPcAccount={setPcAccount} onPairingHeld={onPairingHeld} onRevokedAll={onRevokedAll}
-      first={bare} relayControls={ownSwitch ? <>{relaySwitch}{switchFailure}{startFailure}</> : null} />
+      first={bare} pcsAbove={pcsAbove} relayControls={ownSwitch ? <>{relaySwitch}{switchFailure}{startFailure}</> : null} />
   );
+  // signed out the tab is its sign-in buttons: the relay's own switch stays in More settings
   if (!signedIn) return (
     <>
       <div ref={signInView} className="connect-signin" data-testid="connect-signin">
         {signInStatus}
         {!showAccountPcs && accountAdd}
-        <RelaySignIn service={account.service} boundPc={pcAddFromAccount === true || pcIn !== null} onOpenAccount={account.onOpen} onSignedIn={(session) => { signedInHere.current = { account: session.account, adds: false }; setSignedInProvider(session.provider); account.onSignedIn(); }} />
+        <RelaySignIn service={account.service} boundPc={pcAddFromAccount === true || pcIn !== null} onSignedIn={(session) => { signedInHere.current = { account: session.account, adds: false }; setSignedInProvider(session.provider); account.onSignedIn(); }} />
       </div>
-      {qr(true)}
+      {qr(false)}
     </>
   );
+  const thisPc = machines.find((machine) => machine.kind === "local")?.name ?? null;
   return (
     <>
       <div ref={signInView} className="connect-signin" data-testid="connect-signin" data-bare={bare || undefined}>
         {signInStatus}
         {accountAdd}
-        {!pcAddFromAccount && joinBySignIn && onConnectMachine && <RelayAccountPcs machines={machines} onConnectMachine={onConnectMachine} />}
-        {joinBySignIn && <p className="settings-hint">{t("On another PC, sign in with the same account.")}</p>}
+        {pcsAbove && <RelayAccountPcs machines={machines} onConnectMachine={onConnectMachine} self={thisPc} />}
         {pcIn !== null ? (
           !bare && <>{relaySwitch}{switchFailure}{startFailure}</>
         ) : (
           <>
-            {relaySwitch}
-            {switchFailure}
+            {/* one button: with the relay off, it turns the relay on as it adds the PC */}
             {startFailure}
-            <AddThisPc relayOn={on} gateNote={false} signedInHere={takeSignedInNow} {...(account.opensAll === undefined ? {} : { opensAll: account.opensAll })} />
+            <AddThisPc relayOn={on} gateNote={false} signedInHere={takeSignedInNow} signInAgain={signInAgain} {...(account.opensAll === undefined ? {} : { opensAll: account.opensAll })} />
           </>
         )}
       </div>
@@ -742,7 +752,7 @@ const names = (strays: readonly AccountQrStray[]): string => strays.map((stray) 
  * account key and then links itself and adds the PC (lib/relay/accountController.ts), so the PC joins the scanning
  * device's account with nothing typed and no approval here (docs/account.md, "Adding a PC"). A code admits whoever
  * holds it, so:
- * - nothing is asked of the PC until Show the QR code is pressed, and the code is ended when the QR code comes down:
+ * - nothing is asked of the PC until Phone QR code is pressed, and the code is ended when the QR code comes down:
  *   as the dialog closes or another tab opens, as the page goes (a reload, a closed tab), once the page was hidden
  *   for a minute, and 30 minutes after the press;
  * - the QR code is shown alone: no code to type is made, which could be read off the screen and typed elsewhere;
@@ -770,9 +780,11 @@ const names = (strays: readonly AccountQrStray[]): string => strays.map((stray) 
  * A press made while the page's relay state said otherwise (it is read every 15 seconds) is refused by the PC: the QR
  * code comes down with no failure to read, and the relay's state is read again, which brings that sentence.
  */
-export function AccountQr({ relay, phone, active, signedIn, accountId = null, pcAccount, onPcAccount, first = false, relayControls, onPairingHeld, onRevokedAll }: {
+export function AccountQr({ relay, phone, active, signedIn, accountId = null, pcAccount, onPcAccount, first = false, pcsAbove = false, relayControls, onPairingHeld, onRevokedAll }: {
   relay: RelayState; phone: boolean; active: boolean; signedIn: boolean;
   first?: boolean;
+  /** the tab lists the account's PCs above, this PC first: nothing here says again that it is in the account */
+  pcsAbove?: boolean;
   accountId?: string | null;
   pcAccount: string | null;
   onPcAccount: Dispatch<SetStateAction<string | null | undefined>>;
@@ -809,7 +821,7 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
   }, [enrolling, onPcAccount]);
   const before = useRef<AccountQrBaseline | null>(null);
   const run = useRef(0);
-  /** the account this tab showed when Show the QR code was pressed: its codes' PC is listed there or nowhere */
+  /** the account this tab showed when Phone QR code was pressed: its codes' PC is listed there or nowhere */
   const pressedAs = useRef<string | null>(null);
   /** the last take-down's requests: the next press waits for them, so it never ends the code it is about to get */
   const ending = useRef<Promise<boolean>>(Promise.resolve(true));
@@ -1130,21 +1142,18 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
   const checkingLine = checking.length > 0 && <p className="settings-description" data-testid="connect-account-checking">{t("Checking a device that just paired: {devices}.", { devices: names(checking) })}</p>;
   const revokeEvery = <button type="button" className="btn btn-danger" onClick={() => setConfirming(true)}>{t("Not me: revoke every device")}</button>;
   const relayState = relay.status !== null && !(connecting && relayControls !== null) && <p className="settings-hint" role="status">{statusText(t, relay.status)}</p>;
+  const standingLabel = standing && signedIn && !(here === "mine" && pcsAbove);
+  const labelled = standing ? standingLabel : told || shown;
   return (
-    <section className="connect-account-qr" aria-labelledby={id} data-testid="connect-account-qr" data-account={here ?? undefined} data-first={first || undefined}>
+    <section className="connect-account-qr" aria-labelledby={labelled ? id : undefined} data-testid="connect-account-qr" data-account={here ?? undefined} data-first={first || undefined}>
       {standing ? (
         <>
-          {signedIn && <p ref={heading} className="settings-label" id={id} tabIndex={-1}>{here === "mine" ? t("This PC is in your account.") : t("Sign in to this PC's account.")}</p>}
+          {standingLabel && <p ref={heading} className="settings-label" id={id} tabIndex={-1}>{here === "mine" ? t("This PC is in your account.") : t("Sign in to this PC's account.")}</p>}
           {here === "mine" && enrolling && <p className="settings-description connect-account-qr-warning" role="status">{t("Not finished yet: the device that added this PC is still setting it up. If it stopped, open this PC on that device and choose Try again.")}</p>}
           {here === "other" && <p className="settings-description connect-account-qr-warning">{t("If that account is not yours, revoke every device (More settings → Devices and access): this PC then leaves it.")}</p>}
           {!online && <>{relayControls}{relayState}</>}
         </>
-      ) : (
-        <>
-          <p className="settings-label" id={id}>{t("Add with a QR code")}</p>
-          {!told && <p className="settings-description">{t("Scan it with a device that is signed in to your Ovis account: this PC joins that account, with no number to type. A device that is not signed in is paired with this PC alone.")}</p>}
-        </>
-      )}
+      ) : labelled && <p className="settings-label" id={id}>{t("Add with a QR code")}</p>}
       {standing ? null : view.kind === "joined" ? (
         <div className="connect-account-qr-notice" role="status" data-testid="connect-account-joined" data-account={whose}>
           <p className="settings-label">{whose === "mine" ? t("This PC is in your account.") : whose === "other" ? t("This PC joined a different account.") : t("Sign in to this PC's account.")}</p>
@@ -1177,14 +1186,13 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
       ) : !online ? (
         <>
           {relayControls}
-          {needsAccount ? <p className="settings-hint">{t("Sign in above first; then this PC can show its QR code.")}</p> : relayState}
+          {/* a relay that is merely off says nothing here: the button above turns it on as it adds this PC */}
+          {needsAccount ? <p className="settings-hint">{t("Sign in above first; then this PC can show its QR code.")}</p> : relay.status?.phase !== "off" && relayState}
         </>
-      ) : shown ? <RelayRoute relay={relay} readOnly={false} phone={phone} compact qrOnly onInAccount={refusedForAccount} onOffer={listBeside} /> : unnamed ? (
-        <p className="settings-hint">{signedIn ? t("Add this PC to your account first; then it can show its QR code.") : t("Sign in above first; then this PC can show its QR code.")}</p>
-      ) : (
-        <div className="phone-actions">
-          <button ref={showButton} type="button" className="btn" disabled={view.kind === "starting"} aria-busy={view.kind === "starting" || undefined} onClick={() => void show()}>{again ? t("Show a new code") : t("Show the QR code")}</button>
-        </div>
+      ) : shown ? <RelayRoute relay={relay} readOnly={false} phone={phone} compact qrOnly onInAccount={refusedForAccount} onOffer={listBeside} />
+        // no account named for this PC yet: it makes no QR code, and the sign-in or Add this PC above names one
+        : unnamed ? null : (
+        <button ref={showButton} type="button" className="connect-qr-link" disabled={view.kind === "starting"} aria-busy={view.kind === "starting" || undefined} onClick={() => void show()}>{again ? t("Show a new code") : t("Phone QR code")}</button>
       )}
       {note !== null && view.kind === "idle" && <p className="settings-hint" role="status">{note}</p>}
       {error !== null && <p className="settings-hint relay-error" role="alert">{error}</p>}

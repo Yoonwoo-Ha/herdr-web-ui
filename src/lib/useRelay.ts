@@ -56,6 +56,8 @@ function pollDelay(status: RelayStatus): number {
 
 export function useRelay() {
   const [status, setStatus] = useState<RelayStatus | null>(null);
+  /** the last read of the relay's state failed (not a missing route): no state may be on its way */
+  const [readFailed, setReadFailed] = useState(false);
   const [unsupported, setUnsupported] = useState(false);
   const [pending, setPending] = useState(false);
   const [refresh, setRefresh] = useState(0);
@@ -75,10 +77,12 @@ export function useRelay() {
         const next = await fetchRelay();
         if (stopped) return;
         setStatus((previous) => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
+        setReadFailed(false);
         delay = pollDelay(next);
       } catch (error) {
         // the route is missing on an older server; a restart or a dropped answer must not erase the last state
         if (!stopped && error instanceof ApiError && error.status === 404) { setUnsupported(true); return; }
+        if (!stopped) setReadFailed(true);
       }
       if (!stopped) timer = setTimeout(() => void poll(), delay);
     }
@@ -99,7 +103,7 @@ export function useRelay() {
   }, []);
   /** Asks for the relay's state again now, without waiting for the poll's next round. */
   const reread = useCallback(() => setRefresh((value) => value + 1), []);
-  return { status, unsupported, pending, request, reread };
+  return { status, unsupported, readFailed, pending, request, reread };
 }
 
 export type RelayState = ReturnType<typeof useRelay>;
