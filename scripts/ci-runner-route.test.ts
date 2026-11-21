@@ -443,6 +443,14 @@ describe.skipIf(process.platform === "win32")("CI runner route", () => {
       }
     });
 
+    it("keeps a draft pull request on windows-latest: its job fails at its first step and would spend winvm's round", () => {
+      const ready = readyAgo(5);
+      expect(windows({ ...pr, WINVM_READY: ready, PR_DRAFT: "true" })).toBe("windows-latest");
+      expect(route({ ...pr, FAKE_GH: actions({}), WINVM_READY: ready, PR_DRAFT: "true" }).stderr).toContain("Windows: windows-latest (a draft pull request, whose job runs no test)");
+      for (const draft of ["false", ""]) expect(windows({ ...pr, WINVM_READY: ready, PR_DRAFT: draft })).toEqual(winvm);
+      expect(windows({ EVENT_NAME: "push", REF: "refs/heads/main", WINVM_READY: ready, PR_DRAFT: "" })).toEqual(winvm);
+    });
+
     it("does not follow the Linux jobs' route", () => {
       expect(allOutputs({ ...pr, FAKE_GH: actions({ queued: { 1: waiting(1, 300) } }), WINVM_READY: readyAgo(5) })).toEqual({ linux: "ubuntu-24.04", fast: "ubuntu-24.04", rust: "ubuntu-24.04", windows: winvm });
       expect(allOutputs({ EVENT_NAME: "push", CONFIGURED_LABELS: labels })).toEqual({ linux: JSON.parse(labels), fast: JSON.parse(labels), rust: "ubuntu-24.04", windows: "windows-latest" });

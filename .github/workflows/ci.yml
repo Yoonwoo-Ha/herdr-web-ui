@@ -75,6 +75,8 @@ jobs:
           FAST_LABELS: ${{ vars.CI_FAST_SELF_HOSTED_LABELS }}
           # winvm's runner, while it waits for a job (scripts/self-hosted-runner/winvm-runner.sh); in ci.yml's own runs only
           WINVM_READY: ${{ github.workflow == 'CI' && vars.CI_WINVM_READY || '' }}
+          # a draft's Native Windows install fails at its first step: it must not take winvm's one round
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
           # "true" opts the Rust PTY host job in to the Rust runners; unset keeps it hosted (scripts/ci-runner-route.sh)
           RUST_SELF_HOSTED: ${{ vars.CI_RUST_SELF_HOSTED }}
           # when scripts/self-hosted-runner/rust-heartbeat.sh last saw a Rust runner online (epoch seconds)

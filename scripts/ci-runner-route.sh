@@ -241,7 +241,8 @@ echo "$rust_line"
 # waits for a job (scripts/self-hosted-runner/winvm-runner.sh writes the Unix time into the repository variable
 # CI_WINVM_READY every minute while it listens, and 0 once a job starts or it stops). Anything else gets
 # windows-latest: hosted_only, a fork pull request, an event other than a pull request or a push (WINVM_READY is
-# empty for a workflow that calls ci.yml), a mark that is missing or older than three minutes, and a job of winvm's
+# empty for a workflow that calls ci.yml), a draft pull request (its job fails at its first step without running a
+# test, and on winvm that would spend the VM's whole round), a mark that is missing or older than three minutes, and a job of winvm's
 # label already queued or running (winvm runs one job a round; a second would wait for the next round, or forever
 # when the launcher stops after the first) or a jobs list the API does not give.
 windows_hosted='"windows-latest"'
@@ -269,6 +270,8 @@ elif [[ ("$event" == pull_request || "$event" == pull_request_target) && "${HEAD
   why="pull request from fork ${HEAD_REPO:-unknown}"
 elif [[ "$event" != pull_request && "$event" != push ]]; then
   why="${event:-no event}"
+elif [[ "${PR_DRAFT:-}" == true ]]; then
+  why="a draft pull request, whose job runs no test"
 elif ! [[ "$ready" =~ ^[1-9][0-9]{0,11}$ ]]; then
   why="winvm's runner is not waiting for a job (CI_WINVM_READY ${ready:-unset})"
 elif (( now - ready > 180 || ready - now > 60 )); then

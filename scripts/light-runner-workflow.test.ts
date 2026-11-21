@@ -103,6 +103,7 @@ describe("self-hosted runners and fork pull requests", () => {
     expect(changes.outputs?.fast).toBe("${{ steps.route.outputs.fast }}");
     expect(changes.outputs?.windows).toBe("${{ steps.route.outputs.windows }}");
     expect(changes.steps?.find((step) => step.id === "route")?.env?.["WINVM_READY"]).toBe("${{ github.workflow == 'CI' && vars.CI_WINVM_READY || '' }}");
+    expect(changes.steps?.find((step) => step.id === "route")?.env?.["PR_DRAFT"]).toBe("${{ github.event.pull_request.draft }}");
     expect(changes.outputs?.rust).toBe("${{ steps.route.outputs.rust }}");
     expect(changes.steps?.find((step) => step.id === "route")?.env?.["LINUX_LABELS"]).toBe("${{ github.workflow == 'CI' && vars.CI_LINUX_SELF_HOSTED_LABELS || '' }}");
     expect(changes.steps?.find((step) => step.id === "route")?.run).toBe('bash scripts/ci-runner-route.sh >> "$GITHUB_OUTPUT"');

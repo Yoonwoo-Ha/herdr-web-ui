@@ -750,6 +750,8 @@ describe("ci.yml", () => {
     "jobs.macos-session.runs-on": "${{ inputs.hosted_only && 'macos-15' || github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository && 'macos-15' || fromJSON(github.workflow == 'CI' && vars.CI_MAC_LABELS || '\"macos-15\"') }}",
     "jobs.changes.steps.route.env.EVENT_NAME": "${{ github.event_name }}",
     "jobs.changes.steps.route.env.HEAD_REPO": "${{ github.event.pull_request.head.repo.full_name }}",
+    // only which machine a draft's Native Windows install fails on: empty for a push to main and for a Release run alike
+    "jobs.changes.steps.route.env.PR_DRAFT": "${{ github.event.pull_request.draft }}",
     "jobs.changes.steps.route.env.REQUESTED_LABELS": "${{ inputs.self_hosted_labels }}",
     "jobs.changes.steps.filter.env.EVENT_NAME": "${{ github.event_name }}",
     "jobs.changes.steps.filter.env.PR_DRAFT": "${{ github.event.pull_request.draft }}",
