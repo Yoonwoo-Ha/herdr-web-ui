@@ -7,6 +7,11 @@ rules for changing a stored format.
 
 ## Releasing
 
+On the maintainer's PC, where every merge goes through `pr-merge`, a release freezes the other
+merges once its PR is open: `pr-merge --freeze "X.Y.Z release" <release PR>`. Only the release PR
+merges until the Release run succeeds, which ends the freeze by itself (`pr-merge --unfreeze` when
+the release is put off).
+
 1. Open a release PR that bumps `version` in `package.json` and `herdr-plugin.toml`,
    runs `bun scripts/changelog-fold.ts X.Y.Z [YYYY-MM-DD]` (it moves the `Unreleased` notes in
    [CHANGELOG.md](../CHANGELOG.md) and the [changelog.d/](../changelog.d/README.md) fragments under
