@@ -611,6 +611,17 @@ Signing in links your devices once instead of pairing each phone with each PC. I
 
 Who gets into a PC is still decided by that PC alone, in **Settings → Devices and PCs**, where **Revoke** always works. The account service at `account.ovis.sh` lists your PCs and carries signed messages between your devices; it can't read your sessions or add a device by itself ([how it works](account.md)). It keeps no email, name or username. [The privacy policy](https://ovis.sh/privacy/) says what it stores and for how long.
 
+#### A sign-in method that belongs to another account
+
+**Add Google** (or GitHub, or Apple) is refused when that sign-in already has an Ovis account of its own, for example one made by signing in with Google on another device. Neither account changes: Ovis never joins two accounts. To use that sign-in on this account, take it off the other account first:
+
+1. Sign out, then sign in with that Google to open the other account and see what is in it.
+2. If that account has another way to sign in, sign out and sign in to it that way, then remove Google under **Settings → Devices and PCs → Account → Ways to sign in** (the method a device signed in with can't be removed from that device).
+3. If Google is that account's only way to sign in, it can't be removed yet. To keep that account, first give it another way in: in the desktop app, signed in to it with Google, add a sign-in no account uses yet (another GitHub or Apple), then sign in with that and remove Google as in step 2. If nothing in that account is needed, you can delete it instead (**Delete account**, same place); its PCs keep the devices it added until you revoke them on each PC.
+4. Sign in to this account again and choose **Add Google**.
+
+Don't delete this account instead: the other account may already have a sign-in of the same kind (each account has one per provider), and then it still couldn't take this one.
+
 ### Through Tailscale
 
 Serve the app over **HTTPS** to install it and receive push alerts. The simplest way is Tailscale: keep the server on `127.0.0.1` and let Tailscale add the HTTPS address.

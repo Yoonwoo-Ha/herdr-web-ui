@@ -137,6 +137,8 @@ const pageHidden = (): boolean => typeof document !== "undefined" && document.hi
 
 const offering = (state: AddThisPcState): boolean => state.kind === "offer" || state.kind === "expired" || state.kind === "error" || state.kind === "relay-off";
 
+const IN_USE_HELP = "https://github.com/devswha/ovis/blob/main/docs/guide.md#a-sign-in-method-that-belongs-to-another-account";
+
 const warned = (what: string) => (error: unknown): void => console.warn(what, error instanceof Error ? error.name : error);
 
 /** Whether a kept wait is one this page may take up: within the thirty minutes of its press, and for the PC this page shows. */
@@ -777,6 +779,8 @@ export function AccountSection({ onAccount, recheck = 0, opensAll, deleteSlot = 
   const fallback: AccountProvider[] = bridge ? desktopProviders(bridge) : ["github"];
   const [offer, setOffer] = useState<OfferedProviders | null>(null);
   const [unreachable, setUnreachable] = useState(false);
+  /** the in_use line addMethod showed: its steps link shows only while that exact line is the error */
+  const [inUseShown, setInUseShown] = useState<string | null>(null);
   /** a change to the ways in that waits for a fresh sign-in (403 reauth_required) */
   const [reauth, setReauth] = useState<{ action: "add" | "remove"; provider: AccountProvider } | { action: "delete"; provider: AccountProvider; deletion: Deletion } | null>(null);
   /**
@@ -928,7 +932,7 @@ export function AccountSection({ onAccount, recheck = 0, opensAll, deleteSlot = 
       case "unsupported": return t("This account service can't sign in a browser on this PC yet.");
       case "in_use": return name === null
         ? t("This sign-in already belongs to another Ovis account. Nothing was changed.")
-        : t("This {provider} sign-in already belongs to another Ovis account. Nothing was changed.", { provider: name });
+        : t("This {provider} account is linked to another Ovis account. Take {provider} off that account first, then you can add it here.", { provider: name });
       case "no_sign_in": return t("The sign-in did not finish. Try again.");
     }
   };
@@ -1019,6 +1023,7 @@ export function AccountSection({ onAccount, recheck = 0, opensAll, deleteSlot = 
         await load();
         if (needsReauth(error)) { setReauth({ action: "add", provider }); return; }
         const message = failureText(error, provider);
+        setInUseShown(error instanceof SignInError && error.code === "in_use" ? message : null);
         setView((current) => current.kind === "signed-in" ? { ...current, error: message } : current);
       });
   };
@@ -1322,7 +1327,7 @@ export function AccountSection({ onAccount, recheck = 0, opensAll, deleteSlot = 
           <AddThisPc signedInHere={takeSignedInHere} onListed={() => { void load(); }} {...(opensAll === undefined ? {} : { opensAll })} />
           {view.pcs !== null && onAccount === undefined && <div className="settings-item"><AccountPcList pcs={view.pcs} /></div>}
           {foot !== null ? deleteParts && createPortal(deleteParts, foot) : deleteParts}
-          {view.error !== null && <p className="settings-condition" role="alert">{view.error}</p>}
+          {view.error !== null && <p className="settings-condition" role="alert">{view.error}{view.error === inUseShown && <> <ExternalLink kind="link" className="settings-link" href={IN_USE_HELP}>{t("See how")}</ExternalLink></>}</p>}
         </>
       )}
     </SettingsGroup>
