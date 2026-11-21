@@ -436,6 +436,7 @@ const BASE: Record<string, string> = {
   "Plan: {done} of {total} done": "計画: {total} 件中 {done} 件完了",
   "Plan": "計画",
   "Something went wrong": "問題が発生しました",
+  "Ovis could not load. Check your connection, then try again.": "Ovis を読み込めませんでした。接続を確認してからもう一度お試しください。",
   "The app hit an error and stopped drawing. Your terminals keep running in herdr.": "アプリでエラーが発生し、表示できなくなりました。ターミナルは herdr で動き続けています。",
   "Copy details": "詳細をコピー",
   "This pane can't be shown.": "このペインを表示できません。",

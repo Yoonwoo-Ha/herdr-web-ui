@@ -441,6 +441,7 @@ const BASE: Record<string, string> = {
   "Plan: {done} of {total} done": "计划：已完成 {done}/{total}",
   "Plan": "计划",
   "Something went wrong": "出了点问题",
+  "Ovis could not load. Check your connection, then try again.": "无法加载 Ovis。请检查网络连接，然后重试。",
   "The app hit an error and stopped drawing. Your terminals keep running in herdr.": "应用出错，无法继续显示。你的终端仍在 herdr 中运行。",
   "Copy details": "复制详细信息",
   "This pane can't be shown.": "无法显示此窗格。",

@@ -434,6 +434,7 @@ const BASE: Record<string, string> = {
   "Plan: {done} of {total} done": "계획: {total}개 중 {done}개 완료",
   "Plan": "계획",
   "Something went wrong": "문제가 발생했습니다",
+  "Ovis could not load. Check your connection, then try again.": "Ovis를 불러오지 못했습니다. 연결을 확인한 뒤 다시 시도하세요.",
   "The app hit an error and stopped drawing. Your terminals keep running in herdr.": "앱에 오류가 발생해 화면을 그리지 못했습니다. 터미널은 herdr에서 계속 실행 중입니다.",
   "Copy details": "자세한 내용 복사",
   "This pane can't be shown.": "이 패널을 표시할 수 없습니다.",
