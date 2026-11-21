@@ -121,6 +121,13 @@ describe("the screen's product code", () => {
       "Only tui/main.ts and tui/host/ read process.stdin, process.stdout, process.env or process.argv: pass what this code needs in as a value or through the host's interface.");
   });
 
+  it("reads no clock and arms no timer in tui/input/ and tui/model/", () => {
+    // their waits are deadlines on the caller's clock, named in tui/model/deadlines.ts; the loop owns the one timer
+    const pure = productCode().filter((file) => file.startsWith("tui/input/") || file.startsWith("tui/model/"));
+    fail(matches(pure, /\b(?:setTimeout|setInterval|setImmediate|queueMicrotask)\b|\bDate\s*\.\s*now\b|\bnew\s+Date\b|\bperformance\s*\.\s*now\b|\bBun\s*\.\s*(?:sleep|sleepSync|nanoseconds)\b/),
+      "tui/input/ and tui/model/ read no clock and arm no timer: take the time as an argument from the caller, and name every wait or limit in tui/model/deadlines.ts.");
+  });
+
   it("never reaches the Ovis server", () => {
     fail(matches(productCode(), /\bfetch\s*\(|\/api\//),
       "The screen talks to herdr-core only, never to the Ovis server: no fetch( and no /api/ route under tui/. Use the core connection (server/herdr-core/ files on the closure list) instead.");

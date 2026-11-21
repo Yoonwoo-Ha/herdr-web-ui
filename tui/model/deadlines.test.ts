@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { clearDeadline, earliest, NO_DEADLINES, setDeadline } from "./deadlines.ts";
+import { clearDeadline, earliest, ESC_WAIT_MS, ESC_WAIT_SLOW_MS, NO_DEADLINES, PASTE_LIMIT_BYTES, REPLY_WAIT_MS, SEQUENCE_DROP_MS, setDeadline } from "./deadlines.ts";
+
+describe("the waits and limits of host input", () => {
+  it("are 30 ms after a lone ESC (150 ms with mouse or kitty keys), 500 ms to drop a sequence or end the probe, and 1 MiB for a paste", () => {
+    expect({ ESC_WAIT_MS, ESC_WAIT_SLOW_MS, SEQUENCE_DROP_MS, REPLY_WAIT_MS, PASTE_LIMIT_BYTES })
+      .toEqual({ ESC_WAIT_MS: 30, ESC_WAIT_SLOW_MS: 150, SEQUENCE_DROP_MS: 500, REPLY_WAIT_MS: 500, PASTE_LIMIT_BYTES: 1_048_576 });
+  });
+});
 
 describe("deadlines", () => {
   it("answers nothing when empty", () => {
