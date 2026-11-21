@@ -96,8 +96,7 @@ downloading every package.
 ## Check slots
 
 `scripts/check.ts` lets a few herdr-backed runs share a PC, each in a slot: a loopback port the run
-listens on, with more ports for admission and for the queue of waiting runs
-([Checks](../../docs/development.md#checks)). The runner containers of a PC used to share one
+listens on, with more ports for admission and for the queue of waiting runs. The runner containers of a PC used to share one
 network namespace so that those ports bounded the lanes of all of them. They shared every other
 loopback port with it. A job's tests keep Ovis servers on `127.0.0.1` with no token, and a request
 from the loopback drives such a server: a job on one slot could find the server of a job on

@@ -19,7 +19,7 @@ remote-bundles/
 /bin/
 /pty-sidecar/
 
-# README demo videos: uploaded to GitHub, not committed (docs/development.md)
+# README demo videos: uploaded to GitHub, not committed
 docs/screenshots/*.mp4
 
 # the website, assembled by scripts/build-site.ts
