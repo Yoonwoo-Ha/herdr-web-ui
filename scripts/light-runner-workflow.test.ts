@@ -13,6 +13,8 @@ const LIGHT = `\${{ ${FORK_GUARD} || fromJSON(github.ref == 'refs/heads/main' &&
 const ROUTED = "${{ fromJSON(needs.changes.outputs.linux) }}";
 // Fast checks: the Linux jobs' runner, or CI_FAST_SELF_HOSTED_LABELS only when those name ovis-vm (never a fork's)
 const ROUTED_FAST = "${{ fromJSON(needs.changes.outputs.fast) }}";
+// the Rust PTY host: the runners with the Rust toolchain, or hosted (forks always)
+const ROUTED_RUST = "${{ fromJSON(needs.changes.outputs.rust) }}";
 // ci.yml's macOS session job: a fork stays on macos-15
 const MAC_FORK_GUARD = "github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository && 'macos-15'";
 const MAC = `\${{ ${MAC_FORK_GUARD} || fromJSON(github.workflow == 'CI' && vars.CI_MAC_LABELS || '"macos-15"') }}`;
@@ -53,6 +55,7 @@ function forkSafe(job: Job & { strategy?: { matrix?: { include?: { os?: unknown 
   if (runsOn === MAC || runsOn === hostedOnly("macos-15", MAC)) return "mac";
   if (runsOn === ROUTED || runsOn === hostedOnly("ubuntu-24.04", ROUTED)) return "routed";
   if (runsOn === ROUTED_FAST || runsOn === hostedOnly("ubuntu-24.04", ROUTED_FAST)) return "routed (fast)";
+  if (runsOn === ROUTED_RUST || runsOn === hostedOnly("ubuntu-24.04", ROUTED_RUST)) return "routed (rust)";
   if (runsOn === "${{ matrix.os }}" || runsOn === MAC_PULL_REQUEST) {
     const include = job.strategy?.matrix?.include ?? [];
     const hosted = include.length > 0 && include.every((entry) => typeof entry.os === "string" && HOSTED.test(entry.os));
@@ -95,6 +98,7 @@ describe("self-hosted runners and fork pull requests", () => {
     const changes = ci.jobs.changes!;
     expect(changes.outputs?.linux).toBe("${{ steps.route.outputs.linux }}");
     expect(changes.outputs?.fast).toBe("${{ steps.route.outputs.fast }}");
+    expect(changes.outputs?.rust).toBe("${{ steps.route.outputs.rust }}");
     expect(changes.steps?.find((step) => step.id === "route")?.env?.["LINUX_LABELS"]).toBe("${{ github.workflow == 'CI' && vars.CI_LINUX_SELF_HOSTED_LABELS || '' }}");
     expect(changes.steps?.find((step) => step.id === "route")?.run).toBe('bash scripts/ci-runner-route.sh >> "$GITHUB_OUTPUT"');
   });
@@ -137,7 +141,7 @@ describe("ci.yml's hosted_only input", () => {
         for (const inputs of [{}, { hosted_only: false }, { hosted_only: null }, { self_hosted_labels: "" }]) {
           for (const [environment, draft] of [["self-hosted", "false"], ["github-hosted", "false"], ["github-hosted", "true"]]) {
             const github = { workflow, event_name: event, ref, repository: "devswha/ovis", event: pullRequest === null ? {} : { pull_request: { draft: draft === "true", head: { repo: { full_name: pullRequest } } } } };
-            const needs = { changes: { outputs: { linux: routedTo, fast: routedTo, draft, code: "true" } } };
+            const needs = { changes: { outputs: { linux: routedTo, fast: routedTo, rust: routedTo, draft, code: "true" } } };
             ownRuns.push({ github, vars: variables(vars), inputs, needs, runner: { environment, os: "Linux" } } as Contexts);
           }
         }
@@ -168,7 +172,7 @@ describe("ci.yml's hosted_only input", () => {
       expect(prefix, `${id}: runs-on starts with the hosted_only prefix`).not.toBeNull();
       const label = prefix![1]!;
       const before = `\${{ ${inner.slice(prefix![0].length)} }}`;
-      expect([LIGHT, MAC, ROUTED, ROUTED_FAST], `${id}: behind the prefix, the expression it had`).toContain(before);
+      expect([LIGHT, MAC, ROUTED, ROUTED_FAST, ROUTED_RUST], `${id}: behind the prefix, the expression it had`).toContain(before);
       expect(GITHUB_HOSTED_LABELS).toContain(label);
       for (const context of ownRuns) expect([id, evaluateValue(runsOn, context)]).toEqual([id, evaluateValue(before, context)]);
       for (const context of ownRuns) expect([id, evaluateValue(runsOn, called(context))]).toEqual([id, label]);
@@ -217,6 +221,7 @@ describe("ci.yml's hosted_only input", () => {
       cache("windows-install", "save"),
       runner("macos-session", "macos-15", MAC),
       cache("macos-session", "save"),
+      runner("rust-pty-host", "ubuntu-24.04", ROUTED_RUST),
       cache("rust-pty-host", "save"),
       runner("herdr-core-live", "ubuntu-24.04", LIGHT),
       cache("herdr-core-live", "restore"),

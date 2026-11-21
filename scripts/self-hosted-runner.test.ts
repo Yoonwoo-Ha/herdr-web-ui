@@ -611,7 +611,7 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
     expect(result.status).toBe(0);
     const runs = calls.split("\n").filter((call) => runnerRun.test(call));
     expect(runs).toHaveLength(2);
-    for (const run of runs) expect(run).toContain("--ulimit core=0");
+    for (const run of runs) expect(run).toContain("--ulimit core=0:1 ");
   });
 
   it("hands a host env file to every runner container, never to the check slots' keeper", () => {

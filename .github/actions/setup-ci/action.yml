@@ -13,6 +13,10 @@ inputs:
     description: "'true' installs the checksum-pinned herdr 0.9.3 (Linux x86_64) on PATH."
     required: false
     default: 'false'
+  rust:
+    description: "'true' checks that a self-hosted Linux runner's image has its pinned Rust toolchain; GitHub's images have Rust already."
+    required: false
+    default: 'false'
   cache:
     description: "'save' restores and saves the Bun dependency cache; 'restore' only restores it, for a job that runs unpinned third-party code and must not write a cache other workflows trust; 'none' restores and saves no Actions cache, Bun's executable included, for every job of a run in which a publishing or signing job takes an artifact (pages.yml, the Release and the other publishing workflows, ci.yml when called with hosted_only) and for a job that publishes, signs or holds a secret itself: any job of a main run can write a cache under any key that later runs restore (scripts/privileged-jobs-workflow.test.ts)."
     required: false
@@ -40,6 +44,7 @@ runs:
         EXPECTED_BUN_VERSION: ${{ inputs.bun-version }}
         NEED_NODE: ${{ inputs.node }}
         NEED_HERDR: ${{ inputs.herdr }}
+        NEED_RUST: ${{ inputs.rust }}
       run: bash scripts/ci-preinstalled-tools.sh
     # The runner host's copy of the default branch's packages (scripts/self-hosted-runner/run.sh),
     # read-only to jobs: bun install downloads only what this checkout's lockfile adds.

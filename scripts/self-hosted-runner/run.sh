@@ -669,7 +669,8 @@ slot_loop() {
     # No docker socket, no host mount but the read-only caches and the slot's build cache outbox, no privileges.
     # tini is already the entrypoint.
     # No core dumps: with the host's relative core_pattern ("core") a crash writes one into the
-    # checkout, which scripts/check.ts then counts as a source change of the run.
+    # checkout, which scripts/check.ts then counts as a source change of the run. A hard limit of 1 byte, under which
+    # the kernel writes none either, lets server/pty/host.test.ts check that it lowers a crashing command's to 1.
     # The token goes in on stdin (entrypoint.sh), so it is never in the container's environment.
     cache_args
     build_cache_args "$name"
@@ -680,7 +681,7 @@ slot_loop() {
       --cap-drop ALL \
       --pids-limit 8192 \
       --shm-size 2g \
-      --ulimit core=0 \
+      --ulimit core=0:1 \
       -v "$SLOTS:/check-slots" \
       -e RUNNER_URL="https://github.com/$REPO" \
       -e RUNNER_NAME="$name" \

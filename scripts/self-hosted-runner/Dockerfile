@@ -13,6 +13,11 @@ ARG NODE_VERSION=22.23.3
 ARG NODE_SHA256=1084aa36196bba4c3a5e69a1ee388a6e4ff729dad09445fbcd434b28fe3c24af
 ARG HERDR_VERSION=0.9.3
 ARG HERDR_SHA256=18a8dc65f1c2fa485884344356dea1cfd911c6f06cf46fa78e193f4087f4dba7
+# ci.yml's Rust PTY host job builds and tests crates/pty-sidecar with this toolchain; keep it in step
+# with EXPECTED_RUST_VERSION in scripts/ci-preinstalled-tools.sh.
+ARG RUST_VERSION=1.100.0
+ARG RUSTUP_VERSION=1.29.3
+ARG RUSTUP_INIT_SHA256=b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
@@ -73,6 +78,23 @@ RUN bunx playwright-core@${PLAYWRIGHT_VERSION} install-deps chromium \
  && bunx playwright-core@${PLAYWRIGHT_VERSION} install chromium \
  && chmod -R a+rX "${PLAYWRIGHT_BROWSERS_PATH}" \
  && rm -rf /root/.bun /root/.cache /var/lib/apt/lists/*
+
+# Rust for the Rust PTY host job, after every other tool so an image without it rebuilds only this
+# layer. The toolchain is root's and read-only to jobs; cargo keeps a job's registry downloads in the
+# runner's own ~/.cargo (CARGO_HOME is left unset), which ends with the container. gcc links.
+ENV RUSTUP_HOME=/opt/rustup
+ENV PATH=/opt/cargo/bin:$PATH
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libc6-dev \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL -o /tmp/rustup-init \
+      "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init" \
+ && echo "${RUSTUP_INIT_SHA256}  /tmp/rustup-init" | sha256sum -c - \
+ && chmod 0755 /tmp/rustup-init \
+ && CARGO_HOME=/opt/cargo /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain "${RUST_VERSION}" \
+ && rm /tmp/rustup-init \
+ && chmod -R a+rX /opt/rustup /opt/cargo \
+ && rustc --version && cargo --version
 
 # Jobs check out under /w: check.ts puts herdr's socket under the workspace's .ci/, and a unix
 # socket path is limited to about 100 bytes (the default _work under actions-runner is too long).

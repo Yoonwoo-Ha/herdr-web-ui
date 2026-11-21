@@ -47,6 +47,7 @@ jobs:
       draft: ${{ steps.filter.outputs.draft }}
       linux: ${{ steps.route.outputs.linux }}
       fast: ${{ steps.route.outputs.fast }}
+      rust: ${{ steps.route.outputs.rust }}
       ratchet_base: ${{ steps.ratchet.outputs.base }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,6 +71,10 @@ jobs:
           LINUX_LABELS: ${{ github.workflow == 'CI' && vars.CI_LINUX_SELF_HOSTED_LABELS || '' }}
           MAIN_LABELS: ${{ vars.CI_MAIN_SELF_HOSTED_LABELS }}
           FAST_LABELS: ${{ vars.CI_FAST_SELF_HOSTED_LABELS }}
+          # "true" opts the Rust PTY host job in to the Rust runners; unset keeps it hosted (scripts/ci-runner-route.sh)
+          RUST_SELF_HOSTED: ${{ vars.CI_RUST_SELF_HOSTED }}
+          # when scripts/self-hosted-runner/rust-heartbeat.sh last saw a Rust runner online (epoch seconds)
+          RUST_SEEN: ${{ vars.CI_RUST_RUNNER_SEEN }}
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/ci-runner-route.sh >> "$GITHUB_OUTPUT"
       # A push to main: the latest main commit in this push's history whose CI push run passed (of the last 100), for Fast checks'
@@ -199,12 +204,13 @@ jobs:
         if: needs.changes.outputs.draft != 'true'
         run: bun test ./scripts/self-hosted-runner.test.ts -t 'job-started hook runs a job from this repository'
   rust-pty-host:
-    # The self-hosted runners have no Rust toolchain, so this job always runs on
-    # GitHub's image, which has one: it builds the host and runs the same checks on it as on Node.
+    # Builds the host and runs the same checks on it as on Node. Only the self-hosted runners whose image has the
+    # Rust toolchain carry the label it asks for; scripts/ci-runner-route.sh keeps forks hosted and sends it to
+    # GitHub's image, which has Rust too, when those runners are busy or gone.
     name: Rust PTY host
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.hosted_only && 'ubuntu-24.04' || fromJSON(needs.changes.outputs.rust) }}
     timeout-minutes: 10
     env:
       HERDR_TEST_MODE: unit
@@ -216,6 +222,7 @@ jobs:
       - uses: ./.github/actions/setup-ci
         with:
           node: 'true'
+          rust: 'true'
           cache: ${{ inputs.hosted_only && 'none' || 'save' }}
       - name: Skip heavy tests on draft PRs
         if: needs.changes.outputs.draft == 'true'

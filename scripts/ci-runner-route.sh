@@ -4,6 +4,7 @@
 # A fork pull request always gets the GitHub-hosted image: its code must never reach the
 # self-hosted runner. This script runs from the checked-out revision, which a fork pull request
 # controls; the runner itself refuses fork code (scripts/self-hosted-runner/job-started.sh).
+# The Rust PTY host job has runners of its own (rust=, route_rust below).
 set -euo pipefail
 
 hosted='"ubuntu-24.04"'
@@ -21,15 +22,29 @@ main_configured="${MAIN_LABELS:-}"
 queue_limit=240
 offline_wait=60
 live_job=3600
+# The Rust PTY host job asks for a label only the runners whose image has the Rust toolchain carry (one slot each
+# on the hosts that run them, scripts/self-hosted-runner/README.md "Routing jobs to it"). It takes about a minute on
+# either side, and GitHub's hosted queue holds it for seconds: once one has waited a minute for those runners (busy),
+# the next run's goes hosted. The workflow token cannot list runners, so whether one is online at all comes from the
+# repository variable CI_RUST_RUNNER_SEEN: the epoch seconds at which scripts/self-hosted-runner/rust-heartbeat.sh,
+# run every minute with an admin token, last saw one online. Unset, not a number or older than rust_seen_limit sends
+# the job hosted before it queues, so a run never waits for runners that are all gone.
+rust_label=self-hosted-ovis-rust
+rust_labels="[\"self-hosted\",\"$rust_label\"]"
+rust_queue_limit=60
+rust_seen_limit=300
+# a heartbeat this far ahead of the route's clock is not believed (the two clocks differ by seconds)
+rust_seen_ahead=120
 
+# Prints "<output>=<labels>"; the output is linux unless a third argument names another.
 choose_labels() {
-  local source="$1" value="$2" compact
+  local source="$1" value="$2" output="${3:-linux}" compact
   if ! compact=$(jq -ce 'if type == "array" and length > 0 and all(.[]; type == "string") and any(.[]; . == "self-hosted") then . else error("invalid") end' <<<"$value" 2>/dev/null); then
     echo "::error::$source must be a JSON array of strings that contains \"self-hosted\", got: $value" >&2
     exit 1
   fi
   echo "Runner: self-hosted $compact (from $source)" >&2
-  echo "linux=$compact"
+  echo "$output=$compact"
 }
 
 # the labels of the pull requests' runners (run.sh registers them with self-hosted, Linux and X64):
@@ -62,39 +77,54 @@ api() {
   return 1
 }
 
-# Prints "<longest wait> <live>": the seconds the longest-waiting queued job of the pool has waited for a
-# runner (a day at most: GitHub drops it then), and how many jobs that can only run on the pool's
-# label and started within the last hour are running. A job "in progress" for longer is a stale record
-# (some stay so for days), not a runner; so is a run nothing has updated for a day, which is not read.
+# Prints "<longest wait> <live> <longest Rust wait>": the seconds the longest-waiting queued job of the pool has
+# waited for a runner (a day at most: GitHub drops it then), how many jobs that can only run on the pool's
+# label and started within the last hour are running, and the seconds the longest-waiting queued job that
+# asks for the Rust runners' label has waited. A job "in progress" for longer is a stale record (some stay so
+# for days), not a runner; so is a run nothing has updated for a day, which is not read.
 pool_jobs() {
-  local ids id jobs counts wait live longest=0 running=0
+  local ids id jobs counts wait live rust longest=0 running=0 rust_longest=0
   ids=$(for status in in_progress queued; do
     api "repos/$REPOSITORY/actions/runs?status=$status&per_page=100" | jq '.workflow_runs[] | select(now - (.updated_at | fromdateiso8601) < 86400) | .id' || exit 1
   done) || return 1
   for id in $ids; do
     jobs=$(api "repos/$REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100") || return 1
-    counts=$(jq -s -r -e --argjson pool "$pool_labels" --argjson live "$live_job" '[.[].jobs[]
-      | select([.labels[] | ascii_downcase] | length > 0 and all(.[]; . as $x | $pool | index($x) != null))] as $ours
+    counts=$(jq -s -r -e --argjson pool "$pool_labels" --argjson live "$live_job" --arg rust "$rust_label" '[.[].jobs[]] as $all
+      | [$all[] | select([.labels[] | ascii_downcase] | length > 0 and all(.[]; . as $x | $pool | index($x) != null))] as $ours
       | ([$ours[] | select(.status == "queued") | now - (.created_at | fromdateiso8601) | select(. < 86400)] | max // 0 | floor) as $wait
       | ([$ours[] | select(.status == "in_progress" and ([.labels[] | ascii_downcase] | index("self-hosted-ovis") != null)
           and now - (.started_at | fromdateiso8601) < $live)] | length) as $running
-      | "\($wait) \($running)"' <<<"$jobs") || return 1
-    read -r wait live <<<"$counts"
+      | ([$all[] | select(.status == "queued" and ([.labels[] | ascii_downcase] | index($rust) != null))
+          | now - (.created_at | fromdateiso8601) | select(. < 86400)] | max // 0 | floor) as $rust_wait
+      | "\($wait) \($running) \($rust_wait)"' <<<"$jobs") || return 1
+    read -r wait live rust <<<"$counts"
     if (( wait > longest )); then longest=$wait; fi
+    if (( rust > rust_longest )); then rust_longest=$rust; fi
     running=$((running + live))
-    if (( longest > queue_limit )); then break; fi
+    # the Rust route reads the scan only when opted in; otherwise the Linux route's answer is enough to stop
+    if (( longest > queue_limit )) && { [[ "${RUST_SELF_HOSTED:-}" != true ]] || (( rust_longest > rust_queue_limit )); }; then break; fi
   done
-  echo "$longest $running"
+  echo "$longest $running $rust_longest"
+}
+
+# pool_jobs once for both routes, each of which runs in a subshell: its answer, or "failed". Without a
+# temporary file each route reads the jobs itself, as a run with only one route needing them always did.
+pool_file=$(mktemp 2>/dev/null) || pool_file=""
+trap '[ -z "$pool_file" ] || rm -f "$pool_file"' EXIT
+pool_counts() {
+  [ -n "$pool_file" ] || { pool_jobs; return; }
+  if [ ! -s "$pool_file" ]; then pool_jobs > "$pool_file" || echo failed > "$pool_file"; fi
+  [ "$(cat "$pool_file")" != failed ] && cat "$pool_file"
 }
 
 route_pull_request() {
   local counts waited running
-  if ! counts=$(pool_jobs); then
+  if ! counts=$(pool_counts); then
     echo "::warning::could not read the self-hosted runners' jobs; using ubuntu-24.04" >&2
     echo "linux=$hosted"
     return
   fi
-  read -r waited running <<<"$counts"
+  read -r waited running _ <<<"$counts"
   if (( waited > queue_limit )); then
     echo "Runner: ubuntu-24.04 (a self-hosted job has waited ${waited}s for a runner, pull request)" >&2
     echo "linux=$hosted"
@@ -138,7 +168,58 @@ else
 fi
 }
 
+# The Rust PTY host job: hosted unless the repository variable CI_RUST_SELF_HOSTED is "true" (an opt-in: unset,
+# empty or "false" is the hosted image, as before the Rust runners existed), and hosted wherever the Linux jobs are by
+# a rule (hosted_only, a fork, CI_SELF_HOSTED_LABELS naming the hosted image, an event other than a pull request or a
+# push) whatever it says. Opted in, the job goes to the Rust runners while their heartbeat is fresh and none of
+# their jobs has waited too long.
+route_rust() {
+  local opted_in="${RUST_SELF_HOSTED:-}" configured_all="${CONFIGURED_LABELS:-}" seen="${RUST_SEEN:-}" now="${ROUTE_NOW:-$(date +%s)}" counts waited
+  if [[ "${HOSTED_ONLY:-}" == true ]]; then
+    echo "Rust PTY host: ubuntu-24.04 (called with hosted_only)" >&2
+    echo "rust=$hosted"
+  elif [[ ("$event" == "pull_request" || "$event" == "pull_request_target") && "${HEAD_REPO:-}" != "${REPOSITORY:-}" ]]; then
+    echo "Rust PTY host: ubuntu-24.04 (pull request from fork ${HEAD_REPO:-unknown})" >&2
+    echo "rust=$hosted"
+  elif [[ "${configured_all//[[:space:]]/}" == "$hosted" ]]; then
+    echo "Rust PTY host: ubuntu-24.04 (from repository variable CI_SELF_HOSTED_LABELS)" >&2
+    echo "rust=$hosted"
+  elif [[ "$event" != pull_request && "$event" != push ]]; then
+    echo "Rust PTY host: ubuntu-24.04 ($event)" >&2
+    echo "rust=$hosted"
+  elif [[ "$opted_in" != true ]]; then
+    if [[ -n "$opted_in" && "$opted_in" != false ]]; then
+      echo "::error::repository variable CI_RUST_SELF_HOSTED may only be \"true\" or \"false\" (or unset), got: $opted_in" >&2
+      exit 1
+    fi
+    echo "Rust PTY host: ubuntu-24.04 (CI_RUST_SELF_HOSTED is not \"true\")" >&2
+    echo "rust=$hosted"
+  elif ! [[ "$seen" =~ ^[0-9]{1,12}$ ]]; then
+    echo "Rust PTY host: ubuntu-24.04 (the Rust runners' heartbeat CI_RUST_RUNNER_SEEN is unset or not a number)" >&2
+    echo "rust=$hosted"
+  elif (( now - 10#$seen > rust_seen_limit )); then
+    echo "Rust PTY host: ubuntu-24.04 (no Rust runner seen online for $(( now - 10#$seen ))s)" >&2
+    echo "rust=$hosted"
+  elif (( 10#$seen - now > rust_seen_ahead )); then
+    echo "Rust PTY host: ubuntu-24.04 (the Rust runners' heartbeat is $(( 10#$seen - now ))s ahead of this clock)" >&2
+    echo "rust=$hosted"
+  elif ! counts=$(pool_counts); then
+    echo "::warning::could not read the self-hosted runners' jobs; the Rust PTY host uses ubuntu-24.04" >&2
+    echo "rust=$hosted"
+  else
+    read -r _ _ waited <<<"$counts"
+    if (( waited > rust_queue_limit )); then
+      echo "Rust PTY host: ubuntu-24.04 (a job has waited ${waited}s for the Rust runners)" >&2
+      echo "rust=$hosted"
+    else
+      echo "Rust PTY host: self-hosted $rust_labels (longest wait for the Rust runners ${waited}s)" >&2
+      echo "rust=$rust_labels"
+    fi
+  fi
+}
+
 line=$(route_linux)
+rust_line=$(route_rust)
 echo "$line"
 # Fast checks can stay on other runners while the Linux jobs go to the cloud VM runners (label ovis-vm):
 # CI_FAST_SELF_HOSTED_LABELS applies only then, so a fork's Fast checks always follow its hosted Linux jobs.
@@ -154,3 +235,4 @@ if [[ ("$event" == pull_request || "$event" == push) && "$linux" == *'"ovis-vm"'
   fi
 fi
 echo "fast=$fast"
+echo "$rust_line"

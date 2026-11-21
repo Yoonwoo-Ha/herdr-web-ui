@@ -1,6 +1,6 @@
 # Self-hosted CI runner
 
-An ephemeral Docker GitHub Actions runner for this repository's Linux CI/CD jobs. Each container registers, runs exactly one job and exits; the launcher then starts a fresh one. The image includes Bun, Node 22, checksum-pinned herdr, Playwright Chromium and its system libraries, ffmpeg, git, `gh`, curl, jq, unzip, xz-utils, OpenSSH (client and server), iproute2 (`ss`), tmux and procps (`ps`), with no sudo. Jobs detect it with `RUNNER_ENVIRONMENT=self-hosted`.
+An ephemeral Docker GitHub Actions runner for this repository's Linux CI/CD jobs. Each container registers, runs exactly one job and exits; the launcher then starts a fresh one. The image includes Bun, Node 22, checksum-pinned herdr, a pinned Rust toolchain (rustup's minimal profile, with gcc to link), Playwright Chromium and its system libraries, ffmpeg, git, `gh`, curl, jq, unzip, xz-utils, OpenSSH (client and server), iproute2 (`ss`), tmux and procps (`ps`), with no sudo. Jobs detect it with `RUNNER_ENVIRONMENT=self-hosted`.
 
 ## Prerequisites
 
@@ -51,8 +51,10 @@ host's loopback. What the runners share is `scripts/check.ts`'s slots, in a volu
 the herdr-backed CI lanes of every runner on the PC count against one `CHECK_MAX_RUNS` and wait for
 a slot, instead of each runner believing it has the PC to itself ([Check slots](#check-slots)). The
 `--shm-size 2g` Docker setting sizes `/dev/shm` for browser scratch space; it is not a total RAM
-limit. The container still has a pids limit of 8192, and `--ulimit core=0`: a crash never leaves a
-core file in the checkout, where `scripts/check.ts` would count it as a source change.
+limit. The container still has a pids limit of 8192, and `--ulimit core=0:1`: a crash never leaves a
+core file in the checkout, where `scripts/check.ts` would count it as a source change. The hard limit
+of 1 byte lets `server/pty/host.test.ts` lower a crashing command's limit to 1 byte, for which the
+kernel writes no core file and starts no piped `core_pattern` handler either; at 0 that test skips.
 
 Each slot's network is a /28 of one block, `10.213.0.0/16`, never a range docker picks. Left to
 itself, docker takes 172.17-31.x/16 ranges and then 192.168.x/20 ones: on a host whose 172 ranges
@@ -152,8 +154,12 @@ Self-hosted jobs verify the image's Bun version, requested Node major and herdr 
 of downloading tools. Both browser lanes use the installed project's Playwright revision to find
 Chromium under `/opt/playwright-browsers`; a missing browser fails with rebuild guidance, not a
 download fallback. Rebuild with `--build` after changing the tool pins or Playwright in `bun.lock`.
-The image's `BUN_VERSION` must match the default in `.github/actions/setup-ci/action.yml`, and
-`PLAYWRIGHT_VERSION` must match the lockfile.
+The image's `BUN_VERSION` must match the default in `.github/actions/setup-ci/action.yml`,
+`RUST_VERSION` must match `EXPECTED_RUST_VERSION` in `scripts/ci-preinstalled-tools.sh` (the Rust PTY
+host job checks it), and `PLAYWRIGHT_VERSION` must match the lockfile. The toolchain is root's under
+`/opt/rustup` and `/opt/cargo`; a job's crate downloads go to its own `~/.cargo` and end with its
+container. No host cache holds them: measured on hosthatch in the image, the whole crate graph's
+download, release build and tests take about 7 s from nothing (GitHub's image: 18-22 s).
 
 ### Runner version
 
@@ -353,6 +359,75 @@ way keeps the script it started with, as does the running `run.sh`. Jobs run the
 repository's `scripts/build-cache.ts` against the installed `build-cache-promote.sh`: after a change
 to where the build cache's entries are filed, no job restores a build until the copy is the new one
 ([Build cache](#build-cache)).
+
+### The Rust PTY host job
+
+`ci.yml`'s Rust PTY host job asks for `["self-hosted","self-hosted-ovis-rust"]`. Only a slot that a
+launcher registers with that label takes it, so a host whose image predates the Rust toolchain never
+does: a host serves it with one slot of its own, the launcher's reserved slot, on top of its others:
+
+```sh
+run.sh ... --count 3 --reserved 1 --reserved-labels self-hosted-ovis-rust   # was --count 2: slot 1 takes the Rust job alone
+```
+
+The job takes about a minute, and in GitHub's hosted queue it waited two seconds in most runs (49 pull
+request runs to 2026-11-21: median 2 s, two waits of 14 and 23 minutes), so a slot of its own is what makes
+it as quick here: in the shared pool the same runs' jobs waited 8 to 55 s at the median per host and 3 to 6
+minutes at the 90th percentile, behind Integration tests and the browser parts. HostHatch and old-desktop
+run one each. Rebuild the
+image with the toolchain (`--build`) before you add the label. The job goes to these slots only once the
+repository variable `CI_RUST_SELF_HOSTED` is `true`; unset (the default), empty or `false` keeps it on
+`ubuntu-24.04` as before the slots existed. Any other value fails Detect changes in the runs that read it,
+a same-repository pull request or a push to a branch; forks, `hosted_only` (the Release's), manual runs and
+every run while `CI_SELF_HOSTED_LABELS` names the hosted image stay hosted without reading it, so a typo
+never stops a release:
+
+```sh
+gh variable set CI_RUST_SELF_HOSTED --body true   # the Rust job on the Rust slots
+gh variable delete CI_RUST_SELF_HOSTED            # back to ubuntu-24.04
+```
+
+Opted in, `scripts/ci-runner-route.sh` still keeps forks, `hosted_only` and manual runs on `ubuntu-24.04`,
+and sends the job there too while `CI_SELF_HOSTED_LABELS` names the hosted image, while no Rust slot has
+been seen online for five minutes, and once a job of these slots has waited more than a minute (both busy).
+
+The workflow token cannot list runners, so "seen online" is the repository variable `CI_RUST_RUNNER_SEEN`:
+the epoch seconds at which `rust-heartbeat.sh` last found a runner with the label online. It runs every
+minute on the maintainer PC with an admin `gh`, beside the Mac's heartbeat, as a systemd user timer:
+
+```ini
+# ~/.config/systemd/user/ovis-rust-heartbeat.service
+[Unit]
+Description=Ovis Rust runners' heartbeat (CI_RUST_RUNNER_SEEN)
+[Service]
+Type=oneshot
+ExecStart=/bin/bash %h/.local/share/ovis-ci-runner/rust-heartbeat.sh
+
+# ~/.config/systemd/user/ovis-rust-heartbeat.timer
+[Unit]
+Description=Ovis Rust runners' heartbeat every minute
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+[Install]
+WantedBy=timers.target
+```
+
+With both Rust slots gone, or the maintainer PC off, the value ages and every later run's job goes
+hosted before it queues. One window stays open: a run routed in the five minutes before the value aged
+still waits for the slots, and GitHub never moves a queued job, so that run's Rust PTY host job (not a
+required check) waits until a Rust slot is back, or until GitHub drops it after a day. Cancel that run, wait
+until it has completed (a re-run of a run still cancelling is refused), and run it again in full; its Detect
+changes then sends the job hosted:
+
+```sh
+# after the heartbeat has aged (five minutes)
+gh run cancel <run id> && gh run watch <run id> >/dev/null && gh run rerun <run id>
+```
+
+On main a push run left so holds the next push's run behind it (one concurrency group), and a release
+cannot reuse it, so cancel and re-run it the same way. Turning the opt-in off (`gh variable delete
+CI_RUST_SELF_HOSTED`) sends every later run's job hosted at once.
 
 ## Per-host limits
 
@@ -567,7 +642,7 @@ the rules.
 | ci.yml | changes | HO ubuntu-24.04, else LIGHT | yes under hosted_only; else no: self-hosted unless a fork PR | - | none |
 | ci.yml | windows-install | `windows-latest` | yes | - | setup-ci save, none under hosted_only |
 | ci.yml | macos-session | HO macos-15, else MAC | yes under hosted_only; else yes unless CI_MAC_LABELS is set | - | setup-ci save, none under hosted_only |
-| ci.yml | rust-pty-host | `ubuntu-24.04` | yes | - | setup-ci save, none under hosted_only |
+| ci.yml | rust-pty-host | HO ubuntu-24.04, else ROUTE rust | yes under hosted_only; else as routed: hosted unless CI_RUST_SELF_HOSTED is true | - | setup-ci save, none under hosted_only |
 | ci.yml | herdr-core-live | HO ubuntu-24.04, else LIGHT | yes under hosted_only; else no: self-hosted unless a fork PR | - | setup-ci restore, none under hosted_only; actions/cache (Cache hc, off under hosted_only) |
 | ci.yml | fast | HO ubuntu-24.04, else ROUTE fast | yes under hosted_only; else as routed: self-hosted or hosted | - | setup-ci save, none under hosted_only |
 | ci.yml | integration | HO ubuntu-24.04, else ROUTE linux | yes under hosted_only; else as routed: self-hosted or hosted | - | setup-ci save, none under hosted_only |
