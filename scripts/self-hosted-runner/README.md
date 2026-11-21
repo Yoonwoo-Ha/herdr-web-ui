@@ -722,7 +722,9 @@ the rules.
 | release.yml | windows-app | calls `windows-app.yml` | (its jobs) | contents write | (its jobs) |
 | release.yml | desktop | calls `desktop.yml` | (its jobs) | contents write; passes 7 secrets | (its jobs) |
 | release.yml | mac-dmg | calls `mac-dmg.yml` | (its jobs) | contents write; passes secrets: inherit | (its jobs) |
-| remote-bundles.yml | bundle | MACPR over matrix: ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel | yes unless a same-repository pull request while CI_MAC_LABELS is set | - | none |
+| remote-bundles-platforms.yml | bundle | MACPR over matrix: ubuntu-24.04-arm, macos-15, macos-15-intel | yes unless a same-repository pull request while CI_MAC_LABELS is set | - | none |
+| remote-bundles.yml | bundle | MACPR over matrix: ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel | yes: it no longer runs for a pull request | - | none |
+| remote-bundles.yml | bundle-linux | `ubuntu-24.04` | yes | - | none |
 | remote-bundles.yml | bundle-windows | `ubuntu-24.04` | yes | - | none |
 | remote-bundles.yml | smoke-windows | `windows-latest` | yes | - | none |
 | remote-bundles.yml | ssh | `ubuntu-24.04` | yes | - | none |

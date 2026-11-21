@@ -768,6 +768,7 @@ describe("ci.yml", () => {
     expect([...reads].sort()).toEqual([
       `ci.yml: runs-on: ${String((ci.jobs["macos-session"] as CiJob & { "runs-on"?: string })["runs-on"])}`,
       `pty-sidecar.yml: ${pullRequestOnly}`,
+      `remote-bundles-platforms.yml: ${pullRequestOnly}`,
       `remote-bundles.yml: ${pullRequestOnly}`,
     ]);
     const ciRead = reads.find((read) => read.startsWith("ci.yml: "))!;
