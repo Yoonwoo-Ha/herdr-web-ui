@@ -19,4 +19,7 @@ export const QUARANTINE: Readonly<Record<string, QuarantineEntry>> = {
   "scripts/pane-mute-demo-regression.ts": { until: "2026-12-19", issue: 4131 },
   // a long press on a pinned row in checkPinned's touch pass sometimes never lifts it (#4343)
   "scripts/workspace-touch-reorder-demo-regression.ts": { until: "2026-12-20", issue: 4343 },
+  // cause unknown (no failure in 53 runs, CI image included); on a timeout openPhoneSettings now names the page's
+  // header chip, terminals, dialogs and every WebSocket it opened, so the next CI failure names the stage (#4357)
+  "scripts/ui-access-regression.ts": { until: "2026-12-20", issue: 4357 },
 };

@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Browser, BrowserContext, Page, Request, Response } from "playwright-core";
+import type { Browser, BrowserContext, Page, Request, Response, WebSocket } from "playwright-core";
 import { startBunRelay } from "../relay/bun.ts";
 import { createServer } from "../server/index.ts";
 import { RelayService } from "../server/relay/service.ts";
@@ -139,8 +139,35 @@ const signIn = (page: Page): Promise<void> => page.evaluate((service) => new Pro
 }), ACCOUNT_SERVICE);
 
 export async function openPhoneSettings(page: Page, origin: string): Promise<void> {
-  await page.goto(origin, { waitUntil: "domcontentloaded" });
-  await page.locator(".conn-live").waitFor({ state: "attached" });
+  // #4357: the reopened page once never showed .conn-live; on a timeout, name the stage it stopped at
+  const started = Date.now();
+  const sockets: string[] = [];
+  const noteSocket = (socket: WebSocket): void => {
+    const at = (what: string): void => { sockets.push(`${Date.now() - started}ms ${what} ${new URL(socket.url()).pathname}`); };
+    at("created");
+    socket.on("close", () => at("closed"));
+    socket.on("socketerror", (error) => at(`error ${error}`));
+  };
+  page.on("websocket", noteSocket);
+  try {
+    await page.goto(origin, { waitUntil: "domcontentloaded" });
+    await page.locator(".conn-live").waitFor({ state: "attached" });
+  } catch (error) {
+    // a page that stopped running scripts never answers: the read gives up, so the timeout above is still reported
+    let gaveUp: ReturnType<typeof setTimeout> | undefined;
+    const shown = await Promise.race([
+      page.evaluate(() => ({
+        url: location.href,
+        conn: [...document.querySelectorAll(".conn")].map((chip) => `${chip.className}: ${chip.textContent ?? ""}`),
+        terminals: document.querySelectorAll(".xterm").length,
+        dialogs: [...document.querySelectorAll("[role=dialog], [role=alertdialog]")].map((dialog) => dialog.getAttribute("aria-label") ?? dialog.className),
+      })),
+      new Promise<never>((_, reject) => { gaveUp = setTimeout(() => reject(new Error("the page did not answer within 5 s")), 5_000); }),
+    ]).catch((readError: unknown) => ({ unreadable: String(readError) })).finally(() => clearTimeout(gaveUp));
+    throw new Error(`${error instanceof Error ? error.message.split("\n")[0] : String(error)}; page ${JSON.stringify(shown)}; sockets ${JSON.stringify(sockets)}`, { cause: error });
+  } finally {
+    page.off("websocket", noteSocket);
+  }
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   await openSettingsPage(page, "Devices and PCs");
 }
