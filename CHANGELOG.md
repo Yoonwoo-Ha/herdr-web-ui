@@ -7,6 +7,97 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-11-21
+
+### Added
+- Settings → Agents has a Browser tool row for Claude Code, Codex and GitHub Copilot: pick Chrome
+  DevTools MCP or Playwright MCP and Ovis adds that MCP server, at a pinned version and with a
+  throwaway browser profile, when it starts the agent. None is the default.
+  ([#4342](https://github.com/devswha/ovis/pull/4342))
+- The Android app adds a PC you already reach over SSH: **SSH** under **Add a PC**, with no relay,
+  no account and no port open but SSH. The phone signs in with a key of its own (registered there
+  with your password once, or by copying or sharing its line into `authorized_keys`), or, under
+  **Advanced**, with a private key you paste in (OpenSSH or PEM; ed25519, RSA or ECDSA; with a passphrase or
+  not). The PC's host key fingerprint is shown to confirm first, and a changed one stops the app
+  until you forget it on purpose. Keys stay on the phone, sealed by the Android Keystore.
+  ([#3862](https://github.com/devswha/ovis/pull/3862))
+- Where that account has no Ovis yet, the phone can install it there with the official installer,
+  without sudo, and then opens it.
+  ([#3862](https://github.com/devswha/ovis/pull/3862))
+- An SSH PC in **Your PCs** has **Manage**: rename it, show the phone's key again, set it up
+  again, forget its host key, or remove it, optionally taking the phone's key out of the PC's
+  `authorized_keys` too. When it cannot open, the error page says why (the host key changed, the
+  key was refused, the PC is out of reach, Ovis is not installed or not running there) and gives
+  the one command to run on the PC.
+  ([#3862](https://github.com/devswha/ovis/pull/3862))
+- Desktop and Mac apps: Settings → Chat → Files → Browser for links opens the web links you click in
+  Ovis in a browser you pick from the ones on this computer (agent-browser too, when it is
+  installed). Sign-in pages still open in the system's default browser, which stays the default.
+  ([#4344](https://github.com/devswha/ovis/pull/4344))
+- With the step-2 account switch on, Add this PC to my account adds the PC in one press when you
+  signed in just now with two-step sign-in set: no other device has to type digits. Your other
+  devices get a notice with a one-tap remove, and the new PC is marked new for 24 hours.
+  ([#4347](https://github.com/devswha/ovis/pull/4347))
+
+### Changed
+- Settings > Devices and PCs > Account is compact: one row names the sign-in, the plan and its PCs
+  with a small Sign out, and the ways to sign in are one row of icon chips. Delete account is a small
+  text button at the bottom of the page that still asks first.
+  ([#4352](https://github.com/devswha/ovis/pull/4352))
+- Adding a PC over SSH or Tailscale connects straight to the Ovis running there when exactly one
+  of the account's Ovis servers answers and no session was named, with no list to choose from.
+  Advanced settings can use the PC's default herdr session instead. Current PCs never list this
+  app's test sessions or sessions started from temporary or cache folders; an older PC can still
+  report a few of them.
+  ([#4350](https://github.com/devswha/ovis/pull/4350))
+- A PC that only an account introduction put on this device is no longer opened by itself when the
+  app starts: open it once yourself, and the app reopens it as before from then on.
+  ([#4363](https://github.com/devswha/ovis/pull/4363))
+- app.ovis.sh and the phone apps never land on the overview of your PCs any more: they open the PC you
+  used last (or, when it is switched off, the next saved one that is not). Signed in, when this device has
+  no PC of its own or each is off, they open the account's PC seen most recently that this device is not in
+  yet, with its join card on its own page (nothing opens before you press it).
+  When every PC is off, signed in you get Add a PC, listing your PCs and the account's; signed out, the
+  sign-in, with Add a PC behind Start without signing in. A PC just added to the account that no device is
+  in yet opens on its own page asking for the number its screen shows. The overview opens only on purpose,
+  from Settings → Devices and PCs → Relayed connections or its own address.
+  ([#4348](https://github.com/devswha/ovis/pull/4348))
+- Add a connection → Phones and devices opens on the Ovis relay, the same panel as the relay tab: sign in,
+  then one press shows the QR code for the phone's Ovis app (a PC already in an account shows none: sign in
+  to that account on the new device instead). The other choice, "Without signing in (same Wi-Fi ·
+  Tailscale)", shows only when this PC can offer one: its Tailscale address, Portal, the pairing code (on
+  its own where no address is known), or the one Tailscale step that would give a phone an address
+  (install, sign in, or serve Ovis on the tailnet), instead of "No address a phone can open".
+  ([#4353](https://github.com/devswha/ovis/pull/4353))
+- Adding a sign-in method that already belongs to another Ovis account now says to take it off that
+  account first, with a **See how** link to the steps in the guide, instead of only that nothing
+  changed.
+  ([#4384](https://github.com/devswha/ovis/pull/4384))
+
+### Fixed
+- Signing in on the PC's own Ovis page, in a browser on that PC, goes straight to Google, Apple or
+  GitHub and back, with no code to type; other browsers still sign in with a code, and the code
+  page names only the providers it offers.
+  ([#4351](https://github.com/devswha/ovis/pull/4351))
+- After signing in from the relay tab of Add a connection, Add this PC to my account is right there.
+  ([#4351](https://github.com/devswha/ovis/pull/4351))
+- A PC waiting to be added says how to finish with no second device (app.ovis.sh in another tab),
+  and no longer says it is in the account before the device that added it has finished.
+  ([#4351](https://github.com/devswha/ovis/pull/4351))
+- A new device of the account can be let into the PC from the PC's own Ovis window, by typing the
+  number the new device shows (Settings → Devices and PCs).
+  ([#4351](https://github.com/devswha/ovis/pull/4351))
+- The sign-in screen at app.ovis.sh and in the phone and desktop apps offers every way the account
+  service signs in (Google and Apple too), not GitHub alone.
+  ([#4335](https://github.com/devswha/ovis/pull/4335))
+- After a PC's Ovis restarts while you are moving a workspace, the sidebar now checks the restarted
+  server's order even when it arrived before the move was confirmed, instead of waiting for the next
+  update.
+  ([#4315](https://github.com/devswha/ovis/pull/4315))
+- On a phone, Back from New workspace no longer opens it again when Back had just closed its agent
+  list or folder browser: its fields could be written into the address of the page under it.
+  ([#4387](https://github.com/devswha/ovis/pull/4387))
+
 ## [0.5.7] - 2026-11-21
 
 ### Maintenance
@@ -12005,7 +12096,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/ovis/compare/v0.5.7...HEAD
+[Unreleased]: https://github.com/devswha/ovis/compare/v0.5.8...HEAD
+[0.5.8]: https://github.com/devswha/ovis/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/devswha/ovis/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/devswha/ovis/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/devswha/ovis/compare/v0.5.4...v0.5.5
