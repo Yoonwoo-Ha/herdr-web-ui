@@ -17,6 +17,7 @@ test("a failure of the relay pass setup never keeps Add this PC from its pairing
   const answer = async (input: RequestInfo | URL): Promise<Response> => {
     const path = new URL(String(input), "http://localhost").pathname;
     asked.push(path);
+    if (path === "/api/account/status") return Response.json({ account: null });
     if (path === "/api/relay/link") return Response.json({ url: encodeOffer({ v: 1, server_id: serverId, server_public_key: publicKey, relay: "wss://relay.ovis.sh", name: "desk" }, "https://app.ovis.sh") });
     return Response.json({ error: { code: "internal", message: "relay/account.json is not writable" } }, { status: 500 });
   };
@@ -40,6 +41,7 @@ test("a pass setup that never answers does not hold Add this PC either", async (
   const answer = async (input: RequestInfo | URL): Promise<Response> => {
     const path = new URL(String(input), "http://localhost").pathname;
     asked.push(path);
+    if (path === "/api/account/status") return Response.json({ account: null });
     if (path === "/api/relay/link") return Response.json({ url: encodeOffer({ v: 1, server_id: serverId, server_public_key: publicKey, relay: "wss://relay.ovis.sh", name: "desk" }, "https://app.ovis.sh") });
     return new Promise<Response>(() => {});
   };
@@ -61,7 +63,7 @@ test("reopening the add window asks the link route alone, for an approve-here wi
   setTransport({ ...nativeTransport, fetch: answer });
   const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(answer as typeof fetch);
   try {
-    expect(await reopenAddWindow()).toBeNull();
+    expect((await reopenAddWindow()).serverId).toBeNull();
     expect(asked).toEqual([{ path: "/api/relay/link", localOnly: "1" }]);
   } finally { fetchSpy.mockRestore(); }
 });
@@ -72,7 +74,7 @@ test("reopening the add window says which PC opened it", async () => {
   const answer = async (_input: RequestInfo | URL): Promise<Response> => Response.json({ url: encodeOffer({ v: 1, server_id: serverId, server_public_key: publicKey, relay: "wss://relay.ovis.sh", name: "desk" }, "https://app.ovis.sh") });
   setTransport({ ...nativeTransport, fetch: answer });
   const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(answer as typeof fetch);
-  try { expect(await reopenAddWindow()).toBe(serverId); } finally { fetchSpy.mockRestore(); }
+  try { expect((await reopenAddWindow()).serverId).toBe(serverId); } finally { fetchSpy.mockRestore(); }
 });
 
 function listing(signedIn: { account: string | null }) {
@@ -95,6 +97,7 @@ function listing(signedIn: { account: string | null }) {
     const mine = (): void => { if (bound !== undefined && signedIn.account !== bound) throw new Error("another sign-in is stored"); };
     return {
       listPcs: async () => { mine(); for (const read of reads) read(); return [{ server_id: serverId, added_at: new Date(0).toISOString() }]; },
+      refreshPc: async () => { mine(); return "legacy"; },
       putPc: async () => { mine(); calls.push(`putPc as ${signedIn.account}`); },
       deletePc: async () => { mine(); calls.push(`deletePc as ${signedIn.account}`); },
       session: async () => signedIn.account === null ? undefined : { account: signedIn.account },

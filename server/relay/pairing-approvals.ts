@@ -66,6 +66,7 @@ export class RelayPairingApprovals {
   private readonly remoteListeners = new Set<(pairings: RemotePairingRequest[]) => void>();
   private windowUntil = 0;
   private localOnlyUntil = 0;
+  private windowId: string | null = null;
   private readonly path: string | undefined;
   private readonly now: () => number;
   private readonly setTimer: (run: () => void, ms: number) => () => void;
@@ -101,6 +102,7 @@ export class RelayPairingApprovals {
       if (this.now() < Math.max(this.windowUntil, this.localOnlyUntil)) { this.watchExpiry(); return; }
       this.windowUntil = 0;
       this.localOnlyUntil = 0;
+      this.windowId = null;
       // a file that is gone already reads as closed: nothing is written into a state directory that was removed
       if (this.path && existsSync(this.path) && !this.save()) this.forget();
       // never longer than a window: a clock set far back would overflow the timer and fire it at once, over and over
@@ -120,7 +122,7 @@ export class RelayPairingApprovals {
     let saved: unknown;
     try { saved = JSON.parse(readFileSync(this.path, "utf8")); } catch { return; }
     if (typeof saved !== "object" || saved === null) return;
-    const { v, window_until: windowUntil, local_only_until: localOnlyUntil } = saved as Record<string, unknown>;
+    const { v, window_until: windowUntil, local_only_until: localOnlyUntil, window_id: windowId } = saved as Record<string, unknown>;
     if (v !== 1) return;
     if (typeof windowUntil !== "number" || !Number.isFinite(windowUntil)) return;
     if (typeof localOnlyUntil !== "number" || !Number.isFinite(localOnlyUntil)) return;
@@ -129,6 +131,7 @@ export class RelayPairingApprovals {
     if (windowUntil > now && windowUntil <= latest && localOnlyUntil <= latest) {
       this.windowUntil = windowUntil;
       this.localOnlyUntil = localOnlyUntil;
+      this.windowId = typeof windowId === "string" && /^[0-9a-f]{32}$/.test(windowId) ? windowId : null;
       this.watchExpiry();
       return;
     }
@@ -140,7 +143,7 @@ export class RelayPairingApprovals {
   private save(): boolean {
     if (!this.path) return true;
     try {
-      writePrivateState(this.path, { v: 1, window_until: this.windowUntil, local_only_until: this.localOnlyUntil });
+      writePrivateState(this.path, { v: 1, window_until: this.windowUntil, local_only_until: this.localOnlyUntil, ...(this.windowId === null ? {} : { window_id: this.windowId }) });
       return true;
     } catch (error) {
       console.warn(JSON.stringify({ event: "relay.pairing_window.save_failed", error: error instanceof Error ? error.message : String(error) }));
@@ -153,13 +156,16 @@ export class RelayPairingApprovals {
    * `localOnly`: this PC's own screen waits to be added to an account (docs/account.md, "Adding a PC"),
    * so what is asked until then is decided here only, even once the PC has members who could approve.
    */
-  openWindow(now = this.now(), options: { localOnly?: boolean } = {}): void {
+  openWindow(now = this.now(), options: { localOnly?: boolean } = {}): string {
+    const id = randomBytes(16).toString("hex");
+    this.windowId = id;
     this.windowUntil = now + PAIRING_WINDOW_MS;
     if (options.localOnly) this.localOnlyUntil = now + PAIRING_WINDOW_MS;
     // a window that could not be saved still works until this process ends, but the file it could not
     // replace must not stand in for it at the next start (an older window without its local-only half)
     if (!this.save()) this.forget();
     this.watchExpiry();
+    return id;
   }
 
   /**
@@ -183,10 +189,12 @@ export class RelayPairingApprovals {
    * account members only never depended on the window and stays. False when the saved window could
    * neither be rewritten nor taken away: it is closed for this process, but a restart could bring it back.
    */
-  closeWindow(): boolean {
+  closeWindow(windowId?: string): boolean {
+    if (windowId !== undefined && windowId !== this.windowId) return true;
     const open = this.windowUntil !== 0 || this.localOnlyUntil !== 0;
     this.windowUntil = 0;
     this.localOnlyUntil = 0;
+    this.windowId = null;
     this.closeCount += 1;
     this.cancelExpiry?.();
     this.cancelExpiry = undefined;

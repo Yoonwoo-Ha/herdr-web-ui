@@ -1,4 +1,4 @@
-import { newPcs, NEW_PC_MS, type MyPc, type MyPcState } from "../account/myPcs.ts";
+import { invitationEndsAt, newPcs, type MyPc, type MyPcState } from "../account/myPcs.ts";
 import type { PcStatus } from "./pcStatus.ts";
 import { REGIONAL_RELAYS } from "../../../shared/relay-regions.ts";
 
@@ -81,7 +81,7 @@ const ATTENTION_RANK: Record<AttentionReason, number> = { "needs-update": 1, "ne
  */
 export function dashboardModel(pcs: readonly DashboardPc[], me: DashboardViewer, defaultRelay: string) {
   const now = me.now ?? Date.now();
-  const expiries = new Map(newPcs(pcs, now).flatMap((pc) => pc.added_at === null ? [] : [[pc.server_id, Date.parse(pc.added_at) + NEW_PC_MS] as const]));
+  const expiries = new Map(newPcs(pcs, now).map((pc) => [pc.server_id, invitationEndsAt(pc)]));
   const rows = pcs.map((pc) => {
     const check = (pc.paired ? me.status?.get(pc.server_id) : undefined) ?? null;
     return {

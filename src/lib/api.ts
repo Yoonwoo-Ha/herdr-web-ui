@@ -350,13 +350,13 @@ export function cancelRelayCode(keepalive = false): Promise<{ readonly ok: true 
  * POST /api/relay/link: a pairing link without a code; the phone that opens it compares six digits with this PC.
  * `localOnly`: this PC's screen waits to be added to an account, so what comes is approved on this PC only.
  */
-export function requestRelayLink(options: { localOnly?: boolean } = {}): Promise<{ readonly url: string }> {
-  return getJson<{ readonly url: string }>("/api/relay/link", { method: "POST", headers: { "x-herdr-update": "1", ...(options.localOnly ? { "x-ovis-local-only": "1" } : {}) } });
+export function requestRelayLink(options: { localOnly?: boolean } = {}): Promise<{ readonly url: string; readonly window_id?: string }> {
+  return getJson<{ readonly url: string; readonly window_id?: string }>("/api/relay/link", { method: "POST", headers: { "x-herdr-update": "1", ...(options.localOnly ? { "x-ovis-local-only": "1" } : {}) } });
 }
 
-/** POST /api/relay/link/close: the owner stopped waiting, so this PC takes no more comparisons from its link. An older server has no such route (404). */
-export function closeRelayLink(): Promise<{ readonly ok: true }> {
-  return getJson<{ readonly ok: true }>("/api/relay/link/close", { method: "POST", headers: { "x-herdr-update": "1" } });
+/** POST /api/relay/link/close: end the current pairing window, or only the named generation when supplied. */
+export function closeRelayLink(windowId?: string): Promise<{ readonly ok: true }> {
+  return getJson<{ readonly ok: true }>("/api/relay/link/close", { method: "POST", headers: { "x-herdr-update": "1", ...(windowId === undefined ? {} : { "x-ovis-window": windowId }) } });
 }
 
 /** GET /api/relay/joins: account joins waiting for this PC's own window, without their digits (403 `own_window_required` elsewhere). */

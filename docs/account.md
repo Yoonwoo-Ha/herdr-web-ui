@@ -758,9 +758,10 @@ until someone signs in on it; the steps below are then the way.
    reads the stored one (another tab signed out and in), and the screen then shows the button. A
    listing that gets no answer within a minute is given up the same way, and so is one whose
    screen is closed meanwhile: nothing more is written for it, the PC is not told the account, and
-   the window it opened is closed (`POST /api/relay/link/close`) unless a wait is kept or the
-   person pressed the button since. An entry already sent to the directory when the screen gave
-   up cannot be taken back: the screen then says the PC may not have been listed, and the button
+   the window it opened is closed by its ID (`POST /api/relay/link/close`) unless a wait is kept or the
+   person pressed the button since. Automatic cleanup never closes a newer window; on an older PC
+   that does not return a window ID, it lets the window expire. An entry already sent to the directory
+   when the screen gave up cannot be taken back: the screen then says the PC may not have been listed, and the button
    lists it again. A sign-in that was already there when the screen opened lists nothing by itself
    and gets the offer; so does a sign-in again for the same account, one that ended before the PC
    answered, and one whose PC answered only after the minute. The sign-in never turns the relay
@@ -777,7 +778,9 @@ until someone signs in on it; the steps below are then the way.
    every nine minutes, for 30 minutes a press or sign-in, then offers **Keep waiting**; **Stop waiting**
    ends it sooner and closes the window on the PC at once (`POST /api/relay/link/close`; an Ovis from
    before that route lets it run out), and once more when a reopen or listing that was on its way
-   opens it again after that. A wait that ran out by itself does not close the window
+   opens it again after that, provided the reopened window is still current. A relist that finds
+   the PC already added also closes only the window it opened, even if the tab could not store a resume marker.
+   A wait that ran out by itself does not close the window
    already open: it closes by itself, up to ten minutes later. A reloaded tab
    goes on waiting only for the same PC under the same sign-in. Once a device added the PC the screen says
    so, and that the account's other devices can open it only when the PC's status no longer says `enrolling`.

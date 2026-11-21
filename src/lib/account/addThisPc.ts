@@ -12,7 +12,7 @@ import { isLoopbackHost } from "../phone.ts";
 import { serverIdOfPath } from "../shellMode.ts";
 import { pcAccountStatus, within } from "./join.ts";
 import { NEW_PC_MS } from "./myPcs.ts";
-import { sameSignIn, type AccountService } from "./service.ts";
+import { AccountServiceError, sameSignIn, type AccountService } from "./service.ts";
 
 /**
  * Whether this window is this PC's own window, as the server's ownWindow judges it (server/dispatch.ts): its owner
@@ -43,12 +43,12 @@ export async function thisPcInNoAccount(): Promise<boolean> {
 
 /**
  * Opens this PC's approve-here pairing window again and nothing else: no directory call, so nothing is listed
- * and no device of the account is rung. Answers the id of the PC that opened it (null when its link does not
- * say), so a screen that resumed a wait can tell the PC is the one it waited on.
+ * and no device of the account is rung. Returns the PC's ID for wait resumption and the window ID for cleanup.
  */
-export async function reopenAddWindow(): Promise<string | null> {
-  const { url } = await openAddWindow();
-  try { return decodeOffer(url)?.server_id ?? null; } catch { return null; }
+export async function reopenAddWindow(): Promise<{ readonly serverId: string | null; readonly windowId: string | undefined }> {
+  const { url, windowId } = await openAddWindow();
+  try { return { serverId: decodeOffer(url)?.server_id ?? null, windowId }; }
+  catch { return { serverId: null, windowId }; }
 }
 
 export const CLOSE_ANSWER_MS = 60_000;
@@ -56,19 +56,20 @@ export const CLOSE_ANSWER_MS = 60_000;
 let closing: Promise<unknown> = Promise.resolve();
 
 /**
- * The PC closes whatever window is open when the request arrives, so one asked for after this call is asked
- * for only once this close was answered (`openAddWindow`): a close that arrives late never closes the window
- * of a wait that began after it.
+ * Only an explicit Stop waiting closes the current window without an ID. Serialize later Add opens
+ * after that close; automatic cleanup names its own generation and cannot affect a later open.
  */
-export function closeAddWindow(): Promise<{ readonly ok: true }> {
-  const sent = closeRelayLink();
+export function closeAddWindow(windowId?: string): Promise<{ readonly ok: true }> {
+  const sent = closeRelayLink(windowId);
+  if (windowId !== undefined) return sent;
   closing = Promise.allSettled([closing, within(CLOSE_ANSWER_MS, sent)]);
   return sent;
 }
 
-async function openAddWindow(): Promise<{ url: string }> {
+async function openAddWindow(): Promise<{ readonly url: string; readonly windowId: string | undefined }> {
   for (let seen: Promise<unknown> | null = null; seen !== closing;) { seen = closing; await seen; }
-  return await requestRelayLink({ localOnly: true });
+  const { url, window_id } = await requestRelayLink({ localOnly: true });
+  return { url, windowId: typeof window_id === "string" && /^[0-9a-f]{32}$/.test(window_id) ? window_id : undefined };
 }
 
 const WAITING_KEY = "ovis-add-pc-waiting";
@@ -133,7 +134,12 @@ export function keepAddPcWaiting(waiting: AddPcWaiting | null): void {
   for (const heard of [...watchers]) heard(waiting);
 }
 
-export interface ListedPc { readonly name: string; readonly serverId: string; readonly account: string | null }
+export interface ListedPc {
+  readonly name: string;
+  readonly serverId: string;
+  readonly account: string | null;
+  readonly membership?: { readonly account: string; readonly enrolling: boolean };
+}
 
 export class AddPcWaitOver extends Error {
   constructor(readonly why: "pc" | "sign-in" | "ended") {
@@ -153,17 +159,14 @@ export interface ListedAs {
   readonly account: string;
   /** asked once the window opened, and right before every write to the directory and to the PC: false once the screen gave the attempt up */
   readonly running: () => boolean;
-  /**
-   * Told how far the listing came, for a screen that gives it up: `opened` once this PC opened its pairing
-   * window, `writing` right before the first write to the directory is sent (one sent cannot be taken back).
-   */
-  readonly reached?: (step: "opened" | "writing") => void;
+  /** Right before a directory write is sent; one sent cannot be taken back. */
+  readonly writing?: () => void;
 }
 
 /**
  * Lists this PC in the account's directory and opens its approve-here pairing window; the PC as
- * listed. An entry the card would stop showing before the next relist (`RELIST_MS`) is listed anew,
- * which shows the card again and rings the account's devices, so the card lasts as long as this screen waits.
+ * listed. An invitation that would expire before the next relist (`RELIST_MS`) is refreshed in place if
+ * the service supports it, so the card lasts as long as this screen waits. Only an old service needs a relist.
  *
  * Every directory call is made as the sign-in stored when the listing began (`forSignIn`): one made meanwhile
  * (another tab signed out and in) is never written to. Listing again `for` a wait writes nothing, and throws
@@ -173,16 +176,17 @@ export interface ListedAs {
  * when the account stored at that read is another one or none, or the attempt was given up. A listing whose
  * wait or attempt ended while its entry was being written does not tell the PC the account either.
  */
-export async function listThisPc(service: AccountService, options: { relistMs: number; for?: ListedFor; as?: ListedAs }): Promise<ListedPc> {
+export async function listThisPc(service: AccountService, options: { relistMs: number; for?: ListedFor; as?: ListedAs; opened?: (windowId: string) => void }): Promise<ListedPc> {
   const wait = options.for;
   const as = options.as;
   // asked before the window: one is never opened on another PC than the wait's
   if (wait !== undefined && !await pcAnswers(wait.serverId)) throw new AddPcWaitOver("pc");
   // stopped while that was asked: no window is asked for after Stop waiting closed it
   if (wait !== undefined && !wait.running()) throw new AddPcWaitOver("ended");
-  const offer = decodeOffer((await openAddWindow()).url);
+  const { url, windowId } = await openAddWindow();
+  if (windowId !== undefined) options.opened?.(windowId);
+  const offer = decodeOffer(url);
   if (offer === null) throw new Error("This PC's pairing link did not parse");
-  as?.reached?.("opened");
   if (wait !== undefined && offer.server_id !== wait.serverId) throw new AddPcWaitOver("pc");
   // given up while the window was being opened: nothing more is read or written for it
   // (a stopped wait's listing is over at once, so whoever began it closes the late window without waiting for the directory)
@@ -192,16 +196,44 @@ export async function listThisPc(service: AccountService, options: { relistMs: n
   if (as !== undefined && session?.account !== as.account) throw new AddPcWaitOver("sign-in");
   const directory = session === undefined ? service : service.forSignIn(session);
   const runs = (): boolean => (wait === undefined || wait.running()) && (as === undefined || as.running());
-  const running = (): void => { if (!runs()) throw new AddPcWaitOver("ended"); as?.reached?.("writing"); };
+  const running = (): void => { if (!runs()) throw new AddPcWaitOver("ended"); as?.writing?.(); };
   const listed = (await directory.listPcs()).find((pc) => pc.server_id === offer.server_id);
-  if (listed !== undefined && Date.now() - Date.parse(listed.added_at) >= NEW_PC_MS - options.relistMs) {
-    running();
-    await directory.deletePc(offer.server_id);
-  }
   const name = (offer.name ?? offer.server_id.slice(0, 8)).slice(0, 48);
-  const publicKey = Array.from(importPublicKey(offer.server_public_key), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  running();
-  await directory.putPc(offer.server_id, { label: name, public_key: publicKey, relay: offer.relay });
+  const result = { name, serverId: offer.server_id, account: session?.account ?? null };
+  const readMembership = async (): Promise<ListedPc["membership"]> => {
+    if (!runs()) throw new AddPcWaitOver("ended");
+    const { account, enrolling } = await thisPcMembership();
+    if (!runs()) throw new AddPcWaitOver("ended");
+    return account === null ? undefined : { account, enrolling };
+  };
+  // A first link or one-press bind can finish while the listing is being read. A refresh must not remove it.
+  const membership = await readMembership();
+  if (membership !== undefined) return { ...result, membership };
+  // only an old service omits the ID; a row with an unusable one is a malformed answer, whatever its age: nothing is written for it
+  if (listed?.listing_id === null) throw new AccountServiceError(502, "invalid_answer", "The account service sent an unusable listing ID");
+  let refreshed = false;
+  if (listed !== undefined && Date.now() - Date.parse(listed.invited_at ?? listed.added_at) >= NEW_PC_MS - options.relistMs) {
+    running();
+    const outcome = await directory.refreshPc(offer.server_id, listed.listing_id);
+    // A new service preserves an admission even if the PC binds after the first status read. Read again
+    // both to finish that wait and to keep the local check immediately before any old-service removal.
+    const after = await readMembership();
+    if (after !== undefined) return { ...result, membership: after };
+    switch (outcome) {
+      case "refreshed": refreshed = true; break;
+      case "changed": throw new AccountServiceError(409, "listing_changed", "This add is no longer waiting for that action");
+      case "legacy":
+        running();
+        await directory.deletePc(offer.server_id);
+        break;
+      default: outcome satisfies never;
+    }
+  }
+  if (!refreshed) {
+    const publicKey = Array.from(importPublicKey(offer.server_public_key), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    running();
+    await directory.putPc(offer.server_id, { label: name, public_key: publicKey, relay: offer.relay });
+  }
   // the account this PC now asks its relay pass under (docs/relay.md, "Relay pass"); an older PC has no such route
   // (not for a wait or an attempt that ended while the entry was written: nobody waits for this PC under it)
   if (session && runs()) {
@@ -212,7 +244,7 @@ export async function listThisPc(service: AccountService, options: { relistMs: n
       (error: unknown) => console.warn("Ovis: this PC did not take the account for its relay pass", error instanceof Error ? error.name : error),
     );
   }
-  return { name, serverId: offer.server_id, account: session?.account ?? null };
+  return result;
 }
 
 /**

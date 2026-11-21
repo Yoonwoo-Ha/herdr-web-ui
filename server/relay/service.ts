@@ -616,10 +616,10 @@ export class RelayService {
    * PC, and the owner approves it here (server/relay/session.ts). It holds nothing secret; asking for it
    * opens the window in which this PC takes comparisons (pairing-approvals.ts PAIRING_WINDOW_MS).
    */
-  pairingLink(options: { localOnly?: boolean } = {}): { url: string } {
+  pairingLink(options: { localOnly?: boolean } = {}): { url: string; window_id: string } {
     if (!this.enabled || !this.identity || !this.services || this.blocked) throw new Error("Start the relay before pairing.");
-    this.approvals.openWindow(Date.now(), options);
-    return { url: encodeOffer({ v: 1, server_id: this.identity.server_id, server_public_key: this.identity.public_key, relay: this.advertised, ...offerName() }, this.app) };
+    const window_id = this.approvals.openWindow(Date.now(), options);
+    return { window_id, url: encodeOffer({ v: 1, server_id: this.identity.server_id, server_public_key: this.identity.public_key, relay: this.advertised, ...offerName() }, this.app) };
   }
 
   async resetIdentity(): Promise<RelayStatus> {

@@ -1,6 +1,6 @@
 import "./RelayPcTable.css";
 import type { MouseEvent, ReactNode } from "react";
-import { isNewAccountPc, newPcs, type MyPc } from "../lib/account/myPcs.ts";
+import { invitationEndsAt, isNewAccountPc, newPcs, type MyPc } from "../lib/account/myPcs.ts";
 import { useT } from "../lib/i18n.ts";
 import { lastSeen } from "../lib/lastSeen.ts";
 import { inDashboardFilter, relayHost, type DashboardFilter, type dashboardModel } from "../lib/relay/dashboard.ts";
@@ -81,7 +81,8 @@ export function RelayPcTable({
     if (updating) return null;
     if (row.state === "needs-update") return t("Update Ovis on it");
     if (listedRow(row) && row.state === "needs-approval") {
-      if (freshIds.has(row.server_id) && row.added_at !== null) return t("new · {n} min left", { n: Math.max(1, Math.ceil((Date.parse(row.added_at) + 10 * 60_000 - now) / 60_000)) });
+      const expires = invitationEndsAt(row);
+      if (freshIds.has(row.server_id) && expires !== null) return t("new · {n} min left", { n: Math.max(1, Math.ceil((expires - now) / 60_000)) });
       if (phone) return askToJoinReason(row, t);
     }
     return null;

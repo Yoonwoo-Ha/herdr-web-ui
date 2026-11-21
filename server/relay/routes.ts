@@ -124,8 +124,8 @@ export async function handleRelayRequest(request: Request, pathname: string, con
         return reply(service.pairingLink({ localOnly: request.headers.get("x-ovis-local-only") === "1" }));
       case RELAY_CONTROLS.close:
         setRequestRoute("/api/relay/link/close");
-        // the owner stopped waiting: nothing more is taken, whatever the relay's state
-        if (!service.approvals.closeWindow()) return fail("internal_error", "The pairing window is closed, but its saved state could not be cleared.", 500);
+        // Automatic cleanup may name its own window. A stale close has no effect.
+        if (!service.approvals.closeWindow(request.headers.get("x-ovis-window") ?? undefined)) return fail("internal_error", "The pairing window is closed, but its saved state could not be cleared.", 500);
         return reply({ ok: true });
       case RELAY_CONTROLS.pairing: {
         setRequestRoute("/api/relay/pairing");

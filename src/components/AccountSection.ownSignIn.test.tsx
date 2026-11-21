@@ -77,7 +77,7 @@ describe("signing in on the PC's own window", () => {
         if (url.pathname === "/api/health") return Response.json({ ok: true, bridge_protocol: 1, own_window: { port: PORT }, auth: { required: false, authenticated: true, via: "local", role: "drive" } });
         if (url.pathname === "/api/relay") return Response.json({ phase: relayPhase, relay: "wss://relay.ovis.example", app: "https://app.ovis.example", sessions: 0, blocked: null, error: null });
         if (url.pathname === "/api/account/status") return Response.json({ account: pcAccount, enrolling, unlinked: [], removals: [], adds: [], blocked: [] });
-        if (url.pathname === "/api/relay/link") { links++; return Response.json({ url: OFFER }); }
+        if (url.pathname === "/api/relay/link") { links++; return Response.json({ url: OFFER, window_id: "1".repeat(32) }); }
         if (url.pathname === "/api/relay/link/close") return Response.json({ ok: true });
         return Response.json({ error: { code: "not_found", message: "no such route" } }, { status: 404 });
       }
@@ -194,7 +194,7 @@ describe("the relay tab reopened already signed in", () => {
       if (url.pathname === "/api/health") return Response.json({ ok: true, bridge_protocol: 1, own_window: { port: PORT }, auth: { required: false, authenticated: true, via: "local", role: "drive" }, security: { pairing_gate: "closed", token_configured: false } });
       if (url.pathname === "/api/relay") return Response.json(status(state.relay));
       if (url.pathname === "/api/relay/start") { state.relay = "online"; return Response.json(status("online")); }
-      if (url.pathname === "/api/relay/link") { if (linkGate !== null) await linkGate.promise; return Response.json({ url: OFFER }); }
+      if (url.pathname === "/api/relay/link") { if (linkGate !== null) await linkGate.promise; return Response.json({ url: OFFER, window_id: "1".repeat(32) }); }
       if (url.pathname === "/api/relay/link/close" || url.pathname === "/api/account/relay-account") return Response.json({ ok: true });
       if (url.pathname === "/api/account/one-press") { pressed.push(url.pathname); state.pcAccount = ACCOUNT; return Response.json({ account: ACCOUNT }); }
       if (url.origin === SERVICE && /^\/v1\/pcs\/[0-9a-f]{32}\/admit$/.test(url.pathname)) { pressed.push("admit"); return Response.json({ server_id: url.pathname.split("/")[3], account: ACCOUNT, admitted_at: new Date().toISOString(), new_until: new Date(Date.now() + 86_400_000).toISOString() }); }

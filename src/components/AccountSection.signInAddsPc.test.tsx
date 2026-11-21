@@ -36,6 +36,8 @@ describe("signing in on a PC's own page", () => {
   let statusHangs: boolean;
   let refuses: boolean;
   let ended: AccountSession | undefined;
+  let directoryWrites: string[];
+  let boundOnDirectoryRead: boolean;
 
   beforeEach(() => {
     ahead = 0;
@@ -49,6 +51,8 @@ describe("signing in on a PC's own page", () => {
     fake.offerLinkPage(["github", "google"]);
     pcAccount = null;
     asked = [];
+    directoryWrites = [];
+    boundOnDirectoryRead = false;
     tab = new Map();
     userCode = null;
     for (const key of ["window", "document", "navigator", "indexedDB", "getComputedStyle", "location", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
@@ -81,7 +85,7 @@ describe("signing in on a PC's own page", () => {
         if (url.pathname === "/api/health") return Response.json({ ok: true, bridge_protocol: 1, auth: { required: false, authenticated: true, via: "loopback", role }, security: { pairing_gate: "closed", token_configured: false } });
         if (url.pathname === "/api/relay/link" && relay === "off") return Response.json({ error: { code: "relay_off", message: "Start the relay before pairing." } }, { status: 409 });
         if (url.pathname === "/api/account/status") return Response.json({ account: pcAccount, unlinked: [], removals: [], adds: [], blocked: [] });
-        if (url.pathname === "/api/relay/link") return Response.json({ url: OFFER });
+        if (url.pathname === "/api/relay/link") return Response.json({ url: OFFER, window_id: "1".repeat(32) });
         if (url.pathname === "/api/relay/link/close") return Response.json({ ok: true });
         return Response.json({ error: { code: "not_found", message: "no such route" } }, { status: 404 });
       }
@@ -90,6 +94,12 @@ describe("signing in on a PC's own page", () => {
         return Response.json({ error: { code: "unauthorized", message: "Sign in again" } }, { status: 401 });
       }
       if (url.pathname === "/v1/token" && userCode !== null) { fake.approveOnLinkPage(userCode, ACCOUNT, approveWith); fake.approveDevice(userCode, ACCOUNT); userCode = null; }
+      const method = input instanceof Request ? input.method : init?.method ?? "GET";
+      if (url.pathname === `/v1/pcs/${SERVER}` && (method === "DELETE" || method === "PUT")) directoryWrites.push(method);
+      if (url.pathname === "/v1/pcs" && method === "GET" && boundOnDirectoryRead) {
+        boundOnDirectoryRead = false;
+        pcAccount = ACCOUNT;
+      }
       const answer = await fake.fetch(input, init);
       if (!url.pathname.startsWith("/v1/signin/") || !answer.ok) return answer;
       const started = await answer.json() as Record<string, unknown>;
@@ -157,6 +167,40 @@ describe("signing in on a PC's own page", () => {
     await until(() => buttons().includes("Add this PC to my account"));
     expect(text(renderer!.root)).not.toContain("Signed in. Adding this PC to your account…");
     expect(asked.slice(before).map((request) => request.path).filter((path) => path !== "/api/account/status" && path !== "/api/health")).toEqual([]);
+  });
+
+  it.each([true, false])("retrying a stale listing uses the local binding at write time (bound: %s)", async (bound) => {
+    await mount();
+    await until(() => buttons().includes("Sign in and add this PC"));
+    await press("Sign in and add this PC");
+    await until(() => buttons().includes("Stop waiting"));
+    await press("Stop waiting");
+
+    const service = new AccountService({ store: indexedAccountStore });
+    const [listed] = await service.listPcs();
+    // Start with an actually stale row in the fake: the browser and service use the same time for this retry.
+    const realNow = Date.now;
+    const clock = spyOn(Date, "now").mockImplementation(() => realNow() + 2 * 60_000);
+    try {
+      directoryWrites.length = 0;
+      boundOnDirectoryRead = bound;
+      await press("Add this PC to my account");
+      await until(() => text(renderer!.root).includes("This PC is in your account.") || buttons().includes("Stop waiting"));
+      expect(directoryWrites).toEqual(bound ? [] : ["DELETE", "PUT"]);
+      const [after] = await service.listPcs();
+      expect(after?.server_id).toBe(SERVER);
+      if (bound) {
+        expect(after?.added_at).toBe(listed?.added_at);
+        expect(pcAccount).toBe(ACCOUNT);
+        expect(text(renderer!.root)).toContain("This PC is in your account.");
+        expect(buttons()).not.toContain("Stop waiting");
+      } else {
+        expect(Date.parse(after?.added_at ?? "")).toBeGreaterThan(Date.parse(listed?.added_at ?? ""));
+        expect(buttons()).toContain("Stop waiting");
+      }
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("a sign-in again for the same account, to change its sign-in methods, lists nothing by itself", async () => {

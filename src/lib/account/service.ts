@@ -169,6 +169,9 @@ export interface DirectoryPc {
   readonly server_id: string;
   readonly label: string;
   readonly added_at: string;
+  /** absent from an old service, which has no refresh route; null when the service sent one that is unusable */
+  readonly listing_id?: string | null;
+  readonly invited_at?: string;
   readonly last_seen_at: string | null;
   /** the PC's relay key (X25519, 64 hex) and relay, to compare digits with it; null from an entry without them */
   readonly public_key: string | null;
@@ -242,7 +245,10 @@ function parsePc(value: unknown): DirectoryPc | null {
   const relay = typeof value.relay === "string" && isWssOrigin(value.relay) ? value.relay : null;
   const new_until = typeof value.new_until === "string" && !Number.isNaN(Date.parse(value.new_until)) ? value.new_until : null;
   const admitted_at = typeof value.admitted_at === "string" && !Number.isNaN(Date.parse(value.admitted_at)) ? value.admitted_at : null;
-  return { server_id: value.server_id, label: value.label, added_at: value.added_at, last_seen_at: value.last_seen_at, public_key, relay, new_until, admitted_at, admitted_before_you: admitted_at !== null && value.admitted_before_you === true };
+  const listing_id = "listing_id" in value ? (typeof value.listing_id === "string" && SERVER_ID.test(value.listing_id) ? value.listing_id : null) : undefined;
+  const invited_at = typeof value.invited_at === "string" && !Number.isNaN(Date.parse(value.invited_at)) ? value.invited_at : undefined;
+  return { server_id: value.server_id, label: value.label, added_at: value.added_at, last_seen_at: value.last_seen_at, public_key, relay, new_until, admitted_at, admitted_before_you: admitted_at !== null && value.admitted_before_you === true,
+    ...(listing_id === undefined ? {} : { listing_id }), ...(invited_at === undefined ? {} : { invited_at }) };
 }
 
 export function sessionOf(body: unknown, service: string, now: number): AccountSession {
@@ -357,6 +363,23 @@ export class AccountService {
 
   async deletePc(serverId: string): Promise<void> {
     await this.call("DELETE", `/v1/pcs/${serverId}`);
+  }
+
+  /** Renews an invitation in place. Without a listing ID, the empty body probes for the old service's missing route. */
+  async refreshPc(serverId: string, listingId: string | undefined): Promise<"refreshed" | "changed" | "legacy"> {
+    try {
+      const body = await this.call("POST", `/v1/pcs/${serverId}/refresh`, listingId === undefined ? {} : { listing_id: listingId });
+      if (!isRecord(body) || typeof body.invited_at !== "string" || Number.isNaN(Date.parse(body.invited_at))) {
+        throw new AccountServiceError(502, "invalid_answer", "The account service sent no invitation time");
+      }
+      return "refreshed";
+    } catch (error) {
+      if (error instanceof AccountServiceError) {
+        if (error.status === 409 && error.code === "listing_changed") return "changed";
+        if (listingId === undefined && error.status === 404 && error.code === "not_found") return "legacy";
+      }
+      throw error;
+    }
   }
 
   /**

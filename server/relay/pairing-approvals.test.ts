@@ -28,12 +28,14 @@ function fixture() {
 describe("the pairing window across a restart", () => {
   it("is still open, and still local-only, for a server started on the same state", () => {
     const f = fixture();
-    f.open().openWindow(f.clock.at, { localOnly: true });
-    expect(f.saved()).toEqual({ v: 1, window_until: f.clock.at + PAIRING_WINDOW_MS, local_only_until: f.clock.at + PAIRING_WINDOW_MS });
+    const windowId = f.open().openWindow(f.clock.at, { localOnly: true });
+    expect(f.saved()).toEqual({ v: 1, window_until: f.clock.at + PAIRING_WINDOW_MS, local_only_until: f.clock.at + PAIRING_WINDOW_MS, window_id: windowId });
     f.clock.at += 60_000;
     const restarted = f.open();
     expect(restarted.windowOpen()).toBe(true);
     expect(restarted.localOnlyOpen()).toBe(true);
+    expect(restarted.closeWindow(windowId)).toBe(true);
+    expect(restarted.windowOpen()).toBe(false);
   });
 
   it("ends at the deadline it was opened with, not ten minutes after the restart", () => {
@@ -105,8 +107,8 @@ describe("the pairing window across a restart", () => {
 
   it("stays not local-only when it was opened without it", () => {
     const f = fixture();
-    f.open().openWindow(f.clock.at);
-    expect(f.saved()).toEqual({ v: 1, window_until: f.clock.at + PAIRING_WINDOW_MS, local_only_until: 0 });
+    const windowId = f.open().openWindow(f.clock.at);
+    expect(f.saved()).toEqual({ v: 1, window_until: f.clock.at + PAIRING_WINDOW_MS, local_only_until: 0, window_id: windowId });
     const restarted = f.open();
     expect(restarted.windowOpen()).toBe(true);
     expect(restarted.localOnlyOpen()).toBe(false);
@@ -117,8 +119,8 @@ describe("the pairing window across a restart", () => {
     const approvals = f.open();
     approvals.openWindow(f.clock.at, { localOnly: true });
     f.clock.at += 60_000;
-    approvals.openWindow(f.clock.at);
-    expect(f.saved()).toEqual({ v: 1, window_until: f.clock.at + PAIRING_WINDOW_MS, local_only_until: f.clock.at - 60_000 + PAIRING_WINDOW_MS });
+    const windowId = approvals.openWindow(f.clock.at);
+    expect(f.saved()).toEqual({ v: 1, window_until: f.clock.at + PAIRING_WINDOW_MS, local_only_until: f.clock.at - 60_000 + PAIRING_WINDOW_MS, window_id: windowId });
   });
 
   it.each([
