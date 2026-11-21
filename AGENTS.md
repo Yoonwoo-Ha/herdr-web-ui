@@ -62,6 +62,10 @@ to change. Also read [server/AGENTS.md](server/AGENTS.md) and [src/AGENTS.md](sr
   fresh `%TEMP%` clone that it deletes afterwards (one such run at a time):
   `ssh winvm "pwsh -File C:\ProgramData\winvm\Invoke-InSession.ps1 -Command '& C:\ProgramData\winvm\pr-check.ps1 -Pr <N>'"`.
   When a run leaves state behind, `winvm reset`, then `winvm start`.
+  CI's runner holds the VM's lease while it runs (`winvm status` says `ci-winvm-runner`): stop it with
+  `systemctl --user stop ovis-winvm-runner` (it finishes a job in progress), take the lease, and
+  `systemctl --user start ovis-winvm-runner` after `winvm release`
+  ([Windows runner](scripts/self-hosted-runner/README.md#windows-runner-winvm)).
 - On this PC `/tmp` is a small tmpfs that runs out of inodes: run `bun run check fast`, tests
   and review checkouts with `TMPDIR=$HOME/.cache/ovis-tmp/<name>` (create it first, delete it
   when done).

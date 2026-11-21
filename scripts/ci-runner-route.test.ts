@@ -67,21 +67,27 @@ function lines(env: Record<string, string>): string[] {
   const result = route(env);
   expect(result.status).toBe(0);
   const lines = result.stdout.trimEnd().split("\n");
-  expect(lines.length).toBe(3);
+  expect(lines.length).toBe(4);
   expect(lines[0]).toStartWith("linux=");
   expect(lines[1]).toStartWith("fast=");
   expect(lines[2]).toStartWith("rust=");
+  expect(lines[3]).toStartWith("windows=");
   return lines;
 }
 
+function allOutputs(env: Record<string, string>): { linux: unknown; fast: unknown; rust: unknown; windows: unknown } {
+  const [linux, fast, rust, windows] = lines(env).map((line) => JSON.parse(line.slice(line.indexOf("=") + 1)) as unknown);
+  return { linux, fast, rust, windows };
+}
+
 function outputs(env: Record<string, string>): { linux: unknown; fast: unknown } {
-  const [linux, fast] = lines(env);
-  return { linux: JSON.parse(linux!.slice("linux=".length)), fast: JSON.parse(fast!.slice("fast=".length)) };
+  const { linux, fast } = allOutputs(env);
+  return { linux, fast };
 }
 
 /** Where the Rust PTY host job goes. */
 function rust(env: Record<string, string>): unknown {
-  return JSON.parse(lines(env)[2]!.slice("rust=".length));
+  return allOutputs(env).rust;
 }
 
 function routed(env: Record<string, string>): unknown {
@@ -387,6 +393,62 @@ describe.skipIf(process.platform === "win32")("CI runner route", () => {
     });
   });
 
+  describe("Native Windows install", () => {
+    const winvm = ["self-hosted", "self-hosted-ovis-win"];
+    const readyAgo = (seconds: number): string => String(Math.floor(Date.now() / 1000) - seconds);
+    const windows = (env: Record<string, string>): unknown => allOutputs({ FAKE_GH: actions({}), ...env }).windows;
+    const pr = { EVENT_NAME: "pull_request", HEAD_REPO: repo };
+
+    it("goes to winvm while its runner said within three minutes that it waits for a job", () => {
+      for (const env of [pr, { EVENT_NAME: "push", REF: "refs/heads/main" }, { EVENT_NAME: "push", REF: "refs/heads/topic" }]) {
+        expect(windows({ ...env, WINVM_READY: readyAgo(5) })).toEqual(winvm);
+        expect(windows({ ...env, WINVM_READY: readyAgo(170) })).toEqual(winvm);
+      }
+      expect(route({ ...pr, FAKE_GH: actions({}), WINVM_READY: readyAgo(5) }).stderr).toMatch(/Windows: self-hosted .*said it was waiting \ds ago/);
+    });
+
+    it("takes windows-latest when the mark is missing, 0, stale, from the future or not a time", () => {
+      for (const ready of ["", " ", "0", readyAgo(200), readyAgo(86_400), readyAgo(-120), "soon", "1e9", "-5", "12345678901234"]) {
+        expect(windows({ ...pr, WINVM_READY: ready })).toBe("windows-latest");
+      }
+      expect(route({ ...pr, FAKE_GH: actions({}), WINVM_READY: "0" }).stderr).toContain("Windows: windows-latest (winvm's runner is not waiting for a job (CI_WINVM_READY 0))");
+    });
+
+    it("takes windows-latest while a job of winvm's label is queued or running, or the jobs cannot be read", () => {
+      const ready = readyAgo(5);
+      expect(windows({ ...pr, WINVM_READY: ready, FAKE_GH: actions({ queued: { 1: waiting(1, 10, winvm) } }) })).toBe("windows-latest");
+      expect(windows({ ...pr, WINVM_READY: ready, FAKE_GH: actions({ in_progress: { 1: running(1, winvm) } }) })).toBe("windows-latest");
+      const result = route({ ...pr, WINVM_READY: ready, FAKE_GH: actions({ in_progress: { 1: [...running(1, winvm), ...waiting(1, 10, winvm)] } }) });
+      expect(result.stderr).toContain("Windows: windows-latest (2 job(s) of winvm's label already queued or running)");
+      expect(windows({ ...pr, WINVM_READY: ready, FAKE_GH: tempDir() })).toBe("windows-latest");
+      // a record "in progress" for more than an hour, another runner's jobs and a finished winvm job leave it free
+      const free = [...running(1, winvm, 2 * 3600), ...running(2), ...waiting(1, 10, ["self-hosted", "self-hosted-ovis-mac"]), { status: "completed", labels: winvm, created_at: ago(600), started_at: ago(500) }];
+      expect(windows({ ...pr, WINVM_READY: ready, FAKE_GH: actions({ in_progress: { 1: free } }) })).toEqual(winvm);
+    });
+
+    it("keeps a fork pull request, another event and hosted_only on windows-latest whatever the mark says", () => {
+      const ready = readyAgo(5);
+      for (const env of [
+        { EVENT_NAME: "pull_request", HEAD_REPO: "someone/fork" },
+        { EVENT_NAME: "pull_request" },
+        { EVENT_NAME: "pull_request_target", HEAD_REPO: "someone/fork" },
+        { EVENT_NAME: "pull_request_target", HEAD_REPO: repo },
+        { EVENT_NAME: "workflow_dispatch", REQUESTED_LABELS: labels },
+        { EVENT_NAME: "workflow_run" },
+        { EVENT_NAME: "" },
+        { ...pr, HOSTED_ONLY: "true" },
+        { EVENT_NAME: "push", REF: "refs/heads/main", HOSTED_ONLY: "true" },
+      ]) {
+        expect(windows({ ...env, WINVM_READY: ready })).toBe("windows-latest");
+      }
+    });
+
+    it("does not follow the Linux jobs' route", () => {
+      expect(allOutputs({ ...pr, FAKE_GH: actions({ queued: { 1: waiting(1, 300) } }), WINVM_READY: readyAgo(5) })).toEqual({ linux: "ubuntu-24.04", fast: "ubuntu-24.04", rust: "ubuntu-24.04", windows: winvm });
+      expect(allOutputs({ EVENT_NAME: "push", CONFIGURED_LABELS: labels })).toEqual({ linux: JSON.parse(labels), fast: JSON.parse(labels), rust: "ubuntu-24.04", windows: "windows-latest" });
+    });
+  });
+
   describe("the Rust PTY host", () => {
     const ours = ["self-hosted", "self-hosted-ovis-rust"];
     // the heartbeat rust-heartbeat.sh writes: a Rust runner was seen online `ago` seconds before ROUTE_NOW
@@ -493,7 +555,7 @@ describe.skipIf(process.platform === "win32")("CI runner route", () => {
     it("routes as before when no temporary file can be made", () => {
       const result = route({ EVENT_NAME: "push", TMPDIR: "/nonexistent/for-this-test" });
       expect(result.status).toBe(0);
-      expect(result.stdout).toBe('linux=["self-hosted","self-hosted-ovis"]\nfast=["self-hosted","self-hosted-ovis"]\nrust="ubuntu-24.04"\n');
+      expect(result.stdout).toBe('linux=["self-hosted","self-hosted-ovis"]\nfast=["self-hosted","self-hosted-ovis"]\nrust="ubuntu-24.04"\nwindows="windows-latest"\n');
     });
 
     it("refuses any other CI_RUST_SELF_HOSTED, and never lets it pass the rules that keep the job hosted", () => {

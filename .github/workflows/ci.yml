@@ -47,6 +47,7 @@ jobs:
       draft: ${{ steps.filter.outputs.draft }}
       linux: ${{ steps.route.outputs.linux }}
       fast: ${{ steps.route.outputs.fast }}
+      windows: ${{ steps.route.outputs.windows }}
       rust: ${{ steps.route.outputs.rust }}
       ratchet_base: ${{ steps.ratchet.outputs.base }}
     steps:
@@ -71,6 +72,8 @@ jobs:
           LINUX_LABELS: ${{ github.workflow == 'CI' && vars.CI_LINUX_SELF_HOSTED_LABELS || '' }}
           MAIN_LABELS: ${{ vars.CI_MAIN_SELF_HOSTED_LABELS }}
           FAST_LABELS: ${{ vars.CI_FAST_SELF_HOSTED_LABELS }}
+          # winvm's runner, while it waits for a job (scripts/self-hosted-runner/winvm-runner.sh); in ci.yml's own runs only
+          WINVM_READY: ${{ github.workflow == 'CI' && vars.CI_WINVM_READY || '' }}
           # "true" opts the Rust PTY host job in to the Rust runners; unset keeps it hosted (scripts/ci-runner-route.sh)
           RUST_SELF_HOSTED: ${{ vars.CI_RUST_SELF_HOSTED }}
           # when scripts/self-hosted-runner/rust-heartbeat.sh last saw a Rust runner online (epoch seconds)
@@ -139,7 +142,8 @@ jobs:
     name: Native Windows install
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: windows-latest
+    # winvm when its runner waits for a job, else windows-latest; forks always windows-latest (scripts/ci-runner-route.sh)
+    runs-on: ${{ inputs.hosted_only && 'windows-latest' || fromJSON(needs.changes.outputs.windows) }}
     timeout-minutes: 10
     env:
       HERDR_TEST_MODE: unit

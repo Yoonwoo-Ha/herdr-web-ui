@@ -709,6 +709,7 @@ describe("ci.yml", () => {
     "${{ inputs.hosted_only && 'ubuntu-24.04' || fromJSON(needs.changes.outputs.fast) }}",
     "${{ inputs.hosted_only && 'ubuntu-24.04' || fromJSON(needs.changes.outputs.linux) }}",
     "${{ inputs.hosted_only && 'ubuntu-24.04' || fromJSON(needs.changes.outputs.rust) }}",
+    "${{ inputs.hosted_only && 'windows-latest' || fromJSON(needs.changes.outputs.windows) }}",
     "${{ inputs.hosted_only && 'none' || 'save' }}",
     "${{ inputs.hosted_only && 'none' || 'restore' }}",
     "needs.changes.outputs.draft != 'true' && !inputs.hosted_only",

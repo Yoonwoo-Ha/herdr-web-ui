@@ -236,3 +236,51 @@ if [[ ("$event" == pull_request || "$event" == push) && "$linux" == *'"ovis-vm"'
 fi
 echo "fast=$fast"
 echo "$rust_line"
+
+# Native Windows install: winvm, the Windows 11 VM on the maintainer's PC, while its launcher says its one runner
+# waits for a job (scripts/self-hosted-runner/winvm-runner.sh writes the Unix time into the repository variable
+# CI_WINVM_READY every minute while it listens, and 0 once a job starts or it stops). Anything else gets
+# windows-latest: hosted_only, a fork pull request, an event other than a pull request or a push (WINVM_READY is
+# empty for a workflow that calls ci.yml), a mark that is missing or older than three minutes, and a job of winvm's
+# label already queued or running (winvm runs one job a round; a second would wait for the next round, or forever
+# when the launcher stops after the first) or a jobs list the API does not give.
+windows_hosted='"windows-latest"'
+windows_labels='["self-hosted","self-hosted-ovis-win"]'
+ready="${WINVM_READY:-}"
+now=$(date +%s)
+
+# How many jobs that name winvm's label are queued, or started within the last hour and running.
+winvm_jobs() {
+  local ids id jobs count total=0
+  ids=$(for status in in_progress queued; do
+    api "repos/$REPOSITORY/actions/runs?status=$status&per_page=100" | jq '.workflow_runs[] | select(now - (.updated_at | fromdateiso8601) < 86400) | .id' || exit 1
+  done) || return 1
+  for id in $ids; do
+    jobs=$(api "repos/$REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100") || return 1
+    count=$(jq -s -e --argjson live "$live_job" '[.[].jobs[] | select([.labels[] | ascii_downcase] | index("self-hosted-ovis-win") != null)
+      | select(.status == "queued" or (.status == "in_progress" and now - (.started_at | fromdateiso8601) < $live))] | length' <<<"$jobs") || return 1
+    total=$((total + count))
+  done
+  echo "$total"
+}
+if [[ "${HOSTED_ONLY:-}" == true ]]; then
+  why="called with hosted_only"
+elif [[ ("$event" == pull_request || "$event" == pull_request_target) && "${HEAD_REPO:-}" != "${REPOSITORY:-}" ]]; then
+  why="pull request from fork ${HEAD_REPO:-unknown}"
+elif [[ "$event" != pull_request && "$event" != push ]]; then
+  why="${event:-no event}"
+elif ! [[ "$ready" =~ ^[1-9][0-9]{0,11}$ ]]; then
+  why="winvm's runner is not waiting for a job (CI_WINVM_READY ${ready:-unset})"
+elif (( now - ready > 180 || ready - now > 60 )); then
+  why="winvm's runner last said it was waiting $((now - ready))s ago"
+elif ! taken=$(winvm_jobs); then
+  why="could not read the jobs of winvm's label"
+elif (( taken > 0 )); then
+  why="$taken job(s) of winvm's label already queued or running"
+else
+  echo "Windows: self-hosted $windows_labels (winvm's runner said it was waiting $((now - ready))s ago)" >&2
+  echo "windows=$windows_labels"
+  exit 0
+fi
+echo "Windows: windows-latest ($why)" >&2
+echo "windows=$windows_hosted"
