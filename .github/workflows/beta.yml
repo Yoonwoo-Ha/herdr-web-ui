@@ -3,11 +3,12 @@ name: Beta
 # Linux x64 and arm64 AppImages, and an arm64 Mac build, signed and notarized once the repository
 # variable DESKTOP_MAC_SIGN is 'true' (a Mac app updates itself only when signed).
 # The beta tags are made here only: never push a v* or beta/* tag by hand.
+# Once a day, for the newest main commit whose CI passed (pick finds it, and makes no beta of a commit
+# that has one). Until 2026-11-22 every green main run started this: ten betas a day, each holding three
+# GitHub-hosted runners, the signed Mac build for about twelve minutes. Run it by hand for a beta sooner.
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
+  schedule:
+    - cron: "23 19 * * *"
   workflow_dispatch:
 permissions:
   contents: read
@@ -19,9 +20,9 @@ env:
 jobs:
   pick:
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && github.repository == 'devswha/ovis'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

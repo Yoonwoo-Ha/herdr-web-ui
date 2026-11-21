@@ -1197,8 +1197,8 @@ Updates need a clean checkout: `main` for a source install, or herdr's plugin ch
 
 ### Beta builds
 
-A PC can also take the beta builds made from `main`: each commit whose checks pass is tagged
-`beta/vX.Y.Z-beta.N`, where X.Y.Z is the next release. They are off unless you opt in, and a PC that
+A PC can also take the beta builds made from `main`: once a day the newest commit whose checks pass
+is tagged `beta/vX.Y.Z-beta.N`, where X.Y.Z is the next release. They are off unless you opt in, and a PC that
 did not is never offered one. To opt in, write `beta` to the `update-channel` file in the state dir
 (`~/.config/ovis/update-channel`, or `OVIS_STATE_DIR`'s), or set `OVIS_UPDATE_CHANNEL=beta`. The
 next check, within 5 minutes, offers the newest beta, and it installs like a release. To leave,
