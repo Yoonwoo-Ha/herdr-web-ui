@@ -1064,6 +1064,9 @@ try {
       }
       return { x: Math.round(card.x), width: Math.round(card.width), pane: Math.round(pane.width) };
     };
+    // Pane A has no conversation to show: its first answer takes the empty list's .chat-transcript out of the page and
+    // puts the notice's own in. A box read between the two is null, the removed element's (#4026).
+    await page.locator(".chat-unavailable-reason").waitFor();
     const floor = await laneColumn();
     assert.ok(floor.pane < 1148, "71% of this pane is under the lane's floor");
     assert.equal(floor.width, 820);

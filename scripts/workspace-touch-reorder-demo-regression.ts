@@ -21,6 +21,52 @@ const centerOf = async (page: Page, id: string) => {
 const touch = (cdp: CDPSession, type: "touchStart" | "touchMove" | "touchEnd", point?: { x: number; y: number }) =>
   cdp.send("Input.dispatchTouchEvent", { type, touchPoints: point ? [{ x: point.x, y: point.y }] : [] });
 
+interface PressProbe { report(): unknown; stop(): void }
+
+/**
+ * What a long press that lifted no row met (#4343): what was under the finger and which overlays were open before
+ * the press and at the timeout, and every touch, cancel, context menu and scroll in between with what it landed on.
+ * It only reads the page.
+ */
+const armPressProbe = (page: Page, point: { x: number; y: number }) => page.evaluate(({ x, y }) => {
+  const started = performance.now();
+  const name = (node: EventTarget | null): string => {
+    const path: string[] = [];
+    for (let element = node instanceof Element ? node : null; element !== null && path.length < 3; element = element.parentElement) {
+      path.push(`${element.tagName.toLowerCase()}${[...element.classList].slice(0, 3).map((part) => `.${part}`).join("")}${element instanceof HTMLElement && element.dataset["workspace"] ? `[${element.dataset["workspace"]}]` : ""}`);
+    }
+    return path.join(" < ") || "nothing";
+  };
+  const shown = () => ({
+    hit: name(document.elementFromPoint(x, y)),
+    overlays: [...document.querySelectorAll('.droplet, .modal-scrim, .row-sheet, .row-menu, [role="menu"]')].map((overlay) => `${name(overlay).split(" < ")[0]}${overlay.getAttribute("data-phase") ? `(${overlay.getAttribute("data-phase")})` : ""}`),
+    lifted: [...document.querySelectorAll<HTMLElement>(".workspace-group.is-lifted")].map((row) => row.dataset["workspace"] ?? ""),
+    scroll: document.querySelector(".machine-list")?.scrollTop ?? null,
+  });
+  const row = document.elementFromPoint(x, y)?.closest(".workspace-group") ?? null;
+  const before = shown();
+  const events: string[] = [];
+  const note = (event: Event): void => {
+    // the chat beside the list scrolls by itself as the demo's turn runs: only the list's own scroll moves a row
+    if (event.type === "scroll" && !(event.target instanceof Element && event.target.matches(".machine-list"))) return;
+    if (events.length < 40) events.push(`${Math.round(performance.now() - started)}ms ${event.type} ${name(event.target)}${event.defaultPrevented ? " prevented" : ""}`);
+  };
+  const types = ["touchstart", "touchmove", "touchend", "touchcancel", "pointercancel", "contextmenu", "scroll", "popstate"];
+  for (const type of types) window.addEventListener(type, note, { capture: true, passive: true });
+  const probe: PressProbe = {
+    report: () => ({ point: `${x},${y}`, before, atTimeout: shown(), pressedRowStillInPage: row?.isConnected ?? null, events }),
+    stop: () => { for (const type of types) window.removeEventListener(type, note, { capture: true }); },
+  };
+  (window as unknown as { pressProbe_?: PressProbe }).pressProbe_ = probe;
+}, point);
+
+const endPressProbe = (page: Page, failed: boolean) => page.evaluate((failed) => {
+  const probe = (window as unknown as { pressProbe_?: PressProbe }).pressProbe_;
+  const report = failed ? probe?.report() ?? null : null;
+  probe?.stop();
+  return report;
+}, failed);
+
 async function stroke(page: Page, cdp: CDPSession, from: { x: number; y: number }, to: { x: number; y: number }, holdMs: number, during?: () => Promise<void>): Promise<void> {
   // the demo's timeline raises a finish droplet over the top of a phone's screen at its own moment, where the first
   // row sits: a person dismisses it before pressing the row under it
@@ -30,9 +76,14 @@ async function stroke(page: Page, cdp: CDPSession, from: { x: number; y: number 
       await dismiss.tap();
       await page.locator(".droplet").waitFor({ state: "detached" });
     }
+    await armPressProbe(page, from);
   }
   await touch(cdp, "touchStart", from);
-  if (holdMs > 0) await page.locator(".workspace.is-lifted").waitFor({ timeout: 5_000 });
+  if (holdMs > 0) {
+    const missed = await page.locator(".workspace.is-lifted").waitFor({ timeout: 5_000 }).then(() => null, (error: unknown) => error);
+    const report = await endPressProbe(page, missed !== null).catch((why: unknown) => ({ unread: String(why) }));
+    if (missed !== null) throw new Error(`a long press at ${from.x},${from.y} lifted no row: ${JSON.stringify(report)}`, { cause: missed });
+  }
   const steps = 12;
   for (let step = 1; step <= steps; step += 1) {
     await touch(cdp, "touchMove", { x: Math.round(from.x + (to.x - from.x) * step / steps), y: Math.round(from.y + (to.y - from.y) * step / steps) });
