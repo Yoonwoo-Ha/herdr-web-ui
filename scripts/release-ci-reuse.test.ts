@@ -875,6 +875,27 @@ describe("ci.yml", () => {
       git("commit", "-q", "-m", "client code");
       expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: tested })).toBe("draft=false\ncode=true\nbrowser=true\n");
       expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: moved })).toBe("draft=false\ncode=true\nbrowser=true\n");
+
+      // The base moved after the pull request last saw it: the run's merge commit is made on the later base, and
+      // what another pull request brought there in between is not this one's change.
+      const seen = git("rev-parse", "HEAD");
+      const merged = (branch: string, path: string, others: string): void => {
+        git("switch", "-q", "-c", branch);
+        writeFileSync(join(dir, path), "export {};\n");
+        git("add", path);
+        git("commit", "-q", "-m", "this pull request");
+        git("switch", "-q", "-");
+        writeFileSync(join(dir, others), "export {};\n");
+        git("add", others);
+        git("commit", "-q", "-m", "another pull request, merged meanwhile");
+        git("merge", "-q", "--no-ff", "-m", "the run's merge commit", branch);
+      };
+      merged("unit-test-only", "server/other.test.ts", "src/Other.tsx");
+      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: seen })).toBe("draft=false\ncode=true\nbrowser=false\n");
+      merged("docs-only", "docs/other.md", "src/Another.tsx");
+      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: seen })).toBe("draft=false\ncode=false\nbrowser=true\n");
+      merged("client-code", "src/Mine.tsx", "docs/theirs.md");
+      expect(await decided({ EVENT_NAME: "pull_request", PR_DRAFT: "false", BASE_SHA: seen })).toBe("draft=false\ncode=true\nbrowser=true\n");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
