@@ -1,6 +1,5 @@
-import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve, win32 } from "node:path";
+import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { ConnectionDiagnostics, transportFailureCode } from "../connection-diagnostics.ts";
 import type {
@@ -19,6 +18,9 @@ import type { AgentInfo, AgentManifestInfo, AgentStartParams, PaneInfo, PaneLayo
 import type { HerdrMethod, HerdrMethods, SingleHerdrMethod, UntypedHerdrMethod } from "./methods.ts";
 import type { HerdrIdentity } from "../../shared/machines.ts";
 import { runtimeIdentity } from "../runtime/capabilities.ts";
+import { makeLineReader } from "./line-reader.ts";
+import type { WorktreeInfo } from "./worktree-info.ts";
+import { liveSessionsRefused, sameSocket } from "./test-session.ts";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const diagnostics = new ConnectionDiagnostics("herdr.rpc");
@@ -29,23 +31,6 @@ export function herdrSocketPath(): string {
   if (process.env.HERDR_SOCKET) return process.env.HERDR_SOCKET;
   if (process.platform === "win32") return `${process.env.APPDATA ?? ""}\\herdr\\herdr.sock`;
   return `${process.env.HOME ?? ""}/.config/herdr/herdr.sock`;
-}
-
-/**
- * Whether this process asked for an isolated herdr (HERDR_TEST_SESSION) and did not say the user's own
- * session is meant (OVIS_ALLOW_LIVE_HERDR=1, or the tests' HERDR_TEST_LIVE=1): its herdr and herdr-core
- * connections then never reach the user's own sessions.
- */
-export function liveSessionsRefused(env: Record<string, string | undefined> = process.env): boolean {
-  return Boolean(env["HERDR_TEST_SESSION"]) && env["OVIS_ALLOW_LIVE_HERDR"] !== "1" && env["HERDR_TEST_LIVE"] !== "1";
-}
-
-/** One spelling of a socket: absolute, through the links of its folder, and on Windows the pipe's name in one case. */
-export function sameSocket(path: string): string {
-  // Windows resolves `..` and `.` in a \\.\ device path, a pipe's too: one name, in one case
-  if (process.platform === "win32") return win32.normalize(path.replace(/^\\\\\.\\pipe\\/i, "")).toLowerCase();
-  const absolute = resolve(path);
-  try { return join(realpathSync(dirname(absolute)), basename(absolute)); } catch { return absolute; }
 }
 
 /**
@@ -178,67 +163,6 @@ if (herdrRpcCountRequested()) {
 export const LARGE_REPLY_BYTES = 64 * 1024 * 1024;
 export const LINE_BYTES = 16 * 1024 * 1024;
 const LARGE_REPLY_METHODS = new Set(["pane.read", "pane.selection.read", "session.snapshot"]);
-
-/**
- * herdr frames arrive split across reads, so a partial tail is kept as bytes and decoded only
- * once its line is complete, which keeps a UTF-8 character split between reads whole. A chunk is split, and its partial tail kept,
- * before any callback runs, so a callback that throws loses no other line: every line of the chunk
- * is still delivered, and the first throw is rethrown after the last.
- */
-export function makeLineReader(
-  limit: number,
-  onLine: (line: string, bytes: number) => void,
-  onOversize: (bytes: number) => void,
-): (chunk: Uint8Array) => void {
-  const decoder = new TextDecoder();
-  let parts: Uint8Array[] = [];
-  let held = 0;
-  let failed = false;
-  return (chunk: Uint8Array) => {
-    const lines: Uint8Array[] = [];
-    let oversize: number | null = null;
-    let start = 0;
-    while (!failed && start < chunk.length) {
-      const end = chunk.indexOf(0x0a, start);
-      const piece = chunk.subarray(start, end === -1 ? chunk.length : end);
-      if (held + piece.length > limit) {
-        failed = true;
-        oversize = held + piece.length;
-        parts = [];
-        held = 0;
-        break;
-      }
-      if (end === -1) {
-        // the socket may reuse its read buffer: keep a copy
-        parts.push(piece.slice());
-        held += piece.length;
-        break;
-      }
-      lines.push(held === 0 ? piece : Buffer.concat([...parts, piece]));
-      parts = [];
-      held = 0;
-      start = end + 1;
-    }
-    let thrown: { error: unknown } | null = null;
-    for (const bytes of lines) {
-      const line = decoder.decode(bytes).trim();
-      if (line.length === 0) continue;
-      try {
-        onLine(line, bytes.length);
-      } catch (error) {
-        thrown ??= { error };
-      }
-    }
-    if (oversize !== null) {
-      try {
-        onOversize(oversize);
-      } catch (error) {
-        thrown ??= { error };
-      }
-    }
-    if (thrown) throw thrown.error;
-  };
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -686,17 +610,6 @@ const WORKTREE_GIT_TIMEOUT_MS = 60_000;
 /** `git worktree remove` of the workspace's checkout; herdr closes the workspace with it and keeps the branch. */
 export async function worktreeRemove(workspaceId: string, force: boolean, socketPath?: string): Promise<{ type: "worktree_removed"; workspace_id: string; path: string; forced: boolean }> {
   return queueHerdrFocus(socketPath, (socket) => herdrRpc("worktree.remove", { workspace_id: workspaceId, force }, socket, WORKTREE_GIT_TIMEOUT_MS));
-}
-
-export interface WorktreeInfo {
-  path: string;
-  branch: string | null;
-  label: string;
-  is_linked_worktree: boolean;
-  is_bare: boolean;
-  is_detached: boolean;
-  is_prunable: boolean;
-  open_workspace_id: string | null;
 }
 
 export interface WorktreeSourceInfo {

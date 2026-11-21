@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { LINE_BYTES, makeLineReader } from "../herdr/client.ts";
+import { LINE_BYTES } from "../herdr/client.ts";
+import { makeLineReader } from "../herdr/line-reader.ts";
 import { MAX_PINS, type PreferencesChange, type SharedPreferences } from "../../shared/preferences.ts";
 import { readStateDocument, writeStateDocument } from "../state-document.ts";
 import type { HcConnection } from "./connection.ts";

@@ -11,9 +11,9 @@ import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync, type Sta
 import { homedir, userInfo } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { HerdrCoreFacts } from "../../shared/machines.ts";
-import { readHerdrConfig } from "../herdr-sidebar.ts";
 import { loginPathProbe, loginShell } from "../shell-agent.ts";
 import { userHome } from "../user-home.ts";
+import { coreSocket, plainSession } from "./core-socket.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -473,66 +473,6 @@ async function probe(argv: string[], env: Env, timeoutMs: number): Promise<strin
   }
 }
 
-export interface CoreSocketOptions {
-  env?: Env;
-  home?: string;
-  platform?: NodeJS.Platform;
-  /** `/run/user/<uid>` when that folder exists, else null: hc's runtime dir without XDG_RUNTIME_DIR */
-  userRuntimeDir?: string | null;
-}
-
-export interface CoreSocket {
-  session: string;
-  path: string;
-  /** the socket file is there; it is never connected to, so a core that died may leave one */
-  running: boolean;
-}
-
-/**
- * Where the core of this environment listens, as hc works it out (herdr-core paths.rs): HC_SOCKET,
- * else `socket` in its config.toml, else `<session>.sock` in herdr-core under the runtime dir
- * (XDG_RUNTIME_DIR, else /run/user/<uid>), else beside the state in
- * `$XDG_STATE_HOME/herdr-core/<session>/` (macOS). The session is HC_SESSION, else `default`.
- */
-export function coreSocket(options: CoreSocketOptions = {}): CoreSocket {
-  const env = options.env ?? process.env;
-  const platform = options.platform ?? process.platform;
-  const home = options.home ?? userHome(env, platform);
-  const session = env["HC_SESSION"]?.trim() || "default";
-  const config = join(env["XDG_CONFIG_HOME"] || join(home, ".config"), "herdr-core", "config.toml");
-  const state = join(env["XDG_STATE_HOME"] || join(home, ".local", "state"), "herdr-core", session);
-  const path = env["HC_SOCKET"] || configuredSocket(config) || defaultSocket();
-  return { session, path, running: exists(path) };
-
-  function defaultSocket(): string {
-    if (platform === "win32") return `\\\\.\\pipe\\herdr-core-${(env["USERNAME"] ?? "").replace(/[^A-Za-z0-9]/g, "")}-${session}.sock`;
-    const run = runtimeDir(env, options);
-    return run === null ? join(state, `${session}.sock`) : join(run, "herdr-core", `${session}.sock`);
-  }
-}
-
-function runtimeDir(env: Env, options: CoreSocketOptions): string | null {
-  if (env["XDG_RUNTIME_DIR"]) return env["XDG_RUNTIME_DIR"];
-  if (options.userRuntimeDir !== undefined) return options.userRuntimeDir;
-  const uid = process.getuid?.();
-  if (uid === undefined) return null;
-  const dir = `/run/user/${uid}`;
-  try { return statSync(dir).isDirectory() ? dir : null; } catch { return null; }
-}
-
-/** `socket` in hc's config.toml, when it sets one */
-function configuredSocket(config: string): string | null {
-  // read as herdr's own config is: a regular file of a config's size, never a FIFO a health poll would block on
-  const parsed = readHerdrConfig(config);
-  const socket = parsed !== null && typeof parsed === "object" ? (parsed as Record<string, unknown>)["socket"] : undefined;
-  return typeof socket === "string" && socket !== "" ? socket : null;
-}
-
-/** hc's Windows pipe answers a stat with EBUSY while each of its instances is taken (live-seen with a core running): it is there */
-function exists(path: string): boolean {
-  try { statSync(path); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EBUSY"; }
-}
-
 /** how long one look for hc stands: it runs a login shell and each candidate's --version */
 const FIND_TTL_MS = 5 * 60_000;
 let found: { at: number; hc: FoundHc | null } | null = null;
@@ -567,8 +507,4 @@ export function herdrCoreFacts(): HerdrCoreFacts | undefined {
   const socket = coreSocket();
   // hc takes only a plain folder name for a session; anything else is not told, so no path can be
   return { version: found.hc?.version ?? null, session: plainSession(socket.session), running: socket.running, ...(found.hc?.insteadOf ? { bundled_unused: true } : {}) };
-}
-
-export function plainSession(session: string): string | null {
-  return /^[A-Za-z0-9_.-]{1,64}$/.test(session) && session !== "." && session !== ".." ? session : null;
 }

@@ -1,12 +1,14 @@
 import { chmodSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { startHerdrCoreAdapter, type HerdrCoreAdapter } from "./adapter.ts";
-import { HcConnection, spawnHcConnect } from "./connection.ts";
+import { HcConnection } from "./connection.ts";
+import { spawnHcConnect } from "./hc-connect.ts";
 import { MachineScopedConnection } from "./machine-scope.ts";
 import { SeenMarker } from "./seen-label.ts";
 import { coreStartEnv, terminalEnvFor, userTerminalEnv } from "./terminal-env.ts";
 import { existsSync } from "node:fs";
 import { createConnection } from "node:net";
-import { BUNDLED_PROBE_TIMEOUT_MS, coreSocket, findHc, type FoundHc } from "./discovery.ts";
+import { coreSocket } from "./core-socket.ts";
+import { BUNDLED_PROBE_TIMEOUT_MS, findHc, type FoundHc } from "./discovery.ts";
 import { adapterAddress } from "./pipe.ts";
 import { opencodeDatabasePath, opencodeSessionsTitled } from "../opencode.ts";
 import { HERDR_CORE, serveRuntime } from "../runtime/capabilities.ts";

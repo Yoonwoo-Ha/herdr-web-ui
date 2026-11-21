@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { herdrRpc, herdrSocketPath } from "./client.ts";
-import { spawnHcConnect } from "../herdr-core/connection.ts";
-import { coreSocket } from "../herdr-core/discovery.ts";
+import { coreSocket } from "../herdr-core/core-socket.ts";
+import { spawnHcConnect } from "../herdr-core/hc-connect.ts";
 
 // A script that names a test session but never ran scripts/test-herdr.ts (an import Bun drops
 // because its binding is unused) is left on herdr's default socket: the user's own session.

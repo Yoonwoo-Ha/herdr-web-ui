@@ -29,7 +29,7 @@ import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { startBunRelay } from "../relay/bun.ts";
 import { MAX_PENDING } from "../relay/core.ts";
-import { liveSessionsRefused } from "../server/herdr/client.ts";
+import { liveSessionsRefused } from "../server/herdr/test-session.ts";
 import { createServer } from "../server/index.ts";
 import { RelayService } from "../server/relay/service.ts";
 import { bounded } from "../server/relay/test-helpers.ts";

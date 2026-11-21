@@ -44,7 +44,7 @@ import { codexFreshSession, codexHistorySegments, createCodexTranscriptParser, t
 import { awaited, CODEX_IMAGE_REF, CODEX_TOOL_IMAGE_REF, codexOutputPicture, codexTranscriptImage, DataUrlPictureScan, finish, finishAsync, forgetOmpBlobTypes, InlinePictureScan, MAX_IMAGE_BYTES, ompBlobAnchor, ompBlobDigest, ompBlobPictureSteps, type Steps } from "./codex-images.ts";
 import { type Held, heldOpenPlatform, openHeldDirectory } from "./held-open.ts";
 import { AmbiguousClaudeStore, claudeAttachSession, claudeProcessSession, claudeTranscriptFile, darwinProcess, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, hintedClaudeConfigDir, isClaudeProcess, jobClaude, processClaudeConfigDir, windowsShellClaude } from "./claude-store.ts";
-import { coreSocket } from "./herdr-core/discovery.ts";
+import { coreSocket } from "./herdr-core/core-socket.ts";
 import { coreSocketPath } from "./herdr-core/runtime.ts";
 import { capabilities } from "./runtime/capabilities.ts";
 import { forgetGjcPane, forgetGjcState, gjcPidUnderShell, gjcTranscriptFileForPane, isGjcProcess, recentProcessTable, storeRelative } from "./gjc-runtime.ts";

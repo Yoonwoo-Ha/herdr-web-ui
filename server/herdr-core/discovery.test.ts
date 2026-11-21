@@ -3,7 +3,8 @@ import { chmodSync, existsSync, statSync, mkdirSync, mkdtempSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isAbsolute, relative } from "node:path";
-import { aclReader, coreSocket, discoverHc, findHc, harmlessGroups, herdrCoreFacts, macAclGrantsWrite, ownedByUser, plainSession, privateGroup, PROBE_TIMEOUT_MS, trustRefusal } from "./discovery.ts";
+import { coreSocket, plainSession } from "./core-socket.ts";
+import { aclReader, discoverHc, findHc, harmlessGroups, herdrCoreFacts, macAclGrantsWrite, ownedByUser, privateGroup, PROBE_TIMEOUT_MS, trustRefusal } from "./discovery.ts";
 
 const unix = process.platform !== "win32";
 let cleanup = () => {};
