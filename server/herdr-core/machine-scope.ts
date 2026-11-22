@@ -55,8 +55,8 @@ export class MachineScopedConnection extends HcConnection {
     for (const key of ["terminal", "parent", "children_of"]) {
       if (typeof out[key] === "string") out[key] = this.address(out[key]);
     }
-    // what is made or read without a terminal is this machine's: its terminals, its documents
-    if (method === "terminal.run" || method === "doc.get" || method === "doc.set") out["on"] = this.id;
+    // what is made or read without a terminal is this machine's: its terminals, its documents, the programs it runs
+    if (method === "terminal.run" || method === "doc.get" || method === "doc.set" || method === "machine.exec") out["on"] = this.id;
     return out as P;
   }
 

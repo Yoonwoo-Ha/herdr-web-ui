@@ -13,7 +13,7 @@ import { type HcConnection, HcError } from "./connection.ts";
 import { foreignLayout, leaves, neighbour, OVIS_LAYOUT_DOC, type OvisLayout, type PaneDirection, resizeLeaf, setRatio, splitLeaf, swapLeaves, type TabLayout } from "./layout-doc.ts";
 import { paneSession, titleStatus } from "../agent-identity.ts";
 import { agentInfoOf, agentOf, agentOfStatus, agyPlanReview, type CoreHost, coreHost, agentStatusOf, foregroundOf, type HcForeground, buildSnapshot, type FirstTurn, keptLayout, opencodeRecords, type SessionOf, reportedFacts, type HcStatus, type HcTerminal, hcKeyName, HERDR_PROTOCOL, isRecord, keyBytes, LAYOUT_DOC, onOtherMachine, OTHER_WORKSPACE_ID, PANE_NAME_LABEL, processInfoOf, runsCommandString, SEEN_LABEL, shownStatusOf, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WORKSPACE_NAME_LABEL } from "./snapshot.ts";
-import { checkoutHolding, defaultCheckoutPath, factsOf, git, gitDirIdentity, labeledWorktree, realPath, type Checkout, type Repository, repositoryOf, WORKTREE_LABEL, WorktreeError, worktreeFolder, worktreeLabel } from "./worktrees.ts";
+import { checkoutHolding, defaultCheckoutPath, factsOf, git, gitDirIdentity, labeledWorktree, realPath, type Checkout, type Repository, repositoryOf, type RepositoryReads, WORKTREE_LABEL, WorktreeError, worktreeFolder, worktreeLabel } from "./worktrees.ts";
 import type { AgentStatus, SessionSnapshot, WorkspaceWorktreeInfo } from "../../shared/herdr-api.generated.ts";
 import type { WorktreeInfo } from "../herdr/worktree-info.ts";
 
@@ -474,6 +474,19 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
   };
 
   /**
+   * git run on the machine whose terminals these are, by the core (`hc exec --on`): read-only lookups of its checkouts,
+   * in English as this PC's git (worktrees.ts gitEnvironment): an older git's refused -z is told by its message.
+   * A repository its core was started inside is not the one asked about, and an answer cut short is none.
+   */
+  const gitOnMachine: typeof git = async (cwd, args) => {
+    const unset = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"].flatMap((name) => ["-u", name]);
+    const ran = await hc.call("machine.exec", { argv: ["/usr/bin/env", ...unset, "/usr/bin/git", "-C", cwd, ...args], env: { GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" }, timeout: 8 });
+    const text = (base64: string) => Buffer.from(base64, "base64").toString("utf8");
+    return { ok: ran.code === 0 && !ran.timed_out && !ran.truncated, stdout: text(ran.stdout), stderr: text(ran.stderr).trim() };
+  };
+  /** another machine's folders and git folders are not on this disk: git runs there, and no path is resolved or stat'ed here */
+  const gitReads: RepositoryReads = options.otherMachine ? { run: gitOnMachine, real: (path) => path } : {};
+  /**
    * git's answer per folder: the checkout's facts and its git folder's identity (as a label keeps it),
    * or null outside git. Kept a few seconds; past that the last answer still serves while git is asked
    * again, so a snapshot waits on git only for a folder it never answered for, once and at most a
@@ -485,7 +498,7 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
   type GitEntry = { until: number; answer: GitAnswer; asking: Promise<GitAnswer> | null; first: Promise<GitAnswer> | null; waitedOut: boolean; used: number };
   const checkoutFacts = new Map<string, GitEntry>();
   const askGit = (folder: string, entry: GitEntry): Promise<GitAnswer> => {
-    entry.asking = repositoryOf(folder).then((repository) => ({ facts: factsOf(repository, repository.checkout), gitId: gitDirIdentity(repository.git_dir) }), () => null).then((answer) => {
+    entry.asking = repositoryOf(folder, gitReads).then((repository) => ({ facts: factsOf(repository, repository.checkout), gitId: options.otherMachine ? null : gitDirIdentity(repository.git_dir) }), () => null).then((answer) => {
       const changed = entry.waitedOut ? answer !== null : entry.until !== 0 && JSON.stringify(answer) !== JSON.stringify(entry.answer);
       Object.assign(entry, { until: Date.now() + CHECKOUT_FACTS_MS, answer, asking: null, waitedOut: false });
       if (changed) layoutChanged();
@@ -540,35 +553,34 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
     // terminal started in: as herdr's stays with a workspace, a shell there going elsewhere (a `cd`, an
     // agent changing folder) does not move the row, before or after a restart of Ovis. Clients draw and
     // act on these as on herdr's: removing a checkout asks git again first. No label is written.
-    // Another machine's folders are not on this disk.
-    if (!options.otherMachine) {
-      const asked = new Map<SessionSnapshot["workspaces"][number], string>();
-      for (const workspace of shown.workspaces) {
-        if (workspace.worktree || workspace.workspace_id === OTHER_WORKSPACE_ID) continue;
-        const folders = shown.panes.filter((pane) => pane.workspace_id === workspace.workspace_id).map((pane) => started.get(pane.pane_id));
-        const kept = pinned.get(workspace.workspace_id)?.folder;
-        const folder = kept !== undefined && folders.includes(kept) ? kept : folders[0];
-        if (!folder) continue;
-        asked.set(workspace, folder);
-        homes.set(workspace.workspace_id, folder);
-      }
-      // an older read finishing late does not forget what a newer one asked
-      const folders = new Set(asked.values());
-      for (const [folder, entry] of checkoutFacts) if (!folders.has(folder) && !entry.asking && entry.used < began) checkoutFacts.delete(folder);
-      const ids = new Set(shown.workspaces.map((workspace) => workspace.workspace_id));
-      for (const [id, pin] of pinned) if (!ids.has(id) && pin.at < began) pinned.delete(id);
-      await Promise.all([...asked].map(async ([workspace, folder]) => {
-        const answer = await answerFor(folder);
-        if (!answer) return;
-        workspace.worktree = { ...answer.facts };
-        let pin = pinned.get(workspace.workspace_id);
-        // the folder drawn is kept from the first draw; a pin a newer read took stands over this older one
-        if (!pin || (pin.folder !== folder && pin.at < began)) pinned.set(workspace.workspace_id, pin = { folder, gitId: null, at: Date.now() });
-        // its identity only from an answer git gave since: a cached one may be of a checkout no longer there
-        if (pin.folder === folder && pin.gitId === null && (checkoutFacts.get(folder)?.until ?? 0) > Date.now()) pin.gitId = answer.gitId;
-        gitIds.set(workspace.workspace_id, pin.folder === folder ? pin.gitId ?? answer.gitId : answer.gitId);
-      }));
+    // Another machine's folders are not on this disk: git runs there for them (gitOnMachine), and only draws:
+    // its worktree.* calls are refused here.
+    const asked = new Map<SessionSnapshot["workspaces"][number], string>();
+    for (const workspace of shown.workspaces) {
+      if (workspace.worktree || workspace.workspace_id === OTHER_WORKSPACE_ID) continue;
+      const folders = shown.panes.filter((pane) => pane.workspace_id === workspace.workspace_id).map((pane) => started.get(pane.pane_id));
+      const kept = pinned.get(workspace.workspace_id)?.folder;
+      const folder = kept !== undefined && folders.includes(kept) ? kept : folders[0];
+      if (!folder) continue;
+      asked.set(workspace, folder);
+      homes.set(workspace.workspace_id, folder);
     }
+    // an older read finishing late does not forget what a newer one asked
+    const folders = new Set(asked.values());
+    for (const [folder, entry] of checkoutFacts) if (!folders.has(folder) && !entry.asking && entry.used < began) checkoutFacts.delete(folder);
+    const ids = new Set(shown.workspaces.map((workspace) => workspace.workspace_id));
+    for (const [id, pin] of pinned) if (!ids.has(id) && pin.at < began) pinned.delete(id);
+    await Promise.all([...asked].map(async ([workspace, folder]) => {
+      const answer = await answerFor(folder);
+      if (!answer) return;
+      workspace.worktree = { ...answer.facts };
+      let pin = pinned.get(workspace.workspace_id);
+      // the folder drawn is kept from the first draw; a pin a newer read took stands over this older one
+      if (!pin || (pin.folder !== folder && pin.at < began)) pinned.set(workspace.workspace_id, pin = { folder, gitId: null, at: Date.now() });
+      // its identity only from an answer git gave since: a cached one may be of a checkout no longer there
+      if (pin.folder === folder && pin.gitId === null && (checkoutFacts.get(folder)?.until ?? 0) > Date.now()) pin.gitId = answer.gitId;
+      gitIds.set(workspace.workspace_id, pin.folder === folder ? pin.gitId ?? answer.gitId : answer.gitId);
+    }));
     return { shown, own: ownsLayout(doc.value), gitIds, started };
   };
   const snapshot = async (): Promise<SessionSnapshot> => (await read()).shown;

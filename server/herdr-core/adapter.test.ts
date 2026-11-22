@@ -2199,6 +2199,81 @@ describe("another machine of the core, as its own PC (#2497)", () => {
     expect(cores[0]!.calls.filter((call) => call.method === "doc.get").map((call) => call.params["on"])).toEqual(["lab-id", "lab-id"]);
   });
 
+  it("nests a linked worktree's workspace under its repository by git run on that machine, not on this disk", async () => {
+    const asked: string[][] = [];
+    const answer = (stdout: string) => ({ code: 0, timed_out: false, stdout: Buffer.from(stdout).toString("base64"), stderr: "" });
+    const { socket, cores } = await setup([terminal("lab/t1", { cwd: "/srv/lab/wt" })], {
+      "doc.get": (params) => ({ value: params["on"] === "lab-id" ? LAB_LAYOUT : LAYOUT, version: 1 }),
+      "machine.exec": (params) => {
+        const argv = params["argv"] as string[];
+        asked.push(argv);
+        if (argv.includes("rev-parse")) return answer("/srv/lab/wt\n/srv/lab/.git\n/srv/lab/.git/worktrees/wt\n");
+        return answer("worktree /srv/lab\0HEAD abc\0branch refs/heads/main\0\0worktree /srv/lab/wt\0HEAD def\0branch refs/heads/fix\0\0");
+      },
+    }, undefined, "lab");
+    const snapshot = await sessionSnapshot(socket);
+    expect(snapshot.workspaces[0]!.worktree).toEqual({ repo_key: "/srv/lab/.git", repo_name: "lab", repo_root: "/srv/lab", checkout_path: "/srv/lab/wt", is_linked_worktree: true });
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((argv) => argv.slice(argv.indexOf("/usr/bin/git"), argv.indexOf("/usr/bin/git") + 3).join(" ") === "/usr/bin/git -C /srv/lab/wt")).toBe(true);
+    // aimed at that machine: without `on` the core would run git on this PC, where the folder is not
+    const execs = cores[0]!.calls.filter((call) => call.method === "machine.exec");
+    expect(execs.length).toBeGreaterThan(0);
+    expect(execs.every((call) => call.params["on"] === "lab-id")).toBe(true);
+    // in git's own words, as this PC's git runs: an older git's refused -z is told by its English message
+    expect(execs.every((call) => (call.params["env"] as Record<string, string> | undefined)?.["LC_ALL"] === "C")).toBe(true);
+  });
+
+  // only this PC's core reads its terminals' environment (runtime.ts gives another machine's adapter no terminalEnv);
+  // a program run without a terminal through this connection, whoever runs it, runs on that machine
+  it("runs a program without a terminal on that machine, not on this PC's core", async () => {
+    const { hc, cores } = await setup(listed(), { "machine.exec": () => ({ code: 0, timed_out: false, truncated: false, ms: 1, stdout: "", stderr: "" }) }, undefined, "lab");
+    await hc.call("machine.exec", { argv: ["/usr/bin/env", "-0"], timeout: 5 });
+    expect(cores.flatMap((core) => core.calls.filter((call) => call.method === "machine.exec").map((call) => call.params["on"]))).toEqual(["lab-id"]);
+  });
+
+  it("asks that machine's git about the folder itself, not a repository its core was started in", async () => {
+    const answer = (stdout: string) => ({ code: 0, timed_out: false, truncated: false, stdout: Buffer.from(stdout).toString("base64"), stderr: "" });
+    const inherited = { GIT_DIR: "/home/u/.dotfiles", GIT_WORK_TREE: "/home/u" };
+    const { socket } = await setup([terminal("lab/t1", { cwd: "/srv/plain" })], {
+      "doc.get": (params) => ({ value: params["on"] === "lab-id" ? LAB_LAYOUT : LAYOUT, version: 1 }),
+      "machine.exec": (params) => {
+        const argv = params["argv"] as string[];
+        // as that machine runs it: on top of its core's environment, less what env -u takes away
+        const unset = argv[0] === "/usr/bin/env" ? argv.filter((_, at) => argv[at - 1] === "-u") : [];
+        if (Object.keys(inherited).some((name) => !unset.includes(name))) {
+          return answer(argv.includes("rev-parse") ? "/srv/plain\n/home/u/.dotfiles\n/home/u/.dotfiles\n" : "worktree /home/u\0HEAD abc\0branch refs/heads/main\0\0");
+        }
+        return { code: 128, timed_out: false, truncated: false, stdout: "", stderr: Buffer.from("fatal: not a git repository").toString("base64") };
+      },
+    }, undefined, "lab");
+    expect((await sessionSnapshot(socket)).workspaces[0]!.worktree ?? null).toBeNull();
+  });
+
+  it("draws nothing from a listing that machine's core cut short", async () => {
+    const answer = (stdout: string, truncated = false) => ({ code: 0, timed_out: false, truncated, stdout: Buffer.from(stdout).toString("base64"), stderr: "" });
+    const { socket } = await setup([terminal("lab/t1", { cwd: "/srv/lab/wt" })], {
+      "doc.get": (params) => ({ value: params["on"] === "lab-id" ? LAB_LAYOUT : LAYOUT, version: 1 }),
+      "machine.exec": (params) => (params["argv"] as string[]).includes("rev-parse") ? answer("/srv/lab/wt\n/srv/lab/.git\n/srv/lab/.git/worktrees/wt\n") : answer("worktree /srv/la", true),
+    }, undefined, "lab");
+    expect((await sessionSnapshot(socket)).workspaces[0]!.worktree ?? null).toBeNull();
+  });
+
+  it("lists that machine's checkouts by line when its git is older than 2.36, whatever its language", async () => {
+    const answer = (stdout: string, code = 0, stderr = "") => ({ code, timed_out: false, stdout: Buffer.from(stdout).toString("base64"), stderr: Buffer.from(stderr).toString("base64") });
+    const { socket } = await setup([terminal("lab/t1", { cwd: "/srv/lab/wt" })], {
+      "doc.get": (params) => ({ value: params["on"] === "lab-id" ? LAB_LAYOUT : LAYOUT, version: 1 }),
+      "machine.exec": (params) => {
+        const argv = params["argv"] as string[];
+        const english = (params["env"] as Record<string, string> | undefined)?.["LC_ALL"] === "C";
+        if (argv.includes("rev-parse")) return answer("/srv/lab/wt\n/srv/lab/.git\n/srv/lab/.git/worktrees/wt\n");
+        // git 2.34 (Ubuntu 22.04) in that machine's language unless told otherwise
+        if (argv.includes("-z")) return answer("", 129, english ? "error: unknown switch \x60z'\n" : "Fehler: Unbekannter Schalter \x60z'\n");
+        return answer("worktree /srv/lab\nHEAD abc\nbranch refs/heads/main\n\nworktree /srv/lab/wt\nHEAD def\nbranch refs/heads/fix\n\n");
+      },
+    }, undefined, "lab");
+    expect((await sessionSnapshot(socket)).workspaces[0]!.worktree).toEqual({ repo_key: "/srv/lab/.git", repo_name: "lab", repo_root: "/srv/lab", checkout_path: "/srv/lab/wt", is_linked_worktree: true });
+  });
+
   it("reaches each terminal by its address on the core, and starts a new one there", async () => {
     let started: Record<string, unknown> = {};
     const { socket, cores } = await setup(listed(), {
