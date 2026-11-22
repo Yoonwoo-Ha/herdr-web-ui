@@ -127,6 +127,39 @@ function place(seeds: Base16, text: string): { elevated: string; hover: string; 
 }
 
 const NOTICE_TINT = { dark: 0.12, light: 0.06 } as const;
+/** Weight of `--accent` in `:root`'s `--bubble-bg: color-mix(in srgb, var(--accent) 9%, var(--bg))`. */
+export const BUBBLE_TINT = 0.09;
+
+function fitBubbleAccent(seed: string, bg: string, text: string): string {
+  const bgRgb = rgb(bg);
+  const bgLum = luminance(bgRgb);
+  const textLum = luminance(rgb(text));
+  const passes = (candidate: Vector, margin = 0): boolean => {
+    if (ratio(luminance(candidate), bgLum) < INDICATOR_FLOOR + margin) return false;
+    const bubbleLum = luminance(drawn(over(candidate, bgRgb, BUBBLE_TINT)));
+    return ratio(textLum, bubbleLum) >= TEXT_FLOOR + margin;
+  };
+  const own = rgb(seed);
+  if (passes(own)) return seed;
+  const [L, a, b] = lab(own);
+  for (const scale of CHROMA) {
+    const at = (l: number): Vector => drawn(fromLab([l, a * scale, b * scale]));
+    for (let step = 1; step <= STEPS; step++) {
+      for (const direction of [1, -1]) {
+        const l = L + direction * step / STEPS;
+        if (l < 0 || l > 1 || !passes(at(l), MARGIN)) continue;
+        let passing = l, failing = l - direction / STEPS;
+        for (let i = 0; i < 12; i++) {
+          const mid = (passing + failing) / 2;
+          if (passes(at(mid), MARGIN)) passing = mid;
+          else failing = mid;
+        }
+        return hex(at(passing));
+      }
+    }
+  }
+  return passes([255, 255, 255]) ? "#ffffff" : "#000000";
+}
 
 /**
  * herdr's TUI state colours as the base blocks of src/styles.css carry them (Catppuccin Mocha, and
@@ -139,6 +172,8 @@ export const INDICATORS: Readonly<Record<Mode, Readonly<Record<(typeof INDICATOR
 
 export function deriveTheme(seeds: Base16): { mode: Mode; vars: Record<RoleName, string> } {
   const bg = seeds.base00;
+  let accent = fit(seeds.base0D, [ground(bg, INDICATOR_FLOOR)]);
+  let bubbleBg = blend(accent, bg, BUBBLE_TINT);
   const onGround = [ground(bg, TEXT_FLOOR)];
   const plain = fit(seeds.base05, onGround);
   let text = [[seeds.base01, seeds.base02], [seeds.base01]]
@@ -149,6 +184,36 @@ export function deriveTheme(seeds: Base16): { mode: Mode; vars: Record<RoleName,
   if (surfaces.crowded.length > 0) {
     text = fit(text, [...onGround, ...surfaces.crowded.map((surface) => ground(surface, TEXT_FLOOR))]);
     surfaces = place(seeds, text);
+  }
+  // Sent user bubbles mix `--accent` into `--bg` via `:root`'s `--bubble-bg`; keep text readable on
+  // that tinted surface without flipping the scheme's dark/light polarity.
+  if (contrast(text, bubbleBg) < TEXT_FLOOR) {
+    const darkSide = luminance(rgb(text)) > luminance(rgb(bg));
+    const sameSide = (candidate: string): boolean => (luminance(rgb(candidate)) > luminance(rgb(bg))) === darkSide;
+    const onBubble = [...onGround, ground(bubbleBg, TEXT_FLOOR)];
+    const withSurfaces = [...onBubble, ground(surfaces.elevated, TEXT_FLOOR), ground(surfaces.hover, TEXT_FLOOR)];
+    const keptSurfaces = fit(text, withSurfaces);
+    if (clears(keptSurfaces, withSurfaces) && sameSide(keptSurfaces) && deltaE(text, keptSurfaces) <= TEXT_STEP) {
+      text = keptSurfaces;
+    } else {
+      const moved = fit(text, onBubble);
+      if (clears(moved, onBubble) && sameSide(moved)) {
+        text = moved;
+        surfaces = place(seeds, text);
+        if (surfaces.crowded.length > 0) {
+          const extra = [...onBubble, ...surfaces.crowded.map((surface) => ground(surface, TEXT_FLOOR))];
+          const tightened = fit(text, extra);
+          if (clears(tightened, extra) && sameSide(tightened)) {
+            text = tightened;
+            surfaces = place(seeds, text);
+          }
+        }
+      }
+    }
+    if (contrast(text, bubbleBg) < TEXT_FLOOR) {
+      accent = fitBubbleAccent(seeds.base0D, bg, text);
+      bubbleBg = blend(accent, bg, BUBBLE_TINT);
+    }
   }
   const { elevated, hover } = surfaces;
   const dark = luminance(rgb(text)) > luminance(rgb(bg));
@@ -170,8 +235,7 @@ export function deriveTheme(seeds: Base16): { mode: Mode; vars: Record<RoleName,
   }
   const indicator = [...onSurfaces(INDICATOR_FLOOR), ground(noticeTint, INDICATOR_FLOOR)];
 
-  const textDim = fit(seeds.base04, [...onSurfaces(TEXT_FLOOR), ground(noticeTint, INDICATOR_FLOOR)]);
-  const accent = fit(seeds.base0D, [ground(bg, INDICATOR_FLOOR)]);
+  const textDim = fit(seeds.base04, [...onSurfaces(TEXT_FLOOR), ground(bubbleBg, TEXT_FLOOR), ground(noticeTint, INDICATOR_FLOOR)]);
   const working = fit(seeds.base0D, indicator);
   const blocked = fit(seeds.base08, indicator);
   const done = fit(seeds.base0B, indicator);

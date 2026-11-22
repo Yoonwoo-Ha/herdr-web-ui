@@ -27,7 +27,7 @@ A theme is the sixteen colors of a [Base16](https://github.com/chriskempson/base
 | Color | What Ovis draws with it |
 |---|---|
 | `base00` | The background: the page, the sidebar and panels, the terminal |
-| `base01` | Raised surfaces: cards, menus, input fields, your own chat bubble |
+| `base01` | Raised surfaces: cards, menus, input fields |
 | `base02` | Hovered and selected rows, borders, the terminal's selection |
 | `base03` | Strong borders, the idle status dot |
 | `base04` | Dim text: secondary lines, line numbers |
@@ -38,7 +38,7 @@ A theme is the sixteen colors of a [Base16](https://github.com/chriskempson/base
 | `base0A` | Yellow: notices, types in code |
 | `base0B` | Green: an agent that is done, strings in code |
 | `base0C` | Cyan: annotations in code |
-| `base0D` | Blue: the accent (selection, focus, the Send button), a working agent, functions in code |
+| `base0D` | Blue: the accent (selection, focus, the Send button, your own chat bubble tint), a working agent, functions in code |
 | `base0E` | Purple: keywords in code |
 
 Every other color the app uses (hover steps, tints, shadows, a light theme's terminal colors) is

@@ -31,7 +31,7 @@ const DESIGN_ROWS: readonly (readonly [label: string, token: string])[] = [
   ["Surface/input", "--bg-input"],
   ["Border", "--border"],
   ["Border/strong", "--border-strong"],
-  ["Chat bubble edge", "--bubble-border"],
+  ["Legacy bubble edge (unused)", "--bubble-border"],
   ["Text/primary", "--text"],
   ["Text/dim", "--text-dim"],
   ["Text/strong", "--text-strong"],

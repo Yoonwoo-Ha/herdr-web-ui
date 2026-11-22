@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { contrast } from "./colorMath.ts";
+import { contrast, hex, over, rgb } from "./colorMath.ts";
 import { parseThemeBlocks, parseThemeValue } from "./themeCss.ts";
 import { CONTRAST_PAIRS, INDICATOR_FLOOR, LIGHT_ANSI_PAIRS, TEXT_FLOOR } from "./themeContrast.ts";
-import { BASE16_KEYS, deriveTheme, fit, INDICATORS, type Base16 } from "./themeDerive.ts";
+import { BASE16_KEYS, BUBBLE_TINT, deriveTheme, fit, INDICATORS, type Base16 } from "./themeDerive.ts";
 import { INDICATOR_ROLES, LIGHT_ANSI_ROLES, ROLES } from "./themeRoles.ts";
 
 const TELLS = 1.05;
@@ -20,6 +20,11 @@ function below({ mode, vars }: ReturnType<typeof deriveTheme>): string[] {
     const ratio = contrast(roles[fg]!, roles[bg]!);
     return ratio < floor ? [`${fg} on ${bg}: ${ratio.toFixed(2)}:1 < ${floor}:1 (${roles[fg]} / ${roles[bg]})`] : [];
   });
+  const bubbleBg = hex(over(rgb(roles.accent!), rgb(roles.bg!), BUBBLE_TINT));
+  for (const fg of ["text", "text-strong", "text-dim"] as const) {
+    const ratio = contrast(roles[fg]!, bubbleBg);
+    if (ratio < TEXT_FLOOR) under.push(`${fg} on bubble-bg: ${ratio.toFixed(2)}:1 < ${TEXT_FLOOR}:1 (${roles[fg]} / ${bubbleBg})`);
+  }
   const pressed = contrast(roles["primary-text"]!, roles["primary-hover"]!);
   if (pressed < TEXT_FLOOR) under.push(`primary-text on primary-hover: ${pressed.toFixed(2)}:1 (${roles["primary-text"]} / ${roles["primary-hover"]})`);
   const row = contrast(roles["bg-hover"]!, roles["bg"]!);
@@ -165,6 +170,29 @@ describe("deriveTheme", () => {
     expect(r!).toBeGreaterThan(g!);
     expect(r!).toBeGreaterThan(b!);
     expect(fit("#eceff4", [{ color: "#2e3440", floor: 4.5 }])).toBe("#eceff4");
+  });
+
+  test("keeps sent-message bubble text at AA on the derived --bubble-bg across bright accents and balance-point grounds (#4329)", () => {
+    const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+    const match = /--bubble-bg:\s*color-mix\(in srgb,\s*var\(--accent\)\s*(\d+(?:\.\d+)?)%,\s*var\(--bg\)\)/.exec(css);
+    expect(match?.[1]).toBe(String(BUBBLE_TINT * 100));
+
+    const brightAccent = deriveTheme(seeds({
+      base00: "#181818", base01: "#181818", base02: "#181818", base03: "#181818",
+      base04: "#888888", base05: "#888888", base0D: "#ffffff",
+    }));
+    expect(brightAccent.mode).toBe("dark");
+    expect(below(brightAccent)).toEqual([]);
+
+    for (const [groundColor, textColor, accentColor, expectedMode] of [
+      ["#767676", "#000000", "#000000", "light"],
+      ["#757575", "#ffffff", "#ffffff", "dark"],
+      ["#808080", "#000000", "#000000", "light"],
+    ] as const) {
+      const derived = deriveTheme(seeds({ base00: groundColor, base05: textColor, base0D: accentColor }, groundColor));
+      expect(derived.mode).toBe(expectedMode);
+      expect(below(derived)).toEqual([]);
+    }
   });
 
   test("is the same for the same seeds", () => {

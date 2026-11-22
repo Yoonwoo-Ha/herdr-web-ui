@@ -29,8 +29,8 @@
   --bg-input: #1c1916;
   --border: #2d2924;
   --border-strong: #3e3830;
-  /* the chat's user bubble: no edge where --bg-elevated alone parts it from --bg (the dark
-     amber and charcoal palettes), --border where the two surfaces sit close */
+  /* legacy: nothing draws it since the user's bubble takes --bubble-bg and --bubble-edge (#4329);
+     kept for the frozen palette parity baseline (themes.parity.test.ts) */
   --bubble-border: transparent;
 
   /* text */
@@ -274,6 +274,8 @@
   --surface-raised: var(--bg-elevated);
   --surface-overlay: var(--bg-elevated);
   --bg-nav: var(--bg);
+  --bubble-bg: color-mix(in srgb, var(--accent) 9%, var(--bg));
+  --bubble-edge: color-mix(in srgb, var(--accent) 28%, var(--border));
 
   /* control edge, status & marker contrast roles >= 3:1 (G-028, G-074, G-148, G-194) */
   --border-input: color-mix(in srgb, var(--text-dim) 78%, var(--border-strong));
@@ -3983,6 +3985,7 @@ button {
     --border-contrast: var(--text);
     --border: var(--border-strong);
     --border-input: var(--border-contrast);
+    --bubble-edge: var(--border-contrast);
   }
 }
 

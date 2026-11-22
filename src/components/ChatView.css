@@ -172,9 +172,9 @@
 .chat-bubble {
   max-width: 80%;
   padding: var(--space-3) var(--space-4);
-  border: var(--hairline) solid var(--bubble-border);
+  border: var(--hairline) solid var(--bubble-edge);
   border-radius: var(--radius-lg);
-  background: var(--bg-elevated);
+  background: var(--bubble-bg);
   color: var(--text-strong);
   font-size: var(--chat-fs-body);
   line-height: var(--lh-prose);
