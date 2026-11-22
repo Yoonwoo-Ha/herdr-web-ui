@@ -53,11 +53,79 @@ describe("buildSnapshot", () => {
     expect(since.panes.map((pane) => [pane.pane_id, pane.agent_status])).toEqual([["t6", "done"], ["t9", "idle"]]);
   });
 
-  it("names an unnamed space and tab as the app labels their terminals", () => {
+  it("names an unnamed space as the app labels its terminals, and numbers an unnamed tab by its place, not the app's", () => {
     const layout = { spaces: [{ id: "s1", name: "", tabs: [{ id: "s1t1", name: "", root: block("t1") }] }] };
     const snapshot = buildSnapshot([terminal("t1", { labels: { where: "tmp / 3" } })], layout, "0.1.14");
     expect(snapshot.workspaces[0]!.label).toBe("tmp");
-    expect(snapshot.tabs[0]!.label).toBe("3");
+    expect(snapshot.tabs[0]!.label).toBe("1");
+  });
+
+  it("takes a tab the app named after its agent's program for an unnamed one, as the app does, and keeps a name someone gave", () => {
+    const agent = (address: string, app: string) => terminal(address, { status: { app, state: "idle" }, labels: { where: "api / Claude Code" } });
+    const layout = { spaces: [{ id: "s1", name: "api", tabs: [
+      { id: "s1t1", name: "Claude Code", root: block("t1") },
+      { id: "s1t2", name: "", root: block("t2") },
+      { id: "s1t3", name: "copilot", root: block("t3") },
+      { id: "s1t4", name: "Oh-My-Pi", root: block("t4") },
+      { id: "s1t5", name: "Codex", root: block("t5") },
+      { id: "s1t6", name: "fix login", root: block("t6") },
+      { id: "s1t7", name: "Claude Code", root: block("t7") },
+    ] }] };
+    const snapshot = buildSnapshot([
+      agent("t1", "claude-code"), agent("t2", "claude-code"), agent("t3", "copilot"), agent("t4", "omp"),
+      agent("t5", "claude-code"), agent("t6", "claude-code"), terminal("t7"),
+    ], layout, "0.1.14");
+    expect(snapshot.tabs.map((t) => t.label)).toEqual(["1", "2", "3", "4", "Codex", "fix login", "Claude Code"]);
+  });
+
+  it("keeps an app tab named after its agent unnamed when a terminal the app has not placed joins it", () => {
+    const layout = { spaces: [{ id: "s1", name: "api", tabs: [{ id: "s1t1", name: "Claude Code", root: block("t1") }] }] };
+    const snapshot = buildSnapshot([
+      terminal("t1", { status: { app: "claude-code", state: "idle" } }),
+      terminal("t2", { status: { app: "claude-code", state: "idle" }, labels: { "herdr.space": "s1", "herdr.tab": "s1t1", where: "api / Claude Code" } }),
+    ], layout, "0.1.14");
+    expect(snapshot.tabs.map((t) => [t.tab_id, t.label, t.pane_count])).toEqual([["s1t1", "1", 2]]);
+  });
+
+  it("keeps a tab named after its agent unnamed when only terminals the app has not placed fill it, in an app tab with none left or a tab of their own", () => {
+    const layout = { spaces: [{ id: "s1", name: "api", tabs: [
+      { id: "s1t1", name: "Claude Code", root: block("t1") },
+      { id: "s1t2", name: "fix login", root: block("t2") },
+    ] }] };
+    const claude = (address: string, labels: Record<string, string>) => terminal(address, { status: { app: "claude-code", state: "idle" }, labels });
+    const snapshot = buildSnapshot([
+      claude("t3", { "herdr.space": "s1", "herdr.tab": "s1t1" }),
+      claude("t4", { "herdr.space": "s1", "herdr.tab": "s1t2" }),
+      claude("t5", { "herdr.space": "s1", "herdr.tab": "ovis-tb", where: "api / Claude Code" }),
+    ], layout, "0.1.14");
+    expect(snapshot.tabs.map((t) => [t.tab_id, t.label])).toEqual([["s1t1", "1"], ["s1t2", "fix login"], ["ovis-tb", "3"]]);
+  });
+
+  it("keeps an agent's name given through Ovis as a tab's name, with or without the app", () => {
+    const claude = (address: string, tab: string, name: string) => terminal(address, { status: { app: "claude-code", state: "idle" }, labels: { "herdr.space": "s1", "herdr.tab": tab, "ovis.tab": name } });
+    const given = [claude("t1", "ovis-ta", "Claude Code"), claude("t2", "ovis-tb", "claude")];
+    expect(buildSnapshot(given, null, "0.1.17").tabs.map((t) => t.label)).toEqual(["Claude Code", "claude"]);
+    const layout = { spaces: [{ id: "s1", name: "api", tabs: [{ id: "s1t1", name: "", root: block("t3") }] }] };
+    expect(buildSnapshot([terminal("t3"), ...given], layout, "0.1.14").tabs.map((t) => t.label)).toEqual(["1", "Claude Code", "claude"]);
+  });
+
+  it("reads a tab of several agents as named after its program by its first agent's only, as the app does", () => {
+    const agent = (address: string, app: string) => terminal(address, { status: { app, state: "idle" } });
+    const both = (first: string, second: string) => ({ type: "row", id: `r-${first}`, children: [block(first), block(second)] });
+    const layout = { spaces: [{ id: "s1", name: "api", tabs: [
+      { id: "s1t1", name: "Claude Code", root: both("t1", "t2") },
+      { id: "s1t2", name: "Codex", root: both("t3", "t4") },
+      { id: "s1t3", name: "Claude Code", root: both("t5", "t6") },
+    ] }] };
+    const snapshot = buildSnapshot([agent("t1", "codex"), agent("t2", "claude-code"), agent("t3", "codex"), agent("t4", "claude-code"), terminal("t5"), agent("t6", "claude-code")], layout, "0.1.14");
+    expect(snapshot.tabs.map((t) => t.label)).toEqual(["Claude Code", "2", "3"]);
+  });
+
+  it("knows a tab's agent by its process as well as by its report", () => {
+    const layout = { spaces: [{ id: "s1", name: "api", tabs: [{ id: "s1t1", name: "Codex", root: block("t1") }] }] };
+    const snapshot = buildSnapshot([terminal("t1", { foreground: { pid: 7, name: "codex", argv: ["codex"] } })], layout, "0.1.14");
+    expect(snapshot.panes[0]!.agent).toBe("codex");
+    expect(snapshot.tabs[0]!.label).toBe("1");
   });
 
   const named = (cwd: string, folder?: string) => buildSnapshot([terminal("t1", { cwd })], {
@@ -256,6 +324,29 @@ describe("buildSnapshot, terminals the app has not placed", () => {
       ["s1t1", "s1", "1"], ["ovis-tb", "s1", "logs"], ["ovis-tc", "ovis-s9", "1"], ["ovis-s7:t5", "ovis-s7", "1"], [`${OTHER_WORKSPACE_ID}:t6`, OTHER_WORKSPACE_ID, "t6"],
     ]);
     expect(snapshot.panes.filter((p) => p.tab_id === "ovis-tc").map((p) => p.pane_id)).toEqual(["t3", "t4"]);
+  });
+
+  it("numbers an unnamed tab by its place among the tabs shown, past an app tab whose terminals are gone", () => {
+    const layout = { spaces: [{ id: "s1", name: "api", tabs: [
+      { id: "s1t1", name: "", root: block("t1") },
+      { id: "s1t2", name: "", root: block("t2") },
+      { id: "s1t3", name: "", root: block("t3") },
+    ] }] };
+    const snapshot = buildSnapshot([terminal("t1", { labels: { where: "api / 1" } }), terminal("t3", { labels: { where: "api / 3" } }), terminal("t4", { labels: { "herdr.space": "s1", "herdr.tab": "ovis-tb" } })], layout, "0.1.14");
+    expect(snapshot.tabs.map((t) => [t.tab_id, t.label, t.number])).toEqual([["s1t1", "1", 1], ["s1t3", "2", 2], ["ovis-tb", "3", 3]]);
+  });
+
+  it("numbers a tab the app has not placed by its place among the tabs shown, not by the app's number in its `where` label", () => {
+    const layout = { spaces: [{ id: "s1", name: "api", tabs: [
+      { id: "s1t1", name: "", root: block("t1") },
+      { id: "s1t2", name: "", root: block("t2") },
+    ] }] };
+    const snapshot = buildSnapshot([
+      terminal("t2"),
+      terminal("t3", { labels: { "herdr.space": "s1", "herdr.tab": "s1t2", where: "api / 2" } }),
+      terminal("t4", { labels: { "herdr.space": "s1", "herdr.tab": "s1t3", where: "api / 3" } }),
+    ], layout, "0.1.14");
+    expect(snapshot.tabs.map((t) => [t.tab_id, t.label, t.number])).toEqual([["s1t2", "1", 1], ["s1t3", "2", 2]]);
   });
 
   it("never makes one tab of two: a labeled id the app uses elsewhere gets an id of its own", () => {
