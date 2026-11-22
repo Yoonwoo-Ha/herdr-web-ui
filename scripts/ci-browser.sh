@@ -93,6 +93,7 @@ run_script scripts/terminal-bundled-mono-regression.ts
 run_script scripts/terminal-served-font-regression.ts
 run_script scripts/application-paging-regression.ts
 run_script scripts/pane-paging-demo-regression.ts
+run_script scripts/chat-reading-position-demo-regression.ts
 run_script scripts/link-menu-demo-regression.ts
 run_script scripts/external-link-tab-regression.ts
 run_script scripts/key-bar-customization-demo-regression.ts
