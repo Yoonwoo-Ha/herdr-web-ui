@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, jest, setSystemTime } from "bun:test";
 import { closeSync, constants, existsSync, mkdirSync, mkdtempSync, openSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { HerdrError, herdrRpc, paneGet, paneProcessInfo, paneRead, paneSendKeys, paneSendText, sessionSnapshot, subscribeEvents, type EventFrame, paneClose, paneMoveBeside, paneMoveToNewTab, tabClose, tabCreate, tabMove, tabRename, workspaceClose, workspaceCreate, workspaceRename, agentManifests, agentStart, ping, worktreeCreate, worktreeList, worktreeOpen, worktreeRemove } from "../herdr/client.ts";
+import { HerdrError, herdrRpc, paneGet, paneProcessInfo, paneRead, paneSendKeys, paneSendText, sessionSnapshot, subscribeEvents, type EventFrame, paneClose, paneMoveBeside, paneMoveToNewTab, tabClose, tabCreate, tabMove, tabRename, workspaceClose, workspaceCreate, workspaceRename, agentManifests, agentPrompt, agentStart, ping, worktreeCreate, worktreeList, worktreeOpen, worktreeRemove } from "../herdr/client.ts";
 import { claudeInputDraft, viewportShowsLive } from "../claude-input.ts";
 import { type AdapterOptions, paintedScreen, type SeenObserver, sessionLabeler, startHerdrCoreAdapter } from "./adapter.ts";
 import { SeenMarker } from "./seen-label.ts";
@@ -186,6 +186,71 @@ describe("herdr-core adapter", () => {
     const snapshot = await sessionSnapshot(socket);
     expect(snapshot.workspaces.map((w) => w.label)).toEqual(["api", "Other terminals"]);
     expect(snapshot.panes.map((p) => [p.pane_id, p.agent, p.agent_status])).toEqual([["t1", "claude", "blocked"], ["t2", null, "unknown"]]);
+  });
+
+  it("shows agy's plan review at rest, whose input box takes the reply, and its question and approvals blocked", async () => {
+    const agy = (msg: string, kind: string) => ({ app: "antigravity", state: "blocked", kind, msg });
+    const { socket } = await setup([
+      terminal("t1", { status: agy("Approve plan", "permission") }),
+      terminal("t2", { status: agy("Which name would you like?", "question") }),
+      terminal("t3", { status: agy("Run: rm -rf build", "permission") }),
+      // a question asked in those very words is still a question
+      terminal("t4", { status: agy("Approve plan", "question") }),
+    ]);
+    const snapshot = await sessionSnapshot(socket);
+    expect(snapshot.panes.map((p) => [p.pane_id, p.agent_status, p.agent_kind ?? null, p.agent_message ?? null])).toEqual([
+      ["t1", "done", null, null],
+      ["t2", "blocked", "question", "Which name would you like?"],
+      ["t3", "blocked", "permission", "Run: rm -rf build"],
+      ["t4", "blocked", "question", "Approve plan"],
+    ]);
+  });
+
+  it("sends a prompt into agy's plan review with force, and into any other blocked program without", async () => {
+    const blocked = (app: string, msg: string, kind = "permission") => ({ status: { app, state: "blocked", kind, msg } });
+    const { socket, cores } = await setup([terminal("t1", blocked("antigravity", "Approve plan")), terminal("t2", blocked("antigravity", "Run: make")),
+      terminal("t3", blocked("codex", "Approve plan")), terminal("t4", blocked("antigravity", "Approve plan", "question"))], { "terminal.send": () => ({ turn: 1 }) });
+    for (const target of ["t1", "t2", "t3", "t4"]) await agentPrompt(target, "use option 2", socket);
+    expect(cores.flatMap((core) => core.calls).filter((call) => call.method === "terminal.send").map((call) => call.params)).toEqual([
+      { terminal: "t1", text: "use option 2", force: true },
+      { terminal: "t2", text: "use option 2" },
+      { terminal: "t3", text: "use option 2" },
+      { terminal: "t4", text: "use option 2" },
+    ]);
+  });
+
+  it("tells agy's plan review at rest in its status events as in the snapshot, done on the turn that counts it with nothing new to draw, and its question blocked", async () => {
+    let channel = 0;
+    const working = { app: "antigravity", state: "working" };
+    const { socket, cores } = await setup([terminal("t1"), terminal("t2")], {
+      "events.subscribe": () => {
+        channel = cores.at(-1)!.channel();
+        return { channel, seq: 1, terminals: [terminal("t1", { status: working, turn: 1, labels: { "herdr.seen": "1" } }), terminal("t2", { status: working, turn: 1, labels: { "herdr.seen": "1" } })] };
+      },
+    });
+    const frames: EventFrame[] = [];
+    const started = Promise.withResolvers<void>();
+    const told = Promise.withResolvers<void>();
+    const subscription = subscribeEvents([{ type: "pane.updated" }, { type: "pane.agent_status_changed", pane_id: "t1" }, { type: "pane.agent_status_changed", pane_id: "t2" }], {
+      // the reply that starts the next turn is the last event: what came before it is all told by then
+      onEvent: (frame) => { frames.push(frame); if (frame.data?.["pane_id"] === "t1" && frame.data["agent_status"] === "working") told.resolve(); },
+      onStarted: () => started.resolve(),
+    }, socket);
+    cleanups.push(() => subscription.close());
+    await started.promise;
+    const core = cores[0]!;
+    const blocked = (kind: string, msg: string) => ({ status: { app: "antigravity", state: "blocked", kind, msg } });
+    core.notify(channel, "event", { seq: 2, type: "status", terminal: "t1", data: blocked("permission", "Approve plan") });
+    core.notify(channel, "event", { seq: 3, type: "turn", terminal: "t1", data: { turn: 2, state: "blocked" } });
+    core.notify(channel, "event", { seq: 4, type: "labels", terminal: "t1", data: { labels: { "herdr.seen": "2" } } });
+    core.notify(channel, "event", { seq: 5, type: "status", terminal: "t2", data: blocked("question", "Approve plan") });
+    core.notify(channel, "event", { seq: 6, type: "status", terminal: "t1", data: { status: working } });
+    await told.promise;
+    const shown = (pane: string, status: string) => ({ event: "pane.agent_status_changed", data: { pane_id: pane, agent_status: status, agent: "agy" } });
+    // the plan review's kind and message are not drawn, so neither it nor the reply after it asks for a fresh snapshot
+    const updated = (pane: string) => ({ event: "pane.updated", data: { type: "pane_updated", pane_id: pane } });
+    const layout = { event: "layout.updated", data: { type: "layout_updated" } };
+    expect(frames).toEqual([shown("t1", "done"), shown("t1", "idle"), layout, updated("t2"), shown("t2", "blocked"), shown("t1", "working")]);
   });
 
   it("types send_text into an attach at the terminal's own grid, and answers once hc took the attach's close", async () => {

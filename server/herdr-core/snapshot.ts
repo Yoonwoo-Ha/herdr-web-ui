@@ -57,8 +57,17 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * agy reports `blocked` permission "Approve plan" (OSC 7501) when a turn ends on an artifact for review, while its own input box
+ * takes the reply as at any rest: at rest here, so no card holds the composer and queued messages go to it. A question
+ * in those words is still a question.
+ */
+export function agyPlanReview(status: HcStatus | null | undefined): boolean {
+  return status?.app === "antigravity" && status.state === "blocked" && status.kind === "permission" && status.msg === "Approve plan";
+}
+
 export function agentStatusOf(status: HcStatus | null | undefined): AgentStatus {
-  return reportedStatus(status?.state);
+  return agyPlanReview(status) ? "done" : reportedStatus(status?.state);
 }
 
 /** The status a terminal shows (shared/attention.ts `shownStatusOfWord`), from its program's report. */
@@ -334,7 +343,7 @@ function groups(terminals: readonly HcTerminal[], layout: unknown): Group[] {
 export type FirstTurn = (terminal: Pick<HcTerminal, "address" | "turn">) => number;
 
 export function reportedFacts(status: HcStatus | null | undefined): Pick<HerdrPane, "agent_kind" | "agent_message" | "agent_progress"> {
-  if (!status) return {};
+  if (!status || agyPlanReview(status)) return {};
   const { kind, msg, progress } = status;
   return {
     ...(status.state === "blocked" && typeof kind === "string" && kind !== "" ? { agent_kind: kind } : {}),
