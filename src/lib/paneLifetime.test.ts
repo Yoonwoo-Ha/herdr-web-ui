@@ -221,6 +221,36 @@ describe("pane state per herdr lifetime", () => {
     expect(back.unsent().map(({ kind, text }) => `${kind}:${text}`)).toEqual(["pending:yes", "pending:yes"]);
   });
 
+  it("keeps two held messages with the same text, stored before any herdr was named, as two recovery items once one is (#3990)", () => {
+    const storage = new MemoryStorage();
+    const lifetimes = page(storage);
+    // rows an earlier release stored with no lifetime record: the first herdr named retires them (settle, retireStored)
+    lifetimes.observe([pc("local", undefined)], title);
+    storage.setItem("ovis:pending:w1:p1", JSON.stringify({ version: 1, messages: [{ id: "one", text: "yes" }, { id: "two", text: "yes" }] }));
+    storage.setItem("ovis:queue:w1:p1", "carry this too");
+    // The next herdr takes over: both pending rows are archived in one pass.
+    lifetimes.observe([pc("local", "herdr-a")], title);
+
+    // Both rows come back, one recovery record per message, not one for the shared text.
+    expect(storage.getItem("ovis:pending:w1:p1")).toBeNull();
+    expect(lifetimes.unsent().filter((item) => item.kind === "pending" && item.text === "yes")).toHaveLength(2);
+  });
+
+  it("keeps the record an unconfirmed row already has, and makes one more for a second row with the same text (#3990)", () => {
+    const storage = new MemoryStorage();
+    const lifetimes = page(storage);
+    const pending = new PendingMessageStore(() => lifetimes.paneStorage, lifetimes);
+    lifetimes.onRetire((machineId) => pending.forget(machineId));
+    lifetimes.observe([pc("local", undefined)], title);
+    pending.keepUnconfirmed("w1:p1", "yes");
+    const [kept] = lifetimes.unsent();
+    pending.accept("w1:p1", { id: "two", request_id: 1, text: "yes", state: "queued", created_at: "2026-10-06T00:00:00Z" }, null);
+    lifetimes.observe([pc("local", "herdr-a")], title);
+    expect(pending.read("w1:p1")).toEqual([]);
+    expect(lifetimes.unsent().map(({ kind, text }) => `${kind}:${text}`)).toEqual(["pending:yes", "pending:yes"]);
+    expect(lifetimes.unsent().map(({ id }) => id)).toContain(kept!.id);
+  });
+
   it("keeps no held input past its age in the carry, when the page leaves or when the next one takes it", () => {
     const storage = new MemoryStorage();
     const carried = (): string => storage.getItem("ovis:pane-carried:") ?? "";
