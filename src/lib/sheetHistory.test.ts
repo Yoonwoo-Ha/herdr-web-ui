@@ -36,11 +36,13 @@ function fakeWindow() {
     forward() { traverse(1); },
     go(by: number) { traverse(by); },
   };
-  /** the pages the window was sent to by location.assign: from which entry, and whether a traversal was still on its way */
-  const loads: Array<{ url: string; at: number; pending: boolean }> = [];
+  /** the pages the window was sent to (location.assign or location.replace): from which entry, and whether a traversal was still on its way */
+  const loads: Array<{ url: string; how: "assign" | "replace"; at: number; pending: boolean }> = [];
   const window = {
     history,
-    get location() { return { href: entries[index]!.href, assign: (url: string) => { loads.push({ url, at: index, pending }); } }; },
+    get location() {
+      return { href: entries[index]!.href, assign: (url: string) => { loads.push({ url, how: "assign", at: index, pending }); }, replace: (url: string) => { loads.push({ url, how: "replace", at: index, pending }); } };
+    },
     addEventListener(type: string, listener: (event: { state: unknown }) => void) { if (type === "popstate") listeners.push(listener); },
   };
   /** the browser's key for each entry, as the Navigation API tells it: a test hands it to the window */
@@ -129,22 +131,41 @@ describe("a phone's sheet in the history", () => {
     expect(fake.loads).toEqual([]);
     await settled();
     fake.defer(false);
-    expect(fake.loads.splice(0)).toEqual([{ url: "/#add", at: start, pending: false }]);
+    expect(fake.loads.splice(0)).toEqual([{ url: "/#add", how: "assign", at: start, pending: false }]);
     expect(fake.marks()[start]).toBe(false);
   });
 
   it("sends it at once with no sheet's entry here, and as the sheet goes when the sheet takes no step", async () => {
     const start = fake.at();
     sheetHistory.leavePageFromSheet("/#add");
-    expect(fake.loads.splice(0)).toEqual([{ url: "/#add", at: start, pending: false }]);
+    expect(fake.loads.splice(0)).toEqual([{ url: "/#add", how: "assign", at: start, pending: false }]);
     const leave = hooks.enter(() => {});
     sheetHistory.leavePageFromSheet("/#add");
     h.replaceState(h.state, "", "/?pane=b&new=tab");
     leave();
     expect(fake.loads).toEqual([]);
     jest.advanceTimersByTime(0);
-    expect(fake.loads.splice(0)).toEqual([{ url: "/#add", at: start + 1, pending: false }]);
+    expect(fake.loads.splice(0)).toEqual([{ url: "/#add", how: "assign", at: start + 1, pending: false }]);
     h.back(); await settled();
+    expect(fake.at()).toBe(start);
+  });
+
+  it("sends it in place of the entry of a sheet that stays up under the closing one (a terminal peek), so no entry of that sheet is left under the new page", async () => {
+    const start = fake.at();
+    const leavePeek = hooks.enter(() => {}, true);
+    try {
+      expect(fake.at()).toBe(start + 1);
+      const leaveMore = hooks.enter(() => {});
+      expect(fake.at()).toBe(start + 1);
+      sheetHistory.leavePageFromSheet("/#add");
+      leaveMore();
+      jest.advanceTimersByTime(0);
+      await settled();
+      expect(fake.loads.splice(0)).toEqual([{ url: "/#add", how: "replace", at: start + 1, pending: false }]);
+    } finally {
+      fake.loads.length = 0;
+      leavePeek(); await settled();
+    }
     expect(fake.at()).toBe(start);
   });
 

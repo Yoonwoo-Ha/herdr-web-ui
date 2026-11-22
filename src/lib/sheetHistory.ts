@@ -183,7 +183,8 @@ function depart(): void {
   if (departure === null || stepping !== null || leaving.size > 0) return;
   const url = departure;
   departure = null;
-  window.location.assign(url);
+  if (owned(window.history.state)) window.location.replace(url);
+  else window.location.assign(url);
 }
 
 /**
@@ -191,7 +192,9 @@ function depart(): void {
  * starts loading once the sheet's step off its entry has landed, from the entry under the sheet, so Back from it lands
  * on the page the sheet was over. Started at once, the load loses to that step whenever the new page answers later than
  * the step lands, as over a phone's network: Chromium cancels the load, and Android's WebView lands the step after the
- * new page, which brings this one back. With no sheet's entry here, nor a step on its way, it loads at once.
+ * new page, which brings this one back. With no sheet's entry here, nor a step on its way, it loads at once. Where the
+ * entry is still a sheet's that stays up under the closed one (a terminal peek), the new page takes that entry: pushed
+ * over it, Back would land on a copy of this page with nothing up, and one more Back on this page again.
  */
 export function leavePageFromSheet(url: string): void {
   departure = url;

@@ -274,6 +274,7 @@ run_script scripts/machine-own-ovis-regression.ts
 run_script scripts/herdr-profiles-browser-qa.ts
 run_script scripts/relay-e2e-regression.ts
 run_script scripts/offline-typing-relay-regression.ts
+run_script scripts/add-pc-more-relay-regression.ts
 run_script scripts/relay-shell-browser-qa.ts
 run_script scripts/relay-offline-reasons-regression.ts
 run_script scripts/relay-media-browser-qa.ts
