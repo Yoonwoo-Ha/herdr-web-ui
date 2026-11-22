@@ -272,9 +272,11 @@ export async function capturePiDeliveryAnchorRetrying(path: string, allowMissing
 
 /**
  * Match Ovis-origin typed receipts to durable user records on the active Pi branch.
- * Candidates and matching entries are both FIFO. Unrelated user records are skipped, while a
- * later Ovis receipt may not cross an earlier unmatched one. Content is only a bounded scoped
- * correlator: Pi does not expose a submission id in its TUI or transcript. A record stamped no
+ * Candidates and matching entries are both FIFO. A record with a send's text is its record; where
+ * none has it, a plain send takes the next record unless a later receipt's text claims it, since Pi
+ * changes text on the way in ways no list keeps up with. A later Ovis receipt may not cross an
+ * earlier unmatched one. Content is only a bounded scoped correlator: Pi does not expose a submission id
+ * in its TUI or transcript. A record stamped no
  * earlier than the receipt's capture confirms it. Where the only such text was stamped earlier,
  * either someone else submitted it before Ovis's Enter or the wall clock was set back, so the
  * receipt is `ambiguous`: neither confirmed nor left waiting for a record that may never come.
@@ -337,10 +339,25 @@ export function matchPiDeliveries(path: string, candidates: readonly PiDeliveryC
       }
       const match = same.find(fresh);
       const earlier = match ? undefined : same[0];
-      if (match) consumed.push(candidate.id);
+      // Pi changed a plain message on the way (a notice typed into its box before Enter, a character its
+      // editor reads otherwise): the next record after the last one matched is this send's, unless a later
+      // receipt's own text needs it (the later receipts with its text that could take it, against the copies
+      // of it still to come), so a changed text never holds the receipts behind it. Where a later receipt
+      // needs it, this send has no record before that one's: it waits, as Pi records its sends in order. A
+      // `/name` send keeps to its own text above: Pi may record it as something else, or as nothing.
+      const open = (entry: BranchEntry): boolean => entry.start > afterMatched && entry.role === "user" && fresh(entry) && !consumedEntries.has(key(entry));
+      const reaches = (other: PiDeliveryCandidate, entry: BranchEntry): boolean => other.anchor.path === path && other.anchor.session === session
+        && entry.start >= other.anchor.size && (entry.at === null || entry.at >= other.anchor.at) && piRecordOf(other.text, entry);
+      const needed = (entry: BranchEntry): boolean => later.filter((other) => reaches(other, entry)).length
+        >= chain.filter((copy) => copy.start >= entry.start && open(copy) && copy.text === entry.text).length;
+      const upcoming = match || earlier || piSkillSend(candidate.text) !== undefined || piMaybeCommand(candidate.text)
+        ? undefined : chain.find(open);
+      const following = upcoming && !needed(upcoming) ? upcoming : undefined;
+      if (match ?? following) consumed.push(candidate.id);
       else if (earlier) ambiguous.push(candidate.id);
       else break;
-      const used = (match ?? earlier)!;
+      const used = (match ?? following ?? earlier)!;
+      if (following) matchedEntries.push(key(following));
       const laterCapture = Math.min(...candidates.slice(index + 1)
         .filter((later) => later.text === candidate.text).map((later) => later.anchor.at));
       for (const entry of same) {

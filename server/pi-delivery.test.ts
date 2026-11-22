@@ -53,7 +53,8 @@ describe("Pi delivery transcript matching", () => {
     const consumed = new Set<string>();
     if (budget === "retention") {
       appendFileSync(path, entry("large", "base", "user", "x".repeat(9 * 1024 * 1024)));
-      expect(matchPiDeliveries(path, receipts, consumed).retry).toBe(false);
+      // under the budget it is read (and the next record taken for the first send): the larger one is not
+      expect(matchPiDeliveries(path, receipts, new Set()).retry).toBe(false);
       appendFileSync(path, entry("larger", "large", "user", "x".repeat(9 * 1024 * 1024)));
     } else if (budget === "entry count") {
       for (let index = 0; index < 100_001; index++) appendFileSync(path, entry(`e${index}`, index ? `e${index - 1}` : "base", "assistant", ""));
@@ -534,6 +535,72 @@ describe("Pi delivery transcript matching", () => {
     expect(matchPiDeliveries(path, [candidate("r1", "first", anchor), candidate("r2", "second", anchor)])).toEqual({ consumed: [], changed: [], retry: false });
     appendFileSync(path, entry("u2", "u1", "user", "first") + entry("u3", "u2", "user", "second"));
     expect(matchPiDeliveries(path, [candidate("r1", "first", anchor), candidate("r2", "second", anchor)])).toEqual({ consumed: ["r1", "r2"], changed: [], retry: false });
+  });
+
+  it("confirms a send Pi recorded joined with text typed into its box before Enter, so the receipts behind it confirm too", () => {
+    const path = join(dir(), "session.jsonl");
+    writeFileSync(path, header() + entry("a0", null, "assistant", "working"));
+    const anchor = capturePiDeliveryAnchor(path)!;
+    // hc typed a finished terminal's notice into Pi's box between Ovis's paste and its Enter
+    appendFileSync(path, entry("u1", "a0", "user", "I have access now... <hc>t236 build exited (exit 0). Read: hc read t236</hc>")
+      + entry("a1", "u1", "assistant", "ok") + entry("u2", "a1", "user", "next"));
+    expect(matchPiDeliveries(path, [candidate("r1", "I have access now...", anchor), candidate("r2", "next", anchor)]))
+      .toEqual({ consumed: ["r1", "r2"], changed: [], retry: false });
+  });
+
+  it("takes the next record for a plain send whose text Pi changed, so the receipts behind it never wait on it", () => {
+    const path = join(dir(), "session.jsonl");
+    writeFileSync(path, header() + entry("a0", null, "assistant", "working"));
+    const anchor = capturePiDeliveryAnchor(path)!;
+    // the first send's text never reaches the transcript as sent (a character Pi's editor reads otherwise)
+    appendFileSync(path, entry("u1", "a0", "user", "first, changed") + entry("a1", "u1", "assistant", "ok"));
+    const consumed = new Set<string>();
+    expect(matchPiDeliveries(path, [candidate("r1", "first", anchor), candidate("r2", "second", anchor)], consumed))
+      .toEqual({ consumed: ["r1"], changed: [], retry: false });
+    expect(matchPiDeliveries(path, [candidate("r2", "second", anchor)], consumed)).toEqual({ consumed: [], changed: [], retry: false });
+    appendFileSync(path, entry("u2", "a1", "user", "second"));
+    expect(matchPiDeliveries(path, [candidate("r2", "second", anchor)], consumed)).toEqual({ consumed: ["r2"], changed: [], retry: false });
+  });
+
+  it("lets a changed send take a copy of a later send's text when Pi recorded more copies than later sends need", () => {
+    const path = join(dir(), "session.jsonl");
+    writeFileSync(path, header() + entry("a0", null, "assistant", "working"));
+    const anchor = capturePiDeliveryAnchor(path)!;
+    appendFileSync(path, entry("u1", "a0", "user", "hello") + entry("u2", "u1", "user", "hello"));
+    expect(matchPiDeliveries(path, [candidate("r1", "hello\\", anchor), candidate("r2", "hello", anchor)]))
+      .toEqual({ consumed: ["r1", "r2"], changed: [], retry: false });
+  });
+
+  it("leaves a later send's only record to it", () => {
+    const path = join(dir(), "session.jsonl");
+    writeFileSync(path, header() + entry("a0", null, "assistant", "working"));
+    const anchor = capturePiDeliveryAnchor(path)!;
+    appendFileSync(path, entry("u1", "a0", "user", "hello"));
+    expect(matchPiDeliveries(path, [candidate("r1", "first", anchor), candidate("r2", "hello", anchor)]))
+      .toEqual({ consumed: [], changed: [], retry: false });
+  });
+
+  it("never gives a send Pi has not recorded a record behind a later send's own", () => {
+    const path = join(dir(), "session.jsonl");
+    writeFileSync(path, header() + entry("a0", null, "assistant", "working"));
+    const anchor = capturePiDeliveryAnchor(path)!;
+    const consumed = new Set<string>();
+    appendFileSync(path, entry("u2", "a0", "user", "second") + entry("u3", "u2", "user", "third <hc>t1 exited</hc>"));
+    const sends = [candidate("r1", "first", anchor), candidate("r2", "second", anchor), candidate("r3", "third", anchor)];
+    expect(matchPiDeliveries(path, sends, consumed)).toEqual({ consumed: [], changed: [], retry: false });
+    appendFileSync(path, entry("u4", "u3", "user", "typed in the terminal"));
+    expect(matchPiDeliveries(path, sends, consumed)).toEqual({ consumed: [], changed: [], retry: false });
+  });
+
+  it("leaves a record to a later send only where that send can take it", () => {
+    const path = join(dir(), "session.jsonl");
+    writeFileSync(path, header() + entry("a0", null, "assistant", "working"));
+    const first = capturePiDeliveryAnchor(path)!;
+    appendFileSync(path, entry("u1", "a0", "user", "hello") + entry("a1", "u1", "assistant", "ok"));
+    const second = capturePiDeliveryAnchor(path)!;
+    appendFileSync(path, entry("u2", "a1", "user", "hello <hc>t1 exited</hc>"));
+    expect(matchPiDeliveries(path, [candidate("r1", "hi", first), candidate("r2", "hello", second)]))
+      .toEqual({ consumed: ["r1", "r2"], changed: [], retry: false });
   });
 
   it("accepts an unwritten session only when that exact path becomes its first file", () => {
