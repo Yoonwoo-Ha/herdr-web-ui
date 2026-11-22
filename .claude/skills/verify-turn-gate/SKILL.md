@@ -252,7 +252,8 @@ key typed into a turn and never a wait with no end.
   class goes (any status at any time); the `turns-*` runs do not describe them.
 - A pane's first message (`FIRST_MESSAGE_OWNER`, `holdItem`, `rehold`), omp's start
   (`waitingFor`, `holdQueued`, a message queued behind a starting omp with no `observe`), a
-  message for an agent alone, Grok's second Enter after a Send now, Pi's receipt.
+  message for an agent alone, Grok's second Enter after a Send now, agy's alt+m after a Send now (it
+  joins the turn at work, so it arms no restart: `SEND_NOW` in `server/codex-steering.ts`), Pi's receipt.
 - `close` and the 60 s after it (a closed owner's rows are held first, then dropped). The
   bookkeeping of `resend` around a Send now (a repeated request gets the first one's answer): read,
   not explored. A held copy sent again is explored, as one step, for a row still listed.
@@ -283,7 +284,7 @@ against it. A squash merge keeps blob ids, so the record stays right on `main`.
 | `the queue reads the pane (mark taken)`, `put off (observe …)`, `put off with no status told`, `refused before the paste`, `a screen of Codex's own has the input`, `pasted` | `pending.ts` `dispatchPendingText` up to its paste: `pending.mark`, `pendingContext`, `pending.observe(paneId, "working" / "blocked", mark)`; `dispatchPending`: `retry`, `left`, `pending.settle`, and `pending.holdPane` for an `unannounced` refusal |
 | `reads the pane before its Enter`, `committing (…)`, `its Enter lands`, `refused after the paste: uncertain`, `sent` | `dispatchPendingText` from its paste on: `enterMark`, `beforeEnter`, `steering`, `committing(steering, false, enterMark)`, `paneSendKeys`, the `catch` that makes every failure after `wrote` a `submit_changed`; `dispatchPending`'s `pending.settle` |
 | `Send now on`, `Send now refused before it began`, `claimed by Send now` | `pending.ts` `pendingFrames["pending-action"]`, action `steer`: `pending.claim(item, false)`, and the claim and settle of a send refused before its claim |
-| `Send now reads the pane for Codex's steering panel`, `the panel shows it: committing (restarting the turn)`, `Escape lands`, `Codex is no longer at work` | `server/codex-steering.ts` `interruptCodexSteering`, `codexSteeringPending`; `pending.ts` its `read`, `restarting` and `escape`, with the guard on `pending.current` |
+| `Send now reads the pane for Codex's steering panel`, `the panel shows it: committing (restarting the turn)`, `Escape lands`, `Codex is no longer at work` | `server/codex-steering.ts` `interruptCodexSteering`, `codexSteeringPending`; `pending.ts` its `read`, `restarting` and `press`, with the guard on `pending.current` |
 | `a saved copy of … is sent again` | `pending.ts` `pendingFrames.submit` with a `resend_id`; `PendingInputs.resend` and its reply handler |
 | `Discard` | `pending-action`, action `discard`: `pending.discard` |
 | `…'s page leaves the pane` | `pending.ts` `holdPending`, `pending.hold` |

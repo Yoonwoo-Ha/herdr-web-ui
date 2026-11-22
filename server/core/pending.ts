@@ -870,7 +870,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         read: async () => {
           const status = pending.current(paneId);
           const current = await pendingContext(owner, paneId, lease, identity, true);
-          // no Escape into a masked prompt that came up during the read's last process check
+          // no key into a masked prompt that came up during the read's last process check
           await noMaskedPrompt(paneId, lease.sighting.facts().cols, identity);
           statusAtRead = status;
           return { agent: current.identity.agent, working: current.working, screen: current.screen };
@@ -878,7 +878,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         restarting: () => committing(true, true),
         // herdr has no compare-and-send: the screen can change between this read and the write, so the
         // write is refused when the lease, the deadline or the pane's status moved meanwhile
-        escape: (fresh) => paneSendKeys(paneId, ["Escape"], undefined, () => allowed() && fresh() && pending.current(paneId) === statusAtRead),
+        press: (key, fresh) => paneSendKeys(paneId, [key], undefined, () => allowed() && fresh() && pending.current(paneId) === statusAtRead),
       });
       noteSubmitted(paneId, sent, command, sentAt);
       if (command) watch?.commit(command, prompt, attached);

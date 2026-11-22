@@ -22,7 +22,7 @@ checker.
 | --- | --- | --- |
 | `NoTypingAfterLeaseLoss` | Nothing of a message is pasted or entered after the connection it waits on left the pane, closed, switched to watching or lost the terminal's attach, also when that connection has come back since. For a first message, the attach restarting ends the send under way, not the message's turn: its page may type it at a later try. | The message is typed with nobody there who asked for it. |
 | `FirstMessageOnlyByItsPage` | A first message is typed on its own only through the page that sent the create request, and never once that page has left the pane, closed or switched to watching since the request came, also while the workspace was made and the agent launched. | Another device, or a page that returned, types it unasked. |
-| `TypedAtMostOnce` | A message is pasted once and gets one Enter of its own, whatever fails in between. (The keys a Send now presses after that Enter, Codex's Escape and Grok's second Enter, are not counted.) | The agent gets the message twice, or a half-typed message is typed again behind itself. |
+| `TypedAtMostOnce` | A message is pasted once and gets one Enter of its own, whatever fails in between. (The keys a Send now presses after that Enter, Codex's Escape, agy's alt+m and Grok's second Enter, are not counted.) | The agent gets the message twice, or a half-typed message is typed again behind itself. |
 | `FirstMessageHeldOncePageLeft` | A first message whose page left is held, not left waiting. | The pane's other queued messages wait behind it for ever. |
 | `LostLeaseStaysHeld` | A queued message whose sender left is held: its row never says it still waits for the agent's turn. | The row looks armed when it is not. |
 

@@ -3,8 +3,8 @@ import { stripVTControlCharacters } from "node:util";
 export interface CodexSteeringContext { agent: string | null; working: boolean; screen: string }
 interface SteeringIO {
   read: () => Promise<CodexSteeringContext>;
-  /** sends Escape; `fresh` is asked again when herdr is reached, and a stale write is withheld */
-  escape: (fresh: () => boolean) => Promise<void>;
+  /** presses `key`; `fresh` is asked again when herdr is reached, and a stale write is withheld */
+  press: (key: string, fresh: () => boolean) => Promise<void>;
   restarting: () => void;
   now?: () => number;
   wait?: (ms: number) => Promise<void>;
@@ -57,25 +57,54 @@ export function codexSteeringPending(screen: string, text: string): boolean {
   return cut ? sent.startsWith(shown) : shown === sent;
 }
 
-/** Enter can leave steering pending until a tool boundary. Only Send now may interrupt it, and only for `text`. */
+/**
+ * agy queues what Enter commits during a turn as `▸ <text> (alt+m to send immediately)` right above
+ * its input box, one row per message cut with "..." on a narrow pane, the hint on the last one only.
+ */
+export function agySteeringPending(screen: string, text: string): boolean {
+  const lines = stripVTControlCharacters(screen).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const composer = lastLine(lines, (line) => /^>(?:\s|$)/.test(line));
+  // the box empty between its rules: alt+m is agy's "send with the opposite Queued Messages setting", which sends a draft too
+  const empty = lines[composer] === ">" && /^─+$/.test(lines[composer + 1] ?? "");
+  const entry = /^▸\s*(.*?)\s*\(alt\+m to send immediately\)$/.exec(lines[composer - 2] ?? "");
+  if (composer < 2 || !empty || !/^─+$/.test(lines[composer - 1]!) || !entry) return false;
+  const shown = compact(entry[1]!), sent = compact(text);
+  const cut = /(?:\.\.\.|…)$/.exec(shown);
+  // a row cut to its dots alone could be any message
+  return !!sent && (shown === sent || (cut !== null && cut.index > 0 && sent.startsWith(shown.slice(0, cut.index))));
+}
+
+// Codex's Escape ends its turn and starts one with the message (`restart`); agy's alt+m adds it to the turn at work
+const SEND_NOW: Record<string, { pending: (screen: string, text: string) => boolean; key: string; restart: boolean }> = {
+  codex: { pending: codexSteeringPending, key: "Escape", restart: true },
+  agy: { pending: agySteeringPending, key: "alt+m", restart: false },
+};
+
+/** Enter can leave steering pending until a tool boundary. Only Send now may send it at once, and only for `text`. */
 export async function interruptCodexSteering(explicit: boolean, text: string, submitted: CodexSteeringContext, io: SteeringIO): Promise<void> {
-  if (!explicit || submitted.agent !== "codex" || !submitted.working) return;
+  const agent = submitted.agent;
+  const steer = agent !== null && Object.hasOwn(SEND_NOW, agent) ? SEND_NOW[agent] : undefined;
+  if (!explicit || !steer || !submitted.working) return;
   const now = io.now ?? Date.now;
   const wait = io.wait ?? Bun.sleep;
   const deadline = now() + 1500;
-  const unconfirmed = () => new Error("Codex immediate delivery was not confirmed. Check the terminal before sending again.");
+  const unconfirmed = () => new Error("Immediate delivery was not confirmed. Check the terminal before sending again.");
   while (now() < deadline) {
     // The caller rechecks live identity, lease, authority and interactive prompts in this read.
     const current = await io.read();
-    if (now() >= deadline || current.agent !== "codex") throw unconfirmed();
+    if (current.agent !== agent) throw unconfirmed();
+    if (now() >= deadline) break;
     if (!current.working) return;
-    if (codexSteeringPending(current.screen, text)) {
-      io.restarting();
+    if (steer.pending(current.screen, text)) {
+      if (steer.restart) io.restarting();
       // the RPC's connect is awaited: by the time herdr is written to, the deadline may have passed
-      await io.escape(() => now() < deadline);
+      await io.press(steer.key, () => now() < deadline);
       return;
     }
     await wait(Math.min(50, deadline - now()));
   }
+  // agy draws no queued row for a message it took straight away (e.g. its turn ended before the status
+  // said so), and a missed row only leaves it in agy's own queue: Enter went either way, so no resend
+  if (!steer.restart) return;
   throw unconfirmed();
 }
