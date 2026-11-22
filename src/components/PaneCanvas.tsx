@@ -12,7 +12,7 @@ import { PANE_DRAG_TYPE, paneDragData, type SplitSide } from "../lib/split.ts";
 import { PaneSubmitRetention } from "../lib/paneSubmitRetention.ts";
 import { keepPressedButtonClick } from "../lib/pressedButton.ts";
 import { PaneCachedContext, PanePresentedContext, PaneShownContext, PaneSubmitContext, PaneWatchedContext } from "../lib/paneSubmitContext.ts";
-import { cachedPaneCells, visitPaneTab } from "../lib/paneTabCache.ts";
+import { cachedPaneCells, orderedPaneCells, visitPaneTab } from "../lib/paneTabCache.ts";
 import { routeMissing } from "../lib/api.ts";
 import { layoutCells, zoomMode } from "../lib/layoutMap.ts";
 import { CRAMPED_QUERY, layoutTopology, paneContextPress, paneFieldTarget, SOLO_PANE_QUERY, soloPane, splitPath, splitRatioAt, tabRowHidden } from "../lib/paneCanvas.ts";
@@ -98,6 +98,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   const [submits] = useState(() => new PaneSubmitRetention());
   const retainedIds = useSyncExternalStore(submits.subscribe, submits.snapshot, submits.snapshot);
   const lastCells = useRef(new Map<string, ReturnType<typeof layoutCells>[number]>());
+  const paneOrder = useRef<readonly string[]>([]);
   const visitedTabs = useRef<readonly string[]>([]);
   useEffect(() => {
     const live = new Set(snapshot?.panes.map((item) => item.pane_id) ?? []);
@@ -355,12 +356,16 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   const watchedTabs = new Set(visitedTabs.current.slice(0, narrowScreen ? 2 : 4));
   const cachedCells = cachedPaneCells(visitedTabs.current, presented?.tab_id ?? null, snapshot?.panes ?? [], lastCells.current, shownIds);
   const cachedIds = new Set(cachedCells.map((cell) => cell.paneId));
-  const mountedCells = [...cells.map((cell) => ({ ...cell, retained: false, cached: false })),
+  const mounted = [...cells.map((cell) => ({ ...cell, retained: false, cached: false })),
     ...cachedCells.map((cell) => ({ ...cell, retained: retainedIds.includes(cell.paneId), cached: true })),
     ...retainedIds.flatMap((id) => {
     const cell = lastCells.current.get(id);
     return !shownIds.has(id) && !cachedIds.has(id) && cell ? [{ ...cell, retained: true, cached: false }] : [];
   })];
+  // React moves a keyed frame whose rank changes, and a moved frame loses the scroll of what it scrolls:
+  // a pane keeps its place, and only the frames the tab draws follow the layout's own order
+  const mountedCells = orderedPaneCells(paneOrder.current, mounted, shownIds);
+  paneOrder.current = mountedCells.map((cell) => cell.paneId);
   const mountedIds = new Set(mountedCells.map((cell) => cell.paneId));
   for (const id of lastCells.current.keys()) if (!mountedIds.has(id)) lastCells.current.delete(id);
   return <PaneSubmitContext.Provider value={submits}><div className={`pane-canvas${!pane && presented ? " is-pending" : ""}`} ref={canvas} aria-busy={!pane && presented ? true : undefined}>

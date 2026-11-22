@@ -3163,6 +3163,17 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   draft before the pane attachment is released. No input is replayed. A canvas that already released
   its panes while away opens a replacement as view-only until the user returns.
   An automatic queue also retains its original pane lease until sent, discarded or held.
+- A mounted pane holds the frame it already has, and only the frames its tab draws take their order
+  from the layout (lib/paneTabCache.ts `orderedPaneCells`): an explicit swap moves one of the two
+  exchanged frames, since a swap reorders what is already drawn, and never a frame of another tab
+  mounted between them; a split inserts its pane at the new pane's layout place without moving a
+  sibling; a cached pane keeps its place; a tab switch appends the presented frames and drops the
+  closed ones. React moves a keyed child whose rank
+  changed by re-inserting it, and a moved frame loses the `scrollTop` of everything it scrolls, the
+  chat view included: reordering on every switch landed the chat of the tab being returned to on
+  its oldest row and then restored the stored place, which read as a flash and a scroll from the
+  oldest message to the newest. Placement is drawn from the cell's rectangle, not from the frame's
+  rank, so the layout is unchanged.
 - The unlocked app owns one connection per visited PC, shared by its pane mounts. A pane leaving
   the canvas without an outstanding submit or automatic queue sends detach and loses its
   automatic-delivery lease, while the PC connection keeps

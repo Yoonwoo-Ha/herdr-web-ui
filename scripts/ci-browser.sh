@@ -83,6 +83,7 @@ run_script scripts/terminal-images-demo-regression.ts
 run_script scripts/terminal-ghostty-demo-regression.ts
 run_script scripts/mirror-fold-demo-regression.ts
 run_script scripts/chat-no-rewind-demo-regression.ts
+run_script scripts/tab-switch-keeps-scroll-demo-regression.ts
 run_script scripts/terminal-cjk-punctuation-regression.ts
 run_script scripts/terminal-selection-cell-bg-regression.ts
 run_script scripts/terminal-late-faces-regression.ts

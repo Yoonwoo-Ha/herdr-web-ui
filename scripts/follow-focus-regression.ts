@@ -75,8 +75,12 @@ export async function checkFollowHerdrFocus(page: Page, fixture: FollowFocusFixt
     assert.equal(await selectedPaneId(), followed.root_pane.pane_id, "the followed pane stays selected once the roster lists it");
 
     await page.bringToFront();
-    await page.locator(".xterm-helper-textarea").first().focus();
+    // the shown pane's own terminal: the canvas keeps a cached tab's frame where it was mounted, hidden and
+    // inert, so the first terminal in the page can be one no keyboard reaches
+    const typed = page.locator(`.pane-frame:not(.is-hidden)[data-layout-pane="${followed.root_pane.pane_id}"] .xterm-helper-textarea`);
+    await typed.focus();
     assert.ok(await page.evaluate(() => document.hasFocus()), "this window is in front while typing");
+    assert.ok(await typed.evaluate((node) => node === document.activeElement), "the keyboard is in the shown pane's terminal");
     const typing = await focusedTab("follow focus typing");
     tabs.push(typing.tab.tab_id);
     await focusRead(typing.root_pane.pane_id, "herdr's focus frame for the tab opened while typing is read");
