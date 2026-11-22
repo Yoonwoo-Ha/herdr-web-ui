@@ -72,3 +72,58 @@ export function earliest(deadlines: Deadlines): { name: string; at: number } | u
   }
   return first;
 }
+
+// The state core's waits and limits. Its one deadline name is `notice`; an armed prefix waits without end, as herdr's does.
+
+/** How long a notice stays on screen (herdr keeps a failure on screen for 5 s). */
+export const NOTICE_SHOW_MS = 5_000;
+/** The most notices kept at once; a new one pushes out the oldest. */
+export const NOTICES_KEPT = 8;
+/** The most code points of config text (a binding or a reason as written) drawn; longer text is cut with an ellipsis. */
+export const CONFIG_TEXT_MAX_CHARS = 80;
+/** The most refusals of the key config listed; the rest are counted. */
+export const REFUSALS_SHOWN = 20;
+/** The most graphemes a one-line text field (rename, new tab name, goto) holds; typing or pasting past it is cut. */
+export const TEXT_FIELD_MAX_GRAPHEMES = 256;
+
+/**
+ * A pane's first paint normally ends at hc's mark. Without one it counts as complete once the stream
+ * was quiet this long with every byte of it credited back, so a core that changes the mark costs a
+ * pane this wait and not its life.
+ */
+export const PAINT_QUIET_MS = 1_000;
+/**
+ * How long a pane waits after the last change of its rectangle, or the last `size` event another
+ * viewer caused, before it attaches again: a window being dragged, or a viewer resizing in steps,
+ * costs one new attach and not one per step.
+ */
+export const REATTACH_SETTLE_MS = 150;
+/**
+ * How often in a row a pane attaches again by itself after its stream was dropped though its terminal
+ * lives, or after its emulator died, before it is Failed and waits for the user's retry. Counted from
+ * the last time the pane was live.
+ */
+export const PANE_REOPEN_LIMIT = 3;
+
+// The loop's waits and limits (tui/loop.ts) and the entry's (tui/main.ts).
+
+/** A frame pass runs at most this often: changes closer together than this share one pass. */
+export const FRAME_PASS_MS = 8;
+/** The most bytes of credit one frame pass hands back to the core, the focused pane first. */
+export const PASS_CREDIT_BYTES = 512 * 1024;
+/** Quit and a hang-up close every pane channel and the event stream within this long, answered or not. */
+export const QUIT_BOUND_MS = 2_000;
+/** A program's synchronized-output hold is ended this long after it began, if the program did not end it. */
+export const HOLD_RELEASE_MS = 1_000;
+/**
+ * After a paste the input layer refused, it swallows input until the paste's end mark. When no read brought an
+ * event for this long, the mark is taken as lost and the input layer is reset, so the keyboard is back. Not
+ * shorter: a long paste over a slow link arrives with gaps, and a reset inside one would type the rest of it.
+ */
+export const PASTE_ABANDON_MS = 3_000;
+/** The painter's style table never shrinks: the painter and its grids are made anew once it holds this many styles. */
+export const STYLE_TABLE_LIMIT = 65_536;
+/** The crash records kept in the screen's state folder: the newest this many. */
+export const CRASH_RECORDS_KEPT = 10;
+/** The action codes a crash record carries: the last this many. */
+export const CRASH_ACTIONS_KEPT = 32;

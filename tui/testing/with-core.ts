@@ -42,13 +42,11 @@ import { existsSync, lstatSync, readFileSync, realpathSync, rmSync } from "node:
 import { constants } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { coreFolder, IsolatedCore, signalChildGroup, stoppedCleanly } from "../../scripts/test-hc.ts";
-import { GhosttyEngine, GhosttyModule } from "../../shared/ghostty/engine.ts";
-import { runOnPty, type PtyRun } from "./pty.ts";
+import { gridText, runOnPty, type PtyRun } from "./pty.ts";
 
 /** the longest delay a timer holds (a signed 32-bit count of ms) */
 const TIMER_MAX_MS = 2 ** 31 - 1;
 const USAGE = "usage: bun tui/testing/with-core.ts [--no-core | --core-env <file>] [--limit <seconds>] [--pty [--size COLSxROWS] [--keys <list>] [--answer y|n] [--dump]] -- [--] <command...>";
-const WASM = join(import.meta.dir, "..", "..", "shared", "ghostty", "ghostty-vt.wasm");
 const FIRST_FRAME_END = "\x1b[?2026l";
 const QUESTION = "[Y/n]";
 /** what a terminal answers to the queries a screen's start probe ends with */
@@ -84,21 +82,6 @@ function startPty(choice: PtyChoice, command: string[], env: Record<string, stri
   const answer = choice.answer;
   if (answer) void run.until(QUESTION, "the question").then(() => run.type(`${answer}\r`), () => {});
   return run;
-}
-
-/** The cell grid the output leaves on a terminal of this size, one line a row, trailing blanks cut. */
-async function dumpGrid(output: string, cols: number, rows: number): Promise<string> {
-  const module = new GhosttyModule(new WebAssembly.Instance(new WebAssembly.Module(await Bun.file(WASM).arrayBuffer()), {}));
-  // laid out the way herdr-core lays graphemes out, as the screen's own panes are
-  const engine = new GhosttyEngine(module, cols, rows, { widths: "core", images: false });
-  try {
-    engine.write(new TextEncoder().encode(output));
-    const lines: string[] = Array.from({ length: rows }, () => "");
-    engine.frameAll((y, runs) => { lines[y] = runs.flatMap((run) => run.cells.map((cell) => cell.text)).join("").trimEnd(); });
-    return `${lines.join("\n")}\n`;
-  } finally {
-    engine.dispose();
-  }
 }
 
 interface PtyChoice { cols: number; rows: number; keys: string | null; answer: "y" | "n" | null; dump: boolean }
@@ -321,7 +304,7 @@ async function main(): Promise<number> {
     }
     if (ptyRun) {
       const code = await ptyRun.exited;
-      if (options.pty.dump) process.stdout.write(await dumpGrid(ptyRun.output(), options.pty.cols, options.pty.rows));
+      if (options.pty.dump) process.stdout.write(await gridText(ptyRun.output(), options.pty.cols, options.pty.rows));
       forced ??= code ?? EXIT_FAILED;
     }
   } else if (!finishing && forced === null) {

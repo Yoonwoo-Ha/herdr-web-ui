@@ -334,6 +334,8 @@ jobs:
             ./server/herdr-core/core.fake.live.test.ts
             ./tui/testing/with-core.contract.test.ts
             ./tui/core/link.live.test.ts
+            ./tui/core/pane.live.test.ts
+            ./tui/loop.live.test.ts
           )
           while read -r version sha256; do
             [ -n "$version" ] || continue

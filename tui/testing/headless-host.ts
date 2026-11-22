@@ -74,14 +74,16 @@ export class HeadlessHost implements Host {
   onEnd(listener: (end: HostEnd) => void | Promise<void>): () => void { return this.host.onEnd(listener); }
   write(data: Uint8Array | string): boolean { return this.host.write(data); }
   probe(): Promise<ProbeResult> { return this.host.probe(); }
-  drain(): Promise<Uint8Array> { return this.host.drain(); }
+  watchDisplay(): void { this.host.watchDisplay(); }
+  refreshDisplay(): void { this.host.refreshDisplay(); }
+  drain(): Promise<void> { return this.host.drain(); }
 
   /** Bytes typed into the host: they arrive now, as one read. */
   feed(data: string | Uint8Array): void {
     this.sink?.(typeof data === "string" ? new TextEncoder().encode(data) : data);
   }
 
-  /** Bytes already read but not yet delivered: only a drain takes them. */
+  /** Bytes already read but not yet delivered: a drain reads them. */
   queue(data: string | Uint8Array): void {
     this.waiting.push(typeof data === "string" ? new TextEncoder().encode(data) : data);
   }

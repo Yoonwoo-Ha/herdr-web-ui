@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { emptyProbe, PROBE_QUERY, type Reply, ReplyFilter, themeOf, withReply } from "./probe.ts";
+import { displayAfter, displayFacts, emptyProbe, PROBE_QUERY, type Reply, ReplyFilter, themeOf, withReply } from "./probe.ts";
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 const text = (data: Uint8Array) => new TextDecoder().decode(data);
@@ -14,6 +14,13 @@ describe("the start probe's question", () => {
 });
 
 describe("the probe's result", () => {
+  it("publishes only reported display facts and keeps them through a malformed update", () => {
+    const none = displayFacts(emptyProbe());
+    const dark = displayAfter(none, reply("color", "11;rgb:0/0/0"));
+    const malformed = displayAfter(dark, reply("color", "11;?"));
+    expect([none, dark, malformed]).toEqual([undefined, { bg: "#000000" }, { bg: "#000000" }]);
+  });
+
   it("collects the replies and reads light or dark from the background", () => {
     let result = emptyProbe();
     for (const each of [

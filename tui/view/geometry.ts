@@ -62,7 +62,12 @@ export function regions(width: number, height: number, chrome: ChromeShape): Reg
  * share has no cell on screen, as an emulator is never smaller.
  */
 export interface PaneCells { pane: string; outer: Rect; inner: Rect; cols: number; rows: number }
-export interface SplitCells { id: string; direction: SplitDirection; rect: Rect }
+/**
+ * One split's cells: `rect` is the whole split, `divider` the seam between its two sides: the last line of cells of its
+ * first side and the first line of its second, across the split. Where an enclosing split's divider already runs, the
+ * cells are that one's, so no cell belongs to two dividers.
+ */
+export interface SplitCells { id: string; direction: SplitDirection; rect: Rect; divider: Rect }
 
 /** The smallest share that has room for a border around one cell. */
 const BORDERED = 3;
@@ -81,6 +86,47 @@ export function cellsOf(tree: LayoutNode | null, area: Rect, options: { borders:
     const inner = bordered ? { x: outer.x + 1, y: outer.y + 1, width: outer.width - 2, height: outer.height - 2 } : outer;
     return { pane: pane_id, outer, inner, cols: Math.max(1, inner.width), rows: Math.max(1, inner.height) };
   });
-  const splits = placed.splits.map(({ id, direction, rect }) => ({ id, direction: direction as SplitDirection, rect: intersect(rect, area) }));
+  const splits: SplitCells[] = [];
+  let leaf = 0;
+  // place() lists splits and leaves in the order this walk meets them
+  const walk = (node: LayoutNode): Rect => {
+    if ("leaf" in node) return intersect(placed.panes[leaf++]!.rect, area);
+    const at = splits.length;
+    const { id, direction, rect } = placed.splits[at]!;
+    const split: SplitCells = { id, direction: direction as SplitDirection, rect: intersect(rect, area), divider: NO_CELLS };
+    splits.push(split);
+    const first = walk(node.first);
+    const second = walk(node.second);
+    split.divider = seam(split, first, second);
+    // the splits inside its sides were walked first: they give up the cells this divider takes
+    for (const inner of splits.slice(at + 1)) inner.divider = outside(inner.divider, split.divider);
+    return split.rect;
+  };
+  walk(tree);
   return { panes, splits };
+}
+
+/** The seam between a split's two sides: the first side's last line of cells and the second side's first. */
+function seam(split: SplitCells, first: Rect, second: Rect): Rect {
+  if (first.width === 0 || second.width === 0 || first.height === 0 || second.height === 0) return NO_CELLS;
+  const band = split.direction === "down"
+    ? { x: split.rect.x, y: first.y + first.height - 1, width: split.rect.width, height: second.y - (first.y + first.height - 1) + 1 }
+    : { x: first.x + first.width - 1, y: split.rect.y, width: second.x - (first.x + first.width - 1) + 1, height: split.rect.height };
+  return intersect(band, split.rect);
+}
+
+/**
+ * `rect` without the cells of `taken`. An enclosing divider runs across a nested one's whole width or height and lies at
+ * its end, so what is left is one rectangle; the larger side is kept should both be left.
+ */
+function outside(rect: Rect, taken: Rect): Rect {
+  const cut = intersect(rect, taken);
+  if (cut.width === 0) return rect;
+  const pieces: Rect[] = cut.width === rect.width
+    ? [{ ...rect, height: cut.y - rect.y }, { ...rect, y: cut.y + cut.height, height: rect.y + rect.height - (cut.y + cut.height) }]
+    : cut.height === rect.height
+      ? [{ ...rect, width: cut.x - rect.x }, { ...rect, x: cut.x + cut.width, width: rect.x + rect.width - (cut.x + cut.width) }]
+      : [rect];
+  const kept = pieces.filter((piece) => piece.width > 0 && piece.height > 0).sort((a, b) => b.width * b.height - a.width * a.height)[0];
+  return kept ?? NO_CELLS;
 }

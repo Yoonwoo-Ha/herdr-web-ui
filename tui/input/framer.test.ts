@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { ESC_WAIT_MS, ESC_WAIT_SLOW_MS, PASTE_LIMIT_BYTES, REPLY_WAIT_MS, SEQUENCE_DROP_MS, SEQUENCE_LIMIT_BYTES } from "../model/deadlines.ts";
 import { bytes, expectEveryWay, feedReads, normalize, raw, readWays, T0 } from "../testing/input-runs.ts";
-import type { InputEvent } from "./decode.ts";
+import type { InputEvent, Unstamped } from "./decode.ts";
 import { Framer } from "./framer.ts";
 
 const ESCAPE = { type: "key", key: "ESCAPE", mods: {}, action: "press" } as const;
@@ -203,7 +203,7 @@ describe("hangul once", () => {
 
 describe("replies", () => {
   const OSC_11 = "\x1b]11;rgb:1e1e/1e1e/2e2e";
-  const COLOUR = { type: "reply", kind: "color", data: "11;rgb:1e1e/1e1e/2e2e" };
+  const COLOUR = { type: "reply", kind: "color", data: "11;rgb:1e1e/1e1e/2e2e" } as const;
   const probing = (framer: Framer) => framer.expectReplies(T0);
   // with no DA1 among the bytes, the probe's wait runs out after them
   const TIMEOUT = { type: "reply", kind: "timeout", data: "" };
@@ -215,6 +215,22 @@ describe("replies", () => {
 
   it("gives the same bytes with no query waiting as unknown only", () => {
     expectEveryWay(bytes(`${OSC_11}\x07`), [{ type: "unknown", raw: `${OSC_11}\x07` }]);
+  });
+
+  it("recognizes live display changes between ordinary keys across every read boundary", () => {
+    const wire = bytes(`a\x1b[?997;1n${OSC_11}\x1b\\\x1b[6;20;9tb`);
+    const wanted = [
+      { type: "text", text: "a" },
+      { type: "reply", kind: "scheme", data: "1" },
+      COLOUR,
+      { type: "reply", kind: "cellSize", data: "20;9" },
+      { type: "text", text: "b" },
+    ] satisfies Unstamped[];
+    for (let cut = 0; cut <= wire.length; cut++) {
+      const framer = new Framer(true);
+      expect([...framer.feed(wire.subarray(0, cut), T0), ...framer.feed(wire.subarray(cut), T0)]
+        .map(({ at: _at, ...event }) => event)).toEqual(wanted);
+    }
   });
 
   it("reads the probe's other replies and keeps keys typed meanwhile as keys", () => {

@@ -766,6 +766,54 @@ describe.skipIf(!bin)("the fake herdr-core against a real hc", () => {
     }
   }, TEST_MS);
 
+  /** What one line hears of a terminal whose agent reports `states` one after another, and the turn and state the core then keeps. */
+  async function turns(target: Target, states: readonly string[]): Promise<{ heard: string[]; turn: number | undefined; state: string | undefined }> {
+    const { hc } = await line(target.socket);
+    try {
+      const heard: { terminal: string | undefined; text: string }[] = [];
+      let pending = "";
+      await hc.open("events.subscribe", {}, {
+        onData: (payload) => {
+          pending += Buffer.from(payload).toString();
+          for (let at = pending.indexOf("\n"); at !== -1; at = pending.indexOf("\n")) {
+            const note = JSON.parse(pending.slice(0, at)) as { method: string; params: { type?: string; terminal?: string; data?: Record<string, unknown> } };
+            pending = pending.slice(at + 1);
+            const { type, terminal, data } = note.params;
+            if (note.method !== "event" || (type !== "status" && type !== "turn")) continue;
+            const state = type === "status" ? (data?.["status"] as { state?: unknown } | undefined)?.state : data?.["state"];
+            heard.push({ terminal, text: type === "turn" ? `turn ${String(state)} ${String(data?.["turn"])}` : `status ${String(state)}` });
+          }
+          wake();
+        },
+        onClose: () => {},
+      });
+      const report = (state: string) => `printf '\\033]7501;state=${state}:app=claude\\033\\\\'`;
+      const { address } = await hc.call("terminal.run", { argv: ["sh", "-c", `${states.map((state) => `${report(state)}; sleep 0.2`).join("; ")}; sleep 30`] });
+      if (!target.real) for (const state of states) fake.reportStatus(address, { state, app: "claude" });
+      const mine = () => heard.filter((entry) => entry.terminal === address).map((entry) => entry.text);
+      await until(`${states.length} status reports`, () => mine().filter((text) => text.startsWith("status ")).length >= states.length);
+      const record = await hc.call("terminal.get", { terminal: address });
+      // read before the kill: a real core then reports the ended program's status as null
+      const told = mine();
+      await hc.call("terminal.kill", { terminal: address });
+      return { heard: told, turn: record.turn, state: record.status?.state };
+    } finally {
+      hc.close();
+    }
+  }
+
+  it("t1 a report that leaves working ends a turn: the status, then a turn event with the new state, and the record counts it", async () => {
+    const states = ["working", "idle", "working", "blocked", "idle"];
+    const onReal = await turns(real, states);
+    const onFake = await turns(faked, states);
+    expect(onReal).toEqual({
+      heard: ["status working", "status idle", "turn idle 1", "status working", "status blocked", "turn blocked 2", "status idle"],
+      turn: 2,
+      state: "idle",
+    });
+    expect(onFake).toEqual(onReal);
+  }, TEST_MS);
+
   it("answers calls that are not calls as the real core does", async () => {
     const onReal = await malformedReplies(real.socket);
     const onFake = await malformedReplies(faked.socket);

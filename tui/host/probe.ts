@@ -1,5 +1,6 @@
 import { decodeCsi, decodeString, type Unstamped } from "../input/decode.ts";
 import { ESC_WAIT_SLOW_MS, SEQUENCE_DROP_MS, SEQUENCE_LIMIT_BYTES } from "../model/deadlines.ts";
+import type { Display } from "../../server/herdr-core/hc-api.generated.ts";
 import type { ProbeResult, Rgb } from "./index.ts";
 
 /**
@@ -8,7 +9,8 @@ import type { ProbeResult, Rgb } from "./index.ts";
  * terminal answers and which therefore ends the probe. Never `CSI 6n`: its reply for row 1 reads
  * like a modified F3.
  */
-export const PROBE_QUERY = "\x1b[?u\x1b[?2026$p\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\\x1b[16t\x1b[c";
+export const DISPLAY_QUERY = "\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\\x1b[16t";
+export const PROBE_QUERY = `\x1b[?u\x1b[?2026$p${DISPLAY_QUERY}\x1b[c`;
 
 /** A reply to the probe, as tui/input/decode.ts recognises its shape (the one place that knows them). */
 export type Reply = Extract<Unstamped, { type: "reply" }>;
@@ -21,6 +23,26 @@ function parseColor(text: string): Rgb | null {
   if (!rgb) return null;
   const channel = (hex: string) => Math.round((parseInt(hex, 16) / (16 ** hex.length - 1)) * 255);
   return [channel(rgb[1]!), channel(rgb[2]!), channel(rgb[3]!)];
+}
+
+const hex = (rgb: Rgb): string => "#" + rgb.map((channel) => channel.toString(16).padStart(2, "0")).join("");
+
+/** Send only what the host reported, using the core's RGB and pixel formats. */
+export function displayFacts(probe: ProbeResult): Display | undefined {
+  const { foreground, background, cursorColor, cellPixels } = probe;
+  if (!foreground && !background && !cursorColor && !cellPixels) return undefined;
+  return {
+    ...(foreground && { fg: hex(foreground) }),
+    ...(background && { bg: hex(background) }),
+    ...(cursorColor && { cursor: hex(cursorColor) }),
+    ...(cellPixels && { cell: [cellPixels.width, cellPixels.height] }),
+  };
+}
+
+/** A later reply refreshes one reported fact, leaving the other known facts alone. */
+export function displayAfter(display: Display | undefined, reply: Reply): Display | undefined {
+  const changed = displayFacts(withReply(emptyProbe(), reply));
+  return changed ? { ...display, ...changed } : display;
 }
 
 /** Light when the background's relative luminance is above one half. */
@@ -52,10 +74,11 @@ export function withReply(result: ProbeResult, reply: Reply): ProbeResult {
     }
     case "cellSize": {
       const [height, width] = numbers(reply.data);
-      return { ...result, cellPixels: { width: width!, height: height! } };
+      if (!width || !height || width > 1000 || height > 1000) return result;
+      return { ...result, cellPixels: { width, height } };
     }
     case "deviceAttributes": return { ...result, answered: true, deviceAttributes: numbers(reply.data) };
-    case "timeout": return result;
+    case "scheme": case "timeout": return result;
   }
 }
 
@@ -106,7 +129,7 @@ export class ReplyFilter {
     return out;
   }
 
-  feed(bytes: Uint8Array, now: number): { input: Uint8Array; replies: Reply[]; rest: Uint8Array | null } {
+  feed(bytes: Uint8Array, now: number, passDisplay = false): { input: Uint8Array; replies: Reply[]; rest: Uint8Array | null } {
     const out: number[] = [];
     const replies: Reply[] = [];
     const release = () => { for (const byte of this.held) out.push(byte); this.held = []; };
@@ -117,7 +140,10 @@ export class ReplyFilter {
     };
     /** a finished CSI or OSC: kept when it has a reply's shape, else out whole */
     const finish = (event: Unstamped | undefined) => {
-      if (event?.type === "reply") { replies.push(event); this.held = []; } else release();
+      if (event?.type === "reply" && !(passDisplay && (event.kind === "color" || event.kind === "cellSize"))) {
+        replies.push(event);
+        this.held = [];
+      } else release();
       this.state = "ground";
       return event?.type === "reply" && event.kind === "deviceAttributes";
     };

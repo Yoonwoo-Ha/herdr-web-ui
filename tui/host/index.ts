@@ -64,13 +64,18 @@ export interface Host {
   write(data: Uint8Array | string): boolean;
   /**
    * Asks the host what it can do (kitty flags, DECRQM 2026, OSC 10, 11 and 12, `CSI 16t`, then DA1
-   * as the end). Settles at the DA1 reply or after REPLY_WAIT_MS; replies that come later are
-   * swallowed too. No reply ever reaches `onInput`. The same promise on every call.
+   * as the end). Settles at the DA1 reply or after REPLY_WAIT_MS. The initial replies stay out of
+   * `onInput`; once display watching is enabled, later display updates go to the input decoder.
+   * The same promise on every call.
    */
   probe(): Promise<ProbeResult>;
+  /** Subscribe to terminal color-scheme notifications until leave. */
+  watchDisplay(): void;
+  /** Ask for the current colors and cell size again after a scheme notification. */
+  refreshDisplay(): void;
   /**
-   * The bytes already waiting on stdin, taken instead of handed to `onInput`: reads until no more
-   * arrive within DRAIN_WAIT_MS (probe d's recipe). Empty when not entered.
+   * Reads what already waits on stdin and settles once no more arrives within DRAIN_WAIT_MS (probe d's
+   * recipe). What it reads goes to `onInput` as it comes, as any input does. At once when not entered.
    */
-  drain(): Promise<Uint8Array>;
+  drain(): Promise<void>;
 }
