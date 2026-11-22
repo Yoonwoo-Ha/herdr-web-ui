@@ -163,24 +163,41 @@ interface Line {
 /** What the core answered hello with: what it can do is read from `methods` and `features`, never from `version`. */
 export interface HelloInfo { version: string; core: { id: string; name: string }; methods: string[]; features: string[] }
 
+/** What an HcConnection may be told beyond its transport; without them it keeps its defaults. */
+export interface HcConnectionOptions {
+  /** how long hello and each call wait for hc (default 10 s); a call's own `timeoutMs` still wins */
+  timeoutMs?: number;
+  /**
+   * told once per line, first, when the line ends: the kind it ended for (`closed`, `timeout`,
+   * `bad_frame`, `bad_hello`), before its waiting calls are failed and its channels hear `connection_lost`
+   */
+  onEnd?: (kind: string, message: string) => void;
+}
+
 export class HcConnection {
   private line: Line | null = null;
   private nextId = 1;
   private readonly spawn: () => HcTransport;
+  private readonly timeoutMs: number;
+  private readonly helloTimeoutMs: number;
+  private readonly onEnd: ((kind: string, message: string) => void) | undefined;
 
-  constructor(spawn: () => HcTransport) {
+  constructor(spawn: () => HcTransport, options: HcConnectionOptions = {}) {
     this.spawn = spawn;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.helloTimeoutMs = options.timeoutMs ?? HELLO_TIMEOUT_MS;
+    this.onEnd = options.onEnd;
   }
 
   async hello(): Promise<HelloInfo> {
     return this.current().hello;
   }
 
-  call<M extends HcMethod>(method: M, params: HcMethods[M]["params"], timeoutMs = DEFAULT_TIMEOUT_MS): Promise<HcMethods[M]["result"]> {
+  call<M extends HcMethod>(method: M, params: HcMethods[M]["params"], timeoutMs = this.timeoutMs): Promise<HcMethods[M]["result"]> {
     return this.request<HcMethods[M]["result"]>(method, { ...params }, timeoutMs);
   }
 
-  async open<M extends HcStreamMethod>(method: M, params: HcMethods[M]["params"], handlers: ChannelHandlers, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<{ result: HcMethods[M]["result"]; channel: Channel }> {
+  async open<M extends HcStreamMethod>(method: M, params: HcMethods[M]["params"], handlers: ChannelHandlers, timeoutMs = this.timeoutMs): Promise<{ result: HcMethods[M]["result"]; channel: Channel }> {
     const line = this.current();
     const result = await this.request<HcMethods[M]["result"]>(method, { ...params }, timeoutMs, handlers, line);
     // framed mode always answers with a channel (only plain mode's subscribe has none)
@@ -289,7 +306,7 @@ export class HcConnection {
       helloFailed(new HcError(kind, message));
       this.end(line, kind, message);
     };
-    const helloTimer = setTimeout(() => fail("timeout", `hc connect did not answer hello within ${HELLO_TIMEOUT_MS}ms`), HELLO_TIMEOUT_MS);
+    const helloTimer = setTimeout(() => fail("timeout", `hc connect did not answer hello within ${this.helloTimeoutMs}ms`), this.helloTimeoutMs);
     void hello.then(() => clearTimeout(helloTimer), () => clearTimeout(helloTimer));
     const readFrame = makeFrameReader((frame) => this.onFrame(line, frame), (reason) => this.end(line, "bad_frame", `hc sent an invalid frame (${reason})`));
     void (async () => {
@@ -395,6 +412,7 @@ export class HcConnection {
   private end(line: Line, kind: string, message: string): void {
     if (line.dead) return;
     line.dead = true;
+    this.onEnd?.(kind, message);
     if (this.line === line) this.line = null;
     for (const call of line.pending.values()) {
       clearTimeout(call.timer);

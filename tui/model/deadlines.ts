@@ -24,6 +24,18 @@ export const REPLY_WAIT_MS = 500;
 export const PASTE_LIMIT_BYTES = 1024 * 1024;
 /** The most bytes of one escape sequence kept; a longer one is consumed to its end and reported cut to this. */
 export const SEQUENCE_LIMIT_BYTES = 4096;
+/** How long the core link waits before it opens a new line after one ended; each attempt that fails doubles it. */
+export const RECONNECT_FIRST_MS = 250;
+/** The longest the core link waits between two attempts at a new line. */
+export const RECONNECT_MOST_MS = 5_000;
+/**
+ * A line to the core that stayed up this long was healthy: when it ends, the core link's wait starts
+ * again at RECONNECT_FIRST_MS. A line that ends sooner keeps doubling it, so a core that breaks its
+ * line right after each start is tried every RECONNECT_MOST_MS, not every RECONNECT_FIRST_MS.
+ */
+export const LINE_STABLE_MS = 5_000;
+/** A line to the core that brought no event and no heartbeat (hc sends one every 15 s) for this long is ended, as an EOF ends it. */
+export const LINE_SILENCE_MS = 40_000;
 
 /** A drain of stdin ends when no more bytes arrive within this long (probe d: one `readable` wait, repeated). */
 export const DRAIN_WAIT_MS = 50;
