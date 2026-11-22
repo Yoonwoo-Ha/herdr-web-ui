@@ -1007,6 +1007,9 @@ const promptKey = (text: string): string => text.normalize("NFKC").replace(/^\s*
  */
 const markedDisplay = (text: string): string => text.normalize("NFKC").replace(/\s+/g, "");
 
+/** A tool's call as Codex titles it: a "•" line it starts with what it did or does. */
+const CODEX_TOOL_CALL = /^\u2022 (?:Ran|You ran|Called|Explored|Searched|Waited|Running|Calling|Exploring|Searching|Waiting)(?:\s|$)/;
+
 /**
  * A Codex screen cut at what was typed and what tools did: each prompt (a line Codex starts with
  * "›", a prompt sent or the input box, or an indented "↳", a message queued to be sent), each tool
@@ -1023,8 +1026,7 @@ function codexScreenParts(screen: string): { prompt: boolean; tool?: true; text:
     const prompt = /^(?:[\u203a\u00bb]|\s*\u21b3(?:\s|$))/.test(line);
     // "You ran": a shell command the user ran from the composer, as Codex 0.163 titles it. An answer that
     // starts with one of these words is taken for a call too: telling them apart could show another's chat
-    const tool = !prompt && (/^\s+\u2514(?:\s|$)/.test(line)
-      || /^\u2022 (?:Ran|You ran|Called|Explored|Searched|Waited|Running|Calling|Exploring|Searching|Waiting)(?:\s|$)/.test(line));
+    const tool = !prompt && (/^\s+\u2514(?:\s|$)/.test(line) || CODEX_TOOL_CALL.test(line));
     if (prompt || tool) parts.push({ prompt, ...(tool ? { tool } : {}), text: line });
     else if (last !== undefined && (last.prompt || last.tool) && /^(?:\s|$)/.test(line)) last.text += `\n${line}`;
     else if (last !== undefined && !last.prompt && !last.tool) last.text += `\n${line}`;
@@ -1610,19 +1612,22 @@ function lastFinishedTurn(rollout: string): { asked: string | null; answer: stri
 
 /**
  * A screen's answers, each as it would be compared whole: a line at the start of the screen's line (a "\u2022"
- * or "\u25e6" one, without its bullet) with the indented and blank lines below it, up to the next such line or
- * a "\u2500" rule Codex draws below a finished turn.
+ * or "\u25e6" one, without its bullet, `bulleted`) with the indented and blank lines below it, up to the next such
+ * line or a "\u2500" rule Codex draws below a finished turn.
  */
-function shownBlocks(text: string): string[] {
-  const blocks: string[] = [];
+function shownBlocks(text: string): { text: string; bulleted: boolean }[] {
+  const blocks: { text: string; bulleted: boolean }[] = [];
   let open = false;
   for (const line of text.split("\n")) {
     // Codex indents what an answer wraps onto: a line at the start of the screen's line begins another
     if (/^\u2500/.test(line)) open = false;
-    else if (open && /^(?:\s|$)/.test(line)) blocks[blocks.length - 1] += `\n${line}`;
-    else if (line.trim() !== "") { blocks.push(line.replace(/^[\u2022\u25e6]\s?/, "")); open = true; }
+    else if (open && /^(?:\s|$)/.test(line)) blocks[blocks.length - 1]!.text += `\n${line}`;
+    else if (line.trim() !== "") {
+      blocks.push({ text: line.replace(/^[\u2022\u25e6]\s?/, ""), bulleted: /^[\u2022\u25e6]/.test(line) });
+      open = true;
+    }
   }
-  return blocks.map(markedDisplay);
+  return blocks;
 }
 
 interface Anchor { anchor: string; words: string[]; marked: string; whole: RegExp }
@@ -1710,7 +1715,11 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
   const answerParts = partsOf(screen);
   const texts = blocks ? answerParts : [answerParts.join("\n")];
   const displays = texts.map(normalizeDisplay);
-  const wholeBlocks = answerParts.flatMap(shownBlocks);
+  const screenBlocks = answerParts.flatMap(shownBlocks);
+  const wholeBlocks = screenBlocks.map((block) => markedDisplay(block.text));
+  // a rendered answer counts from its bullet only: indented rows a read begins with may be the rest of a prompt or of a
+  // tool's output whose first row the read cut. Each block's letters first: rendering an answer parses all its markdown
+  const renderedBlocks = screenBlocks.flatMap((block) => block.bulleted ? [{ text: block.text, letters: normalizeDisplay(block.text) }] : []);
   const parsed = candidates.map(turnsOf);
   const footed = blocks ? null : footedAnswer(screen.slice(Math.max(0, screen.lastIndexOf("OpenAI Codex (v"))));
   const turn = footed === null ? null : footedTurnOwner(footed, candidates, displays, footerOwners);
@@ -1731,6 +1740,10 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
       const found = answerAnchor(text);
       return found !== null && displays.some((display) => display.includes(found.anchor))
         && (wholeBlocks.some((block) => found.whole.test(block))
+          // Commentary may contain Markdown while tools are still running, so no
+          // completed-turn footer exists yet. A whole rendered message is the
+          // same substantial evidence as a whole plain one, never just a suffix.
+          || renderedBlocks.some((block) => block.letters.includes(found.anchor) && completedAnswerMatches(text, block.text))
           || (candidate.path === footedOwner && completedAnswerMatches(text, footed!.text))) ? [found] : [];
     });
     if (anchors.length === 0) continue;
@@ -2587,8 +2600,9 @@ const STATUS_ROW = /^[\u2022\u25e6] (?:.* \((?:\d+h )?(?:\d+m )?\d+s(?: \u2022 .
 
 /**
  * What a Codex TUI's screen shows of its conversation since its last header, answers only: each
- * block a line starting with "•" begins (an answer, a tool's call), through the indented lines
- * below it. Prompts ("›", with their indented lines), the input box and the picker's rows are
+ * block a line starting with "•" begins, through the indented lines below it. A tool's call (CODEX_TOOL_CALL,
+ * with the lines it wraps onto) is left out, as codexScreenParts leaves it: it may quote any conversation's
+ * answer, and an answer that starts with the same word is taken for one. Prompts ("›", with their indented lines), the input box and the picker's rows are
  * left out: a pane may quote another conversation there before its own is loaded, or show the
  * picker with none. So are Codex's status row (STATUS_ROW) and what hangs below an indented "└ " (a
  * tool's output, which a rollout may keep only in part), "↳ " (a message queued to be sent, which
@@ -2601,7 +2615,7 @@ function shownAnswers(screen: string): string {
     if (line.includes("OpenAI Codex (v")) {
       kept = [];
       answer = false;
-    } else if (/^\S/.test(line)) answer = line.startsWith("\u2022") && !STATUS_ROW.test(line.trimEnd());
+    } else if (/^\S/.test(line)) answer = line.startsWith("\u2022") && !STATUS_ROW.test(line.trimEnd()) && !CODEX_TOOL_CALL.test(line);
     else if (/^\s+(?:[\u2514\u21b3](?:\s|$)|answer: |note: )/.test(line)) answer = false;
     if (answer) kept.push(line);
   }

@@ -1168,6 +1168,27 @@ describe("a thread of another folder Codex has loaded, as a resume through the p
     expect(await resolve()).toBeNull();
   });
 
+  heldIt("takes no tool call's title, wrapped or not, for an answer another loaded conversation gave in the same words", async () => {
+    const rollout = otherFolderThread();
+    const command = "echo Deploy finished for every region and the canary plus rollback checks passed cleanly";
+    foreground = picker;
+    const titles = [`• Ran ${command.replace(" plus", "\n  plus")}`, `• Ran ${command}`];
+    const cases = titles.flatMap((title) => [`Ran ${command}`, `**Ran ${command}**`].map((said) => ({ title, said })));
+    for (const [index, { title, said }] of cases.entries()) {
+      const ran = `${title}\n  └ Deploy finished`;
+      const peer = `01a16b22-7e1f-7072-8897-dddddddd000${index}`;
+      elsewhereThread(peer, [said]);
+      const both = await loaded(other, peer);
+      screen = `  >_ OpenAI Codex (v0.164.0)\n\n${ran}\n\n› `;
+      expect({ title, said, found: await resolve() }).toEqual({ title, said, found: null });
+      // the pane's own answer beside that call still tells
+      screen = `  >_ OpenAI Codex (v0.164.0)\n\n• ${otherAnswer}\n\n${ran}\n\n› `;
+      expect({ title, said, found: await resolve() }).toEqual({ title, said, found: rollout });
+      both.kill();
+      await both.exited;
+    }
+  });
+
   heldIt("weighs what another loaded conversation reasoned, long ago too", async () => {
     otherFolderThread();
     const peer = "01a16b22-7e1f-7072-8897-dddddddddddd";
@@ -3229,6 +3250,23 @@ describe("a Codex pane whose last answer is shorter than 64 letters and digits b
     expect(await resolve()).toBeNull();
     foreground = [{ pid: 2147483643, argv: ["/usr/bin/codex"] }];
     expect(await resolve()).toBe(path);
+  });
+
+  it("keeps a whole rendered commentary bound after tools scroll it away", async () => {
+    foreground = live;
+    const reply = `**The application requirements are verified against the original posting.** ${answer}`;
+    writeRollout(path, thread, turn("t0", "Inspect the application", reply, false));
+    screen = [
+      "› Inspect the application", "", `• ${reply.replaceAll("**", "")}`, "",
+      "• Ran inspect-application", "  └ Fields checked", "",
+      "• Working (4s • esc to interrupt)", "", "› Ask Codex to do anything", "",
+      "  GPT-6-Luna low · /tmp/proj",
+    ].join("\n");
+    expect(await resolve()).toBe(path);
+    screen = "• Ran another-command\n  └ More output\n\n• Working (5s • esc to interrupt)";
+    expect(await resolve()).toBe(path);
+    screen = "";
+    expect(await codexOpenRollout(root, root, home)).toBe(path);
   });
 
   it("leaves a long answer's binding as it was when a short turn follows: kept when the screen no longer tells", async () => {
