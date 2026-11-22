@@ -365,11 +365,31 @@ const AGENT_START_MS = 10_000;
 
 /** What hc sends right after the screen in a first paint: the win32-input-mode state (herdr-core viewers.rs `first_paint`). */
 const PAINT_END = "\u001b[?9001";
+/** How a first paint begins: hc's CAN, then the soft reset of ghostty-vt `paint`. */
+const PAINT_START = "\u0018\u001b[!p";
 /** How long a watch-only attach may take to bring its first paint: within the 1.5s a prompt poll gives its colored read. */
 const PAINT_MS = 1_000;
 /** Any escape sequence: CSI, OSC, a DCS/SOS/PM/APC string, or a short escape (HTS, a charset designation). */
 const ESCAPE_RE = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[PX^_][^\u001b]*\u001b\\|[ -/]*[0-~])/g;
 const SGR_RE = /^\u001b\[[0-9;:]*m$/;
+/** The clear a first paint starts with, after hc's reset, and the one between its history and its screen. */
+const PAINT_CLEAR = "\u001b[H\u001b[2J";
+/** hc's switch to the alternate screen in a first paint, right before it paints that screen. */
+const ALTERNATE_SCREEN = "\u001b[?1049h";
+
+/**
+ * Where the alternate screen's paint begins in a first paint, right after hc switches to it, or -1
+ * when the program is on the main screen. hc paints the main screen first, then switches and paints
+ * the alternate one (measured on hc 0.1.21), so the switch may come well after the first clear: a
+ * program a shell started there (Claude Code typed at a prompt) has the shell's modes, tab stops and
+ * lines painted before it.
+ */
+function alternateScreenAt(paint: string): number {
+  const end = paint.indexOf(PAINT_END);
+  const cleared = paint.indexOf(PAINT_CLEAR);
+  const at = end === -1 || cleared === -1 ? -1 : paint.indexOf(ALTERNATE_SCREEN, cleared);
+  return at === -1 || at > end ? -1 : at + ALTERNATE_SCREEN.length;
+}
 
 /**
  * What hc's text read of the screen (`terminal.read`, no history) shows, with its colors, from the
@@ -380,21 +400,29 @@ const SGR_RE = /^\u001b\[[0-9;:]*m$/;
  * that one tells input from padding (OpenCode's Tab space), and a text compare trims it anyway. hc paints after a
  * clear (`CSI H CSI 2J`): the history, pushed up by an SGR reset, a line break and one more per
  * screen row, then a second clear and the screen, which ends where the win32-input-mode state
- * follows (herdr-core ghostty-vt `paint`, viewers.rs `first_paint`). null for a paint not shaped
- * so. A row the terminal soft-wrapped stays a line of its own, as on the screen, where hc's text
- * read joins it with the next.
+ * follows (herdr-core ghostty-vt `paint`, viewers.rs `first_paint`). A program on the alternate
+ * screen has no history there, and hc's read takes none in: its screen is what hc paints after the
+ * switch to it (alternateScreenAt), never the main screen's lines before it. null for a paint not
+ * shaped so. A row the terminal soft-wrapped stays a line of its own, as on the screen, where hc's
+ * text read joins it with the next.
  */
 export function paintedScreen(paint: string, rows: number): string | null {
   const end = paint.indexOf(PAINT_END);
-  const parts = paint.slice(0, Math.max(end, 0)).split("\u001b[H\u001b[2J");
-  if (end === -1 || parts.length < 2 || parts.length > 3) return null;
+  const parts = paint.slice(0, Math.max(end, 0)).split(PAINT_CLEAR);
+  if (end === -1 || parts.length < 2) return null;
   const text = (part: string): string => part.replace(ESCAPE_RE, (sequence) => (SGR_RE.test(sequence) ? sequence : ""))
     .replace(/\r\n/g, "\n").replace(/\r/g, "");
-  const pushed = "\n".repeat(rows + 1);
-  const history = parts.length === 3 ? text(parts[1]!) : "";
-  if (history !== "" && !history.endsWith(pushed)) return null;
-  const lines = [...(history === "" ? [] : history.slice(0, -pushed.length).split("\n")), ...text(parts.at(-1)!).split("\n")]
-    .map(withoutPlainTrailingSpaces);
+  const alternate = alternateScreenAt(paint);
+  let painted: string[];
+  if (alternate !== -1) painted = text(paint.slice(alternate, end)).split("\n");
+  else {
+    if (parts.length > 3) return null;
+    const pushed = "\n".repeat(rows + 1);
+    const history = parts.length === 3 ? text(parts[1]!) : "";
+    if (history !== "" && !history.endsWith(pushed)) return null;
+    painted = [...(history === "" ? [] : history.slice(0, -pushed.length).split("\n")), ...text(parts.at(-1)!).split("\n")];
+  }
+  const lines = painted.map(withoutPlainTrailingSpaces);
   while (lines.length > 0 && lines.at(-1)!.replace(/\u001b\[[0-9;:]*m/g, "") === "") lines.pop();
   return lines.slice(-rows).join("\n");
 }
@@ -687,7 +715,9 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
   /**
    * The first paint (with `history` lines, else a screen's worth) of an attach that only watches, which never types or
    * resizes, closed once the screen is in, and the rows it was painted at. null: no paint within
-   * PAINT_MS of hc answering the attach, or a stream that ended first.
+   * PAINT_MS of hc answering the attach, or a stream that ended first. Another machine's line may drop
+   * in the middle of a paint: hc then attaches again on the same channel and paints afresh
+   * (remote/viewers.rs `reattach`), so only the last paint that began before the screen's end counts.
    */
   const watchedPaint = async (paneId: string, history?: number): Promise<{ paint: string | null; rows: number }> => {
     const record = await terminal(paneId);
@@ -697,7 +727,8 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
     const { result, channel } = await hc.open("terminal.attach", { terminal: paneId, cols: record.cols, rows: record.rows, history: history ?? record.rows, observe: true }, {
       onData: (payload) => {
         paint += decoder.decode(payload, { stream: true });
-        if (paint.includes(PAINT_END)) resolve(paint);
+        const end = paint.indexOf(PAINT_END);
+        if (end !== -1) resolve(paint.slice(Math.max(paint.lastIndexOf(PAINT_START, end), 0)));
       },
       onClose: () => resolve(null),
     });
@@ -725,18 +756,17 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
 
   /**
    * Whether the terminal's program is on the alternate screen, which hc's record does not say: hc
-   * paints its reset, which ends in a clear, then the alternate screen first if the program is on it
-   * (herdr-core ghostty-vt `paint`). No paint, or an attach hc refused (a kept terminal whose
-   * program is lost, whose stored screen hc still reads), counts as the alternate screen.
+   * paints its reset, which ends in a clear, then the main screen, then switches to the alternate
+   * screen and paints it if the program is on it (herdr-core ghostty-vt `paint`, alternateScreenAt).
+   * No paint, a paint without that clear, or an attach hc refused (a kept terminal whose program is
+   * lost, whose stored screen hc still reads), counts as the alternate screen.
    */
   const onAlternateScreen = async (paneId: string): Promise<boolean> => {
     const { paint } = await watchedPaint(paneId, 0).catch((error: unknown) => {
       if (error instanceof HcError) return { paint: null };
       throw error;
     });
-    if (paint === null) return true;
-    const cleared = paint.indexOf("\u001b[H\u001b[2J");
-    return cleared === -1 || paint.startsWith("\u001b[?1049h", cleared + "\u001b[H\u001b[2J".length);
+    return paint === null || !paint.includes(PAINT_CLEAR) || alternateScreenAt(paint) !== -1;
   };
 
   /** Input to one pane in the order it was asked for: each attach and its bytes finish before the next. */
