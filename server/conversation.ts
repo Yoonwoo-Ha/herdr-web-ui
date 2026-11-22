@@ -2366,11 +2366,12 @@ async function readPaneConversation(paneId: string, codexHome?: string, page: Co
     try { revision = grokProjection(resolved.path, statSync(resolved.path)).revision; } catch {}
     if (revision === null || revision === "0") throw new ConversationUnavailable("transcript_missing");
   }
-  // The ledger never records the selected model. The live status row does, and a switch there
-  // writes no turn, so the answer is marked screen and the chat re-reads it on terminal output.
-  // A scroll or a failed read leaves the name unknown rather than one from an older frame, and is
-  // still marked screen so the next draw can fill it. The row is read before the store check below,
-  // so a pane that moved to another conversation during the read is refused, not given its model.
+  // The ledger records the model only with the next message. The live status row names it at once,
+  // and a switch there writes no turn, so the answer is marked screen and the chat re-reads it on
+  // terminal output. A scroll or a failed read keeps the ledger's model rather than one from an
+  // older frame, and is still marked screen so the next draw can fill it. The row is read before
+  // the store check below, so a pane that moved to another conversation during the read is
+  // refused, not given its model.
   const agyScreen = resolved.source === "agy-transcript" ? await screenMetadata("agy-transcript") : null;
   if (resolved.agy && !sameAgyStore(resolved.agy, await resolveAgyStore(snapshot.panes.find((pane) => pane.pane_id === paneId)!))) throw new ConversationUnavailable("no_session_path");
   // The screen read waits on herdr. A pane closed or bound to another session meanwhile has not
@@ -2418,11 +2419,17 @@ async function readPaneConversation(paneId: string, codexHome?: string, page: Co
   }
   if (agyScreen !== null) {
     // Enrich the response, never the shared page.
+    // Live screen wins when readable (e.g. a /model switch before the next turn);
+    // otherwise keep the transcript's recorded model/effort (e.g. herdr-core or a scrolled pane).
+    const model = agyScreen.model ?? answer.metadata.model;
+    const reasoning_effort = agyScreen.model !== null
+      ? agyScreen.reasoning_effort
+      : (agyScreen.reasoning_effort ?? answer.metadata.reasoning_effort);
     return {
       ...answer,
       screen: true,
-      metadata: { ...answer.metadata, ...agyScreen },
-      version: answerVersion(answer.version, `${agyScreen.model}\0${agyScreen.reasoning_effort}`),
+      metadata: { ...answer.metadata, model, reasoning_effort },
+      version: answerVersion(answer.version, `${model}\0${reasoning_effort}`),
     };
   }
   return answer;
@@ -2595,7 +2602,22 @@ export function transcriptPage(source: Exclude<StreamSource, "agy-transcript">, 
 }
 
 export async function agyTranscriptPage(path: string, page: ConversationPage = {}, codexHome?: string, authorized?: { dev: number; ino: number }): Promise<RecognizedConversation> {
-  try { return await withAgyHistory(path, (projection, fd) => ({ ...transcriptPageRead("agy-transcript", path, page, codexHome, projection, fd), activity: projection.activity }), authorized); }
+  try {
+    return await withAgyHistory(path, (projection, fd) => {
+      const read = transcriptPageRead("agy-transcript", path, page, codexHome, projection, fd);
+      const model = projection.model ?? read.metadata.model;
+      const reasoning_effort = projection.model !== null ? projection.reasoning_effort : (projection.reasoning_effort ?? read.metadata.reasoning_effort);
+      const metadata = { ...read.metadata, model, reasoning_effort };
+      return {
+        ...read,
+        metadata,
+        activity: projection.activity,
+        version: model !== read.metadata.model || reasoning_effort !== read.metadata.reasoning_effort
+          ? answerVersion(read.version, `${model}\0${reasoning_effort}`)
+          : read.version,
+      };
+    }, authorized);
+  }
   catch (error) {
     // every file thread busy: worth another try soon (http.ts answers 503); another file than the
     // authorized one is pending (withAgyHistory)

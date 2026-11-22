@@ -24,7 +24,8 @@ const CATALOG_BYTES = AGY_CATALOG_BYTES;
 const hash = (value: string): string => createHash("sha256").update(value).digest("base64url");
 const record = (value: unknown): Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 export class AgyUnavailable extends Error { constructor() { super("Agy history is unavailable"); } }
-interface Step { index: number; start: number; end: number; type: string; status: string; digest: string; activity?: "working" | "idle" }
+interface StepModel { model: string; reasoning_effort: string | null; source: "settings" | "planner" }
+interface Step { index: number; start: number; end: number; type: string; status: string; digest: string; activity?: "working" | "idle"; model?: StepModel }
 interface Index { identity: string; size: number; changed: string; scanned: number; revision: string; steps: Step[]; visible: Step[]; retired: Set<number> }
 const indexes = new Map<string, Index>();
 const catalogs = new Map<string, { key: string; rows: number[] }>();
@@ -160,7 +161,46 @@ export async function agyCatalogOffThread(path: string): Promise<Set<number>> {
   return new Set(rows);
 }
 
-export interface AgyProjection { segments: { start: number; end: number }[]; promptStarts: number[]; revision: string; indices: number[]; activity: "working" | "idle" }
+export interface AgyProjection { segments: { start: number; end: number }[]; promptStarts: number[]; revision: string; indices: number[]; activity: "working" | "idle"; model: string | null; reasoning_effort: string | null }
+const SETTINGS_OPEN = "<USER_SETTINGS_CHANGE>";
+const SETTINGS_CLOSE = "</USER_SETTINGS_CHANGE>";
+// display names hold dots (`Gemini 3.8 Flash (High)`): the value ends at the sentence's period
+const AGY_SETTINGS_MODEL = /^The user changed setting `Model Selection` from [^\n]+? to ([^\n]+?)\.(?: |$)/mu;
+const AGY_PAREN_EFFORT = /^(.*\S)\s+\((none|minimal|extra-low|low|medium|high|xhigh|max)\)$/iu;
+const AGY_ID_EFFORT = /^(.+?)-(extra-low|minimal|low|medium|high|xhigh|max)$/u;
+const normalizeModelKey = (name: string): string => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+/** Agy appends its settings block last, after every skill body and mentioned item it expands: a block inside one of those is text. */
+function agySettingsBlock(metadata: string): string | null {
+  const trimmed = metadata.trimEnd();
+  if (!trimmed.endsWith(SETTINGS_CLOSE)) return null;
+  const open = trimmed.lastIndexOf(SETTINGS_OPEN);
+  return open < 0 ? null : trimmed.slice(open + SETTINGS_OPEN.length, -SETTINGS_CLOSE.length);
+}
+
+function stepModel(value: Record<string, unknown>): StepModel | undefined {
+  if (value.status !== "DONE") return undefined;
+  if (value.type === "USER_INPUT" && typeof value.content === "string") {
+    const envelope = agyEnvelope(value.content);
+    const block = envelope === null ? null : agySettingsBlock(envelope.metadata);
+    const chosen = (block === null ? null : AGY_SETTINGS_MODEL.exec(block))?.[1]?.trim() ?? "";
+    if (!chosen || chosen === "None") return undefined;
+    const paren = AGY_PAREN_EFFORT.exec(chosen);
+    return paren
+      ? { model: paren[1]!.trim(), reasoning_effort: paren[2]!.toLowerCase(), source: "settings" }
+      : { model: chosen, reasoning_effort: null, source: "settings" };
+  }
+  if (value.type === "PLANNER_RESPONSE" && typeof value.model === "string") {
+    const raw = value.model.trim();
+    if (!raw) return undefined;
+    const suffixed = AGY_ID_EFFORT.exec(raw);
+    return suffixed
+      ? { model: suffixed[1]!, reasoning_effort: suffixed[2]!.toLowerCase(), source: "planner" }
+      : { model: raw, reasoning_effort: null, source: "planner" };
+  }
+  return undefined;
+}
+
 function agyScan(path: string, fd: number): Index {
   const stat = fstatSync(fd);
   const identity = `${stat.dev}:${stat.ino}`;
@@ -201,7 +241,7 @@ function agyScan(path: string, fd: number): Index {
         : value.type === "PLANNER_RESPONSE"
           ? (Array.isArray(value.tool_calls) && value.tool_calls.length > 0) || typeof value.content !== "string" || !value.content.trim() ? "working" : "idle"
           : undefined;
-      index.steps.push({ index: number, start: lineStart, end: lineEnd, type: value.type as string, status: String(value.status ?? ""), digest: hash(line), activity });
+      index.steps.push({ index: number, start: lineStart, end: lineEnd, type: value.type as string, status: String(value.status ?? ""), digest: hash(line), activity, model: stepModel(value) });
       if (index.steps.length > MAX_ENTRIES) throw new AgyUnavailable();
       index.scanned = lineEnd;
       start = newline + 1;
@@ -229,8 +269,24 @@ function agyReduce(index: Index, catalog: Set<number>): AgyProjection {
   const promptStarts: number[] = [], indices: number[] = [];
   let length = 0;
   let activity: AgyProjection["activity"] = "idle";
+  let model: string | null = null;
+  let reasoning_effort: string | null = null;
+  let display: { key: string; model: string; reasoning_effort: string | null } | null = null;
   for (const step of visible) {
     if (step.activity !== undefined) activity = step.activity;
+    if (step.model !== undefined) {
+      if (step.model.source === "settings") {
+        model = step.model.model;
+        reasoning_effort = step.model.reasoning_effort;
+        display = { key: normalizeModelKey(step.model.model), model: step.model.model, reasoning_effort: step.model.reasoning_effort };
+      } else if (display !== null && display.key === normalizeModelKey(step.model.model)) {
+        model = display.model;
+        reasoning_effort = step.model.reasoning_effort ?? display.reasoning_effort;
+      } else {
+        model = step.model.model;
+        reasoning_effort = step.model.reasoning_effort;
+      }
+    }
     indices.push(step.index);
     if (step.type === "USER_INPUT" && step.status === "DONE") promptStarts.push(length);
     const previous = segments.at(-1);
@@ -238,7 +294,7 @@ function agyReduce(index: Index, catalog: Set<number>): AgyProjection {
     else segments.push({ start: step.start, end: step.end });
     length += step.end - step.start;
   }
-  return { segments, promptStarts, revision: index.revision, indices, activity };
+  return { segments, promptStarts, revision: index.revision, indices, activity, model, reasoning_effort };
 }
 
 const historyReads = new Map<string, Promise<unknown>>();
@@ -301,12 +357,56 @@ export function parseAgyTranscript(text: string, path?: string): ConversationTur
   const steps = path ? new Map(indexes.get(path)?.visible.map((step) => [step.index, step])) : undefined;
   let idle = false;
   let woken = false;
+  type ToolPart = Extract<ConversationPart, { kind: "tool" }>;
+  let pendingBatch: { plannerIndex: number; calls: ToolPart[]; generics: { stepIndex: number; content: string; line: string; ts: string | null; step: Step | undefined }[] } | null = null;
+  const appendAssistant = (parts: ConversationPart[], ts: string | null, fromPlanner: boolean): void => {
+    if (!parts.length) return;
+    const previous = turns.at(-1);
+    const opens = woken && fromPlanner;
+    if (previous?.role === "assistant" && !opens) {
+      previous.parts.push(...parts);
+      if (!woken && (!idle || fromPlanner)) previous.end_ts = ts ?? undefined;
+    } else {
+      turns.push({ role: "assistant", ts, end_ts: ts ?? undefined, parts });
+      woken = false;
+    }
+  };
+  const flushBatch = (): void => {
+    if (pendingBatch === null) return;
+    const { plannerIndex, calls, generics } = pendingBatch;
+    pendingBatch = null;
+    if (generics.length === 0) return;
+    // Agy allocates sequential step indices to tool results in dispatch order right after the
+    // planner step. Pair them only when the count and indices match 1-to-1; otherwise keep each
+    // result independent rather than guessing.
+    if (generics.length === calls.length && generics.every((entry, idx) => entry.stepIndex === plannerIndex + 1 + idx)) {
+      for (let idx = 0; idx < calls.length; idx++) {
+        const result = generics[idx]!;
+        if (!result.content) continue;
+        trimOutput(calls[idx]!, result.content, path && result.step ? outputRef(path, result.step) : `agy:${hash(result.line)}`);
+        const previous = turns.at(-1);
+        if (previous?.role === "assistant" && !woken && !idle) previous.end_ts = result.ts ?? undefined;
+      }
+      return;
+    }
+    for (const result of generics) {
+      if (!result.content) continue;
+      const part: ToolPart = { kind: "tool", name: "Tool output", summary: `Step ${result.stepIndex}`, input: "", output: "" };
+      trimOutput(part, result.content, path && result.step ? outputRef(path, result.step) : `agy:${hash(result.line)}`);
+      appendAssistant([part], result.ts, false);
+    }
+  };
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     const value = entry(line);
     if (value.status !== "DONE") continue;
     const content = typeof value.content === "string" ? value.content : "";
     const ts = typeof value.created_at === "string" ? value.created_at : null;
+    if (value.type === "GENERIC" && pendingBatch !== null) {
+      pendingBatch.generics.push({ stepIndex: value.step_index as number, content, line, ts, step: steps?.get(value.step_index as number) });
+      continue;
+    }
+    flushBatch();
     if (value.type === "USER_INPUT") {
       const envelope = agyEnvelope(content);
       const skills = envelope === null ? [] : agyInvokedSkills(envelope.request, envelope.metadata).map((skill) => ({ kind: "skill" as const, skill }));
@@ -322,10 +422,12 @@ export function parseAgyTranscript(text: string, path?: string): ConversationTur
     }
     if (value.type !== "PLANNER_RESPONSE" && value.type !== "GENERIC") continue;
     const parts: ConversationPart[] = [];
+    const callParts: ToolPart[] = [];
+    let malformedCall = false;
     if (value.type === "GENERIC") {
       if (!content) continue;
       // Native exports provide no call ID. Keep this result independent of planner calls.
-      const part: Extract<ConversationPart, { kind: "tool" }> = { kind: "tool", name: "Tool output", summary: `Step ${value.step_index}`, input: "", output: "" };
+      const part: ToolPart = { kind: "tool", name: "Tool output", summary: `Step ${value.step_index}`, input: "", output: "" };
       const step = steps?.get(value.step_index as number);
       trimOutput(part, content, path && step ? outputRef(path, step) : `agy:${hash(line)}`);
       parts.push(part);
@@ -333,29 +435,26 @@ export function parseAgyTranscript(text: string, path?: string): ConversationTur
       if (content) parts.push({ kind: "text", text: content });
       for (const call of Array.isArray(value.tool_calls) ? value.tool_calls : []) {
         const tool = record(call), input = record(tool.args);
-        if (typeof tool.name !== "string") continue;
+        if (typeof tool.name !== "string") { malformedCall = true; continue; }
         const mapped = { ...input, command: input.CommandLine, file_path: input.Path ?? input.AbsolutePath ?? input.TargetFile };
-        const part: Extract<ConversationPart, { kind: "tool" }> = { kind: "tool", name: tool.name, summary: toolSummary(tool.name, mapped), input: JSON.stringify(input), output: "" };
+        const part: ToolPart = { kind: "tool", name: tool.name, summary: toolSummary(tool.name, mapped), input: JSON.stringify(input), output: "" };
         // the ledger ties no output step to its call, so a read stays requested
         const skill = tool.name === "read_file" ? skillDocument(input.Path) : null;
         if (skill) part.skill = { ...skill, status: "requested" };
         parts.push(part);
+        callParts.push(part);
       }
     }
     if (!parts.length) continue;
     if (value.type === "PLANNER_RESPONSE") {
       idle = (!Array.isArray(value.tool_calls) || value.tool_calls.length === 0) && content.trim().length > 0;
+      if (callParts.length > 0 && !malformedCall) {
+        pendingBatch = { plannerIndex: value.step_index as number, calls: callParts, generics: [] };
+      }
     }
-    const previous = turns.at(-1);
-    const opens = woken && value.type === "PLANNER_RESPONSE";
-    if (previous?.role === "assistant" && !opens) {
-      previous.parts.push(...parts);
-      if (!woken && (!idle || value.type === "PLANNER_RESPONSE")) previous.end_ts = ts ?? undefined;
-    } else {
-      turns.push({ role: "assistant", ts, end_ts: ts ?? undefined, parts });
-      woken = false;
-    }
+    appendAssistant(parts, ts, value.type === "PLANNER_RESPONSE");
   }
+  flushBatch();
   return turns;
 }
 

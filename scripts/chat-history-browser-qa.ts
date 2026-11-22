@@ -464,11 +464,11 @@ try {
   await page.getByText("Summarize the last three fictional commits.", { exact: true }).waitFor();
   await page.getByText("Synthetic Agy answer", { exact: true }).waitFor();
   await page.locator(".work-block-head").click();
-  assert.equal(await page.locator(".work-row-head").count(), 2, "Agy planner call and independent result remain separate");
-  await page.locator(".work-row-head").last().click();
+  assert.equal(await page.locator(".work-row-head").count(), 1, "Agy's result is drawn in the planner call it answers, not as a row of its own");
+  await page.locator(".work-row-head").click();
   await page.getByText("Fictional commit log", { exact: true }).waitFor();
   assert.equal(await page.getByText("Synthetic Claude prompt", { exact: true }).count(), 0);
-  console.log("PASS Agy native parser output renders user/assistant text and independent expandable tool results");
+  console.log("PASS Agy native parser output renders user/assistant text and its tool call with the result it returned");
   // A press reads a chat before its pick renders (#2562). herdr moves the pane to another session after
   // that read answered and before the click lands: the chat opened shows the new session, never the old one.
   await page.evaluate(() => { window.qa.session("switch", "a"); window.qa.press("switch"); });
