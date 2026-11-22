@@ -432,8 +432,12 @@ try {
     await paused.getByText("Copilot turn after the wait", { exact: true }).waitFor();
     await banner.waitFor({ state: "detached" });
     if (process.env.UI_EVIDENCE_DIR) await paused.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "copilot-recovered.png") });
+    structured = false;
+    await paused.evaluate(() => window.chatFallbackQA.refresh());
+    await paused.locator(".chat-terminal-fallback summary").waitFor();
+    assert.equal(await paused.getByText("Copilot turn after the wait", { exact: true }).count(), 0, "a settled fallback clears the old transcript");
     await paused.close();
-    structured = false; source = "codex-transcript";
+    source = "codex-transcript";
     console.log("PASS a Copilot wait keeps the turns, reads on activity only, and resumes them");
   }
   {

@@ -31,7 +31,7 @@ export const COPILOT_UNAVAILABLE_REASONS = [
   "copilot_api_foreground_changed", "copilot_api_no_foreground", "copilot_api_transcript_unproved",
 ] as const;
 const COPILOT_SETTLED = new Set<string>(["copilot_session_unregistered", "copilot_peer_conflict", "copilot_report_mismatch",
-  "copilot_api_no_foreground", "copilot_api_foreground_changed"]);
+  "copilot_api_no_foreground", "copilot_api_foreground_changed", "copilot_api_unsupported_protocol"]);
 export const copilotRecoverable = (diagnostic: string | undefined): boolean =>
   diagnostic !== undefined && diagnostic.startsWith("copilot_") && !COPILOT_SETTLED.has(diagnostic);
 export const UNAVAILABLE_DIAGNOSTICS = [...COPILOT_UNAVAILABLE_REASONS, "agent_cwd_missing", "devin_current_session_unverified"] as const;

@@ -56,13 +56,14 @@ async function fixture(mode = "stable", flags = ["--ui-server"]) {
           if (config.mode === "truncated") { socket.end("Content-Length: 100\\r\\n\\r\\n{"); continue; }
           if (config.mode === "protected") { send({ jsonrpc: "2.0", id: message.id, error: { code: -32001, message: "Unauthorized" } }); continue; }
           if (message.method === "connect") {
-            send({ jsonrpc: "2.0", id: message.id, result: { ok: true, protocolVersion: config.mode === "version" ? 999 : 3 } });
+            const protocolVersion = { legacy: 3, unknown: 999, "string-version": "4" }[config.mode] ?? 4;
+            send({ jsonrpc: "2.0", id: message.id, result: { ok: config.mode !== "negative-handshake", protocolVersion } });
           } else {
             selections++;
             if (config.mode === "close") { socket.end(); continue; }
             if (config.mode === "event") send({ jsonrpc: "2.0", method: "session.lifecycle", params: { type: "session.foreground", sessionId: second } });
             const sessionId = config.mode === "switch" ? selections === 1 ? first : second
-              : config.mode === "malformed" ? "../not-a-session" : config.mode === "empty" ? null : config.session;
+              : config.mode === "malformed" ? "../not-a-session" : config.mode === "empty" ? undefined : config.session;
             const response = { jsonrpc: "2.0", id: config.mode === "wrong-id" ? "wrong" : message.id, result: { sessionId } };
             if (config.mode === "event-after-final" && selections === 2) {
               socket.write(Buffer.concat([frame(response), frame({ jsonrpc: "2.0", method: "session.lifecycle", params: { type: "session.foreground", sessionId: second } })]));
@@ -119,6 +120,12 @@ linux("requeries the current foreground across warm switches without a native re
   } finally { await test.close(); }
 });
 
+linux("reads a Copilot that still speaks protocol 3 as before", async () => {
+  const test = await fixture("legacy");
+  try { expect(await observeCopilotForeground(test.pid)).toEqual({ state: "observed", sessionId: first, authorization: "unproven" }); }
+  finally { await test.close(); }
+});
+
 linux("never retains the last ID after a failed observation or protected-endpoint refusal", async () => {
   const test = await fixture();
   try {
@@ -173,11 +180,12 @@ linux("never reuses a binding after a transport gap or explicit reader cleanup",
 const attempts = 3;
 const attemptBudget = 3 * COPILOT_RPC_TIMEOUT_MS;
 const fixtureStart = 5_000;
-for (const mode of ["switch", "event", "event-after-final", "malformed", "wrong-id", "empty", "oversize", "truncated", "close", "version", "stall"]) {
+for (const mode of ["switch", "event", "event-after-final", "malformed", "wrong-id", "empty", "oversize", "truncated", "close",
+  "unknown", "string-version", "negative-handshake", "stall"]) {
   linux(`rejects ${mode} instead of returning a stale foreground ID`, async () => {
     const test = await fixture(mode);
     const diagnostic = mode === "switch" || mode === "event" || mode === "event-after-final" ? "foreground_changed"
-      : mode === "empty" ? "no_foreground" : mode === "version" ? "unsupported_protocol"
+      : mode === "empty" ? "no_foreground" : ["unknown", "string-version"].includes(mode) ? "unsupported_protocol"
       : mode === "stall" ? "rpc_timeout" : mode === "close" || mode === "truncated" ? "rpc_failed" : "malformed_rpc";
     try {
       let result = await observeCopilotForeground(test.pid);

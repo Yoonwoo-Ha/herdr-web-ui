@@ -108,7 +108,7 @@ if (api) createServer((socket) => {
       if (!["connect", "session.getForeground"].includes(message.method)
         || Object.keys(message.params).length !== 0) throw new Error("unexpected API write or credentials");
       const response = apiReject ? { error: { code: -32001, message: "Unauthorized" } }
-        : { result: message.method === "connect" ? { protocolVersion: 3 } : { sessionId: selected } };
+        : { result: message.method === "connect" ? { ok: true, protocolVersion: 4 } : { sessionId: selected } };
       const reply = frame({ jsonrpc: "2.0", id: message.id, ...response });
       if (apiRace && message.method === "session.getForeground" && ++apiReads % 2 === 0)
         socket.write(Buffer.concat([reply, lifecycleEvent("session.background"), lifecycleEvent("session.foreground")]));

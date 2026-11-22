@@ -147,7 +147,8 @@ class ForegroundClient {
           await Bun.sleep(5);
         }
         const result = await this.request("connect");
-        if (!record(result) || result.protocolVersion !== 3) throw new Unavailable("unsupported_protocol");
+        if (!record(result) || (result.protocolVersion !== 3 && result.protocolVersion !== 4)) throw new Unavailable("unsupported_protocol");
+        if (result.ok !== true) throw new Unavailable("malformed_rpc");
       } finally { clearTimeout(timer); }
     })();
   }
