@@ -61,7 +61,7 @@ afterEach(() => {
 
 const box = () => renderer!.root.findAll((node) => node.type === "textarea" && node.props.onKeyDown !== undefined)[0]!;
 async function type(value: string): Promise<void> {
-  await act(async () => { box().props.onChange({ target: { value, selectionStart: value.length } }); });
+  await act(async () => { box().props.onChange({ currentTarget: { value, selectionStart: value.length } }); });
 }
 async function enter(): Promise<void> {
   await act(async () => {

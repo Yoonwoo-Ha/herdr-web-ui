@@ -172,3 +172,26 @@ it("reads the clipboard once for a double press", async () => {
   expect(reads).toBe(1);
   expect(sent).toHaveLength(1);
 });
+
+it("clears a sent paste with CRLF line breaks when an IME that changed nothing ends while it is on its way", async () => {
+  const sent: unknown[][] = [];
+  let acknowledge: (result: true) => void = () => {};
+  const results: ReturnType<ComposerProps["onSend"]>[] = ["The agent is busy.", new Promise<true>((resolve) => { acknowledge = resolve; })];
+  readText = async () => "one\r\ntwo";
+  await act(async () => { renderer = create(<Composer {...props(sent)} onSend={(...args) => { sent.push(args); return results.shift()!; }} />); });
+  await press();
+  expect(composerDrafts.read(draftKey).text).toBe("one\r\ntwo");
+  const box = renderer!.root.findAll((node) => node.type === "textarea" && node.props.onKeyDown !== undefined)[0]!;
+  await act(async () => {
+    box.props.onKeyDown({ key: "Enter", shiftKey: false, altKey: false, metaKey: false, ctrlKey: false, repeat: false, nativeEvent: { isComposing: false, keyCode: 13 }, preventDefault() {} });
+  });
+  expect(sent).toHaveLength(2);
+  // a textarea reports its line breaks as \n whatever the draft holds
+  await act(async () => {
+    box.props.onCompositionStart();
+    box.props.onCompositionEnd({ currentTarget: { value: "one\ntwo", selectionStart: 7 } });
+  });
+  await act(async () => { acknowledge(true); });
+  expect(composerDrafts.read(draftKey).text).toBe("");
+  expect(note()).toBeNull();
+});

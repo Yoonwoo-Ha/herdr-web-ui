@@ -423,6 +423,14 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
     send();
   };
 
+  const syncTextarea = (element: HTMLTextAreaElement): void => {
+    const { value } = element;
+    if (value === readTerminalDraft(owner)) return;
+    setText(value);
+    setNote(null);
+    if (value.length === 0) clearPendingSend();
+  };
+
   const [wrappedRows, setWrappedRows] = useState(1);
   useLayoutEffect(() => {
     const element = box.current;
@@ -450,9 +458,11 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
         value={text}
         maxLength={TERMINAL_LINE_LIMIT}
         onCompositionStart={() => { composing.current = true; compositions.current += 1; onComposing?.(true); }}
-        onCompositionEnd={() => {
+        onCompositionEnd={(event) => {
           composing.current = false;
           compositions.current += 1;
+          // Some commits change the DOM value without delivering an input event.
+          syncTextarea(event.currentTarget);
           onComposing?.(false);
           const current = attempt.current;
           if (current === null) return;
@@ -470,11 +480,9 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
         autoCapitalize="off"
         autoCorrect="off"
         spellCheck={false}
-        onChange={(event) => {
-          setText(event.target.value);
-          setNote(null);
-          if (event.target.value.length === 0) clearPendingSend();
-        }}
+        // React's onChange can omit an input whose value its tracker already saw.
+        onInput={(event) => syncTextarea(event.currentTarget)}
+        onChange={(event) => syncTextarea(event.currentTarget)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
         onFocus={onFocus}

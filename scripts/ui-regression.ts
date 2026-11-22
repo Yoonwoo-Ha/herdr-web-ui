@@ -21,6 +21,7 @@ import { checkTerminalInput } from "./terminal-input-regression.ts";
 import { checkSafariIme } from "./terminal-safari-ime-regression.ts";
 import { checkIpadIme } from "./terminal-ipad-ime-regression.ts";
 import { checkLinuxIme } from "./terminal-linux-ime-regression.ts";
+import { checkTextareaDrafts } from "./textarea-draft-regression.ts";
 import { checkHeldDraftPaneSwitch } from "./terminal-draft-regression.ts";
 import { checkCommandBackspace } from "./terminal-command-backspace-regression.ts";
 import { checkCtrlEnter } from "./terminal-ctrl-enter-regression.ts";
@@ -2397,6 +2398,7 @@ try {
   }
 
   if (part === "ime") {
+    await checkTextareaDrafts(browser, origin, paneA, paneB);
     await checkSafariIme(browser, origin, paneA, paneB);
     await checkIpadIme(browser, origin, paneA, paneB);
     await checkLinuxIme(browser, origin, paneA);
