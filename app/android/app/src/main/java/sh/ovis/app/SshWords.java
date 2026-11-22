@@ -10,7 +10,7 @@ import android.content.Context;
 final class SshWords {
     private SshWords() {}
 
-    /** `where` is user@host[:port]; `how` the sign-in that was tried ("phone-key", "password", "imported"); `publicLine` the pasted key's line, or null. */
+    /** `where` is user@host[:port]; `how` the sign-in that was tried ("phone-key", "password", "imported", "tailscale"); `publicLine` the pasted key's line, or null. */
     static String describe(Context context, String where, SshFailure failure, String how, String publicLine) {
         String detail = failure.getMessage() == null ? failure.kind : failure.getMessage();
         String command = failure.command == null ? SshLink.INSTALL_COMMAND : failure.command;
@@ -18,6 +18,7 @@ final class SshWords {
             case "auth":
                 if ("password".equals(how)) return context.getString(R.string.ssh_fail_auth_password, where);
                 if ("imported".equals(how)) return context.getString(R.string.ssh_fail_auth_pasted, where, publicLine == null ? "" : publicLine);
+                if ("tailscale".equals(how)) return context.getString(R.string.ssh_fail_auth_tailscale, where);
                 return context.getString(R.string.ssh_fail_auth_phone, where);
             case "key-missing":
                 return context.getString(R.string.ssh_fail_key_missing);

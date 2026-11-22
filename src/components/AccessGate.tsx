@@ -3,7 +3,7 @@ import "./AccessGate.css";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { ApiError, authenticate, pairDevice } from "../lib/api.ts";
-import { deviceLabel } from "../lib/phone.ts";
+import { thisDeviceLabel } from "../lib/phone.ts";
 import type { AccessRefusal } from "../../shared/protocol.ts";
 import { useT } from "../lib/i18n.ts";
 import { changePc, inNativeApp } from "../lib/nativeApp.ts";
@@ -68,7 +68,7 @@ function PairingGate({ reason, initialCode, consumePairCode, pairingUnconfirmed,
     setSubmitting("code");
     setError(null);
     try {
-      await pairDevice(value, deviceLabel(navigator.userAgent, navigator.maxTouchPoints ?? 0));
+      await pairDevice(value, thisDeviceLabel());
       onPaired?.();
       onUnlocked();
     } catch (err) {
@@ -118,6 +118,9 @@ function PairingGate({ reason, initialCode, consumePairCode, pairingUnconfirmed,
         <h1 id="access-gate-title" className="access-gate-title">
           {t(reason === "token_required" ? "Unlock" : "Pair this device")}
         </h1>
+        {reason === "tailnet_blocked" && (
+          <p className="access-gate-refused" role="status">{t("This device was removed on the PC, so your Tailscale login no longer lets it in. Allow it on the PC's own screen, or pair it with a code.")}</p>
+        )}
         {reason === "other_user" && (
           <p className="access-gate-refused" role="status">{t("Tailscale says this device belongs to someone other than this PC's owner. The owner can still let it in with a pairing code.")}</p>
         )}

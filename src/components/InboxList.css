@@ -216,6 +216,29 @@
   container-type: inline-size;
 }
 
+/* a PC's header over its rows (MachineHeader.tsx) is the sidebar's, its mark on the avatars' centre line */
+.mode-inbox {
+  --side-box: var(--control-h);
+  --side-row: var(--control-h);
+  --side-action: var(--space-6);
+  --side-gutter: calc(var(--inbox-inset) + (var(--inbox-avatar) - var(--side-box)) / 2);
+}
+
+.mode-inbox .inbox-machine {
+  width: 100cqi;
+}
+
+/* its caret is drawn only, the header's title the control: no room is kept for the sidebar's + beside it */
+.mode-inbox .inbox-machine > .machine-header > .machine-toggle {
+  padding-inline-start: 0;
+}
+
+@media (pointer: coarse) {
+  .mode-inbox {
+    --side-row: var(--touch-target);
+  }
+}
+
 .mode-inbox .inbox-rows {
   width: 100cqi;
   margin: 0;
@@ -540,6 +563,18 @@
   min-height: 0;
   padding: var(--space-1) 0 calc(var(--space-3) + env(safe-area-inset-bottom, 0px)) var(--space-3);
   scroll-padding-block: var(--space-1);
+}
+
+.mode-inbox.is-wide {
+  --side-gutter: calc(var(--space-2) + (var(--inbox-avatar) - var(--side-box)) / 2);
+}
+
+.mode-inbox.is-wide .inbox-machine {
+  width: calc(100cqi - var(--space-3) * 2 + var(--hairline));
+}
+
+.mode-inbox.is-wide .inbox-machine .inbox-rows {
+  width: 100%;
 }
 
 .mode-inbox.is-wide .inbox-rows {

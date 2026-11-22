@@ -12,13 +12,16 @@ export const PAIRING_WINDOW_MS = 10 * 60_000;
 export const pairingWindowFs = { rmSync, truncateSync };
 
 /** How a waiting comparison ended: approved (by this PC when `by` is absent, else by that account member) or not. */
-export type PairingDecision = { approved: true; by?: DeviceMatch } | { approved: false };
+export type PairingDecision = { approved: true; by?: DeviceMatch; pcLabel?: string } | { approved: false };
 
 /** What a remote approval came to: done, nothing waiting under that id, or the wrong digits picked (which ends it). */
 export type RemoteDecision = { outcome: "decided"; device_id: string } | { outcome: "gone" | "wrong_digits" };
 
 /** What the owner's typed digits came to on this PC's own window: approved, nothing such waiting, or wrong (which ends it). */
 export type TypedDecision = "decided" | "gone" | "wrong_digits";
+
+/** What a tap on this PC's own window came to: decided, nothing such waiting, or a join a member could approve, which is typed. */
+export type TapDecision = "decided" | "gone" | "typed_only";
 
 interface Waiting {
   request: RelayPairingRequest & { intent: PairingIntent };
@@ -32,6 +35,12 @@ interface Waiting {
   localOnly: boolean;
   /** another PC of the account vouched for by an admission: members are told, so their app checks it (RemotePairingRequest) */
   vouched: boolean;
+  provenServerId?: string;
+  /**
+   * an account join asked while this PC had no member to approve it (a PC added in one press, its owner's first phone):
+   * this PC's own window alone lists it with its digits and decides it by a tap (`decideOwn`), never a member
+   */
+  firstJoin: boolean;
   choices: [string, string, string];
   finish: (decision: PairingDecision) => void;
 }
@@ -233,6 +242,18 @@ export class RelayPairingApprovals {
       .map(({ request, expiresAt }) => ({ ...request, left_ms: Math.max(0, expiresAt - now) }));
   }
 
+  private vouchedSession: string | undefined;
+
+  reserveVouched(id: string): boolean {
+    if (this.vouchedSession !== undefined) return false;
+    this.vouchedSession = id;
+    return true;
+  }
+
+  releaseVouched(id: string): void {
+    if (this.vouchedSession === id) this.vouchedSession = undefined;
+  }
+
   private readonly joins: number[] = [];
 
   /** Counts one account join asked for outside the pairing window; false past 5 a minute. */
@@ -244,21 +265,32 @@ export class RelayPairingApprovals {
   }
 
   remoteList(): RemotePairingRequest[] {
-    return [...this.waiting.values()].filter(({ localOnly }) => !localOnly).map(({ request, choices, key, vouched }) => ({
-      id: request.id, label: request.label, intent: request.intent, choices, expires_at: request.expires_at, key,
-      ...(vouched ? { vouched: true as const } : {}),
+    return [...this.waiting.values()].filter(({ localOnly }) => !localOnly).map(({ request, choices, key, vouched, provenServerId }) => ({
+      id: request.id, label: request.label, intent: request.intent, choices: vouched ? [] : choices, expires_at: request.expires_at, key,
+      ...(vouched ? { vouched: true as const, ...(provenServerId ? { proven_server_id: provenServerId } : {}) } : {}),
     }));
   }
 
   /**
    * The account joins taken outside the pairing window, for this PC's own window alone (dispatch.ts, ownWindow): listed
    * without their digits, which the owner types from the new device's screen (`decideTyped`), so no prompt the owner did
-   * not start can be waved through with a tap.
+   * not start can be waved through with a tap. A first join comes with its digits: nobody else could approve it, and its
+   * owner compares them and taps (`decideOwn`).
    */
   ownJoins(now = this.now()): OwnJoinRequest[] {
-    return [...this.waiting.values()].filter(ownJoin).map(({ request, askedAt, expiresAt }) => ({
+    return [...this.waiting.values()].filter(ownJoin).map(({ request, askedAt, expiresAt, firstJoin }) => ({
       id: request.id, label: request.label, asked_at: new Date(askedAt).toISOString(), left_ms: Math.max(0, expiresAt - now),
+      ...(firstJoin ? { digits: request.digits } : {}),
     }));
+  }
+
+  /** On this PC's own window: Allow or Decline of a first join. A join a member could approve is typed instead. */
+  decideOwn(id: string, approved: boolean): TapDecision {
+    const entry = this.waiting.get(id);
+    if (!entry || !ownJoin(entry)) return "gone";
+    if (!entry.firstJoin) return "typed_only";
+    entry.finish(approved ? { approved: true } : { approved: false });
+    return "decided";
   }
 
   /** On this PC's own window: the digits the new device shows, typed by the owner. One wrong entry ends that join. */
@@ -285,7 +317,7 @@ export class RelayPairingApprovals {
   }
 
   /** Null when MAX_PENDING_APPROVALS are already waiting. `withdraw` ends it unapproved (the phone left, or time ran out). */
-  ask(label: string, digits: string, expiresAt: number, device: { intent: PairingIntent; key: string; deviceId: string; membersOnly?: boolean; localOnly?: boolean; vouched?: boolean } = { intent: "pc", key: "", deviceId: "" }): { decision: Promise<PairingDecision>; withdraw: () => void } | null {
+  ask(label: string, digits: string, expiresAt: number, device: { intent: PairingIntent; key: string; deviceId: string; membersOnly?: boolean; localOnly?: boolean; vouched?: boolean; provenServerId?: string; firstJoin?: boolean } = { intent: "pc", key: "", deviceId: "" }): { decision: Promise<PairingDecision>; withdraw: () => void } | null {
     if (this.waiting.size >= MAX_PENDING_APPROVALS) return null;
     const id = randomBytes(8).toString("hex");
     const decided = Promise.withResolvers<PairingDecision>();
@@ -295,9 +327,11 @@ export class RelayPairingApprovals {
       decided.resolve(decision);
     };
     // fixed when the phone asked (session.ts), so a window that closes before its digits are shown changes nothing
-    const localOnly = !(device.membersOnly ?? false) && (device.localOnly ?? this.localOnlyOpen());
+    // a first join is this PC's own as well: no member that joins meanwhile may decide it
+    const firstJoin = device.firstJoin ?? false;
+    const localOnly = firstJoin || (!(device.membersOnly ?? false) && (device.localOnly ?? this.localOnlyOpen()));
     this.waiting.set(id, { request: { id, label, digits, expires_at: new Date(expiresAt).toISOString(), intent: device.intent, ...(localOnly ? { local_only: true as const } : {}) },
-      askedAt: this.now(), expiresAt, key: device.key, deviceId: device.deviceId, membersOnly: device.membersOnly ?? false, localOnly, vouched: device.vouched ?? false, choices: decoys(digits), finish });
+      askedAt: this.now(), expiresAt, key: device.key, deviceId: device.deviceId, membersOnly: device.membersOnly ?? false, localOnly, vouched: device.vouched ?? false, ...(device.provenServerId ? { provenServerId: device.provenServerId } : {}), firstJoin, choices: decoys(digits), finish });
     this.changed();
     return { decision: decided.promise, withdraw: () => finish({ approved: false }) };
   }
@@ -315,12 +349,12 @@ export class RelayPairingApprovals {
    * From an account member through the relay, who must name the new device's digits. A wrong pick
    * declines it, so guessing among the three costs the comparison and counts as a failed pairing.
    */
-  decideRemote(id: string, approved: boolean, digits: string, by: DeviceMatch): RemoteDecision {
+  decideRemote(id: string, approved: boolean, digits: string, by: DeviceMatch, pc?: { id: string; label: string }): RemoteDecision {
     const entry = this.waiting.get(id);
     if (!entry || entry.localOnly) return { outcome: "gone" };
     if (!approved) { entry.finish({ approved: false }); return { outcome: "decided", device_id: entry.deviceId }; }
-    if (digits !== entry.request.digits) { entry.finish({ approved: false }); return { outcome: "wrong_digits" }; }
-    entry.finish({ approved: true, by });
+    if (entry.vouched ? !entry.provenServerId || pc?.id !== entry.provenServerId || digits !== "" : digits !== entry.request.digits || pc !== undefined) { entry.finish({ approved: false }); return { outcome: "wrong_digits" }; }
+    entry.finish({ approved: true, by, ...(pc ? { pcLabel: pc.label } : {}) });
     return { outcome: "decided", device_id: entry.deviceId };
   }
 

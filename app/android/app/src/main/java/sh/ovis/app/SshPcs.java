@@ -89,7 +89,7 @@ final class SshPcs {
         String user;
         String hostKeyAlgorithm = "";
         String hostKey = "";
-        /** "phone-key" or "imported" */
+        /** "phone-key", "imported" or "tailscale" (Tailscale SSH, no key) */
         String auth = "phone-key";
         /** sealed, "" unless auth is "imported" */
         String importedKey = "";
@@ -328,6 +328,35 @@ final class SshPcs {
         int left = 5 - parts.length;
         if (last >= (1L << (8 * left))) return -1;
         return (address << (8 * left)) + last;
+    }
+
+    /** A MagicDNS name or a Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48). */
+    static boolean tailnet(String host) {
+        String name = host.trim().toLowerCase(Locale.ROOT);
+        if (name.endsWith(".ts.net") || name.startsWith("fd7a:115c:a1e0:")) return true;
+        String[] parts = name.split("\\.");
+        if (parts.length != 4) return false;
+        try {
+            int b = Integer.parseInt(parts[1]);
+            return Integer.parseInt(parts[0]) == 100 && b >= 64 && b <= 127;
+        } catch (NumberFormatException notIp) {
+            return false;
+        }
+    }
+
+    /**
+     * Whether the page loaded at `url` may open the SSH setup (HerdrShell openSshSetup): the app's own pages (the connect
+     * screen, which has no server URL, so `null` here) or the hosted app (`https://app.ovis.sh`), never a PC's page.
+     */
+    static boolean setupOpener(String url, boolean connectScreen) {
+        if (connectScreen) return true;
+        if (url == null) return false;
+        try {
+            java.net.URI page = new java.net.URI(url);
+            return "https".equalsIgnoreCase(page.getScheme()) && "app.ovis.sh".equalsIgnoreCase(page.getHost()) && (page.getPort() == -1 || page.getPort() == 443);
+        } catch (java.net.URISyntaxException unreadable) {
+            return false;
+        }
     }
 
     static String newGate() {

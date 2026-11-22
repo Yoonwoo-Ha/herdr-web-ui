@@ -186,9 +186,16 @@ A downloaded update says so, in three places:
   may be what a server that cannot start needs. A window a page opens has no line.
 - **Restart to Update** in the tray, as long as the update waits.
 
-The line is drawn by the pages, from what the app's preload tells them (`ovisUpdate`): the
-downloaded version and whether its line was closed. Only the connection screen and the server's
-own pages are answered.
+**Settings → About** in the app's window shows the app's own version on the Ovis row, with
+**Check for updates**: it checks now, the same check the hourly one runs (one at a time), and
+says how it goes there: checking, up to date, the version it downloads and how far, then
+**Restart to Update** once the app holds it, or the error in one line. A build that does not
+update itself says so instead. A browser on the app's server keeps the sentence that updates come
+with the app.
+
+The line and About's row are drawn by the pages, from what the app's preload tells them
+(`ovisUpdate`): the downloaded version and whether its line was closed, and the app's version and
+where its check stands. Only the connection screen and the server's own pages are answered.
 
 On Linux the AppImage replaces itself, so one kept in a folder the user cannot write (under
 `/opt`, say) does not update itself: the log says why its updates are off. A .deb install
@@ -223,6 +230,13 @@ pins again and unpacks them afresh. It also adds the release's Rust PTY host
 by `package.json` was built from this checkout's PTY host sources, as on a release tag; otherwise
 the server uses Node for the few things that need a PTY host of its own, where the PC has Node. `bun run start` then runs the app from `stage/`
 without packaging it. Nothing downloaded is committed.
+
+On macOS, run `OVIS_BUILD_STAGING=1 bun run dist` for a staging preview. If you stage and package
+separately, set `OVIS_BUILD_STAGING=1` on the `package` step. The packaged app opens the staging
+account service and relay without a launcher script. Its default home is `~/.ost` and its profile
+is `~/.ost/app`. If the core socket path would be too long, both move under `/tmp/ost-<uid>`.
+Environment overrides and `--user-data-dir` still take precedence. The login `HOME` by itself
+is not a home override. Packaging without the switch leaves out the staging marker.
 
 To try it without touching your own hc core or Ovis state, give it a fresh user data folder and hc
 session:

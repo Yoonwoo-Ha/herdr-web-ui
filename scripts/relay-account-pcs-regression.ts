@@ -12,6 +12,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { startBunRelay } from "../relay/bun.ts";
 import { createServer } from "../server/index.ts";
+import { savedServerId } from "../server/relay/identity.ts";
 import { RelayService } from "../server/relay/service.ts";
 import { bounded, deferred, relayConnection } from "../server/relay/test-helpers.ts";
 import { UsageService } from "../server/usage.ts";
@@ -41,6 +42,7 @@ const relay = startBunRelay({ port: 0, limiters: {
 } });
 cleanup.push(() => relay.stop());
 const service = new FakeAccountService();
+service.offerLinkPage(["github"]);
 const token = service.issueToken(ACCOUNT);
 const accountService = { url: ACCOUNT_SERVICE, fetch: service.fetch };
 
@@ -79,11 +81,13 @@ const memberKey = Buffer.from(await crypto.subtle.exportKey("spki", memberKeys.p
 const member = { id: randomBytes(8).toString("hex"), label: "Owner's phone", role: "drive", token_hash: randomBytes(32).toString("hex"),
   relay_public_key: memberKey, account: ACCOUNT, created_at: new Date().toISOString(), last_seen_at: null };
 writeFileSync(join(bState, "devices.json"), JSON.stringify({ gate_closed_at: member.created_at, devices: [member] }), { mode: 0o600 });
+service.opensAll = true;
+service.registerDevice(ACCOUNT, memberKey, "Owner phone");
 const bRelay = relayService(bState);
 // This fixture uses the legacy account-vouched flow and its existing phone approver,
 // not a Step 2 admission or a new account-service grant.
 const b = createServer({ port: 0, hostname: "127.0.0.1", stateDir: bState, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false,
-  relay: bRelay.relayService, accountService, accountOpensAll: false, usage: new UsageService(undefined, []) });
+  relay: bRelay.relayService, accountService, accountOpensAll: true, platform: "linux", usage: new UsageService(undefined, []) });
 cleanup.push(() => b.stop());
 const bBase = `http://127.0.0.1:${b.port}`;
 await startRelay(bBase, bRelay.synced);
@@ -91,6 +95,7 @@ const offered = await fetch(`${bBase}/api/relay/offer`, { method: "POST", header
 const { code: _code, ...offer } = decodeOffer((await offered.json() as { url: string }).url)!;
 await service.fetch(new Request(`${ACCOUNT_SERVICE}/v1/pcs/${offer.server_id}`, { method: "PUT", headers: { authorization: `Bearer ${token}` },
   body: JSON.stringify({ label: "Desk", public_key: bytesToHex(importPublicKey(offer.server_public_key)), relay: offer.relay }) }));
+assert.equal((await b.context.services.accountMailbox.readSnapshot())?.committed, true);
 // a PC of the account that is never on: its relay route answers nobody
 const awayKey = randomBytes(32);
 await service.fetch(new Request(`${ACCOUNT_SERVICE}/v1/pcs/${deriveServerId(awayKey)}`, { method: "PUT", headers: { authorization: `Bearer ${token}` },
@@ -110,9 +115,9 @@ async function approver() {
   cleanup.push(() => { for (const close of holder.closes) close(); });
   const link = await relayConnection(holder as never, { serverId: offer.server_id });
   await link.auth({ keys: memberKeys, publicKey: memberKey, id: member.id });
-  return async (id: string, digits: string): Promise<number> => {
+  return async (id: string, serverId: string): Promise<number> => {
     const request = link.open("/api/relay/pairing", { method: "POST", headers: [["content-type", "application/json"], ["x-herdr-machine", "1"]], body: "stream" });
-    void request.stream.sendBody(new Response(JSON.stringify({ id, decision: "approve", digits })).body!).catch(() => {});
+    void request.stream.sendBody(new Response(JSON.stringify({ id, decision: "approve", proven_server_id: serverId, pc_label: "Source PC" })).body!).catch(() => {});
     return (await request.response).status;
   };
 }
@@ -128,6 +133,12 @@ async function accountWindow(browser: Browser, pageErrors: string[], relation: "
   cleanup.push(() => context.close());
   await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
   await context.route("**/api/access", (route) => route.fulfill({ json: { port: 0, tailscale: { state: "missing", dns_name: null, serving_url: null, serve_command: null, serve_url: null } } }));
+  // a signed-out window signs in on the link page, whose code this script approves at the fake service
+  if (relation !== "mine") await context.route("**/api/health?scope=bridge", async (route) => {
+    const response = await route.fetch();
+    const { own_window: _own, ...body } = await response.json() as Record<string, unknown>;
+    await route.fulfill({ response, json: body });
+  });
   await context.route("**/api/account/status*", (route) => route.fulfill({ json: { account: relation === "other" ? "acct_other_pc" : ACCOUNT, pc_add_from_account: true,
     members: 1, unlinked: [], removals: [], adds: [], blocked: [], enrolling: false, mailbox: { last_pull_at: null, error: null } } }));
   await context.route(`${ACCOUNT_SERVICE}/**`, async (route) => {
@@ -164,8 +175,8 @@ async function openRelayTab(page: Page, expected = "This PC is in an account. Ad
   const sheet = page.getByRole("dialog", { name: "Add a connection", exact: true });
   await sheet.locator('.connect-tabs [data-tab="relay"]').click();
   const tab = sheet.locator('[data-tab-panel="relay"]');
-  // the account's PCs at once for this PC's own account, the prompt for any other sign-in
-  await tab.locator(".relay-account-pcs").or(tab.getByText(expected, { exact: true })).first().waitFor();
+  // the signed-in line for this PC's own account, the prompt for any other sign-in
+  await tab.getByText("This PC is in your account.", { exact: true }).or(tab.getByText(expected, { exact: true })).first().waitFor();
   assert.ok(!(await tab.innerText()).includes("acct_"), "no raw account ID");
   assert.equal(await tab.getByText(/This PC shows a QR code only|This browser is not signed in, so it cannot tell|To add a device, sign in to this PC's account/).count(), 0);
   return tab;
@@ -199,25 +210,17 @@ try {
   // signed in, with nothing opened: the sidebar lists the account's PCs that are not in this app yet
   const away = accountRow(adding.page, "Away");
   await away.getByText("Switched off", { exact: true }).waitFor({ timeout: 30_000 });
-  const checkAway = away.getByRole("button", { name: "Check again", exact: true });
   const deskRow = accountRow(adding.page, "Desk");
-  const add = deskRow.getByRole("button", { name: "Add Desk", exact: true });
-  await add.waitFor();
-  assert.equal(await adding.page.locator(".settings-dialog, .connect-phone-dialog").count(), 0, "no settings or Add a connection was opened for the list");
+  const request = await remotePrompt(); // the sidebar starts the ready PC once, without an Add button
+  assert.equal(await deskRow.getByRole("button").count(), 0);
+  assert.equal(await away.locator('.machine-dot[title="Switched off"]').count(), 1);
+  assert.equal(await adding.page.locator(".settings-dialog, .connect-phone-dialog").count(), 0, "the sidebar starts without opening settings");
   await shot(adding.page, "sidebar");
-  await checkAway.click();
-  // held while that PC is asked again, then offered again since it still does not answer
-  await away.getByRole("button", { name: "Checking…", exact: true }).waitFor();
-  await checkAway.waitFor({ timeout: 30_000 });
-  assert.equal(await away.getByText("Switched off", { exact: true }).count(), 1, "it still reads Switched off");
   const approve = await approver();
-  const prompted = remotePrompt();
-  await add.click();
-  const digits = (await deskRow.locator(".relay-account-digits").innerText()).replace(/\s/g, "");
-  assert.match(digits, /^\d{6}$/, "the sidebar shows the six digits to approve");
-  const request = await prompted;
-  assert.ok(request.choices.includes(digits), "B's member is offered the digits the sidebar shows");
-  assert.equal(await approve(request.id, digits), 200, "B's member approves");
+  const source = savedServerId(aState);
+  assert.ok(source && request.proven_server_id === source, "B asks only about the proven source PC");
+  assert.deepEqual(request.choices, []);
+  assert.equal(await approve(request.id, source), 200, "B's member approves that PC");
   await opened(adding.page, "Desk");
   await deskRow.waitFor({ state: "detached" });
   const listed = await (await fetch(`${origin}/api/machines`, { headers: { origin } })).json() as { machines: { kind: string; name: string }[] };
@@ -227,28 +230,43 @@ try {
   const connecting = await accountWindow(browser, pageErrors);
   assert.equal(await connecting.page.locator('.machine-title[aria-current="true"][title="Desk"]').count(), 0, "a new window starts on another PC");
   const mine = await openRelayTab(connecting.page);
-  // signed in to this PC's own account, the tab lists the account's PCs at once
-  assert.equal(await mine.getByRole("button", { name: "Add from account", exact: true }).count(), 0, "no prompt stands before the account's PCs");
-  const added = mine.locator(".relay-account-pc").filter({ has: connecting.page.locator(".connect-found-name", { hasText: /^Desk$/ }) });
-  await added.locator(".connect-found-detail", { hasText: /^In this app$/ }).waitFor();
-  await added.getByRole("button", { name: "Open", exact: true }).click();
-  await opened(connecting.page, "Desk");
-  await shot(connecting.page, "after-connect");
+  // signed in to this PC's own account, the tab is the signed-in line and the phone's QR code: the account's PCs are in
+  // the sidebar, not here
+  assert.equal(await mine.getByRole("button", { name: "Add from account", exact: true }).count(), 0, "no prompt");
+  assert.equal(await mine.getByText("Your account's PCs", { exact: true }).count(), 0, "the relay tab lists no PCs");
+  assert.equal(await mine.getByRole("img", { name: "QR code that opens this PC in the Ovis app", exact: true }).count(), 1, "the phone's QR code");
+  await shot(connecting.page, "relay-tab");
 
   for (const relation of ["other", "signed-out"] as const) {
     const { page } = await accountWindow(browser, pageErrors, relation);
-    const tab = await openRelayTab(page);
-    await tab.getByText("Sign in to this PC's account.", { exact: true }).waitFor();
-    await tab.getByRole("button", { name: "Add from account", exact: true }).click();
+    // a window signed out of this PC's account gets the sign-in alone, not the Add from account prompt
+    const tab = await openRelayTab(page, "Sign in to Ovis");
     if (relation === "signed-out") {
+      // the sign-in alone: no line above it, no Add from account prompt beside it
+      assert.equal(await tab.getByTestId("connect-signin").locator("p.settings-description, p.settings-hint").count(), 0);
+      assert.equal(await tab.getByRole("button", { name: "Add from account", exact: true }).count(), 0);
       const signIn = tab.getByTestId("connect-signin");
       const first = signIn.getByRole("button").first();
       await first.waitFor();
       assert.equal(await first.isEnabled(), true);
-      assert.equal(await first.evaluate(el => document.activeElement === el), true);
-    } else {
+      // signing in on this PC, already in that account, leaves nothing to add: Add a connection and Settings close onto
+      // the main screen
+      const linkPage = page.context().waitForEvent("page");
+      await signIn.getByRole("button", { name: "Sign in to Ovis", exact: true }).click();
+      await linkPage;
+      const userCode = await tab.getByTestId("relay-signin-waiting").locator("output").textContent();
+      assert.ok(userCode, "the sign-in shows its code");
+      service.approveOnLinkPage(userCode, ACCOUNT, "github");
       await page.locator(".connect-phone-dialog").waitFor({ state: "detached" });
-      await page.locator('.settings-dialog [data-section="account"] button:focus').waitFor();
+      await page.locator(".settings-dialog").waitFor({ state: "detached" });
+      await shot(page, "signed-in-home");
+    } else {
+      // signed in to another account than this PC's (owner #25): the sign-in buttons alone, so the right one can be picked;
+      // no Add from account, no line about the account, no paragraph to act on
+      await tab.getByTestId("connect-signin").getByRole("button", { name: "Sign in to Ovis", exact: true }).waitFor();
+      assert.equal(await tab.getByRole("button", { name: "Add from account", exact: true }).count(), 0);
+      assert.equal(await tab.getByText(/Sign in to this PC's account\.|If that account is not yours|This PC is in an account\./).count(), 0);
+      await shot(page, "other-account");
     }
   }
 
@@ -262,7 +280,7 @@ try {
     if (!strict) await shot(page, "unavailable");
   }
   assert.deepEqual(pageErrors, [], "no page error");
-  console.log("PASS the account's PCs: the sidebar lists those not in this app yet with nothing opened, Switched off with Check again for one that does not answer, and its Add pairs once a member approves; Add a connection → Ovis relay's Open opens one already added; both select it in the sidebar with no SSH setup dialog");
+  console.log("PASS the account's PCs: the sidebar lists those not in this app yet with nothing opened, marks offline PCs and automatically asks a member to pair a ready PC; it opens in the sidebar with no SSH setup dialog; a sign-in on this PC, already in the account, lands on the main screen; Add a connection → Ovis relay is the signed-in line and the QR code, with no PC list");
 } catch (error) {
   code = 1;
   console.error("FAIL relay account PCs:", error);

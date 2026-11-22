@@ -233,6 +233,7 @@ const SET_UP_FOR_ANOTHER_ACCOUNT_WAITING = "This PC was set up for another Ovis 
 const CODE_FOR_ANOTHER_ACCOUNT = "This PC's pairing code was made for another Ovis account than the one this device is signed in to. Sign in to that account on this device, then pair again.";
 
 /** What a device that waited to link reads when no account was named for this PC: the way on is on the PC too. */
+const ADD_AT_PC = "This PC left its Ovis account. Add it again on the PC itself: sign in there and add it to your account, or run `ovis add` there.";
 const SET_UP_FOR_NO_ACCOUNT = "This PC is not set up for an Ovis account yet. Sign in on the PC and add it to your account, or run `ovis add` there; then scan its QR code again.";
 
 /** What a device reads when its account's service has no word from that account about this device. */
@@ -261,6 +262,13 @@ function look(store: DeviceStore, link: LinkRecord, deviceId: string, arrival: L
   if (arrival.provisional && !waits) return { refused: "link_required" };
   const account = store.account();
   if (account !== null && account !== link.account) return { refused: "account_mismatch" };
+  // A PC its account stopped listing joins one again only by an add made at the PC: its own press, a code it issued
+  // itself, or digits its own screen approved since. A device it kept paired, or a code such a device asked for,
+  // brings it into none
+  if (account === null && store.addAtPcRequired() && !(arrival.pinned !== null && store.issuedAtPc(arrival.pinned)) && !store.approvedAtPcSinceClear(deviceId)) {
+    if (waits) store.turnAway(deviceId, "account_mismatch", link.account);
+    return { refused: "account_mismatch", message: ADD_AT_PC };
+  }
   // A device that already drives this PC is held to the code made for a PC in no account that lived when its link
   // came, and to none that came since: if that is no longer the code alive (it ended, another replaced it, the PC
   // joined an account meanwhile), nothing changes for it
@@ -342,7 +350,9 @@ export async function applyLink(store: DeviceStore, value: unknown, session: { d
   if (store.isTombstoned(link.key) && !(waits && link.key === link.old_key && !store.removedByAccount(link.key))) return { refused: "tombstoned" };
   // a row moving to a key this PC holds back would let that key in without anyone approving it here
   if (link.key !== link.old_key && rules.gates?.held(link.key)) return { refused: "removal_pending" };
-  if (store.keyHeldByOther(link.key, deviceId)) return { refused: "key_in_use" };
+  // a row that waits with the key of a pairing this PC already has is that device, pairing again: its link renews it
+  const renews = waits && link.key === link.old_key && store.pairingsRenewedBy(link.key) !== null;
+  if (store.keyHeldByOther(link.key, deviceId) && !renews) return { refused: "key_in_use" };
   const takeBack = waits ? rules.barrier?.() : undefined;
   let device: PairedDevice | null = null;
   try { device = store.linkAccountKey(deviceId, link.old_key, link.key, link.account, sessionId, vouched); }

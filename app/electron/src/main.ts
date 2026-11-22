@@ -3,11 +3,11 @@ import { app, autoUpdater as squirrel, BrowserWindow, ipcMain, Menu, nativeImage
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, rmSync, watch, type FSWatcher, type WriteStream } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { choosePort, coreEnv, endLeftover, installCore, isFile, layout, openLog, processCommand, processStartSync, readSaved, serverEnv, startCore, startServer, stopServer, writeSaved, type RunningServer } from "./children.ts";
 import { accountServiceOf, startLoopbackSignIn, type LoopbackSignIn } from "./accountSignIn.ts";
 import { awakeLabel, DESKTOP_ACTIVITY_FILE, holdAwake, readAwakeSettings, readWorking, writeAwakeSettings, type AwakeSettings } from "./awake.ts";
-import { checkForUpdates, debInstallCommand, downloadsUpdate, nextOffer, NO_OFFER, readUpdateNotices, stillHeld, UPDATE_CHECK_INTERVAL_MS, updateChannel, updateNotice, updatePlan, writeUpdateNotices, type HeldUpdate, type UpdateNotices, type UpdateOffer, type UpdaterEvent } from "./updates.ts";
+import { appUpdateState, checkForUpdates, debInstallCommand, downloadsUpdate, nextOffer, NO_OFFER, readUpdateNotices, stillHeld, UPDATE_CHECK_INTERVAL_MS, updateChannel, updateNotice, updatePlan, writeUpdateNotices, type AppCheck, type AppUpdateState, type HeldUpdate, type UpdateNotices, type UpdateOffer, type UpdaterEvent } from "./updates.ts";
 import { extractedAppDir, othersRunFrom } from "./appimage.ts";
 import { desktopLocale, desktopText } from "./text.ts";
 import { hideWindow } from "./windowClose.ts";
@@ -16,8 +16,10 @@ import { openOutside } from "./openOutside.ts";
 import { findBrowsers, readLinkBrowser, webAddress, writeLinkBrowser, type FoundBrowsers, type LinkBrowser } from "./browsers.ts";
 import { BrowserTabs, type BrowserBounds } from "./browserTabs.ts";
 import { debuggingSwitch, ownAddresses, readBrowserState } from "./browserState.ts";
-import { networkInterfaces } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
+import { commandState, installCommand, READ_TERMINAL_PATH, SHELL_PATH_SCRIPT, shellPath, writeLauncher, type CommandHost } from "./terminalCommand.ts";
 import { BrowserBroker, brokerPath } from "./browserBroker.ts";
+import { readStagingProfile } from "./stagingProfile.ts";
 import { BROWSER_TOKENS_DIR } from "../../../shared/browser-broker.ts";
 
 type StepState = "pending" | "ok" | "failed";
@@ -35,6 +37,17 @@ export interface UpdateLine {
 }
 
 const resources = app.isPackaged ? join(process.resourcesPath, "ovis") : process.env["OVIS_DESKTOP_STAGE"] || join(app.getAppPath(), "stage");
+if (app.isPackaged && process.platform === "darwin") {
+  const staging = readStagingProfile({ resources, env: process.env });
+  if (staging) {
+    Object.assign(process.env, staging.env);
+    if (!app.commandLine.hasSwitch("user-data-dir")) {
+      mkdirSync(staging.userData, { recursive: true, mode: 0o700 });
+      app.setPath("userData", staging.userData);
+      app.setPath("sessionData", staging.userData);
+    }
+  }
+}
 const programs = layout(resources);
 const versions = (() => {
   try { return JSON.parse(readFileSync(join(resources, "versions.json"), "utf8")) as { hc: string; bun: string }; } catch { return null; }
@@ -59,6 +72,9 @@ let stopped = false;
 let offer: UpdateOffer = NO_OFFER;
 let installOffer: (() => void) | null = null;
 let installWaiters: (() => void)[] = [];
+/** the app's own check (Settings → About), and the check itself once updates are on */
+let appCheck: AppCheck = { is: "idle" };
+let checkNow: (() => Promise<void>) | null = null;
 const noticesPath = join(app.getPath("userData"), "update-notice.json");
 let notices = readUpdateNotices(noticesPath);
 /** held so its click still arrives: a notification nothing holds is collected, and its click with it */
@@ -84,11 +100,50 @@ const brokerSocket = brokerPath(app.getPath("userData"), process.platform);
 const broker = brokerSocket === null ? null : new BrowserBroker(() => browser, join(stateDir, BROWSER_TOKENS_DIR), brokerSocket);
 
 const accountService = accountServiceOf(process.env);
+/** the `ovis` command (terminalCommand.ts): written on each start, linked onto the PATH from Settings → About */
+const commandDir = join(app.getPath("userData"), "cli");
+let commandLauncher: string | null = null;
 
 const accountProviders = (process.env["OVIS_ACCOUNT_PROVIDERS"] ?? "").split(",").map((name) => name.trim()).filter((name) => name === "github" || name === "google" || name === "apple");
 
 function serverOrigin(): string | null {
   return server ? new URL(server.url).origin : null;
+}
+
+function writeCommand(): void {
+  if (!isFile(programs.serverBinary)) return;
+  try {
+    commandLauncher = writeLauncher(commandDir, process.platform, {
+      serverBinary: programs.serverBinary,
+      desktopJson: savedPath,
+      stateDir,
+      configDir: join(app.getPath("userData"), "cli-settings"),
+      accountService: process.env["OVIS_ACCOUNT_SERVICE_URL"]?.trim() || null,
+    });
+  } catch (error) {
+    console.error(`Writing the ovis command in ${commandDir} failed: ${message(error)}`);
+  }
+}
+
+function programOutput(program: string, args: readonly string[], timeoutMs: number, env: Record<string, string> = {}): Promise<{ code: number | null; out: string }> {
+  return new Promise((resolve) => {
+    execFile(program, args, { env: { ...process.env, ...env }, timeout: timeoutMs, windowsHide: true }, (error, stdout) => {
+      resolve({ code: error === null ? 0 : typeof error.code === "number" ? error.code : null, out: String(stdout) });
+    });
+  });
+}
+
+async function terminalPath(): Promise<string> {
+  if (process.platform === "win32") {
+    const { code, out } = await programOutput("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", READ_TERMINAL_PATH], 15_000);
+    return code === 0 ? out : process.env["PATH"] ?? "";
+  }
+  const { out } = await programOutput(process.env["SHELL"] || "/bin/sh", ["-ilc", SHELL_PATH_SCRIPT], 5_000);
+  return shellPath(out) ?? process.env["PATH"] ?? "";
+}
+
+function commandHost(launcher: string): CommandHost {
+  return { platform: process.platform, home: homedir(), shell: process.env["SHELL"] || "/bin/zsh", launcher, isFile, terminalPath, run: async (program, args, env) => (await programOutput(program, args, 60_000, env)).code };
 }
 
 function ours(url: string): boolean {
@@ -488,12 +543,30 @@ function sendUpdateLine(): void {
   window?.webContents.send("ovis:update", updateLine());
 }
 
+/** an update whose file is gone is not offered here either (heldUpdate), checked each time this is told */
+function appUpdate(): AppUpdateState {
+  heldUpdate();
+  return appUpdateState(app.getVersion(), checkNow !== null, appCheck, offer);
+}
+
+/** to the server's own page alone, as About is drawn only there (tellBrowser) */
+function sendAppUpdate(): void {
+  const contents = window?.webContents;
+  if (contents && serverPage(contents.mainFrame)) contents.send("ovis:update-state", appUpdate());
+}
+
+function setAppCheck(next: AppCheck): void {
+  appCheck = next;
+  sendAppUpdate();
+}
+
 function heldUpdate(): HeldUpdate | null {
   if (offer.ready !== null && stillHeld(offer.ready, existsSync) === null) {
     updateLog(`The downloaded update ${offer.ready.version} is gone from the updater's folder: no longer offered until it is downloaded again.`);
     offer = { ...offer, ready: null };
     rebuildTrayMenu();
     sendUpdateLine();
+    sendAppUpdate();
   }
   return offer.ready;
 }
@@ -609,6 +682,7 @@ async function startUpdates(): Promise<void> {
   const told = (event: UpdaterEvent) => {
     const before = offer.ready;
     offer = nextOffer(offer, event, process.platform);
+    sendAppUpdate();
     if (offer.ready === before) return;
     rebuildTrayMenu();
     announceUpdate();
@@ -616,6 +690,7 @@ async function startUpdates(): Promise<void> {
   autoUpdater.on("error", (error) => {
     failed = true;
     updateLog(`Update failed: ${message(error)}`);
+    appCheck = { is: "failed", error: message(error) };
     told({ is: "error" });
     // a download that failed emptied the updater's folder, the update held until now with it
     heldUpdate();
@@ -637,13 +712,29 @@ async function startUpdates(): Promise<void> {
       told({ is: "staged" });
     });
   }
-  const check = () => {
+  autoUpdater.on("download-progress", (progress) => {
+    if (appCheck.is === "downloading") setAppCheck({ ...appCheck, percent: Math.floor(progress.percent) });
+  });
+  // one check at a time: the hourly one and About's button join a check under way
+  let checking: Promise<void> | null = null;
+  const check = (): Promise<void> => {
     // not once the app is on its way out: a download that fails then empties the folder the install reads
-    if (quitting) return;
-    void checkForUpdates(autoUpdater, updateLog, (version) => !quitting && downloadsUpdate({ found: version, held: offer.staging ?? heldUpdate(), failed, exists: existsSync }));
+    if (quitting) return Promise.resolve();
+    checking ??= (async () => {
+      setAppCheck({ is: "checking" });
+      const outcome = await checkForUpdates(autoUpdater, updateLog, (version) => {
+        const wanted = !quitting && downloadsUpdate({ found: version, held: offer.staging ?? heldUpdate(), failed, exists: existsSync });
+        if (wanted) setAppCheck({ is: "downloading", version, percent: null });
+        return wanted;
+      });
+      // a downloaded or held update is the offer's to show (updates.ts appUpdateState)
+      setAppCheck(outcome.is === "failed" ? { is: "failed", error: outcome.error } : outcome.is === "latest" ? { is: "latest" } : { is: "idle" });
+    })().finally(() => { checking = null; });
+    return checking;
   };
-  check();
-  setInterval(check, UPDATE_CHECK_INTERVAL_MS);
+  checkNow = check;
+  void check();
+  setInterval(() => void check(), UPDATE_CHECK_INTERVAL_MS);
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -678,6 +769,12 @@ if (!app.requestSingleInstanceLock()) {
     // Answered at once when the install returned: a .deb's prompt
     // cancelled, with Ovis running on (or a .deb installed, a moment before it quits)
     return quitting ? new Promise<void>((answer) => { installWaiters.push(answer); }) : undefined;
+  });
+  // Settings → About: the app's version and its own check, which the button there starts now
+  // only the server's own page by its frame's origin: the server also shows a file's HTML at its own address
+  ipcMain.handle("ovis:update-state", (event) => serverPage(event.senderFrame) ? appUpdate() : null);
+  ipcMain.handle("ovis:update-check", (event) => {
+    if (serverPage(event.senderFrame)) void checkNow?.();
   });
   ipcMain.on("ovis:update-close", (event, version: unknown) => {
     if (!ownPage(event.senderFrame?.url) || !offer.ready || version !== offer.ready.version) return;
@@ -718,6 +815,12 @@ if (!app.requestSingleInstanceLock()) {
   });
   ipcMain.on("ovis:browser-open", (event, url: unknown) => {
     if (serverPage(event.senderFrame) && typeof url === "string") void openWebLink(url);
+  });
+  // Settings → About → Terminal command (terminalCommand.ts): only the server's own page, and only once the launcher is written
+  ipcMain.handle("ovis:command", (event) => serverPage(event.senderFrame) && commandLauncher !== null ? commandState(commandHost(commandLauncher)) : null);
+  ipcMain.handle("ovis:command-install", (event) => {
+    if (!serverPage(event.senderFrame) || commandLauncher === null) throw new Error("Adding the ovis command is not offered here");
+    return installCommand(commandHost(commandLauncher));
   });
 
   // the built-in browser (browserTabs.ts): only the server's own page reaches it, and only while its setting is on.
@@ -792,6 +895,7 @@ if (!app.requestSingleInstanceLock()) {
       app.setAsDefaultProtocolClient(LINK_SCHEME, process.execPath, ["--"]);
     }
     pendingLink ??= argvLinkQuery(process.argv);
+    writeCommand();
     // found before the first link: on Windows that takes several registry reads
     if (linkBrowser !== null) void browsers();
     allowPermissions();

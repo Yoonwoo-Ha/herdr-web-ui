@@ -239,4 +239,5 @@ export const FILES_KO: Record<string, string> = {
   "You have control": "내가 제어 중",
   "{agent} is using it": "{agent} · 쓰는 중",
   "An agent is using it": "에이전트가 쓰는 중",
+  "Open {name}": "{name} 열기",
 };

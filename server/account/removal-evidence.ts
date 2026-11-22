@@ -32,6 +32,8 @@ export interface Removal {
   readonly tomb: string;
   readonly at: string;
   readonly records?: readonly unknown[];
+  /** the Tailscale StableNodeIDs of the rows this removal dropped: blocked again from here at every start (tailnet-nodes.ts) */
+  readonly tailnet_nodes?: readonly string[];
 }
 export interface Marker { readonly key: string; readonly account: string; readonly removals: readonly Removal[] }
 export interface Revoke { readonly id: string; readonly key: string; readonly account: string | null; readonly at: string; readonly untrusted_time?: true; readonly legacy_time?: true }
@@ -52,7 +54,7 @@ function parseDoc(value: unknown): Doc | null {
   const doc = value as Partial<Doc>;
   if (doc.v !== 1 || !Array.isArray(doc.markers) || !Array.isArray(doc.revokes) || !Array.isArray(doc.unrevokes)) return null;
   if (doc.row_drops !== undefined && !(Array.isArray(doc.row_drops) && doc.row_drops.every(isRowDrop))) return null;
-  const removalOk = (r: Removal) => typeof r === "object" && r !== null && typeof r.id === "string" && isStrings(r.over) && typeof r.tomb === "string" && typeof r.at === "string" && (r.records === undefined || Array.isArray(r.records));
+  const removalOk = (r: Removal) => typeof r === "object" && r !== null && typeof r.id === "string" && isStrings(r.over) && typeof r.tomb === "string" && typeof r.at === "string" && (r.records === undefined || Array.isArray(r.records)) && (r.tailnet_nodes === undefined || isStrings(r.tailnet_nodes));
   if (!doc.markers.every((m) => typeof m === "object" && m !== null && typeof m.key === "string" && typeof m.account === "string" && Array.isArray(m.removals) && m.removals.every(removalOk))) return null;
   if (!doc.revokes.every((r) => typeof r === "object" && r !== null && typeof r.id === "string" && typeof r.key === "string" && (r.account === null || typeof r.account === "string") && typeof r.at === "string" && (r.untrusted_time === undefined || (r.untrusted_time === true && isIsoTime(r.at))) && (r.legacy_time === undefined || r.legacy_time === true))) return null;
   if (!doc.unrevokes.every((u) => typeof u === "object" && u !== null && typeof u.id === "string" && typeof u.revoke === "string" && typeof u.at === "string" && typeof u.by === "string")) return null;
@@ -152,14 +154,21 @@ export class RemovalEvidence {
     return blocked ? "block" : "remove";
   }
 
+  /** The tailnet nodes each standing removal dropped, with its time: the node list is rebuilt from them at start. */
+  tailnetDenials(): { id: string; at: string }[] {
+    return this.doc.markers.flatMap((marker) => marker.removals.filter((removal) => this.removalStands(marker, removal))
+      .flatMap((removal) => (removal.tailnet_nodes ?? []).map((id) => ({ id, at: removal.at }))));
+  }
+
   /** The removal ids a pairing of `key` on this PC knew: it stands over every one of them (`paired_over`). */
   pairedOver(key: string): string[] { return this.standingMarkers(key).flatMap(({ standing }) => standing.map((r) => r.id)); }
 
   /** A signed `remove` (or, later, a block) of `key` under `account`. False when this marker already holds that removal. */
-  addRemoval(key: string, account: string, removal: { id: string; at: string; records?: readonly unknown[]; drop?: RowDrop | undefined }): boolean {
+  addRemoval(key: string, account: string, removal: { id: string; at: string; records?: readonly unknown[]; drop?: RowDrop | undefined; tailnetNodes?: readonly string[] }): boolean {
     const marker = this.doc.markers.find((m) => m.key === key && m.account === account);
     if (marker?.removals.some((r) => r.id === removal.id)) return false;
-    const entry: Removal = { id: removal.id, over: [...this.forgets(key, account)], tomb: removal.id, at: removal.at, ...(removal.records ? { records: [...removal.records] } : {}) };
+    const entry: Removal = { id: removal.id, over: [...this.forgets(key, account)], tomb: removal.id, at: removal.at, ...(removal.records ? { records: [...removal.records] } : {}),
+      ...(removal.tailnetNodes?.length ? { tailnet_nodes: [...removal.tailnetNodes] } : {}) };
     let removals = [...marker?.removals ?? [], entry];
     // only a removal a forget already ended makes room: one that stands is never dropped, however many there are (T61)
     while (removals.length > MARKER_REMOVALS_MAX) {

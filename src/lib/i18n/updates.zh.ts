@@ -65,4 +65,10 @@ export const UPDATES_ZH: Record<string, string> = {
   "This server runs from an installed update's folder, not from its source checkout. Restart Ovis from its source checkout (the herdr plugin's Stop, then Start, or bun run start there) to update.": "此服务器正从已安装更新的文件夹运行。请从源码检出重新启动 Ovis（herdr 插件的 Stop 然后 Start，或 bun run start），再更新。",
   "The running version is not part of the release history; automatic downgrade is disabled.": "正在运行的版本不在发布历史中，不会自动降级。",
   "The version of Ovis running on this PC. Update and restart installs the release shown and then restarts Ovis.": "此 PC 上正在运行的 Ovis 版本。“更新并重启”会安装所显示的版本，然后重启 Ovis。",
+  "The version of the Ovis app on this PC. The app downloads updates by itself, and Restart to Update installs one.": "此 PC 上 Ovis 应用的版本。应用会自动下载更新，“重启以更新”会安装它。",
+  "This build of the app does not update itself.": "此应用版本不会自动更新。",
+  "Downloading Ovis {version}…": "正在下载 Ovis {version}…",
+  "Downloading Ovis {version}… {percent}%": "正在下载 Ovis {version}… {percent}%",
+  "The update did not go through: {error}": "更新未完成：{error}",
+  "Update": "更新",
 };

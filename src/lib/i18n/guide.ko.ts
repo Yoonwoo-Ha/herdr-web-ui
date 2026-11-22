@@ -6,7 +6,6 @@ export const GUIDE_KO: Record<string, string> = {
   "Look again": "다시 확인",
   "Use Tailscale or Wi-Fi instead": "대신 Tailscale이나 Wi-Fi 쓰기",
   "Set up Ovis": "Ovis 설정",
-  "Connect your phone": "폰 연결하기",
   "Looking": "찾는 중",
   "Installed · v{version}": "설치됨 · v{version}",
   "Can't tell": "알 수 없음",
@@ -26,7 +25,6 @@ export const GUIDE_KO: Record<string, string> = {
   "Nice. Now add a metric for replayed requests.": "좋아요. 이제 재실행된 요청을 세는 지표를 추가해 줘.",
   "Adding a counter next to the existing request metrics.": "기존 요청 지표 옆에 카운터를 추가할게요.",
   "Phone and alerts": "폰과 알림",
-  "Turn on alerts": "알림 켜기",
   "Test alert": "테스트 알림",
   "Not yet": "아직",
   "Later": "나중에",
@@ -100,4 +98,5 @@ export const GUIDE_KO: Record<string, string> = {
   "Reach this PC from anywhere.": "어디서든 이 PC에 연결해요.",
   "Set up later": "나중에 설정",
   "Keep SSH or a screen working on this PC: reached only through the relay, one stolen older device could lock you out of it.": "이 PC에 SSH나 화면 접근을 남겨 두세요. 릴레이로만 닿으면, 오래된 기기 하나를 도난당했을 때 이 PC에 못 들어갈 수 있어요.",
+  "Run this once on this PC.": "이 PC에서 한 번 실행해요.",
 };

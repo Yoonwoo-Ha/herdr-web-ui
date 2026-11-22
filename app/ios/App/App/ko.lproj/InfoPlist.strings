@@ -1,0 +1,6 @@
+/* Korean for Info.plist's permission texts (the English ones stay in Info.plist) */
+"NSCameraUsageDescription" = "PC의 설정 → 폰 및 기기에 표시된 QR 코드를 찍습니다.";
+"NSLocalNetworkUsageDescription" = "PC가 같은 네트워크에 있으면 Ovis 릴레이를 거치지 않고 바로 연결합니다.";
+"NSMicrophoneUsageDescription" = "음성 입력으로 에이전트에게 메시지와 명령을 받아쓰게 합니다.";
+"NSPhotoLibraryAddUsageDescription" = "에이전트 채팅의 사진을 사진 앱에 저장합니다.";
+"NSSpeechRecognitionUsageDescription" = "OpenAI 키가 없을 때 말한 내용을 에이전트에게 보낼 글로 바꿉니다.";

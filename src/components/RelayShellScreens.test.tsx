@@ -270,9 +270,9 @@ describe("RelayShellScreens", () => {
         setAddingPc: none,
       }),
     );
-    expect(html).toContain("Sign in to your Ovis account");
+    expect(html).toContain('data-tab-panel="relay"');
     expect(html).toContain('data-provider="google" aria-busy="true" disabled=""');
-    expect(html).toContain('data-action="no-account" disabled=""');
+    expect(html).toContain('data-action="add-code" disabled=""');
   });
 
   describe("the confirm before a link's PC is paired with", () => {

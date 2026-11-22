@@ -41,6 +41,13 @@ export interface PendingSignIn {
   readonly started_at: number;
   /** the marked pairing this sign-in was started for (relay/shell.tsx): it goes with the sign-in, whatever its end */
   readonly pairing?: PendingPairing;
+  /**
+   * the PC whose own page started this sign-in (its relay ID; relay/shell.tsx): a browser's sign-in comes back on the
+   * front page alone, which goes on to that page once this very sign-in succeeded
+   */
+  readonly pc?: string;
+  /** the account whose sign-out of every device asked for this sign-in again: its return signs them out, for that account only */
+  readonly sign_out_everywhere?: string;
 }
 
 /** A scanned offer waiting on a sign-in; `at`: when the code was scanned, which bounds how long it is tried. */

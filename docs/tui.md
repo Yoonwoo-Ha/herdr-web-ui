@@ -17,6 +17,9 @@ ovis tui                             # or, in a checkout: bun scripts/plugin.ts 
 ovis tui --session work              # another herdr-core session
 ```
 
+Plain `ovis` opens it too, at a terminal where the program is installed and a core answers; anywhere else it prints
+the help (and, in a script or a pipe, it is `ovis status` as before).
+
 It never starts a core. When none runs, it says so with the command that starts one
 (`hc server start`) and exits.
 

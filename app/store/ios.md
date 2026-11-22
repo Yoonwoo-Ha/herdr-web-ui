@@ -189,7 +189,7 @@ refuse addresses that are not an Ovis server, which is an app change, not a form
 > watch and control their coding agents and terminals (https://ovis.sh). The app connects only
 > to the user's own computer, directly or through the end-to-end encrypted Ovis relay that
 > computer turns on. Signing in is optional. To review the whole app without a computer, tap
-> "Start without signing in", then "Enter an address", type demo and tap Open: it runs the full
+> the "Direct" tab, type demo and tap Connect: it runs the full
 > interface with made-up agents and terminals, entirely on the phone. "Scan QR code" uses the camera only to read the
 > pairing code a computer shows. The app uses the microphone for voice input the user chooses:
 > turning Voice input on in Settings briefly opens it to ask for access; the mic button or the

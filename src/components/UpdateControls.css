@@ -23,6 +23,17 @@
   overflow-wrap: normal;
 }
 
+/* the desktop app's failed check (UpdateControls AppUpdateRow): one line of its own under the row, the whole error in its title */
+.settings-updates .settings-row > .update-app-error {
+  flex: 1 0 100%;
+  order: 1;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .settings-updates .settings-row > .btn {
   margin-inline-start: auto;
 }

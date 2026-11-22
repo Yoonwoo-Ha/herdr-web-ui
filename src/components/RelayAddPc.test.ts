@@ -1,6 +1,35 @@
 import { describe, expect, it } from "bun:test";
 
-import { addressOf, publicHttp } from "./RelayAddPc.tsx";
+import { addressOf, publicHttp, scanQr } from "./RelayAddPc.tsx";
+
+describe("a QR scan in the phone app", () => {
+  async function scan(granted: boolean | null): Promise<{ calls: string[]; failed: number }> {
+    const saved = Object.getOwnPropertyDescriptor(globalThis, "Capacitor");
+    const calls: string[] = [];
+    let failed = 0;
+    const methods = granted === null ? [] : [{ name: "camera" }];
+    Object.defineProperty(globalThis, "Capacitor", { configurable: true, value: {
+      isNativePlatform: () => true,
+      PluginHeaders: [{ name: "HerdrShell", methods }, { name: "CapacitorBarcodeScanner", methods: [{ name: "scanBarcode" }] }],
+      nativePromise: async (plugin: string, method: string) => { calls.push(`${plugin}.${method}`); return method === "camera" ? { granted } : { ScanResult: "https://pc.example/" }; },
+    } });
+    try {
+      await new Promise<void>((done) => {
+        scanQr((key: string) => key, () => done(), () => { failed += 1; done(); });
+      });
+    } finally {
+      if (saved) Object.defineProperty(globalThis, "Capacitor", saved); else Reflect.deleteProperty(globalThis, "Capacitor");
+    }
+    return { calls, failed };
+  }
+
+  it("asks the app for the camera first, and with it refused opens no scanner, whose own refusal is in English", async () => {
+    expect(await scan(false)).toEqual({ calls: ["HerdrShell.camera"], failed: 1 });
+    expect(await scan(true)).toEqual({ calls: ["HerdrShell.camera", "CapacitorBarcodeScanner.scanBarcode"], failed: 0 });
+    // an app built before the check scans as before
+    expect(await scan(null)).toEqual({ calls: ["CapacitorBarcodeScanner.scanBarcode"], failed: 0 });
+  });
+});
 
 describe("an address typed on Add a PC", () => {
   it("reads it as people write it: http for a bare IPv4 address, https for a name, a whole URL as it is", () => {

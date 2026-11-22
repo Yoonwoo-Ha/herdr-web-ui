@@ -2,7 +2,8 @@ import { describe, expect, it, spyOn } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import type { UpdateStatus } from "../../shared/update.ts";
+import { DESKTOP_APP_UPDATES, type UpdateStatus } from "../../shared/update.ts";
+import * as desktopUpdate from "../lib/desktopUpdate.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import type { UpdatesModel } from "../lib/updates.ts";
 import * as herdrUpdate from "../lib/herdrUpdate.ts";
@@ -133,6 +134,61 @@ describe("update failure announcements", () => {
       if (languages) Object.defineProperty(navigator, "languages", languages);
       else Reflect.deleteProperty(navigator, "languages");
     }
+  });
+});
+
+describe("About's row for the desktop app itself", () => {
+  const desktopServer = updates({ ...blocked, managed: false, blocked_reason: DESKTOP_APP_UPDATES });
+  const idle: desktopUpdate.AppUpdate = { version: "0.5.8", phase: "idle", update: null, percent: null, error: null };
+  const row = (state: desktopUpdate.AppUpdate | null, model = desktopServer): string => {
+    const hook = spyOn(desktopUpdate, "useDesktopAppUpdate").mockReturnValue(state && { state, installing: false, check: () => undefined, install: () => undefined });
+    try { return render(true, model); } finally { hook.mockRestore(); }
+  };
+
+  it("puts the app's version and Check for updates where the sentence said updates come with the app", () => {
+    const html = row(idle);
+    expect(html).toContain("Running v0.5.8");
+    expect(html).toMatch(/<button type="button" class="btn">Check for updates<\/button>/);
+    expect(html).not.toContain("updates come with the app");
+  });
+
+  it("keeps the sentence in a browser, where there is no app to check", () => {
+    expect(row(null)).toContain("updates come with the app");
+  });
+
+  it("is the server's own row on a server that is not the app's", () => {
+    const html = row(idle, updates({ ...blocked, blocked_reason: null }));
+    expect(html).toContain("Running v0.4.22");
+    expect(html).not.toContain("Running v0.5.8");
+  });
+
+  it("holds Check for updates while it checks and downloads, with the download's progress", () => {
+    expect(row({ ...idle, phase: "checking" })).toMatch(/Checking for updates…<\/span><button type="button" class="btn" disabled="">Check for updates<\/button>/);
+    const downloading = row({ ...idle, phase: "downloading", update: "0.5.9", percent: 42 });
+    expect(downloading).toContain("Downloading Ovis 0.5.9… 42%");
+    expect(downloading).toContain('disabled="">Check for updates');
+    expect(row({ ...idle, phase: "downloading", update: "0.5.9" })).toContain("Downloading Ovis 0.5.9…<");
+  });
+
+  it("offers Restart to Update once the app holds the update", () => {
+    const html = row({ ...idle, phase: "ready", update: "0.5.9" });
+    expect(html).toContain("Ovis 0.5.9 is ready.");
+    expect(html).toMatch(/<button type="button" class="btn btn-primary">Restart to Update<\/button>/);
+    expect(html).not.toContain(">Check for updates<");
+  });
+
+  it("says a failed check in one line, the whole error in its title, and offers the check again", () => {
+    const html = row({ ...idle, phase: "failed", error: "net::ERR_INTERNET_DISCONNECTED\n    at SimpleURLLoaderWrapper" });
+    expect(html).toContain('role="alert"');
+    expect(html).toContain(">The update did not go through: net::ERR_INTERNET_DISCONNECTED<");
+    expect(html).toContain('title="net::ERR_INTERNET_DISCONNECTED');
+    expect(html).toContain(">Check for updates<");
+  });
+
+  it("offers no check from a build that does not update itself", () => {
+    const html = row({ ...idle, phase: "off" });
+    expect(html).toContain("This build of the app does not update itself.");
+    expect(html).not.toContain("<button");
   });
 });
 

@@ -11,17 +11,19 @@ import { apiFetch } from "../lib/api-request-id.ts";
 import { fetchRelay } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
 import type { AccountPcEntry } from "../lib/api.ts";
-import { MachineOffLine, useRecheck } from "./MachineOffLine.tsx";
-import { signedInAccount, spaced, useAccountPcs, type AccountPcs, type AccountPcsSource } from "./RelayAccountPcs.tsx";
+import { serverScopePath } from "../lib/shellMode.ts";
+import { signedInAccount, useAccountPcs, type AccountPcs, type AccountPcsSource } from "../lib/account/useAccountPcs.ts";
 
 /**
  * Signed in to the Ovis account on a PC that is in that account with its relay online: the account's other PCs that
- * are not in this app yet, under the PCs the sidebar lists, without Add a connection being opened first. Each says
- * what it answered: Add where it would pair (the same Add, and the same approval on another device, as the relay tab's
- * list), Switched off with Check again where it did not answer, or that its Ovis needs an update. A PC once added is
- * the sidebar's own group above. A page that is not signed in asks this PC nothing for it.
+ * are not in this app yet, under the PCs the sidebar lists, each added to this PC on its own as soon as it answers, one
+ * at a time (the relay tab's Add, and the same approval on another device), so every PC of the account lists every
+ * other whichever one a device opens. Each row only says where it is, with nothing to press: Connecting… while it is
+ * added, why it was not once a pairing failed (asked again once the account lists something new), Switched off where it did not
+ * answer, or that its Ovis needs an update. The approval itself is asked on the account's devices, never here. A PC once
+ * added is the sidebar's own group above. A page that is not signed in asks this PC nothing for it.
  */
-export function SidebarAccountPcs({ machines, onAdded, source, hidden = false }: { machines: readonly Machine[]; onAdded: (machine: Machine) => void; source?: AccountPcsSource; /** the sidebar filter is on: the rows step aside, a pairing under way stays */ hidden?: boolean }) {
+export function SidebarAccountPcs({ machines, onAdded, onListed, openable, source, hidden = false }: { machines: readonly Machine[]; onAdded: (machine: Machine) => void; /** the relay IDs of the PCs being added, empty when none are (the hosted app's own list leaves those out) */ onListed?: (serverIds: readonly string[]) => void; /** the PCs this device keeps its own link to (the hosted app's list): a row of one opens it as that link would */ openable?: ReadonlySet<string>; source?: AccountPcsSource; /** the sidebar filter is on: the rows step aside, a pairing under way stays */ hidden?: boolean }) {
   const account = useRef<AccountPcsSource | null>(null);
   account.current ??= source ?? signedInAccount();
   const [mine, setMine] = useState<string | null>(null);
@@ -54,14 +56,14 @@ export function SidebarAccountPcs({ machines, onAdded, source, hidden = false }:
   }, [reads]);
   if (mine === null) return null;
   // another account is another list from scratch: nothing read for the one before carries over
-  return <JoinedAccountPcs key={mine} account={mine} reads={reads} machines={machines} onAdded={onAdded} source={account.current} hidden={hidden} />;
+  return <JoinedAccountPcs key={mine} account={mine} reads={reads} machines={machines} onAdded={onAdded} onListed={onListed} openable={openable} source={account.current} hidden={hidden} />;
 }
 
 /**
  * Signed in to `account`: its PCs once this PC is in that same account with its relay online. Both are read once, and
  * again when the window comes back, never polled: a sidebar adds no request of its own while the window just sits there.
  */
-function JoinedAccountPcs({ account, reads, machines, onAdded, source, hidden }: { account: string; reads: number; machines: readonly Machine[]; onAdded: (machine: Machine) => void; source: AccountPcsSource; hidden: boolean }) {
+function JoinedAccountPcs({ account, reads, machines, onAdded, onListed, openable, source, hidden }: { account: string; reads: number; machines: readonly Machine[]; onAdded: (machine: Machine) => void; onListed?: (serverIds: readonly string[]) => void; openable: ReadonlySet<string> | undefined; source: AccountPcsSource; hidden: boolean }) {
   const [joined, setJoined] = useState(false);
   useEffect(() => {
     let live = true;
@@ -77,14 +79,87 @@ function JoinedAccountPcs({ account, reads, machines, onAdded, source, hidden }:
   }, [account, reads]);
   const accountPcs = useAccountPcs({ machines, source, enabled: joined, expect: account, refresh: reads, onAdded });
   const waiting = accountPcs.pcs?.filter((pc) => accountPcs.added(pc.server_id) === undefined) ?? [];
+  // each PC is added on its own once. A member's Deny is kept in this browser per account, asking PC and PC, across page loads, until
+  // the account lists that PC anew; one that failed for a passing reason gets one more try when the window comes back;
+  // any other is asked again once the account lists something new. A read of the list that failed changes nothing.
+  const [tried, setTried] = useState<ReadonlySet<string>>(new Set());
+  const [, noteDecline] = useState(0);
+  const passing = useRef(new Set<string>());
+  const retried = useRef(new Set<string>());
+  // a Deny is to the PC that asked: the hosted app and the phone app keep one storage for every PC's page
+  const asking = machines.find((machine) => machine.kind === "local")?.server_id ?? "";
+  const declineKey = (serverId: string): string => `ovis:declined-pc:${account}:${asking}:${serverId}`;
+  const declined = (pc: AccountPcEntry & { readonly new_until?: string | null }): boolean => {
+    try { return localStorage.getItem(declineKey(pc.server_id)) === (pc.new_until ?? ""); } catch { return false; }
+  };
+  const failure = accountPcs.failure;
+  // each PC's own failure, kept while the next PC is added (the pairing keeps the last one alone), until it is tried anew
+  const [failures, setFailures] = useState<ReadonlyMap<string, string>>(new Map());
+  useEffect(() => {
+    if (failure !== null) setFailures((current) => new Map(current).set(failure.server_id, failure.message));
+  }, [failure]);
+  useEffect(() => {
+    if (failure?.code === undefined) return;
+    if (failure.code !== "account_pc_declined") {
+      if (!retried.current.has(failure.server_id)) passing.current.add(failure.server_id);
+      return;
+    }
+    const pc = accountPcs.pcs?.find((entry) => entry.server_id === failure.server_id);
+    if (pc === undefined) return;
+    try { localStorage.setItem(declineKey(pc.server_id), pc.new_until ?? ""); } catch { /* not kept: asked again on the next load */ }
+    noteDecline((count) => count + 1);
+  }, [failure]);
+  useEffect(() => {
+    if (passing.current.size === 0) return;
+    const again = [...passing.current];
+    passing.current.clear();
+    for (const serverId of again) retried.current.add(serverId);
+    setTried((current) => new Set([...current].filter((serverId) => !again.includes(serverId))));
+    setFailures((current) => new Map([...current].filter(([serverId]) => !again.includes(serverId))));
+  }, [reads]);
+  const listing = accountPcs.pcs?.map((pc) => `${pc.server_id}:${pc.new_until ?? ""}`).join("\n") ?? "";
+  const lastListing = useRef("");
+  useEffect(() => {
+    if (listing === "" || listing === lastListing.current) return;
+    lastListing.current = listing;
+    retried.current.clear();
+    setTried(new Set());
+    setFailures(new Map());
+  }, [listing]);
+  // the relay back on after it was off is a new look at every PC but a declined one, as a new listing is
+  const wasJoined = useRef(false);
+  useEffect(() => {
+    if (joined && !wasJoined.current && lastListing.current !== "") {
+      retried.current.clear();
+      setTried(new Set());
+      setFailures(new Map());
+    }
+    wasJoined.current = joined;
+  }, [joined]);
+  // only a PC being added stands in for this device's own link to it (ShellPcs.tsx): one that is outdated, off,
+  // declined or failed leaves that link where it was, so an update never costs a phone the way to a PC it drives
+  const adding = waiting.filter((pc) => accountPcs.stateOf(pc.server_id) === "ready" && (accountPcs.pairing?.server_id === pc.server_id || (!tried.has(pc.server_id) && !declined(pc))));
+  const listed = adding.map((pc) => pc.server_id).join("\n");
+  useEffect(() => {
+    onListed?.(listed === "" ? [] : listed.split("\n"));
+    return () => onListed?.([]);
+  }, [listed, onListed]);
+  const next = accountPcs.pairing === null ? waiting.find((pc) => accountPcs.stateOf(pc.server_id) === "ready" && !tried.has(pc.server_id) && !declined(pc)) : undefined;
+  useEffect(() => {
+    if (next === undefined) return;
+    setTried((current) => new Set(current).add(next.server_id));
+    void accountPcs.add(next);
+  }, [next?.server_id]);
   if (waiting.length === 0) return null;
-  return <>{waiting.map((pc) => <AccountPcRow key={pc.server_id} pc={pc} pcs={accountPcs} hidden={hidden} />)}</>;
+  return <>{waiting.map((pc) => <AccountPcRow key={pc.server_id} pc={pc} pcs={accountPcs} declined={declined(pc)} failedWith={failures.get(pc.server_id)} hidden={hidden} opens={openable?.has(pc.server_id) === true} />)}</>;
 }
 
-/** One PC of the account not in this app yet, as a PC group's header with its state under it. */
-function AccountPcRow({ pc, hidden, pcs: { stateOf, pairing, failure, add, cancel, recheck } }: { pc: AccountPcEntry & { readonly new_until?: string | null }; hidden: boolean; pcs: AccountPcs }) {
+/**
+ * One PC of the account not in this app yet, as a PC group's header with where it is under it. `opens`: this device keeps
+ * its own link to it, which the row stands in for while the PC is added, so its name opens it as that link would.
+ */
+function AccountPcRow({ pc, hidden, declined, failedWith, opens, pcs: { stateOf, pairing } }: { pc: AccountPcEntry & { readonly new_until?: string | null }; hidden: boolean; /** a member declined it, in this browser, for this listing */ declined: boolean; /** why its last add failed, until it is tried anew */ failedWith: string | undefined; opens: boolean; pcs: AccountPcs }) {
   const t = useT();
-  const row = useRef<HTMLElement>(null);
   const [expiredAt, setExpiredAt] = useState<string>();
   const newUntil = pc.new_until;
   useEffect(() => {
@@ -95,41 +170,24 @@ function AccountPcRow({ pc, hidden, pcs: { stateOf, pairing, failure, add, cance
     return () => clearTimeout(timer);
   }, [newUntil]);
   const state = stateOf(pc.server_id);
-  // the same hold as a PC of the roster: one check per PC however often it is pressed (MachineOffLine.tsx)
-  const again = useRecheck(pc.server_id, () => recheck(pc), state === "offline");
   const adding = pairing?.server_id === pc.server_id;
+  const failed = !adding && failedWith !== undefined;
+  const refused = !adding && !failed && declined;
+  const away = state === "offline" || state === "outdated" || failed || refused;
+  // where it is, beside its name only: the words are the dot's tooltip and what a screen reader hears
+  const words = failed ? failedWith : refused ? t("Not approved") : state === undefined ? t("Checking…") : state === "offline" ? t("Switched off") : state === "outdated" ? t("Update Ovis on that PC") : t("Connecting…");
   return (
-    <section ref={row} tabIndex={-1} hidden={hidden && !adding} className="machine-group is-offline account-pc-group" aria-label={t("PC {name}", { name: pc.name })} data-pc-state={state ?? "checking"}>
+    <section hidden={hidden && !adding} className={`machine-group account-pc-group${away ? " is-offline" : ""}`} aria-label={t("PC {name}", { name: pc.name })} data-pc-state={state ?? "checking"}>
       <header className="machine-header">
         <div className="machine-title">
           <span className="sidebar-mark" aria-hidden="true"><Monitor /></span>
-          <span className="machine-name" title={pc.name}>{pc.name}</span>
+          {opens ? <a className="machine-name" title={pc.name} href={serverScopePath(pc.server_id)}>{pc.name}</a>
+            : <span className="machine-name" title={pc.name}>{pc.name}</span>}
           {newUntil !== expiredAt && isNewAccountPc(pc, Date.now()) && <span className="machine-state-word">{t("New PC")}</span>}
-          <span className={`machine-dot is-${state === undefined ? "connecting" : state === "ready" ? "connected" : "disconnected"}`} aria-hidden="true" />
+          <span className={`machine-dot is-${away ? "disconnected" : "connecting"}`} title={words} aria-hidden="true" />
         </div>
       </header>
-      {state === "offline"
-        ? <MachineOffLine state="off" reason={null} checking={again.checking} failure={again.failure} onCheck={again.check} returnFocus={() => row.current} />
-        : (
-          <div className="account-pc-line">
-            {state === undefined && <span className="machine-state-word" role="status">{t("Checking…")}</span>}
-            {state === "outdated" && <span className="machine-state-word" role="status">{t("Update Ovis on that PC")}</span>}
-            {state === "ready" && (adding
-              ? <button type="button" className="btn account-pc-action" onClick={cancel}>{t("Cancel")}</button>
-              : <button type="button" className="btn account-pc-action" disabled={pairing !== null} aria-label={t("Add {name}", { name: pc.name })} onClick={() => void add(pc)}>{t("Add")}</button>)}
-          </div>
-        )}
-      {adding && (
-        <div className="account-pc-wait" role="status">
-          {pairing.digits === null ? t("Asking {name}…", { name: pc.name }) : (
-            <>
-              <span>{t("Approve on another device of your account")}</span>
-              <span className="relay-account-digits">{spaced(pairing.digits)}</span>
-            </>
-          )}
-        </div>
-      )}
-      {failure?.server_id === pc.server_id && <p className="machine-error" role="alert">{failure.message}</p>}
+      <p className="machine-state visually-hidden" role={failed ? "alert" : "status"}>{words}</p>
     </section>
   );
 }

@@ -239,4 +239,5 @@ export const FILES_JA: Record<string, string> = {
   "You have control": "自分が操作中",
   "{agent} is using it": "{agent} · 使用中",
   "An agent is using it": "エージェントが使用中",
+  "Open {name}": "{name} を開く",
 };

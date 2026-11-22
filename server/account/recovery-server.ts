@@ -1,11 +1,16 @@
 import { userInfo } from "node:os";
 import type { RecoveryStanding } from "../../shared/account-devices-api.ts";
 import type { DeviceStore } from "../devices.ts";
+import { forgetPageMedia } from "../file-view.ts";
 import type { DeviceJournal } from "./device-journal.ts";
 import type { KeyProofPairings } from "./key-proof.ts";
 import type { PcAccountState } from "./pc-binding.ts";
 import type { PendingRedemptions } from "./pending.ts";
-import { recoveryActs, type RecoverySeams } from "./recovery-acts.ts";
+import { RelayIdentityError } from "../relay/identity.ts";
+import type { RelayService } from "../relay/service.ts";
+import type { AccountMailbox } from "./mailbox.ts";
+import { takeForAccount } from "./one-press.ts";
+import { recoveryActs, type AccountAddSeams, type RecoverySeams } from "./recovery-acts.ts";
 import { openRecoverySocket, type RecoveryReleases } from "./recovery.ts";
 import { pcRecordId, SafetyLog } from "./safety-log.ts";
 
@@ -19,13 +24,20 @@ export function openPcRecovery(options: {
   readonly releases: RecoveryReleases;
   readonly pending: PendingRedemptions | undefined;
   readonly pairings: KeyProofPairings | undefined;
+  readonly relay: RelayService;
+  readonly accountMailbox: AccountMailbox;
 }) {
-  const { stateDir, devices, pcAccount, journal, safetyLog, releases, pending, pairings } = options;
+  const { stateDir, devices, pcAccount, journal, safetyLog, releases, pending, pairings, relay, accountMailbox } = options;
   // The log's freeze set already includes each standing block once.
   const standing = (): RecoveryStanding[] => safetyLog.state().freezes.flatMap(({ record }) => {
     const { kind, id, target, account, signer } = record;
     return kind === "block" || kind === "freeze" ? [{ kind, id, target, account, signer }] : [];
   });
+  // a row the CLI ends loses the page media its renders were given, as one HTTP revoke ends (dispatch.ts)
+  const forgetMedia = (ids: string[]): string[] => {
+    for (const id of ids) forgetPageMedia({ device: id });
+    return ids;
+  };
   const seams: RecoverySeams = {
     pendingList: () => (pending?.list() ?? []).map(({ id, label, fingerprint }) => ({ id, label, fingerprint })),
     standing,
@@ -40,7 +52,11 @@ export function openPcRecovery(options: {
       }
       return pairings.approve(id, fingerprint, "recover");
     },
-    removeKey: (input) => devices.removeKey(input),
+    removeKey: (input) => {
+      const done = devices.removeKey(input);
+      if ("removed" in done) forgetMedia(done.removed);
+      return done;
+    },
     appendLift: (id, forget, user) => {
       const freezeId = id.startsWith("f:");
       const restriction = standing().find((entry) => entry.id === id);
@@ -64,16 +80,38 @@ export function openPcRecovery(options: {
       }
       return done;
     },
-    revokeAll: (user) => devices.revokeAll(user),
+    revokeAll: (user) => forgetMedia(devices.revokeAll(user)),
+  };
+  // a bridge this app started on another PC's behalf is never that PC's own Ovis: it is not added to an account
+  const managed = () => process.env["OVIS_REMOTE"] === "1";
+  const accountAdd: AccountAddSeams = {
+    inspect: () => {
+      if (managed()) return { refused: "This is a bridge another PC started, not this PC's own Ovis", code: "managed" };
+      // an SSH install skips the first browser visit: the add itself makes the missing identity, never a damaged one's
+      try { relay.ensureIdentity(); }
+      catch (error) {
+        if (error instanceof RelayIdentityError) return { refused: "This PC's relay identity cannot be read", code: "identity_unreadable" };
+        throw error;
+      }
+      const fields = relay.publicFields();
+      if (fields === null) return { refused: "This PC has no relay identity yet", code: "no_identity" };
+      const { name, ...shown } = fields;
+      return { ...shown, label: (name ?? fields.server_id.slice(0, 8)).slice(0, 48), account: devices.account() };
+    },
+    take: async (account, serverId) => {
+      if (managed()) return { refused: "This is a bridge another PC started, not this PC's own Ovis", code: "managed" };
+      const taken = await takeForAccount({ devices, relay, accountMailbox }, account, serverId);
+      return "refused" in taken ? { refused: taken.refused.message, code: taken.refused.code } : taken;
+    },
   };
   const handle = recoveryActs({ releases, logReadable: act => {
     if (!SafetyLog.open(stateDir).readable) return false;
     switch (act) {
       case "revoke_all": return devices.revokeAllError === null;
-      case "release": case "admit": case "lift": return devices.accountError === null;
+      case "release": case "admit": case "lift": case "account_add_inspect": case "account_add_take": return devices.accountError === null;
       case "list": case "undo": case "remove": return !devices.failsClosed;
     }
-  }, user: userInfo().username, seams });
+  }, user: userInfo().username, seams, accountAdd });
   const opened = openRecoverySocket({ stateDir, handle });
   if ("refused" in opened) {
     if (opened.refused !== "windows") console.error(`ovis recover is not available: ${opened.refused}`);

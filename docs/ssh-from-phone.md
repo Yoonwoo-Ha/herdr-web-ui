@@ -1,15 +1,19 @@
-# Open a PC over SSH from the Android app
+# Open a PC over SSH from the phone app
 
 For a computer you already reach with `ssh`: the phone connects straight to it, with no Ovis relay,
-no account and no port open but SSH. Linux and macOS computers; Android for now (the iPhone app:
-[ios-ssh-plan.md](ios-ssh-plan.md)).
+no account and no port open but SSH. Linux and macOS computers, from the Android and iPhone apps. On the iPhone a pasted private key must be
+ed25519 or ECDSA (RSA keys work in the Android app), and the password once needs the computer to take SSH's
+plain password sign-in.
 
 ## Add it
 
-1. On **Add a PC** (after signing in, or **Start without signing in**), tap **SSH**.
+1. On the **SSH** tab, type `user@host` in **SSH** and tap **Connect**: the app's SSH screen opens with it filled in.
 2. Fill in the address (a host name or an IP your phone reaches: on the same Wi-Fi, or over
    Tailscale), the SSH port and your user name there.
 3. Choose how the phone signs in:
+   - **Tailscale SSH: no key**, when the computer runs Tailscale SSH (`tailscale up --ssh`) and its policy lets
+     your login in. Nothing goes on the computer. If Tailscale asks for a check, the app shows its link: open it,
+     approve, and the phone goes on by itself. Picked for you when the address is a Tailscale one.
    - **This phone's own key** (recommended). The app shows one line; add it to
      `~/.ssh/authorized_keys` on the computer (Copy, or Share it to mail or a messenger you read on
      the computer, then paste it there), then tap Connect.
@@ -33,6 +37,13 @@ no account and no port open but SSH. Linux and macOS computers; Android for now 
 The computer joins **Your PCs** on the first screen as `user@host (SSH)`. Leaving the app ends the
 SSH connection after a while; coming back connects again by itself, asking nothing, and whatever you
 had typed stays a draft until you send it.
+
+## The PCs your first PC knows
+
+Once one PC is added over SSH, the **SSH** tab lists the PCs it knows, each with **Add**: the hosts of its
+`~/.ssh/config` (by their user@hostname), the PCs of its Tailscale login (as the same user), and the PCs it added
+over SSH itself. Add opens the SSH screen filled in, as typing it would. The list comes from that PC's Ovis over
+the phone's SSH connection; a PC whose Ovis is older lists what it can.
 
 ## Install Ovis from the phone
 
@@ -63,6 +74,7 @@ The app's error page says what happened and what to do:
 | It says | Do |
 | --- | --- |
 | The PC's SSH key changed | Check why on the computer. If you know (reinstalled), Change PC, then Manage → Forget host key, and open it to confirm the new fingerprint. Otherwise do not connect. |
+| Approve this phone in Tailscale | Tailscale SSH asks for its check again: open the link, approve it, then Try again. |
 | The PC refused this phone | The key left `authorized_keys` there. Change PC, then Manage → Set up again, and use the password once. |
 | Could not reach the PC over SSH | The computer is off, sshd is not running, or the phone cannot reach the address (another network; Tailscale off). |
 | Ovis is not installed there | Run the command shown, in a terminal on the computer, or Manage → Set up again to install from the phone. |
@@ -71,6 +83,7 @@ The app's error page says what happened and what to do:
 ## Where your keys are
 
 The phone's own key and any key you paste are kept only in the app, sealed with a key in the
-phone's Android Keystore: they never leave the phone, not even in a backup. Your password is used
+phone's Android Keystore or the iPhone's Keychain (this device only): they never leave the phone, not even
+in a backup. Your password is used
 once and never stored. Nothing goes to the Ovis developers or the Ovis relay: the connection is
 between your phone and your computer.

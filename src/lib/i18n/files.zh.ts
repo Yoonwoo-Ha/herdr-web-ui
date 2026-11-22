@@ -239,4 +239,5 @@ export const FILES_ZH: Record<string, string> = {
   "You have control": "由你控制",
   "{agent} is using it": "{agent} · 使用中",
   "An agent is using it": "Agent 使用中",
+  "Open {name}": "打开 {name}",
 };

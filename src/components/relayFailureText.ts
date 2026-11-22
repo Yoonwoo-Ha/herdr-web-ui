@@ -24,6 +24,7 @@ export function relayFailureText(t: Translate, failure: RelayFailure, name: stri
     if (failure === "pair-declined") return { title: t("Nobody approved this device for {name}", { name }), copy: t("Nobody approved it within 90 seconds, or it was denied. Try again, and approve it on a device of your account that is connected to {name} (keep {name} open in Ovis there), or on {name} itself if it shows this request. If it keeps failing, pair this device with a QR or code from {name}.", { name }), detail: filtered, retry: true };
   }
   switch (failure) {
+    case "pair-unanswered": return { title: t("No answer from {name}", { name }), copy: t("Ask again, then press [Allow] on {name}.", { name }), detail: filtered, retry: true };
     case "pair-declined": return { title: t("{name} did not approve this device", { name }), copy: t("It was declined on the PC, or not approved within 90 seconds. Open the link again to compare new numbers."), detail: filtered, retry: false };
     case "pair-unavailable": return { title: t("{name} is not taking new devices right now", { name }), copy: t("Its link may have run out (it works for 10 minutes), or it may be paused after too many tries or busy with other devices. Copy a new link on the PC, or wait a few minutes."), detail: filtered, retry: false };
     case "new-devices-refused": return { title: t("{name} cannot add new devices right now", { name }), copy: t("Its Ovis account is past its relay limit, so the relay lets no new device in. Devices already added still connect. Check the account in Settings on the PC, or try again later."), detail: filtered, retry: true };
@@ -49,6 +50,8 @@ export function relayFailureText(t: Translate, failure: RelayFailure, name: stri
     case "link-required": return { title: t("{name} no longer takes this QR code", { name }), copy: t("Show a new QR code on {name} and scan it.", { name }), detail: filtered, retry: false };
     case "account-mismatch": return { title: t("{name} is not set up for your account", { name }), copy: t("On {name}, sign in to your account and show a new QR code, then scan it.", { name }), detail: filtered, retry: false };
     case "unverified-device": return { title: t("{name} could not check this device with your account", { name }), copy: t("Wait a few minutes, then show a new QR code on {name} and scan it.", { name }), detail: filtered, retry: false };
+    case "account-unreachable": return { title: t("{name} could not reach your Ovis account", { name }), copy: t("{name} lets your account's devices in only after the account service confirms it is still in your account, and the service did not answer. Try again in a moment. A device paired with {name} itself still connects.", { name }), detail: filtered, retry: true };
+    case "account-readd": return { title: t("Add {name} to your account again", { name }), copy: t("{name} is no longer in your Ovis account. On {name}, open Settings → Devices and PCs → Add a connection → Ovis relay and add it to your account again, then try again here.", { name }), detail: filtered, retry: true };
     case "scan-expired": return { title: t("The QR code ran out while you signed in"), copy: t("Show a new QR code on {name} and scan it.", { name }), detail: filtered, retry: false };
   }
 }

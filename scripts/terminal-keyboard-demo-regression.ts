@@ -17,6 +17,7 @@ import { chromePath } from "./chrome-path.ts";
 import { appFaces } from "./app-faces.ts";
 import { shownRow, shownRows } from "./shown-rows.ts";
 import { serveDemo } from "./demo-server.ts";
+import { RECONNECTING_SHOWN_AFTER_MS } from "../src/lib/headerConnection.ts";
 
 const SETTINGS_KEY = "ovis:settings";
 const PREFIX = "/herdr-web-ui/demo/app/";
@@ -35,6 +36,7 @@ interface Frame { type: string; pane_id?: string }
 interface Recorded {
   sentFrames: Frame[];
   recordedSockets: Array<WebSocket & { push(frame: Record<string, unknown>): void }>;
+  socketsRefused?: boolean;
   viewportQA: { resize(height: number): void };
 }
 type QaWindow = Window & Recorded;
@@ -67,7 +69,8 @@ const RECORDER = `<script>(() => {
   window.sentFrames = [];
   window.recordedSockets = [];
   const Recorded = function (url, protocols) {
-    const socket = new Demo(url, protocols);
+    // while socketsRefused is set, a reconnect finds the server away: the loss lasts as long as a test needs
+    const socket = new Demo(window.socketsRefused ? "ws://127.0.0.1:9/" : url, protocols);
     window.recordedSockets.push(socket);
     const send = socket.send.bind(socket);
     socket.send = (raw) => {
@@ -878,8 +881,13 @@ async function captureSet(browser: Browser, dir: string): Promise<Capture[]> {
       await shot(page, `390-${theme}-disabled-offline`, meta("direct typing, the connection dropped (reconnect held, inside the grace): the bar and the control disabled"), true);
       assert.deepEqual(await offlineNow(), [true, false, true], "still offline after the capture: the screenshot shows the offline state");
       await page.keyboard.press("Shift");
-      await page.waitForFunction(() => document.querySelector(".conn-reconnecting") !== null && document.querySelector(".conn-live") === null);
       await page.getByText("Reconnecting to Ovis…").waitFor();
+      // the header and its chip name a reconnect only once it has lasted RECONNECTING_SHOWN_AFTER_MS: the reconnects
+      // meanwhile find the server away, so this loss lasts that long
+      await page.evaluate(() => { (window as unknown as QaWindow).socketsRefused = true; });
+      await page.clock.runFor(RECONNECTING_SHOWN_AFTER_MS);
+      await page.waitForFunction(() => document.querySelector(".conn-reconnecting") !== null && document.querySelector(".conn-live") === null);
+      await page.evaluate(() => { (window as unknown as QaWindow).socketsRefused = false; });
       await page.clock.resume();
       await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('.pane-frame:not(.is-hidden) .key-bar [data-key="keyboard"]')?.disabled === false, undefined, { timeout: 20_000 });
       await role(page, "observe");

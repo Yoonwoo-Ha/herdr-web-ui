@@ -22,6 +22,27 @@ public class SshLinkTest {
     }
 
     @Test
+    public void onlyTheAppsOwnPagesAndTheHostedAppOpenTheSshSetup() {
+        assertTrue(SshPcs.setupOpener(null, true));
+        assertTrue(SshPcs.setupOpener("https://app.ovis.sh/#pcs", false));
+        for (String page : new String[] { "https://app.ovis.sh.evil.example/", "http://app.ovis.sh/", "https://app.ovis.sh:8443/", "http://127.0.0.2:47317/", "https://desk.tail1e211e.ts.net/" }) {
+            assertFalse(page, SshPcs.setupOpener(page, false));
+        }
+        assertFalse(SshPcs.setupOpener(null, false));
+    }
+
+    @Test
+    public void readsTailscaleSshsCheckLinkAndNothingElse() {
+        assertEquals("https://login.tailscale.com/a/l130ea4b830eaf8", SshLink.checkLink("# Tailscale SSH requires an additional check.\n# To authenticate, visit: https://login.tailscale.com/a/l130ea4b830eaf8\n"));
+        assertEquals("https://login.tailscale.com/a/abc123", SshLink.checkLink("visit: https://login.tailscale.com/a/abc123."));
+        assertNull(SshLink.checkLink("visit: https://login.tailscale.com.evil.example/a/abc"));
+        assertNull(SshLink.checkLink("Welcome to the box"));
+        assertTrue(SshPcs.tailnet("100.106.153.26"));
+        assertTrue(SshPcs.tailnet("box.tail1e211e.ts.net"));
+        assertFalse(SshPcs.tailnet("192.168.0.2"));
+    }
+
+    @Test
     public void picksTheOvisOfHerdrsDefaultSession() {
         SshLink.Found found = SshLink.parseDiscovery(String.join("\n",
             "Linux", "x86_64",

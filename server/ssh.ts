@@ -215,6 +215,11 @@ export class SshConnection {
   private answers = new Map<string, string>();
   private stderr = "";
   usedSecret = false;
+  /**
+   * Public keys only (the user's config, key files and agent; a key's passphrase may still be asked): no password or
+   * keyboard-interactive login. Set before start() for a connection that vouches for an account add (machines.ts).
+   */
+  publicKeyOnly = false;
   onExit: (() => void) | null = null;
   onOutput: ((text: string) => void) | null = null;
 
@@ -236,6 +241,7 @@ export class SshConnection {
     const args = ["-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "PermitLocalCommand=no", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"];
     if (clearForwardings) args.unshift("-o", "ClearAllForwardings=yes");
     if (this.keyOnly) args.push("-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none");
+    if (this.publicKeyOnly) args.push("-o", "PreferredAuthentications=publickey", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no");
     // the account's own `ControlMaster auto` would make every connection fail on Windows
     if (!this.multiplexed) args.push("-o", "ControlMaster=no", "-o", "ControlPath=none");
     if (this.target.port) args.push("-o", `Port=${this.target.port}`);
@@ -514,6 +520,29 @@ export class SshConnection {
       if (timedOut) throw new Error("SSH port forward timed out");
       throw error;
     } finally { clearTimeout(timer); this.pending.delete(ready.reject); }
+  }
+  /**
+   * A Unix socket on the PC (its owner's recovery socket) reached at a socket in this connection's own folder, which only
+   * this account may enter. Multiplexed connections only (Linux, macOS).
+   */
+  async forwardSocket(remotePath: string): Promise<string> {
+    if (this.closed) throw new Error("SSH connection closed");
+    if (!this.multiplexed) throw new Error("Forwarding a socket needs a multiplexed SSH connection");
+    if (/[\s:]/.test(remotePath) || !remotePath.startsWith("/")) throw new Error("Invalid remote socket path");
+    const local = join(this.makeDir(), `fwd-${randomBytes(8).toString("hex")}.sock`);
+    this.socketForwards.set(local, remotePath);
+    try { await this.exec([this.client.ssh, "-F", "none", "-S", this.control, "-O", "forward", "-L", `${local}:${remotePath}`, this.target.destination]); }
+    catch (error) { await this.closeSocketForward(local); throw error; }
+    return local;
+  }
+  private socketForwards = new Map<string, string>();
+  /** Ends a forward forwardSocket opened: the master stops listening there, and the local socket file goes. */
+  async closeSocketForward(local: string): Promise<void> {
+    const remote = this.socketForwards.get(local);
+    if (remote === undefined) return;
+    this.socketForwards.delete(local);
+    try { if (!this.closed && this.master !== null && this.master.exitCode === null) await this.exec([this.client.ssh, "-F", "none", "-S", this.control, "-O", "cancel", "-L", `${local}:${remote}`, this.target.destination]); }
+    finally { rmSync(local, { force: true }); }
   }
   private async exec(args: string[], input?: Uint8Array | StreamInput, timeout = 30_000, maxOutput?: number): Promise<string> {
     const stream = input !== undefined && !(input instanceof Uint8Array) ? input : undefined;

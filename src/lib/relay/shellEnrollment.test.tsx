@@ -5,13 +5,11 @@ import { ACCOUNT_FEATURE, RELAY_PROTOCOL } from "../../../shared/relay-mux.ts";
 import { encodeOffer } from "../../../shared/relay-offer.ts";
 import { exportPublicKey, generateKeyPair } from "../../../shared/relay-e2ee.ts";
 import { deriveServerId } from "../../../shared/relay-server-proof.ts";
-import { RelayPcTable } from "../../components/RelayPcTable.tsx";
 import { ReadyCheckpoint, RelayShell, type RelayShellProps } from "../../components/RelayShell.tsx";
 import { myPcs } from "../account/myPcs.ts";
 import { memoryAccountStore } from "../account/store.ts";
 import { SettingsProvider } from "../settings.ts";
 import { nativeTransport, setTransport } from "../transport.ts";
-import { dashboardModel, dashboardPcs } from "./dashboard.ts";
 import type { RelayDevice, ShellDeviceStore } from "./device.ts";
 import { mountRelayShell } from "./shell.tsx";
 import { createShellTestPage } from "./shell.test.tsx";
@@ -106,11 +104,10 @@ describe("account pairing completion", () => {
     }
     await until(() => enrolls > 0);
     const rows = async () => myPcs([], await store.list(), { now: Date.now(), accountKey: key.public_spki, account: "acct-test" });
-    const dashboard = async () => dashboardPcs(await rows(), await store.list());
     const pcPage = `https://app.ovis.sh/s/${offer.server_id}/`;
     /** the wait for the next look armed after the `reads`th read of the introduction */
     const polled = (reads: number): boolean => timers.some((timer) => timer.ms === 3_000 && timer.reads === reads);
-    return { current, enrollment, rows, dashboard, mountAt, pcPage, kinds, polled, enrolls: () => enrolls, apps: () => apps, retrySuccess: () => { response = Promise.resolve(Response.json({ results: [] })); } };
+    return { current, enrollment, rows, mountAt, pcPage, kinds, polled, enrolls: () => enrolls, apps: () => apps, retrySuccess: () => { response = Promise.resolve(Response.json({ results: [] })); } };
   }
 
   it("enters the PC as soon as a sheet join is admitted, with no Ready screen, and finishes the account's part behind it", async () => {
@@ -190,20 +187,4 @@ describe("account pairing completion", () => {
     expect(run.apps()).toBe(1);
   });
 
-  it("tells a failed dashboard row to Open it to try again, and that Open retries the enrollment", async () => {
-    const run = await pairing();
-    run.enrollment.resolve(Response.json({ error: { code: "account_unavailable" } }, { status: 503 }));
-    await until(async () => (await run.rows())[0]?.enrollment === "failed");
-    const model = dashboardModel(await run.dashboard(), { label: "Phone", now: Date.now() }, "wss://relay.ovis.sh");
-    const html = renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(RelayPcTable, { rows: model.rows, onSelect() {}, onOpenSheet() {} }) }));
-    const action = /<a[^>]*href="([^"]+)"[^>]*data-pc-action="open"[^>]*>([^<]+)<\/a>/.exec(html);
-    const line = /data-pc-enrollment="">([^<]+)</.exec(html)?.[1];
-    expect(action?.[2]).toBe("Open");
-    expect(line).toBe("Account setup is incomplete. Open it to try again.");
-    const before = run.enrolls();
-    run.retrySuccess();
-    await run.mountAt(new URL(action?.[1] ?? "/", "https://app.ovis.sh").href);
-    await until(() => run.enrolls() > before);
-    await until(async () => (await run.rows())[0]?.enrollment === "complete");
-  });
 });

@@ -73,11 +73,11 @@ export class AccountCatchUp {
     // Only an applied whole read renews the deadline. Failed pulls never postpone it, and a hung service cannot
     // prevent the PC from closing idle sessions at the deadline.
     this.clearDeadline();
-    if (!store) return;
+    if (!store && !this.gate) return;
     const clock = this.devices.waitClock();
     const deadline = clock.now() + STALE_READ_MS;
     this.remaining = () => deadline - clock.now();
-    this.onStale = () => store.waitForRead();
+    this.onStale = () => { store?.waitForRead(); this.devices.staleAccountMembers(); };
     const fire = () => {
       const left = this.checkFreshness();
       if (left > 0) this.cancelStaleness = clock.setTimeout(fire, Math.ceil(left));

@@ -20,6 +20,10 @@ const local = { id: "local", kind: "local", name: "Desk", enabled: true, state: 
 const relayPc = (patch: Partial<Machine>): Machine =>
   ({ id: "hh", kind: "relay", name: "HostHatch", enabled: true, state: "reconnecting", snapshot: null, error: "The PC did not answer through the relay", action_required: null, remote_ovis: null, ...patch }) as unknown as Machine;
 
+// a PC this server reaches over SSH that refused: Check again asks it now; a relay PC is retried by the server alone
+const sshPc = (patch: Partial<Machine>): Machine =>
+  ({ id: "hh", kind: "ssh", name: "HostHatch", enabled: true, state: "reconnecting", snapshot: null, error: "ssh: connect to host hh.example port 22: Connection refused", action_required: null, remote_ovis: null, ...patch }) as unknown as Machine;
+
 const descriptors = new Map<string, PropertyDescriptor | undefined>();
 let renderer: ReactTestRenderer | undefined;
 
@@ -68,10 +72,9 @@ it("asks the server to try an off PC now on Check again, once per hold however o
     return new Response(JSON.stringify({ error: { code: "machine_offline", message: "This PC is disconnected" } }), { status: 503, headers: { "content-type": "application/json" } });
   }) as typeof fetch);
   try {
-    await mount([local, relayPc({})]);
+    await mount([local, sshPc({})]);
     const line = renderer!.root.find((element) => element.props.className === "machine-off");
-    expect(textOf(line)).toContain("Switched off");
-    expect(textOf(line)).toContain("It is off, has no network, or Ovis is not running on it.");
+    expect(textOf(line)).toContain("hh.example:22 refused the SSH connection");
     const [button] = recheckButtons();
     expect(textOf(button!)).toBe("Check again");
     await act(async () => { button!.props.onClick(); });
@@ -80,7 +83,7 @@ it("asks the server to try an off PC now on Check again, once per hold however o
     expect([textOf(recheckButtons()[0]!), recheckButtons()[0]!.props["aria-disabled"]]).toEqual(["Checking…", true]);
     expect(renderer!.root.findAll((element) => element.props.className === "machine-error")).toHaveLength(0);
     await act(async () => renderer?.unmount());
-    await mount([local, relayPc({})]);
+    await mount([local, sshPc({})]);
     await act(async () => { recheckButtons()[0]!.props.onClick(); });
     expect(asked).toHaveLength(1);
     await act(async () => { jest.advanceTimersByTime(RECHECK_HOLD_MS - 1); });
@@ -99,16 +102,16 @@ it("tells a failed ask on the off row, and drops it for good when the PC answers
     new Response(JSON.stringify({ error: { code: "remote_unavailable", message: "Temporary gateway error" } }), { status: 502, headers: { "content-type": "application/json" } })) as typeof fetch);
   const failures = () => renderer!.root.findAll((element) => element.type === "p" && element.props.role === "alert").map(textOf);
   try {
-    await mount([local, relayPc({ id: "gw" })]);
+    await mount([local, sshPc({ id: "gw" })]);
     await act(async () => { recheckButtons()[0]!.props.onClick(); });
     expect(failures()).toEqual([expect.stringContaining("Temporary gateway error")]);
     await act(async () => renderer!.update(createElement(SettingsProvider, null, createElement(MachineSidebar, {
-      machines: [local, relayPc({ id: "gw", state: "connected", error: null })], selectedMachineId: "local", selectedPaneId: null, activity, actions,
+      machines: [local, sshPc({ id: "gw", state: "connected", error: null })], selectedMachineId: "local", selectedPaneId: null, activity, actions,
       onSelect: () => {}, onNew: () => {}, onSetup: () => {}, onUsageLogin: () => {},
     }))));
     expect(failures()).toEqual([]);
     await act(async () => renderer!.update(createElement(SettingsProvider, null, createElement(MachineSidebar, {
-      machines: [local, relayPc({ id: "gw" })], selectedMachineId: "local", selectedPaneId: null, activity, actions,
+      machines: [local, sshPc({ id: "gw" })], selectedMachineId: "local", selectedPaneId: null, activity, actions,
       onSelect: () => {}, onNew: () => {}, onSetup: () => {}, onUsageLogin: () => {},
     }))));
     expect(failures()).toEqual([]);
@@ -126,7 +129,7 @@ it("says nothing of an earlier ask that fails after a later one", async () => {
     return calls === 1 ? first.promise : new Response(JSON.stringify({ error: { code: "machine_offline", message: "This PC is disconnected" } }), { status: 503, headers: { "content-type": "application/json" } });
   }) as typeof fetch);
   try {
-    await mount([local, relayPc({ id: "late" })]);
+    await mount([local, sshPc({ id: "late" })]);
     await act(async () => { recheckButtons()[0]!.props.onClick(); });
     await act(async () => { jest.advanceTimersByTime(RECHECK_HOLD_MS); });
     await act(async () => { recheckButtons()[0]!.props.onClick(); });
@@ -138,11 +141,26 @@ it("says nothing of an earlier ask that fails after a later one", async () => {
   }
 });
 
-it("offers no Check again for a connected PC, and to a device that only watches says why without it", async () => {
+it("offers no Check again for a connected PC or an off PC of the relay, and to a device that only watches says why without it", async () => {
   await mount([local, relayPc({ state: "connected", error: null })]);
   expect(recheckButtons()).toHaveLength(0);
   await act(async () => renderer?.unmount());
-  await mount([local, relayPc({})], true);
+  // the server keeps trying a relay PC by itself: the dot beside its name says it is off, with nothing under it
+  await mount([local, relayPc({})]);
   expect(recheckButtons()).toHaveLength(0);
-  expect(textOf(renderer!.root.find((element) => element.props.className === "machine-off"))).toContain("It is off, has no network, or Ovis is not running on it.");
+  expect(renderer!.root.findAll((element) => element.props.className === "machine-off")).toHaveLength(0);
+  expect(renderer!.root.find((element) => typeof element.props.className === "string" && element.props.className.startsWith("machine-dot")).props.title).toBe("Switched off");
+  expect(textOf(renderer!.root.find((element) => element.props.className === "machine-state visually-hidden"))).toBe("Switched off");
+  await act(async () => renderer?.unmount());
+  await mount([local, sshPc({})], true);
+  expect(recheckButtons()).toHaveLength(0);
+  expect(textOf(renderer!.root.find((element) => element.props.className === "machine-off"))).toContain("refused the SSH connection");
+});
+
+it("draws a PC this one only watches there as view only: it says so and offers no new workspace", async () => {
+  await mount([local, relayPc({ state: "connected", error: null, view_only: true })]);
+  const group = renderer!.root.find((element) => element.type === "section" && element.props["aria-label"] === "PC HostHatch");
+  expect(textOf(group)).toContain("View only");
+  const create = group.find((element) => element.type === "button" && typeof element.props.className === "string" && element.props.className.includes("machine-new"));
+  expect(create.props.disabled).toBe(true);
 });

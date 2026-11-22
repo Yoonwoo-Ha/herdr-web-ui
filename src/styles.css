@@ -199,25 +199,16 @@
   --pending-max-h: min(20dvh, 12rem);
   --palette-w: 640px;
   --palette-top: 12vh;
-  /* the hosted relay app (RelayShell, RelayDashboard and the components under them). Its own
-     geometry, so it never shrinks with the terminal sidebar's density: rows that carry an action,
-     the bottom tab bar, the columns and the one size of a control's or a tab's glyph */
-  --table-row-h: 44px;
-  --tabbar-h: 56px;
-  --relay-sidebar-w: 240px;
-  --relay-content-w: 1280px;
+  /* the hosted relay app (RelayShell and the components under it). Its own
+     geometry, so it never shrinks with the terminal sidebar's density */
   --relay-signin-w: 368px;
   --relay-step-w: 440px;
   --relay-step-h: 720px;
   --relay-step-bar: 3px;
   --relay-step-icon: 48px;
   --relay-sheet-w: 520px;
-  --relay-detail-w: 360px;
-  --relay-table-head-h: 36px;
   --relay-control-icon-size: 16px;
   /* floors under a compact or user-scaled size: max(floor, role) keeps a tab label and body text readable */
-  --relay-fs-min: 11px;
-  --relay-fs-body-min: 12px;
 
   /* focus */
   --ring: 2px solid var(--accent);
@@ -1663,16 +1654,8 @@
   --sidebar-w: 300px;
   --control-h: 32px;
   --row-h: 44px;
-  --table-row-h: 40px;
   --chip-h: 18px;
   --avatar-size: 26px;
-}
-
-/* after the density block on purpose: same specificity, and a finger gets a full row in either density */
-@media (pointer: coarse) {
-  :root {
-    --table-row-h: var(--touch-target);
-  }
 }
 
 /* after the density block on purpose: same specificity, and from 769px both densities share one
@@ -2223,8 +2206,10 @@ button {
   white-space: nowrap;
 }
 
-.context-connection.is-reconnecting {
-  color: var(--status-reconnecting);
+/* a reconnect is not an error: the header names it in the crumb's own neutral colour */
+.context-connection.is-reconnecting,
+.context-connection.is-failed {
+  color: var(--text-dim);
 }
 
 .context-connection.is-connected {
@@ -2415,32 +2400,6 @@ button {
   height: var(--space-5);
 }
 
-/* a button, so the installed app's title-bar drag region gives it the click */
-.sidebar-brand.is-entry {
-  padding: var(--space-half) var(--space-1);
-  margin-left: calc(-1 * var(--space-1));
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background-color var(--dur-fast) var(--ease-out);
-}
-
-@media (hover: hover) {
-  .sidebar-brand.is-entry:hover {
-    background: var(--bg-hover);
-  }
-}
-
-@media (pointer: coarse) {
-  .sidebar-brand.is-entry {
-    min-height: var(--touch-target);
-  }
-}
-
-.sidebar-brand.is-entry:active {
-  background: var(--bg-elevated);
-}
 
 .header-text-button {
   display: inline-flex;

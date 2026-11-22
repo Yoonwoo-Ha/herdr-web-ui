@@ -74,7 +74,9 @@ export function sshDetails(pc) {
   const address = `${pc.user}@${pc.host}${pc.port === 22 ? "" : `:${pc.port}`}`;
   const how = pc.auth === "imported"
     ? t(`Signs in with a pasted ${pc.keyType ? `${pc.keyType} ` : ""}key`, `붙여 넣은 ${pc.keyType ? `${pc.keyType} ` : ""}키로 로그인`)
-    : t("Signs in with this phone's key", "이 휴대폰의 키로 로그인");
+    : pc.auth === "tailscale"
+      ? t("Signs in with Tailscale SSH, no key", "Tailscale SSH로 키 없이 로그인")
+      : t("Signs in with this phone's key", "이 휴대폰의 키로 로그인");
   const hostKey = pc.fingerprint
     ? t(`Host key ${pc.hostKeyAlgorithm} ${pc.fingerprint}`, `호스트 키 ${pc.hostKeyAlgorithm} ${pc.fingerprint}`)
     : t("Host key forgotten: Set up again shows the key it has now, to check and confirm.", "호스트 키를 지웠습니다: 다시 설정에서 지금의 키를 보고 확인하세요.");
@@ -144,20 +146,20 @@ export function openFailure(url, code, message) {
       const answer = /^HTTP \d{3}$/.test(message ?? "") ? ` (${message})` : "";
       return t(
         `${host} answered${answer}, but it is not Ovis: another web server, or herdr itself, which the app cannot open. ${where}`,
-        `${host}이(가) 응답했지만${answer} Ovis가 아닙니다. 다른 웹 서버이거나, 앱이 열 수 없는 herdr 자체입니다. ${where}`,
+        `이 주소(${host})가 응답했지만${answer} Ovis가 아닙니다. 다른 웹 서버이거나, 앱이 열 수 없는 herdr 자체입니다. ${where}`,
       );
     }
     case "refused": return refusedHelp(url, host);
     case "timeout": return (homeHost(url.hostname) ? t(
       `${host} did not answer within ${ANSWER_SECONDS} seconds. The PC may be off, or out of this phone's reach: a home network address does not open over mobile data or another Wi-Fi, and a firewall on the PC can block the port.`,
-      `${host}이(가) ${ANSWER_SECONDS}초 안에 응답하지 않았습니다. PC가 꺼져 있거나 이 휴대폰에서 닿지 않을 수 있습니다. 집 네트워크 주소는 모바일 데이터나 다른 Wi-Fi에서 열리지 않고, PC의 방화벽이 포트를 막을 수도 있습니다.`,
+      `이 주소(${host})가 ${ANSWER_SECONDS}초 안에 응답하지 않았습니다. PC가 꺼져 있거나 이 휴대폰에서 닿지 않을 수 있습니다. 집 네트워크 주소는 모바일 데이터나 다른 Wi-Fi에서 열리지 않고, PC의 방화벽이 포트를 막을 수도 있습니다.`,
     ) : t(
       `Nothing came back from ${host} within ${ANSWER_SECONDS} seconds. The server may be down, or this phone's connection (or a VPN on it) may not reach it.`,
       `${ANSWER_SECONDS}초 동안 ${host}에서 아무 응답도 오지 않았습니다. 서버가 꺼져 있거나, 이 휴대폰의 연결(또는 VPN)이 서버에 닿지 않을 수 있습니다.`,
     )) + tailscale;
     case "unknown-host": return t(
       `${url.hostname} was not found. Check the name, or open the address Ovis shows under Settings → Phone & devices on the PC.`,
-      `${url.hostname}을(를) 찾지 못했습니다. 이름을 확인하거나, PC의 Ovis에서 설정 → 폰 및 기기에 표시된 주소를 여세요.`,
+      `이 이름(${url.hostname})을 찾지 못했습니다. 이름을 확인하거나, PC의 Ovis에서 설정 → 폰 및 기기에 표시된 주소를 여세요.`,
     ) + tailscale;
     default: return t(`${host} could not be reached: ${message}`, `${host}에 연결할 수 없습니다: ${message}`) + tailscale;
   }
@@ -166,7 +168,7 @@ export function openFailure(url, code, message) {
 function refusedHelp(url, host) {
   const text = t(
     `${host} refused the connection: nothing listens there. Ovis has to run on the PC (herdr alone is not enough), and by default it listens only on the PC itself (127.0.0.1). Open the address Ovis shows under Settings → Phone & devices on the PC.`,
-    `${host}이(가) 연결을 거부했습니다. 그 주소에서 기다리는 것이 없습니다. PC에서 Ovis가 실행 중이어야 하고(herdr만으로는 안 됩니다), Ovis는 기본으로 PC 자신(127.0.0.1)에서만 기다립니다. PC의 Ovis에서 설정 → 폰 및 기기에 표시된 주소를 여세요.`,
+    `이 주소(${host})가 연결을 거부했습니다. 그 주소에서 기다리는 것이 없습니다. PC에서 Ovis가 실행 중이어야 하고(herdr만으로는 안 됩니다), Ovis는 기본으로 PC 자신(127.0.0.1)에서만 기다립니다. PC의 Ovis에서 설정 → 폰 및 기기에 표시된 주소를 여세요.`,
   );
   return loopbackHost(url.hostname) ? text + " " + t(
     "On a phone, localhost and 127.0.0.1 are the phone itself, not your PC.",
@@ -189,14 +191,98 @@ export function parseAddress(text) {
   return url;
 }
 
+const SSH_TARGET = /^(?:ssh:\/\/)?([^\s@/:]+)@([^\s@/:[\]]+|\[[0-9a-f:.]+\])(?::(\d{1,5}))?\/?$/i;
+
+/**
+ * What the SSH tab's one field holds: an SSH login, `user@host` or `user@host:port` (or `ssh://` with them), as
+ * `{ ssh: { user, host, port } }`, and anything else as an address (`{ address }`, for open). A `user@host` with a
+ * scheme other than ssh is an address with its credentials, never SSH.
+ */
+export function sshOrAddress(text) {
+  const value = String(text).trim();
+  const ssh = SSH_TARGET.exec(value);
+  if (ssh === null) return { address: value };
+  const port = ssh[3] === undefined ? 22 : Number(ssh[3]);
+  if (port < 1 || port > 65535) return { address: value };
+  return { ssh: { user: ssh[1], host: ssh[2].replace(/^\[|\]$/g, ""), port } };
+}
+
+/**
+ * The PCs an SSH PC knows (OvisSsh known: its own Ovis's /api/machines/ssh-candidates and /api/machines), as logins
+ * this phone can add over SSH, `{ user, host, port, name, source }`: an ssh config host by its user@hostname (an alias
+ * alone means nothing on the phone, which has no such config), a PC of its Tailscale login by its MagicDNS name, as
+ * `from`'s user (Tailscale SSH or a key there takes the same login), and a PC it added over SSH by its target. Those
+ * already saved on this phone (`saved`: SSH PCs as OvisSsh list gives them) and `from` itself are left out, each
+ * login once, at most 20.
+ */
+export function knownLogins(known, from, saved = []) {
+  const logins = [];
+  const take = (name, text, port, source, user = null) => {
+    const login = SSH_TARGET.exec(`${text.includes("@") ? "" : `${user ?? from.user}@`}${text}${port && port !== 22 ? `:${port}` : ""}`);
+    if (login === null) return;
+    const entry = { user: login[1], host: login[2].replace(/^\[|\]$/g, ""), port: login[3] === undefined ? 22 : Number(login[3]), name, source };
+    const same = (pc) => pc.user === entry.user && pc.host.toLowerCase() === entry.host.toLowerCase() && pc.port === entry.port;
+    if (same(from) || saved.some(same) || logins.some(same)) return;
+    logins.push(entry);
+  };
+  for (const pc of Array.isArray(known?.candidates?.pcs) ? known.candidates.pcs : []) {
+    if (typeof pc?.name !== "string") continue;
+    if (pc.source === "tailscale" && typeof pc.destination === "string") take(pc.name, pc.destination, 22, "tailscale");
+    else if (pc.source === "ssh_config" && typeof pc.detail === "string" && pc.detail.includes("@")) take(pc.name, pc.detail, 22, "ssh_config");
+  }
+  for (const machine of Array.isArray(known?.machines?.machines) ? known.machines.machines : []) {
+    if (machine?.kind !== "ssh" || typeof machine.target?.destination !== "string" || !machine.target.destination.includes("@")) continue;
+    take(typeof machine.name === "string" ? machine.name : machine.target.destination, machine.target.destination, machine.target.port ?? 22, "pc");
+  }
+  return logins.slice(0, 20);
+}
+
+/**
+ * A saved PC's name in the lists and on the way back to it: its saved name, else what its address says (a relay PC's
+ * id, as its host is the app's; a Tailscale host's first word; an SSH login; the address).
+ */
+export function savedPcLabel(origin, names, ssh = {}) {
+  if (names[origin]) return names[origin];
+  if (ssh[origin]) return ssh[origin].label;
+  let url;
+  try { url = new URL(origin); } catch { return origin; }
+  const scope = /^\/s\/([0-9a-f]{32})\/?$/.exec(url.pathname);
+  if (scope) return scope[1].slice(0, 12);
+  return tailnetHost(url.hostname) ? url.hostname.split(".")[0] : url.host;
+}
+
+/**
+ * The PCs this phone is already on, one list under each tab's controls, each PC in the one list of the way it connects:
+ * the relay tab's the PCs paired over the relay (a scope on the app's origin; the app's own front page is no PC, and the
+ * account's PCs come with its sign-in, never here), the Tailscale tab's those at a Tailscale address (a phone has no list
+ * of its tailnet's machines, only the ones opened here), and the SSH tab's the PCs added over SSH (way "ssh"), every
+ * other address (way "address") and an entry saved unreadable (way "broken"), there to be forgotten. Each is `{ origin, label, way }`
+ * (savedPcLabel). `saved` and `names` as HerdrShell's getState gives them, `ssh` the SSH PCs by origin (OvisSsh list).
+ */
+export function tabPcs(saved, list, names, ssh = {}, appOrigin = APP_ORIGIN) {
+  const app = new URL(appOrigin).origin;
+  return saved.flatMap((origin) => {
+    let url = null;
+    try { url = new URL(origin); } catch { /* a saved address to forget */ }
+    const way = url === null ? "broken"
+      : url.origin === app ? (/^\/s\/[0-9a-f]{32}\/?$/.test(url.pathname) ? "relay" : null)
+      : tailnetHost(url.hostname) ? "tailscale" : ssh[origin] ? "ssh" : "address";
+    const home = way === "address" || way === "broken" ? "ssh" : way;
+    return home === list ? [{ origin, label: savedPcLabel(origin, names, ssh), way }] : [];
+  });
+}
+
 const OFFER = "#offer=";
 const SCOPE = /^\/s\/([0-9a-f]{32})\/?$/;
+/** a PC's page that asks for that provider's sign-in first (the QR code a PC in an account shows): no key, code or token */
+const SIGN_IN = /^#sign-in=[a-z]{1,32}$/;
 
 /**
  * What `url` (from parseAddress) opens through the Ovis relay, or null for a PC's own address.
  * A PC's page on the app's origin, `/s/<server_id>/`, with its pairing offer (`#offer=`, the QR code
- * the PC shows for the relay) or without (a PC saved before), is `{ url, scope, name }`: the address
- * to open, the fragment kept, the scope the app saves the PC under, and its label from the offer.
+ * the PC shows for the relay), with a provider's sign-in (`#sign-in=`, the QR code a PC in an account
+ * shows) or with neither (a PC saved before), is `{ url, scope, name }`: the address to open, the
+ * fragment kept, the scope the app saves the PC under, and its label from the offer.
  * Anything else is `{ error }`: "foreign-offer" for an offer on another origin, which only the app's
  * origin may take, "bad-offer" for an offer that does not name this scope's PC, and "not-a-pc" for
  * another page of the app's origin. The hosted shell checks the offer in full before it pairs.
@@ -207,6 +293,7 @@ export function relayLink(url, appOrigin = APP_ORIGIN) {
   if (serverId === undefined) return { error: "not-a-pc" };
   const scope = `${url.origin}/s/${serverId}/`;
   if (url.hash === "") return { url: scope, scope, name: undefined };
+  if (SIGN_IN.test(url.hash)) return { url: scope + url.hash, scope, name: undefined };
   if (!url.hash.startsWith(OFFER)) return { error: "not-a-pc" };
   const offer = offerOf(url.hash.slice(OFFER.length));
   if (offer === null || offer.server_id !== serverId) return { error: "bad-offer" };

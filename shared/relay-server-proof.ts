@@ -18,7 +18,7 @@ export interface ProofRoute {
    * `account` proves the key to the account service (docs/account.md); the relay verifies `control`, `data` and `warm`, and
    * `pair-host` for a typed code's rendezvous, whose `connection_id` is the nameplate (relay/pair-room.ts).
    */
-  readonly role: "control" | "data" | "client" | "warm" | "account" | "pair-host";
+  readonly role: "control" | "data" | "client" | "warm" | "account" | "pair-host" | "vouched-pc";
   readonly connection_id: string | null;
 }
 

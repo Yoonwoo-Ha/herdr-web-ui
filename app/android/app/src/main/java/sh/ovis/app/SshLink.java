@@ -5,6 +5,7 @@ import com.trilead.ssh2.Connection;
 import com.trilead.ssh2.LocalStreamForwarder;
 import com.trilead.ssh2.ServerHostKeyVerifier;
 import com.trilead.ssh2.Session;
+import com.trilead.ssh2.UserAuthBannerCallback;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -17,7 +18,9 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 import org.json.JSONObject;
 
@@ -174,6 +177,50 @@ final class SshLink {
             throw unreachable(failed);
         }
         throw new SshFailure("auth", "The machine refused that password");
+    }
+
+    /**
+     * Signs in with Tailscale SSH, no key: the "none" method, which Tailscale SSH holds while it asks for a check.
+     * `banner` hears what the PC says meanwhile (its check link, for the person to open and approve this phone) and
+     * may end the wait with a failure; the wait lasts up to `limitMs`.
+     */
+    static void signInWithTailscale(Connection connection, String user, long limitMs, Function<String, SshFailure> banner) throws SshFailure {
+        AtomicReference<SshFailure> stop = new AtomicReference<>();
+        UserAuthBannerCallback hear = (message, language) -> {
+            SshFailure failure = banner.apply(message);
+            if (failure != null && stop.compareAndSet(null, failure)) connection.close();
+        };
+        connection.addUserAuthBanner(hear);
+        try {
+            within(connection, limitMs, () -> {
+                boolean in;
+                try {
+                    in = connection.authenticateWithNone(user);
+                } catch (IOException failed) {
+                    if (stop.get() != null) throw stop.get();
+                    throw unreachable(failed);
+                } catch (IllegalStateException closed) {
+                    if (stop.get() != null) throw stop.get();
+                    throw new SshFailure("unreachable", "The connection ended");
+                }
+                if (stop.get() != null) throw stop.get();
+                if (!in) throw new SshFailure("auth", "The machine did not let this phone in without a key (Tailscale SSH is off there, or its policy does not allow this login)");
+                return null;
+            });
+        } finally {
+            connection.removeUserAuthBanner(hear);
+        }
+    }
+
+    private static final java.util.regex.Pattern CHECK_LINK = java.util.regex.Pattern.compile("https://login\\.tailscale\\.com/[A-Za-z0-9/_?=&%.-]+");
+
+    /** The check link in a Tailscale SSH banner ("To authenticate, visit: https://login.tailscale.com/a/…"), or null. */
+    static String checkLink(String banner) {
+        java.util.regex.Matcher found = CHECK_LINK.matcher(banner == null ? "" : banner);
+        if (!found.find()) return null;
+        String link = found.group();
+        while (link.endsWith(".")) link = link.substring(0, link.length() - 1);
+        return link;
     }
 
     /** `command`'s output (stdout only), at most 512 KiB, each line also handed to `lines` as it comes when given. */

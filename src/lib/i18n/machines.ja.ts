@@ -1,12 +1,11 @@
 /**
  * Japanese for the keys only the machines files use:
- * components/MachineSidebar.tsx (with STATE_WORD), components/MachineDialog.tsx,
+ * components/MachineSidebar.tsx (with STATE_WORD), components/MachineHeader.tsx, components/MachineDialog.tsx,
  * lib/bridgeProgress.ts (with STAGES), components/MachineStats.tsx, lib/systemReport.ts.
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const MACHINES_JA: Record<string, string> = {
-  "1 agent": "エージェント: 1 件",
-  "{n} agents": "エージェント: {n} 件",
+  "Inbox": "受信トレイ",
   "{where} refused the SSH connection: the PC may be off, or nothing answers on that port.": "{where} が SSH 接続を拒否しました。PC の電源が切れているか、そのポートで応答するものがない可能性があります。",
   "{where} is not a name this web server can look up: check the address.": "{where} はこのウェブサーバーが解決できない名前です。アドレスを確認してください。",
   "{where} did not answer in time: check that the PC is on and reachable.": "{where} が時間内に応答しませんでした。PC の電源が入っていて到達できるか確認してください。",
@@ -32,7 +31,6 @@ export const MACHINES_JA: Record<string, string> = {
   "Review startup options": "起動方法を確認",
   "{name} is waiting for Windows sign-in{others}.": "{name} は Windows へのサインインを待機しています{others}。",
   "Start without Windows sign-in": "Windows にサインインせず起動",
-  "Starting without Windows sign-in…": "Windows にサインインせず起動中…",
   "Signing out of Windows ends herdr and its panes; lock the PC instead.": "Windows からサインアウトすると herdr とそのペインが終了します。代わりに PC をロックしてください。",
   "Starting without Windows sign-in can break Codex sandbox commands, and desktop-control tools may be unavailable. This choice applies to one start.": "Windows にサインインせず起動すると、Codex のサンドボックスコマンドが失敗したり、デスクトップ操作ツールを利用できなかったりする場合があります。この選択は今回の起動にのみ適用されます。",
   "Expand {name}": "{name} を展開",
@@ -46,7 +44,6 @@ export const MACHINES_JA: Record<string, string> = {
   "Manage PC": "PC を管理",
   "PC name": "PC 名",
   "Rename…": "名前を変更…",
-  "Disconnect": "切断",
   "Bridge connection conflict": "ブリッジ接続の競合",
   "Update the apps connected to this PC to the same version, or disconnect the other app, then reconnect here. Sessions keep running.": "この PC に接続するアプリを同じバージョンに更新するか、別のアプリの接続を解除してから、ここで再接続してください。セッションは実行を継続します。",
   "{name} has a bridge connection conflict{others}.": "{name} のブリッジ接続が競合しています{others}。",
@@ -133,6 +130,7 @@ export const MACHINES_JA: Record<string, string> = {
   "{name}'s own Ovis needs an update on that PC{others}.": "{name} の Ovis はその PC での更新が必要です{others}。",
   "Updating {name}'s own Ovis failed{others}.": "{name} の Ovis を更新できませんでした{others}。",
   "Update this PC's Ovis and connect": "この PC の Ovis を更新して接続",
+  "Update this PC's Ovis to the preview and connect": "この PC の Ovis をプレビュー版に更新して接続",
   "Updating {name}'s own Ovis": "{name} の Ovis を更新しています",
   "That PC's own updater installs it there. Existing herdr sessions keep running.": "その PC 自身のアップデーターがそこにインストールします。既存の herdr セッションは動き続けます。",
   "CPU": "CPU",
@@ -154,4 +152,15 @@ export const MACHINES_JA: Record<string, string> = {
   "Disk {value}": "ディスク {value}",
   "PC load in the status bar": "ステータスバーに PC の負荷を表示",
   "The selected PC's CPU, memory and fullest disk in the status bar, on this device only.": "選択中の PC の CPU、メモリ、最も使用率の高いディスクをステータスバーに表示します。この端末だけに適用されます。",
+  "Add it to my account": "自分のアカウントに追加",
+  "Adding it to your account…": "アカウントに追加しています…",
+  "Added to your account.": "アカウントに追加しました。",
+  "It is already in your account.": "すでにアカウントにあります。",
+  "That PC is in another account.": "その PC は別のアカウントにあります。",
+  "Add it with the number on the server's Ovis page.": "サーバーの Ovis ページに表示された番号で追加してください。",
+  "Sign in again on this PC, then add it again.": "この PC でもう一度サインインしてから、もう一度追加してください。",
+  "It was not added to your account. Try again.": "アカウントに追加できませんでした。もう一度お試しください。",
+  "Ovis was not installed on that PC": "その PC に Ovis をインストールできませんでした",
+  "Installing Ovis on that PC…": "その PC に Ovis をインストールしています…",
+  "Install Ovis there": "その PC に Ovis をインストール",
 };

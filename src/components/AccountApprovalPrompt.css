@@ -76,6 +76,7 @@
 }
 
 .account-approval-ask {
+  overflow-wrap: anywhere;
   margin: 0 0 var(--space-2);
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
@@ -124,6 +125,10 @@
   grid-template-columns: 1fr 1fr;
   gap: var(--space-2);
   margin-top: var(--space-5);
+}
+
+.account-approval-actions > :only-child {
+  grid-column: 1 / -1;
 }
 
 .account-approval-note {

@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { reserveTab } from "../externalLink.ts";
-import { deviceLabel, deviceOs } from "../phone.ts";
+import { deviceOs, thisDeviceLabel } from "../phone.ts";
 import { holdingSessionStore } from "./deleteAccount.ts";
 import { desktopAccount } from "./desktop.ts";
 import { startDeviceSignIn, startLinkPageSignIn, type DeviceSignIn } from "./deviceSignIn.ts";
@@ -110,7 +110,7 @@ export function useLinkPageSignIn(service: string, onSignedIn: (session: Account
     running.current = controller;
     setState({ kind: "starting" });
     void (async () => {
-      const requester = { label: deviceLabel(navigator.userAgent, navigator.maxTouchPoints ?? 0), os: deviceOs(navigator.userAgent, navigator.maxTouchPoints ?? 0) };
+      const requester = { label: thisDeviceLabel(), os: deviceOs(navigator.userAgent, navigator.maxTouchPoints ?? 0) };
       const options = { service, store: indexedAccountStore, requester };
       const fallback = offer.device[0];
       const picked = deviceOnly ? offer.device.find((device) => device === provider) : undefined;

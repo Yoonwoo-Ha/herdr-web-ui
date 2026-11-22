@@ -7,7 +7,7 @@ import type { AgentStatus } from "../../shared/protocol.ts";
 import { heldOrder, INBOX_FILTERS, inboxEmpty, inboxFiltered, inboxKey, inboxOrder, inboxSearched, inboxSinceAt, inboxStatus, inboxWords, plainWords, type InboxFilter } from "../lib/agentInbox.ts";
 import { agentGroup, type AgentRow } from "../lib/agentRoster.ts";
 import { stateSince } from "../lib/agentStateSince.ts";
-import type { HeaderConnection } from "../lib/headerConnection.ts";
+import { connectionWord as wordFor, type HeaderConnection } from "../lib/headerConnection.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { inboxAsks, inboxRowLine, inboxStateWord } from "../lib/inboxRow.ts";
 import { PanePressContext } from "../lib/paneSubmitContext.ts";
@@ -25,6 +25,8 @@ import { summaryTargets, useInboxSummaries, type RowSummary, type SummaryReads }
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { agentRowTitle, blockedNote, stateAge } from "./AgentSidebar.tsx";
+import { MachineHeader, useMachineFold } from "./MachineHeader.tsx";
+import { machineDotState, STATE_WORD } from "./MachineSidebar.tsx";
 import { RowMenu } from "./RowMenu.tsx";
 import { compactWorktreeName, StatusBadge } from "./Sidebar.tsx";
 import "./InboxList.css";
@@ -156,7 +158,6 @@ export function InboxList({ ref, machines, activity, watching, wide, filter, onF
   const searchOpen = !wide || searchAsked || query !== "";
   useLayoutEffect(() => { if (wide && searchAsked) search.current?.focus(); }, [wide, searchAsked]);
 
-  const severalPcs = machines.length > 1;
   const rows = shown.map((row) => {
     const { machine, entry } = row;
     const { pane, workspace, tab } = entry;
@@ -175,7 +176,7 @@ export function InboxList({ ref, machines, activity, watching, wide, filter, onF
     const summary = summaries.get(key);
     const failed = online && group === "done" && summary?.failed === true;
     const state = !online ? t("Offline") : failed ? t("Turn failed") : inboxStateWord(group, t);
-    const line = inboxRowLine({ online, group, words: wordsOf(row), place, machine: severalPcs ? machine.name : null, failed }, t);
+    const line = inboxRowLine({ online, group, words: wordsOf(row), place, failed }, t);
     return {
       key, machine, pane, online, status, group, title, line, failed, mark: paneMark(entry) ?? "", kind, state,
       asks: online && inboxAsks(group), since: online ? inboxSinceAt(group, summary, group === "blocked" ? stateSince(stamps, machine.id, pane.pane_id, pane.terminal_id, "blocked") : null) : null,
@@ -259,7 +260,7 @@ export function InboxList({ ref, machines, activity, watching, wide, filter, onF
       <ListFilter aria-hidden="true" />
     </button>
   );
-  const connectionWord = useAnnouncedText(connection === null ? null : t(connection === "connected" ? "Connected" : "Reconnecting…"));
+  const connectionWord = useAnnouncedText(connection === null ? null : wordFor(connection, t));
   const connectionLine = <p className={connectionWord === null ? "visually-hidden" : "inbox-connection"} role="status">{connectionWord}</p>;
   const moreButton = more && (
     <button type="button" className="icon-button inbox-round inbox-more" aria-label={more.label} title={more.label}
@@ -267,6 +268,38 @@ export function InboxList({ ref, machines, activity, watching, wide, filter, onF
       <Ellipsis aria-hidden="true" />
     </button>
   );
+
+  const drawRow = (row: (typeof rows)[number]) => {
+    const open = wide && row.key === current;
+    const words = <span className="inbox-words" dir="auto">{row.line}</span>;
+    const age = row.since === null ? null : stateAge(now - row.since);
+    const at = row.since === null ? null : new Date(row.since);
+    const spoken = [row.kind ? agentName(row.kind) : null, row.title, row.state, row.line === row.state ? null : row.line, age].filter((part) => part !== null).join(", ");
+    return (
+      <li key={row.key} className={`inbox-item${row.online ? "" : " is-offline"}${row.asks ? " is-asking" : ""}${open ? " is-current" : ""}`} data-machine={row.machine.id} data-pane={row.pane.pane_id} data-state={row.group}>
+        <button type="button" className="inbox-row" disabled={!row.online} aria-label={spoken} aria-current={open ? "true" : undefined}
+          ref={(node) => { if (node) rowNodes.current.set(row.key, node); else rowNodes.current.delete(row.key); }}
+          title={wide ? [row.title, row.line, at === null ? null : `${age} · ${at.toLocaleString(resolvedLanguage)}`].filter((part) => part !== null).join("\n") : undefined}
+          onPointerDown={(event) => { if (event.button === 0 && row.online) pressPane?.(row.machine.id, row.pane.pane_id); }}
+          onClick={() => { tally(() => usageCounters.paneUse("inbox_open", row.machine.id)); onOpen(row.machine.id, row.pane.pane_id); }}>
+          <InboxAvatar mark={row.mark} />
+          <span className="inbox-body">
+            <span className="inbox-line">
+              <span className="inbox-name">{row.title}</span>
+              {!wide && at !== null && <time className="inbox-time" dateTime={at.toISOString()} title={at.toLocaleString(resolvedLanguage)}>{age}</time>}
+            </span>
+            {wide ? words : <span className="inbox-sub">{words}{stateMark(row.status, row.failed, row.state)}</span>}
+          </span>
+          {wide && stateMark(row.status, row.failed, row.state)}
+        </button>
+      </li>
+    );
+  };
+  // several PCs: each one's rows under its own header, in the PCs' order, as the sidebar draws them (MachineHeader.tsx)
+  const groups = machines.length > 1 ? machines.flatMap((machine) => {
+    const own = rows.filter((row) => row.machine.id === machine.id);
+    return own.length === 0 ? [] : [{ machine, rows: own }];
+  }) : null;
 
   return (
     <section className={`mode-inbox${wide ? " is-wide" : ""}`} aria-label={t("Agent inbox")} tabIndex={-1} ref={root}
@@ -310,35 +343,11 @@ export function InboxList({ ref, machines, activity, watching, wide, filter, onF
             </button>
           </div>
         ) : empty !== null ? <p className="inbox-empty" role="status">{empty.flatMap((line, at) => [...(at > 0 ? [" "] : []), <span key={line}>{line}</span>])}</p> : (
-          <ul className="inbox-rows" onPointerDown={holdAfterPress} onTouchEnd={holdAfterPress}
+          <div className="inbox-groups" onPointerDown={holdAfterPress} onTouchEnd={holdAfterPress}
             onFocus={(event) => setFocusIn(event.target.matches(":focus-visible"))} onBlur={(event) => { if (!(typeof Node === "function" && event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setFocusIn(false); }}>
-            {rows.map((row) => {
-              const open = wide && row.key === current;
-              const words = <span className="inbox-words" dir="auto">{row.line}</span>;
-              const age = row.since === null ? null : stateAge(now - row.since);
-              const at = row.since === null ? null : new Date(row.since);
-              const spoken = [row.kind ? agentName(row.kind) : null, row.title, row.state, row.line === row.state ? null : row.line, age].filter((part) => part !== null).join(", ");
-              return (
-                <li key={row.key} className={`inbox-item${row.online ? "" : " is-offline"}${row.asks ? " is-asking" : ""}${open ? " is-current" : ""}`} data-machine={row.machine.id} data-pane={row.pane.pane_id} data-state={row.group}>
-                  <button type="button" className="inbox-row" disabled={!row.online} aria-label={spoken} aria-current={open ? "true" : undefined}
-                    ref={(node) => { if (node) rowNodes.current.set(row.key, node); else rowNodes.current.delete(row.key); }}
-                    title={wide ? [row.title, row.line, at === null ? null : `${age} · ${at.toLocaleString(resolvedLanguage)}`].filter((part) => part !== null).join("\n") : undefined}
-                    onPointerDown={(event) => { if (event.button === 0 && row.online) pressPane?.(row.machine.id, row.pane.pane_id); }}
-                    onClick={() => { tally(() => usageCounters.paneUse("inbox_open", row.machine.id)); onOpen(row.machine.id, row.pane.pane_id); }}>
-                    <InboxAvatar mark={row.mark} />
-                    <span className="inbox-body">
-                      <span className="inbox-line">
-                        <span className="inbox-name">{row.title}</span>
-                        {!wide && at !== null && <time className="inbox-time" dateTime={at.toISOString()} title={at.toLocaleString(resolvedLanguage)}>{age}</time>}
-                      </span>
-                      {wide ? words : <span className="inbox-sub">{words}{stateMark(row.status, row.failed, row.state)}</span>}
-                    </span>
-                    {wide && stateMark(row.status, row.failed, row.state)}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+            {groups === null ? <ul className="inbox-rows">{rows.map(drawRow)}</ul>
+              : groups.map((group) => <InboxMachineGroup key={group.machine.id} machine={group.machine} rows={group.rows.length}>{group.rows.map(drawRow)}</InboxMachineGroup>)}
+          </div>
         )}
       </div>
       {!wide && <div className="inbox-foot">
@@ -352,6 +361,21 @@ export function InboxList({ ref, machines, activity, watching, wide, filter, onF
           id: value, label: filterWord(value), icon: ListFilter, checked: filter === value, run: () => onFilter(value),
           ...(value === "all" ? {} : { glyph: <span className="inbox-filter-mark" aria-hidden="true"><StatusBadge compact status={value} label={filterWord(value)} /></span> }),
         }))} />}
+    </section>
+  );
+}
+
+function InboxMachineGroup({ machine, rows, children }: { machine: Machine; rows: number; children: ReactNode }) {
+  const t = useT();
+  const compact = useSettings().settings.sidebarRows === "one";
+  const [folded, toggle] = useMachineFold(machine.id);
+  const online = machine.state === "connected";
+  return (
+    <section className={`machine-group inbox-machine${online ? "" : " is-offline"}${folded ? " is-folded" : ""}`} aria-label={t("PC {name}", { name: machine.name })}>
+      <MachineHeader machine={machine} folded={folded} onToggle={toggle} compact={compact}
+        agents={online ? { count: rows, words: rows === 1 ? t("1 agent") : t("{n} agents", { n: rows }) } : null}
+        dot={online ? null : { state: machineDotState(machine), title: t(STATE_WORD[machine.state]) }} />
+      {!folded && <ul className="inbox-rows">{children}</ul>}
     </section>
   );
 }

@@ -7,13 +7,12 @@ import { accountDeviceId } from "../../../shared/account-records.ts";
 import { generateKeyPair } from "../../../shared/relay-e2ee.ts";
 import { ACCOUNT_OPENS_ALL_FEATURE, encodeFrame, FrameType, MuxProtocolError, RELAY_PROTOCOL } from "../../../shared/relay-mux.ts";
 import { deriveServerId } from "../../../shared/relay-server-proof.ts";
-import { RelayPcTable } from "../../components/RelayPcTable.tsx";
 import { RelayShell, type RelayShellProps } from "../../components/RelayShell.tsx";
 import { beginSignIn } from "../account/signin.ts";
+import { isNewAccountPc } from "../account/myPcs.ts";
 import { memoryAccountStore } from "../account/store.ts";
 import { SettingsProvider } from "../settings.ts";
 import { nativeTransport, setTransport } from "../transport.ts";
-import { dashboardModel, dashboardPcs } from "./dashboard.ts";
 import { accountOpenPeer, accountOpenRefusalFrame } from "./accountOpenPeer.fixture.ts";
 import type { ShellDeviceStore } from "./device.ts";
 import { createShellTestPage } from "./shell.test.tsx";
@@ -90,27 +89,32 @@ async function accountPc({ release = true, loseRegistrationReply = false, newUnt
   });
   await mountAt(`${APP}/${new URL(returned).hash}`);
   const current = (): RelayShellProps => { if (props === undefined) throw new TypeError("Missing shell props"); return props; };
-  const markup = (): string => {
-    const { state, directoryRelays } = current();
+  // what the account's row lets this device do with the PC: open it by the account's key, or ask to join it
+  const action = (): "open" | "join" => {
+    const { state } = current();
     if (state.kind !== "empty" || state.account?.kind !== "signed-in" || state.account.pcs === null) throw new TypeError("Missing signed-in directory");
-    const rows = dashboardModel(dashboardPcs(state.account.pcs, [], directoryRelays), { label: "Device" }, RELAY).rows;
-    return renderToStaticMarkup(createElement(SettingsProvider, null, createElement(RelayPcTable, { rows, onSelect() {}, onOpenSheet() {} })));
+    const row = state.account.pcs[0];
+    return row?.accountOpen === true && !isNewAccountPc(row, Date.now()) ? "open" : "join";
   };
-  return { accountStore, serverId, requests, registrationKeys, navigations, navigated: navigated.promise, appOpened: appOpened.promise, current, markup, apps: () => apps, reload: () => mountAt(`${APP}/`), openPage: () => mountAt(`${APP}/s/${serverId}/`), follow: (path: string) => mountAt(`${APP}${path}`) };
+  return { accountStore, serverId, requests, registrationKeys, navigations, navigated: navigated.promise, appOpened: appOpened.promise, current, action, apps: () => apps, reload: () => mountAt(`${APP}/`), openPage: () => mountAt(`${APP}/s/${serverId}/`), follow: (path: string) => mountAt(`${APP}${path}`) };
 }
 
-it("A3: a newly added account PC is marked New and its page waits for the Join press", async () => {
+it.each([
+  ["a newly added account PC", () => new Date(Date.now() + 23 * 60 * 60_000).toISOString()],
+  // a window that does not parse may still be open: condition 3 fails closed (security-triage)
+  ["an account PC whose new window does not parse", () => "garbage"],
+])("A3: %s is marked New and its page waits for the Join press", async (_case, newUntil) => {
   const attempts: boolean[] = [];
   const pressed = Promise.withResolvers<void>();
   const run = await accountPc({
-    newUntil: new Date(Date.now() + 23 * 60 * 60_000).toISOString(),
+    newUntil: newUntil(),
     open: async (_offer, options) => {
       attempts.push(options?.accountOpensAll === true);
       pressed.resolve();
       throw new RangeError("Stop after observing the requested connection");
     },
   });
-  const markup = run.markup();
+  const action = run.action();
   await run.openPage();
   expect(attempts).toEqual([]);
   const path = run.navigations[0];
@@ -122,10 +126,8 @@ it("A3: a newly added account PC is marked New and its page waits for the Join p
   run.current().onPair();
   await pressed.promise;
   expect(attempts).toEqual([false]);
-  // the overview shows nothing new (owner rule): no mark, and no quick Open
-  expect(markup).not.toMatch(/>New( PC)?<\//);
-  expect(markup).toContain('data-pc-action="join"');
-  expect(markup).not.toContain('data-pc-action="open"');
+  // the account's row offers no quick Open
+  expect(action).toBe("join");
 });
 
 it("T34, P18: a normal sign-in opens a listed unpaired PC as its registered account row", async () => {
@@ -139,14 +141,13 @@ it("T34, P18: a normal sign-in opens a listed unpaired PC as its registered acco
     return new Admitted(offer);
   } });
   const key = await run.accountStore.get("signin_key");
-  const markup = run.markup();
-  expect(markup).not.toContain(">New PC</");
+  const action = run.action();
   await run.openPage();
   expect({
-    number: key?.no, open: markup.includes('data-pc-action="open"'), join: markup.includes('data-pc-action="join"'),
+    number: key?.no, action,
     admissions, apps: run.apps(), navigations: run.navigations,
   }).toEqual({
-    number: 7, open: true, join: false,
+    number: 7, action: "open",
     admissions: key ? [{ feature: true, row: accountDeviceId(run.serverId, key.key.public_spki), key: key.key.public_spki }] : [],
     apps: 1, navigations: [],
   });
@@ -185,8 +186,7 @@ it("a just-added PC that does not take the account's way in falls back to the ne
 
 it("P18: an account service without the release only receives the challenge probe and still offers Join", async () => {
   const run = await accountPc({ release: false, open: () => { throw new TypeError("Join must wait for confirmation"); } });
-  expect(run.markup()).toContain('data-pc-action="join"');
-  expect(run.markup()).not.toContain('data-pc-action="open"');
+  expect(run.action()).toBe("join");
   expect(run.requests.filter((path) => path.startsWith("/v1/devices"))).toEqual(["/v1/devices/challenge"]);
   expect(await run.accountStore.get("signin_key")).toBeUndefined();
   await run.openPage();
@@ -196,6 +196,35 @@ it("P18: an account service without the release only receives the challenge prob
 const refused = (code: string, hold?: HoldState) =>
   Object.assign(new MuxProtocolError("protocol_error", "PC refused"), { code, ...(hold === undefined ? {} : { hold }) });
 
+it.each([
+  ["account_unreachable", "account-unreachable", "Desk could not reach your Ovis account"],
+  ["account_readd_required", "account-readd", "Add Desk to your account again"],
+] as const)("listing confirmation: %s says why on the PC's page, with Try again, and starts no pairing", async (code, failure, title) => {
+  let attempts = 0;
+  const run = await accountPc({ open: async () => { attempts++; throw refused(code); } });
+  await run.openPage();
+  expect(run.current().state).toMatchObject({ kind: "failed", failure });
+  const screen = renderToStaticMarkup(createElement(SettingsProvider, null, createElement(RelayShell, run.current())));
+  expect(screen).toContain(title);
+  expect(screen).toContain("Try again");
+  expect({ attempts, navigations: run.navigations, key: (await run.accountStore.get("signin_key"))?.no }).toEqual({ attempts: 1, navigations: [], key: 7 });
+});
+
+it.each([
+  ["account_unreachable", "account-unreachable"],
+  ["account_readd_required", "account-readd"],
+] as const)("listing confirmation wire: %s in answer to AUTH reaches a client that offered the feature", async (code, failure) => {
+  const offered: boolean[] = [];
+  const run = await accountPc({ open: (offer, options, identity) => openRelayTransport(offer, {
+    ...options, socket: () => accountOpenPeer(identity, { features: [ACCOUNT_OPENS_ALL_FEATURE], provisional: true,
+      hello: (frame) => { offered.push(frame.payload.features.includes("account-listing-errors-1")); },
+      auth: () => accountOpenRefusalFrame(code, code) }),
+  }) });
+  await run.openPage();
+  const state = run.current().state;
+  expect<object>({ offered, screen: state.kind === "failed" ? state.failure : state.kind, navigations: run.navigations }).toEqual({ offered: [true], screen: failure, navigations: [] });
+});
+
 it("P18, T34: reloading after a lost registration reply opens the PC with the same sign-in key", async () => {
   const run = await accountPc({ loseRegistrationReply: true, open: async (offer) => new class extends RelayTransport {
     override get server() { return { version: "1.0.0", relayProtocol: RELAY_PROTOCOL }; }
@@ -204,7 +233,7 @@ it("P18, T34: reloading after a lost registration reply opens the PC with the sa
   if (pending === undefined) throw new TypeError("Missing pending registration");
   expect(pending.no).toBeNull();
   await run.reload();
-  expect(run.markup()).toContain('data-pc-action="open"');
+  expect(run.action()).toBe("open");
   await run.openPage();
   expect(run.apps()).toBe(1);
   expect(run.registrationKeys).toEqual([pending.key.public_spki, pending.key.public_spki]);
@@ -220,7 +249,7 @@ it("P18, T34: refreshing the same shell after a lost registration reply opens th
 
   await run.current().onRefreshAccount?.();
 
-  expect(run.markup()).toContain('data-pc-action="open"');
+  expect(run.action()).toBe("open");
   expect(run.registrationKeys).toEqual([pending.key.public_spki, pending.key.public_spki]);
 });
 

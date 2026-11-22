@@ -23,10 +23,11 @@ export function PhonePanel({ url, phone = false }: { url: string; phone?: boolea
   );
 }
 
-export function Address({ url, title }: { url: string; title?: string }) {
+/** `qr` false: the address alone, where a QR code of it is drawn already (Portal's address under Add a connection's SSH tab) */
+export function Address({ url, title, qr = true }: { url: string; title?: string; qr?: boolean }) {
   return (
     <div className="phone-address">
-      <QrCode value={url} label={`QR code: ${url}`} />
+      {qr && <QrCode value={url} label={`QR code: ${url}`} />}
       <div>
         {title !== undefined && <p className="settings-label">{title}</p>}
         <p className="phone-url"><ExternalLink kind="ovis" href={url}>{url}</ExternalLink></p>

@@ -19,10 +19,11 @@ import { NewSessionDialog } from "./components/NewSessionDialog.tsx";
 import { SetupGuide, SetupGuideResume } from "./components/SetupGuide.tsx";
 import { useOtherDevice, useSetupGuide } from "./lib/useSetupGuide.ts";
 import { armHints, browserStorage, setupRowState } from "./lib/firstHints.ts";
-import { alertsHere, alertsSurfaces } from "./lib/setupGuideFlow.ts";
+import { alertsFailed, alertsHere, alertsSurfaces } from "./lib/setupGuideFlow.ts";
 import { pushSupported, registeredPushEndpoint } from "./lib/push.ts";
 import { confirmation } from "./lib/pushConfirm.ts";
 import { SetupProgressRow } from "./components/SetupProgressRow.tsx";
+import { askAddConnection } from "./lib/addConnectionRequest.ts";
 import { FirstStartHints } from "./components/FirstStartHints.tsx";
 import { SessionHistory } from "./components/SessionHistory.tsx";
 import { WorktreeRequestDialog } from "./components/WorktreeDialog.tsx";
@@ -46,7 +47,7 @@ import { pageSearch } from "./lib/pageQuery.ts";
 import { copyText } from "./lib/clipboard.ts";
 import { CommandPalette } from "./components/CommandPalette.tsx";
 import { AppLayoutContext, appLayoutOf, MachineContext } from "./lib/machineContext.tsx";
-import { addPcExit, MachineActionBanner, MachineSidebar, openAddPc } from "./components/MachineSidebar.tsx";
+import { addPcExit, addPcMoreItem, MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { type PanePresence, useSidebarActivityState } from "./lib/sidebarActivity.tsx";
 import { useAgentStateStamping } from "./lib/useAgentStateSince.ts";
@@ -87,12 +88,17 @@ import { RelayNotice } from "./components/RelayNotice.tsx";
 import { InstallHint } from "./components/InstallHint.tsx";
 import { DevicePairedNotice, DeviceRemovedNotice } from "./components/DevicePairedNotice.tsx";
 import { NewPcNotices } from "./components/NewPcNotices.tsx";
-import { hostedSignOutItems } from "./components/AccountHead.tsx";
+import { UnconfirmedPcNotices } from "./components/UnconfirmedPcNotices.tsx";
+import { AccountJoinRequests } from "./components/AccountJoinRequests.tsx";
+import { hostedAccountItems } from "./components/AccountHead.tsx";
 import { useHostedSignIn } from "./lib/account/hostedSignIn.ts";
 import { ownWindowHere } from "./lib/account/addThisPc.ts";
 import { useAccountDeviceNotices } from "./components/AccountDeviceNotices.tsx";
 import { PendingKeys } from "./components/PendingKeys.tsx";
 import { RelayPairingPrompt } from "./components/RelayPairingPrompt.tsx";
+import { useOwnWindowPrompts } from "./lib/useOwnWindowPrompts.ts";
+import { pcHeld } from "./lib/relay/newPcHere.ts";
+import { OwnJoinCard } from "./components/OwnJoins.tsx";
 import { AccountApprovals } from "./components/AccountApprovals.tsx";
 import { TelemetryNotice } from "./components/TelemetryControls.tsx";
 import { FilesDialog } from "./components/FilesDialog.tsx";
@@ -123,7 +129,7 @@ import { fileViewerKey, useFilePanels } from "./lib/useFilePanels.ts";
 import { usePaneCoverage } from "./lib/usePaneCoverage.ts";
 import { useT } from "./lib/i18n.ts";
 import { useConnectionChip, useServerMessageHandler } from "./lib/useConnectionChip.ts";
-import { useHeaderConnection } from "./lib/headerConnection.ts";
+import { connectionWord, useHeaderConnection, type HeaderConnection } from "./lib/headerConnection.ts";
 import { ConnectionRouteMark } from "./components/ConnectionRouteMark.tsx";
 import { StatusBar } from "./components/StatusBar.tsx";
 import { LensToggle } from "./components/LensToggle.tsx";
@@ -161,7 +167,7 @@ import { inboxOrder } from "./lib/agentInbox.ts";
 import { layoutCells } from "./lib/layoutMap.ts";
 import { pageStartsInInbox, useInboxMode } from "./lib/inboxMode.ts";
 import { InboxList } from "./components/InboxList.tsx";
-import { InboxConnecting, InboxFootEntry, InboxUnchosen, ThreadTitle, ThreadTop } from "./components/InboxMode.tsx";
+import { InboxConnecting, InboxUnchosen, ThreadTitle, ThreadTop } from "./components/InboxMode.tsx";
 import { InboxRail } from "./components/InboxRail.tsx";
 import { OvisMark } from "./components/OvisMark.tsx";
 import { catchTypeAhead } from "./lib/typeAhead.ts";
@@ -201,17 +207,25 @@ function ConnectionChip({ connected, word, title, quiet }: { connected: boolean;
   );
 }
 
-function SidebarBrand({ dark, onOpenInbox }: { dark: boolean; onOpenInbox: (() => void) | null }) {
-  const t = useT();
-  if (onOpenInbox === null) return (
+function SidebarBrand({ dark }: { dark: boolean }) {
+  return (
     <div className="brand sidebar-brand">
       <img src={dark ? logoDark : logoLight} alt="Ovis" width="68" height="24" />
     </div>
   );
+}
+
+/** a phone's header over its open drawer: the PC and workspace the list is on, not the pane's agent and name */
+function DrawerHeadTitle({ machine, workspace, connection, watching }: { machine: string; workspace: string; connection: HeaderConnection; watching: boolean }) {
+  const t = useT();
   return (
-    <button type="button" className="brand sidebar-brand is-entry" aria-label={t("Open agent inbox")} title={t("Open agent inbox")} onClick={onOpenInbox}>
-      <img src={dark ? logoDark : logoLight} alt="" width="68" height="24" />
-    </button>
+    <div className={`context drawer-head-title${connection === null ? "" : " has-connection"}`} title={`${machine} › ${workspace}`}>
+      <div className="context-title"><span className="context-title-text">{machine}</span></div>
+      <div className={`context-sub${connection === null ? "" : ` context-connection is-${connection}`}`}>
+        {watching && <><span className="context-watch">{t("View only")}</span><span className="context-sep" aria-hidden="true">·</span></>}
+        <span>{connection === null ? workspace : connectionWord(connection, t)}</span>
+      </div>
+    </div>
   );
 }
 
@@ -244,6 +258,8 @@ export function App() {
   const [updateRemote, setUpdateRemote] = useState(false);
   const { machineDialog, setMachineDialog, addPcPreset, setAddPcPreset, addPcFocusReturn, closeMachineDialog } = useMachineDialog();
   const { newSessionMachineId, setNewSessionMachineId } = useNewSessionMachine();
+  // a PC this one only watches there (Machine.view_only) is drawn as a watching device draws every PC
+  const viewOnly = (machineId: string): boolean => auth?.role === "watch" || machines.find((machine) => machine.id === machineId)?.view_only === true;
   const { health, localFreshness, shownHealth, readLocalHealth } = useLocalHealth();
   const exposure = health?.lan_exposure ?? health?.direct_exposure;
   const exposureDirect = !health?.lan_exposure || health.lan_exposure.direct === true;
@@ -256,7 +272,9 @@ export function App() {
   const { layoutNotice, setLayoutNotice } = useLayoutNotice();
   const { locked, setLocked, lockReason, pairCode, consumePairCode, pairingUnconfirmed, onPaired, auth, canSignOut, security, readBridgeHealth } = useAccessState({ ui: settings.uiFontFamily, chat: settings.chatFontFamily });
   const pendingAccess = locked === true ? false : auth === null ? undefined : auth.authenticated && auth.role === "drive" && auth.via !== "open";
-  const { pairedNotices, setPairedNotices, dismissPairedNotice, relayPairings, setRelayPairings, remotePairings, setRemotePairings, removedNotices, setRemovedNotices, dismissRemovedNotice, pendingKeys, setPendingKeys, clearPendingKeys } = usePairedNotices(pendingAccess);
+  const { pairedNotices, setPairedNotices, dismissPairedNotice, relayPairings, setRelayPairings, remotePairings, setRemotePairings, removedNotices, setRemovedNotices, dismissRemovedNotice, pendingKeys, setPendingKeys, clearPendingKeys } = usePairedNotices(pendingAccess, auth?.role === "watch");
+  const ownWindow = ownWindowHere(health?.auth);
+  const { prompts, joins: ownJoins, reread: rereadOwnJoins } = useOwnWindowPrompts(relayPairings, pendingKeys, ownWindow, locked === false);
   const updates = useUpdates(locked === false);
   const desktopUpdate = useDesktopUpdate();
   const { selectedPaneId, setSelectedPaneId, notificationViewTarget, setNotificationViewTarget, terminalPeek, setTerminalPeek, endPeek, pendingLink, linkLanded, setLinkLanded, rosterSeq, linkSince, selectionSince, rosterTick, setRosterTick, linkTick, setLinkTick } = useSelectionState({ initialLink });
@@ -349,7 +367,13 @@ export function App() {
   const alertsHealth = usePushHealth();
   const rowAlerts = alertsSurfaces(alertsHere({ alertsOn, notifications, desktop: desktopUpdateBridge() !== null, pushSupported: pushSupported(), pushOn, push: { checked: alertsHealth.checked, problem: alertsHealth.health.problem, delivered: alertsHealth.delivered }, confirmed: confirmation(registeredPushEndpoint()) })).row;
   const setupRow = rowOn && otherDevicePaired !== undefined && rowAlerts !== "wait"
-    ? <SetupProgressRow facts={{ workspace: localSnapshot.workspaces.length > 0, phone: otherDevicePaired !== null, alerts: rowAlerts === "done" }} />
+    ? <SetupProgressRow facts={{ workspace: localSnapshot.workspaces.length > 0, phone: otherDevicePaired !== null, alerts: rowAlerts === "done" }} actions={{
+      workspace: () => actions.openNewSession(),
+      // Add a connection on the Ovis relay tab, which needs no Tailscale; Tailscale only when picked there
+      phone: () => { askAddConnection("relay"); setSettingsLinkPage("devices"); setSettingsOpen(true); },
+      // the guide's alerts step's own call; a browser that refused says why in Settings → Alerts
+      alerts: () => { void enableNotifications().then((result) => { if (alertsFailed(result, desktopUpdateBridge() !== null)) { setSettingsLinkPage("alerts"); setSettingsOpen(true); } }); },
+    }} />
     : null;
   const inMode = inboxMode.on && !guideShown;
   inboxMode.drawerBlocked.current = inMode;
@@ -373,8 +397,10 @@ export function App() {
     thread: inMode && !inbox.shown && selectedPaneId !== null && linkLanded ? sidebarPinKey(selectedMachineId, selectedPaneId) : null,
     focusInput: () => paneControls.current?.focusInput() });
   const modeOffered = !guideShown;
-  const markEnters = modeOffered && wideScreen && !sidebarCollapsed && !inMode;
-  const markInDrawer = modeOffered && !wideScreen && drawerOpen && !inMode;
+  // the sidebar's foot, with its Inbox beside the gear, is on screen: More need not offer the way in too
+  const footShown = modeOffered && wideScreen && !sidebarCollapsed && !inMode;
+  // a phone's open drawer: the header's toggle is the Ovis mark, and its title the PC and workspace
+  const drawerHead = !wideScreen && drawerOpen && !inMode;
   const { enter: enterInbox, leave: leaveMode } = useCountedInboxWays(enterInboxShell, leaveModeShell);
   useShownCount("inbox", modeOffered, LOCAL_MACHINE);
 
@@ -524,8 +550,10 @@ export function App() {
 
 
   const { bell, alertsOffDot } = alertsBell({ t, alertsOn, notifications, pushOn, enableNotifications, disableNotifications });
-  const connWord = t(connected ? "live" : outputStopped ? "disconnected" : connectedBefore ? "reconnecting" : "connecting");
   const headerConnection = useHeaderConnection({ scope: `${split ? split.active : soloSlot}:${selectedMachineId}`, reportedBy, connected, connectedBefore, outputStopped });
+  // a reconnect the header does not name yet (its first second) shows the connection as it was: nothing flashes
+  const chipConnected = connected || (connectedBefore && !outputStopped && headerConnection === null);
+  const connWord = t(chipConnected ? "live" : outputStopped ? "disconnected" : connectedBefore ? "reconnecting" : "connecting");
   const session = useSessionStats(selectedMachineId, selectedPane?.pane_id ?? null);
   const sessionLines = session === null ? null : sessionMenuLines(session);
   const sessionShort = session === null ? [] : [workedWords(session), sizeWords(session)].filter((part) => part !== null);
@@ -559,10 +587,13 @@ export function App() {
   // nor is an inbox mode thread: the mode's shell has no tab row, split or pane menu to close from
   const closeOffered = selectedPane !== null && auth?.role !== "watch" && !guideShown && !inbox.shown && !inMode && !paneLocked(selectedPane.pane_id);
   const tabCloseOffered = selectedPane !== null && tabStripMounted && auth?.role !== "watch" && !guideShown && !inbox.shown && !inMode;
+  // C3 pin 1 (#16): a PC new in the account here takes no keyboard jump into its sessions, only a tap on one
+  const keyJumpHeld = (): boolean => selectedMachineId === "local" && pcHeld();
   const actions = useMemo<AppActions>(
     () => ({
       selectPane,
       selectAdjacentPane: (direction) => {
+        if (keyJumpHeld()) return;
         const panes = rosterPanes(snapshotRef.current?.panes ?? [], selectedPaneId);
         if (panes.length === 0) return;
         const index = panes.findIndex((pane) => pane.pane_id === selectedPaneId);
@@ -570,18 +601,21 @@ export function App() {
         if (next) selectPane(next.pane_id);
       },
       selectAdjacentTab: (direction) => {
+        if (keyJumpHeld()) return;
         const roster = snapshotRef.current;
         const viewed: ViewedPane = (scope, id) => lastViewedPane(scope, selectedMachineId, id);
         const next = roster ? adjacentTabPane(roster, selectedPaneId, direction, viewed) : null;
         if (next) selectPane(next);
       },
       selectTabNumber: (number) => {
+        if (keyJumpHeld()) return;
         const roster = snapshotRef.current;
         const viewed: ViewedPane = (scope, id) => lastViewedPane(scope, selectedMachineId, id);
         const next = roster ? numberedTabPane(roster, selectedPaneId, number, viewed) : null;
         if (next) selectPane(next);
       },
       selectAdjacentWorkspace: (direction) => {
+        if (keyJumpHeld()) return;
         const roster = snapshotRef.current;
         if (!roster) return;
         const unfolded = (): string[] => {
@@ -809,7 +843,7 @@ export function App() {
   const moreItems: RowMenuItem[] = [
     // a phone's way to another PC (relay step 1): the hosted app's Add a PC, or the phone app's own screens
     // on a phone only, as the approved flow draws it: a desktop adds a PC from Settings → Devices and PCs
-    ...(addPcTo !== null && isSheetWidth ? [{ id: "add-pc", label: t("Add a PC"), icon: Plus, run: () => openAddPc(addPcTo) }] : []),
+    ...[addPcMoreItem(addPcTo, isSheetWidth)].filter((item) => item !== null),
     ...(waitingInMore && nextWaiting !== null ? [{ id: "next-waiting", label: t("Open the next session waiting for you"), hint: String(moreWaiting), icon: CircleHelp, run: openNextWaiting }] : []),
     { id: "palette", label: t("Search panes and actions"), icon: Search, ...(paletteKeys ? { hint: paletteKeys } : {}), run: () => openPalette() },
     ...(foldFind && more ? [{ id: "find-group", label: t("Find…"), icon: TextSearch, run: () => openMoreGroup("find", more.anchor) }] : findInTerminal),
@@ -819,9 +853,10 @@ export function App() {
     ...paneMoreItems.filter((item) => !(foldFind && item.id === "search-conversation") && (!foldPane || item.id.startsWith("pane:")))
       .map((item, index) => index === 0 ? { ...item, divider: true } : item),
     ...(foldPane && more ? [{ id: "pane-group", label: t("Pane and tab…"), icon: PanelsTopLeft, divider: true, run: () => openMoreGroup("pane", more.anchor) }] : []),
-    ...(modeOffered && !markEnters ? [{ id: "enter-inbox", label: t("Open agent inbox"), icon: Inbox, divider: true, run: () => { actions.counted?.("inbox", "menu"); enterInbox(); } }] : []),
-    // a phone's Sign out of the hosted app, last, as the overview's foot had it: a desktop has it in Settings → Devices and PCs
-    ...(isSheetWidth ? hostedSignOutItems(hostedSignIn, t) : []),
+    ...(modeOffered && !footShown ? [{ id: "enter-inbox", label: t("Open agent inbox"), icon: Inbox, divider: true, run: () => { actions.counted?.("inbox", "menu"); enterInbox(); } }] : []),
+    // a phone's account and Sign out of the hosted app, last, as the overview's foot had it: a desktop has them in
+    // Settings → Devices and PCs, which the account line opens
+    ...(isSheetWidth ? hostedAccountItems(hostedSignIn, t, () => { setSettingsLinkPage("devices"); setSettingsLinkSection("account"); setSettingsOpen(true); }) : []),
   ];
   const fromMore = (id: string): RowMenuItem[] => moreItems.filter((item) => item.id === id);
   const moreOnList = inbox.shown;
@@ -946,26 +981,24 @@ export function App() {
       {selectedPane !== null && !guideShown && !inbox.shown && <h1 className="visually-hidden">{selectedTitle}</h1>}
       {listScreen || inboxWide ? null : <header className={`app-header is-zoned${chatShown ? " is-chat" : ""}${stripInHeader && !phoneTabRow ? " has-tab-row" : ""}${phoneTabRow && stripInHeader ? " has-phone-tabs" : ""}`}>
         <div className="header-side">
-          {wideScreen && !sidebarCollapsed && !inMode && <SidebarBrand dark={resolvedTheme === "dark"} onOpenInbox={markEnters ? () => { actions.counted?.("inbox", "button"); enterInbox(); } : null} />}
+          {wideScreen && !sidebarCollapsed && !inMode && <SidebarBrand dark={resolvedTheme === "dark"} />}
           {inboxBack ? <button type="button" id="inbox-back" className="icon-button inbox-back" aria-label={t("Back")} title={t("Back")} onClick={inbox.back}><ChevronLeft /></button> : <button
             type="button"
             id="drawer-toggle"
-            className={`icon-button drawer-toggle${markInDrawer ? " is-mark" : ""}`}
-            aria-label={t(markInDrawer ? "Open agent inbox" : drawerOpen ? "Close workspace list" : "Open workspace list")}
-            title={markInDrawer ? t("Open agent inbox") : undefined}
-            aria-haspopup={markInDrawer ? undefined : "dialog"}
-            aria-expanded={markInDrawer ? undefined : drawerOpen}
-            aria-controls={markInDrawer ? undefined : "workspace-drawer"}
+            className={`icon-button drawer-toggle${drawerHead ? " is-mark" : ""}`}
+            aria-label={t(drawerOpen ? "Close workspace list" : "Open workspace list")}
+            aria-haspopup="dialog"
+            aria-expanded={drawerOpen}
+            aria-controls="workspace-drawer"
             onClick={(event) => {
-              if (!markInDrawer) { toggleDrawerByButton(event.timeStamp); return; }
-              if (secondTapOfOpening(event.timeStamp)) return;
-              actions.counted?.("inbox", "button");
-              enterInbox();
+              // the mark stands where the menu button was: the opening double tap's second half does not close it
+              if (drawerHead && secondTapOfOpening(event.timeStamp)) return;
+              toggleDrawerByButton(event.timeStamp);
             }}
           >
-            {markInDrawer ? <OvisMark width="22" height="22" /> : drawerOpen ? <X /> : <Menu />}
+            {drawerHead ? <OvisMark width="22" height="22" /> : drawerOpen ? <X /> : <Menu />}
           </button>}
-          {!inMode && wideScreen && !sidebarCollapsed && settings.sidebarRows !== "two" && <button type="button" className="icon-button new-workspace-button" disabled={auth?.role === "watch" || selectedMachine?.state !== "connected"} aria-label={t("New workspace")} title={auth?.role === "watch" ? `${t("New workspace")} · ${t("View only")}` : t("New workspace")} onClick={() => { actions.counted?.("new_workspace", "button"); actions.openNewSession(); }}>
+          {!inMode && wideScreen && !sidebarCollapsed && settings.sidebarRows !== "two" && <button type="button" className="icon-button new-workspace-button" disabled={viewOnly(selectedMachineId) || selectedMachine?.state !== "connected"} aria-label={t("New workspace")} title={viewOnly(selectedMachineId) ? `${t("New workspace")} · ${t("View only")}` : t("New workspace")} onClick={() => { actions.counted?.("new_workspace", "button"); actions.openNewSession(); }}>
             <Plus aria-hidden="true" />
           </button>}
           {!inMode && <button type="button" className="icon-button palette-button" aria-label={t("Command palette")} title={shortcutTitle(t("Command palette"), "palette")} onClick={() => openPalette()}>
@@ -1005,8 +1038,8 @@ export function App() {
                 }} />
             </PanePressContext.Provider>
             </RenderBoundary>
-            {phoneTabRow && headerConnection !== null && <span className={`header-tabs-connection is-${headerConnection}`}>{t(headerConnection === "connected" ? "Connected" : "Reconnecting…")}</span>}
-            {phoneTabRow && auth?.role === "watch" && <span className="header-tabs-watch" title={t("View only")}><Eye aria-hidden="true" /><span className="visually-hidden">{t("View only")}</span></span>}
+            {phoneTabRow && headerConnection !== null && <span className={`header-tabs-connection is-${headerConnection}`}>{connectionWord(headerConnection, t)}</span>}
+            {phoneTabRow && viewOnly(selectedMachineId) && <span className="header-tabs-watch" title={t("View only")}><Eye aria-hidden="true" /><span className="visually-hidden">{t("View only")}</span></span>}
             {phoneTabRow && <button type="button" className="icon-button header-tabs-sheet" aria-label={t("Tabs of {workspace}", { workspace: selectedWorkspace.label })}
               title={t("Tabs of {workspace}", { workspace: selectedWorkspace.label })} aria-haspopup="dialog" aria-expanded={tabSheet !== null} onClick={(event) => toggleTabSheet(event.currentTarget)}>
               {workspaceTabCount > 1 && <span className="header-tabs-count" aria-hidden="true">{workspaceTabCount}</span>}
@@ -1014,7 +1047,9 @@ export function App() {
             </button>}
           </div>
         ) : note !== null ? null : inbox.shown ? <Brand /> : inMode && selectedPane ? (
-          <ThreadTitle machines={machines} activity={activity} machineId={selectedMachineId} pane={selectedPane} connection={headerConnection} watching={auth?.role === "watch"} severalPcs={sidebarMachines.length > 1} />
+          <ThreadTitle machines={machines} activity={activity} machineId={selectedMachineId} pane={selectedPane} connection={headerConnection} watching={viewOnly(selectedMachineId)} severalPcs={sidebarMachines.length > 1} />
+        ) : selectedPane && crumb && drawerHead ? (
+          <DrawerHeadTitle machine={crumb.machine} workspace={crumb.workspace} connection={headerConnection} watching={viewOnly(selectedMachineId)} />
         ) : selectedPane && crumb ? (
           <div className={`context${headerConnection === null ? "" : " has-connection"}${tabsInHeader && selectedWorkspace && !guideShown ? " has-tabs" : ""}`} title={crumb.tooltip}>
             <div className="context-title">
@@ -1030,8 +1065,8 @@ export function App() {
               </button>}
             </div>
             <div className={`context-sub${headerConnection === null ? "" : ` context-connection is-${headerConnection}`}`}>
-              {auth?.role === "watch" && !statusBarShown && <><span className="context-watch">{t("View only")}</span><span className="context-sep" aria-hidden="true">·</span></>}
-              {headerConnection !== null ? <span>{t(headerConnection === "connected" ? "Connected" : "Reconnecting…")}</span> : <>
+              {viewOnly(selectedMachineId) && !statusBarShown && <><span className="context-watch">{t("View only")}</span><span className="context-sep" aria-hidden="true">·</span></>}
+              {headerConnection !== null ? <span>{connectionWord(headerConnection, t)}</span> : <>
                 {crumb.showMachine && <><span className="machine-context-name">{crumb.machine}</span><span className="context-sep" aria-hidden="true">›</span></>}
                 <span>{crumb.workspace}</span>
                 {crumb.folder !== null && (
@@ -1080,10 +1115,10 @@ export function App() {
         )}
         <div className="header-meta">
           {!guideShown && !inbox.shown && <ConnectionChip
-            connected={connected}
+            connected={chipConnected}
             word={connWord}
-            quiet={(headerConnection === "reconnecting" && note === null && ((crumb !== null && !stripInHeader) || (phoneTabRow && stripInHeader))) || statusBarShown}
-            title={[connected ? null : connWord, shownHerdr ? (shownHerdr.runtime === "herdr-core" ? t("herdr-core {version} · protocol {protocol}", { version: shownHerdr.version, protocol: shownHerdr.protocol }) : t("herdr {version} · protocol {protocol}", { version: shownHerdr.version, protocol: shownHerdr.protocol })) : null].filter((part) => part !== null).join(" · ") || undefined}
+            quiet={((headerConnection === "reconnecting" || headerConnection === "failed") && note === null && ((crumb !== null && !stripInHeader) || (phoneTabRow && stripInHeader))) || statusBarShown}
+            title={[chipConnected ? null : connWord, shownHerdr ? (shownHerdr.runtime === "herdr-core" ? t("herdr-core {version} · protocol {protocol}", { version: shownHerdr.version, protocol: shownHerdr.protocol }) : t("herdr {version} · protocol {protocol}", { version: shownHerdr.version, protocol: shownHerdr.protocol })) : null].filter((part) => part !== null).join(" · ") || undefined}
           />}
           {selectedMachineId !== "local"
             ? !targetHerdr && <span className="pill pill-offline">{t("herdr offline")}</span>
@@ -1122,20 +1157,18 @@ export function App() {
         {inMode ? (inboxWide && <aside className="sidebar inbox-column">
           <InboxRail onExit={leaveMode} onInbox={() => inbox.list.current?.toTop()} waiting={railWaiting}
             alerts={{ on: bell.on, title: bell.title, toggle: () => void bell.run() }} onSettings={actions.openSettings} shortcutTitle={shortcutTitle}
-            pcs={{ machines: sidebarMachines, selectedId: selectedMachineId, connection: rosterConnection,
-              saidByThread: !inbox.shown && selectedPane !== null && note === null && rosterConnection === headerConnection,
-              onSelect: (machineId) => selectTarget(machineId, null) }} />
+            connection={rosterConnection} saidByThread={!inbox.shown && selectedPane !== null && note === null && rosterConnection === headerConnection} />
           {modeList(true)}
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>) : <aside id="workspace-drawer" className={`sidebar${drawerOpen ? " is-open" : ""}${sidebarPeeking ? " is-peek" : ""}`} role={drawerModal ? "dialog" : undefined} aria-modal={drawerModal ? true : undefined} tabIndex={drawerModal ? -1 : undefined} aria-label={drawerModal ? t("Workspace list") : undefined}
           aria-owns={drawerModal ? "drawer-toggle" : undefined} ref={drawerRef} {...peekSidebarHandlers}>
-          {markInDrawer && <button type="button" className="visually-hidden drawer-close" aria-controls="workspace-drawer" aria-expanded="true" onClick={() => setDrawerOpen(false)}>{t("Close workspace list")}</button>}
+          {drawerHead && <button type="button" className="visually-hidden drawer-close" aria-controls="workspace-drawer" aria-expanded="true" onClick={() => setDrawerOpen(false)}>{t("Close workspace list")}</button>}
           {error && <div className="error-state" role="alert"><p>{error}</p><button className="btn" onClick={() => void load()}>{t("Retry")}</button></div>}
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
             <ReorderContext.Provider value={reorderCoordinator}><MachineSidebar machines={sidebarMachines} allMachines={machines} watching={auth?.role === "watch"} appLayout={appLayoutOn} drawerOpen={drawerOpen} filterRequest={sidebarFilterRequest} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} activity={activity} actions={actions} onSelect={selectTarget} onUsageLogin={(paneId) => { selectTarget("local", paneId, "terminal"); void load(); }} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={openNewOn}
               afterPcs={browserTabs !== null && filePanelAvailable ? <BrowserTabsGroup tabs={browserTabs} selected={browserTab} onSelect={openBrowserTab} /> : undefined}
-              footerStart={<>{setupRow}{modeOffered && wideScreen && !markEnters && <InboxFootEntry onOpen={() => { actions.counted?.("inbox", "button"); enterInbox(); }} />}</>} /></ReorderContext.Provider>
+              footerStart={setupRow} inbox={modeOffered && !inMode ? { waiting: sessionTally.waiting, open: () => { actions.counted?.("inbox", "button"); enterInbox(); } } : null} /></ReorderContext.Provider>
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>}
@@ -1156,13 +1189,20 @@ export function App() {
         <PushHealthNotice onRepair={repairNotifications} onOpen={() => { setSettingsLinkPage("alerts"); setSettingsOpen(true); }} />
         <InstallHint />
         {setupGuide.guide !== null && setupGuide.paused && <SetupGuideResume onResume={setupGuide.resume} />}
-        {relayPairings.length > 0 && <RelayPairingPrompt pairings={relayPairings} />}
+        {prompts.length > 0 && <RelayPairingPrompt pairings={prompts} />}
+        {/* an account join a member could approve too: this PC's own window asks for the number itself (OwnJoinCard) */}
+        {ownWindow && locked === false && <OwnJoinCard joins={ownJoins} onDecided={rereadOwnJoins} />}
         {remotePairings.length > 0 && <AccountApprovals pairings={remotePairings} />}
         {pairedNotices.length > 0 && <DevicePairedNotice events={pairedNotices} onDismiss={dismissPairedNotice} onOpen={(event) => { dismissPairedNotice(event); setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
         {deviceNotices}
         {health !== null && <NewPcNotices enabled={machineSessions.peek("local")?.socket?.accountOpensAll() === true} ownWindowOf={ownWindowHere(health.auth) ? health.web_ui?.server_id : undefined} signIn={accountSignedIn ?? undefined} />}
+        {/* NewPcNotices above tells of a PC confirmed here; the hosted app's sign-in again comes back to this page, which goes on with the add */}
+        {health !== null && <UnconfirmedPcNotices enabled={machineSessions.peek("local")?.socket?.accountOpensAll() === true} tellConfirmed={false}
+          onSignInAgain={hostedSignIn?.signInAgain} />}
+        {/* a PC asking to join while this phone went straight into another PC: its join card would never show */}
+        {health !== null && hostedSignIn !== null && <AccountJoinRequests />}
         {/* The PC's pending-redemptions stream owns the list; a decline response can arrive after a newer event. */}
-        <PendingKeys pending={pendingKeys} onDecline={(id) => { void declinePendingKey(id).catch((error: unknown) => console.warn("Ovis: the device was not declined", error instanceof Error ? error.name : error)); }} />
+        <PendingKeys pending={ownWindow ? [] : pendingKeys} onDecline={(id) => { void declinePendingKey(id).catch((error: unknown) => console.warn("Ovis: the device was not declined", error instanceof Error ? error.name : error)); }} />
         {removedNotices.length > 0 && <DeviceRemovedNotice events={removedNotices} onDismiss={dismissRemovedNotice} />}
         {setupGuide.guide === null && <FirstStartHints active={locked === false} />}
         {setupGuide.guide !== null && <MachineContext.Provider value="local"><SetupGuide auth={auth} security={security} opensAll={machineSessions.peek("local")?.socket?.accountOpensAll() === true} onEnableAlerts={enableNotifications} settingsOpen={settingsOpen} pushOn={pushOn} sharedSettingsKnown={sharedSettingsKnown} notifications={notifications} hidden={setupGuide.paused} state={setupGuide.guide} dispatch={setupGuide.dispatch} onClose={setupGuide.close} onOpenSettings={(page) => { setSettingsLinkPage(page); setSettingsOpen(true); }}
@@ -1176,7 +1216,7 @@ export function App() {
         {guideShown ? null :
         <div ref={paneAreaRef} className={`pane-split${paneSplit ? " is-split" : ""}${inbox.shown ? " is-under-inbox" : ""}`} onDragEnterCapture={paneDragOver} onDragOverCapture={paneDragOver} onDragLeave={paneDragLeave} onDropCapture={paneDrop}>
           {inboxWide && <ThreadTop note={<HeaderNote note={herdrPrefixWaiting ? t("herdr prefix: press a key") : note} />}
-            thread={!inbox.shown && selectedPane !== null && note === null ? { machines, activity, machineId: selectedMachineId, pane: selectedPane, connection: headerConnection, watching: auth?.role === "watch", severalPcs: sidebarMachines.length > 1 } : null}
+            thread={!inbox.shown && selectedPane !== null && note === null ? { machines, activity, machineId: selectedMachineId, pane: selectedPane, connection: headerConnection, watching: viewOnly(selectedMachineId), severalPcs: sidebarMachines.length > 1 } : null}
             controls={!inbox.shown && selectedPane !== null ? <>
               <LensToggle view={view} peek={terminalPeek !== null} terminalAttach={terminalAttach} thread round
                 title={(label) => shortcutTitle(label, "toggle-view")} onToggle={() => actions.toggleView("header")} />
@@ -1263,7 +1303,7 @@ export function App() {
                 )}
                 <main className="terminal-host">
                   <div id={slotPanelId} className="terminal-tabpanel" role={slotPanelLabel === null ? undefined : "tabpanel"} aria-label={slotPanelLabel ?? undefined}>
-                  <PaneCanvas key={machineId} snapshot={slotSnapshot} pane={pane} selectedPaneId={paneId} onSelect={onSelect} onChanged={actions.refresh} actionsRef={active ? paneActionsRef : undefined} watching={auth?.role === "watch"}
+                  <PaneCanvas key={machineId} snapshot={slotSnapshot} pane={pane} selectedPaneId={paneId} onSelect={onSelect} onChanged={actions.refresh} actionsRef={active ? paneActionsRef : undefined} watching={viewOnly(machineId)}
                     mirrored={herdr?.terminal_attach === false || herdr?.terminal_mirror === true}
                     onOpenInHalf={wideScreen && !threadDrawn ? (id, side) => dockSide({ machineId, paneId: id }, side) : undefined}
                     onRecoverUnsent={(target) => openUnsent({ machineId, pane: target })}
@@ -1277,7 +1317,7 @@ export function App() {
                     renderPane={(item, itemActive, herdrSplit) => <OpenFileContext.Provider value={item ? (path) => openFile({ path, paneId: item.pane_id, machineId }) : null}>
                       <PaneTerminal
                         presentationKey={paneContentKey(machine, item, item ? lensOf(item) : slotView)}
-                        deviceWatching={auth?.role === "watch"}
+                        deviceWatching={viewOnly(machineId)}
                         finishEpoch={machine?.snapshot?.finish_epoch}
                         finishId={item?.finish_id}
                         title={item ? displayPaneTitle(item) : active ? selectedTitle : null}
@@ -1334,10 +1374,10 @@ export function App() {
           machine={crumb.machine} place={crumb.folder === null ? crumb.workspace : `${crumb.workspace} › ${crumb.folder}`} path={crumb.path}
           session={sessionShort.length > 0 ? sessionShort.join(" · ") : null}
           pcLoad={pcLoadOn(settings, machines) ? <PcLoadStatus key={selectedMachine?.id ?? ""} machine={selectedMachine ?? null} /> : null}
-          watching={auth?.role === "watch"}
+          watching={viewOnly(selectedMachineId)}
           waiting={sessionTally.waiting} onNextWaiting={nextWaiting === null ? null : openNextWaiting}
-          connection={headerConnection ?? (connected ? "live" : "lost")}
-          connectionWord={headerConnection === "reconnecting" ? t("Reconnecting…") : connected ? t("Connected") : connWord} />}
+          connection={headerConnection ?? (chipConnected ? "live" : "lost")}
+          connectionWord={headerConnection === "reconnecting" || headerConnection === "failed" ? connectionWord(headerConnection, t) : chipConnected ? t("Connected") : connWord} />}
         </div>
         </WebPanelContext.Provider>
         </OpenFileContext.Provider>
@@ -1370,7 +1410,7 @@ export function App() {
         onClose={closeNewSession}
         onPending={(pending) => { newSessionPending.current = pending; }}
         onOpenPane={(paneId) => { closeNewSession(); selectTarget(newSessionMachineId, paneId, "terminal"); void load(); }}
-        watching={auth?.role === "watch"}
+        watching={viewOnly(newSessionMachineId)}
         groupKept={(groupOf) => liveGroupKeys(groupOf, machines, hiddenMachines)}
         onCreated={(paneId, agentStarted, messageWaits = false) => {
           closeNewSession();
@@ -1441,7 +1481,7 @@ export function App() {
       }} />}
       {unsentFor && <UnsentTextDialog machines={machines} target={unsentFor} canRecover={unsentFor.pane.agent != null} onClose={closeUnsent} onRecover={recover} />}
       <CommandPalette key={selectedMachineId} machines={sidebarMachines} onSelect={selectTarget} open={paletteOpen} initialQuery={paletteQuery} onClose={() => setPaletteOpen(false)} snapshot={snapshot} online={selectedMachine?.state === "connected"} selectedPaneId={selectedPaneId}
-        view={terminalPeek !== null ? "terminal" : view} actions={actions} watching={auth?.role === "watch"} inboxMode={inMode} />
+        view={terminalPeek !== null ? "terminal" : view} actions={actions} watching={viewOnly(selectedMachineId)} inboxMode={inMode} />
       <MarkdownLinkMenu />
     </div></AppLayoutContext.Provider></MachineContext.Provider></MachineSessionsProvider>
   );

@@ -9,6 +9,7 @@ import type { RemotePairingRequest } from "../../../shared/protocol.ts";
 import type { RelayDevice, RelayDeviceStore } from "../relay/device.ts";
 import { keyIdOf } from "../relay/shellState.ts";
 import type { AccountService, Admission } from "./service.ts";
+import { vouchedPcName, type MemberPcEvidence } from "./vouched-pc.ts";
 import type { AccountKey, AccountStore } from "./store.ts";
 
 export type PcFetch = (input: string, init?: RequestInit) => Promise<Response>;
@@ -56,6 +57,8 @@ export interface PcAccountStatus {
   readonly blockedAll?: boolean;
   /** it waits for its first member's enrollment; absent from an Ovis from before enrollments */
   readonly enrolling?: boolean;
+  /** its account stopped listing it: only an add made at the PC brings it into one again, so a device sends it no link */
+  readonly pcAddRequired?: true;
 }
 
 /** `fresh`: the PC reads its mailbox first, so a removal waiting there is counted (docs/account.md, "PC API"). */
@@ -74,6 +77,7 @@ export async function pcAccountStatus(fetch: PcFetch, options: { fresh?: boolean
     ...(options.fresh && "fresh" in body ? { fresh: (body as { fresh?: unknown }).fresh === true } : {}),
     ...((body as { blocked_all?: unknown }).blocked_all === true ? { blockedAll: true } : {}),
     ...(typeof (body as { enrolling?: unknown }).enrolling === "boolean" ? { enrolling: (body as { enrolling: boolean }).enrolling } : {}),
+    ...((body as { pc_add_required?: unknown }).pc_add_required === true ? { pcAddRequired: true as const } : {}),
   };
 }
 
@@ -181,7 +185,8 @@ export const ADMISSION_MS = 10 * 60_000;
  * for X alone is just answered on X.
  */
 export async function approveJoin(options: {
-  request: RemotePairingRequest; digits: string; through: string; service: AccountService;
+  request: RemotePairingRequest; digits?: string | undefined; through: string; service: AccountService;
+  pc?: MemberPcEvidence; shownPc?: string | null;
   decide: (decision: "approve" | "decline", digits?: string) => Promise<void>;
   /** with the admission that vouched for the device: its name is the one the device gave the account service, not the PC's */
   admit: (admission: Admission) => Promise<unknown>; now?: () => number;
@@ -189,6 +194,7 @@ export async function approveJoin(options: {
   shown?: Admission | null;
 }): Promise<void> {
   const { request } = options;
+  if (request.vouched !== true && !options.digits) throw new UnverifiedJoinError();
   if (request.intent !== "account" && request.vouched !== true) { await options.decide("approve", options.digits); return; }
   const vouched = vouchedAdmission(await options.service.recentAdmissions(), options.through, request.key, (options.now ?? Date.now)());
   if (vouched === undefined) {
@@ -198,6 +204,14 @@ export async function approveJoin(options: {
   // the device asked again with another name, system or place since the card was drawn: nothing is
   // answered, and the card shows the new details before anyone approves them
   if (options.shown !== undefined && (options.shown === null || !sameAdmission(options.shown, vouched))) throw new AdmissionChangedError();
+  if (request.vouched === true) {
+    if (request.intent !== "pc" || !options.pc || !options.shownPc || options.digits !== undefined || await vouchedPcName(options.service, { ...request, through: options.through }, options.pc) !== options.shownPc) {
+      await options.decide("decline");
+      throw new UnverifiedJoinError();
+    }
+    await options.decide("approve");
+    return;
+  }
   await options.decide("approve", options.digits);
   // a PC vouched for joins X alone: no add, no introduction
   if (request.intent === "account") await options.admit(vouched);

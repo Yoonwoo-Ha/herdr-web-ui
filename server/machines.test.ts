@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { describeProgress } from "../src/lib/bridgeProgress.ts";
-import type { SetupJob } from "../shared/machines.ts";
+import type { SetupJob, SetupStepCode } from "../shared/machines.ts";
 import type { PanePromptResponse } from "../shared/protocol.ts";
 import { paneNotificationTag } from "../shared/notify-policy.ts";
 import { BRIDGE_PROTOCOL, machinePath, paneStorageId, REMOTE_BUNDLE_VERSION } from "../shared/machines.ts";
@@ -11,7 +11,7 @@ import { canSendSecret, sameOrigin, shellQuote, validateTarget } from "./machine
 import { handleMachineRequest, MACHINE_PROXY_PATH } from "./machine-api.ts";
 import type { BridgeDescriptor } from "./bridge.ts";
 import { createServer } from "./index.ts";
-import { MachineActionRequired, MachineManager } from "./machines.ts";
+import { MachineActionRequired, MachineManager, setupStepWords } from "./machines.ts";
 import { detectHost, psQuote, UNSUPPORTED_HOST, windowsBridgeFiles, windowsHost } from "./remote-host.ts";
 import { decodeClixml, SshConnection } from "./ssh.ts";
 import { terminalAttachSupported } from "./herdr/client.ts";
@@ -409,6 +409,28 @@ describe("setup job labels", () => {
     expect(manager.job("job")?.phase).toBe("installing");
     expect(manager.job("job")?.step).not.toBe("Review the changes on this PC");
     expect(job.public.step).toBe("Installing on this PC…");
+  });
+
+  it("gives each step a code with its parameters beside its English, which the dialog words in the app's language", () => {
+    const { manager, job, drive } = fixture("approval", "Review the changes on this PC");
+    const coded = drive as unknown as { stage(job: TestJob, phase: SetupJob["phase"], step: SetupStepCode | string): void };
+    manager.action("job", { action: "approve" });
+    expect(manager.job("job")?.step_code).toEqual({ code: "installing" });
+    coded.stage(job, "installing", { code: "install_bundle", platform: "linux-x64" });
+    expect([manager.job("job")?.step, manager.job("job")?.step_code]).toEqual(["Installing verified linux-x64 bundle…", { code: "install_bundle", platform: "linux-x64" }]);
+    coded.stage(job, "starting", { code: "own_update_running", target: "0.5.10", stage: "dependencies" });
+    expect([manager.job("job")?.step, manager.job("job")?.step_code]).toEqual(["This PC's own Ovis is updating itself to v0.5.10: installing dependencies…", { code: "own_update_running", target: "0.5.10", stage: "dependencies" }]);
+    coded.stage(job, "starting", "Waiting for Windows sign-in on this PC.");
+    expect([manager.job("job")?.step, manager.job("job")?.step_code]).toEqual(["Waiting for Windows sign-in on this PC.", null]);
+  });
+
+  it("words every step code in English for logs and older apps", () => {
+    const codes: SetupStepCode[] = [{ code: "connecting" }, { code: "fingerprint" }, { code: "authentication" }, { code: "checking" }, { code: "review" }, { code: "installing" },
+      { code: "install_bundle", platform: "linux-x64" }, { code: "install_herdr" }, { code: "register_key" }, { code: "restart_bridge" }, { code: "start_bridge" },
+      { code: "own_update_ask", target: null }, { code: "own_update_running", target: null, stage: "building" }, { code: "own_update_connect" }, { code: "headless" },
+      { code: "connected" }, { code: "failed" }, { code: "timed_out" }, { code: "cancelled" }];
+    for (const code of codes) expect(setupStepWords(code)).toMatch(/^[\x20-\x7e…]+$/);
+    expect(setupStepWords({ code: "own_update_ask", target: "0.5.10" })).toBe("Asking this PC's own Ovis to update itself to v0.5.10…");
   });
 
   it("requires current Windows-login consent for each headless start and rejects duplicate or cancelled requests", () => {

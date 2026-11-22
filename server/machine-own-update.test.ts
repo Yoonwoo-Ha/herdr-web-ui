@@ -787,4 +787,13 @@ describe("a PC whose own Ovis is older than this app", () => {
     expect(failed).toMatchObject({ phase: "failed", action_required: "update_bridge", remote_ovis: { updatable: true, latest_version: "0.4.18", address: `pc.invalid:${REGISTERED_PORT}` } });
     expect(installs).toEqual([]);
   });
+
+  it("gives the dialog the older Ovis's failure as a code with its versions, which the app words in its own language", async () => {
+    const { manager } = pc({ status: managedOffer() }, { registered: false });
+    const job = manager.setup({ destination: "fixture@pc.invalid" });
+    await (manager as unknown as { jobs: Map<string, { finished: Promise<void> }> }).jobs.get(job.id)?.finished;
+    const failed = manager.job(job.id) as SetupJob;
+    expect(failed.error_code).toEqual({ code: "own_ovis_older", version: "0.4.16", target: "0.4.18" });
+    expect(failed.error).toStartWith("This PC runs its own Ovis v0.4.16");
+  });
 });

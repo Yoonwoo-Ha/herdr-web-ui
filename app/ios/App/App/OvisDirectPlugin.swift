@@ -318,7 +318,15 @@ final class DirectCallGate: NSObject, WKScriptMessageHandler {
         return frame.isMainFrame && origin.protocol == "https" && origin.host.lowercased() == appHost && (origin.port == 0 || origin.port == 443)
     }
 
+    /// The main frame of the app's own bundled pages (the connect screen), the only one OvisSsh answers.
+    static func fromBundle(_ frame: WKFrameInfo) -> Bool {
+        frame.isMainFrame && frame.securityOrigin.protocol == "capacitor" && frame.securityOrigin.host.lowercased() == "localhost"
+    }
+
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        // the SSH PCs' keys, host keys and setup: never a PC page's to reach (OvisSshPlugin)
+        if let body = message.body as? [String: Any], body["pluginId"] as? String == "OvisSsh" || body["service"] as? String == "OvisSsh",
+           !Self.fromBundle(message.frameInfo) { return }
         if let body = message.body as? [String: Any], body["pluginId"] as? String == "OvisDirect" || body["service"] as? String == "OvisDirect" {
             guard Self.fromApp(message.frameInfo) else { return }
             if body["type"] as? String == "message", let method = body["methodName"] as? String, Self.ownMethods.contains(method),

@@ -78,10 +78,16 @@ public class OvisSshPlugin extends Plugin {
         SshTunnels.wakeAll();
     }
 
+    /** `user`, `host`, `port`: what the SSH tab's field held (user@host), filled in on the setup screen; each may be left out. */
     @PluginMethod
     public void add(PluginCall call) {
         if (!fromAppPage(call)) return;
-        startActivityForResult(call, new Intent(getContext(), SshSetupActivity.class), "added");
+        Intent setup = new Intent(getContext(), SshSetupActivity.class)
+            .putExtra(SshSetupActivity.EXTRA_USER, call.getString("user"))
+            .putExtra(SshSetupActivity.EXTRA_HOST, call.getString("host"));
+        Integer port = call.getInt("port");
+        if (port != null) setup.putExtra(SshSetupActivity.EXTRA_PORT, port);
+        startActivityForResult(call, setup, "added");
     }
 
     /** Sets the PC `origin` up again on the setup screen, its address kept. */
@@ -181,6 +187,30 @@ public class OvisSshPlugin extends Plugin {
         if (name.length() > 64) name = name.substring(0, 64);
         PCStore.setName(getContext(), pc.origin, name.isEmpty() ? pc.label() + " (SSH)" : name);
         call.resolve();
+    }
+
+    /** What the SSH PC `origin` knows of other PCs, as its own Ovis answers over its tunnel (SshTunnels.known). */
+    @PluginMethod
+    public void known(PluginCall call) {
+        if (!fromAppPage(call)) return;
+        SshPcs.Pc pc = SshPcs.on(getContext()).get(call.getString("origin"));
+        if (pc == null || !pc.hasHostKey()) {
+            call.reject("That SSH PC is not saved on this phone.");
+            return;
+        }
+        new Thread(() -> {
+            try {
+                org.json.JSONObject found = SshTunnels.known(getContext(), pc);
+                JSObject answer = new JSObject();
+                answer.put("candidates", found.opt("candidates"));
+                answer.put("machines", found.opt("machines"));
+                call.resolve(answer);
+            } catch (SshFailure failed) {
+                call.reject(failed.getMessage(), failed.kind);
+            } catch (IOException taken) {
+                call.reject(taken.getMessage(), "ssh-port");
+            }
+        }, "ovis-ssh-known").start();
     }
 
     /** Forgets the PC's host key on purpose: it opens again only once the setup screen confirms the key it shows then. */

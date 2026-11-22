@@ -203,6 +203,24 @@ export class RelayService {
     return this.link ? this.identity : this.readSavedIdentity();
   }
 
+  /**
+   * What this PC tells another PC of its owner that adds it to an account over SSH (docs/account.md, "Adding a PC over
+   * SSH"): its ID, public key, advertised relay and name, as a pairing link would carry them, and nothing secret. It opens
+   * no pairing window.
+   */
+  publicFields(): { server_id: string; public_key: string; relay: string; name?: string } | null {
+    const identity = this.currentIdentity();
+    return identity ? { server_id: identity.server_id, public_key: identity.public_key, relay: this.advertised, ...offerName() } : null;
+  }
+
+
+  /**
+   * An explicit SSH add of a PC whose relay never started (an SSH install skips onboarding): its identity, created when
+   * none is saved yet. A damaged one is never replaced (RelayIdentityError), and no pairing window opens.
+   */
+  ensureIdentity(): RelayIdentity {
+    return this.currentIdentity() ?? loadRelayIdentity(this.options.stateDir);
+  }
 
   private get advertised(): string {
     return this.regionalRelay !== null && this.regionalPhase === "online" ? this.regionalRelay : this.relay;

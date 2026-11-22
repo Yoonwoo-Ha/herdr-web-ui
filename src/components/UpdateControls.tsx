@@ -7,7 +7,7 @@ import { useSettings } from "../lib/settings.ts";
 import { announcesUpdate, readAnnounced, readOfferClosed, summaryFor, watchAnnounced, watchOfferClosed, writeAnnounced, writeOfferClosed } from "../lib/updateNotes.ts";
 import { describeUpdate } from "../lib/updateProgress.ts";
 import type { UpdatesModel } from "../lib/updates.ts";
-import type { DesktopUpdateLine } from "../lib/desktopUpdate.ts";
+import { useDesktopAppUpdate, type DesktopAppUpdate, type DesktopUpdateLine } from "../lib/desktopUpdate.ts";
 import { lazyChunkFailed, onLazyChunkFailure } from "../lib/lazyChunk.ts";
 import { Markdown } from "./Markdown.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
@@ -85,8 +85,36 @@ function UpdateProgress({ status, fallback }: { status: UpdateStatus | null; fal
   </div>;
 }
 
+/** The app's own version and check, in About's row (desktop app): the app downloads updates by itself, and this checks now */
+function AppUpdateRow({ app }: { app: DesktopAppUpdate }) {
+  const t = useT();
+  const { state } = app;
+  const update = state.update ?? "";
+  const line = ((): string | null => {
+    switch (state.phase) {
+      case "off": return t("This build of the app does not update itself.");
+      case "idle": case "failed": return null;
+      case "checking": return t("Checking for updates…");
+      case "latest": return t("Up to date.");
+      case "downloading": return state.percent === null ? t("Downloading Ovis {version}…", { version: update }) : t("Downloading Ovis {version}… {percent}%", { version: update, percent: state.percent });
+      case "ready": return t("Ovis {version} is ready.", { version: update });
+    }
+  })();
+  // one line: the updater's errors run to several (an HTTP answer's headers), the first says what went wrong
+  const error = state.phase === "failed" ? t("The update did not go through: {error}", { error: (state.error ?? "").split("\n")[0] ?? "" }) : null;
+  const busy = state.phase === "checking" || state.phase === "downloading";
+  return <>
+    <span className="settings-fact">{t("Running {version}", { version: `v${state.version}` })}</span>
+    {error !== null ? <span className="settings-hint update-app-error" role="alert" title={state.error ?? undefined}>{error}</span>
+      : line !== null && <span className="settings-hint" role="status">{line}</span>}
+    {state.phase === "ready" ? <button type="button" className="btn btn-primary" disabled={app.installing} onClick={app.install}>{t("Restart to Update")}</button>
+      : state.phase !== "off" && <button type="button" className="btn" disabled={busy} onClick={app.check}>{t("Check for updates")}</button>}
+  </>;
+}
+
 export function UpdateControls({ updates, bridgesFollow = false }: { updates: UpdatesModel; bridgesFollow?: boolean }) {
   const t = useT();
+  const app = useDesktopAppUpdate();
   const { status, error, busy, needsReload, reload, notes, installed, request, failure, offered } = updates;
   const locale = useLocale();
   const installing = busy && (status?.phase === "building" || status?.phase === "restarting");
@@ -96,18 +124,22 @@ export function UpdateControls({ updates, bridgesFollow = false }: { updates: Up
     : status?.blocked_reason ? blockedReasonWords(status.blocked_reason, t) : null;
   const blocked = restart && status?.blocked_reason === CHECKOUT_CHANGED_REASON ? null : reason;
   const bare = useContext(SettingsBare);
-  if (bare && !installing && !needsReload && failure === null && !error && !status?.error && !blocked && !tabVersion) {
+  // the desktop app's own server: the app's row, with its own check, in place of the sentence that updates come with the app
+  const desktop = status?.blocked_reason === DESKTOP_APP_UPDATES ? app : null;
+  if (bare && !installing && !needsReload && failure === null && !error && !status?.error && (!blocked || desktop) && !tabVersion) {
     const state = busy ? t("Checking for updates…") : status?.available ? t("Version {version} is available.", { version: versionLabel(status.latest_version, status.latest_revision) ?? "" }) : status?.checked_at ? t("Up to date.") : null;
     return <section className="settings-section settings-updates" data-section="updates" tabIndex={-1} aria-labelledby="settings-updates-title">
       <h3 id="settings-updates-title" className="visually-hidden">{t("Updates")}</h3>
       <div className="settings-card">
-        <SettingsRow label="Ovis" description={t("The version of Ovis running on this PC. Update and restart installs the release shown and then restarts Ovis.")} icon={Info}>
+        {desktop ? <SettingsRow label="Ovis" description={t("The version of the Ovis app on this PC. The app downloads updates by itself, and Restart to Update installs one.")} icon={Info}>
+          <AppUpdateRow app={desktop} />
+        </SettingsRow> : <SettingsRow label="Ovis" description={t("The version of Ovis running on this PC. Update and restart installs the release shown and then restarts Ovis.")} icon={Info}>
           <span className="settings-fact">{t("Running {version}", { version: runningAppVersion(status, __APP_VERSION__) })}</span>
           {state && <span className="settings-hint" role="status">{state}</span>}
           {status?.managed && (status.available
             ? <button type="button" className="btn btn-primary" disabled={busy || offered === null} onClick={() => { if (offered) void request({ command: "install", expected_revision: offered }); }}>{t("Update and restart")}</button>
             : <button type="button" className="btn" disabled={busy} onClick={() => void request({ command: "check" })}>{t("Check for updates")}</button>)}
-        </SettingsRow>
+        </SettingsRow>}
         {notes && <div className="settings-item"><ReleaseNotes notes={notes} label={t("What's new")} /></div>}
         {installed && installed.releases.length > 0 && <div className="settings-item"><ReleaseNotes notes={installed} label={t("What the last update brought")} /></div>}
       </div>

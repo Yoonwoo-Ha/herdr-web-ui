@@ -4,7 +4,6 @@
   "scripts/file-viewer-regression.ts": 137,
   "scripts/device-security-demo-regression.ts": 135,
   "scripts/relay-shell-browser-qa.ts": 130,
-  "scripts/relay-dashboard-browser-qa.ts": 126,
   "scripts/sidebar-filter-demo-regression.ts": 121,
   "scripts/prompt-dock-demo-regression.ts": 120,
   "scripts/sidebar-activity-demo-regression.ts": 117,

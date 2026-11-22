@@ -12,7 +12,7 @@ import { MachineManager } from "./machines.ts";
 import { startFakePushService } from "./push.fake.ts";
 import { createServer } from "./index.ts";
 import { FakeAccountService } from "../shared/account-service-fake.ts";
-import { ACCOUNT, registerSnapshotPc } from "./account/listed-pc.test-helpers.ts";
+import { pressInto, registerSnapshotPc } from "./account/listed-pc.test-helpers.ts";
 import { workspaceCreate, workspaceClose } from "./herdr/client.ts";
 import type { DevicePairedEvent, DevicesRevokedAll, MachineEvent, ServerMessage } from "../shared/protocol.ts";
 
@@ -240,6 +240,63 @@ async function openEvents(base: string, headers: Record<string, string>, signal:
   return { events, next, ended, setCookies, cookie: setCookies[0]?.split(";")[0] ?? null };
 }
 
+it("a join waits on the PC until one window sees it: told to a window opened later, after a restart too, never to the device itself", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ovis-waiting-join-"));
+  const start = () => createServer({ port: 0, hostname: "127.0.0.1", stateDir: root, token: "", tailscaleOwner: null, sidecar: false });
+  // each run's streams end before its server stops: a server stopping under a stream cuts it
+  let abort = new AbortController();
+  let server = start();
+  const restart = () => { abort.abort(); server.stop(); abort = new AbortController(); server = start(); };
+  const base = () => `http://127.0.0.1:${server.port}`;
+  const joined = (event: MachineEvent): event is DevicePairedEvent => event.type === "device-paired" && event.label === "Phone";
+  let theme = 0;
+  // the stream is ordered and a join waiting is told as the window subscribes: after this barrier, nothing more comes
+  const settled = async (window: Awaited<ReturnType<typeof openEvents>>) => {
+    const value = `barrier-${++theme}`;
+    const heard = window.next((event) => event.type === "preferences" && event.preferences.settings["theme"] === value, "the barrier");
+    expect((await fetch(`${base()}/api/preferences`, { method: "PUT", headers: guard, body: JSON.stringify({ settings: { theme: value } }) })).status).toBe(200);
+    await heard;
+  };
+  try {
+    const store = server.context.services.devices;
+    const paired = store.pair(store.startPairing().code, "Phone", "drive");
+    if (!paired) throw new Error("Expected pairing");
+    store.match(paired.token);
+    // nobody had a window open when the phone joined, and the PC restarted since
+    restart();
+    const first = await openEvents(base(), {}, abort.signal);
+    const told = await first.next(joined, "a window opened later hears of the join") as DevicePairedEvent;
+    const own = await openEvents(base(), { cookie: `${DEVICE_COOKIE}=${paired.token}` }, abort.signal);
+    await settled(own);
+    expect(own.events.filter(joined)).toEqual([]);
+    // a device paired after the join never hears of it, so it cannot mark it seen for the others
+    const running = server.context.services.devices;
+    const tablet = running.pair(running.startPairing().code, "Tablet", "drive");
+    if (!tablet) throw new Error("Expected pairing");
+    running.match(tablet.token);
+    const tabletCookie = `${DEVICE_COOKIE}=${tablet.token}`;
+    const later = await openEvents(base(), { cookie: tabletCookie }, abort.signal);
+    await settled(later);
+    expect(later.events.filter(joined)).toEqual([]);
+    const refused = await fetch(`${base()}/api/devices/joins/seen`, { method: "POST", headers: { ...guard, cookie: tabletCookie }, body: JSON.stringify({ event_id: told.event_id }) });
+    expect(refused.status).toBe(404);
+    const second = await openEvents(base(), {}, abort.signal);
+    await second.next(joined, "another window hears of it too");
+    const gone = second.next((event) => event.type === "device-paired-seen" && event.event_id === told.event_id, "seen in the first window");
+    const seen = await fetch(`${base()}/api/devices/joins/seen`, { method: "POST", headers: guard, body: JSON.stringify({ event_id: told.event_id }) });
+    expect(await seen.json()).toEqual({ seen: true });
+    await gone;
+    restart();
+    const afterRestart = await openEvents(base(), {}, abort.signal);
+    await settled(afterRestart);
+    expect(afterRestart.events.filter(joined)).toEqual([]);
+  } finally {
+    abort.abort();
+    server.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 for (const action of ["revoke", "role change"] as const) {
 it(`keeps native WS and SSE open on rename until ${action}`, async () => {
   const root = mkdtempSync(join(tmpdir(), "ovis-native-rename-"));
@@ -394,8 +451,10 @@ it.each([false, true])("revoking every device closes each paired client's stream
     const cookieD = await pair("D");
     const toldD = await Promise.all(heardD);
     expect(toldD.every((event) => event.type === "device-paired" && event.event_id === (toldD[0] as DevicePairedEvent).event_id)).toBe(true);
+    // a device opens on the joins nobody has seen yet that came after it was paired (T57), never its own, then hears each
+    // new one: C, paired after A and B, hears only D (Watch was paired before the server ran, so no join of it waits)
     expect(streamC.events.filter((event) => event.type === "device-paired").map((event) => (event as DevicePairedEvent).label)).toEqual(["D"]);
-    expect(streamA.events.filter((event) => event.type === "device-paired").map((event) => (event as DevicePairedEvent).label)).toEqual(["C", "D"]);
+    expect(streamA.events.filter((event) => event.type === "device-paired").map((event) => (event as DevicePairedEvent).label)).toEqual(["B", "C", "D"]);
     const { devices } = await (await fetch(`${base}/api/devices`, { headers: admin })).json() as { devices: { id: string; label: string }[] };
     expect(devices.map((device) => device.label).sort()).toEqual(["A", "B", "C", "D", "Watch"]);
 
@@ -425,7 +484,7 @@ it.each([false, true])("revoking every device closes each paired client's stream
     // Only a bound Step 2 PC reserves global removal to the PC.
     const driver = { ...guard, ...stranger, cookie: cookieD };
     if (accountOpensAll) {
-      server.context.services.devices.bindByService(ACCOUNT);
+      await pressInto(service, server.context.services);
       expect(await server.context.services.accountMailbox.readSnapshot()).toMatchObject({ committed: true });
       const refused = await revokeAll(driver);
       expect(refused.status).toBe(403);

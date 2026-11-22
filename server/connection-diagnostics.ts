@@ -1,4 +1,21 @@
 import { randomUUID } from "node:crypto";
+import type { DeviceRole } from "../shared/access.ts";
+import type { SessionError } from "../shared/relay-mux.ts";
+import type { ClearReason } from "./account/pc-binding.ts";
+
+type AccessEvent =
+  | { event: "relay.session.accepted"; origin: "local-pairing" | "account"; role: DeviceRole; device_no: number | null }
+  | { event: "relay.session.closed"; reason: SessionError }
+  | { event: "account.snapshot.refused"; status: 403; reason: "not_listed" }
+  | { event: "account.listing.replaced" }
+  | { event: "account.binding.cleared"; reason: ClearReason }
+  | { event: "account.sessions.closed"; count: number };
+
+/** Server-owned fields only. Use the same timestamped JSON console sink as connection diagnostics. */
+export function logAccess(event: AccessEvent): void {
+  try { console.info(JSON.stringify({ time: new Date().toISOString(), ...event })); }
+  catch { /* Diagnostics must not affect admission or revocation. */ }
+}
 
 const REPEAT_MS = 30_000;
 const MAX_FAILURES = 128;

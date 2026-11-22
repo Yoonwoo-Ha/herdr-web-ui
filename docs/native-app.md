@@ -176,11 +176,17 @@ To repeat it:
 
 What is there:
 
-- `app/web`: the app's own pages. `index.html` opens on the account's sign-in (the buttons the
-  account service names at `/v1/providers`; a press opens the hosted app on that sign-in,
-  `#sign-in=<provider>`), with Start without signing in below it. That and a build with
-  `OVIS_APP_ACCOUNT=0` lead to Add a PC: Scan a QR code, Enter an address (Tailscale or Wi-Fi),
-  SSH (only in an app that announces the `OvisSsh` plugin), and the PCs opened before. The address `demo` opens the bundled demo, which has no button
+- `app/web`: the app's own pages. `index.html` is Connect a PC, with the desktop's Add a connection
+  tabs in its order, picked without a history entry (the phone's Back leaves the app): Ovis relay
+  (the default; the sign-ins the account service names at `/v1/providers`, a press opens the hosted
+  app on that sign-in, `#sign-in=<provider>`, and Scan the QR on the PC's screen), Tailscale (the PCs this phone opened at a Tailscale
+  address, with Connect, a Tailscale address and Scan a QR code; on Android, while no interface holds
+  a Tailscale address, one line and Open Tailscale alone) and SSH (SSH's `user@host` first, which opens the SSH
+  setup filled in, only in an app that announces the `OvisSsh` plugin; Add by address, a text link to a field
+  for a PC's https address; then the PCs added over SSH, and as Saved addresses those opened before at any other address, each
+  with Connect and Forget, and one saved unreadable with Forget alone). The relay and Tailscale tabs list
+  their own PCs opened before. A build with
+  `OVIS_APP_ACCOUNT=0` has no relay tab and opens on Tailscale. The address `demo` opens the bundled demo, which has no button
   of its own: the store review notes (app/store) send reviewers there. `error.html` is shown when a PC cannot be
   reached or answers with an HTTP error (a 502 from `tailscale serve` while Ovis is stopped), with the
   reason, Try again and Change PC. Both are in English and Korean: an element's
@@ -206,7 +212,10 @@ What is there:
   as is an offer that names another PC than its path. The app opens the link as the WebView's
   first page, like any PC (the offer stays in the fragment through
   `instanceDescriptor().serverURL` on iOS, a 2026-10-30 Simulator spike, and through the start
-  path on Android), and the hosted shell pairs from there. Every relay PC shares that origin, so
+  path on Android), and the hosted shell pairs from there. The QR code of a PC already in an
+  account, `https://app.ovis.sh/s/<server_id>/#sign-in=<provider>`, opens the same way with its
+  fragment kept: the hosted shell signs in with that provider (the app's own sheet), then joins
+  the PC as a device of the account. Every relay PC shares that origin, so
   the app saves it by its scope (`https://app.ovis.sh/s/<server_id>/`) and labels it with the
   offer's `name`; a PC opened at its own address is still saved by its origin, and lists saved
   before keep their entries as they are. The allowed host (iOS) and the bridge's origin
@@ -486,8 +495,8 @@ pieces are the Java twins of the iOS ones, in `app/android/app/src/main/java/sh/
   hosted shell). `MainActivity` takes only a link to a PC's scope (`PCStore.appLink`); one to
   another page of the hosted shell leaves the open page alone. A view of a PC (a file's `#read=`, a
   pane's `#pane=` or an older `?pane=`) opens that PC at that view when the app has it saved, and
-  otherwise leaves the open page alone too. A link to pair from (the scope alone or with its
-  `#offer=`) is kept in memory (`PCStore.link`) for the connect screen, which takes it once (`HerdrShellPlugin.takeLink`, which an activity showing a PC never answers, as its
+  otherwise leaves the open page alone too. A link to pair from (the scope alone, with its
+  `#offer=`, or with a provider's `#sign-in=`) is kept in memory (`PCStore.link`) for the connect screen, which takes it once (`HerdrShellPlugin.takeLink`, which an activity showing a PC never answers, as its
   page has the bridge too) and opens it as a scanned QR code, so `relayLink()` checks the offer the
   same way. A link handed back when the app is restored or started from Recents is not opened again. Until the link is verified, Android opens such links in the
   browser as before. The hosted shell also serves `apple-app-site-association` for the iOS app,
@@ -602,11 +611,18 @@ Still open on Android:
 
 ### PCs over SSH
 
-The Android app can add a PC the person already reaches over SSH: **SSH** under **Add a PC** on
-the connect screen. The phone talks to the PC's sshd itself (ConnectBot's `sshlib`, BSD-3-Clause), with no Ovis
+The Android and iOS apps can add a PC the person already reaches over SSH: **SSH** under **Add a PC** on
+the connect screen (the iPhone's: [The iPhone's SSH](#the-iphones-ssh) below). The phone talks to the PC's sshd itself (ConnectBot's `sshlib`, BSD-3-Clause), with no Ovis
 relay, no account and no port open but SSH. A user guide is [ssh-from-phone.md](ssh-from-phone.md);
 the iOS plan is [ios-ssh-plan.md](ios-ssh-plan.md). Nothing in `server/` or `shared/` changes: the PC
 runs the Ovis it already has.
+
+Only the app's own pages add an SSH PC (`OvisSshPlugin.fromAppPage`); a PC's page, the hosted app's included,
+never gets that. The hosted app's SSH tab takes `user@host` in the phone app all the same: it calls
+`HerdrShell.openSshSetup`, which opens the connect screen on its SSH tab with that login filled in
+(`PCStore.sshSetup`, taken once with `takeSshSetup`, which only the connect screen answers), and the connect
+screen takes it to the SSH setup screen as a login typed there would. An app without that method, and a
+browser, offer no SSH on the hosted page.
 
 How a page gets there (`app/android/app/src/main/java/sh/ovis/app/Ssh*.java`, `OvisSshPlugin`):
 
@@ -687,6 +703,59 @@ fixes it on the PC (`PCStore.failureCommand`, shown to copy): the host key chang
 the PC out of reach, Ovis not installed (the install command) or not started (its launcher's
 command). The tunnel's 503 carries `X-Ovis-Ssh: <kind>`, so `MainActivity` keeps that reason rather
 than the bare status, and a stop while the page is up takes the page to `error.html` too.
+
+#### The iPhone's SSH
+
+The iOS app does the same with the same screens, words, kinds and commands, in Swift
+(`app/ios/OvisSshCore`, a local Swift package over [SwiftNIO SSH](https://github.com/apple/swift-nio-ssh),
+Apache-2.0, whose cryptography is CryptoKit; `app/ios/App/App/OvisSshPlugin.swift`, `SshSetupView.swift`,
+`SshWords.swift`). `swift test` in `app/ios/OvisSshCore` on a Mac runs its tests (no CI job runs them yet: a macOS job for them is a
+follow-up), over
+the Android app's `ssh-test-keys`; `SshFixtureTests` also runs against a real sshd when `OVIS_SSH_FIXTURE`
+names one (a throwaway `sshd -D -f <config>` run as yourself is enough). Where it differs:
+
+- iOS gives the loopback interface 127.0.0.1 alone, so each PC gets a port of its own,
+  `http://127.0.0.1:<47320 to 47619>` (`SshPcs.freeOrigin`, never one a removed PC had until all 300 were
+  handed out). Cookies do not separate ports, so the gate cookie is named for the port
+  (`ovis_ssh_gate_<port>`), and the tunnel also refuses a request another origin's page makes (an `Origin`
+  that is not its own, or `Sec-Fetch-Site` other than `same-origin` or `none`): another SSH PC's page, on
+  its own port, is same-site and would carry the cookie. The app never opens or navigates to 127.0.0.1 at a port
+  no SSH PC listens on, the tunnel refuses a redirect there, and a WebKit content rule list
+  (`OvisSsh.loopbackRules`, made again as SSH PCs come and go, before each web view) blocks every other load from
+  127.0.0.1 there, a picture or a script a page asks for included. `Sec-Fetch-Site` comes with iOS 16.4, so SSH is
+  offered from iOS 16.4 on (`OvisSsh.supported`; the plugin is not registered before it).
+- The gate is 256 random bits made when the PC is set up and kept sealed with it, as WKWebView's cookie store
+  is set asynchronously: it is put there (HttpOnly, SameSite=Strict, on that origin only) before the PC's
+  page loads (`HerdrBridgeViewController.reopen` → `OvisSsh.prepare`).
+- Secrets are sealed with AES-GCM under a 256-bit key in the Keychain, this device only
+  (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, never synced or backed up). The phone's own key is
+  ed25519, as on Android (its line `ssh-ed25519 … ovis-phone:<model>`).
+- Capacitor's iOS bridge lets any page call any plugin, so `DirectCallGate` drops every `OvisSsh` call
+  that does not come from the main frame of the app's own bundled pages (`capacitor://localhost`), and the
+  plugin refuses one that comes through while a PC's page is up.
+- Pasted keys: OpenSSH ed25519 and ECDSA keys, with a passphrase (bcrypt_pbkdf, aes-ctr) or without, and
+  PEM ECDSA keys. SwiftNIO SSH has no RSA, so an RSA key is refused with words that say so (the Android app
+  takes it). Signing in with a password uses SSH's `password` method only, not keyboard-interactive.
+- iOS suspends the app's sockets in the background: on return each tunnel listens again and pings its
+  connection (`SceneDelegate.sceneWillEnterForeground`), and a network change (`NWPathMonitor`) drops
+  every connection; the next request makes a new one, asking nothing.
+- Android's `FLAG_SECURE` has no iOS counterpart: the setup screen can be screenshotted.
+
+#### Tailscale SSH and the PCs a PC knows (both apps)
+
+- **Tailscale SSH, no key** (`auth` "tailscale"): the phone offers SSH's `none` method, which Tailscale SSH accepts
+  for a login its policy allows. In check mode it holds the sign-in and sends a user-auth banner,
+  "# To authenticate, visit: https://login.tailscale.com/a/…"; the setup screen shows that link (`checkLink`, only
+  `https://login.tailscale.com/`) with Open the link, and waits up to ten minutes. A reconnect has nobody to approve
+  it: the tunnel fails with `tailscale-check` and the link as its command, and `error.html` offers Open the link and
+  Try again. A login the policy does not cover is held silently by Tailscale (its own ssh waits the same), so the
+  screen waits until its deadline. The host key is still confirmed and pinned as for any SSH PC.
+- **The PCs a PC knows**: `OvisSsh.known` asks an SSH PC's own Ovis, over its tunnel's SSH connection as from its
+  loopback (`local` access, which `/api/machines/ssh-candidates` and `/api/machines` answer), and the connect
+  screen lists `knownLogins` (`app/web/shell.js`) on the SSH tab with Add: ssh config hosts by user@hostname (an alias
+  alone means nothing on the phone), Tailscale PCs as the first PC's user, and that PC's SSH PCs by target; those
+  already on the phone are left out. Only an SSH PC is asked: a relay or Tailscale-address PC gives the phone no
+  connection of its own to ask over.
 
 First install from the phone: where the account has no Ovis, the setup screen offers to install it.
 The PC flow's remote bundle (`scripts/build-remote-bundle.ts`) cannot serve the phone: it starts a

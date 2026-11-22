@@ -218,3 +218,26 @@
 .devices-row.is-away > .devices-name > .settings-label {
   opacity: 0.55;
 }
+
+.devices-tailnet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.devices-tailnet-others {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.devices-tailnet-node {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

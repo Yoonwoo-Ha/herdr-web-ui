@@ -1,0 +1,26 @@
+import { useMemo, useState } from "react";
+
+import type { OwnJoinRequest, PendingKey, RelayPairingRequest } from "../../shared/machines.ts";
+import { useOwnJoins } from "../components/OwnJoins.tsx";
+import { firstJoinPrompts, pendingKeyPrompts, tailnetPrompts, type PromptPairing } from "../components/RelayPairingPrompt.tsx";
+import { useTailnetNodes } from "./useTailnetNodes.ts";
+
+/**
+ * What this PC's window asks in one place (RelayPairingPrompt): devices waiting with digits, and, in the PC's own window
+ * alone, a first join with Allow beside its digits, a key waiting for its screen beside a button that opens the confirm
+ * page, and a removed Tailscale device asking to get back in (server/tailnet-nodes.ts). `ownWindow` is a display hint
+ * only: the routes and the confirm page enforce their own rules. `joins`: the account joins waiting for the own window
+ * (OwnJoinCard takes those without digits), read only while `unlocked`, and `reread` reads them again at once.
+ */
+export function useOwnWindowPrompts(relayPairings: readonly RelayPairingRequest[], pendingKeys: readonly PendingKey[], ownWindow: boolean, unlocked = true): { readonly prompts: readonly PromptPairing[]; readonly joins: readonly OwnJoinRequest[]; readonly reread: () => void } {
+  const [reads, setReads] = useState(0);
+  // a locked PC refuses the list: it is read again once the lock is gone
+  const joins = useOwnJoins(ownWindow && unlocked, reads);
+  // a first join's deadline is counted from its own read: an unrelated update rebuilds the list, never that deadline
+  const firstJoins = useMemo(() => firstJoinPrompts(joins), [joins]);
+  const tailnet = useTailnetNodes(ownWindow)?.pending ?? null;
+  const tailnetAsks = useMemo(() => tailnetPrompts(tailnet), [tailnet?.id, tailnet?.asked_at]); // eslint-disable-line react-hooks/exhaustive-deps
+  const prompts = useMemo(() => [...relayPairings, ...firstJoins, ...(ownWindow ? [...pendingKeyPrompts(pendingKeys), ...tailnetAsks] : [])], [relayPairings, firstJoins, ownWindow, pendingKeys, tailnetAsks]);
+  const reread = useMemo(() => () => setReads((count) => count + 1), []);
+  return { prompts, joins, reread };
+}

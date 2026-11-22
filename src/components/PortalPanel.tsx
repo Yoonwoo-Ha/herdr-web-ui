@@ -20,7 +20,8 @@ import { SettingsGroup, SettingsRow } from "./SettingsControls.tsx";
  * `readOnly`: this browser reads it and changes nothing: a device that only watches, or a visitor
  * Portal's own sign-in let in, which the server refuses every action here.
  */
-export function PortalPanel({ readOnly = false }: { readOnly?: boolean }) {
+/** `addressQr` false: its address without a QR code, where the phone's QR code above carries it already */
+export function PortalPanel({ readOnly = false, addressQr = true }: { readOnly?: boolean; addressQr?: boolean }) {
   const t = useT();
   const { status, error, pending, busy, request } = usePortal();
   const [typed, setTyped] = useState<string | null>(null);
@@ -61,7 +62,7 @@ export function PortalPanel({ readOnly = false }: { readOnly?: boolean }) {
     <SettingsGroup title="Portal" note={t("A public HTTPS address for this PC through a Portal relay. Anyone on the internet can open it, so it needs an access token.")}>
       {status.url !== null && (
         <div className="settings-item phone-panel">
-          <Address url={status.url} title={t("Portal serves this PC")} />
+          <Address url={status.url} title={t("Portal serves this PC")} qr={addressQr} />
           <p className="settings-description">{status.auth.method === "none" ? t("Open it on your phone and sign in with the access token, or pair the phone with a pairing code.") : t("Open it on your phone and sign in the way you chose here. The access token is not asked after it.")}</p>
         </div>
       )}

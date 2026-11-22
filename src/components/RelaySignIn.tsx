@@ -19,7 +19,7 @@ function failureText(t: ReturnType<typeof useT>, error: unknown): string {
   }
 }
 
-export function RelaySignIn({ service, onSignedIn, boundPc = false }: { service: string; onSignedIn: (session: AccountSession) => void; boundPc?: boolean }) {
+export function RelaySignIn({ service, onSignedIn }: { service: string; onSignedIn: (session: AccountSession) => void }) {
   const t = useT();
   const locale = useLocale();
   const { state, ready, own, unavailable, linkPage, start, cancel } = useLinkPageSignIn(service, onSignedIn);
@@ -80,7 +80,6 @@ export function RelaySignIn({ service, onSignedIn, boundPc = false }: { service:
   const failure = state.kind === "failed" ? failureText(t, state.error) : null;
   return (
     <>
-      {boundPc && <p className="settings-description">{t("Sign in to this PC's account.")}</p>}
       {unavailable ? <p className="settings-hint">{t("Sign in on this PC's own screen, or in the Ovis app.")}</p>
         : own !== null ? <div ref={providerButtons}><AccountSignIn providers={own} onSignIn={start} error={failure} busy={state.kind === "starting"} /></div> : <>
       <button ref={signInButton} type="button" className="btn btn-primary connect-signin-button" aria-disabled={!ready || state.kind === "starting"} onClick={() => { if (ready && state.kind !== "starting") start(); }}>{state.kind === "starting" ? t("Signing in…") : t("Sign in to Ovis")}</button>

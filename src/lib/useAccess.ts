@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AccessRefusal, HealthAuth, SecuritySummary } from "../../shared/protocol.ts";
 import { fetchBridgeHealth, pairDevice } from "./api.ts";
-import { deviceLabel, takePairCode } from "./phone.ts";
+import { thisDeviceLabel, takePairCode } from "./phone.ts";
 import { canSignOut as authEndsHere } from "./signOut.ts";
 import { sameData } from "./useMachineRoster.ts";
 import { addServedFonts } from "./userFonts.ts";
@@ -75,7 +75,7 @@ export function usePairFromAddress({ locked, pairCode, auth, consumePairCode, on
     if (locked !== false || pairCode === "" || auth?.via === "device") return;
     const code = consumePairCode();
     if (code === "") return;
-    pairDevice(code, deviceLabel(navigator.userAgent, navigator.maxTouchPoints ?? 0)).then(() => { onPaired(); return loadHealth(); }).catch(() => {});
+    pairDevice(code, thisDeviceLabel()).then(() => { onPaired(); return loadHealth(); }).catch(() => {});
   }, [locked, pairCode, auth, consumePairCode, onPaired, loadHealth]);
 }
 

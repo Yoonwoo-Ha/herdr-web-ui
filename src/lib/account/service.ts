@@ -11,6 +11,7 @@ import { newRecordId, registerSigningBytes, type AccountRecord, type DeviceSafet
 import { isWssOrigin } from "../../../shared/relay-offer.ts";
 import { toBase64Url } from "../../../shared/relay-pair-sas.ts";
 import { GLOBAL_APP } from "../../../shared/relay-regions.ts";
+import type { PcProofFields } from "./pcProof.ts";
 import type { AccountLock, AccountProvider, AccountSession, AccountStore } from "./store.ts";
 import { ACCOUNT_PROVIDERS, accountLock, indexedAccountStore } from "./store.ts";
 
@@ -119,6 +120,9 @@ export class AccountServiceError extends Error {
   }
 }
 
+/** The listing a request named is no longer the one waiting for it (account#57, #67): nothing was written, and the PCs are read again. */
+export const listingChanged = (error: unknown): boolean => error instanceof AccountServiceError && error.status === 409 && error.code === "listing_changed";
+
 /**
  * The access token's refresh failed before the request it was for went out: the service has not answered that
  * request, so its error is no refusal of it (a refused refresh that ends the sign-in is a SignedOutError instead).
@@ -171,6 +175,11 @@ export interface DirectoryPc {
   readonly added_at: string;
   /** absent from an old service, which has no refresh route; null when the service sent one that is unusable */
   readonly listing_id?: string | null;
+  /**
+   * When the PC said it is bound by this listing's add (account#57, POST /v1/pc/complete): null while it is only listed or
+   * admitted; absent from an older service, which does not tell.
+   */
+  readonly completed_at?: string | null;
   readonly invited_at?: string;
   readonly last_seen_at: string | null;
   /** the PC's relay key (X25519, 64 hex) and relay, to compare digits with it; null from an entry without them */
@@ -181,10 +190,17 @@ export interface DirectoryPc {
    * hand meanwhile. Null for any other PC, and once that time has passed.
    */
   readonly new_until: string | null;
+  /** the service sent a new window this device cannot read as a time: `new_until` is null, and a vouched approval refuses the PC (vouched-pc.ts) */
+  readonly new_until_unreadable?: true;
   /** when the PC was added in one press (kept after its 24 hours), or null */
   readonly admitted_at: string | null;
   /** the PC was added in one press under the first-PC exemption before this device joined: nobody was told of it */
   readonly admitted_before_you: boolean;
+  /**
+   * PCL-1: listed by a device code (a PC's own sign-in), which anyone can type for any PC, and not confirmed by an app's own
+   * sign-in since: only `listUnconfirmedPcs` returns such a row, and nothing opens or lists it as the account's.
+   */
+  readonly unconfirmed?: true;
 }
 
 type Fetch = (input: Request | string | URL, init?: RequestInit) => Promise<Response>;
@@ -247,8 +263,11 @@ function parsePc(value: unknown): DirectoryPc | null {
   const admitted_at = typeof value.admitted_at === "string" && !Number.isNaN(Date.parse(value.admitted_at)) ? value.admitted_at : null;
   const listing_id = "listing_id" in value ? (typeof value.listing_id === "string" && SERVER_ID.test(value.listing_id) ? value.listing_id : null) : undefined;
   const invited_at = typeof value.invited_at === "string" && !Number.isNaN(Date.parse(value.invited_at)) ? value.invited_at : undefined;
+  const completed_at = "completed_at" in value ? (typeof value.completed_at === "string" && !Number.isNaN(Date.parse(value.completed_at)) ? value.completed_at : null) : undefined;
   return { server_id: value.server_id, label: value.label, added_at: value.added_at, last_seen_at: value.last_seen_at, public_key, relay, new_until, admitted_at, admitted_before_you: admitted_at !== null && value.admitted_before_you === true,
-    ...(listing_id === undefined ? {} : { listing_id }), ...(invited_at === undefined ? {} : { invited_at }) };
+    ...(listing_id === undefined ? {} : { listing_id }), ...(completed_at === undefined ? {} : { completed_at }), ...(invited_at === undefined ? {} : { invited_at }),
+    ...(value.new_until != null && new_until === null ? { new_until_unreadable: true as const } : {}),
+    ...(value.unconfirmed === true ? { unconfirmed: true as const } : {}) };
 }
 
 export function sessionOf(body: unknown, service: string, now: number): AccountSession {
@@ -353,16 +372,61 @@ export class AccountService {
     const body = await this.call("GET", "/v1/pcs", undefined, signal, again);
     const pcs = isRecord(body) && Array.isArray(body.pcs) ? body.pcs : null;
     if (pcs === null) throw new AccountServiceError(502, "invalid_answer", "The account service sent no PC list");
-    return pcs.map(parsePc).filter((pc): pc is DirectoryPc => pc !== null);
+    // a row the service marks unconfirmed is never the account's here, whatever asked for it
+    return pcs.map(parsePc).filter((pc): pc is DirectoryPc => pc !== null && pc.unconfirmed !== true);
   }
 
-  /** Lists a PC in the account's directory, with its relay key and relay so a new device can compare digits with it. */
-  async putPc(serverId: string, entry: { label: string; public_key: string; relay: string }, signal?: AbortSignal, again?: SendAgain): Promise<void> {
+  /** PCL-1: the account's PCs a device code listed and no app's own sign-in confirmed, to offer them for a confirm. */
+  async listUnconfirmedPcs(signal?: AbortSignal): Promise<DirectoryPc[]> {
+    const body = await this.call("GET", "/v1/pcs?include=unconfirmed", undefined, signal);
+    const pcs = isRecord(body) && Array.isArray(body.pcs) ? body.pcs : null;
+    if (pcs === null) throw new AccountServiceError(502, "invalid_answer", "The account service sent no PC list");
+    return pcs.map(parsePc).filter((pc): pc is DirectoryPc => pc !== null && pc.unconfirmed === true);
+  }
+
+  /**
+   * PCL-1/PCL-4: this own sign-in says the PC is the account's, with the key and relay its listing gave. The service refuses
+   * a device code's sign-in (`own_sign_in_required`), one older than ten minutes (`session_not_fresh`) and one without
+   * two-step in a used account (`two_step_required`). The confirmed row comes back new for 24 hours (C3). It names the
+   * listing the card showed (account#67), so a replacement is never confirmed by it: the service answers 409
+   * `listing_changed` (`listingChanged`); one that predates the field ignores it.
+   */
+  async confirmPc(pc: DirectoryPc): Promise<DirectoryPc> {
+    if (pc.public_key === null || pc.relay === null) throw new AccountServiceError(409, "unconfirmable", "The listing gives no key or relay to confirm");
+    const body = await this.call("PUT", `/v1/pcs/${pc.server_id}`, { label: pc.label, public_key: pc.public_key, relay: pc.relay, confirm: true,
+      ...(typeof pc.listing_id === "string" ? { listing_id: pc.listing_id } : {}) });
+    const row = isRecord(body) ? parsePc(body.pc) : null;
+    if (row === null || row.server_id !== pc.server_id || row.unconfirmed === true) throw new AccountServiceError(502, "invalid_answer", "The account service did not confirm the PC");
+    return row;
+  }
+
+  /** Whether this sign-in is an app's own (a device code's never is): only such a sign-in may confirm a PC. */
+  async ownSignIn(signal?: AbortSignal): Promise<boolean> {
+    const body = await this.call("GET", "/v1/session", undefined, signal);
+    return isRecord(body) && body.own_sign_in === true;
+  }
+
+  /** When this sign-in was made (GET /v1/session `signed_in_at`, kept by every refresh), in ms; null when the service does not say. */
+  async signedInAt(signal?: AbortSignal): Promise<number | null> {
+    const body = await this.call("GET", "/v1/session", undefined, signal);
+    const at = isRecord(body) && typeof body.signed_in_at === "string" ? Date.parse(body.signed_in_at) : Number.NaN;
+    return Number.isFinite(at) ? at : null;
+  }
+
+  /**
+   * Lists a PC in the account's directory, with its relay key and relay so a new device can compare digits with it; with
+   * the PC's own proof (ownPcProof) when the PC itself lists it, which alone lists it again after it left (409 `pc_left`).
+   */
+  async putPc(serverId: string, entry: { label: string; public_key: string; relay: string } & PcProofFields, signal?: AbortSignal, again?: SendAgain): Promise<void> {
     await this.call("PUT", `/v1/pcs/${serverId}`, entry, signal, again);
   }
 
-  async deletePc(serverId: string): Promise<void> {
-    await this.call("DELETE", `/v1/pcs/${serverId}`);
+  /**
+   * Removes a PC. A Decline names the listing its card showed (account#67): the service then removes only that listing while
+   * it still asks to join, and answers 409 `listing_changed` (`listingChanged`) otherwise; one that predates it ignores it.
+   */
+  async deletePc(serverId: string, listingId?: string): Promise<void> {
+    await this.call("DELETE", `/v1/pcs/${serverId}${listingId === undefined ? "" : `?listing_id=${encodeURIComponent(listingId)}`}`);
   }
 
   /** Renews an invitation in place. Without a listing ID, the empty body probes for the old service's missing route. */
@@ -375,7 +439,7 @@ export class AccountService {
       return "refreshed";
     } catch (error) {
       if (error instanceof AccountServiceError) {
-        if (error.status === 409 && error.code === "listing_changed") return "changed";
+        if (listingChanged(error)) return "changed";
         if (listingId === undefined && error.status === 404 && error.code === "not_found") return "legacy";
       }
       throw error;
@@ -524,6 +588,21 @@ export class AccountService {
   async deleteAccount(): Promise<void> {
     // only the documented 204 is a completed deletion: a 202 pending, say, leaves the account (and what this device keeps) alone
     await this.call("DELETE", "/v1/account", undefined, undefined, undefined, 204);
+  }
+
+  /**
+   * Signs every device out of the account (POST /v1/signout/all): each sign-in of it ends at the service, this one's
+   * included, so this sign-in is forgotten here too, unless another took its place meanwhile. Its PCs and device keys
+   * stay, and so do its unsent blocks: a later sign-in to the account sends them (S32-1). Like deleting the account it
+   * wants an own sign-in made in the last ten minutes (403 `reauth_required`, `web_sign_in_required`).
+   */
+  async signOutEverywhere(): Promise<void> {
+    const ended = this.options.signIn ?? await this.session();
+    if (ended === undefined) throw new SignedOutError();
+    // only the documented 204 ended them: any other success leaves this sign-in as it was
+    await this.call("POST", "/v1/signout/all", {}, undefined, undefined, 204);
+    await this.options.store.update("session", (current) => current !== undefined && sameSignIn(current, ended) ? undefined : current);
+    if (this.options.store === indexedAccountStore) globalThis.window?.dispatchEvent(new Event(ACCOUNT_SIGN_OUT_EVENT));
   }
 
   async postRecord(serverIds: readonly string[], record: AccountRecord): Promise<number> {

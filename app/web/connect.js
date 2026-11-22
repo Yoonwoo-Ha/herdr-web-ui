@@ -1,14 +1,17 @@
 // The connect screen: the app's first page until a PC is chosen. Opening a PC goes through the
 // native HerdrShell plugin, which makes the PC's address the WebView's first page: navigating
 // there from this page would cost every launch about 1.5 s (docs/native-app.md, Spike results).
-import { ACCOUNT_SERVICE, ACCOUNT_SIGN_IN, APP_ORIGIN, barsForScreen, followScheme, listedProviders, localize, openFailure, parseAddress, publicHttp, relayLink, shell, sshDetails, t } from "./shell.js";
+import { ACCOUNT_SERVICE, ACCOUNT_SIGN_IN, APP_ORIGIN, barsForScreen, followScheme, knownLogins, listedProviders, localize, openFailure, parseAddress, publicHttp, relayLink, shell, savedPcLabel, sshDetails, sshOrAddress, t, tabPcs } from "./shell.js";
 
 localize();
 followScheme();
 
-const feedback = document.getElementById("feedback");
 const form = document.getElementById("connect");
 const input = document.getElementById("address");
+const byAddress = document.getElementById("by-address");
+const addressForm = document.getElementById("address-connect");
+const webInput = document.getElementById("web-address");
+const sshAdd = document.getElementById("ssh-add");
 const error = document.getElementById("error");
 const spinner = document.getElementById("spinner");
 const statusText = document.getElementById("status-text");
@@ -38,10 +41,10 @@ function stopPending() {
 /** PCs that loaded before (an origin, or a relay PC's scope), and the public http address the user was just warned about. */
 let savedOrigins = [];
 let warned = "";
-/** The PCs added over SSH (Android's OvisSsh plugin), by their loopback origin on this phone. */
+/** The PCs added over SSH (the app's OvisSsh plugin), by their loopback origin on this phone. */
 let sshPcs = {};
 
-/** Calls Android's OvisSsh plugin (app/android/.../OvisSshPlugin.java). */
+/** Calls the app's OvisSsh plugin (app/android/.../OvisSshPlugin.java, app/ios/App/App/OvisSshPlugin.swift). */
 function ssh(method, options = {}) {
   return window.Capacitor.nativePromise("OvisSsh", method, options);
 }
@@ -76,7 +79,7 @@ async function open(text) {
     catch (err) { error.textContent = String(err?.message ?? err); }
     return;
   }
-  if (url === null) { error.textContent = t("That is not an http or https address.", "http 또는 https 주소가 아닙니다."); if (!addressScreen.hidden) input.focus(); return; }
+  if (url === null) { error.textContent = t("That is not an http or https address.", "http 또는 https 주소가 아닙니다."); focusField(); return; }
   // the hosted app itself, saved once it loaded (a sign-in opens it): picked from this list, it opens on its front page
   // (#pcs, which the hosted app takes as the app's own way there: Add a PC, or its sign-in), not straight into the PC it
   // opened last as a launch does (src/lib/relay/shell.tsx, launchOrder): a new web view starts a new session, so a bare
@@ -89,18 +92,24 @@ async function open(text) {
   }
   // a PC paired over the Ovis relay opens at its scope on the app's origin, saved under that scope
   const relay = relayLink(url);
-  if (relay?.error) { error.textContent = relayErrors[relay.error](); if (!addressScreen.hidden) input.focus(); return; }
+  if (relay?.error) { error.textContent = relayErrors[relay.error](); focusField(); return; }
   if (relay) {
     error.textContent = "";
-    try { await shell("open", { url: relay.url, scope: relay.scope, ...(relay.name ? { name: relay.name } : {}) }); }
+    // #picked: the person chose this PC now, so the app does not move on to another one if it is off (src/lib/relay/shell.tsx);
+    // a link that carries its own fragment (a pairing offer) is never a reopen, so it needs none
+    const picked = new URL(relay.url);
+    if (picked.hash === "") picked.hash = "picked";
+    try { await shell("open", { url: picked.href, scope: relay.scope, ...(relay.name ? { name: relay.name } : {}) }); }
     catch (err) { error.textContent = String(err?.message ?? err); }
     return;
   }
-  if (publicHttp(url) && !savedOrigins.some((saved) => new URL(saved).origin === url.origin) && warned !== url.href) {
+  // an unreadable saved address (kept on disk for its Forget) is no saved origin, and never stops this one
+  const savedOrigin = (saved) => { try { return new URL(saved).origin; } catch { return null; } };
+  if (publicHttp(url) && !savedOrigins.some((saved) => savedOrigin(saved) === url.origin) && warned !== url.href) {
     warned = url.href;
     error.textContent = t(
       `${url.host} is not on a tailnet or a home network, so plain http would send the pairing code and everything you type across the internet unencrypted. Use its https address, or open it again to go ahead.`,
-      `${url.host}은(는) tailnet이나 집 네트워크의 주소가 아니어서, 일반 http로는 페어링 코드와 입력하는 모든 내용이 암호화되지 않은 채 인터넷으로 오갑니다. https 주소를 쓰거나, 그래도 열려면 한 번 더 여세요.`,
+      `이 주소(${url.host})는 tailnet이나 집 네트워크의 주소가 아니어서, 일반 http로는 페어링 코드와 입력하는 모든 내용이 암호화되지 않은 채 인터넷으로 오갑니다. https 주소를 쓰거나, 그래도 열려면 한 번 더 여세요.`,
     );
     return;
   }
@@ -114,57 +123,111 @@ async function open(text) {
   finally { if (mine === attempt) showStatus(""); }
 }
 
-const screens = { "sign-in": document.getElementById("sign-in"), add: document.getElementById("add"), address: document.getElementById("address-screen") };
-const addressScreen = screens.address;
-// a build without the account (OVIS_APP_ACCOUNT=0, build-web.ts) starts on Add a PC, with nothing to go back to
-const first = ACCOUNT_SIGN_IN ? "sign-in" : "add";
+const tabs = [...document.querySelectorAll('[role="tab"]')];
+const tailnetInput = document.getElementById("tailnet-address");
+// a build without the account (OVIS_APP_ACCOUNT=0, build-web.ts) has no relay tab and opens on Tailscale
+if (!ACCOUNT_SIGN_IN) document.getElementById("tab-relay").hidden = true;
+let tab = ACCOUNT_SIGN_IN ? "relay" : "tailscale";
 
-/**
- * One screen at a time; what an open says goes with the screen that is up, above the PCs opened before so a long list
- * never pushes it out of sight. `focus`: what gets the focus on it, none for false.
- */
-function show(name, focus) {
-  stopPending();
-  error.textContent = "";
-  for (const [key, screen] of Object.entries(screens)) screen.hidden = key !== name;
-  screens[name].insertBefore(feedback, screens[name].querySelector("#saved-section"));
-  if (focus !== false) (focus ?? screens[name].querySelector("button:not([hidden])"))?.focus();
+/** The field of the tab that is up, for an open that did not go: none on the relay's tab. */
+function focusField() {
+  // the SSH field only where it is drawn (an app without OvisSsh hides it), the address field once Add by address opened it
+  if (tab === "ssh") (!addressForm.hidden ? webInput : sshAdd.hidden ? null : input)?.focus();
+  else if (tab === "tailscale" && !tailnetInput.closest("[hidden]")) tailnetInput.focus();
 }
 
 /**
- * A step forward is an entry of the page's history, so the phone's own Back steps back as the round Back does (Android
- * gives Back to a page with history of the app's own, MainActivity.syncBack).
+ * One tab at a time, picked rather than stepped to: no entry of the page's history, so the phone's Back leaves the app
+ * from any tab (MainActivity's pageBack gives Back to the page only when it has history), as it does on the desktop's
+ * Add a connection. What an open said goes with the tab it was said on.
  */
-function go(name, focus) {
-  history.pushState({ screen: name }, "", `#${name}`);
-  show(name, focus);
+function pick(name, focus = false) {
+  if (name !== tab) {
+    stopPending();
+    error.textContent = "";
+  }
+  tab = name;
+  for (const each of tabs) {
+    const on = each.dataset.tab === name;
+    each.setAttribute("aria-selected", String(on));
+    each.tabIndex = on ? 0 : -1;
+    document.getElementById(each.getAttribute("aria-controls")).hidden = !on;
+  }
+  if (focus) tabs.find((each) => each.dataset.tab === name)?.focus();
+  if (name === "tailscale") void checkTailscale();
 }
 
-history.replaceState({ screen: first }, "", location.pathname);
-addEventListener("popstate", (event) => { show(screens[event.state?.screen] ? event.state.screen : first); });
-for (const screen of [screens.add, screens.address]) screen.querySelector("[data-back]").addEventListener("click", () => history.back());
-document.getElementById("no-account").addEventListener("click", () => go("add"));
-document.getElementById("address-way").addEventListener("click", () => go("address", input));
+for (const each of tabs) each.addEventListener("click", () => pick(each.dataset.tab));
+// a tab list's own keys: the arrows move between the tabs that are drawn, Home and End to the ends
+document.querySelector('[role="tablist"]').addEventListener("keydown", (event) => {
+  const shown = tabs.filter((each) => !each.hidden);
+  const at = shown.findIndex((each) => each.dataset.tab === tab);
+  const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: shown.length - 1 }[event.key];
+  if (to === undefined) return;
+  event.preventDefault();
+  pick(shown[(to + shown.length) % shown.length].dataset.tab, true);
+});
+pick(tab);
 
-// a machine reached over SSH from this phone: Android's OvisSsh plugin asks the rest on a screen of its own. An app
-// without it (iOS, or an Android build before it) has no SSH to offer, so the way is left out rather than drawn dead
-const sshWay = document.getElementById("ssh-way");
+// a machine reached over SSH from this phone: the app's OvisSsh plugin asks the rest on a screen of its own. An app
+// without it (an Android or iOS build before it) has no SSH to offer, so the SSH tab's field takes addresses alone
 // the plugins the app announces to the page before its first script runs (src/lib/nativeApp.ts, hasNativePlugin)
-if ((window.Capacitor?.PluginHeaders ?? []).some((header) => header.name === "OvisSsh")) sshWay.addEventListener("click", async () => {
+const sshOffered = (window.Capacitor?.PluginHeaders ?? []).some((header) => header.name === "OvisSsh");
+sshAdd.hidden = !sshOffered;
+
+/** Add by address: the field for a PC's https address, behind its text link; open with `address` filled in. */
+function showAddressForm(shown, address = "") {
+  addressForm.hidden = !shown;
+  byAddress.setAttribute("aria-expanded", String(shown));
+  if (shown && address !== "") webInput.value = address;
+}
+byAddress.addEventListener("click", () => { showAddressForm(addressForm.hidden); if (!addressForm.hidden) webInput.focus(); });
+addressForm.addEventListener("submit", (event) => { event.preventDefault(); void open(webInput.value); });
+
+/** The SSH field: SSH's user@host goes to the SSH setup screen with it filled in; anything else opens as an address. */
+async function connectField(text) {
+  const target = sshOrAddress(text);
+  if (!target.ssh) { await open(target.address); return; }
+  if (!sshOffered) {
+    error.textContent = t("SSH needs the latest version of this app. Update it, or type the PC's https address instead.", "SSH는 이 앱의 최신 버전에서 돼요. 앱을 업데이트하거나 PC의 https 주소를 넣으세요.");
+    input.focus();
+    return;
+  }
   // an open still being checked must not take over while the setup screen is up
   stopPending();
   error.textContent = "";
-  try { await ssh("add"); }
+  try { await ssh("add", target.ssh); }
   catch (err) { error.textContent = String(err?.message ?? err); }
-});
-else sshWay.hidden = true;
+}
 
 cancel.addEventListener("click", () => {
   stopPending();
-  if (!addressScreen.hidden) input.focus();
+  focusField();
 });
 
-form.addEventListener("submit", (event) => { event.preventDefault(); void open(input.value); });
+form.addEventListener("submit", (event) => { event.preventDefault(); void connectField(input.value); });
+document.getElementById("tailnet-connect").addEventListener("submit", (event) => { event.preventDefault(); void open(tailnetInput.value); });
+
+/**
+ * Whether Tailscale is on on this phone, as Android tells (HerdrShell tailscale): off, the tab says so and offers its
+ * app alone, since no Tailscale address opens meanwhile; it asks again when the app comes back (from Tailscale). An app
+ * that cannot tell (iOS, an older Android build) draws the tab as on.
+ */
+async function checkTailscale() {
+  if (!android) return;
+  let on = true;
+  try { on = (await shell("tailscale")).on !== false; }
+  catch { /* an Android build without the check: as on */ }
+  document.getElementById("tailscale-off").hidden = on;
+  document.getElementById("tailscale-on").hidden = !on;
+}
+
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && tab === "tailscale") void checkTailscale(); });
+document.getElementById("open-tailscale").addEventListener("click", async () => {
+  error.textContent = "";
+  try { await shell("openTailscale"); }
+  catch (err) { error.textContent = String(err?.message ?? err); }
+});
 
 const account = document.getElementById("account");
 /** Draws a button for each sign-in named, in the build's order. */
@@ -172,12 +235,7 @@ function showProviders(providers) {
   for (const button of account.querySelectorAll("[data-provider]")) button.hidden = !providers.includes(button.dataset.provider);
 }
 
-if (!ACCOUNT_SIGN_IN) {
-  screens.add.querySelector("[data-back]").hidden = true;
-  show("add", false);
-}
-else {
-  show("sign-in", false);
+if (ACCOUNT_SIGN_IN) {
   // the service names its sign-ins (GET /v1/providers), as the hosted app reads them; until it answers, GitHub alone
   // (the markup's), the hosted app's own fallback, so no button opens a sign-in the hosted app would not start
   fetch(new URL("/v1/providers", ACCOUNT_SERVICE)).then((response) => response.ok ? response.json() : null).then((body) => {
@@ -199,9 +257,15 @@ else {
   });
 }
 
-document.getElementById("scan").addEventListener("click", async () => {
+for (const scan of document.querySelectorAll("[data-scan]")) scan.addEventListener("click", async () => {
   error.textContent = "";
   try {
+    // the Android app asks for the camera itself first (HerdrShell camera): the scanner's own refusal is in English alone
+    const cameraCheck = (window.Capacitor?.PluginHeaders ?? []).some((header) => header.name === "HerdrShell" && (header.methods ?? []).some((each) => each.name === "camera"));
+    if (cameraCheck && (await shell("camera")).granted !== true) {
+      error.textContent = t("Ovis cannot use the camera. Allow it in the phone's Settings, under Apps, Ovis, Permissions.", "Ovis가 카메라를 쓸 수 없어요. 휴대폰 설정의 앱 → Ovis → 권한에서 허용하세요.");
+      return;
+    }
     // the plugin's own JS fills these defaults; this page calls the bridge without it
     const result = await window.Capacitor.nativePromise("CapacitorBarcodeScanner", "scanBarcode", { hint: 0, scanInstructions: t("Point at the QR code under Settings → Phone & devices on your PC", "PC의 설정 → 폰 및 기기에 있는 QR 코드를 비추세요"), scanButton: false, scanText: " ", cameraDirection: 1, scanOrientation: 3 });
     if (result?.ScanResult) await open(result.ScanResult);
@@ -209,6 +273,119 @@ document.getElementById("scan").addEventListener("click", async () => {
     error.textContent = String(err?.message ?? err);
   }
 });
+
+/** the way a row connects, on its second line */
+const WAY_TAGS = { relay: () => t("Relay", "릴레이"), tailscale: () => "Tailscale", ssh: () => "SSH", address: () => t("Address", "주소"), broken: () => t("Unreadable", "읽을 수 없음") };
+
+/**
+ * A tab's list of the PCs this phone is already on (tabPcs), under its controls: each a compact row of its name, the way
+ * it connects and, for the PC this screen was opened from, Connected, then its address. A tap on the row opens it; Forget
+ * at its end (an SSH PC's Manage, as its keys live on this phone); an entry saved unreadable opens nothing.
+ */
+function renderPcs(which, list, section, state) {
+  const pcs = tabPcs(savedOrigins, which, state.names ?? {}, sshPcs);
+  list.replaceChildren(...pcs.flatMap(({ origin, label, way }) => {
+    const item = document.createElement("li");
+    const row = document.createElement(way === "broken" ? "span" : "button");
+    row.className = "pc-open";
+    if (way !== "broken") {
+      row.type = "button";
+      row.setAttribute("aria-label", t(`Open ${label}`, `${label} 열기`));
+      row.addEventListener("click", () => void open(origin));
+    }
+    const title = document.createElement("span");
+    title.className = "way-title pc-name";
+    title.textContent = label;
+    const sub = document.createElement("span");
+    sub.className = "sub pc-sub";
+    const tag = document.createElement("span");
+    tag.className = "pc-tag";
+    tag.textContent = WAY_TAGS[way]();
+    sub.append(tag);
+    if (state.choosing === true && origin === state.current) {
+      const on = document.createElement("span");
+      on.className = "pc-on";
+      on.textContent = t("Connected", "연결됨");
+      sub.append(on);
+    }
+    const address = way === "ssh" ? sshDetails(sshPcs[origin]).address : way === "broken" ? "" : new URL(origin).host;
+    if (address !== "" && address !== label) {
+      const where = document.createElement("span");
+      where.className = "pc-address";
+      where.textContent = address;
+      sub.append(where);
+    }
+    row.append(title, sub);
+    if (way !== "ssh") {
+      const forget = button(t("Forget", "지우기"), async () => { await shell("forget", { url: origin }); await load(); }, "forget");
+      forget.setAttribute("aria-label", t(`Forget ${label}`, `${label} 지우기`));
+      item.append(row, forget);
+      return [item];
+    }
+    const manage = button(t("Manage", "관리"), () => {
+      const shown = item.nextElementSibling?.classList.contains("manage-row");
+      if (shown) { item.nextElementSibling.remove(); manage.setAttribute("aria-expanded", "false"); return; }
+      const panelRow = document.createElement("li");
+      panelRow.className = "manage-row";
+      panelRow.append(managePanel(origin, label));
+      item.after(panelRow);
+      manage.setAttribute("aria-expanded", "true");
+    }, "forget");
+    manage.setAttribute("aria-expanded", "false");
+    manage.setAttribute("aria-label", t(`Manage ${label}`, `${label} 관리`));
+    item.append(row, manage);
+    return [item];
+  }));
+  section.hidden = pcs.length === 0;
+  return pcs.length;
+}
+
+const KNOWN_SOURCES = { tailscale: () => "Tailscale", ssh_config: () => t("SSH config", "SSH 설정"), pc: () => t("Its PC", "그 PC의 PC") };
+
+/**
+ * After the first PC: the PCs an SSH PC on this phone knows (its ssh config's hosts, its Tailscale login's PCs, the PCs
+ * it added), as its own Ovis answers over its tunnel (OvisSsh known), each with Add, which opens the SSH setup screen
+ * filled in. Asked of the PC last opened (else the first saved), once per screen; one that does not answer shows nothing.
+ */
+async function showKnown(state) {
+  const section = document.getElementById("known-section");
+  const from = sshPcs[state.last] ?? Object.values(sshPcs).find((pc) => pc.fingerprint);
+  section.hidden = true;
+  if (!sshOffered || from === undefined || !from.fingerprint) return;
+  let known;
+  try { known = await ssh("known", { origin: from.origin }); }
+  catch { return; }
+  const logins = knownLogins(known, from, Object.values(sshPcs));
+  const label = savedPcLabel(from.origin, state.names ?? {}, sshPcs);
+  document.getElementById("known-title").textContent = t(`PCs found on ${label}`, `${label}에서 찾은 PC`);
+  document.getElementById("known-pcs").replaceChildren(...logins.map((login) => {
+    const item = document.createElement("li");
+    const text = document.createElement("span");
+    text.className = "way-text";
+    const title = document.createElement("span");
+    title.className = "way-title pc-name";
+    title.textContent = login.name;
+    const sub = document.createElement("span");
+    sub.className = "sub pc-sub";
+    const tag = document.createElement("span");
+    tag.className = "pc-tag";
+    tag.textContent = KNOWN_SOURCES[login.source]();
+    const address = document.createElement("span");
+    address.className = "pc-address";
+    address.textContent = `${login.user}@${login.host}${login.port === 22 ? "" : `:${login.port}`}`;
+    sub.append(tag, address);
+    text.append(title, sub);
+    const add = button(t("Add", "추가"), async () => {
+      error.textContent = "";
+      try { await ssh("add", { user: login.user, host: login.host, port: login.port }); }
+      catch (err) { error.textContent = String(err?.message ?? err); }
+    }, "primary");
+    add.setAttribute("aria-label", t(`Add ${login.name}`, `${login.name} 추가`));
+    item.append(text, add);
+    return item;
+  }));
+  section.hidden = logins.length === 0;
+}
 
 function button(text, onClick, className = "") {
   const element = document.createElement("button");
@@ -297,57 +474,46 @@ function managePanel(origin, label) {
       try {
         const { remote, reason } = await ssh("remove", { origin, cleanRemote: box.checked });
         await load();
-        if (remote === "failed") error.textContent = t(`${label} was removed from this phone, but its key could not be taken out of the PC (${reason}). Remove the line whose comment starts with ovis-phone: from ~/.ssh/authorized_keys there yourself.`, `${label}을(를) 이 휴대폰에서 지웠지만 PC에서 키를 빼지 못했습니다(${reason}). 그쪽 ~/.ssh/authorized_keys에서 주석이 ovis-phone:으로 시작하는 줄을 직접 지우세요.`);
+        if (remote === "failed") error.textContent = t(`${label} was removed from this phone, but its key could not be taken out of the PC (${reason}). Remove the line whose comment starts with ovis-phone: from ~/.ssh/authorized_keys there yourself.`, `이 PC(${label})를 이 휴대폰에서 지웠지만 PC에서 키를 빼지 못했습니다(${reason}). 그쪽 ~/.ssh/authorized_keys에서 주석이 ovis-phone:으로 시작하는 줄을 직접 지우세요.`);
       } catch (err) { fail(err); }
     }, "primary");
-    extra.replaceChildren(paragraph(t(`Remove ${label} from this phone? Its host key and the key saved for it go too.`, `이 휴대폰에서 ${label}을(를) 지울까요? 호스트 키와 이 PC용으로 저장한 키도 함께 지워집니다.`)), boxLabel, yes);
+    extra.replaceChildren(paragraph(t(`Remove ${label} from this phone? Its host key and the key saved for it go too.`, `이 휴대폰에서 이 PC(${label})를 지울까요? 호스트 키와 이 PC용으로 저장한 키도 함께 지워집니다.`)), boxLabel, yes);
   });
   actions.append(rename, phoneKey, setUp, ...(details.confirmed ? [forgetKey] : []), remove);
   panel.append(paragraph(details.address), paragraph(details.how), paragraph(details.hostKey, "key"), actions, extra, said);
   return panel;
 }
 
-function renderSaved(saved, current, names) {
-  const list = document.getElementById("saved");
-  list.replaceChildren();
-  for (const origin of saved) {
-    const item = document.createElement("li");
-    const sshPc = sshPcs[origin];
-    const label = names[origin] ? (sshPc ? names[origin] : `${names[origin]} (${new URL(origin).host})`) : (sshPc ? `${sshPc.label} (SSH)` : origin);
-    const openButton = button(origin === current ? `${label} ${t("(last opened)", "(마지막으로 연 PC)")}` : label, () => void open(origin), "open");
-    if (sshPc) {
-      // an SSH PC is managed rather than only forgotten: its key and host key live on this phone
-      const manage = button(t("Manage", "관리"), () => {
-        const shown = item.nextElementSibling?.classList.contains("manage-row");
-        if (shown) { item.nextElementSibling.remove(); manage.setAttribute("aria-expanded", "false"); return; }
-        const row = document.createElement("li");
-        row.className = "manage-row";
-        row.append(managePanel(origin, label));
-        item.after(row);
-        manage.setAttribute("aria-expanded", "true");
-      }, "forget");
-      manage.setAttribute("aria-expanded", "false");
-      manage.setAttribute("aria-label", t(`Manage ${label}`, `${label} 관리`));
-      item.append(openButton, manage);
-    } else {
-      const forget = button(t("Forget", "지우기"), async () => { await shell("forget", { url: origin }); await load(); }, "forget");
-      forget.setAttribute("aria-label", t(`Forget ${label}`, `${label} 지우기`));
-      item.append(openButton, forget);
-    }
-    list.append(item);
-  }
-  document.getElementById("saved-section").hidden = saved.length === 0;
+/** Opened from a PC to choose another way (HerdrShell chooseAnother): that PC stays open until another is picked, and this goes back to it. */
+function showBackToPc(state) {
+  const back = document.getElementById("back-to-pc");
+  back.hidden = state.choosing !== true;
+  if (back.hidden) return;
+  const name = savedPcLabel(state.current, state.names ?? {}, sshPcs);
+  back.textContent = `‹ ${name}`;
+  back.setAttribute("aria-label", t(`Back to ${name}`, `${name} 화면으로 돌아가기`));
 }
+
+document.getElementById("back-to-pc").addEventListener("click", async () => {
+  error.textContent = "";
+  try { await shell("backToCurrent"); }
+  catch (err) { error.textContent = String(err?.message ?? err); }
+});
 
 async function load() {
   const state = await shell("getState");
   savedOrigins = state.saved ?? [];
   sshPcs = {};
-  if (android) {
+  if (sshOffered) {
     try { for (const pc of (await ssh("list")).pcs ?? []) sshPcs[pc.origin] = pc; }
     catch { /* an app without the plugin lists its PCs as before */ }
   }
-  renderSaved(savedOrigins, state.last ?? "", state.names ?? {});
+  showBackToPc(state);
+  renderPcs("relay", document.getElementById("relay-pcs"), document.getElementById("relay-section"), state);
+  const tailnet = renderPcs("tailscale", document.getElementById("tailnet"), document.getElementById("tailnet-section"), state);
+  document.getElementById("tailnet-none").hidden = tailnet > 0;
+  renderPcs("ssh", document.getElementById("ssh-pcs"), document.getElementById("ssh-section"), state);
+  void showKnown(state);
   // an SSH PC whose address on this phone another app took first is not opened (OvisSshPlugin.listen)
   if (state.kind === "ssh-port") {
     error.textContent = t(
@@ -365,9 +531,24 @@ async function openAppLink() {
   if (window.Capacitor?.getPlatform?.() !== "android") return;
   const { url } = await shell("takeLink");
   if (!url) return;
-  go("address", false);
-  input.value = url;
+  pick("ssh");
+  showAddressForm(true, url);
   await open(url);
 }
 
 void openAppLink();
+
+// SSH asked for on a PC's page (the hosted app's SSH tab, HerdrShell openSshSetup): only the app's own pages add an
+// SSH PC, so it comes here, on SSH with the login filled in, and goes to the SSH setup screen as typed here would
+async function openSshSetupAsked() {
+  let asked;
+  try { asked = await shell("takeSshSetup"); }
+  catch { return; }
+  if (!asked?.asked) return;
+  pick("ssh");
+  input.value = asked.target;
+  if (sshOrAddress(asked.target).ssh) await connectField(asked.target);
+  else input.focus();
+}
+
+void openSshSetupAsked();

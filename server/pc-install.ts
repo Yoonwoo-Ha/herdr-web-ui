@@ -215,6 +215,8 @@ export class PcInstaller {
   private readonly startMs: number;
   private readonly stopMs: number;
   constructor(private readonly options: { sshDir: string; connect: InstallConnect; release?: string; onChange?(job: PcInstallJob): void; pollMs?: number; startMs?: number; stopMs?: number;
+    /** where that PC fetches the installer from, in place of the release's own (installerAt): a local artifact in a test */
+    installer?: string;
     /** Settings -> Experimental -> PCs: start a replaced server again. Off (or absent), a server started by hand that an install
      * stopped is never copied or started again: a failed or cancelled replacement leaves it stopped */
     restore?: () => boolean }) {
@@ -460,7 +462,7 @@ export class PcInstaller {
         step("installing", `Installing Ovis ${release} with its official installer (about a minute)…`);
         if (stopped) replaced = "maybe";
         let out: string;
-        try { out = await ssh.run(installerRun(release), undefined, INSTALL_TIMEOUT_MS); } catch (error) { if (abort.signal.aborted) throw error; throw sshFailure(error); }
+        try { out = await ssh.run(installerRun(release, this.options.installer), undefined, INSTALL_TIMEOUT_MS); } catch (error) { if (abort.signal.aborted) throw error; throw sshFailure(error); }
         const lines = out.split("\n").map((line) => line.trim()).filter(Boolean);
         if (lines.at(-1) !== "ovis-install-exit=0") {
           // nothing was started in its place only when the installer never ran (its download failed); one that failed

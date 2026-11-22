@@ -16,6 +16,7 @@ import { indexedDeviceStore } from "../lib/relay/device.ts";
 import { serverIdOfPath } from "../lib/shellMode.ts";
 import { getTransport } from "../lib/transport.ts";
 import { AccountApprovalPrompt } from "./AccountApprovalPrompt.tsx";
+import { VouchedPcApproval } from "./VouchedPcApproval.tsx";
 
 /**
  * Whether a request rests on an admission, so its card says who is asking and its approval checks that admission
@@ -24,6 +25,13 @@ import { AccountApprovalPrompt } from "./AccountApprovalPrompt.tsx";
 export const restsOnAdmission = (request: RemotePairingRequest | undefined): boolean => request?.intent === "account" || request?.vouched === true;
 
 export function AccountApprovals({ pairings }: { pairings: readonly RemotePairingRequest[] }) {
+  const request = pairings[0];
+  const through = serverIdOfPath(window.location.pathname);
+  if (request?.vouched && through) return <VouchedPcApproval key={JSON.stringify([through, request.id, request.key, request.proven_server_id])} request={request} through={through} />;
+  return <DeviceApprovals pairings={pairings} />;
+}
+
+function DeviceApprovals({ pairings }: { pairings: readonly RemotePairingRequest[] }) {
   const t = useT();
   const request = pairings[0];
   const serverId = serverIdOfPath(window.location.pathname);

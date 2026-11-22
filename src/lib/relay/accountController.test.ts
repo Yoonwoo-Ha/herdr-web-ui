@@ -1,7 +1,6 @@
 import { createShellTestPage } from "./shell.test.tsx";
 import { afterEach, beforeEach, describe, expect, it, jest, spyOn } from "bun:test";
 import { createElement, type ReactElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 
 import { exportPublicKey, generateKeyPair } from "../../../shared/relay-e2ee.ts";
@@ -12,7 +11,7 @@ import { useHostedSignIn, type HostedSignIn } from "../account/hostedSignIn.ts";
 import type { BlockRecord } from "../../../shared/account-records.ts";
 import type { RelayDevice, ShellDeviceStore } from "./device.ts";
 import { mountRelayShell, type RelayShellMount } from "./shell.tsx";
-import { dashboardState } from "./dashboard.ts";
+import { shellAccountActions } from "../account/hostedSignIn.ts";
 
 const AP = "wss://relay-ap.ovis.sh";
 const SERVICE = "https://account.ovis.sh";
@@ -55,13 +54,7 @@ describe("the hosted shell's front page", () => {
   };
   const last = (): RelayShellProps => shellProps(rendered.at(-1)!);
   const account = () => { const { state } = last(); if ((state.kind !== "list" && state.kind !== "empty") || state.account?.kind !== "signed-in") throw new Error(`not the signed-in front page: ${state.kind}`); return state.account; };
-  // the rows of the dashboard, which a front page draws only at its own address
-  const rows = (): number => {
-    const location = window.location as { hash: string };
-    const before = location.hash;
-    location.hash = "#overview";
-    try { return renderToStaticMarkup(rendered.at(-1)!).match(/<tr[^>]*data-pc-state="/g)?.length ?? 0; } finally { location.hash = before; }
-  };
+  const rows = (): number => account().pcs?.length ?? 0;
   const visible = (next: "visible" | "hidden"): void => { browser.setVisibility(next); browser.page.dispatchEvent(new Event("visibilitychange")); };
 
   it("invalidates an in-flight directory read as soon as sign-out starts", async () => {
@@ -80,14 +73,13 @@ describe("the hosted shell's front page", () => {
     }));
     last().onRefreshAccount?.();
     await until(() => reads === 2, "explicit retry");
-    last().onSignOut?.();
+    shellAccountActions()?.signOut();
     await drain();
     const count = rendered.length;
     directory.resolve(Response.json({ pcs: [{ ...keyFor(), label: "Late PC", added_at: null, last_seen_at: null, public_key: null, relay: AP }] }));
     await drain();
     expect(rendered).toHaveLength(count);
     expect(last().state).toMatchObject({ account: { kind: "signed-out" } });
-    expect(last().directoryRelays).toEqual([]);
     signout.resolve(Response.json({}));
     await drain();
   });
@@ -110,7 +102,7 @@ describe("the hosted shell's front page", () => {
       }));
       last().onRefreshAccount?.();
       await until(() => reads === 2, "the read held over the sign-out");
-      last().onSignOut?.();
+      shellAccountActions()?.signOut();
       Object.defineProperty(globalThis, "Capacitor", { configurable: true, value: { isNativePlatform: () => true, getPlatform: () => "ios", PluginHeaders: [{ name: "OvisAuth" }], nativePromise: async () => ({ idToken: "apple-id-token" }) } });
       globalThis.fetch = Object.assign(async () => { tokened.resolve(); return Response.json({ access_token: "access-2", refresh_token: "refresh-2", expires_in: 3600, account: "acct-test", provider: "apple" }); }, { preconnect: savedFetch.preconnect });
       last().onSignIn?.("apple");
@@ -247,8 +239,6 @@ describe("the hosted shell's front page", () => {
     }
     // ten minutes of failed reads: nothing new is known of the PCs, so no row ages past what the account last confirmed
     expect(account().pcs!.map((pc) => [pc.name, pc.state])).toEqual([["Desk PC", "paired"], ["Mac mini", "needs-approval"], ["nuc", "needs-approval"]]);
-    // so this device's own check that reached no relay still reads Could not reach this machine, not Machine offline
-    expect(dashboardState(account().pcs![0]!, { kind: "offline", reason: "relay" })).toBe("unreachable");
     answer = ok;
 
     visible("hidden");

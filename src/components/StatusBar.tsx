@@ -23,7 +23,7 @@ export interface StatusBarProps {
   watching: boolean;
   waiting: number;
   onNextWaiting: (() => void) | null;
-  connection: "live" | "reconnecting" | "connected" | "lost";
+  connection: "live" | "reconnecting" | "failed" | "connected" | "lost";
   connectionWord: string;
 }
 
@@ -51,7 +51,7 @@ export function StatusBar({ machineId, workspaceId, machine, place, path, sessio
           <CircleHelp aria-hidden="true" />
           <span className="status-bar-text">{t("{count} waiting for you", { count: waiting })}</span>
         </button>}
-        <span className={`status-bar-item status-bar-conn${connection === "reconnecting" || connection === "lost" ? " is-lost" : ""}`} data-state={connection}>
+        <span className={`status-bar-item status-bar-conn${connection === "reconnecting" || connection === "failed" || connection === "lost" ? " is-lost" : ""}`} data-state={connection}>
           <span className="status-bar-dot" aria-hidden="true" />
           {connectionWord}
         </span>

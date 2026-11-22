@@ -1,7 +1,7 @@
 import type { PortalSignIn } from "./portal.ts";
 
 export type AccessVia = "local" | "tailscale" | "device" | "token" | "open" | "portal" | "relay";
-export type AccessRefusal = "other_user" | "pairing_required" | "token_required" | "locked" | "strict";
+export type AccessRefusal = "other_user" | "pairing_required" | "token_required" | "locked" | "strict" | "tailnet_blocked";
 /** What a paired device may do: drive (type, answer, manage) or only watch. */
 export type DeviceRole = "drive" | "watch";
 
@@ -189,6 +189,8 @@ export type AccountPairingState =
 export interface RemoteAccess {
   /** the port this server listens on; the tailscale command names it */
   readonly port: number;
+  /** the server's `process.platform` (darwin, win32, linux...): which Tailscale download and app this PC takes; older servers omit it */
+  readonly platform?: string;
   readonly tailscale: TailscaleAccess;
 }
 

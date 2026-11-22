@@ -22,6 +22,7 @@ export interface AccountApprovalPromptProps {
   request: RemotePairingRequest;
   pcName: string;
   pcCount: number;
+  vouchedName?: string | undefined;
   /**
    * What the account service saw of the device asking (GET /v1/admissions): undefined while it is
    * read, when Approve waits for it; null for a request for this PC only, which has none.
@@ -48,7 +49,7 @@ export function AccountAsker({ asker, language }: { asker: Asker; language: stri
   );
 }
 
-export function AccountApprovalCard({ request, pcName, pcCount, asker, onDecide }: AccountApprovalPromptProps) {
+export function AccountApprovalCard({ request, pcName, pcCount, asker, onDecide, vouchedName }: AccountApprovalPromptProps) {
   const t = useT();
   const { resolvedLanguage } = useSettings();
   const id = useId();
@@ -86,9 +87,10 @@ export function AccountApprovalCard({ request, pcName, pcCount, asker, onDecide 
 
   return (
     <div className="modal-scrim">
-      <div ref={surface} className="modal account-approval" role="alertdialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-lead ${id}-ask`} tabIndex={-1} data-testid="account-approval">
+      <div ref={surface} className="modal account-approval" role="alertdialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={request.vouched ? `${id}-lead` : `${id}-lead ${id}-ask`} tabIndex={-1} data-testid="account-approval">
         <div className="account-approval-mark" aria-hidden="true"><MonitorSmartphone /></div>
-        <h2 className="account-approval-title" id={`${id}-title`}>{t("Add a new device?")}</h2>
+        <h2 className="account-approval-title" id={`${id}-title`}>{request.vouched ? t("Pair this PC?") : t("Add a new device?")}</h2>
+        {request.vouched ? <p className="account-approval-ask" id={`${id}-lead`}>{vouchedName ?? t("This PC could not be verified.")}</p> : <>
         <p className="account-approval-lead" id={`${id}-lead`}>{t("Check the number, then approve")}</p>
         <p className="account-approval-via">{request.intent === "account" ? t("Through {pc} · joins your {n} PCs", { pc: pcName, n: pcCount }) : t("Only for {pc}", { pc: pcName })}</p>
         {asker != null && <AccountAsker asker={asker} language={resolvedLanguage} />}
@@ -101,10 +103,11 @@ export function AccountApprovalCard({ request, pcName, pcCount, asker, onDecide 
               className="account-approval-choice" disabled={busy || asker === undefined} onClick={() => setPicked(choice)}>{grouped(choice)}</button>
           ))}
         </div>
+        </>}
         {error !== null && <p className="account-approval-error" role="alert">{error}</p>}
         <div className="account-approval-actions">
           <button ref={deny} type="button" className="btn" disabled={busy} onClick={() => void decide("decline")}>{t("Deny")}</button>
-          <button type="button" className="btn btn-primary" disabled={busy || picked === null || asker === undefined} onClick={() => void decide("approve")}>{t("Approve")}</button>
+          {request.vouched ? vouchedName && <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void decide("approve")}>{t("Allow")}</button> : <button type="button" className="btn btn-primary" disabled={busy || picked === null || asker === undefined} onClick={() => void decide("approve")}>{t("Approve")}</button>}
         </div>
         <p className="account-approval-note">{t("Approve only if you started this yourself just now. Didn't ask for it? Deny it.")}</p>
       </div>

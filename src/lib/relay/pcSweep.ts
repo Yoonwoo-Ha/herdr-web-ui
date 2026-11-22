@@ -1,14 +1,14 @@
 /** Probe results never imply account or version state. A sweep a minute while the list is shown, at most CHECK_PCS PCs each. */
 import { checkPc, sweepOf } from "./pcStatus.ts";
-import type { PcFinding, PcStatus } from "./pcStatus.ts";
-import type { RelayDevice, RelayDeviceStore } from "./device.ts";
+import type { PcFinding, PcStatus, ProbeTarget } from "./pcStatus.ts";
+import type { RelayDeviceStore } from "./device.ts";
 import type { RelaySocket } from "./channel.ts";
 import { OFFLINE_AFTER_MS } from "../account/myPcs.ts";
 
 const CHECK_PCS = 8;
 const CHECK_AT_ONCE = 2;
 /** a minute: one sweep's CHECK_PCS connections (up to two each, with the global relay's fallback) stay well under the relay's 30 a minute */
-const CHECK_GAP_MS = 60_000;
+export const CHECK_GAP_MS = 60_000;
 const CHECK_KEY = "ovis-pc-check-at";
 const CHECK_CURSOR_KEY = "ovis-pc-check-cursor";
 
@@ -19,7 +19,7 @@ function localStorageSet(key: string, value: string): void {
   try { localStorage.setItem(key, value); } catch {}
 }
 
-interface QueuedCheck { readonly device: RelayDevice; readonly before: PcFinding | undefined; readonly settled: ReturnType<typeof Promise.withResolvers<void>> }
+interface QueuedCheck { readonly device: ProbeTarget; readonly before: PcFinding | undefined; readonly settled: ReturnType<typeof Promise.withResolvers<void>> }
 
 /**
  * `pauseOutOfSight`: a view that is out of sight starts no queued check (the sidebar's list, ShellPcs.tsx) and goes on
@@ -44,7 +44,7 @@ export function createPcSweep(store: RelayDeviceStore, view: { readonly active: 
   const redraw = (): void => { if (view.active()) view.redraw(); };
   const cursorNow = (): number => Number(localStorageGet(CHECK_CURSOR_KEY) ?? "0");
 
-  const enqueue = (device: RelayDevice, where: "front" | "back"): Promise<void> => {
+  const enqueue = (device: ProbeTarget, where: "front" | "back"): Promise<void> => {
     const shown = pcStatus.get(device.server_id);
     const before = shown?.kind === "checking" ? shown.previous : shown;
     const entry: QueuedCheck = { device, before, settled: Promise.withResolvers<void>() };
@@ -141,8 +141,11 @@ export function createPcSweep(store: RelayDeviceStore, view: { readonly active: 
     drain();
     await Promise.all(settled);
   };
-  /** `where`: ahead of the queue (a person's Check again), or after what is queued (a launch's checks, in its order) */
-  const checkOne = async (serverId: string, where: "front" | "back" = "front"): Promise<void> => {
+  /**
+   * `where`: ahead of the queue (a person's Check again), or after what is queued (a launch's checks, in its order).
+   * `known`: a PC this device has no saved pairing for (an account PC), checked by its directory row.
+   */
+  const checkOne = async (serverId: string, where: "front" | "back" = "front", known?: ProbeTarget): Promise<void> => {
     if (stopped) return;
     const waiting = queue.findIndex((entry) => entry.device.server_id === serverId);
     if (waiting >= 0) {
@@ -152,7 +155,7 @@ export function createPcSweep(store: RelayDeviceStore, view: { readonly active: 
     }
     const under = running.get(serverId);
     if (under !== undefined) return under;
-    const device = await store.get(serverId);
+    const device = known ?? await store.get(serverId);
     if (device === undefined || stopped) return;
     const settled = enqueue(device, where);
     redraw();

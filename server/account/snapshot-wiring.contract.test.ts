@@ -93,6 +93,16 @@ describe("S2-24 the server wires the whole read only under the release flag (G1,
     }).toEqual({ published: [tablet.id], paired: true, listed: true });
   });
 
+  test("a row is never told of its own key's admission: another row of the same key is that same device", async () => {
+    const { services, member } = await server(true);
+    const devices = services.devices;
+    expect(await services.accountMailbox.readSnapshot()).toMatchObject({ committed: true });
+    const laptop = devices.openNotices().find((entry) => entry.label === "Laptop");
+    if (!laptop?.row) throw new Error("Laptop was not admitted");
+    expect(devices.noticeFor(member.id, laptop)).not.toBeNull();
+    expect(devices.noticeFor(member.id, { ...laptop, key: member.publicKey })).toBeNull();
+  });
+
   test("G1: with OVIS_ACCOUNT_OPENS_ALL on, the PC's mailbox reads and commits the account's snapshot", async () => {
     const { service, services } = await server(true);
     expect(services.devices.account()).toBe(ACCOUNT);

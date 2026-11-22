@@ -31,6 +31,23 @@ describe("S2-27 devices.json rows wait for the first whole read (T41, T42, T65, 
     expect(waiting(gate)).toEqual([]);
   });
 
+  test("a read that reached its last page but could widen nothing ends the wait of a credential that is this PC's own, and of no other row", () => {
+    let binding: string | null = "bind-1";
+    const gate = new CatchUpGate(() => binding);
+    const own = (name: string, held = false) => gate.waits(rows[name]!, undefined, () => name === "linked" && !held);
+    expect([own("linked"), own("member")]).toEqual([true, true]);
+    gate.narrowedRead();
+    expect([own("linked"), own("member"), own("linked", true)]).toEqual([false, true, true]);
+    // what the row may do for the account is asked with no such word, and waits on
+    expect(gate.waits(rows.linked!)).toBe(true);
+    // a wait after a lift stands over it
+    gate.waitAfterLift("key", [rows.linked!.id]);
+    expect(own("linked")).toBe(true);
+    // another binding waits for a read of its own
+    binding = "bind-2";
+    expect(gate.waits(rows.recover!, undefined, () => true)).toBe(true);
+  });
+
   test("T65: with the service off no read comes, so the wait stays; only screen-paired rows and released rows get in", () => {
     const released = new Set([rows.legacy!.id]);
     const gate = new CatchUpGate(() => "bind-1", (id) => released.has(id));

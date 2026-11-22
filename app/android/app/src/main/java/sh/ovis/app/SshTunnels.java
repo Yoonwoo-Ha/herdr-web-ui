@@ -89,7 +89,15 @@ final class SshTunnels {
         SshPcs store = SshPcs.on(app);
         Connection made = SshLink.connect(pc.host, pc.port, new SshLink.HostKeyCheck(pc.hostKeyAlgorithm, pc.hostKey));
         try {
-            SshLink.signIn(made, pc.user, "imported".equals(pc.auth) ? store.importedKey(pc) : store.phoneKey());
+            if ("tailscale".equals(pc.auth)) {
+                // nobody is on the setup screen to open a check link: the error page shows it, and Try again signs in again
+                SshLink.signInWithTailscale(made, pc.user, SshLink.SIGN_IN_MS, banner -> {
+                    String link = SshLink.checkLink(banner);
+                    return link == null ? null : new SshFailure("tailscale-check", "Tailscale SSH asks to approve this phone again", link);
+                });
+            } else {
+                SshLink.signIn(made, pc.user, "imported".equals(pc.auth) ? store.importedKey(pc) : store.phoneKey());
+            }
             return SshLink.link(made, SshLink.ovisPort(made));
         } catch (SshFailure failed) {
             made.close();
@@ -98,6 +106,35 @@ final class SshTunnels {
             made.close();
             throw new SshFailure("internal", SshFailure.rootMessage(unexpected));
         }
+    }
+
+    /**
+     * What the PC `pc` knows of other PCs, from its own Ovis over its tunnel: `candidates` (its ssh config's hosts
+     * and its Tailscale login's PCs) and `machines` (the PCs it added), each that JSON or null. Neither is required;
+     * both missing fails with the first one's failure.
+     */
+    static org.json.JSONObject known(Context context, SshPcs.Pc pc) throws SshFailure, IOException {
+        SshTunnel tunnel = open(context, pc);
+        org.json.JSONObject answer = new org.json.JSONObject();
+        SshFailure first = null;
+        String[][] paths = { { "candidates", "/api/machines/ssh-candidates" }, { "machines", "/api/machines" } };
+        for (String[] path : paths) {
+            try {
+                answer.put(path[0], new org.json.JSONTokener(tunnel.get(path[1])).nextValue());
+            } catch (SshFailure failed) {
+                if (first == null) first = failed;
+            } catch (org.json.JSONException unreadable) {
+                if (first == null) first = new SshFailure("internal", "An answer that is not JSON");
+            }
+        }
+        if (answer.length() == 0 && first != null) throw first;
+        return answer;
+    }
+
+    /** Try again for the PC `origin`: its tunnel signs in again after a Tailscale check (SshTunnel.resume). */
+    static synchronized void resume(String origin) {
+        Entry entry = origin == null ? null : tunnels.get(origin);
+        if (entry != null) entry.tunnel.resume();
     }
 
     static synchronized void closeFor(String origin) {

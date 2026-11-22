@@ -13,10 +13,57 @@ import { AccountSignIn, CheckPcsButton, PcStatusLine } from "./AccountPcs.tsx";
 import { JoinWait } from "./JoinWait.tsx";
 import { KeyId } from "./KeyId.tsx";
 import { KeyFingerprintWait } from "./PendingKeys.tsx";
+import { approveOnLine } from "./approveOnLine.ts";
 import { relayFailureText } from "./relayFailureText.ts";
 import { CodeEntry, ReadyCheckpoint, type RelayShellProps } from "./RelayShell.tsx";
-import { RelayAddPc } from "./RelayAddPc.tsx";
+import { ConnectStart } from "./ConnectStart.tsx";
+import { canScanQr, RelayAddPc } from "./RelayAddPc.tsx";
 import { SheepMascot } from "./SheepMascot.tsx";
+
+/** Why the plain screen is up (#16): what the person does next on the PC, or why nothing goes on. */
+export type PlainReason = "allow" | "type" | "off" | "declined" | "unanswered" | "removed" | "no-account-pc";
+
+/**
+ * #16: the one plain screen a signed-in device shows instead of the connect tabs, app and browser alike: the PC's name,
+ * one line with what to do there (press Allow, type this number, turn Ovis on, ask again after a decline or a removal,
+ * sign in on a PC), the number when the join shows one, and under it the PC screen's QR way in (a code in a browser) and
+ * the other ways to connect. No tabs, no banner, no list.
+ */
+export function PcApprovalWait({ reason, name, digits = null, menu, onQr, onCheck, onAskAgain, onOtherWays }: {
+  readonly reason: PlainReason; readonly name: string | null; readonly digits?: string | null; readonly menu?: ReactNode;
+  readonly onQr: () => void; readonly onCheck?: (() => void) | undefined; readonly onAskAgain?: (() => void) | undefined; readonly onOtherWays?: (() => void) | undefined;
+}) {
+  const t = useT();
+  const line = (() => {
+    switch (reason) {
+      case "allow": return t("Press [Allow] on {name}", { name: name ?? t("this PC") });
+      case "type": return t("Type this number on {name}", { name: name ?? t("this PC") });
+      case "off": return name === null ? t("Turn on Ovis on the PC") : t("{name} is off. Turn on Ovis on it.", { name });
+      case "declined": return t("Not allowed. Ask again, then press [Allow] on {name}.", { name: name ?? t("this PC") });
+      case "unanswered": return t("No answer from {name}", { name: name ?? t("this PC") });
+      case "removed": return t("This device was removed from {name}. Ask again to join it.", { name: name ?? t("this PC") });
+      case "no-account-pc": return t("Sign in with the same account on the PC where Ovis runs");
+      default: {
+        const exhaustive: never = reason;
+        return exhaustive;
+      }
+    }
+  })();
+  const waiting = reason === "allow" || reason === "type";
+  return (
+    <div className="relay-shell account-centered relay-approval-wait" data-approval-wait={name === null && reason === "off" ? "no-pc" : reason === "allow" || reason === "type" ? "pc" : reason}>
+      {menu !== undefined && <div className="relay-approval-wait-menu">{menu}</div>}
+      {name !== null && <h1 className="relay-shell-title">{name}</h1>}
+      <p className={reason === "declined" || reason === "unanswered" || reason === "removed" ? "relay-shell-copy add-pc-problem" : "relay-shell-copy"} role={reason === "declined" || reason === "unanswered" || reason === "removed" ? "alert" : "status"}>{line}</p>
+      {digits !== null && digits !== "" && <p className="relay-shell-digits" aria-label={digits.split("").join(" ")}>{`${digits.slice(0, 3)} ${digits.slice(3)}`}</p>}
+      {waiting && <div className="relay-shell-wait"><div className="boot-spinner" aria-hidden="true" /></div>}
+      {onAskAgain && <button type="button" className="btn btn-primary" data-action="ask-again" onClick={onAskAgain}>{t("Ask again")}</button>}
+      {onCheck && <button type="button" className="btn" data-action="check-again" onClick={onCheck}>{t("Check again")}</button>}
+      <button type="button" className="btn btn-ghost account-link" data-action="approval-wait-qr" onClick={onQr}>{canScanQr() ? t("Or scan the QR on the PC's screen") : t("Or pair with a code")}</button>
+      {onOtherWays && <button type="button" className="btn btn-ghost account-link" data-action="other-ways" onClick={onOtherWays}>{t("Other ways to connect")}</button>}
+    </div>
+  );
+}
 
 function PcCard({ name, detail = null }: { readonly name: string; readonly detail?: string | null }) {
   return (
@@ -207,12 +254,13 @@ export function RelayShellCardContent({ props, view, signInFirst, addingPc, setS
       <div className="visually-hidden" role="status">{announcedStatus}</div>
       {state.kind === "ready" && onOpenPc && <ReadyCheckpoint open={onOpenPc} cancel={onCancel} state={state} retry={onRetry} />}
       {signInFirst && (
-        <>
-          <h1 className="relay-shell-hero relay-shell-signin-hero"><span>{t("Your PCs, anywhere.")}</span>{" "}<span className="relay-shell-hero-quiet">{t("Sign in to your Ovis account")}</span></h1>
-          {signIn}
-          <p className="relay-shell-first-time">{t("First time? Your account is made right away.")}</p>
-          <button type="button" className="btn btn-ghost account-link relay-shell-no-account" data-action="no-account" disabled={signingIn} onClick={() => setSignedOutView("pair")}>{t("Start without signing in")}</button>
-        </>
+        <ConnectStart devices={state.kind === "list" ? state.devices : []} onForget={props.onForgetSaved} relay={(
+          <>
+            {signIn}
+            <p className="relay-shell-first-time">{t("First time? Your account is made right away.")}</p>
+            <button type="button" className="btn btn-ghost account-link connect-start-code" data-action="add-code" disabled={signingIn} onClick={onCodeStart}>{t("Pair with a code")}</button>
+          </>
+        )} />
       )}
       {state.kind === "list" && account === null && (
         <>
@@ -287,13 +335,13 @@ export function RelayShellCardContent({ props, view, signInFirst, addingPc, setS
       {state.kind === "compare" && !(state.typed && !state.confirmed) && (
         <>
           <SheepMascot screen="waiting" size={56} badge />
-          <h1 className="relay-shell-title" ref={pressedTitle} tabIndex={-1}>{state.confirmed ? t("Approve on the PC if it shows the same number") : t("Does {name} show this number?", { name: pc })}</h1>
+          <h1 className="relay-shell-title" ref={pressedTitle} tabIndex={-1}>{state.approveOn !== undefined ? approveOnLine(t, state.approveOn) : state.confirmed ? t("Approve on the PC if it shows the same number") : t("Does {name} show this number?", { name: pc })}</h1>
           {!state.confirmed && <p className="relay-shell-copy">{t("If they match, approve this device on {name}.", { name: pc })}</p>}
           <div className="relay-step-cards">
             <div className="relay-step-card relay-step-number">
               {/* a typed comparison's digits are only on the PC's screen: the card keeps the 90 seconds line alone */}
               {!state.typed && <p className="relay-shell-digits" aria-label={state.digits.split("").join(" ")}>{`${state.digits.slice(0, 3)} ${state.digits.slice(3)}`}</p>}
-              {state.confirmed && <p className="relay-shell-detail">{t("Approve this device on {name} within 90 seconds to finish.", { name: pc })}</p>}
+              {state.confirmed && state.approveOn === undefined && <p className="relay-shell-detail">{t("Approve this device on {name} within 90 seconds to finish.", { name: pc })}</p>}
             </div>
           </div>
           <div className="relay-shell-actions">{!state.confirmed && <button type="button" className="btn btn-primary" onClick={() => onMatch()}>{t("The numbers match")}</button>}<button type="button" className="btn relay-step-quiet" onClick={onCancel}>{t("Cancel")}</button></div>

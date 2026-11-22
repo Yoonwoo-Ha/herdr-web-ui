@@ -53,8 +53,15 @@ try {
   for (const id of owned) assert.equal(await page.locator(`.app-header #${id}`).count(), 1, `the owned ${id} is the header's own control`);
   assert.equal(await page.locator(".app-header .new-workspace-button").count(), 0, "the header draws no + over the open drawer");
   const mark = page.locator(".app-header #drawer-toggle");
-  assert.deepEqual(await mark.evaluate((node) => [node.getAttribute("aria-label"), node.getAttribute("title"), node.getAttribute("aria-expanded"), node.querySelector("img") !== null]),
-    ["Open agent inbox", "Open agent inbox", null, true], "the open drawer's head is the Ovis mark, named and titled for the inbox");
+  assert.deepEqual(await mark.evaluate((node) => [node.getAttribute("aria-label"), node.getAttribute("aria-expanded"), node.querySelector("img") !== null]),
+    ["Close workspace list", "true", true], "the open drawer's head is the Ovis mark, the toggle that closes it, not a way into the inbox");
+  assert.equal(await page.locator(".app-header").getByRole("button", { name: "Open agent inbox" }).count(), 0, "the header over the open drawer offers no inbox");
+  const headTitle = page.locator(".app-header .drawer-head-title");
+  const pcName = await page.evaluate(async () => ((await (await fetch("/api/machines")).json()) as { machines: { id: string; name: string }[] }).machines.find((machine) => machine.id === "local")?.name ?? null);
+  assert.deepEqual([await page.locator(".app-header .context-title svg").count(), (await headTitle.locator(".context-title-text").textContent())?.trim()], [0, pcName],
+    "the header over the open drawer names the PC, with no agent mark or pane name");
+  assert.deepEqual(await drawer.locator(".sidebar-footer-row > button").evaluateAll((nodes) => nodes.map((node) => [node.className.split(" ").at(-1), node.getAttribute("aria-label")?.split(" \u00b7 ")[0] ?? null])),
+    [["sidebar-footer-settings", "Settings"], ["sidebar-footer-inbox", "Inbox"]], "the drawer's foot holds the gear and Inbox beside it");
   const namedClose = drawer.getByRole("button", { name: "Close workspace list", exact: true });
   assert.equal(await namedClose.count(), 1, "the drawer holds a named close for a screen reader");
   assert.deepEqual(await drawer.locator(".sidebar-footer > *").evaluateAll((nodes) => nodes.filter((node) => node.getClientRects().length > 0).map((node) => node.className)),
@@ -116,7 +123,7 @@ try {
   await page.locator("#workspace-drawer:not([role])").waitFor();
   assert.equal(await drawer.getAttribute("aria-modal"), null, "the desktop sidebar is not modal");
   await context.close();
-  console.log("PASS phone drawer is a modal focus-trapped surface, headed by the Ovis mark, closed by a tap outside, a swipe, Back, Escape and its named close");
+  console.log("PASS phone drawer is a modal focus-trapped surface, headed by the Ovis mark and the PC's name with Inbox beside the gear at its foot, closed by a tap outside, a swipe, Back, Escape and its named close");
 
   {
     const guarded = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
@@ -142,13 +149,16 @@ try {
     // the click's own handlers ran in its dispatch; the render a way in would cause is drawn by the next frame
     await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
     assert.ok(second - opened < SECOND_TAP_MS, `the two taps landed ${Math.round(second - opened)} ms apart, not a double tap: the guard was not exercised`);
-    assert.equal(await page.locator(".mode-inbox").count(), 0, `the second tap of a double tap (${Math.round(second - opened)} ms apart) on the mark's spot is not a way into the inbox`);
-    assert.equal(await page.locator("#workspace-drawer.is-open").count(), 1, "and the drawer stays open");
+    assert.equal(await page.locator("#workspace-drawer.is-open").count(), 1, `the second tap of a double tap (${Math.round(second - opened)} ms apart) on the mark's spot leaves the drawer open`);
     await toggle.tap();
+    await page.locator("#workspace-drawer:not(.is-open)").waitFor({ state: "attached" });
+    assert.equal(await page.locator(".mode-inbox").count(), 0, "a tap on the mark past the double tap closes the drawer and opens no inbox");
+    await toggle.tap();
+    await page.locator("#workspace-drawer.is-open .sidebar-footer-inbox").tap();
     await page.locator(".mode-inbox").waitFor();
-    assert.equal(new URL(page.url()).searchParams.get("app"), "inbox", "a tap on the mark past the double tap opens the agent inbox");
+    assert.equal(new URL(page.url()).searchParams.get("app"), "inbox", "Inbox beside the drawer's gear opens the agent inbox");
     await guarded.close();
-    console.log(`PASS a double tap on the menu button (${Math.round(second - opened)} ms apart) opens the drawer and not the inbox; the mark opens it after ${SECOND_TAP_MS} ms`);
+    console.log(`PASS a double tap on the menu button (${Math.round(second - opened)} ms apart) opens the drawer and keeps it open; the mark closes it after ${SECOND_TAP_MS} ms, and Inbox at the drawer's foot opens the inbox`);
   }
 
   {
@@ -166,25 +176,21 @@ try {
     await page.locator("#workspace-drawer.is-open").waitFor();
     assert.equal(await page.locator("#workspace-drawer .sidebar-footer-pc").count(), 0, "a phone's drawer has no Change PC row");
     await page.locator("#workspace-drawer .sidebar-footer-settings").tap();
-    const change = page.locator(".settings-dialog .settings-change-pc");
-    await change.waitFor();
-    assert.equal((await change.textContent())?.trim(), "Change PC");
-    await change.tap();
-    await page.waitForFunction(() => window.nativeCalls.includes("HerdrShell.disconnect"), undefined, { timeout: 5_000 });
+    await page.locator(".settings-dialog .settings-tabs").waitFor();
+    assert.equal(await page.getByRole("button", { name: "Change PC", exact: true }).count(), 0, "Settings' list has no Change PC: the sidebar lists every PC");
     const tablet = await app.newPage();
     await tablet.setViewportSize({ width: 700, height: 1000 });
     await openPane(tablet);
     await tablet.getByRole("button", { name: "Open workspace list", exact: true }).tap();
     await tablet.locator("#workspace-drawer.is-open").waitFor();
     assert.equal(await tablet.locator("#workspace-drawer .sidebar-footer-pc").count(), 0, "at 700px the drawer has no Change PC row");
-    await tablet.locator("#workspace-drawer .sidebar-footer-settings").tap();
-    await tablet.locator(".settings-dialog .settings-change-pc").waitFor();
     const wide = await app.newPage();
     await wide.setViewportSize({ width: 1440, height: 900 });
     await openPane(wide);
-    await wide.locator("#workspace-drawer .sidebar-footer-pc").waitFor();
+    await wide.locator("#workspace-drawer .sidebar-footer-settings").waitFor();
+    assert.equal(await wide.locator("#workspace-drawer .sidebar-footer-pc").count(), 0, "a wide window has no Change PC row either");
     await app.close();
-    console.log("PASS in the phone app the drawer's foot is the gear alone, and the gear's Settings list ends in Change PC, which goes back to the app's list, at 390 and at 700; a wide window keeps its Change PC row");
+    console.log("PASS in the phone app the sidebar's foot is the gear alone and Settings' list ends without Change PC, at 390, 700 and 1440: the sidebar lists every PC");
   }
 } finally {
   await browser.close();

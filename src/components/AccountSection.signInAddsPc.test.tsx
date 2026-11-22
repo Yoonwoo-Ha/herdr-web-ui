@@ -178,6 +178,8 @@ describe("signing in on a PC's own page", () => {
   });
 
   it.each([true, false])("retrying a stale listing uses the local binding at write time (bound: %s)", async (bound) => {
+    // an account service from before listings had IDs: a stale invitation is renewed by listing the PC again
+    fake.completions = false;
     await mount();
     await until(() => buttons().includes("Sign in and add this PC"));
     await press("Sign in and add this PC");
@@ -238,7 +240,8 @@ describe("signing in on a PC's own page", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     expect(buttons()).not.toContain("Stop waiting");
     expect(text(renderer!.root)).not.toContain("Signed in. Adding this PC to your account…");
-    expect(asked.slice(before).map((request) => request.path).filter((path) => path !== "/api/account/status" && path !== "/api/health")).toEqual([]);
+    // Manage account's own device list reads this PC's devices; nothing writes to the PC or lists it
+    expect(asked.slice(before).map((request) => request.path).filter((path) => path !== "/api/account/status" && path !== "/api/health" && path !== "/api/devices")).toEqual([]);
   });
 
   it("says only Sign in on a PC already in an account, and adds nothing after it", async () => {

@@ -1,9 +1,11 @@
 /**
- * The sighting does not prove the machine is in the
- * account still (after Revoke all and a listing again its row keeps it), so the join sheet keeps Type the number, which
- * turns it into the typed-number sheet. The shell is the real build on
- * https://app.ovis.sh (routed here), the account service the in-memory fake with the directory answered here; no
- * relay or PC takes part (every WebSocket is closed at once), so nothing is paired.
+ * A second device of the account, signed in, finds the account's PCs it is not in yet on Add a PC (/#add; the signed-in front page lists only its own, #16),
+ * each noted Needs approval, and joins one from that PC's own page: m1-box, which the directory heard from, asks to
+ * join (the join sheet); desk2, never seen and new in the account, takes the number its own screen shows (the new
+ * sheet). Escape leaves the sheet for the front page. The shell is the real build on https://app.ovis.sh (routed
+ * here), the account service the in-memory fake with the directory answered here and no device-key route (404, as one
+ * without device keys answers), so a PC's page offers its join sheet instead of opening by the account's key; no relay
+ * or PC takes part (every WebSocket is closed at once), so nothing is paired.
  *
  * The shell is SHELL_DIR when set, else dist-shell/, else a build of its own when neither is there.
  *
@@ -15,6 +17,7 @@ import { join } from "node:path";
 import { chromium, type Page } from "playwright-core";
 import { FakeAccountService } from "../shared/account-service-fake.ts";
 import { generateKeyPair } from "../shared/relay-e2ee.ts";
+import { translate } from "../src/lib/i18n.ts";
 import { deriveServerId } from "../shared/relay-server-proof.ts";
 import { chromePath } from "./chrome-path.ts";
 import { servePagesSite } from "./pages-static.ts";
@@ -77,6 +80,7 @@ try {
           const request = route.request();
           const cors = { "access-control-allow-origin": APP, "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST, PUT, DELETE" };
           if (request.method() === "OPTIONS") { await route.fulfill({ status: 204, headers: cors }); return; }
+          if (new URL(request.url()).pathname === "/v1/devices/challenge") { await route.fulfill({ status: 404, headers: cors }); return; }
           if (request.method() === "GET" && new URL(request.url()).pathname === "/v1/pcs" && request.headers()["authorization"]) {
             await route.fulfill({ status: 200, headers: cors, contentType: "application/json", body: JSON.stringify({ pcs: directory() }) });
             return;
@@ -99,71 +103,43 @@ try {
 
         await page.goto(`${APP}/`);
         await page.locator(".account-provider").first().click();
-        // a sign-in lands on Add a PC, never the dashboard: that opens only by its own address
-        await page.locator('main.relay-add-screen[data-account-state="signed-in"] .relay-add, [data-add-pc-mode]').first().waitFor({ timeout: 45_000 });
-        await page.goto(`${APP}/#overview`);
-        await page.locator('.relay-dash[data-dashboard-mode="account"]').waitFor({ timeout: 45_000 });
+        // a sign-in lands on the connect tabs, or on the join an account PC its launch picked asks by itself (#16)
+        await page.locator('main.relay-add-screen[data-account-state="signed-in"] .connect-start-tabs, [data-add-pc-mode], [data-approval-wait]').first().waitFor({ timeout: 45_000 });
 
-        const card = (label: string) => page.locator(".relay-overview-attention-row").filter({ hasText: label }).locator("[data-attention-action]");
-        await card("desk2").waitFor();
-        const cards = { m1: await card("m1-box").getAttribute("data-attention-action"), desk2: await card("desk2").getAttribute("data-attention-action") };
-        await shot("overview");
-        if (cards.m1 !== "join" || cards.desk2 !== "add") fail(`${name}: attention cards ${JSON.stringify(cards)}, want m1-box join and desk2 add`);
+        // the tab's launch is past: Add a PC lists both PCs as not in on this device yet
+        const front = async (): Promise<void> => {
+          await page.goto(`${APP}/#add`);
+          // from the front page that is a same-document hash change: the load draws Add a PC
+          await page.reload();
+          await page.locator('main.relay-add-screen[data-account-state="signed-in"] a.relay-add-saved-pc').filter({ hasText: "desk2" }).waitFor({ timeout: 45_000 });
+        };
+        const link = (label: string) => page.locator("a.relay-add-saved-pc").filter({ hasText: label });
+        await front();
+        const notes = { m1: await link("m1-box").locator(".relay-add-saved-note").innerText(), desk2: await link("desk2").locator(".relay-add-saved-note").innerText() };
+        await shot("front");
+        const needs = translate(language, "Needs approval");
+        if (notes.m1 !== needs || notes.desk2 !== needs) fail(`${name}: notes ${JSON.stringify(notes)}, want "${needs}" on both`);
 
-        await page.evaluate(() => { location.hash = "#pcs"; });
-        await page.locator('.relay-dash[data-dashboard-view="pcs"]').waitFor();
-        const row = (label: string) => page.locator("[data-pc-list] [data-pc-id]").filter({ visible: true }).filter({ hasText: label });
-        await row("m1-box").waitFor();
-        const rows = { m1: await row("m1-box").locator("[data-pc-action]").getAttribute("data-pc-action"), desk2: await row("desk2").locator("[data-pc-action]").getAttribute("data-pc-action") };
-        await shot("row");
-        if (rows.m1 !== "join" || rows.desk2 !== "add") fail(`${name}: row actions ${JSON.stringify(rows)}, want m1-box join and desk2 add`);
-
-        await row("m1-box").locator(".relay-pc-name-btn").click();
-        const details = page.locator(`[data-pc-details="${machines[0]!.server_id}"]`);
-        await details.waitFor();
-        const panel = await details.evaluate((element) => ({
-          actions: element.querySelectorAll(".relay-pc-details-actions .btn").length,
-          reasons: [...element.querySelectorAll(".relay-pc-details-sub")].filter((line) => (line.textContent ?? "").trim() !== "").length,
-        }));
-        await shot("details");
-        if (panel.actions !== 1 || panel.reasons === 0) fail(`${name}: details ${JSON.stringify(panel)}, want one action and a reason line`);
-        await details.locator(".relay-pc-details-actions .btn").click();
-        const sheet = await page.locator("[role=dialog][data-add-pc-mode]").getAttribute("data-add-pc-mode");
-        if (sheet !== "join") fail(`${name}: the details action opened the ${sheet} sheet, want join`);
-        await page.locator('[role=dialog][data-add-pc-mode="join"][data-add-pc-phase="start"]').waitFor();
-        await shot("sheet-join");
-        // the number on the machine's own screen stays a way in: the directory cannot say the machine is in the account now
-        await page.locator('[role=dialog][data-add-pc-mode="join"] [data-action="type-number"]').click();
-        const typing = page.locator('[role=dialog][data-add-pc-mode="new"][data-add-pc-phase="start"]');
-        await typing.waitFor();
-        if (!await typing.evaluate((element) => element.contains(document.activeElement))) fail(`${name}: focus left the sheet when it turned to Type the number`);
-        await shot("sheet-join-type-number");
-        if (phone) await page.evaluate(() => {
-          document.documentElement.dataset["qaSteppedOff"] = "no";
-          addEventListener("popstate", () => { document.documentElement.dataset["qaSteppedOff"] = "yes"; }, { once: true });
-        });
-        await page.keyboard.press("Escape");
-        await page.locator("[data-add-pc-phase]").waitFor({ state: "detached" });
-        if (phone) await page.locator('html[data-qa-stepped-off="yes"]').waitFor({ state: "attached", timeout: 5_000 });
-        await page.keyboard.press("Escape");
-        await details.waitFor({ state: "detached" });
-
-        await row("desk2").locator('[data-pc-action="add"]').click();
-        const fresh = page.locator('[role=dialog][data-add-pc-mode="new"][data-add-pc-phase="start"]');
-        await fresh.waitFor();
-        await shot("sheet-new");
-        await fresh.locator('[data-action="ask-to-join"]').click();
-        const joining = page.locator('[role=dialog][data-add-pc-mode="join"][data-add-pc-phase="start"]');
-        await joining.waitFor();
-        if (!await joining.evaluate((element) => element.contains(document.activeElement))) fail(`${name}: focus left the sheet when it turned to Ask to join`);
-        await shot("sheet-new-ask-to-join");
-        await page.keyboard.press("Escape");
-        await page.locator("[data-add-pc-phase]").waitFor({ state: "detached" });
+        /** The PC's own page from its row: its join sheet, one press from asking; Escape leaves it for the front page. */
+        const joinFrom = async (label: string, mode: "join" | "new"): Promise<void> => {
+          await link(label).click();
+          const sheet = page.locator(`[role=dialog][data-add-pc-mode="${mode}"][data-add-pc-phase="confirm"]`);
+          await sheet.waitFor({ timeout: 45_000 });
+          if (!await sheet.evaluate((element) => element.contains(document.activeElement))) fail(`${name}: focus is not in ${label}'s ${mode} sheet`);
+          if (await sheet.locator("[data-sheet-primary]").count() !== 1) fail(`${name}: ${label}'s sheet has no one press to ask`);
+          await shot(`sheet-${mode}`);
+          await page.keyboard.press("Escape");
+          await page.locator('main.relay-add-screen[data-account-state="signed-in"] .connect-start-tabs').waitFor();
+          if (await page.locator("[data-add-pc-phase]").count() !== 0) fail(`${name}: Escape left ${label}'s sheet up`);
+        };
+        await joinFrom("m1-box", "join");
+        await front();
+        await joinFrom("desk2", "new");
 
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
         if (overflow) fail(`${name}: the page scrolls sideways`);
         if (errors.length > 0) fail(`${name}: ${errors.slice(0, 3).join("; ")}`);
-        console.log(`PASS ${name}: m1-box (seen by the directory) offers Join on its card, row and details, into the join sheet with Type the number; desk2 (never seen) keeps Add, whose sheet offers Ask to join`);
+        console.log(`PASS ${name}: Add a PC lists m1-box and desk2 as needing approval; m1-box's own page (seen by the directory) offers the join sheet, desk2's (never seen) the new one, and Escape leaves each for the front page`);
       } finally {
         await closeMarked(context);
       }

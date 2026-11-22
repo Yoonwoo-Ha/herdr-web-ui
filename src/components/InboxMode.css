@@ -48,7 +48,8 @@
   font-size: var(--fs-xs);
 }
 
-.thread-state.is-reconnecting {
+.thread-state.is-reconnecting,
+.thread-state.is-failed {
   color: var(--status-reconnecting);
 }
 
@@ -184,7 +185,8 @@
   white-space: nowrap;
 }
 
-.thread-chip-state.is-reconnecting {
+.thread-chip-state.is-reconnecting,
+.thread-chip-state.is-failed {
   color: var(--status-reconnecting);
 }
 

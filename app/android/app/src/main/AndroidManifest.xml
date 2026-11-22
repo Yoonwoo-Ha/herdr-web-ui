@@ -65,6 +65,12 @@
         </provider>
     </application>
 
+    <!-- The connect screen's Tailscale tab opens the Tailscale app (HerdrShellPlugin.openTailscale): Android 11 and later
+         show an app's launcher only to apps that name it. -->
+    <queries>
+        <package android:name="com.tailscale.ipn" />
+    </queries>
+
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />

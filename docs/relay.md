@@ -163,7 +163,12 @@ two screens instead, as in Bluetooth's numeric comparison:
    ([A PC with no screen](#a-pc-with-no-screen)), and reads the waiting requests once more before
    it sends an approval typed as three digits. Input that is not a terminal (a pipe, `ssh` without
    `-t`) answers nothing: the command says so and fails, and no request is declined, so each keeps
-   waiting for a run at a terminal. The PC's terminal is the PC itself.
+   waiting for a run at a terminal. The PC's terminal is the PC itself, so it also asks about each
+   account join a member could approve ([Who may admit a device](account.md#who-may-admit-a-device)):
+   no digits are shown for it, all six the new device shows are typed, and one wrong entry ends it.
+   On a machine several people log in to, set an access token: without one, any local OS account
+   counts as this PC's own window and could approve a join (it would still need the six digits the
+   asking device shows).
 
 The approval may also come from a phone already linked to the owner's account, connected through
 the relay: it is shown three sets of digits and must pick the new device's
@@ -206,8 +211,8 @@ then waits for the approval. On a PC's own page, the join shows the digits under
 **Pairing with a typed code.** For a device with no camera pointed at the PC, **Show a code to
 type** under the QR code shows ten characters, `XXXXX-XXXXX` (Crockford base32: no I, L, O or U;
 O, I and L typed are read as 0, 1 and 1), and **Pair with a code** on app.ovis.sh takes them
-(in a browser, under **Add a PC → Scan a QR code**: Add a PC is behind **Start without signing in**
-on the sign-in screen, or the front page itself when no account service runs). The code finds the PC and hands the device the same offer the QR code carries, then the
+(in a browser, in the **Ovis relay** tab of the signed-out front page, **Connect a PC**, or under
+**Add a PC → Scan a QR code**, the front page itself when no account service runs). The code finds the PC and hands the device the same offer the QR code carries, then the
 device pairs with the six-digit code in it as a scanned QR code does: nothing else admits it
 ([`shared/relay-pair-code.ts`](../shared/relay-pair-code.ts),
 [`server/relay/pair-code.ts`](../server/relay/pair-code.ts),
@@ -313,10 +318,11 @@ terminal, with the same two ways its Settings page offers and the same rules. Th
 `bun scripts/plugin.ts` takes its place:
 
 ```bash
-ovis add             # sign in to your account, then scan this PC's QR code with a device of the account
-ovis add --approve   # the same sign-in, then approve here the device that adds this PC
-ovis add --google    # either, at Google's own device page (--github: GitHub's)
-ovis link --code     # a code to type and the relay QR code, renewed until Ctrl+C
+ovis login              # sign in to your account, then scan this PC's QR code with a device of the account
+ovis login --approve    # the same sign-in, then approve here the device that adds this PC
+ovis login --google     # either, at Google's own device page (--github: GitHub's)
+ovis login --no-browser # show the address and code only (the default over SSH or without a desktop)
+ovis pair --relay       # a code to type and the relay QR code, renewed until Ctrl+C (was: ovis link --code)
 ```
 
 The installer runs `ovis add` as its last step when it is given `--add`
@@ -326,7 +332,8 @@ the step starts, so it answers nothing the step asks; where the installer cannot
 prints the command instead. On a PC where it has just installed herdr the app is not up yet: start
 herdr, then run `ovis add`, as its last lines say.
 
-`add`, `login` and `link` are one command under three names. Both ways turn the relay on first when
+`login`, `add` and `link` are one command under three names. On a desktop, `login` opens the sign-in
+page in the browser itself, as `codex login` does; the address and code stay on screen for another device. Both ways turn the relay on first when
 it is off, and wait until it is online.
 
 - **`add`** signs in the way a PC's own page does: it prints the Ovis sign-in page
@@ -847,6 +854,8 @@ The relay service has limits of its own (frame size, phones per PC, connections 
 | `resource_exhausted` | too many new streams or frames a second, or a queue over its limit |
 | `timeout` | admission or a keepalive took too long, or a comparison of digits was not finished in 90 seconds |
 | `internal_error` | something failed on the other side |
+| `account_unreachable` | the PC could not ask the account service whether its account still lists it, so it lets no device of the account in; only to a client that offered `account-listing-errors-1` ([account.md](account.md#adding-a-pc)) |
+| `account_readd_required` | the PC left its account (the account stopped listing it, or its binding named no listing) and waits to be added again at the PC; only to a client that offered `account-listing-errors-1`, after it proved a key the PC knew for that account. The client keeps its key |
 
 `RESET` ends one stream and leaves the others: `cancelled`, `refused` (over a stream limit, or the
 session is closing), `bad_request`, `body_too_large`, `message_too_large`, `stream_protocol_error`,

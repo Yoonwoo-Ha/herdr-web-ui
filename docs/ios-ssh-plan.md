@@ -1,7 +1,9 @@
 # SSH PCs in the iOS app: plan
 
-Not built yet. The Android app adds a PC over SSH (docs/native-app.md, PCs over SSH); this is what the
-iOS twin needs, so a later change starts from decisions rather than research. Size: 9 to 12 days for
+Built: [native-app.md, The iPhone's SSH](native-app.md#the-iphones-ssh) says what was built and where it
+differs from this plan (SwiftNIO SSH alone, without Citadel: no RSA; the phone's own key is ed25519, sealed
+under a Keychain key, rather than a Secure Enclave P-256 key, so its line matches Android's; one port per PC).
+The plan as written before it: Size: 9 to 12 days for
 one person who knows the iOS shell, plus 2 for the first install from the phone.
 
 ## What stays the same as on Android

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { deviceLabel, deviceOs, isLoopbackHost, phonePlan } from "./phone.ts";
+import { setCurrentLanguage } from "./i18n.ts";
+import { deviceLabel, deviceOs, isLoopbackHost, labelDevice, phonePlan } from "./phone.ts";
 import type { RemoteAccess } from "../../shared/protocol.ts";
 
 const local = { protocol: "http:", hostname: "localhost", origin: "http://localhost:7317", secure: true };
@@ -62,12 +63,48 @@ describe("deviceOs", () => {
 });
 
 describe("deviceLabel", () => {
-  it("names the device and browser", () => {
-    expect(deviceLabel("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1")).toBe("iPhone · Safari");
-    expect(deviceLabel("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36")).toBe("Mac · Chrome");
-    expect(deviceLabel("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.4 Safari/605.1.15", 5)).toBe("iPad · Safari");
-    expect(deviceLabel("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/128.0 Mobile Safari/537.36")).toBe("Android · Chrome");
-    expect(deviceLabel("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36 Edg/128.0")).toBe("Windows · Edge");
+  const ANDROID_CHROME = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/128.0 Mobile Safari/537.36";
+  // the Android app's WebView: the same Chrome token, with `wv`
+  const ANDROID_WEBVIEW = "Mozilla/5.0 (Linux; Android 14; Pixel 8; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/128.0 Mobile Safari/537.36";
+  const IPHONE_SAFARI = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1";
+  // the iOS app's WKWebView: no Safari token
+  const IPHONE_WEBVIEW = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
+
+  it("names a browser, then the device", () => {
+    expect(deviceLabel(ANDROID_CHROME)).toBe("Chrome (Android)");
+    expect(deviceLabel(IPHONE_SAFARI, 5)).toBe("Safari (iPhone)");
+    expect(deviceLabel("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36")).toBe("Chrome (Mac)");
+    expect(deviceLabel("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.4 Safari/605.1.15", 5)).toBe("Safari (iPad)");
+    expect(deviceLabel("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36 Edg/128.0")).toBe("Edge (Windows)");
     expect(deviceLabel("curl/8.0")).toBe("Device");
+  });
+
+  it("names the Ovis app as the app, not its WebView's browser", () => {
+    expect(deviceLabel(ANDROID_WEBVIEW, 5, true)).toBe("Ovis app (Android)");
+    expect(deviceLabel(IPHONE_WEBVIEW, 5, true)).toBe("Ovis app (iPhone)");
+    expect(deviceLabel("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/0.5.10 Safari/605.1.15 OvisMac/0.5.10")).toBe("Ovis app (Mac)");
+    // a phone browser on the same page is still the browser
+    expect(deviceLabel(ANDROID_WEBVIEW)).toBe("Chrome (Android)");
+  });
+
+  it("reads the device back out of a name it made, in any language and the older form, and none out of a name typed", () => {
+    expect(labelDevice("Chrome (Android)")).toBe("Android");
+    expect(labelDevice("Safari (iPad)")).toBe("iPad");
+    expect(labelDevice("Ovis app (iPhone)")).toBe("iPhone");
+    expect(labelDevice("Ovis 앱 (Android)")).toBe("Android");
+    expect(labelDevice("Ovis アプリ (Mac)")).toBe("Mac");
+    expect(labelDevice("Ovis 应用 (Android)")).toBe("Android");
+    expect(labelDevice("Android · Chrome")).toBe("Android");
+    expect(labelDevice("iPhone")).toBe("iPhone");
+    expect(labelDevice("Kitchen laptop")).toBeNull();
+    expect(labelDevice("Opera (Android)")).toBeNull();
+  });
+
+  it.each([["ko", "Ovis 앱 (Android)"], ["ja", "Ovis アプリ (Android)"], ["zh", "Ovis 应用 (Android)"]] as const)("names the app in %s", (language, label) => {
+    setCurrentLanguage(language);
+    try {
+      expect(deviceLabel(ANDROID_WEBVIEW, 5, true)).toBe(label);
+      expect(deviceLabel(ANDROID_CHROME)).toBe("Chrome (Android)");
+    } finally { setCurrentLanguage("en"); }
   });
 });

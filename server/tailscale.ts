@@ -1,10 +1,12 @@
 /**
- * What Tailscale on this PC can already do for a phone, read-only: `tailscale status --json` and
- * `tailscale serve status --json`, never `serve`, `up` or anything else that changes the tailnet.
- * The Settings → Phone panel turns the answer into the address that already works, or the one
- * command the user still has to run on this PC.
+ * What Tailscale on this PC can already do for a phone: `tailscale status --json` and
+ * `tailscale serve status --json`. The Settings → Phone panel turns the answer into the address that already works.
+ * Two changes are made, each only when this PC's own window asks (dispatch.ts): `serveTailscale` runs the one
+ * `tailscale serve` for this server's port on a free allowed HTTPS port, and `openTailscaleApp` opens the Tailscale
+ * app so its owner can turn it on and sign in. Nothing runs `up`, and no serve config for another port is touched.
  */
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { RemoteAccess, TailscaleAccess } from "../shared/protocol.ts";
 import { addressesNode } from "./access.ts";
 
@@ -26,6 +28,10 @@ interface ServeJson {
   TCP?: Record<string, { HTTPS?: boolean; HTTP?: boolean }>;
   /** "host:port" -> handlers by path */
   Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }>;
+  /** "host:port" -> true for a listener Tailscale Funnel opens to the public internet */
+  AllowFunnel?: Record<string, boolean>;
+  /** the listeners a foreground `tailscale serve` session holds while it runs, by session */
+  Foreground?: Record<string, ServeJson>;
 }
 
 const NONE: TailscaleAccess = { state: "missing", dns_name: null, serving_url: null, serve_command: null, serve_url: null };
@@ -33,6 +39,11 @@ const NONE: TailscaleAccess = { state: "missing", dns_name: null, serving_url: n
 function parseJson<T>(text: string | null): T | null {
   if (text === null) return null;
   try { return JSON.parse(text) as T; } catch { return null; }
+}
+
+/** Whether `text` is JSON at all: `null` is, and is what a node that serves nothing may print. */
+function isJson(text: string): boolean {
+  try { JSON.parse(text); return true; } catch { return false; }
 }
 
 /**
@@ -70,12 +81,19 @@ export function httpsPorts(value: string | undefined): readonly number[] {
 }
 
 export function parseTailscale(output: TailscaleOutput | null, port: number, candidates: readonly number[] = HTTPS_PORTS): TailscaleAccess {
-  if (output === null) return NONE;
+  return readServe(output, port, candidates).access;
+}
+
+/** `parseTailscale`'s answer and the free allowed HTTPS port its command names (null when it names none). */
+function readServe(output: TailscaleOutput | null, port: number, candidates: readonly number[]): { access: TailscaleAccess; free: number | null; known: boolean } {
+  if (output === null) return { access: NONE, free: null, known: false };
   const status = parseJson<StatusJson>(output.status);
-  if (status === null || status.BackendState !== "Running") return { ...NONE, state: "stopped" };
+  if (status === null || status.BackendState !== "Running") return { access: { ...NONE, state: "stopped" }, free: null, known: false };
   const dns = parseNodeName(output.status);
   const serve = parseJson<ServeJson>(output.serve);
-  const taken = new Set(Object.keys(serve?.TCP ?? {}).map(Number).filter(Number.isFinite));
+  // a foreground session's listeners are taken too, though they end with it
+  const listeners = [serve?.TCP, ...Object.values(serve?.Foreground ?? {}).map((session) => session.TCP)];
+  const taken = new Set(listeners.flatMap((tcp) => Object.keys(tcp ?? {})).map(Number).filter(Number.isFinite));
   let servingUrl: string | null = null;
   for (const [hostPort, site] of Object.entries(serve?.Web ?? {})) {
     const separator = hostPort.lastIndexOf(":");
@@ -83,15 +101,23 @@ export function parseTailscale(output: TailscaleOutput | null, port: number, can
     const webPort = Number(hostPort.slice(separator + 1));
     // an HTTP listener is no use to a phone: it can neither install the app nor receive alerts
     if (!serve?.TCP?.[String(webPort)]?.HTTPS) continue;
+    // a Funnel listener is public, not the tailnet-only address asked for: its port stays taken, nothing is reported
+    if (serve.AllowFunnel?.[hostPort] === true) continue;
     if (proxiesTo(site.Handlers?.["/"]?.Proxy, port)) { servingUrl = httpsUrl(host, webPort); break; }
   }
   const free = servingUrl === null ? candidates.find((candidate) => !taken.has(candidate)) ?? null : null;
   return {
-    state: "running",
-    dns_name: dns,
-    serving_url: servingUrl,
-    serve_command: free === null ? null : `tailscale serve --bg --https=${free} http://127.0.0.1:${port}`,
-    serve_url: free === null || dns === null ? null : httpsUrl(dns, free),
+    free,
+    // whether the serve status was read at all: only then are the taken ports known. A command that succeeded with
+    // JSON was read, `null` or `{}` included (nothing served); only a failed command or output that is no JSON was not
+    known: output.serve !== null && isJson(output.serve),
+    access: {
+      state: "running",
+      dns_name: dns,
+      serving_url: servingUrl,
+      serve_command: free === null ? null : `tailscale serve --bg --https=${free} http://127.0.0.1:${port}`,
+      serve_url: free === null || dns === null ? null : httpsUrl(dns, free),
+    },
   };
 }
 
@@ -118,8 +144,79 @@ export async function readTailscale(binary: string | null = tailscaleBinary()): 
   return { status, serve };
 }
 
-export async function remoteAccess(port: number, candidates: readonly number[] = httpsPorts(process.env[HTTPS_PORT_VARIABLE])): Promise<RemoteAccess> {
-  return { port, tailscale: parseTailscale(await readTailscale(), port, candidates) };
+export async function remoteAccess(port: number, candidates: readonly number[] = httpsPorts(process.env[HTTPS_PORT_VARIABLE]), binary: string | null = tailscaleBinary()): Promise<RemoteAccess> {
+  return { port, platform: process.platform, tailscale: parseTailscale(await readTailscale(binary), port, candidates) };
+}
+
+const SERVE_TIMEOUT_MS = 15_000;
+
+export type TailscaleChange =
+  | { readonly ok: true; readonly access: RemoteAccess }
+  | {
+    readonly ok: false;
+    readonly code: "tailscale_missing" | "tailscale_not_running" | "tailscale_no_port" | "tailscale_serve_refused" | "tailscale_app_unavailable";
+    /** the first line the CLI wrote, for the server's log only */
+    readonly detail?: string;
+    /** Linux refused for want of operator rights: `sudo tailscale set --operator=$USER` once lets this user serve */
+    readonly operator?: boolean;
+  };
+
+const firstLine = (text: string): string => text.split(/\r?\n/).map((line) => line.trim()).find((line) => line !== "") ?? "";
+
+/**
+ * Serves this server on the tailnet: reads Tailscale again and, only while it runs and serves nothing for `port`,
+ * runs `<tailscale> serve --bg --https=<free> http://127.0.0.1:<port>` on the first free port `candidates` allows
+ * (never another), as an argument array with no shell and a deadline, then reads again and answers what it serves.
+ * Already served, it answers at once and runs nothing.
+ */
+export async function serveTailscale(port: number, candidates: readonly number[] = httpsPorts(process.env[HTTPS_PORT_VARIABLE]),
+  binary: string | null = tailscaleBinary(), platform: NodeJS.Platform = process.platform): Promise<TailscaleChange> {
+  if (binary === null) return { ok: false, code: "tailscale_missing" };
+  const before = readServe(await readTailscale(binary), port, candidates);
+  if (before.access.state !== "running") return { ok: false, code: "tailscale_not_running" };
+  if (before.access.serving_url !== null) return { ok: true, access: { port, platform, tailscale: before.access } };
+  // a port is only taken when it is shown free: a serve status that could not be read changes nothing
+  if (!before.known) return { ok: false, code: "tailscale_serve_refused", detail: "tailscale serve status could not be read" };
+  if (before.free === null) return { ok: false, code: "tailscale_no_port" };
+  const proc = Bun.spawn([binary, "serve", "--bg", `--https=${before.free}`, `http://127.0.0.1:${port}`], { windowsHide: true, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const timer = setTimeout(() => proc.kill(), SERVE_TIMEOUT_MS);
+  let code: number;
+  let said: string;
+  try {
+    const [out, err, exit] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    code = exit;
+    said = firstLine(err) || firstLine(out);
+  } finally {
+    clearTimeout(timer);
+  }
+  const refused = (detail: string): TailscaleChange => ({
+    ok: false, code: "tailscale_serve_refused", detail,
+    operator: platform === "linux" && /access denied|permission|operator|root/i.test(detail),
+  });
+  if (code !== 0) return refused(said || `exit ${code}`);
+  const after = parseTailscale(await readTailscale(binary), port, candidates);
+  if (after.serving_url === null) return refused(said || "serve ran but serves no address for this port");
+  return { ok: true, access: { port, platform, tailscale: after } };
+}
+
+/** How this PC opens its Tailscale app, as an argument array; null where it has none to open (Linux has no app of Tailscale's). */
+export function tailscaleAppCommand(platform: NodeJS.Platform, env: Record<string, string | undefined> = process.env, exists: (path: string) => boolean = existsSync): string[] | null {
+  if (platform === "darwin") return ["open", "-a", "Tailscale"];
+  if (platform !== "win32") return null;
+  const gui = join(env["ProgramFiles"] ?? "C:\\Program Files", "Tailscale", "tailscale-ipn.exe");
+  return exists(gui) ? [gui] : null;
+}
+
+/** Opens the Tailscale app on this PC, where it has one, and does not wait for it: its owner turns it on and signs in there. */
+export function openTailscaleApp(platform: NodeJS.Platform = process.platform): { ok: true } | { ok: false; code: "tailscale_app_unavailable"; detail?: string } {
+  const command = tailscaleAppCommand(platform);
+  if (command === null) return { ok: false, code: "tailscale_app_unavailable" };
+  try {
+    Bun.spawn(command, { windowsHide: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, code: "tailscale_app_unavailable", detail: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /** A tagged node belongs to no person: its `User` entry is the node itself, named by its MagicDNS name. */
@@ -198,6 +295,44 @@ const cliStatus = async (): Promise<string | null> => {
 };
 
 /**
+ * The WhoIs a source without a reader of its own asks: the tailscale CLI. Under bun test the preload replaces `read` with
+ * one that answers nothing (scripts/test-herdr.ts), so no test asks the real tailscaled; a test that needs an answer
+ * passes its own reader.
+ */
+export const tailscaleWhois = {
+  read: async (address: string): Promise<string | null> => {
+    const binary = tailscaleBinary();
+    return binary === null ? null : run(binary, ["whois", "--json", address]);
+  },
+};
+
+/**
+ * The tailnet node a request came from, by `tailscale whois`: `id` is its StableNodeID, which survives a node key's
+ * rotation (the node key does not) and is what a block names; `hostname` is for display only.
+ */
+export interface TailnetNode { readonly id: string; readonly hostname: string; readonly login: string | null }
+
+export const STABLE_NODE_ID = /^[A-Za-z0-9]{1,64}$/;
+
+interface WhoisJson { Node?: { StableID?: string; Name?: string; ComputedName?: string; Hostinfo?: { Hostname?: string } }; UserProfile?: { LoginName?: string } }
+
+/** `tailscale whois --json <address>`'s node, or null when it names no StableID this PC can keep. */
+export function parseWhois(text: string | null): TailnetNode | null {
+  const whois = parseJson<WhoisJson>(text);
+  const node = whois?.Node;
+  const id = node?.StableID;
+  if (typeof id !== "string" || !STABLE_NODE_ID.test(id)) return null;
+  const name = node?.ComputedName || node?.Hostinfo?.Hostname || node?.Name?.replace(/\.$/, "").split(".")[0] || id;
+  const login = whois?.UserProfile?.LoginName;
+  return { id, hostname: name.slice(0, 64), login: typeof login === "string" && login !== "" ? login : null };
+}
+
+/** how long a tailnet address is taken to stay the same node */
+const WHOIS_TTL_MS = 60_000;
+/** how long a WhoIs that named nothing is not asked again, so a broken CLI is not spawned once per request */
+const WHOIS_FAILED_MS = 5_000;
+
+/**
  * What `tailscale status --json` says about this PC and its tailnet, read through `readStatus` and
  * kept five minutes. `identity` answers every reader that does not grant from the cache, refreshing
  * a stale value in the background, so those readers never wait on the tailscale CLI; the first
@@ -212,7 +347,28 @@ export class TailnetIdentitySource {
   private cache: (TailnetIdentity & { at: number; settled: boolean; ownerKnown: boolean }) | null = null;
   private reading: Promise<void> | null = null;
 
-  constructor(private readonly readStatus: () => Promise<string | null> = cliStatus) {}
+  private readonly nodes = new Map<string, { node: TailnetNode | null; at: number }>();
+  private readonly asking = new Map<string, Promise<TailnetNode | null>>();
+
+  constructor(private readonly readStatus: () => Promise<string | null> = cliStatus,
+    private readonly readWhois: (address: string) => Promise<string | null> = (address) => tailscaleWhois.read(address)) {}
+
+  /**
+   * The node behind one tailnet address (`tailscale whois`), kept a minute; a read that names nothing is kept five
+   * seconds, so a broken CLI is not spawned per request. Reads of one address share the one in flight.
+   */
+  async node(address: string): Promise<TailnetNode | null> {
+    const kept = this.nodes.get(address);
+    if (kept !== undefined && Date.now() - kept.at < (kept.node === null ? WHOIS_FAILED_MS : WHOIS_TTL_MS)) return kept.node;
+    let reading = this.asking.get(address);
+    if (reading === undefined) {
+      reading = this.readWhois(address).then(parseWhois, () => null).finally(() => this.asking.delete(address));
+      this.asking.set(address, reading);
+    }
+    const node = await reading;
+    this.nodes.set(address, { node, at: Date.now() });
+    return node;
+  }
 
   /**
    * A read that failed, or one whose status leaves the sole-login question open, keeps what the

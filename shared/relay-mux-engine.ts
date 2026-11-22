@@ -600,6 +600,8 @@ export class MuxEngine {
     this.setupTimer = this.timer(() => this.fail("timeout", "Mux setup timed out"), MUX_SETUP_MS);
   }
   get active(): boolean { return this.state === "active"; }
+  /** The local failure being sent, even if the peer closes the carrier before the send returns. */
+  get failureCode(): SessionError | undefined { return this.fatal?.code; }
   flush(): Promise<void> {
     if (this.state === "closed" || !this.sending && !this.scheduled) return Promise.resolve();
     return new Promise((resolve) => { this.idleWaiters.push(resolve); });

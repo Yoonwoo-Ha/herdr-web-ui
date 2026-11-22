@@ -8,6 +8,9 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, unlinkSync } from "node:fs";
 import { hostname, networkInterfaces } from "node:os";
+import { importPublicKey, importSecretKey } from "../shared/relay-e2ee.ts";
+import { answerServerChallenge } from "../shared/relay-server-proof.ts";
+import type { RelayIdentity } from "./relay/identity.ts";
 import { DirectCarrierUnusableError, openRelayChannel, openRelayChannelWithFallback, orderDirectRoutes, probeDirect, UnsafeRelayDestinationError } from "../shared/relay-channel.ts";
 import type { RelayChannelOptions } from "../shared/relay-channel.ts";
 import type { RelayChannel, RelaySocket } from "../shared/relay-channel.ts";
@@ -15,7 +18,7 @@ import { base64url, ServerIdentityChangedError } from "../shared/relay-device.ts
 import type { RelayDevice, RelayDeviceStore } from "../shared/relay-device.ts";
 import { MuxStreamError } from "../shared/relay-mux-engine.ts";
 import type { HttpRequest, WsStream } from "../shared/relay-mux-engine.ts";
-import { isDirectCarrier, MAX_DIRECT_CARRIERS, MAX_LARGE_WS_MESSAGE_BYTES, MuxProtocolError, PAIR_INTENT_VOUCHED, REQUEST_HEADERS } from "../shared/relay-mux.ts";
+import { isDirectCarrier, MAX_DIRECT_CARRIERS, MAX_LARGE_WS_MESSAGE_BYTES, MuxProtocolError, PAIR_INTENT_VOUCHED, PAIR_PC_PROOF, REQUEST_HEADERS } from "../shared/relay-mux.ts";
 import type { RelayOffer } from "../shared/relay-offer.ts";
 import { validateOffer } from "../shared/relay-offer.ts";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../shared/terminal-flow.ts";
@@ -163,6 +166,8 @@ export function removeRelayPcKey(path: string): void {
 export interface RelayPcTunnel {
   readonly endpoint: { url: string; token: string };
   readonly route: "relay" | "direct";
+  /** what that PC admitted this one as: `watch` for a PC of the account joined through it (a vouched join) */
+  readonly role: "drive" | "watch";
   close(): void;
 }
 
@@ -210,11 +215,11 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
   networkCheckMs?: number;
   probes?: RouteProbes;
   /**
-   * A first pairing with another PC of the account (PAIR_INTENT_VOUCHED) instead of a code: `compare` is told the
-   * digits, a PC that does not select the intent is RelayPcOutdated before anything is sent to pair, and `signal`
+   * A first pairing with another account PC proves this server’s identity instead of comparing digits.
+   * A target without proof support is RelayPcOutdated before anything is sent to pair, and `signal`
    * ends the comparison. The caller never aborts it once the tunnel is open: it would end the admitted channel too.
    */
-  pairing?: { compare: (digits: string) => Promise<void>; signal: AbortSignal };
+  pairing?: { identity: RelayIdentity; waiting(): void; signal: AbortSignal };
 }): Promise<RelayPcTunnel> {
   const readNetwork = options.network ?? networkNow;
   const networkCheckMs = options.networkCheckMs ?? NETWORK_CHECK_MS;
@@ -545,15 +550,18 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
   return {
     endpoint: { url: `http://127.0.0.1:${server.port}`, token },
     get route() { return current?.direct === undefined ? "relay" : "direct"; },
+    get role() { return current?.role ?? "drive"; },
     close,
   };
 }
 
 /** A comparison that asks to pair this PC with another PC of the account, and only with one that selects that. */
-function vouchedPairing(pairing: { compare: (digits: string) => Promise<void>; signal: AbortSignal }): Partial<RelayChannelOptions> {
+function vouchedPairing(pairing: { identity: RelayIdentity; waiting(): void; signal: AbortSignal }): Partial<RelayChannelOptions> {
   return {
-    compare: pairing.compare, signal: pairing.signal, intent: "vouched",
-    beforeRequest: (server) => { if (!server.features?.includes(PAIR_INTENT_VOUCHED)) throw new RelayPcOutdated(); },
+    pcProof: { publicKey: Buffer.from(importPublicKey(pairing.identity.public_key)).toString("hex"), waiting: pairing.waiting,
+      answer: (frame, binding) => answerServerChallenge(frame, importSecretKey(pairing.identity.secret_key), { role: "vouched-pc", server_id: pairing.identity.server_id, connection_id: binding }) },
+    signal: pairing.signal, intent: "vouched",
+    beforeRequest: (server) => { if (!server.features?.includes(PAIR_INTENT_VOUCHED) || !server.features.includes(PAIR_PC_PROOF)) throw new RelayPcOutdated(); },
   };
 }
 
@@ -570,8 +578,8 @@ export async function vouchedSupport(offer: RelayOffer, options: { socket?: (url
   try {
     const key = await RelayPcKey.create("", plain, () => false);
     await openRelayChannelWithFallback(plain, {
-      store: key, label: relayPcLabel(), compare: () => new Promise<void>(() => {}), intent: "vouched",
-      beforeRequest: (server) => { throw new Answered(server.features?.includes(PAIR_INTENT_VOUCHED) === true); },
+      store: key, label: relayPcLabel(), intent: "vouched",
+      beforeRequest: (server) => { throw new Answered(server.features?.includes(PAIR_INTENT_VOUCHED) === true && server.features.includes(PAIR_PC_PROOF)); },
       ...(options.socket ? { socket: options.socket } : {}), ...(options.pcAnswerMs === undefined ? {} : { pcAnswerMs: options.pcAnswerMs }),
     }, openRelayChannel);
     return "ready";

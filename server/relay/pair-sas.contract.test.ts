@@ -12,6 +12,7 @@ import type { RelayPairingRequest, RemotePairingRequest } from "../../shared/mac
 import { readDeviceRegistry } from "../devices.ts";
 import { FakeAccountService } from "../../shared/account-service-fake.ts";
 import { rotateRelayIdentity } from "./identity.ts";
+import { answerServerChallenge, deriveServerId } from "../../shared/relay-server-proof.ts";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { importPublicKey } from "../../shared/relay-e2ee.ts";
 import { accountDeviceId } from "../../shared/account-records.ts";
@@ -684,8 +685,8 @@ test("every connected device hears of the admission and of the member that appro
   await confirm(p);
   expect((await p.inbox.next()).type).toBe(FrameType.AUTH_OK);
   for (const index of [0, 1]) {
-    await until(index, '"type":"device-paired"');
-    expect(texts[index]).toContain(`"approved_by":{"device_id":"${member.id}","label":"Account phone"}`);
+    // the streams opened on the earlier joins nobody has seen yet: this one is the join the member approved
+    await until(index, `"approved_by":{"device_id":"${member.id}","label":"Account phone"}`);
     expect(texts[index]).not.toContain(`"digits":"${digits}"`);
     await streams[index]!.cancel();
   }
@@ -799,9 +800,10 @@ test("a watch device on the PC's own address cannot read the digits of a waiting
   expect(await response.text()).not.toContain(request.digits);
 });
 
-async function joinFixture(clock: () => number = Date.now) {
+async function joinFixture(clock: () => number = Date.now, journal = false) {
   const service = new FakeAccountService(clock);
-  const made = await relayAccountFixture("drive", "acct_1", { accountOpensAll: false, accountService: { url: "https://account.test", fetch: service.fetch } });
+  service.opensAll = journal;
+  const made = await relayAccountFixture("drive", "acct_1", { accountOpensAll: journal, platform: "linux", accountService: { url: "https://account.test", fetch: service.fetch } });
   fixtures.push(made.fixture);
   const identity = rotateRelayIdentity(made.fixture.stateDir);
   const tokens = { acct_1: service.issueToken("acct_1"), acct_2: service.issueToken("acct_2") };
@@ -812,19 +814,25 @@ async function joinFixture(clock: () => number = Date.now) {
   const admit = (key: string, account: keyof typeof tokens = "acct_1") => service.fetch(new Request("https://account.test/v1/admissions", {
     method: "POST", headers: { authorization: `Bearer ${tokens[account]}` }, body: JSON.stringify({ server_id: identity.server_id, label: "Mac app", key }),
   }));
+  if (journal) {
+    service.registerDevice("acct_1", made.member.publicKey, "Account phone");
+    expect(await made.fixture.app.context.services.accountMailbox.readSnapshot()).toMatchObject({ committed: true });
+  }
   return { f: made.fixture, member: made.member, service, admit };
 }
 
-async function askToJoin(f: Fixture, admitKey?: (key: string) => Promise<unknown>, intent = PAIR_INTENT_ACCOUNT) {
+async function askToJoin(f: Fixture, admitKey?: (key: string) => Promise<unknown>, intent = PAIR_INTENT_ACCOUNT, identity?: { keys: KeyPair; replay?: string }) {
   const { p } = await direct(f);
-  await p.hello([PAIR_SAS_FEATURE, intent]);
+  await p.hello([PAIR_SAS_FEATURE, intent, ...(identity ? ["pair-pc-proof"] : [])]);
   await admitKey?.(p.publicKey);
   const nonce = randomPairNonce();
-  await p.send({ type: FrameType.PAIR_REQUEST, flags: 0, stream_id: 0, payload: { label: "Mac app", public_key: p.publicKey, commitment: toBase64Url(pairCommitment(p.binding(), p.publicKey, nonce)) } });
+  await p.send({ type: FrameType.PAIR_REQUEST, flags: 0, stream_id: 0, payload: { label: "Mac app", public_key: p.publicKey, commitment: toBase64Url(pairCommitment(p.binding(), p.publicKey, nonce)), ...(identity ? { server_key: bytesToHex(identity.keys.publicKey) } : {}) } });
   const answer = await p.inbox.next();
   if (answer.type !== FrameType.PAIR_CHALLENGE) return { p, refused: answer.type === FrameType.SESSION_ERROR ? answer.payload.code : String(answer.type) };
-  await p.send({ type: FrameType.PAIR_REVEAL, flags: 0, stream_id: 0, payload: { nonce: toBase64Url(nonce) } });
-  return { p, digits: pairDigits(p.binding(), p.publicKey, nonce, fromBase64Url(answer.payload.nonce)) };
+  const digits = pairDigits(p.binding(), p.publicKey, nonce, fromBase64Url(answer.payload.nonce));
+  const proof = identity && (identity.replay ?? answerServerChallenge(answer.payload.server_challenge, identity.keys.secretKey, { role: "vouched-pc", server_id: deriveServerId(identity.keys.publicKey), connection_id: toBase64Url(p.binding()) }));
+  await p.send({ type: FrameType.PAIR_REVEAL, flags: 0, stream_id: 0, payload: { nonce: toBase64Url(nonce), ...(proof ? { server_proof: proof } : {}) } });
+  return { p, proof, digits };
 }
 
 function remotePrompt(f: Fixture): Promise<RemotePairingRequest> {
@@ -892,12 +900,73 @@ test("refused requests do not spend the PC's account joins", async () => {
 // Another PC of the account vouched for (docs/account.md, "Adding a PC of your account"): the account join's gates,
 // window or not, shown to members as "pair this PC", a plain row once approved, and its own failure count.
 
-const vouched = (f: Fixture, admitKey?: (key: string) => Promise<unknown>) => askToJoin(f, admitKey, PAIR_INTENT_VOUCHED);
+const vouched = (f: Fixture, admitKey?: (key: string) => Promise<unknown>) => askToJoin(f, admitKey, PAIR_INTENT_VOUCHED, { keys: generateKeyPair() });
+
+test("a legacy vouched PC without server proof is not given the intent, so it reads this PC as outdated, and is refused even with a fresh admission", async () => {
+  const { f, admit } = await joinFixture(Date.now, true);
+  // a 0.5.9 PC offers the intent without pair-pc-proof, and calls a PC that does not select the intent outdated
+  expect((await (await direct(f)).p.hello([PAIR_SAS_FEATURE, PAIR_INTENT_VOUCHED])).features).toEqual([PAIR_SAS_FEATURE]);
+  expect((await askToJoin(f, key => admit(key), PAIR_INTENT_VOUCHED)).refused).toBe("auth_failed");
+  expect(f.app.context.services.relay.approvals.remoteList()).toEqual([]);
+});
+
+test("a second vouched session cannot open while the first waits", async () => {
+  const { f, admit } = await joinFixture(Date.now, true);
+  const pending = remotePrompt(f);
+  const first = await vouched(f, key => admit(key));
+  await pending;
+  // Both sessions have an invitation; a missing admission must not stand in for the concurrency gate.
+  const second = await vouched(f, async key => { await admit(key); await f.app.context.services.accountMailbox.pull(); });
+  expect(second.refused).toBe("auth_failed");
+  first.p.channel.close();
+});
+
+test("a vouched request whose admission is still being checked holds no slot: a stranger cannot make a real PC's join fail", async () => {
+  const { f, admit } = await joinFixture(Date.now, true);
+  const mailbox = f.app.context.services.accountMailbox;
+  const real = mailbox.admitted.bind(mailbox);
+  const reached = deferred<void>();
+  const held = deferred<boolean>();
+  let first = true;
+  mailbox.admitted = async (key: string) => {
+    if (!first) return real(key);
+    first = false;
+    reached.resolve();
+    return held.promise;
+  };
+  // a stranger with no admission asks first, and its check is still out
+  const stranger = vouched(f);
+  await bounded(reached.promise);
+  const pending = remotePrompt(f);
+  const member = await vouched(f, async (key) => { await admit(key); await mailbox.pull(); });
+  expect(member.refused).toBeUndefined();
+  await pending;
+  held.resolve(false);
+  expect((await stranger).refused).toBe("auth_failed");
+  member.p.channel.close();
+});
+
+test("a server proof accepted in one vouched session cannot be replayed in another", async () => {
+  const { f, admit } = await joinFixture(Date.now, true);
+  const keys = generateKeyPair();
+  const pending = remotePrompt(f);
+  const first = await askToJoin(f, key => admit(key), PAIR_INTENT_VOUCHED, { keys });
+  await pending;
+  expect(typeof first.proof).toBe("string");
+  if (!first.proof) throw new Error("Missing first server proof");
+  first.p.channel.close();
+  await first.p.closed;
+  const second = await askToJoin(f, async key => { await admit(key); await f.app.context.services.accountMailbox.pull(); }, PAIR_INTENT_VOUCHED, { keys, replay: first.proof });
+  expect(second.refused).toBeUndefined(); // B actually challenged the second session.
+  expect(f.app.context.services.accountMailbox.currentAdmission(second.p.publicKey)).toBe(true);
+  expect(await sessionError(second.p)).toBe("auth_failed");
+  expect(f.app.context.services.relay.approvals.remoteList()).toEqual([]);
+});
 
 test("a PC vouched for is selected only alongside pair-sas, and alone among the intents", async () => {
   const f = fixture();
-  expect((await (await direct(f)).p.hello([PAIR_SAS_FEATURE, PAIR_INTENT_VOUCHED])).features).toEqual([PAIR_SAS_FEATURE, PAIR_INTENT_VOUCHED]);
-  expect((await (await direct(f)).p.hello([PAIR_INTENT_VOUCHED])).features).toEqual([]);
+  expect((await (await direct(f)).p.hello([PAIR_SAS_FEATURE, PAIR_INTENT_VOUCHED, "pair-pc-proof"])).features).toEqual([PAIR_SAS_FEATURE, PAIR_INTENT_VOUCHED]);
+  expect((await (await direct(f)).p.hello([PAIR_INTENT_VOUCHED, "pair-pc-proof"])).features).toEqual([]);
   const { p } = await direct(f);
   await p.send({ type: FrameType.HELLO, flags: 0, stream_id: 0,
     payload: { protocol: "ovis-mux", versions: [1], features: [PAIR_SAS_FEATURE, PAIR_INTENT_PC, PAIR_INTENT_VOUCHED], required_features: [] } });
@@ -905,7 +974,7 @@ test("a PC vouched for is selected only alongside pair-sas, and alone among the 
 });
 
 test("a PC vouched for is refused without a fresh admission for its own key, before any prompt and uncounted, even inside the pairing window", async () => {
-  const { f, admit } = await joinFixture();
+  const { f, admit } = await joinFixture(Date.now, true);
   const otherKey = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("spki", (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"])).publicKey)));
   // the owner's own pairing window invites phones, not another PC: it still needs its admission
   f.app.context.services.relay.approvals.openWindow();
@@ -919,45 +988,45 @@ test("a PC vouched for is refused without a fresh admission for its own key, bef
 });
 
 test("a PC vouched for with an admission older than ten minutes is refused", async () => {
-  const { f, admit } = await joinFixture(() => Date.now() - 11 * 60_000);
+  const { f, admit } = await joinFixture(() => Date.now() - 11 * 60_000, true);
   expect((await vouched(f, (key) => admit(key))).refused).toBe("auth_failed");
 });
 
 test("a PC vouched for is refused by a PC with no drive account member to approve it", async () => {
-  const { f, member, admit } = await joinFixture();
+  const { f, member, admit } = await joinFixture(Date.now, true);
   f.app.context.services.devices.update(member.id, { role: "watch" });
   expect((await vouched(f, (key) => admit(key))).refused).toBe("auth_failed");
 });
 
-test("a PC vouched for waits for a member as 'pair this PC', and an approval makes a plain row the approver added, no member", async () => {
-  const { f, member, admit } = await joinFixture();
+test("a PC vouched for waits for a member as 'pair this PC', and an approval makes a watch row the approver added, no member", async () => {
+  const { f, member, admit } = await joinFixture(Date.now, true);
   const link = await signedIn(f, member);
   const prompt = remotePrompt(f);
-  const { p, digits } = await vouched(f, (key) => admit(key));
+  const { p } = await vouched(f, (key) => admit(key));
   const request = await prompt;
   // the approver's app is asked to pair this PC only, so it signs no add and introduces nothing
-  expect(request).toMatchObject({ label: "Mac app", intent: "pc", vouched: true, key: p.publicKey });
+  expect(request).toMatchObject({ label: request.proven_server_id, intent: "pc", vouched: true, key: p.publicKey });
   expect(f.app.context.services.relay.approvals.list()).toEqual([]);
   expect(f.app.context.services.relay.approvals.decide(request.id, true)).toBe(false);
-  expect((await post(link, "/api/relay/pairing", { id: request.id, decision: "approve", digits })).status).toBe(200);
+  expect((await post(link, "/api/relay/pairing", { id: request.id, decision: "approve", proven_server_id: request.proven_server_id, pc_label: "Verified PC" })).status).toBe(200);
   await confirm(p);
   expect((await p.inbox.next()).type).toBe(FrameType.AUTH_OK);
   const registry = readDeviceRegistry(join(f.stateDir, "devices.json"));
   const row = registry.kind === "ok" ? registry.devices.find((device) => device.relay_public_key === p.publicKey) : undefined;
-  expect(row).toMatchObject({ label: "Mac app", role: "drive", added_by: member.id });
+  expect(row).toMatchObject({ label: "Verified PC", role: "watch", added_by: member.id });
   expect(row).not.toHaveProperty("account");
   expect(row).not.toHaveProperty("account_add");
 });
 
-test("a wrong pick for a PC vouched for counts on its own path only", async () => {
-  const { f, member, admit } = await joinFixture();
+test("a legacy digit answer for a proven PC counts on its own path only", async () => {
+  const { f, member, admit } = await joinFixture(Date.now, true);
   const link = await signedIn(f, member);
   for (let failure = 0; failure < 19; failure++) f.app.context.services.devices.noteRelayFailure("vouched");
   const prompt = remotePrompt(f);
   const { p, digits } = await vouched(f, (key) => admit(key));
   const request = await prompt;
-  const decoy = request.choices.find((choice) => choice !== digits)!;
-  expect((await post(link, "/api/relay/pairing", { id: request.id, decision: "approve", digits: decoy })).body.error?.code).toBe("wrong_digits");
+  expect(request.choices).toEqual([]);
+  expect((await post(link, "/api/relay/pairing", { id: request.id, decision: "approve", digits })).body.error?.code).toBe("wrong_digits");
   expect(await sessionError(p)).toBe("auth_failed");
   expect(f.app.context.services.devices.hasKey(p.publicKey)).toBe(false);
   expect(() => f.app.context.services.devices.assertRelayPairing("vouched")).toThrow();
@@ -966,9 +1035,10 @@ test("a wrong pick for a PC vouched for counts on its own path only", async () =
 });
 
 test("PCs vouched for share the account joins' five a minute", async () => {
-  const { f, admit } = await joinFixture();
+  const { f, admit } = await joinFixture(Date.now, true);
   for (let index = 0; index < 5; index++) expect(f.app.context.services.relay.approvals.takeAccountJoin()).toBe(true);
-  expect((await vouched(f, (key) => admit(key))).refused).toBe("auth_failed");
+  const { p } = await vouched(f, key => admit(key));
+  expect(await sessionError(p)).toBe("auth_failed");
 });
 
 async function memberSocket(f: Fixture, device: Awaited<ReturnType<typeof relayDevice>>) {

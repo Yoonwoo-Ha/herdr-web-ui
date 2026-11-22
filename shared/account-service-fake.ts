@@ -14,6 +14,20 @@ import { isWssOrigin } from "./relay-offer.ts";
 import { deriveServerId, proofKey, serverChallenge, verifyServerProof } from "./relay-server-proof.ts";
 
 export const CHALLENGE_TTL_MS = 60_000;
+/** How long a PC's own leave (POST /v1/pcs/{server_id}/leave) keeps a PUT without its proof from listing it again. */
+export const PC_LEFT_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** a listing's own ID (account#57), as the service makes it */
+const LISTING_ID = /^[0-9a-f]{32}$/;
+
+/** account#57's completion scope, and the context its challenge is stored and proved under */
+function completionScope(value: unknown): { account: string; listing_id: string } | null {
+  if (value === null || typeof value !== "object") return null;
+  const { account, listing_id } = value as Record<string, unknown>;
+  return Object.keys(value).length === 2 && typeof account === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(account) && typeof listing_id === "string" && LISTING_ID.test(listing_id)
+    ? { account, listing_id } : null;
+}
+const completionKey = (scope: { account: string; listing_id: string }, nonce: string): string => `pc-complete/1:${scope.account}:${scope.listing_id}:${nonce}`;
 export const MAILBOX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const MAILBOX_PAGE = 100;
 export const MAILBOX_MAX = 1000;
@@ -64,7 +78,18 @@ const PKCE = /^[A-Za-z0-9._~-]{43,128}$/;
 interface Session { account: string; provider: SignInProvider | "test"; family: string; expires: number }
 
 /** `public_key`: the PC's relay key (X25519, 64 hex), from which `server_id` derives; `relay`: the wss origin it is reached through. */
-export interface FakePc { server_id: string; label: string; public_key: string; relay: string; added_at: string; last_seen_at: string | null; new_until?: string | null; admitted_at?: string | null; exempt?: boolean }
+export interface FakePc { server_id: string; label: string; public_key: string; relay: string; added_at: string; last_seen_at: string | null; new_until?: string | null; admitted_at?: string | null; exempt?: boolean;
+  /** PCL-1: listed by a sign-in that was no app's own (a device code) and not confirmed since, as the service's `listed_by_device` */
+  listed_by_device?: boolean;
+  /** listed by a device code while Step 2 was on: until confirmed or admitted it leaves the account never used (account#62) */
+  pending_under_step2?: boolean;
+  /** the sign-in (family) that wrote the listing, as the service's `listed_by_session` (account#63): upkeep never rewrites it */
+  listed_by_session?: string;
+  /** with `completions` (account#57): this listing's own ID */
+  listing_id?: string;
+  /** the PC completed its add (the service's `completed_at`; with `completions`, POST /v1/pc/complete), and a device was admitted to it by its digits (`digit_admitted`) */
+  completed_at?: string | null;
+  digit_admitted?: boolean }
 /** How long a PC added in one press stays new to the account's other devices. */
 export const PC_NEW_MS = 24 * 60 * 60_000;
 /** One-press PC adds one account may make per rolling day; past it 429 `pc_add_cap`. */
@@ -111,7 +136,7 @@ export class FakeAccountService {
   /** what a sign-in made through the sign-in routes says of two-step sign-in; tests set it */
   signInTwoStep: boolean | null = null;
   /** one-press admissions by account and PC (`box`), and each account's admit times, for the daily cap */
-  private readonly pcAdmissions = new Map<string, { at: number; taken: boolean; family: string }>();
+  private readonly pcAdmissions = new Map<string, { at: number; taken: boolean; family: string; listing?: string }>();
   private readonly admitTimes = new Map<string, number[]>();
   /** accounts that admitted or removed a PC: never empty again for the first-PC exemption */
   private readonly usedAccounts = new Set<string>();
@@ -126,6 +151,8 @@ export class FakeAccountService {
   private readonly directories = new Map<string, Map<string, FakePc>>();
   private readonly mailboxes = new Map<string, Mail[]>();
   private readonly challenges = new Map<string, { server_id: string; expected: string; expires: number }>();
+  /** box(server_id, account): when the PC left that account by its own proof */
+  private readonly pcLeaves = new Map<string, number>();
   private readonly admissionList: FakeAdmission[] = [];
   /** quiet admissions: only an app's own sign-in posts one, and only a PC the account lists reads them */
   private readonly quietList: FakeAdmission[] = [];
@@ -143,17 +170,30 @@ export class FakeAccountService {
   opensAll = false;
   /** Newer services distinguish a listed PC's snapshot opt-out from a hidden 404. */
   reportsStep2Off = false;
+  /**
+   * account#57: each listing has its own ID; a PC's admission may name it (`with_listing_id`), and the PC, once bound,
+   * records its add complete with a proof scoped to that account and listing (POST /v1/pc/complete). Off: an older service,
+   * which a PC no longer binds to in one press.
+   */
+  completions = true;
+  /**
+   * The mailbox says beside `listing_id` whether that listing stands on a one-press admission this PC took
+   * (`listing_admitted`). Off: a service from before the field, which omits it.
+   */
+  saysListingAdmitted = true;
   private seq = 0;
   readonly requests: string[] = [];
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  issueToken(account: string, { twoStep = null }: { twoStep?: boolean | null } = {}): string {
+  /** `device`: the token is a device code's sign-in (a PC's), never an app's own */
+  issueToken(account: string, { twoStep = null, device = false }: { twoStep?: boolean | null; device?: boolean } = {}): string {
     const token = randomHex(32);
     const family = randomHex(16);
     this.tokens.set(token, { account, provider: "test", family, expires: Number.POSITIVE_INFINITY });
     this.signedInAt.set(family, this.now());
     this.twoStep.set(family, twoStep);
+    if (device) this.deviceFamilies.add(family);
     return token;
   }
 
@@ -325,14 +365,21 @@ export class FakeAccountService {
     }
   }
 
-  private erase(account: string): void {
+  /** POST /v1/signout/all: every sign-in of the account ends, codes not yet redeemed included; its PCs and device keys stay. */
+  private signOutEverywhere(account: string): void {
     for (const held of [...this.tokens.values()]) if (held.account === account) this.revokeFamily(held.family);
     for (const [token, refresh] of this.refreshTokens) if (refresh.account === account) { this.revokedFamilies.add(refresh.family); this.refreshTokens.delete(token); }
-    for (const [provider, signsInTo] of this.signIns) if (signsInTo === account) this.signIns.delete(provider);
     for (const [family, push] of this.pushes) if (push.account === account) this.pushes.delete(family);
     for (const [token, link] of this.linkTokens) if (link.account === account) this.linkTokens.delete(token);
     for (const [code, held] of this.codes) if (held.account === account) this.codes.delete(code);
+    for (const [code, waiting] of this.deviceSignIns) if (waiting.account === account) this.deviceSignIns.delete(code);
+  }
+
+  private erase(account: string): void {
+    this.signOutEverywhere(account);
+    for (const [provider, signsInTo] of this.signIns) if (signsInTo === account) this.signIns.delete(provider);
     for (const key of [...this.mailboxes.keys()]) if (key.endsWith(`\0${account}`)) this.mailboxes.delete(key);
+    for (const key of [...this.pcLeaves.keys()]) if (key.endsWith(`\0${account}`)) this.pcLeaves.delete(key);
     for (const key of [...this.counters.keys()]) if (key.endsWith(`:${account}`)) this.counters.delete(key);
     for (const list of [this.admissionList, this.quietList]) for (let index = list.length - 1; index >= 0; index--) if (list[index]?.account === account) list.splice(index, 1);
     this.identityList.delete(account);
@@ -362,12 +409,29 @@ export class FakeAccountService {
     return this.registerDevice(session.account, key, label);
   }
 
-  /** Whether the account was ever used: another PC listed, a one-press admit or removal, or any device key ever, revoked ones included. */
-  private everUsed(account: string, serverId: string, family: string): boolean {
-    const others = [...(this.directories.get(account)?.keys() ?? [])].some((id) => id !== serverId);
-    // a key the admitting sign-in registered itself is no other device
+  /**
+   * Whether the account was ever used, as the service's first-PC exemption judges it (account#62, NEVER_USED_ADMIT and
+   * NEVER_USED_CONFIRM): another PC listed but a device code's listing made under Step 2 that nobody confirmed or admitted
+   * (PCL-1: anyone may type a code), a one-press admit or a member's removal ever; then device keys, revoked ones
+   * included, but one this sign-in registered itself. For the admit (`kind` "admit") they count only once the account
+   * had a confirmed or admitted PC, since a person may sign in on the phone first; for a confirm, always.
+   */
+  /**
+   * Whether a listing is a member of its account, as the service's memberPc (NO_PC_YET's basis): a PC of the account where
+   * Step 2 is on now, or one never pending under Step 2. A device code's listing made while Step 2 was off stays one.
+   */
+  private member(row: FakePc): boolean {
+    return !this.opensAll || row.listed_by_device !== true || row.pending_under_step2 !== true;
+  }
+
+  private everUsed(account: string, serverId: string, family: string, kind: "admit" | "confirm"): boolean {
+    const rows = [...(this.directories.get(account)?.values() ?? [])];
+    const pending = (row: FakePc): boolean => row.pending_under_step2 === true && row.listed_by_device === true && row.admitted_at == null;
+    if (rows.some((row) => row.server_id !== serverId && !pending(row)) || this.usedAccounts.has(account)) return true;
     const keys = [...(this.registries.get(account)?.devices.keys() ?? [])].filter((key) => this.keyFamily.get(key) !== family);
-    return others || this.usedAccounts.has(account) || keys.length > 0;
+    if (keys.length === 0) return false;
+    if (kind === "confirm") return true;
+    return rows.some((row) => row.admitted_at != null || (row.server_id !== serverId && row.listed_by_device !== true));
   }
 
   registerDevice(account: string, key: string, label: string, eligible = true): number {
@@ -419,6 +483,8 @@ export class FakeAccountService {
     this.requests.push(`${request.method} ${url.pathname}`);
     try {
       if (url.pathname.startsWith("/v1/pc/")) return await this.pc(request, url.pathname);
+      const leaving = /^\/v1\/pcs\/([0-9a-f]{32})\/leave$/.exec(url.pathname)?.[1];
+      if (leaving !== undefined && request.method === "POST") return await this.leave(request, leaving);
       const provider = /^\/v1\/signin\/([a-z]+)$/.exec(url.pathname)?.[1];
       if (provider !== undefined && request.method === "GET") return this.signIn(url, provider);
       if (url.pathname === "/v1/token" && request.method === "POST") return await this.token(request);
@@ -497,6 +563,14 @@ export class FakeAccountService {
     if ((path === "/v1/identities/link" && request.method === "POST") || (path.startsWith("/v1/identities/") && request.method === "DELETE")) {
       if (!recent) return problem(403, "reauth_required", "Sign in again first");
     }
+    if (path === "/v1/signout/all" && request.method === "POST") {
+      // as deleting the account: a device code's sign-in never signs the account's owner out, and only a recent one does
+      if (this.deviceFamilies.has(session.family)) return problem(403, "web_sign_in_required", "Sign in on this device first");
+      if (!recent) return problem(403, "reauth_required", "Sign in again first");
+      this.ring(account, session.family);
+      this.signOutEverywhere(account);
+      return new Response(null, { status: 204 });
+    }
     if (path === "/v1/account" && request.method === "DELETE") {
       // a device code can be typed for someone else's PC: its sign-in must not end the account
       if (this.deviceFamilies.has(session.family)) return problem(403, "web_sign_in_required", "Sign in on this device first");
@@ -527,11 +601,17 @@ export class FakeAccountService {
     }
     const directory = this.directories.get(account) ?? new Map<string, FakePc>();
     this.directories.set(account, directory);
+    if (path === "/v1/session" && request.method === "GET") {
+      return json({ account, own_sign_in: !this.deviceFamilies.has(session.family), signed_in_at: new Date(this.signedInAt.get(session.family) ?? this.now()).toISOString() });
+    }
     if (path === "/v1/pcs" && request.method === "GET") {
+      // PCL-1: while step 2 is on, a PC listed by a device code and not confirmed only for `?include=unconfirmed`
+      const unconfirmed = new URL(request.url).searchParams.get("include") === "unconfirmed";
       // null while step 2 is off for the account, and once passed
       const keyAt = this.keyRegisteredAt.get(session.family);
-      return json({ pcs: [...directory.values()].map(({ exempt, ...entry }) => ({
+      return json({ pcs: [...directory.values()].filter((entry) => unconfirmed || !this.opensAll || entry.listed_by_device !== true).map(({ exempt, listed_by_device, pending_under_step2: _pending, listed_by_session: _lister, digit_admitted: _digits, ...entry }) => ({
         ...entry,
+        unconfirmed: this.opensAll && listed_by_device === true,
         new_until: this.opensAll && entry.new_until != null && Date.parse(entry.new_until) > this.now() ? entry.new_until : null,
         admitted_at: this.opensAll ? entry.admitted_at ?? null : null,
         // the one admit no device was told about: shown to a device whose own key came after it
@@ -549,7 +629,7 @@ export class FakeAccountService {
       const open = this.pcAdmissions.get(box(admitted, account));
       // a retry of this same sign-in's own admission, still open, gets the same answer: no second exemption is granted
       const retry = entry !== undefined && open !== undefined && !open.taken && open.family === session.family && this.now() - open.at <= ADMISSION_TTL_MS && entry.new_until != null;
-      if (exempt && !retry && this.everUsed(account, admitted, session.family)) return problem(403, "two_step_required", "Set up two-step sign-in first");
+      if (exempt && !retry && this.everUsed(account, admitted, session.family, "admit")) return problem(403, "two_step_required", "Set up two-step sign-in first");
       if (entry === undefined) return problem(400, "unknown_pc", "List PCs of this account only");
       if (open !== undefined && !open.taken && this.now() - open.at <= ADMISSION_TTL_MS && entry.new_until != null) {
         return json({ server_id: admitted, account, admitted_at: new Date(open.at).toISOString(), new_until: entry.new_until });
@@ -564,36 +644,99 @@ export class FakeAccountService {
       this.admitTimes.set(account, [...times, this.now()]);
       // one instant for the admission, its directory entry and this answer: a retry answers the same
       const at = this.now();
-      this.pcAdmissions.set(box(admitted, account), { at, taken: false, family: session.family });
+      this.pcAdmissions.set(box(admitted, account), { at, taken: false, family: session.family, ...(entry.listing_id === undefined ? {} : { listing: entry.listing_id }) });
       this.usedAccounts.add(account);
       entry.new_until = new Date(this.now() + PC_NEW_MS).toISOString();
       entry.admitted_at = new Date(at).toISOString();
       entry.exempt = exempt;
+      entry.listed_by_device = false;
       this.ring(account, session.family);
       return json({ server_id: admitted, account, admitted_at: new Date(at).toISOString(), new_until: entry.new_until });
     }
     const pc = /^\/v1\/pcs\/([0-9a-f]{32})$/.exec(path)?.[1];
     if (pc !== undefined && request.method === "PUT") {
-      const body = await request.json() as { label?: unknown; public_key?: unknown; relay?: unknown };
+      const body = await request.json() as { label?: unknown; public_key?: unknown; relay?: unknown; confirm?: unknown; listing_id?: unknown; challenge_id?: unknown; proof?: unknown };
+      // PCL-1: only an app's own sign-in may say "this is my PC"; a device code can be typed for someone else's PC
+      const own = !this.deviceFamilies.has(session.family);
+      const confirm = body.confirm === true;
+      // account#67: a confirm names the listing its card showed, and only a confirm does
+      const named = body.listing_id !== undefined;
+      if (named && (!confirm || typeof body.listing_id !== "string" || !LISTING_ID.test(body.listing_id))) return problem(400, "invalid_request", "Name a listing only to confirm it");
+      if (confirm && !own) return problem(403, "own_sign_in_required", "Sign in on this device to confirm the PC");
       if (typeof body.label !== "string" || body.label.length < 1 || body.label.length > 48) return problem(400, "invalid_label", "Name the PC");
       // the key is stored, but it cannot be forged: it must give this server_id
       const key = proofKey(body.public_key);
       if (!key || deriveServerId(key) !== pc) return problem(400, "server_key_mismatch", "That key does not give that server_id");
       if (typeof body.relay !== "string" || !isWssOrigin(body.relay)) return problem(400, "invalid_relay", "Give the relay's wss origin");
+      // the PC's own proof of this server_id, sent beside the entry when the PC itself lists it: it lists it again after its leave
+      const proven = body.challenge_id !== undefined || body.proof !== undefined;
+      if (proven && !this.takeProof({ server_id: pc, challenge_id: body.challenge_id, proof: body.proof })) return problem(401, "proof_invalid", "Ask for a new challenge and answer it");
+      // PCL-4: a confirm asks what the one-press admit asks of the sign-in: fresh, and two-step set unless the account was never used
+      if (confirm) {
+        if (this.now() - (this.signedInAt.get(session.family) ?? Number.NEGATIVE_INFINITY) > REAUTH_MS) return problem(403, "session_not_fresh", "Sign in again on this device first");
+        if (this.twoStep.get(session.family) !== true && this.everUsed(account, pc, session.family, "confirm")) return problem(403, "two_step_required", "Two-step sign-in must be on for one press; add this PC with the number");
+      }
       const fresh = !directory.has(pc);
+      const leftAt = this.pcLeaves.get(box(pc, account));
+      if (fresh && !proven && leftAt !== undefined && this.now() - leftAt < PC_LEFT_MS) {
+        return json({ error: { left_at: new Date(leftAt).toISOString(), code: "pc_left", message: "This PC left the account; sign in on the PC to add it again" } }, 409);
+      }
       if (fresh && directory.size >= DIRECTORY_MAX) return problem(409, "directory_full", "Remove a PC first");
-      // a re-PUT (the nine-minute relist) keeps the PC's admission
+      // a re-PUT (the nine-minute relist) keeps the PC's admission and its confirmation mark
       const before = directory.get(pc);
-      const entry: FakePc = { server_id: pc, label: body.label, public_key: body.public_key as string, relay: body.relay, added_at: before?.added_at ?? this.iso(), last_seen_at: before?.last_seen_at ?? null,
-        ...(before?.new_until == null ? {} : { new_until: before.new_until, admitted_at: before.admitted_at ?? null, exempt: before.exempt ?? false }) };
+      // a named confirm acts only on that listing, still the PC's current one and still unconfirmed, and writes the confirm alone
+      if (named && (before === undefined || before.listing_id !== body.listing_id || before.listed_by_device !== true)) {
+        return problem(409, "listing_changed", "This add is no longer waiting for that action");
+      }
+      const confirming = confirm && before?.listed_by_device === true;
+      const entry: FakePc = { server_id: pc, ...(named ? { label: before!.label, public_key: before!.public_key, relay: before!.relay } : { label: body.label, public_key: body.public_key as string, relay: body.relay }), added_at: before?.added_at ?? this.iso(), last_seen_at: before?.last_seen_at ?? null,
+        ...(before?.new_until == null ? {} : { new_until: before.new_until, admitted_at: before.admitted_at ?? null, exempt: before.exempt ?? false }),
+        listed_by_device: before === undefined ? !own : before.listed_by_device === true && !confirming,
+        pending_under_step2: before === undefined ? !own && this.opensAll : before.pending_under_step2 === true,
+        ...(before === undefined ? { listed_by_session: session.family } : before.listed_by_session === undefined ? {} : { listed_by_session: before.listed_by_session }),
+        ...(this.completions ? { listing_id: before?.listing_id ?? randomHex(16), completed_at: before?.completed_at ?? null } : {}) };
+      // a confirm makes the PC one the account's devices open, as the admit does: new to them for PC_NEW_MS (C3). It
+      // writes no admission: the row it confirms is what makes the account used from then on
+      if (confirming) {
+        entry.admitted_at = this.iso();
+        entry.new_until = new Date(this.now() + PC_NEW_MS).toISOString();
+      }
       directory.set(pc, entry);
-      if (fresh) this.ring(account, session.family);
-      return json({ pc: entry });
+      if (proven) this.pcLeaves.delete(box(pc, account));
+      if (fresh || confirming) this.ring(account, session.family);
+      const { exempt: _exempt, listed_by_device, pending_under_step2: _pending, listed_by_session: _lister, digit_admitted: _digits, ...shown } = entry;
+      return json({ pc: { ...shown, unconfirmed: this.opensAll && listed_by_device === true } });
     }
     if (pc !== undefined && request.method === "DELETE") {
+      // account#67: a Decline names the listing its card showed; after the sign-in checks, it removes only that listing while
+      // it still asks to join (not admitted by one press, a confirm or digits, and not completed)
+      const named = new URL(request.url).searchParams.get("listing_id");
+      if (named !== null && !LISTING_ID.test(named)) return problem(400, "invalid_request", "That is no listing ID");
+      const listed = directory.get(pc);
+      const changed = named !== null && (listed === undefined || listed.listing_id !== named || listed.admitted_at != null || listed.digit_admitted === true || listed.completed_at != null);
+      // PCR-1: removing unbinds the PC and cuts the account's devices off it, so it asks what deleting the account asks. The
+      // compat ruling's one exception: a device code's sign-in ends its own listing (written by it, never confirmed, admitted
+      // or completed), as an installed CLI renews its card
+      if (this.deviceFamilies.has(session.family)) {
+        const own = directory.get(pc);
+        // as the service: written by this sign-in, never confirmed, admitted (one press or digits) or completed
+        if (own === undefined || own.listed_by_session !== session.family || own.listed_by_device !== true || own.admitted_at != null
+          || own.completed_at != null || own.digit_admitted === true) {
+          return problem(403, "own_sign_in_required", "Sign in on this device to remove a PC");
+        }
+        if (changed) return problem(409, "listing_changed", "This PC no longer asks to join by that listing");
+        directory.delete(pc);
+        // ruling (b): a member's end is a member's removal (the account is used); a listing pending under Step 2 was never one
+        if (this.member(own)) this.usedAccounts.add(account);
+        return new Response(null, { status: 204 });
+      }
+      if (!recent) return problem(403, "reauth_required", "Sign in again first");
+      if (changed) return problem(409, "listing_changed", "This PC no longer asks to join by that listing");
+      const removed = directory.get(pc);
       directory.delete(pc);
       this.pcAdmissions.delete(box(pc, account));
-      this.usedAccounts.add(account);
+      // PCL-1: ending a listing that was never the account's (unconfirmed under Step 2) is no member's removal
+      if (removed !== undefined && this.member(removed)) this.usedAccounts.add(account);
       return new Response(null, { status: 204 });
     }
     if (path === "/v1/records" && request.method === "POST") {
@@ -638,6 +781,43 @@ export class FakeAccountService {
     return problem(404, "not_found", "Unknown request");
   }
 
+  /** Spends the challenge `body` names and says whether `body.proof` answers it for `body.server_id`. */
+  private takeProof(body: { server_id: unknown; challenge_id: unknown; proof: unknown }): { server_id: string } | null {
+    const challenge = typeof body.challenge_id === "string" ? this.challenges.get(body.challenge_id) : undefined;
+    if (typeof body.challenge_id === "string") this.challenges.delete(body.challenge_id);
+    if (!challenge || challenge.server_id !== body.server_id || this.now() > challenge.expires || !verifyServerProof(body.proof, challenge.expected)) return null;
+    return { server_id: challenge.server_id };
+  }
+
+  /**
+   * The PC leaves an account by its own proof, with no bearer (`ovis logout`, account#65): as a DELETE /v1/pcs does, the
+   * listing and its untaken admission end; its mailbox and admissions for the account go; and for PC_LEFT_MS a PUT
+   * lists it again only with the PC's own proof. 204 whether or not the account listed it.
+   */
+  private async leave(request: Request, serverId: string): Promise<Response> {
+    const body = await request.json() as Record<string, unknown>;
+    if (body.server_id !== serverId || typeof body.account !== "string" || body.challenge_id === undefined || body.proof === undefined) {
+      return problem(400, "invalid_request", "Name this PC and the account it leaves");
+    }
+    if (!this.takeProof({ server_id: serverId, challenge_id: body.challenge_id, proof: body.proof })) return problem(401, "proof_invalid", "Ask for a new challenge and answer it");
+    const account = body.account;
+    const key = box(serverId, account);
+    const directory = this.directories.get(account);
+    const removed = directory?.get(serverId);
+    directory?.delete(serverId);
+    this.pcAdmissions.delete(key);
+    this.mailboxes.delete(key);
+    for (const list of [this.admissionList, this.quietList]) {
+      for (let index = list.length - 1; index >= 0; index--) if (list[index]!.server_id === serverId && list[index]!.account === account) list.splice(index, 1);
+    }
+    if (!this.deletedAccounts.has(account)) this.pcLeaves.set(key, this.now());
+    if (removed !== undefined) {
+      if (!(this.opensAll && removed.listed_by_device === true)) this.usedAccounts.add(account);
+      this.ring(account, "");
+    }
+    return new Response(null, { status: 204 });
+  }
+
   private async pc(request: Request, path: string): Promise<Response> {
     if (request.method !== "POST") return problem(404, "not_found", "Unknown request");
     const body = await request.json() as Record<string, unknown>;
@@ -645,17 +825,33 @@ export class FakeAccountService {
       const key = proofKey(body.public_key);
       if (!key || typeof body.server_id !== "string" || deriveServerId(key) !== body.server_id) return problem(401, "server_key_mismatch", "That key does not give that server_id");
       const challengeId = randomHex(16);
-      const { expected, frame } = serverChallenge(key, { server_id: body.server_id, role: "account", connection_id: challengeId });
-      this.challenges.set(challengeId, { server_id: body.server_id, expected, expires: this.now() + CHALLENGE_TTL_MS });
+      // a completion's proof is scoped to its account and listing: its context is not a wire nonce (account#57)
+      const scope = this.completions ? completionScope(body.completion) : null;
+      if (body.completion !== undefined && scope === null) return problem(400, "invalid_body", "Name the account and listing");
+      const context = scope ? completionKey(scope, challengeId) : challengeId;
+      const { expected, frame } = serverChallenge(key, { server_id: body.server_id, role: "account", connection_id: context });
+      this.challenges.set(context, { server_id: body.server_id, expected, expires: this.now() + CHALLENGE_TTL_MS });
       return json({ challenge_id: challengeId, frame });
+    }
+    if (path === "/v1/pc/complete" && this.completions) {
+      const scope = completionScope({ account: body.account, listing_id: body.listing_id });
+      const context = scope && typeof body.challenge_id === "string" ? completionKey(scope, body.challenge_id) : null;
+      const challenge = context === null ? undefined : this.challenges.get(context);
+      if (context !== null) this.challenges.delete(context);
+      if (!scope || !challenge || challenge.server_id !== body.server_id || this.now() > challenge.expires || !verifyServerProof(body.proof, challenge.expected)) {
+        return problem(401, "proof_invalid", "Ask for a new challenge and answer it");
+      }
+      const entry = this.directories.get(scope.account)?.get(challenge.server_id);
+      // the listing still current, and its own evidence: an admission of it taken (or a completion already stamped)
+      const taken = this.pcAdmissions.get(box(challenge.server_id, scope.account))?.taken === true;
+      if (entry?.listing_id !== scope.listing_id || (entry.completed_at == null && !taken)) return problem(409, "listing_changed", "This add is no longer waiting for that action");
+      entry.completed_at ??= this.iso();
+      return json({ completed_at: entry.completed_at });
     }
     if (path === "/v1/pc/mailbox" || (path === "/v1/pc/admission" && this.opensAll)
       || (path === "/v1/pc/snapshot" && (this.opensAll || this.reportsStep2Off))) {
-      const challenge = typeof body.challenge_id === "string" ? this.challenges.get(body.challenge_id) : undefined;
-      if (typeof body.challenge_id === "string") this.challenges.delete(body.challenge_id);
-      if (!challenge || challenge.server_id !== body.server_id || this.now() > challenge.expires || !verifyServerProof(body.proof, challenge.expected)) {
-        return problem(401, "proof_invalid", "Ask for a new challenge and answer it");
-      }
+      const challenge = this.takeProof({ server_id: body.server_id, challenge_id: body.challenge_id, proof: body.proof });
+      if (!challenge) return problem(401, "proof_invalid", "Ask for a new challenge and answer it");
       if (typeof body.account !== "string") return problem(400, "invalid_account", "Name the account this PC belongs to");
       if (path === "/v1/pc/admission") {
         // G1: only the named account's own admission, while that account lists the PC; any other account's is invisible
@@ -664,7 +860,8 @@ export class FakeAccountService {
         // retry-safe for 10 minutes, inclusive; it ends with the sign-in that made it
         if (open === undefined || this.now() - open.at > ADMISSION_TTL_MS || this.revokedFamilies.has(open.family) || entry?.new_until == null) return problem(404, "no_admission", "No account added this PC in one press");
         open.taken = true;
-        return json({ account: body.account, admitted_at: new Date(open.at).toISOString(), new_until: entry.new_until });
+        return json({ account: body.account, admitted_at: new Date(open.at).toISOString(), new_until: entry.new_until,
+          ...(this.completions && body.with_listing_id === true ? { listing_id: entry.listing_id ?? null } : {}) });
       }
       if (path === "/v1/pc/snapshot") {
         // P6: only a PC the account lists reads the account's devices and records
@@ -690,7 +887,12 @@ export class FakeAccountService {
       const quiet = entry === undefined ? [] : this.quietList
         .filter((a) => a.server_id === challenge.server_id && a.account === body.account && this.now() - Date.parse(a.at) < ADMISSION_TTL_MS)
         .map(({ key, label, at }) => ({ key, label, at }));
-      return json({ records: rest.slice(0, MAILBOX_PAGE).map(({ seq, record }) => ({ seq, record })), more: rest.length > MAILBOX_PAGE, admissions, quiet_admissions: quiet });
+      // as the service: the listing it holds this PC under, when it confirms one (never one a device code listed under Step 2)
+      const named = entry !== undefined && !(this.opensAll && entry.listed_by_device === true) ? entry.listing_id ?? null : null;
+      const taken = this.pcAdmissions.get(key);
+      const listing = this.completions && body.with_listing_id === true
+        ? { listing_id: named, ...(this.saysListingAdmitted ? { listing_admitted: named !== null && entry?.admitted_at != null && taken?.taken === true && taken.listing === named } : {}) } : {};
+      return json({ ...listing, records: rest.slice(0, MAILBOX_PAGE).map(({ seq, record }) => ({ seq, record })), more: rest.length > MAILBOX_PAGE, admissions, quiet_admissions: quiet });
     }
     return problem(404, "not_found", "Unknown request");
   }

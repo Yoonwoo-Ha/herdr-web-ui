@@ -8,7 +8,6 @@
  */
 import { afterEach, expect, test } from "bun:test";
 import { decodeOffer } from "../shared/relay-offer.ts";
-import { FakeAccountService } from "../shared/account-service-fake.ts";
 import { PAIRING_LINK_MS } from "../server/devices.ts";
 import { ask, ended, linkRecord, pairingPc, phone, sendLink, signedInWith, vouchFor, type Pc } from "../server/account/pairing.test-helpers.ts";
 import { bounded, TestClock } from "../server/relay/test-helpers.ts";
@@ -33,7 +32,9 @@ async function adding(typed?: (pc: Pc) => void) {
   const clock = new TestClock();
   made.devices.useClock(clock);
   const origin = `http://127.0.0.1:${made.app.port}`;
-  const service = new FakeAccountService();
+  // the command signs in to the service the PC's own Ovis uses (both read OVIS_ACCOUNT_SERVICE_URL): the PC's proof on
+  // its listing is a challenge of that service
+  const service = made.account;
   const stop = new AbortController();
   const out: string[] = [];
   const named: (string | null)[] = [];

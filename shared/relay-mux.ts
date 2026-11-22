@@ -5,6 +5,8 @@ import { AccountDevicesApiError, parseBlockReceipt, parseHoldState, type BlockRe
 export const RELAY_PROTOCOL = 1;
 export const RELAY_HINTS = "relay-hints";
 export const ACCOUNT_OPENS_ALL_FEATURE = "account-opens-all-1";
+/** A client that offers it reads `account_unreachable` and `account_readd_required`; one without it takes either as a protocol error. */
+export const ACCOUNT_LISTING_ERRORS = "account-listing-errors-1";
 /** Eight numbered receipts fit the existing 1 KiB session error, even with safe-integer log numbers. */
 export const AUTH_RECEIPTS_MAX = 8;
 /** The address is a hint: Noise against the pinned PC key proves the PC. */
@@ -53,6 +55,14 @@ export const PAIR_INTENT_ACCOUNT = "pair-intent-account";
  * account's members as "pair this PC", and it makes a plain row there, never an account member.
  */
 export const PAIR_INTENT_VOUCHED = "pair-intent-pc-vouched";
+export const PAIR_PC_PROOF = "pair-pc-proof";
+/**
+ * Which PC a comparison waits on when the PC itself approves it on its own screen (an account join on a PC with no
+ * member, docs/account.md design 5.3), named by its system so the phone can say where to press. A value a phone does
+ * not know reads as "pc", so a later PC can name another.
+ */
+export const PAIR_APPROVERS = ["mac", "windows", "linux", "pc"] as const;
+export type PairApprover = typeof PAIR_APPROVERS[number];
 export const LARGE_WS_MESSAGES = "large-ws-messages";
 /**
  * A phone without it refuses a
@@ -73,6 +83,8 @@ export const SESSION_ERRORS = [
   "flow_control_error", "resource_exhausted", "timeout", "internal_error",
   // Step 2, sent only by a PC with Step 2 on to an account-joined sign-in; `held` carries its HoldState
   "held", "not_listed", "admission",
+  // sent only to a client that offered ACCOUNT_LISTING_ERRORS
+  "account_unreachable", "account_readd_required",
 ] as const;
 export type SessionError = typeof SESSION_ERRORS[number];
 export const STREAM_ERRORS = [
@@ -144,9 +156,9 @@ type Payloads = {
   readonly 0x08: bigint;
   readonly 0x09: bigint;
   readonly 0x0a: { readonly code: string; readonly label: string; readonly public_key: string };
-  readonly 0x0b: { readonly label: string; readonly public_key: string; readonly commitment: string };
-  readonly 0x0c: { readonly nonce: string };
-  readonly 0x0d: { readonly nonce: string };
+  readonly 0x0b: { readonly label: string; readonly public_key: string; readonly commitment: string; readonly server_key?: string };
+  readonly 0x0c: { readonly nonce: string; readonly approve_on?: PairApprover; readonly server_challenge?: string };
+  readonly 0x0d: { readonly nonce: string; readonly server_proof?: string };
   readonly 0x0e: { readonly confirmed: true };
   readonly 0x10: { readonly device_id: string; readonly method: Method; readonly target: string; readonly headers: HeaderList; readonly body: "none" | "stream" };
   readonly 0x11: null;
@@ -420,9 +432,12 @@ function metadata(type: FrameType, flags: number, stream_id: number, input: unkn
       return { ...common, type, payload: { code, label: pairLabel(v.label), public_key: p256Spki(v.public_key) } };
     }
     case FrameType.PAIR_REQUEST:
-      return { ...common, type, payload: { label: pairLabel(v.label), public_key: p256Spki(v.public_key), commitment: base64url(v.commitment, 32) } };
-    case FrameType.PAIR_CHALLENGE: case FrameType.PAIR_REVEAL:
-      return { ...common, type, payload: { nonce: base64url(v.nonce, 32) } };
+      return { ...common, type, payload: { label: pairLabel(v.label), public_key: p256Spki(v.public_key), commitment: base64url(v.commitment, 32), ...(v.server_key === undefined ? {} : { server_key: hex(v.server_key, 64) }) } };
+    case FrameType.PAIR_CHALLENGE:
+      return { ...common, type, payload: { nonce: base64url(v.nonce, 32), ...(v.server_challenge === undefined ? {} : { server_challenge: text(v.server_challenge, 512) }),
+        ...(v.approve_on === undefined ? {} : { approve_on: PAIR_APPROVERS.find((approver) => approver === v.approve_on) ?? "pc" }) } };
+    case FrameType.PAIR_REVEAL:
+      return { ...common, type, payload: { nonce: base64url(v.nonce, 32), ...(v.server_proof === undefined ? {} : { server_proof: text(v.server_proof, 256) }) } };
     case FrameType.KEY_CHALLENGE:
       return { ...common, type, payload: { challenge: base64url(v.challenge, 32) } };
     case FrameType.KEY_PROVE:

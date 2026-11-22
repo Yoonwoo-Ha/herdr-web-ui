@@ -26,8 +26,8 @@
 #    never stars by itself.
 #
 # It also puts an `ovis` command into ~/.local/bin, which runs the installed Ovis's own command line
-# (scripts/plugin.ts): `ovis add` adds this PC to your Ovis account from its terminal, `ovis pair` shows
-# a pairing code, `ovis status` says whether the app runs. To end the install with `ovis add`:
+# (scripts/plugin.ts): `ovis login` (also `ovis add`) adds this PC to your Ovis account from its terminal,
+# `ovis pair` shows a pairing code, `ovis status` says whether the app runs, `ovis --help` lists the rest. To end the install with `ovis add`:
 #
 #   curl -fsSL https://ovis.sh/install.sh | sh -s -- --add
 #

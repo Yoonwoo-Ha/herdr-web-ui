@@ -196,7 +196,8 @@ describe("the PC's account binding (account-pc.json)", () => {
     const second = await linked(devices);
     expect(devices.removeAccountKey(second.key, ACCOUNT, { id: newRecordId(), issuedAt: new Date().toISOString() })).toBe(true);
     expect(devices.revoke(first.id)).toBe(true);
-    expect(pcFile(dir).binding).toEqual({ account: ACCOUNT, bind_id: bindId });
+    // with how long it waits for the device that linked it to list it
+    expect<object | null>(pcFile(dir).binding).toEqual({ account: ACCOUNT, bind_id: bindId, listing_due: expect.any(String) });
 
     // a named clear at the PC: the binding goes, the clear is kept, and the file stays
     devices.clearAccountBinding("unlisted", "account");

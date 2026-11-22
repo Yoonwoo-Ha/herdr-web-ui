@@ -45,6 +45,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class SshSetupActivity extends Activity {
     static final String EXTRA_ORIGIN = "origin";
+    /** A new PC's login as the SSH tab's field held it (user@host:port), filled in to check and change. */
+    static final String EXTRA_USER = "user";
+    static final String EXTRA_HOST = "host";
+    static final String EXTRA_PORT = "port";
 
     /** What the screen is doing, for SshSetupFlowTest: "connecting", "confirm-host", "signing-in", "looking", "confirm-install", "installing", "done", "failed:<kind>". */
     interface Steps {
@@ -66,6 +70,10 @@ public class SshSetupActivity extends Activity {
     private View phoneKeyPanel;
     private View passwordPanel;
     private View importPanel;
+    private View tailscalePanel;
+    private Button openLink;
+    /** Tailscale SSH's check link while it waits for the person to approve this phone */
+    private volatile String checkLink;
     private TextView keyLine;
     private EditText password;
     private EditText privateKey;
@@ -113,10 +121,16 @@ public class SshSetupActivity extends Activity {
             user.setText(editing.user);
             // the PC keeps its address on this phone (its origin, and the page's drafts and storage there)
             for (EditText fixed : new EditText[] { host, port, user }) fixed.setEnabled(false);
+        } else {
+            Intent asked = getIntent();
+            if (asked.getStringExtra(EXTRA_HOST) != null) host.setText(asked.getStringExtra(EXTRA_HOST));
+            if (asked.getStringExtra(EXTRA_USER) != null) user.setText(asked.getStringExtra(EXTRA_USER));
+            if (asked.hasExtra(EXTRA_PORT)) port.setText(String.valueOf(asked.getIntExtra(EXTRA_PORT, 22)));
         }
 
         form.addView(label(getString(R.string.ssh_method_label)));
         method = new RadioGroup(this);
+        method.addView(radio(R.id.ssh_method_tailscale, R.string.ssh_method_tailscale));
         method.addView(radio(R.id.ssh_method_phone, R.string.ssh_method_phone));
         method.addView(radio(R.id.ssh_method_password, R.string.ssh_method_password));
         RadioButton pasteWay = radio(R.id.ssh_method_paste, R.string.ssh_method_paste);
@@ -132,6 +146,11 @@ public class SshSetupActivity extends Activity {
         boolean imported = editing != null && "imported".equals(editing.auth);
         pasteWay.setVisibility(imported ? View.VISIBLE : View.GONE);
         advanced.setVisibility(imported ? View.GONE : View.VISIBLE);
+
+        LinearLayout tsPanel = panel();
+        tsPanel.addView(note(getString(R.string.ssh_tailscale_note)));
+        tailscalePanel = tsPanel;
+        form.addView(tsPanel);
 
         LinearLayout keyPanel = panel();
         keyPanel.addView(note(getString(R.string.ssh_phone_key_note)));
@@ -186,7 +205,9 @@ public class SshSetupActivity extends Activity {
         form.addView(pastePanel);
 
         method.setOnCheckedChangeListener((group, checked) -> showPanel(checked));
-        method.check(imported ? R.id.ssh_method_paste : R.id.ssh_method_phone);
+        // a PC at a tailnet address most likely runs Tailscale SSH: no key to add there
+        boolean tailscale = editing != null ? "tailscale".equals(editing.auth) : SshPcs.tailnet(host.getText().toString());
+        method.check(imported ? R.id.ssh_method_paste : tailscale ? R.id.ssh_method_tailscale : R.id.ssh_method_phone);
 
         LinearLayout statusRow = new LinearLayout(this);
         statusRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -202,6 +223,14 @@ public class SshSetupActivity extends Activity {
         statusRow.addView(spinner, new LinearLayout.LayoutParams(dp(28), dp(28)));
         statusRow.addView(status, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         form.addView(statusRow);
+        openLink = button(getString(R.string.ssh_open_link), true);
+        openLink.setId(R.id.ssh_open_link);
+        openLink.setVisibility(View.GONE);
+        openLink.setOnClickListener(v -> {
+            String link = checkLink;
+            if (link != null) startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(link)));
+        });
+        form.addView(openLink);
 
         LinearLayout buttons = new LinearLayout(this);
         connect = button(getString(R.string.ssh_connect), true);
@@ -290,7 +319,13 @@ public class SshSetupActivity extends Activity {
         else keyState.setText(SshKeys.encrypted(text) ? R.string.ssh_key_encrypted : R.string.ssh_key_plain);
     }
 
+    private void showLink(String link) {
+        checkLink = link;
+        runOnUiThread(() -> openLink.setVisibility(link == null ? View.GONE : View.VISIBLE));
+    }
+
     private void showPanel(int checked) {
+        tailscalePanel.setVisibility(checked == R.id.ssh_method_tailscale ? View.VISIBLE : View.GONE);
         phoneKeyPanel.setVisibility(checked == R.id.ssh_method_phone ? View.VISIBLE : View.GONE);
         passwordPanel.setVisibility(checked == R.id.ssh_method_password ? View.VISIBLE : View.GONE);
         importPanel.setVisibility(checked == R.id.ssh_method_paste ? View.VISIBLE : View.GONE);
@@ -395,7 +430,7 @@ public class SshSetupActivity extends Activity {
         }
         if (!busy.compareAndSet(false, true)) return;
         int checked = method.getCheckedRadioButtonId();
-        String how = checked == R.id.ssh_method_password ? "password" : checked == R.id.ssh_method_paste ? "imported" : "phone-key";
+        String how = checked == R.id.ssh_method_password ? "password" : checked == R.id.ssh_method_paste ? "imported" : checked == R.id.ssh_method_tailscale ? "tailscale" : "phone-key";
         String secret = how.equals("password") ? password.getText().toString() : how.equals("imported") ? privateKey.getText().toString().trim() : null;
         String secretPassphrase = passphrase.getText().toString();
         // the password is used once: it leaves the screen as soon as it is read, whatever happens next
@@ -411,6 +446,7 @@ public class SshSetupActivity extends Activity {
     }
 
     private void fail(String where, SshFailure failed, String how, String publicLine) {
+        showLink(null);
         say(SshWords.describe(this, where, failed, how, publicLine), false);
         tell("failed:" + failed.kind);
     }
@@ -480,7 +516,18 @@ public class SshSetupActivity extends Activity {
             active = connection;
             if (left) throw new SshFailure("internal", "The screen was closed");
             String saveAs = how;
-            if (how.equals("phone-key")) {
+            if (how.equals("tailscale")) {
+                // the person approves this phone in the browser if Tailscale asks: up to ten minutes
+                SshLink.signInWithTailscale(connection, account, 600_000, banner -> {
+                    String link = SshLink.checkLink(banner);
+                    if (link != null) {
+                        showLink(link);
+                        say(getString(R.string.ssh_tailscale_check, link), true);
+                    }
+                    return null;
+                });
+                showLink(null);
+            } else if (how.equals("phone-key")) {
                 SshLink.signIn(connection, account, phoneKey(store));
             } else if (how.equals("imported")) {
                 SshLink.signIn(connection, account, pasted.pair);
@@ -513,7 +560,7 @@ public class SshSetupActivity extends Activity {
             if (saveAs.equals("imported")) {
                 store.sealImported(pc, secret, secretPassphrase, pasted.type.equals("ed25519") ? "ed25519" : pasted.type + " " + pasted.bits);
             } else {
-                pc.auth = "phone-key";
+                pc.auth = saveAs.equals("tailscale") ? "tailscale" : "phone-key";
                 pc.importedKey = "";
                 pc.importedPassphrase = "";
                 pc.keyType = "";

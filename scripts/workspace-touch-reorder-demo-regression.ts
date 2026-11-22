@@ -166,7 +166,7 @@ async function checkPinned(page: Page, cdp?: CDPSession): Promise<void> {
   }
   await page.reload();
   await page.locator(".conn-live").waitFor({ state: "attached" });
-  const toggle = page.locator('button[aria-controls="workspace-drawer"]');
+  const toggle = page.locator('#drawer-toggle');
   if (cdp && await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
   await page.locator(".workspace-list-pinned").waitFor();
   assert.deepEqual(await pinnedRows(page), expected, "pin order survives reload");
@@ -753,7 +753,7 @@ try {
       page.on("pageerror", (error) => errors.push(error.message));
       await page.goto(`http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/`);
       await page.locator(".conn-live").waitFor({ state: "attached" });
-      await page.locator('button[aria-controls="workspace-drawer"]').click();
+      await page.locator('#drawer-toggle').click();
       await page.locator(".machine-workspaces .workspace-group").first().waitFor();
       const cdp = await context.newCDPSession(page);
 
@@ -783,7 +783,7 @@ try {
       assert.deepEqual((await serverOrder(page)).filter((id) => before.includes(id)), expected, "herdr got the move");
       assert.equal(await page.locator(".workspace.is-lifted, [data-drop]").count(), 0, "nothing stays lifted or marked");
       assert.equal(await page.locator(`.workspace-group[data-workspace="${before[0]}"]`).evaluate((row) => row.style.transform), "", "the dropped row sits in the list");
-      assert.equal(await page.locator('button[aria-controls="workspace-drawer"]').getAttribute("aria-expanded"), "true", "the drag left the drawer open");
+      assert.equal(await page.locator('#drawer-toggle').getAttribute("aria-expanded"), "true", "the drag left the drawer open");
       console.log("PASS a long press lifts a workspace row on a touch screen, and a drag drops it where the line shows");
 
       const burstFrom = await centerOf(page, before[0]!);

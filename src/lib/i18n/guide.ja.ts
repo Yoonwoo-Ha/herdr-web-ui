@@ -6,7 +6,6 @@ export const GUIDE_JA: Record<string, string> = {
   "Look again": "もう一度確認",
   "Use Tailscale or Wi-Fi instead": "代わりに Tailscale か Wi-Fi を使う",
   "Set up Ovis": "Ovis のセットアップ",
-  "Connect your phone": "スマートフォンをつなぐ",
   "Looking": "確認中",
   "Installed · v{version}": "インストール済み · v{version}",
   "Can't tell": "判別できません",
@@ -26,7 +25,6 @@ export const GUIDE_JA: Record<string, string> = {
   "Nice. Now add a metric for replayed requests.": "いいね。次は再実行されたリクエストの指標を追加して。",
   "Adding a counter next to the existing request metrics.": "既存のリクエスト指標の隣にカウンターを追加します。",
   "Phone and alerts": "スマホと通知",
-  "Turn on alerts": "通知をオンにする",
   "Test alert": "テスト通知",
   "Not yet": "まだ",
   "Later": "あとで",
@@ -100,4 +98,5 @@ export const GUIDE_JA: Record<string, string> = {
   "Reach this PC from anywhere.": "どこからでもこの PC につながります。",
   "Set up later": "あとで設定",
   "Keep SSH or a screen working on this PC: reached only through the relay, one stolen older device could lock you out of it.": "この PC で SSH か画面を使える状態にしておいてください。リレー経由でしか届かないと、古いデバイスが 1 台盗まれただけで入れなくなることがあります。",
+  "Run this once on this PC.": "この PC で一度実行します。",
 };

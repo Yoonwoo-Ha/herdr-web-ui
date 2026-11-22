@@ -34,8 +34,10 @@ import { DEFAULT_ACCOUNT_SERVICE } from "../shared/web-policy.ts";
 import { importPublicKey } from "../shared/relay-e2ee.ts";
 import { startDeviceSignIn, startLinkPageSignIn } from "../src/lib/account/deviceSignIn.ts";
 import { NEW_PC_MS } from "../src/lib/account/myPcs.ts";
+import { ownPcProof } from "../src/lib/account/pcProof.ts";
 import { AccountService, AccountServiceError, DEVICE_PROVIDERS, offeredProviders, type DeviceProvider } from "../src/lib/account/service.ts";
 import { memoryAccountStore, memoryLock, type AccountProvider } from "../src/lib/account/store.ts";
+import { shortAccount } from "./plugin-cli.ts";
 
 type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -61,6 +63,8 @@ export interface LinkOptions {
    */
   readonly isTty?: boolean;
   readonly size?: () => { readonly rows: number; readonly columns: number } | null;
+  /** opens the sign-in page in this desktop's browser and says whether it could; unset where there is none (`--no-browser`, SSH) */
+  readonly openBrowser?: (url: string) => boolean;
   readonly signal: AbortSignal;
   readonly fetch?: Fetch;
   readonly serviceFetch?: Fetch;
@@ -553,6 +557,9 @@ function asking(input: AnswerInput) {
   };
 }
 
+/** What `ovis approve` says when its input is no terminal: it answers nothing, and declines nothing either. */
+const NOT_A_TERMINAL = "This is not run in a terminal, so no request can be answered here. Nothing was declined: the requests keep waiting. Run this in a terminal to answer them (over ssh, run ssh -t).\n";
+
 export interface ApproveOptions extends AnswerInput {
   readonly decide: (id: string, decision: "approve" | "decline") => Promise<"taken" | "gone" | "away">;
   /**
@@ -574,7 +581,7 @@ export async function approveWaiting(pairings: readonly WaitingDevice[], options
   // own phone among them, for a run at a terminal or the app. (A decline ends a request for good; `ovis add --approve`,
   // whose run opened the window those requests came through, declines them as they show.)
   if (options.terminal !== true) {
-    out("This is not run in a terminal, so no request can be answered here. Nothing was declined: the requests keep waiting. Run this in a terminal to answer them (over ssh, run ssh -t).\n");
+    out(NOT_A_TERMINAL);
     return 1;
   }
   const desk = asking(options);
@@ -623,6 +630,56 @@ export async function approveWaiting(pairings: readonly WaitingDevice[], options
   return 0;
 }
 
+/** What a locked or strict PC says to its terminal (server/lock-boundary.ts): nothing is approved here then. */
+export function lockRefusal(code: "locked" | "strict"): string {
+  return code === "locked"
+    ? "This PC is locked, so no device can be approved from its terminal. Unlock it on its own screen, then run this again.\n"
+    : "This PC cannot read its safety log, so no device can be approved from its terminal. Open it on its own screen, or run ovis recover there, then run this again.\n";
+}
+
+/** A members-only account join waiting for this PC (`GET /api/relay/joins` without digits): its digits are typed, never shown. */
+export interface OwnJoin { readonly id: string; readonly label: string }
+
+/** What `POST /api/relay/join` made of the six digits typed: `away` when its answer did not come. */
+export type JoinOutcome = "approved" | "wrong_digits" | "gone" | "locked" | "strict" | "away";
+
+export interface JoinOptions extends AnswerInput {
+  readonly approve: (id: string, digits: string) => Promise<JoinOutcome>;
+}
+
+/**
+ * `ovis approve` for account joins a member could also approve (#28): the PC's terminal is the PC itself, so it asks
+ * as the own window's card does (src/components/OwnJoins.tsx OwnJoinCard). Its person types all six digits the new
+ * device shows: no candidates are shown and three digits are not enough. The PC compares them (pairing-approvals.ts
+ * decideTyped), and one wrong entry ends that join. Enter by itself leaves it waiting until its own deadline. A locked
+ * or strict PC refuses, and nothing more is asked. What is not a terminal answers nothing. The exit code.
+ */
+export async function approveJoins(joins: readonly OwnJoin[], options: JoinOptions): Promise<number> {
+  const { out } = options;
+  if (options.terminal !== true) {
+    out(NOT_A_TERMINAL);
+    return 1;
+  }
+  for (const join of joins) {
+    const label = plainLabel(join.label);
+    for (;;) {
+      const line = await askLine(options, `${label} asks to join your account. Type all six digits its screen shows to let it in (one wrong entry ends this request), or press Enter by itself to leave it waiting: `);
+      if (line === null) { out("The terminal's input ended: nothing more is approved here.\n"); return 1; }
+      const typed = line.normalize("NFKC").replace(/\s/g, "");
+      if (typed === "") { out(`${label} is left waiting until its time runs out.\n`); break; }
+      if (!SIX_DIGITS.test(typed)) { out(`That line answered nothing: only all six digits ${label} shows let it in. Answer again.\n`); continue; }
+      const outcome = await options.approve(join.id, typed);
+      if (outcome === "locked" || outcome === "strict") { out(lockRefusal(outcome)); return 1; }
+      if (outcome === "away") { out("Your answer may not have reached the Ovis on this PC. Run this again once it answers.\n"); return 1; }
+      out(outcome === "approved" ? `Approved: ${label} joins your account once it confirms.\n`
+        : outcome === "wrong_digits" ? `That is not the number ${label} shows. It was not let in; it can ask again.\n`
+        : `${label} is no longer waiting.\n`);
+      break;
+    }
+  }
+  return 0;
+}
+
 const groups = (id: string): string => id.match(/.{1,4}/g)?.join(" ") ?? id;
 
 export function linkSettings(env: Readonly<Record<string, string | undefined>>): Pick<LinkOptions, "preview" | "cliName" | "app"> {
@@ -641,7 +698,7 @@ function cli(options: LinkOptions): string {
  * typed ahead where the input cannot be discarded, or a key pressed twice) answers nothing, and the prompt is shown
  * again. For a run that reads nothing else meanwhile: it reads one line at a time, and leaves no read open.
  */
-async function askLine(options: LinkOptions, prompt: string): Promise<string | null> {
+async function askLine(options: AnswerInput, prompt: string): Promise<string | null> {
   const now = options.now ?? Date.now;
   // Where the terminal's input cannot be emptied (Windows, no C library found), a line begun before the prompt comes
   // with the first Enter pressed at it, however late: that first line answers nothing, as `asking` does for a request
@@ -772,19 +829,24 @@ interface Listing { readonly serverId: string; readonly entry: { label: string; 
  * over a PUT, so only a DELETE then a PUT shows the card again. The entry is `unlisted.listing` from
  * before that DELETE (whose answer can be lost after the service applied it) until the PUT lands: the
  * caller lists it again until it is back, so a renewal never leaves the PC unlisted.
+ * A device code's sign-in may end only a pending listing it wrote itself (account#63), and a refresh takes only a
+ * confirmed PC: a listing an earlier run wrote is kept as it is, by a PUT, and `unlisted.kept` says so from then on.
  */
-async function listThisPc(api: Api, service: AccountService, now: () => number, unlisted: { listing: Listing | null }): Promise<Listing> {
+async function listThisPc(api: Api, service: AccountService, now: () => number, unlisted: { listing: Listing | null; kept: boolean }): Promise<Listing> {
   const listing = await openedListing(api);
   const listed = (await service.listPcs()).find((pc) => pc.server_id === listing.serverId);
-  if (listed === undefined || now() - Date.parse(listed.added_at) < NEW_PC_MS - RELIST_MS) {
-    await service.putPc(listing.serverId, listing.entry);
+  if (listed === undefined || unlisted.kept || now() - Date.parse(listed.added_at) < NEW_PC_MS - RELIST_MS) {
+    await service.putPc(listing.serverId, { ...listing.entry, ...await ownPcProof(listing.serverId, (path) => api("POST", path)) });
     unlisted.listing = null;
     await nameRelayAccount(api, service);
     return listing;
   }
   unlisted.listing = listing;
-  await service.deletePc(listing.serverId);
-  if (await putListing(service, listing)) unlisted.listing = null;
+  try { await service.deletePc(listing.serverId); } catch (error) {
+    if (!(error instanceof AccountServiceError && error.status === 403 && error.code === "own_sign_in_required")) throw error;
+    unlisted.kept = true;
+  }
+  if (await putListing(api, service, listing)) unlisted.listing = null;
   await nameRelayAccount(api, service);
   return listing;
 }
@@ -807,11 +869,11 @@ async function nameRelayAccount(api: Api, service: AccountService): Promise<void
   if (session) await api("POST", "/api/account/relay-account", { body: { account: session.account } }).catch(() => undefined);
 }
 
-async function putListing(service: AccountService, listing: Listing): Promise<boolean> {
-  try { await service.putPc(listing.serverId, listing.entry); return true; } catch { return false; }
+/** Lists this PC with its own proof (ownPcProof), which alone lists it again after `ovis logout` left the account. */
+async function putListing(api: Api, service: AccountService, listing: Listing): Promise<boolean> {
+  try { await service.putPc(listing.serverId, { ...listing.entry, ...await ownPcProof(listing.serverId, (path) => api("POST", path)) }); return true; } catch { return false; }
 }
 
-const shortId = (account: string): string => plainLabel(account).slice(0, 12);
 
 interface Device {
   readonly id: string; readonly label: string; readonly created_at: string; readonly via_relay?: true; readonly account?: string;
@@ -931,11 +993,12 @@ async function addByQr(options: LinkOptions, api: Api, joining: Joining): Promis
     const left = remaining(Math.max(0, card.until - now()));
     const code = qr(card.url).replace(/\n+$/, "").split("\n");
     const width = Math.max(...code.map((row) => row.length));
-    const head = ["Scan this QR code with a device that is signed in to this Ovis account. It adds this PC to the account; there is no number to type.", ...!tied && !joining.plain ? [OLDER_PC] : [], ""];
+    const head = ["2/2  Let this PC in", "", "Scan this QR code with a device that is signed in to this Ovis account. It adds this PC to the account; there is no number to type.", ...!tied && !joining.plain ? [OLDER_PC] : [], ""];
     const tail = [
       ...card.typed !== null
         ? [`Code to type: ${card.typed}   (works once, expires in ${left})`, `Or, on that device, open ${appHost(options, card.url)}, choose Pair with a code and type it.`]
         : [`No code to type this time (${card.refused}). The QR code expires in ${left}.`],
+      `No device in the account yet? Open ${appHost(options, card.url)} on your phone, sign in, then scan.`,
       `That device then shows an ID: pair only if it matches this PC's ID, every group: ${groups(card.serverId)}`,
       "Anyone who can read this screen can pair with this PC while the code is shown.",
       `${minted < MAX_CODES ? "A new one comes when this one runs out. " : ""}Press Ctrl+C to stop.`,
@@ -977,7 +1040,7 @@ async function addByQr(options: LinkOptions, api: Api, joining: Joining): Promis
   const refusal = (error: LocalError): LocalError => error.code === "pairing_gone"
     ? new LocalError(`Another pairing code was made on this PC (in Settings, by ${cli(options)} pair, or by another run) after this run's: it is left as it is, and no QR code is shown. Run ${cli(options)} add again.`, error.status, error.code)
     : error.code !== "invalid_account" ? error
-    : new LocalError(`The Ovis on this PC did not take the id of the account you signed in to (${shortId(joining.signedIn)}) for its code (${error.message})`, error.status, error.code);
+    : new LocalError(`The Ovis on this PC did not take the id of the account you signed in to (${shortAccount(joining.signedIn)}) for its code (${error.message})`, error.status, error.code);
   const mint = async (): Promise<void> => {
     minted++;
     pinned = null;
@@ -1016,7 +1079,7 @@ async function addByQr(options: LinkOptions, api: Api, joining: Joining): Promis
     tied = offer.expect_account !== undefined;
     for (const answer of [offer, typed]) {
       if (answer?.expect_account !== undefined && answer.expect_account !== joining.signedIn) {
-        throw new LocalError(`The Ovis on this PC made its code for another Ovis account (${shortId(answer.expect_account)}) than the one you signed in to (${shortId(joining.signedIn)}). Run ${cli(options)} add again.`);
+        throw new LocalError(`The Ovis on this PC made its code for another Ovis account (${shortAccount(answer.expect_account)}) than the one you signed in to (${shortAccount(joining.signedIn)}). Run ${cli(options)} add again.`);
       }
     }
     pinned = offer.pairing?.id ?? null;
@@ -1210,7 +1273,7 @@ async function addByQr(options: LinkOptions, api: Api, joining: Joining): Promis
           // device paired before to do it. Whoever came since the first code goes, with no question: nobody here
           // vouches for that account, and this PC is out of it again once its members here are gone
           const { outcomes, open } = await clear(list);
-          const said = `This PC joined another Ovis account (${shortId(account)})${label === null ? "" : `, added by ${label}`}, not the one you signed in to (${shortId(joining.signedIn)}).${removals(outcomes, false)}`;
+          const said = `This PC joined another Ovis account (${shortAccount(account)})${label === null ? "" : `, added by ${label}`}, not the one you signed in to (${shortAccount(joining.signedIn)}).${removals(outcomes, false)}`;
           // where that leaves this PC. When its devices or its account cannot be read, more of that account's devices
           // may be paired than were removed: that is said, with the way to end them, rather than left to the next run
           let unread = open !== null && open !== "more" ? open.unread : null;
@@ -1340,7 +1403,7 @@ async function addByQr(options: LinkOptions, api: Api, joining: Joining): Promis
           }
         }
         if (added && joined.enrolling !== true && strays.length === 0) {
-          say(`This PC is in your account (${shortId(joining.signedIn)})${label === null ? "" : `, added by ${label}`}: every device of your account can use it.\n`);
+          say(`This PC is in your account (${shortAccount(joining.signedIn)})${label === null ? "" : `, added by ${label}`}: every device of your account can use it.\n${loginClosing(options)}`);
           return unremoved ? 1 : 0;
         }
       } catch (error) {
@@ -1428,10 +1491,10 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
   }
   if (first.account !== null) {
     if (first.enrolling !== true) {
-      out(`This PC is already in an Ovis account (${shortId(first.account)}).\n`);
+      out(`This PC is already in an Ovis account (${shortAccount(first.account)}).\n`);
       return 0;
     }
-    out(`This PC is already in an Ovis account (${shortId(first.account)}), but its account's other devices are not in yet. Open the Ovis app on the phone that added it. Waiting for them; press Ctrl+C to stop.\n`);
+    out(`This PC is already in an Ovis account (${shortAccount(first.account)}), but its account's other devices are not in yet. Open the Ovis app on the phone that added it. Waiting for them; press Ctrl+C to stop.\n`);
     const stopAt = now() + WAITING_MS;
     for (;;) {
       await wait(POLL_MS, signal);
@@ -1444,7 +1507,7 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
         return 1;
       }
       if (again !== null && again.enrolling !== true) {
-        out(`This PC is in an Ovis account (${shortId(again.account ?? first.account)}): every device of that account can use it.\n`);
+        out(`This PC is in an Ovis account (${shortAccount(again.account ?? first.account)}): every device of that account can use it.\n`);
         return 0;
       }
       if (now() >= stopAt) {
@@ -1476,30 +1539,14 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
   const requester = { label: hostname(), os: accountOsOfPlatform(process.platform) };
   const startOptions = { service: options.accountService, store, lock, fetch: serviceFetch, now, wait, requester };
   const signIn = offer !== null && offer.page.length > 0 ? await startLinkPageSignIn(startOptions, offer.device[0] ?? "github") : await startDeviceSignIn({ ...startOptions, provider: forced ?? offer?.device[0] ?? "github" });
-  const provider = signIn.provider;
-  out((provider === "ovis"
-    ? [
-      "",
-      "Sign in to your Ovis account:",
-      `open ${signIn.verificationUri} on any device and enter the code: ${signIn.userCode}`,
-      ...(signIn.verificationUriComplete === null ? [] : ["or scan this QR code with the phone's camera:", qr(signIn.verificationUriComplete)]),
-      // a test copy of the service may ask for another sign-in there
-      options.accountService === DEFAULT_ACCOUNT_SERVICE ? "Then continue with GitHub or Google there. Waiting for the sign-in…" : "Then sign in there. Waiting for the sign-in…",
-      "",
-    ]
-    : [
-      "",
-      `Sign in to your Ovis account with ${provider === "github" ? "GitHub" : "Google"}:`,
-      `open ${signIn.verificationUri} on any device and enter the code: ${signIn.userCode}`,
-      "Waiting for the sign-in…",
-      "",
-    ]).join("\n"));
+  out(signInSteps(signIn, { ...options, label: requester.label, expiresIn: remaining(Math.max(0, signIn.expiresAt - now())) }));
   await signIn.finish(signal);
   const service = new AccountService({ store, lock, fetch: serviceFetch, now });
   const session = await service.session();
   const signedIn = session?.account ?? null;
-  const pending: { listing: Listing | null } = { listing: null };
+  const pending: { listing: Listing | null; kept: boolean } = { listing: null, kept: false };
   const unlisted = "This PC could not be listed in your account again just now; it is tried again until it is.\n";
+  const kept = "This PC stays listed, but an earlier run listed it, so your other devices may no longer show it as new.\n";
   try {
     if (session === undefined || signedIn === null) throw new LocalError("The sign-in did not last. Run this again.");
     if (preview && !mode.approve) {
@@ -1513,21 +1560,22 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
       }
     }
     const first = await listThisPc(api, service, now, pending);
+    if (pending.kept) out(kept);
     if (pending.listing !== null) out(unlisted);
     // a renewal's listing not put back yet goes back first: an account that does not list the PC gives it no pass
-    if (pending.listing !== null && await putListing(service, pending.listing)) { pending.listing = null; await nameRelayAccount(api, service); }
+    if (pending.listing !== null && await putListing(api, service, pending.listing)) { pending.listing = null; await nameRelayAccount(api, service); }
     try { await relayOnline(options, api); } catch (error) {
       if (!(error instanceof LocalError)) throw error;
       throw new LocalError(`This PC stays listed in your account, but its Ovis relay is not online yet (${error.message}) Run this again once it is.`);
     }
     const name = first.entry.label;
     if (!mode.approve) {
-      out(preview ? `This PC is listed in that account as ${name}.\n` : `Signed in. This PC is listed in your account as ${name}.\n`);
+      out(`${STEP_INDENT}${preview ? `This PC is listed in that account as ${name}.` : `Signed in. This PC is listed in your account as ${name}.`}\n`);
       return await addByQr(options, api, {
         signedIn, status, plain: mode.print || options.isTty !== true,
         unlist: () => { pending.listing = null; return service.deletePc(first.serverId).then(() => true, () => false); },
         name: () => nameRelayAccount(api, service),
-        tend: async () => { if (pending.listing !== null && await putListing(service, pending.listing)) pending.listing = null; },
+        tend: async () => { if (pending.listing !== null && await putListing(api, service, pending.listing)) pending.listing = null; },
       });
     }
     let listedAt = now();
@@ -1539,7 +1587,9 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
     let added = false;
     let away = false;
     out([
-      `Signed in. This PC is listed in your account as ${name}.`,
+      `${STEP_INDENT}Signed in. This PC is listed in your account as ${name}.`,
+      "",
+      "2/2  Approve the device that adds this PC",
       `On a device already signed in to this account (the Ovis app or ${appHost(options, options.app ?? "https://app.ovis.sh")}), choose Add on ${name}.`,
       "If it shows Join there instead, choose Join, then Ask to join or Type the number.",
       "Its request shows here to approve. Press Ctrl+C to stop.",
@@ -1554,7 +1604,7 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
       pending.listing = null;
       const unlistedThere = await service.deletePc(first.serverId).then(() => true, () => false);
       await api("POST", "/api/account/relay-account", { body: { account } }).catch(() => undefined);
-      say(`This PC joined another Ovis account (${shortId(account)}), not the one you signed in to (${shortId(signedIn)}). ${unlistedThere ? "It was taken off the list of the account you signed in to." : "It could not be taken off the list of the account you signed in to; remove it there."} If that was not you, open Settings → Devices and PCs on this PC and choose Revoke all.\n`);
+      say(`This PC joined another Ovis account (${shortAccount(account)}), not the one you signed in to (${shortAccount(signedIn)}). ${unlistedThere ? "It was taken off the list of the account you signed in to." : "It could not be taken off the list of the account you signed in to; remove it there."} If that was not you, open Settings → Devices and PCs on this PC and choose Revoke all.\n`);
       return 1;
     };
     let lastListed = false;
@@ -1617,7 +1667,7 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
         const joined = await status();
         if (joined.account !== null && joined.account !== signedIn) return await elsewhere(joined.account);
         if (joined.account !== null && joined.enrolling !== true) {
-          say(`This PC is in your account (${shortId(joined.account)}): every device of your account can use it.\n`);
+          say(`This PC is in your account (${shortAccount(joined.account)}): every device of your account can use it.\n${loginClosing(options)}`);
           return 0;
         }
         added = joined.account !== null;
@@ -1626,16 +1676,18 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
           say("Added. Bringing in your account's other devices…\n");
         }
         // a listing a renewal took away goes back, also once this PC is in the account: unlisted, it gets no relay pass
-        if (pending.listing !== null && now() < stopAt && await putListing(service, pending.listing)) pending.listing = null;
+        if (pending.listing !== null && now() < stopAt && await putListing(api, service, pending.listing)) pending.listing = null;
         if (!added && now() < stopAt) {
           const last = lastLooks();
           let opened = false;
           if ((now() - listedAt >= RELIST_MS || (last && !lastListed)) && mayOpen()) {
             // a renewal that failed after its DELETE went out keeps waiting: the listing is put back above, as after a failed PUT.
             // None in the last ten minutes: it would show the PC as new for ten more, past the window's end
+            const keptBefore = pending.kept;
             try { await listThisPc(api, service, now, pending); } catch (error) {
               if (pending.listing === null) throw error;
             }
+            if (pending.kept && !keptBefore) say(kept);
             if (pending.listing !== null) say(unlisted);
             listedAt = now();
             openedAt = listedAt;
@@ -1681,10 +1733,50 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
       }
     }
   } finally {
-    if (pending.listing !== null && !await putListing(service, pending.listing)) out("This PC dropped out of your account's list; run link again to list it.\n");
+    if (pending.listing !== null && !await putListing(api, service, pending.listing)) out("This PC dropped out of your account's list; run link again to list it.\n");
     // the sign-in was only for this: it ends with it, and nothing of it stays on the PC
     await service.signOut().catch(() => out("The sign-in could not be ended at the account service; it ends by itself when it runs out.\n"));
   }
+}
+
+const STEP_INDENT = "     ";
+const step = (lines: readonly string[]): string[] => lines.map((line) => line === "" ? "" : STEP_INDENT + line);
+
+/**
+ * Step 1 of `ovis login`, laid out as `codex login` is: on a desktop the sign-in page opens by itself, with the code
+ * filled in where the service gives one, and the address stays on screen for another device; anywhere else (SSH,
+ * --no-browser, no desktop) the address and the code to type are the screen, with a QR code of the filled-in page.
+ */
+function signInSteps(
+  signIn: { readonly provider: string; readonly verificationUri: string; readonly verificationUriComplete: string | null; readonly userCode: string },
+  options: LinkOptions & { readonly label: string; readonly expiresIn: string },
+): string {
+  const page = signIn.verificationUriComplete ?? signIn.verificationUri;
+  // a test copy of the service may ask for another sign-in there
+  const there = signIn.provider !== "ovis" ? `Sign in with ${signIn.provider === "github" ? "GitHub" : "Google"} there.`
+    : options.accountService === DEFAULT_ACCOUNT_SERVICE ? "Then continue with GitHub or Google there." : "Then sign in there.";
+  const opened = options.openBrowser?.(page) === true;
+  // the QR code keeps the left edge: a scanner needs its quiet zone, not an indent
+  const body = opened
+    ? step([
+      "Opening your browser at:",
+      `  ${page}`,
+      `Check that the page shows the code ${signIn.userCode}, then continue there.`,
+      `No browser here? Open ${signIn.verificationUri} on any device and enter that code.`,
+      "",
+      `Waiting for the sign-in… (expires in ${options.expiresIn}, Ctrl+C to cancel)`,
+    ])
+    : [
+      ...step([`1. On any device, open: ${signIn.verificationUri}`, `2. Enter this code: ${signIn.userCode}   (expires in ${options.expiresIn})`]),
+      ...signIn.verificationUriComplete === null ? [] : [...step(["Or scan this to open the page with the code filled in:"]), qr(signIn.verificationUriComplete).replace(/\n+$/, "")],
+      ...step([there, "", `Enter the code only if you started ${cli(options)} login yourself.`, "Waiting for the sign-in… (Ctrl+C to cancel)"]),
+    ];
+  return ["", `Add this PC (${options.label}) to your Ovis account`, "", "1/2  Sign in", ...body, ""].join("\n");
+}
+
+/** What `ovis login` ends with once this PC is in the account. */
+export function loginClosing(options: LinkOptions): string {
+  return `The sign-in was only for this and ends with it; nothing of it is kept on this PC.\nCheck: ${cli(options)} status      Undo: ${cli(options)} logout\n`;
 }
 
 export async function link(args: readonly string[], options: LinkOptions): Promise<number> {
@@ -1702,7 +1794,11 @@ export async function link(args: readonly string[], options: LinkOptions): Promi
     if (options.signal.aborted) { options.out("Stopped.\n"); return 1; }
     // the account's list refused this PC for want of room (409 directory_full): its code alone says nothing to a person
     const full = error instanceof AccountServiceError && error.code === "directory_full";
-    options.out(`Could not link this PC: ${full ? `Your account holds as many PCs as it can. Remove one in the Ovis app, then run ${cli(options)} add again.` : error instanceof Error ? error.message : String(error)}\n`);
+    // 409 pc_left: this PC left that account with ovis logout, and its own proof did not come with the listing
+    const left = error instanceof AccountServiceError && error.code === "pc_left";
+    options.out(`Could not link this PC: ${full ? `Your account holds as many PCs as it can. Remove one in the Ovis app, then run ${cli(options)} add again.`
+      : left ? `This PC left that account (${cli(options)} logout), and the Ovis running on it did not prove it is this PC, which listing it again takes. Update Ovis on this PC (Settings → Updates), then run ${cli(options)} login again.`
+      : error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
 }

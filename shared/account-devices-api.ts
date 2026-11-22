@@ -30,8 +30,8 @@ function fail(message: string): never {
   throw new AccountDevicesApiError(message);
 }
 
-/** Device table P15: the journal kinds a notice can carry; `release` and `admit` are the recovery's own (R11). */
-export type NoticeKind = "admit" | "drop" | "remove" | "block" | "lift" | "promote" | "confirm" | "lock" | "unlock" | "account" | "method" | "merge" | "release";
+/** Device table P15: the journal kinds a notice can carry; `release` and `admit` are the recovery's own (R11), `tailnet` a block or Allow of a tailnet node (server/tailnet-nodes.ts). */
+export type NoticeKind = "admit" | "drop" | "remove" | "block" | "lift" | "promote" | "confirm" | "lock" | "unlock" | "account" | "method" | "merge" | "release" | "tailnet";
 
 /** Device table P18, T34, T58: the registering sign-in provider for a list admission, if the snapshot still names it. */
 export type NoticeSignInMethod = "github" | "google" | "apple" | null;
@@ -145,7 +145,10 @@ export type RecoveryAction =
   | { readonly act: "remove"; readonly targets: readonly string[] }
   | { readonly act: "revoke_all" }
   | { readonly act: "lift"; readonly blocks: readonly string[] }
-  | { readonly act: "admit"; readonly pending: string; readonly fingerprint: string };
+  | { readonly act: "admit"; readonly pending: string; readonly fingerprint: string }
+  // adding this PC to its owner's account from another PC over SSH (docs/account.md, "Adding a PC over SSH")
+  | { readonly act: "account_add_inspect" }
+  | { readonly act: "account_add_take"; readonly account: string; readonly server_id: string };
 
 /** A safety record still in force, named by the ID the recovery socket accepts for a lift. */
 export type RecoveryStanding = {
@@ -207,11 +210,13 @@ export function parseBlockReceipt(value: unknown): BlockReceipt {
 
 /** Device table R11: one recovery act; throws AccountDevicesApiError. Every list names 1-64 entries. */
 export function parseRecoveryAction(value: unknown): RecoveryAction {
-  const action = shape(value, ["act", "rows", "targets", "blocks", "pending", "fingerprint"]);
+  const action = shape(value, ["act", "rows", "targets", "blocks", "pending", "fingerprint", "account", "server_id"]);
   const only = (...fields: string[]) => Object.keys(action).every((name) => name === "act" || fields.includes(name));
   const ok = (() => {
     switch (action.act) {
-      case "list": case "revoke_all": return only();
+      case "list": case "revoke_all": case "account_add_inspect": return only();
+      case "account_add_take": return only("account", "server_id") && typeof action.account === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(action.account)
+        && typeof action.server_id === "string" && HEX32.test(action.server_id);
       case "release": return only("rows") && ids(action.rows, ROW_ID);
       case "undo": return only("rows") && (action.rows === null || ids(action.rows, ROW_ID));
       // a row id or an account key, nothing in between

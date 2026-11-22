@@ -35,6 +35,7 @@ import { chromePath } from "../chrome-path.ts";
 import { servePagesSite } from "../pages-static.ts";
 import { link } from "../plugin-link.ts";
 import { relayBrowserSocket } from "../relay-browser-bridge.ts";
+import { openSettingsPage } from "../settings-page.ts";
 import { shownRow } from "../shown-rows.ts";
 import { exitCode, runSteps, table, type Step } from "./verdict.ts";
 
@@ -254,14 +255,16 @@ async function typeInto(device: Device, pane: string, what: string): Promise<str
 
 async function listedPcs(device: Device): Promise<string[]> {
   const { page } = device;
-  await page.goto(`${APP}/`, { waitUntil: "domcontentloaded" });
-  await page.locator("[data-pc-list] [data-pc-id]").first().waitFor();
-  return page.locator("[data-pc-list] [data-pc-id]").evaluateAll((rows) => [...new Set(rows.map((row) => row.getAttribute("data-pc-id") ?? ""))]);
+  // Add a PC (#16: the signed-in front page lists only this device's own PCs): each PC a link to its own page, /s/<id>/
+  await page.goto(`${APP}/#add`, { waitUntil: "domcontentloaded" });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.locator("a.relay-add-saved-pc").first().waitFor();
+  return page.locator("a.relay-add-saved-pc").evaluateAll((links) => [...new Set(links.map((link) => /^\/s\/([^/]+)\/$/.exec(link.getAttribute("href") ?? "")?.[1] ?? ""))]);
 }
 
 async function openFromList(device: Device, pc: Pc, page = device.page): Promise<void> {
   if (page.url() !== `${APP}/`) await page.goto(`${APP}/`, { waitUntil: "domcontentloaded" });
-  await page.locator(`[data-pc-list] [data-pc-id="${pc.offer?.server_id}"] [data-pc-action="open"]`).first().click();
+  await page.locator(`a.relay-add-saved-pc[href="/s/${pc.offer?.server_id}/"]`).click();
   await inApp(page);
 }
 
@@ -403,18 +406,24 @@ const steps: Step<World>[] = [
     await shot(w.phone!.page, "opened-from-list-390");
     return "opened from the list; its terminal drew";
   } },
-  { id: "desktop.forgets-pc", title: "The desktop forgets the second PC: its key is deleted there and the list no longer opens it", needs: ["desktop.opens-from-list"], run: async (w) => {
+  { id: "desktop.forgets-pc", title: "The desktop forgets the second PC from its Settings: its key is deleted there and Add a PC no longer lists it as this device's", needs: ["desktop.opens-from-list"], run: async (w) => {
     const { page } = w.desktop!;
     const id = w.laptop.offer!.server_id;
-    await page.goto(`${APP}/`, { waitUntil: "domcontentloaded" });
-    await page.locator(`[data-pc-list] [data-pc-id="${id}"]`).first().click();
-    const details = page.locator(`[data-pc-details="${id}"]`);
-    await details.getByRole("button", { name: "Forget this PC" }).click();
+    await openFromList(w.desktop!, w.laptop);
+    await page.locator(".sidebar-footer").getByRole("button", { name: "Settings", exact: true }).click();
+    await openSettingsPage(page, "Devices and PCs");
+    await page.locator(".settings-dialog").getByRole("button", { name: "Forget this PC", exact: true }).click();
     await page.getByRole("button", { name: "Forget", exact: true }).click();
-    await page.waitForFunction((id) => document.querySelector(`[data-pc-list] [data-pc-id="${id}"] [data-pc-action="open"]`) === null, id);
+    // Forget goes to the front page; Add a PC lists the PC, still in the account, only as one needing approval
+    await page.waitForURL(`${APP}/`);
+    await page.goto(`${APP}/#add`, { waitUntil: "domcontentloaded" });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.locator("a.relay-add-saved-pc").first().waitFor();
     assert.equal(await savedKey(page, id), false, "the desktop's key for the PC is gone");
+    const notes = await page.locator(`a.relay-add-saved-pc[href="/s/${id}/"]`).evaluateAll((links) => links.map((link) => link.querySelector(".relay-add-saved-note")?.textContent ?? null));
+    assert.ok(notes.every((note) => note === "Needs approval"), `Add a PC lists the forgotten PC only as the account's (${JSON.stringify(notes)})`);
     await shot(page, "forgot-1440");
-    return "Forget this PC deleted the key; the row offers no Open";
+    return `Forget this PC deleted the key; Add a PC lists it ${notes.length === 0 ? "no more" : "as needing approval"}`;
   } },
   { id: "network.stays-in", title: "Every request of both devices went to the app, the account service or the relay; none reached a PC directly", run: async (w) => {
     const pcs = [w.desk.base, w.laptop.base];

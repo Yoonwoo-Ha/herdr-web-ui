@@ -155,10 +155,6 @@
   white-space: nowrap;
 }
 
-.settings-change-pc {
-  margin-top: var(--space-2);
-}
-
 .settings-tab-chevron {
   display: none;
 }

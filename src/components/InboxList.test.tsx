@@ -271,13 +271,54 @@ describe("InboxList", () => {
     expect([asking("w1D:p1"), asking("w1E:p1"), asking("w1C:p1"), asking("w1F:p1")]).toEqual([true, true, false, false]);
   });
 
-  it("leads the words with the PC's name only when more than one PC is shown", async () => {
+  it("groups the rows under one short header line per PC, in the PCs' order, when more than one PC is shown, and draws no header for one", async () => {
     const one = await draw(roster());
+    expect(byClass(one, "machine-header")).toEqual([]);
     expect(words(one, "w1C:p1")).toEqual(["Working"]);
     await act(async () => { renderer?.unmount(); });
     const root = await draw(twoPcs());
-    expect(words(root, "w1C:p1", "local")).toEqual(["workstation · Working"]);
-    expect(words(root, "w1C:p1", "laptop")).toEqual(["Laptop · Working"]);
+    const groups = byClass(root, "machine-group");
+    expect(groups.map((group) => [group.props["aria-label"], byClass(group, "machine-header").length, byClass(group, "machine-name").map(text)])).toEqual([
+      ["PC workstation", 1, ["workstation"]], ["PC Laptop", 1, ["Laptop"]],
+    ]);
+    for (const [index, id] of [[0, "local"], [1, "laptop"]] as const) {
+      const ids = byClass(groups[index]!, "inbox-item").map((node) => node.props["data-machine"]);
+      expect(ids.length).toBeGreaterThan(0);
+      expect(new Set(ids)).toEqual(new Set([id]));
+    }
+    expect(words(root, "w1C:p1", "local")).toEqual(["Working"]);
+    expect(words(root, "w1C:p1", "laptop")).toEqual(["Working"]);
+  });
+
+  it("folds a PC's group from its header as the sidebar folds that PC, the same fold kept for both, and opens it again", async () => {
+    const stored = new Map<string, string>();
+    const before = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); }, removeItem: (key: string) => { stored.delete(key); } } });
+    try {
+      const root = await draw(twoPcs());
+      const laptop = () => byClass(root, "machine-group").find((group) => group.props["aria-label"] === "PC Laptop")!;
+      const title = () => byClass(laptop(), "machine-title")[0]!;
+      expect([title().type, title().props["aria-expanded"], title().props["aria-label"]]).toEqual(["button", true, "Collapse Laptop"]);
+      await act(async () => { title().props.onClick(); });
+      expect([title().props["aria-expanded"], title().props["aria-label"], String(laptop().props.className).split(" ").includes("is-folded")]).toEqual([false, "Expand Laptop", true]);
+      expect(byClass(laptop(), "inbox-item")).toEqual([]);
+      expect(byClass(root, "inbox-item").every((node) => node.props["data-machine"] === "local")).toBe(true);
+      expect(stored.get("ovis:pc-collapsed:laptop")).toBe("1");
+      await act(async () => { renderer?.unmount(); });
+      const again = await draw(twoPcs());
+      expect(byClass(again, "inbox-item").some((node) => node.props["data-machine"] === "laptop")).toBe(false);
+      const reopen = byClass(byClass(again, "machine-group").find((group) => group.props["aria-label"] === "PC Laptop")!, "machine-toggle")[0]!;
+      await act(async () => { reopen.props.onClick(); });
+      expect(byClass(again, "inbox-item").some((node) => node.props["data-machine"] === "laptop")).toBe(true);
+      expect(stored.get("ovis:pc-collapsed:laptop")).toBe("0");
+    } finally {
+      if (before) Object.defineProperty(globalThis, "localStorage", before); else Reflect.deleteProperty(globalThis, "localStorage");
+    }
+  });
+
+  it("draws only the groups a filter or a query leaves a row in", async () => {
+    const root = await draw(twoPcs(), { query: "Laptop" });
+    expect(byClass(root, "machine-group").map((group) => group.props["aria-label"])).toEqual(["PC Laptop"]);
   });
 
   it("draws a PC that is away as disabled rows that say Offline, with no mark, and open nothing", async () => {
@@ -298,9 +339,12 @@ describe("InboxList", () => {
     expect(byClass(root, "inbox-add").length).toBe(0);
   });
 
-  it("says Offline after the name of a PC that is away when several PCs are shown", async () => {
+  it("says Offline on the rows of a PC that is away when several PCs are shown, its header faded with its dot", async () => {
     const root = await draw(twoPcs("disconnected"));
-    expect(words(root, "w1D:p1", "laptop")).toEqual(["Laptop · Offline"]);
+    expect(words(root, "w1D:p1", "laptop")).toEqual(["Offline"]);
+    const laptop = byClass(root, "machine-group").find((group) => group.props["aria-label"] === "PC Laptop")!;
+    expect(String(laptop.props.className).split(" ")).toContain("is-offline");
+    expect(byClass(laptop, "machine-dot").map((node) => [node.props.className, node.props.title])).toEqual([["machine-dot is-disconnected", "Disconnected"]]);
   });
 
   it("names a row for a screen reader: the agent's kind, its name, its state, then its words", async () => {
@@ -569,7 +613,7 @@ describe("InboxList", () => {
     const before = order(root);
     const moved = statusOf({ "w1E:p1": "blocked" });
     expect(inboxOrder(roster(), moved).map((row) => row.entry.pane.pane_id)).not.toEqual(before);
-    const list = () => byClass(root, "inbox-rows")[0]!;
+    const list = () => byClass(root, "inbox-groups")[0]!;
     const focusOn = (ring: boolean) => ({ target: { matches: (selector: string) => ring && selector === ":focus-visible" } });
     await act(async () => { list().props.onFocus(focusOn(true)); });
     await redraw({ activity: moved });

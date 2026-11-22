@@ -10,7 +10,7 @@ import { inRelayShell } from "../lib/useRelay.ts";
 const noRoute = (): (() => void) => () => {};
 
 function useDirectCarrier(relay: boolean): boolean {
-  const transport = relay ? getTransport() as { route?: unknown; onRouteChange?: (listener: () => void) => () => void } : null;
+  const transport = relay ? getTransport() : null;
   const subscribe = useCallback((listener: () => void) => transport?.onRouteChange ? transport.onRouteChange(listener) : noRoute(), [transport]);
   return useSyncExternalStore(subscribe, () => transport?.route === "direct");
 }

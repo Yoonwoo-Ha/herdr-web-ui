@@ -128,11 +128,9 @@ let stepping: Set<string> | null = null;
 /**
  * Where the browser tells its entries (the Navigation API), the key of the one the step on its way lands on: the entry
  * under the one it leaves, named as the step is asked, as the browser names it then. A sheet that makes its entry
- * meanwhile changes neither. Its landing is the popstate onto that entry (`landing`); any other is not the step's.
+ * meanwhile changes neither.
  */
 let stepOnto: string | null = null;
-let landing: Event | null = null;
-let landedOn: (event: Event) => boolean = () => false;
 let steppedOff = false;
 /**
  * A step the browser drops lands nowhere: the wait ends by itself (LANDING_MS), so the next Back is
@@ -178,14 +176,26 @@ function tellTraversalOver(): void {
   for (const listener of [...traversalOver]) listener();
 }
 
-/** The key of the entry the step on its way lands on; null with no step on its way, or where the browser tells no entries. */
-export function sheetBackOnto(): string | null {
-  return stepping === null ? null : stepOnto;
+/** The page a sheet's item leaves for (leavePageFromSheet), loaded once no step of a closing sheet is to come or on its way. */
+let departure: string | null = null;
+
+function depart(): void {
+  if (departure === null || stepping !== null || leaving.size > 0) return;
+  const url = departure;
+  departure = null;
+  window.location.assign(url);
 }
 
-/** Whether a popstate is the step on its way landing on the entry it was asked for, and no traversal of anyone else's. */
-export function sheetBackLanded(event: Event): boolean {
-  return landedOn(event);
+/**
+ * Leaves this page for `url` from an item of a sheet that closes as it runs (RowMenu closes the sheet first): the new page
+ * starts loading once the sheet's step off its entry has landed, from the entry under the sheet, so Back from it lands
+ * on the page the sheet was over. Started at once, the load loses to that step whenever the new page answers later than
+ * the step lands, as over a phone's network: Chromium cancels the load, and Android's WebView lands the step after the
+ * new page, which brings this one back. With no sheet's entry here, nor a step on its way, it loads at once.
+ */
+export function leavePageFromSheet(url: string): void {
+  departure = url;
+  if (!owned(window.history.state)) depart();
 }
 
 function stepBack(): void {
@@ -304,7 +314,7 @@ export function leaveSheet(id: string): void {
     heirs.delete(id);
     const key = entryKeys.get(id);
     entryKeys.delete(id);
-    if (sheetOf(window.history.state) !== id) return;
+    if (sheetOf(window.history.state) !== id) { depart(); return; }
     if (window.location.href !== address) { window.history.replaceState(ordinary(window.history.state, true), ""); seen = null; }
     else if (heir !== undefined && open.has(heir) && covered.delete(heir)) {
       window.history.replaceState({ ...(window.history.state as Record<string, unknown>), [KEY]: heir }, "");
@@ -317,6 +327,7 @@ export function leaveSheet(id: string): void {
       // its entry: the step leaves this entry too, and a second one would land under the entry it names
       stepBack();
     }
+    depart();
   }, 0));
 }
 
@@ -393,7 +404,6 @@ if (typeof window !== "undefined") {
     holding = false;
     const was = here;
     here = where();
-    landing = stepping !== null && stepOnto !== null && here?.key === stepOnto ? event : null;
     settle(here);
     ahead = null;
     took = climbing !== null && here?.key === climbing.key;
@@ -513,8 +523,8 @@ if (typeof window !== "undefined") {
     else if (!own && step === null && was !== null && here !== null && here.index === was.index - 1) ahead = was.key;
   };
   window.addEventListener("popstate", hear);
+  window.addEventListener("popstate", depart);
   sheetStep.holds = (event) => { hear(event as PopStateEvent); return holding; };
-  landedOn = (event) => { hear(event as PopStateEvent); return event === landing; };
   if (sheetOf(window.history.state) !== null) window.history.replaceState(ordinary(window.history.state, true), "");
 }
 

@@ -15,7 +15,12 @@ import { attachableIdentity, sidecarAvailable } from "./pty/sidecar.ts";
  * `generation` and `birth` identify the registering process beyond its PID; older bridges wrote neither.
  * `port` is on 127.0.0.1, the only address the app's SSH tunnel goes to (`loopbackRelay`).
  */
-export interface BridgeDescriptor { managed_remote?: boolean; port: number; token: string; pid: number; generation?: string; birth?: ProcessBirth; socket_path: string; bridge_protocol: number; bundle_version: string }
+/**
+ * `recover_socket`: the owner-only recovery socket of a PC's own Ovis (server/account/recovery.ts), named only by an
+ * independent server: another PC of its user reaches it over SSH to add it to an account (docs/account.md, "Adding a PC
+ * over SSH"). Older servers and bridges this app started name none.
+ */
+export interface BridgeDescriptor { managed_remote?: boolean; port: number; token: string; pid: number; generation?: string; birth?: ProcessBirth; socket_path: string; bridge_protocol: number; bundle_version: string; recover_socket?: string }
 /**
  * The bridges' folder. On Windows, Ovis's state migration leaves a junction at the legacy folder (to
  * `.config\\ovis`), and a process an SSH session started may not traverse it ("untrusted mount point"):
@@ -75,7 +80,7 @@ function liveIn(reading: { text: string } | null): boolean {
  * bridge holds the descriptor, when the descriptor changed while this one started, or when its
  * guard cannot be taken.
  */
-export function registerBridge(port: number, token = randomBytes(32).toString("hex"), options: { path?: string; sampled?(): void } = {}): { token: string; registered: boolean; close(): void } {
+export function registerBridge(port: number, token = randomBytes(32).toString("hex"), options: { path?: string; sampled?(): void; recoverSocket?: string } = {}): { token: string; registered: boolean; close(): void } {
   const path = options.path ?? descriptorPath();
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const unregistered = { token, registered: false, close() {} };
@@ -89,7 +94,8 @@ export function registerBridge(port: number, token = randomBytes(32).toString("h
       const now = readDescriptor(path);
       if (now?.id !== seen?.id || now?.text !== seen?.text || liveIn(now)) return false;
       const tmp = `${path}.${process.pid}.tmp`;
-      writeFileSync(tmp, JSON.stringify({ managed_remote: process.env["OVIS_REMOTE"] === "1", port, token, pid: process.pid, generation: record.generation, ...(record.birth ? { birth: record.birth } : {}), socket_path: socketPath(), bridge_protocol: BRIDGE_PROTOCOL, bundle_version: REMOTE_BUNDLE_VERSION } satisfies BridgeDescriptor), { mode: 0o600 });
+      const managed = process.env["OVIS_REMOTE"] === "1";
+      writeFileSync(tmp, JSON.stringify({ managed_remote: managed, port, token, pid: process.pid, generation: record.generation, ...(record.birth ? { birth: record.birth } : {}), socket_path: socketPath(), bridge_protocol: BRIDGE_PROTOCOL, bundle_version: REMOTE_BUNDLE_VERSION, ...(!managed && options.recoverSocket ? { recover_socket: options.recoverSocket } : {}) } satisfies BridgeDescriptor), { mode: 0o600 });
       chmodSync(tmp, 0o600);
       renameSync(tmp, path);
       return true;

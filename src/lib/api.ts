@@ -11,7 +11,8 @@ import type { SystemReport } from "../../shared/system.ts";
 import type { MovePlanResponse, MoveStartRequest, MoveStopAllOffer, MoveStopAllRequest, MoveStopRequest } from "../../shared/runtime-move.ts";
 import type { EditableText, PaneDocuments, TextSaved, TextSaveRequest } from "../../shared/files.ts";
 import { parseSystemReport } from "./systemReport.ts";
-import { machinePath, type OwnJoinRequest, type BridgeHealth, type HerdrCoreFacts, type HerdrIdentity, type HerdrRuntimeFacts, type Machine, type MachineRoster, type PendingKey, type RuntimeName, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
+import { TAILNET_NODE_ROUTES, type TailnetNodesAnswer } from "../../shared/tailnet-nodes.ts";
+import { machinePath, type OwnJoinRequest, type BridgeHealth, type HerdrCoreFacts, type HerdrIdentity, type HerdrRuntimeFacts, type Machine, type MachineRoster, type PcInstallJob, type PcInstallRequest, type PendingKey, type RuntimeName, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
 import type {
   WorkspaceMoved,
   HerdrPane,
@@ -151,6 +152,21 @@ export function startUsageLogin(request: UsageLoginRequest, signal?: AbortSignal
 
 export function fetchRemoteAccess(): Promise<RemoteAccess> {
   return getJson<RemoteAccess>("/api/access");
+}
+
+export type TailscaleServed = { ok: true; access: RemoteAccess } | { ok: false; code: string | null; operator: boolean };
+
+/** Has this PC's server run `tailscale serve` for itself (this PC's own window only): the access it then has, or its refusal. */
+export async function serveOnTailscale(): Promise<TailscaleServed> {
+  const response = await apiFetch("/api/access/tailscale/serve", { method: "POST", headers: { "x-herdr-machine": "1" } });
+  if (response.ok) return { ok: true, access: await response.json() as RemoteAccess };
+  const body = await response.json().catch(() => null) as { error?: { code?: string; operator?: boolean } } | null;
+  return { ok: false, code: body?.error?.code ?? null, operator: body?.error?.operator === true };
+}
+
+/** Opens the Tailscale app on this PC (this PC's own window only); false where it has none or it did not open. */
+export async function openTailscaleApp(): Promise<boolean> {
+  return (await apiFetch("/api/access/tailscale/open", { method: "POST", headers: { "x-herdr-machine": "1" } })).ok;
 }
 
 export function fetchUsage(refresh = false): Promise<UsageReport> {
@@ -359,7 +375,7 @@ export function closeRelayLink(windowId?: string): Promise<{ readonly ok: true }
   return getJson<{ readonly ok: true }>("/api/relay/link/close", { method: "POST", headers: { "x-herdr-update": "1", ...(windowId === undefined ? {} : { "x-ovis-window": windowId }) } });
 }
 
-/** GET /api/relay/joins: account joins waiting for this PC's own window, without their digits (403 `own_window_required` elsewhere). */
+/** GET /api/relay/joins: account joins waiting for this PC's own window, without their digits but a first join's (403 `own_window_required` elsewhere). */
 export async function fetchOwnJoins(): Promise<OwnJoinRequest[]> {
   return (await getJson<{ readonly joins: OwnJoinRequest[] }>("/api/relay/joins")).joins;
 }
@@ -369,11 +385,25 @@ export async function approveOwnJoin(id: string, digits: string): Promise<void> 
   await getJson<{ readonly ok: true }>("/api/relay/join", { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify({ id, digits }) });
 }
 
+/** POST /api/relay/join: Allow or Decline of a first join on this PC's own window, its digits compared there. */
+export async function decideOwnJoin(id: string, decision: "approve" | "decline"): Promise<void> {
+  const url = "/api/relay/join";
+  const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify({ id, decision }) });
+  if (!response.ok) throw await errorFrom(url, response);
+}
+
 /** POST /api/relay/pairing: the owner's answer to a phone waiting with the same digits (`relay-pairings` events). */
-export async function decideRelayPairing(id: string, decision: "approve" | "decline", digits?: string): Promise<void> {
+export async function decideRelayPairing(id: string, decision: "approve" | "decline", answer?: string | { proven_server_id: string; pc_label: string }): Promise<void> {
   const url = "/api/relay/pairing";
   // an account member approving through the relay names the digits it picked (docs/account.md, "Who may admit a device")
-  const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify({ id, decision, ...(digits === undefined ? {} : { digits }) }) });
+  const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify({ id, decision, ...(typeof answer === "string" ? { digits: answer } : answer) }) });
+  if (!response.ok) throw await errorFrom(url, response);
+}
+
+/** POST /api/account/confirm-page: opens this PC's confirm page on its own desktop (own window only; 409 when it cannot). */
+export async function openConfirmPage(): Promise<void> {
+  const url = "/api/account/confirm-page";
+  const response = await apiFetch(url, { method: "POST", headers: { "x-herdr-machine": "1" } });
   if (!response.ok) throw await errorFrom(url, response);
 }
 
@@ -879,6 +909,26 @@ export async function endPairing(code: string, keepalive = false): Promise<{ rea
 
 export async function renameDevice(id: string, label: string): Promise<PairedDevice> {
   return (await sendJson(`/api/devices/${encodeURIComponent(id)}`, "PATCH", { label })).json();
+}
+
+/** POST /api/devices/joins/seen: a join this window showed is seen, for every window of the PC (`device-paired-seen`). */
+export async function markJoinSeen(eventId: string): Promise<void> {
+  await sendJson("/api/devices/joins/seen", "POST", { event_id: eventId });
+}
+
+/** GET /api/devices/tailnet-nodes: the tailnet nodes of the owner's login this PC has seen, and the one waiting on the card (this PC's own window only). */
+export function fetchTailnetNodes(): Promise<TailnetNodesAnswer> {
+  return getJson<TailnetNodesAnswer>(TAILNET_NODE_ROUTES.list);
+}
+
+/** POST /api/devices/tailnet-nodes/block: these nodes get nothing by the owner's Tailscale login until Allow. */
+export async function blockTailnetNodes(ids: readonly string[]): Promise<TailnetNodesAnswer> {
+  return (await sendJson(TAILNET_NODE_ROUTES.block, "POST", { ids })).json();
+}
+
+/** POST /api/devices/tailnet-nodes/answer: Allow or Decline of the blocked node on the card; refused while the PC is locked. */
+export async function answerTailnetNode(id: string, decision: "allow" | "decline"): Promise<void> {
+  await sendJson(TAILNET_NODE_ROUTES.answer, "POST", { id, decision });
 }
 
 export async function revokeDevice(id: string): Promise<void> {
@@ -1483,11 +1533,11 @@ export const checkAccountPcs = (pcs: readonly AccountPcEntry[]) => machineReques
 /** POST /api/machines/relay/account/start: the key this PC would hold for that PC, for the admission to name; ApiError `account_pc_outdated` for an older one. */
 export const startAccountPc = (pc: AccountPcEntry) => machineRequest<{ ticket: string; key: string; label: string }>("/relay/account/start", "POST", { pc });
 /**
- * POST /api/machines/relay/account/pair: compares digits with that PC through the relay, `onDigits` told them once that
- * PC took the request, and resolves with the PC once a member of the account approved it there. Aborting `signal`
- * cancels it on this PC's server too. ApiError `account_pc_<failure>` otherwise.
+ * POST /api/machines/relay/account/pair: asks that PC through the relay, `onWaiting` told once that PC took the request
+ * and waits for a member of the account to approve it on another device, and resolves with the PC once one did. Aborting
+ * `signal` cancels it on this PC's server too. ApiError `account_pc_<failure>` otherwise.
  */
-export async function pairAccountPc(ticket: string, onDigits: (digits: string) => void, signal: AbortSignal): Promise<Machine> {
+export async function pairAccountPc(ticket: string, onWaiting: () => void, signal: AbortSignal): Promise<Machine> {
   const url = "/api/machines/relay/account/pair";
   const response = await apiFetch(url, { method: "POST", signal, headers: { "content-type": "application/json", "x-herdr-machine": "1", "x-herdr-update": "1" }, body: JSON.stringify({ ticket }) });
   if (!response.ok || response.body === null) throw await errorFrom(url, response);
@@ -1498,9 +1548,9 @@ export async function pairAccountPc(ticket: string, onDigits: (digits: string) =
     if (chunk.done) throw new ApiError(url, 502, "The answer ended early", null);
     buffer += chunk.value;
     for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
-      const line = JSON.parse(buffer.slice(0, end)) as { digits?: string; machine?: Machine; error?: { code: string; message: string } };
+      const line = JSON.parse(buffer.slice(0, end)) as { waiting?: true; machine?: Machine; error?: { code: string; message: string } };
       buffer = buffer.slice(end + 1);
-      if (typeof line.digits === "string") onDigits(line.digits);
+      if (line.waiting === true) onWaiting();
       if (line.machine) { void reader.cancel(); return line.machine; }
       if (line.error) { void reader.cancel(); throw new ApiError(url, 409, line.error.message, line.error.code); }
     }
@@ -1509,6 +1559,9 @@ export async function pairAccountPc(ticket: string, onDigits: (digits: string) =
 export const startMachineSetup = (request: SetupRequest) => machineRequest<SetupJob>("/setup", "POST", request);
 export const fetchMachineSetup = (id: string) => machineRequest<SetupJob>(`/setup/${encodeURIComponent(id)}`);
 export const answerMachineSetup = (id: string, action: SetupAction) => machineRequest<SetupJob>(`/setup/${encodeURIComponent(id)}`, "POST", action);
+/** Ovis installed on a PC over SSH with the official installer, pinned to this app's release (PcInstallJob) */
+export const startPcInstall = (request: PcInstallRequest) => machineRequest<PcInstallJob>("/install", "POST", request);
+export const fetchPcInstall = (id: string) => machineRequest<PcInstallJob>(`/install/${encodeURIComponent(id)}`);
 
 /** GET /api/voice: whether the server holds a key; the key itself never comes back. */
 export async function fetchVoiceStatus(): Promise<VoiceStatus> {

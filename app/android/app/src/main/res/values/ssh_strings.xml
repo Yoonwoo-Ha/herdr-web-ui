@@ -72,4 +72,9 @@
     <string name="ssh_fail_install_disk">That machine has %1$s free in its home folder; installing Ovis needs about 1 GB.</string>
     <string name="ssh_fail_install_failed">The install did not finish. %1$s\n\nRun it there to see why:\n\n%2$s</string>
     <string name="ssh_fail_other">Could not finish: %1$s</string>
+    <string name="ssh_method_tailscale">Tailscale SSH: no key (the PC runs Tailscale SSH)</string>
+    <string name="ssh_tailscale_note">Nothing to add on the PC: Tailscale lets this phone in as your Tailscale login, if that PC runs Tailscale SSH and its policy allows it. Tailscale may ask you to approve it once in the browser.</string>
+    <string name="ssh_tailscale_check">Tailscale SSH asks you to approve this phone. Open the link, approve, and the phone goes on by itself:\n\n%1$s</string>
+    <string name="ssh_open_link">Open the link</string>
+    <string name="ssh_fail_auth_tailscale">%1$s did not let this phone in without a key. Check that Tailscale SSH is on there (tailscale up --ssh) and that its policy allows your login, or sign in another way.</string>
 </resources>

@@ -1,10 +1,11 @@
 /**
  * Korean for the keys only the settings files use:
  * components/SettingsDialog.tsx (with THEME_NAMES), components/SignOutRow.tsx, components/KeyBarSettings.tsx,
- * components/SettingsControls.tsx, components/TelemetryControls.tsx, components/LinkBrowserRow.tsx, lib/paletteSettings.ts.
+ * components/SettingsControls.tsx, components/TelemetryControls.tsx, components/LinkBrowserRow.tsx, components/TerminalCommandRow.tsx, lib/paletteSettings.ts.
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const SETTINGS_KO: Record<string, string> = {
+  "Forget": "잊기",
   "Finished": "완료",
   "Direct typing": "직접 입력",
   "Microphone permission was denied": "마이크 권한이 거부되었습니다",
@@ -243,7 +244,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "agents hooks claude codex install": "에이전트 훅 claude codex 설치",
   "onboarding first run getting started welcome": "온보딩 처음 실행 시작하기 환영",
   "Agent integrations": "에이전트 통합",
-  "This page shows one PC. The front page lists every PC this phone is paired with.": "이 페이지는 PC 한 대를 보여줍니다. 첫 페이지에 이 폰과 페어링된 모든 PC가 나옵니다.",
   "Deletes this phone's key for this PC. Pairing again takes a new QR code from the PC.": "이 PC에 대한 이 폰의 키를 삭제합니다. 다시 페어링하려면 PC의 새 QR 코드가 필요합니다.",
 
   "Through Portal": "Portal 경유",
@@ -290,10 +290,27 @@ export const SETTINGS_KO: Record<string, string> = {
   "Remove PC {name}": "{name} PC 제거",
 
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "이 PC의 외부 알림 설정을 읽지 못했습니다({error}). 설정을 닫았다가 다시 여세요.",
-  "Opens the page of every PC this device reaches through the relay, to check, join or forget them.": "이 기기가 릴레이로 연결하는 모든 PC의 페이지를 열어 확인하거나 참여하거나 지울 수 있어요.",
-  "Manage|relayed connections": "관리",
   "Built-in browser": "내장 브라우저",
   "Blocked sites": "차단한 사이트",
   "Opens web pages in tabs inside this app: they are listed under Browser in the sidebar and open beside the pane. Its tabs are signed in to nothing you use elsewhere, and an agent's tabs keep cookies of their own.": "웹페이지를 이 앱 안의 탭으로 엽니다. 탭은 사이드바의 '브라우저' 아래에 나오고 패널 옆에 열립니다. 이 탭들은 다른 곳의 로그인을 쓰지 않고, 에이전트 탭은 쿠키를 따로 씁니다.",
   "The built-in browser never loads these sites or their subdomains, in your tabs or an agent's. One site per line.": "내장 브라우저는 이 사이트와 하위 도메인을 내 탭에서도 에이전트 탭에서도 열지 않습니다. 한 줄에 사이트 하나씩 적습니다.",
+  "Density": "밀도",
+  "Comfortable": "여유",
+  "Compact": "촘촘",
+  "Language": "언어",
+  "Interface font size": "인터페이스 글자 크기",
+  "Decrease interface font size": "인터페이스 글자 크기 줄이기",
+  "Increase interface font size": "인터페이스 글자 크기 키우기",
+  "Forget this PC?": "이 PC를 잊을까요?",
+  "This phone's key for it is deleted here, and the PC keeps listing this phone until it is revoked there. Pairing again takes a new QR code from the PC.": "이 폰에서 해당 키를 삭제합니다. PC에서는 폐기하기 전까지 이 폰이 목록에 남습니다. 다시 페어링하려면 PC의 새 QR 코드가 필요합니다.",
+  "Terminal command": "터미널 명령",
+  "Use ovis in a terminal": "터미널에서 ovis 쓰기",
+  "Adds the ovis command for this app: in a new terminal window, ovis login, ovis status and ovis approve work on this app's Ovis.": "이 앱의 ovis 명령을 추가합니다. 새 터미널 창에서 ovis login, ovis status, ovis approve가 이 앱의 Ovis에 동작합니다.",
+  "Add the command": "명령 추가",
+  "Adding the command…": "명령 추가 중…",
+  "Couldn't add the ovis command.": "ovis 명령을 추가하지 못했습니다.",
+  "{path} is the ovis command of another Ovis install: it stays as it is, and this app adds none.": "{path}은 다른 Ovis 설치의 ovis 명령입니다. 그대로 두고 이 앱은 명령을 추가하지 않습니다.",
+  "{path} comes first on your terminal's PATH, so ovis runs that one.": "터미널 PATH에서 {path}이 먼저 나오므로 ovis는 그것을 실행합니다.",
+  "{dir} is not on your terminal's PATH: add it there to run ovis.": "{dir} 폴더가 터미널 PATH에 없습니다. PATH에 추가해야 ovis를 실행할 수 있습니다.",
+  "Added ~/.local/bin to your PATH in {path}: open a new terminal window to run ovis.": "{path}에서 ~/.local/bin을 PATH에 추가했습니다. 새 터미널 창을 열어 ovis를 실행하세요.",
 };

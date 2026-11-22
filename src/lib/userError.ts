@@ -1,3 +1,4 @@
+import type { SetupErrorCode, SetupStepCode } from "../../shared/machines.ts";
 import { ApiError } from "./api.ts";
 import { t, type Translate } from "./i18n.ts";
 
@@ -100,8 +101,77 @@ export function machineErrorText(words: string, translateIn: Translate): string 
     ["Choose this PC's Ovis server or a running herdr session.", t("Choose this PC's Ovis server or a running herdr session.")],
     ["A herdr session is already running on this PC. Choose it, or start a new one.", t("A herdr session is already running on this PC. Choose it, or start a new one.")],
     ["The herdr session chosen for this PC is no longer running. Start it on that PC and reconnect, or choose again.", t("The herdr session chosen for this PC is no longer running. Start it on that PC and reconnect, or choose again.")],
+    ["That PC runs only a bridge this app started, not Ovis of its own. Install Ovis on it, then add it to your account.", t("That PC runs only a bridge this app started, not Ovis of its own. Install Ovis on it, then add it to your account.")],
+    ["Ovis is not running on that PC. Install it there, then add it to your account.", t("Ovis is not running on that PC. Install it there, then add it to your account.")],
+    ["Adding a Windows PC to your account over SSH is not supported yet. Add it with the number on its Ovis page.", t("Adding a Windows PC to your account over SSH is not supported yet. Add it with the number on its Ovis page.")],
+    ["That PC's Ovis is too old to be added over SSH. Update it there, then try again.", t("That PC's Ovis is too old to be added over SSH. Update it there, then try again.")],
   ];
   return known.reduce((text, [english, local]) => text.replaceAll(english, local), words);
+}
+
+/** a prerelease (-beta, -preview): offered only as a preview, never as a plain update */
+export function previewVersion(version: string | null | undefined): boolean {
+  return version?.includes("-") === true;
+}
+
+/**
+ * A failed setup's words in the app's language: from its code where the server gave one, else its English as
+ * machineErrorText reads it. A prerelease target is named a preview, with a line that it
+ * is a test build.
+ */
+export function setupErrorLines(job: { error: string | null; error_code?: SetupErrorCode | null }, t: Translate): string[] {
+  const coded = job.error_code;
+  if (!coded) return job.error ? [machineErrorText(job.error, t)] : [];
+  const older = coded.version ? t("This PC runs its own Ovis {version}, older than this app.", { version: `v${coded.version}` }) : t("This PC runs its own Ovis, older than this app.");
+  const preview = previewVersion(coded.target);
+  const update = coded.target === null ? t("Update it to reconnect.")
+    : preview ? t("Update it to the preview version {target} to reconnect.", { target: `v${coded.target}` })
+    : t("Update it to {target} to reconnect.", { target: `v${coded.target}` });
+  return [`${older} ${update}`, ...(preview ? [t("A preview version is a test build, not a stable release.")] : [])];
+}
+
+/**
+ * A setup step's words in the app's language: from its code where the server gave one, else as it came (an older
+ * server's English, a PC's own notice). An own Ovis's prerelease target is named a preview, as setupErrorLines does.
+ */
+export function setupStepText(job: { step: string; step_code?: SetupStepCode | null }, t: Translate): string {
+  const step = job.step_code;
+  if (!step) return job.step;
+  const ownStage = (stage: string): string => {
+    switch (stage) {
+      case "download": return t("downloading");
+      case "dependencies": return t("installing dependencies");
+      case "typecheck": return t("type-checking");
+      case "build": case "building": return t("building");
+      case "restart": case "restarting": return t("restarting");
+      default: return stage;
+    }
+  };
+  switch (step.code) {
+    case "connecting": return t("Connecting with SSH keys and ssh-agent…");
+    case "fingerprint": return t("Verify the server fingerprint");
+    case "authentication": return t("SSH authentication required");
+    case "checking": return t("Checking the remote environment…");
+    case "review": return t("Review the changes on this PC");
+    case "installing": return t("Installing on this PC…");
+    case "install_bundle": return t("Installing verified {platform} bundle…", { platform: step.platform });
+    case "install_herdr": return t("Installing herdr with its own installer…");
+    case "register_key": return t("Registering the app SSH key…");
+    case "restart_bridge": return t("Restarting the verified remote bridge…");
+    case "start_bridge": return t("Starting the remote bridge…");
+    case "own_update_ask": return step.target === null ? t("Asking this PC's own Ovis to update itself…")
+      : previewVersion(step.target) ? t("Asking this PC's own Ovis to update itself to the preview version {target}…", { target: `v${step.target}` })
+      : t("Asking this PC's own Ovis to update itself to {target}…", { target: `v${step.target}` });
+    case "own_update_running": return step.target === null ? t("This PC's own Ovis is updating itself: {stage}…", { stage: ownStage(step.stage) })
+      : previewVersion(step.target) ? t("This PC's own Ovis is updating itself to the preview version {target}: {stage}…", { target: `v${step.target}`, stage: ownStage(step.stage) })
+      : t("This PC's own Ovis is updating itself to {target}: {stage}…", { target: `v${step.target}`, stage: ownStage(step.stage) });
+    case "own_update_connect": return t("Connecting to this PC's updated Ovis…");
+    case "headless": return t("Starting without Windows sign-in…");
+    case "connected": return t("Connected");
+    case "failed": return t("Connection failed");
+    case "timed_out": return t("Connection timed out");
+    case "cancelled": return t("Cancelled");
+  }
 }
 
 export interface SshFailure {

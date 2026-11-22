@@ -30,6 +30,7 @@ import { checkFolderFilter, checkNewFolder } from "./folder-filter-regression.ts
 import { checkPaletteKeys } from "./palette-keys-regression.ts";
 import { checkFollowHerdrFocus } from "./follow-focus-regression.ts";
 import { checkRelayPanel } from "./relay-panel-regression.ts";
+import { checkConnectDialogScroll } from "./connect-dialog-scroll-regression.ts";
 import { systemUsageContext, UsageService } from "../server/usage.ts";
 import { openSettingsFolds, openSettingsPage } from "./settings-page.ts";
 import { assertCspClean, watchCsp } from "./csp-violations.ts";
@@ -768,10 +769,10 @@ try {
     await openSettingsPage(page, "Devices and PCs");
     await page.getByRole("dialog", { name: "Settings" }).getByRole("button", { name: "Add a connection", exact: true }).click();
     const connectSheet = page.getByRole("dialog", { name: "Add a connection", exact: true });
-    await connectSheet.locator('.connect-tabs [data-tab="direct"]').click();
+    await connectSheet.locator('.connect-tabs [data-tab="ssh"]').click();
     const sshAdd = connectSheet.locator(".connect-ssh-form").getByRole("button", { name: "Connect", exact: true });
     assert.equal(await sshAdd.isDisabled(), true, "Connect waits for an address");
-    await connectSheet.getByLabel("Address or SSH", { exact: true }).fill("qa@pc.invalid");
+    await connectSheet.getByLabel("Add another PC from this one", { exact: true }).fill("qa@pc.invalid");
     await sshAdd.click();
     await page.getByRole("dialog", { name: "Add PC", exact: true }).waitFor();
     assert.equal(await page.getByRole("dialog", { name: "Add PC", exact: true }).getByLabel("SSH alias or user@address", { exact: true }).inputValue(), "qa@pc.invalid", "Add PC opens with the typed address");
@@ -2466,6 +2467,7 @@ try {
     console.log("PASS Settings sign out: cancel preserves access, failure permits retry, token and paired-device sign out return to the access gate");
 
     await checkRelayPanel(browser);
+    await checkConnectDialogScroll(browser);
   }
 } catch (error) {
   for (const evidence of evidenceSessions) {

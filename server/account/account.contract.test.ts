@@ -1361,7 +1361,9 @@ test("a driving device hears of a device an account remove took, and of one revo
   expect(removed).toContain(`"device_id":"${accountDeviceId(SERVER_ID, gone.spki)}","label":"Mac app"`);
   expect(removed).toContain(`"by":{"device_id":"${device.id}","label":"Relay test"}`);
   f.app.context.services.devices.revoke(revoked.id);
-  expect(await events.until(`"device_id":"${revoked.id}"`)).toContain('"by":"pc"');
+  // the stream opened on the join of that device too, which nobody has seen yet: the removal is the one by the PC
+  const text = await events.until('"by":"pc"');
+  expect(text.slice(text.lastIndexOf('"type":"device-removed"'))).toContain(`"device_id":"${revoked.id}"`);
   await events.close();
 });
 

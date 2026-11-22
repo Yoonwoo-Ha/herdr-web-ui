@@ -3,14 +3,43 @@ import "./RelayAddPc.css";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, Globe, QrCode, SquareTerminal, type LucideIcon } from "lucide-react";
 
-import { useT } from "../lib/i18n.ts";
-import { callNative, hasNativePlugin } from "../lib/nativeApp.ts";
+import { useT, type Translate } from "../lib/i18n.ts";
+import { callNative, hasNativeMethod, hasNativePlugin } from "../lib/nativeApp.ts";
+import { ACCOUNT_PROVIDERS } from "../lib/account/store.ts";
 import { serverIdOfPath, serverScopePath } from "../lib/shellMode.ts";
 import { SheepMascot } from "./SheepMascot.tsx";
 
 /** The phone app's QR scanner (@capacitor/barcode-scanner, app/package.json) and its SSH screen (Android's OvisSsh). */
 const SCANNER = "CapacitorBarcodeScanner";
 const SSH = "OvisSsh";
+
+const SSH_TARGET = /^(?:ssh:\/\/)?([^\s@/:]+)@([^\s@/:[\]]+|\[[0-9a-f:.]+\])(?::(\d{1,5}))?\/?$/i;
+
+/**
+ * An SSH login typed where an address goes, `user@host` or `user@host:port` (or `ssh://` with them), as the app's own
+ * SSH field reads it (app/web/shell.js `sshOrAddress`): its text as `user@host[:port]`, or null for anything else.
+ */
+export function sshTarget(text: string): string | null {
+  const found = SSH_TARGET.exec(text.trim());
+  if (found === null) return null;
+  const port = found[3] === undefined ? 22 : Number(found[3]);
+  if (port < 1 || port > 65535) return null;
+  return `${found[1]}@${found[2]}${port === 22 ? "" : `:${port}`}`;
+}
+
+/**
+ * Whether this page can hand SSH to the phone app: a PC page (the hosted app's included) never adds an SSH PC itself
+ * (OvisSsh answers only the app's own pages), so it asks the app to open its own connect screen with the login filled
+ * in (HerdrShell openSshSetup), where the person adds it. An app without that, and a browser, have no SSH here.
+ */
+export function sshHandoff(): boolean {
+  return hasNativePlugin(SSH) && hasNativeMethod("HerdrShell", "openSshSetup");
+}
+
+/** Opens the app's own SSH screen, `target` (`user@host[:port]`) filled in, or empty to type one there. */
+export function openSshSetup(target: string): Promise<unknown> {
+  return callNative("HerdrShell", "openSshSetup", { target });
+}
 
 /**
  * An address typed as people write it: `my-pc.tailnet.ts.net`, `192.168.0.12:7421` or a whole URL. A bare IPv4
@@ -45,13 +74,25 @@ export function publicHttp(url: URL): boolean {
   return host.includes(".") && !/\.(local|lan|home\.arpa|internal)$/.test(host);
 }
 
+/**
+ * The PC page a link of this app's origin opens, built from the PC's scope: the page itself (`/s/<id>/`, no query) with
+ * its pairing offer, an account's sign-in (signInLink) or neither; null for anything else, a file under the scope too.
+ */
+function pcPage(url: URL): string | null {
+  const serverId = serverIdOfPath(url.pathname);
+  if (serverId === null || url.pathname !== serverScopePath(serverId) || url.search !== "") return null;
+  const signIn = url.hash.startsWith("#sign-in=") && (ACCOUNT_PROVIDERS as readonly string[]).includes(url.hash.slice("#sign-in=".length));
+  if (url.hash !== "" && !signIn && !url.hash.startsWith("#offer=")) return null;
+  return url.origin + serverScopePath(serverId) + url.hash;
+}
+
 /** Opens a PC's address: the phone app checks it is Ovis first (HerdrShell.open, app/web/connect.js); a browser goes there. */
 async function openAddress(url: URL): Promise<void> {
   if (hasNativePlugin("HerdrShell")) await callNative("HerdrShell", "open", { url: url.href, check: true });
   else window.location.assign(url.href);
 }
 
-function Way({ icon: Icon, title, sub, onClick, action }: { readonly icon: LucideIcon; readonly title: string; readonly sub: string; readonly onClick: () => void; readonly action: string }) {
+export function Way({ icon: Icon, title, sub, onClick, action }: { readonly icon: LucideIcon; readonly title: string; readonly sub: string; readonly onClick: () => void; readonly action: string }) {
   return (
     <button type="button" className="relay-add-way" data-action={action} onClick={onClick}>
       <span className="relay-add-way-icon"><Icon aria-hidden="true" /></span>
@@ -61,42 +102,77 @@ function Way({ icon: Icon, title, sub, onClick, action }: { readonly icon: Lucid
   );
 }
 
+export type SavedPc = { readonly server_id: string; readonly name?: string | undefined; readonly note?: string | undefined; readonly status?: "online" | "off" | undefined };
+
+/** The PCs this device paired before (and, signed in, the account's PCs not on it yet), each by its page. */
+export function SavedPcs({ devices }: { readonly devices: readonly SavedPc[] }) {
+  const t = useT();
+  return (
+    <section className="relay-add-saved">
+      <h2 className="relay-add-saved-title">{t("Your PCs")}</h2>
+      <ul>
+        {devices.map((device) => (
+          <li key={device.server_id}><a className="relay-add-saved-pc" href={serverScopePath(device.server_id)}><span className="relay-add-saved-name">{device.name ?? t("Unnamed PC")}</span>{device.note !== undefined && <span className="relay-add-saved-note">{device.note}</span>}<ChevronRight aria-hidden="true" /></a></li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** Whether the phone app around this page can scan a PC's QR code itself (a browser cannot). */
+export function canScanQr(): boolean {
+  return hasNativePlugin(SCANNER);
+}
+
 /**
- * Add a PC, the one screen behind "Start without signing in" and the app's Add a PC: scan the PC's QR code, enter an
- * address on Tailscale or Wi-Fi, or SSH where the phone app can, then the PCs this device paired before and, signed in,
- * the account's PCs not on it yet, each with what is known of it (`note`: off, needs approval). `qr`: the screen that
- * says where the QR code is and offers a code, for a page with no scanner of its own (a browser).
+ * Scans a PC's QR code with the phone app's scanner and hands what it read to `take`; `failed`: the scanner could not
+ * run (the camera refused). The plugin's own JS fills these defaults; the page calls the bridge without it (app/web/connect.js).
  */
-export function RelayAddPc({ onBack, devices, qr }: {
-  readonly onBack?: (() => void) | undefined;
-  readonly devices: readonly { readonly server_id: string; readonly name?: string | undefined; readonly note?: string | undefined }[];
-  readonly qr: (back: () => void) => ReactNode;
-}) {
-  const t = useT(), fieldId = useId(), title = useRef<HTMLHeadingElement>(null);
-  const [step, setStep] = useState<"ways" | "address" | "qr">("ways");
+export function scanQr(t: Translate, take: (url: URL | null) => void, failed: (cause: unknown) => void): void {
+  // the Android app asks for the camera itself first (HerdrShell camera): the scanner's own refusal is in English alone
+  const camera = hasNativeMethod("HerdrShell", "camera") ? callNative<{ granted?: boolean }>("HerdrShell", "camera") : Promise.resolve({ granted: true });
+  camera.then((answer) => {
+    if (answer.granted !== true) { failed(new Error(t("Ovis cannot use the camera. Allow it in the phone's Settings, under Apps, Ovis, Permissions."))); return; }
+    scan(t, take, failed);
+  }, failed);
+}
+
+function scan(t: Translate, take: (url: URL | null) => void, failed: (cause: unknown) => void): void {
+  void callNative<{ ScanResult?: string }>(SCANNER, "scanBarcode", { hint: 0, scanInstructions: t("Point at the QR code on the PC's screen"), scanButton: false, scanText: " ", cameraDirection: 1, scanOrientation: 3 }).then((result) => {
+    if (result.ScanResult) take(addressOf(result.ScanResult));
+  }, failed);
+}
+
+export type AddressOpen = ReturnType<typeof useAddressOpen>;
+
+/**
+ * What a scanned or typed address does, with the error it ends on: `cancel` stops an address the phone app is still
+ * checking (Android asks it for up to 20 s), which leaving the screen does by itself.
+ */
+export function useAddressOpen() {
+  const t = useT();
   const [error, setError] = useState<string | null>(null);
   // the public http address the person was just warned about: opening it again goes ahead
   const warned = useRef<string | null>(null);
-  // an address the phone app is still checking (Android asks it for up to 20 s): Back cancels it
   const opening = useRef(false);
-  const failed = (cause: unknown): void => { setError(cause instanceof Error ? cause.message : String(cause)); };
-  const go = (next: "ways" | "address" | "qr"): void => {
+  const cancel = (): void => {
     if (opening.current && hasNativePlugin("HerdrShell")) void callNative("HerdrShell", "cancelOpen").catch(() => undefined);
     opening.current = false;
-    setError(null); setStep(next);
   };
-  // a step that replaces the control that had the focus gives it to its own title, so a keyboard keeps its place
-  useEffect(() => { if (step === "ways" && document.activeElement === document.body) title.current?.focus(); }, [step]);
+  useEffect(() => cancel, []);
+  const failed = (cause: unknown): void => { setError(cause instanceof Error ? cause.message : String(cause)); };
   /**
    * What a scanned or typed address does: a pairing link of this app opens at its PC's page, where the pairing asks
-   * first; one of another origin is refused; a PC's own address opens (a public http one only after a warning); anything
+   * first, and so does an account PC's standing QR (its page, with the sign-in fragment or none: signInLink); a pairing
+   * link of another origin is refused; a PC's own address opens (a public http one only after a warning); anything
    * else says so.
    */
   const take = (url: URL | null): void => {
     if (url === null) { setError(t("That is not an http or https address.")); return; }
     const offer = url.hash.startsWith("#offer=");
     if (url.origin === window.location.origin) {
-      if (offer && serverIdOfPath(url.pathname) !== null) window.location.assign(url.href);
+      const page = pcPage(url);
+      if (page !== null) window.location.assign(page);
       else setError(t("That is not an http or https address."));
       return;
     }
@@ -110,18 +186,62 @@ export function RelayAddPc({ onBack, devices, qr }: {
     opening.current = true;
     openAddress(url).catch(failed).finally(() => { opening.current = false; });
   };
-  const scan = (): void => {
-    if (!hasNativePlugin(SCANNER)) { go("qr"); return; }
-    setError(null);
-    // the plugin's own JS fills these defaults; the page calls the bridge without it (app/web/connect.js). A scanner that
-    // cannot run (the camera refused) leads to the QR step, which offers a code instead
-    void callNative<{ ScanResult?: string }>(SCANNER, "scanBarcode", { hint: 0, scanInstructions: t("Point at the QR code on the PC's screen"), scanButton: false, scanText: " ", cameraDirection: 1, scanOrientation: 3 }).then((result) => {
-      if (result.ScanResult) take(addressOf(result.ScanResult));
-    }, () => go("qr"));
-  };
+  return { error, setError, failed, cancel, take };
+}
+
+/**
+ * A PC's address in one field (`label` names it) and its submit button, then what opening it ended on; `open`: the
+ * opener of a screen that has other ways to open a PC beside it, which then shows what opening ended on itself.
+ */
+export function AddressForm({ label, placeholder, submit: submitLabel, labelShown = false, autoFocus = false, open, ssh = false }: {
+  readonly label: string; readonly placeholder: string; readonly submit: string; readonly labelShown?: boolean; readonly autoFocus?: boolean; readonly open?: AddressOpen;
+  /** an SSH login typed here goes to the phone app's own SSH screen (sshHandoff) */
+  readonly ssh?: boolean;
+}) {
+  const fieldId = useId();
+  const own = useAddressOpen();
+  const { error, setError, failed, take } = open ?? own;
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
-    take(addressOf((event.currentTarget.elements.namedItem("address") as HTMLInputElement).value));
+    const typed = (event.currentTarget.elements.namedItem("address") as HTMLInputElement).value;
+    const login = ssh ? sshTarget(typed) : null;
+    if (login !== null) { setError(null); openSshSetup(login).catch(failed); return; }
+    take(addressOf(typed));
+  };
+  return (
+    <>
+      <form className="relay-add-form" onSubmit={submit} noValidate>
+        {labelShown && <label className="relay-shell-field-label" htmlFor={fieldId}>{label}</label>}
+        <input id={fieldId} name="address" className="input" type="url" inputMode="url" {...(labelShown ? {} : { "aria-label": label })} placeholder={placeholder} autoCapitalize="off" autoCorrect="off" spellCheck={false} autoComplete="url" autoFocus={autoFocus} />
+        <button type="submit" className="btn btn-primary">{submitLabel}</button>
+      </form>
+      {open === undefined && error !== null && <p className="account-error" role="alert">{error}</p>}
+    </>
+  );
+}
+
+/**
+ * Add a PC, the app's Add a PC (More → Add a PC, `/#add`): scan the PC's QR code, enter an address on Tailscale or
+ * Wi-Fi, or SSH where the phone app can, then the PCs this device paired before and, signed in, the account's PCs not
+ * on it yet, each with what is known of it (`note`: off, needs approval). `qr`: the screen that says where the QR code
+ * is and offers a code, for a page with no scanner of its own (a browser).
+ */
+export function RelayAddPc({ onBack, devices, qr }: {
+  readonly onBack?: (() => void) | undefined;
+  readonly devices: readonly SavedPc[];
+  readonly qr: (back: () => void) => ReactNode;
+}) {
+  const t = useT(), title = useRef<HTMLHeadingElement>(null);
+  const [step, setStep] = useState<"ways" | "address" | "qr">("ways");
+  const { error, setError, failed, cancel, take } = useAddressOpen();
+  const go = (next: "ways" | "address" | "qr"): void => { cancel(); setError(null); setStep(next); };
+  // a step that replaces the control that had the focus gives it to its own title, so a keyboard keeps its place
+  useEffect(() => { if (step === "ways" && document.activeElement === document.body) title.current?.focus(); }, [step]);
+  const scan = (): void => {
+    if (!canScanQr()) { go("qr"); return; }
+    setError(null);
+    // a scanner that cannot run (the camera refused) leads to the QR step, which offers a code instead
+    scanQr(t, take, () => go("qr"));
   };
   const back = step === "ways" ? onBack : () => go("ways");
   if (step === "qr") return <>{qr(() => go("ways"))}</>;
@@ -131,31 +251,19 @@ export function RelayAddPc({ onBack, devices, qr }: {
       {step === "ways" ? (
         <>
           <SheepMascot screen="header" size={56} badge />
-          <h1 className="relay-add-title" ref={title} tabIndex={-1}>{t("Add a PC|screen")}</h1>
+          <h1 className="relay-add-title" ref={title} tabIndex={-1}>{t("Connect a PC")}</h1>
           <div className="relay-add-ways">
             <Way icon={QrCode} title={t("Scan a QR code")} sub={t("The QR on the PC's screen")} action="add-qr" onClick={scan} />
             <Way icon={Globe} title={t("Enter an address")} sub="Tailscale · Wi-Fi" action="add-address" onClick={() => go("address")} />
-            {/* only where the phone app can reach a PC over SSH itself: a page without it draws no way it cannot take */}
-            {hasNativePlugin(SSH) && <Way icon={SquareTerminal} title="SSH" sub="user@host" action="add-ssh" onClick={() => { setError(null); callNative(SSH, "add").catch(failed); }} />}
+            {/* only where the phone app can take SSH to its own screen: a page without it draws no way it cannot take */}
+            {sshHandoff() && <Way icon={SquareTerminal} title="SSH" sub="user@host" action="add-ssh" onClick={() => { setError(null); openSshSetup("").catch(failed); }} />}
           </div>
-          {devices.length > 0 && (
-            <section className="relay-add-saved">
-              <h2 className="relay-add-saved-title">{t("Your PCs")}</h2>
-              <ul>
-                {devices.map((device) => (
-                  <li key={device.server_id}><a className="relay-add-saved-pc" href={serverScopePath(device.server_id)}><span className="relay-add-saved-name">{device.name ?? t("Unnamed PC")}</span>{device.note !== undefined && <span className="relay-add-saved-note">{device.note}</span>}<ChevronRight aria-hidden="true" /></a></li>
-                ))}
-              </ul>
-            </section>
-          )}
+          {devices.length > 0 && <SavedPcs devices={devices} />}
         </>
       ) : (
         <>
           <h1 className="relay-add-title">{t("Enter an address")}</h1>
-          <form className="relay-add-form" onSubmit={submit} noValidate>
-            <input id={fieldId} name="address" className="input" type="url" inputMode="url" aria-label={t("PC address")} placeholder="https://my-pc.tailnet.ts.net" autoCapitalize="off" autoCorrect="off" spellCheck={false} autoComplete="url" autoFocus />
-            <button type="submit" className="btn btn-primary">{t("Open")}</button>
-          </form>
+          <AddressForm label={t("PC address")} placeholder="https://my-pc.tailnet.ts.net" submit={t("Open")} autoFocus />
         </>
       )}
       {error !== null && <p className="account-error" role="alert">{error}</p>}

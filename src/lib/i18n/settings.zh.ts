@@ -1,10 +1,11 @@
 /**
  * Simplified Chinese for the keys only the settings files use:
  * components/SettingsDialog.tsx (with THEME_NAMES), components/SignOutRow.tsx, components/KeyBarSettings.tsx,
- * components/SettingsControls.tsx, components/TelemetryControls.tsx, components/LinkBrowserRow.tsx, lib/paletteSettings.ts.
+ * components/SettingsControls.tsx, components/TelemetryControls.tsx, components/LinkBrowserRow.tsx, components/TerminalCommandRow.tsx, lib/paletteSettings.ts.
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const SETTINGS_ZH: Record<string, string> = {
+  "Forget": "忘记",
   "Finished": "完成",
   "Direct typing": "直接输入",
   "Microphone permission was denied": "麦克风权限已被拒绝",
@@ -243,7 +244,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "agents hooks claude codex install": "Agent 钩子 claude codex 安装",
   "onboarding first run getting started welcome": "入门 首次运行 开始使用 欢迎",
   "Agent integrations": "代理集成",
-  "This page shows one PC. The front page lists every PC this phone is paired with.": "此页面只显示一台电脑。首页列出与此手机配对的所有电脑。",
   "Deletes this phone's key for this PC. Pairing again takes a new QR code from the PC.": "删除此手机对应这台电脑的密钥。重新配对需要电脑上新的二维码。",
 
   "Through Portal": "经由 Portal",
@@ -290,10 +290,27 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Remove PC {name}": "移除 PC {name}",
 
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "无法读取此 PC 的外部提醒设置（{error}）。请关闭设置后重新打开。",
-  "Opens the page of every PC this device reaches through the relay, to check, join or forget them.": "打开此设备通过中继连接的所有电脑的页面，可以检查、加入或移除它们。",
-  "Manage|relayed connections": "管理",
   "Built-in browser": "内置浏览器",
   "Blocked sites": "屏蔽的网站",
   "Opens web pages in tabs inside this app: they are listed under Browser in the sidebar and open beside the pane. Its tabs are signed in to nothing you use elsewhere, and an agent's tabs keep cookies of their own.": "在此应用内的标签页中打开网页：标签页列在侧边栏的“浏览器”下，并在窗格旁打开。这些标签页不使用你在别处的登录，Agent 的标签页使用各自的 Cookie。",
   "The built-in browser never loads these sites or their subdomains, in your tabs or an agent's. One site per line.": "内置浏览器不会在你的标签页或 Agent 的标签页中加载这些网站及其子域名。每行一个网站。",
+  "Density": "密度",
+  "Comfortable": "宽松",
+  "Compact": "紧凑",
+  "Language": "语言",
+  "Interface font size": "界面字号",
+  "Decrease interface font size": "减小界面字号",
+  "Increase interface font size": "增大界面字号",
+  "Forget this PC?": "忘记这台电脑？",
+  "This phone's key for it is deleted here, and the PC keeps listing this phone until it is revoked there. Pairing again takes a new QR code from the PC.": "此手机上的对应密钥将被删除；在电脑上撤销之前，它仍会列出这部手机。重新配对需要电脑上新的二维码。",
+  "Terminal command": "终端命令",
+  "Use ovis in a terminal": "在终端中使用 ovis",
+  "Adds the ovis command for this app: in a new terminal window, ovis login, ovis status and ovis approve work on this app's Ovis.": "为此应用添加 ovis 命令：在新的终端窗口中，ovis login、ovis status 和 ovis approve 将作用于此应用的 Ovis。",
+  "Add the command": "添加命令",
+  "Adding the command…": "正在添加命令…",
+  "Couldn't add the ovis command.": "无法添加 ovis 命令。",
+  "{path} is the ovis command of another Ovis install: it stays as it is, and this app adds none.": "{path} 是另一个 Ovis 安装的 ovis 命令：保持原样，此应用不添加命令。",
+  "{path} comes first on your terminal's PATH, so ovis runs that one.": "终端的 PATH 中 {path} 排在前面，因此 ovis 会运行它。",
+  "{dir} is not on your terminal's PATH: add it there to run ovis.": "{dir} 不在终端的 PATH 中：将其加入 PATH 才能运行 ovis。",
+  "Added ~/.local/bin to your PATH in {path}: open a new terminal window to run ovis.": "已在 {path} 中将 ~/.local/bin 加入 PATH：请打开新的终端窗口运行 ovis。",
 };

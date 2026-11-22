@@ -1,12 +1,11 @@
 /**
  * Simplified Chinese for the keys only the machines files use:
- * components/MachineSidebar.tsx (with STATE_WORD), components/MachineDialog.tsx,
+ * components/MachineSidebar.tsx (with STATE_WORD), components/MachineHeader.tsx, components/MachineDialog.tsx,
  * lib/bridgeProgress.ts (with STAGES), components/MachineStats.tsx, lib/systemReport.ts.
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const MACHINES_ZH: Record<string, string> = {
-  "1 agent": "1 个代理",
-  "{n} agents": "{n} 个代理",
+  "Inbox": "收件箱",
   "{where} refused the SSH connection: the PC may be off, or nothing answers on that port.": "{where} 拒绝了 SSH 连接：PC 可能已关机，或该端口上没有服务响应。",
   "{where} is not a name this web server can look up: check the address.": "{where} 不是此 Web 服务器能解析的名称：请检查地址。",
   "{where} did not answer in time: check that the PC is on and reachable.": "{where} 未及时响应：请确认 PC 已开机且可以访问。",
@@ -32,7 +31,6 @@ export const MACHINES_ZH: Record<string, string> = {
   "Review startup options": "查看启动选项",
   "{name} is waiting for Windows sign-in{others}.": "{name} 正在等待 Windows 登录{others}。",
   "Start without Windows sign-in": "不登录 Windows 直接启动",
-  "Starting without Windows sign-in…": "正在不登录 Windows 的情况下启动…",
   "Signing out of Windows ends herdr and its panes; lock the PC instead.": "注销 Windows 会结束 herdr 及其所有窗格；请改为锁定 PC。",
   "Starting without Windows sign-in can break Codex sandbox commands, and desktop-control tools may be unavailable. This choice applies to one start.": "不登录 Windows 直接启动可能导致 Codex 沙箱命令失败，桌面控制工具也可能无法使用。此选择仅适用于本次启动。",
   "Expand {name}": "展开 {name}",
@@ -46,7 +44,6 @@ export const MACHINES_ZH: Record<string, string> = {
   "Manage PC": "管理 PC",
   "PC name": "PC 名称",
   "Rename…": "重命名…",
-  "Disconnect": "断开连接",
   "Bridge connection conflict": "桥接连接冲突",
   "Update the apps connected to this PC to the same version, or disconnect the other app, then reconnect here. Sessions keep running.": "将连接此电脑的应用更新到相同版本，或断开其他应用的连接，然后在此重新连接。会话会继续运行。",
   "{name} has a bridge connection conflict{others}.": "{name} 的桥接连接发生冲突{others}。",
@@ -133,6 +130,7 @@ export const MACHINES_ZH: Record<string, string> = {
   "{name}'s own Ovis needs an update on that PC{others}.": "{name} 的 Ovis 需要在那台 PC 上更新{others}。",
   "Updating {name}'s own Ovis failed{others}.": "更新 {name} 的 Ovis 失败{others}。",
   "Update this PC's Ovis and connect": "更新此 PC 的 Ovis 并连接",
+  "Update this PC's Ovis to the preview and connect": "将此 PC 的 Ovis 更新到预览版并连接",
   "Updating {name}'s own Ovis": "正在更新 {name} 的 Ovis",
   "That PC's own updater installs it there. Existing herdr sessions keep running.": "由那台 PC 自己的更新程序在那里安装。现有的 herdr 会话继续运行。",
   "CPU": "CPU",
@@ -154,4 +152,15 @@ export const MACHINES_ZH: Record<string, string> = {
   "Disk {value}": "磁盘 {value}",
   "PC load in the status bar": "在状态栏显示 PC 负载",
   "The selected PC's CPU, memory and fullest disk in the status bar, on this device only.": "在状态栏显示所选 PC 的 CPU、内存和占用最高的磁盘，仅对此设备生效。",
+  "Add it to my account": "添加到我的账号",
+  "Adding it to your account…": "正在添加到你的账号…",
+  "Added to your account.": "已添加到你的账号。",
+  "It is already in your account.": "它已经在你的账号中。",
+  "That PC is in another account.": "那台电脑在另一个账号中。",
+  "Add it with the number on the server's Ovis page.": "请用服务器 Ovis 页面上显示的数字添加。",
+  "Sign in again on this PC, then add it again.": "请在这台电脑上重新登录，然后再次添加。",
+  "It was not added to your account. Try again.": "未能添加到你的账号。请重试。",
+  "Ovis was not installed on that PC": "未能在那台电脑上安装 Ovis",
+  "Installing Ovis on that PC…": "正在那台电脑上安装 Ovis…",
+  "Install Ovis there": "在那台电脑上安装 Ovis",
 };

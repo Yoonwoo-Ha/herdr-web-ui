@@ -41,8 +41,18 @@ final class PCStore {
     /** The address to open instead of the bare origin until a PC page loads: a pairing link keeps its code through Try again. In memory only, as it can hold that code. */
     static String pendingStart;
 
+    /**
+     * The connect screen is up to pick another way or PC, the current PC kept (HerdrShell chooseAnother, a PC page's
+     * Connect a PC): Back or its button reopens that PC, and opening another replaces it. In memory only, so an app
+     * started again opens the current PC.
+     */
+    static volatile boolean choosing;
+
     /** A PC's page on the hosted shell the app was opened with (appLink), until the connect screen takes it. In memory only, as it can hold a pairing offer's code. */
     static volatile String link;
+
+    /** The SSH login a page asked the connect screen to open on its SSH tab with (HerdrShellPlugin.openSshSetup), until it takes it. In memory only. */
+    static volatile String sshSetup;
 
     private static final Pattern PC_SCOPE = Pattern.compile("/s/([0-9a-f]{32})/?");
 
@@ -190,15 +200,18 @@ final class PCStore {
     }
 
     /**
-     * Whether an app link is one to pair from: the PC's scope alone or with its pairing offer, which
-     * the connect screen checks as it does a scanned QR code (app/web/shell.js relayLink). Any other
+     * Whether an app link is one to pair from: the PC's scope alone, with its pairing offer, or with a
+     * provider's sign-in (the QR code a PC in an account shows: sign in, then join it), which the
+     * connect screen checks as it does a scanned QR code (app/web/shell.js relayLink). Any other
      * fragment or query is a view of the PC (a file, a pane), which opens only a PC already saved.
      */
     static boolean pairingLink(String link) {
         URI uri = URI.create(link);
         String fragment = uri.getRawFragment();
-        return uri.getRawQuery() == null && (fragment == null || fragment.isEmpty() || fragment.startsWith("offer="));
+        return uri.getRawQuery() == null && (fragment == null || fragment.isEmpty() || fragment.startsWith("offer=") || SIGN_IN.matcher(fragment).matches());
     }
+
+    private static final Pattern SIGN_IN = Pattern.compile("sign-in=[a-z]{1,32}");
 
     static volatile String failure;
 
@@ -291,6 +304,7 @@ final class PCStore {
     }
 
     static void setCurrent(Context context, String origin) {
+        choosing = false;
         prefs(context).edit().putString("current", origin).apply();
     }
 
@@ -299,6 +313,7 @@ final class PCStore {
     }
 
     static void open(Context context, String key, String start) {
+        choosing = false;
         prefs(context).edit().putString("current", key).putString("last", key).apply();
         pendingStart = start;
     }
@@ -358,10 +373,6 @@ final class PCStore {
     static boolean scoped(String key) {
         String scope = rawPath(key);
         return !scope.isEmpty() && !scope.equals("/");
-    }
-
-    static boolean pageTakesBack(String here, String before, String place) {
-        return here != null && before != null && belongs(here, place) && belongs(before, place);
     }
 
     /**

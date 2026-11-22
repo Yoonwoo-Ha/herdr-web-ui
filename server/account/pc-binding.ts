@@ -12,13 +12,19 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { writePrivateState } from "../private-state.ts";
+import { logAccess } from "../connection-diagnostics.ts";
 import { ADMISSION_FILE, type OriginFrom, type OriginHow, type RowOrigin } from "./admission-order.ts";
 import { DEVICE_JOURNAL_FILE } from "./safety-log.ts";
 
 /** `unlisted`: a PC bound on the account service's word that the account stopped listing (one press, docs/account.md) */
 export type ClearReason = "revoke_all" | "identity_reset" | "unlisted";
+/** How long a PC a device's link just brought into an account waits for that device to list it, before a missing listing counts as a removal. */
+export const FIRST_LISTING_MS = 10 * 60_000;
+/** Who made an `unlisted` clear when the PC did it itself: its older one-press binding named no listing the account service still confirms. */
+export const UNPINNED_CLEAR = "unpinned";
 // A receipt written by an older version still invalidates its bind_id; new clears cannot emit that reason.
-export interface AccountClear { readonly bind_id: string; readonly reason: ClearReason | "left_on_pc"; readonly by: string }
+/** `admits`: this PC's next admission number when it cleared, so what it admitted since can be told from what it kept. */
+export interface AccountClear { readonly bind_id: string; readonly reason: ClearReason | "left_on_pc"; readonly by: string; readonly admits?: number }
 export interface AccountBinding {
   readonly account: string;
   readonly bind_id: string;
@@ -26,6 +32,17 @@ export interface AccountBinding {
   readonly pending?: true;
   /** bound in one press, on the account service's word for the account this PC's owner named; no row made it */
   readonly service?: true;
+  /**
+   * The account's listing this PC stands on. Bound in one press: the listing it was admitted in, asked about by its
+   * scoped receipt. Bound by a device's link: the listing its account rows were first let in under, compared with the
+   * one the account names at each pull.
+   */
+  readonly listing_id?: string;
+  /**
+   * A device's link made this binding a moment ago, and that device lists the PC only after its link: until this time,
+   * or the first listing named, a read that finds the PC not listed is no removal.
+   */
+  readonly listing_due?: string;
 }
 
 interface ServiceStep2 {
@@ -66,7 +83,10 @@ function parseDoc(value: unknown): (PcDoc & { counterOnly?: true }) | string {
   }
   const binding = doc.binding;
   if (binding !== null && !(typeof binding === "object" && binding !== undefined && typeof binding.account === "string" && ACCOUNT.test(binding.account) && typeof binding.bind_id === "string" && ID.test(binding.bind_id) && (binding.pending === undefined || binding.pending === true) && (binding.service === undefined || (binding.service === true && binding.pending === undefined)))) return "invalid binding";
-  if (!Array.isArray(doc.clears) || !doc.clears.every((clear) => typeof clear === "object" && clear !== null && typeof clear.bind_id === "string" && ID.test(clear.bind_id) && REASONS.has(clear.reason) && typeof clear.by === "string")) return "invalid clears";
+  if (binding?.listing_id !== undefined && (binding.pending === true || typeof binding.listing_id !== "string" || !ID.test(binding.listing_id))) return "invalid listing";
+  if (binding?.listing_due !== undefined && (binding.service === true || typeof binding.listing_due !== "string" || Number.isNaN(Date.parse(binding.listing_due)))) return "invalid listing wait";
+  if (!Array.isArray(doc.clears) || !doc.clears.every((clear) => typeof clear === "object" && clear !== null && typeof clear.bind_id === "string" && ID.test(clear.bind_id) && REASONS.has(clear.reason) && typeof clear.by === "string"
+    && (clear.admits === undefined || (Number.isSafeInteger(clear.admits) && clear.admits >= 0)))) return "invalid clears";
   if (binding !== null && doc.clears.some((clear) => clear.bind_id === binding.bind_id)) return "a cleared binding stands";
   const first = doc.first;
   if (first !== null && !(typeof first === "object" && first !== undefined && typeof first.key === "string" && (first.list_key === null || typeof first.list_key === "string"))) return "invalid first";
@@ -277,6 +297,25 @@ export class PcAccountState {
 
   clears(): readonly AccountClear[] { return this.doc.clears; }
 
+  /**
+   * The account stopped listing this PC (or its listing was replaced), and it is in none since: only an add a person
+   * makes at this PC brings it into one again. It stands on the kept clear, so a restart keeps it, and ends with the
+   * next binding. The number: the first admission made since that clear; for a clear from before they were kept, since
+   * this version first read it.
+   */
+  addAtPcSince(): number | null {
+    const last = this.doc.clears.at(-1);
+    if (this.doc.binding !== null || last?.reason !== "unlisted") return null;
+    if (last.admits !== undefined) return last.admits;
+    // a clear from before admissions were kept with it: what this PC admitted before it first reads the clear is from before
+    if (this.problem !== null) return Number.MAX_SAFE_INTEGER;
+    const admits = this.doc.next_admit;
+    // a folder that takes no write dates nothing: no approval counts until it does, and the PC starts all the same
+    try { this.write({ ...this.doc, clears: [...this.doc.clears.slice(0, -1), { ...last, admits }] }); }
+    catch { return Number.MAX_SAFE_INTEGER; }
+    return admits;
+  }
+
   gen(): number { return this.doc.gen; }
 
   /** All admissions already numbered here are strictly below this boundary, even with the PC clock set back. */
@@ -312,7 +351,7 @@ export class PcAccountState {
     this.write({ ...this.doc, binding: { ...binding, pending: true }, first: { key, list_key: null }, others_ever: others_ever || this.doc.clears.length > 0 });
     return {
       // the row is on disk: the binding stands from here, whatever fails after (T13)
-      commit: () => this.write({ ...this.doc, binding }),
+      commit: () => this.write({ ...this.doc, binding: { ...binding, listing_due: new Date(Date.now() + FIRST_LISTING_MS).toISOString() } }),
       // only the binding goes back; the count this turn took stays taken (P21)
       takeBack: () => this.write({ ...this.doc, binding: null, first, others_ever }),
     };
@@ -323,9 +362,24 @@ export class PcAccountState {
    * One press binds a PC in no account on the account service's word for `account`, the one its owner named here: no row
    * is written with it, so it stands at once, and no device is its first (T67).
    */
-  bindByService(account: string): void {
+  bindByService(account: string, listingId?: string): void {
     if (this.doc.binding !== null) throw new Error("This PC is already in an account");
-    this.write({ ...this.doc, binding: { account, bind_id: randomBytes(16).toString("hex"), service: true }, first: null, others_ever: this.doc.others_ever || this.doc.clears.length > 0 });
+    this.write({ ...this.doc, binding: { account, bind_id: randomBytes(16).toString("hex"), service: true, listing_id: listingId }, first: null, others_ever: this.doc.others_ever || this.doc.clears.length > 0 });
+  }
+
+  pinListing(bindId: string, listingId: string): void {
+    const binding = this.doc.binding;
+    if (binding !== null && binding.pending !== true && binding.bind_id === bindId && binding.listing_id === undefined) {
+      const { listing_due: _named, ...standing } = binding;
+      this.write({ ...this.doc, binding: { ...standing, listing_id: listingId } });
+    }
+  }
+
+  /** Whether this binding still waits for the device that made it to list the PC (AccountBinding.listing_due). */
+  awaitsFirstListing(now = Date.now()): boolean {
+    const due = this.doc.binding?.listing_due;
+    // a wall clock set back far enough to make the wait longer than it ever is ends it
+    return due !== undefined && now < Date.parse(due) && Date.parse(due) - now <= FIRST_LISTING_MS;
   }
 
   /** The PC leaves its account: only for one of the named reasons. The clear is kept, and the file stays. */
@@ -333,7 +387,8 @@ export class PcAccountState {
     const binding = this.doc.binding;
     // a PC already strict writes nothing: what it was told to clear waits for its repair, and it serves nobody meanwhile
     if (binding === null || this.problem !== null) return false;
-    this.write({ ...this.doc, binding: null, clears: [...this.doc.clears, { bind_id: binding.bind_id, reason, by }], gen: this.doc.gen + 1 });
+    this.write({ ...this.doc, binding: null, clears: [...this.doc.clears, { bind_id: binding.bind_id, reason, by, admits: this.doc.next_admit }], gen: this.doc.gen + 1 });
+    logAccess({ event: "account.binding.cleared", reason });
     return true;
   }
 

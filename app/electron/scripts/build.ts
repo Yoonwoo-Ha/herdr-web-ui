@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { mergeFeeds } from "./feed.ts";
 import { stageServerArtifact } from "../../../scripts/server-artifact.ts";
 import { BUN, BUN_LICENSE, BUN_VERSION, download, HC, HC_VERSION, hostTarget, sha256, type Pinned } from "./runtimes.ts";
+import { writeStagingMarker } from "../src/stagingProfile.ts";
 
 const here = resolve(import.meta.dir, "..");
 const repo = resolve(here, "..", "..");
@@ -179,6 +180,7 @@ async function dist(): Promise<void> {
     if (new URL(feed).protocol !== "https:") throw new Error("OVIS_UPDATE_FEED must be an https address");
     args.push("-c.publish.provider=generic", `-c.publish.url=${feed}`);
   }
+  writeStagingMarker(stage, platform === "mac" && process.env["OVIS_BUILD_STAGING"] === "1");
   const child = Bun.spawn(args, { cwd: here, stdout: "inherit", stderr: "inherit" });
   if (await child.exited !== 0) throw new Error("electron-builder failed");
 }

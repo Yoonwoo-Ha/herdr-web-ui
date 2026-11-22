@@ -23,7 +23,6 @@ export const SETTINGS_ACCESS_JA: Record<string, string> = {
   "The device list cannot be read, so no new device can pair. This PC, the token and Tailscale sign-in still work.": "デバイス一覧を読み込めないため、新しいデバイスはペアリングできません。このPC、トークン、Tailscaleのサインインは引き続き使えます。",
   "Listens on": "待ち受けアドレス",
   "Loopback": "ループバック",
-  "Tailscale address": "Tailscaleアドレス",
   "Other address": "その他のアドレス",
   "A network address, every interface or a host name: other devices on that network may reach it.": "ネットワークアドレス、すべてのインターフェース、またはホスト名です。そのネットワーク上の他のデバイスから接続できる場合があります。",
   "The address the server listens on. A proxy on this PC can still forward other traffic to it.": "サーバーが待ち受けるアドレスです。このPC上のプロキシが他の通信を転送することもあります。",

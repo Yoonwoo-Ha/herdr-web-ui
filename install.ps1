@@ -424,6 +424,47 @@ command = ["herdr", "plugin", "pane", "open", "--plugin", "$pluginId", "--entryp
     Move-Item -Force -LiteralPath (Join-Path $dir 'herdr-plugin.toml.new') -Destination (Join-Path $dir 'herdr-plugin.toml')
 }
 
+# `ovis` in any new terminal, as install.sh's launcher gives Linux and macOS: cmd\ovis.cmd runs the release's server as
+# `ovis-server plugin <command>`. It is kept beside bin\, not in it, since an update replaces bin\ whole; its folder is
+# put on the user's PATH once. The shim names the server relative to itself (%~dp0), so a user folder outside ASCII
+# stays intact, and it replaces only a shim of its own: an `ovis.cmd` it did not write, or a link, stays as it is.
+function Write-OvisCommand {
+    $dir = Join-Path $ovisHome 'cmd'
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $shim = Join-Path $dir 'ovis.cmd'
+    $text = "@echo off`r`n`"%~dp0..\bin\ovis-server.exe`" plugin %*`r`n"
+    $existing = Get-Item -LiteralPath $shim -Force -ErrorAction SilentlyContinue
+    if ($existing -and (($existing.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        [IO.File]::ReadAllText($shim) -notmatch '^@echo off\r?\n"[^"\r\n]*\\bin\\ovis-server\.exe" plugin %\*\r?\n?$')) {
+        Write-Host "Ovis: $shim is not Ovis's own command, so it was left as it is"
+        return
+    }
+    $staged = Join-Path $dir ([IO.Path]::GetRandomFileName())
+    [IO.File]::WriteAllText($staged, $text, [Text.Encoding]::ASCII)
+    try {
+        if ($existing) { [IO.File]::Copy($staged, $shim, $true) }
+        # nothing was there: a file another installer writes meanwhile is not replaced
+        else { [IO.File]::Move($staged, $shim) }
+    } catch {
+        Write-Host "Ovis: $shim appeared while Ovis was writing it, so it was left as it is"
+        return
+    } finally { Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue }
+    if ([Environment]::OSVersion.Platform -ne 'Win32NT') { return }
+    # the user's Path as stored: GetEnvironmentVariable expands %VAR% entries, and writing that back would flatten them
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+    try {
+        $userPath = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        if (-not (($userPath -split ';') -contains $dir)) {
+            $kind = if ($key.GetValueNames() -contains 'Path') { $key.GetValueKind('Path') } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
+            $key.SetValue('Path', ((@($userPath -split ';' | Where-Object { $_ }) + $dir) -join ';'), $kind)
+            # setting and removing a variable through .NET announces the changed environment to Explorer and new terminals
+            [Environment]::SetEnvironmentVariable('OVIS_PATH_CHANGED', '1', 'User')
+            [Environment]::SetEnvironmentVariable('OVIS_PATH_CHANGED', $null, 'User')
+            Write-Host "Ovis: added $dir to your PATH: open a new terminal to run ovis"
+        }
+    } finally { $key.Dispose() }
+}
+
 $newInstall = $false
 $binaryDone = $false
 $ovisPlugin = Join-Path $ovisHome 'plugin'
@@ -460,6 +501,7 @@ if (-not $fromSource) {
         if ($shipped) {
             $changed = Install-OvisBinary $version
             Write-OvisPlugin $version
+            Write-OvisCommand
             if (-not (Find-Plugin)) {
                 Run-Tool herdr @('plugin', 'link', $ovisPlugin) | Out-Null
                 $newInstall = $true

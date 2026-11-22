@@ -1,10 +1,11 @@
 /**
  * Japanese for the keys only the settings files use:
  * components/SettingsDialog.tsx (with THEME_NAMES), components/SignOutRow.tsx, components/KeyBarSettings.tsx,
- * components/SettingsControls.tsx, components/TelemetryControls.tsx, components/LinkBrowserRow.tsx, lib/paletteSettings.ts.
+ * components/SettingsControls.tsx, components/TelemetryControls.tsx, components/LinkBrowserRow.tsx, components/TerminalCommandRow.tsx, lib/paletteSettings.ts.
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const SETTINGS_JA: Record<string, string> = {
+  "Forget": "削除",
   "Finished": "完了",
   "Direct typing": "直接入力",
   "Microphone permission was denied": "マイクの使用が許可されませんでした",
@@ -243,7 +244,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "agents hooks claude codex install": "エージェント フック claude codex インストール",
   "onboarding first run getting started welcome": "オンボーディング 初回 はじめに ようこそ",
   "Agent integrations": "エージェント連携",
-  "This page shows one PC. The front page lists every PC this phone is paired with.": "このページは1台のPCを表示します。トップページにこのスマホとペアリング済みのすべてのPCが並びます。",
   "Deletes this phone's key for this PC. Pairing again takes a new QR code from the PC.": "このPC用のこのスマホのキーを削除します。再度ペアリングするにはPCの新しいQRコードが必要です。",
 
   "Through Portal": "Portal経由",
@@ -290,10 +290,27 @@ export const SETTINGS_JA: Record<string, string> = {
   "Remove PC {name}": "PC {name} を削除",
 
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "この PC の外部通知の設定を読み取れませんでした（{error}）。設定を閉じてもう一度開いてください。",
-  "Opens the page of every PC this device reaches through the relay, to check, join or forget them.": "このデバイスがリレーでつなぐすべてのPCのページを開き、確認・参加・削除ができます。",
-  "Manage|relayed connections": "管理",
   "Built-in browser": "内蔵ブラウザー",
   "Blocked sites": "ブロックするサイト",
   "Opens web pages in tabs inside this app: they are listed under Browser in the sidebar and open beside the pane. Its tabs are signed in to nothing you use elsewhere, and an agent's tabs keep cookies of their own.": "ウェブページをこのアプリ内のタブで開きます。タブはサイドバーの「ブラウザー」に並び、ペインの横に開きます。これらのタブは他でのログインを使わず、エージェントのタブは別の Cookie を使います。",
   "The built-in browser never loads these sites or their subdomains, in your tabs or an agent's. One site per line.": "内蔵ブラウザーは、自分のタブでもエージェントのタブでも、これらのサイトとそのサブドメインを読み込みません。1 行に 1 サイトずつ入力します。",
+  "Density": "表示密度",
+  "Comfortable": "ゆったり",
+  "Compact": "コンパクト",
+  "Language": "言語",
+  "Interface font size": "インターフェースの文字サイズ",
+  "Decrease interface font size": "インターフェースの文字サイズを小さく",
+  "Increase interface font size": "インターフェースの文字サイズを大きく",
+  "Forget this PC?": "このPCを削除しますか？",
+  "This phone's key for it is deleted here, and the PC keeps listing this phone until it is revoked there. Pairing again takes a new QR code from the PC.": "このスマホ側のキーを削除します。PC側ではそこで取り消すまでこのスマホが一覧に残ります。再度ペアリングするにはPCの新しいQRコードが必要です。",
+  "Terminal command": "ターミナルコマンド",
+  "Use ovis in a terminal": "ターミナルで ovis を使う",
+  "Adds the ovis command for this app: in a new terminal window, ovis login, ovis status and ovis approve work on this app's Ovis.": "このアプリの ovis コマンドを追加します。新しいターミナルウィンドウで ovis login、ovis status、ovis approve がこのアプリの Ovis に対して動きます。",
+  "Add the command": "コマンドを追加",
+  "Adding the command…": "コマンドを追加中…",
+  "Couldn't add the ovis command.": "ovis コマンドを追加できませんでした。",
+  "{path} is the ovis command of another Ovis install: it stays as it is, and this app adds none.": "{path} は別の Ovis インストールの ovis コマンドです。そのまま残し、このアプリは追加しません。",
+  "{path} comes first on your terminal's PATH, so ovis runs that one.": "ターミナルの PATH で {path} が先にあるため、ovis はそちらを実行します。",
+  "{dir} is not on your terminal's PATH: add it there to run ovis.": "{dir} はターミナルの PATH にありません。ovis を実行するには PATH に追加してください。",
+  "Added ~/.local/bin to your PATH in {path}: open a new terminal window to run ovis.": "{path} で ~/.local/bin を PATH に追加しました。新しいターミナルウィンドウを開いて ovis を実行してください。",
 };

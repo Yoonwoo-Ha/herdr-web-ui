@@ -3,7 +3,7 @@ import nacl from "tweetnacl";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { exportAccountKey, newRecordId, signAccountRecord, signSafetyRecord, type AccountRecord } from "./account-records.ts";
 import { assembleSnapshot, parseSnapshotPage, type AccountSnapshotPage } from "./account-snapshot.ts";
-import { SNAPSHOT_PAGE, ACCESS_TOKEN_TTL_S, ADMISSION_TTL_MS, ACCOUNT_RING, ADMISSIONS_PER_WINDOW, DEVICE_POLL_S, DIRECTORY_MAX, FakeAccountService, isAllowedRedirect, MAILBOX_TTL_MS, WEB_REDIRECT, type FakePc } from "./account-service-fake.ts";
+import { SNAPSHOT_PAGE, ACCESS_TOKEN_TTL_S, ADMISSION_TTL_MS, ACCOUNT_RING, ADMISSIONS_PER_WINDOW, DEVICE_POLL_S, DIRECTORY_MAX, FakeAccountService, isAllowedRedirect, MAILBOX_TTL_MS, PC_LEFT_MS, WEB_REDIRECT, type FakePc } from "./account-service-fake.ts";
 import { answerServerChallenge, deriveServerId, serverChallenge, verifyServerProof, type ProofRoute } from "./relay-server-proof.ts";
 
 const BASE = "https://account.test";
@@ -35,6 +35,83 @@ async function pull(service: FakeAccountService, machine: ReturnType<typeof pc>,
 }
 
 describe("the fake account service", () => {
+  test("PCR-1 compat: a device code's own listing that completed or was digit-admitted is not its to end", async () => {
+    const service = new FakeAccountService();
+    const cli = service.issueToken("acct_1", { device: true });
+    const put = (machine: ReturnType<typeof pc>) => service.fetch(new Request(`${BASE}/v1/pcs/${machine.serverId}`, {
+      method: "PUT", body: JSON.stringify({ label: "pc", public_key: machine.publicKey, relay: "wss://relay.test" }), headers: { "content-type": "application/json", authorization: `Bearer ${cli}` },
+    }));
+    const remove = async (machine: ReturnType<typeof pc>) => {
+      const answer = await service.fetch(new Request(`${BASE}/v1/pcs/${machine.serverId}`, { method: "DELETE", headers: { authorization: `Bearer ${cli}` } }));
+      return answer.status === 204 ? 204 : `${answer.status} ${((await answer.json()) as { error?: { code?: string } }).error?.code}`;
+    };
+    for (const after of [{ completed_at: new Date().toISOString() }, { digit_admitted: true }] as Partial<FakePc>[]) {
+      const machine = pc();
+      expect((await put(machine)).status).toBe(200);
+      Object.assign(service.pcs("acct_1").find((entry) => entry.server_id === machine.serverId)!, after);
+      expect(await remove(machine)).toBe("403 own_sign_in_required");
+    }
+  });
+
+  test("PCR-1: a device code's listing made while Step 2 was off stays a member once Step 2 is on: its end counts as a removal", async () => {
+    const service = new FakeAccountService();
+    const used = () => (service as unknown as { usedAccounts: Set<string> }).usedAccounts.has("acct_1");
+    const cli = service.issueToken("acct_1", { device: true });
+    const machine = pc();
+    expect((await service.fetch(new Request(`${BASE}/v1/pcs/${machine.serverId}`, {
+      method: "PUT", body: JSON.stringify({ label: "pc", public_key: machine.publicKey, relay: "wss://relay.test" }), headers: { "content-type": "application/json", authorization: `Bearer ${cli}` },
+    }))).status).toBe(200);
+    service.opensAll = true;
+    expect((await service.fetch(new Request(`${BASE}/v1/pcs/${machine.serverId}`, { method: "DELETE", headers: { authorization: `Bearer ${cli}` } }))).status).toBe(204);
+    expect(used()).toBe(true);
+  });
+
+  test("PCR-1 ruling (b): with Step 2 off a device code's own listing is a member: its end counts as a removal, and another sign-in's is 403", async () => {
+    const service = new FakeAccountService();
+    const used = () => (service as unknown as { usedAccounts: Set<string> }).usedAccounts.has("acct_1");
+    const put = (token: string, machine: ReturnType<typeof pc>) => service.fetch(new Request(`${BASE}/v1/pcs/${machine.serverId}`, {
+      method: "PUT", body: JSON.stringify({ label: "pc", public_key: machine.publicKey, relay: "wss://relay.test" }), headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    }));
+    const remove = (token: string, machine: ReturnType<typeof pc>) => service.fetch(new Request(`${BASE}/v1/pcs/${machine.serverId}`, { method: "DELETE", headers: { authorization: `Bearer ${token}` } }));
+    const cli = service.issueToken("acct_1", { device: true });
+    const mine = pc();
+    expect((await put(cli, mine)).status).toBe(200);
+    expect((await remove(service.issueToken("acct_1", { device: true }), mine)).status).toBe(403);
+    expect(used()).toBe(false);
+    expect((await remove(cli, mine)).status).toBe(204);
+    expect(service.pcs("acct_1")).toEqual([]);
+    expect(used()).toBe(true);
+  });
+
+  test("PCR-1 compat: a device code's sign-in ends only its own pending listing, logging nothing; everything else is 403", async () => {
+    const service = new FakeAccountService();
+    // Step 2 on: the device code's listing is pending, never a member
+    service.opensAll = true;
+    const put = (token: string, machine: ReturnType<typeof pc>) => service.fetch(new Request(`${BASE}/v1/pcs/${machine.serverId}`, {
+      method: "PUT", body: JSON.stringify({ label: "pc", public_key: machine.publicKey, relay: "wss://relay.test" }), headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    }));
+    const remove = async (token: string, machine: ReturnType<typeof pc>) => {
+      const answer = await service.fetch(new Request(`${BASE}/v1/pcs/${machine.serverId}`, { method: "DELETE", headers: { authorization: `Bearer ${token}` } }));
+      return answer.status === 204 ? 204 : `${answer.status} ${((await answer.json()) as { error?: { code?: string } }).error?.code}`;
+    };
+    const cli = service.issueToken("acct_1", { device: true });
+    const mine = pc();
+    expect((await put(cli, mine)).status).toBe(200);
+    // another device code's sign-in, then the lister itself, which can list it again
+    expect(await remove(service.issueToken("acct_1", { device: true }), mine)).toBe("403 own_sign_in_required");
+    expect(await remove(cli, mine)).toBe(204);
+    expect(service.pcs("acct_1")).toEqual([]);
+    expect((await put(cli, mine)).status).toBe(200);
+    // confirmed or admitted since: no longer its own to end
+    for (const after of [{ listed_by_device: false }, { admitted_at: new Date().toISOString() }, { listed_by_session: undefined }] as Partial<FakePc>[]) {
+      const machine = pc();
+      expect((await put(cli, machine)).status).toBe(200);
+      Object.assign(service.pcs("acct_1").find((entry) => entry.server_id === machine.serverId)!, after);
+      expect(await remove(cli, machine)).toBe("403 own_sign_in_required");
+    }
+    expect(await remove(cli, pc())).toBe("403 own_sign_in_required");
+  });
+
   test("a record a client queues reaches each listed PC once it proves its key, and an ack clears it", async () => {
     const service = new FakeAccountService();
     const token = service.issueToken("acct_1");
@@ -325,6 +402,25 @@ describe("signing in to the fake account service", () => {
     expect(service.deleted("acct_head")).toBe(false);
   });
 
+  test("signing out every device ends each sign-in of the account, the caller's and device codes' included, from a fresh own sign-in only", async () => {
+    let now = 0;
+    const service = new FakeAccountService(() => now);
+    const all = (access: string) => service.fetch(post("/v1/signout/all", {}, access));
+    const caller = service.issueToken("acct_all");
+    const browser = service.issueToken("acct_all");
+    const typed = service.issueToken("acct_all", { device: true });
+    const other = service.issueToken("acct_other");
+    const refusal = async (response: Response) => [response.status, ((await response.json()) as { error: { code: string } }).error.code];
+    expect(await refusal(await all(typed))).toEqual([403, "web_sign_in_required"]);
+    now += 11 * 60_000;
+    const fresh = service.issueToken("acct_all");
+    expect(await refusal(await all(caller))).toEqual([403, "reauth_required"]);
+    for (const access of [caller, browser, typed]) expect((await pcs(service, access)).status).toBe(200);
+    expect((await all(fresh)).status).toBe(204);
+    for (const access of [fresh, caller, browser, typed]) expect((await pcs(service, access)).status).toBe(401);
+    expect((await pcs(service, other)).status).toBe(200);
+  });
+
   test("a device sign-in started with a challenge says so, and redeems only with its verifier", async () => {
     let now = 0;
     const service = new FakeAccountService(() => now);
@@ -550,5 +646,116 @@ describe("the fake's snapshot wire (device table P6, G1, P16)", () => {
     const lift = await signSafetyRecord({ ...signed, kind: "lift", target: block.id, signer: older.spki, signer_no: olderNo }, older.pair.privateKey);
     expect((await send(lift)).status).toBe(200);
     expect(parseSnapshotPage((await read(service, pc(), {})).body).devices.filter((device) => device.eligible).map((device) => device.no)).toEqual([olderNo, newestNo, laterNo]);
+  });
+});
+describe("the fake's first-PC exemption, as the account service has it (account#62)", () => {
+  const put = (service: FakeAccountService, token: string, machine: ReturnType<typeof pc>, extra: Record<string, unknown> = {}) => service.fetch(new Request(`${BASE}/v1/pcs/${machine.serverId}`, {
+    method: "PUT", headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ label: "PC", public_key: machine.publicKey, relay: "wss://relay.example", ...extra }),
+  }));
+  const admit = async (service: FakeAccountService, token: string, machine: ReturnType<typeof pc>) => {
+    const response = await service.fetch(post(`/v1/pcs/${machine.serverId}/admit`, {}, token));
+    return response.ok ? "admitted" : (await response.json() as { error: { code: string } }).error.code;
+  };
+  const fresh = () => { const service = new FakeAccountService(); service.opensAll = true; return service; };
+
+  test("a phone signed in first, with no two-step, leaves the first PC's one press exempt", async () => {
+    const service = fresh();
+    const phone = service.issueToken("acct_1");
+    service.registerSessionKey(phone, (await client()).spki, "Phone");
+    const desk = pc();
+    const owner = service.issueToken("acct_1");
+    expect((await put(service, owner, desk)).ok).toBe(true);
+    expect(await admit(service, owner, desk)).toBe("admitted");
+  });
+
+  test("a device code's pending listing under Step 2 leaves the account never used; a removal or a confirmed PC does not", async () => {
+    const service = fresh();
+    const typed = service.issueToken("acct_1", { device: true });
+    expect((await put(service, typed, pc())).ok).toBe(true);
+    const desk = pc();
+    const owner = service.issueToken("acct_1");
+    expect((await put(service, owner, desk)).ok).toBe(true);
+    expect(await admit(service, owner, desk)).toBe("admitted");
+
+    const removed = fresh();
+    const removing = removed.issueToken("acct_1");
+    const gone = pc();
+    expect((await put(removed, removing, gone)).ok).toBe(true);
+    await removed.fetch(new Request(`${BASE}/v1/pcs/${gone.serverId}`, { method: "DELETE", headers: { authorization: `Bearer ${removing}` } }));
+    const next = pc();
+    expect((await put(removed, removing, next)).ok).toBe(true);
+    expect(await admit(removed, removing, next)).toBe("two_step_required");
+  });
+
+  test("devices count once the account has a PC, and always for a confirm", async () => {
+    const service = fresh();
+    const phone = service.issueToken("acct_1");
+    service.registerSessionKey(phone, (await client()).spki, "Phone");
+    const typed = service.issueToken("acct_1", { device: true });
+    const laptop = pc();
+    expect((await put(service, typed, laptop)).ok).toBe(true);
+    // the confirm writes no exempt admission, so a phone's key keeps it from passing without two-step
+    const confirming = await put(service, service.issueToken("acct_1"), laptop, { confirm: true });
+    expect(confirming.status).toBe(403);
+    expect((await confirming.json() as { error: { code: string } }).error.code).toBe("two_step_required");
+    const desk = pc();
+    const owner = service.issueToken("acct_1");
+    expect((await put(service, owner, desk)).ok).toBe(true);
+    expect(await admit(service, owner, desk)).toBe("admitted");
+    const second = pc();
+    const again = service.issueToken("acct_1");
+    expect((await put(service, again, second)).ok).toBe(true);
+    expect(await admit(service, again, second)).toBe("two_step_required");
+  });
+});
+
+describe("a PC's own leave (account#65)", () => {
+  async function proofOf(service: FakeAccountService, machine: ReturnType<typeof pc>) {
+    const challenge = await (await service.fetch(post("/v1/pc/challenge", { server_id: machine.serverId, public_key: machine.publicKey }))).json() as { challenge_id: string; frame: string };
+    return { challenge_id: challenge.challenge_id, proof: answerServerChallenge(challenge.frame, machine.keys.secretKey, { server_id: machine.serverId, role: "account", connection_id: challenge.challenge_id }) };
+  }
+  const put = (service: FakeAccountService, token: string, machine: ReturnType<typeof pc>, extra: Record<string, unknown> = {}) =>
+    service.fetch(new Request(`${BASE}/v1/pcs/${machine.serverId}`, { method: "PUT", body: JSON.stringify({ label: "pc", public_key: machine.publicKey, relay: "wss://relay.ovis.sh", ...extra }), headers: { authorization: `Bearer ${token}` } }));
+  const listed = async (service: FakeAccountService, token: string) =>
+    ((await (await service.fetch(new Request(`${BASE}/v1/pcs`, { headers: { authorization: `Bearer ${token}` } }))).json()) as { pcs: { server_id: string }[] }).pcs.map((entry) => entry.server_id);
+
+  test("after a leave a PUT without the PC's proof answers 409 pc_left for 30 days; the PC's own proof lists it again and ends the mark", async () => {
+    let now = Date.parse("2026-11-21T00:00:00Z");
+    const service = new FakeAccountService(() => now);
+    const token = service.issueToken("acct_1");
+    const machine = pc();
+    expect((await put(service, token, machine)).status).toBe(200);
+
+    expect((await service.fetch(post(`/v1/pcs/${machine.serverId}/leave`, { server_id: machine.serverId, account: "acct_1", ...await proofOf(service, machine) }))).status).toBe(204);
+    expect(await listed(service, token)).toEqual([]);
+
+    const refused = await put(service, token, machine);
+    expect(refused.status).toBe(409);
+    expect((await refused.json() as { error: { code: string; left_at: string } }).error).toMatchObject({ code: "pc_left", left_at: new Date(now).toISOString() });
+    // another PC's proof lifts nothing, and a spent one is refused
+    const other = pc();
+    expect((await put(service, token, machine, await proofOf(service, other))).status).toBe(401);
+    const proof = await proofOf(service, machine);
+    expect((await put(service, token, machine, proof)).status).toBe(200);
+    expect(await listed(service, token)).toEqual([machine.serverId]);
+    expect((await put(service, token, machine, proof)).status).toBe(401);
+    // the mark is gone: upkeep needs no proof
+    expect((await put(service, token, machine)).status).toBe(200);
+
+    expect((await service.fetch(post(`/v1/pcs/${machine.serverId}/leave`, { server_id: machine.serverId, account: "acct_1", ...await proofOf(service, machine) }))).status).toBe(204);
+    now += PC_LEFT_MS;
+    expect((await put(service, token, machine)).status).toBe(200);
+  });
+
+  test("a leave needs the PC's own fresh proof for its own server_id", async () => {
+    const service = new FakeAccountService();
+    const token = service.issueToken("acct_1");
+    const [machine, other] = [pc(), pc()];
+    await put(service, token, machine);
+    expect((await service.fetch(post(`/v1/pcs/${machine.serverId}/leave`, { server_id: machine.serverId, account: "acct_1" }))).status).toBe(400);
+    expect((await service.fetch(post(`/v1/pcs/${machine.serverId}/leave`, { server_id: other.serverId, account: "acct_1", ...await proofOf(service, other) }))).status).toBe(400);
+    expect((await service.fetch(post(`/v1/pcs/${machine.serverId}/leave`, { server_id: machine.serverId, account: "acct_1", ...await proofOf(service, other) }))).status).toBe(401);
+    expect(await listed(service, token)).toEqual([machine.serverId]);
   });
 });

@@ -77,7 +77,6 @@
     "scripts/pty-compare.ts",
     "scripts/push-health-demo-regression.ts",
     "scripts/recent-folders-regression.ts",
-    "scripts/relay-dashboard-browser-qa.ts",
     "scripts/relay-e2e-regression.ts",
     "scripts/relay-join-browser-qa.ts",
     "scripts/relay-media-browser-qa.ts",

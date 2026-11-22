@@ -3,7 +3,7 @@ import { handleRequest, type ServerContext } from "../dispatch.ts";
 import { ACCOUNT, createListedPc } from "./listed-pc.test-helpers.ts";
 import { JOIN_HOLD_MS } from "./join-hold.ts";
 import { accountRouteAction, accountRouteGuard } from "./account-row-rights.ts";
-import { DISPATCH_MUTATIONS, RELAY_CONTROLS } from "../dispatch-routes.ts";
+import { DISPATCH_MUTATIONS, RELAY_CONTROLS, TAILSCALE_CONTROLS } from "../dispatch-routes.ts";
 import { relayConnection } from "../relay/test-helpers.ts";
 import { ask, phone } from "./pairing.test-helpers.ts";
 
@@ -93,12 +93,12 @@ test("R1-R10: every mutation registered by dispatch has an action or a proven ha
   }
 });
 
-test("R5, R6, R8: registered relay controls and introductions refuse account-joined callers at their handler guards", async () => {
+test("R5, R6, R8: registered relay controls, introductions, the confirm page and the Tailscale controls refuse account-joined callers at their handler guards", async () => {
   const { rows, device, request } = await listedDispatcher();
   const clock = spyOn(Date, "now").mockReturnValue(Date.now() + JOIN_HOLD_MS);
   try {
     expect(rows.access(device.id)).toEqual({ ok: true });
-    for (const path of [...Object.values(RELAY_CONTROLS), "/api/account/introduce"]) {
+    for (const path of [...Object.values(RELAY_CONTROLS), "/api/account/introduce", "/api/account/confirm-page", ...Object.values(TAILSCALE_CONTROLS)]) {
       const response = await request("POST", path);
       expect(response?.status, path).toBe(403);
       const code = path === RELAY_CONTROLS.pairing || path === "/api/account/introduce" ? "account_required" : "local_required";

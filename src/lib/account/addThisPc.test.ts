@@ -43,6 +43,7 @@ test("a pass setup that never answers does not hold Add this PC either", async (
     asked.push(path);
     if (path === "/api/account/status") return Response.json({ account: null });
     if (path === "/api/relay/link") return Response.json({ url: encodeOffer({ v: 1, server_id: serverId, server_public_key: publicKey, relay: "wss://relay.ovis.sh", name: "desk" }, "https://app.ovis.sh") });
+    if (path === "/api/account/pc-proof") return Response.json({ error: { code: "not_found" } }, { status: 404 });
     return new Promise<Response>(() => {});
   };
   setTransport({ ...nativeTransport, fetch: answer });
@@ -257,10 +258,16 @@ test("one press asks nothing when the stored sign-in is not the account it was f
   } finally { f.restore(); }
 });
 
-test("a refusal of the account service (no two-step, a stale sign-in, the daily cap, an older service) leaves the PC unasked", async () => {
-  const f = onePress({ admit: () => Promise.reject(new AccountServiceError(403, "two_step_required", "Set up two-step sign-in first")) });
+test.each([
+  // signing in again as before cannot pass it: the person is told what does
+  ["two_step_required", "no-two-step"],
+  ["session_not_fresh", "sign-in-again"],
+  ["own_sign_in_required", "sign-in-again"],
+  ["pc_add_cap", "refused"],
+] as const)("a refusal of the account service (%s) leaves the PC unasked and answers %s", async (code, outcome) => {
+  const f = onePress({ admit: () => Promise.reject(new AccountServiceError(403, code, "The sign-in was refused")) });
   try {
-    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe("sign-in-again");
+    expect<string>(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe(outcome);
     expect(f.calls).toEqual([`admit ${PC_ID} as acct_1`]);
   } finally { f.restore(); }
 });

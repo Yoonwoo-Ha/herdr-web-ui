@@ -9,10 +9,11 @@ import { DEFAULT_ACCOUNT_SERVICE } from "../shared/web-policy.ts";
 import { loadRelayIdentity } from "../server/relay/identity.ts";
 import { updateStateDir } from "../server/update-state.ts";
 import { mergeEnvLayers } from "../server/legacy-env.ts";
-import { approveWaiting, link, linkSettings, type WaitingDevice } from "./plugin-link.ts";
+import { approveJoins, approveWaiting, link, linkSettings, type JoinOutcome, type WaitingDevice } from "./plugin-link.ts";
 import { COMMAND_ALIASES } from "./plugin-runtime.ts";
 
 const ORIGIN = "http://127.0.0.1:7317";
+const CLOSING = "The sign-in was only for this and ends with it; nothing of it is kept on this PC.\nCheck: ovis status      Undo: ovis logout\n";
 const SERVICE = "https://account.test";
 const RELAY = "wss://relay.test";
 
@@ -280,7 +281,7 @@ describe("ovis link, on the PC itself", () => {
     }
   });
 
-  async function linkToAccount(options: { args?: string[]; prepare?: (service: FakeAccountService) => void; approve: (service: FakeAccountService, code: string) => void; enforcing?: boolean; service?: string }) {
+  async function linkToAccount(options: { args?: string[]; prepare?: (service: FakeAccountService) => void; approve: (service: FakeAccountService, code: string) => void; enforcing?: boolean; service?: string; openBrowser?: (url: string) => boolean }) {
     const pc = identity();
     const time = clock();
     const service = new FakeAccountService(time.now);
@@ -311,6 +312,7 @@ describe("ovis link, on the PC itself", () => {
     const code = await link([...options.args ?? [], "--approve"], {
       origin: ORIGIN, headers: {}, fetch: local.fetch, now: time.now, wait: time.wait, signal: new AbortController().signal,
       accountService: options.service ?? SERVICE, serviceFetch: (input, init) => service.fetch(new Request(input, init)), lines: keys.lines, terminal: true, discard: keys.discard,
+      ...options.openBrowser === undefined ? {} : { openBrowser: options.openBrowser },
       out: (text) => {
         out.push(text);
         const shown = /code:? ([A-Z0-9-]{4,16})\b/.exec(text);
@@ -391,6 +393,41 @@ describe("ovis link, on the PC itself", () => {
     expect(polls()).toBe(901);
   });
 
+  it("keeps waiting when run again after it stopped, though the earlier run's listing is not this sign-in's to renew", async () => {
+    const pc = identity();
+    const time = clock();
+    const service = new FakeAccountService(time.now);
+    let account: string | null = null;
+    let polls = 0;
+    // the look from which this PC is in the account: none in the first run
+    let joinsAt = Number.POSITIVE_INFINITY;
+    const local = localPc(async (request, path) => {
+      if (path === "/api/account/status") return Response.json({ account, unlinked: [], removals: [], adds: [], blocked: [] });
+      if (path === "/api/relay" && request.method === "GET") return Response.json({ phase: "online", blocked: null });
+      if (path === "/api/relay/link") return Response.json({ url: encodeOffer({ v: 1, server_id: pc.server_id, server_public_key: pc.public_key, relay: RELAY, name: "old-desktop" }, "https://app.ovis.sh") });
+      if (path === "/api/relay/pairings") { if (++polls >= joinsAt) account = "acct_1"; return Response.json({ pairings: [] }); }
+      return undefined;
+    });
+    const run = async () => {
+      const out: string[] = [];
+      const code = await link(["--approve"], {
+        origin: ORIGIN, headers: {}, fetch: local.fetch, now: time.now, wait: time.wait, signal: new AbortController().signal, lines: silent(), terminal: true, accountService: SERVICE,
+        serviceFetch: (input, init) => service.fetch(new Request(input, init)),
+        out: (text) => { out.push(text); const shown = /code:? ([A-Z0-9-]{4,16})\b/.exec(text); if (shown) service.approveDevice(shown[1]!, "acct_1"); },
+      });
+      return { code, text: out.join("") };
+    };
+    const first = await run();
+    expect([first.code, first.text.endsWith("Stopped waiting after 30 minutes. Run this again to keep waiting.\n")]).toEqual([1, true]);
+    // the listing the first run renewed last is more than nine minutes old: due for renewal, by another sign-in
+    joinsAt = polls + 3;
+    const { code, text } = await run();
+    expect(text).not.toContain("Could not link this PC");
+    expect(text).toContain("This PC stays listed, but an earlier run listed it, so your other devices may no longer show it as new.\n");
+    expect(code).toBe(0);
+    expect(service.pcs("acct_1").map((entry) => entry.server_id)).toEqual([pc.server_id]);
+  });
+
   it("never asks for a window that would outlive its 30 minutes, nor shows this PC as new past it: neither in the last ten", async () => {
     const { code, linkAt, writes, pc } = await waiting(() => ({ account: null }));
     expect(code).toBe(1);
@@ -450,7 +487,7 @@ describe("ovis link, on the PC itself", () => {
     const paths = calls.map((call) => call.path);
     const lost = paths.indexOf("/api/relay/pairings", paths.lastIndexOf("/api/relay/link") - 6);
     expect(paths.slice(lost, lost + 7)).toEqual(["/api/relay/pairings", ...Array(5).fill("/api/relay/link"), "/api/relay/pairings"]);
-    expect(out.at(-1)).toBe("This PC is in your account (acct_1): every device of your account can use it.\n");
+    expect(out.at(-1)).toBe("This PC is in your account (acct_1): every device of your account can use it.\n" + CLOSING);
   });
 
   it("stops when the server goes away too late in the run to ask for its window again", async () => {
@@ -464,7 +501,7 @@ describe("ovis link, on the PC itself", () => {
     let failed = 0;
     const { code, out, linkAt } = await waiting((_polls, elapsed) => ({ account: elapsed >= 25 * 60_000 ? "acct_1" : null }), (elapsed) => elapsed >= 25 * 60_000 && failed++ === 0);
     expect(code).toBe(0);
-    expect(out.at(-1)).toBe("This PC is in your account (acct_1): every device of your account can use it.\n");
+    expect(out.at(-1)).toBe("This PC is in your account (acct_1): every device of your account can use it.\n" + CLOSING);
     expect(out.join("")).not.toContain("too close to this run's 30 minutes");
     expect(Math.max(...linkAt)).toBe(20 * 60_000);
   });
@@ -480,7 +517,7 @@ describe("ovis link, on the PC itself", () => {
     expect(code).toBe(0);
     expect(polls()).toBe(8);
     expect(out.filter((text) => text.includes("Bringing in"))).toEqual(["Added. Bringing in your account's other devices…\n"]);
-    expect(out.at(-1)).toBe("This PC is in your account (acct_1): every device of your account can use it.\n");
+    expect(out.at(-1)).toBe("This PC is in your account (acct_1): every device of your account can use it.\n" + CLOSING);
   });
 
   it("stops after 30 minutes when the account's other devices never come in, without saying it is done", async () => {
@@ -537,6 +574,33 @@ describe("ovis link, on the PC itself", () => {
     expect(text).not.toContain("github.com/login/device");
     expectQrCode(text);
     expect(service.pcs("acct_1")).toHaveLength(1);
+  });
+
+  it("opens the link page with its code filled in where this PC's desktop has a browser, and says which code to check", async () => {
+    const opened: string[] = [];
+    const { code, text } = await linkToAccount({
+      prepare: (service) => service.offerLinkPage(["github", "google"]),
+      approve: (service, shown) => service.approveOnLinkPage(shown, "acct_1", "google"),
+      openBrowser: (url) => { opened.push(url); return true; },
+    });
+    expect(code).toBe(0);
+    expect(opened).toHaveLength(1);
+    const page = new URL(opened[0]!);
+    expect(`${page.origin}${page.pathname}`).toBe(`${SERVICE}/link`);
+    expect(text).toContain(`  ${opened[0]}`);
+    // the code to type stays on the screen for a sign-in on another device; the QR code is the headless screen's
+    expect(text).not.toContain("Or scan this");
+  });
+
+  it("without a browser, shows the address and the code to type, with the QR code of the filled-in page", async () => {
+    const { code, text } = await linkToAccount({
+      prepare: (service) => service.offerLinkPage(["github", "google"]),
+      approve: (service, shown) => service.approveOnLinkPage(shown, "acct_1", "google"),
+      openBrowser: () => false,
+    });
+    expect(code).toBe(0);
+    expect(text).toContain(`1. On any device, open: ${SERVICE}/link`);
+    expectQrCode(text);
   });
 
   it("names the sign-ins of the link page only at the real account service: a test copy may ask for another", async () => {
@@ -1691,7 +1755,7 @@ describe("ovis link, on the PC itself", () => {
     const drawn = out.find((line) => line.includes("Scan this QR code"))!;
     expectQrCode(drawn);
     expect(drawn.startsWith(`${ON}\x1b[2J\x1b[H`)).toBe(true);
-    expect(out.slice(out.indexOf(drawn) + 1)).toEqual([OFF, "This PC is in your account (acct_1), added by Hako's iPhone: every device of your account can use it.\n"]);
+    expect(out.slice(out.indexOf(drawn) + 1)).toEqual([OFF, "This PC is in your account (acct_1), added by Hako's iPhone: every device of your account can use it.\n" + CLOSING]);
     expect(offers).toEqual(["100001"]);
     expect(cancels).toEqual([{ code: "100001" }]);
     expect(paths).not.toContain("GET /api/relay/pairings");
@@ -1738,7 +1802,7 @@ describe("ovis link, on the PC itself", () => {
     expect(at).toBeGreaterThan(-1);
     expect(shown.listedAtName).toEqual([0]);
     expect(shown.out.slice(0, at).some((text) => text.includes("Scan this QR code"))).toBe(false);
-    expect(shown.out.slice(at + 1)).toContain(`This PC is listed in that account as ${shown.service.pcs("acct_1")[0]?.label}.\n`);
+    expect(shown.out.slice(at + 1)).toContain(`     This PC is listed in that account as ${shown.service.pcs("acct_1")[0]?.label}.\n`);
     expectQrCode(shown.out.find((text) => text.includes("Scan this QR code"))!);
     expect(shown.offers).toEqual(["100001"]);
     expect(shown.service.pcs("acct_1").map((entry) => entry.server_id)).toEqual([shown.pc.server_id]);
@@ -1786,7 +1850,7 @@ describe("ovis link, on the PC itself", () => {
         expect(printed.text).not.toContain("\x1b");
         expect(printed.text).not.toContain("Press Enter");
         expect(printed.text).toContain("Or, on that device, open app.ovis.sh, choose Pair with a code and type it.\n");
-        expect(printed.out).toContain(`Signed in. This PC is listed in your account as ${printed.service.pcs("acct_1")[0]?.label}.\n`);
+        expect(printed.out).toContain(`     Signed in. This PC is listed in your account as ${printed.service.pcs("acct_1")[0]?.label}.\n`);
         expect(printed.offers).toEqual(["100001"]);
       }
       const piped = await scanning({ settings: names, isTty: false, terminal: false, args: ["--print"], step: joins });
@@ -1902,7 +1966,7 @@ describe("ovis link, on the PC itself", () => {
       OFF,
       "Hako's iPhone paired with this PC. Waiting for it to add this PC to your account…\n",
       "Added by Hako's iPhone. Bringing in your account's other devices…\n",
-      "This PC is in your account (acct_1), added by Hako's iPhone: every device of your account can use it.\n",
+      "This PC is in your account (acct_1), added by Hako's iPhone: every device of your account can use it.\n" + CLOSING,
     ]);
   });
 
@@ -2016,7 +2080,7 @@ describe("ovis link, on the PC itself", () => {
     expect(revoked).toEqual([PHONE.id]);
     expect(out.slice(-2)).toEqual([
       "This PC joined another Ovis account (acct_2), added by Hako's iPhone, not the one you signed in to (acct_1). Hako's iPhone paired with this PC since the code was shown and was removed.\n",
-      "This PC is in your account (acct_1), added by Old tablet: every device of your account can use it.\n",
+      "This PC is in your account (acct_1), added by Old tablet: every device of your account can use it.\n" + CLOSING,
     ]);
     expect(code).toBe(0);
   });
@@ -2143,7 +2207,7 @@ describe("ovis link, on the PC itself", () => {
           else answer("");
         },
       });
-      expect(out.slice(-6)).toEqual(["\n", NEXT, HELD, NEXT, "Removed.\n", "This PC is in your account (acct_1), added by Old tablet: every device of your account can use it.\n"]);
+      expect(out.slice(-6)).toEqual(["\n", NEXT, HELD, NEXT, "Removed.\n", "This PC is in your account (acct_1), added by Old tablet: every device of your account can use it.\n" + CLOSING]);
       expect(out).not.toContain("Kept.\n");
       expect(revoked).toEqual([PHONE.id]);
       expect(code).toBe(0);
@@ -2156,7 +2220,7 @@ describe("ovis link, on the PC itself", () => {
       },
       said: (text, _type, answer) => { if (text === NEXT) answer(++shows === 1 ? "" : "keep"); },
     });
-    expect(kept.out.slice(-4)).toEqual([HELD, NEXT, "Kept.\n", "This PC is in your account (acct_1), added by Old tablet: every device of your account can use it.\n"]);
+    expect(kept.out.slice(-4)).toEqual([HELD, NEXT, "Kept.\n", "This PC is in your account (acct_1), added by Old tablet: every device of your account can use it.\n" + CLOSING]);
     expect(kept.revoked).toEqual([]);
   });
 
@@ -2220,7 +2284,7 @@ describe("ovis link, on the PC itself", () => {
       },
     });
     expect(code).toBe(0);
-    expect(out.at(-1)).toBe("\nThis PC is in your account (acct_1), added by Hako's iPhone: every device of your account can use it.\n");
+    expect(out.at(-1)).toBe("\nThis PC is in your account (acct_1), added by Hako's iPhone: every device of your account can use it.\n" + CLOSING);
     expect(revoked).toEqual([]);
   });
 
@@ -2238,7 +2302,7 @@ describe("ovis link, on the PC itself", () => {
       "Hako's iPhone paired with this PC. Waiting for it to add this PC to your account…\n",
       "Hako's iPhone paired with this PC while the code was shown and is not in your account. Keep that device? Type keep to keep it, or press Enter to remove it: ",
       "Removed.\n",
-      "This PC is in your account (acct_1), added by Old tablet: every device of your account can use it.\n",
+      "This PC is in your account (acct_1), added by Old tablet: every device of your account can use it.\n" + CLOSING,
     ]);
     expect(soon.revoked).toEqual([PHONE.id]);
     expect(soon.offers).toEqual(["100001"]);
@@ -2258,7 +2322,7 @@ describe("ovis link, on the PC itself", () => {
       "That line answered nothing: the question changed while it may have been typed. Answer again for the question shown now.\n",
       "Hako's iPhone paired with this PC while the code was shown and is not in your account. Keep that device? Type keep to keep it, or press Enter to remove it: ",
       "Removed.\n",
-      "This PC is in your account (acct_1), added by Old tablet: every device of your account can use it.\n",
+      "This PC is in your account (acct_1), added by Old tablet: every device of your account can use it.\n" + CLOSING,
     ]);
     expect(waiting.revoked).toEqual([PHONE.id]);
     const stuck = await scanning({
@@ -2274,7 +2338,7 @@ describe("ovis link, on the PC itself", () => {
       step: (state, looks) => { if (looks === 2) { state.account = "acct_1"; state.devices = [OLD, PHONE]; } },
       said: (text, _type, answer) => { if (text.includes("Keep that device?")) answer("keep"); },
     });
-    expect(untold.out.slice(-2)).toEqual(["Kept.\n", "This PC is in your account (acct_1): every device of your account can use it.\n"]);
+    expect(untold.out.slice(-2)).toEqual(["Kept.\n", "This PC is in your account (acct_1): every device of your account can use it.\n" + CLOSING]);
   });
 
   it("names as the adder the member that linked itself, not a device of the account it then brought in", async () => {
@@ -2287,18 +2351,18 @@ describe("ovis link, on the PC itself", () => {
     });
     expect(scanned.out.slice(-2)).toEqual([
       "Added by Hako's iPhone. Bringing in your account's other devices…\n",
-      "This PC is in your account (acct_1), added by Hako's iPhone: every device of your account can use it.\n",
+      "This PC is in your account (acct_1), added by Hako's iPhone: every device of your account can use it.\n" + CLOSING,
     ]);
     expect(scanned.code).toBe(0);
     const before = await scanning({
       step: (state, looks) => { if (looks === 3) { state.account = "acct_1"; state.devices = [{ ...OLD, account: "acct_1" }, { ...BARE, added_by: OLD.id }]; } },
     });
-    expect(before.out.at(-1)).toBe("This PC is in your account (acct_1), added by Old tablet: every device of your account can use it.\n");
+    expect(before.out.at(-1)).toBe("This PC is in your account (acct_1), added by Old tablet: every device of your account can use it.\n" + CLOSING);
     // where it cannot be told which one linked itself (an Ovis that does not say who brought a member in), none is named
     const untold = await scanning({
       step: (state, looks) => { if (looks === 3) { state.account = "acct_1"; state.devices = [OLD, MEMBER, BARE]; } },
     });
-    expect(untold.out.at(-1)).toBe("This PC is in your account (acct_1): every device of your account can use it.\n");
+    expect(untold.out.at(-1)).toBe("This PC is in your account (acct_1): every device of your account can use it.\n" + CLOSING);
     expect(untold.code).toBe(0);
   });
 
@@ -2311,7 +2375,7 @@ describe("ovis link, on the PC itself", () => {
     expect(revoked).toEqual([]);
     expect(out.slice(-2)).toEqual([
       "Hako's iPhone is in your account by now, so it stays.\n",
-      "This PC is in your account (acct_1), added by Hako's iPhone: every device of your account can use it.\n",
+      "This PC is in your account (acct_1), added by Hako's iPhone: every device of your account can use it.\n" + CLOSING,
     ]);
     expect(code).toBe(0);
     // and one whose row says so in the same look, though the account was read before it linked: no removal is asked for
@@ -2328,7 +2392,7 @@ describe("ovis link, on the PC itself", () => {
     expect(told.paths.filter((call) => call.startsWith("DELETE "))).toEqual([]);
     expect(told.out.slice(-2)).toEqual([
       "That line answered nothing: its question is no longer asked.\n",
-      "This PC is in your account (acct_1), added by Hako's iPhone: every device of your account can use it.\n",
+      "This PC is in your account (acct_1), added by Hako's iPhone: every device of your account can use it.\n" + CLOSING,
     ]);
     expect(told.code).toBe(0);
   });
@@ -2357,7 +2421,7 @@ describe("ovis link, on the PC itself", () => {
       "Removed.\n",
       "Tailnet laptop paired with this PC while the code was shown and is not in your account. Keep that device? Type keep to keep it, or press Enter to remove it: ",
       "Removed.\n",
-      "This PC is in your account (acct_1), added by Old tablet: every device of your account can use it.\n",
+      "This PC is in your account (acct_1), added by Old tablet: every device of your account can use it.\n" + CLOSING,
     ]);
     expect(between.code).toBe(0);
     const more = await scanning({
@@ -3329,5 +3393,77 @@ describe("pair --approve, asked as ovis add asks", () => {
     expect(gone.code).toBe(0);
     expect(gone.out).toContain("Phone p1 is no longer waiting.\n");
     expect(gone.decisions).toEqual([{ id: "p2", decision: "approve" }]);
+  });
+});
+
+describe("ovis approve, a members join typed with all six of its digits (#28)", () => {
+  // labels without digits, so a digit on the screen can only be one the command showed
+  const joinOf = (id: string) => ({ id, label: `Tablet ${id === "j1" ? "one" : "two"}` });
+  /** `said`: each text the command writes; `answer` types lines once the prompt was on the screen long enough. */
+  async function joining(options: { joins: { id: string; label: string }[]; said: (text: string, answer: (...lines: string[]) => void) => void; terminal?: boolean; approve?: (attempt: number) => JoinOutcome }) {
+    let at = Date.parse("2026-11-22T12:00:00Z");
+    const keys = keyboard();
+    const out: string[] = [];
+    const sent: { id: string; digits: string }[] = [];
+    let reads = 0;
+    const code = await approveJoins(options.joins, {
+      lines: { next: () => { reads++; return keys.lines.next(); } }, terminal: options.terminal ?? true, signal: new AbortController().signal, now: () => at, discard: keys.discard,
+      out: (text) => {
+        out.push(text);
+        options.said(text, (...lines) => { setTimeout(() => { at += 2_000; for (const line of lines) keys.type(line); }, 0); });
+      },
+      approve: async (id, digits) => { sent.push({ id, digits }); return options.approve?.(sent.length) ?? "approved"; },
+    });
+    return { code, out, text: out.join(""), sent, reads };
+  }
+  const prompt = (said: string, id: string): boolean => said.includes(joinOf(id).label) && said.endsWith(": ");
+
+  it("asks for the six digits the new device shows, shows none itself, takes no three, and lets it in with all six", async () => {
+    let asked = 0;
+    const { code, out, sent } = await joining({
+      joins: [joinOf("j1")],
+      said: (said, answer) => { if (prompt(said, "j1")) answer(++asked === 1 ? "456" : "123 456"); },
+    });
+    expect(code).toBe(0);
+    expect(asked).toBe(2);
+    // no candidates: the terminal shows no digits to pick from
+    expect(out.filter((said) => prompt(said, "j1")).join("")).not.toMatch(/[0-9]/);
+    expect(sent).toEqual([{ id: "j1", digits: "123456" }]);
+  });
+
+  it("ends a join at one wrong entry, never asking for it again, and goes on to the next; Enter by itself sends nothing", async () => {
+    const asked: string[] = [];
+    const { code, sent } = await joining({
+      joins: [joinOf("j1"), joinOf("j2")],
+      said: (said, answer) => {
+        if (prompt(said, "j1")) { asked.push("j1"); answer("000000"); }
+        if (prompt(said, "j2")) { asked.push("j2"); answer(""); }
+      },
+      approve: () => "wrong_digits",
+    });
+    expect(code).toBe(0);
+    expect(asked).toEqual(["j1", "j2"]);
+    expect(sent).toEqual([{ id: "j1", digits: "000000" }]);
+  });
+
+  it("stops at a locked or strict PC, says so, and asks about no other join", async () => {
+    for (const refusal of ["locked", "strict"] as const) {
+      const asked: string[] = [];
+      const { code, text, sent } = await joining({
+        joins: [joinOf("j1"), joinOf("j2")],
+        said: (said, answer) => { if (prompt(said, "j1")) { asked.push("j1"); answer("123456"); } if (prompt(said, "j2")) asked.push("j2"); },
+        approve: () => refusal,
+      });
+      expect(code).toBe(1);
+      expect(asked).toEqual(["j1"]);
+      expect(sent).toHaveLength(1);
+      expect(text).toContain(refusal === "locked" ? "locked" : "safety log");
+    }
+  });
+
+  it("approves nothing when its input is not a terminal: it reads no line and sends nothing", async () => {
+    const { code, sent, reads } = await joining({ joins: [joinOf("j1")], terminal: false, said: (_said, answer) => answer("123456") });
+    expect(code).toBe(1);
+    expect([sent, reads]).toEqual([[], 0]);
   });
 });

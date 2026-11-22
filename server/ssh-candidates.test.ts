@@ -218,3 +218,14 @@ it("lists only the other source when one is missing", async () => {
   expect(await sshCandidates({ sshDir: empty, readStatus: async () => null })).toEqual([]);
   expect((await sshCandidates({ sshDir: empty, readStatus: async () => status(["box"]) })).map((candidate) => candidate.destination)).toEqual(["box.tail.ts.net"]);
 });
+
+it("lists no git forge as a PC: github.com, gitlab.com, bitbucket.org, codeberg.org and their hosts, by alias or HostName", async () => {
+  const dir = sshDir({ config: [
+    "Host github.com", "Host gitlab.com", "Host bitbucket.org", "Host codeberg.org", "Host ssh.github.com", "Host altssh.gitlab.com",
+    "Host gh-work\n  HostName github.com\n  User git", "Host forge\n  HostName ssh.github.com\n  Port 443",
+    "Host nuc12\n  HostName 192.168.0.12\n  User git", "Host desk\n  User me", "Host notgithub.com",
+  ].join("\n") + "\n" });
+  const candidates = await sshCandidates({ sshDir: dir, readStatus: async () => null });
+  // a PC that happens to log in as git stays: only a forge's own host goes
+  expect(candidates.map((candidate) => candidate.name)).toEqual(["nuc12", "desk", "notgithub.com"]);
+});

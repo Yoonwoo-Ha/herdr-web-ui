@@ -4,7 +4,7 @@ import { ACCOUNT_OPENS_ALL_CAPABILITY, type NoticeAnswer, type NoticeSeen } from
 import { OUTPUT_STALLED_CLOSE_CODE } from "../../shared/terminal-flow.ts";
 import { promptSet } from "../../shared/secret-prompt.ts";
 import { ConnectionTrace } from "./connectionTrace.ts";
-import { abandonNativeReads, getTransport, type WebSocketLike } from "./transport.ts";
+import { abandonNativeReads, getTransport, type Transport, type WebSocketLike } from "./transport.ts";
 
 type Handler = (message: ServerMessage) => void;
 
@@ -190,6 +190,7 @@ export class HerdrSocket {
   private reconnectTimer: number | null = null;
   private connectTimer: number | null = null;
   private connectTimeouts = 0;
+  private routeWatch: { readonly transport: Transport; readonly stop: () => void } | null = null;
   private endedEarly = new WeakSet<WebSocketLike>();
   private disposed = false;
   private wakeListening = false;
@@ -349,7 +350,9 @@ export class HerdrSocket {
     // a backoff retry still waiting would only open a second attempt later, past whatever ends this one
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
-    const socket = getTransport().openSocket(this.url);
+    const transport = getTransport();
+    this.watchRoute(transport);
+    const socket = transport.openSocket(this.url);
     const epoch = ++this.connectionEpoch;
     const started = Date.now();
     this.socket = socket;
@@ -819,6 +822,18 @@ export class HerdrSocket {
     this.retries = 0;
     this.connectTimeouts = 0;
     this.connect();
+  }
+
+  /** A relay carrier back up reopens this stream at once, rather than when its backoff runs out. */
+  private watchRoute(transport: Transport): void {
+    if (this.routeWatch?.transport === transport) return;
+    this.routeWatch?.stop();
+    this.routeWatch = transport.onRouteChange ? {
+      transport,
+      stop: transport.onRouteChange(() => {
+        if (transport.route !== undefined && !this.left && this.socket?.readyState !== SOCKET_OPEN) this.wake();
+      }),
+    } : null;
   }
 
   private scheduleReconnect(): void {
@@ -1404,6 +1419,8 @@ export class HerdrSocket {
     this.trace.close();
     this.disposed = true;
     linkWatchers.delete(this);
+    this.routeWatch?.stop();
+    this.routeWatch = null;
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.clearConnectTimer();

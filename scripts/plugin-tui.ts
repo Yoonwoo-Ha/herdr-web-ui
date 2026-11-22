@@ -40,6 +40,17 @@ export function tuiEnv(caller: Env): Record<string, string> {
   return env;
 }
 
+/** Whether a herdr-core answers at `path`: a unix socket connection is made or refused at once. */
+export async function coreAnswers(path: string): Promise<boolean> {
+  try {
+    const socket = await Bun.connect({ unix: path, socket: { data: () => undefined } });
+    socket.end();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const WINDOWS_MESSAGE = "ovis tui: the terminal client runs on Linux and macOS only.\n";
 
 export function lookupMessage(lookup: Exclude<TuiLookup, { kind: "found" }>): string {

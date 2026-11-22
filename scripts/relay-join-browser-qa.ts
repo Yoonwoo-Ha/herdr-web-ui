@@ -1,4 +1,9 @@
-/** Explicit dashboard consent starts pairing once; external offers keep their confirmation. */
+/**
+ * A join of an account PC this device is not paired with starts from the PC's own page, reached from its row on Add a
+ * PC (the signed-in front page): one press of Ask to join on its sheet starts the pairing, which reaches connecting
+ * with focus and footer inside the sheet. The account service answers no device-key route (404, as one without device
+ * keys does), so the PC's page offers its join sheet instead of opening by the account's key; no relay or PC takes part.
+ */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,6 +48,7 @@ try {
           const request = route.request();
           const cors = { "access-control-allow-origin": APP, "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST, PUT, DELETE" };
           if (request.method() === "OPTIONS") { await route.fulfill({ status: 204, headers: cors }); return; }
+          if (new URL(request.url()).pathname === "/v1/devices/challenge") { await route.fulfill({ status: 404, headers: cors }); return; }
           if (new URL(request.url()).pathname === "/v1/pcs" && request.headers()["authorization"]) {
             await route.fulfill({ status: 200, headers: cors, contentType: "application/json", body: JSON.stringify({ pcs: directoryOf(fleetOf("FREADY"), Date.now()) }) });
             return;
@@ -64,15 +70,15 @@ try {
         page.on("pageerror", (error) => errors.push(error.message));
         await page.goto(APP);
         await page.locator(".account-provider").first().click();
-        // a sign-in lands on Add a PC, never the dashboard: that opens only by its own address
-        await page.locator('main.relay-add-screen[data-account-state="signed-in"] .relay-add, [data-add-pc-mode]').first().waitFor({ timeout: 45_000 });
-        await page.goto(`${APP}/#overview`);
-        await page.locator('[data-dashboard-mode="account"]').waitFor();
+        // a sign-in lands on the connect tabs, or on the join an account PC its launch picked asks by itself (#16)
+        await page.locator('main.relay-add-screen[data-account-state="signed-in"] .connect-start-tabs, [data-add-pc-mode], [data-approval-wait]').first().waitFor({ timeout: 45_000 });
+        // the tab's launch is past; the account's PCs are listed on Add a PC, not on the signed-in front page (#16)
+        await page.goto(`${APP}/#add`);
+        // from the front page that is a same-document hash change: the load draws Add a PC
+        await page.reload();
         const pc = mode === "new" ? "New mini PC" : "Old MacBook";
-        const row = page.locator(':is(tr,li)[data-pc-state]').filter({ hasText: pc })
-          .filter({ has: page.locator("[data-pc-action]") }).first();
-        await row.locator("[data-pc-action]").first().click();
-        const sheet = page.locator(`[data-add-pc-mode="${mode}"][data-add-pc-phase="start"]`);
+        await page.locator('main.relay-add-screen[data-account-state="signed-in"] a.relay-add-saved-pc').filter({ hasText: pc }).click();
+        const sheet = page.locator(`[data-add-pc-mode="${mode}"][data-add-pc-phase="confirm"]`);
         await sheet.waitFor();
         await sheet.locator("[data-sheet-primary]").click();
         await page.locator(`[data-add-pc-mode="${mode}"][data-add-pc-phase="connecting"]`).waitFor({ timeout: 15_000 });
@@ -100,7 +106,7 @@ try {
         report.push({ name, ...geometry });
         console.log(`PASS ${name}: one confirmation reaches connecting; focus and footer contained`);
         await page.keyboard.press("Escape");
-        await page.locator('[data-dashboard-mode="account"]').waitFor();
+        await page.locator('main.relay-add-screen[data-account-state="signed-in"] .connect-start-tabs').waitFor();
         if (await page.locator("[data-add-pc-phase]").count() !== 0) throw new TypeError(`${name}: Cancel retained the sheet`);
       } finally {
         await closeMarked(context);

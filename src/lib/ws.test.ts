@@ -3324,6 +3324,40 @@ it("runs on a transport's socket where the page has no global WebSocket", () => 
   }
 });
 
+it("reopens the app stream as soon as the relay carrier is back, not when its backoff runs out", () => {
+  const routeListeners = new Set<() => void>();
+  const relay = {
+    ...nativeTransport, kind: "relay" as const, route: undefined as "relay" | "direct" | undefined,
+    openSocket: (url: string) => new FakeSocket(url) as unknown as WebSocketLike,
+    onRouteChange: (listener: () => void) => { routeListeners.add(listener); return () => { routeListeners.delete(listener); }; },
+  };
+  const routeChanged = (route: "relay" | "direct" | undefined): void => { relay.route = route; for (const listener of [...routeListeners]) listener(); };
+  setTransport(relay);
+  const client = new HerdrSocket("ws://test/ws");
+  try {
+    relay.route = "relay";
+    client.connect();
+    const first = FakeSocket.last;
+    first.open();
+    // the carrier drops: the stream closes and waits out its backoff
+    routeChanged(undefined);
+    first.disconnect();
+    expect(FakeSocket.last).toBe(first);
+    routeChanged("relay");
+    const second = FakeSocket.last;
+    expect(second).not.toBe(first);
+    second.open();
+    // a carrier switch with the stream already open opens nothing more
+    routeChanged("direct");
+    expect(FakeSocket.last).toBe(second);
+    client.close();
+    expect(routeListeners.size).toBe(0);
+  } finally {
+    client.close();
+    setTransport(nativeTransport);
+  }
+});
+
 it("forgets machine event capability on disconnect before a replacement subscriber can observe it", () => {
   const client = new HerdrSocket("ws://test/ws");
   client.connect(); const socket = FakeSocket.last; socket.open();

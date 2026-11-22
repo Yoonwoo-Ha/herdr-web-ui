@@ -62,14 +62,6 @@
   inset-block-end: calc(var(--space-3) * -1 - var(--hairline) - env(safe-area-inset-bottom, 0px));
 }
 
-.icon-button.inbox-rail-item.inbox-rail-exit {
-  margin-block-end: var(--space-2);
-}
-
-.icon-button.inbox-rail-item.inbox-rail-exit::before {
-  inset-block-end: calc(var(--space-2) / -2 - var(--space-2) - var(--hairline));
-}
-
 @media (hover: hover) {
   .icon-button.inbox-rail-item:hover:not(:disabled) {
     --rail-item-bg: var(--side-hover);
@@ -129,22 +121,17 @@
   pointer-events: none;
 }
 
-.inbox-rail-dot.is-reconnecting {
+.inbox-rail-dot.is-reconnecting,
+.inbox-rail-dot.is-failed {
   background: var(--status-reconnecting);
   animation: pulse var(--dur-pulse) var(--ease-pulse) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .inbox-rail-dot.is-reconnecting {
+  .inbox-rail-dot.is-reconnecting,
+  .inbox-rail-dot.is-failed {
     animation: none;
   }
-}
-
-.inbox-rail-mark {
-  display: block;
-  flex: 0 0 auto;
-  width: var(--mark-size);
-  height: var(--mark-size);
 }
 
 @media (hover: none) and (pointer: coarse) {

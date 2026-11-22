@@ -8,7 +8,7 @@ interface CapacitorBridge {
   getPlatform?: () => string;
   nativePromise?: (plugin: string, method: string, options?: Record<string, unknown>) => Promise<unknown>;
   /** the app's native plugins, announced to the page before its first script runs */
-  PluginHeaders?: ReadonlyArray<{ name?: unknown }>;
+  PluginHeaders?: ReadonlyArray<{ name?: unknown; methods?: ReadonlyArray<{ name?: unknown }> }>;
 }
 
 export const PUSH_PLUGIN = "OvisPush";
@@ -38,6 +38,11 @@ export function hasNativePlugin(name: string): boolean {
   return inNativeApp() && (bridge()?.PluginHeaders ?? []).some((header) => header.name === name);
 }
 
+/** Whether the app's plugin `name` has `method`: an app built before the method was added has the plugin without it. */
+export function hasNativeMethod(name: string, method: string): boolean {
+  return inNativeApp() && (bridge()?.PluginHeaders ?? []).some((header) => header.name === name && (header.methods ?? []).some((each) => each.name === method));
+}
+
 /** Calls `method` of the app's plugin `plugin`; a refusal rejects with the plugin's `code` on the error. */
 export async function callNative<T>(plugin: string, method: string, options: Record<string, unknown> = {}): Promise<T> {
   const call = bridge()?.nativePromise;
@@ -47,4 +52,10 @@ export async function callNative<T>(plugin: string, method: string, options: Rec
 
 export async function changePc(): Promise<void> {
   await bridge()?.nativePromise?.("HerdrShell", "disconnect", {});
+}
+
+/** The app's connect screen with this PC kept until another is picked; an app built before that leaves this PC for it. */
+export async function chooseAnotherPc(): Promise<void> {
+  if (hasNativeMethod("HerdrShell", "chooseAnother")) await callNative("HerdrShell", "chooseAnother");
+  else await changePc();
 }

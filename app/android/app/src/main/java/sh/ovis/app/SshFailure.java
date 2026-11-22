@@ -15,6 +15,7 @@ package sh.ovis.app;
  *       `bridge-only`, `not-started`, `not-ovis`;</li>
  *   <li>a first install from the phone: `install-unsupported`, `install-missing-tool`,
  *       `install-permission`, `install-disk`, `install-failed`;</li>
+ *   <li>`tailscale-check`: Tailscale SSH asks to approve this phone again (`command` is its link);</li>
  *   <li>`cancelled`, `internal`.</li>
  * </ul>
  */
@@ -33,7 +34,10 @@ final class SshFailure extends Exception {
         this.command = command;
     }
 
-    /** Whether reconnecting stops on it until the PC is set up again (SshTunnel). */
+    /**
+     * Whether reconnecting stops on it until the PC is set up again (SshTunnel); Tailscale's check until Try again, as
+     * each new sign-in would ask for another check the person never sees.
+     */
     boolean stops() {
         switch (kind) {
             case "host-key-changed":
@@ -41,6 +45,7 @@ final class SshFailure extends Exception {
             case "auth":
             case "key-unreadable":
             case "key-lost":
+            case "tailscale-check":
                 return true;
             default:
                 return false;

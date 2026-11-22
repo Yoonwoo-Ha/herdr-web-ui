@@ -23,26 +23,47 @@ export class CatchUpGate {
   private waiting = new Set<string>();
   private readonly frozenByTarget = new Map<string, Set<string>>();
   private readonly lifted = new Set<string>();
+  private staleFor: string | null = null;
+  /** The binding whose last read reached its last page and applied every block, but could widen nothing (narrowedRead). */
+  private narrowedFor: string | null = null;
 
   /** `binding`: this PC's binding id now, null in no account, where nobody waits (no block can name it). */
   constructor(private readonly binding: () => string | null, private readonly released: (id: string) => boolean = () => false) {}
 
-  waits(row: GatedRow, legacyCredential?: () => boolean): boolean {
+  /** `ownCredential`: whether the row's access is this PC's own to give and nothing holds it back, asked only after a read that widened nothing. */
+  waits(row: GatedRow, legacyCredential?: () => boolean, ownCredential?: () => boolean): boolean {
     const binding = this.binding();
     if (binding === null) return false;
     if (this.lifted.has(row.id)) return true;
     if (legacyCredential !== undefined) return !legacyCredential();
     if (this.released(row.id) || pairedAtPc(row.origin)) return false;
     if (this.caughtUpFor === binding) return this.waiting.has(row.id);
-    return true;
+    return !(this.narrowedFor === binding && ownCredential?.() === true);
+  }
+
+  /**
+   * A read reached its last page with every block applied, and could let nothing more in (the account's listing of
+   * this PC was not confirmed). What the wait after a start is for has happened, so a row that needs nothing let in
+   * waits no longer; every other row waits on, for a read that commits.
+   */
+  narrowedRead(): void {
+    this.narrowedFor = this.binding();
   }
 
   /** T42: record the rows that the whole read's admission check refused. */
   wholeRead(refused: readonly string[] = []): void {
     this.caughtUpFor = this.binding();
+    this.staleFor = null;
     this.waiting = new Set(refused);
     this.lifted.clear();
   }
+
+  /** T56: the last whole read is too old. It stays so until the next one, for rows made meanwhile too. */
+  staleRead(): void {
+    if (this.caughtUpFor !== null && this.caughtUpFor === this.binding()) this.staleFor = this.caughtUpFor;
+  }
+
+  readStale(): boolean { return this.staleFor !== null && this.staleFor === this.binding(); }
 
   /** An exact recovery can supersede this read's refusal, never the first read or a wait after a lift. */
   recoveredHere(id: string): void {

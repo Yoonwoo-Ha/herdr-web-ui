@@ -297,6 +297,13 @@ describe("a sign-in shared by tabs", () => {
     expect(await store.get("session")).toEqual(session);
   });
 
+  it("keeps a listed PC whose new window does not read as a time, as one with none", async () => {
+    const store = memoryAccountStore();
+    await store.set("session", { service: SERVICE, account: "acct_1", provider: "github", access_token: "t", refresh_token: "r", expires_at: Date.now() + 3600_000 });
+    const listing = async () => Response.json({ pcs: [{ server_id: PC_A, label: "p620", added_at: "2026-11-05T12:00:00.000Z", last_seen_at: null, new_until: "soon" }] });
+    expect((await new AccountService({ store, fetch: listing }).listPcs()).map(({ label, new_until }) => [label, new_until])).toEqual([["p620", null]]);
+  });
+
   it("keeps the service's own words out of its errors, which could echo a token", async () => {
     const store = memoryAccountStore();
     await store.set("session", { service: SERVICE, account: "acct_1", provider: "github", access_token: "secret-token", refresh_token: "r", expires_at: Date.now() + 3600_000 });
