@@ -52,6 +52,19 @@ try {
       });
       console.log("PASS live interface typography changes refit status labels at a fixed card width");
 
+      await withCard(browser, 330, { agent: "claude", model: "claude-opus-5-5", status: "idle", pending: false, uiFontSize: 15 }, async (page) => {
+        const draws = new Set<string>();
+        for (let width = 330; width >= 304; width -= 2) {
+          await page.setViewportSize({ width, height: 844 });
+          await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => done())))));
+          const row = await measure(page);
+          await drawn(page, row.draw as Draw, `${width}px at a 15px interface font, whose 3ch floor of 23.78px clientWidth reads as 24`);
+          draws.add(row.draw);
+        }
+        assert.ok(draws.has("no-effort") && draws.has("out"), `the name is cut toward its floor, then the label steps out: ${[...draws].join(", ")}`);
+      });
+      console.log("PASS a name cut to a fractional floor steps the label out, so the pill never cuts the ring");
+
       for (const width of [390, 1440]) await withCard(browser, width, { model: LONG_MODEL }, async (page) => {
         const box = page.getByRole("textbox", { name: "Message", exact: true });
         await box.fill("Keep the draft at its insertion point.\n".repeat(80));
