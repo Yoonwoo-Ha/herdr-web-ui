@@ -215,6 +215,26 @@ describe("roster and health polling beside the event stream", () => {
     });
   });
 
+  it("keeps the socket's roster and shows no card when a PC from before account roster reads refuses the read as local_only", async () => {
+    let refused = false;
+    setTransport({ ...transport, openEventSource: () => source, async fetch(input) {
+      const path = String(input); reads.push(path);
+      if (path.startsWith("/api/machines") && !refused) throw new TypeError("Load failed");
+      if (path.startsWith("/api/machines")) return Response.json({ error: { code: "local_only", message: "An account-joined device cannot do this from afar" } }, { status: 403 });
+      return Response.json({ ok: true });
+    } });
+    await advance(5_000);
+    expect(errorShown).toBe("Load failed");
+    refused = true;
+    await stream("opened");
+    await stream([{ ...local(), name: "Pushed" }]);
+    const before = reads.filter((read) => read.startsWith("/api/machines")).length;
+    await advance(35_000);
+    expect(reads.filter((read) => read.startsWith("/api/machines")).length).toBeGreaterThan(before);
+    expect(errorShown).toBeNull();
+    expect(shown.map((machine) => machine.name)).toEqual(["Pushed"]);
+  });
+
   it("T71: keeps the PC's list of keys waiting for its screen as each change comes", async () => {
     await healthyStream();
     const key: PendingKey = { id: "p1", label: "Pixel 9", fingerprint: "AB12-CD34", via: "relay", redeemed_at: "2026-11-20T04:00:00.000Z", slots: { used: 1, of: 5 } };

@@ -1,6 +1,6 @@
 import { subscribeMachineEvents } from "./machine-events.ts";
 import { wireMachine, wireMachineEvent, type WireMachine } from "../shared/compact-agents.ts";
-import type { DevicePairedEvent, DevicePairedSeenEvent, DeviceRemovedEvent, MachineRoster, PcInstallJob, PcInstallRequest, PcUpdateAll, PcUpdateStarted, PendingRedemptionsEvent, RelayPairingsEvent, RemotePairingsEvent, SetupAction, SetupRequest } from "../shared/machines.ts";
+import { LOCAL_MACHINE, type DevicePairedEvent, type DevicePairedSeenEvent, type DeviceRemovedEvent, type Machine, type MachineRoster, type PcInstallJob, type PcInstallRequest, type PcUpdateAll, type PcUpdateStarted, type PendingRedemptionsEvent, type RelayPairingsEvent, type RemotePairingsEvent, type SetupAction, type SetupRequest } from "../shared/machines.ts";
 import type { AgentRowTokens } from "../shared/pane-tokens.ts";
 import type { SharedPreferences } from "../shared/preferences.ts";
 import type { PanePromptResponse, SessionSnapshot } from "../shared/protocol.ts";
@@ -20,6 +20,10 @@ import { answerCode, moveAll, moveAllPlans, PC_MOVE_PATH, PC_UPDATE_REQUIRED, to
 import { ADDRESS_PC_WORDS, AddressPcError } from "./address-pc.ts";
 
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
+
+/** The PCs an account-joined device is told, over its terminal socket or GET /api/machines: this PC's own row alone. */
+export const accountRoster = (layout: AgentRowTokens | null, machines: Machine[]): Machine[] =>
+  withoutHiddenTokens(layout, machines.filter((machine) => machine.id === LOCAL_MACHINE));
 /**
  * Updating this PC's PCs, as switching its own runtime (dispatch.ts): only its owner, from this app's own page (the
  * update header, same origin, no query).
@@ -134,7 +138,9 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
   /** this PC's owner (access.ts ownerAccess): only they may start or stop updates of its PCs */
   owner = false,
   /** OVIS_ACCOUNT_OPENS_ALL is on here: only then does the roster carry a block to another PC's account records */
-  accountOpensAll = false, source?: Pick<DeviceStore, "accountPolicyActive" | "accountError">): Promise<Response> {
+  accountOpensAll = false, source?: Pick<DeviceStore, "accountPolicyActive" | "accountError">,
+  /** an account-joined device (DeviceStore.isAccountRow): its roster is accountRoster, and no PC's boot is proved for it */
+  accountRow = false): Promise<Response> {
   const url = new URL(request.url);
   // A PC's file opens as this PC's /api/fs/file does, from any navigation: reading it changes
   // nothing, and Chrome on Android shows a PDF in the viewer's frame as an "Open" button whose
@@ -170,11 +176,12 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       const asked = url.searchParams.getAll("verify_source_boot");
       // as the machine events tell it, for every answer below: without the token values herdr's rows hide
       // (withoutHiddenTokens), and without a PC's own agent_refs (wireMachine)
-      const shown = () => withoutHiddenTokens(herdrSidebar?.get() ?? null, manager.list()).map((machine) => wireMachine(machine, false));
+      const shown = () => (accountRow ? accountRoster : withoutHiddenTokens)(herdrSidebar?.get() ?? null, manager.list()).map((machine) => wireMachine(machine, false));
       if (asked.length === 0) {
         if (url.searchParams.get("compact_agents") !== "1") return jsonResponse({ machines: shown() } satisfies MachineRoster);
         return jsonResponse({ machines: shown().map((machine) => wireMachine(machine, true)) } satisfies { machines: WireMachine[] });
       }
+      if (accountRow) return fail("local_only", "An account-joined device cannot do this from afar", 403);
       if (asked.length > 1 || asked[0] === "") return fail("invalid_query", "verify_source_boot names one PC", 400);
       const machineId = asked[0]!;
       const proof = await manager.verifySourceBoot(machineId, request.signal);

@@ -7,8 +7,10 @@ import { accountReadAllowed, accountRouteAction, accountRouteGuard, accountRowMa
 // selector in either transport may widen it (including a second selector).
 function localAccountPath(request: Request): string | null {
   const { pathname, searchParams } = new URL(request.url);
+  // the roster read is answered with this PC's own row (machine-api.ts accountRoster); proving a PC's boot is not
+  const roster = pathname === "/api/machines" && request.method === "GET" && !searchParams.has("verify_source_boot");
   const local = pathname.replace(/^\/api\/machines\/local\//, "/api/");
-  if (/^\/api\/machines(?:\/|$)/.test(local)) return null;
+  if (!roster && /^\/api\/machines(?:\/|$)/.test(local)) return null;
   const selector = /(?:^|[-_])(?:machine|pc)(?:[-_]?id)?$/i;
   for (const [name, value] of searchParams) {
     if (selector.test(name.replace(/([a-z])([A-Z])/g, "$1-$2")) && value !== "local") return null;

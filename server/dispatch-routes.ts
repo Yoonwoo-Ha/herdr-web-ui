@@ -52,7 +52,7 @@ export function dispatchMutationRegistered(method: string, pathname: string): bo
 }
 
 export const DISPATCH_READS: ReadonlySet<string> = new Set([
-  "preferences", "seen", "session", "sessions/history", "health", "system", "herdr-ui", "devices", "access",
+  "machines", "preferences", "seen", "session", "sessions/history", "health", "system", "herdr-ui", "devices", "access",
   "account/introduction", "account/status", "push", "relay", "updates", "updates/notes", "updates/installed", "runtime/move",
   "usage", "usage/statusline", "usage/login", "usage/login/prompt", "voice", "fonts", "cliproxy", "cliproxy/login", "telemetry",
   "agents", "agent-catalog", "integrations", "plugins/actions", "plugin/action", "agent/commands",

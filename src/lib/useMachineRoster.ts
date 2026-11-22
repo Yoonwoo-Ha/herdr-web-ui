@@ -217,6 +217,8 @@ export function useRosterLoader({ locked, healthFailing, rosterIn, setMachines, 
     }
     catch (err) {
       if (err instanceof ApiError && err.status === 401) { setLocked(true); return; }
+      // an account-joined device on a PC from before it answered this read: the roster comes over the socket alone
+      if (err instanceof ApiError && err.status === 403 && err.code === "local_only") { carrierBack(); setError(null); return; }
       if (err instanceof CarrierDownError) {
         carrierDown.current ??= { timer: window.setTimeout(() => {
           if (carrierDown.current) carrierDown.current.timer = null;
