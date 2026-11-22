@@ -20,7 +20,7 @@ import { startOpenCodeWatch, openCodeSkillsToType, skillsNotAttached } from "../
 import { herdrSkillAttachIo, type SkillAttachIo, typeWithSkills } from "../opencode-skill-attach.ts";
 import { userHome } from "../user-home.ts";
 import { type GrokBeforeSend, grokEcho, grokQueue, sendGrokQueuedNow } from "./grok-queue.ts";
-import { drawsColour, inputRowState, readsTypedDraft, screenFromAnsi, typedDraft } from "../../shared/input-row.ts";
+import { drawsColour, inputRowState, POWERLINE_WORKING_RULE, readsTypedDraft, screenFromAnsi, typedDraft } from "../../shared/input-row.ts";
 
 const CLAUDE_INPUT_DRAFT_MESSAGE = "Claude Code's input box is not empty (a draft, bash mode, or a box that could not be read); send or clear it in the terminal, then send this message";
 
@@ -258,12 +258,16 @@ const AGENT_BOX_READS = 3;
  * Whether the viewport's read shows the live screen: its rows are the live screen's last ones. herdr's live read can
  * hold a row more at its top than the viewport (measured with Gemini CLI 0.68.0), never other rows at the bottom.
  */
-function showsLive(colors: string, live: string): boolean {
-  const shown = screenText(colors).split("\n"), current = screenText(live).split("\n");
+export function showsLive(colors: string, live: string): boolean {
+  const shown = spinnerless(screenText(colors)).split("\n"), current = spinnerless(screenText(live)).split("\n");
   return shown.length <= current.length && shown.length >= current.length - 2 && current.slice(current.length - shown.length).join("\n") === shown.join("\n");
 }
 
 const screenText = (text: string): string => stripVTControlCharacters(text).split(/\r?\n/).map((line) => line.trimEnd()).join("\n").trimEnd();
+/** pi-powerline-footer's working border (shared/input-row.ts POWERLINE_WORKING_RULE) is the same screen whichever frame its
+    braille spinner shows. Every other row is compared as drawn, the box's own and plain pi's border included: no box is read under that one */
+const spinnerless = (text: string): string => text.split("\n")
+  .map((row) => POWERLINE_WORKING_RULE.test(row) ? row.replace(/^( ── )[\u2801-\u28ff]/, "$1\u2800") : row).join("\n");
 
 /**
  * herdr reports Codex at rest

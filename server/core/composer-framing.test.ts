@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HerdrError } from "../herdr/client.ts";
 import { PendingInputError } from "../pending-input.ts";
-import { closeBackslash, createSubmitText, pendingFault, pendingText, submitFraming } from "./composer.ts";
+import { closeBackslash, createSubmitText, pendingFault, pendingText, showsLive, submitFraming } from "./composer.ts";
 
 let root: string;
 let listener: ReturnType<typeof Bun.listen>;
@@ -167,5 +167,29 @@ describe("closeBackslash", () => {
     expect(closeBackslash("pi", "under requisiciones? \\")).toBe("under requisiciones? \\ ");
     expect(closeBackslash("pi", "\u001b[200~see C:\\temp\\\u001b[201~")).toBe("\u001b[200~see C:\\temp\\ \u001b[201~");
     expect(closeBackslash("pi", "see C:\\temp\\x")).toBe("see C:\\temp\\x");
+  });
+});
+
+describe("showsLive", () => {
+  it("takes a working agent's two reads as one screen though its spinner turned between them", () => {
+    const viewport = " status\n \u001b[38;2;111;164;201m── ⠼\u001b[0m Working ──────────\n > how\n ──────────────────";
+    const live = " status\n ── ⠴ Working ──────────\n > how\n ──────────────────";
+    expect(showsLive(viewport, live)).toBeTrue();
+    // any other change between the reads is still another screen
+    expect(showsLive(viewport, live.replace("how", "hows"))).toBeFalse();
+    // a braille character outside the border's spinner is the screen's own: typed in the box, it is another screen
+    expect(showsLive(viewport.replace("how", "how⠋"), live.replace("how", "how⠙"))).toBeFalse();
+    // nor does one typed after a dash: only a row that is the border itself carries the spinner
+    expect(showsLive(" > ─ ⠋ x", " > ─ ⠙ x")).toBeFalse();
+    // nor does a row that only starts like the border: the match never runs on into the next row
+    expect(showsLive(" >\n   ── ⠋ x\n ──────────", " >\n   ── ⠙ x\n ──────────")).toBeFalse();
+    // a typed row the box runs onto (indented three columns) is the box's own, drawn like the border or not
+    expect(showsLive(" > a\n   ── ⠼ notation ──────────", " > a\n   ── ⠴ notation ──────────")).toBeFalse();
+    // plain pi's own working border (not indented) is compared as drawn: no box is read under it, so a turned spinner
+    // taken for the same screen only ever lets a misreading through
+    expect(showsLive("── ⠸ Working ──────────", "── ⠴ Working ──────────")).toBeFalse();
+    // that border where its status leaves few dashes, or where the editor scrolls, is the same screen too
+    expect(showsLive(" ── ⠸ Working ───────\n > how", " ── ⠴ Working ───────\n > how")).toBeTrue();
+    expect(showsLive(" ── ⠸ Working ──── ↑ 2 more ─────\n > how", " ── ⠴ Working ──── ↑ 2 more ─────\n > how")).toBeTrue();
   });
 });

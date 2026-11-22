@@ -41,6 +41,8 @@ the command list open. Redacted: the shell's user name and host read `tester0` a
 `pane.read --source visible --format ansi`, pi 1.5.2 with the pi-powerline-footer 0.22.0 extension (its status
 bar above the editor) in a scratch folder: `draft-empty` at rest, `draft-typed` with `2` typed, `draft-multiline`
 with `line1`, Shift+Enter, `line2`. Only the screen's last 20 rows are kept (the status bar and the editor).
+`pi/powerline-working-typed-200.ansi`: the same setup recorded 2026-11-20 mid-turn (a `sleep 60` bash call), the
+spinner and `Working` in the editor's upper border and `how` typed in it.
 
 ## `<agent>/draft-*` for gjc, muse, qwen, cline and dsh-tui: the chat send's draft check
 

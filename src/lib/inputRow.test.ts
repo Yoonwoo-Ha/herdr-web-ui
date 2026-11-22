@@ -117,6 +117,8 @@ const EXPECTED: Record<string, Record<string, InputRowState>> = {
     "draft-empty-119": "ready", "draft-typed-119": "draft", "draft-slash-119": "gone",
     // pi 1.5.2 with pi-powerline-footer 0.22.0, its status bar above the editor
     "powerline-draft-empty-200": "ready", "powerline-draft-typed-200": "draft", "powerline-draft-multiline-200": "draft",
+    // its turn's spinner in the upper border (`── ⠸ Working ──`)
+    "powerline-working-typed-200": "draft",
     "settings-idle-119": "ready", "settings-idle-40": "ready", "settings-open-119": "gone", "settings-open-40": "gone",
     "settings-closed-119": "ready", "settings-closed-40": "ready",
     "tree-open-119": "gone", "tree-open-40": "gone", "resume-open-119": "gone", "resume-open-40": "gone",
@@ -462,6 +464,21 @@ describe("the chat send's read of the same screens (shared/input-row.ts)", () =>
     expect(inputRowState("pi", lastPrompt("draft-empty", arrow))).toBe("ready");
     // anything else under the editor (its autocomplete list) still fails safe
     expect(inputRowState("pi", lastPrompt("draft-typed", `   /model  Select model\n${arrow}`))).toBe("gone");
+    // while pi works its upper border carries the spinner: a send then queues, and would join a typed `how`
+    expect(typedDraft("pi", screen("working-typed"))).toBeTrue();
+    const workingEmpty = readFileSync(join(FIXTURES, "pi/powerline-working-typed-200.ansi"), "utf8").replace(">\u001b[0m how\u001b[0m", ">\u001b[0m\u001b[0m");
+    expect(inputRowState("pi", screenFromAnsi(workingEmpty))).toBe("ready");
+    // pi 1.5.2 draws that border (CustomEditor.renderTopBorder) with the dashes the row leaves, one where its status fills
+    // the row, and ` ↑ 2 more ` in it where the editor scrolls: each is still the box's upper border
+    const accent = (text: string): string => `\u001b[38;2;111;164;201m${text}\u001b[0m`;
+    const workingBox = (border: string, rows: string[]): ScreenSnapshot => screenFromAnsi([" status", ` ${accent(border)}`,
+      ...rows.map((row, index) => index > 0 ? `   ${row}` : ` \u001b[38;2;200;200;200m>\u001b[0m${row === "" ? "" : ` ${row}`}\u001b[0m\u001b[7m\u001b[0m`),
+      ` ${accent("─".repeat(border.length))}`].join("\n"));
+    for (const border of ["── ⠸ Working ───────", "── ⠸ Auto-compacting... (esc to ─", "── ⠸ Working ──────── ↑ 2 more ─────────────"]) {
+      expect(typedDraft("pi", workingBox(border, ["how"]))).toBeTrue();
+      expect(typedDraft("pi", workingBox(border, ["line3", "line4", "line5", "line6", "line7"]))).toBeTrue();
+      expect(inputRowState("pi", workingBox(border, [""]))).toBe("ready");
+    }
   });
 
   test("pi's editor holding a line typed with leading spaces is a draft to the send, still a dialog's row to the peek", () => {
