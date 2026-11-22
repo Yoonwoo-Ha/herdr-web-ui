@@ -27,6 +27,7 @@ const look = (page: Page, paneId: string) => page.evaluate((id) => {
   return {
     scrollTop: view === null ? null : Math.round(view.scrollTop),
     scrollHeight: view === null ? null : view.scrollHeight,
+    clientHeight: view === null ? null : view.clientHeight,
     hidden: frame === null ? null : frame.classList.contains("is-hidden"),
     order: [...document.querySelectorAll(".pane-frame")].map((node) => node.getAttribute("data-layout-pane")),
   };
@@ -49,12 +50,31 @@ const topRow = async (page: Page, paneId: string): Promise<string> => {
   return row;
 };
 
-const scrollToPlace = (page: Page, paneId: string, fraction: number) => page.evaluate(({ id, share }) => {
+/** Waits until the chat's list holds still: rows it renders are measured after the scroll that showed them,
+ * which grows the transcript and moves scrollTop to keep the rows on the screen where they were. */
+const settled = (page: Page, paneId: string) => page.evaluate((id) => new Promise<void>((resolve, reject) => {
   const view = document.querySelector<HTMLElement>(`.pane-frame[data-layout-pane="${CSS.escape(id)}"] .chat-view`)!;
-  view.scrollTop = Math.round((view.scrollHeight - view.clientHeight) * share);
-  view.dispatchEvent(new Event("scroll", { bubbles: true }));
-  return Math.round(view.scrollTop);
-}, { id: paneId, share: fraction });
+  const deadline = performance.now() + 15_000;
+  let last = "", still = 0;
+  const check = () => {
+    const now = `${Math.round(view.scrollTop)}|${view.scrollHeight}`;
+    still = now === last ? still + 1 : 0;
+    last = now;
+    if (still >= 20) resolve();
+    else if (performance.now() > deadline) reject(new Error(`the chat never held still (${now})`));
+    else requestAnimationFrame(check);
+  };
+  requestAnimationFrame(check);
+}), paneId);
+
+/** The reader's own scroll up the transcript, with the wheel: a scroll the chat did not see the reader make
+ * is taken for the list's own, and a chat that was at its end goes on following it. */
+const readUp = async (page: Page, paneId: string, fraction: number): Promise<void> => {
+  const view = page.locator(`.pane-frame[data-layout-pane="${paneId}"] .chat-view`);
+  const distance = await view.evaluate((node, share) => Math.round((node.scrollHeight - node.clientHeight) * share), fraction);
+  await view.hover();
+  await page.mouse.wheel(0, -distance);
+};
 
 /** The panes whose frame React moves in the canvas: a moved frame loses the scrollTop of what it scrolls. */
 async function watchMoves(page: Page): Promise<void> {
@@ -105,15 +125,21 @@ const switchTo = async (page: Page, label: string): Promise<void> => {
 try {
   await buildDemoApp(app);
   // the demo transport installs its own fetch, so the long history is wrapped once it has loaded
+  // the demo's agent finishes its last turn after the first read; repeated in every round, that would grow
+  // the transcript above the reader too, so each pane keeps the turns of its first answer
   writeFileSync(join(app, "long-history.js"), `(() => {
     const native = window.fetch;
+    const first = new Map();
     window.fetch = async (...args) => {
       const answer = await native(...args);
       const url = typeof args[0] === "string" ? args[0] : args[0] instanceof Request ? args[0].url : String(args[0]);
       if (!url.includes("/api/pane/conversation") || url.includes("/search")) return answer;
       const data = await answer.clone().json();
       if (!Array.isArray(data.turns) || data.turns.length === 0) return answer;
-      data.turns = Array.from({ length: ${ROUNDS} }, (_, round) => data.turns.map((turn, index) => ({
+      const pane = new URL(url, location.href).searchParams.get("pane_id");
+      if (!first.has(pane)) first.set(pane, data.turns);
+      const turns = first.get(pane);
+      data.turns = Array.from({ length: ${ROUNDS} }, (_, round) => turns.map((turn, index) => ({
         ...turn,
         parts: turn.parts.map((part) => part.kind === "text" ? { ...part, text: "Round " + round + " #" + index + ": " + part.text } : part),
       }))).flat();
@@ -135,14 +161,18 @@ try {
             for (const pane of [id, "w1D:p1", "w1J:p1"]) localStorage.setItem(`ovis:view:${pane}`, "chat");
           }, PANE);
           const opened = await context.newPage();
+          // a loaded CI runner measures the chat's rows late: the same slowness here, so the place is read as CI reads it
+          await (await context.newCDPSession(opened)).send("Emulation.setCPUThrottlingRate", { rate: 4 });
           const errors: string[] = [];
           opened.on("pageerror", (error) => errors.push(error.message));
           await opened.goto(`http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(PANE)}`);
           await rows(opened);
 
-          const start = await scrollToPlace(opened, PANE, 0.45);
-          assert.ok(start > 200, `${face}: the reader is up the page (scrollTop ${start})`);
+          await readUp(opened, PANE, 0.55);
+          await settled(opened, PANE);
           const before = await look(opened, PANE);
+          const gap = before.scrollHeight! - before.clientHeight! - before.scrollTop!;
+          assert.ok(before.scrollTop! > 200 && gap > 400, `${face}: the reader is up the page, away from its end (scrollTop ${before.scrollTop}, ${gap} px above the end)`);
           const topBefore = await topRow(opened, PANE);
           await watchMoves(opened);
 
@@ -168,10 +198,13 @@ try {
           // this one there (it is no longer first among the mounted frames), so the place is checked again
           await switchTo(opened, "probe2");
           await switchTo(opened, "Idempotent");
-          const again = await look(opened, PANE);
           assert.deepEqual(await moves(opened), [], `${face}: a second trip moves no pane frame either`);
-          assert.ok(Math.abs(again.scrollTop! - before.scrollTop!) <= 2, `${face}: the second trip keeps the scroll offset (${before.scrollTop} → ${again.scrollTop})`);
-          assert.equal(await topRow(opened, PANE), topBefore, `${face}: and the row the reader left`);
+          await settled(opened, PANE);
+          // the row, not scrollTop: the demo's live turn re-renders while the reader is away, and the list moves
+          // scrollTop to keep the reader's row where it was
+          const again = await look(opened, PANE);
+          assert.ok(again.scrollTop! > 200, `${face}: the second trip is not back at the oldest row (scrollTop ${again.scrollTop})`);
+          assert.equal(await topRow(opened, PANE), topBefore, `${face}: the second trip keeps the row the reader left`);
           assert.deepEqual(errors, []);
           console.log(`PASS ${face}: a tab switch keeps the reader's place in a chat (${before.scrollTop} → ${after.scrollTop}) and moves no pane frame`);
           if (viewport.width < 500) assert.ok(after.order.length === 3, `${face}: all three panes stay mounted on a phone`);
