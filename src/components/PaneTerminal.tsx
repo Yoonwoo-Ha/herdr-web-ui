@@ -1255,7 +1255,7 @@ export function PaneTerminal({
         isBusy={(id) => pendingMessages.isBusy(queueOwner, id)}
         onSendNow={(id) => actOnPending(id, "steer")}
         onEdit={(id) => actOnPending(id, "edit")}
-        onDiscard={(id) => actOnPending(id, "discard")}
+        onDiscard={(id, displayOnly) => actOnPending(id, displayOnly ? "dismiss" : "discard")}
       />}
       {presented && paneId !== null && chatMounted && <div className="prompt-dock" ref={setPromptDock} aria-live="polite" inert={peek !== null || undefined} />}
       {presented && paneId !== null && chatMounted && !secretActive && !observing && !ended && (

@@ -82,6 +82,39 @@ describe("pane state per herdr lifetime", () => {
     expect(lifetimes.unsent()).toEqual([]);
   });
 
+  it("keeps display-dismissed IDs on the same herdr without recovering their text, then retires only that lifetime's marks", () => {
+    const storage = new MemoryStorage(), lifetimes = page(storage);
+    lifetimes.observe([pc("local", "dismiss-herdr-a")], title);
+    const store = new PendingMessageStore(() => lifetimes.paneStorage, lifetimes);
+    lifetimes.onRetire(machine => store.forget(machine));
+    const copy = { id: "dismissed-id", request_id: 1, text: "already sent", state: "uncertain" as const, created_at: "2026-11-17T00:00:00Z" };
+    lifetimes.paneStorage.setItem(DRAFT, "keep this draft");
+    store.accept("w1:p1", copy, "scope");
+    expect(store.dismissCopy("w1:p1", copy.id)).toBe(true);
+    const reloaded = page(storage); reloaded.observe([pc("local", "dismiss-herdr-a")], title);
+    const restored = new PendingMessageStore(() => reloaded.paneStorage, reloaded);
+    restored.accept("w1:p1", copy, null);
+    expect(restored.read("w1:p1")).toEqual([]);
+    expect(reloaded.paneStorage.getItem(DRAFT)).toBe("keep this draft");
+    lifetimes.observe([pc("local", "dismiss-herdr-b")], title);
+    expect(lifetimes.unsent().map(item => item.text)).toEqual(["keep this draft"]);
+    // The recycled pane ID in another herdr does not inherit display tombstones.
+    store.accept("w1:p1", copy, null);
+    expect(store.read("w1:p1")).toMatchObject([{ id: copy.id }]);
+  });
+  it("never offers a dismissed ID's text for recovery, also once a connection listed that row again", () => {
+    const storage = new MemoryStorage(), lifetimes = page(storage);
+    lifetimes.observe([pc("local", "dismiss-live-a")], title);
+    const store = new PendingMessageStore(() => lifetimes.paneStorage, lifetimes);
+    lifetimes.onRetire(machine => store.forget(machine));
+    const copy = { id: "dismissed-live", request_id: 1, text: "dismissed once", state: "uncertain" as const, created_at: "2026-11-17T00:00:00Z" };
+    store.accept("w1:p1", copy, "scope");
+    expect(store.dismissCopy("w1:p1", copy.id)).toBe(true);
+    store.publish("w1:p1", [copy, { ...copy, id: "still-queued", text: "never dismissed", state: "queued" }], [], "scope");
+    expect(store.read("w1:p1").map(row => row.id)).toEqual([copy.id, "still-queued"]);
+    lifetimes.observe([pc("local", "dismiss-live-b")], title);
+    expect(lifetimes.unsent().map(item => item.text)).toEqual(["never dismissed"]);
+  });
   it("keeps a pane's state across server restarts on one herdr, and leaves a replaced herdr's text to recovery", () => {
     const storage = new MemoryStorage();
     const first = page(storage);

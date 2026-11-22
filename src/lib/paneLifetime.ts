@@ -99,7 +99,11 @@ function texts(kind: UnsentKind, value: string | null, now: number, marked = fal
     const data: unknown = JSON.parse(value ?? "null");
     const messages = typeof data === "object" && data !== null && "messages" in data && Array.isArray(data.messages) ? data.messages as unknown[] : null;
     if (messages === null) return [{ text: value ?? "", agentOnly: false }];
+    // a dismissed ID is saved while a live connection still holds its row, never as text to recover
+    const listed = (data as { dismissed?: unknown }).dismissed;
+    const dismissed = new Set(Array.isArray(listed) ? listed as unknown[] : []);
     return messages.flatMap((message) => typeof message === "object" && message !== null && "text" in message && typeof message.text === "string"
+      && !("id" in message && dismissed.has(message.id))
       ? [{ text: message.text, agentOnly: "agent_only" in message && message.agent_only === true }] : []);
   } catch { return [{ text: value ?? "", agentOnly: false }]; }
 }
