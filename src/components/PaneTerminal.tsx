@@ -33,7 +33,6 @@ import { answerHint } from "../lib/promptAnswer.ts";
 import { composerDrafts } from "../lib/composerDraft.ts";
 import { appendQuote, formatTerminalQuote } from "../lib/terminalQuote.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
-import { fetchBridgeHealth } from "../lib/api.ts";
 import { useSessionHistoryOffered } from "../lib/useSessionHistoryOffered.ts";
 import { paneStorageId } from "../../shared/machines.ts";
 import { labelledAgent } from "../../shared/supported-agents.ts";
@@ -364,16 +363,7 @@ export function PaneTerminal({
   const endedRef = useRef(false);
   const modifyOtherKeysRef = useRef(0);
   const [observing, setObserving] = useState(role === "observe");
-  const [authWatching, setAuthWatching] = useState(() => role === "observe" || isDemoWatch());
-  useEffect(() => {
-    if (role === "observe" || isDemoWatch()) { setAuthWatching(true); return; }
-    let live = true;
-    fetchBridgeHealth().then((health) => {
-      if (live && health?.auth?.role === "watch") setAuthWatching(true);
-    }, () => {});
-    return () => { live = false; };
-  }, [role]);
-  const viewOnly = observing || role === "observe" || authWatching;
+  const viewOnly = observing || role === "observe" || deviceWatching || isDemoWatch();
   // `unchecked`: the PC types the answer without reading its screen first (useTerminalMount showSecret)
   const [secret, setSecret] = useState<{ pane: string; prompt: string; unchecked: boolean } | null>(null);
   const secretRef = useRef<string | null>(null);

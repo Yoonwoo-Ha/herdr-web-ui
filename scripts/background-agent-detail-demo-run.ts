@@ -15,7 +15,7 @@ const evidence = process.env.UI_EVIDENCE_DIR || "";
 if (evidence) mkdirSync(evidence, { recursive: true });
 
 interface Case { kind?: string; strip?: boolean; role?: "watch"; late?: boolean }
-interface Log { requests: string[]; delivered: number; frames: string[]; reads?: number; roleReads?: number }
+interface Log { requests: string[]; delivered: number; frames: string[]; reads?: number }
 declare global { interface Window { bgCase: Case; bgLog: Log; bgRelease?: () => void; bgHold?: boolean; bgRole?: () => void } }
 
 const patch = `(() => {
@@ -25,17 +25,21 @@ const patch = `(() => {
   window.bgCase = window.bgCase || {};
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   const fail = (code, message, status) => json({ error: { code, message } }, status);
-  const roleReleased = new Promise((resolve) => { window.bgRole = resolve; });
+  let roleWatching = false;
+  window.bgRole = () => {
+    roleWatching = true;
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
   window.fetch = async (input, init) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href);
     const method = (init?.method ?? "GET").toUpperCase();
     log.requests.push(method + " " + url.pathname);
     const c = window.bgCase;
     if (c.role === "watch" && url.pathname.endsWith("/api/health")) {
-      // late: the app's gate reads the role first and is answered; every read after it, the pane's own among them, waits for the script
-      if (c.late && url.searchParams.get("scope") === "bridge" && (log.roleReads = (log.roleReads ?? 0) + 1) > 1) await roleReleased;
+      // late: the app starts with drive, then learns watch on a later health read while the list is open
+      const role = c.late && !roleWatching ? "drive" : "watch";
       const body = await (await demoFetch(input, init)).json();
-      return json({ ...body, auth: { required: true, authenticated: true, role: "watch" } });
+      return json({ ...body, auth: { required: true, authenticated: true, role } });
     }
     if (c.strip && url.pathname.endsWith("/api/pane/omo-tasks")) {
       const body = await (await demoFetch(input, init)).json();

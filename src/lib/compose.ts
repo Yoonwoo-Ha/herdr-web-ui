@@ -215,9 +215,11 @@ export function commandListed(command: SlashCommand): boolean {
   return command.visibility !== "agent-hidden";
 }
 
-export function namesHiddenCommand(commands: readonly SlashCommand[], query: string): boolean {
+export function namesHiddenCommand(commands: readonly SlashCommand[], query: string, prefix?: string): boolean {
   const word = query.toLowerCase();
-  return word !== "" && commands.some((command) => !commandListed(command) && command.name.toLowerCase().startsWith(word));
+  return word !== "" && commands.some((command) => !commandListed(command)
+    && (prefix === undefined || (command.trigger ?? "/") === prefix)
+    && command.name.toLowerCase().startsWith(word));
 }
 
 /**

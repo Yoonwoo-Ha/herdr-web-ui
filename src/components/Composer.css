@@ -265,10 +265,41 @@
 }
 
 .composer-context {
+  position: relative;
   display: inline-flex;
   flex: none;
   align-items: center;
+  border-radius: var(--radius-pill);
   color: var(--text-dim);
+}
+
+.composer-status:has(.composer-context:focus-visible),
+.composer-status[data-hint] > .composer-status-meta:has(.composer-context:focus-visible),
+.composer-pill:has(.composer-context:focus-visible) {
+  overflow: visible;
+}
+
+.composer-context:focus-visible {
+  outline: var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+.composer-context:focus-visible::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--space-2));
+  z-index: 2;
+  padding: var(--space-1) var(--space-2);
+  border: var(--hairline) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+  color: var(--text-strong);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-tight);
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .composer-context svg {

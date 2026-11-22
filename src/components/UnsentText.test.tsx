@@ -26,7 +26,7 @@ describe("UnsentTextDialog", () => {
     Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
     Object.defineProperty(globalThis, "matchMedia", { configurable: true, value: matchMedia });
     Object.defineProperty(globalThis, "getComputedStyle", { configurable: true, value: () => ({ getPropertyValue: () => "" }) });
-    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { href: "http://ovis.test/" }, localStorage: storage, matchMedia, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events), setTimeout, clearTimeout } });
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { href: "http://ovis.test/" }, localStorage: storage, matchMedia, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events), setTimeout, clearTimeout, setInterval, clearInterval } });
     Object.defineProperty(globalThis, "document", { configurable: true, value: { documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } }, activeElement: null, querySelector: () => null, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events), body: {} } });
   });
 
@@ -67,5 +67,30 @@ describe("UnsentTextDialog", () => {
     expect(actions).toEqual(["Copy", "Discard"]);
     expect(lead?.children.join("")).not.toMatch(/message box/i);
     expect(lead?.children.join("")).toContain("Nothing here is sent.");
+  });
+
+  it("updates relative timestamps while the dialog stays open (#3458)", async () => {
+    const pane = { pane_id: "w1:p1", workspace_id: "w1", label: "chat", title: "Pi" } as HerdrPane;
+    const machine: Machine = { id: "target-pc", name: "Build PC", kind: "local", enabled: true, state: "connected", error: null, snapshot: { protocol: 22, version: "test", workspaces: [{ workspace_id: "w1", label: "release", active_tab_id: "w1:t1", number: 1, pane_count: 1, tab_count: 1, agent_status: "idle", focused: false }], panes: [pane], tabs: [], agents: [], layouts: [] } };
+    let now = 1_000_000;
+    let tick: (() => void) | undefined;
+    const realDateNow = Date.now;
+    const win = window as unknown as { setInterval: typeof setInterval; clearInterval: typeof clearInterval };
+    Date.now = () => now;
+    win.setInterval = ((fn: () => void) => { tick = fn; return 1 as unknown as ReturnType<typeof setInterval>; }) as typeof setInterval;
+    win.clearInterval = (() => undefined) as typeof clearInterval;
+    try {
+      localStorage.setItem("ovis:unsent:tick", JSON.stringify({ id: "tick", machine_id: "target-pc", pane_id: "w1:p1", pane_title: "old", kind: "message", text: "draft", at: now }));
+      await act(async () => {
+        renderer = create(<SettingsProvider><UnsentTextDialog machines={[machine]} target={{ machineId: "target-pc", pane }} canRecover onRecover={() => true} onClose={() => undefined} /></SettingsProvider>);
+      });
+      const time = () => renderer?.root.findByType("time").children.join("");
+      expect(time()).toBe("this minute");
+      now += 120_000;
+      await act(async () => { tick?.(); });
+      expect(time()).toBe("2 minutes ago");
+    } finally {
+      Date.now = realDateNow;
+    }
   });
 });

@@ -4265,7 +4265,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   fill the ring's track is `--border-strong`; a ring left bare on the card keeps `--border`.
   No part carries a chevron: herdr owns the agent, so none of them opens a menu. It is display only: a `span` with no role, no
   focus, no hover or pressed state, no pointer cursor and no chevron; the ring inside it is the
-  one thing to press on desktop; mobile keeps the ring inert. The `title` of the model is the id as received, and the level's is its
+  one thing a keyboard reaches on desktop (`tabindex="0"`; while its focus is visible its number
+  stands in a tooltip above it, `--bg-elevated` on `--border-strong`, which no box around it
+  clips); mobile keeps the ring inert and out of the tab order. The `title` of the model is the id as received, and the level's is its
   sentence; behind a name the id is also repeated as `.visually-hidden` text, since a touch
   cannot reach a title. A pane that names no model draws no pill: the mark and the ring stand
   alone, with a dim `Model —` and the level between them if the pane records only a level.

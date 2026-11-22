@@ -138,14 +138,31 @@ try {
       for (const agent of ["claude", "codex"] as const) for (const width of [350, 390, 800, 1440]) for (const mic of [false, true]) await withCard(browser, width, { agent, model: "gpt-5.6", mic }, async (page) => {
         const rest = await measure(page);
         assert.ok(rest.stop && !rest.send && !rest.sendOptions && !rest.queue, JSON.stringify(rest));
-        assert.equal(await page.locator(".composer-context").evaluate((node) =>
-          node.tagName === "SPAN" && node.getAttribute("title")?.includes("%") === true && !node.hasAttribute("aria-expanded") && !node.hasAttribute("tabindex")), true, "the context ring is display-only");
+        assert.equal(await page.locator(".composer-context").evaluate((node, desktop) =>
+          node.tagName === "SPAN" && node.getAttribute("title")?.includes("%") === true && !node.hasAttribute("aria-expanded") && node.hasAttribute("tabindex") === desktop && (!desktop || node.tabIndex === 0), width >= 800), true,
+          width >= 800 ? "the context ring is keyboard-focusable without expanding inline" : "a phone keeps the context ring out of the tab order");
         await draft(page);
         const row = await measure(page);
         await drawn(page, row.draw as Draw, `${agent} ${width}px, a written follow-up`);
         assert.ok(row.send && !row.stop && !row.sendOptions && !row.queue && row.ring, JSON.stringify(row));
         assert.equal(row.card.height, rest.card.height, "Send replaces Stop on the same row");
         if (width >= 800) {
+          // reached as a keyboard reaches it, back from Send, so its focus is a visible one
+          await page.locator(".composer-send").focus();
+          await page.keyboard.press("Shift+Tab");
+          assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("composer-context") === true), true, `${agent} ${width}px: desktop context ring is reachable by keyboard`);
+          assert.equal(await page.locator(".composer-context").evaluate((node) => {
+            if (!node.matches(":focus-visible") || getComputedStyle(node, "::after").content !== JSON.stringify(node.getAttribute("data-tooltip"))) return false;
+            for (let up = node.parentElement; up && !up.classList.contains("composer-surface"); up = up.parentElement) {
+              const style = getComputedStyle(up);
+              if (style.display !== "contents" && (style.overflowX !== "visible" || style.overflowY !== "visible")) return false;
+            }
+            return true;
+          }), true, `${agent} ${width}px: the focused ring draws its number above it, clipped by no box around it`);
+          const focused = await measure(page);
+          assert.equal(focused.draw, row.draw, `${agent} ${width}px: focusing the ring leaves the row as drawn`);
+          assert.equal(focused.card.height, row.card.height);
+          await page.locator(".composer-context").evaluate((node) => (node as HTMLElement).blur());
           await page.locator(".composer-context").click();
           const pressed = await measure(page);
           assert.equal(pressed.draw, row.draw, `${agent} ${width}px: a press on the ring leaves the row as drawn`);
