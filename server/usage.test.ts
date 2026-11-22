@@ -819,7 +819,36 @@ describe("providers", () => {
     if (result === "failing") commands.set("secret-tool lookup service gemini username antigravity", "");
     const report = await new UsageService(context("linux"), only("antigravity")).report();
     expect(report).toEqual({ server_time: expect.any(String), providers: [] });
-    expect(commandCalls).toEqual([["secret-tool", "lookup", "service", "gemini", "username", "antigravity"]]);
+    // An empty lookup is followed by `search`, which tells a locked keyring from no item.
+    expect(commandCalls).toEqual([
+      ["secret-tool", "lookup", "service", "gemini", "username", "antigravity"],
+      ["secret-tool", "search", "service", "gemini", "username", "antigravity"],
+    ]);
+  });
+
+  it("shows Antigravity as locked when the Linux keyring lists its item but keeps the secret locked", async () => {
+    commands.set("secret-tool search service gemini username antigravity", "[/9]\nlabel = \nschema = org.freedesktop.Secret.Generic\nattribute.service = gemini");
+    const report = await new UsageService(context("linux"), only("antigravity")).report();
+    expect(report.providers).toHaveLength(1);
+    expect(report.providers[0]).toMatchObject({ id: "antigravity", problem: "locked" });
+    expect(requests).toHaveLength(0);
+  });
+
+  it("reads Antigravity's token file over a locked Linux keyring, without searching the keyring", async () => {
+    write(join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), { token: { access_token: "ya29-file", expiry: new Date(NOW + HOUR).toISOString() } });
+    commands.set("secret-tool search service gemini username antigravity", "[/9]\nlabel = \nschema = org.freedesktop.Secret.Generic");
+    replies.set("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", { body: { response: { groups: [] } } });
+    const report = await new UsageService(context("linux"), only("antigravity")).report();
+    expect(report.providers).toMatchObject([{ id: "antigravity", problem: null }]);
+    expect((requests[0]!.init.headers as Record<string, string>)["authorization"]).toBe("Bearer ya29-file");
+    expect(commandCalls.filter(([command]) => command === "secret-tool")).toEqual([["secret-tool", "lookup", "service", "gemini", "username", "antigravity"]]);
+  });
+
+  it("treats a listed item whose secret the search itself reads as no sign-in, not a locked keyring", async () => {
+    commands.set("secret-tool search service gemini username antigravity", "[/9]\nlabel = \nschema = org.freedesktop.Secret.Generic\nattribute.service = gemini\nsecret = not-empty");
+    const report = await new UsageService(context("linux"), only("antigravity")).report();
+    expect(report).toEqual({ server_time: expect.any(String), providers: [] });
+    expect(requests).toHaveLength(0);
   });
 
   it("names secret-tool when Linux lacks it and no Antigravity sign-in was found, and looks again on the next report", async () => {

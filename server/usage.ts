@@ -246,6 +246,20 @@ async function requestJson(ctx: UsageContext, url: string, init: RequestInit, ti
   return record(JSON.parse(body));
 }
 
+/**
+ * A Secret Service item read with secret-tool: "locked" when the item is listed but its secret is not
+ * (the login keyring is still locked, e.g. after a reboot), so the meter stays with that reason instead
+ * of vanishing as if there were no sign-in. Searched only when `probeLock`: a sign-in from a file wins
+ * over a locked item, so the search could change nothing.
+ */
+async function linuxKeyring(ctx: UsageContext, attributes: string[], parse: (value: string) => SignIn | null, probeLock: boolean): Promise<SignIn | "locked" | null> {
+  const value = await ctx.run(["secret-tool", "lookup", ...attributes]);
+  const signIn = value ? parse(value) : null;
+  if (signIn || value || !probeLock) return signIn;
+  const listed = await ctx.run(["secret-tool", "search", ...attributes]);
+  return listed !== null && /^\[\//m.test(listed) && !/^secret = /m.test(listed) ? "locked" : null;
+}
+
 async function fromKeychain(ctx: UsageContext, service: string, accounts: Array<string | undefined>, parse: (value: string) => SignIn | null): Promise<SignIn | "locked" | null> {
   if (ctx.platform !== "darwin") return null;
   for (const account of accounts) {
@@ -727,7 +741,7 @@ const antigravity: UsageProvider = {
     const dir = ctx.env["ANTIGRAVITY_APP_DATA_DIR"] || join(ctx.home, ".gemini", "antigravity-cli");
     const file = antigravitySignIn(readText(join(dir, "antigravity-oauth-token")));
     const keychain = ctx.platform === "linux"
-      ? antigravitySignIn(await ctx.run(["secret-tool", "lookup", "service", "gemini", "username", "antigravity"]))
+      ? await linuxKeyring(ctx, ["service", "gemini", "username", "antigravity"], antigravitySignIn, file === null)
       : await fromKeychain(ctx, "gemini", ["antigravity"], antigravitySignIn);
     return keychainOrFile(keychain, file, "keychain");
   },
