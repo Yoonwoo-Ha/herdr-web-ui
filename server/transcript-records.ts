@@ -4,6 +4,7 @@ import type { SubagentDetail, TaskNotification } from "./claude-subagents.ts";
 import { skillInvocationPrompt, skillPromptMessage } from "./skill-activity.ts";
 import { trimOutput } from "./tool-output.ts";
 import { inlineImageType, ompBlobDigest, ompBlobImageType } from "./codex-images.ts";
+import { withoutAnswerFrame } from "./omo-ask.ts";
 
 type Row = Record<string, unknown>;
 export const record = (value: unknown): Row => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
@@ -478,13 +479,13 @@ function ompTranscriptParser(state: OmpParseState, images: boolean, callIds: boo
       omoTaskTitles(message, taskTitles);
 
       if (message.role === "user") {
-        const prompt =
+        const prompt = withoutAnswerFrame(
           typeof message.content === "string"
             ? message.content
             : contentParts(message.content)
                 .map((part) => (part.type === "text" && typeof part.text === "string" ? part.text : ""))
                 .filter((part) => part.length > 0)
-                .join("\n");
+                .join("\n"));
         const pictures = images ? piPromptImages(entry, message, blobs).map(({ media_type, ref }) => ({ kind: "image" as const, media_type, ref })) : [];
         if (prompt.length === 0) {
           if (pictures.length > 0) turns.push({ role: "user", ts: timestamp ?? null, parts: pictures });

@@ -1802,6 +1802,15 @@ describe("gjc sessions", () => {
     ]);
   });
 
+  it("shows an answer OmO delivers as a user message without the frame naming its question", () => {
+    const user = (text: string) => JSON.stringify({ type: "message", timestamp: "2026-10-01T00:00:00.000Z", message: { role: "user", content: [{ type: "text", text }] } });
+    const text = [user("[Answer to question toolu_01]\nNext step: compare on the device"), user("a line that only mentions [Answer to question x]\nlater")].join("\n");
+    expect(parseOmpTranscript(text).map((turn) => turn.parts)).toEqual([
+      [{ kind: "text", text: "Next step: compare on the device" }],
+      [{ kind: "text", text: "a line that only mentions [Answer to question x]\nlater" }],
+    ]);
+  });
+
   it("keeps user-attributed IRC records and ordinary notices whose text quotes IRC", () => {
     const content = "[IRC `0-WindowsPaths` → you]\n\nA quoted example, not an internal delivery.";
     const text = [

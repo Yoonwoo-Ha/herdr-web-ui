@@ -33,6 +33,9 @@ interface Entry {
 
 const ANSWER_FRAME_RE = /^\[Answer to question ([^\]\r\n]+)\]\r?\n/;
 
+/** an answer OmO delivers as a user message, without the frame naming its question, as OmO's own screen shows it */
+export const withoutAnswerFrame = (text: string): string => text.replace(ANSWER_FRAME_RE, "");
+
 function waits(args: unknown): boolean {
   const record = typeof args === "object" && args !== null ? args as Record<string, unknown> : {};
   return (record["waitForAnswer"] ?? record["wait_for_answer"]) !== false;
