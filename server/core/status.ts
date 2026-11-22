@@ -213,6 +213,11 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     if (status !== undefined && pending.current(paneId) !== queueStatus(paneId, status)) { pending.status(paneId, queueStatus(paneId, status)); drainPending(paneId); }
   }
   const heard = new Map<string, AgentStatus>();
+  /**
+   * Claude panes a snapshot read at rest on the transcript's word alone, herdr reading them at work, until herdr's word
+   * is rest, by an event or a read: each told only by the newest word on the pane (agentRead)
+   */
+  const restedOnTranscript = new Set<string>();
   /** Claude keeps its busy title up while a background subagent works after its turn ended, and herdr reads `working` (#2069). */
   function restingClaude(paneId: string, agent: string | null | undefined, status: AgentStatus): AgentStatus {
     if (agent !== "claude" || agentNow.get(paneId) !== "claude") return status;
@@ -224,6 +229,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
    * idle before it: the subagents' spinner keeps herdr at working across turns.
    */
   function hearClaude(paneId: string, agent: string | null | undefined, status: AgentStatus, event: boolean): void {
+    if (agent !== "claude" || status !== "working") restedOnTranscript.delete(paneId);
     if (agent !== "claude") { heard.delete(paneId); return; }
     const before = heard.get(paneId);
     heard.set(paneId, status);
@@ -436,6 +442,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       agentLifetime.delete(paneId);
       eventAgent.delete(paneId);
       heard.delete(paneId);
+      restedOnTranscript.delete(paneId);
     }
     for (const pane of named.panes) {
       if ((agentRead.get(pane.pane_id) ?? 0) > read) continue;
@@ -450,6 +457,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     for (const pane of named.panes) {
       pane.agent_status = launchedAgents.settle(pane.pane_id, pane.agent_status);
       if (pane.agent === "claude" && agentNow.get(pane.pane_id) === "claude") claudeAgents.poll(pane.pane_id);
+      if (agentRead.get(pane.pane_id) === read && pane.agent_status === "working" && restingClaude(pane.pane_id, pane.agent, "working") !== "working") restedOnTranscript.add(pane.pane_id);
     }
     options.openCodeState?.reconcile(named.panes, promptCheckpoint);
     return named;
@@ -808,6 +816,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     taskAgents.forget(paneId);
     completions.forget(paneId);
     heard.delete(paneId);
+    restedOnTranscript.delete(paneId);
     agentNow.delete(paneId);
     agentRead.set(paneId, opencodeAgents.beginRead());
     agentExited.delete(paneId);
@@ -969,10 +978,16 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
 
   /**
    * `fresh` is asked of every caller: a wiring that dropped it would make delivery's last checks read an answer up
-   * to a poll old, with every test still passing.
+   * to a poll old, with every test still passing. Read fresh, a rest the queue has on the transcript's word alone,
+   * herdr reading the pane at work (restingClaude), ends with a turn begun since the last read, also one a poll read
+   * first. A turn herdr tells is not this: a message typed at once still commits into it.
    */
-  const queueHeld = (paneId: string, fresh: boolean): boolean =>
-    fresh ? agentNow.get(paneId) === "claude" && claudeAgents.loopHoldsNow(paneId) : queueStatus(paneId, "idle") === "working";
+  const queueHeld = (paneId: string, fresh: boolean): boolean => {
+    if (!fresh) return queueStatus(paneId, "idle") === "working";
+    if (agentNow.get(paneId) !== "claude") return false;
+    if (claudeAgents.loopHoldsNow(paneId)) return true;
+    return (restedOnTranscript.has(paneId) || restingClaude(paneId, "claude", "working") !== "working") && !claudeAgents.restsOnNow(paneId);
+  };
   /** A socket file alone proves nothing: a herdr that died can leave its file behind. */
   const currentHerdrLifetime = (): string | undefined => {
     const identity = finishes.herdrIdentity();
