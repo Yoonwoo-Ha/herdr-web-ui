@@ -29,6 +29,17 @@ describe("which tabs the header's row draws", () => {
     expect(tabsInRow(20, 15, room, add, TAB_MIN_WIDTH, 12)).toEqual([0, 1, 12, 15]);
   });
 
+  test("the gaps between the row's tabs, + and More count too", () => {
+    const gap = 3;
+    // three tabs and +: three gaps
+    expect(tabsInRow(3, 2, 3 * TAB_MIN_WIDTH + add + 3 * gap, add, TAB_MIN_WIDTH, -1, gap)).toEqual([0, 1, 2]);
+    expect(tabsInRow(3, 2, 3 * TAB_MIN_WIDTH + add + 3 * gap - 1, add, TAB_MIN_WIDTH, -1, gap)).toEqual([0, 2]);
+    // three tabs, + and More: four gaps
+    const room = 3 * TAB_MIN_WIDTH + add + TAB_MORE_WIDTH + 4 * gap;
+    expect(tabsInRow(20, 0, room, add, TAB_MIN_WIDTH, -1, gap)).toEqual([0, 1, 2]);
+    expect(tabsInRow(20, 0, room - 1, add, TAB_MIN_WIDTH, -1, gap)).toEqual([0, 1]);
+  });
+
   test("a row too narrow for one tab still draws the open one", () => {
     expect(tabsInRow(8, 6, 50, add)).toEqual([6]);
     expect(tabsInRow(8, 0, 50, add)).toEqual([0]);

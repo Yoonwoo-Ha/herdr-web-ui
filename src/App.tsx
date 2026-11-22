@@ -1246,7 +1246,7 @@ export function App() {
                 <CrashProbe region="pane" />
                 {!(slotSnapshot && pane && workspace) && slotBar}
                 {slotSnapshot && pane && workspace && !(active && classicStripInHeader) && !threadDrawn && (
-                  <TabStrip snapshot={slotSnapshot} workspace={workspace} selectedPane={pane} panelId={slotPanelId} splitDrag={wideScreen} onSelectPane={onSelect}
+                  <TabStrip snapshot={slotSnapshot} workspace={workspace} selectedPane={pane} panelId={slotPanelId} splitDrag={wideScreen} browserTabs={paneSplit && wideScreen && !tabsInHeader} onSelectPane={onSelect}
                     inHeader={tabsInHeader} sheet={active ? tabSheet : null} onSheetClose={closeTabSheet} end={slotEnd} closable={auth?.role !== "watch"}
                     renameRequest={active && renameRequest?.machineId === machineId && renameRequest.paneId === pane.pane_id ? renameRequest : null}
                     onRenameHandled={clearRenameRequest}

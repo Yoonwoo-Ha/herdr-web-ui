@@ -235,7 +235,7 @@
   cursor: default;
 }
 
-.header-tabs .tab-strip-item.is-active > .tab-strip-tab {
+:is(.header-tabs, .browser-tabs) .tab-strip-item.is-active > .tab-strip-tab {
   font-weight: var(--fw-selected);
 }
 
@@ -248,9 +248,9 @@
 @media (pointer: coarse), (max-width: 768px) {
   .tab-strip-menu,
   .tab-strip-add,
-  .header-tabs .tab-strip-item > .tab-strip-menu,
-  .header-tabs .tab-strip-item.is-active > .tab-strip-close,
-  .header-tabs .tab-strip-add {
+  :is(.header-tabs, .browser-tabs) .tab-strip-item > .tab-strip-menu,
+  :is(.header-tabs, .browser-tabs) .tab-strip-item.is-active > .tab-strip-close,
+  :is(.header-tabs, .browser-tabs) .tab-strip-add {
     width: var(--touch-target);
     height: var(--touch-target);
     min-width: var(--touch-target);
@@ -312,6 +312,46 @@
   .pane-slot.is-chat .tab-strip,
   .pane-slot.is-chat .tab-strip-row {
     --strip-bg: var(--bg);
+  }
+
+  .tab-strip-row.browser-tabs,
+  .pane-slot.is-chat .tab-strip-row.browser-tabs {
+    --strip-tint: var(--bg-panel);
+    --tab-open-bg: var(--bg-elevated);
+    --strip-bg: var(--strip-tint);
+    align-items: center;
+    min-height: calc(var(--tab-h) + var(--space-2));
+    padding: var(--space-1) var(--space-2);
+    background: var(--strip-tint);
+    border-bottom: var(--hairline) solid var(--divider);
+  }
+
+  .tab-strip-row.browser-tabs > .tab-strip,
+  .pane-slot.is-chat .tab-strip-row.browser-tabs > .tab-strip {
+    --strip-bg: var(--strip-tint);
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0;
+    background: var(--strip-tint);
+  }
+
+  .tab-strip-row.browser-tabs > .tab-strip-end {
+    flex: 0 0 auto;
+    align-items: center;
+    padding-left: var(--space-1);
+  }
+
+  .pane-slot.is-active .tab-strip-row.browser-tabs {
+    border-bottom-color: var(--border-strong);
+  }
+
+  .pane-slot.is-inactive .tab-strip-row.browser-tabs .tab-strip-item.is-active {
+    background: transparent;
+    border-color: var(--divider);
+  }
+
+  .pane-slot.is-inactive .tab-strip-row.browser-tabs .tab-strip-item.is-active .tab-strip-tab {
+    color: var(--text);
   }
 }
 

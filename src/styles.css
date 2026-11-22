@@ -2521,7 +2521,7 @@ button {
   padding-right: var(--space-4);
 }
 
-.header-tabs .tab-strip {
+:is(.header-tabs, .browser-tabs) .tab-strip {
   --strip-bg: var(--strip-tint);
   align-items: center;
   gap: var(--space-px-3);
@@ -2533,7 +2533,7 @@ button {
   background: var(--strip-bg);
 }
 
-.header-tabs .tab-strip-item {
+:is(.header-tabs, .browser-tabs) .tab-strip-item {
   position: relative;
   align-items: center;
   flex: 0 1 auto;
@@ -2546,18 +2546,18 @@ button {
 }
 
 @media (hover: hover) {
-  .header-tabs .tab-strip-item:hover {
+  :is(.header-tabs, .browser-tabs) .tab-strip-item:hover {
     background: var(--bg-hover);
   }
 }
 
-.header-tabs .tab-strip-item.is-active {
+:is(.header-tabs, .browser-tabs) .tab-strip-item.is-active {
   background: var(--tab-open-bg);
   border-color: var(--border);
   box-shadow: none;
 }
 
-.header-tabs .tab-strip-tab {
+:is(.header-tabs, .browser-tabs) .tab-strip-tab {
   flex: 1 1 auto;
   gap: var(--space-1);
   min-width: 0;
@@ -2571,7 +2571,7 @@ button {
   font-weight: var(--fw-regular);
 }
 
-.header-tabs .tab-strip-item.is-active .tab-strip-tab {
+:is(.header-tabs, .browser-tabs) .tab-strip-item.is-active .tab-strip-tab {
   color: var(--text-strong);
   font-weight: var(--fw-selected);
 }
@@ -2581,7 +2581,8 @@ button {
   outline-offset: var(--ring-inset-offset);
 }
 
-.pane-slot .tab-strip-tab {
+/* :where keeps the browser-tab exclusion from raising the rule's weight over the is-active padding rules */
+.pane-slot .tab-strip-tab:not(:where(.browser-tabs .tab-strip-tab)) {
   gap: var(--space-1);
   padding: 0 var(--space-2);
 }
@@ -2596,32 +2597,32 @@ button {
   }
 }
 
-.header-tabs .tab-strip-label {
+:is(.header-tabs, .browser-tabs) .tab-strip-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.header-tabs .tab-strip-agent.is-shell svg {
+:is(.header-tabs, .browser-tabs) .tab-strip-agent.is-shell svg {
   width: var(--icon-size-sm);
   height: var(--icon-size-sm);
   color: var(--text-dim);
 }
 
-.header-tabs .tab-strip-agent { order: 0; }
-.header-tabs .tab-strip-label { order: 1; }
+:is(.header-tabs, .browser-tabs) .tab-strip-agent { order: 0; }
+:is(.header-tabs, .browser-tabs) .tab-strip-label { order: 1; }
 
-.header-tabs .tab-strip-tab > .tab-strip-dot {
+:is(.header-tabs, .browser-tabs) .tab-strip-tab > .tab-strip-dot {
   order: 2;
   margin-left: auto;
 }
 
-.header-tabs .tab-strip-tab > .tab-strip-dot:not(.tab-strip-glyph)[data-status="working"] {
+:is(.header-tabs, .browser-tabs) .tab-strip-tab > .tab-strip-dot:not(.tab-strip-glyph)[data-status="working"] {
   width: calc(var(--dot-size) + var(--space-1));
   height: calc(var(--dot-size) + var(--space-1));
 }
 
-.header-tabs .tab-strip-menu {
+:is(.header-tabs, .browser-tabs) .tab-strip-menu {
   width: var(--pointer-target);
   height: var(--pointer-target);
   margin-inline: calc(-1 * var(--hairline));
@@ -2631,7 +2632,7 @@ button {
   display: none;
 }
 
-.header-tabs .tab-strip-item.is-active .tab-strip-close {
+:is(.header-tabs, .browser-tabs) .tab-strip-item.is-active .tab-strip-close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2649,24 +2650,24 @@ button {
   cursor: pointer;
 }
 
-.header-tabs .tab-strip-close svg {
+:is(.header-tabs, .browser-tabs) .tab-strip-close svg {
   width: var(--icon-size-xs);
   height: var(--icon-size-xs);
 }
 
 @media (hover: hover) {
-  .header-tabs .tab-strip-close:hover {
+  :is(.header-tabs, .browser-tabs) .tab-strip-close:hover {
     background: var(--bg-hover);
     color: var(--text-strong);
   }
 }
 
-.header-tabs .tab-strip-close:active {
+:is(.header-tabs, .browser-tabs) .tab-strip-close:active {
   background: var(--bg-hover);
   color: var(--text-strong);
 }
 
-.header-tabs .tab-strip-add {
+:is(.header-tabs, .browser-tabs) .tab-strip-add {
   align-self: center;
   width: calc(var(--control-h) - var(--space-2));
   height: calc(var(--control-h) - var(--space-2));
@@ -2676,7 +2677,7 @@ button {
 }
 
 /* as wide as lib/tabOverflow.ts TAB_MORE_WIDTH reserves, with its gap */
-.header-tabs .tab-strip-more {
+:is(.header-tabs, .browser-tabs) .tab-strip-more {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2697,37 +2698,37 @@ button {
 }
 
 @media (hover: hover) {
-  .header-tabs .tab-strip-more:hover {
+  :is(.header-tabs, .browser-tabs) .tab-strip-more:hover {
     background: var(--bg-hover);
     color: var(--text-strong);
   }
 }
 
-.header-tabs .tab-strip-more:focus-visible,
-.header-tabs .tab-strip-more:active,
-.header-tabs .tab-strip-more[aria-expanded="true"] {
+:is(.header-tabs, .browser-tabs) .tab-strip-more:focus-visible,
+:is(.header-tabs, .browser-tabs) .tab-strip-more:active,
+:is(.header-tabs, .browser-tabs) .tab-strip-more[aria-expanded="true"] {
   background: var(--bg-hover);
   color: var(--text-strong);
 }
 
-.header-tabs .tab-strip-more svg {
+:is(.header-tabs, .browser-tabs) .tab-strip-more svg {
   width: 14px;
   height: 14px;
 }
 
 @media (pointer: coarse) {
-  .header-tabs .tab-strip-item {
+  :is(.header-tabs, .browser-tabs) .tab-strip-item {
     height: 44px;
   }
 
-  .header-tabs .tab-strip-menu,
-  .header-tabs .tab-strip-item.is-active .tab-strip-close,
-  .header-tabs .tab-strip-add {
+  :is(.header-tabs, .browser-tabs) .tab-strip-menu,
+  :is(.header-tabs, .browser-tabs) .tab-strip-item.is-active .tab-strip-close,
+  :is(.header-tabs, .browser-tabs) .tab-strip-add {
     width: var(--touch-target);
     height: var(--touch-target);
   }
 
-  .header-tabs .tab-strip-item.is-active {
+  :is(.header-tabs, .browser-tabs) .tab-strip-item.is-active {
     min-width: 160px;
   }
 }
@@ -4059,7 +4060,7 @@ time {
     animation: none;
   }
 
-  .header-tabs .tab-strip-tab > .tab-strip-dot:not(.tab-strip-glyph)[data-status="working"],
+  :is(.header-tabs, .browser-tabs) .tab-strip-tab > .tab-strip-dot:not(.tab-strip-glyph)[data-status="working"],
   .tab-strip .tab-strip-dot:not(.tab-strip-glyph)[data-status="working"] {
     width: calc(var(--dot-size) + 3px);
     height: calc(var(--dot-size) + 3px);
@@ -4069,7 +4070,7 @@ time {
     animation: none;
   }
 
-  .header-tabs .tab-strip-tab > .tab-strip-dot:not(.tab-strip-glyph)[data-status="working"] {
+  :is(.header-tabs, .browser-tabs) .tab-strip-tab > .tab-strip-dot:not(.tab-strip-glyph)[data-status="working"] {
     width: calc(var(--dot-size) + var(--space-1));
     height: calc(var(--dot-size) + var(--space-1));
   }

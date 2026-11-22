@@ -1093,7 +1093,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   one picked from the list opens there; `lib/tabOverflow.ts` picks them. The row is the panel's surface and the
   open tab a raised pill on it (`--bg-elevated`); its close (×) shows on the open tab alone, and a
   resting tab closes from its menu or a middle click, as a browser's does. A split view keeps a
-  strip per half and the title in the header. The Herdr app's Changes button is not carried over:
+  strip per half and the title in the header; from `769px` each half draws the same browser-style
+  tab row (`.tab-strip-row.browser-tabs`, following VS Code's and Zed's split editor tab bars) with
+  its shell glyph, open-tab close (×), `+` and More overflow, dimming the inactive half's open tab
+  to a hairline outline so the active half stays clear. The Herdr app's Changes button is not carried over:
   Files holds the changes as one of its tabs.
 - The Chat/Terminal switch (`.view-switch`) shows both lenses as Apple's segmented control: a
   track with the open lens on a raised thumb that slides to it in 180ms (`--ease-out`; no motion
@@ -1127,9 +1130,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   without them (a split view, the setup guide, no pane), the header takes the pane's surface: under
   the chat lens `--bg` with no bottom rule, the transcript scrolling under a `--space-5` fade from
   `--bg`; under the terminal lens, with no pane, or with a pane herdr could not restore, `--term-bg`
-  and the rule. A split view's strips take the same surface as the header over them (`--strip-bg`:
-  `--bg` under the chat lens, `--term-bg` otherwise, `--bg-panel` below `769px`) and keep their
-  hairline, under the chat the one line over the transcript (no fade under it). The update notice, the alerts health notice, a PC's action banner and the pairing line (below) are drawn in
+  and the rule. A split view's strips take the panel surface (`--bg-panel`) from `769px` as the
+  header's tab row does (and `--bg-panel` below `769px`) and keep their hairline, under the chat the one line over the transcript (no fade under it). The update notice, the alerts health notice, a PC's action banner and the pairing line (below) are drawn in
   the pane column, over the tab strip, never across the window: the sidebar and its top row stay
   one piece. A device pairing with this server while a window is open (`device-paired` on the
   machines event stream) is one `.update-notice.is-paired` line there: a `--accent` phone glyph
