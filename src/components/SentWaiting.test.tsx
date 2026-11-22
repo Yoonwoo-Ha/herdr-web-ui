@@ -233,4 +233,14 @@ describe("mounted", () => {
       expect(currentWaitingSends(key)).toEqual([]);
     } finally { forgetWaitingSends(key); }
   });
+
+  test("a send with pasted tabs settles on the turn Pi records with them expanded", () => {
+    const key = waitingKey("local", "tabs");
+    try {
+      settleWaitingSends(key, [], at - 1, true);
+      rememberWaitingSend(key, "Look at the columns, \tNov 2025\tNov 2024", at);
+      settleWaitingSends(key, [{ role: "user", ts: new Date(at + 500).toISOString(), parts: [{ kind: "text", text: "Look at the columns,     Nov 2025    Nov 2024" }] }], at + 600, true, "pi-transcript");
+      expect(currentWaitingSends(key)).toEqual([]);
+    } finally { forgetWaitingSends(key); }
+  });
 });

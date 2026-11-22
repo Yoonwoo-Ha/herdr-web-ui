@@ -40,6 +40,22 @@ describe("waitingText", () => {
     expect(transcriptHolds({ ...send, text: "rename user id" }, [user("renameuserid")])).toBe(false);
   });
 
+  it("reads a tab as four spaces in a Pi transcript only, where Pi records it so", () => {
+    const leftWaiting = (sends: readonly string[], recorded: string, source: "pi-transcript" | "claude-transcript"): string[] => {
+      const key = waitingKey("local", `probe-${++probes}`);
+      try {
+        sends.forEach((text, index) => rememberWaitingSend(key, text, index + 1));
+        settleWaitingSends(key, [user(recorded, sends.length + 1)], sends.length + 2, true, source);
+        return currentWaitingSends(key).map((waiting) => waiting.text);
+      } finally { forgetWaitingSends(key); }
+    };
+    expect(leftWaiting(["compare A\tB"], "compare A    B", "pi-transcript")).toEqual([]);
+    expect(leftWaiting(["compare A\tB", "compare A    B"], "compare A    B", "pi-transcript")).toEqual(["compare A    B"]);
+    expect(leftWaiting(["compare A\tB"], "compare A    B", "claude-transcript")).toEqual(["compare A\tB"]);
+    expect(leftWaiting(["compare A\tB", "compare A    B"], "compare A    B", "claude-transcript")).toEqual(["compare A\tB"]);
+    expect(leftWaiting(["compare A    B", "compare A\tB"], "compare A\tB", "claude-transcript")).toEqual(["compare A    B"]);
+  });
+
   it("does not take another turn's words for it", () => {
     expect(transcriptHolds(send, [user("还有发消息提示")])).toBe(false);
     expect(transcriptHolds(send, [assistant(send.text)])).toBe(false);

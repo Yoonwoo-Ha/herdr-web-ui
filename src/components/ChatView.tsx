@@ -2453,8 +2453,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const sentWaiting = useWaitingSends(machineId, paneId, connected);
   const turnsRead = loaded && error === null && !stale && state.source === "conversation";
   useLayoutEffect(() => {
-    settleWaitingSends(waitKey, state.turns, Date.now(), turnsRead);
-  }, [sentWaiting, state.turns, turnsRead, waitKey]);
+    settleWaitingSends(waitKey, state.turns, Date.now(), turnsRead, state.conversationSource);
+  }, [sentWaiting, state.conversationSource, state.turns, turnsRead, waitKey]);
   const waitWords = useAnnouncedText(!loaded && error === null ? t("Loading conversation…") : waiting ? t("Waiting for the PC…") : null);
   const retryRead = useCallback(() => { setFailures(0); conversationRefresh.refresh(); }, [conversationRefresh]);
   const footer = <>

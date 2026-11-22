@@ -3,7 +3,7 @@ import { act, createElement } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 
 import type { ConversationResponse } from "../../shared/protocol.ts";
-import { forgetWaitingSends, rememberWaitingSend, waitingKey } from "../lib/sentWaiting.ts";
+import { currentWaitingSends, forgetWaitingSends, rememberWaitingSend, waitingKey } from "../lib/sentWaiting.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { ChatView } from "./ChatView.tsx";
 import { SentWaitingList } from "./SentWaiting.tsx";
@@ -101,3 +101,23 @@ test.each([["working", false], ["idle", true]] as const)(
     } finally { act(() => { forgetWaitingSends(waitingKey("local", paneId)); }); }
   },
 );
+
+test("a send with pasted tabs leaves no waiting copy once Pi's transcript records them as four spaces", async () => {
+  const paneId = "waiting-pi-tabs";
+  const key = waitingKey("local", paneId);
+  answer = { source: "pi-transcript", activity: "idle", turns: [{ role: "user", ts: new Date(Date.now() - 1_000).toISOString(), parts: [{ kind: "text", text: "compare    Nov 2025    Nov 2024" }] }] };
+  rememberWaitingSend(key, "compare\tNov 2025\tNov 2024", Date.now() - 5_000);
+  try {
+    let applied!: () => void;
+    const read = new Promise<void>((resolve) => { applied = resolve; });
+    await act(async () => {
+      renderer = create(createElement(SettingsProvider, null, createElement(ChatView, {
+        paneId, refreshKey: 0, connected: true, ended: false, agent: "pi", agentStatus: "idle", onMetadata: () => { applied(); },
+      })), { createNodeMock: () => new Node() });
+    });
+    await act(async () => { await within(read, 5_000, "the conversation read"); });
+    if (renderer === undefined) throw new Error("Chat did not mount");
+    expect(currentWaitingSends(key)).toEqual([]);
+    expect(renderer.root.findAllByType(SentWaitingList)).toHaveLength(0);
+  } finally { act(() => { forgetWaitingSends(key); }); }
+});

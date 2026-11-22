@@ -1,5 +1,5 @@
 import type { Machine } from "../../shared/machines.ts";
-import type { ConversationTurn } from "../../shared/protocol.ts";
+import type { ConversationResponse, ConversationTurn } from "../../shared/protocol.ts";
 import { composerMessage } from "./compose.ts";
 import { paneLifetimes } from "./paneLifetime.ts";
 
@@ -41,6 +41,12 @@ export const WAITING_HINT_MS = 5_000;
  */
 const said = (text: string): string => text.replace(/\r\n?/gu, "\n").split("\n").map((line) => line.trimEnd()).join("\n").trim();
 
+/**
+ * Pi records a tab as four spaces (server/pi-delivery.ts piRecordText). The other agents keep it, so
+ * only a Pi transcript is read this way: elsewhere "a\tb" and "a    b" stay two messages.
+ */
+const piSaid = (text: string): string => said(text.replace(/\t/gu, "    "));
+
 const becomesTurn = (text: string): boolean => !/^\s*[/!]/u.test(text);
 
 const turnTime = (turn: Turn): number => turn.ts === null ? Number.NaN : Date.parse(turn.ts);
@@ -75,14 +81,14 @@ function newerThanSend(send: WaitingSend, at: number, key: string, answeredAt: n
   return after.latest === null || at + coarse + (after.takenAt - after.latest) > send.at;
 }
 
-const turnSaid = (parts: Turn["parts"]): string => said(parts.filter((part) => part.kind === "text").map((part) => part.text).join(" "));
+const turnSaid = (parts: Turn["parts"], words: (text: string) => string): string => words(parts.filter((part) => part.kind === "text").map((part) => part.text).join(" "));
 
-const keySaid = (key: string): string => turnSaid((JSON.parse(key.slice(0, key.lastIndexOf(":"))) as [Turn["ts"], Turn["parts"]])[1]);
+const keySaid = (key: string): string => turnSaid((JSON.parse(key.slice(0, key.lastIndexOf(":"))) as [Turn["ts"], Turn["parts"]])[1], piSaid);
 
-function turnMatches(send: WaitingSend, turn: Turn, key: string, answeredAt: number, last: boolean): boolean {
+function turnMatches(send: WaitingSend, turn: Turn, key: string, answeredAt: number, last: boolean, words: (text: string) => string): boolean {
   const at = turnTime(turn);
   if (turn.role !== "user" || !Number.isFinite(at) || !newerThanSend(send, at, key, answeredAt, last)) return false;
-  return turnSaid(turn.parts) === said(send.text);
+  return turnSaid(turn.parts, words) === words(send.text);
 }
 
 interface WaitingPane {
@@ -223,7 +229,8 @@ function storage(): Storage | null {
   try { return typeof sessionStorage === "undefined" ? null : sessionStorage; } catch { return null; }
 }
 function keptSend(key: string, send: WaitingSend, claimed: Iterable<string>) {
-  const words = said(send.text);
+  // Pi's wider reading, whatever the agent: after a reload it keeps more turns barred from the send, never fewer
+  const words = piSaid(send.text);
   const own = (turn: string) => keySaid(turn) === words;
   const after = send.after === null ? null : { ...send.after, keys: [...send.after.keys].filter(own) };
   return { key, text: send.text, at: send.at, herdr: send.herdr, after, claimed: [...claimed].filter(own) };
@@ -281,7 +288,7 @@ export function currentWaitingSends(key: string): readonly WaitingSend[] {
   return waiting.get(key)?.sends ?? empty;
 }
 
-export function settleWaitingSends(key: string, turns: readonly Turn[], now = Date.now(), loaded = turns.length > 0): void {
+export function settleWaitingSends(key: string, turns: readonly Turn[], now = Date.now(), loaded = turns.length > 0, source?: ConversationResponse["source"]): void {
   const candidates = userTurns(turns);
   if (loaded) {
     const times = turns.map(turnTime).filter(Number.isFinite);
@@ -299,8 +306,9 @@ export function settleWaitingSends(key: string, turns: readonly Turn[], now = Da
   if (loaded) queueMicrotask(() => markUnanswered(key));
   const settled = new Set<WaitingSend>();
   const order = [...pane.sends.filter((send) => send.unanswered !== true), ...pane.sends.filter((send) => send.unanswered === true)];
+  const words = source === "pi-transcript" ? piSaid : said;
   for (const send of order) {
-    const match = candidates.find((candidate) => !pane.claimed.has(candidate.key) && turnMatches(send, candidate.turn, candidate.key, candidate.answeredAt, candidate.last));
+    const match = candidates.find((candidate) => !pane.claimed.has(candidate.key) && turnMatches(send, candidate.turn, candidate.key, candidate.answeredAt, candidate.last, words));
     if (!match) continue;
     pane.claimed.add(match.key);
     settled.add(send);
