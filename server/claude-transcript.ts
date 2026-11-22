@@ -6,6 +6,7 @@ import { agentTaskResult, CLAUDE_HANDBACK_POINTER, claudeHandback, claudePeerId,
 import { taskNotification, type SubagentDetail } from "./claude-subagents.ts";
 import { trimOutput } from "./tool-output.ts";
 import { base64Size, inlineImageType, MAX_IMAGE_BYTES } from "./codex-images.ts";
+import { POLL_TOOL, REPL_TOOL, replDeliveries, replDispatched, replOutput, virtualCallOutput, type ReplOutput } from "./claude-code-mode.ts";
 
 export function isCommandEntry(text: string, entry: { origin?: unknown; permissionMode?: unknown }): boolean {
   if (claudeCommandEcho(text)) return false;
@@ -400,7 +401,12 @@ export interface TranscriptEntry {
   /** "updates": Claude Code shows the entry's thinking text as a progress message, not as reasoning */
   thinkingDisplay?: unknown;
   message?: { role?: string; content?: unknown; stop_reason?: unknown };
-  attachment?: { type?: unknown; prompt?: unknown; commandMode?: unknown; origin?: { kind?: unknown } };
+  /** `envelopes`: a `poll_events` attachment's events (claude-code-mode.ts) */
+  attachment?: { type?: unknown; prompt?: unknown; commandMode?: unknown; origin?: { kind?: unknown }; envelopes?: unknown };
+  /** a call a Code Mode script made, and its answer: written after the script, not by the model (claude-code-mode.ts) */
+  isVirtual?: unknown;
+  /** what Claude Code kept of a tool's result: the only place a script's call has its output */
+  toolUseResult?: unknown;
 }
 
 export function claudeResultText(output: unknown): string {
@@ -456,6 +462,12 @@ interface ClaudeParseState {
   lastPrompt: { turn: ConversationTurn; parent: string | null | undefined; answered: boolean } | null;
   peersSeen: Set<string>;
   handbacks: Map<string, { report?: string; notice?: ConversationTurn; card?: OmoTaskResult }>;
+  /** Code Mode (claude-code-mode.ts): a REPL call was seen, so a Poll call is how its scripts' output is fetched */
+  codeMode: boolean;
+  /** By script number, a REPL call whose script went on running, and the output delivered for it so far */
+  scripts: Map<number, { part: Extract<ConversationPart, { kind: "tool" }>; text: string; delivered: Set<string> }>;
+  /** Poll calls not drawn, by tool_use id, with the turn they belong to should their result hold more than output */
+  polls: Map<string, { part: Extract<ConversationPart, { kind: "tool" }>; turn: ConversationTurn }>;
 }
 
 function fillCard(card: OmoTaskResult, report: string): void {
@@ -467,6 +479,7 @@ function claudeParseState(options: ClaudeTranscriptOptions): ClaudeParseState {
   return {
     turns: [], pending: new Map(), calls: new Map(), atWork: false, completed: false,
     noticed: options.noticed ?? new Set(), lastPrompt: null, peersSeen: new Set(), handbacks: new Map(),
+    codeMode: false, scripts: new Map(), polls: new Map(),
   };
 }
 
@@ -475,7 +488,22 @@ export function createClaudeTranscriptParser(options: ClaudeTranscriptOptions = 
 }
 
 function claudeTranscriptParser(options: ClaudeTranscriptOptions, state: ClaudeParseState): TranscriptParser {
-  const { turns, pending, calls, noticed, peersSeen, handbacks } = state;
+  const { turns, pending, calls, noticed, peersSeen, handbacks, scripts, polls } = state;
+  /** A script's output, into the REPL row that started it; late output under its number is added after it. */
+  const deliver = (output: ReplOutput): void => {
+    const script = scripts.get(output.eval);
+    if (script === undefined) return;
+    // one event can be delivered twice (a Poll result and an attachment); its own time tells it apart
+    const key = output.at ?? `${script.delivered.size}`;
+    if (script.delivered.has(key)) return;
+    script.delivered.add(key);
+    script.text = script.text.length > 0 && output.output.length > 0 ? `${script.text}\n${output.output}` : script.text + output.output;
+    const { part } = script;
+    delete part.output_ref; delete part.output_size;
+    trimOutput(part, script.text, part.call_id ?? "");
+    if (output.error) part.error = true;
+    part.state = part.error === true ? "error" : "ok";
+  };
   const noticeAt = (): number => state.atWork && turns.at(-1)?.role === "assistant" ? turns.length - 1 : turns.length;
   const notified = (block: string, ts: string | null): boolean => {
     const notice = taskNotification(block);
@@ -512,7 +540,13 @@ function claudeTranscriptParser(options: ClaudeTranscriptOptions, state: ClaudeP
 
   /** the last human prompt and the entry it hangs from: a send Claude Code cancelled before
    *  any reply is re-sent as a sibling of it, and its own screen shows only the re-send */
+  /** A script still running when its turn ended reads as its receipt, as before Code Mode was read, not as running:
+   *  its output may come only after the next prompt, on a page read apart from this one. Output that comes replaces it. */
+  const turnEnded = (): void => {
+    for (const [n, { part }] of scripts) if (part.state === "pending") { trimOutput(part, `(dispatched #${n})`, part.call_id ?? ""); part.state = "ok"; }
+  };
   const pushPrompt = (turn: ConversationTurn, entry: TranscriptEntry): void => {
+    turnEnded();
     const { lastPrompt } = state;
     if (lastPrompt !== null && !lastPrompt.answered && typeof entry.parentUuid === "string" && entry.parentUuid === lastPrompt.parent) {
       const index = turns.indexOf(lastPrompt.turn);
@@ -548,7 +582,7 @@ function claudeTranscriptParser(options: ClaudeTranscriptOptions, state: ClaudeP
       return;
     }
     if (entry.isMeta) return;
-    if (isContextClear(entry, "claude-transcript")) { turns.length = 0; pending.clear(); calls.clear(); handbacks.clear(); state.lastPrompt = null; return; }
+    if (isContextClear(entry, "claude-transcript")) { turns.length = 0; pending.clear(); calls.clear(); handbacks.clear(); scripts.clear(); polls.clear(); state.lastPrompt = null; return; }
     const content = entry.message?.content;
     if (entry.isCompactSummary) {
       const summary = typeof content === "string" ? content
@@ -563,6 +597,13 @@ function claudeTranscriptParser(options: ClaudeTranscriptOptions, state: ClaudeP
     // lines around a prompt repeat it; a task completion can arrive only in its enqueue.
     if (entry.type === "queue-operation" && entry.operation === "enqueue" && typeof entry.content === "string" && notified(entry.content, entry.timestamp ?? null)) return;
     const queued = entry.type === "attachment" ? entry.attachment : undefined;
+    // Code Mode: the output of a script the model did not Poll for comes before its next turn, in this attachment
+    if (queued?.type === "poll_events") {
+      for (const envelope of Array.isArray(queued.envelopes) ? queued.envelopes : []) {
+        if (typeof envelope === "string") for (const output of replDeliveries(envelope, true).outputs) deliver(output);
+      }
+      return;
+    }
     if (queued?.commandMode === "task-notification" && typeof queued.prompt === "string" && notified(queued.prompt, entry.timestamp ?? null)) return;
     if (queued?.type === "queued_command" && queued.commandMode === "prompt" && queued.origin?.kind === "human") {
       if (typeof queued.prompt === "string" && queued.prompt.trim() && !isCommandEntry(queued.prompt.trim(), queued)) {
@@ -680,7 +721,35 @@ function claudeTranscriptParser(options: ClaudeTranscriptOptions, state: ClaudeP
         pending.delete(result.tool_use_id);
         // senpi took the call to its host: no outcome yet, and its output arrives as a host tool result
         if (isHostHandoff(result)) continue;
-        trimOutput(tool, claudeResultText(result.content), result.tool_use_id);
+        const text = claudeResultText(result.content);
+        // Code Mode: a Poll result is the scripts' output, drawn in their REPL rows; the Poll row itself only
+        // when it brought something else too
+        const poll = polls.get(result.tool_use_id);
+        if (poll !== undefined) {
+          polls.delete(result.tool_use_id);
+          const { outputs, other } = replDeliveries(text);
+          for (const output of outputs) deliver(output);
+          if (other.length === 0 && (outputs.length > 0 || text.includes("<system>authentic event nonces"))) continue;
+          poll.turn.parts.push(tool);
+          trimOutput(tool, other.length > 0 ? other.join("\n\n") : text, result.tool_use_id);
+          tool.state = result.is_error === true ? "error" : "ok";
+          continue;
+        }
+        // a REPL whose script runs on: running until its output comes; one that ended in time holds its output
+        if (tool.name === REPL_TOOL && result.is_error !== true) {
+          const dispatched = replDispatched(text);
+          if (dispatched !== null) { scripts.set(dispatched, { part: tool, text: "", delivered: new Set() }); continue; }
+          const own = replOutput(text);
+          if (own !== null) {
+            trimOutput(tool, own.output, result.tool_use_id);
+            if (own.error) tool.error = true;
+            tool.state = own.error ? "error" : "ok";
+            // what the script logs after it ended comes later under its number, as a dispatched one's output does
+            if (own.eval !== null) scripts.set(own.eval, { part: tool, text: own.output, delivered: new Set() });
+            continue;
+          }
+        }
+        trimOutput(tool, text.length === 0 ? virtualCallOutput(entry) ?? "" : text, result.tool_use_id);
         if (result.is_error === true) tool.error = true;
         // the result's flag, and only it, says how the call went: an empty result is still a success
         if (tool.call_id !== undefined) tool.state = result.is_error === true ? "error" : "ok";
@@ -699,8 +768,14 @@ function claudeTranscriptParser(options: ClaudeTranscriptOptions, state: ClaudeP
       const turn = assistantTurn(entry.timestamp);
       // an entry that names no stop reason is still at work when it calls a tool
       const stop = entry.message?.stop_reason;
-      state.completed = stop === "end_turn";
-      state.atWork = stop === "tool_use" || (stop == null && content.some((block: unknown) => typeof block === "object" && block !== null && "type" in block && block.type === "tool_use"));
+      // a call a Code Mode script made (isVirtual) is written after the script, inside the model's turn: it
+      // leaves whether the turn is at work as it stands. Calls written after the turn's answer open one turn
+      // after it, which the calls after them and the answer that follows join.
+      if (entry.isVirtual !== true) {
+        state.completed = stop === "end_turn";
+        state.atWork = stop === "tool_use" || (stop == null && content.some((block: unknown) => typeof block === "object" && block !== null && "type" in block && block.type === "tool_use"));
+        if (state.completed) turnEnded();
+      } else state.completed = false;
       if (entry.timestamp) turn.end_ts = entry.timestamp;
       for (const block of content) {
         if (typeof block !== "object" || block === null) continue;
@@ -727,7 +802,11 @@ function claudeTranscriptParser(options: ClaudeTranscriptOptions, state: ClaudeP
           if (skill) { part.skill = skill; part.summary = skill.name; }
           const id = (block as { id?: unknown }).id;
           if (typeof id === "string" && id.length > 0) { part.call_id = id; part.state = "pending"; }
-          turn.parts.push(part);
+          if (b.name === REPL_TOOL && entry.isVirtual !== true) state.codeMode = true;
+          // Code Mode's Poll only fetches the scripts' output (drawn in their REPL rows): drawn only if its result
+          // holds something else
+          if (b.name === POLL_TOOL && state.codeMode && entry.isVirtual !== true && typeof id === "string" && id.length > 0) polls.set(id, { part, turn });
+          else turn.parts.push(part);
           pending.set(String(id ?? ""), part);
           if (typeof id === "string" && id.length > 0) calls.set(id, part);
         }
@@ -782,7 +861,8 @@ const localLine = (entry: TranscriptEntry, content: unknown): boolean => typeof 
  * an overloaded model), `answered` when it is an answer (one a retry got after such an error included), `running`
  * when it is a prompt (one sent while Claude worked and taken in from the queue included: a `queued_command` record,
  * as parseClaudeTranscript reads it), a tool's result or a tool call. A subagent's entries (`isSidechain`), Claude
- * Code's own records (meta entries, a compaction's summary, a local command's output) and every other entry tell nothing.
+ * Code's own records (meta entries, a compaction's summary, a local command's output), the calls a Code Mode script
+ * made (`isVirtual`) and every other entry tell nothing.
  */
 export function claudeTurnEnd(text: string): ClaudeTurnEnd {
   let end: ClaudeTurnEnd = null;
@@ -790,7 +870,9 @@ export function claudeTurnEnd(text: string): ClaudeTurnEnd {
     if (!line.includes('"assistant"') && !line.includes('"user"') && !line.includes('"queued_command"')) continue;
     let entry: (TranscriptEntry & { isSidechain?: unknown }) | null;
     try { entry = JSON.parse(line) as typeof entry; } catch { continue; }
-    if (entry === null || typeof entry !== "object" || entry.isSidechain === true || entry.isMeta === true || entry.isCompactSummary === true) continue;
+    // a call a Code Mode script made, and its answer (isVirtual), are written once the script ends, which can be after
+    // the turn did: they tell nothing of it
+    if (entry === null || typeof entry !== "object" || entry.isSidechain === true || entry.isMeta === true || entry.isCompactSummary === true || entry.isVirtual === true) continue;
     const content = entry.message?.content;
     if (entry.type === "assistant") {
       if (entry.isApiErrorMessage === true) { end = "failed"; continue; }
