@@ -12,7 +12,7 @@ import { createServer } from "../server/index.ts";
 import { paneRead, paneSendKeys, paneSendText, sessionSnapshot, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { setRuntime, startRuntime } from "../server/herdr-core/runtime.ts";
 import { chromePath } from "./chrome-path.ts";
-import { isolatedHcEnv, stopIsolatedCore } from "./test-hc.ts";
+import { isolatedHcEnv, stopTestCores } from "./test-hc.ts";
 
 const bin = process.env["OVIS_TEST_HC_BIN"];
 if (!bin || process.platform === "win32") {
@@ -454,6 +454,6 @@ try {
   await Promise.resolve().then(() => server?.stop()).catch((error) => console.log("server stop failed", error));
   for (const id of owned) await workspaceClose(id).catch((error) => console.log("workspace close failed", id, error));
   adapter?.stop();
-  await stopIsolatedCore(bin, env);
+  await stopTestCores(bin, [{ env, pids: [] }]);
   rmSync(root, { recursive: true, force: true });
 }
