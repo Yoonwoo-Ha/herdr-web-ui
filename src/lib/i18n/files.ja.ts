@@ -4,7 +4,7 @@
  * components/TextFileView.tsx, components/TextFileEditor.tsx, components/FilePathLink.tsx, components/FilePanelResizer.tsx,
  * components/HighlightedCode.tsx, components/RepoDiffViewer.tsx, components/RepoChanges.tsx,
  * components/RepoDiff.tsx, lib/repoDiff.ts, lib/diffLineNotes.ts, components/WebPanel.tsx,
- * components/PullRequestPanel.tsx, lib/pullRequest.ts, components/MarkdownOutline.tsx.
+ * components/PullRequestPanel.tsx, lib/pullRequest.ts, components/MarkdownOutline.tsx, components/BrowserSidePanel.tsx.
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const FILES_JA: Record<string, string> = {
@@ -18,8 +18,6 @@ export const FILES_JA: Record<string, string> = {
   "Show source": "ソースを表示",
   "Resize file panel": "ファイルパネルの幅を変更",
   "Show beside the pane": "ペインの横に表示",
-  "Reload page": "ページを再読み込み",
-  "Close page": "ページを閉じる",
   "Show as a popup": "ポップアップで表示",
   "Close files": "ファイルを閉じる",
   "Showing the first {shown} of {total}.": "{total} 件中、最初の {shown} 件を表示しています。",
@@ -228,4 +226,17 @@ export const FILES_JA: Record<string, string> = {
   "Split": "並べて表示",
   "The text size of a file you open, in its preview and its source. It follows the chat font size until you set one here.": "開いたファイルの文字サイズで、プレビューにもソースにも適用されます。ここで決めるまではチャットの文字サイズに合わせます。",
   "On a wide window, Browse files opens as a panel to the right of the pane and not as a popup. With Open files on Beside the pane, a file opened from the list takes its place, and closing the file brings the list back.": "広いウィンドウでは、「ファイルを参照」がポップアップではなくペインの右側のパネルとして開きます。「ファイルを開く」が「ペインの横」のときは、一覧から開いたファイルがその場所に表示され、ファイルを閉じると一覧に戻ります。",
+  "Browser panel": "ブラウザパネル",
+  "Results": "成果物",
+  "Files the browser downloads, screenshots and published pages show here.": "ブラウザがダウンロードしたファイル、スクリーンショット、公開されたページがここに表示されます。",
+  "Published page": "公開ページ",
+  "Tabs the agents use": "エージェントが使うタブ",
+  "No agent is using a tab.": "タブを使っているエージェントはありません。",
+  "Screenshot": "スクリーンショット",
+  "Downloading…": "ダウンロード中…",
+  "Show in folder": "フォルダで表示",
+  "Close page": "ページを閉じる",
+  "You have control": "自分が操作中",
+  "{agent} is using it": "{agent} · 使用中",
+  "An agent is using it": "エージェントが使用中",
 };

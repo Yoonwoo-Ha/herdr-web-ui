@@ -76,7 +76,7 @@ fn working_directory() -> io::Result<PathBuf> {
 /// `TERM=xterm-256color`, `PWD` the working directory.
 fn environment(cwd: &OsStr) -> Vec<(OsString, OsString)> {
     let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
-        .filter(|(key, _)| key != "OVIS_TOKEN" && key != "HERDR_WEB_TOKEN" && key != "TERM" && key != "PWD")
+        .filter(|(key, _)| key != "OVIS_TOKEN" && key != "HERDR_WEB_TOKEN" && key != "OVIS_TEST_PTY_NO_CLOSE_DEADLINE" && key != "TERM" && key != "PWD")
         .collect();
     env.push(("PWD".into(), cwd.to_owned()));
     env.push(("TERM".into(), "xterm-256color".into()));

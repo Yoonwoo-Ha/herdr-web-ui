@@ -45,9 +45,12 @@ function nativeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Resp
   const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
   const origin = typeof location === "undefined" ? "http://localhost" : location.origin;
   const target = new URL(input instanceof Request ? input.url : String(input), origin);
+  const api = target.origin === origin && target.pathname.startsWith("/api/");
+  // this server's API, a PC's through it included, never redirects: a redirect target's answer is no answer (S32-1)
+  if (api) init = { ...init, redirect: "error" };
   // only this server's reads: a write is never given up for the caller (the server may have done it),
   // and another host's connections were not found dead
-  if ((method !== "GET" && method !== "HEAD") || target.origin !== origin || !target.pathname.startsWith("/api/")) return fetch(input, init);
+  if ((method !== "GET" && method !== "HEAD") || !api) return fetch(input, init);
   const own = init?.signal ?? (input instanceof Request ? input.signal : undefined);
   const read = new AbortController();
   let signal = read.signal;

@@ -248,7 +248,7 @@ describe("the connection map", () => {
     expect(wires(html)).toEqual({ "Home server": "live", "Old box": "live", "Dark box": "off" });
     expect(html).toMatch(/data-pc="Home server"[^>]*data-via="direct"/);
     const routes = html.slice(html.indexOf('<ol class="relay-map-routes"'));
-    expect([...routes.matchAll(/<small class="relay-map-hop-note">([^<]+)<\/small>/g)].map(([, word]) => word)).toEqual(["Needs update", "Same network · 4 ms", "Offline"]);
+    expect([...routes.matchAll(/<small class="relay-map-hop-note">([^<]+)<\/small>/g)].map(([, word]) => word)).toEqual(["Needs update", "Same network · 4 ms", "Machine offline"]);
     expect(/data-pc-id="Home server"[^>]*title="([^"]+)"/.exec(routes)?.[1]).not.toContain("Offline");
   });
 });

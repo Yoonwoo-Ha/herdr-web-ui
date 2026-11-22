@@ -1,5 +1,6 @@
 import type { ClientMessage, ClientRole, PendingMessage, ServerFeature, ServerMessage } from "../../shared/protocol.ts";
 import { receiptResumeId } from "./receiptResume.ts";
+import { ACCOUNT_OPENS_ALL_CAPABILITY, type NoticeAnswer, type NoticeSeen } from "../../shared/account-devices-api.ts";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../../shared/terminal-flow.ts";
 import { promptSet } from "../../shared/secret-prompt.ts";
 import { ConnectionTrace } from "./connectionTrace.ts";
@@ -55,6 +56,35 @@ const SOCKET_CONNECTING = 0;
 const SOCKET_OPEN = 1;
 const SOCKET_CLOSING = 2;
 const SOCKET_CLOSED = 3;
+
+/**
+ * One clock for every key and every connection's link: a key carries the tick it was captured at (markTyped), a
+ * connection the tick its link was last confirmed up at (linkUpAt). A key reaches a pane only over a link confirmed
+ * before the key was captured and not lost since (HerdrSocket.takesKey).
+ */
+let keyClock = 0;
+const linkWatchers = new Set<HerdrSocket>();
+
+/**
+ * The tick of a key captured now: typed into a terminal, or caught for a terminal that does not exist yet. A network
+ * the browser reports gone is counted as lost on every connection first, as its `offline` event may come later.
+ */
+export function markTyped(): number {
+  for (const socket of linkWatchers) socket.noteNetwork();
+  return ++keyClock;
+}
+
+/** A server on this device, reached directly, for this device's own panes: its path never crosses the network. */
+function deviceLocal(url: string): boolean {
+  if (getTransport().kind !== "native") return false;
+  try {
+    const target = new URL(url);
+    const host = target.hostname;
+    return (host === "localhost" || host === "[::1]" || host.startsWith("127.")) && (target.searchParams.get("machine_id") ?? "local") === "local";
+  } catch {
+    return false;
+  }
+}
 const DISCONNECTED: SubmitResult = { ok: false, code: "disconnected", message: "the connection dropped before the pane confirmed this message" };
 const NOT_TRANSMITTED: SubmitResult = { ok: false, code: "not_transmitted", message: "the connection dropped before this message was sent" };
 const CAPABILITIES_UNKNOWN: SubmitResult = { ok: false, code: "capabilities_unknown", message: "this PC has not said yet what it supports; nothing was sent" };
@@ -114,6 +144,8 @@ export class HerdrSocket {
   private readonly disconnectHandlers = new Set<() => void>();
   private readonly beforeReplayHandlers = new Set<() => void>();
   private featuresKnown = false;
+  /** what the last feature list said of the account release, kept across reconnects (accountReleaseWithdrawn) */
+  private accountOpensAllSaid: boolean | null = null;
   /** `terminal-history` from this connection's latest features frame (trusted or not) or snapshot: it says how to draw, not what to send */
   private terminalHistory = false;
   private machineEventsOffered: boolean | null = null;
@@ -173,6 +205,12 @@ export class HerdrSocket {
   private readonly probeIds = new Set<number>();
   private probeDone: Promise<void> = Promise.resolve();
   private markProbeDone: () => void = () => {};
+  /** the key clock's tick when this connection's link was last confirmed up; null while it is not (see markTyped) */
+  private linkUpAt: number | null = null;
+  /** the current network loss was noted (noteNetwork); the network coming back or the link confirmed opens the next */
+  private lossNoted = false;
+  /** keys queued before the network went (an attach's resume, a new tab's catch) are held even when none is typed during it */
+  private readonly onOffline = (): void => { this.noteNetwork(); };
   private probeDrops = 0;
   private pathLost = false;
   private pingKnown = false;
@@ -180,7 +218,7 @@ export class HerdrSocket {
   private nextPing = 1;
   private readonly onWake = (event?: Event): void => {
     if (event?.type === "pageshow") { this.left = false; this.trace.record("pageshow"); }
-    if (event?.type === "online") this.trace.record("online");
+    if (event?.type === "online") { this.trace.record("online"); this.lossNoted = false; }
     if (event?.type === "visibilitychange") this.trace.record(document.visibilityState === "hidden" ? "hidden" : "visible");
     // a page on its way into the back/forward cache connects again only when it is shown
     if (this.left) return;
@@ -244,6 +282,7 @@ export class HerdrSocket {
 
   constructor(url: string = defaultUrl()) {
     this.url = url;
+    linkWatchers.add(this);
     this.trace = new ConnectionTrace(url, () => ({
       connection: this.connectionEpoch, socket_state: this.socket?.readyState ?? null,
       visibility: typeof document === "undefined" ? "unknown" : document.visibilityState === "hidden" ? "hidden" : "visible",
@@ -345,6 +384,7 @@ export class HerdrSocket {
       this.lostAt = null;
       this.lastFrameAt = this.openedAt;
       this.watchIdle(socket);
+      this.confirmLink();
       // the path is back: reads sent on the lost one would hold the browser's connections to the server
       if (this.pathLost) {
         this.pathLost = false;
@@ -364,6 +404,8 @@ export class HerdrSocket {
       }
     });
 
+    let earlyNoticeOffer = false;
+    const pendingNotices: Extract<ServerMessage, { type: "device-notice-replay" | "device-notice" }>[] = [];
     socket.addEventListener("message", (event) => {
       if (this.socket !== socket) return;
       this.trace.flush();
@@ -405,6 +447,7 @@ export class HerdrSocket {
         const first = !this.featuresKnown;
         this.features = new Set(message.features ?? []);
         this.featuresKnown = true;
+        this.accountOpensAllSaid = this.features.has(ACCOUNT_OPENS_ALL_CAPABILITY);
         // typing lost on another herdr, or on one never proven, is not this herdr's pane's, whatever its ID
         this.lifetime = message.type === "snapshot" ? message.snapshot.herdr_lifetime : message.herdr_lifetime;
         for (const [paneId, lost] of this.lostInput) if (lost.lifetime !== this.lifetime) this.lostInput.delete(paneId);
@@ -491,7 +534,20 @@ export class HerdrSocket {
         this.resolveRequest(message.id, message.ok ? { ok: true } : { ok: false, code: message.code ?? "insert_failed", message: message.message ?? "the pane did not take the text" });
       }
       // A terminal/parser failure is not malformed JSON and must not disappear.
+      if (message.type === "features" && !this.featuresKnown) {
+        earlyNoticeOffer = message.features?.includes(ACCOUNT_OPENS_ALL_CAPABILITY) === true;
+        if (!earlyNoticeOffer) pendingNotices.length = 0;
+      }
+      if ((message.type === "device-notice" || message.type === "device-notice-replay") && !this.accountOpensAll()) {
+        // A first-connect offer can precede its trusted snapshot; retain frames only after that offer.
+        if (earlyNoticeOffer && !this.featuresKnown) pendingNotices.push(message);
+        return;
+      }
       this.emit(message);
+      if (this.featuresKnown && pendingNotices.length > 0) {
+        const confirmed = pendingNotices.splice(0);
+        if (this.accountOpensAll()) for (const notice of confirmed) this.emit(notice);
+      }
       for (const paneId of unwatched) this.emit({ type: "watch-end", pane_id: paneId });
     });
 
@@ -539,6 +595,7 @@ export class HerdrSocket {
     this.socket = null;
     this.clearConnectTimer();
     this.clearLiveness();
+    this.linkUpAt = null;
     // typing no pong confirmed may never have reached the server: the panes' terminals hold it for review
     for (const [paneId, typed] of this.unconfirmed) {
       const earlier = this.lostInput.get(paneId);
@@ -631,6 +688,37 @@ export class HerdrSocket {
     this.probeIds.clear();
     this.markProbeDone();
     if (this.connectionState === "probing") this.connectionState = "open";
+    this.confirmLink();
+  }
+
+  /**
+   * The browser says its network is gone while the socket may still read OPEN: what it takes now would wait in the
+   * browser or the network and reach the pane after the network is back, typed by nobody. Unless the server is on
+   * this device, the link counts as lost at once, and the connection is probed so a dead socket is dropped. A probe
+   * already in flight pinged while the network was there, so it asks again: an earlier ping's pong proves nothing.
+   * Each loss counts once (lossNoted), so a second loss before the first probe's pong invalidates that probe too.
+   */
+  noteNetwork(): void {
+    if (this.lossNoted || typeof navigator === "undefined" || navigator.onLine !== false || deviceLocal(this.url)) return;
+    this.lossNoted = true;
+    this.linkUpAt = null;
+    const socket = this.socket;
+    if (this.probeTimer !== null && socket !== null) {
+      window.clearTimeout(this.probeTimer);
+      this.probeIds.clear();
+      this.ping(socket, 1);
+    } else this.probe();
+  }
+
+  /**
+   * The link is up again once its connection opened or answered a probe (or, on a bridge without "ping", the network
+   * came back), and the browser reports a network or the server is on this device.
+   */
+  private confirmLink(): void {
+    if (this.linkUpAt !== null || !this.connected || this.probing) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false && !deviceLocal(this.url)) return;
+    this.linkUpAt = ++keyClock;
+    this.lossNoted = false;
   }
 
   private async probeSettled(socket: WebSocketLike): Promise<boolean> {
@@ -682,6 +770,7 @@ export class HerdrSocket {
     if (this.wakeListening || typeof window.addEventListener !== "function") return;
     this.wakeListening = true;
     window.addEventListener("online", this.onWake);
+    window.addEventListener("offline", this.onOffline);
     window.addEventListener("pageshow", this.onWake);
     window.addEventListener("pagehide", this.onLeave);
     if (typeof document !== "undefined") {
@@ -709,6 +798,9 @@ export class HerdrSocket {
     // an open socket may be half-open after a sleep or a network change: ask it (a bridge without "ping" is trusted)
     if (socket?.readyState === SOCKET_OPEN) {
       this.probe();
+      // a bridge without "ping" is trusted here, and its link confirmed (when the browser reports a network);
+      // one with it is confirmed by the pong of the probe just sent
+      this.confirmLink();
       return;
     }
     if (socket?.readyState === SOCKET_CLOSING) {
@@ -867,6 +959,26 @@ export class HerdrSocket {
     return this.featuresKnown;
   }
 
+  /** Device table G5: this PC opens to the account's sign-in (ACCOUNT_OPENS_ALL_CAPABILITY), as its trusted features say; never offline. */
+  accountOpensAll(): boolean {
+    return this.connected && this.features.has(ACCOUNT_OPENS_ALL_CAPABILITY);
+  }
+
+  /**
+   * This PC's last feature list lacked the account release (S32-1): an explicit withdrawal, which holds through a
+   * disconnect and a reconnect that has listed nothing yet, until a list offers it again. False before any list.
+   */
+  accountReleaseWithdrawn(): boolean {
+    return this.accountOpensAllSaid === false;
+  }
+
+  /** Device table T57: says what was seen, or answers one notice; only to a PC that offers it. True when sent. */
+  sendNotice(message: NoticeSeen | NoticeAnswer): boolean {
+    if (!this.accountOpensAll()) return false;
+    this.rawSend(message);
+    return true;
+  }
+
   hasTerminalHistory(): boolean {
     return this.terminalHistory;
   }
@@ -967,7 +1079,21 @@ export class HerdrSocket {
   }
 
   canInput(paneId: string): boolean {
-    return this.connected && !this.probing && this.mode === "interact" && this.inputReady.has(paneId);
+    return this.takesKey(paneId);
+  }
+
+  /**
+   * The one gate every key to a pane passes (canInput, sendInput, sendKeys). A key captured at `typedAt` (markTyped;
+   * now when absent) goes only over a link confirmed up before it was captured and not lost since: nothing typed while
+   * the link was down, or queued before it went down, reaches the pane by itself once it is back. It is held instead.
+   * "Down" is what this connection knows: a stall it has no sign of yet (the browser reports a network, the socket
+   * reads OPEN) is found only by the liveness probe: keys typed before the probe starts go as usual, and keys typed
+   * while it waits for its pong are held.
+   */
+  private takesKey(paneId: string, typedAt?: number): boolean {
+    this.noteNetwork();
+    return this.linkUpAt !== null && (typedAt === undefined || typedAt > this.linkUpAt)
+      && this.connected && !this.probing && this.mode === "interact" && this.inputReady.has(paneId);
   }
 
   canQueueMessages(): boolean {
@@ -979,9 +1105,10 @@ export class HerdrSocket {
   }
 
   /** `stop`: the composer's Stop, a lone ESC the bridge keeps ahead of the next message. `automatic`: xterm's own reply, nobody typed it.
-   * `secret`: typed at a masked prompt. Neither is kept to be held when its connection ends unconfirmed */
-  sendInput(paneId: string, text: string, stop = false, automatic = false, secret = false): boolean {
-    if (!this.canInput(paneId)) { this.traceProbeRefusal(); return false; }
+   * `secret`: typed at a masked prompt. Neither is kept to be held when its connection ends unconfirmed.
+   * `typedAt`: when it was captured (markTyped), for typing that waited; see takesKey */
+  sendInput(paneId: string, text: string, stop = false, automatic = false, secret = false, typedAt?: number): boolean {
+    if (!this.takesKey(paneId, typedAt)) { this.traceProbeRefusal(); return false; }
     // a password's too: its input-result proves the pane took it, where a pong proves only that the bridge read it
     const id = !automatic && (!this.featuresKnown || this.features.has("input-receipt")) ? this.nextInput++ : undefined;
     try { this.rawSend({ type: "input", pane_id: paneId, text, ...(stop ? { stop: true } : {}), ...(automatic ? { automatic: true } : {}), ...(id !== undefined ? { id } : {}) }); } catch { return false; }
@@ -1267,14 +1394,16 @@ export class HerdrSocket {
     this.trace.record("probe_input_blocked", {}, true);
   }
 
-  sendKeys(paneId: string, keys: string[]): boolean {
-    if (!this.canInput(paneId)) { this.traceProbeRefusal(); return false; }
+  /** `typedAt`: when the keys were captured (markTyped), for keys that waited; see takesKey */
+  sendKeys(paneId: string, keys: string[], typedAt?: number): boolean {
+    if (!this.takesKey(paneId, typedAt)) { this.traceProbeRefusal(); return false; }
     try { this.rawSend({ type: "keys", pane_id: paneId, keys }); return true; } catch { return false; }
   }
 
   close(): void {
     this.trace.close();
     this.disposed = true;
+    linkWatchers.delete(this);
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.clearConnectTimer();
@@ -1283,6 +1412,7 @@ export class HerdrSocket {
     this.endedEarly = new WeakSet();
     if (this.wakeListening) {
       window.removeEventListener("online", this.onWake);
+      window.removeEventListener("offline", this.onOffline);
       window.removeEventListener("pageshow", this.onWake);
       window.removeEventListener("pagehide", this.onLeave);
       if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.onWake);

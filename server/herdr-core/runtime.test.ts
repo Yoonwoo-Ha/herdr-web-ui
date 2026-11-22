@@ -35,7 +35,7 @@ afterEach(() => {
 /** where a stand-in hc is found at all: discovery runs one only when every folder above it is safe, which a shared TMPDIR need not be */
 const checkedTmp = platform === "win32" ? tmpdir() : "/tmp";
 
-it.skipIf(platform === "win32")("runs the hc it found, not an unrelated one named first", async () => {
+it.skipIf(platform === "win32")("refuses to start on an unrelated hc named in OVIS_HC_BIN, and runs no other", async () => {
   const dir = mkdtempSync(join(checkedTmp, "ovis-hc-found-"));
   cleanup = () => rmSync(dir, { recursive: true, force: true });
   const script = (name: string, output: string) => {
@@ -47,10 +47,25 @@ it.skipIf(platform === "win32")("runs the hc it found, not an unrelated one name
   process.env["OVIS_HC_BIN"] = script("hc", "herbstclient 0.9.5");
   const core = script("herdr-core", "hc 0.1.17");
   process.env["PATH"] = join(dir, "bin");
-  const adapter = await startRuntime(join(dir, "state"), () => findHc({ env: process.env, home: dir, loginShellPath: async () => null, usualDirs: [] }), noLogin);
+  const started = startRuntime(join(dir, "state"), () => findHc({ env: process.env, home: dir, loginShellPath: async () => null, usualDirs: [] }), noLogin);
+  await expect(started).rejects.toThrow("OVIS_HC_BIN");
+  expect(hcBin()).not.toBe(core);
+});
+
+it.skipIf(platform === "win32")("runs another hc when the app's own does not answer, and logs which one in its place", async () => {
+  const dir = mkdtempSync(join(checkedTmp, "ovis-hc-bundled-"));
+  cleanup = () => rmSync(dir, { recursive: true, force: true });
+  const own = hcIn(dir, "app", "herbstclient 0.9.5");
+  const other = hcIn(dir, "usual", "hc 0.1.17");
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  process.env["OVIS_RUNTIME"] = "herdr-core";
+  const adapter = await startRuntime(join(dir, "state"), () => findHc({ env: { OVIS_HC_BIN: own, OVIS_HC_BIN_BUNDLED: "1", PATH: join(dir, "empty") }, home: dir, loginShellPath: async () => null, usualDirs: [join(dir, "usual")] }), noLogin);
   if (!adapter) throw new Error("runtime did not start");
   try {
-    expect(hcBin()).toBe(core);
+    expect(hcBin()).toBe(other);
+    const lines = warn.mock.calls.map((call) => String(call[0])).filter((line) => line.includes(own));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(other);
   } finally {
     adapter.stop();
   }

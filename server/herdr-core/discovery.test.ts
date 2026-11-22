@@ -3,7 +3,8 @@ import { chmodSync, existsSync, statSync, mkdirSync, mkdtempSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isAbsolute, relative } from "node:path";
-import { aclReader, coreSocket, discoverHc, findHc, harmlessGroups, macAclGrantsWrite, ownedByUser, plainSession, privateGroup, PROBE_TIMEOUT_MS, trustRefusal } from "./discovery.ts";
+import { coreSocket, plainSession } from "./core-socket.ts";
+import { aclReader, discoverHc, findHc, harmlessGroups, herdrCoreFacts, macAclGrantsWrite, ownedByUser, privateGroup, PROBE_TIMEOUT_MS, trustRefusal } from "./discovery.ts";
 
 const unix = process.platform !== "win32";
 let cleanup = () => {};
@@ -87,6 +88,43 @@ it.skipIf(!unix)("never runs an hc from a folder another account can write, earl
   } finally {
     for (const dir of ["open", "others", "stickybin", "shared", "open2"]) chmodSync(join(root, dir), 0o755);
   }
+});
+
+it.skipIf(!unix)("regression: a set OVIS_HC_BIN that fails is not swapped for another hc", async () => {
+  const { root, log } = scratch();
+  const broken = fake(join(root, "named"), "my-hc", "not hc", log);
+  fake(join(root, "path"), "hc", "hc 0.1.19", log);
+  fake(join(root, "usual"), "hc", "hc 0.1.17", log);
+  const look = (named: string) => findHc({ env: { OVIS_HC_BIN: named, PATH: join(root, "path") }, home: root, loginShellPath: async () => join(root, "path"), usualDirs: [join(root, "usual")] });
+  expect(await look(broken)).toBeNull();
+  expect(await look(join(root, "missing", "hc"))).toBeNull();
+  expect(await look("no-such-hc")).toBeNull();
+});
+
+it.skipIf(!unix)("looks in the usual places when the app's own hc (OVIS_HC_BIN_BUNDLED) fails, and says which it used instead", async () => {
+  const { root, log } = scratch();
+  const broken = fake(join(root, "app"), "herdr-core", "not hc", log);
+  const usual = fake(join(root, "usual"), "hc", "hc 0.1.17", log);
+  const options = { env: { OVIS_HC_BIN: broken, OVIS_HC_BIN_BUNDLED: "1", PATH: join(root, "empty") }, home: root, usualDirs: [join(root, "usual")] };
+  expect(await findHc({ ...options, loginShellPath: async () => null })).toEqual({ bin: usual, version: "0.1.17", insteadOf: broken });
+  expect(runs(log)).toEqual(["--version", "--version"]);
+  // Settings is told the app's own hc was not used
+  await discoverHc(options);
+  expect(herdrCoreFacts()).toMatchObject({ version: "0.1.17", bundled_unused: true });
+});
+
+it.skipIf(!unix)("gives the app's own hc longer to answer --version than any other", async () => {
+  const { root, log } = scratch();
+  const own = fake(join(root, "app"), "herdr-core", "hc 0.1.17", log);
+  const usual = fake(join(root, "usual"), "hc", "hc 0.1.17", log);
+  const asked: [string, number][] = [];
+  const version = async (bin: string, _env: unknown, timeoutMs: number) => { asked.push([bin, timeoutMs]); return bin === usual ? "0.1.17" : null; };
+  const look = (env: Record<string, string>) => findHc({ env: { ...env, OVIS_HC_BIN: own, PATH: join(root, "empty") }, home: root, loginShellPath: async () => null, usualDirs: [join(root, "usual")], version });
+  expect(await look({ OVIS_HC_BIN_BUNDLED: "1" })).toEqual({ bin: usual, version: "0.1.17", insteadOf: own });
+  expect(asked.splice(0)).toEqual([[own, 10_000], [usual, 3_000]]);
+  // one the user named keeps the usual wait, and nothing else is asked
+  expect(await look({})).toBeNull();
+  expect(asked).toEqual([[own, 3_000]]);
 });
 
 it.skipIf(!unix)("runs one in the user's own folder, through a sticky shared one and a link, and an explicit OVIS_HC_BIN anywhere", async () => {
@@ -290,10 +328,9 @@ it.skipIf(!unix)("passes over an hc that is not herdr-core's, and one that fails
   const { root, log } = scratch();
   fake(join(root, "wm"), "hc", "herbstclient 0.9.5", log);
   fake(join(root, "broken"), "hc", "hc 0.1.17", log, 1);
-  const named = fake(join(root, "named"), "hc", "hcx 2", log);
   const real = fake(join(root, "login"), "hc", "hc 0.1.17", log);
   const found = await findHc({
-    env: { OVIS_HC_BIN: named, PATH: [join(root, "wm"), join(root, "broken")].join(":") },
+    env: { PATH: [join(root, "wm"), join(root, "broken")].join(":") },
     home: root, loginShellPath: async () => join(root, "login"), usualDirs: [],
   });
   expect(found).toEqual({ bin: real, version: "0.1.17" });

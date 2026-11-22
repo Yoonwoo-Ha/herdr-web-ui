@@ -403,3 +403,18 @@ it("puts an edited agent-only message back in the box agent-only", async () => {
     saved.restore();
   }
 });
+
+it.each([
+  ["before this connection's features are known", false, false, "hold"],
+  ["on a herdr-core server, which shows a card's wait as blocked", true, true, "hold"],
+  ["on herdr, where blocked is the agent's own reading", true, false, "immediate"],
+] as const)("sends a normal Send to a Codex shown blocked %s as %s, automatic sending off", async (_when, listed, modes, expected) => {
+  const deliveries: SubmitDelivery[] = [];
+  const actions = sends("blocked-pane", { ok: true }, [], {
+    agent: "codex", agentStatus: "blocked",
+    socketRef: { current: { connected: true, featuresListed: (): boolean => listed, typesArrows: (): boolean => modes } as unknown as HerdrSocket },
+    submitComposerMessage: (_text, delivery) => { deliveries.push(delivery); return Promise.resolve({ ok: true }); },
+  });
+  await actions.composerSend("next step");
+  expect(deliveries).toEqual([expected]);
+});

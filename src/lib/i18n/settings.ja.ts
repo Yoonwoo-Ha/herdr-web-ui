@@ -1,7 +1,7 @@
 /**
  * Japanese for the keys only the settings files use:
  * components/SettingsDialog.tsx (with THEME_NAMES), components/SignOutRow.tsx, components/KeyBarSettings.tsx,
- * components/SettingsControls.tsx, components/TelemetryControls.tsx, lib/paletteSettings.ts.
+ * components/SettingsControls.tsx, components/TelemetryControls.tsx, components/LinkBrowserRow.tsx, lib/paletteSettings.ts.
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const SETTINGS_JA: Record<string, string> = {
@@ -133,7 +133,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "Auto ({language})": "自動（{language}）",
   "No OpenAI key: the browser's speech recognition is used": "OpenAI キーがないため、ブラウザーの音声認識を使用します",
   "Speech recognition": "音声認識",
-  "Browser": "ブラウザー",
   "API key": "API キー",
   "Save an API key to use the mic": "マイクを使うには API キーを保存してください",
   "No OpenAI key saved": "OpenAI キーが保存されていません",
@@ -146,7 +145,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "Not saved on the server yet; reloading or closing this page can undo the change.": "まだサーバーに保存されていません。このページを再読み込みするか閉じると、変更が取り消されることがあります。",
   "Sending the change to the server…": "変更をサーバーに送信しています…",
   "Keep screen on": "画面をオンのままにする",
-  "Needs HTTPS or localhost.": "HTTPS または localhost が必要です。",
   "This browser can't keep the screen on.": "このブラウザーでは画面をオンに保てません。",
   "For this device. An alert waits a little first, and none comes when the pane changes meanwhile, as when you answer at the PC.": "このデバイスに適用されます。通知は少し待ってから送られ、その間に PC で回答するなどしてペインの状態が変わった場合は送られません。",
   "Alerts from": "通知を受け取る PC",
@@ -171,7 +169,7 @@ export const SETTINGS_JA: Record<string, string> = {
   "Anonymous usage counts": "匿名の利用集計",
   "Turned off on this PC by OVIS_TELEMETRY=0, DO_NOT_TRACK or a CI environment.": "この PC では OVIS_TELEMETRY=0、DO_NOT_TRACK または CI 環境によりオフになっています。",
   "Send anonymous usage counts": "匿名の利用集計を送る",
-  "Once on install and once per update, with the last browser's app settings, and once a day you open the app, with the kinds of coding agents running in herdr (such as claude or codex), the kinds of screen the app was opened on, how they reached this PC, and how many prompt answers were sent and alerts delivered and tapped. After each day, how often the app's buttons were used that day (chat sends, the composer's buttons, the agent inbox, and switches between chat and terminal by kind of agent and how) and, for a few actions, whether a button, a menu, a shortcut or the command palette was used, each count only as a rough range, with the list of which of these controls were shown, on narrow and wide screens apart, never what was typed, which pane or what time of day. Custom fonts, shortcuts and replies are reported only as customization flags or counts, never their text. Account identifiers, terminal content and files are excluded. The receiver stores the country, not the IP address.": "インストール時に 1 回、更新ごとに 1 回、最後に使用したブラウザーのアプリ設定とともに送信し、アプリを開いた日に 1 回、herdr で動いているコーディングエージェントの種類（claude や codex など）、アプリを開いた画面の種類、その画面がこの PC に届いた経路、送信したプロンプトへの回答数、届いた通知とタップされた通知の数とともに送信します。1 日が終わると、その日にアプリのボタンをどれだけ使ったか（チャットの送信、入力欄のボタン、エージェント受信箱、エージェントの種類と操作方法ごとのチャットとターミナルの切り替え）と、いくつかの操作をボタン・メニュー・ショートカット・コマンドパレットのどれで行ったかを回数ごとにおおよその範囲だけで送り、これらのコントロールのどれが表示されたかを名前の一覧で送ります。狭い画面と広い画面に分けて送り、入力した内容、どのペインか、何時かは送りません。カスタムフォント、ショートカット、返信は、テキストではなくカスタマイズの有無や数としてのみ報告します。アカウント識別子、ターミナルの内容、ファイルは含みません。受信側は IP アドレスではなく国のみを保存します。",
+  "Once on install and once per update, with the last browser's app settings, and once a day you open the app, with the kinds of coding agents running in herdr (such as claude or codex), the kinds of screen the app was opened on, how they reached this PC (this PC itself, the local network, Tailscale, Funnel, a device paired through the Ovis relay (through the relay or directly), Portal or another proxy), and how many prompt answers were sent and alerts delivered and tapped. After each day, how often the app's buttons were used that day (chat sends, the composer's buttons, the agent inbox, and switches between chat and terminal by kind of agent and how) and, for a few actions, whether a button, a menu, a shortcut or the command palette was used, each count only as a rough range, with the list of which of these controls were shown, on narrow and wide screens apart, never what was typed, which pane or what time of day. Custom fonts, shortcuts and replies are reported only as customization flags or counts, never their text. Account identifiers, terminal content and files are excluded. The receiver stores the country, not the IP address.": "インストール時に 1 回、更新ごとに 1 回、最後に使用したブラウザーのアプリ設定とともに送信し、アプリを開いた日に 1 回、herdr で動いているコーディングエージェントの種類（claude や codex など）、アプリを開いた画面の種類、その画面がこの PC に届いた経路（この PC 自身、ローカルネットワーク、Tailscale、Funnel、Ovis リレーでペアリングしたデバイス（リレー経由または直接接続）、Portal、その他のプロキシ）、送信したプロンプトへの回答数、届いた通知とタップされた通知の数とともに送信します。1 日が終わると、その日にアプリのボタンをどれだけ使ったか（チャットの送信、入力欄のボタン、エージェント受信箱、エージェントの種類と操作方法ごとのチャットとターミナルの切り替え）と、いくつかの操作をボタン・メニュー・ショートカット・コマンドパレットのどれで行ったかを回数ごとにおおよその範囲だけで送り、これらのコントロールのどれが表示されたかを名前の一覧で送ります。狭い画面と広い画面に分けて送り、入力した内容、どのペインか、何時かは送りません。カスタムフォント、ショートカット、返信は、テキストではなくカスタマイズの有無や数としてのみ報告します。アカウント識別子、ターミナルの内容、ファイルは含みません。受信側は IP アドレスではなく国のみを保存します。",
   "Once a day you open the app:": "アプリを開いた日に 1 回:",
   "After a day has ended:": "1 日が終わった後:",
   "The receiver adds the country this message comes from (two letters, such as KR). It does not store the address.": "受信側が、このメッセージの送信元の国（KR のような 2 文字）を付け加えます。アドレスは保存しません。",
@@ -183,6 +181,10 @@ export const SETTINGS_JA: Record<string, string> = {
   "Beside the pane": "ペインの横",
   "In a new tab": "新しいタブ",
   "Reuse tab for external links": "外部リンク用のタブを再利用",
+  "Browser for links": "リンクを開くブラウザ",
+  "The browser a web link you click in Ovis opens in, on this computer. Sign-in pages always open in the system's default browser.": "このコンピュータで Ovis の Web リンクを押したときに開くブラウザです。サインインのページは常にシステムの既定のブラウザで開きます。",
+  "System default": "システムの既定",
+  "System default ({name})": "システムの既定 ({name})",
   "theme themes palette dark light mode colors density language sidebar logos": "テーマ パレット palette ダーク ライト モード 色 密度 言語 サイドバー ロゴ",
   "chat message width composer enter send thinking code": "チャット メッセージ 幅 入力欄 エンター 送信 思考 コード",
   "terminal key bar keyboard clipboard": "ターミナル キーバー キーボード クリップボード",
@@ -288,4 +290,10 @@ export const SETTINGS_JA: Record<string, string> = {
   "Remove PC {name}": "PC {name} を削除",
 
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "この PC の外部通知の設定を読み取れませんでした（{error}）。設定を閉じてもう一度開いてください。",
+  "Opens the page of every PC this device reaches through the relay, to check, join or forget them.": "このデバイスがリレーでつなぐすべてのPCのページを開き、確認・参加・削除ができます。",
+  "Manage|relayed connections": "管理",
+  "Built-in browser": "内蔵ブラウザー",
+  "Blocked sites": "ブロックするサイト",
+  "Opens web pages in tabs inside this app: they are listed under Browser in the sidebar and open beside the pane. Its tabs are signed in to nothing you use elsewhere, and an agent's tabs keep cookies of their own.": "ウェブページをこのアプリ内のタブで開きます。タブはサイドバーの「ブラウザー」に並び、ペインの横に開きます。これらのタブは他でのログインを使わず、エージェントのタブは別の Cookie を使います。",
+  "The built-in browser never loads these sites or their subdomains, in your tabs or an agent's. One site per line.": "内蔵ブラウザーは、自分のタブでもエージェントのタブでも、これらのサイトとそのサブドメインを読み込みません。1 行に 1 サイトずつ入力します。",
 };

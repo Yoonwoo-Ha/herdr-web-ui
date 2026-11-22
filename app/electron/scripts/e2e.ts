@@ -112,6 +112,14 @@ for (const profile of [".profile", ".bash_profile", ".zprofile", ".zshrc", ".bas
 for (const program of ["herdr", "hc", "herdr-core"]) {
   check(`no ${program} on the app's PATH`, Bun.which(program, { PATH }) === null, Bun.which(program, { PATH }) ?? "");
 }
+// Linux: a browser of the run's own, for Settings → Browser for links: it writes down the one argument it is given
+const linkBrowserOutput = join(root, "link-browser-opened.txt");
+if (process.platform === "linux") {
+  writeFileSync(join(fakeBin, "e2e-browser"), `#!/bin/sh\nprintf '%s|%s' "$#" "$1" > '${linkBrowserOutput}'\n`);
+  chmodSync(join(fakeBin, "e2e-browser"), 0o755);
+  mkdirSync(join(home, ".local", "share", "applications"), { recursive: true });
+  writeFileSync(join(home, ".local", "share", "applications", "e2e-browser.desktop"), `[Desktop Entry]\nType=Application\nName=E2E Browser\nExec=${join(fakeBin, "e2e-browser")} %u\nMimeType=x-scheme-handler/https;\n`);
+}
 
 /** Linux: a display of the run's own, never the caller's (its X cookie stays in the caller's HOME) */
 async function startDisplay(): Promise<string | undefined> {
@@ -219,7 +227,7 @@ const HOOK = `(() => {
   // the hourly update check, scheduled as the app does and also kept here to be run at once
   const setTimer = globalThis.setInterval;
   globalThis.setInterval = function (run, ms, ...rest) { if (ms === ${UPDATE_CHECK_INTERVAL_MS}) e2e.updateChecks.push(run); return setTimer.call(this, run, ms, ...rest); };
-  e2e.window = () => electron.BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.getParentWindow() === null) ?? null;
+  e2e.window = () => electron.BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.getParentWindow() === null && w.isFocusable()) ?? null;
   e2e.tray = () => (e2e.trayMenu ? e2e.trayMenu.items.map((item) => item.type === "separator" ? "-" : item.label + (item.enabled ? "" : " (off)")) : null);
   e2e.press = (label) => { const item = e2e.trayMenu?.items.find((entry) => entry.label === label); if (!item) throw new Error("no tray item " + label); if (!item.enabled) throw new Error("tray item " + label + " is off"); item.click(); return true; };
   return true;
@@ -411,6 +419,7 @@ async function lifecycle(app: string): Promise<void> {
   await second.inspector.eval(`e2e.press("Open in Browser")`);
   const opened = await second.inspector.eval<string[]>("e2e.opened");
   check("tray: Open in Browser opens the server's address", opened.some((url) => url.startsWith(origin2)), opened.join(", "));
+  if (process.platform === "linux") await linkBrowser(second);
   await second.inspector.eval("e2e.window().close()");
   const hidden = await until("the window to hide", async () => (await second.inspector.eval<boolean>("e2e.window()?.isVisible() ?? false")) ? null : true, 5_000).catch(() => false);
   check("closing the window keeps Ovis in the tray", hidden === true && alive(second.mainPid) && saved(second).server !== null);
@@ -445,6 +454,24 @@ async function lifecycle(app: string): Promise<void> {
   await until("the roster drawn", async () => (await pageText(fourth)).includes("e2e terminal") || null, 20_000).catch(() => null);
   await screenshot(fourth, "6-after-kill-restart");
   await quit(fourth, "quit");
+}
+
+/** Settings → Browser for links, through the page's own bridge: the run's browser is listed, chosen, and given a link as one argument */
+async function linkBrowser(app: App): Promise<void> {
+  const inPage = <T>(script: string) => app.inspector.eval<T>(`e2e.window().webContents.executeJavaScript(${JSON.stringify(script)})`);
+  const listed = await inPage<{ browsers: { id: string; name: string }[]; chosen: string | null } | null>("window.ovisBrowsers.list()");
+  const id = "desktop:e2e-browser.desktop";
+  check("Browser for links lists the browsers, the system default chosen", listed?.chosen === null && listed.browsers.some((browser) => browser.id === id && browser.name === "E2E Browser"), JSON.stringify(listed));
+  const refused = await inPage<boolean>("window.ovisBrowsers.choose('/bin/sh').then(() => false, () => true)");
+  check("Browser for links refuses a browser it did not find", refused);
+  await inPage(`window.ovisBrowsers.choose(${JSON.stringify(id)})`);
+  const link = "https://example.com/a b?q=\"x\"&y='z' $(id)";
+  const before = (await app.inspector.eval<string[]>("e2e.opened")).length;
+  await inPage(`window.ovisBrowsers.open(${JSON.stringify(link)})`);
+  const got = await until("the run's browser to open the link", () => existsSync(linkBrowserOutput) ? readFileSync(linkBrowserOutput, "utf8") : null, 15_000).catch(() => "");
+  check("Browser for links opens a web link in the chosen browser, as one argument", got === `1|${new URL(link).href}`, got);
+  check("Browser for links leaves the system browser out of it", (await app.inspector.eval<string[]>("e2e.opened")).length === before);
+  await inPage("window.ovisBrowsers.choose(null)");
 }
 
 async function packageVersion(version: string, output: string, feed?: string): Promise<void> {

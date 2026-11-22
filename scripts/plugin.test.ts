@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
+import { watch } from "node:fs";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { platform, tmpdir, uptime } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
@@ -22,7 +23,7 @@ async function status(): Promise<{ out: string; err: string; exitCode: number }>
   return run("status");
 }
 
-async function run(command: string, extra: Record<string, string | undefined> = {}, more: { args?: string[]; stdin?: string; timeout?: number } = {}): Promise<{ out: string; err: string; exitCode: number }> {
+async function run(command: string, extra: Record<string, string | undefined> = {}, more: { args?: string[]; stdin?: string; timeout?: number; preload?: string } = {}): Promise<{ out: string; err: string; exitCode: number }> {
   const child = launch(command, extra, more);
   const [out, err, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   return { out, err, exitCode };
@@ -37,8 +38,8 @@ function launchEnv(extra: Record<string, string | undefined> = {}): Record<strin
   return env;
 }
 
-function launch(command: string, extra: Record<string, string | undefined> = {}, more: { args?: string[]; stdin?: string; timeout?: number } = {}) {
-  return Bun.spawn(["bun", "scripts/plugin.ts", command, ...more.args ?? []], { cwd: ROOT, env: launchEnv(extra), stdout: "pipe", stderr: "pipe", ...more.stdin === undefined ? {} : { stdin: new Blob([more.stdin]) }, ...more.timeout === undefined ? {} : { timeout: more.timeout, killSignal: "SIGKILL" } });
+function launch(command: string, extra: Record<string, string | undefined> = {}, more: { args?: string[]; stdin?: string; timeout?: number; preload?: string } = {}) {
+  return Bun.spawn(["bun", ...more.preload === undefined ? [] : ["--preload", more.preload], "scripts/plugin.ts", command, ...more.args ?? []], { cwd: ROOT, env: launchEnv(extra), stdout: "pipe", stderr: "pipe", ...more.stdin === undefined ? {} : { stdin: new Blob([more.stdin]) }, ...more.timeout === undefined ? {} : { timeout: more.timeout, killSignal: "SIGKILL" } });
 }
 
 beforeEach(() => {
@@ -724,6 +725,107 @@ describe("the state dir when run by hand", () => {
   });
 });
 
+describe("the devices status lists apart", () => {
+  const GROUPS = { unlinked: [{ id: "6a1f0c9e2b7d4a10", label: "Old phone" }], own_word: [{ id: "0d4c1b7a9e2f3c58", label: "Tab\u001b]0;let\u0007let" }, { id: "1e5d2c8b0a3f4d69", label: "Laptop" }] };
+  /** An Ovis on a port of its own whose health answer is `answer` for each request, by the request's authorization. */
+  function answering(answer: (authorization: string | null) => Record<string, unknown>) {
+    const asked: (string | null)[] = [];
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+      if (new URL(request.url).pathname !== "/api/health") return new Response(null, { status: 404 });
+      asked.push(request.headers.get("authorization"));
+      return Response.json(answer(request.headers.get("authorization")));
+    } });
+    writeFileSync(join(configDir, ".env"), `PORT=${server.port}\n`);
+    return { server, asked, env: { HOST: "127.0.0.1", HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_STATE_DIR: join(scratch, "app-state"), OVIS_TOKEN: "" } };
+  }
+  const lines = (out: string) => out.split("\n").filter((line) => /^(relay )?devices /.test(line));
+
+  it("are the two groups of the owner's health answer, each device by its name with no control character, and its id", async () => {
+    const pc = answering(() => ({ ...APP_HEALTH, account_devices: GROUPS }));
+    try {
+      const result = await run("status", pc.env);
+      expect(result.exitCode, result.err).toBe(0);
+      expect(lines(result.out)).toEqual([
+        "relay devices outside the account: Old phone (6a1f0c9e2b7d4a10)",
+        "devices that joined the account on their own word: Tab]0;letlet (0d4c1b7a9e2f3c58), Laptop (1e5d2c8b0a3f4d69)",
+      ]);
+      expect(pc.asked).toEqual([null]);
+    } finally { await pc.server.stop(true); }
+  });
+
+  it("say none for an empty group, and are not printed by a server that sends none", async () => {
+    const empty = answering(() => ({ ...APP_HEALTH, account_devices: { unlinked: [], own_word: [] } }));
+    try {
+      expect(lines((await run("status", empty.env)).out)).toEqual(["relay devices outside the account: none", "devices that joined the account on their own word: none"]);
+    } finally { await empty.server.stop(true); }
+    const older = answering(() => APP_HEALTH);
+    try {
+      // it let the command in: nothing is asked again, with the token or without
+      const result = await run("status", { ...older.env, OVIS_TOKEN: "the-token" });
+      expect(result.out.split("\n")[0]).toBe(`running http://127.0.0.1:${older.server.port}`);
+      expect(lines(result.out)).toEqual([]);
+      expect(older.asked).toEqual([null]);
+    } finally { await older.server.stop(true); }
+  });
+
+  /**
+   * `status` with fetch replaced inside the command, so nothing listens: each request gets the next of `answers` (the
+   * last one again once they run out). What it printed, and each request's path and authorization.
+   */
+  async function statusAnswering(answers: readonly Record<string, unknown>[], token: string): Promise<{ out: string; asked: string }> {
+    writeFileSync(join(configDir, ".env"), "PORT=9\n");
+    const asked = join(scratch, "asked");
+    rmSync(asked, { force: true });
+    const plugin = JSON.stringify(join(ROOT, "scripts", "plugin.ts"));
+    const child = Bun.spawn([process.execPath, "-e", `import { appendFileSync } from "node:fs";
+const answers = ${JSON.stringify(answers)};
+globalThis.fetch = async (input, init) => {
+  const request = new Request(input, init);
+  appendFileSync(${JSON.stringify(asked)}, \`\${new URL(request.url).pathname} \${request.headers.get("authorization") ?? "none"}\\n\`);
+  return Response.json(answers.length > 1 ? answers.shift() : answers[0]);
+};
+process.argv = [process.execPath, ${plugin}, "status"];
+const { runPlugin } = await import(${plugin});
+await runPlugin();`], { cwd: ROOT, stdout: "pipe", stderr: "pipe", env: launchEnv({ HOST: "127.0.0.1", HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_STATE_DIR: join(scratch, "app-state"), OVIS_TOKEN: token }) });
+    const [out, err, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    expect(exitCode, err).toBe(0);
+    expect(out.split("\n")[0]).toBe("running http://127.0.0.1:9");
+    return { out, asked: readFileSync(asked, "utf8") };
+  }
+  const notice = (out: string) => out.split("\n").filter((line) => line.startsWith("account devices: "));
+
+  it("are never asked for with the token over TCP: the app's answer that did not let the command in is the one request, and status says so", async () => {
+    // its first answer is the app's and lets nothing in, and whatever answers the same address next would be handed the
+    // token (an earlier status asked again with it)
+    const { out, asked } = await statusAnswering([{ ...APP_HEALTH, auth: { required: true, authenticated: false, reason: "token_required" } }, { ...APP_HEALTH, account_devices: GROUPS }], "the-token");
+    expect(asked).toBe("/api/health none\n");
+    expect(lines(out)).toEqual([]);
+    expect(notice(out)).toHaveLength(1);
+    expect(notice(out)[0]).toContain("token");
+    expect(out).not.toContain("the-token");
+  });
+
+  it("print a device's id with no control character, on its group's one line", async () => {
+    const groups = { unlinked: [{ id: "6a1f0c9e\n2b7d4a10", label: "Old phone" }], own_word: [{ id: "0d4c1b7a\u001b[2J9e2f3c58", label: "Tab" }] };
+    const { out } = await statusAnswering([{ ...APP_HEALTH, account_devices: groups }], "");
+    expect(lines(out)).toEqual([
+      "relay devices outside the account: Old phone (6a1f0c9e2b7d4a10)",
+      "devices that joined the account on their own word: Tab (0d4c1b7a[2J9e2f3c58)",
+    ]);
+  });
+
+  it("name the token as the reason they are not shown only when the app asks for it", async () => {
+    // a PC that wants this device paired, with no token set, and an open LAN that lets the command in but is not its owner
+    for (const auth of [{ required: true, authenticated: false, reason: "pairing_required" }, { required: false, authenticated: true, via: "open", role: "drive" }]) {
+      const { out, asked } = await statusAnswering([{ ...APP_HEALTH, auth }], "");
+      expect(asked).toBe("/api/health none\n");
+      expect(lines(out)).toEqual([]);
+      expect(notice(out)).toHaveLength(1);
+      expect(notice(out)[0]).not.toContain("token");
+    }
+  });
+});
+
 describe("add and login", () => {
   function linkedPc() {
     const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
@@ -815,15 +917,63 @@ describe("add and login", () => {
   }, 30_000);
 
   it("are in the usage an unknown command gets, with what they do", async () => {
-    const result = await run("constructor", { HERDR_PLUGIN_CONFIG_DIR: configDir });
+    const result = await run("constructor", { HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_ACCOUNT_OPENS_ALL: "1" });
     expect(result.exitCode).toBe(2);
     expect(result.err).toBe([
-      "usage: bun scripts/plugin.ts <start|stop|status|pair|link|add|login|phone|phone-setup|tui>",
+      "usage: bun scripts/plugin.ts <start|stop|status|pair|link|add|login|recover|confirm|phone|phone-setup|tui>",
       "add (also login, link): sign this PC in, then scan its QR code with a device of your Ovis account to add it (--approve: approve that device here instead; --print: write the QR code where there is no terminal).",
       "link --code: show a code and a QR code to pair one device instead.",
       "tui: herdr-core's terminals in this terminal, as herdr shows them.",
+      "recover: list the devices that wait for this PC's account to be read; --release <id>... lets them in until then, --undo ends that.",
+      "confirm: open this PC's confirm page, where turning strict mode on or off waits for your approval.",
       "",
     ].join("\n"));
+  });
+
+  it("with the release flag off, recover is not a command and the usage does not offer it (T70, flag off)", async () => {
+    const result = await run("recover", { HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_ACCOUNT_OPENS_ALL: "0" });
+    expect(result.exitCode).toBe(2);
+    expect(result.err).not.toContain("recover");
+  });
+
+  it.each([undefined, "1", "", "false"])("with Step 2 flag %j, confirm prints this PC's confirm page without a desktop", async (flag) => {
+    const state = join(scratch, "app-state");
+    mkdirSync(state, { recursive: true, mode: 0o700 });
+    writeFileSync(join(state, "local-confirm.json"), JSON.stringify({ port: 41234 }), { mode: 0o600 });
+    const result = await run("confirm", { HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_ACCOUNT_OPENS_ALL: flag, OVIS_STATE_DIR: state, DISPLAY: undefined, WAYLAND_DISPLAY: undefined });
+    expect({ code: result.exitCode, out: result.out }).toEqual({ code: process.platform === "linux" ? 0 : 1, out: expect.stringContaining(process.platform === "linux" ? "http://127.0.0.1:41234/" : "Linux") });
+  });
+
+  it("with the release flag on under Wayland, confirm opens the page it built with xdg-open", async () => {
+    const state = join(scratch, "app-state");
+    mkdirSync(state, { recursive: true, mode: 0o700 });
+    writeFileSync(join(state, "local-confirm.json"), JSON.stringify({ port: 41234 }), { mode: 0o600 });
+    const opened = join(scratch, "opened");
+    writeFileSync(join(scratch, "bin", "xdg-open"), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${opened}"\n`);
+    chmodSync(join(scratch, "bin", "xdg-open"), 0o755);
+    const result = await run("confirm", { HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_ACCOUNT_OPENS_ALL: "1", OVIS_STATE_DIR: state, DISPLAY: undefined, WAYLAND_DISPLAY: "wayland-0" });
+    if (process.platform !== "linux") { expect(result.exitCode).toBe(1); return; }
+    expect(result.exitCode).toBe(0);
+    // the opener is started detached: wait for what it writes, not for a time
+    const written = (): boolean => existsSync(opened) && readFileSync(opened, "utf8").endsWith("\n");
+    await new Promise<void>((resolve) => {
+      const watcher = watch(scratch, () => { if (written()) { watcher.close(); resolve(); } });
+      if (written()) { watcher.close(); resolve(); }
+    });
+    expect(readFileSync(opened, "utf8")).toBe("http://127.0.0.1:41234/\n");
+  });
+
+  it("with the release flag off, confirm is not a command and the usage does not offer it (flag off)", async () => {
+    const result = await run("confirm", { HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_ACCOUNT_OPENS_ALL: "0" });
+    expect(result.exitCode).toBe(2);
+    expect(result.err).not.toContain("confirm");
+  });
+
+  it("T70: recover uses the release flag from the same config as the server", async () => {
+    writeFileSync(join(configDir, ".env"), "OVIS_ACCOUNT_OPENS_ALL=1\n");
+    const result = await run("recover", { HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_ACCOUNT_OPENS_ALL: "0" });
+    expect(result.exitCode).toBe(1);
+    expect(result.out).toMatch(/recovery socket|desktop app/);
   });
 });
 
@@ -1090,6 +1240,26 @@ describe.skipIf(platform() === "win32")("a machine profile, under the fleet prev
     expect(pc.calls.map((call) => `${call.door} ${call.call}`)).toEqual(["socket GET /api/health"]);
   }, 30_000);
 
+  it("names the settings file when its OVIS_STATE_DIR hides the profile named on the command line, and only then", async () => {
+    const pc = profilePc();
+    const other = join(pc.home, "other-state");
+    try {
+      pc.settings(`OVIS_STATE_DIR=${other}\n`);
+      const status = await run("status", pc.env);
+      const add = await run("add", pc.env);
+      const approve = await run("pair", pc.env, { args: ["--approve"] });
+      const wayOut = `${join(configDir, ".env")} sets OVIS_STATE_DIR to ${other}, which wins over ${pc.state}. Run it with that profile's HERDR_PLUGIN_CONFIG_DIR, or set the same OVIS_STATE_DIR in the file.\n`;
+      const stopped = `Ovis is not running at http://127.0.0.1:${pc.port}; start it first\n${wayOut}`;
+      // status's stdout keeps its one line, which install.sh reads
+      expect([status.out.split("\n")[0], status.err, add.err, add.exitCode, approve.err, approve.exitCode]).toEqual([`down http://127.0.0.1:${pc.port}`, wayOut, stopped, 1, stopped, 1]);
+      printed(pc, status, add, approve);
+      pc.settings(`OVIS_STATE_DIR=${pc.state}\n`);
+      const same = await run("status", pc.env);
+      expect(same.out.split("\n")[0], same.err).toBe(`running http://127.0.0.1:${pc.port}`);
+    } finally { await pc.stop(); }
+    expect(pc.calls.map((call) => `${call.door} ${call.call}`)).toEqual(["socket GET /api/health"]);
+  }, 30_000);
+
   const ENGINE_DOWN = { ok: true, auth: { required: false, authenticated: true, via: "local", role: "drive" }, machine_profile: { engine: "herdr", runtime_down: true, reason: "herdr is not running for the selected session" } };
 
   it("takes a profile whose engine does not answer as running on its owner socket: status says the engine is down, add goes on", async () => {
@@ -1320,6 +1490,82 @@ describe("pair --approve", () => {
   });
 });
 
+/**
+ * A fake clock for the command's time limits, loaded before it runs: `AbortSignal.timeout(ms)` arms a limit instead of
+ * timing one, each request names the limit it carries (`x-test-limit`), and an answer marked `x-test-past-limit` moves
+ * the clock past that request's limit as it comes in, so its body is never read in time.
+ */
+const FAKE_CLOCK = `
+const armed = new WeakMap();
+AbortSignal.timeout = (ms) => { const controller = new AbortController(); armed.set(controller.signal, { ms, controller }); return controller.signal; };
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (input, init = {}) => {
+  const limit = init.signal ? armed.get(init.signal) : undefined;
+  const headers = new Headers(init.headers);
+  if (limit) headers.set("x-test-limit", String(limit.ms));
+  const response = await realFetch(input, { ...init, headers });
+  if (limit && response.headers.get("x-test-past-limit") === "1") limit.controller.abort(new DOMException("The operation timed out.", "TimeoutError"));
+  return response;
+};
+`;
+
+/**
+ * A server that answers health, and `late` past the limit its request carries: `late` is reached (its `reached` runs)
+ * and answered, but its body would come only after the clock passed the limit. `limits`: the limit each request carried.
+ */
+function lateAnswerPc(late: string, answer: (path: string) => Response | undefined = () => undefined, reached = (): void => undefined) {
+  const limits: Record<string, string | null> = {};
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const path = new URL(request.url).pathname;
+    limits[path] = request.headers.get("x-test-limit");
+    if (path === "/api/health") return Response.json(APP_HEALTH);
+    if (path === late) {
+      reached();
+      return new Response(new ReadableStream({ start(body) { body.enqueue(new TextEncoder().encode("{")); } }), { headers: { "content-type": "application/json", "x-test-past-limit": "1" } });
+    }
+    return answer(path) ?? new Response(null, { status: 404 });
+  } });
+  return { server, limits };
+}
+
+describe("pair's first requests to a server that answered health", () => {
+  const clocked = () => { const file = join(scratch, "fake-clock.ts"); writeFileSync(file, FAKE_CLOCK); return file; };
+
+  it("pair --approve gives up on the waiting pairings at the 15 s its later reads have, and says so", async () => {
+    const pc = lateAnswerPc("/api/relay/pairings");
+    try {
+      const result = await run("pair", { PORT: String(pc.server.port) }, { args: ["--approve"], stdin: "", timeout: 10_000, preload: clocked() });
+      expect([result.exitCode, result.out], result.err).toEqual([1, ""]);
+      expect(pc.limits["/api/relay/pairings"]).toBe("15000");
+      expect(result.err).toBe(`Ovis at http://127.0.0.1:${pc.server.port} did not answer in time; try again\n`);
+    } finally { await pc.server.stop(true); }
+  }, 20_000);
+
+  it("pair gives up on starting a pairing at the 5 s its relay requests have, and says a code it never got may be live", async () => {
+    let made = 0;
+    const pc = lateAnswerPc("/api/devices/pair/start", undefined, () => { made++; });
+    try {
+      const result = await run("pair", { PORT: String(pc.server.port), OVIS_CLI_NAME: undefined }, { timeout: 10_000, preload: clocked() });
+      expect([result.exitCode, result.out], result.err).toEqual([1, ""]);
+      expect(pc.limits["/api/devices/pair/start"]).toBe("5000");
+      // the PC made a code this never showed: the command says so, and names the run that replaces it
+      expect(made).toBe(1);
+      expect(result.err).toContain("run ovis pair again");
+    } finally { await pc.server.stop(true); }
+  }, 20_000);
+
+  it("pair shows its code without an address when the address does not come within 5 s", async () => {
+    const pc = lateAnswerPc("/api/access", (path) => path === "/api/devices/pair/start" ? Response.json({ code: "123456", expires_at: "2030-01-01T00:00:00.000Z" }) : undefined);
+    try {
+      const result = await run("pair", { PORT: String(pc.server.port) }, { timeout: 10_000, preload: clocked() });
+      expect(result.exitCode, result.err).toBe(0);
+      expect(pc.limits["/api/access"]).toBe("5000");
+      expect(result.out).toContain("Pairing code: 123 456");
+      expect(result.out).toContain("open the app's address");
+    } finally { await pc.server.stop(true); }
+  }, 20_000);
+});
+
 describe("pair relay offer", () => {
   async function pairWithRelay(phase: "online" | "off" | "missing" | "malformed" | "bad-offer") {
     const key = generateKeyPair();
@@ -1421,9 +1667,9 @@ describe("a command handed on to the release the app updated to", () => {
    * With `group`, it leads a process group of its own, as a command
    * in a terminal does. Its stderr goes into a file: a release left running would hold a pipe open.
    */
-  function handOn(command: string, { fail = false, group = false } = {}) {
+  function handOn(command: string, { fail = false, group = false, given = join(scratch, "app-state"), settings = "" } = {}) {
     const port = quietPort();
-    writeFileSync(join(configDir, ".env"), `PORT=${port}\n`);
+    writeFileSync(join(configDir, ".env"), `PORT=${port}\n${settings}`);
     const release = join(updateStateDir(ROOT, port, join(scratch, "app-state")), "release-test");
     mkdirSync(join(release, "scripts"), { recursive: true });
     const pidFile = join(scratch, "release-pid");
@@ -1438,11 +1684,13 @@ setInterval(() => {}, 1 << 30);
     const revision = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: ROOT, windowsHide: true }).stdout.toString().trim();
     writeFileSync(join(release, "..", "current.json"), JSON.stringify({ source_revision: revision, directory: release }));
     const notes = join(scratch, "notes");
+    const releaseEnv = join(scratch, "release-env");
     const child = Bun.spawn([process.execPath, "-e", `import { appendFileSync } from "node:fs";
 const spawn = Bun.spawn;
 Bun.spawn = (argv, options) => {
   if (!String(argv[1]).endsWith(${JSON.stringify(releaseScript)})) return spawn(argv, options);
   appendFileSync(${JSON.stringify(notes)}, \`spawn \${process.listenerCount("SIGTERM")} \${process.listenerCount("SIGHUP")}\n\`);
+  appendFileSync(${JSON.stringify(releaseEnv)}, JSON.stringify({ state: options.env.OVIS_STATE_DIR, given: options.env.OVIS_PLUGIN_GIVEN_STATE_DIR }));
   ${fail ? "throw new Error(\"the release cannot start\");" : "return spawn(argv, options);"}
 };
 process.argv = [process.execPath, ${plugin}, ${JSON.stringify(command)}];
@@ -1451,12 +1699,13 @@ try { await runPlugin(); } catch (error) { appendFileSync(${JSON.stringify(notes
 process.kill(process.pid, "SIGTERM");
 setInterval(() => {}, 1_000);`], {
       cwd: ROOT, stdout: "pipe", stderr: Bun.file(join(scratch, "stderr")), detached: group,
-      env: launchEnv({ HOST: "127.0.0.1", HERDR_PLUGIN_ROOT: ROOT, HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_STATE_DIR: join(scratch, "app-state"), OVIS_TOKEN: "" }),
+      env: launchEnv({ HOST: "127.0.0.1", HERDR_PLUGIN_ROOT: ROOT, HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_STATE_DIR: given, OVIS_TOKEN: "" }),
     });
     const released = () => existsSync(pidFile) ? Number(readFileSync(pidFile, "utf8")) : 0;
     return {
       child, released,
       notes: () => existsSync(notes) ? readFileSync(notes, "utf8") : "",
+      releaseEnv: () => existsSync(releaseEnv) ? JSON.parse(readFileSync(releaseEnv, "utf8")) as unknown : null,
       said: () => existsSync(join(scratch, "stderr")) ? readFileSync(join(scratch, "stderr"), "utf8") : "",
       [Symbol.dispose]: () => {
         child.kill("SIGKILL");
@@ -1464,6 +1713,13 @@ setInterval(() => {}, 1_000);`], {
       },
     };
   }
+
+  posix("gives the release the environment the settings file made, and the OVIS_STATE_DIR it was run with apart", async () => {
+    using run = handOn("a-later-command", { given: join(scratch, "given-state"), settings: `OVIS_STATE_DIR=${join(scratch, "app-state")}\n` });
+    const up = await within(run.child.stdout.getReader().read(), "the release never started");
+    expect(new TextDecoder().decode(up.value), run.said()).toBe("up\n");
+    expect(run.releaseEnv()).toEqual({ state: join(scratch, "app-state"), given: join(scratch, "given-state") });
+  }, 30_000);
 
   for (const command of ["link", "phone-setup", "a-later-command"]) {
     for (const [signal, exit] of [["SIGTERM", 3], ["SIGHUP", 4], ["SIGINT", 6]] as const) {

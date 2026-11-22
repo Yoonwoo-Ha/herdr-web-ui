@@ -41,6 +41,7 @@ const rows = Number.parseInt(rowsRaw ?? "", 10);
 const env = { ...process.env, TERM: "xterm-256color" };
 delete env.OVIS_TOKEN;
 delete env.HERDR_WEB_TOKEN;
+delete env.OVIS_TEST_PTY_NO_CLOSE_DEADLINE;
 
 const term = pty.spawn(command, args, {
   name: "xterm-256color",
@@ -92,10 +93,14 @@ const socket = process.platform === "win32" ? undefined : term._socket;
 if (socket) {
   const destroy = socket.destroy.bind(socket);
   socket.destroy = (...args) => {
+    // Without a test deadline, node-pty's own 200 ms destroy must not release a hold our exit check has not ended;
+    // with no hold (a clean EOF, no EIO), a destroy closes as it always does.
+    if (process.env.OVIS_TEST_PTY_NO_CLOSE_DEADLINE === "1" && !args[0] && closing !== null && !closing.done) return socket;
     if (args[0] && !finalRead && closing === null) {
       // an EIO'd pty is readable forever: reading stops, or it spins until the close
       socket._handle?.readStop?.();
-      const until = Date.now() + EXIT_QUIET_MS;
+      // Tests can require the child exit, rather than the grace deadline, to close the PTY.
+      const until = process.env.OVIS_TEST_PTY_NO_CLOSE_DEADLINE === "1" ? Infinity : Date.now() + EXIT_QUIET_MS;
       const close = () => { clearInterval(closing.timer); closing.done = true; destroy(...args); };
       closing = { done: false, close, timer: setInterval(() => {
         if (!running()) return close();

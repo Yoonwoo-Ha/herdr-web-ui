@@ -133,13 +133,23 @@ export function relayFixture(serveOnly = false, options: NonNullable<Parameters<
   };
 }
 
-export async function relayAccountFixture(role: "drive" | "watch" = "drive", account = "acct_1", options: NonNullable<Parameters<typeof createServer>[0]> = {}) {
+/** The PC's first whole read was applied (S2-27, T42): rows not paired at this PC stop waiting for it. */
+export function caughtUp(fixture: ReturnType<typeof relayFixture>): void {
+  fixture.app.context.services.catchUp?.wholeRead();
+}
+
+export async function relayAccountFixture(role: "drive" | "watch" = "drive", account = "acct_1",
+  { prepare, origin, ...options }: NonNullable<Parameters<typeof createServer>[0]> & {
+    prepare?: (stateDir: string) => void; origin?: (createdAt: string) => import("../account/admission-order.ts").RowOrigin;
+  } = {}) {
   const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
   const publicKey = Buffer.from(await crypto.subtle.exportKey("spki", keys.publicKey)).toString("base64url");
   const stateDir = mkdtempSync(join(tmpdir(), "ovis-relay-account-"));
   const member = { id: randomBytes(8).toString("hex"), label: "Account phone", role, token_hash: randomBytes(32).toString("hex"),
-    relay_public_key: publicKey, account, created_at: new Date().toISOString(), last_seen_at: null };
-  writeFileSync(join(stateDir, "devices.json"), JSON.stringify({ gate_closed_at: member.created_at, devices: [member] }), { mode: 0o600 });
+    relay_public_key: publicKey, account, created_at: new Date(Date.now()).toISOString(), last_seen_at: null };
+  const row = origin === undefined ? member : { ...member, origin: origin(member.created_at) };
+  writeFileSync(join(stateDir, "devices.json"), JSON.stringify({ gate_closed_at: member.created_at, devices: [row] }), { mode: 0o600 });
+  prepare?.(stateDir);
   const fixture = relayFixture(false, { ...options, stateDir });
   return { fixture, member: { keys, publicKey, id: member.id } };
 }
@@ -155,7 +165,7 @@ export async function relayDevice(fixture: ReturnType<typeof relayFixture>, role
 }
 
 export async function relayConnection(fixture: ReturnType<typeof relayFixture>,
-  options: Partial<Omit<RelaySessionOptions, "channel" | "services">> = {}) {
+  options: Partial<Omit<RelaySessionOptions, "channel" | "services">> = {}, Session = RelaySession) {
   const clientTransport = new DuplexTransport();
   const daemonTransport = new DuplexTransport();
   clientTransport.peer = daemonTransport;
@@ -198,7 +208,7 @@ export async function relayConnection(fixture: ReturnType<typeof relayFixture>,
     },
   });
   const daemon = await daemonOpening;
-  session = new RelaySession({
+  session = new Session({
     channel: daemon, services: fixture.app.context.services, port: fixture.app.port,
     serverId: "0123456789abcdef0123456789abcdef", serverVersion: "0.4.20", minSupportedClient: "0.4.20",
     routingOverhead: 0, maxWireMessageBytes: 256 * 1024, ...options,

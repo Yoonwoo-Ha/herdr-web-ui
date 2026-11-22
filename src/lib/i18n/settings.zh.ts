@@ -1,7 +1,7 @@
 /**
  * Simplified Chinese for the keys only the settings files use:
  * components/SettingsDialog.tsx (with THEME_NAMES), components/SignOutRow.tsx, components/KeyBarSettings.tsx,
- * components/SettingsControls.tsx, components/TelemetryControls.tsx, lib/paletteSettings.ts.
+ * components/SettingsControls.tsx, components/TelemetryControls.tsx, components/LinkBrowserRow.tsx, lib/paletteSettings.ts.
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const SETTINGS_ZH: Record<string, string> = {
@@ -133,7 +133,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Auto ({language})": "自动（{language}）",
   "No OpenAI key: the browser's speech recognition is used": "未设置 OpenAI 密钥，将使用浏览器的语音识别",
   "Speech recognition": "语音识别",
-  "Browser": "浏览器",
   "API key": "API 密钥",
   "Save an API key to use the mic": "保存 API 密钥后才能使用麦克风",
   "No OpenAI key saved": "未保存 OpenAI 密钥",
@@ -146,7 +145,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Not saved on the server yet; reloading or closing this page can undo the change.": "尚未保存到服务器；重新加载或关闭此页面可能会撤销此更改。",
   "Sending the change to the server…": "正在将更改发送到服务器…",
   "Keep screen on": "保持屏幕常亮",
-  "Needs HTTPS or localhost.": "需要 HTTPS 或 localhost。",
   "This browser can't keep the screen on.": "此浏览器无法保持屏幕常亮。",
   "For this device. An alert waits a little first, and none comes when the pane changes meanwhile, as when you answer at the PC.": "仅适用于此设备。提醒会先稍等片刻，如果期间窗格状态发生变化（例如你已在 PC 上回答），则不会发送。",
   "Alerts from": "接收提醒的电脑",
@@ -171,7 +169,7 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Anonymous usage counts": "匿名使用统计",
   "Turned off on this PC by OVIS_TELEMETRY=0, DO_NOT_TRACK or a CI environment.": "此电脑因 OVIS_TELEMETRY=0、DO_NOT_TRACK 或 CI 环境而已关闭。",
   "Send anonymous usage counts": "发送匿名使用统计",
-  "Once on install and once per update, with the last browser's app settings, and once a day you open the app, with the kinds of coding agents running in herdr (such as claude or codex), the kinds of screen the app was opened on, how they reached this PC, and how many prompt answers were sent and alerts delivered and tapped. After each day, how often the app's buttons were used that day (chat sends, the composer's buttons, the agent inbox, and switches between chat and terminal by kind of agent and how) and, for a few actions, whether a button, a menu, a shortcut or the command palette was used, each count only as a rough range, with the list of which of these controls were shown, on narrow and wide screens apart, never what was typed, which pane or what time of day. Custom fonts, shortcuts and replies are reported only as customization flags or counts, never their text. Account identifiers, terminal content and files are excluded. The receiver stores the country, not the IP address.": "应用安装时发送一次，每次更新发送一次，并附带最后使用的浏览器中的应用设置；在你打开应用的每一天再发送一次，并附带 herdr 中正在运行的编码代理类型（例如 claude 或 codex）、打开应用的屏幕类型、这些屏幕连接到这台电脑的方式，以及发送的提示回答数量和送达、被点开的提醒数量。每天结束后，还会发送当天应用各按钮的使用频率（聊天发送、输入框按钮、代理收件箱，以及按代理类型和操作方式划分的聊天与终端切换），以及部分操作是通过按钮、菜单、快捷键还是命令面板完成的，每个次数只以大致区间上报；这些控件中哪些曾显示，则以名称列表发送。区分窄屏和宽屏，绝不包含输入的内容、哪个窗格或具体时间。自定义字体、快捷键和快捷回复仅以自定义标记或数量的形式上报，绝不包含其文本。不包含账户标识、终端内容和文件。接收端只保存国家，不保存 IP 地址。",
+  "Once on install and once per update, with the last browser's app settings, and once a day you open the app, with the kinds of coding agents running in herdr (such as claude or codex), the kinds of screen the app was opened on, how they reached this PC (this PC itself, the local network, Tailscale, Funnel, a device paired through the Ovis relay (through the relay or directly), Portal or another proxy), and how many prompt answers were sent and alerts delivered and tapped. After each day, how often the app's buttons were used that day (chat sends, the composer's buttons, the agent inbox, and switches between chat and terminal by kind of agent and how) and, for a few actions, whether a button, a menu, a shortcut or the command palette was used, each count only as a rough range, with the list of which of these controls were shown, on narrow and wide screens apart, never what was typed, which pane or what time of day. Custom fonts, shortcuts and replies are reported only as customization flags or counts, never their text. Account identifiers, terminal content and files are excluded. The receiver stores the country, not the IP address.": "应用安装时发送一次，每次更新发送一次，并附带最后使用的浏览器中的应用设置；在你打开应用的每一天再发送一次，并附带 herdr 中正在运行的编码代理类型（例如 claude 或 codex）、打开应用的屏幕类型、这些屏幕连接到这台电脑的方式（这台电脑本身、本地网络、Tailscale、Funnel、通过 Ovis 中继配对的设备（经由中继或直接连接）、Portal 或其他代理），以及发送的提示回答数量和送达、被点开的提醒数量。每天结束后，还会发送当天应用各按钮的使用频率（聊天发送、输入框按钮、代理收件箱，以及按代理类型和操作方式划分的聊天与终端切换），以及部分操作是通过按钮、菜单、快捷键还是命令面板完成的，每个次数只以大致区间上报；这些控件中哪些曾显示，则以名称列表发送。区分窄屏和宽屏，绝不包含输入的内容、哪个窗格或具体时间。自定义字体、快捷键和快捷回复仅以自定义标记或数量的形式上报，绝不包含其文本。不包含账户标识、终端内容和文件。接收端只保存国家，不保存 IP 地址。",
   "Once a day you open the app:": "在你打开应用的每一天发送一次：",
   "After a day has ended:": "每天结束后：",
   "The receiver adds the country this message comes from (two letters, such as KR). It does not store the address.": "接收端会附加这条消息来自的国家（两个字母，例如 KR）。不保存地址。",
@@ -183,6 +181,10 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Beside the pane": "在窗格旁",
   "In a new tab": "在新标签页中",
   "Reuse tab for external links": "重复使用外部链接标签页",
+  "Browser for links": "打开链接的浏览器",
+  "The browser a web link you click in Ovis opens in, on this computer. Sign-in pages always open in the system's default browser.": "在这台电脑上点击 Ovis 中的网页链接时使用的浏览器。登录页面始终在系统默认浏览器中打开。",
+  "System default": "系统默认",
+  "System default ({name})": "系统默认 ({name})",
   "theme themes palette dark light mode colors density language sidebar logos": "主题 调色板 palette 深色 浅色 模式 颜色 密度 语言 侧边栏 徽标",
   "chat message width composer enter send thinking code": "聊天 消息 宽度 输入框 回车 发送 思考 代码",
   "terminal key bar keyboard clipboard": "终端 按键栏 键盘 剪贴板",
@@ -288,4 +290,10 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Remove PC {name}": "移除 PC {name}",
 
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "无法读取此 PC 的外部提醒设置（{error}）。请关闭设置后重新打开。",
+  "Opens the page of every PC this device reaches through the relay, to check, join or forget them.": "打开此设备通过中继连接的所有电脑的页面，可以检查、加入或移除它们。",
+  "Manage|relayed connections": "管理",
+  "Built-in browser": "内置浏览器",
+  "Blocked sites": "屏蔽的网站",
+  "Opens web pages in tabs inside this app: they are listed under Browser in the sidebar and open beside the pane. Its tabs are signed in to nothing you use elsewhere, and an agent's tabs keep cookies of their own.": "在此应用内的标签页中打开网页：标签页列在侧边栏的“浏览器”下，并在窗格旁打开。这些标签页不使用你在别处的登录，Agent 的标签页使用各自的 Cookie。",
+  "The built-in browser never loads these sites or their subdomains, in your tabs or an agent's. One site per line.": "内置浏览器不会在你的标签页或 Agent 的标签页中加载这些网站及其子域名。每行一个网站。",
 };

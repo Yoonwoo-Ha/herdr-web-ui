@@ -5,7 +5,9 @@ import { cleanup, type Config, explore, type Result, type Rule, RULES, VARIANTS 
 
 // The agent and herdr as SKILL.md describes them ("What the check assumes"): each `false` below is a thing the real
 // system can do, left out because a rule breaks with it. The finding-* and limit-* runs put them back one at a time.
-const described = { free: false, rest: "idle" as const, overtake: false, lateEvents: false, steerPastEnd: false, sendNowDuringRestart: false, baseline: false, atOnce: false, slowEnter: false, ownQueue: false, others: 0 };
+// A Send now past a turn's end, a second Send now during a Codex restart, a reconcile's baseline and a queue send typed
+// at once behind an open wait were such findings (#4118): the gate meets them now, and every run asks with them.
+const described = { free: false, rest: "idle" as const, overtake: false, lateEvents: false, steerPastEnd: true, sendNowDuringRestart: true, baseline: true, atOnce: true, slowEnter: false, ownQueue: false, others: 0 };
 const all: Rule[] = [...RULES];
 const gate: Rule[] = ["QueueWaitsForTurnEvidence"];
 const turn: Rule[] = ["NoAutomaticEnterIntoQueuedTurn"];
@@ -17,12 +19,11 @@ export const CONFIGS: Config[] = [
   { ...described, free: true, rest: "done", name: "gate-two-pages", agent: "codex", messages: 2, owners: ["a", "b"], blocks: 0, gone: true, moves: true, holds: true, rules: gate, expect: "holds" },
   // with the agent and herdr described
   { ...described, name: "turns-claude", agent: "claude", messages: 3, owners: ["a"], blocks: 1, gone: true, moves: false, holds: true, rules: all, expect: "holds" },
-  { ...described, rest: "done", name: "turns-codex", agent: "codex", messages: 3, owners: ["a"], blocks: 1, gone: true, moves: false, holds: true, rules: all, expect: "holds" },
+  { ...described, rest: "done", name: "turns-codex", agent: "codex", messages: 2, owners: ["a"], blocks: 1, gone: true, moves: false, holds: true, rules: all, expect: "holds" },
   { ...described, name: "turns-moved", agent: "codex", messages: 2, owners: ["a", "b"], blocks: 0, gone: false, moves: true, holds: true, rules: all, expect: "holds" },
-  // a snapshot ahead of status events, or an older ready reading told as a baseline, opens the queue early (findings
-  // below), yet no Enter of the queue's follows into the turn
-  { ...described, overtake: true, rest: "done", name: "turns-ahead", agent: "codex", messages: 3, owners: ["a"], blocks: 1, gone: false, moves: false, holds: false, rules: turn, expect: "holds" },
-  { ...small, name: "turns-baseline", agent: "codex", messages: 2, baseline: true, rules: turn, expect: "holds" },
+  // a snapshot ahead of status events that shows the status the queue already has can open the queue early, yet no Enter
+  // of the queue's follows into the turn
+  { ...described, overtake: true, rest: "done", name: "turns-ahead", agent: "codex", messages: 2, owners: ["a"], blocks: 1, gone: false, moves: false, holds: false, rules: turn, expect: "holds" },
   // each rule can fail: a broken copy of the class
   broken("claim-replaces-wait", "QueueWaitsForTurnEvidence", { free: true }),
   broken("sent-ends-wait", "QueueWaitsForTurnEvidence", { free: true }),
@@ -32,15 +33,13 @@ export const CONFIGS: Config[] = [
   broken("observe-ignores-mark", "QueueWaitsForTurnEvidence", { free: true }),
   broken("ready-without-working", "NoAutomaticEnterIntoQueuedTurn"),
   // what the code does today: see SKILL.md, "What it has found"
-  { ...small, name: "finding-send-now-as-turn-ends", agent: "claude", steerPastEnd: true, rules: turn, expect: "NoAutomaticEnterIntoQueuedTurn", via: ["committing (steering a turn at work); its Enter lands: the agent is at rest"] },
   { ...small, name: "finding-late-status-events", agent: "claude", overtake: true, lateEvents: true, rules: turn, expect: "NoAutomaticEnterIntoQueuedTurn" },
-  { ...small, free: true, name: "finding-second-send-now-in-restart", agent: "codex", sendNowDuringRestart: true, rules: gate, expect: "QueueWaitsForTurnEvidence", via: ["committing (steering a turn at work, over a restart not yet seen to start)"] },
-  { ...small, name: "finding-older-ready-baseline", agent: "claude", baseline: true, rules: gate, expect: "QueueWaitsForTurnEvidence", via: ["the reconcile's reading is told to the queue as its baseline"] },
-  { ...small, name: "finding-queue-send-typed-at-once", agent: "claude", atOnce: true, rules: turn, expect: "NoAutomaticEnterIntoQueuedTurn", via: ["typed at once"] },
   // what status evidence cannot tell: see SKILL.md, "What the check assumes"
   { ...small, name: "limit-slow-enter", agent: "claude", slowEnter: true, rules: turn, expect: "NoAutomaticEnterIntoQueuedTurn" },
   { ...small, name: "limit-own-queue", agent: "claude", ownQueue: true, rules: turn, expect: "NoAutomaticEnterIntoQueuedTurn" },
-  { ...small, name: "limit-other-turn", agent: "claude", others: 1, rules: turn, expect: "NoAutomaticEnterIntoQueuedTurn" },
+  // a turn something else starts broke the rule only through a Send now whose steering wait that turn's end completed:
+  // since #4118 such a ready waits for the Send now's own turn, and the run holds
+  { ...small, name: "turns-other-turn", agent: "claude", others: 1, rules: turn, expect: "holds" },
 ];
 
 function print(result: Result): void {

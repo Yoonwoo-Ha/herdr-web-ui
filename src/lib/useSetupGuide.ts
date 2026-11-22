@@ -21,7 +21,11 @@ export interface SetupGuideFacts {
 export function useSetupGuide({ enabled, workspaces, pairingGate, watching, showUsage = false }: SetupGuideFacts) {
   const usageWas = useRef(showUsage);
   useEffect(() => {
-    if (usageWas.current && !showUsage) { try { storage()?.removeItem(USAGE_ARMED_KEY); } catch { } }
+    try {
+      const store = storage();
+      if (usageWas.current && !showUsage) store?.removeItem(USAGE_ARMED_KEY);
+      else if (showUsage && store?.getItem(USAGE_ARMED_KEY) === "1") store.setItem(USAGE_ARMED_KEY, "on");
+    } catch { }
     usageWas.current = showUsage;
   }, [showUsage]);
   const [savedSettings] = useState(() => { try { return storage()?.getItem(SETTINGS_STORAGE_KEY) != null; } catch { return true; } });

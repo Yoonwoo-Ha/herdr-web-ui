@@ -152,6 +152,8 @@
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  /* a full-width call to action on such a page */
+  --radius-cta: 10px;
   --radius-xl: 16px;
   --radius-2xl: 24px;
   --radius-pill: 999px;
@@ -205,6 +207,10 @@
   --relay-sidebar-w: 240px;
   --relay-content-w: 1280px;
   --relay-signin-w: 368px;
+  --relay-step-w: 440px;
+  --relay-step-h: 720px;
+  --relay-step-bar: 3px;
+  --relay-step-icon: 48px;
   --relay-sheet-w: 520px;
   --relay-detail-w: 360px;
   --relay-table-head-h: 36px;
@@ -1745,6 +1751,18 @@ body {
   color: var(--text-dim);
   font-family: sans-serif;
   font-size: var(--fs-sm);
+}
+
+/* the hosted relay app's start (lib/relay/boot.ts): the mascot in its badge and nothing else, its
+   words read out only */
+.boot.relay-start > .visually-hidden {
+  top: auto;
+  left: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  transform: none;
 }
 
 .boot-spinner {

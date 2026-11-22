@@ -17,8 +17,17 @@ export async function deleteAccount(options: { service: AccountService; accountS
   // holds its own copy). A sign-in that took its place while the delete was out keeps all of it, the session included,
   // and a sign-in another tab began (its `pending` state) is no account's: it stays to finish.
   // No sign-in stored at all is the deleted one ended meanwhile (another tab's request refused once the account was gone):
-  // its key and records are still the deleted account's, so they go too.
-  await options.accountStore.clear(undefined, { only: (current) => current === undefined || sameSignIn(current, options.session), spare: ["pending"] });
+  // its key and records are still the deleted account's, so they go too. Another account's unsent blocks stay (S32-1).
+  await options.accountStore.clear(undefined, {
+    only: (current) => current === undefined || sameSignIn(current, options.session), spare: ["pending"],
+    unsent: (entry) => entry.account !== options.session.account,
+  });
+  // the deleted account's unsent blocks go even when a sign-in took its place meanwhile: no sign-in can send them now
+  await options.accountStore.update("unsent_blocks", (current) => {
+    if (current === undefined) return undefined;
+    const kept = Object.fromEntries(Object.entries(current).filter(([, entry]) => entry.account !== options.session.account));
+    return Object.keys(kept).length === 0 ? undefined : kept;
+  });
 }
 
 /**

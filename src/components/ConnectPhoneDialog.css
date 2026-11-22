@@ -86,15 +86,52 @@
   color: var(--text);
 }
 
-.connect-tabs {
+/* the three ways to add a PC, and pairing a phone apart at their end */
+.connect-ways {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
   align-self: stretch;
+}
+
+/* on a narrow phone the tabs keep the row, and pairing a phone goes under them */
+.connect-tabs {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.connect-phone-way {
+  flex: none;
+}
+
+.connect-phone-way[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--bg-elevated);
+}
+
+.connect-picks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.connect-picks-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.connect-outside-help {
+  align-self: flex-start;
 }
 
 .connect-tabs > button {
   flex: 1;
 }
 
-.connect-tab {
+.connect-tab,
+.connect-devices-local {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -106,7 +143,8 @@
 }
 
 /* a tab not chosen stays mounted (its pairing code is kept), hidden: the flex above would show it */
-.connect-tab[hidden] {
+.connect-tab[hidden],
+.connect-devices-local[hidden] {
   display: none;
 }
 
@@ -161,6 +199,11 @@
   margin-inline-start: auto;
 }
 
+/* a pill inside the name (This PC among the account's PCs) keeps a gap from it */
+.connect-found-name > .connect-found-source {
+  margin-inline-start: var(--space-2);
+}
+
 .connect-found-source {
   flex: none;
   padding: 0 var(--space-2);
@@ -177,6 +220,21 @@
   gap: var(--space-1);
   color: var(--status-done);
   font-size: var(--fs-sm);
+}
+
+.connect-qr-link {
+  align-self: flex-start;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.connect-qr-link:hover:not(:disabled) {
+  text-decoration: underline;
 }
 
 .connect-found-added svg {
@@ -222,6 +280,10 @@
   border-top: var(--hairline) solid var(--border);
 }
 
+.connect-account-qr:empty {
+  display: none;
+}
+
 .connect-account-qr[data-first] {
   padding-top: 0;
   border-top: 0;
@@ -265,7 +327,22 @@
     flex-basis: 100%;
   }
 
-  .connect-found-source {
+  .connect-found-source,
+  .connect-found-row > :last-child:not(.connect-found-detail) {
     margin-inline-start: auto;
   }
+}
+
+.connect-command {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.connect-command code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
 }

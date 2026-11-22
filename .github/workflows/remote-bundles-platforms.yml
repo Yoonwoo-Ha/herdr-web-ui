@@ -1,0 +1,55 @@
+name: Remote PC bundles (arm64 and macOS)
+# The Linux arm64 and macOS bundles of a pull request, built and smoked only when it changes what differs
+# between platforms: the bundle and PTY host builds, the lockfile, the integrations' installers, the
+# server's PTY and macOS code. Every other server change is smoked on Linux x64 and Windows by
+# remote-bundles.yml, which also builds all of these for a tag and publishes them.
+on:
+  pull_request:
+    paths:
+      - 'scripts/build-remote-bundle.ts'
+      - 'scripts/server-artifact.ts'
+      - 'scripts/install-*-integration.ts'
+      - 'integrations/**'
+      - 'scripts/remote-bundle-smoke.ts'
+      - 'scripts/pty-sidecar.ts'
+      - 'crates/pty-sidecar/**'
+      - 'server/pty/**'
+      - 'server/*darwin*'
+      - 'server/process-start.ts'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/remote-bundles.yml'
+      - '.github/workflows/remote-bundles-platforms.yml'
+      - '.github/actions/setup-ci/**'
+permissions:
+  contents: read
+concurrency:
+  group: remote-platforms-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  bundle:
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04-arm, pty: linux-arm64 }
+          - { os: macos-15, pty: darwin-universal }
+          - { os: macos-15-intel, pty: darwin-universal }
+    runs-on: ${{ fromJSON(matrix.os == 'macos-15' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_MAC_LABELS || toJSON(matrix.os)) }}
+    env:
+      HERDR_BUNDLE_PTY_SIDECAR: ${{ github.workspace }}/pty-sidecar/ovis-pty-sidecar-${{ matrix.pty }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-ci
+        with:
+          bun-version: 1.4.4
+          node: 'true'
+          cache: none
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck && bun run build
+      - run: bun scripts/pty-sidecar.ts build ${{ matrix.pty }} pty-sidecar
+      - run: bun run scripts/build-remote-bundle.ts
+      - run: bun run scripts/remote-bundle-smoke.ts

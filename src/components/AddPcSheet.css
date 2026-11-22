@@ -41,14 +41,6 @@
   background: var(--status-blocked);
 }
 
-.add-pc-step-count {
-  margin: 0 0 var(--space-1);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-regular);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-dim);
-}
-
 .add-pc-sub {
   margin: var(--space-1) 0 0;
   max-width: 65ch;
@@ -248,4 +240,24 @@
   .add-pc-steps li[data-step="running"] .add-pc-mark::after {
     animation: none;
   }
+}
+
+.add-pc-command {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.add-pc-other {
+  padding: 0 var(--space-4) var(--space-4);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.add-pc-other summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--pointer-target);
+  cursor: pointer;
+  color: var(--text);
 }

@@ -45,6 +45,25 @@ async function mouseReporting(s: Session): Promise<void> {
   await s.page.locator(".xterm.enable-mouse-events").waitFor();
 }
 
+async function pressReaches(s: Session, point: { x: number; y: number }, what: string): Promise<void> {
+  // A report the pane cannot take is dropped by sendTyped. Check readiness and the hit target in
+  // the same poll right before pressing: the pane can stop taking input while the hit test waits.
+  let under = "";
+  await until(async () => {
+    if (!s.ready()) {
+      under = "a pane that does not take input";
+      return false;
+    }
+    under = await s.page.evaluate(({ x, y }) => {
+      const at = document.elementFromPoint(x, y);
+      return at?.closest(".pane-frame.is-current .xterm.enable-mouse-events") ? "" : at ? `${at.tagName.toLowerCase()}.${[...at.classList].join(".")}` : "nothing";
+    }, point);
+    // readiness can drop while the hit test is pending: accept the poll only if it still holds
+    if (under === "" && !s.ready()) under = "a pane that stopped taking input";
+    return under === "";
+  }, () => `${what} lands on this pane's grid while it takes input (found ${under})`);
+}
+
 const MARK = "z";
 
 async function mark(s: Session, label: string, from = s.frames.length): Promise<{ read: string; frames: Session["frames"] }> {
@@ -265,6 +284,7 @@ try {
     const at = await s.point(100, 70);
     let got = "";
     const click = /\x1b\[<0;(\d+);(\d+)M[\s\S]*\x1b\[<0;(\d+);(\d+)m/;
+    await pressReaches(s, at, "the left click's press");
     await s.page.mouse.click(at.x, at.y);
     await until(() => click.test(got += s.received()), "left click received as press and release");
     const first = click.exec(got)!;
@@ -307,6 +327,7 @@ try {
     await s.page.mouse.move(name.x, name.y);
     await until(async () => (await s.page.locator(".xterm-screen.xterm-cursor-pointer").count()) === 0, "a bare name is no link without the key");
     got = "";
+    await pressReaches(s, name, "the plain click on a bare name");
     await s.page.mouse.click(name.x, name.y);
     await until(() => click.test(got += s.received()), "a plain click on a bare name received by the program");
     assert.equal(await s.page.locator(".file-viewer").count(), 0, "a plain click on a bare name opens nothing");
@@ -323,6 +344,7 @@ try {
 
     // the keys held with a click go with it: Ctrl adds 16 to the button
     await s.page.keyboard.down("Control");
+    if (process.platform !== "darwin") await pressReaches(s, at, "the Ctrl+click's press");
     await s.page.mouse.click(at.x, at.y);
     await s.page.keyboard.up("Control");
     got = "";
@@ -339,14 +361,17 @@ try {
 
     const second = await s.point(400, 200);
     got = "";
+    await pressReaches(s, second, "the later click's press");
     await s.page.mouse.click(second.x, second.y);
     await until(() => click.test(got += s.received()), "a later click received");
     const later = click.exec(got)!;
     assert.ok(Number(later[1]) > Number(first[1]) && Number(later[2]) > Number(first[2]), "at its own cell, right of and below the first");
 
     const grid = (await s.page.locator(".xterm-screen").boundingBox())!;
+    const topRight = { x: grid.x + grid.width - 3, y: grid.y + 3 };
     got = "";
-    await s.page.mouse.click(grid.x + grid.width - 3, grid.y + 3);
+    await pressReaches(s, topRight, "the click on the top right cell");
+    await s.page.mouse.click(topRight.x, topRight.y);
     await until(() => click.test(got += s.received()), "a click on the top right cell received");
     const corner = click.exec(got)!;
     assert.equal(corner[2], "1", "on the top row");
@@ -383,13 +408,11 @@ try {
       await s.page.mouse.move(end.x, end.y, { steps: 4 });
       await s.page.mouse.up();
     };
-    const dragged = async (): Promise<void> => {
-      await s.page.mouse.move(from.x, from.y);
-      await dragFromHere(from, to);
-    };
     const drag = /\x1b\[<0;\d+;\d+M(?:[\s\S]*?\x1b\[<32;\d+;\d+M)+[\s\S]*?\x1b\[<0;(\d+);(\d+)m/;
     let got = "";
-    await dragged();
+    await s.page.mouse.move(from.x, from.y);
+    await pressReaches(s, from, "the plain drag's press");
+    await dragFromHere(from, to);
     await until(() => drag.test(got += s.received()), () => `a plain drag received as press, moves and release (read ${JSON.stringify(got)})`);
     assert.equal(await s.page.locator(".xterm-selection div").count(), 0, "a plain drag selects nothing here");
     if (evidence) await s.page.screenshot({ path: join(evidence, "opencode-plain-drag.png") });
@@ -398,7 +421,8 @@ try {
     const selecting = await s.page.evaluate(() => /Mac/.test(navigator.platform)) ? "Alt" : "Shift";
     got = "";
     await s.page.keyboard.down(selecting);
-    await dragged();
+    await s.page.mouse.move(from.x, from.y);
+    await dragFromHere(from, to);
     await s.page.keyboard.up(selecting);
     await until(async () => (await s.page.locator(".xterm-selection div").count()) > 0, `${selecting}+drag selects`);
     if (evidence) await s.page.screenshot({ path: join(evidence, "opencode-modifier-drag.png") });
@@ -406,14 +430,7 @@ try {
     // Nothing reaches xterm in between: a key, or a buttonless move (a hover report), would clear the
     // selection first, so the press is where the modifier drag let go.
     assert.ok((await s.page.locator(".xterm-selection div").count()) > 0, "the selection is still up when the plain drag starts");
-    // The press reaches the program only from this pane's grid with its mouse mode on, and only while the pane
-    // takes input: a mouse report the pane cannot take now is dropped without a word (useTerminalMount sendTyped).
-    // both hold together right before the press: readiness checked first could drop while the hit test waits
-    let under = "";
-    await until(async () => (under = s.ready() ? await s.page.evaluate(({ x, y }) => {
-      const at = document.elementFromPoint(x, y);
-      return at?.closest(".pane-frame.is-current .xterm.enable-mouse-events") ? "" : at ? `${at.tagName.toLowerCase()}.${[...at.classList].join(".")}` : "nothing";
-    }, to) : "a pane that does not take input") === "", () => `the plain drag's press lands on this pane's grid while it takes input (found ${under})`);
+    await pressReaches(s, to, "the plain drag's press");
     await dragFromHere(to, from);
     await until(() => drag.test(got += s.received()), () => `a plain drag after a selection received (read ${JSON.stringify(got)})`);
     await until(async () => (await s.page.locator(".xterm-selection div").count()) === 0, "the earlier selection is cleared");

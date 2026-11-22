@@ -62,7 +62,7 @@ export function useHiddenMachines(): string[] {
 export function useShownMachines<T extends HasId>({ machines, selectedMachineRef, selectTargetRef, picks, restored }: {
   machines: readonly T[];
   selectedMachineRef: RefObject<string>;
-  selectTargetRef: RefObject<(machineId: string, paneId: string | null) => void>;
+  selectTargetRef: RefObject<(machineId: string, paneId: string | null, view?: undefined, keepNote?: boolean) => void>;
   picks: RefObject<number>;
   restored: boolean;
 }): T[] {
@@ -76,6 +76,7 @@ export function useShownMachines<T extends HasId>({ machines, selectedMachineRef
     hiddenBefore.current = hidden;
     if (before === hidden) return;
     const next = selectionToMove(machinesRef.current, before, hidden, selectedMachineRef.current);
+    // the user hid the PC shown: their own move, so an earlier note goes (unlike the restore below)
     if (next !== null) selectTargetRef.current(next, null);
   }, [hidden]);
   const restoreChecked = useRef(!restored);
@@ -84,7 +85,8 @@ export function useShownMachines<T extends HasId>({ machines, selectedMachineRef
     restoreChecked.current = true;
     if (picks.current > 0) return;
     const next = selectionAfterHiding(machines, hidden, selectedMachineRef.current);
-    if (next !== null) selectTargetRef.current(next, null);
+    // restored on load, not picked: a link's note stays
+    if (next !== null) selectTargetRef.current(next, null, undefined, true);
   }, [machines]);
   return shown;
 }

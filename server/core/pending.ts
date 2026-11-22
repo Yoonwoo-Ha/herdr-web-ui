@@ -42,7 +42,7 @@ import { interruptCodexSteering } from "../codex-steering.ts";
 import type { OmoStatus } from "../omo-status.ts";
 import { heldOmoProcess } from "../omo.ts";
 import { startOpenCodeWatch, openCodeSkillsToType, type OpenCodeWatch, skillsNotAttached } from "../opencode-native.ts";
-import { herdrSkillAttachIo, type PromptPiece, typeWithSkills } from "../opencode-skill-attach.ts";
+import { herdrSkillAttachIo, type PromptPiece, type SkillAttachIo, typeWithSkills } from "../opencode-skill-attach.ts";
 
 type Frame<T extends ClientMessage["type"]> = Extract<ClientMessage, { type: T }>;
 
@@ -190,6 +190,14 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
   const present = (client: Client): boolean => clients.has(client) && !connectionOf(client).closing;
   const pendingDrains = new Set<string>();
   const pendingRequests = new WeakMap<Client, PendingRequestBook<SubmitReply>>();
+  /** the connection's record of its submit frames by id: a frame that comes again is answered from it, not run again */
+  const requestBook = (client: Client): PendingRequestBook<SubmitReply> => {
+    let book = pendingRequests.get(client);
+    if (!book) { book = new PendingRequestBook((reply: SubmitReply) => reply.pending !== undefined && pending.retains(client, reply.pending.id)); pendingRequests.set(client, book); }
+    return book;
+  };
+  const requestFingerprint = (message: Frame<"submit">, agentOnly: boolean): string =>
+    new Bun.CryptoHasher("sha256").update(JSON.stringify([message.pane_id, message.text, message.payload, message.delivery ?? "immediate", agentOnly])).digest("hex");
   const draftConfirmations = new WeakMap<Client, Map<string, { draft: string | null; identity: PendingIdentity; box?: string | null }>>();
 
   const piTyped = new Map<string, PiTypedReceipt[]>();
@@ -648,7 +656,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
   }
 
   async function dispatchPendingText(owner: Client, paneId: string, text: string, lease: PendingLease, identity: PendingIdentity,
-    automatic: boolean, arrivedAt: number, committing: (working: boolean, restarting?: boolean) => void = () => {}, interruptWorkingCodex = false,
+    automatic: boolean, arrivedAt: number, committing: (working: boolean, restarting?: boolean, readMark?: number) => void = () => {}, interruptWorkingCodex = false,
     requestId = 0, agentOnly = false, queued = false,
     row: { withdrawn?: () => boolean; waiting?: (waits: boolean) => void } = {}): Promise<SubmitReply> {
     let wrote = false;
@@ -733,12 +741,26 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       const allowed = (): boolean => {
         try { authorizePending(owner, paneId, lease); return true; } catch { return false; }
       };
+      // asked by the first write too, as herdr's connection opens: one that opened past the deadline types nothing.
+      // Once something is typed, the rest of the message and its Enter go.
+      const inTime = (): boolean => Date.now() - arrivedAt <= (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS);
+      const notTyped = (): void => {
+        authorizePending(owner, paneId, lease);
+        if (!inTime()) throw new HerdrError("submit_timeout", "The pending message waited too long; nothing was typed");
+      };
       // Pending input is a guarded literal paste + Enter, never Codex's native Tab queue.
       // Keep the final key here so a disconnect, pane switch or new menu can cancel it.
       wrote = true;
       if (command && skills.length > 0) {
         let typed = false;
-        const typing = (): boolean => { const ok = allowed(); typed ||= ok; return ok; };
+        const typing = (): boolean => allowed() && (typed || inTime());
+        // typed once a write's guard lets it go, as composer.ts counts it: typeWithSkills also asks `typing` before any write
+        const io = herdrSkillAttachIo(paneId);
+        const writes: SkillAttachIo = {
+          ...io,
+          sendText: (piece, guard) => io.sendText(piece, () => guard() && (typed = true)),
+          sendKeys: (keys, guard) => io.sendKeys(keys, () => guard() && (typed = true)),
+        };
         const revalidate = async (): Promise<void> => {
           const current = await pendingContext(owner, paneId, lease, identity, typed);
           if (automatic && !typed && (current.working || queueHeld(paneId, false))) throw new HerdrError("pending_wait", "The agent is working again; this message still waits for its next turn");
@@ -752,10 +774,10 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
           }
           await noMaskedPrompt(paneId, lease.sighting.facts().cols, identity);
         };
-        const result = await typeWithSkills(text, skills, typing, herdrSkillAttachIo(paneId), revalidate, beforeKey).catch((error: unknown) => {
+        const result = await typeWithSkills(text, skills, typing, writes, revalidate, beforeKey).catch((error: unknown) => {
           if (!typed) {
             wrote = false;
-            if (error instanceof HerdrError && error.code === "cancelled") authorizePending(owner, paneId, lease);
+            if (error instanceof HerdrError && error.code === "cancelled") notTyped();
           }
           throw error;
         });
@@ -763,8 +785,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         prompt = result.prompt;
         command = skillsNotAttached(command, result.missed);
       } else {
-        await paneSendText(paneId, `\u001b[200~${closeMention(sent)}\u001b[201~`, undefined, allowed).catch((error: unknown) => {
-          if (error instanceof HerdrError && error.code === "cancelled") { wrote = false; authorizePending(owner, paneId, lease); }
+        await paneSendText(paneId, `\u001b[200~${closeMention(sent)}\u001b[201~`, undefined, () => allowed() && inTime()).catch((error: unknown) => {
+          if (error instanceof HerdrError && error.code === "cancelled") { wrote = false; notTyped(); }
           throw error;
         });
       }
@@ -777,6 +799,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         }
         throw error;
       };
+      // the pane's event count as the read before the Enter began: whether a status came since that read (committing)
+      let enterMark = pending.mark(paneId);
       let beforeEnter = await pendingContext(owner, paneId, lease, identity, true, agentOnly).catch(enterRefused);
       if (automatic && (beforeEnter.working || queueHeld(paneId, false))) enterRefused(new HerdrError("pending_wait", "The agent started another turn before this queued message could be committed"));
       authorizePending(owner, paneId, lease);
@@ -784,6 +808,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       const beforeCapturePid = beforeEnter.identity.processPid;
       const piAnchor = piTracked ? await preparePiReceipt(paneId, beforeEnter.identity).catch(() => null) : undefined;
       if (piAnchor !== undefined) {
+        enterMark = pending.mark(paneId);
         beforeEnter = await pendingContext(owner, paneId, lease, identity, true, agentOnly).catch(enterRefused);
         if (automatic && (beforeEnter.working || queueHeld(paneId, false))) enterRefused(new HerdrError("pending_wait", "The agent started another turn before this queued message could be committed"));
         await stillInFront(paneId, beforeCapturePid, identity, agentOnly).catch(enterRefused);
@@ -801,7 +826,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       if (resumed()) refuseResumed();
       authorizePending(owner, paneId, lease);
       const steering = !automatic && beforeEnter.working;
-      committing(steering);
+      committing(steering, false, enterMark);
       // Claude Code queues what Enter commits during a turn; Ctrl+Enter sends it now (#737). herdr
       // encodes the key as the pane asked, and as a plain CR for a program that asked for nothing.
       const sentAt = Date.now();
@@ -875,7 +900,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       if (by === null) throw new HerdrError("input_not_ready", "No connection has the pane attached to type the message");
       const lease = item.lease ?? pendingLease(by, item.paneId);
       reply = await dispatchPendingText(by, item.paneId, item.message.text, lease, item.identity,
-        automatic, arrivedAt, (working, restarting) => pending.committing(item, working, restarting), interruptWorkingCodex, item.message.request_id, item.message.agent_only === true, false,
+        automatic, arrivedAt, (working, restarting, readMark) => pending.committing(item, working, restarting, readMark), interruptWorkingCodex, item.message.request_id, item.message.agent_only === true, false,
         { withdrawn: () => withdrawn.has(item), waiting: (waits) => pending.sendingWaitsFor(item, waits ? "omp_starting" : undefined) });
     } catch (error) {
       reply = { ok: false, ...pendingFault(error, options.herdrFailure) };
@@ -1365,9 +1390,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       const arrivedAt = Date.now();
       try {
         if (waits) {
-          let book = pendingRequests.get(client);
-          if (!book) { book = new PendingRequestBook((reply: SubmitReply) => reply.pending !== undefined && pending.retains(client, reply.pending.id)); pendingRequests.set(client, book); }
-          const fingerprint = new Bun.CryptoHasher("sha256").update(JSON.stringify([message.pane_id, message.text, message.payload, message.delivery, agentOnly])).digest("hex");
+          const book = requestBook(client);
+          const fingerprint = requestFingerprint(message, agentOnly);
           const previous = book.get(message.id, fingerprint);
           const lease = previous ? null : pendingLease(client, message.pane_id);
           const reply = previous ?? book.run(message.id, fingerprint, () => serialize(message.pane_id, async (): Promise<SubmitReply> => {
@@ -1386,7 +1410,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
               // Queued, it never clears a stopped send Claude put back in its box, as the drain does not (#2546).
               if (message.delivery === "queue" && !pending.waiting(message.pane_id) && !typedWhileOmpStarted(message.pane_id)) {
                 const sendingAt = new Date().toISOString();
-                const typed = await dispatchPendingText(client, message.pane_id, text, lease!, context.identity, false, arrivedAt, undefined, false, message.id, agentOnly, true);
+                const typed = await dispatchPendingText(client, message.pane_id, text, lease!, context.identity, false, arrivedAt,
+                  (working) => pending.typedAtOnce(message.pane_id, working), false, message.id, agentOnly, true);
                 if (typed.ok || typed.code !== "pending_wait") return typed.ok ? { ...typed, sending_at: sendingAt } : typed;
                 waited = true;
               }
@@ -1414,21 +1439,32 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         }
         let sendingAt: string | undefined;
         let behind: PendingMessage | undefined;
+        const queuable = message.typed !== true && message.resend_id === undefined && message.clear_draft === undefined && message.send_anyway !== true;
+        const fingerprint = requestFingerprint(message, agentOnly);
+        let recorded: Promise<SubmitReply> | undefined;
         // taken as the frame comes, for a message that is queued after all (below): a lease taken in the lane would be a
         // new one for a page that left the pane and came back while its frame waited there
-        const arrived = message.typed !== true && message.resend_id === undefined && message.clear_draft === undefined && message.send_anyway !== true
-          ? (() => { try { return pendingLease(client, message.pane_id); } catch { return null; } })() : null;
+        const arrived = queuable ? (() => { try { return pendingLease(client, message.pane_id); } catch { return null; } })() : null;
+        // and for one whose pane was not ready yet as it came, its page leaving the pane meanwhile is noted (holdRequested)
+        const way = queuable && arrived === null ? askFirstMessage(client.data.connectionId) as Asked : null;
+        way?.at(message.pane_id);
         const dispatch = async () => {
+          // a message that was queued after all (below) is answered from its record when its frame comes again, asked in
+          // the frame's turn as the choice below is: listed once, and never typed again once it was sent or discarded
+          if (queuable && pendingRequests.get(client)?.has(message.id)) { recorded = requestBook(client).get(message.id, fingerprint); return; }
           if (attachments.get(message.pane_id)?.held) throw new HerdrError("attach_held", ATTACH_HELD_MESSAGE);
           // A chat message sent at once while the pane's queue waits for its omp to take input (a new workspace's first
           // message) would wait for the same report with the pane's lane held, and be typed ahead of what waits there.
           // And one sent after the terminal was typed into during that start would be pasted behind those words: it is accepted
           // and held, as what waited was.
-          if (message.typed !== true && message.resend_id === undefined && message.clear_draft === undefined && message.send_anyway !== true
-            && ((ompWaits.has(message.pane_id) && pending.waiting(message.pane_id)) || typedWhileOmpStarted(message.pane_id))) {
+          if (queuable && ((ompWaits.has(message.pane_id) && pending.waiting(message.pane_id)) || typedWhileOmpStarted(message.pane_id))) {
+            if (way?.left) throw new HerdrError("pending_lease_lost", "This message's page left the pane while it waited its turn; nothing was typed");
             const lease = arrived ?? pendingLease(client, message.pane_id);
             const context = await pendingContext(client, message.pane_id, lease);
-            behind = pending.enqueue(client, message.pane_id, message.id, pendingText(message.text), lease, context.identity, false, agentOnly).message;
+            if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) throw new HerdrError("submit_timeout", "This message waited too long; nothing was typed");
+            const queued = await requestBook(client).run(message.id, fingerprint, async (): Promise<SubmitReply> =>
+              ({ ok: true, pending: pending.enqueue(client, message.pane_id, message.id, pendingText(message.text), lease, context.identity, false, agentOnly).message }));
+            behind = queued.pending;
             if (typedWhileOmpStarted(message.pane_id)) pending.holdQueued(message.pane_id, TYPED_WHILE_WAITING);
             return;
           }
@@ -1499,7 +1535,14 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
           result(answer.ok, answer.code, answer.message, undefined, undefined, undefined, answer.ok && typedNow, typedNow ? sendingAt : undefined);
           return;
         }
-        await serialize(message.pane_id, dispatch);
+        try { await serialize(message.pane_id, dispatch); } finally { way?.end(); }
+        if (recorded) {
+          const answer = await recorded;
+          const accepted = answer.pending ? pending.get(client, message.pane_id, answer.pending.id)?.message : undefined;
+          if (answer.pending && !accepted) replayPendingOutcome(client, message.pane_id, answer.pending.id);
+          result(answer.ok, answer.code, answer.message, accepted);
+          return;
+        }
         if (message.clear_draft !== undefined || message.send_anyway) draftConfirmations.get(client)?.delete(message.pane_id);
         result(true, undefined, undefined, behind, undefined, undefined, false, sendingAt);
         if (behind) drainPending(message.pane_id);

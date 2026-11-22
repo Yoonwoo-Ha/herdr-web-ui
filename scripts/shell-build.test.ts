@@ -5,7 +5,7 @@ import { pagePolicy } from "../server/file-view.ts";
 import { CONTENT_SECURITY_POLICY, IMMUTABLE_CACHE, REVALIDATE, shellContentSecurityPolicy } from "../server/static.ts";
 import { REGIONAL_APPS } from "../shared/relay-regions.ts";
 import { injectBootstrap } from "./theme-bootstrap-build.ts";
-import { ANDROID_APP_FINGERPRINTS, APP_ID, IOS_APP_ID, RENDER_PATH, SHELL_META, shellCaddyfile, shellFiles, shellHeaders, shellIndexHtml, shellManifest, shellRedirects } from "./shell-build.ts";
+import { ANDROID_APP_FINGERPRINTS, APP_ID, IOS_APP_ID, MISSING_ASSET_PAGE, RENDER_PATH, SHELL_FILE_NAMES, SHELL_META, shellBuild, shellCaddyfile, shellFiles, shellHeaders, shellIndexHtml, shellManifest, shellRedirects } from "./shell-build.ts";
 
 const root = join(import.meta.dir, "..");
 const indexHtml = readFileSync(join(root, "index.html"), "utf8");
@@ -182,12 +182,30 @@ describe("the shell's headers", () => {
   });
 });
 
+describe("the shell's hashed files", () => {
+  it("have a 404 page under /assets/, so Pages never answers a missing one with the page", () => {
+    expect(MISSING_ASSET_PAGE.startsWith("assets/")).toBe(true);
+    expect(shellFiles(manifest)[MISSING_ASSET_PAGE]).toBeString();
+  });
+
+  it("take names no 0.5.8 shell served (eight hash characters), for the app's code and its workers alike", () => {
+    const config = (shellBuild().config as () => { build: { rollupOptions: { output: unknown } }; worker: { rollupOptions: { output: unknown } } })();
+    expect(config.build.rollupOptions.output).toBe(SHELL_FILE_NAMES);
+    expect(config.worker.rollupOptions.output).toBe(SHELL_FILE_NAMES);
+    for (const name of Object.values(SHELL_FILE_NAMES)) expect(name).toMatch(/^assets\/\[name\]-\[hash:10\]/);
+  });
+});
+
 describe("the shell's Caddy site", () => {
   it("sends the policies and caching the Pages headers send", () => {
     const site = shellCaddyfile("app-ap.ovis.sh");
     expect(site).toContain(`header @notrender Content-Security-Policy "${shellContentSecurityPolicy(Object.values(REGIONAL_APPS))}"`);
     expect(site).toContain(`header @render Content-Security-Policy "${pagePolicy(null)}"`);
-    expect(site).toContain(`header /assets/* Cache-Control "${IMMUTABLE_CACHE}"`);
+    expect(site).toContain(`@asset {\n\t\tpath /assets/*\n\t\tfile\n\t}`);
+    expect(site).toContain(`header @asset Cache-Control "${IMMUTABLE_CACHE}"`);
+    expect(site).toContain(`@missingasset {\n\t\tpath /assets/*\n\t\tnot file\n\t}`);
+    expect(site).toContain(`header @missingasset Cache-Control "no-store"`);
+    expect(site).not.toContain("header /assets/*");
     expect(site).toContain(`Cache-Control "${REVALIDATE}"`);
     for (const value of [shellContentSecurityPolicy(Object.values(REGIONAL_APPS)), pagePolicy(null)]) expect(value).not.toContain('"');
   });

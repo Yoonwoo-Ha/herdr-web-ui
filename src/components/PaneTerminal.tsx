@@ -36,6 +36,7 @@ import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { fetchBridgeHealth } from "../lib/api.ts";
 import { useSessionHistoryOffered } from "../lib/useSessionHistoryOffered.ts";
 import { paneStorageId } from "../../shared/machines.ts";
+import { labelledAgent } from "../../shared/supported-agents.ts";
 import { KeyBar, LineKeysButton } from "./KeyBar.tsx";
 import { TerminalInput, type TerminalInputHandle } from "./TerminalInput.tsx";
 import { FindBar } from "./FindBar.tsx";
@@ -447,10 +448,12 @@ export function PaneTerminal({
   commandsRef.current = commands;
   const machineIdRef = useRef(machineId); machineIdRef.current = machineId;
   const agentRef = useRef(agent); agentRef.current = agent;
+  // the agent the pane runs, for reading its screen: herdr's label stays the one shown
+  const kindRef = useRef(labelledAgent(agent)); kindRef.current = labelledAgent(agent);
   const frameGateRef = useRef(new FrameGate());
   const inputRowNow = useCallback((): InputRowState | null => {
     const term = termRef.current;
-    const current = agentRef.current;
+    const current = kindRef.current;
     if (term === null || !readsInputRow(current)) return null;
     if (!frameGateRef.current.current) return "unknown";
     return inputRowState(current, readScreen(term.buffer.active, term.cols, term.rows));
@@ -470,8 +473,8 @@ export function PaneTerminal({
     if (command === null || open === undefined || paneRef.current !== pane || !activeRef.current || !presentedRef.current || !shownRef.current
       || !chatMountedRef.current || observeRef.current || heldRef.current || endedRef.current || unsupportedRef.current) return;
     if (coarseRef.current) stackRef.current?.querySelector<HTMLTextAreaElement>(".composer-text")?.blur();
-    const recorded = known !== null && autoReturnArmed(agentRef.current, text, command.name);
-    const watch = seen && agentRef.current !== null && screenReturnArmed(agentRef.current, text, command.name) ? agentRef.current : null;
+    const recorded = known !== null && autoReturnArmed(kindRef.current, text, command.name);
+    const watch = seen && kindRef.current !== null && screenReturnArmed(kindRef.current, text, command.name) ? kindRef.current : null;
     const atReceipt = watch === null || frameGateRef.current.reflowing ? null : inputRowNow();
     receiptRowRef.current = atReceipt === null ? null : { pane, text, state: atReceipt };
     open({ command: `${command.trigger ?? "/"}${command.name}`, text, knownOutcomeIds: known, auto: recorded || watch !== null, watch, inputRowSeen: seen });

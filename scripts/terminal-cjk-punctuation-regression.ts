@@ -10,11 +10,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
-import { createServer } from "../server/index.ts";
-import { UsageService } from "../server/usage.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { chromePath } from "./chrome-path.ts";
-import { shownRows } from "./shown-rows.ts";
+import { shownRow, shownRows } from "./shown-rows.ts";
+import { gridTestServer, terminalGrid } from "./terminal-grid.ts";
 
 const MARK_COLUMN = 100;
 const ROWS = [
@@ -28,7 +27,7 @@ const state = mkdtempSync(join(tmpdir(), "terminal-cjk-punctuation-"));
 const evidence = process.env["CHECK_BROWSER_EVIDENCE_DIR"] || state;
 mkdirSync(evidence, { recursive: true });
 const workspaces: string[] = [];
-let server: ReturnType<typeof createServer> | undefined;
+let server: Awaited<ReturnType<typeof gridTestServer>> | undefined;
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -41,14 +40,7 @@ setInterval(() => {}, 1 << 30);
   const made = await workspaceCreate({ cwd: state, label: "ovis-test-cjk-punctuation" });
   workspaces.push(made.workspace.workspace_id);
   const pane = made.root_pane.pane_id;
-  const ready = herdrRpc("pane.wait_for_output", {
-    pane_id: pane, source: "visible", match: { type: "substring", value: "ROWS_READY" }, timeout_ms: 10000,
-  }, undefined, 12000);
-  await herdrRpc("pane.send_input", { pane_id: pane, text: `exec ${quote(process.execPath)} ${quote(program)}`, keys: ["enter"] });
-  await ready;
-
-  server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(state, "server"),
-    tailscaleOwner: null, usage: new UsageService(undefined, []) });
+  server = await gridTestServer(state);
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   // a Chinese page, as the report's: under zh every fullwidth mark is trimmed, not only ，（）
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "zh-CN" });
@@ -59,27 +51,44 @@ setInterval(() => {}, 1 << 30);
   page.setDefaultTimeout(10000);
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
-  await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(pane)}`);
+  // Draw after herdr has taken the browser's grid, so column 100 and the marker fit.
+  const waitForGrid = await terminalGrid(page, pane);
+  const [grid] = await Promise.all([waitForGrid(10_000),
+    page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(pane)}`)]);
+  assert.ok(grid.cols >= MARK_COLUMN + `|MARK${ROWS.length - 1}`.length - 1);
   await page.locator(".conn-live").waitFor();
-  await page.locator(shownRows(), { hasText: `MARK${ROWS.length - 1}` }).waitFor();
-  await page.evaluate(() => document.fonts.ready.then(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve()))));
-
-  const drawn = await page.evaluate(([count, shown]) => {
-    const rows = document.querySelector<HTMLElement>(shown)!;
+  await Promise.all([
+    herdrRpc("pane.wait_for_output", {
+      pane_id: pane, source: "visible", match: { type: "substring", value: "ROWS_READY" }, timeout_ms: 10000,
+    }, undefined, 12000),
+    herdrRpc("pane.send_input", { pane_id: pane, text: `exec ${quote(process.execPath)} ${quote(program)}`, keys: ["enter"] }),
+  ]);
+  // xterm can finish a render before Ghostty's rows are ready, and either renderer can
+  // split a marker between spans. Locate all markers and measure them in the same paint.
+  const sample = await page.waitForFunction(([count, shown, rowSelector]) => {
+    const rows = document.querySelector<HTMLElement>(shown);
+    if (!rows?.getClientRects().length || getComputedStyle(rows).visibility !== "visible" || document.fonts.status !== "loaded") return null;
+    const visibleRows = [...document.querySelectorAll(rowSelector)].filter(row => rows.contains(row));
     const left = rows.getBoundingClientRect().left;
     const marks: number[] = [];
     for (let index = 0; index < count; index += 1) {
-      const walker = document.createTreeWalker(rows, NodeFilter.SHOW_TEXT);
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        const at = node.textContent!.indexOf(`|MARK${index}`);
-        if (at < 0) continue;
+      const marker = `|MARK${index}`;
+      const row = visibleRows.find(line => line.textContent?.includes(marker));
+      if (!row) return null;
+      let at = (row.textContent ?? "").indexOf(marker);
+      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node instanceof Text; node = walker.nextNode()) {
+        if (at >= node.length) { at -= node.length; continue; }
         const range = document.createRange();
         range.setStart(node, at);
         range.setEnd(node, at + 1);
-        marks.push(range.getBoundingClientRect().left - left);
+        const rect = range.getBoundingClientRect();
+        if (!rect.width) return null;
+        marks.push(rect.left - left);
         break;
       }
     }
+    if (marks.length !== count) return null;
     const measure = document.querySelector<HTMLElement>(".pane-terminal .xterm-char-measure-element");
     const probe = document.createElement("span");
     probe.style.whiteSpace = "pre";
@@ -92,7 +101,10 @@ setInterval(() => {}, 1 << 30);
     probe.remove();
     return { marks, trims: trimmed < full - 1, measureTrim: measure ? getComputedStyle(measure).getPropertyValue("text-spacing-trim") : null,
       renderer: document.querySelector<HTMLElement>(".pane-terminal")?.dataset["renderer"] ?? "xterm" };
-  }, [ROWS.length, shownRows()] as const);
+  }, [ROWS.length, shownRows(), shownRow()] as const);
+  const drawn = await sample.jsonValue();
+  await sample.dispose();
+  assert.ok(drawn);
   console.log(JSON.stringify(drawn));
   await page.screenshot({ path: join(evidence, "terminal-cjk-punctuation.png") });
 

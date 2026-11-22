@@ -58,7 +58,6 @@ export const SETTINGS_LAYOUT_JA: Record<string, string> = {
   "When this device alerts you, and where else alerts go.": "このデバイスがいつ通知するか、通知をほかにどこへ送るか。",
   "Coding agents on this PC, their accounts and plan limits.": "この PC のコーディングエージェント、アカウント、プランの使用量。",
   "Keyboard shortcuts, and herdr's prefix keys.": "ショートカットと herdr のプレフィックスキー。",
-  "Phones, browsers and PCs that reach this Ovis.": "この Ovis に接続するスマホ、ブラウザー、PC。",
   "Features still being shaped; they may change.": "調整中の機能です。変わることがあります。",
   "Enter {min}–{max}px": "{min}–{max}px の範囲で入力してください。",
 };

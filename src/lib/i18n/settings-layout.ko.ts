@@ -58,7 +58,6 @@ export const SETTINGS_LAYOUT_KO: Record<string, string> = {
   "When this device alerts you, and where else alerts go.": "이 기기가 언제 알릴지, 알림을 어디로 더 보낼지.",
   "Coding agents on this PC, their accounts and plan limits.": "이 PC의 코딩 에이전트, 계정, 요금제 사용량.",
   "Keyboard shortcuts, and herdr's prefix keys.": "단축키와 herdr 프리픽스 키.",
-  "Phones, browsers and PCs that reach this Ovis.": "이 Ovis에 연결하는 폰, 브라우저, PC.",
   "Features still being shaped; they may change.": "다듬는 중인 기능입니다. 바뀔 수 있습니다.",
   "Enter {min}–{max}px": "{min}–{max}px 사이로 입력하세요.",
 };

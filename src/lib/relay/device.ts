@@ -14,6 +14,15 @@ export interface RelayDeviceStore extends SharedRelayDeviceStore {
   update(serverId: string, change: (current: RelayDevice | undefined) => RelayDevice, source?: { readonly serverId: string; readonly assert: (current: RelayDevice | undefined) => void }): Promise<RelayDevice>;
 }
 
+/** The store the hosted shell keeps its pairings in. */
+export interface ShellDeviceStore extends RelayDeviceStore {
+  /**
+   * Forgets a PC only while its saved record is still the row `deviceId`, read and deleted in one write transaction:
+   * a Forget or a newer pairing made since (another tab) stands. True when it forgot it.
+   */
+  removeRow(serverId: string, deviceId: string): Promise<boolean>;
+}
+
 export function enrollmentOf(device: RelayDevice, account?: string): EnrollmentState | undefined {
   if (!("account_enrollment" in device)) return undefined;
   const value: unknown = device.account_enrollment;
@@ -29,7 +38,7 @@ export function observedVersionOf(device: RelayDevice): ObservedVersion | undefi
   return typeof value.version === "string" && typeof value.outdated === "boolean" ? { version: value.version, outdated: value.outdated } : undefined;
 }
 
-export const indexedDeviceStore: RelayDeviceStore = {
+export const indexedDeviceStore: ShellDeviceStore = {
   async get(serverId) {
     const db = await openDatabase();
     try {
@@ -60,6 +69,25 @@ export const indexedDeviceStore: RelayDeviceStore = {
         tx.objectStore("devices").delete(serverId);
         tx.objectStore("pending-push").delete(serverId);
         tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error);
+      });
+    } finally { db.close(); }
+  },
+  async removeRow(serverId, deviceId) {
+    const db = await openDatabase();
+    try {
+      return await new Promise<boolean>((resolve, reject) => {
+        const tx = db.transaction(["devices", "pending-push"], "readwrite");
+        const devices = tx.objectStore("devices");
+        let removed = false;
+        const request: IDBRequest<RelayDevice | undefined> = devices.get(serverId);
+        request.onsuccess = () => {
+          if (request.result?.device_id !== deviceId) return;
+          devices.delete(serverId);
+          tx.objectStore("pending-push").delete(serverId);
+          removed = true;
+        };
+        tx.oncomplete = () => resolve(removed);
         tx.onabort = () => reject(tx.error);
       });
     } finally { db.close(); }

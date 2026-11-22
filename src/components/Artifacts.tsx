@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { AppWindow, ExternalLink } from "lucide-react";
+import { AppWindow, ExternalLink as ExternalLinkIcon } from "lucide-react";
 
 import "./BackgroundTasks.css";
 
@@ -8,6 +8,7 @@ import { useLocale, useT } from "../lib/i18n.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useSettings } from "../lib/settings.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
 import type { AgentStatus, ClaudeArtifact } from "../../shared/protocol.ts";
 
 /**
@@ -21,33 +22,46 @@ export function Artifacts(props: { paneId: string; status: AgentStatus | undefin
   return settings.composerArtifacts ? <ArtifactsChip {...props} /> : null;
 }
 
-function ArtifactsChip({ paneId, status }: { paneId: string; status: AgentStatus | undefined }) {
-  const t = useT();
-  const locale = useLocale();
+/**
+ * The pages a Claude Code pane published, read again whenever `refresh` changes (its status, a list
+ * opening); empty for another pane until its own answer comes, and with no pane. `retryEmpty` asks
+ * again every 3 s while the answer is empty, for a chip that has nothing to reopen.
+ */
+export function usePaneArtifacts(paneId: string | null, refresh: unknown, retryEmpty: boolean): ClaudeArtifact[] {
   const { fetchPaneArtifacts } = useMachineApi();
   const machineId = useMachineId();
   const [artifacts, setArtifacts] = useState<ClaudeArtifact[]>([]);
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLSpanElement>(null);
-  const menu = useRef<HTMLDivElement>(null);
-  const id = useId();
-  usePhoneSheetBack(() => setOpen(false), open);
-  useEffect(() => { setArtifacts([]); setOpen(false); }, [paneId, machineId]);
+  useEffect(() => { setArtifacts([]); }, [paneId, machineId]);
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     // Session discovery may outlast the route's one-second budget even for an idle pane.
     // Keep asking while empty: there is no chip to reopen and no later status edge is promised.
+    if (paneId === null) return;
     const load = (): void => {
       fetchPaneArtifacts(paneId).then((found) => {
         if (!alive) return;
         setArtifacts(found);
-        if (found.length === 0) timer = setTimeout(load, 3000);
+        if (found.length === 0 && retryEmpty) timer = setTimeout(load, 3000);
       }, () => undefined);
     };
     load();
     return () => { alive = false; clearTimeout(timer); };
-  }, [fetchPaneArtifacts, paneId, status, open]);
+  }, [fetchPaneArtifacts, paneId, refresh, retryEmpty]);
+  return artifacts;
+}
+
+function ArtifactsChip({ paneId, status }: { paneId: string; status: AgentStatus | undefined }) {
+  const t = useT();
+  const locale = useLocale();
+  const machineId = useMachineId();
+  const [open, setOpen] = useState(false);
+  const artifacts = usePaneArtifacts(paneId, `${status ?? ""}:${open}`, true);
+  const root = useRef<HTMLSpanElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const id = useId();
+  usePhoneSheetBack(() => setOpen(false), open);
+  useEffect(() => { setOpen(false); }, [paneId, machineId]);
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent): void => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
@@ -83,14 +97,14 @@ function ArtifactsChip({ paneId, status }: { paneId: string; status: AgentStatus
       <ul className="bg-task-list">{artifacts.map((artifact) => {
         const when = formatChatTimestamp(artifact.at, now, locale, t);
         return <li key={artifact.url} className="bg-task is-openable">
-          <a className="bg-task-open" href={artifact.url} target="_blank" rel="noopener noreferrer">
+          <ExternalLink kind="link" className="bg-task-open" href={artifact.url}>
             <AppWindow className="bg-task-icon" aria-hidden="true" />
             <span className="bg-task-main">
               <span className="bg-task-title">{artifact.title ?? artifact.url}</span>
               {when && <span className="bg-task-meta" title={when.full}>{when.label}</span>}
             </span>
-            <ExternalLink className="bg-task-caret" aria-hidden="true" />
-          </a>
+            <ExternalLinkIcon className="bg-task-caret" aria-hidden="true" />
+          </ExternalLink>
         </li>;
       })}</ul>
     </div>}

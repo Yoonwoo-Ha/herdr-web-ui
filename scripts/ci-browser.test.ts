@@ -195,6 +195,7 @@ describe("browser lane", () => {
 });
 
 const MANUAL_BROWSER_SCRIPTS = [
+  "scripts/pc-add-guidance-regression.ts", // requires UI_EVIDENCE_DIR; run for the localized PC-add captures
   "scripts/android-ime-regression.ts", // an Android emulator over ADB (docs/terminal-input.md)
   "scripts/chat-browser-qa.ts",
   "scripts/font-swap-demo-regression.ts",

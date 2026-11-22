@@ -1,6 +1,7 @@
 import type { WorkspaceMoved } from "../../shared/protocol.ts";
 import { isBackgroundRole, ROLE_TOKEN } from "../../shared/pane-tokens.ts";
 import { movedTabOrder } from "./tabOrder.ts";
+export { worktreeGroups } from "../../shared/worktree-groups.ts";
 
 /**
  * One herdr `workspace.move`. Like `tab.move`, its `insert_index` counts insertion boundaries
@@ -37,31 +38,6 @@ export function workspaceMoves(current: readonly string[], next: readonly string
     order = moved;
   });
   return moves;
-}
-
-interface GroupedWorkspace {
-  workspace_id: string;
-  worktree?: { is_linked_worktree: boolean; repo_key: string } | null;
-}
-
-export function worktreeGroups<W extends GroupedWorkspace>(ordered: readonly W[]): { workspace: W; children: W[] }[] {
-  const firstByRepo = new Map<string, W>();
-  for (const workspace of ordered) {
-    if (workspace.worktree && !workspace.worktree.is_linked_worktree && !firstByRepo.has(workspace.worktree.repo_key)) firstByRepo.set(workspace.worktree.repo_key, workspace);
-  }
-  const nearestByRepo = new Map<string, W>();
-  const childrenOf = new Map<string, W[]>();
-  const top: W[] = [];
-  for (const workspace of ordered) {
-    const worktree = workspace.worktree;
-    if (worktree && !worktree.is_linked_worktree) nearestByRepo.set(worktree.repo_key, workspace);
-    const parent = worktree?.is_linked_worktree ? nearestByRepo.get(worktree.repo_key) ?? firstByRepo.get(worktree.repo_key) : undefined;
-    if (!parent) { top.push(workspace); continue; }
-    const children = childrenOf.get(parent.workspace_id) ?? [];
-    children.push(workspace);
-    childrenOf.set(parent.workspace_id, children);
-  }
-  return top.map((workspace) => ({ workspace, children: childrenOf.get(workspace.workspace_id) ?? [] }));
 }
 
 /**
@@ -101,6 +77,8 @@ interface Hold {
   receipts: number;
   legacy: boolean;
   settleMark: number | null;
+  /** the last roster's evidence when the newest move with a receipt since the hold last settled was sent; undefined until one */
+  sent?: Evidence | null;
 }
 interface PcOrder {
   shown: string[] | null;
@@ -119,6 +97,8 @@ interface PcOrder {
   waiters: { generation: number; resolve: (ids: string[]) => void; reject: (error: Error) => void }[];
   gone: boolean;
   check: { key: string; abort: AbortController } | null;
+  /** the server lifetime the last answered verification was asked about: asking again would spend the PC's interval for nothing */
+  answered: string | null;
 }
 
 export class ReorderCoordinator {
@@ -135,7 +115,7 @@ export class ReorderCoordinator {
   private pc(id: string): PcOrder {
     let pc = this.pcs.get(id);
     if (!pc) {
-      pc = { shown: null, last: null, generation: 0, pending: new Set(), desired: null, hold: null, floors: new Map(), protectedEpoch: null, guard: null, retired: new Set(), receipts: 0, chain: Promise.resolve(), failed: false, waiters: [], gone: false, check: null };
+      pc = { shown: null, last: null, generation: 0, pending: new Set(), desired: null, hold: null, floors: new Map(), protectedEpoch: null, guard: null, retired: new Set(), receipts: 0, chain: Promise.resolve(), failed: false, waiters: [], gone: false, check: null, answered: null };
       this.pcs.set(id, pc);
     }
     return pc;
@@ -216,7 +196,10 @@ export class ReorderCoordinator {
     void verify(id, check.abort.signal).then((answer) => {
       if (pc.check !== check) return;
       pc.check = null;
-      if (answer && !check.abort.signal.aborted && key === `${pc.receipts}:${pc.guard?.version ?? 0}:${pc.generation}:${pc.protectedEpoch}`) this.proved(id, pc, answer);
+      if (answer && !check.abort.signal.aborted && key === `${pc.receipts}:${pc.guard?.version ?? 0}:${pc.generation}:${pc.protectedEpoch}`) {
+        pc.answered = evidence.epoch;
+        this.proved(id, pc, answer);
+      }
     }, () => { if (pc.check === check) pc.check = null; });
   }
 
@@ -258,7 +241,10 @@ export class ReorderCoordinator {
     const run = pc.chain.then(async () => {
       const base = pc.failed ? await this.qualifiedBase(pc, generation) : [...current];
       pc.failed = false;
-      for (const step of workspaceMoves(base, mergeOrder(next, base))) this.acknowledge(pc, await move(step));
+      for (const step of workspaceMoves(base, mergeOrder(next, base))) {
+        const sent = pc.last?.evidence ?? null;
+        this.acknowledge(pc, await move(step), sent);
+      }
     });
     pc.chain = run.catch(() => { pc.failed = true; });
     return run.then(() => this.settle(machineId, pc, generation, null), (error: unknown) => this.settle(machineId, pc, generation, error));
@@ -270,7 +256,7 @@ export class ReorderCoordinator {
     return new Promise((resolve, reject) => pc.waiters.push({ generation, resolve, reject }));
   }
 
-  private acknowledge(pc: PcOrder, receipt: WorkspaceMoved | void): void {
+  private acknowledge(pc: PcOrder, receipt: WorkspaceMoved | void, sent: Evidence | null): void {
     pc.receipts++;
     this.invalidateCheck(pc);
     const hold = pc.hold!;
@@ -282,6 +268,7 @@ export class ReorderCoordinator {
     pc.floors.set(epoch, Math.max(pc.floors.get(epoch) ?? 0, seq!));
     pc.protectedEpoch = epoch;
     hold.epoch = epoch;
+    hold.sent = sent;
   }
 
   private settle(machineId: string, pc: PcOrder, generation: number, error: unknown): void {
@@ -297,10 +284,25 @@ export class ReorderCoordinator {
       } else {
         hold.settleMark = this.loads;
         this.options.onSettled?.(machineId);
+        const sent = hold.sent;
+        hold.sent = undefined;
+        if (sent !== undefined) this.recheck(machineId, pc, sent);
       }
     }
     this.notify();
     if (error !== null && latest) throw error;
+  }
+
+  /**
+   * A roster that arrived while the moves were on their way was let through or had its check cut short by a later receipt.
+   * Once they settle it is checked as one arriving now would be: one of another server lifetime may come from a restart
+   * after a move. Not when it is of the server lifetime read when the newest move with a receipt was sent (no restart
+   * since; also a repeated or delayed older read), nor of one a verification already answered about.
+   */
+  private recheck(machineId: string, pc: PcOrder, sent: Evidence | null): void {
+    const last = pc.last?.evidence;
+    if (!last || pc.retired.has(last.epoch) || last.epoch === sent?.epoch || last.epoch === pc.answered) return;
+    this.mismatch(machineId, pc, last);
   }
 }
 

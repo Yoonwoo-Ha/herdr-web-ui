@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { downloadPlatform, guessedCpuLabel, linuxArch, macArch } from "../ovis-site/assets/platform.js";
+import { INSTALLERS, downloadPlatform, guessedCpuLabel, linuxArch, macArch, releaseLine } from "../ovis-site/assets/platform.js";
 
 const UA = {
   mac: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
@@ -81,5 +81,37 @@ describe("linuxArch", () => {
     expect(linuxArch({ userAgent: UA.linux }, "arm")).toBe("arm64");
     expect(linuxArch({ userAgent: "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36" }, "x86")).toBe("x64");
     expect(linuxArch({ userAgent: UA.linux }, "")).toBe("x64");
+  });
+});
+
+describe("releaseLine", () => {
+  const assets = [...INSTALLERS, "Ovis.dmg", "Ovis.exe", "SHA256SUMS"].map((name) => ({ name, state: "uploaded" }));
+  const release = { tag_name: "v0.5.9", published_at: "2026-11-21T13:20:05Z", assets };
+
+  it("names the latest release's tag and day, linking its notes", () => {
+    expect(releaseLine(release)).toEqual({
+      text: "v0.5.9 · 2026-11-21",
+      href: "https://github.com/devswha/ovis/releases/tag/v0.5.9",
+    });
+  });
+
+  it("shows nothing for an answer that is not a release (rate limit, error, another tag)", () => {
+    expect(releaseLine(null)).toBeUndefined();
+    expect(releaseLine({})).toBeUndefined();
+    expect(releaseLine({ ...release, tag_name: "beta/v0.5.9-beta.8" })).toBeUndefined();
+    expect(releaseLine({ ...release, tag_name: "v0.5.9\"><img src=x>" })).toBeUndefined();
+    expect(releaseLine({ ...release, published_at: null })).toBeUndefined();
+    expect(releaseLine({ ...release, published_at: "2026-99-99Tbad" })).toBeUndefined();
+    expect(releaseLine({ ...release, published_at: "2026-02-30T00:00:00Z" })).toBeUndefined();
+  });
+
+  it("shows nothing for a release missing an installer the rows link, whose button would fail", () => {
+    // mac-dmg.yml and windows-app.yml can make a release latest with only the older Ovis.dmg and Ovis.exe
+    expect(releaseLine({ ...release, assets: [{ name: "Ovis.dmg", state: "uploaded" }, { name: "Ovis.exe", state: "uploaded" }] })).toBeUndefined();
+    for (const state of ["open", "starter"]) {
+      expect(releaseLine({ ...release, assets: assets.map((asset) => (asset.name === "Ovis-linux-x64.deb" ? { ...asset, state } : asset)) })).toBeUndefined();
+    }
+    for (const missing of INSTALLERS) expect(releaseLine({ ...release, assets: assets.filter((asset) => asset.name !== missing) })).toBeUndefined();
+    expect(releaseLine({ tag_name: "v0.5.9", published_at: "2026-11-21T13:20:05Z" })).toBeUndefined();
   });
 });

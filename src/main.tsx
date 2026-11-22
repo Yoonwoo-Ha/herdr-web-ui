@@ -14,6 +14,8 @@ import { App } from "./App.tsx";
 import { AppCrash, CrashProbe } from "./components/AppCrash.tsx";
 import { FileReader } from "./components/FileReader.tsx";
 import { RenderBoundary } from "./components/RenderBoundary.tsx";
+import { SignInReturn } from "./components/SignInReturn.tsx";
+import { CALLBACK_PATH, takeReturn } from "./lib/account/ownWindow.ts";
 import { readerFromSearch, reloadWhenReaderChanges } from "./lib/fileReader.ts";
 import { pageSearch } from "./lib/pageQuery.ts";
 import { bootRelayShell } from "./lib/relay/boot.ts";
@@ -29,6 +31,8 @@ const container = document.getElementById("root");
 if (!container) throw new Error("#root is missing from index.html");
 const mount: HTMLElement = container;
 
+// the provider's return to a sign-in this PC's own window started (lib/account/ownWindow.ts): read once, then out of the address
+const signInReturn = shellMode() !== "relay" && window.location.pathname === CALLBACK_PATH ? takeReturn(window.location, window.history) : null;
 const reader = readerFromSearch(pageSearch());
 reloadWhenReaderChanges(reader);
 
@@ -47,7 +51,7 @@ function renderApp(): Root {
       <RenderBoundary resetKey={null} fallback={(_retry, error) => <AppCrash error={error} />}>
         <CrashProbe region="root" />
         <SettingsProvider>
-          {reader !== null ? <FileReader target={reader} /> : <App />}
+          {signInReturn !== null ? <SignInReturn params={signInReturn} /> : reader !== null ? <FileReader target={reader} /> : <App />}
         </SettingsProvider>
       </RenderBoundary>
     </StrictMode>,

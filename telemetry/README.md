@@ -95,7 +95,22 @@ bunx wrangler d1 execute herdr-web-ui-telemetry --remote --command "CREATE TABLE
 ```
 
 These ALTERs preserve historical rows; their newly added `settings` value remains `NULL` and is
-not inferred from old data. After the database is ready, deploy the Worker and then release the
+not inferred from old data.
+
+A Worker change goes to staging first: the `staging` environment in `wrangler.toml` is the same
+Worker with a database of its own, `herdr-web-ui-telemetry-staging`, at
+`https://herdr-web-ui-telemetry-staging.<account>.workers.dev`, which no app sends to. Post the new
+message there and read it back before deploying to production. On a new account, create that
+database once, put its `database_id` in `[[env.staging.d1_databases]]` in `wrangler.toml`, and apply
+the schema; then deploy:
+
+```sh
+bunx wrangler d1 create herdr-web-ui-telemetry-staging   # a new account only
+bunx wrangler d1 execute herdr-web-ui-telemetry-staging --env staging --remote --file schema.sql   # a new staging database only
+bunx wrangler deploy --env staging
+```
+
+After the database is ready and staging took the change, deploy the Worker and then release the
 app version that sends snapshots:
 
 ```sh

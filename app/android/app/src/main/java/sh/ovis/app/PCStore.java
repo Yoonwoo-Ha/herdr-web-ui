@@ -57,6 +57,20 @@ final class PCStore {
         return appScope(data) == null ? null : data;
     }
 
+    /** Whether the page the app shows (`current`, a saved key) is the hosted shell's: its own list, or one of its PCs. */
+    static boolean showsHostedShell(String current) {
+        return sameOrigin(current, "https://app.ovis.sh");
+    }
+
+    /**
+     * The page of `pc` has loaded: the start address it was opened with is used up, unless it is
+     * another PC's (a link that came while this page loaded, which the next start opens).
+     */
+    static void startLoaded(String pc) {
+        String start = pendingStart;
+        if (start != null && belongs(start, pc)) pendingStart = null;
+    }
+
     static String appScope(String link) {
         URI uri;
         try {
@@ -190,9 +204,17 @@ final class PCStore {
 
     static volatile String failureKind;
 
+    /** A command to run on the PC that fixes the failure, which the error page shows to copy (an SSH PC's: SshFailure.command); else null. */
+    static volatile String failureCommand;
+
     static void fail(String reason, String kind) {
+        fail(reason, kind, null);
+    }
+
+    static void fail(String reason, String kind, String command) {
         failure = reason;
         failureKind = kind;
+        failureCommand = command;
     }
 
     static final int ANSWER_SECONDS = 20;
@@ -388,8 +410,9 @@ final class PCStore {
     }
 
     static String startPath(String start, String key) {
-        String origin = origin(key);
-        if (start == null || origin == null || !origin.equals(origin(start))) {
+        // the default port written out (https://app.ovis.sh:443/...) is the same origin as the key saved without it
+        String origin = normalizedOrigin(key);
+        if (start == null || origin == null || !origin.equals(normalizedOrigin(start))) {
             String scope = rawPath(key);
             return scope.isEmpty() ? "/" : scope;
         }

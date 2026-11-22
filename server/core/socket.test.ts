@@ -1,4 +1,4 @@
-import { expect, it, spyOn } from "bun:test";
+import { expect, it, mock, spyOn } from "bun:test";
 import { resolve } from "node:path";
 import type { SessionSnapshot } from "../../shared/protocol.ts";
 import { OUTPUT_HARD_BYTES } from "../output-window.ts";
@@ -7,16 +7,54 @@ import type { MachineManager } from "../machines.ts";
 import { type Client, connectionData } from "./connections.ts";
 import { createSocket } from "./socket.ts";
 
-function socket(stopped: boolean) {
+function socket(stopped: boolean, notices?: Parameters<typeof createSocket>[0]["notices"], accountEnabled = notices !== undefined) {
   const ended: string[] = [];
   const handler = createSocket({
     clients: new Set(), present: new Set(), stopped: () => stopped, admit: () => true, setRole() {}, watchable: () => true, terminalHistory: () => false, terminalModes: () => false, watchPane() {}, unwatchPane() {},
-    end: (_client, reason) => { ended.push(reason); }, holdPending() {}, attachments: new Map(),
+    notices, accountEnabled, end: (_client, reason) => { ended.push(reason); }, holdPending() {}, attachments: new Map(),
     clientSnapshot: async () => ({}) as SessionSnapshot, herdrLifetime: () => undefined, browserSnapshot: (snapshot) => snapshot, countVisit() {}, drainOutput() {}, frames: {} as never,
   });
   const client: Client = { data: connectionData({ deviceId: undefined, readOnly: false }), readyState: WebSocket.OPEN, getBufferedAmount: () => 0, send: () => 1, close: () => {} };
   return { handler, client, ended };
 }
+
+it("T53: a socket answers It's me only with the session's proved key, never with a bare device id", async () => {
+  const calls: string[][] = [];
+  const { handler, client } = socket(false, { replay: () => null, seen() {}, decide() {}, open: () => undefined, mayAnswer: () => false, block: async () => ({ outcome: "refused", id: "", reason: "record_invalid" }),
+    itsMe: (...args) => { calls.push(args); return true; } });
+  const sent = spyOn(client, "send");
+  client.data.deviceId = "member";
+  const answer = JSON.stringify({ type: "notice-answer", id: "admission", answer: "its_me" });
+  await handler.message(client, answer);
+  expect(calls).toEqual([]);
+  client.data.provedKey = "session-key";
+  await handler.message(client, answer);
+  expect(calls).toEqual([["member", "admission", "session-key"]]);
+  expect(sent).not.toHaveBeenCalled();
+});
+
+it("T53: an It's me the PC cannot record (its journal or registry write throws) keeps the connection and says the notice stays open", async () => {
+  const { handler, client } = socket(false, { replay: () => null, seen() {}, decide() {}, open: () => undefined, mayAnswer: () => false, block: async () => ({ outcome: "refused", id: "", reason: "record_invalid" }),
+    itsMe: () => { throw new Error("EIO"); } });
+  const sent = spyOn(client, "send");
+  const logged = spyOn(console, "error").mockImplementation(() => {});
+  client.data.deviceId = "member";
+  client.data.provedKey = "session-key";
+  try {
+    await handler.message(client, JSON.stringify({ type: "notice-answer", id: "admission", answer: "its_me" }));
+  } finally { logged.mockRestore(); }
+  expect(sent.mock.calls.map(([raw]) => JSON.parse(String(raw)).code)).toEqual(["notice_decision_failed"]);
+});
+
+it("flag off: a socket ignores It's me as before, without answering", async () => {
+  const itsMe = mock(() => true);
+  const { handler, client } = socket(false, { replay: () => null, seen() {}, decide() {}, open: () => undefined, mayAnswer: () => false, block: async () => ({ outcome: "refused", id: "", reason: "record_invalid" }), itsMe }, false);
+  const sent = spyOn(client, "send");
+  client.data.deviceId = "member";
+  await handler.message(client, JSON.stringify({ type: "notice-answer", id: "admission", answer: "its_me" }));
+  expect(sent).not.toHaveBeenCalled();
+  expect(itsMe).not.toHaveBeenCalled();
+});
 
 it("tells a new connection its features before its snapshot, which waits on herdr, and even when that read fails", async () => {
   for (const outcome of ["read", "failed"] as const) {
@@ -64,6 +102,26 @@ it("names the folder OVIS_PASTE_DIR sends uploads to in the features frame, and 
     }
   } finally {
     if (previous === undefined) delete process.env["OVIS_PASTE_DIR"]; else process.env["OVIS_PASTE_DIR"] = previous;
+  }
+});
+
+it("lists account-opens-all/1 by default but not with OVIS_ACCOUNT_OPENS_ALL=0", async () => {
+  const previous = process.env["OVIS_ACCOUNT_OPENS_ALL"];
+  try {
+    for (const [flag, listed] of [[undefined, true], ["0", false], ["1", true]] as const) {
+      if (flag === undefined) delete process.env["OVIS_ACCOUNT_OPENS_ALL"]; else process.env["OVIS_ACCOUNT_OPENS_ALL"] = flag;
+      const handler = createSocket({
+        clients: new Set(), present: new Set(), stopped: () => false, admit: () => true, setRole() {}, watchable: () => true, terminalHistory: () => false, terminalModes: () => false, watchPane() {}, unwatchPane() {},
+        end() {}, holdPending() {}, attachments: new Map(),
+        clientSnapshot: async () => ({ workspaces: [], panes: [], agents: [], layouts: [] }) as unknown as SessionSnapshot, herdrLifetime: () => undefined, browserSnapshot: (snapshot) => snapshot, countVisit() {}, drainOutput() {}, frames: {} as never,
+      });
+      const frames: { type: string; features?: string[] }[] = [];
+      const client: Client = { data: connectionData({ deviceId: undefined, readOnly: false }), readyState: WebSocket.OPEN, getBufferedAmount: () => 0, send: (raw: string) => { frames.push(JSON.parse(raw)); return raw.length; }, close: () => {} };
+      await handler.open!(client);
+      expect({ flag, listed: frames[0]!.features!.includes("account-opens-all/1") }).toEqual({ flag, listed });
+    }
+  } finally {
+    if (previous === undefined) delete process.env["OVIS_ACCOUNT_OPENS_ALL"]; else process.env["OVIS_ACCOUNT_OPENS_ALL"] = previous;
   }
 });
 

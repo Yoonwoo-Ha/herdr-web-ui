@@ -235,6 +235,30 @@ describe("machine boundaries", () => {
       expect(hits).toBe(before);
     } finally { error.mockRestore(); endpoint.mockRestore(); bridge.stop(true); manager.stop(); rmSync(dir, { recursive: true, force: true }); }
   });
+  it("tries again on a PC's read only while it waits to reconnect: a connected PC is read, a removed one left alone", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-proxy-retry-"));
+    const manager = new MachineManager(dir, {} as PushService, new CompletionTracker(null), async () => { throw new Error("fixture offline"); });
+    const bridge = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({ ok: true }) });
+    const reconnect = spyOn(manager as unknown as { reconnect(runtime: unknown): Promise<void> }, "reconnect").mockResolvedValue(undefined);
+    const on = manager["runtime"]({ id: "on", name: "on", kind: "relay", enabled: true, state: "connected", snapshot: null, error: null });
+    on.endpoint = { url: `http://127.0.0.1:${bridge.port}`, token: "fixture-token" };
+    const off = manager["runtime"]({ id: "off", name: "off", kind: "relay", enabled: true, state: "disconnected", snapshot: null, error: "The PC did not answer through the relay" });
+    manager["machines"].set("on", on);
+    manager["machines"].set("off", off);
+    manager["retryLater"](off);
+    const ask = (id: string) => handleMachineRequest(new Request(`http://localhost/api/machines/${id}/session`), manager);
+    try {
+      const generation = on.generation;
+      expect((await ask("on")).status).toBe(200);
+      expect([on.machine.state, on.generation, on.endpoint !== undefined]).toEqual(["connected", generation, true]);
+      expect((await ask("gone")).status).toBe(503);
+      expect(reconnect).not.toHaveBeenCalled();
+      expect((await ask("off")).status).toBe(503);
+      expect(reconnect.mock.calls.map(([runtime]) => runtime)).toEqual([off]);
+      expect((await ask("off")).status).toBe(503);
+      expect(reconnect).toHaveBeenCalledTimes(1);
+    } finally { reconnect.mockRestore(); bridge.stop(true); manager.stop(); rmSync(dir, { recursive: true, force: true }); }
+  });
   it("keeps file streaming and 304 bodyless", async () => {
     const dir = mkdtempSync(join(tmpdir(), "herdr-proxy-stream-"));
     const manager = new MachineManager(dir, {} as PushService, new CompletionTracker(null), async () => { throw new Error("fixture offline"); });

@@ -8,6 +8,7 @@ describe("selectPane", () => {
   let renderer: ReactTestRenderer | undefined;
   let select: (paneId: string, focusInput?: boolean) => void;
   let picks: number;
+  let note: string | null;
 
   beforeEach(() => {
     saved = Object.getOwnPropertyDescriptor(globalThis, "IS_REACT_ACT_ENVIRONMENT");
@@ -22,18 +23,20 @@ describe("selectPane", () => {
     else Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");
   });
 
-  async function mount(): Promise<void> {
+  async function mount(first: "pane-closed" | "copied" = "pane-closed"): Promise<void> {
     function Probe() {
       const pendingLink = useRef(null);
       const pendingFile = useRef(null);
       const selectionHint = useRef(null);
       const [, setLinkLanded] = useState(true);
-      const [, setSelectedPaneId] = useState<string | null>(null);
+      const [selectedPaneId, setSelectedPaneId] = useState<string | null>("w1:p1");
       const [, setNotificationViewTarget] = useState(null);
       const [, setTerminalPeek] = useState(null);
       const [, setAutoSelected] = useState(false);
       const [, setDrawerOpen] = useState(false);
-      select = useSelectPane({ pendingLink, pendingFile, setLinkLanded, selectionHint, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, setDrawerOpen, onPick: () => { picks += 1; } } as Parameters<typeof useSelectPane>[0]).selectPane;
+      const [headerNote, setHeaderNote] = useState<"pane-closed" | "copied" | null>(first);
+      note = headerNote;
+      select = useSelectPane({ pendingLink, pendingFile, setLinkLanded, selectionHint, selectedPaneId, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, setDrawerOpen, setHeaderNote, onPick: () => { picks += 1; } } as Parameters<typeof useSelectPane>[0]).selectPane;
       return null;
     }
     await act(async () => { renderer = create(createElement(Probe)); });
@@ -49,5 +52,26 @@ describe("selectPane", () => {
     await mount();
     await act(async () => { select("w1:p2", false); });
     expect(picks).toBe(0);
+  });
+
+  it("takes away the note an earlier link's landing left in the header", async () => {
+    await mount();
+    expect(note).toBe("pane-closed");
+    await act(async () => { select("w1:p2"); });
+    expect(note).toBeNull();
+  });
+
+  it("lets Link copied run its own short time", async () => {
+    await mount("copied");
+    await act(async () => { select("w1:p2"); });
+    expect(note).toBe("copied");
+  });
+
+  it("keeps the note when the pick is the pane already shown", async () => {
+    await mount();
+    await act(async () => { select("w1:p1"); });
+    expect(note).toBe("pane-closed");
+    await act(async () => { select("w1:p2"); });
+    expect(note).toBeNull();
   });
 });

@@ -1,10 +1,11 @@
 import { describe, expect, it } from "bun:test";
 
 import { AGENT_CATALOG, catalogRow, type AgentCatalogRow, type AgentInstallState } from "../../shared/agent-catalog.ts";
+import type { SecuritySummary } from "../../shared/access.ts";
 import type { HealthAuth, RelayStatus } from "../../shared/protocol.ts";
 import type { ProviderUsage } from "../../shared/usage.ts";
 import { onSetupGuideRequest, openSetupGuide } from "./setupGuide.ts";
-import { agentRows, alertsFailed, alertsHere, alertsSurfaces, type AlertsFacts, type AlertsHere, autoOpen, CHECK_SETTLE_MS, checkList, checkStatus, foundAgents, guideStep, INSTALL_GIVE_UP_MS, installedHere, openInFolder, otherDevice, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, preferredAgent, GUIDE_STORAGE_KEY, readGuide, readSignedIn, relayStep, REOPENED, saveGuide, settleDelay, setupLeft, setupView, signedInAgents, tileState, turnsUsageOn, FIRST_RUN, type FreshFacts, type PcCheck } from "./setupGuideFlow.ts";
+import { agentRows, alertsFailed, alertsHere, alertsSurfaces, type AlertsFacts, type AlertsHere, autoOpen, CHECK_SETTLE_MS, checkList, checkStatus, foundAgents, guideStep, INSTALL_GIVE_UP_MS, installedHere, openInFolder, otherDevice, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, preferredAgent, relayOnlyPc, GUIDE_STORAGE_KEY, readGuide, readSignedIn, relayStep, REOPENED, saveGuide, settleDelay, setupLeft, setupView, signedInAgents, tileState, turnsUsageOn, FIRST_RUN, type FreshFacts, type PcCheck } from "./setupGuideFlow.ts";
 
 const FRESH: FreshFacts = { workspaces: 0, savedSettings: false, sharedRevision: 0, pairingGate: "open", watching: false };
 
@@ -415,6 +416,9 @@ describe("alertsHere: what the step, Done and Setup: N left say of this device's
     ["an older server or the open LAN: no record, the confirmation push failed (and after a reload)", { push: record({ delivered: null }), confirmed: false }, "off"],
     ["an older server or the open LAN: no record, subscribed before the outcome was kept: as before", { push: record({ delivered: null }), confirmed: null }, "on"],
     ["an older server or the open LAN: no record, no subscription", { pushOn: false, push: record({ delivered: null }) }, "off"],
+    ["a delivered subscription, but the permission not granted here", { notifications: "default" }, "off"],
+    ["a delivered subscription, but no push in this browser", { pushSupported: false }, "off"],
+    ["a delivered subscription, its health not read yet since the load", { push: record({ checked: false }) }, "checking"],
   ];
   for (const [name, facts, expected] of rows) {
     it(name, () => {
@@ -426,7 +430,7 @@ describe("alertsHere: what the step, Done and Setup: N left say of this device's
     expect(alertsSurfaces("on")).toEqual({ step: "send-test", done: "done", row: "done" });
     expect(alertsSurfaces("off")).toEqual({ step: "turn-on", done: "not-yet", row: "left" });
     expect(alertsSurfaces("checking")).toEqual({ step: "checking", done: "checking", row: "wait" });
-    expect(alertsSurfaces("unavailable")).toEqual({ step: "note", done: "not-yet", row: "done" });
+    expect(alertsSurfaces("unavailable")).toEqual({ step: "note", done: "unavailable", row: "done" });
   });
 });
 
@@ -437,3 +441,23 @@ describe("a guide opened at a later step", () => {
   });
 });
 
+
+describe("relayOnlyPc", () => {
+  const facts = (bind_scope: SecuritySummary["bind_scope"], observed_ingress: SecuritySummary["observed_ingress"]): SecuritySummary => ({ token_configured: true, pairing_gate: "closed", bind_scope, observed_ingress, public_exposure: "unknown" });
+
+  it("T70: a PC bound to its loopback and opened on it directly has only the relay for other devices", () => {
+    expect(relayOnlyPc(facts("loopback", "direct"))).toBe(true);
+  });
+
+  it("T70: a PC on the local network, on the tailnet, or fronted by Tailscale or a proxy has another route", () => {
+    expect(relayOnlyPc(facts("other", "direct"))).toBe(false);
+    expect(relayOnlyPc(facts("tailnet", "direct"))).toBe(false);
+    expect(relayOnlyPc(facts("loopback", "tailscale"))).toBe(false);
+    expect(relayOnlyPc(facts("loopback", "funnel"))).toBe(false);
+    expect(relayOnlyPc(facts("loopback", "proxy"))).toBe(false);
+  });
+
+  it("T70: an ingress the PC cannot name (a forwarding proxy that says nothing) is not taken as relay-only", () => {
+    expect(relayOnlyPc(facts("loopback", "unknown"))).toBe(false);
+  });
+});

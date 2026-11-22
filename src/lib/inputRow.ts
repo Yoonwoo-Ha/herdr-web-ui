@@ -43,6 +43,7 @@ export interface FrameStamp {
   readonly epoch: number;
   readonly boundary: boolean;
   readonly whole: boolean;
+  readonly synchronized: boolean;
   readonly geometry: boolean;
 }
 
@@ -80,7 +81,7 @@ export class FrameGate {
     const escape = text.lastIndexOf("\u001b");
     const tail = escape < 0 ? "" : text.slice(escape);
     this.carry = tail.length < 8 && !/^\u001b\[\?2026[hl]/.test(tail) ? tail : "";
-    return { epoch: this.epoch, boundary: !this.open, whole: whole || !this.synced, geometry };
+    return { epoch: this.epoch, boundary: !this.open, whole: whole || !this.synced, synchronized: whole, geometry };
   }
 
   settle(stamp: FrameStamp, ready: boolean): boolean {

@@ -6,6 +6,7 @@ import { startBunRelay } from "../relay/bun.ts";
 import type { Machine } from "../shared/machines.ts";
 import type { CompletionTracker } from "./completion.ts";
 import { createServer } from "./index.ts";
+import { bindTestPc, expectPcAddRefused, pcAddCases, type PcAddMode } from "./pc-add-policy.test-helpers.ts";
 import { handleMachineRequest } from "./machine-api.ts";
 import { MachineManager } from "./machines.ts";
 import type { PushService } from "./push.ts";
@@ -48,7 +49,7 @@ it("lists only online, untagged PCs of this PC's own Tailscale login, never phon
  * PC B with the relay on, reached as `tailscale serve` would bring a request from another node of the
  * tailnet: from loopback, with the asking node's login and its tailnet source address.
  */
-async function pcB(login: string, options: { codeServerId?: string } = {}) {
+async function pcB(login: string, options: { codeServerId?: string; mode?: PcAddMode } = {}) {
   const relay = startBunRelay({ port: 0, limiters: {
     perAddress: { async limit() { return { success: true }; } },
     global: { async limit() { return { success: true }; } },
@@ -66,8 +67,10 @@ async function pcB(login: string, options: { codeServerId?: string } = {}) {
     return socket;
   };
   const bState = stateDir();
+  if (options.mode === "target-bound") bindTestPc(bState);
   const service = new RelayService({ stateDir: bState, relay: `wss://127.0.0.1:${relay.port}`, connect: local, pairCodeRelay: `wss://127.0.0.1:${relay.port}` });
-  const b = createServer({ port: 0, hostname: "127.0.0.1", stateDir: bState, token: "", tailscaleOwner: "me@example.com", sidecar: false, registerBridge: false, relay: service });
+  const b = createServer({ port: 0, hostname: "127.0.0.1", stateDir: bState, token: "", tailscaleOwner: "me@example.com", sidecar: false, registerBridge: false, relay: service,
+    accountOpensAll: options.mode !== undefined && options.mode !== "off", platform: "linux" });
   cleanup.push(async () => { await service.shutdown(); b.stop(); });
   const bBase = `http://127.0.0.1:${b.port}`;
   expect((await fetch(`${bBase}/api/relay/start`, { method: "POST", headers: { origin: bBase, "x-herdr-update": "1" } })).status).toBe(200);
@@ -88,10 +91,13 @@ async function pcB(login: string, options: { codeServerId?: string } = {}) {
   return { b, bBase, serveUrl: `http://127.0.0.1:${serve.port}`, local, asked };
 }
 
-async function pcA(initial: Parameters<typeof status>[0], origins: Record<string, string>, local: (url: string) => WebSocket) {
+async function pcA(initial: Parameters<typeof status>[0], origins: Record<string, string>, local: (url: string) => WebSocket, mode?: PcAddMode) {
   const probed: string[] = [];
   let peers = initial;
-  const a = createServer({ port: 0, hostname: "127.0.0.1", stateDir: stateDir(), token: "", tailscaleOwner: null, sidecar: false, registerBridge: false, relayPcSocket: local,
+  const dir = stateDir();
+  if (mode === "source-bound") bindTestPc(dir);
+  const a = createServer({ port: 0, hostname: "127.0.0.1", stateDir: dir, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false, relayPcSocket: local,
+    ...(mode ? { accountOpensAll: mode !== "off", platform: "linux" as const } : {}),
     tailnetPcs: { readStatus: async () => status(peers), ports: [443], origin: (dnsName) => { probed.push(dnsName); return origins[dnsName] ?? "http://127.0.0.1:9"; } } });
   cleanup.push(() => a.stop());
   const base = `http://127.0.0.1:${a.port}`;
@@ -103,9 +109,9 @@ async function pcA(initial: Parameters<typeof status>[0], origins: Record<string
 
 type Found = { pcs: { name: string; url: string; relay: string | null; outdated: boolean }[] };
 
-it("adds a PC of the same Tailscale login through the relay with one tap, after the IDs match by themselves", async () => {
-  const { b, serveUrl, local } = await pcB("me@example.com");
-  const { ask, probed } = await pcA([{ name: "pc-b", user: "9007199254740993" }, { name: "stranger", user: "42" }], { "pc-b.tail.ts.net": serveUrl }, local);
+it.each(pcAddCases)("Tailnet one-tap PC add follows the live account binding: %s", async mode => {
+  const { b, serveUrl, local } = await pcB("me@example.com", { mode });
+  const { ask, probed } = await pcA([{ name: "pc-b", user: "9007199254740993" }, { name: "stranger", user: "42" }], { "pc-b.tail.ts.net": serveUrl }, local, mode);
 
   const listed = await ask("GET");
   expect(listed.status).toBe(200);
@@ -113,11 +119,13 @@ it("adds a PC of the same Tailscale login through the relay with one tap, after 
   expect(pcs).toEqual([{ name: "pc-b", url: serveUrl, relay: "online", outdated: false }]);
   // a node of another login is never asked anything
   expect(probed).toEqual(["pc-b.tail.ts.net"]);
+  if (mode === "source-bound") return expectPcAddRefused(await ask("POST", { url: serveUrl }), mode, b);
 
   // only an address the list found is asked for a code
   expect((await ask("POST", { url: "http://127.0.0.1:9" })).status).toBe(404);
 
   const added = await ask("POST", { url: serveUrl });
+  if (mode === "target-bound") return expectPcAddRefused(added, mode, b);
   expect(added.status).toBe(201);
   const { machine } = await added.json() as { machine: Machine };
   expect(machine).toMatchObject({ kind: "relay", name: "pc-b", relay: { server_id: b.context.services.relay.serverId() } });

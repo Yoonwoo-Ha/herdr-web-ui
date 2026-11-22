@@ -1,7 +1,8 @@
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { loginEnvProbe, loginShell } from "../shell-agent.ts";
-import { SERVER_ENV, type HcConnection } from "./connection.ts";
+import type { HcConnection } from "./connection.ts";
+import { SERVER_ENV } from "./hc-connect.ts";
 
 type Env = Record<string, string>;
 type SourceEnv = Record<string, string | undefined>;

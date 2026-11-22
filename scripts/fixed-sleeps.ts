@@ -25,7 +25,7 @@ const BOUND = /Date\.now\(\)|performance\.now\(\)|[Dd]eadline|\b\w+\s*<=?\s*(?:\
 /** `// fixed wait:` followed by the reason. */
 const MARKER = /\/\/\s*fixed wait:\s*\S/;
 
-export const sleepFiles = (): string[] => files("{server,src,shared,scripts,site,telemetry}/**/*.{ts,tsx,mjs,js}")
+export const sleepFiles = (): string[] => files("{server,src,shared,scripts,site,telemetry,tui}/**/*.{ts,tsx,mjs,js}")
   .filter((file) => !file.startsWith("scripts/film/") && !file.startsWith("scripts/readme-media/") && file !== "scripts/fixed-sleeps.ts" && file !== "scripts/conventions.test.ts");
 
 function inBoundedLoop(code: string, at: number): boolean {

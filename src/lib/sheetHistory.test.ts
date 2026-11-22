@@ -4,12 +4,16 @@ import { sheetStep } from "./historyKeys.ts";
 let originalWindow: PropertyDescriptor | undefined;
 
 function fakeWindow() {
-  const entries: Array<{ state: unknown; href: string }> = [{ state: null, href: "/?pane=a" }];
+  let keys = 0;
+  const entries: Array<{ state: unknown; href: string; key: string }> = [{ state: null, href: "/?pane=a", key: "k0" }];
   let index = 0;
   const listeners: Array<(event: { state: unknown }) => void> = [];
   /** a browser runs a traversal later, toward the entry it named when called: a test turns this on to open something meanwhile */
   let deferred = false;
   let pending = false;
+  /** or holds every traversal until the test releases them, in order */
+  let holding = false;
+  const held: Array<() => void> = [];
   const traverse = (by: number): void => {
     const next = Math.max(0, Math.min(entries.length - 1, index + by));
     if (next === index) return;
@@ -19,14 +23,15 @@ function fakeWindow() {
       index = Math.min(next, entries.length - 1);
       dispatch();
     };
+    if (holding) { pending = true; held.push(() => { pending = false; land(); }); return; }
     if (!deferred) { index = next; queueMicrotask(dispatch); return; }
     pending = true;
     setTimeout(() => { pending = false; land(); }, 1);
   };
   const history = {
     get state() { return entries[index]!.state; },
-    pushState(state: unknown, _title: string, url?: string | null) { entries.splice(index + 1); entries.push({ state, href: url ?? entries[index]!.href }); index += 1; },
-    replaceState(state: unknown, _title: string, url?: string | null) { entries[index] = { state, href: url ?? entries[index]!.href }; },
+    pushState(state: unknown, _title: string, url?: string | null) { entries.splice(index + 1); keys += 1; entries.push({ state, href: url ?? entries[index]!.href, key: `k${keys}` }); index += 1; },
+    replaceState(state: unknown, _title: string, url?: string | null) { entries[index] = { state, href: url ?? entries[index]!.href, key: entries[index]!.key }; },
     back() { traverse(-1); },
     forward() { traverse(1); },
     go(by: number) { traverse(by); },
@@ -36,7 +41,13 @@ function fakeWindow() {
     get location() { return { href: entries[index]!.href }; },
     addEventListener(type: string, listener: (event: { state: unknown }) => void) { if (type === "popstate") listeners.push(listener); },
   };
-  return { window, entries, at: () => index, defer: (on: boolean) => { deferred = on; }, pending: () => pending, marks: () => entries.map((entry) => typeof (entry.state as Record<string, unknown> | null)?.["ovis:sheet"] === "string") };
+  /** the browser's key for each entry, as the Navigation API tells it: a test hands it to the window */
+  const navigation = {
+    get currentEntry() { return { key: entries[index]!.key, index }; },
+    entries() { return entries.map((entry, at) => ({ key: entry.key, index: at })); },
+  };
+  return { window, entries, navigation, at: () => index, defer: (on: boolean) => { deferred = on; },
+    hold: () => { holding = true; }, release: () => { holding = false; for (const go of held.splice(0)) go(); }, pending: () => pending, marks: () => entries.map((entry) => typeof (entry.state as Record<string, unknown> | null)?.["ovis:sheet"] === "string") };
 }
 const fake = fakeWindow();
 const settled = async () => {
@@ -334,11 +345,49 @@ describe("a phone's sheet in the history", () => {
     jest.advanceTimersByTime(0);
     expect(fake.pending()).toBe(true);
     expect(sheetStep.lands({} as Event)).toBe(true);
+    // with no Navigation API it names no entry its step lands on
+    expect(sheetHistory.sheetBackOnto()).toBeNull();
     await settled();
     fake.defer(false);
     hooks.enter(() => {});
     h.back(); await settled();
     expect(answers).toEqual([true, false]);
+  });
+
+  it("names the entry its step lands on and tells that landing from any other traversal, also when a sheet opened and closed meanwhile (#4221)", async () => {
+    const browser = fake.window as { navigation?: unknown };
+    browser.navigation = fake.navigation;
+    try {
+      const landed: boolean[] = [];
+      fake.window.addEventListener("popstate", (event) => { landed.push(sheetHistory.sheetBackLanded(event as unknown as Event)); });
+      const start = fake.at();
+      const under = fake.entries[start]!.key;
+      const leaveFirst = hooks.enter(() => {});
+      fake.hold();
+      leaveFirst();
+      jest.advanceTimersByTime(0);
+      expect(fake.pending()).toBe(true);
+      expect(sheetHistory.sheetBackOnto()).toBe(under);
+      // a sheet opens over the entry the step leaves, and closes, before the step lands: it takes no step of its own
+      const leaveSecond = hooks.enter(() => {});
+      expect(fake.at()).toBe(start + 2);
+      leaveSecond();
+      jest.advanceTimersByTime(0);
+      expect(sheetHistory.sheetBackOnto()).toBe(under);
+      fake.release();
+      await settled();
+      expect(fake.at()).toBe(start);
+      expect(landed).toEqual([true]);
+      expect(sheetHistory.sheetBackOnto()).toBeNull();
+      // a Back of the user's own is no landing of the step
+      const leaveThird = hooks.enter(() => {});
+      h.back(); await settled();
+      leaveThird();
+      expect(fake.at()).toBe(start);
+      expect(landed).toEqual([true, false]);
+    } finally {
+      Reflect.deleteProperty(browser, "navigation");
+    }
   });
 
   it("keeps Settings opened as the palette closes over a peek that stays up: the palette's entry is the peek's again, with no step left to land under Settings (#2000)", async () => {

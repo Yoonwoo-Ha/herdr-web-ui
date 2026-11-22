@@ -574,15 +574,20 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
         const setup = async (recording: Page): Promise<void> => {
           // by path: the app asks with `?compact_agents=1`, which a glob ending in the path does not match
           const isRoster = (url: URL) => url.pathname === "/api/machines";
-          if (scenario === "hidden-mount") await recording.route(isRoster, async (route) => {
-            const response = await route.fetch();
-            // App deliberately does not load while hidden. Hide after loading starts, but before
-            // the roster response can mount a pane; hasFocus alone must not permit an attach.
-            await recording.evaluate(() => {
-              Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
-              Object.defineProperty(document, "hasFocus", { configurable: true, value: () => true });
-            });
-            await route.fulfill({ response });
+          if (scenario === "hidden-mount") await recording.addInitScript(() => {
+            const browserWindow: Window = window;
+            const fetchPage = browserWindow.fetch.bind(browserWindow);
+            let started = false;
+            // Let the first roster read start, then hide in that same task. A
+            // machine-events socket can mount the pane before the HTTP answer.
+            Object.defineProperty(document, "visibilityState", { configurable: true, get: () => started ? "hidden" : "visible" });
+            Object.defineProperty(document, "hasFocus", { configurable: true, value: () => true });
+            browserWindow.fetch = (input, init) => {
+              const answer = fetchPage(input, init);
+              const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+              if (url.pathname === "/api/machines") started = true;
+              return answer;
+            };
           });
           if (scenario === "mirrored-mount") await recording.route(isRoster, async (route) => {
             const response = await route.fetch();
@@ -1239,7 +1244,16 @@ export async function checkFocusedWindowReclaimsTerminalSize(browser: Browser, o
     const desktop = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 1280, height: 800 } }, settings, false, asking);
     await attached(desktop);
     const desktopSize = await tookAskedGrid(desktop, "the desktop took the pane at its own size");
-    const phone = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, { ...settings, terminalInputMode: "line" }, false, asking);
+    // The phone's first health answer is held until the desktop has taken the pane back (#4378): a page attaches
+    // from the server's cached roster before it knows whether herdr can attach, and learning that later is no
+    // reason to size the pane again.
+    let answerHealth = (): void => {};
+    const healthHeld = new Promise<void>((resolve) => { answerHealth = resolve; });
+    const lateHealth = async (page: Page) => {
+      await asking(page);
+      await page.route((url) => url.pathname === "/api/health" && url.search === "", async (route) => { await healthHeld; await route.continue().catch(() => {}); });
+    };
+    const phone = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, { ...settings, terminalInputMode: "line" }, false, lateHealth);
     await attached(phone);
     const phoneSize = await tookAskedGrid(phone, "the phone took the pane at its own size");
     // A window takes the pane back on a click or a key only once it has heard that another took it: the server's
@@ -1257,6 +1271,12 @@ export async function checkFocusedWindowReclaimsTerminalSize(browser: Browser, o
 
     await desktop.locator(".xterm").click();
     await took(desktopSize, "a click in the desktop terminal");
+    const beforeHealth = (await framesOf(phone)).length;
+    answerHealth();
+    await phone.waitForFunction(() => [...document.querySelectorAll("[title]")].some((el) => /protocol \d/.test(el.getAttribute("title") ?? "")), undefined, { timeout: 10_000 });
+    await phone.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)))));
+    assert.deepEqual((await framesOf(phone)).slice(beforeHealth).filter((f) => f.dir === "out" && (f.type === "resize" || f.type === "attach")), [], "the phone's first health answer, come after the desktop took the pane back, sends no size of its own");
+    assert.equal(await size(), desktopSize, "the phone's late health answer leaves the pane at the desktop's size");
     await phone.locator(".xterm").tap();
     await took(phoneSize, "a tap in the phone terminal");
     await desktop.locator(".xterm").click({ button: "right" });

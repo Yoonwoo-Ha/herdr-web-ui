@@ -7,6 +7,7 @@ import { worktreeOfLabels } from "./worktrees.ts";
 import { paneAgent, type ProgramPlatform, reportedAgent, reportedStatus } from "../agent-identity.ts";
 import { catalogPlatform, type CatalogPlatform } from "../../shared/agent-catalog.ts";
 import type { JobProcess } from "../foreground-job.ts";
+import { shownStatusOfWord } from "../../shared/attention.ts";
 
 /**
  * hc has no workspaces, tabs or panes. The Herdr desktop app keeps its own (spaces, tabs and split
@@ -27,11 +28,7 @@ export const TAB_LABEL = "herdr.tab";
 export const WORKSPACE_NAME_LABEL = "ovis.workspace";
 export const TAB_NAME_LABEL = "ovis.tab";
 export const PANE_NAME_LABEL = "ovis.pane";
-/**
- * The last turn a person looked at, shared by every Herdr client (herdr-app docs/labels.md): an
- * agent at rest whose turn is past it is done, one at or below it idle.
- */
-export const SEEN_LABEL = "herdr.seen";
+export { SEEN_LABEL, seenTurnOf } from "../../shared/attention.ts";
 
 /**
  * One OSC 7501 report (hc's `Status`): the program's own words. `kind` (permission, question, auth)
@@ -64,18 +61,10 @@ export function agentStatusOf(status: HcStatus | null | undefined): AgentStatus 
   return reportedStatus(status?.state);
 }
 
-export function seenTurnOf(labels: Readonly<Record<string, string>> | undefined): number | null {
-  const value = labels?.[SEEN_LABEL];
-  if (value === undefined || !/^\d{1,15}$/.test(value)) return null;
-  return Number(value);
-}
-
+/** The status a terminal shows (shared/attention.ts `shownStatusOfWord`), from its program's report. */
 export function shownStatusOf(status: HcStatus | null | undefined, turn: number | undefined, labels: Readonly<Record<string, string>> | undefined, firstTurn?: number): AgentStatus {
   const word = agentStatusOf(status);
-  if (word !== "idle" && word !== "done") return word;
-  const seen = seenTurnOf(labels);
-  if (seen !== null) return (turn ?? 0) > seen ? "done" : "idle";
-  return firstTurn !== undefined && (turn ?? 0) > firstTurn ? "done" : word;
+  return shownStatusOfWord(word, turn, labels, firstTurn);
 }
 
 export function agentOfStatus(status: HcStatus | null | undefined): string | null {

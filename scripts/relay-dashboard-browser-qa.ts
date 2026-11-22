@@ -34,7 +34,6 @@ interface OpenOptions {
   readonly density?: "comfortable" | "compact";
   readonly locale?: "en" | "ja" | "ko" | "zh";
   readonly textScale?: number;
-  readonly signedIn?: boolean;
   readonly reducedMotion?: boolean;
   readonly forcedColors?: boolean;
   readonly directory?: (route: Route) => Promise<void> | void;
@@ -100,7 +99,21 @@ export async function relayDashboardQa({ browser, origin, evidence }: DashboardQ
       await route.fulfill({ status: answer.status, headers: { ...Object.fromEntries(answer.headers), ...cors }, body: Buffer.from(await answer.arrayBuffer()) });
     });
     await context.routeWebSocket(/.*/, (ws) => { sockets.push(ws.url()); ws.close(); });
-    await context.addInitScript(({ language, theme, density, scale }) => {
+    await context.addInitScript(({ app, language, theme, density, scale }) => {
+      if (location.origin === app) {
+        // The signed-in shell can render before its account key is committed. Watch the write
+        // in the OAuth return document, where the app will create the key.
+        const put = IDBObjectStore.prototype.put;
+        IDBObjectStore.prototype.put = function (value, key) {
+          const request = put.call(this, value, key);
+          if (this.transaction.db.name === "ovis-account" && this.name === "account" && key === "key") {
+            this.transaction.addEventListener("complete", () => {
+              document.documentElement.setAttribute("data-qa-account-key-committed", "");
+            }, { once: true });
+          }
+          return request;
+        };
+      }
       if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language, theme, density }));
       if (scale !== 1) {
         const apply = (): void => {
@@ -110,7 +123,7 @@ export async function relayDashboardQa({ browser, origin, evidence }: DashboardQ
         };
         if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", apply, { once: true }); else apply();
       }
-    }, { language: locale, theme: options.theme ?? "dark", density: options.density ?? "comfortable", scale: textScale });
+    }, { app: APP, language: locale, theme: options.theme ?? "dark", density: options.density ?? "comfortable", scale: textScale });
     await options.prepare?.(context);
     const page = await context.newPage();
     page.setDefaultTimeout(20_000);
@@ -122,27 +135,28 @@ export async function relayDashboardQa({ browser, origin, evidence }: DashboardQ
     if (options.entry === "screen") { await page.locator("main[data-relay-state]").first().waitFor({ timeout: LOAD_MS }); return made; }
     await page.locator(".account-provider").first().waitFor({ timeout: LOAD_MS });
     if (options.entry === "providers") return made;
-    const settle = async (mode: "account" | "local"): Promise<void> => {
-      await page.locator(`.relay-dash[data-dashboard-mode="${mode}"]`).waitFor({ timeout: LOAD_MS });
+    const settle = async (): Promise<void> => {
+      await page.locator('.relay-dash[data-dashboard-mode="account"]').waitFor({ timeout: LOAD_MS });
       await page.locator(".relay-overview-strip button, [data-dashboard-empty]").first().waitFor({ timeout: LOAD_MS });
       await page.waitForFunction(() => document.querySelectorAll('.status-dot[data-state="checking"]').length === 0, null, { timeout: LOAD_MS });
     };
-    if (options.signedIn ?? true) {
-      await page.locator(".account-provider").first().click();
-      await page.locator('.relay-dash[data-dashboard-mode="account"]').waitFor({ timeout: LOAD_MS });
-      if (fleet.seeds.length > 0) {
-        await seedPairings(page, fleet.seeds, ACCOUNT);
-        await page.reload();
-      }
-      directory = options.directory ?? null;
-      if (options.directory) { await page.reload(); return made; }
-      await settle("account");
-    } else {
-      await seedPairings(page, fleet.seeds, null);
+    await page.locator(".account-provider").first().click();
+    // a sign-in lands on Add a PC, never the dashboard: that opens only by its own address, as here
+    await page.locator('main.relay-add-screen[data-account-state="signed-in"] .relay-add, [data-add-pc-mode]').first().waitFor({ timeout: LOAD_MS });
+    expect(await page.locator(".relay-dash").count() === 0, "the sign-in landed on the dashboard");
+    // a fresh load that draws the signed-in dashboard read the account key back from storage: it was committed
+    await page.goto(`${APP}/#overview`);
+    await page.locator('.relay-dash[data-dashboard-mode="account"]').waitFor({ timeout: LOAD_MS });
+    // the sign-in's return opens a saved PC by itself once it has read them (#4358): seeded before that read, the PC it
+    // opens aborts the reload below, so the pairings wait until the shell has read its entry to the end
+    await page.locator('[data-relay-shell="mounted"]').waitFor({ state: "attached" });
+    if (fleet.seeds.length > 0) {
+      await seedPairings(page, fleet.seeds, ACCOUNT);
       await page.reload();
-      await page.locator('[data-action="continue-local"], .account-continue-saved').first().click();
-      await settle("local");
     }
+    directory = options.directory ?? null;
+    if (options.directory) { await page.reload(); return made; }
+    await settle();
     return made;
   };
 
@@ -208,6 +222,10 @@ export async function relayDashboardQa({ browser, origin, evidence }: DashboardQ
   for (const width of [1440, 390] as const) {
     await check(`signin-${width}`, async () => {
       const { page, account } = await open({ fleet: "F0", width, theme: "light", entry: "providers" });
+      // the hosted build names no providers: the stack is the account service's own list once it answers
+      await page.locator(".account-provider").nth(2).waitFor({ timeout: LOAD_MS });
+      const names = await page.locator(".account-provider").allTextContents();
+      expect(names.join() === "Continue with GitHub,Continue with Google,Continue with Apple", `the service's providers are offered: ${JSON.stringify(names)}`);
       const column = await page.locator(".account-centered").first().evaluate((element) => {
         const style = getComputedStyle(element);
         return { width: element.getBoundingClientRect().width, border: style.borderTopWidth, background: style.backgroundColor };
@@ -216,7 +234,7 @@ export async function relayDashboardQa({ browser, origin, evidence }: DashboardQ
       expect(width === 1440 ? Math.round(column.width) === 368 : column.width <= 368, `sign-in column ${column.width}px (368px at most, 368 on a desktop)`);
       expect(column.border === "0px" && column.background === "rgba(0, 0, 0, 0)", `sign-in column is unboxed (border ${column.border}, background ${column.background})`);
       expect(providers.length > 0 && providers.every((height) => height === providers[0]) && (providers[0] ?? 0) >= 44, `provider controls ${JSON.stringify(providers)}px: one height, at least 44`);
-      expect(!account.includes("GET /v1/providers"), "the sign-in asks the service for no provider list after it painted");
+      expect(account.filter((request) => request === "GET /v1/providers").length === 1, `the sign-in reads the service's provider list once: ${JSON.stringify(account)}`);
       expect(await page.locator(".account-provider").count() === providers.length, "the provider stack did not change while measured");
       await shot(page, `signin-${width}-light`);
       return `column ${Math.round(column.width)}px unboxed, providers ${JSON.stringify(providers)}px, ${await noOverflow(page)}`;
@@ -375,17 +393,6 @@ export async function relayDashboardQa({ browser, origin, evidence }: DashboardQ
       await closeMarked(page.context());
     }
     return results.join("; ");
-  });
-
-  await check("local-dashboard", async () => {
-    const { page, fleet } = await open({ fleet: "FREADY", signedIn: false });
-    const keys = await page.locator(".relay-overview-strip [data-strip-cell]").evaluateAll((cells) => cells.map((cell) => cell.getAttribute("data-strip-cell")));
-    expect(JSON.stringify(keys) === JSON.stringify(["paired", "relays"]), `local strip ${JSON.stringify(keys)}: no account Ready/Needs you`);
-    const labels = Object.values(await strip(page)).map((cell) => cell.label);
-    expect(JSON.stringify(labels) === JSON.stringify(["Paired with this device", "Relays"]), `local strip reads ${JSON.stringify(labels)}: no account Ready/Needs you`);
-    const words = await page.locator(".relay-pc-state-word").allInnerTexts();
-    expect(words.length === fleet.seeds.length && words.every((word) => /^(Paired · not checked|No answer)$/.test(word)), `local rows report this device's checks only ${JSON.stringify(words)}`);
-    return `strip ${JSON.stringify(keys)}, rows ${JSON.stringify([...new Set(words)])}`;
   });
 
   const filters: [string, FleetName, string, number][] = [["filter-needs", "FREADY", "needs", 3], ["filter-ready", "FREADY", "ready", 2], ["filter-offline", "FREADY", "offline", 1], ["filter-empty", "F4", "ready", 0]];

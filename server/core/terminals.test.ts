@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, jest, mock, setSystemTime, spyOn } from "bun:test";
 import { OUTPUT_HARD_BYTES, OUTPUT_HIGH_BYTES, OUTPUT_JOIN_BYTES_PER_SECOND, OUTPUT_STALL_MS, ReplayBuffer } from "../output-window.ts";
 import { connectionData, send } from "./connections.ts";
+import { createInputLane } from "./input.ts";
 import type { PaneAttachment } from "./terminal-process.ts";
 import * as terminalProcess from "./terminal-process.ts";
 import * as pty from "../pty/session.ts";
@@ -87,6 +88,83 @@ it("pauses a pane whose output waits behind a large frame queued after its attac
     registry.conversations.stop();
   }
 });
+
+for (const [how, name] of [
+  ["detach", "delivers the letter and wheel reports a viewer was answered for, in order, before its own detach lets the attach go, and takes nothing after it"],
+  ["disconnect", "ends the attach at once, with what it had not passed on, when its last viewer's connection is taken out"],
+  ["remove during drain", "kills a draining attach at once when its last viewer's connection is removed"],
+  ["force close during drain", "kills a draining attach at once when its pane attachment is forced closed"],
+  ["shutdown during drain", "kills a draining attach at once when the server closes all attachments"],
+] as const) {
+  it(`${name} (#4174)`, async () => {
+    const passed: string[] = [];
+    const gate = Promise.withResolvers<void>();
+    const gone = Promise.withResolvers<void>();
+    let taking = true;
+    let running = true;
+    const told: ServerMessage[] = [];
+    const client = {
+      data: connectionData({ deviceId: undefined, readOnly: false }), readyState: WebSocket.OPEN,
+      getBufferedAmount: () => 0, send: (text: string) => { told.push(JSON.parse(text)); return text.length; }, close() {},
+    };
+    // an attach that takes bytes at once and passes them on only once the gate opens: killed, it ends with what still
+    // waits; asked to leave, it takes no more and goes after all of it
+    attachment = {
+      kind: "pty", ready: true, cols: 80, rows: 24, clients: new Set(), grids: new Map(), stalled: new Map(), replay: new ReplayBuffer(1024),
+      process: {
+        exited: gone.promise, pause() {}, resume() {}, resize() {}, winch() {},
+        write(data: string) {
+          if (!taking) return false;
+          void gate.promise.then(() => { if (running) passed.push(data); });
+          return true;
+        },
+        kill() {
+          if (!running) return;
+          taking = running = false; passed.push("gone"); gone.resolve();
+        },
+        leave() {
+          taking = false;
+          void gate.promise.then(() => {
+            if (running) { running = false; passed.push("gone"); gone.resolve(); }
+          });
+        },
+      } as unknown as Extract<PaneAttachment, { kind: "pty" }>["process"],
+    };
+    const clients = new Set([client]);
+    const registry = createTerminalRegistry({
+      options: {}, clients, stopped: () => false, terminalAttach: async () => true,
+      holdFor: 0, heldRetry: 0, retryFor: 0, relookupFor: 0,
+      holdPending() {}, holdPendingPane() {}, attached() {}, inputReady() {}, end() {},
+    });
+    const { inputFrames } = createInputLane({
+      TYPED_SETTLE_MS: 0, KEY_SETTLE_MS: 0, clients, sight: registry.sight, poke: registry.poke,
+      terminalAttach: async () => true, terminalAttachKnown: () => true, mayType: () => true, authorizeSocket() {},
+    });
+    try {
+      await registry.terminalFrames.attach(client, { type: "attach", pane_id: "p", cols: 80, rows: 24, keep_size: true });
+      const typed = ["a", ...Array.from({ length: 6 }, (_, wheel) => `\x1b[<64;10;${wheel + 1}M`)];
+      typed.forEach((text, id) => inputFrames.input(client, { type: "input", pane_id: "p", text, id }));
+      if (how === "disconnect") registry.detachClaimed(client);
+      else registry.terminalFrames.detach(client, { type: "detach", pane_id: "p" });
+      inputFrames.input(client, { type: "input", pane_id: "p", text: "b", id: typed.length });
+      if (how !== "disconnect") expect(passed).toEqual([]);
+      if (how === "remove during drain") {
+        clients.delete(client);
+        registry.detachClaimed(client);
+      }
+      if (how === "force close during drain") registry.closeAttachment("p");
+      if (how === "shutdown during drain") registry.closeAttachments();
+      if (how !== "detach") expect(passed).toEqual(["gone"]);
+      gate.resolve();
+      await gone.promise;
+      expect(passed).toEqual(how === "detach" ? [...typed, "gone"] : ["gone"]);
+      expect(told.filter((frame) => frame.type === "input-result")).toEqual([
+        ...typed.map((_, id) => ({ type: "input-result" as const, id, pane_id: "p", ok: true })),
+        { type: "input-result" as const, id: typed.length, pane_id: "p", ok: false, code: "input_not_ready" },
+      ]);
+    } finally { gate.resolve(); registry.conversations.stop(); }
+  });
+}
 
 it("retains only a bounded opaque resume ID on an attach claim", async () => {
   const valid = crypto.randomUUID();
@@ -410,6 +488,7 @@ for (const onCore of [true, false]) {
         expect(pane.writes).toEqual(["\x1b[?1;2c"]);
         expect(pane.pty?.env).toEqual({ HERDR_SOCKET_PATH: herdr.herdrSocketPath() });
         expect(pane.pty?.args).toEqual(["terminal", "attach", "term_0"]);
+        expect(pane.pty?.leaveAt).toBe(process.platform === "win32" ? undefined : terminalProcess.ATTACH_LEAVE);
         pane.attach.onData("screen");
         expect(pane.painted()).toBe(setup + "screen");
       }

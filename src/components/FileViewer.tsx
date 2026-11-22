@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { Braces, Check, Code, Copy, Download, Ellipsis, ExternalLink, Link2, Maximize2, PanelRight, Pencil, TableOfContents, TriangleAlert, X } from "lucide-react";
+import { Braces, Check, Code, Copy, Download, Ellipsis, ExternalLink as ExternalLinkIcon, Link2, Maximize2, PanelRight, Pencil, TableOfContents, TriangleAlert, X } from "lucide-react";
 
 import "./FileViewer.css";
 import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
@@ -44,6 +44,7 @@ import { getTransport } from "../lib/transport.ts";
 import { useResourceUrl, useResourceUrlState } from "../lib/useResourceUrl.ts";
 import { RelayResourceTooLargeError } from "../lib/relay/resources.ts";
 import { fileFailure, fileFailureText, type FileFailure } from "../lib/fileFailure.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
 
 type Preview = { status: "none" | "pending" | "failed" } | { status: "ready"; blocks: MarkdownBlock[] };
 
@@ -499,8 +500,8 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
       {docked ? <Maximize2 aria-hidden="true" /> : <PanelRight aria-hidden="true" />}
     </button>}
     {/* in the installed app's window a new tab would be another app window: Copy link takes their place */}
-    {!page && !appWindow && <a className="icon-button file-viewer-action file-viewer-wide" href={newTabSrc ?? undefined} target="_blank" rel="noopener" aria-label={t("Open in a new tab")} title={t("Open in a new tab")}><ExternalLink aria-hidden="true" /></a>}
-    {(page || markdown) && !appWindow && <a className="icon-button file-viewer-action file-viewer-wide" href={rawSrc ?? undefined} target="_blank" rel="noopener" aria-label={t("Open raw file")} title={t("Open raw file")}><Code aria-hidden="true" /></a>}
+    {!page && !appWindow && <ExternalLink kind="ovis" referrer className="icon-button file-viewer-action file-viewer-wide" href={newTabSrc ?? undefined} aria-label={t("Open in a new tab")} title={t("Open in a new tab")}><ExternalLinkIcon aria-hidden="true" /></ExternalLink>}
+    {(page || markdown) && !appWindow && <ExternalLink kind="ovis" referrer className="icon-button file-viewer-action file-viewer-wide" href={rawSrc ?? undefined} aria-label={t("Open raw file")} title={t("Open raw file")}><Code aria-hidden="true" /></ExternalLink>}
     {!page && appWindow && <CopyLinkButton href={newTabHref} />}
     <a className="icon-button file-viewer-action file-viewer-wide" href={downloadHref ?? undefined} download={info?.name ?? true} aria-label={t("Download")} title={t("Download")}><Download aria-hidden="true" /></a>
     {canEdit && !editing && <button type="button" className="icon-button file-viewer-action" aria-label={t("Edit file")} title={t("Edit file")} onClick={() => setEditing(true)}><Pencil aria-hidden="true" /></button>}
@@ -509,8 +510,8 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
       <button type="button" className="icon-button file-viewer-action" aria-label={t("More")} title={t("More")} aria-haspopup="menu" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}><Ellipsis aria-hidden="true" /></button>
       {moreOpen && <div className="file-viewer-more-menu" role="menu" aria-label={t("More")} onKeyDown={moveInMore}>
         <p className="file-viewer-more-path" title={locationTitle}><span dir="ltr">{locationTitle}</span></p>
-        {!page && !appWindow && <a role="menuitem" className="file-viewer-more-item" href={newTabSrc ?? undefined} target="_blank" rel="noopener" onClick={() => closeMore(true)}><ExternalLink aria-hidden="true" />{t("Open in a new tab")}</a>}
-        {(page || markdown) && !appWindow && <a role="menuitem" className="file-viewer-more-item" href={rawSrc ?? undefined} target="_blank" rel="noopener" onClick={() => closeMore(true)}><Code aria-hidden="true" />{t("Open raw file")}</a>}
+        {!page && !appWindow && <ExternalLink kind="ovis" referrer role="menuitem" className="file-viewer-more-item" href={newTabSrc ?? undefined} onClick={() => closeMore(true)}><ExternalLinkIcon aria-hidden="true" />{t("Open in a new tab")}</ExternalLink>}
+        {(page || markdown) && !appWindow && <ExternalLink kind="ovis" referrer role="menuitem" className="file-viewer-more-item" href={rawSrc ?? undefined} onClick={() => closeMore(true)}><Code aria-hidden="true" />{t("Open raw file")}</ExternalLink>}
         {!page && appWindow && <CopyLinkButton href={newTabHref} menuItem onDone={() => closeMore(true)} />}
         <a role="menuitem" className="file-viewer-more-item" href={downloadHref ?? undefined} download={info?.name ?? true} onClick={() => closeMore(true)}><Download aria-hidden="true" />{t("Download")}</a>
       </div>}

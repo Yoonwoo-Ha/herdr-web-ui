@@ -15,8 +15,10 @@ import { AccountIntroductions, INTRODUCTION_TTL_MS } from "./introductions.ts";
 import { exportPublicKey, generateKeyPair, importPublicKey } from "../../shared/relay-e2ee.ts";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { deriveServerId } from "../../shared/relay-server-proof.ts";
-import { applyAccountRecords } from "./records.ts";
+import { applyAccountRecords, applyEnrollment } from "./records.ts";
 import { createServer } from "../index.ts";
+import { pullForRefusedSignIn } from "../relay/refused-signin.ts";
+import { privateStateFs } from "../private-state.ts";
 
 type Fixture = ReturnType<typeof relayFixture>;
 type Link = Awaited<ReturnType<typeof relayConnection>>;
@@ -29,7 +31,8 @@ const fixtures: Fixture[] = [];
 afterEach(() => { for (const fixture of fixtures.splice(0)) fixture.close(); });
 
 function fixture(options: Parameters<typeof relayFixture>[1] = {}): Fixture {
-  const made = relayFixture(false, options);
+  // This suite covers the released signed-add/enrollment protocol, not whole-list Step 2.
+  const made = relayFixture(false, { accountOpensAll: false, ...options });
   fixtures.push(made);
   return made;
 }
@@ -91,6 +94,20 @@ function registryRow(f: Fixture, id: string) {
   return registry.kind === "ok" ? registry.devices.find((device) => device.id === id) : undefined;
 }
 
+test("flag off: an unkept removal does not mask an unknown enrollment signer", async () => {
+  const devices = fixture({ accountOpensAll: false }).app.context.services.devices;
+  const stranger = await accountKey();
+  const key = (await accountKey()).spki;
+  const records = [await remove(stranger, key), await add(stranger, key)] as const;
+  const results = await applyEnrollment(devices, records, SERVER_ID, {
+    gates: { enrolling: () => false, held: () => false }, wait: () => false, settle: async () => {},
+  });
+  expect(results).toEqual([
+    { id: records[0].id, outcome: "refused", code: "account_unavailable" },
+    { id: records[1].id, outcome: "refused", code: "signer_not_member" },
+  ]);
+});
+
 test("a device links its row to the account over its own session, which gives the PC its first member", async () => {
   const f = fixture();
   const legacy = await relayDevice(f);
@@ -103,6 +120,23 @@ test("a device links its row to the account over its own session, which gives th
   expect(await status(link)).toEqual(expect.objectContaining({ account: ACCOUNT, members: 1, unlinked: [] }));
   const again = await relayConnection(f);
   expect((await again.auth({ keys: key.keys, publicKey: key.spki, id: legacy.id })).device_id).toBe(legacy.id);
+});
+
+test("P22: the account link route refuses a key move for a screen-approved device", async () => {
+  const f = fixture({ accountOpensAll: true });
+  const devices = f.app.context.services.devices;
+  const old = await accountKey();
+  const redeemed = devices.redeemCode(devices.startPairing().code, "code", old.spki);
+  if (!redeemed.ok) throw new Error(redeemed.reason);
+  const approved = devices.admitConfirmed({ codeId: redeemed.codeId, key: old.spki, label: "Phone", source: "screen" });
+  if (approved === null) throw new Error("Screen confirmation failed");
+  const device = { id: approved.id, keys: old.keys, publicKey: old.spki };
+  const link = await signedIn(f, device);
+
+  const response = await post(link, "/api/account/link", { record: await linkRecord(device, await accountKey()) });
+
+  expect(response).toMatchObject({ status: 409, body: { error: { code: "replacement_needs_app" } } });
+  expect(registryRow(f, device.id)).toMatchObject({ relay_public_key: old.spki });
 });
 
 test("a link is refused for another row, another PC, a stale key, a key another row holds, or off the relay", async () => {
@@ -582,6 +616,20 @@ test("a full queue makes room for a relayed remove by dropping a waiting add, ne
   expect((await applyAccountRecords(f.app.context.services.devices, [await add(key, joining.spki)], SERVER_ID, Date.now(), mailbox.gates()))[0]?.outcome).toBe("applied");
 });
 
+test("flag off: a full queue of waiting adds makes room for a relayed add as on main", async () => {
+  const f = fixture({ accountOpensAll: false });
+  const pendingPath = join(f.stateDir, "account-pending.json");
+  const stranger = await accountKey();
+  const adds = await Promise.all(Array.from({ length: PENDING_MAX }, async () => add(stranger, (await accountKey()).spki)));
+  writeFileSync(pendingPath, JSON.stringify(adds), { mode: 0o600 });
+  const mailbox = new AccountMailbox({ devices: f.app.context.services.devices, identity: () => undefined, service: "https://account.test", pendingPath });
+  const relayed = await add(stranger, (await accountKey()).spki);
+  expect(mailbox.wait(relayed)).toBe(true);
+  const kept = JSON.parse(readFileSync(pendingPath, "utf8")) as unknown[];
+  expect(kept).toHaveLength(PENDING_MAX);
+  expect(kept).toContainEqual(relayed);
+});
+
 test("a watch device reaches none of the account routes", async () => {
   const f = fixture();
   const watcher = await signedIn(f, await relayDevice(f, "watch"));
@@ -892,7 +940,7 @@ async function mailboxService(f: Fixture) {
 
 async function accountPc() {
   let fetch = (_request: Request): Promise<Response> => Promise.reject(new Error("no account service yet"));
-  const made = await relayAccountFixture("drive", ACCOUNT, { accountService: { url: "https://account.test", fetch: (request) => fetch(request) } });
+  const made = await relayAccountFixture("drive", ACCOUNT, { accountOpensAll: false, accountService: { url: "https://account.test", fetch: (request) => fetch(request) } });
   fixtures.push(made.fixture);
   const { service, identity, leave } = await mailboxService(made.fixture);
   await made.fixture.app.context.services.accountMailbox.pull();
@@ -909,6 +957,39 @@ async function signInAs(f: Fixture, serverId: string, key: AccountKey): Promise<
 }
 
 const pulls = (service: FakeAccountService) => service.requests.filter((request) => request === "POST /v1/pc/mailbox").length;
+
+test("flag off: a failed mailbox batch is not counted or acknowledged", async () => {
+  const { f, identity, service, leave, signer } = await accountPc();
+  const { devices, accountMailbox } = f.app.context.services;
+  const first = (await accountKey()).spki;
+  const second = (await accountKey()).spki;
+  await leave(await add(signer, first));
+  await leave(await add(signer, second));
+  const rename = privateStateFs.renameSync;
+  privateStateFs.renameSync = (from, to) => {
+    if (to === join(f.stateDir, "devices.json") && devices.hasKey(first)) throw new Error("second registry write failed");
+    rename(from, to);
+  };
+  try {
+    const count = await accountMailbox.pull();
+    expect(accountMailbox.error).toBe("second registry write failed");
+    expect(service.mailbox(identity.server_id, ACCOUNT)).toHaveLength(2);
+    expect(count).toBe(0);
+  } finally { privateStateFs.renameSync = rename; }
+});
+
+test("flag off: disconnect during sign-in does not cancel a mailbox removal", async () => {
+  const { f, identity, leave, signer } = await accountPc();
+  const services = f.app.context.services;
+  const key = (await accountKey()).spki;
+  await leave(await remove(signer, key));
+  const mux = { active: true, extendSetup: () => {} };
+  const pull = pullForRefusedSignIn({ services, serverId: identity.server_id },
+    { deviceId: accountDeviceId(identity.server_id, key), nonce: new Uint8Array(32), signature: "" }, mux);
+  mux.active = false;
+  expect(await pull).toBe(false);
+  expect(services.devices.isTombstoned(key)).toBe(true);
+});
 
 test("a device a member just added elsewhere signs in at once: the PC reads its mailbox for a device it does not know", async () => {
   const { f, service, identity, leave, signer } = await accountPc();
@@ -1383,7 +1464,7 @@ test("a key paired again in one of two state dirs stays paired, without its tomb
   const store = f.app.context.services.devices;
   const later = Date.now() + 1_000;
   expect(store.pairRelay(store.startPairing(later).code, "Mac app", gone.spki, later)).not.toBeNull();
-  const other = createServer({ port: 0, hostname: "127.0.0.1", stateDir: sibling, siblingStateDir: f.stateDir, token: "t", tailscaleOwner: null, machines: false, sidecar: false });
+  const other = createServer({ port: 0, hostname: "127.0.0.1", stateDir: sibling, siblingStateDir: f.stateDir, token: "t", tailscaleOwner: null, machines: false, sidecar: false, accountOpensAll: false });
   try {
     // the merge brings the other dir's tombstone back, and the start-up repair drops it: the row is newer
     for (const devices of [other.context.services.devices, new DeviceStore(f.stateDir)]) {
@@ -1435,7 +1516,7 @@ test("a key revoked on this PC stays out when a sibling dir that missed the revo
     const registry = JSON.parse(readFileSync(join(sibling, "devices.json"), "utf8")) as { devices: { relay_public_key?: string; created_at: string }[] };
     for (const row of registry.devices) if (row.relay_public_key === gone.spki) row.created_at = new Date(Date.now() + 1_000).toISOString();
     writeFileSync(join(sibling, "devices.json"), JSON.stringify(registry), { mode: 0o600 });
-    const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir: f.stateDir, siblingStateDir: sibling, token: "t", tailscaleOwner: null, machines: false, sidecar: false });
+    const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir: f.stateDir, siblingStateDir: sibling, token: "t", tailscaleOwner: null, machines: false, sidecar: false, accountOpensAll: false });
     try {
       expect(app.context.services.devices.hasKey(gone.spki)).toBe(false);
     } finally { app.stop(); }

@@ -1,12 +1,11 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { ALargeSmall, AppWindow, ArrowDownUp, ArrowLeftRight, ArrowLeft, AudioLines, Bell, Bot, Box, Brain, ChevronLeft, ChevronRight, CircleDot, ClipboardCopy, ClipboardPaste, Command, CornerDownLeft, ExternalLink, FileClock, FilePen, Filter, FlaskConical, Gauge, Globe, Image as ImageIcon, Inbox, Info, Keyboard, Languages, Layers, ListCollapse, ListTree, Lock, MessageSquare, MessageSquareReply, MessagesSquare, Mic, Monitor, Mouse, MousePointer2, MoveHorizontal, Palette, PanelLeft, PanelRight, Plus, Puzzle, Rows3, Search, Send, Server, Shapes, Smartphone, Sparkles, SquareTerminal, Star, SunMoon, Tag, Tags, TextCursorInput, Trash2, Type, Volume2, WandSparkles, WrapText, X, type LucideIcon } from "lucide-react";
+import { ALargeSmall, AppWindow, ArrowDownUp, ArrowLeftRight, ArrowLeft, AudioLines, Ban, Bell, Bot, Box, Brain, ChevronLeft, ChevronRight, CircleDot, ClipboardCopy, ClipboardPaste, Command, CornerDownLeft, ExternalLink as ExternalLinkIcon, FileClock, FilePen, Filter, FlaskConical, Gauge, Globe, Image as ImageIcon, Inbox, Info, Keyboard, Languages, Layers, ListCollapse, ListTree, Lock, MessageSquare, MessageSquareReply, MessagesSquare, Mic, Monitor, Mouse, MousePointer2, MoveHorizontal, Palette, PanelLeft, PanelRight, Plus, Puzzle, Rows3, Search, Send, Server, Shapes, Smartphone, Sparkles, SquareTerminal, Star, SunMoon, Tag, Tags, TextCursorInput, Trash2, Type, Volume2, WandSparkles, WrapText, X, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
 
 import type { AddPcPreset, AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { changePc, inNativeApp } from "../lib/nativeApp.ts";
-import { canReuseExternalLinkTab } from "../lib/terminalFileLinks.ts";
 import { loadRelayShell } from "../lib/relay.ts";
 import { inRelayShell, useRelay, type RelayState } from "../lib/useRelay.ts";
 import { serverIdOfPath, shellMode } from "../lib/shellMode.ts";
@@ -26,9 +25,11 @@ import { focusInOtherModal, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { awaitRestart, restartState, subscribeRestart } from "../lib/runtimeSwitch.ts";
 import { paneLifetimes } from "../lib/paneLifetime.ts";
 import { KeyBarSettings, KeyBarToggles } from "./KeyBarSettings.tsx";
+import { OwnJoins } from "./OwnJoins.tsx";
 import { FileTextSizeRow } from "./FileTextSizeRow.tsx";
 import { FoldHelpersRow } from "./FoldHelpersRow.tsx";
 import { FilesPanelRow } from "./FilesPanelRow.tsx";
+import { LinkBrowserRow } from "./LinkBrowserRow.tsx";
 import { onSettingsHistory, recordSettings, settingsEntry, settingsLevels, type SettingsLevel } from "../lib/settingsHistory.ts";
 import { ThemeFiles, themeLabel } from "./ThemeFiles.tsx";
 import { THEME_NAMES, ThemeCard } from "./ThemeCard.tsx";
@@ -39,7 +40,7 @@ import { UI_FONT_MAX, UI_FONT_MIN, UI_FONT_PRESET_FAMILY, uiFontPreset, type UiF
 import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalledFonts } from "../lib/installedFonts.ts";
 import type { UpdatesModel } from "../lib/updates.ts";
 import type { UserError } from "../lib/userError.ts";
-import { LOCAL_MACHINE, pcAlertKey, type HerdrCoreFacts, type HerdrRuntimeFacts, type Machine, type MachineSettings, type RuntimeName } from "../../shared/machines.ts";
+import { LOCAL_MACHINE, pairedPc, pcAlertKey, type HerdrCoreFacts, type HerdrRuntimeFacts, type Machine, type MachineSettings, type RuntimeName } from "../../shared/machines.ts";
 import { canHideMachine, isMachineShown, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
 import { alertFiltersChanged, updateAlertFilters, useAlertFilters } from "../lib/alertFilters.ts";
 import { alertMeWhenChips } from "./AlertChips.tsx";
@@ -52,19 +53,24 @@ import { useMachineApi } from "../lib/machineContext.tsx";
 import type { VoiceStatus } from "../../shared/voice.ts";
 import { dictationLocale, VOICE_CONFIG_EVENT } from "../lib/voice.ts";
 import { DevicesPanel } from "./DevicesPanel.tsx";
+import { StrictModeSection } from "./StrictModePanel.tsx";
+import { useMachineSessions } from "../lib/machineSessionContext.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { RuntimeMove } from "./RuntimeMove.tsx";
 import { SignOutRow } from "./SignOutRow.tsx";
 import { failureText, openOwnOffer, RelayDirectRow, statusText } from "./RelayPanel.tsx";
 import { AccountSection, accountServiceHere, type AccountState } from "./AccountSection.tsx";
+import { HostedAccountGroup } from "./AccountHead.tsx";
+import { useHostedSignIn } from "../lib/account/hostedSignIn.ts";
+import { shellAccountServiceOf } from "../lib/account/service.ts";
 import { AccountPcRows, NoAccountPcHint, removePcFromAccount } from "./AccountPcs.tsx";
-import { DRAWER_QUERY, leavePcList, pcListExit, STATE_WORD } from "./MachineSidebar.tsx";
-import { pcAccountStatus } from "../lib/account/join.ts";
+import { DRAWER_QUERY, leavePcList, pcListExit, removablePc, STATE_WORD } from "./MachineSidebar.tsx";
+import { AccountPcError, pcAccountStatus, type PcAccountStatus } from "../lib/account/join.ts";
 import { AccountService } from "../lib/account/service.ts";
 import { indexedAccountStore } from "../lib/account/store.ts";
 import { apiFetch } from "../lib/api-request-id.ts";
 import type { MyPc } from "../lib/account/myPcs.ts";
-import { ConnectPhoneDialog, relayOffered } from "./ConnectPhoneDialog.tsx";
+import { ConnectPhoneDialog, relayOffered, relayPending } from "./ConnectPhoneDialog.tsx";
 import { ACCOUNT_QR_WATCH_EVENT, accountQrNoticeWaiting } from "../lib/accountQrWatch.ts";
 import { PushTestControls } from "./PushTestControls.tsx";
 import { AlertWebhookGroup } from "./AlertWebhookGroup.tsx";
@@ -81,9 +87,17 @@ import { RenderBoundary } from "./RenderBoundary.tsx";
 import { requestedSettingsPage, requestSettingsPage, type SettingsPageId } from "../lib/paletteSettings.ts";
 import { currentSettingsPage } from "../lib/deepLink.ts";
 import { HERDR_WINDOW_CHOICES, type HerdrWindowChoice } from "../lib/herdrWindow.ts";
+import { canReuseExternalLinkTab, ExternalLink } from "../lib/externalLink.ts";
+import { hasDesktopBrowser } from "../lib/desktopBrowser.ts";
+import { browserBlockedSites } from "../../shared/browser-policy.ts";
+import "./BrowserPanel.css";
 
 export interface SettingsDialogProps {
   open: boolean;
+  /** this PC lists account-opens-all/1 now (its step-2 switch is on), from the local socket's features */
+  opensAll?: () => boolean;
+  /** this PC's last feature list lacked account-opens-all/1 (an explicit withdrawal, S32-1) */
+  withdrawn?: () => boolean;
   section?: "updates" | null;
   linkPage?: string | null;
   linkSection?: string | null;
@@ -279,7 +293,6 @@ function pageNote(t: Translate, page: SettingsPage): string | null {
     case "alerts": return t("When this device alerts you, and where else alerts go.");
     case "agents": return t("Coding agents on this PC, their accounts and plan limits.");
     case "shortcuts": return t("Keyboard shortcuts, and herdr's prefix keys.");
-    case "devices": return t("Phones, browsers and PCs that reach this Ovis.");
     case "experimental": return t("Features still being shaped; they may change.");
     default: return null;
   }
@@ -614,6 +627,8 @@ function ChatPage() {
           condition={<span className="settings-condition">{t(filePanelAvailable ? "Only pages this PC serves can open beside the pane." : "Only pages this PC serves can open in the app.")}</span>} wide reset={["webLinks"]}>
           <Segmented label={t("Web links")} value={settings.webLinks} onChange={(webLinks) => update({ webLinks })} options={WEB_LINK_TARGETS.map((webLinks) => ({ value: webLinks, label: webLinks === "panel" ? t(filePanelAvailable ? "Beside the pane" : "In the app") : t("In a new tab") }))} />
         </SettingsRow>
+        <LinkBrowserRow />
+        {hasDesktopBrowser() && <BuiltInBrowserRows />}
       </SettingsGroup>
 
       <VoiceMain />
@@ -635,7 +650,7 @@ function ChatPage() {
             <Toggle label={t("Reopen files on return")} checked={settings.reopenFileOnReturn} onChange={(reopenFileOnReturn) => update({ reopenFileOnReturn })} />
           </SettingsRow>
           <FilesPanelRow />
-          {canReuseExternalLinkTab() && <SettingsRow icon={ExternalLink} label={t("Reuse tab for external links")} description={t("Links that open outside Ovis reuse one browser tab and do not open a new one each time.")} reset={["reuseExternalLinkTab"]}
+          {canReuseExternalLinkTab() && <SettingsRow icon={ExternalLinkIcon} label={t("Reuse tab for external links")} description={t("Links that open outside Ovis reuse one browser tab and do not open a new one each time.")} reset={["reuseExternalLinkTab"]}
             condition={<span className="settings-condition">{t("The site in that tab can see and navigate this Ovis tab.")}</span>}>
             <Toggle label={t("Reuse tab for external links")} checked={settings.reuseExternalLinkTab} onChange={(reuseExternalLinkTab) => update({ reuseExternalLinkTab })} />
           </SettingsRow>}
@@ -644,6 +659,37 @@ function ChatPage() {
       </SettingsFold>
     </SettingsBare.Provider>
   );
+}
+
+/** The desktop app's built-in browser (app/electron/src/browserTabs.ts): only the desktop app offers it. */
+function BuiltInBrowserRows() {
+  const t = useT();
+  const { settings, update } = useSettings();
+  // what is typed in the blocked-sites box is kept when it goes away too (Settings closed with Escape before a blur);
+  // a box only replaced (the list saved, or reset to its default) has no edit of its own to keep
+  const update$ = useRef(update);
+  update$.current = update;
+  const holdBlockedBox = useCallback((box: HTMLTextAreaElement | null) => {
+    if (box === null) return;
+    return () => {
+      if (box.dataset["edited"] === "true") update$.current({ browserBlockedSites: browserBlockedSites(box.value.split("\n")) });
+    };
+  }, []);
+  return <>
+    <SettingsRow icon={AppWindow} label={t("Built-in browser")} description={t("Opens web pages in tabs inside this app: they are listed under Browser in the sidebar and open beside the pane. Its tabs are signed in to nothing you use elsewhere, and an agent's tabs keep cookies of their own.")} reset={["builtInBrowser"]}>
+      <Toggle label={t("Built-in browser")} checked={settings.builtInBrowser} onChange={(builtInBrowser) => update({ builtInBrowser })} />
+    </SettingsRow>
+    {settings.builtInBrowser && <SettingsRow icon={Ban} label={t("Blocked sites")} description={t("The built-in browser never loads these sites or their subdomains, in your tabs or an agent's. One site per line.")} wide reset={["browserBlockedSites"]}>
+      <textarea ref={holdBlockedBox} key={settings.browserBlockedSites.join("\n")} className="input settings-blocked-sites" rows={4} aria-label={t("Blocked sites")} placeholder="bank.example" defaultValue={settings.browserBlockedSites.join("\n")}
+        autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} onInput={(event) => { event.currentTarget.dataset["edited"] = "true"; }} onBlur={(event) => {
+          // what is kept, shown as kept: lines that are not a site are dropped from the box too
+          const kept = browserBlockedSites(event.currentTarget.value.split("\n"));
+          event.currentTarget.value = kept.join("\n");
+          delete event.currentTarget.dataset["edited"];
+          update({ browserBlockedSites: kept });
+        }} />
+    </SettingsRow>}
+  </>;
 }
 
 function TerminalPage({ keyBarButtonRef, onEditKeyBar, picturesByDefault }: { keyBarButtonRef: RefObject<HTMLButtonElement | null>; onEditKeyBar: () => void; picturesByDefault: boolean }) {
@@ -1159,12 +1205,13 @@ function deviceKind(label: string, t: ReturnType<typeof useT>): string | null {
   return t("Browser");
 }
 
-const groupedId = (id: string): string => id.match(/.{1,4}/g)?.join(" ") ?? id;
-
-function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSettings, pcSettingsError, onPcSettings, openAddPc, connectPc }: {
+function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSettings, pcSettingsError, onPcSettings, openAddPc, connectPc, opensAll, withdrawn }: {
+  opensAll?: (() => boolean) | undefined;
+  withdrawn?: (() => boolean) | undefined;
   auth: HealthAuth | null; security: SecurityFacts; onSignOut: (() => Promise<void>) | null; onRevokedAll: () => void;
   machines: readonly Machine[]; pcSettings: MachineSettings | null; pcSettingsError: string | null; onPcSettings: (patch: Partial<MachineSettings>) => void; openAddPc: (preset?: AddPcPreset) => void; connectPc: (machine: Machine) => void;
 }) {
+  const sessions = useMachineSessions();
   const { settings, update } = useSettings();
   const t = useT();
   const installPrompt = useInstallPrompt();
@@ -1193,6 +1240,7 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
   const holdPairing = useCallback((held: boolean) => { pairingHeld.current = held; }, []);
   const closeConnectOnPair = useCallback(() => { if (!pairingHeld.current) setConnecting(false); }, []);
   const accountService = accountServiceHere();
+  const hostedSignIn = useHostedSignIn();
   const [identityResets, setIdentityResets] = useState(0);
   const [account, setAccount] = useState<AccountState>({ signedIn: false, account: null, pcs: null, provider: null, noPcs: false, reachable: true });
   const tellsQrNotice = accountService !== null && account.reachable && relayOffered(relay) && !relayReadOnly;
@@ -1206,10 +1254,15 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
   // a new device joins by signing in only to a PC in the account this browser is signed in to (docs/account.md
   // "Joining through the account")
   const [pcAccount, setPcAccount] = useState<string | null>(null);
+  const [pcAddFromAccount, setPcAddFromAccount] = useState<PcAccountStatus["pcAddFromAccount"]>();
   useEffect(() => {
-    if (account.account === null) { setPcAccount(null); return; }
+    if (!connecting && account.account === null) { setPcAccount(null); setPcAddFromAccount(undefined); return; }
     let live = true;
-    pcAccountStatus(apiFetch).then((status) => { if (live) setPcAccount(status.account); }, () => { if (live) setPcAccount(null); });
+    pcAccountStatus(apiFetch).then((status) => {
+      if (live) { setPcAccount(status.account); setPcAddFromAccount(status.pcAddFromAccount); }
+    }, (error: unknown) => {
+      if (live) { setPcAccount(null); setPcAddFromAccount(error instanceof AccountPcError && error.code === "strict" ? "unavailable" : undefined); }
+    });
     return () => { live = false; };
   }, [account.account, connecting]);
   const joinBySignIn = account.account !== null && pcAccount === account.account && relay.status?.phase === "online";
@@ -1225,10 +1278,13 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
   return (
     <>
       {/* the account first: the sign-in the relay depends on is not left in More settings */}
-      <AccountSection onAccount={setAccount} recheck={accountChecks} />
+      {/* a PC page the hosted app opened has no PC sign-in of its own: the hosted one, with the overview's Sign out */}
+      {accountService === null && <HostedAccountGroup signIn={hostedSignIn} />}
+      <AccountSection onAccount={setAccount} recheck={accountChecks} signInElsewhere={(relayOffered(relay) || relayPending(relay)) && !relayReadOnly} {...(opensAll === undefined ? {} : { opensAll })} {...(withdrawn === undefined ? {} : { withdrawn })} />
 
       {/* what is connected to this PC: its name atop one list of the other PCs, phones and browsers, the one in use first */}
       <SettingsGroup section="devices">
+        <OwnJoins />
         <div className="settings-item my-devices">
           <MyPcRows machines={machines} account={account.account} accountPcs={account.pcs} onAccountChanged={readAccountAgain} watching={auth?.role === "watch"} relayKey={`${relay.status?.phase ?? ""}:${identityResets}`} selfAction={setDevicesCheck}>
             <DevicesPanel onDevicePaired={closeConnectOnPair} auth={auth} onRevokedAll={onRevokedAll} kindOf={(label) => deviceKind(label, t)} currentAction={selfRelay} more={devicesMore} checkSlot={devicesCheck} />
@@ -1261,6 +1317,10 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
                 <SettingsRow label={t("Change PC")} description={t("This page shows one PC. The front page lists every PC this phone is paired with.")}>
                   <button type="button" className="btn" onClick={() => window.location.assign("/")}>{t("Change PC")}</button>
                 </SettingsRow>
+                {/* the dashboard of the account's PCs, opened only on purpose: no launch or sign-in lands on it */}
+                {shellAccountServiceOf(document, window.location.origin, nativeApp) !== null && <SettingsRow label={t("Relayed connections")} description={t("Opens the page of every PC this device reaches through the relay, to check, join or forget them.")}>
+                  <button type="button" className="btn" data-action="manage-relayed" onClick={() => window.location.assign("/#overview")}>{t("Manage|relayed connections")}</button>
+                </SettingsRow>}
                 <SettingsRow label={t("Forget this PC")} description={t("Deletes this phone's key for this PC. Pairing again takes a new QR code from the PC.")}>
                   <button type="button" className="btn" onClick={() => setConfirmForget(true)}>{t("Forget this PC")}</button>
                 </SettingsRow>
@@ -1278,6 +1338,8 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
         <SettingsGroup title={t("Devices and access")} section="devices-more">
           {/* in the hosted shell too (a phone reaching this PC through the relay or directly), there without the switch */}
           {(relayOffered(relay) || inRelayShell()) && <RelayDirectRow relay={relay} readOnly={relayReadOnly || inRelayShell()} />}
+          {/* strict mode: one row with its switch; what it ends is said when it is turned on */}
+          <StrictModeSection offered={sessions?.peek("local")?.socket.accountOpensAll() === true} auth={auth} />
           <div className="settings-item" ref={setDevicesMore} />
           {onSignOut && <SignOutRow viaPortal={auth?.via === "portal"} oidc={auth?.portal?.method === "oidc"} onSignOut={onSignOut} label={t("Sign out of this PC")} />}
         </SettingsGroup>
@@ -1300,7 +1362,8 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
         <ConnectPhoneDialog plan={plan} pairUrl={pairUrl}
           relay={relay} readOnly={relayReadOnly} closesGate={closesGate} canPair={auth?.via !== "portal"}
           signedIn={account.signedIn} accountId={account.account} joinBySignIn={joinBySignIn}
-          account={accountService !== null && account.reachable ? { service: accountService, onOpen: openAccount, onSignedIn: readAccountAgain } : null}
+          pcAddFromAccount={pcAddFromAccount} onAccountSetup={openAccount}
+          account={accountService !== null && account.reachable ? { service: accountService, onOpen: openAccount, onSignedIn: readAccountAgain, ...(opensAll === undefined ? {} : { opensAll }) } : null}
           onAddPc={(preset) => { setConnecting(false); openAddPc(preset); }} machines={machines}
           onConnectMachine={(machine) => { setConnecting(false); connectPc(machine); }}
           onPairingHeld={holdPairing} onRevokedAll={onRevokedAll} onClose={closeConnect} />
@@ -1365,8 +1428,6 @@ function RelayControls({ relay, closesGate, onReset }: { relay: RelayState; clos
   );
 }
 
-const removablePc = (machine: Machine): boolean => machine.state !== "connected" && machine.herdr_profile_id === undefined && (machine.kind === "ssh" || machine.kind === "relay");
-
 function MyPcRows({ machines, account, accountPcs, onAccountChanged, relayKey, watching, selfAction, children }: { machines: readonly Machine[]; accountPcs: readonly MyPc[] | null; relayKey: string;
   account: string | null;
   onAccountChanged: () => void;
@@ -1394,7 +1455,6 @@ function MyPcRows({ machines, account, accountPcs, onAccountChanged, relayKey, w
         <li className="devices-row my-device-self" data-testid="this-pc">
           <div className="devices-name">
             <span className="settings-label">{local.name}<span className="devices-kind is-self">{t("This PC")}</span></span>
-            {id !== undefined && <span className="settings-description my-device-id">{t("ID {id}", { id: groupedId(id) })}</span>}
           </div>
           <div className="devices-actions my-device-check" ref={selfAction} />
         </li>
@@ -1418,7 +1478,7 @@ function MyPcRows({ machines, account, accountPcs, onAccountChanged, relayKey, w
       {account !== null && <AccountPcRows pcs={fromAccount} watching={watching} onRemoved={onAccountChanged}
         remove={(serverId) => removePcFromAccount(new AccountService({ store: indexedAccountStore }), account, serverId)} />}
     </ul>
-    {removing !== null && <ConfirmDialog title={t("Remove PC {name}?", { name: removing.name })} body={t(removing.kind === "relay" ? "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC." : "Removes this registration. Remote sessions keep running.")} confirmLabel={t("Remove PC")}
+    {removing !== null && <ConfirmDialog title={t("Remove PC {name}?", { name: removing.name })} body={t(pairedPc(removing) ? "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC." : "Removes this registration. Remote sessions keep running.")} confirmLabel={t("Remove PC")}
       onConfirm={async () => { await machineRequest(`/${encodeURIComponent(removing.id)}`, "DELETE"); setRemoving(null); }} onClose={() => setRemoving(null)} />}
     </>
   );
@@ -1539,7 +1599,7 @@ function RuntimeFacts({ version, runtime, core, facts: healthFacts, bootId, onSe
     : facts?.locked === "env" ? t("OVIS_RUNTIME in Ovis's environment decides which terminals this PC shows; change it there to switch.")
     // where the OS does not serve herdr-core, setting OVIS_RUNTIME=herdr-core would stop Ovis: no how-to
     : target !== null || onCore || !core?.version || facts?.locked === "platform" ? null
-    : <span>{t("The Herdr app's core (hc {version}) is on this PC too. Ovis can show its terminals instead of herdr's.", { version: core.version })} <a className="settings-link" href={RUNTIME_HELP} target="_blank" rel="noreferrer">{t("How to switch")}</a></span>;
+    : <span>{t("The Herdr app's core (hc {version}) is on this PC too. Ovis can show its terminals instead of herdr's.", { version: core.version })} <ExternalLink kind="link" className="settings-link" href={RUNTIME_HELP}>{t("How to switch")}</ExternalLink></span>;
   const toCore = target === "herdr-core";
   const coreInstalled = core?.version != null;
   const tuiInstalled = facts?.tui.installed ?? !onCore;
@@ -1604,15 +1664,15 @@ function AboutPage({ updates, herdrVersion, herdrRuntime, herdrCore, herdrRuntim
       <SettingsGroup title={t("About")} className="settings-about" section="about">
         <div className="settings-row">
           <div className="settings-row-text">
-            <span className="settings-label-line"><Globe className="settings-row-icon" aria-hidden="true" /><a className="settings-link" href="https://ovis.sh/" target="_blank" rel="noreferrer">ovis.sh</a></span>
+            <span className="settings-label-line"><Globe className="settings-row-icon" aria-hidden="true" /><ExternalLink kind="link" className="settings-link" href="https://ovis.sh/">ovis.sh</ExternalLink></span>
           </div>
-          <a className="btn" href="https://github.com/devswha/ovis" target="_blank" rel="noreferrer"><Star aria-hidden="true" />{t("Star on GitHub")}</a>
+          <ExternalLink kind="link" className="btn" href="https://github.com/devswha/ovis"><Star aria-hidden="true" />{t("Star on GitHub")}</ExternalLink>
         </div>
         <div className="settings-row">
           <div className="settings-row-text">
             <span className="settings-label-line"><MessagesSquare className="settings-row-icon" aria-hidden="true" />{t("Questions and chat")}</span>
           </div>
-          <a className="btn" href="https://ovis.sh/discord" target="_blank" rel="noreferrer">{t("Join Discord")}</a>
+          <ExternalLink kind="link" className="btn" href="https://ovis.sh/discord">{t("Join Discord")}</ExternalLink>
         </div>
       </SettingsGroup>
     </SettingsBare.Provider>
@@ -1671,7 +1731,7 @@ function matchedGroups(result: Element | null, words: readonly string[]): string
   return [...groups.filter(holdsAll), ...groups.filter((group) => !holdsAll(group))].map((group) => group.dataset["section"]).filter((name): name is string => name !== undefined);
 }
 
-function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, onUsageLogin, onOpenPane, actions, updates, auth, herdrVersion, herdrRuntime = null, herdrCore = null, herdrRuntimeFacts = null, picturesByDefault = false, bootId = null, onServerRestarted, security, onEnableNotifications, saveError, savePaused, saveRetrying, onRetrySave, overPreview = false, machines = [] }: SettingsDialogProps) {
+function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, onUsageLogin, onOpenPane, actions, updates, auth, herdrVersion, herdrRuntime = null, herdrCore = null, herdrRuntimeFacts = null, picturesByDefault = false, bootId = null, onServerRestarted, security, onEnableNotifications, saveError, savePaused, saveRetrying, onRetrySave, overPreview = false, machines = [], opensAll, withdrawn }: SettingsDialogProps) {
   const t = useT();
   const narrow = useNarrow();
   const pcExit = useMemo(() => pcListExit({ nativeApp: inNativeApp(), relayShell: shellMode() === "relay", pathname: window.location.pathname }), []);
@@ -1852,7 +1912,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
       case "agents": return <AgentsSettings watching={auth?.role === "watch"} onLocalLogin={onUsageLogin} onOpenPane={onOpenPane} onOpenGuide={onClose} />;
       case "shortcuts": return <ShortcutsPage />;
       // after every device went, its own pairing included, a browser asks the server where it stands: the roster answers, or the gate does
-      case "devices": return <DevicesPage auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh} openAddPc={actions.openAddPc} connectPc={actions.connectPc}
+      case "devices": return <DevicesPage opensAll={opensAll} withdrawn={withdrawn} auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh} openAddPc={actions.openAddPc} connectPc={actions.connectPc}
         machines={machines} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={(patch) => void updatePcSettings(patch)} />;
       case "experimental": return <ExperimentalPage />;
       case "about": return <AboutPage updates={updates} herdrVersion={herdrVersion} herdrRuntime={herdrRuntime} herdrCore={herdrCore} herdrRuntimeFacts={herdrRuntimeFacts} bootId={bootId} onServerRestarted={onServerRestarted} onOpenPane={onOpenPane} bridgesFollow={pcSettings?.auto_update_bridges === true} />;

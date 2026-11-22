@@ -46,7 +46,7 @@ Neither command updates itself; only `bun run start` and the plugin run the upda
   There is no `develop` branch; releases are `vX.Y.Z` tags on `main`.
 - Independent changes should use independent PRs from `main`. The only exception is a stack explicitly
   managed by a maintainer for a genuine code dependency; code conflicts and approval gates are
-  scheduling constraints, not reasons to stack. See the [coordinated-work procedure](docs/development.md#coordinated-work).
+  scheduling constraints, not reasons to stack.
   Contributors must not assume elevated permissions or that a stack has been authorized.
 - One change per PR. Changes that cannot stand apart, because one needs another's code, may share
   a PR: keep each as its own commit, in the order they depend on each other, and say in the
@@ -60,8 +60,7 @@ Neither command updates itself; only `bun run start` and the plugin run the upda
 ## Checks
 
 `bun run check fast` runs the **Fast checks** CI job, and `bun run check full` adds the
-**Integration and browser** job, on a herdr of its own apart from the one you work in
-([docs/development.md](docs/development.md#checks)).
+**Integration and browser** job, on a herdr of its own apart from the one you work in.
 
 **Fast checks** is these, one by one; none needs herdr:
 
@@ -85,7 +84,7 @@ bun run test:ui            # builds, then browser regression on `ovis-test`; sto
 
 `bun test` runs the unit and integration suites together. Remote-PC changes also have
 `bun run test:ssh`. Tests and screenshots use panes and state they create themselves, never your
-running terminals: see [development](docs/development.md#checks).
+running terminals.
 
 ## Terminology
 

@@ -160,3 +160,24 @@ describe("GhosttyVt widths", () => {
     expect(await ghosttyScreen(40, 1, ["\x1b[?20", "27haक्षX"])).toEqual(await xtermLayout("aक्षX"));
   });
 });
+
+
+describe("resize after a program changed its columns", () => {
+  it("draws the size it is given again after the program switched to 132 columns", async () => {
+    const vt = await GhosttyVt.create(80, 24);
+    try {
+      vt.resize(80, 24, 8, 16);
+      vt.write("\x1b[?40h\x1b[?3h");
+      vt.frame(() => {});
+      vt.resize(80, 24, 8, 16);
+      vt.write("\x1b[2JX");
+      let drawn = 0;
+      vt.frame((_y, runs) => {
+        for (const run of runs) drawn = Math.max(drawn, run.x + run.cells.reduce((width, cell) => width + (cell.wide ? 2 : 1), 0));
+      });
+      expect({ cols: vt.cols, drawn }).toEqual({ cols: 80, drawn: 80 });
+    } finally {
+      vt.dispose();
+    }
+  });
+});

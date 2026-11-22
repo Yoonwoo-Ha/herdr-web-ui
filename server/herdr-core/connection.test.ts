@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { legacyName } from "../legacy-env.ts";
-import { spawnHcConnect } from "./connection.ts";
+import { spawnHcConnect } from "./hc-connect.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "ovis-hc-connect-env-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));

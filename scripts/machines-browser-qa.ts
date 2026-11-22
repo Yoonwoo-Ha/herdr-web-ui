@@ -38,9 +38,9 @@ async function select(name: string) {
 }
 async function addPcOverSsh() {
   const sheet = page.getByRole("dialog", { name: "Add a connection", exact: true });
-  await sheet.locator('.connect-tabs [data-tab="ssh"]').click();
-  await sheet.getByLabel("Or type an SSH address", { exact: true }).fill("qa@pc.invalid");
-  await sheet.locator(".connect-ssh-form").getByRole("button", { name: "Add", exact: true }).click();
+  await sheet.locator('.connect-tabs [data-tab="direct"]').click();
+  await sheet.getByLabel("Address or SSH", { exact: true }).fill("qa@pc.invalid");
+  await sheet.locator(".connect-ssh-form").getByRole("button", { name: "Connect", exact: true }).click();
 }
 const composer = page.getByRole("textbox", { name: "Message", exact: true });
 let releaseUpload = () => {};

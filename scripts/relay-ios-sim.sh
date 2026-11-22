@@ -306,6 +306,11 @@ launch
 answer="$(attach)"
 session="$(python3 -c 'import json,sys; d = json.loads(sys.argv[1]); print(d.get("sessionId") or d["value"]["sessionId"])' "$answer")" || { say "no WebDriverAgent session: $answer"; exit 1; }
 say "WebDriverAgent session $session: ${answer:0:300}"
+# the app opens on the sign-in: Start without signing in, then Enter an address, leads to the address field
+start="$(find '{"using":"predicate string","value":"type == \"XCUIElementTypeButton\" AND label IN {\"Start without signing in\", \"로그인 없이 시작\"}"}' "Start without signing in")"
+json -X POST "$wda/session/$session/element/$start/click" -d '{}' >/dev/null
+way="$(find '{"using":"predicate string","value":"type == \"XCUIElementTypeButton\" AND (label BEGINSWITH \"Enter an address\" OR label BEGINSWITH \"주소 입력\")"}' "Enter an address")"
+json -X POST "$wda/session/$session/element/$way/click" -d '{}' >/dev/null
 field="$(find '{"using":"class chain","value":"**/XCUIElementTypeTextField"}' "the connect screen's address field")"
 json -X POST "$wda/session/$session/element/$field/click" -d '{}' >/dev/null
 json -X POST "$wda/session/$session/element/$field/value" -d "$(python3 -c 'import json,sys; print(json.dumps({"text": sys.argv[1]}))' "$offer")" >/dev/null

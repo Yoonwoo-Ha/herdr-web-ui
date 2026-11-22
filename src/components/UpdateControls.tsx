@@ -15,6 +15,7 @@ import { SettingsBare, SettingsRow } from "./SettingsControls.tsx";
 import "./Machines.css";
 import "./UpdateControls.css";
 import { useLocale, useT, type Translate } from "../lib/i18n.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
 
 const BLOCKED_REASONS: ReadonlyArray<{ is: (reason: string) => boolean; words: (t: Translate) => string }> = [
   { is: (reason) => reason === "Start with bun run start or the herdr plugin to enable updates.", words: (t) => t("Start with bun run start or the herdr plugin to enable updates.") },
@@ -47,7 +48,7 @@ function ReleaseNotes({ notes, label }: { notes: Pick<UpdateNotes, "releases" | 
       {notes.releases.map((release) => {
         const summary = summaryFor(release, resolvedLanguage);
         const section = <div className="update-changelog" role="region" aria-label={t("Full changelog")} tabIndex={0}>
-          <RenderBoundary resetKey={release.notes} fallback={() => <p className="settings-hint">{t("These notes could not be shown.")} <a href={CHANGELOG} target="_blank" rel="noopener noreferrer">{t("Full changelog")}</a></p>}>
+          <RenderBoundary resetKey={release.notes} fallback={() => <p className="settings-hint">{t("These notes could not be shown.")} <ExternalLink kind="link" href={CHANGELOG}>{t("Full changelog")}</ExternalLink></p>}>
             <Markdown>{release.notes}</Markdown>
           </RenderBoundary>
         </div>;
@@ -67,7 +68,7 @@ function ReleaseNotes({ notes, label }: { notes: Pick<UpdateNotes, "releases" | 
           </>}
         </section>;
       })}
-      {notes.omitted > 0 && <p className="settings-hint">{t("Earlier releases not shown here: {count}.", { count: notes.omitted })} <a href={CHANGELOG} target="_blank" rel="noopener noreferrer">{t("Full changelog")}</a></p>}
+      {notes.omitted > 0 && <p className="settings-hint">{t("Earlier releases not shown here: {count}.", { count: notes.omitted })} <ExternalLink kind="link" href={CHANGELOG}>{t("Full changelog")}</ExternalLink></p>}
     </div>
   </>;
 }
@@ -118,7 +119,7 @@ export function UpdateControls({ updates, bridgesFollow = false }: { updates: Up
     <p className="settings-hint">{t("Running {version}", { version: runningAppVersion(status, __APP_VERSION__) })}</p>
     {tabVersion && reload !== "restart" && <p className="settings-hint">{t("This tab still runs {version} until it is reloaded.", { version: tabVersion })}</p>}
     {installing && !error ? <div role="status"><UpdateProgress status={status} fallback={t(status?.phase === "building" ? "Installing dependencies and building…" : "Restarting the bridge…")} /></div> : <p className="settings-hint" role={error || status?.error || failure ? "alert" : "status"}>
-      {(failure === "offer-changed" ? t("A newer release was published after you chose this update, so nothing was installed. Check again to review it.") : null) ?? error ?? status?.error ?? (restart ? <><span>{t("Ovis was updated on this PC. Restart it there to load the update.")}</span> <a className="settings-link" href={RESTART_HELP} target="_blank" rel="noreferrer">{t("How to restart")}</a></> : null) ?? blocked ?? (busy ? t("Checking for updates…") :
+      {(failure === "offer-changed" ? t("A newer release was published after you chose this update, so nothing was installed. Check again to review it.") : null) ?? error ?? status?.error ?? (restart ? <><span>{t("Ovis was updated on this PC. Restart it there to load the update.")}</span> <ExternalLink kind="link" className="settings-link" href={RESTART_HELP}>{t("How to restart")}</ExternalLink></> : null) ?? blocked ?? (busy ? t("Checking for updates…") :
         status?.available ? t("Version {version} is available.", { version: versionLabel(status.latest_version, status.latest_revision) ?? "" }) : status?.checked_at ? t("Up to date.") : t("Waiting for an update check…"))}
     </p>}
     {restart && !error && !status?.error && blocked && <p className="settings-hint">{blocked}</p>}
@@ -130,7 +131,7 @@ export function UpdateControls({ updates, bridgesFollow = false }: { updates: Up
       <div className="update-actions">
         <button type="button" className="btn" disabled={busy} onClick={() => void request({ command: "check" })}>{t("Check for updates")}</button>
         <button type="button" className="btn btn-primary" disabled={busy || offered === null || failure !== null} onClick={() => { if (offered) void request({ command: "install", expected_revision: offered }); }}>{t("Update and restart")}</button>
-        {!installing && failure === "restart" && <a className="btn" href={RESTART_HELP} target="_blank" rel="noreferrer">{t("How to restart")}</a>}
+        {!installing && failure === "restart" && <ExternalLink kind="link" className="btn" href={RESTART_HELP}>{t("How to restart")}</ExternalLink>}
       </div>
     </>}
     {status?.checked_at && <p className="settings-hint">{t("Last checked {when}", { when: new Date(status.checked_at).toLocaleString(locale) })}</p>}
@@ -217,7 +218,7 @@ export function UpdateNotice({ updates, onOpen }: { updates: UpdatesModel; onOpe
   if (needsReload) {
     if (reload === "restart") return <div className="update-notice is-line is-warning" role="status">
       <span>{t("Ovis was updated on this PC. Restart it there to load the update.")}</span>
-      <a className="btn" href={RESTART_HELP} target="_blank" rel="noreferrer">{t("How to restart")}</a>
+      <ExternalLink kind="link" className="btn" href={RESTART_HELP}>{t("How to restart")}</ExternalLink>
     </div>;
     const text = reload === "updated" ? t("App updated. Save unsent drafts before reloading.") : t("Part of the app could not load. Save unsent drafts, then reload.");
     return <div className="update-notice is-line is-warning" role="status">
@@ -228,7 +229,7 @@ export function UpdateNotice({ updates, onOpen }: { updates: UpdatesModel; onOpe
   // a server that cannot install by revision is sent no install: the line says to restart it
   if (failure === "restart") return <div className="update-notice is-line is-warning" role="status">
     <span>{t("Restart Ovis on this PC to update from here: the server running now cannot install exactly the release shown.")}</span>
-    <a className="btn" href={RESTART_HELP} target="_blank" rel="noreferrer">{t("How to restart")}</a>
+    <ExternalLink kind="link" className="btn" href={RESTART_HELP}>{t("How to restart")}</ExternalLink>
   </div>;
   // A release that replaced the one asked for is looked at again too, never installed from here unseen.
   const install = failure === null ? offered : null;

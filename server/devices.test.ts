@@ -1,10 +1,13 @@
-import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, it, setSystemTime, spyOn } from "bun:test";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DevicePairedEvent } from "../shared/protocol.ts";
-import { DeviceGoneError, DeviceStore, handleDeviceRequest, newStreamKey, normalizeLabel, PairingRateLimitedError, PcInAccountError, readDeviceRegistry, sameBrowser, streamCookie, streamKeys } from "./devices.ts";
-import { privateStateFs } from "./private-state.ts";
+import { CODE_TTL_MS, DeviceGoneError, DeviceStore, handleDeviceRequest, newStreamKey, normalizeLabel, PAIRING_LINK_MS, PairingFinishingError, PairingRateLimitedError, PcInAccountError, readDeviceRegistry, sameBrowser, streamCookie, streamKeys } from "./devices.ts";
+import { TestClock } from "./relay/test-helpers.ts";
+import { privateStateFs, privateStateRefusal } from "./private-state.ts";
+import { SafetyLog } from "./account/safety-log.ts";
+import { RevokeAllIntent } from "./account/revoke-all-intent.ts";
 import { isTaggedNode, parseTailscaleOwner } from "./tailscale.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "herdr-devices-"));
@@ -20,7 +23,106 @@ async function relaySignature(key: CryptoKey, nonce: Uint8Array, serverId = "ser
     Buffer.concat([Buffer.from("ovis-relay-auth/1"), nonce, Buffer.from(serverId)]))).toString("base64url");
 }
 
+describe("regression: a registry another account could write", () => {
+  const root = mkdtempSync(join(tmpdir(), "devices-untrusted-"));
+  afterAll(() => { rmSync(root, { recursive: true, force: true }); });
+  const registry = JSON.stringify({ gate_closed_at: null, devices: [{ id: "planted", token_hash: "x".repeat(64), role: "drive", label: "Planted", created_at: "2026-11-01T00:00:00.000Z", last_seen_at: null }] });
+  const mode = (path: string) => statSync(path).mode & 0o777;
+  const someoneElse = (process.getuid?.() ?? 0) + 1;
+
+  it.skipIf(process.platform === "win32")("is refused when another account owns it, its folder or the link to it", () => {
+    const dir = mkdtempSync(join(root, "theirs-"));
+    writeFileSync(join(dir, "devices.json"), registry, { mode: 0o600 });
+    // as another account sees what it made: owned by it
+    expect(privateStateRefusal(join(dir, "devices.json"), process.platform, someoneElse)).toContain("owned by uid");
+    expect(privateStateRefusal(join(dir, "missing.json"), process.platform, someoneElse)).toContain("owned by uid");
+    const linked = mkdtempSync(join(root, "linked-"));
+    symlinkSync(join(dir, "devices.json"), join(linked, "devices.json"));
+    expect(privateStateRefusal(join(linked, "devices.json"), process.platform, someoneElse)).toContain("owned by uid");
+    expect(privateStateRefusal(join(dir, "devices.json"))).toBeNull();
+  });
+
+  it.skipIf(process.platform === "win32")("takes others' write access away from what is this user's before reading it, and keeps working", () => {
+    const dir = mkdtempSync(join(root, "open-"));
+    chmodSync(dir, 0o757);
+    writeFileSync(join(dir, "devices.json"), registry, { mode: 0o600 });
+    chmodSync(join(dir, "devices.json"), 0o646);
+    const store = new DeviceStore(dir);
+    expect(store.error).toBeNull();
+    expect(store.gated).toBe(true);
+    expect(mode(dir)).toBe(0o755);
+    expect(mode(join(dir, "devices.json"))).toBe(0o644);
+    // through a link of this user's, the target's folder and file are held to the same rule
+    const elsewhere = mkdtempSync(join(root, "elsewhere-"));
+    chmodSync(elsewhere, 0o757);
+    writeFileSync(join(elsewhere, "devices.json"), registry, { mode: 0o600 });
+    chmodSync(join(elsewhere, "devices.json"), 0o666);
+    const linked = mkdtempSync(join(root, "mine-linked-"));
+    symlinkSync(join(elsewhere, "devices.json"), join(linked, "devices.json"));
+    expect(readDeviceRegistry(join(linked, "devices.json")).kind).toBe("ok");
+    expect(mode(elsewhere)).toBe(0o755);
+    expect(mode(join(elsewhere, "devices.json"))).toBe(0o644);
+    // a first installation in a folder others could write is one no longer
+    const fresh = mkdtempSync(join(root, "fresh-"));
+    chmodSync(fresh, 0o777);
+    expect(new DeviceStore(fresh).gated).toBe(false);
+    expect(mode(fresh)).toBe(0o755);
+  });
+});
+
+it("flag off: canDrive finds a non-held drive row after a watch row with the same id", () => {
+  const root = mkdtempSync(join(dir, "duplicate-id-"));
+  const watch = { id: "0011223344556677", label: "Phone", role: "watch", token_hash: "a".repeat(64), created_at: "2026-10-10", last_seen_at: null };
+  writeFileSync(join(root, "devices.json"), JSON.stringify({ gate_closed_at: watch.created_at,
+    devices: [watch, { ...watch, role: "drive", token_hash: "b".repeat(64) }] }), { mode: 0o600 });
+  const store = new DeviceStore(root);
+  expect(store.error).toBeNull();
+  expect(store.canDrive(watch.id)).toBe(true);
+});
+
+it("flag off: reading a PC-confirmed row leaves its carried notice on disk", () => {
+  const root = mkdtempSync(join(dir, "carried-notice-"));
+  const path = join(root, "devices.json");
+  const at = "2026-10-01T00:00:00.000Z";
+  const row = { id: "0011223344556677", label: "Phone", role: "watch", token_hash: "a".repeat(64),
+    created_at: at, last_seen_at: null, carried_notice: "b".repeat(32),
+    origin: { from: "pc", how: "confirmed", by: null, admit_no: 1, at } };
+  const bytes = JSON.stringify({ gate_closed_at: at, devices: [row] });
+  writeFileSync(path, bytes, { mode: 0o600 });
+  expect(new DeviceStore(root).sessionRow(row.id)?.role).toBe("watch");
+  expect(readFileSync(path, "utf8")).toBe(bytes);
+});
+
 describe("the gate closing", () => {
+  it("Step 1 confirms the first local pairing when only the account subsystem is unavailable", () => {
+    const root = mkdtempSync(join(dir, "off-first-local-"));
+    const store = new DeviceStore(root, null, "Account state unavailable");
+    expect(store.opensAll()).toBe(false);
+    expect(store.failsClosed).toBe(false);
+    const paired = store.pair(store.startPairing().code, "Local browser", "drive");
+    if (!paired) throw new Error("Local Step 1 pairing failed");
+    expect(store.match(paired.token)?.id).toBe(paired.device.id);
+    expect(store.gated).toBe(true);
+  });
+
+  it("Step 1 confirms a fresh browser cookie without consuming a Step 2 listed-only removal", () => {
+    const root = mkdtempSync(join(dir, "off-listed-intent-"));
+    const intent = new RevokeAllIntent(root, []);
+    intent.begin([], new Date().toISOString(), 1, 2);
+    intent.awaitListed();
+    const path = join(root, "revoke-all.json");
+    const pending = readFileSync(path, "utf8");
+    const store = new DeviceStore(root);
+    expect(store.opensAll()).toBe(false);
+    const paired = store.pair(store.startPairing().code, "Local browser", "drive");
+    if (!paired) throw new Error("Local Step 1 pairing failed");
+    expect(store.gated).toBe(false);
+    expect(store.match(paired.token)?.id).toBe(paired.device.id);
+    expect(store.gated).toBe(true);
+    expect(new DeviceStore(root).match(paired.token)?.id).toBe(paired.device.id);
+    expect(readFileSync(path, "utf8")).toBe(pending);
+  });
+
   it("is told once, when the first device's cookie came back or the relay closed it, never for a later device or a revoke", async () => {
     const store = new DeviceStore(mkdtempSync(join(dir, "gate-closed-")));
     let told = 0;
@@ -196,7 +298,9 @@ describe("relay device", () => {
     const signature = await relaySignature(keys.privateKey, nonce);
     store.revoke(first.device.id);
     expect(await store.matchRelay(first.device.id, nonce, signature, "server-a")).toBeNull();
-    expect(store.revokeAll()).toEqual([second.device.id]);
+    // the second pairing holds the key just revoked, so it went too
+    expect(store.has(second.device.id)).toBe(false);
+    expect(store.revokeAll()).toEqual([]);
     expect(store.gated).toBe(true);
     const fresh = new DeviceStore(root);
     expect(fresh.gated).toBe(true);
@@ -318,6 +422,23 @@ describe("relay device", () => {
       expect(() => fresh.startPairing()).toThrow();
       expect(readFileSync(path, "utf8")).toBe(contents);
     }
+  });
+
+  it("flag off: malformed hold metadata leaves the registry readable but held rows unadmitted", () => {
+    const root = mkdtempSync(join(dir, "rollback-registry-"));
+    const path = join(root, "devices.json");
+    const live = { id: "notice", label: "Phone", role: "watch", token_hash: "a".repeat(64),
+      created_at: new Date(0).toISOString(), last_seen_at: null, carried_notice: { old: true } };
+    const held = [null, false, "", {}, "invalid"].map((value, index) => ({ ...live, id: `held-${index}`, held: value }));
+    const bytes = JSON.stringify({ gate_closed_at: null, devices: [live, ...held] });
+    writeFileSync(path, bytes, { mode: 0o600 });
+    const rollback = new DeviceStore(root);
+    expect(rollback.error).toBeNull();
+    expect(rollback.sessionRow(live.id)?.role).toBe("watch");
+    expect(rollback.list(null).map(row => row.id)).toEqual([live.id, ...held.map(row => row.id)]);
+    for (const row of held) expect(rollback.sessionRow(row.id)).toBeNull();
+    expect(new DeviceStore(root, null, null, { safety: SafetyLog.open(root) }).error).not.toBeNull();
+    expect(readFileSync(path, "utf8")).toBe(bytes);
   });
 
   it("limits code issues to ten in a sliding window without extending refusals", () => {
@@ -577,6 +698,90 @@ describe("revoking a device unless an account vouches for it", () => {
   });
 });
 
+describe("a key held by a member row and a pairing made on this PC", () => {
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+  const member = "m000000000000001";
+  const twoRows = async () => {
+    const root = mkdtempSync(join(dir, "same-key-"));
+    const key = (await relayKeys()).publicKeySpki;
+    writeFileSync(join(root, "devices.json"), JSON.stringify({
+      gate_closed_at: ago(600_000),
+      devices: [
+        { id: "s000000000000001", label: "Signer", role: "drive", token_hash: "h1", relay_public_key: (await relayKeys()).publicKeySpki, created_at: ago(600_000), last_seen_at: null, account: "acct_1" },
+        { id: member, label: "Member", role: "drive", token_hash: "h2", relay_public_key: key, created_at: ago(300_000), last_seen_at: null, account: "acct_1", added_by: "s000000000000001" },
+      ],
+    }));
+    const store = new DeviceStore(root);
+    const closed: string[] = [];
+    store.onRevoke(member, () => closed.push(member));
+    return { root, key, store, closed };
+  };
+
+  it("revoking the pairing ends the member row of that key too", async () => {
+    const { root, key, store, closed } = await twoRows();
+    const local = store.pairRelayApproved("Local", key, { path: "code" })!.device;
+    const announced: string[] = [];
+    store.onRemoved((event) => announced.push(event.device_id));
+    expect(store.revoke(local.id)).toBe(true);
+    expect([closed, store.sessionRow(member), store.has(member)]).toEqual([[member], null, false]);
+    expect(announced.sort()).toEqual([local.id, member].sort());
+    expect(new DeviceStore(root).has(member)).toBe(false);
+  });
+
+  it("the revoke route hands every row it took to the cleanup", async () => {
+    const { key, store } = await twoRows();
+    const local = store.pairRelayApproved("Local", key, { path: "code" })!.device;
+    const cleaned: string[] = [];
+    const path = `/api/devices/${local.id}`;
+    const response = await handleDeviceRequest(new Request(`http://127.0.0.1${path}`, { method: "DELETE", headers: { origin: "http://127.0.0.1", "x-herdr-machine": "1" } }),
+      path, store, { level: "full", via: "local", role: "drive" }, null, (ids) => cleaned.push(...ids));
+    expect(response.status).toBe(204);
+    expect(cleaned.sort()).toEqual([local.id, member].sort());
+  });
+
+  it("a revoke unless the device is a member of an account leaves both rows when the key's other row is a member", async () => {
+    const { key, store, closed } = await twoRows();
+    const local = store.pairRelayApproved("Local", key, { path: "code" })!.device;
+    const path = `/api/devices/${local.id}`;
+    const response = await handleDeviceRequest(new Request(`http://127.0.0.1${path}`, { method: "DELETE", headers: { origin: "http://127.0.0.1", "x-herdr-machine": "1", "x-ovis-unless-account": "acct_1" } }),
+      path, store, { level: "full", via: "local", role: "drive" }, null);
+    expect(response.status).toBe(409);
+    expect([store.has(local.id), store.has(member), closed, store.isTombstoned(key)]).toEqual([true, true, [], false]);
+  });
+
+  it("a revoke leaves a row of the key that its tombstone does not cover", async () => {
+    const { key, store, closed } = await twoRows();
+    const local = store.pairRelayApproved("Local", key, { path: "code" })!.device;
+    const later = store.pairRelayApproved("Later", key, { path: "code" })!.device;
+    let laterClosed = 0;
+    store.onRevoke(later.id, () => { laterClosed++; });
+    // a clock set back before the pairings: the tombstone is older than both, so it covers the member row alone
+    setSystemTime(new Date(Date.now() - 3_600_000));
+    try { expect(store.revoke(local.id)).toBe(true); } finally { setSystemTime(); }
+    expect([store.has(local.id), store.has(member), store.has(later.id), closed, laterClosed]).toEqual([false, false, true, [member], 0]);
+  });
+
+  it("a revoke ends a pairing code that another row it took holds", async () => {
+    const { key, store } = await twoRows();
+    const local = store.pairRelayApproved("Local", key, { path: "code" })!.device;
+    store.startPairing(Date.now(), { remote: true, startedBy: local.id, memberRequired: false, by: local.id });
+    expect(store.activePairing()).not.toBeNull();
+    expect(store.revoke(member)).toBe(true);
+    expect([store.has(local.id), store.activePairing()]).toEqual([false, null]);
+  });
+
+  it("a remove signed before the pairing keeps the pairing and takes the member row", async () => {
+    const { root, key, store, closed } = await twoRows();
+    const issuedAt = ago(1000);
+    const local = store.pairRelayApproved("Local again", key, { path: "code" })!.device;
+    expect(store.removeAccountKey(key, "acct_1", { id: "rec_1", issuedAt })).toBe(true);
+    expect([closed, store.has(member), store.has(local.id), store.accountSigner(key, "acct_1"), store.isTombstoned(key)]).toEqual([[member], false, true, null, false]);
+    const restarted = new DeviceStore(root);
+    expect([restarted.has(member), restarted.has(local.id)]).toEqual([false, true]);
+    expect(store.removeAccountKey(key, "acct_1", { id: "rec_1", issuedAt })).toBe(false);
+  });
+});
+
 describe("revoking a device that holds a pairing code", () => {
   const guard = { origin: "http://127.0.0.1", "x-herdr-machine": "1" };
   const call = (store: DeviceStore, method: string, path: string, access: Parameters<typeof handleDeviceRequest>[3], relayKey: string | null = null) =>
@@ -656,6 +861,75 @@ describe("revoking a device that holds a pairing code", () => {
 
 // The relay tab's QR code (POST /api/relay/offer with x-ovis-no-account-only): whoever scans it signed in becomes the
 // PC's first account member, so it is for a PC in no account only.
+describe("how a device a code started through the relay let in joined its account", () => {
+  /** A PC in no account, and the calls a relay device makes on it: start a code, pair with one, be revoked. */
+  function setUp(name: string) {
+    const stateDir = mkdtempSync(join(dir, name));
+    const store = new DeviceStore(stateDir);
+    const guard = { origin: "http://127.0.0.1", "x-herdr-machine": "1" };
+    const start = async (device: { id: string; label: string; role: "drive" | "watch" }, key: string) => {
+      const started = await handleDeviceRequest(new Request("http://127.0.0.1/api/devices/pair/start", { method: "POST", headers: guard }),
+        "/api/devices/pair/start", store, { level: "full", via: "relay", role: "drive", device }, key);
+      expect(started.status).toBe(200);
+      return (await started.json() as { code: string }).code;
+    };
+    const paired = async (code: string, label: string) => {
+      const keys = await relayKeys();
+      return { device: store.pairRelay(code, label, keys.publicKeySpki)!.device, key: keys.publicKeySpki };
+    };
+    const stored = (id: string) => { const registry = readDeviceRegistry(join(stateDir, "devices.json")); return registry.kind === "ok" ? registry.devices.find((d) => d.id === id) : undefined; };
+    const revoke = async (id: string) => expect((await handleDeviceRequest(new Request(`http://127.0.0.1/api/devices/${id}`, { method: "DELETE", headers: guard }),
+      `/api/devices/${id}`, store, { level: "full", via: "local", role: "drive" }, null)).status).toBe(204);
+    return { store, start, paired, stored, revoke };
+  }
+
+  it("on its own word when the code's starter was no account member, and with no mark when a member started the code", async () => {
+    const { store, start, paired, stored } = setUp("joined-by-starter-");
+    // on a PC in no account any driving relay device may start a code: its starter is named, and approves nothing
+    const starter = await paired(store.startPairing().code, "Starter");
+    const joined = await paired(await start(starter.device, starter.key), "Joined");
+    expect(stored(joined.device.id)).toMatchObject({ added_by: starter.device.id });
+    expect(stored(joined.device.id)).not.toHaveProperty("member_approved_in");
+    store.linkAccountKey(joined.device.id, joined.key, joined.key, "acct_1");
+    expect(stored(joined.device.id)?.joined_by).toBe("word");
+    expect(store.accountRows()).toEqual({ members: 1, unlinked: [starter.device.id], own_word: [joined.device.id] });
+    // a code a member starts is that member's approval: the device it lets in links with no mark
+    const added = await paired(await start(joined.device, joined.key), "Added");
+    expect(stored(added.device.id)).toMatchObject({ added_by: joined.device.id, member_approved_in: "acct_1" });
+    store.linkAccountKey(added.device.id, added.key, added.key, "acct_1");
+    expect(stored(added.device.id)).not.toHaveProperty("joined_by");
+    expect(store.accountRows()).toEqual({ members: 2, unlinked: [starter.device.id], own_word: [joined.device.id] });
+  });
+
+  it("on its own word when the code's starter joined the account only after starting it", async () => {
+    const { store, start, paired, stored } = setUp("joined-by-late-member-");
+    const starter = await paired(store.startPairing().code, "Starter");
+    const code = await start(starter.device, starter.key);
+    // the starter becomes a member between starting the code and its use: that approves nothing it started before
+    store.linkAccountKey(starter.device.id, starter.key, starter.key, "acct_1");
+    const later = await paired(code, "Later");
+    expect(stored(later.device.id)).toMatchObject({ added_by: starter.device.id });
+    expect(stored(later.device.id)).not.toHaveProperty("member_approved_in");
+    store.linkAccountKey(later.device.id, later.key, later.key, "acct_1");
+    expect(stored(later.device.id)?.joined_by).toBe("word");
+    expect(store.accountRows()).toEqual({ members: 2, unlinked: [], own_word: [starter.device.id, later.device.id] });
+  });
+
+  it("on its own word when it links into another account than the one whose member approved it", async () => {
+    const { store, start, paired, stored, revoke } = setUp("joined-by-other-account-");
+    const member = await paired(store.startPairing().code, "Member");
+    store.linkAccountKey(member.device.id, member.key, member.key, "acct_1");
+    const approved = await paired(await start(member.device, member.key), "Approved");
+    expect(stored(approved.device.id)).toMatchObject({ added_by: member.device.id, member_approved_in: "acct_1" });
+    // the member goes, the PC is in no account, and the device links into another one
+    await revoke(member.device.id);
+    expect(store.account()).toBeNull();
+    store.linkAccountKey(approved.device.id, approved.key, approved.key, "acct_2");
+    expect(stored(approved.device.id)?.joined_by).toBe("word");
+    expect(store.accountRows()).toEqual({ members: 1, unlinked: [], own_word: [approved.device.id] });
+  });
+});
+
 describe("a pairing code made only for a PC in no account", () => {
   const paired = async (store: DeviceStore, label: string) => {
     const key = (await relayKeys()).publicKeySpki;
@@ -734,6 +1008,50 @@ describe("a pairing code made only for a PC in no account", () => {
     expect(store.linkAccountKey(phone.id, key, key, "acct_1")).not.toBeNull();
     expect(store.account()).toBe("acct_1");
     expect(() => store.pairingForNoAccount()).toThrow(PcInAccountError);
+  });
+
+  it("is not replaced past its ten minutes while a device that paired with it in time may still link, and is once none may", async () => {
+    for (const links of [true, false]) {
+      const store = new DeviceStore(mkdtempSync(join(dir, "no-account-code-finishing-")));
+      const clock = new TestClock();
+      store.useClock(clock);
+      const made = Date.now();
+      const qr = store.pairingForNoAccount(null, made);
+      const key = (await relayKeys()).publicKeySpki;
+      const phone = store.pairRelay(qr.code, "Phone", key)!.device;
+      clock.advance(5_000);
+      // the QR code's ten minutes are over and the page asks for its next code: the phone has 25 s left to link
+      let finishing: unknown;
+      try { store.pairingForNoAccount(null, made + CODE_TTL_MS + 1); } catch (error) { finishing = error; }
+      expect(finishing).toBeInstanceOf(PairingFinishingError);
+      expect((finishing as PairingFinishingError).retryAfter).toBe(25);
+      if (links) {
+        expect(store.linkAccountKey(phone.id, key, key, "acct_1")).not.toBeNull();
+        expect(() => store.pairingForNoAccount(null, made + CODE_TTL_MS + 2)).toThrow(PcInAccountError);
+      } else {
+        clock.advance(PAIRING_LINK_MS);
+        const next = store.pairingForNoAccount(null, made + CODE_TTL_MS + 2);
+        expect(next.code).toMatch(/^\d{6}$/);
+        expect(store.activePairing(made + CODE_TTL_MS + 2)).toEqual(next);
+      }
+    }
+  });
+
+  it("keeps a device that links with a key this PC removed after a restart, also when the clock was set back and the removal could not be cleared", async () => {
+    const stateDir = mkdtempSync(join(dir, "no-account-code-clock-back-"));
+    const store = new DeviceStore(stateDir);
+    const key = (await relayKeys()).publicKeySpki;
+    const first = store.pairRelay(store.startPairing().code, "Phone", key)!.device;
+    expect(store.revoke(first.id)).toBe(true);
+    // the same phone pairs with the relay tab's code and links with the key it paired with
+    const phone = store.pairRelay(store.pairingForNoAccount().code, "Phone", key)!.device;
+    Reflect.set(store, "clearTombstone", () => { throw new Error("disk full"); });
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    setSystemTime(new Date(Date.now() - 60_000));
+    try { expect(store.linkAccountKey(phone.id, key, key, "acct_1")).not.toBeNull(); } finally { setSystemTime(); logged.mockRestore(); }
+    const restarted = new DeviceStore(stateDir);
+    expect(restarted.list(null).map((device) => device.id)).toEqual([phone.id]);
+    expect(restarted.isTombstoned(key)).toBe(false);
   });
 
   it("leaves a code made any other way pending when the PC joins an account", async () => {

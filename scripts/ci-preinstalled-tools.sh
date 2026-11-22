@@ -25,4 +25,12 @@ if [[ "${NEED_HERDR:-false}" == true ]]; then
     sha256sum --check --status || fail "The runner image must provide the checksum-pinned herdr 0.9.3."
 fi
 
+# RUST_VERSION in scripts/self-hosted-runner/Dockerfile
+EXPECTED_RUST_VERSION=1.100.0
+if [[ "${NEED_RUST:-false}" == true ]]; then
+  rust_version="$(rustc --version 2>/dev/null)" || fail "The runner image must provide Rust $EXPECTED_RUST_VERSION."
+  [[ "$rust_version" == "rustc $EXPECTED_RUST_VERSION "* ]] && cargo --version >/dev/null 2>&1 ||
+    fail "The runner image must provide Rust $EXPECTED_RUST_VERSION, not ${rust_version#rustc }."
+fi
+
 echo "Using verified tools from the self-hosted runner image"

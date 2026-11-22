@@ -165,7 +165,9 @@ it.each(["manual", "catalog socket", "catalog new", "manual default", "catalog d
   }
 });
 
-it("puts a chosen session that stopped on the card as a choice, and never retries it on its own", async () => {
+// gone: the chosen session stopped; not gone: the PC stopped its start for sessions found there, none of which it may offer
+// (only this app's test sessions): either way the card asks, with a new herdr, instead of waiting for a bridge
+it.each([true, false])("puts a startup the PC stopped on the card as a choice, and never retries it on its own (gone: %p)", async (gone) => {
   const dir = mkdtempSync(join(tmpdir(), "machine-herdr-gone-"));
   const id = "12345678-1234-1234-1234-123456789abd";
   const socket = "/home/fixture/desktop/herdr/sessions/work/herdr.sock";
@@ -178,7 +180,7 @@ it("puts a chosen session that stopped on the card as a choice, and never retrie
     spyOn(posixHost, "installBundle").mockResolvedValue(undefined),
     spyOn(posixHost, "start").mockImplementation(async () => { starts++; }),
     spyOn(posixHost, "descriptors").mockResolvedValue([]),
-    spyOn(posixHost, "foundSessions").mockResolvedValue({ gone: true, sessions: [] }),
+    spyOn(posixHost, "foundSessions").mockResolvedValue({ gone, sessions: [] }),
   ];
   const retries = spyOn(MachineManager.prototype as unknown as { retryLater(runtime: unknown): void }, "retryLater");
   const manager = new MachineManager(dir, { seed() {} } as unknown as PushService, new CompletionTracker(null), async () => { throw new Error("isolated"); });
@@ -190,7 +192,7 @@ it("puts a chosen session that stopped on the card as a choice, and never retrie
       job = manager.setup({ destination: "fixture-only", session: "work", herdr_socket: socket, machine_id: id, update_remote: true }, { auto: true });
     });
     expect(failed).toMatchObject({ phase: "failed", action_required: "choose_herdr", found_herdr_sessions: [] });
-    expect(failed.error).toContain("no longer running");
+    expect(failed.error).toContain(gone ? "no longer running" : "already running");
     const pc = manager.list().find((machine) => machine.id === id);
     expect(pc).toMatchObject({ action_required: "choose_herdr", found_herdr_sessions: [] });
     expect(retries).not.toHaveBeenCalled();

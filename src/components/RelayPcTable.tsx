@@ -1,6 +1,6 @@
 import "./RelayPcTable.css";
 import type { MouseEvent, ReactNode } from "react";
-import { newPcs, type MyPc } from "../lib/account/myPcs.ts";
+import { invitationEndsAt, isNewAccountPc, newPcs, type MyPc } from "../lib/account/myPcs.ts";
 import { useT } from "../lib/i18n.ts";
 import { lastSeen } from "../lib/lastSeen.ts";
 import { inDashboardFilter, relayHost, type DashboardFilter, type dashboardModel } from "../lib/relay/dashboard.ts";
@@ -9,7 +9,7 @@ import { serverScopePath } from "../lib/shellMode.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { CheckPcsButton } from "./AccountPcs.tsx";
-import { askToJoinReason, formatAbsoluteTime, formatProbeLine, localStateWord, pcDotState, routeNode, type DashboardRow } from "./relayPcState.tsx";
+import { askToJoinReason, formatAbsoluteTime, formatProbeLine, localStateWord, outOfReachReason, outOfReachWord, pcDotState, routeNode, type DashboardRow } from "./relayPcState.tsx";
 import { StatusDot } from "./StatusDot.tsx";
 
 export type DashboardAttention = ReturnType<typeof dashboardModel>["attention"][number];
@@ -29,6 +29,8 @@ export interface RelayPcTableProps {
   readonly onSelect: (serverId: string) => void;
   readonly onOpenSheet: (pc: MyPc, mode: "new" | "join") => void;
   readonly onOpenPc?: (pc: MyPc) => void;
+  /** Check again on a row this device could not reach: that PC alone */
+  readonly onCheckPc?: (serverId: string) => void;
   readonly pcStatus?: ReadonlyMap<string, PcStatus>;
   readonly onCheckPcs?: () => void;
   readonly checkedByUser?: boolean;
@@ -47,7 +49,7 @@ function matchesFilter(row: DashboardRow, filter: DashboardFilter, filters?: Rea
 
 export function RelayPcTable({
   rows, attention = [], filters, filter = "all", onFilter, relayFilter = null, onClearRelayFilter,
-  selectedPcId = null, onSelect, onOpenSheet, onOpenPc, pcStatus, onCheckPcs, checkedByUser = false,
+  selectedPcId = null, onSelect, onOpenSheet, onOpenPc, onCheckPc, pcStatus, onCheckPcs, checkedByUser = false,
   updatingIds, mode = "account", narrow = false, showToolbar = true, showLastSeen = true, now = Date.now(),
 }: RelayPcTableProps) {
   const t = useT();
@@ -64,7 +66,7 @@ export function RelayPcTable({
       case "unchecked": return localStateWord(row.check, t);
       case "needs-approval": return t("Needs approval");
       case "needs-update": return t("Needs update");
-      case "offline": return row.last_seen_at === null ? t("Offline") : t("Offline · {when}", { when: lastSeen(row.last_seen_at, now) });
+      case "offline": case "unreachable": return outOfReachWord(row.displayState, t);
       case "paired":
         if (!listedRow(row)) return localStateWord(row.check ?? statusMap.get(row.server_id) ?? null, t);
         return row.linked || row.enrollment === "failed" ? t("Ready") : t("Ready · not in the account yet");
@@ -72,11 +74,15 @@ export function RelayPcTable({
   };
   const stateSubline = (row: DashboardRow, updating: boolean, phone = false): string | null => {
     const check = row.check ?? statusMap.get(row.server_id) ?? null;
+    // why this device cannot open it, which says what its own check found as well: a line on a phone (the table's row keeps it in its title, PF-1)
+    const away = updating || !phone ? null : outOfReachReason(row, t, now);
+    if (away !== null) return away;
     if (listedRow(row) && checkedByUser && row.paired) return formatProbeLine(check, t) ?? t("Not checked");
     if (updating) return null;
     if (row.state === "needs-update") return t("Update Ovis on it");
     if (listedRow(row) && row.state === "needs-approval") {
-      if (freshIds.has(row.server_id) && row.added_at !== null) return t("new · {n} min left", { n: Math.max(1, Math.ceil((Date.parse(row.added_at) + 10 * 60_000 - now) / 60_000)) });
+      const expires = invitationEndsAt(row);
+      if (freshIds.has(row.server_id) && expires !== null) return t("new · {n} min left", { n: Math.max(1, Math.ceil((expires - now) / 60_000)) });
       if (phone) return askToJoinReason(row, t);
     }
     return null;
@@ -90,9 +96,10 @@ export function RelayPcTable({
   };
   const stateWord = (row: DashboardRow, updating: boolean): ReactNode => {
     const word = stateHeadline(row, updating);
-    const reason = !updating && row.state === "needs-approval" && !freshIds.has(row.server_id) ? askToJoinReason(row, t) : null;
+    const join = !updating && row.state === "needs-approval" && !freshIds.has(row.server_id) ? askToJoinReason(row, t) : null;
+    const reason = join ?? (updating ? null : outOfReachReason(row, t, now));
     const title = reason !== null ? `${word} · ${reason}` : word;
-    return <span className="relay-pc-state-word" title={title} {...(reason !== null ? { "data-reason": "join" } : {})}>{word}</span>;
+    return <span className="relay-pc-state-word" title={title} {...(join !== null ? { "data-reason": "join" } : {})}>{word}</span>;
   };
 
   const renderAction = (row: DashboardRow): ReactNode => {
@@ -102,6 +109,8 @@ export function RelayPcTable({
         onClick={(event) => { event.stopPropagation(); if (onOpenPc) { event.preventDefault(); onOpenPc(row); } }}>{label}</a>
     );
     const detailsBtn = <button type="button" className="btn relay-pc-action-btn" data-pc-action="details" onClick={(e) => { stop(e); onSelect(row.server_id); }}>{t("Details")}</button>;
+    // a PC new to the account (one press) gets no quick Open here: it is opened from the PC's own page, on a press
+    if (mode === "account" && row.accountOpen && !isNewAccountPc(row, now)) return openLink("open", t("Open"));
     switch (row.displayState) {
       case "paired": case "unchecked": return openLink("open", t("Open"));
       case "needs-update": return row.paired ? openLink("update", t("Update")) : detailsBtn;
@@ -113,6 +122,11 @@ export function RelayPcTable({
       case "offline":
         return !row.paired && row.join !== undefined
           ? <button type="button" className="btn relay-pc-action-btn" data-pc-action="join" onClick={(e) => { stop(e); onOpenSheet(row, "join"); }}>{t("Join")}</button>
+          : detailsBtn;
+      // Open can only fail while no relay answers this device: the check is what to try once its network is back
+      case "unreachable":
+        return onCheckPc
+          ? <button type="button" className="btn relay-pc-action-btn" data-pc-action="check" onClick={(e) => { stop(e); onCheckPc(row.server_id); }}>{t("Check again")}</button>
           : detailsBtn;
     }
   };

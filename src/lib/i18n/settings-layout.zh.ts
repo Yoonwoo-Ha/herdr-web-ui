@@ -58,7 +58,6 @@ export const SETTINGS_LAYOUT_ZH: Record<string, string> = {
   "When this device alerts you, and where else alerts go.": "此设备何时提醒你，以及提醒还发往何处。",
   "Coding agents on this PC, their accounts and plan limits.": "此 PC 上的编程代理、账户和套餐用量。",
   "Keyboard shortcuts, and herdr's prefix keys.": "快捷键和 herdr 前缀键。",
-  "Phones, browsers and PCs that reach this Ovis.": "连接到此 Ovis 的手机、浏览器和 PC。",
   "Features still being shaped; they may change.": "仍在完善的功能，可能会变化。",
   "Enter {min}–{max}px": "请输入 {min}–{max}px 之间的数值。",
 };

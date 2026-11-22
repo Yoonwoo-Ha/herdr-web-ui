@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium, type Locator, type Page } from "playwright-core";
+import { chromium, errors as playwrightErrors, type BrowserContext, type Locator, type Page } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { forgetPageMedia, PAGE_MEDIA_LIFETIME_MS, pageFileHooks, pageMediaResponse } from "../server/file-view.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
@@ -15,6 +15,21 @@ import { openSettingsPage } from "./settings-page.ts";
  * spot Settings comes to cover would open that row's sentence (SettingsControls' useRowSentence), which takes the next
  * Escape for itself, as it should, and a check that Escape closes Settings would wait on it.
  */
+/**
+ * The browser scripts of a lane share one herdr test session, so another script's agent that turns blocked raises
+ * an alert droplet on this script's pages too, at any moment and above an open dialog: it once took the click meant
+ * for the Files dialog's Changes tab (#4270). No check here is about droplets, so these pages draw none. A sheet
+ * the page adopts, not a style element: the app's own document only, and nothing its content policy reads.
+ */
+async function drawsNoDroplet(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    if (window.top !== window) return;
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(".droplet { visibility: hidden !important; }");
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+  });
+}
+
 async function openSettingsByKeys(page: Page): Promise<void> {
   await page.mouse.move(0, 0);
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
@@ -41,21 +56,55 @@ const openFiles = async (page: import("playwright-core").Page) => {
   else await runMoreItem(page, "Browse files");
 };
 
-// A loaded or reloaded chat scrolls to its end once its conversation is measured; the chat frame
-// names its content only once it is presented there. Even then a link far above the end is no
-// steady target for a pointer: a follow to the end still on its way moves it between pointer down
-// and up, or takes its row and the focus away before a key, and nothing opens. Not even a wheel
-// read back first holds still: the follow undid one in looped runs.
-const transcriptSettled = (page: Page) => page.locator(".chat-frame[data-pane-content]").waitFor({ state: "attached" });
+const transcriptLink = (page: Page, link: Locator): Locator =>
+  page.locator(".pane-frame.is-current .chat-view").locator(link);
 const reloadFollowingEnd = async (page: Page): Promise<void> => {
   await page.evaluate(() => { for (const node of document.querySelectorAll(".chat-view")) node.scrollTop = node.scrollHeight; });
   await page.waitForFunction(() => (JSON.parse(sessionStorage.getItem("ovis:chat-positions") ?? "[]") as [string, { atEnd: boolean }][]).every(([, place]) => place.atEnd));
   await page.reload();
 };
-const activateInTranscript = async (page: Page, link: Locator): Promise<void> => {
-  await transcriptSettled(page);
-  await link.dispatchEvent("click");
-};
+// Dispatch waits for the link in the selected chat. It does not need the end of the chat to be
+// presented, which is what data-pane-content acknowledges.
+const activateInTranscript = (page: Page, link: Locator): Promise<void> =>
+  transcriptLink(page, link).dispatchEvent("click");
+
+async function activateWithPaneDiagnostic(page: Page, link: Locator, expectedPane: string): Promise<void> {
+  try {
+    await activateInTranscript(page, link);
+  } catch (error) {
+    if (!(error instanceof playwrightErrors.TimeoutError)) throw error;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const snapshot = await Promise.race([
+      page.evaluate((expectedPane) => {
+        const frame = document.querySelector(".pane-frame.is-current");
+        const currentPane = frame?.getAttribute("data-layout-pane") ?? null;
+        const chat = frame?.querySelector(".chat-view");
+        const sideNotesPanes = new Set<string | null>();
+        for (const element of document.querySelectorAll("body *")) {
+          if (element.textContent?.trim() === "side notes") {
+            sideNotesPanes.add(element.closest(".pane-frame")?.getAttribute("data-layout-pane") ?? null);
+          }
+        }
+        return {
+          currentPane,
+          matchesExpectedPane: currentPane === expectedPane,
+          hasChatView: chat !== undefined && chat !== null,
+          paneContent: chat?.getAttribute("data-pane-content") ?? frame?.querySelector(".chat-frame")?.getAttribute("data-pane-content") ?? null,
+          chatRows: chat?.querySelectorAll("[data-chat-row]").length ?? 0,
+          conversationSource: chat?.getAttribute("data-conversation-source") ?? chat?.querySelector("[data-conversation-source]")?.getAttribute("data-conversation-source") ?? null,
+          sideNotesFound: sideNotesPanes.size > 0,
+          sideNotesPanes: [...sideNotesPanes],
+        };
+      }, expectedPane).catch((cause: unknown) => ({ snapshotError: cause instanceof Error ? cause.message : String(cause) })),
+      // Page.evaluate has no timeout and may never return if the renderer is stuck.
+      new Promise<{ snapshotError: string }>((resolve) => {
+        timer = setTimeout(() => resolve({ snapshotError: "DOM snapshot timed out" }), 2_000);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    console.error(`Transcript link timeout: ${JSON.stringify({ expectedPane, url: page.url(), ...snapshot })}`);
+    throw error;
+  }
+}
 
 const root = mkdtempSync(join(tmpdir(), "ovis-file-back-"));
 const reportServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(
@@ -216,6 +265,7 @@ try {
   const origin = `http://127.0.0.1:${server.port}`;
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  await drawsNoDroplet(context);
   const page = await context.newPage();
   await page.addInitScript(() => {
     // the app's own document only: a sandboxed HTML page the viewer frames has no storage to seed
@@ -235,6 +285,12 @@ try {
   await page.goto(`${origin}/api/health`);
   await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
   await page.locator(".conn-live").waitFor();
+  assert.equal(await page.evaluate(() => {
+    const probe = document.body.appendChild(Object.assign(document.createElement("div"), { className: "droplet" }));
+    const visibility = getComputedStyle(probe).visibility;
+    probe.remove();
+    return visibility;
+  }), "hidden", "this script's pages draw no alert droplet");
   const videoLink = page.getByRole("button", { name: "demo video", exact: true });
   await videoLink.waitFor();
   await page.locator(".markdown-code").first().locator(".hl-keyword", { hasText: "const" }).waitFor();
@@ -454,9 +510,9 @@ try {
   await openSettingsPage(page, "Devices and PCs");
   await settingsOverPreview.getByRole("button", { name: "Add a connection", exact: true }).click();
   const connectDevice = page.getByRole("dialog", { name: "Add a connection", exact: true });
-  await connectDevice.locator('.connect-tabs [data-tab="ssh"]').click();
-  await connectDevice.getByLabel("Or type an SSH address", { exact: true }).fill("qa@pc.invalid");
-  await connectDevice.locator(".connect-ssh-form").getByRole("button", { name: "Add", exact: true }).click();
+  await connectDevice.locator('.connect-tabs [data-tab="direct"]').click();
+  await connectDevice.getByLabel("Address or SSH", { exact: true }).fill("qa@pc.invalid");
+  await connectDevice.locator(".connect-ssh-form").getByRole("button", { name: "Connect", exact: true }).click();
   const addPc = page.locator("dialog.machine-dialog");
   await addPc.waitFor();
   await settingsOverPreview.waitFor({ state: "hidden" });
@@ -665,11 +721,9 @@ try {
   console.log("PASS from 980px a file opened from the Files dialog shows in the panel and the dialog closes");
 
   for (const [label, content] of [["extensionless", "Extensionless text"], ["unknown text", "Unknown extension text"]] as const) {
-    const link = page.getByRole("button", { name: label, exact: true });
-    // the panel just closed: the chat takes its width back and its rows move under a pointer.
-    await transcriptSettled(page);
-    await link.focus();
-    await link.dispatchEvent("click");
+    const link = transcriptLink(page, page.getByRole("button", { name: label, exact: true }));
+    // Focus and activate in the same task, before the chat can move or unmount the row.
+    await link.evaluate((button: HTMLButtonElement) => { button.focus(); button.click(); });
     await panel.getByText(content, { exact: true }).waitFor();
     assert.equal(await page.locator(".modal.file-viewer").count(), 0, "real text metadata corrects an unknown-extension popup guess");
     await panel.getByRole("button", { name: "Close file", exact: true }).click();
@@ -886,11 +940,11 @@ try {
   const sideNotes = page.getByRole("button", { name: "side notes", exact: true });
   await rowOf(sidePane).click();
   await onPane(sidePane);
-  await activateInTranscript(page, sideNotes);
+  await activateWithPaneDiagnostic(page, sideNotes, sidePane);
   await panel.getByText("Side pane notes", { exact: true }).waitFor();
   await rowOf(pane).click();
   await onPane(pane);
-  await activateInTranscript(page, notesLink);
+  await activateWithPaneDiagnostic(page, notesLink, pane);
   await panel.getByText("File preview history regression", { exact: true }).waitFor();
   // the viewer showing the first pane's file is marked: a viewer the switch reused would keep that
   // file's loaded content, and show it for the side pane's file until it read its own
@@ -1266,6 +1320,7 @@ try {
   for (const width of [390, 1440]) {
     for (const theme of ["dark", "light"]) {
       const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width === 390, hasTouch: width === 390 });
+      await drawsNoDroplet(context);
       await context.addInitScript((theme) => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme })), theme);
       const page = await context.newPage();
       page.setDefaultTimeout(10_000);
@@ -1348,12 +1403,16 @@ try {
   }
   for (const width of [1280, 601, 600, 390]) {
     const readerContext = await browser.newContext({ viewport: { width, height: 800 } });
+    await drawsNoDroplet(readerContext);
     try {
       const readerPage = await readerContext.newPage();
       await readerPage.goto(`${origin}/?read=${encodeURIComponent(join(root, "long.md"))}`);
       const readerBody = readerPage.locator(".file-reader-body");
       await readerBody.locator(".file-viewer-markdown p").first().waitFor();
-      await readerBody.locator(".file-viewer-markdown .markdown-h1").nth(longPreviewHeadings - 1).waitFor();
+      const readerPreview = readerBody.locator('.file-viewer-markdown[data-drawn="complete"]');
+      // A loaded runner can take longer to draw this large file; the signal ends the wait early (#4185).
+      await readerPreview.waitFor({ timeout: 30_000 });
+      assert.equal(await readerPreview.locator(".markdown-h1").count(), longPreviewHeadings);
       const geometry = await readerBody.evaluate((element) => ({ height: element.clientHeight, scrollHeight: element.scrollHeight, viewport: innerHeight }));
       assert.ok(geometry.height < geometry.viewport, `${width}px: standalone reader body is bounded by the viewport`);
       assert.ok(geometry.scrollHeight > geometry.height, `${width}px: long document has an internal scroll range`);
@@ -1400,6 +1459,7 @@ try {
   const remote: Machine = { ...local, id: "remote-fixture", name: "Remote fixture", snapshot: { ...local.snapshot, panes: [], workspaces: [], tabs: [], layouts: [], agents: [] } };
   for (const target of ["remote-fixture", "local", "missing-fixture"]) {
     const ownerContext = await browser.newContext();
+    await drawsNoDroplet(ownerContext);
     const fileRequests: string[] = [];
     await ownerContext.addInitScript(({ stored, pane }) => {
       localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
@@ -1495,7 +1555,10 @@ try {
   const long = page.getByRole("dialog", { name: "long.md", exact: true });
   await long.locator(".file-viewer-markdown .markdown-h1").first().waitFor();
   assert.match(await long.locator(".file-viewer-meta .file-viewer-notice").getAttribute("title") ?? "", /^Showing the first 256 KB of /);
-  await long.locator(".file-viewer-markdown .markdown-h1").nth(longPreviewHeadings - 1).waitFor();
+  const longPreview = long.locator('.file-viewer-markdown[data-drawn="complete"]');
+  // A loaded runner can take longer to draw this large file; the signal ends the wait early (#4185).
+  await longPreview.waitFor({ timeout: 30_000 });
+  assert.equal(await longPreview.locator(".markdown-h1").count(), longPreviewHeadings);
   // The preview can contain thousands of file-link buttons. Query its toolbar, not every
   // accessible name in the document: the check itself must not monopolize the page.
   const longHeader = long.locator(".file-viewer-header");

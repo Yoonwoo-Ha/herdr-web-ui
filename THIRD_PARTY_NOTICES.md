@@ -64,6 +64,14 @@ validation approach from
 The MIT license text below applies. Ovis uses independent server IDs,
 bounded private storage and absent-only response defaults.
 
+## orca accessibility snapshot
+
+`app/electron/src/browserAxTree.ts` adapts the accessibility-tree walk (its role sets and the
+outline it makes) from [stablyai/orca](https://github.com/stablyai/orca),
+`src/main/browser/cdp/snapshots/snapshot-ax-tree-walk.ts`, at revision
+`0854480f88dbc495dc7c2b95dc35844916e4b296`, under MIT, Copyright (c) 2026 Lovecast Inc. The MIT
+license text below applies.
+
 ## Agent of Empires IME rewrite sequences
 
 The dictation hypotheses and SwiftKey word-commit sequences in
@@ -1563,7 +1571,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## libghostty-vt
 
-`src/lib/ghostty/ghostty-vt.wasm` is libghostty-vt from [Ghostty](https://github.com/ghostty-org/ghostty) at
+`shared/ghostty/ghostty-vt.wasm` is libghostty-vt from [Ghostty](https://github.com/ghostty-org/ghostty) at
 commit e95bed6, built for wasm32 by `scripts/ghostty-vt/build.sh` with the small change in
 `scripts/ghostty-vt/kitty-on-wasm.patch` (Kitty graphics on, file media off). It draws every terminal, under the
 MIT License below. The module links two
@@ -1902,6 +1910,57 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+## markdown-it
+
+The file viewer's Markdown Preview is read by [markdown-it](https://github.com/markdown-it/markdown-it)
+14.3.3, which `dist/` carries with the packages it imports. They are under the MIT license below,
+with these copyright notices:
+
+- `markdown-it` 14.3.3: `Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin.`
+- `linkify-it` 5.0.2: `Copyright (c) 2015 Vitaly Puzrin.`
+- `mdurl` 2.1.0: `Copyright (c) 2015 Vitaly Puzrin, Alex Kocharin.` and
+  `Copyright Joyent, Inc. and other Node contributors. All rights reserved.`
+- `uc.micro` 2.1.0 and `punycode.js` 2.3.1: `Copyright Mathias Bynens <https://mathiasbynens.be/>`
+
+```
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation
+files (the "Software"), to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+```
+
+It also carries `entities` 4.5.0, under the BSD 2-Clause license:
+
+```
+Copyright (c) Felix Böhm
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+
+Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+THIS IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS,
+EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
 
 ## Mermaid
 

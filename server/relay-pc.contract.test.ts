@@ -1,11 +1,13 @@
 import { afterEach, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { startBunRelay } from "../relay/bun.ts";
 import type { HerdrIdentity, Machine, MachineEvent, PcUpdateAll } from "../shared/machines.ts";
 import type { SessionSnapshot } from "../shared/protocol.ts";
 import { createServer } from "./index.ts";
+import { handleRequest } from "./dispatch.ts";
+import { bindTestPc, expectPcAddRefused, pcAddCases, type PcAddMode } from "./pc-add-policy.test-helpers.ts";
 import { RelayService } from "./relay/service.ts";
 import { newRouteProbes, openRelayPcTunnel, RelayPcKey } from "./relay-pc.ts";
 import { decodeOffer } from "../shared/relay-offer.ts";
@@ -31,7 +33,9 @@ const LAN = "10.99.0.1";
 const TAILNET = "100.64.0.7";
 const listener = { port: 0 };
 
-async function twoPcs(options: { direct?: { reachable: (dial: number, host: string) => boolean; held?: (dial: number) => Promise<void> | undefined; named?: (port: number) => readonly string[] }; updates?: UpdateService } = {}) {
+// An unspecified mode follows the shipped default, on both PCs.
+async function twoPcs(options: { direct?: { reachable: (dial: number, host: string) => boolean; held?: (dial: number) => Promise<void> | undefined; named?: (port: number) => readonly string[] }; updates?: UpdateService; accountOpensAll?: boolean; mode?: PcAddMode; platform?: NodeJS.Platform } = {}) {
+  const opensAll = options.mode ? options.mode !== "off" : options.accountOpensAll;
   const relay = startBunRelay({ port: 0, limiters: {
     perAddress: { async limit() { return { success: true }; } },
     global: { async limit() { return { success: true }; } },
@@ -54,9 +58,10 @@ async function twoPcs(options: { direct?: { reachable: (dial: number, host: stri
     return socket;
   };
   const bState = stateDir();
+  if (options.mode === "target-bound") bindTestPc(bState);
   const service = new RelayService({ stateDir: bState, relay: `wss://127.0.0.1:${relay.port}`, connect: local, pairCodeRelay: `wss://127.0.0.1:${relay.port}`,
     ...(options.direct ? { direct: { addresses: () => ["127.0.0.1"], advertise: (port: number) => { listener.port = port; return options.direct!.named?.(port) ?? [`ws://${LAN}:7319`]; }, peerAllowed: () => true, preferredPort: 0 } } : {}) });
-  const b = createServer({ port: 0, hostname: "127.0.0.1", stateDir: bState, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false, relay: service, ...(options.updates ? { updates: options.updates } : {}) });
+  const b = createServer({ port: 0, hostname: "127.0.0.1", stateDir: bState, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false, relay: service, accountOpensAll: opensAll, ...(options.platform ? { platform: options.platform } : {}), ...(options.updates ? { updates: options.updates } : {}) });
   cleanup.push(async () => { await service.shutdown(); b.stop(); });
   const bBase = `http://127.0.0.1:${b.port}`;
   const started = await fetch(`${bBase}/api/relay/start`, { method: "POST", headers: { origin: bBase, "x-herdr-update": "1" } });
@@ -71,6 +76,7 @@ async function twoPcs(options: { direct?: { reachable: (dial: number, host: stri
   expect(approvals.localOnlyOpen()).toBe(true);
   const { url: link } = await offered.json() as { url: string };
   const aState = stateDir();
+  if (options.mode === "source-bound") bindTestPc(aState);
   const lan = { dials: 0, dialed: [] as string[], ended: [] as string[] };
   const onLan = (url: string): WebSocket => {
     const target = new URL(url);
@@ -91,7 +97,7 @@ async function twoPcs(options: { direct?: { reachable: (dial: number, host: stri
   };
   const startA = () => {
     const a = createServer({ port: 0, hostname: "127.0.0.1", stateDir: aState, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false, relayPcSocket: local, relayPcDirectSocket: onLan,
-      pcUpdateTimings: { pollMs: 20, startMs: 5_000, checkMs: 1_000 } });
+      accountOpensAll: opensAll, pcUpdateTimings: { pollMs: 20, startMs: 5_000, checkMs: 1_000 } });
     let stopped = false;
     const stop = () => { if (!stopped) { stopped = true; a.stop(); } };
     cleanup.push(stop);
@@ -101,6 +107,27 @@ async function twoPcs(options: { direct?: { reachable: (dial: number, host: stri
 }
 
 const findRelayPc = (base: string, code: string) => postRelay(base, { code }, "/code");
+
+it("unreadable account evidence refuses a PC add without claiming the unbound source is in an account", async () => {
+  const { aState, startA, link, b } = await twoPcs({ mode: "unbound", platform: "linux" });
+  writeFileSync(join(aState, "account-tombstones.json"), "unreadable", { mode: 0o600 });
+  const a = startA();
+  expect(a.app.context.services.devices.account()).toBeNull();
+  expect(a.app.context.services.devices.accountError).not.toBeNull();
+  const publicRequest = await addRelayPc(a.base, link);
+  expect([publicRequest.status, await errorCode(publicRequest)]).toEqual([403, "strict"]);
+  // Exercise the already-authorized handler separately. Dispatch must not reveal account details to a blocked caller.
+  const response = await handleRequest(new Request(`${a.base}/api/machines/relay`, { method: "POST",
+    headers: { host: new URL(a.base).host, origin: a.base, "content-type": "application/json", "x-herdr-machine": "1", "x-herdr-update": "1" },
+    body: JSON.stringify({ link }) }), { ...a.app.context, ownerSocket: true, requestIP: () => ({ address: "127.0.0.1" }), timeout() {} });
+  expect(b.context.services.devices.list(null).filter(row => row.via_relay)).toEqual([]);
+  expect(response?.status).toBe(409);
+  expect(await response?.json()).toMatchObject({ error: { code: "pc_add_account_unavailable", message: "Can't add a PC right now. Try again in a moment." } });
+  const status = await handleRequest(new Request(`${a.base}/api/account/status`, { headers: { host: new URL(a.base).host } }),
+    { ...a.app.context, ownerSocket: true, requestIP: () => ({ address: "127.0.0.1" }), timeout() {} });
+  expect(status?.status).toBe(200);
+  expect(await status?.json()).toMatchObject({ account: null, pc_add_from_account: "unavailable" });
+});
 
 const errorCode = async (response: Response) => (await response.json() as { error: { code: string } }).error.code;
 
@@ -140,11 +167,12 @@ async function machineWhen(base: string, wanted: (machine: Machine) => boolean, 
   } finally { abort.abort(); }
 }
 
-it("adds a PC through the relay, shows its panes, signs in again after a restart and stops at a revocation", async () => {
-  const { b, link, aState, startA } = await twoPcs();
+it.each(pcAddCases)("relay-link PC add follows the live account binding: %s", async mode => {
+  const { b, link, aState, startA } = await twoPcs({ mode, platform: "linux" });
   let a = startA();
 
   const added = await addRelayPc(a.base, link, "Lab");
+  if (mode === "source-bound" || mode === "target-bound") return expectPcAddRefused(added, mode, b);
   expect(added.status).toBe(201);
   const { machine } = await added.json() as { machine: Machine };
   expect(machine).toMatchObject({ kind: "relay", name: "Lab", relay: { server_id: new URL(link).pathname.split("/")[2] } });
@@ -196,9 +224,10 @@ it("adds a PC through the relay, shows its panes, signs in again after a restart
   expect(existsSync(keys) ? readdirSync(keys) : []).toEqual([]);
 }, 60_000);
 
-it("finds a PC by the code it shows, keeps its offer while its ID is compared, and adds it once that ID is confirmed", async () => {
-  const { bBase, startA } = await twoPcs();
+it.each(pcAddCases)("typed-code PC add follows the live account binding: %s", async mode => {
+  const { b, bBase, startA } = await twoPcs({ mode, platform: "linux" });
   const a = startA();
+  if (mode === "source-bound") return expectPcAddRefused(await findRelayPc(a.base, "ZZZZZ-ZZZZZ"), mode, b);
   const notACode = await findRelayPc(a.base, "hello");
   expect(notACode.status).toBe(400);
   expect(await errorCode(notACode)).toBe("typed_code_not-a-code");
@@ -222,6 +251,7 @@ it("finds a PC by the code it shows, keeps its offer while its ID is compared, a
   expect(other.status).toBe(400);
   expect((await other.json() as { error: { message: string } }).error.message).toContain("no longer waiting");
   const added = await postRelay(a.base, { found: answer.ticket });
+  if (mode === "target-bound") return expectPcAddRefused(added, mode, b);
   expect(added.status).toBe(201);
   const { machine } = await added.json() as { machine: Machine };
   expect(machine.relay?.server_id).toBe(server_id);

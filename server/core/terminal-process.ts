@@ -125,6 +125,14 @@ const ATTACH_REFUSAL_EXIT_MS = 2_000;
 export const ATTACH_TAKEOVER_EXIT_MS = 2_000;
 export const ATTACH_HELD_MESSAGE = "Another web bridge has this pane open. It connects here as soon as that bridge lets go.";
 /**
+ * How `herdr terminal attach` is asked to leave by itself: at `ctrl+b q` it detaches and exits (herdr's CLI
+ * reference, "Direct terminal attach"), once it has sent herdr every key it read before the chord. Hung up, it quits
+ * with what it had not read yet: input this server already answered for (#4174). After the chord's first key alone
+ * (typed raw, or as a kitty or modifyOtherKeys report), which still waits for its second, the `q` would not be the
+ * chord's: herdr would type it into the pane.
+ */
+export const ATTACH_LEAVE = { keys: "\x02q", notAfter: /(?:\x02|\x1b\[98[;:][\d;:]*u|\x1b\[27;\d+;98~)$/ };
+/**
  * How long a pane whose attach herdr ended is looked up again before its terminal is taken for
  * ended. A live handoff (`herdr update --handoff`, `herdr server live-handoff`) moves every pane
  * to a new server under a new terminal id and cuts each attach with "server shut down", the
@@ -613,6 +621,8 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
         env: { HERDR_SOCKET_PATH: checkedHerdrSocket(herdrSocketPath()) },
         cols: attachment.cols,
         rows: attachment.rows,
+        // herdr's attach reads the chord on Unix only: elsewhere its keys would be typed into the pane
+        ...(process.platform === "win32" ? {} : { leaveAt: ATTACH_LEAVE }),
         onData: (data) => {
           if (retired || attachments.get(paneId) !== attachment) return;
           if (onCore) {

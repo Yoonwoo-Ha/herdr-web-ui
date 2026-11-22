@@ -7,6 +7,15 @@ import { AGENT_CATALOG, catalogRow } from "../shared/agent-catalog.ts";
 import type { UsageReport } from "../shared/protocol.ts";
 import { openSettingsPage } from "./settings-page.ts";
 
+async function openUsageDrawer(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+  // The popover is positioned inside the drawer and inherits its slide.
+  await page.waitForFunction(() => {
+    const drawer = document.querySelector("#workspace-drawer.is-open");
+    return drawer !== null && drawer.getBoundingClientRect().left === 0 && drawer.getAnimations().length === 0;
+  });
+}
+
 const at = (hours: number): string => new Date(Date.now() + hours * 3600_000).toISOString();
 const report = (): UsageReport => ({
   providers: [
@@ -182,7 +191,7 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await phone.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ showUsage: true })));
     const page = await phone.newPage();
     await page.goto(origin);
-    await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+    await openUsageDrawer(page);
     await page.locator(".usage-strip").click();
     const popover = page.getByRole("dialog", { name: "Subscription usage", exact: true });
     await popover.waitFor();
@@ -405,7 +414,7 @@ async function checkRecordedAccounts(browser: Browser, origin: string): Promise<
     await staged(phone);
     const page = await phone.newPage();
     await page.goto(origin);
-    await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+    await openUsageDrawer(page);
     await page.locator(".usage-strip").click();
     const popover = page.getByRole("dialog", { name: "Subscription usage", exact: true });
     await popover.waitFor();
@@ -532,7 +541,7 @@ export async function checkUsageSignInAgain(browser: Browser, origin: string): P
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
       await page.goto(origin);
-      const openDrawer = async () => { if (phone) await page.getByRole("button", { name: "Open workspace list", exact: true }).click(); };
+      const openDrawer = async () => { if (phone) await openUsageDrawer(page); };
       await openDrawer();
       await page.locator(".usage-strip").click();
       const popover = page.getByRole("dialog", { name: "Subscription usage", exact: true });

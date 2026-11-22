@@ -37,9 +37,21 @@ export function reloadOnPlainClick(event: LinkClick, page: Reloadable = window, 
  * entry Back or Forward lands on: the query moves into the fragment, so a reload or the page's
  * next request does not carry it again.
  */
+/**
+ * The query as a fragment's fields, less a `sign-in` entry: that entry is taken from a fragment alone, and a query
+ * moved into one never carries it (so a reload cannot start a sign-in a query named).
+ */
+export function queryWithoutSignIn(search: string): string {
+  const fields = new URLSearchParams(search.replace(/^\?/, ""));
+  if (!fields.has("sign-in")) return search.replace(/^\?/, "");
+  fields.delete("sign-in");
+  return fields.toString();
+}
+
 export function moveQueryToFragment(page: { location: { pathname: string; search: string }; history: { state: unknown; replaceState(data: unknown, unused: string, url: string): void } }): boolean {
   if (page.location.search.length <= 1) return false;
-  page.history.replaceState(page.history.state, "", `${page.location.pathname}#${page.location.search.slice(1)}`);
+  const query = queryWithoutSignIn(page.location.search);
+  page.history.replaceState(page.history.state, "", query === "" ? page.location.pathname : `${page.location.pathname}#${query}`);
   return true;
 }
 

@@ -49,7 +49,10 @@ function measure({ top, bottom, footer }: Parts, line: HTMLElement, order: Split
       const list = section.querySelector(".machine-list");
       const first = list?.querySelector(":is(.machine-header, .workspace-header, .machine-new-row)");
       if (!list || !first) return row;
-      return Math.ceil(list.getBoundingClientRect().top - section.getBoundingClientRect().top + first.getBoundingClientRect().height);
+      // the built-in browser's tab group sits under the list in this section (MachineSidebar.tsx): its height comes on top,
+      // so the first PC row still shows at the minimum
+      const browser = section.querySelector(".browser-tabs")?.getBoundingClientRect().height ?? 0;
+      return Math.ceil(list.getBoundingClientRect().top - section.getBoundingClientRect().top + first.getBoundingClientRect().height + browser);
     }
     const agent = section.querySelector(".agent-row");
     return agent ? parseFloat(getComputedStyle(agent).minHeight) || row : row;

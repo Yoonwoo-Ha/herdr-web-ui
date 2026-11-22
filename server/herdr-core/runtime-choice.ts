@@ -9,7 +9,8 @@ import { delimiter, dirname, join } from "node:path";
 import type { HerdrCoreFacts, HerdrRuntimeFacts, RuntimeLock, RuntimeSource } from "../../shared/machines.ts";
 import { herdrConfigPath } from "../herdr-sidebar.ts";
 import { userHome } from "../user-home.ts";
-import { coreSocket, discoverHc, type FoundHc } from "./discovery.ts";
+import { coreSocket } from "./core-socket.ts";
+import { discoverHc, type FoundHc } from "./discovery.ts";
 import type { Runtime } from "./runtime.ts";
 import { readSavedRuntime, runtimeFile, saveRuntime } from "./runtime-file.ts";
 

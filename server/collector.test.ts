@@ -45,7 +45,11 @@ describe("parseStructureFrame", () => {
   });
 
   it("parses pane_created and pane_closed into a structure-changed event", () => {
+    // herdr 0.9.5's frame (isolated test session); herdr-core's names only the pane ID
+    expect(parseStructureFrame(createdFrame("w2:p1", "unknown"))).toEqual({ kind: "structure-changed", created: { paneId: "w2:p1", status: "unknown" } });
+    expect(parseStructureFrame({ event: "pane.created", data: { type: "pane_created", pane_id: "t4" } })).toEqual({ kind: "structure-changed" });
     expect(parseStructureFrame({ data: { type: "pane_created" } })).toEqual({ kind: "structure-changed" });
+    for (const type of ["tab_closed", "workspace_closed", "worktree_removed"]) expect(parseStructureFrame({ data: { type, workspace_id: "w2" } })).toEqual({ kind: "structure-changed", scopedClose: true });
     expect(parseStructureFrame({ data: { type: "pane_closed", pane_id: "w1:p1" } })).toEqual({ kind: "structure-changed", closed: "w1:p1" });
     expect(parseStructureFrame({ data: { type: "pane_closed" } })).toEqual({ kind: "structure-changed" });
   });
@@ -274,7 +278,7 @@ describe("lifecycle invalidations", () => {
   ];
 
   it.each(types)("refreshes for %s", (type) => {
-    expect(parseStructureFrame({ event: type, data: { type } })).toEqual({ kind: "structure-changed" });
+    expect(parseStructureFrame({ event: type, data: { type } })).toMatchObject({ kind: "structure-changed" });
   });
 
   it("coalesces a lifecycle burst into one push and authoritative reconciliation", async () => {
@@ -578,10 +582,15 @@ const until = async (done: () => boolean, what: string): Promise<void> => {
 };
 const paneOf = (pane_id: string, agent_status: string) => ({ pane_id, agent_status }) as unknown as HerdrPane;
 const statusFrame = (pane_id: string, agent_status: string): EventFrame => ({ event: "pane.agent_status_changed", data: { pane_id, agent_status, agent: "claude" } });
+function createdFrame(pane_id: string, agent_status: string): EventFrame {
+  const [workspace_id] = pane_id.split(":");
+  return { event: "pane_created", data: { type: "pane_created", pane: { pane_id, workspace_id, tab_id: `${workspace_id}:t1`, terminal_id: `term_${pane_id}`, agent_status, focused: false, revision: 0 } } };
+}
 
 function recorder() {
   const log = {
     baselines: 0,
+    created: [] as string[],
     resyncs: [] as { panes: string[]; newer: string[] }[],
     structure: 0,
     statuses: [] as string[],
@@ -592,7 +601,10 @@ function recorder() {
       log.statuses.push(`${paneId}:${status}${replay ? ` (was ${replay.before})` : ""}`);
       log.order.push(`${paneId}:${status}`);
     },
-    onBaseline: () => { log.baselines += 1; },
+    onBaseline: (_panes, _newer, _askedAt, created) => {
+      log.baselines += 1;
+      for (const [paneId, status] of new Map(created)) log.created.push(`${paneId}:${status}`);
+    },
     onReconciled: (panes) => log.order.push(`reconciled ${panes.map((p) => `${p.pane_id}:${p.agent_status}`).join(" ")}`),
     onResync: (panes, newer) => log.resyncs.push({ panes: panes.map((p) => p.pane_id), newer: [...newer].sort() }),
     onPaneEnded: () => {},
@@ -601,6 +613,136 @@ function recorder() {
   };
   return { log, handlers };
 }
+
+describe("a pane created while the collector listens", () => {
+  beforeEach(() => { jest.useFakeTimers(); });
+  afterEach(() => { jest.useRealTimers(); });
+
+  async function listening(panes: HerdrPane[] = [paneOf("w1:p1", "idle")]) {
+    const herdr = fakeHerdr(panes);
+    const { log, handlers } = recorder();
+    const collector = startStatusCollector(handlers, herdr.deps);
+    await elapse();
+    herdr.status()!.start();
+    await elapse(20);
+    return { herdr, log, collector };
+  }
+
+  it("hands the status it began with to the first snapshot that reads it, once, and replays from that snapshot as for any pane", async () => {
+    const { herdr, log, collector } = await listening();
+    herdr.setPanes([paneOf("w1:p1", "idle"), paneOf("w2:p1", "working")]);
+    herdr.lifecycle().emit(createdFrame("w2:p1", "unknown"));
+    await elapse(20);
+    expect(log.created).toEqual(["w2:p1:unknown"]);
+    herdr.setPanes([paneOf("w1:p1", "idle"), paneOf("w2:p1", "unknown")]);
+    herdr.status()!.start();
+    await elapse(20);
+    // the queue's baseline is the snapshot's working, never the creation's unknown: the end of the turn is told
+    expect(log.statuses).toEqual(["w2:p1:unknown (was working)"]);
+    collector.refresh();
+    await elapse(20);
+    expect(log.created).toEqual(["w2:p1:unknown"]);
+    collector.stop();
+  });
+
+  it("tells none from a snapshot asked for before a workspace or tab closed, nor from a later one: the close's own snapshot may come after the alert's wait", async () => {
+    const { herdr, log, collector } = await listening();
+    herdr.lifecycle().emit(createdFrame("w2:p1", "unknown"));
+    herdr.hold();
+    await elapse(20);
+    herdr.lifecycle().emit({ event: "tab_closed", data: { type: "tab_closed", tab_id: "w3:t1", workspace_id: "w3" } });
+    herdr.setPanes([paneOf("w1:p1", "idle"), paneOf("w2:p1", "blocked")]);
+    herdr.answerAll();
+    await elapse(20);
+    herdr.answerAll();
+    await elapse(20);
+    expect(log.baselines).toBeGreaterThan(2);
+    expect(log.created).toEqual([]);
+    collector.stop();
+  });
+
+  it("keeps it past a snapshot asked for before its creation was read", async () => {
+    const { herdr, log, collector } = await listening();
+    herdr.hold();
+    collector.refresh();
+    await elapse();
+    herdr.lifecycle().emit(createdFrame("w2:p1", "unknown"));
+    herdr.answerAll();
+    await elapse(20);
+    expect(log.created).toEqual([]);
+    herdr.setPanes([paneOf("w1:p1", "idle"), paneOf("w2:p1", "blocked")]);
+    herdr.answerAll();
+    await elapse(20);
+    expect(log.created).toEqual(["w2:p1:unknown"]);
+    collector.stop();
+  });
+
+  it("hands nothing for one that closed, exited or moved away first, even listed by a snapshot asked for before, nor for a pane a snapshot already read", async () => {
+    const { herdr, log, collector } = await listening();
+    herdr.hold();
+    for (const paneId of ["w2:p1", "w3:p1", "w4:p1", "w1:p1"]) herdr.lifecycle().emit(createdFrame(paneId, "unknown"));
+    await elapse(20);
+    herdr.lifecycle().emit({ event: "pane_closed", data: { type: "pane_closed", pane_id: "w2:p1" } });
+    herdr.lifecycle().emit({ event: "pane_exited", data: { type: "pane_exited", pane_id: "w3:p1" } });
+    herdr.lifecycle().emit({ event: "pane_moved", data: { type: "pane_moved", previous_pane_id: "w4:p1", pane: { pane_id: "w5:p1", agent_status: "blocked" } } });
+    herdr.setPanes(["w1:p1", "w2:p1", "w3:p1", "w4:p1"].map((paneId) => paneOf(paneId, "blocked")));
+    herdr.answerAll();
+    await elapse(20);
+    expect(log.created).toEqual([]);
+    herdr.setPanes(["w1:p1", "w2:p1", "w3:p1", "w5:p1"].map((paneId) => paneOf(paneId, "blocked")));
+    herdr.answerAll();
+    await elapse(20);
+    expect(log.baselines).toBeGreaterThan(2);
+    expect(log.created).toEqual([]);
+    collector.stop();
+  });
+
+  it("forgets it when the lifecycle subscription closes: a herdr started again lists another pane under the same ID", async () => {
+    const { herdr, log, collector } = await listening();
+    herdr.hold();
+    herdr.lifecycle().emit(createdFrame("w2:p1", "unknown"));
+    await elapse(20);
+    herdr.lifecycle().drop("socket_error");
+    await elapse(20);
+    herdr.lifecycle().start();
+    herdr.setPanes([paneOf("w1:p1", "idle"), paneOf("w2:p1", "blocked")]);
+    herdr.answerAll();
+    await elapse(20);
+    herdr.answerAll();
+    await elapse(20);
+    expect(log.baselines).toBeGreaterThan(2);
+    expect(log.created).toEqual([]);
+    collector.stop();
+  });
+
+  it("pairs no creation frame read after the lifecycle connection came back with a snapshot asked for before it was lost", async () => {
+    const { herdr, log, collector } = await listening();
+    herdr.hold();
+    collector.refresh();
+    await elapse();
+    herdr.lifecycle().drop("socket_error");
+    await elapse(20);
+    herdr.lifecycle().start();
+    herdr.lifecycle().emit(createdFrame("w2:p1", "unknown"));
+    herdr.setPanes([paneOf("w1:p1", "idle"), paneOf("w2:p1", "blocked")]);
+    herdr.answerAll();
+    await elapse(20);
+    expect(log.created).toEqual([]);
+    collector.stop();
+  });
+
+  it("forgets it once a snapshot asked for after its creation was read does not list it", async () => {
+    const { herdr, log, collector } = await listening();
+    herdr.lifecycle().emit(createdFrame("w2:p1", "unknown"));
+    await elapse(20);
+    expect(log.created).toEqual([]);
+    herdr.setPanes([paneOf("w1:p1", "idle"), paneOf("w2:p1", "blocked")]);
+    collector.refresh();
+    await elapse(20);
+    expect(log.created).toEqual([]);
+    collector.stop();
+  });
+});
 
 describe("startStatusCollector recovery", () => {
   beforeEach(() => { jest.useFakeTimers(); });

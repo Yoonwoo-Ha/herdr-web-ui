@@ -83,3 +83,35 @@ describe("a first message", () => {
     expect(firstMessageFault("hi", null)).toContain("needs an agent");
   });
 });
+
+describe("an MCP server named by the client", () => {
+  it.each([
+    ["claude", ["--mcp-config", "/tmp/evil.json"]],
+    ["claude", ["--model", "opus", "--mcp-config={\"mcpServers\":{}}"]],
+    ["copilot", ["--additional-mcp-config", "@/tmp/evil.json"]],
+    ["codex", ["-c", "mcp_servers.x.command='sh'"]],
+    ["codex", ["--config=mcp_servers={}"]],
+    ["codex", ["-c", "\"mcp_servers\".x.args=[]"]],
+  ])("is refused for %s: only the PC adds one, from its settings", (kind, args) => {
+    expect(launchArgsFault(kind, args)).toContain("browser tool");
+  });
+  it.each([
+    ["codex", ["mcp", "add", "x", "--", "sh"]],
+    ["claude", ["mcp", "add", "x", "sh"]],
+    ["copilot", ["--model", "x", "mcp", "add", "x", "--", "sh"]],
+    ["claude", ["--", "mcp", "add", "x", "sh"]],
+    ["copilot", ["--", "mcp", "add", "x"]],
+    ["claude", ["-c", "mcp", "add", "x", "sh"]],
+  ])("is refused through %s's own mcp command, which writes its settings", (kind, args) => {
+    expect(launchArgsFault(kind, args)).toContain("mcp command");
+  });
+  it("is no command as a flag's value, nor in Codex's prompt after --", () => {
+    expect(launchArgsFault("claude", ["--model", "mcp"])).toBeNull();
+    expect(launchArgsFault("codex", ["-m", "mcp", "--", "mcp"])).toBeNull();
+  });
+  it("is the prompt's own text after --", () => {
+    expect(launchArgsFault("codex", ["--", "--mcp-config and mcp_servers"])).toBeNull();
+    expect(launchArgsFault("claude", ["--", "--mcp-config"])).toBeNull();
+    expect(launchArgsFault("codex", ["-c", "model_reasoning_effort=high"])).toBeNull();
+  });
+});

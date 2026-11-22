@@ -4,12 +4,11 @@
  */
 
 import { placeBlock } from "./workspaceOrder.ts";
+import { sidebarPinKey } from "../../shared/attention.ts";
+
+export { sidebarPinKey } from "../../shared/attention.ts";
 
 const STORAGE_KEY = "ovis:sidebar-agent-pins";
-
-export function sidebarPinKey(machineId: string, paneId: string): string {
-  return `${machineId}:${paneId}`;
-}
 
 /**
  * The pins after herdr moved a pane under a new ID (#1503): its pin keeps its place under the new ID. The

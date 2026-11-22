@@ -102,17 +102,6 @@ export function directoryOf(fleet: Fleet, now: number): FakePc[] {
  * fresh non-extractable key of their own.
  */
 export async function seedPairings(page: Page, seeds: readonly Seed[], account: string | null): Promise<void> {
-  if (account !== null) await page.waitForFunction(() => new Promise<boolean>((resolve) => {
-    const request = indexedDB.open("ovis-account", 1);
-    request.onupgradeneeded = () => request.result.createObjectStore("account");
-    request.onerror = () => resolve(false);
-    request.onsuccess = () => {
-      const db = request.result;
-      const read = db.transaction("account", "readonly").objectStore("account").get("key");
-      read.onsuccess = () => { db.close(); resolve(read.result !== undefined); };
-      read.onerror = () => { db.close(); resolve(false); };
-    };
-  }));
   await page.evaluate(async ({ seeds, account }) => {
     const open = (name: string, version: number, upgrade: (db: IDBDatabase) => void) => new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(name, version);

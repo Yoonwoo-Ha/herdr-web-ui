@@ -1,6 +1,6 @@
 # Self-hosted CI runner
 
-An ephemeral Docker GitHub Actions runner for this repository's Linux CI/CD jobs. Each container registers, runs exactly one job and exits; the launcher then starts a fresh one. The image includes Bun, Node 22, checksum-pinned herdr, Playwright Chromium and its system libraries, ffmpeg, git, `gh`, curl, jq, unzip, xz-utils, OpenSSH (client and server), iproute2 (`ss`), tmux and procps (`ps`), with no sudo. Jobs detect it with `RUNNER_ENVIRONMENT=self-hosted`.
+An ephemeral Docker GitHub Actions runner for this repository's Linux CI/CD jobs. Each container registers, runs exactly one job and exits; the launcher then starts a fresh one. The image includes Bun, Node 22, checksum-pinned herdr, a pinned Rust toolchain (rustup's minimal profile, with gcc to link), Playwright Chromium and its system libraries, ffmpeg, git, `gh`, curl, jq, unzip, xz-utils, OpenSSH (client and server), iproute2 (`ss`), tmux and procps (`ps`), with no sudo. Jobs detect it with `RUNNER_ENVIRONMENT=self-hosted`.
 
 ## Prerequisites
 
@@ -51,8 +51,10 @@ host's loopback. What the runners share is `scripts/check.ts`'s slots, in a volu
 the herdr-backed CI lanes of every runner on the PC count against one `CHECK_MAX_RUNS` and wait for
 a slot, instead of each runner believing it has the PC to itself ([Check slots](#check-slots)). The
 `--shm-size 2g` Docker setting sizes `/dev/shm` for browser scratch space; it is not a total RAM
-limit. The container still has a pids limit of 8192, and `--ulimit core=0`: a crash never leaves a
-core file in the checkout, where `scripts/check.ts` would count it as a source change.
+limit. The container still has a pids limit of 8192, and `--ulimit core=0:1`: a crash never leaves a
+core file in the checkout, where `scripts/check.ts` would count it as a source change. The hard limit
+of 1 byte lets `server/pty/host.test.ts` lower a crashing command's limit to 1 byte, for which the
+kernel writes no core file and starts no piped `core_pattern` handler either; at 0 that test skips.
 
 Each slot's network is a /28 of one block, `10.213.0.0/16`, never a range docker picks. Left to
 itself, docker takes 172.17-31.x/16 ranges and then 192.168.x/20 ones: on a host whose 172 ranges
@@ -94,8 +96,7 @@ downloading every package.
 ## Check slots
 
 `scripts/check.ts` lets a few herdr-backed runs share a PC, each in a slot: a loopback port the run
-listens on, with more ports for admission and for the queue of waiting runs
-([Checks](../../docs/development.md#checks)). The runner containers of a PC used to share one
+listens on, with more ports for admission and for the queue of waiting runs. The runner containers of a PC used to share one
 network namespace so that those ports bounded the lanes of all of them. They shared every other
 loopback port with it. A job's tests keep Ovis servers on `127.0.0.1` with no token, and a request
 from the loopback drives such a server: a job on one slot could find the server of a job on
@@ -152,8 +153,12 @@ Self-hosted jobs verify the image's Bun version, requested Node major and herdr 
 of downloading tools. Both browser lanes use the installed project's Playwright revision to find
 Chromium under `/opt/playwright-browsers`; a missing browser fails with rebuild guidance, not a
 download fallback. Rebuild with `--build` after changing the tool pins or Playwright in `bun.lock`.
-The image's `BUN_VERSION` must match the default in `.github/actions/setup-ci/action.yml`, and
-`PLAYWRIGHT_VERSION` must match the lockfile.
+The image's `BUN_VERSION` must match the default in `.github/actions/setup-ci/action.yml`,
+`RUST_VERSION` must match `EXPECTED_RUST_VERSION` in `scripts/ci-preinstalled-tools.sh` (the Rust PTY
+host job checks it), and `PLAYWRIGHT_VERSION` must match the lockfile. The toolchain is root's under
+`/opt/rustup` and `/opt/cargo`; a job's crate downloads go to its own `~/.cargo` and end with its
+container. No host cache holds them: measured on hosthatch in the image, the whole crate graph's
+download, release build and tests take about 7 s from nothing (GitHub's image: 18-22 s).
 
 ### Runner version
 
@@ -354,6 +359,75 @@ repository's `scripts/build-cache.ts` against the installed `build-cache-promote
 to where the build cache's entries are filed, no job restores a build until the copy is the new one
 ([Build cache](#build-cache)).
 
+### The Rust PTY host job
+
+`ci.yml`'s Rust PTY host job asks for `["self-hosted","self-hosted-ovis-rust"]`. Only a slot that a
+launcher registers with that label takes it, so a host whose image predates the Rust toolchain never
+does: a host serves it with one slot of its own, the launcher's reserved slot, on top of its others:
+
+```sh
+run.sh ... --count 3 --reserved 1 --reserved-labels self-hosted-ovis-rust   # was --count 2: slot 1 takes the Rust job alone
+```
+
+The job takes about a minute, and in GitHub's hosted queue it waited two seconds in most runs (49 pull
+request runs to 2026-11-21: median 2 s, two waits of 14 and 23 minutes), so a slot of its own is what makes
+it as quick here: in the shared pool the same runs' jobs waited 8 to 55 s at the median per host and 3 to 6
+minutes at the 90th percentile, behind Integration tests and the browser parts. HostHatch and old-desktop
+run one each. Rebuild the
+image with the toolchain (`--build`) before you add the label. The job goes to these slots only once the
+repository variable `CI_RUST_SELF_HOSTED` is `true`; unset (the default), empty or `false` keeps it on
+`ubuntu-24.04` as before the slots existed. Any other value fails Detect changes in the runs that read it,
+a same-repository pull request or a push to a branch; forks, `hosted_only` (the Release's), manual runs and
+every run while `CI_SELF_HOSTED_LABELS` names the hosted image stay hosted without reading it, so a typo
+never stops a release:
+
+```sh
+gh variable set CI_RUST_SELF_HOSTED --body true   # the Rust job on the Rust slots
+gh variable delete CI_RUST_SELF_HOSTED            # back to ubuntu-24.04
+```
+
+Opted in, `scripts/ci-runner-route.sh` still keeps forks, `hosted_only` and manual runs on `ubuntu-24.04`,
+and sends the job there too while `CI_SELF_HOSTED_LABELS` names the hosted image, while no Rust slot has
+been seen online for five minutes, and once a job of these slots has waited more than a minute (both busy).
+
+The workflow token cannot list runners, so "seen online" is the repository variable `CI_RUST_RUNNER_SEEN`:
+the epoch seconds at which `rust-heartbeat.sh` last found a runner with the label online. It runs every
+minute on the maintainer PC with an admin `gh`, beside the Mac's heartbeat, as a systemd user timer:
+
+```ini
+# ~/.config/systemd/user/ovis-rust-heartbeat.service
+[Unit]
+Description=Ovis Rust runners' heartbeat (CI_RUST_RUNNER_SEEN)
+[Service]
+Type=oneshot
+ExecStart=/bin/bash %h/.local/share/ovis-ci-runner/rust-heartbeat.sh
+
+# ~/.config/systemd/user/ovis-rust-heartbeat.timer
+[Unit]
+Description=Ovis Rust runners' heartbeat every minute
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+[Install]
+WantedBy=timers.target
+```
+
+With both Rust slots gone, or the maintainer PC off, the value ages and every later run's job goes
+hosted before it queues. One window stays open: a run routed in the five minutes before the value aged
+still waits for the slots, and GitHub never moves a queued job, so that run's Rust PTY host job (not a
+required check) waits until a Rust slot is back, or until GitHub drops it after a day. Cancel that run, wait
+until it has completed (a re-run of a run still cancelling is refused), and run it again in full; its Detect
+changes then sends the job hosted:
+
+```sh
+# after the heartbeat has aged (five minutes)
+gh run cancel <run id> && gh run watch <run id> >/dev/null && gh run rerun <run id>
+```
+
+On main a push run left so holds the next push's run behind it (one concurrency group), and a release
+cannot reuse it, so cancel and re-run it the same way. Turning the opt-in off (`gh variable delete
+CI_RUST_SELF_HOSTED`) sends every later run's job hosted at once.
+
 ## Per-host limits
 
 `ci.yml` sets the self-hosted values for a 32-core PC, and a workflow cannot read its runner's
@@ -424,6 +498,41 @@ together, and the hosts' available memory never fell below 79.9 GiB on the P620 
 second host, so two runs' spikes at once fit on either.
 
 A manual run can override the variable with the `self_hosted_labels` workflow_dispatch input. Fork PRs always use `ubuntu-24.04`; Windows/macOS jobs, `remote-bundles.yml` and `windows-install.yml` stay GitHub-hosted, except the `macos-15` jobs that hold no secret (`ci.yml`'s Native macOS session identity job, and for pull requests from this repository the `macos-15` entries of `remote-bundles.yml` and `pty-sidecar.yml`), which follow the repository variable `CI_MAC_LABELS` to the self-hosted Mac when it is set ([docs](../../docs/development.md)).
+
+## Offering a runner only when there is room
+
+A registered runner is an offer: GitHub hands it any job whose labels it matches, so a host that is
+already busy keeps taking work. `run.sh --offer-when-room` makes a slot wait until this host has room
+before it fetches a registration token and starts its runner:
+
+- no other runner of this host in the same pool is idle (a pool is a repository and a label set: an
+  idle runner of another repository never takes this one's jobs, whatever its labels; both pull
+  request pools and a launcher copy's own runners count: the host's containers are `herdr-ci-<host>-*`, and a runner counts as idle until a
+  `Runner.Worker` process is in it, one still registering included), so the host offers at most one
+  idle runner per pool;
+- no job started on this host in the last 30 s and no runner of it started in the last 30 s (both
+  delays exist because pressure rises after a job begins, not when it is handed out);
+- CPU and memory pressure are under the host's thresholds, if it sets any.
+
+Slots started with `--reserved` skip the gate: main's jobs start at once. Without the flag nothing
+changes, and `--count` is still the hard maximum.
+
+The two thresholds live in the host's env file beside the other `CHECK_HOST_*` values, whole numbers,
+in percent of `/proc/pressure/cpu` and `/proc/pressure/memory` "some avg10":
+
+```sh
+CHECK_HOST_OFFER_CPU_PSI=25
+CHECK_HOST_OFFER_MEMORY_PSI=10
+```
+
+Leave one out and that half of the pressure condition does not exist; leave both out and the gate
+keeps the first two conditions only. A kernel without `/proc/pressure` (PSI off) skips the pressure
+condition with one line in the launcher's log. A gate that waits says so once per reason, not every
+poll.
+
+The gate is not a limit on jobs: a host's `--count` still has to fit its `CHECK_HOST_MAX_RUNS` (at most
+8, the most herdr-backed lanes `scripts/check.ts` admits), and the two thresholds are what a person
+tunes to keep a loaded host out of the pool.
 
 ## Cloud VM runners
 
@@ -567,7 +676,7 @@ the rules.
 | ci.yml | changes | HO ubuntu-24.04, else LIGHT | yes under hosted_only; else no: self-hosted unless a fork PR | - | none |
 | ci.yml | windows-install | `windows-latest` | yes | - | setup-ci save, none under hosted_only |
 | ci.yml | macos-session | HO macos-15, else MAC | yes under hosted_only; else yes unless CI_MAC_LABELS is set | - | setup-ci save, none under hosted_only |
-| ci.yml | rust-pty-host | `ubuntu-24.04` | yes | - | setup-ci save, none under hosted_only |
+| ci.yml | rust-pty-host | HO ubuntu-24.04, else ROUTE rust | yes under hosted_only; else as routed: hosted unless CI_RUST_SELF_HOSTED is true | - | setup-ci save, none under hosted_only |
 | ci.yml | herdr-core-live | HO ubuntu-24.04, else LIGHT | yes under hosted_only; else no: self-hosted unless a fork PR | - | setup-ci restore, none under hosted_only; actions/cache (Cache hc, off under hosted_only) |
 | ci.yml | fast | HO ubuntu-24.04, else ROUTE fast | yes under hosted_only; else as routed: self-hosted or hosted | - | setup-ci save, none under hosted_only |
 | ci.yml | integration | HO ubuntu-24.04, else ROUTE linux | yes under hosted_only; else as routed: self-hosted or hosted | - | setup-ci save, none under hosted_only |
@@ -613,7 +722,9 @@ the rules.
 | release.yml | windows-app | calls `windows-app.yml` | (its jobs) | contents write | (its jobs) |
 | release.yml | desktop | calls `desktop.yml` | (its jobs) | contents write; passes 7 secrets | (its jobs) |
 | release.yml | mac-dmg | calls `mac-dmg.yml` | (its jobs) | contents write; passes secrets: inherit | (its jobs) |
-| remote-bundles.yml | bundle | MACPR over matrix: ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel | yes unless a same-repository pull request while CI_MAC_LABELS is set | - | none |
+| remote-bundles-platforms.yml | bundle | MACPR over matrix: ubuntu-24.04-arm, macos-15, macos-15-intel | yes unless a same-repository pull request while CI_MAC_LABELS is set | - | none |
+| remote-bundles.yml | bundle | MACPR over matrix: ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel | yes: it no longer runs for a pull request | - | none |
+| remote-bundles.yml | bundle-linux | `ubuntu-24.04` | yes | - | none |
 | remote-bundles.yml | bundle-windows | `ubuntu-24.04` | yes | - | none |
 | remote-bundles.yml | smoke-windows | `windows-latest` | yes | - | none |
 | remote-bundles.yml | ssh | `ubuntu-24.04` | yes | - | none |
@@ -669,3 +780,94 @@ these is refused when its payload names no head repository, and a job with no ev
 
 Fork runs still wait for a maintainer's approval (above); the hook is the second lock, the one a
 fork's own workflow cannot change.
+
+### Windows runner (winvm)
+
+`ovis-winvm` (labels `self-hosted, self-hosted-ovis-win` only: `--no-default-labels`, so no job
+that asks for any Windows runner lands there) runs CI's Native Windows install in winvm, the
+Windows 11 VM on the maintainer's PC (`ssh winvm`, the `winvm` command and its lease: the repo's
+AGENTS.md). `winvm-runner.sh` runs on the PC as the user unit `ovis-winvm-runner` and runs one job
+per round, one copy at a time (a lock file beside its cache; `--once` refuses to start while the
+unit runs):
+
+1. It takes the winvm lease (`ci-winvm-runner`) and keeps it while it runs. A lane holding the VM
+   keeps the runner off; a lane that wants the VM stops the unit, which frees it (step 5).
+2. It fences the VM: `winvm-fence.ps1`, sent over ssh, stops each other repository's runner
+   service kept in the snapshot as soon as it is not in a job, and answers `FENCE <services left>
+   <workers>`. Sent with `-IncludeOwn`, it also ends this runner's idle listener and counts this
+   runner's own job, which can outlive the ssh that watched it. Only on `FENCE 0 0` from a
+   successful ssh, when no runner can take a job or is in one, does it `winvm reset` and
+   `winvm start` (about 2 minutes, which starts those services again): every job starts from the
+   snapshot. A VM that does not answer, or a job still running after an hour, is never reset: the
+   round gives up and tries again later. A fence that stopped a service has changed the VM, so from
+   then on the stop resets it or keeps the lease (step 5). Right after the reset it fences again,
+   so those services stay stopped for the whole round: none takes a job between an offer and this
+   runner's job, which the hook would then wait for (the lease already keeps the VM this round's).
+3. It copies the newest `actions/runner` package (cached on the PC), `winvm-runner.ps1`,
+   `winvm-job-started.ps1` and `winvm-fence.ps1` into `C:\ProgramData\winvm\ovis-runner`, hands a registration token
+   over ssh's stdin to a file the VM script reads and deletes (it reaches `config.cmd` in
+   `ACTIONS_RUNNER_INPUT_TOKEN`, which the runner reads and clears, never in a command line), and
+   starts `winvm-runner.ps1` in
+   the VM's desktop session through `Invoke-InSession.ps1`, as Windows checks that depend on an
+   interactive session need. It registers an ephemeral runner (`--ephemeral --disableupdate`)
+   and runs it until its one job ends.
+4. While that runner listens and no other runner in the VM is in a job, the launcher writes the
+   Unix time into the repository variable `CI_WINVM_READY` every minute; a job's start writes 0. `scripts/ci-runner-route.sh` sends
+   the job of a same-repository pull request or a push there only while that mark is under three
+   minutes old and no job of winvm's label is queued or running (the Actions jobs API, which the
+   route reads for the Linux jobs too), and `windows-latest` otherwise, so the check runs, under
+   its name, on every code pull request whether winvm is up, busy or leased. Two routes that read
+   the API before the first one's Windows job exists can both pick winvm; the second job gets
+   the next round, also when the launcher stops (step 5).
+5. An idle runner is recycled after 100 minutes (`Invoke-InSession` ends its task after two
+   hours); a session that does not listen within 10 minutes is ended and its round fails. A stop
+   waits for a job in progress. For an idle runner it clears the mark, waits for a job a route sent
+   before, then deletes the registration, which GitHub refuses while the runner is in a job, and
+   ends the VM's listener. Before it ends, the launcher waits until 8.5 minutes have passed since
+   winvm was last offered (a route takes a mark up to three minutes old, and Detect changes, which
+   routes, ends within five), so every route that read that offer has queued its job, then reads
+   the queue (three tries). A job queued for the label, or a queue it cannot read, gets another round,
+   three at most; after that it exits nonzero and says to cancel and re-run that run. Then, if a
+   round touched the VM, it fences, resets and starts it, and releases the lease. Ownership is the
+   run's own record, not a read of `winvm status`. When the VM cannot be fenced within 10 minutes,
+   the reset fails or the release fails, it keeps what it holds and exits nonzero (`winvm status`
+   shows `ci-winvm-runner`): `winvm reset && winvm start && winvm release` once no job runs there.
+   It also exits nonzero when it cannot read whether its runner is still registered, and `--once`
+   when its round failed (a session that ended with an error, not by the drain).
+
+`winvm-job-started.ps1` is the runner's `ACTIONS_RUNNER_HOOK_JOB_STARTED`: the Windows
+counterpart of `job-started.sh`, with the same verdict on the event payload (a fork's code is
+refused). Any error before the verdict refuses too. A refusal ends the job's `Runner.Worker`, the
+nearest ancestor of that name that started before the hook; while none is found or the kill
+fails, the hook kills nothing and blocks, trying again every 5 seconds, so no further step of
+the job runs. A job it allows then runs `winvm-fence.ps1` until it answers `FENCE 0 0`: every
+other runner service is stopped, one in a job as soon as that job ends, so none takes a job
+beside ours (the next reset starts them again; the launcher already stopped them after its reset,
+so this only matters when one was started by hand). After three minutes without that the job fails
+and says to re-run all jobs of the run, whose new route takes `windows-latest`. The fence reads
+the workers again right before each service's stop, so a service that took a job while another
+stopped keeps it; one that takes a job in the milliseconds between that read and its stop is
+stopped with that job.
+
+Install on the PC (`winvm` on PATH, `gh` logged in as a repository admin):
+
+```ini
+# ~/.config/systemd/user/ovis-winvm-runner.service
+[Unit]
+Description=winvm's ephemeral runner for Native Windows install (devswha/ovis)
+[Service]
+ExecStart=%h/workspace/ovis/scripts/self-hosted-runner/winvm-runner.sh
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# the launcher alone gets the stop: it drains the runner, then resets and releases the VM
+KillMode=mixed
+# the drain (8.5 min), a job (10), three more rounds (about 17 each), the fence (10) and a reset (2)
+TimeoutStopSec=90min
+Restart=on-failure
+[Install]
+WantedBy=default.target
+```
+
+`systemctl --user enable --now ovis-winvm-runner`; `journalctl --user -u ovis-winvm-runner`
+shows each round. `winvm-runner.sh --once` runs one round in a terminal. Undo: stop and disable
+the unit and delete `CI_WINVM_READY` (`gh variable delete CI_WINVM_READY`); the job then always
+takes `windows-latest`.

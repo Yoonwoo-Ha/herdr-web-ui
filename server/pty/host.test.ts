@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { defaultRustSidecar, installedHostVouched, probeRustHost, resetPtyHostForTests, RUST_SIDECAR_BUILD, rustSidecar, rustSidecarPath } from "./host.ts";
-import { PtySession, type PtySessionOptions } from "./session.ts";
+import { LEAVE_WITHIN_MS, PtySession, type PtySessionOptions } from "./session.ts";
 import { nodeSidecarAvailable, resetSidecarForTests, sidecarAvailable } from "./sidecar.ts";
 
 const RUST_HOST = rustSidecar({ ...process.env, OVIS_PTY_SIDECAR: "rust" });
@@ -513,6 +513,31 @@ async function gone(tag: string): Promise<boolean> {
   }
 }
 
+const LEAVE = { keys: "\x02q", notAfter: /\x02$/ };
+const bytes = (text: string): string => [...Buffer.from(text)].map((byte) => `<${byte.toString(16).padStart(2, "0")}>`).join("");
+/**
+ * Stands where `herdr terminal attach` stands: reads its terminal raw and says each byte it read (`<61>`), and reads
+ * nothing before `gate` is there. One that `leaves` exits at LEAVE's keys.
+ */
+const READS = (gate: string | null, leaves: boolean) => ["-e", `
+  const fs = require("fs");
+  const gate = ${JSON.stringify(gate)};
+  process.stdin.setRawMode(true);
+  let read = "", reading = false;
+  function start() {
+    if (reading || (gate && !fs.existsSync(gate))) return;
+    reading = true;
+    process.stdin.on("data", (data) => {
+      const now = [...data].map((byte) => "<" + byte.toString(16).padStart(2, "0") + ">").join("");
+      read += now;
+      process.stdout.write(now, () => { if (${leaves} && read.includes("<02><71>")) process.exit(0); });
+    });
+  }
+  if (gate) fs.watch(require("path").dirname(gate), start);
+  start();
+  process.stdout.write("READY");
+`];
+
 /** A command in a process group of its own whose members ignore SIGHUP: a hangup alone never ends it. */
 const STUBBORN_GROUP = (tag: string, then: string) => ["-c", `trap '' HUP; ${tag} & printf READY; ${then}`];
 
@@ -578,19 +603,12 @@ function parity(host: "node" | "rust") {
       } finally { ended.session.kill(); }
     }, 15_000);
 
-    // that wait ends the moment the command has exited: a plain exit is not held for it. Time is the behaviour
-    // here, and it is counted from the command's own last act, not from the host's start: the start is most of
-    // a run, and it is what a busy machine stretches. The act is a file the command leaves, not output: the
-    // Node host reads a last byte together with the hangup, and ends that pty another way. The file's own time
-    // is the start of the count, the system's word for when the command wrote it: whatever this process does
-    // late only makes the span longer, never shorter. From the file the exit is about 20 ms away on the Node
-    // host, and 200 ms more when the wait is run out.
+    // Neither the host's grace deadline nor node-pty's fallback may release the hold:
+    // the same exit check used in production must observe the command's end.
     it.skipIf(process.platform === "win32")("ends a plain exit without waiting out the hold for a closed terminal", async () => {
-      const leaving = join(mkdtempSync(join(fixtures, "leaving-")), "now");
-      const ended = run("sh", ["-c", ': > "$1"; exit 7', "sh", leaving]);
+      const ended = run("sh", ["-c", "exit 7"], { env: { OVIS_TEST_PTY_NO_CLOSE_DEADLINE: "1" } });
       try {
         expect(await ended.exited).toBe(7);
-        expect(Date.now() - statSync(leaving).mtimeMs).toBeLessThan(150);
       } finally { ended.session.kill(); }
     }, 15_000);
 
@@ -702,6 +720,48 @@ function parity(host: "node" | "rust") {
         expect(await echo.exited).toBe(0);
         expect(echo.output()).toContain("HEX:61efbfbd62");
       } finally { echo.session.kill(); }
+    }, 15_000);
+
+    it.skipIf(process.platform === "win32")("lets a command that leaves at its own keys read everything written before them, however late it reads (#4174)", async () => {
+      const gate = join(mkdtempSync(join(fixtures, "gate-")), "open");
+      const leaving = run("node", READS(gate, true), { leaveAt: LEAVE });
+      try {
+        await leaving.until("READY", (output) => output.includes("READY"));
+        const typed = ["a", ...Array.from({ length: 6 }, (_, wheel) => `\x1b[<64;10;${wheel + 1}M`)];
+        for (const text of typed) expect(leaving.session.write(text)).toBe(true);
+        leaving.session.leave();
+        expect(leaving.session.write("b")).toBe(false);
+        writeFileSync(gate, "");
+        await leaving.session.exited;
+        expect(leaving.output()).toBe(`READY${bytes(typed.join("") + LEAVE.keys)}`);
+      } finally { leaving.session.kill(); }
+    }, 15_000);
+
+    it.skipIf(process.platform === "win32")("ends a command with its keys unwritten behind input they would not be read as its way out after", async () => {
+      const held = run("node", READS(null, true), { leaveAt: LEAVE });
+      try {
+        await held.until("READY", (output) => output.includes("READY"));
+        held.session.write("\x02");
+        await held.until("the chord's first key", (output) => output.includes("<02>"));
+        held.session.leave();
+        await held.session.exited;
+        expect(held.output()).toBe("READY<02>");
+      } finally { held.session.kill(); }
+    }, 15_000);
+
+    // time is the behaviour here: a command that does not leave is ended as a kill ends it, once it has had
+    // LEAVE_WITHIN_MS for it and well after a kill at once would have (some 250 ms)
+    it.skipIf(process.platform === "win32")("ends a command that has not left at its keys within LEAVE_WITHIN_MS", async () => {
+      const staying = run("node", READS(null, false), { leaveAt: LEAVE });
+      try {
+        await staying.until("READY", (output) => output.includes("READY"));
+        staying.session.write("a");
+        const asked = performance.now();
+        staying.session.leave();
+        await staying.session.exited;
+        expect(performance.now() - asked).toBeGreaterThan(LEAVE_WITHIN_MS / 2);
+        expect(staying.output()).toBe(`READY${bytes(`a${LEAVE.keys}`)}`);
+      } finally { staying.session.kill(); }
     }, 15_000);
 
     it("reaps both processes when killed with output paused", async () => {

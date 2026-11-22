@@ -11,7 +11,8 @@ export const SHARED_SETTING_KEYS = [
   "theme", "palette", "darkTheme", "lightTheme", "customThemes", "language", "sidebarRows", "agentOrder", "agentMarks", "agentLocks", "lockedAgents", "opencodeParentEnds", "ompHeldFiles", "restoreReplacedServer", "agentNamedGroups", "agentGroupNames", "agentGroupOf", "autoSendQueued", "autoTabNames",
   "showThinking", "quickReplies", "showQuickReplies", "showUsage", "usageCount",
   "usageGlance", "usageOrder", "usageHidden", "claudeLaunchMode", "codexLaunchMode",
-  "claudeLaunchModel", "claudeLaunchEffort", "codexLaunchModel", "codexLaunchEffort",
+  "claudeLaunchModel", "claudeLaunchEffort", "codexLaunchModel", "codexLaunchEffort", "agentBrowserTools",
+  "builtInBrowser", "browserBlockedSites",
 ] as const;
 export type SharedSettingKey = (typeof SHARED_SETTING_KEYS)[number];
 

@@ -168,6 +168,7 @@ run_script scripts/file-viewer-page-scripts-browser-qa.ts
 run_script scripts/text-file-edit-regression.ts
 run_script scripts/web-panel-mobile-regression.ts
 run_script scripts/palette-local-page-demo-regression.ts
+run_script scripts/built-in-browser-demo-regression.ts
 run_script scripts/pwa-update-browser-qa.ts
 run_script scripts/install-state-demo-regression.ts
 run_script scripts/revision-bound-update-demo-regression.ts
@@ -266,10 +267,16 @@ run_script scripts/machine-dialog-regression.ts
 run_script scripts/machine-conflict-regression.ts
 run_script scripts/relay-pairing-prompt-regression.ts
 run_script scripts/relay-account-pcs-regression.ts
+run_script scripts/relay-first-link-regression.ts
 run_script scripts/relay-second-device-join-regression.ts
 run_script scripts/machine-own-ovis-regression.ts
 run_script scripts/herdr-profiles-browser-qa.ts
 run_script scripts/relay-e2e-regression.ts
+run_script scripts/offline-typing-relay-regression.ts
 run_script scripts/relay-shell-browser-qa.ts
 run_script scripts/relay-dashboard-browser-qa.ts
+run_script scripts/sheet-history-late-step-regression.ts
+run_script scripts/my-machines-today-regression.ts
+run_script scripts/my-machines-screens-qa.ts
+run_script scripts/relay-offline-reasons-regression.ts
 run_script scripts/relay-media-browser-qa.ts

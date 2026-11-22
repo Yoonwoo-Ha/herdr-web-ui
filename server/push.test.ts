@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import webpush from "web-push";
@@ -107,6 +107,18 @@ describe("push state", () => {
     expect(Buffer.from(key, "base64url").length).toBe(65);
     expect(createPushService({ loopbackHttp: true, stateDir }).publicKey()).toBe(key);
     expect(statSync(join(stateDir, "vapid.json")).mode & 0o777).toBe(0o600);
+  });
+
+  it.skipIf(process.platform === "win32")("regression: takes others' write access away from the key pair before it is read", () => {
+    const dir = mkdtempSync(join(tmpdir(), "push-untrusted-"));
+    try {
+      chmodSync(dir, 0o777);
+      const key = createPushService({ loopbackHttp: true, stateDir: dir }).publicKey();
+      expect(statSync(dir).mode & 0o777).toBe(0o755);
+      chmodSync(join(dir, "vapid.json"), 0o666);
+      expect(createPushService({ loopbackHttp: true, stateDir: dir }).publicKey()).toBe(key);
+      expect(statSync(join(dir, "vapid.json")).mode & 0o777).toBe(0o644);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   it("refuses a malformed key file instead of rotating the key under every device", () => {
@@ -624,6 +636,60 @@ describe("alert timing and each device's choice", () => {
       timers.fire();
       await push.settled();
       expect(fake.received.map((r) => r.payload.body)).toEqual(["work finished"]);
+    } finally { timers.restore(); }
+  });
+
+  it("tells a new pane's first reading as a change from its creation, once, never between two readings at rest nor for a pane it heard of", async () => {
+    const timers = holdAlertTimers();
+    try {
+      const { push } = timed({ input: true, done: "always" });
+      await push.firstStatus("w2:p1", "unknown", "blocked");
+      await push.onStatus("w2:p1", "blocked");
+      expect(timers.pending()).toBe(1);
+      await push.firstStatus("w3:p1", "unknown", "done");
+      await push.firstStatus("w4:p1", "idle", "done");
+      await push.firstStatus("w5:p1", "unknown", "working");
+      await push.firstStatus("w1:p1", "unknown", "blocked");
+      expect(timers.pending()).toBe(2);
+      timers.fire();
+      await push.settled();
+      expect(fake.received.map((r) => `${r.payload.pane_id} ${r.payload.body}`).sort()).toEqual(["w2:p1 waiting for your input", "w3:p1 work finished"]);
+      // what it was first read as is what the next change is measured against
+      await push.onStatus("w4:p1", "done");
+      await push.onStatus("w5:p1", "working");
+      expect(timers.pending()).toBe(0);
+    } finally { timers.restore(); }
+  });
+
+  it("calls off a new pane's first question once a snapshot no longer lists it", async () => {
+    const timers = holdAlertTimers();
+    try {
+      const { push } = timed();
+      await push.firstStatus("w2:p1", "unknown", "blocked");
+      expect(timers.pending()).toBe(1);
+      push.gone([pane("w1:p1", "idle", "claude")], new Set());
+      expect(timers.pending()).toBe(0);
+      await push.settled();
+      expect(fake.received).toHaveLength(0);
+    } finally { timers.restore(); }
+  });
+
+  it("does not time a turn from a new pane's first reading: it began before anyone read it", async () => {
+    const timers = holdAlertTimers();
+    try {
+      const { push, advance } = timed();
+      await push.firstStatus("w2:p1", "unknown", "working");
+      await push.firstStatus("w3:p1", "unknown", "blocked");
+      timers.fire();
+      await push.settled();
+      fake.received.length = 0;
+      advance(500);
+      await push.onStatus("w2:p1", "done");
+      await push.onStatus("w3:p1", "done");
+      expect(timers.pending()).toBe(2);
+      timers.fire();
+      await push.settled();
+      expect(fake.received.map((r) => r.payload.body)).toEqual(["work finished", "work finished"]);
     } finally { timers.restore(); }
   });
 
@@ -1364,6 +1430,24 @@ describe("push resync after lost status events", () => {
     expect(fake.received).toHaveLength(0);
   });
 
+  it.each([
+    ["closes", (push: PushService) => push.closed("w1:p1")],
+    ["is gone from a snapshot", (push: PushService) => push.gone([], new Set())],
+  ])("drops a finish already under way when its pane %s", async (_name, away) => {
+    const asked = Promise.withResolvers<void>();
+    const looked = Promise.withResolvers<void>();
+    const push = createPushService({ loopbackHttp: true, stateDir, timing: { short: 0, long: 0, longTurn: 0 },
+      lookupPane: async () => { asked.resolve(); await looked.promise; return { title: "claude" }; } });
+    push.subscribe(fake.subscription);
+    push.seed([pane("w1:p1", "working", "claude")]);
+    await push.onStatus("w1:p1", "done");
+    await asked.promise;
+    away(push);
+    looked.resolve();
+    await push.settled();
+    expect(fake.received).toHaveLength(0);
+  });
+
   it("leaves a pane with a newer event, and done versus idle, as they are", async () => {
     const push = subscribed();
     push.seed([pane("w1:p1", "working", "a"), pane("w1:p2", "working", "b")]);
@@ -1639,5 +1723,46 @@ describe("answer buttons on a question's alert (#2916)", () => {
     await push.onStatus("w1:p1", "blocked", "pc-2");
     expect(asked).toBe(0);
     expect(fake.received[0]!.payload.actions).toBeUndefined();
+  });
+});
+
+describe("a card's wait told to web push (server/card-waits.ts)", () => {
+  const SHORT = 40;
+  /** the short wait's timer, held until the test fires it; every other timer runs for real */
+  function heldShortWait() {
+    const realSet = globalThis.setTimeout;
+    const realClear = globalThis.clearTimeout;
+    const held = new Map<object, () => void>();
+    const set = spyOn(globalThis, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+      if (ms !== SHORT) return realSet(callback, ms, ...args);
+      const handle = {};
+      held.set(handle, () => callback(...args));
+      return handle;
+    }) as never);
+    const clear = spyOn(globalThis, "clearTimeout").mockImplementation(((handle: unknown) => {
+      if (!held.delete(handle as object)) realClear(handle as Parameters<typeof clearTimeout>[0]);
+    }) as never);
+    return { pending: () => held.size, fire: () => { const due = [...held.values()]; held.clear(); for (const run of due) run(); }, restore: () => { set.mockRestore(); clear.mockRestore(); } };
+  }
+  const service = () => {
+    const push = createPushService({ loopbackHttp: true, stateDir, timing: { short: SHORT, long: SHORT, longTurn: 1_000 } });
+    push.subscribe(fake.subscription, { input: true, done: "always" });
+    return push;
+  };
+
+  it("alerts once, after its short wait, for a wait first heard as blocked once the agent's own status was assumed", async () => {
+    const timers = heldShortWait();
+    try {
+      const push = service();
+      push.assume("t1", "unknown");
+      await push.onStatus("t1", "blocked");
+      expect(timers.pending()).toBe(1);
+      timers.fire();
+      await push.settled();
+      expect(fake.received).toHaveLength(1);
+      // the same card read again is no change
+      await push.onStatus("t1", "blocked");
+      expect(timers.pending()).toBe(0);
+    } finally { timers.restore(); }
   });
 });

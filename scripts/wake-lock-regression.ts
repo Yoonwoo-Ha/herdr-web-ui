@@ -80,6 +80,14 @@ export async function checkWakeLock(browser: Browser, origin: string, paneId: st
     assert.equal(await toggle.getAttribute("aria-checked"), "true", "unsupported browsers keep the preference without failing");
 
     await context.route(rosterStream, (route) => route.abort());
+    // The app prefers roster events on the WebSocket. An unfiltered event can
+    // repopulate the HTTP fixture before the wake lock effect runs.
+    await page.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
+      const upstream = socket.connectToServer();
+      upstream.onMessage((data) => {
+        if (JSON.parse(String(data)).type !== "machine-event") socket.send(data);
+      });
+    });
     await context.route(rosterRead, async (route) => {
       // full rows: a compact roster's agent_refs would name the panes emptied below
       const response = await route.fetch({ url: `${origin}/api/machines` });
@@ -89,13 +97,17 @@ export async function checkWakeLock(browser: Browser, origin: string, paneId: st
       }
       await route.fulfill({ json: body });
     });
-    await page.reload();
-    await page.locator(".conn-live").waitFor();
+    await Promise.all([
+      page.waitForResponse((response) => rosterRead(new URL(response.url())) && response.ok()),
+      page.reload(),
+    ]);
+    await page.locator(".pane-split").waitFor();
     await page.keyboard.press("ControlOrMeta+Shift+Comma");
     await openSettingsPage(page, "Devices and PCs");
     await openMoreSettings(page);
     await toggle.waitFor();
     assert.equal(await toggle.getAttribute("aria-checked"), "true");
+    assert.equal(await page.locator(".pane-frame[data-layout-pane]").count(), 0, "the fixture has no panes");
     assert.equal(await page.evaluate(() => (window as any).wakeLockStats.requests), 0, "no pane, no screen lock");
     assert.deepEqual(errors, []);
     console.log("PASS screen wake lock: opt-in, hide/return, off, persistence, refusal, unsupported, no pane");

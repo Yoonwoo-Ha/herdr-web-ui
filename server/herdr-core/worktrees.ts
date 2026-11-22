@@ -2,7 +2,7 @@ import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 import type { WorkspaceWorktreeInfo } from "../../shared/herdr-api.generated.ts";
-import type { WorktreeInfo } from "../herdr/client.ts";
+import type { WorktreeInfo } from "../herdr/worktree-info.ts";
 
 /**
  * herdr's worktree calls, answered with git on a herdr-core PC: hc has no worktrees, so Ovis runs

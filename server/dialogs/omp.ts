@@ -2,7 +2,7 @@ import type { DialogReader } from "./registry.ts";
 import { pickerPlan } from "./interaction-plan.ts";
 import { piActiveTab } from "./pi-ask-tabs.ts";
 import { type InteractivePromptAnswer } from "../../shared/protocol.ts";
-import { ANSI_RE, KEY, type MenuRow, type ParsedPrompt, cleanLine, findLastIndex, finishPrompt, isDivider, own, keySteps, navigationKeys, nearestQuestion, normalizeText, wrapped } from "./shared.ts";
+import { ANSI_RE, KEY, type MenuRow, type ParsedPrompt, type TypedEditorAnswer, cleanLine, editorRowsMatch, findLastIndex, finishPrompt, isDivider, own, keySteps, navigationKeys, nearestQuestion, normalizeText, wrapped } from "./shared.ts";
 
 /** the option markers: unicode, and the Nerd Font preset's icons (checkbox \uf096/\uf14a, radio \uf10c/\uf192, cursor \uf054) (#3282) */
 const OMP_MARKERS = "○●◉◯☐☑☒✓\uf096\uf14a\uf10c\uf192";
@@ -233,6 +233,33 @@ function findMenuDividers(lines: string[], hintIndex: number): [number, number] 
     else return [index, end];
   }
   return null;
+}
+
+/** Other opens a HookEditor panel in place of Ask, with the active question in its title. */
+export function ompCustomEditorMatches(screen: string, { prompt, text }: TypedEditorAnswer): boolean {
+  const lines = screen.replace(ANSI_RE, "").trimEnd().split(/\r?\n/u);
+  const tail = lines.at(-1)?.trim() ?? "";
+  if (/^(?:[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \S+|π) · /u.test(tail)) lines.pop();
+  while (lines.at(-1)?.trim() === "") lines.pop();
+  const bottom = lines.pop();
+  if (!bottom || !/^\s*╰─+╯\s*$/u.test(bottom)) return false;
+  const top = findLastIndex(lines, (line) => /^\s*╭/u.test(line));
+  const title = /^\s*╭─ Custom answer: (.*?) ─+╮\s*$/u.exec(lines[top] ?? "");
+  if (!title?.[1]) return false;
+  const panel = lines.slice(top + 1).map((line) => /^\s*│ (.*) │\s*$/u.exec(line)?.[1]?.trimEnd());
+  const field = panel.findIndex((line) => line === ">" || line?.startsWith("> "));
+  const hint = panel.findIndex((line, index) => index > field && /^(?:enter|⏎|\u{f0311})(?: or \S+)? submit\b/iu.test(line ?? ""));
+  if (field < 0 || hint < 0 || panel.some((line) => line === undefined)) return false;
+  const footer = panel.slice(hint).filter(Boolean).join(" ");
+  if (!/submit +(?:esc|⎋|\u{f12b7}) cancel +\S+ external editor$/iu.test(footer)
+    || !editorRowsMatch([title[1], ...panel.slice(0, field).flatMap((line) => line ? [line] : [])], normalizeText(prompt.question))) return false;
+  const first = panel[field]?.slice(2) ?? "";
+  const continuation = panel.slice(field + 1, hint);
+  if (!continuation.every((line) => line === "" || line?.startsWith("  "))) return false;
+  const rows = [first, ...continuation.map((line) => line?.slice(2) ?? "")];
+  // The default software caret adds a thin bar at the end of the last row.
+  const last = rows.pop()?.replace(/▏$/u, "") ?? "";
+  return editorRowsMatch([...rows, last], text) && !editorRowsMatch([...rows, last], "Type your answer");
 }
 
 function parseOmpQuestion(screen: string): ParsedPrompt | null {

@@ -1,10 +1,10 @@
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, jest, mock } from "bun:test";
 import { createElement, useLayoutEffect } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import type { Machine } from "../../shared/machines.ts";
 import type { HerdrPane, HerdrWorkspace } from "../../shared/protocol.ts";
 import { NAV_KEY, readLink, type AppLink, type CreateDraft } from "./deepLink.ts";
-import { FILE_PREVIEW_KEY } from "./historyKeys.ts";
+import { FILE_PREVIEW_KEY, sheetStep as sheetTraversal } from "./historyKeys.ts";
 import type { SelectionMark } from "./selectionMark.ts";
 import * as settingsHistory from "./settingsHistory.ts";
 import * as sheetHistory from "./sheetHistory.ts";
@@ -153,9 +153,10 @@ afterEach(async () => {
   descriptors.clear();
 });
 
-async function mount(addresses: string[]): Promise<void> {
+async function mount(addresses: string[], beforeDraw?: () => Promise<void>): Promise<void> {
   entries = addresses.map((search) => ({ state: null, url: new URL(`http://localhost:7317/${search}`) }));
   index = entries.length - 1;
+  await beforeDraw?.();
   await act(async () => { renderer = create(createElement(Probe)); });
   writes = [];
 }
@@ -220,6 +221,30 @@ it("Back off the New workspace dialog's entry closes it while its fields are on 
 
   expect(place.newSessionOpen).toBe(false);
   expect(addresses()).toEqual([P1, held]);
+});
+
+it("writes New workspace's fields onto the dialog's entry once the sheets' way back is over, never onto the entry under it", async () => {
+  let pending = false;
+  let over: (() => void) | null = null;
+  mock.module("./sheetHistory.ts", () => ({
+    ...loaded.sheet, sheetSteppedOff: () => sheetStep, sheetTraversalPending: () => pending,
+    onSheetTraversalOver: (listener: () => void) => { over = listener; return () => { over = null; }; },
+  }));
+  try {
+    place = { ...place, paneId: "p1" };
+    await mount([P1]);
+    pending = true;
+    await act(async () => { place.newSessionOpen = true; place.newFields = { cwd: "/updated", name: null, agent: null }; draw(); });
+    expect(addresses()).toEqual([P1]);
+    // the dialog's entry made again by a tap, after its way back was dropped
+    window.history.pushState({ "ovis:sheet": "sheet-1" }, "");
+    pending = false;
+    await act(async () => { over?.(); });
+    expect(addresses()[0]).toBe(P1);
+    expect(readLink(addresses()[1]!).create).toMatchObject({ kind: "workspace", cwd: "/updated" });
+  } finally {
+    mock.module("./sheetHistory.ts", () => ({ ...loaded.sheet, sheetSteppedOff: () => sheetStep }));
+  }
 });
 
 async function dialogOverList(): Promise<string> {
@@ -468,6 +493,43 @@ it("leaves the list alone on a Settings entry and on a sheet's step off its entr
 
   expect(inboxCalls).toEqual([]);
   expect(asked).toEqual([]);
+});
+
+it("keeps the newly listed pane's address when a closed sheet's Back is still landing", async () => {
+  place.paneId = "p1";
+  const listed = roster();
+  place.snapshot = { ...listed, panes: listed.panes.slice(0, 1) };
+  const traversal = { ...sheetTraversal };
+  const pending: { land?: () => void } = {};
+  const history = window.history;
+  history.back = () => {
+    const target = index - 1;
+    pending.land = () => history.go(target - index);
+  };
+  try {
+    let sheets = loaded.sheet;
+    await mount([P1], async () => {
+      const modulePath = "./sheetHistory.ts?address-bar-sheet-back";
+      sheets = await import(modulePath);
+      mock.module("./sheetHistory.ts", () => sheets);
+    });
+    const sheet = sheets.enterSheet(() => {}, null);
+    await act(async () => { place.paneId = "p2"; draw(); });
+
+    jest.useFakeTimers();
+    try { sheets.leaveSheet(sheet); jest.advanceTimersByTime(0); }
+    finally { jest.useRealTimers(); }
+    expect(pending.land).toBeDefined();
+    await act(async () => { place.snapshot = roster(); draw(); });
+    await act(async () => { pending.land?.(); });
+
+    expect(window.location.search).toBe(P2);
+    expect(addresses()).toEqual([P1, P2]);
+    expect(asked).toEqual([]);
+  } finally {
+    mock.module("./sheetHistory.ts", () => ({ ...loaded.sheet, sheetSteppedOff: () => sheetStep }));
+    Object.assign(sheetTraversal, traversal);
+  }
 });
 
 it("pushes a row opened from the list over the list's entry while a file is still up, not in its place", async () => {

@@ -15,11 +15,12 @@ export async function relayServerTree(dir = process.env["RELAY_E2E_SERVER_DIR"] 
 }
 
 export function relayBrowserSocket(ws: WebSocketRoute, address: () => string, frame: () => void = () => {}, release?: Promise<void>, sent: () => void = () => {}): void {
-  const queue: (string | Buffer)[] = [];
+  const queue: (string | Uint8Array<ArrayBuffer>)[] = [];
   let upstream: WebSocket | null = null;
   let closed = false;
-  ws.onMessage((message) => {
+  ws.onMessage((received) => {
     sent();
+    const message = typeof received === "string" ? received : new Uint8Array(received);
     if (upstream?.readyState === WebSocket.OPEN) upstream.send(message); else queue.push(message);
   });
   ws.onClose(() => { closed = true; upstream?.close(); });

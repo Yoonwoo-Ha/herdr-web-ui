@@ -1,12 +1,14 @@
 import { chmodSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { startHerdrCoreAdapter, type HerdrCoreAdapter } from "./adapter.ts";
-import { HcConnection, spawnHcConnect } from "./connection.ts";
+import { HcConnection } from "./connection.ts";
+import { spawnHcConnect } from "./hc-connect.ts";
 import { MachineScopedConnection } from "./machine-scope.ts";
 import { SeenMarker } from "./seen-label.ts";
 import { coreStartEnv, terminalEnvFor, userTerminalEnv } from "./terminal-env.ts";
 import { existsSync } from "node:fs";
 import { createConnection } from "node:net";
-import { coreSocket, findHc, type FoundHc } from "./discovery.ts";
+import { coreSocket } from "./core-socket.ts";
+import { BUNDLED_PROBE_TIMEOUT_MS, findHc, type FoundHc } from "./discovery.ts";
 import { adapterAddress } from "./pipe.ts";
 import { opencodeDatabasePath, opencodeSessionsTitled } from "../opencode.ts";
 import { HERDR_CORE, serveRuntime } from "../runtime/capabilities.ts";
@@ -149,8 +151,13 @@ export async function startRuntime(stateDir: string, find: (onRefused?: (bin: st
     const core = await find((bin, reason) => { refused.push(`${bin}: ${reason}`); });
     if (core === null) {
       const passedOver = refused.length === 0 ? "" : ` Passed over as another account could change them: ${refused.join("; ")}. ${unix ? "Make the folder yours alone (`chmod g-w <folder>`)" : "Keep hc inside your profile folder"} or set OVIS_HC_BIN to the hc you trust.`;
+      const named = process.env["OVIS_HC_BIN"];
+      if (named && process.env["OVIS_HC_BIN_BUNDLED"] === "1") throw new NoHerdrCoreError(`no herdr-core found: the app's own hc (OVIS_HC_BIN=${named}) did not answer \`--version\` with \`hc …\` within ${BUNDLED_PROBE_TIMEOUT_MS / 1000}s, nor did herdr-core or hc in ~/.local/bin, /opt/homebrew/bin, /usr/local/bin, mise, Nix, cargo, the PATH or the login shell's PATH. Reinstall the app, or install herdr-core (https://herdr.dev/core).${passedOver}`);
+      if (named) throw new NoHerdrCoreError(`no herdr-core found: OVIS_HC_BIN (${named}) did not answer \`--version\` with \`hc …\`, and no other hc is run while it is set. Fix OVIS_HC_BIN or unset it.${passedOver}`);
       throw new NoHerdrCoreError(`no herdr-core found: no OVIS_HC_BIN, nor herdr-core or hc in ~/.local/bin, /opt/homebrew/bin, /usr/local/bin, mise, Nix, cargo, the PATH or the login shell's PATH, answered \`--version\` with \`hc …\` (one in a folder another account can change is not run). Install herdr-core (https://herdr.dev/core) or set OVIS_HC_BIN to its full path.${passedOver}`);
     }
+    // the app's own hc did not answer: say which one runs instead, once, as the server starts
+    if (core.insteadOf) console.warn(`[herdr-core] the app's own hc (${core.insteadOf}) did not answer \`--version\` within ${BUNDLED_PROBE_TIMEOUT_MS / 1000}s; using ${core.bin} (hc ${core.version}) instead`);
     found = core.bin;
     search = find;
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });

@@ -243,6 +243,31 @@ describe("RelayOverview", () => {
     expect(renderMarkup({ pcs: f4Pcs(), mode: "account", defaultRelay: GLOBAL, now: NOW }, "ko")).toContain("오프라인 1대 포함");
   });
 
+  it("puts a listed PC this device's check found nobody for in Needs you as Machine offline with when and why and Details, and one it could not reach as Could not reach this machine with Check again", async () => {
+    // both listed, and the account heard from both a minute ago: this device's own check is what says otherwise
+    const pcs = [makePc("id_a", "pc-a", "paired"), makePc("id_m1", "m1-box", "paired", { relay: AP })];
+    const pcStatus = new Map<string, PcStatus>([["id_a", { kind: "offline", reason: "pc" }], ["id_m1", { kind: "offline", reason: "relay" }]]);
+    const html = renderMarkup({ pcs, mode: "account", defaultRelay: GLOBAL, now: NOW, pcStatus, onCheckPc: () => {} });
+    const rows = [...html.matchAll(/<li class="relay-overview-attention-row"[\s\S]*?<\/li>/g)].map(([row]) => ({
+      state: /data-pc-state="([^"]+)"/.exec(row)?.[1],
+      name: /relay-overview-attention-name"[^>]*>([^<]+)</.exec(row)?.[1],
+      why: /relay-overview-attention-why"[^>]*>([^<]+)</.exec(row)?.[1]?.replaceAll("&#x27;", "'"),
+      action: /data-attention-action="([^"]+)"/.exec(row)?.[1],
+    }));
+    expect(rows).toEqual([
+      { state: "unreachable", name: "m1-box", why: "Could not reach this machine · This device could not reach the relay. Check this device's network.", action: "check" },
+      { state: "offline", name: "pc-a", why: "Machine offline · Last seen just now. It is off, has no network, or Ovis is not running on it.", action: "details" },
+    ]);
+    expect([...html.matchAll(/data-strip-cell="(ready|needs)" data-strip-count="(\d+)"/g)].map(([, cell, count]) => [cell, Number(count)])).toEqual([["ready", 0], ["needs", 2]]);
+    // Check again checks that PC alone
+    const checked: string[] = [];
+    const root = await mount({ pcs, mode: "account", defaultRelay: GLOBAL, now: NOW, pcStatus, onCheckPc: (serverId) => { checked.push(serverId); } });
+    const again = root.find((node) => node.type === "button" && node.props["data-attention-action"] === "check");
+    expect(textOf(again)).toBe("Check again");
+    await act(async () => { again.props.onClick(); });
+    expect(checked).toEqual(["id_m1"]);
+  });
+
   it("shows Paired with this device N and Relays in local mode without Ready or Offline columns, and lists no PC of its own: the table below carries each PC's state and route", () => {
     const pcs = localPcs();
     const checks = new Map<string, PcStatus>([["id_studio", { kind: "answered", route: "lan", rttMs: 38 }], ["id_work", { kind: "offline", reason: "pc" }]]);
@@ -416,10 +441,12 @@ describe("RelayOverview", () => {
         .matchAll(/<span class="relay-overview-attention-why">([^<]+)<\/span>/g),
     ].map(([, text]) => text ?? "");
 
-    expect(offlineReasons("en")).toEqual(["offline since 2 h", "offline since 15 min"]);
-    expect(offlineReasons("ko")).toEqual(["2시간 전부터 오프라인", "15분 전부터 오프라인"]);
-    expect(offlineReasons("ja")).toEqual(["2 時間前からオフライン", "15 分前からオフライン"]);
-    expect(offlineReasons("zh")).toEqual(["已离线 2 小时", "已离线 15 分钟"]);
+    // the row's own words for Machine offline, all in the one language: when the account last heard from it, and why
+    for (const lang of ["en", "ko", "ja", "zh"] as const) {
+      const tr = (key: string, vars?: Record<string, string | number>) => translate(lang, key, vars);
+      const said = (when: string) => `${tr("Machine offline")} · ${tr("Last seen {when}.", { when })} ${tr("It is off, has no network, or Ovis is not running on it.")}`;
+      expect(offlineReasons(lang).map((text) => text.replaceAll("&#x27;", "'"))).toEqual([said(tr("{n} h ago", { n: 2 })), said(tr("{n} min ago", { n: 15 }))]);
+    }
 
     const root = await mount({
       pcs: [freshPc, updatePc, offlinePaired],
@@ -511,7 +538,7 @@ describe("RelayOverview", () => {
     expect(empty.findAll((node) => node.type === "ol")).toHaveLength(1);
     expect(empty.findAll((node) => node.type === "li").map(textOf)).toEqual([
       `Install Ovis on the PC.On macOS or Linux:${INSTALLER_COMMAND}CopyOn Windows, in PowerShell:${WINDOWS_INSTALLER_COMMAND}Copy`,
-      "On that PC, open Settings → Devices and PCs → Account and sign in with the same Google account as on this device.",
+      "On that PC, open Settings → Devices and PCs → Add a connection → Ovis relay and sign in with the same Google account as on this device.",
       "Choose Add this PC to my account there. It then shows here.",
     ]);
     expect(empty.findAll((node) => node.type === "code").map(textOf)).toEqual([INSTALLER_COMMAND, WINDOWS_INSTALLER_COMMAND]);
@@ -607,7 +634,7 @@ describe("RelayOverview", () => {
     const empty = root.find((node) => node.props["data-dashboard-empty"] === "");
     const steps = empty.findAll((node) => node.type === "li").map(textOf);
     expect(steps).toHaveLength(3);
-    expect(steps[1]).toBe("On that PC, open Settings → Devices and PCs → Account and sign in with a GitHub or Google sign-in that is linked to this account.");
+    expect(steps[1]).toBe("On that PC, open Settings → Devices and PCs → Add a connection → Ovis relay and sign in with a GitHub or Google sign-in that is linked to this account.");
     expect(textOf(empty)).not.toContain("sign in with Apple");
     expect(textOf(empty)).not.toContain("the other way");
     expect(textOf(empty.find((node) => node.props["data-empty-provider"] === ""))).toBe("Signed in with Apple. A PC signs in with GitHub or Google only, and each is a separate Ovis account until you link it to this one. Without a linked sign-in, pair with a QR or code instead.");

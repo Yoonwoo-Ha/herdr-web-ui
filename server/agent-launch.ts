@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
+import { join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { freeAgentName } from "./agent-name.ts";
 import { launchedAgents } from "./launched-agents.ts";
 import { isShellAgentKind, startShellAgent, type ShellAgentLocator } from "./shell-agent.ts";
@@ -7,6 +8,7 @@ import { agentStart, HerdrError, sessionSnapshot } from "./herdr/client.ts";
 import { requestFault } from "./http.ts";
 import { agentStartArgs } from "./claude-settings-file.ts";
 import { DSH_EFFORTS, launchArgsFault } from "../shared/launch-rules.ts";
+import { browserToolArgs, browserToolChoices, browserToolConfig, isBrowserToolAgent, withBrowserToolArgs } from "../shared/browser-tools.ts";
 import { hcMachine } from "./herdr-core/runtime.ts";
 import { userHome } from "./user-home.ts";
 
@@ -78,6 +80,46 @@ async function startDshTui(paneId: string, args: string[], options: { locator?: 
   }
 }
 
+let browserTools: { read: () => unknown; dir: string } | null = null;
+
+/** Where the launch reads the shared `agentBrowserTools` setting from, and the folder its MCP config files go in. */
+export function readBrowserToolSetting(read: () => unknown, dir: string): void {
+  browserTools = { read, dir: resolve(dir) };
+}
+
+/**
+ * `args` with the browser tool chosen for this agent, if any (shared/browser-tools.ts). Claude Code and Copilot read
+ * it from a file in this PC's state folder, so an agent another machine of the core starts gets none: it would look
+ * for the file there.
+ */
+export function withBrowserTool(kind: string, args: string[] | undefined, platform: string): string[] | undefined {
+  if (browserTools === null || !isBrowserToolAgent(kind)) return args;
+  const tool = browserToolChoices(browserTools.read())[kind];
+  if (tool === undefined) return args;
+  let file = "";
+  if (kind !== "codex") {
+    if (hcMachine() !== null) {
+      console.warn(`browser tool: not added to ${kind}, which starts on another machine than this PC's config file`);
+      return args;
+    }
+    file = join(browserTools.dir, `${kind}-${tool}.json`);
+    const config = browserToolConfig(kind, tool, platform);
+    if (!existsSync(file) || readFileSync(file, "utf8") !== config) {
+      mkdirSync(browserTools.dir, { recursive: true, mode: 0o700 });
+      // a new file renamed over the old one: a link left at that name is replaced, never written through
+      const staged = `${file}.${randomUUID()}.tmp`;
+      try {
+        writeFileSync(staged, config, { flag: "wx", mode: 0o600 });
+        renameSync(staged, file);
+      } catch (error) {
+        rmSync(staged, { force: true });
+        throw error;
+      }
+    }
+  }
+  return withBrowserToolArgs(args ?? [], browserToolArgs(kind, tool, platform, file));
+}
+
 export async function agentLaunch(paneId: string, agent: AgentPayload, launched?: (pid: number) => void, locator?: ShellAgentLocator, options: { platform?: string; settingsDir?: string; home?: string } = {}): Promise<{ agent_started: true } | { agent_started: false; error: { code: string; message: string } }> {
   try {
     const kind = agent.kind as string;
@@ -94,7 +136,8 @@ export async function agentLaunch(paneId: string, agent: AgentPayload, launched?
     else {
       const given = typeof agent.name === "string" && agent.name.length > 0 ? agent.name : null;
       // on Windows a Claude Code's inline JSON --settings goes as a file's path (server/claude-settings-file.ts)
-      const startArgs = args === undefined ? undefined : agentStartArgs(kind, args, { platform: options.platform, dir: options.settingsDir });
+      const launchArgs = withBrowserTool(kind, args, options.platform ?? process.platform);
+      const startArgs = launchArgs === undefined ? undefined : agentStartArgs(kind, launchArgs, { platform: options.platform, dir: options.settingsDir });
       // herdr refuses a name another agent holds. Two creations at once can pick the same
       // free one: the refused one picks again. It also refuses a pane whose shell is not up
       // yet (`agent_pane_busy`, herdr 0.9.3), which a pane made a moment ago can be.

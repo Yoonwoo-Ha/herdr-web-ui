@@ -12,11 +12,11 @@
 .relay-pc-table {
   width: 100%; table-layout: fixed; border-collapse: collapse; font-size: max(var(--relay-fs-body-min), var(--fs-md));
 }
-.relay-pc-col-name { width: 36%; }
-.relay-pc-col-state { width: 18%; }
+.relay-pc-col-name { width: 34%; }
+.relay-pc-col-state { width: 20%; }
 .relay-pc-col-relay { width: 22%; }
 .relay-pc-col-seen { width: 12%; }
-.relay-pc-col-act { width: 12%; }
+.relay-pc-col-act { width: 14%; }
 .relay-pc-table.is-without-seen .relay-pc-col-name { width: 36%; }
 .relay-pc-table.is-without-seen .relay-pc-col-state { width: 22%; }
 .relay-pc-table.is-without-seen .relay-pc-col-relay { width: 28%; }
@@ -121,7 +121,7 @@
   line-height: var(--lh-tight);
   font-variant-numeric: tabular-nums;
 }
-.relay-pc-table .relay-pc-state-word { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.relay-pc-table .relay-pc-state-word { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; max-width: 100%; overflow: hidden; }
 .relay-pc-probe-line {
   display: block;
   margin: 0;

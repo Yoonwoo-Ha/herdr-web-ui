@@ -1,7 +1,7 @@
 /**
  * Korean for the keys only the settings files use:
  * components/SettingsDialog.tsx (with THEME_NAMES), components/SignOutRow.tsx, components/KeyBarSettings.tsx,
- * components/SettingsControls.tsx, components/TelemetryControls.tsx, lib/paletteSettings.ts.
+ * components/SettingsControls.tsx, components/TelemetryControls.tsx, components/LinkBrowserRow.tsx, lib/paletteSettings.ts.
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const SETTINGS_KO: Record<string, string> = {
@@ -133,7 +133,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "Auto ({language})": "자동 ({language})",
   "No OpenAI key: the browser's speech recognition is used": "OpenAI 키가 없어 브라우저의 음성 인식을 사용합니다",
   "Speech recognition": "음성 인식",
-  "Browser": "브라우저",
   "API key": "API 키",
   "Save an API key to use the mic": "마이크를 쓰려면 API 키를 저장하세요",
   "No OpenAI key saved": "저장된 OpenAI 키가 없습니다",
@@ -146,7 +145,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "Not saved on the server yet; reloading or closing this page can undo the change.": "서버에\u00a0아직 저장되지\u00a0않았습니다. 이\u00a0페이지를 새로\u00a0고치거나\u00a0닫으면 변경이\u00a0취소될\u00a0수\u00a0있습니다.",
   "Sending the change to the server…": "변경을 서버로\u00a0보내는\u00a0중…",
   "Keep screen on": "화면 켜짐 유지",
-  "Needs HTTPS or localhost.": "HTTPS 또는 localhost가 필요합니다.",
   "This browser can't keep the screen on.": "이 브라우저는 화면을 켜 둘 수 없습니다.",
   "For this device. An alert waits a little first, and none comes when the pane changes meanwhile, as when you answer at the PC.": "이 기기에 적용됩니다. 알림은 잠시 기다렸다가 보내며, 그사이 PC에서 답하는 등 pane 상태가 바뀌면 보내지 않습니다.",
   "Alerts from": "알림을 보낼 PC",
@@ -171,7 +169,7 @@ export const SETTINGS_KO: Record<string, string> = {
   "Anonymous usage counts": "익명 사용 집계",
   "Turned off on this PC by OVIS_TELEMETRY=0, DO_NOT_TRACK or a CI environment.": "이 PC에서는 환경 변수(OVIS_TELEMETRY=0, DO_NOT_TRACK)나 CI 환경 때문에 꺼져 있습니다.",
   "Send anonymous usage counts": "익명 사용 집계 보내기",
-  "Once on install and once per update, with the last browser's app settings, and once a day you open the app, with the kinds of coding agents running in herdr (such as claude or codex), the kinds of screen the app was opened on, how they reached this PC, and how many prompt answers were sent and alerts delivered and tapped. After each day, how often the app's buttons were used that day (chat sends, the composer's buttons, the agent inbox, and switches between chat and terminal by kind of agent and how) and, for a few actions, whether a button, a menu, a shortcut or the command palette was used, each count only as a rough range, with the list of which of these controls were shown, on narrow and wide screens apart, never what was typed, which pane or what time of day. Custom fonts, shortcuts and replies are reported only as customization flags or counts, never their text. Account identifiers, terminal content and files are excluded. The receiver stores the country, not the IP address.": "앱 설치 시 한 번, 업데이트마다 한 번, 마지막으로 사용한 브라우저의 앱 설정과 함께 보내고, 앱을 여는 날마다 한 번, herdr에서 실행 중인 코딩 에이전트의 종류(claude, codex 등), 앱을 연 화면의 종류, 그 화면이 이 PC에 연결된 방식, 보낸 프롬프트 답변 수와 전달되고 탭된 알림 수와 함께 보냅니다. 하루가 끝나면 그날 앱의 버튼을 얼마나 썼는지(채팅 보내기, 입력창 버튼, 에이전트 받은편지함, 에이전트 종류와 방법별 채팅·터미널 전환)와 몇몇 동작을 버튼·메뉴·단축키·명령 팔레트 중 무엇으로 했는지를 횟수마다 대략의 범위로 보내고, 이 컨트롤들 중 무엇이 화면에 나왔는지는 이름 목록으로 보냅니다. 좁은 화면과 넓은 화면을 나눠 보내며, 입력한 내용, 어느 패널인지, 몇 시인지는 보내지 않습니다. 사용자 지정 글꼴, 바로 가기 및 답변은 텍스트가 아니라 사용자 지정 여부나 개수로만 보고합니다. 계정 식별자, 터미널 내용 및 파일은 제외됩니다. 수신 측은 IP 주소가 아니라 국가만 저장합니다.",
+  "Once on install and once per update, with the last browser's app settings, and once a day you open the app, with the kinds of coding agents running in herdr (such as claude or codex), the kinds of screen the app was opened on, how they reached this PC (this PC itself, the local network, Tailscale, Funnel, a device paired through the Ovis relay (through the relay or directly), Portal or another proxy), and how many prompt answers were sent and alerts delivered and tapped. After each day, how often the app's buttons were used that day (chat sends, the composer's buttons, the agent inbox, and switches between chat and terminal by kind of agent and how) and, for a few actions, whether a button, a menu, a shortcut or the command palette was used, each count only as a rough range, with the list of which of these controls were shown, on narrow and wide screens apart, never what was typed, which pane or what time of day. Custom fonts, shortcuts and replies are reported only as customization flags or counts, never their text. Account identifiers, terminal content and files are excluded. The receiver stores the country, not the IP address.": "앱 설치 시 한 번, 업데이트마다 한 번, 마지막으로 사용한 브라우저의 앱 설정과 함께 보내고, 앱을 여는 날마다 한 번, herdr에서 실행 중인 코딩 에이전트의 종류(claude, codex 등), 앱을 연 화면의 종류, 그 화면이 이 PC에 연결된 방식(이 PC 자체, 로컬 네트워크, Tailscale, Funnel, Ovis 릴레이로 페어링한 기기(릴레이 경유 또는 직접 연결), Portal 또는 다른 프록시), 보낸 프롬프트 답변 수와 전달되고 탭된 알림 수와 함께 보냅니다. 하루가 끝나면 그날 앱의 버튼을 얼마나 썼는지(채팅 보내기, 입력창 버튼, 에이전트 받은편지함, 에이전트 종류와 방법별 채팅·터미널 전환)와 몇몇 동작을 버튼·메뉴·단축키·명령 팔레트 중 무엇으로 했는지를 횟수마다 대략의 범위로 보내고, 이 컨트롤들 중 무엇이 화면에 나왔는지는 이름 목록으로 보냅니다. 좁은 화면과 넓은 화면을 나눠 보내며, 입력한 내용, 어느 패널인지, 몇 시인지는 보내지 않습니다. 사용자 지정 글꼴, 바로 가기 및 답변은 텍스트가 아니라 사용자 지정 여부나 개수로만 보고합니다. 계정 식별자, 터미널 내용 및 파일은 제외됩니다. 수신 측은 IP 주소가 아니라 국가만 저장합니다.",
   "Once a day you open the app:": "앱을 여는 날마다 한 번:",
   "After a day has ended:": "하루가 끝난 뒤:",
   "The receiver adds the country this message comes from (two letters, such as KR). It does not store the address.": "받는 쪽에서 이 메시지를 보낸 국가(KR 같은 두 글자)를 덧붙입니다. 주소는 저장하지 않습니다.",
@@ -183,6 +181,10 @@ export const SETTINGS_KO: Record<string, string> = {
   "Beside the pane": "패널 옆에",
   "In a new tab": "새 탭에서",
   "Reuse tab for external links": "외부 링크에 탭 재사용",
+  "Browser for links": "링크 열 브라우저",
+  "The browser a web link you click in Ovis opens in, on this computer. Sign-in pages always open in the system's default browser.": "이 컴퓨터에서 Ovis 안의 웹 링크를 눌렀을 때 열 브라우저입니다. 로그인 페이지는 언제나 시스템 기본 브라우저로 열립니다.",
+  "System default": "시스템 기본",
+  "System default ({name})": "시스템 기본 ({name})",
   "theme themes palette dark light mode colors density language sidebar logos": "테마 팔레트 palette 다크 라이트 모드 색상 밀도 언어 사이드바 로고",
   "chat message width composer enter send thinking code": "채팅 메시지 너비 입력창 엔터 보내기 생각 코드",
   "terminal key bar keyboard clipboard": "터미널 키 바 키보드 클립보드",
@@ -288,4 +290,10 @@ export const SETTINGS_KO: Record<string, string> = {
   "Remove PC {name}": "{name} PC 제거",
 
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "이 PC의 외부 알림 설정을 읽지 못했습니다({error}). 설정을 닫았다가 다시 여세요.",
+  "Opens the page of every PC this device reaches through the relay, to check, join or forget them.": "이 기기가 릴레이로 연결하는 모든 PC의 페이지를 열어 확인하거나 참여하거나 지울 수 있어요.",
+  "Manage|relayed connections": "관리",
+  "Built-in browser": "내장 브라우저",
+  "Blocked sites": "차단한 사이트",
+  "Opens web pages in tabs inside this app: they are listed under Browser in the sidebar and open beside the pane. Its tabs are signed in to nothing you use elsewhere, and an agent's tabs keep cookies of their own.": "웹페이지를 이 앱 안의 탭으로 엽니다. 탭은 사이드바의 '브라우저' 아래에 나오고 패널 옆에 열립니다. 이 탭들은 다른 곳의 로그인을 쓰지 않고, 에이전트 탭은 쿠키를 따로 씁니다.",
+  "The built-in browser never loads these sites or their subdomains, in your tabs or an agent's. One site per line.": "내장 브라우저는 이 사이트와 하위 도메인을 내 탭에서도 에이전트 탭에서도 열지 않습니다. 한 줄에 사이트 하나씩 적습니다.",
 };

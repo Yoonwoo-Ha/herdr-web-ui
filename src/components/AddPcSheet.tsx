@@ -15,6 +15,8 @@ import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { relayFailureText } from "./relayFailureText.ts";
 import { EnrollmentStatus } from "./EnrollmentStatus.tsx";
+import { JoinWait } from "./JoinWait.tsx";
+import { KeyFingerprintWait } from "./PendingKeys.tsx";
 
 export type AddPcSheetMode = "new" | "join" | "add";
 export type AddPcPhase = "start" | "confirm" | "connecting" | "compare" | "wrong" | "approving" | "ready" | "failed";
@@ -60,6 +62,15 @@ export interface AddPcSheetProps {
    * waits on its own screen again (Revoke all, then listed again), so the join start keeps the typed number beside it.
    */
   onTypeNumber?: () => void;
+}
+
+const APPROVE_COMMAND = "ovis pair --approve";
+
+/** A sentence with a command in it, the command kept on one line as code. */
+function withCommand(sentence: string, command: string): ReactNode {
+  const at = sentence.indexOf(command);
+  if (at < 0) return sentence;
+  return <>{sentence.slice(0, at)}<code className="add-pc-command">{command}</code>{sentence.slice(at + command.length)}</>;
 }
 
 export function AddPcSheet({ mode, pc, state, onJoin, onPair, onMatch, onRetry, onOpenPc, onCancel, onClose, onPairByQr, onAskToJoin, onTypeNumber }: AddPcSheetProps) {
@@ -117,21 +128,22 @@ export function AddPcSheet({ mode, pc, state, onJoin, onPair, onMatch, onRetry, 
   if (phase === null || pc === null) {
     title = t("Add a PC");
     sub = t("A PC joins through your account, or pairs with this device alone.");
-    body = <p className="relay-shell-copy">{t("On the PC, open Settings → Devices and PCs → Account, sign in, then choose Add this PC to my account. It then shows here.")}</p>;
+    body = <p className="relay-shell-copy">{t("On the PC, open Settings → Devices and PCs → Add a connection → Ovis relay, sign in, then choose Add this PC to my account. It then shows here.")}</p>;
     actions = pairActions(<button key="close" type="button" className="btn" onClick={onClose}>{t("Close")}</button>, <button key="primary" type="button" className="btn btn-primary" data-sheet-primary onClick={onPairByQr}>{t("Pair with a QR or code")}</button>);
   } else {
-    title = mode === "new" ? t("Add {name} to your account", { name }) : t("Add this device to {name}", { name });
-    sub = mode === "new"
+    // a new device's way in: approval on a device it already uses
+    const joinStart = mode !== "new" && phase === "start";
+    title = mode === "new" ? t("Add {name} to your account", { name }) : joinStart ? t("Get approved on a device you already use") : t("Add this device to {name}", { name });
+    // the request reaches only a device with this PC open in Ovis (server/dispatch.ts remote-pairings): the line says so
+    sub = joinStart ? t("Open {name} in Ovis on a device you already use and approve there, or on {name} itself: Settings → Devices and PCs, then type the number this device shows.", { name }) : mode === "new"
       ? phase === "start" && onAskToJoin
         ? t("Type the number {name} shows on its own screen after you start Add, then approve there. If {name} is already in your account, ask to join instead.", { name })
         : t("Type the number {name} shows on its own screen, then approve there.", { name })
       // a device connected to the PC hears its join request (docs/account.md "Who may admit a device"), or the PC itself
       // while its own Add screen waits; an instruction, not a claim: the directory cannot say which, so both are named
-      : t("Approve this device on a device of your account connected to {name}, or on {name} if it shows this request.", { name });
+      : t("Approve this device on a device of your account connected to {name}, or on {name} itself: Settings → Devices and PCs, then type the number this device shows.", { name });
     switch (phase) {
       case "start":
-        // a join is heard only by a device with the PC open, so that comes before the press
-        if (mode !== "new") body = <><p className="relay-shell-copy">{t("First open {name} in Ovis on a device that already uses it (your phone, for example) and keep it open. Then choose Ask to join.", { name })}</p>{onTypeNumber && <p className="relay-shell-copy">{t("If {name} is waiting on its own screen to be added, type its number here instead.", { name })}</p>}</>;
         if (mode !== "new" && onTypeNumber) {
           const type = <button key="type" type="button" className="btn" data-action="type-number" onClick={onTypeNumber}>{t("Type the number")}</button>;
           actions = pairActions(phone ? [type, cancel] : [cancel, type], <button key="primary" type="button" className="btn btn-primary" data-sheet-primary onClick={() => onJoin(pc)}>{t("Ask to join")}</button>);
@@ -151,7 +163,9 @@ export function AddPcSheet({ mode, pc, state, onJoin, onPair, onMatch, onRetry, 
         actions = pairActions(cancel, <button key="primary" type="button" className="btn btn-primary" data-sheet-primary onClick={onPair}>{t("Pair")}</button>);
         break;
       case "connecting":
-        body = <div className="relay-shell-wait" role="status"><div className="boot-spinner" aria-hidden="true" /><p className="relay-shell-detail">{t("Connecting to {name}…", { name })}</p></div>;
+        body = state.kind === "connecting" && state.hold !== undefined ? <JoinWait pc={name} hold={state.hold} />
+          : state.kind === "connecting" && state.keyFingerprint !== undefined ? <KeyFingerprintWait pc={name} fingerprint={state.keyFingerprint} />
+          : <div className="relay-shell-wait" role="status"><div className="boot-spinner" aria-hidden="true" /><p className="relay-shell-detail">{t("Connecting to {name}…", { name })}</p></div>;
         actions = cancel;
         break;
       case "compare": {
@@ -222,6 +236,33 @@ export function AddPcSheet({ mode, pc, state, onJoin, onPair, onMatch, onRetry, 
     }
   }
 
+  // a join a PC's own page offers: one press to ask, then the number alone, which the PC checks and approves
+  if ((state.kind === "confirm" || state.kind === "compare") && state.alone === true && pc !== null) {
+    const asking = state.kind === "confirm";
+    return createPortal(
+      <div className="modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+        <div ref={surface} className="modal add-pc-sheet add-pc-alone" lang={locale} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} tabIndex={-1} data-add-pc-mode={mode} data-add-pc-phase={asking ? "confirm" : "compare"}>
+          <header className="modal-header add-pc-head"><h2 className="modal-title" id={`${id}-title`}>{asking ? t("Add this device to {name}", { name }) : t("Approve it on {name}", { name })}</h2></header>
+          {state.kind === "compare" && (
+            <div className="modal-body add-pc-body">
+              <p className="relay-shell-digits" aria-label={state.digits.split("").join(" ")}>{`${state.digits.slice(0, 3)} ${state.digits.slice(3)}`}</p>
+              <p className="relay-shell-copy">{t("Approve it if the PC shows the same number.")}</p>
+            </div>
+          )}
+          <footer className="modal-footer add-pc-footer">{asking ? pairActions(cancel, <button key="primary" type="button" className="btn btn-primary" data-sheet-primary onClick={onPair}>{t("Ask to join")}</button>) : cancel}</footer>
+          {state.kind === "compare" && (
+            <details className="add-pc-other">
+              <summary>{t("Another way")}</summary>
+              <p className="relay-shell-detail">{withCommand(t("In the PC's terminal: ovis pair --approve"), APPROVE_COMMAND)}</p>
+              <p className="relay-shell-detail">{t("Or approve it on another device of your account that has this PC open.")}</p>
+            </details>
+          )}
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+
   const failureKind = state.kind === "failed" ? state.failure : null;
   const stepNumber = phase === null || pc === null ? null : activeStepIndex(mode === "new" ? "new" : "join", phase, failureKind) + 1;
   const statuses = phase === null || pc === null ? [] : addPcSteps(mode === "new" ? "new" : "join", phase, failureKind);
@@ -241,8 +282,8 @@ export function AddPcSheet({ mode, pc, state, onJoin, onPair, onMatch, onRetry, 
     <div className="modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
       <div ref={surface} className="modal add-pc-sheet" lang={locale} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-sub`} tabIndex={-1} data-add-pc-mode={mode} {...(phase === null ? {} : { "data-add-pc-phase": phase })}>
         <header className="modal-header add-pc-head">
-          {steps && <div className="add-pc-bars" aria-hidden="true">{steps.map(({ status }, step) => <span key={step} data-bar={status} />)}</div>}
-          {stepNumber !== null && <p className="add-pc-step-count">{t("Step {n} of {total}", { n: stepNumber, total: 4 })}</p>}
+          {/* the thin bars alone say where it stands; the step's number is the bars' own, for a screen reader */}
+          {steps && <div className="add-pc-bars" {...(stepNumber === null ? { "aria-hidden": true } : { role: "progressbar", "aria-label": title, "aria-valuemin": 1, "aria-valuemax": 4, "aria-valuenow": stepNumber, "aria-valuetext": t("Step {n} of {total}", { n: stepNumber, total: 4 }) })}>{steps.map(({ status }, step) => <span key={step} data-bar={status} />)}</div>}
           <h2 className="modal-title" id={`${id}-title`}>{title}</h2>
           <p className="add-pc-sub" id={`${id}-sub`}>{sub}</p>
         </header>

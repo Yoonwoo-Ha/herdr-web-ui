@@ -41,7 +41,6 @@ export const SETTINGS_ACCESS_KO: Record<string, string> = {
   "The server cannot see whether a proxy, tunnel or router makes it reachable from the internet.": "프록시, 터널 또는 라우터 때문에 인터넷에서 접속할\u00a0수\u00a0있는지 서버는 알\u00a0수\u00a0없습니다.",
   "Named agent groups": "에이전트 그룹 직접 만들기",
   "Agents under workspaces": "워크스페이스 아래에 에이전트",
-  "ID {id}": "ID {id}",
   "Sign out of this PC": "이 PC에서 로그아웃",
   "This app": "이 앱",
   "Use the relay": "릴레이 사용",

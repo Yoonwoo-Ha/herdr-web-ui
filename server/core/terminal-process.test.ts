@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import * as herdr from "../herdr/client.ts";
-import { attachScreenStarted, createSpawnAttachment, type PaneAttachment, screenGrid } from "./terminal-process.ts";
+import { ATTACH_LEAVE, attachScreenStarted, createSpawnAttachment, type PaneAttachment, screenGrid } from "./terminal-process.ts";
 
 // herdr 0.9.5 `terminal attach`, captured through the Rust PTY host with its two startup queries
 // taken out (AttachStartupProbes): the setup, then a screen or a refusal's teardown and line
@@ -62,6 +62,13 @@ describe("screenGrid", () => {
     for (let row = 2; row <= 24; row++) rest += `\x1b[${row};1H${" ".repeat(91)}`;
     expect(screenGrid(`\x1b[1;1H${marks}${rest}`)).toEqual({ cols: 91, rows: 24 });
     expect(screenGrid(`\x1b[1;1H${marks}`)).toBeNull();
+  });
+});
+
+describe("ATTACH_LEAVE", () => {
+  it("holds herdr's detach chord back only behind the chord's first key, however the viewer's terminal wrote it", () => {
+    for (const first of ["\x02", "ls\x02", "\x1b[98;5u", "\x1b[98;5:3u", "\x1b[98:66;5u", "\x1b[27;5;98~"]) expect([first, ATTACH_LEAVE.notAfter.test(first)]).toEqual([first, true]);
+    for (const other of ["a", "\x02a", "\x02\r", "\x1b[<64;10;5M", "\x1b[97;5u", "\x1b[27;5;13~", "\x1b[98;5u\r"]) expect([other, ATTACH_LEAVE.notAfter.test(other)]).toEqual([other, false]);
   });
 });
 

@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Browser } from "playwright-core";
 
-type ProbeWindow = Window & { ready: boolean; messages: Array<{ type?: string; pane?: string; url?: string }>; selections: unknown[] };
+type ProbeWindow = Window & { ready: boolean; messages: Array<{ type?: string; pane?: string; url?: string; error?: string }>; selections: unknown[] };
 
 export async function checkNotificationStartup(browser: Browser, upstream: string, olderPane: string, newerPane: string): Promise<void> {
   let releaseJS!: () => void;
@@ -36,11 +36,25 @@ export async function checkNotificationStartup(browser: Browser, upstream: strin
   ` + readFileSync(join(import.meta.dir, "..", "public", "sw.js"), "utf8") + `
     nativeAdd("message", (event) => {
       if (event.data?.type === "probe-open-created") {
-        event.waitUntil(nativeMatch({ type: "window", includeUncontrolled: true }).then((clients) => {
-          const opened = clients.find((client) => client.url === new URL(pendingOpen.url, self.location).href);
-          if (!opened) throw new Error("cold page is not a discoverable WindowClient");
-          pendingOpen.resolve(opened);
-        }));
+        // the browser's own openWindow answers once the new window is a listed client; a page that
+        // has committed can still be missing from matchAll for a moment, so this one looks again
+        if (!pendingOpen) {
+          event.source?.postMessage({ type: "probe-error", error: "the worker holds no openWindow call: it was started again" });
+          return;
+        }
+        const wanted = new URL(pendingOpen.url, self.location).href;
+        event.waitUntil((async () => {
+          const deadline = Date.now() + 10000;
+          let seen = [];
+          while (Date.now() < deadline) {
+            const clients = await nativeMatch({ type: "window", includeUncontrolled: true });
+            const opened = clients.find((client) => client.url === wanted);
+            if (opened) return pendingOpen.resolve(opened);
+            seen = clients.map((client) => client.url);
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+          event.source?.postMessage({ type: "probe-error", error: "cold page is not a discoverable WindowClient; windows: " + JSON.stringify(seen) });
+        })());
         return;
       }
       if (event.data?.type !== "probe-click") return;
@@ -101,10 +115,14 @@ export async function checkNotificationStartup(browser: Browser, upstream: strin
     try {
       await Promise.race([jsRequested, new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("cold app JS was not requested")), 15000); })]);
     } finally { clearTimeout(timeout); }
+    const answered = async (pane: string): Promise<void> => {
+      await driver.waitForFunction((pane) => (window as ProbeWindow).messages.some((message) => message.type === "probe-error" || (message.type === "probe-done" && message.pane === pane)), pane);
+      assert.deepEqual(await driver.evaluate(() => (window as ProbeWindow).messages.filter((message) => message.type === "probe-error")), [], `the worker answered the click for ${pane}`);
+    };
     await driver.evaluate(() => navigator.serviceWorker.controller!.postMessage({ type: "probe-open-created" }));
-    await driver.waitForFunction((pane) => (window as ProbeWindow).messages.some((message) => message.type === "probe-done" && message.pane === pane), olderPane);
+    await answered(olderPane);
     await driver.locator("#new").click();
-    await driver.waitForFunction((pane) => (window as ProbeWindow).messages.some((message) => message.type === "probe-done" && message.pane === pane), newerPane);
+    await answered(newerPane);
     releaseJS();
     await app.waitForLoadState("load");
     await app.waitForFunction((pane) => JSON.parse(sessionStorage.getItem("ovis:selection") ?? "null")?.pane_id === pane, newerPane);

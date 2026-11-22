@@ -1,4 +1,5 @@
 import { afterEach, expect, it, jest } from "bun:test";
+import { PENDING_MS } from "../../../server/account/pending.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -12,7 +13,13 @@ import type { SecureChannel, Transport } from "../../../shared/relay-e2ee.ts";
 import { decodeFrame, encodeFrame, FrameType, LIMITS_V1, MuxProtocolError } from "../../../shared/relay-mux.ts";
 import type { MuxFrame } from "../../../shared/relay-mux.ts";
 import { MuxEngine } from "../../../shared/relay-mux-engine.ts";
+import type { RelayChannelOptions } from "../../../shared/relay-channel.ts";
+import { withAccountDevice } from "../account/accountDevice.ts";
+import type { RelayDevice, RelayDeviceStore } from "./device.ts";
+import { ACCOUNT_OPENS_ALL_FEATURE } from "../../../shared/relay-mux.ts";
+import { pairFingerprint, verifyPairProof } from "../../../shared/pair-fingerprint.ts";
 import { ADMISSION_MS, ASSIGNMENT_MS, openRelayChannel, PC_ANSWER_MS, RelayAdmissionTimeoutError, RelayNewSessionsRefusedError, RelayPcOfflineError, RelayUnreachableError } from "./channel.ts";
+import { probePc } from "../../../shared/relay-channel.ts";
 import { isFatalRelayError } from "./transport.ts";
 import { RELAY_NEW_SESSIONS_CLOSE, RELAY_NEW_SESSIONS_REFUSED } from "../../../shared/relay-pass.ts";
 import type { RelaySocket } from "./channel.ts";
@@ -52,8 +59,8 @@ class FakeSocket implements RelaySocket {
   }
 }
 
-async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" | "auth-ok" | "features" | "assigned" | "receipt" | "silence" | "protocol" | "early-welcome" | "account", onClose?: (error: Error) => void,
-  pc: { relay?: string; hints?: readonly string[] } = {}) {
+async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" | "auth-ok" | "features" | "assigned" | "receipt" | "silence" | "protocol" | "early-welcome" | "account" | "key-proof" | "key-proof-twice", onClose?: (error: Error) => void,
+  pc: { relay?: string; hints?: readonly string[]; features?: readonly string[]; provisional?: boolean; omitKeyPending?: boolean; wrap?: (store: MemoryDeviceStore, device: RelayDevice) => RelayDeviceStore } = {}, channel: Partial<RelayChannelOptions> = {}) {
   const dir = mkdtempSync(join(tmpdir(), "relay-channel-"));
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
   const registry = new DeviceStore(dir);
@@ -74,6 +81,7 @@ async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" |
   const authSeen = Promise.withResolvers<void>();
   const allowAuth = Promise.withResolvers<void>();
   const httpSeen = Promise.withResolvers<string>();
+  const receiptSeen = Promise.withResolvers<MuxEngine["stats"]>();
   let secure: SecureChannel;
   let server: MuxEngine;
   let socket: FakeSocket;
@@ -99,7 +107,11 @@ async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" |
       const bytes = new Uint8Array(data);
       const frame = decodeFrame(bytes);
       trace.push(`client:${Object.entries(FrameType).find(([, value]) => value === frame.type)?.[0]}`);
-      incoming = incoming.then(async () => { await daemonOpening; server.receive(bytes); }).catch(fail);
+      incoming = incoming.then(async () => {
+        await daemonOpening;
+        server.receive(bytes);
+        if (frame.type === FrameType.RECEIVED) receiptSeen.resolve(server.stats);
+      }).catch(fail);
     } },
   }).then((channel) => {
     secure = channel;
@@ -112,13 +124,15 @@ async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" |
       onHttp: (stream) => { httpSeen.resolve(stream.request.target); stream.headers(200); stream.end(); },
       onSession: (frame) => { void handle(frame).catch(fail); },
     });
-    if (attack === "early-welcome") {
+    if (pc.provisional) {
+      server.sendSession({ type: FrameType.WELCOME, flags: 0, stream_id: 0, payload: { ...welcome(), features: [], provisional: true } });
+    } else if (attack === "early-welcome") {
       trace.push("server:WELCOME");
       server.sendSession({ type: FrameType.WELCOME, flags: 0, stream_id: 0, payload: welcome() });
     }
   });
   void daemonOpening.catch(() => {});
-  const welcome = () => ({ protocol: "ovis-mux" as const, version: 1 as const, features: attack === "features" ? ["unoffered"] : attack === "account" ? ["account"] : [],
+  const welcome = () => ({ protocol: "ovis-mux" as const, version: 1 as const, features: pc.features ?? (attack === "features" ? ["unoffered"] : attack === "account" ? ["account"] : []),
     limits: { ...LIMITS_V1, max_streams: 2 }, nonce: attack === "nonce" ? base64url(nonce.slice(1)) : base64url(nonce),
     server_version: "test", relay_protocol: attack === "protocol" ? 2 : 1, min_supported_client: "0.0.0" });
   const raw = (type: number, payload: unknown): Uint8Array => {
@@ -127,7 +141,20 @@ async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" |
     bytes[0] = 1; bytes[1] = type; bytes.set(body, 8);
     return bytes;
   };
+  let keyProofSent: MuxFrame | undefined;
+  const keyProof = { challenge: base64url(new Uint8Array(32).fill(7)), proved: Promise.withResolvers<string>(), proofs: 0 };
   const handle = async (frame: MuxFrame): Promise<void> => {
+    if (frame.type === FrameType.KEY_PROVE) {
+      keyProof.proofs++;
+      keyProof.proved.resolve(frame.payload.signature);
+      if (attack === "key-proof-twice") {
+        await secure.send(raw(FrameType.KEY_CHALLENGE, { challenge: base64url(new Uint8Array(32).fill(8)) }).slice().buffer);
+        return;
+      }
+      // a waiting frame that tries to name a fingerprint: the device must never show it
+      if (!pc.omitKeyPending) await secure.send(raw(FrameType.KEY_PENDING, { fingerprint: "ZZZZ-ZZZZ" }).slice().buffer);
+      return;
+    }
     if (frame.type === FrameType.HELLO) {
       offered = frame.payload.features;
       hinting = pc.hints !== undefined && offered.includes("relay-hints");
@@ -154,6 +181,11 @@ async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" |
       return;
     }
     let deviceId: string;
+    if (frame.type === FrameType.PAIR && (attack === "key-proof" || attack === "key-proof-twice") && offered.includes("key-proof-1") && !keyProofSent) {
+      keyProofSent = frame;
+      await secure.send(raw(FrameType.KEY_CHALLENGE, { challenge: keyProof.challenge, fingerprint: "ZZZZ-ZZZZ" }).slice().buffer);
+      await keyProof.proved.promise;
+    }
     if (frame.type === FrameType.PAIR) {
       const paired = registry.pairRelay(frame.payload.code, frame.payload.label, frame.payload.public_key);
       if (!paired) throw new Error("Pairing rejected");
@@ -171,12 +203,13 @@ async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" |
     await server.flush();
     server.authenticate(deviceId);
   };
-  const opening = openRelayChannel(offer, { store, ...(onClose ? { onClose } : {}), socket: (url) => {
+  const signingIn = !pairing && pc.wrap ? (await store.get(offer.server_id))! : undefined;
+  const opening = openRelayChannel(offer, { ...channel, store: signingIn ? pc.wrap!(store, signingIn) : store, ...(onClose ? { onClose } : {}), socket: (url) => {
     expect(url).toBe(`${offer.relay}/v1/ws?server_id=${offer.server_id}&role=client&v=1`);
     queueMicrotask(() => socket.deliver(JSON.stringify(attack === "assigned" ? { type: "wrong" } : { type: "assigned", connection_id: "ef".repeat(16) })));
     return socket;
   } });
-  return { opening, trace, authSeen, allowAuth, httpSeen, socket, store, offer, get offered() { return offered; } };
+  return { opening, trace, authSeen, allowAuth, httpSeen, receiptSeen, socket, store, offer, keyProof, get offered() { return offered; } };
 }
 
 for (const pairing of [false, true]) {
@@ -264,6 +297,44 @@ it("calls a relay that never assigns the connection unreachable, after ASSIGNMEN
   expect(error).toMatchObject({ closeCode: null, silent: true });
   expect(failureOf(error, { code: true, paired: false })).toBe("relay-unreachable");
   expect(socket.closed).toBe(4000);
+});
+
+it("calls a relay that turned this device away before assigning it (TRY_AGAIN, POLICY) a refusal, and a socket that failed saying nothing unreachable", async () => {
+  const failure = async (code: number) => {
+    const socket = new SilentSocket();
+    const created = Promise.withResolvers<void>();
+    const offer = { v: 1 as const, server_id: "12".repeat(16), server_public_key: exportPublicKey(generateKeyPair().publicKey), relay: "wss://relay.example" };
+    const outcome = settled(openRelayChannel(offer, { store: new MemoryDeviceStore(), socket: () => { created.resolve(); return socket; } }));
+    await created.promise;
+    socket.onclose?.(new CloseEvent("close", { code, reason: "too many clients for this server" }));
+    await flush();
+    return failureOf(outcome.get()?.error, { code: false, paired: true });
+  };
+  expect([await failure(1013), await failure(1008), await failure(1006), await failure(1011)]).toEqual(["relay-refused", "relay-refused", "relay-unreachable", "relay-unreachable"]);
+});
+
+it("tells a probe's PC that never came from a relay that turned this device away before assigning it and from a carrier that failed saying nothing", async () => {
+  jest.useFakeTimers();
+  const offer = { v: 1 as const, server_id: "12".repeat(16), server_public_key: exportPublicKey(generateKeyPair().publicKey), relay: "wss://relay.example" };
+  const probed = async (act: (socket: SilentSocket) => void) => {
+    const socket = new SilentSocket();
+    const found = probePc(offer, { relay: offer.relay }, () => socket, 8_000);
+    act(socket);
+    await flush();
+    jest.advanceTimersByTime(8_000);
+    return (await found).kind;
+  };
+  const assigned = (socket: SilentSocket): void => socket.deliver(JSON.stringify({ type: "assigned", connection_id: "ef".repeat(16) }));
+  const closed = (socket: SilentSocket, code: number): void => socket.onclose?.(new CloseEvent("close", { code }));
+  expect({
+    nobody: await probed(assigned),
+    pcGone: await probed((socket) => { assigned(socket); closed(socket, 1012); }),
+    busyBefore: await probed((socket) => closed(socket, 1013)),
+    policy: await probed((socket) => closed(socket, 1008)),
+    dropped: await probed((socket) => { assigned(socket); closed(socket, 1006); }),
+    failed: await probed((socket) => { assigned(socket); socket.onerror?.(new Event("error")); }),
+    unassigned: await probed((socket) => closed(socket, 1011)),
+  }).toEqual({ nobody: "silent", pcGone: "silent", busyBefore: "refused", policy: "refused", dropped: "unreachable", failed: "unreachable", unassigned: "unreachable" });
 });
 
 it("calls the PC offline when the relay assigned the connection but nothing answered within PC_ANSWER_MS", async () => {
@@ -407,6 +478,36 @@ it("stops at a PC of another relay protocol before any credential, as an update"
   expect(failureOf(error, { code: false, paired: true })).toBe("needs-update");
   expect(f.trace.filter((entry) => entry.startsWith("client:"))).toEqual(["client:HELLO"]);
   expect(f.socket.closed).toBe(true);
+});
+
+it("G5: does not send account AUTH when WELCOME selects no account-open feature", async () => {
+  const old = await fixture(false, undefined, undefined, {}, { accountOpensAll: true });
+  old.allowAuth.resolve();
+  await expect(old.opening).rejects.toThrow();
+  expect(old.trace).toEqual(["client:HELLO", "server:WELCOME"]);
+});
+
+it("T34, G5: offers the account-opens-all mux feature in HELLO only when asked, so only a flag-on app hears an account refusal", async () => {
+  const plain = await fixture(false);
+  await plain.authSeen.promise;
+  expect(plain.offered).not.toContain(ACCOUNT_OPENS_ALL_FEATURE);
+  plain.allowAuth.resolve();
+  await plain.opening;
+  const asking = await fixture(false, undefined, undefined, { features: [ACCOUNT_OPENS_ALL_FEATURE] }, { accountOpensAll: true });
+  await asking.authSeen.promise;
+  expect(asking.offered).toContain(ACCOUNT_OPENS_ALL_FEATURE);
+  asking.allowAuth.resolve();
+  await asking.opening;
+});
+
+it("T34: an account open after a provisional WELCOME acknowledges every PC setup frame", async () => {
+  const f = await fixture(false, undefined, undefined, { provisional: true, features: [ACCOUNT_OPENS_ALL_FEATURE] }, { accountOpensAll: true });
+  f.allowAuth.resolve();
+  const channel = await f.opening;
+  await channel.mux.flush();
+  const { acknowledged, submitted } = await bounded(f.receiptSeen.promise);
+  expect(submitted).toBe(3n);
+  expect(acknowledged).toBe(submitted);
 });
 
 it("offers the account feature in HELLO and keeps what the PC selected, so an older PC can be told apart", async () => {
@@ -615,4 +716,56 @@ it("saves the regional relay a real PC names after its provisional WELCOME", asy
   const channel = await bounded(connectReal(f, keys, offer, store, undefined, [REGIONAL, GLOBAL_RELAY]));
   cleanups.push(() => channel.close());
   expect((await store.get(offer.server_id))?.relay).toBe(REGIONAL);
+});
+
+it("T34, T40: a sign-in through the account row's store completes, and the row keeps its key and id", async () => {
+  const f = await fixture(false, undefined, undefined, { hints: ["wss://relay2.example"], wrap: (_store, device) => withAccountDevice(new MemoryDeviceStore(), device) });
+  await f.authSeen.promise;
+  f.allowAuth.resolve();
+  const channel = await f.opening;
+  expect(channel).toBeDefined();
+});
+
+it.each([true, false])("T71, P11: only KEY_PENDING (%s) shows the fingerprint computed by the device", async (pending) => {
+  const shown: string[] = [];
+  const f = await fixture(true, "key-proof", undefined, { omitKeyPending: !pending }, { keyProof: (fingerprint) => { shown.push(fingerprint); } });
+  const signature = await f.keyProof.proved.promise;
+  await f.authSeen.promise;
+  f.allowAuth.resolve();
+  await f.opening;
+  expect(f.offered).toContain("key-proof-1");
+  const key = (await f.store.get(f.offer.server_id))!.public_spki;
+  expect(await verifyPairProof(f.offer.server_id, f.keyProof.challenge, key, signature)).toBe(true);
+  expect(shown).toEqual(pending ? [await pairFingerprint(f.offer.server_id, f.keyProof.challenge, key)] : []);
+});
+
+it("T71: approval just before the PC's pending-key deadline completes pairing", async () => {
+  jest.useFakeTimers();
+  const waiting = Promise.withResolvers<string>();
+  const f = await fixture(true, "key-proof", undefined, {}, { keyProof: waiting.resolve });
+  const outcome = f.opening.then((channel) => {
+    channel.close();
+    return "paired";
+  }, (error: unknown) => error);
+  await waiting.promise;
+  await f.authSeen.promise;
+  jest.advanceTimersByTime(PENDING_MS - 1);
+  f.allowAuth.resolve();
+  expect(await outcome).toBe("paired");
+});
+
+it("G5: without asking for key proof, HELLO does not offer it", async () => {
+  const f = await fixture(true);
+  await f.authSeen.promise;
+  expect(f.offered).not.toContain("key-proof-1");
+  f.allowAuth.resolve();
+  await f.opening;
+});
+
+it("T72: a second challenge in the same pairing is never signed, and the attempt ends", async () => {
+  const f = await fixture(true, "key-proof-twice", undefined, {}, { keyProof: () => {} });
+  await f.keyProof.proved.promise;
+  const error = await f.opening.catch((caught: unknown) => caught);
+  expect(error).toMatchObject({ code: "protocol_error" });
+  expect(f.keyProof.proofs).toBe(1);
 });

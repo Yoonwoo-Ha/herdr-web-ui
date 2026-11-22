@@ -157,7 +157,7 @@
   min-width: 0;
 }
 
-.settings-row-text:has(> .settings-label-line > .settings-row-icon) > :not(.settings-label-line) {
+.settings-row-text.has-icon > :not(.settings-label-line) {
   padding-inline-start: var(--settings-icon-column);
 }
 
@@ -865,7 +865,7 @@
     grid-column: 2;
   }
 
-  .settings-row.is-wide:has(> .settings-row-preview) > :not(.settings-row-text, .settings-row-preview) {
+  .settings-row.is-wide > :not(.settings-row-text, .settings-row-preview) {
     grid-column: 1 / -1;
   }
 

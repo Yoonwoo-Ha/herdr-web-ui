@@ -63,26 +63,29 @@ describe("file threads", () => {
   });
 
   it("refuses a task at its deadline, and keeps its thread taken until the call returns", async () => {
-    setUp({ workers: 1, waiting: 1, deadlineMs: 200 });
+    // the task after the release is a folder walk, with the long deadline: one with the short one
+    // would race the thread's answer and its own turn on it against 200 ms
+    setUp({ workers: 1, waiting: 1, deadlineMs: 200, longDeadlineMs: 30_000 });
     const hold = gate();
     await expect(fileTask(held({ op: "info", path: file }, hold.buffer))).rejects.toBeInstanceOf(FileBusyError);
     await expect(fileTask({ op: "info", path: file })).rejects.toBeInstanceOf(FileBusyError);
     expect(filePoolSize()).toEqual({ threads: 1, idle: 0, waiting: 0 });
-    const next = fileTask<FileInfo | null>({ op: "info", path: file });
+    const next = fileTask<string[]>({ op: "walk", cwd: root });
     hold.release();
-    expect(await next).toMatchObject({ size: 5 });
+    expect([...await next].sort()).toEqual(["big.bin", "notes.txt"]);
     expect(filePoolSize()).toEqual({ threads: 1, idle: 1, waiting: 0 });
   });
 
   it("closes a descriptor a late answer opened, and frees its thread for the next task", async () => {
-    setUp({ workers: 1, waiting: 1, deadlineMs: 300 });
+    // only the held task has the short deadline; the next one, a folder walk, has the long one
+    setUp({ workers: 1, waiting: 1, deadlineMs: 300, longDeadlineMs: 30_000 });
     const hold = gate();
     await expect(fileTask<OpenedFile | null>(held({ op: "open", path: big, get: whole, fastDiskMs: -1 }, hold.buffer))).rejects.toBeInstanceOf(FileBusyError);
     const fd = await hold.ran();
     expect(fd).toBeGreaterThanOrEqual(0);
-    const next = fileTask<FileInfo | null>({ op: "info", path: file });
+    const next = fileTask<string[]>({ op: "walk", cwd: root });
     hold.release();
-    expect(await next).toMatchObject({ size: 5 });
+    expect([...await next].sort()).toEqual(["big.bin", "notes.txt"]);
     expect(() => fstatSync(fd)).toThrow();
   });
 

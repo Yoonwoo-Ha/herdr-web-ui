@@ -6,7 +6,7 @@ import { chromium, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { DEMO_FILE_PREVIEW_SCRIPT } from "./demo-file-preview.ts";
-import { openSettingsFolds, openSettingsPage, themeSide } from "./settings-page.ts";
+import { openSettingsFolds, openSettingsPage, pressInSettings, sheetRisen, themeSide } from "./settings-page.ts";
 import { PAGES, SETTINGS, closeSettings, dialogOf, historyHolds, openSettings } from "./settings-pages-harness.ts";
 import { KO } from "../src/lib/i18n.ko.ts";
 import { JA } from "../src/lib/i18n.ja.ts";
@@ -493,6 +493,8 @@ try {
         await openSettings(page);
         await openSettingsPage(page, "Terminal");
         await dialog.getByRole("button", { name: "Edit key bar", exact: true }).tap();
+        await page.getByRole("dialog", { name: "Key bar", exact: true }).waitFor();
+        await sheetRisen(page);
         await page.getByRole("button", { name: "Close settings", exact: true }).tap();
         await page.locator(".settings-dialog").waitFor({ state: "detached" });
         await historyHolds(page, "the X from the key bar editor", () => (history.state as Record<string, unknown> | null)?.["ovis:settings"] === undefined);
@@ -566,7 +568,7 @@ try {
             await openSettings(page);
             await openSettingsPage(page, "Appearance");
             for (const mode of ["light", "dark"]) {
-              await page.getByRole("group", { name: "Theme", exact: true }).getByRole("button", { name: mode === "dark" ? "Dark" : "Light", exact: true }).click();
+              await pressInSettings(page.getByRole("group", { name: "Theme", exact: true }).getByRole("button", { name: mode === "dark" ? "Dark" : "Light", exact: true }));
               await page.waitForFunction((mode) => document.documentElement.dataset.theme === mode, mode);
               await checkSelectArrows(page);
               await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `select-arrows-${width}-${mode}.png`), animations: "disabled" });
@@ -601,15 +603,12 @@ try {
         assert.equal(await themePicker.locator("..").locator("svg").evaluate((arrow) => getComputedStyle(arrow).display), "none");
         await page.emulateMedia({ forcedColors: "none" });
         await checkSelectArrows(page);
-        await page.keyboard.press("Escape");
-        await page.locator(".settings-dialog").waitFor({ state: "detached" });
-        // Settings is opened again below: its close's step back lands first, or, landing over a second late,
-        // it is taken for a Back and closes the Settings opened meanwhile (settingsHistory's landing deadline)
-        await page.waitForFunction(() => (history.state as Record<string, unknown> | null)?.["ovis:settings"] === undefined);
+        // A row's help can take Escape first. Use Close for the theme cases and let its history step land before reopening.
+        await closeSettings(page);
         for (const id of ["dracula", "nord", "vesper", "black"]) {
           await openSettings(page);
           await openSettingsPage(page, "Appearance");
-          await page.getByRole("group", { name: "Theme", exact: true }).getByRole("button", { name: "Dark", exact: true }).click();
+          await pressInSettings(page.getByRole("group", { name: "Theme", exact: true }).getByRole("button", { name: "Dark", exact: true }));
           await themeSide(page, "dark").selectOption(id);
           await page.waitForFunction((id) => document.documentElement.dataset.palette === id && document.documentElement.dataset.theme === "dark", id);
           assert.equal(await themeSide(page, "light").inputValue(), "amber", `${id} has no sibling pre-fill`);
@@ -621,16 +620,14 @@ try {
           assert.notEqual(surfaces[0], surfaces[2], `${id} border differs from input surface`);
           await checkSelectArrows(page);
           if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `${id}-appearance-1280.png`), animations: "disabled" });
-          await page.keyboard.press("Escape");
-          await page.locator(".settings-dialog").waitFor({ state: "detached" });
-          await page.waitForFunction(() => (history.state as Record<string, unknown> | null)?.["ovis:settings"] === undefined);
+          await closeSettings(page);
           await page.locator(".composer-text").waitFor();
           if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `${id}-chat-1280.png`), animations: "disabled" });
         }
         await openSettings(page);
         await openSettingsPage(page, "Appearance");
         await themeSide(page, "light").selectOption("dracula");
-        await page.getByRole("group", { name: "Theme", exact: true }).getByRole("button", { name: "Light", exact: true }).click();
+        await pressInSettings(page.getByRole("group", { name: "Theme", exact: true }).getByRole("button", { name: "Light", exact: true }));
         await page.waitForFunction(() => document.documentElement.dataset.palette === "dracula" && document.documentElement.dataset.theme === "dark" && getComputedStyle(document.documentElement).colorScheme === "dark");
         assert.equal(await page.getByRole("group", { name: "Theme", exact: true }).getByRole("button", { name: "Light", exact: true }).getAttribute("aria-pressed"), "true");
         assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:settings")!).theme), "light");
@@ -654,6 +651,10 @@ try {
         await page.locator(".settings-dialog").waitFor({ state: "detached" });
         await page.goForward();
         await dialogOf(page).getByRole("tabpanel", { name: "About", exact: true }).waitFor();
+        const close = dialogOf(page).getByRole("button", { name: "Close settings", exact: true });
+        await close.hover({ force: true });
+        await close.focus();
+        await page.locator(".settings-help, .settings-row-sentence").waitFor({ state: "hidden" });
         await page.keyboard.press("Escape");
         await page.locator(".settings-dialog").waitFor({ state: "detached" });
         await page.waitForFunction(() => (history.state as Record<string, unknown> | null)?.["ovis:settings"] === undefined);

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, type Dispatch, type RefObject, type SetStateAction } from "react";
+import { useEffect, useLayoutEffect, useRef, type Dispatch, type RefObject, type SetStateAction } from "react";
 import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { HerdrSocket } from "./ws.ts";
@@ -173,5 +173,15 @@ export function usePaneAttach(deps: PaneAttachDeps): void {
   }, [paneId, terminalId]);
 
   useEffect(() => { releaseRef.current(); }, [pending]);
-  useEffect(() => { presentationRef.current(); }, [cached, watched, presented, mirrored]);
+  // Whether herdr can attach decides only how a pane that was put away comes back. A pane in use that learns it
+  // late (its first health answer, after an attach from the cached roster) has nothing to assert again: asking for
+  // its grid then would take the pane from the device that took it meanwhile.
+  const presentationSeen = useRef({ cached, watched, presented, mirrored });
+  useEffect(() => {
+    const before = presentationSeen.current;
+    presentationSeen.current = { cached, watched, presented, mirrored };
+    const mirroredAlone = before.mirrored !== mirrored && before.cached === cached && before.watched === watched && before.presented === presented;
+    if (mirroredAlone && !cachedRef.current && !releasedRef.current) return;
+    presentationRef.current();
+  }, [cached, watched, presented, mirrored]);
 }

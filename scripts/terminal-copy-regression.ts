@@ -5,11 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, Page } from "playwright-core";
 import { herdrRpc, paneRead, paneSendText, workspaceCreate, workspaceClose } from "../server/herdr/client.ts";
-import { shownRow, shownRows } from "./shown-rows.ts";
+import { shownRow } from "./shown-rows.ts";
 
 export async function checkTerminalCopy(browser: Browser, origin: string): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "herdr-copy-ui-"));
-  const created = await workspaceCreate({ cwd: root, label: "ovis-test-copy-ui" });
+  const prompt = "copy-fixture$ ";
+  const created = await workspaceCreate({ cwd: root, label: "ovis-test-copy-ui", env: { PS1: prompt } });
   const pane = created.root_pane.pane_id;
   const script = join(root, "show.cjs");
   writeFileSync(script, `
@@ -31,19 +32,28 @@ setInterval(() => {}, 1000);
         releasing = true;
         setTimeout(() => { releasing = false; }, 0);
       }, { capture: true });
-      const state = { checking: false, writes: [] as boolean[], pending: 0, positions: { asked: 0, open: 0 } };
+      const state = { checking: false, writes: [] as boolean[], pending: 0, positions: { asked: 0, open: 0 }, scrollWrites: 0 };
       (window as any).clipboardGesture = state;
       const fetchPage = window.fetch.bind(window);
       (window as any).fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         const method = init?.method ?? (input instanceof Request ? input.method : "GET");
         const url = new URL(input instanceof Request ? input.url : String(input), location.href);
-        if (method !== "GET" || !url.pathname.endsWith("/pane/scroll")) return fetchPage(input, init);
-        state.positions.asked++;
-        state.positions.open++;
+        if (!url.pathname.endsWith("/pane/scroll")) return fetchPage(input, init);
+        if (method === "GET") {
+          state.positions.asked++;
+          state.positions.open++;
+        } else if (method === "POST") state.scrollWrites++;
+        else return fetchPage(input, init);
         let closed = false;
         const close = (): void => {
-          if (!closed) state.positions.open--;
+          if (closed) return;
           closed = true;
+          if (method === "GET") state.positions.open--;
+          else {
+            // The drag queues its next write in the current write's promise
+            // continuation. Keep the current one counted through that handoff.
+            requestAnimationFrame(() => { state.scrollWrites--; });
+          }
         };
         try {
           const response = await fetchPage(input, init);
@@ -76,7 +86,7 @@ setInterval(() => {}, 1000);
     // letting go copies once herdr's copy_on_select is known: on here, as herdr's default with no config
     const preference = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/herdr-ui");
     await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
-    await page.locator(shownRows()).first().waitFor();
+    await page.locator(shownRow(), { hasText: prompt.trimEnd() }).waitFor();
     assert.equal((await (await preference).json()).copy_on_select, true, "no herdr config: herdr's default copies on release");
     await paneSendText(pane, `clear; node ${script}\r`);
     const first = page.locator(shownRow(), { hasText: "DRAGCOPY-first-line" });
@@ -292,13 +302,14 @@ setInterval(() => {}, 1000);
     const herdrTop = async (): Promise<number> => Number((await paneRead({ paneId: pane, source: "visible", stripAnsi: true })).text.split("\n")[0]!.trim().slice(1));
     const syncedTop = async (): Promise<number> => {
       const deadline = Date.now() + 10_000;
-      for (;;) {
-        const shown = await topRow();
-        const herdr = await herdrTop();
-        if (shown === herdr) return shown;
-        assert.ok(Date.now() < deadline, `the screen shows herdr's top line (${shown}, herdr ${herdr})`);
-        await Bun.sleep(25);
-      }
+      await page.waitForFunction(() => (window as Window & { clipboardGesture?: { scrollWrites: number } }).clipboardGesture?.scrollWrites === 0);
+      const herdr = await herdrTop();
+      assert.ok(Number.isFinite(herdr), "herdr shows a numbered line");
+      await page.waitForFunction(([selector, line]) => {
+        const row = document.querySelector(selector);
+        return Number(row?.textContent?.trim().slice(1)) === line;
+      }, [shownRow(), herdr] as const, { timeout: Math.max(1, deadline - Date.now()) });
+      return herdr;
     };
     const firstTop = await syncedTop();
     const pressAt = { x: screen.x + 200, y: screen.y + lineHeight * 5.5 };

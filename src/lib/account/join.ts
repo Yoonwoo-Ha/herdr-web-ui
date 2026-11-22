@@ -13,9 +13,10 @@ import type { AccountKey, AccountStore } from "./store.ts";
 
 export type PcFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
-/** The PC refused an account request; `code` is its error code, never its words. */
+/** The PC refused an account request; `code` is its error code, never its words; `retryAfterMs`: the wait its `retry-after` named. */
 export class AccountPcError extends Error {
-  constructor(readonly status: number, readonly code: string) {
+  /** `firstLink`: the PC turned a marked pairing's first link away, and ended its row (firstLinkRefusal) */
+  constructor(readonly status: number, readonly code: string, readonly retryAfterMs: number | null = null, readonly firstLink = false) {
     super(`The PC answered ${status} (${code})`);
     this.name = "AccountPcError";
   }
@@ -29,7 +30,8 @@ async function refusal(response: Response): Promise<AccountPcError> {
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error;
   }
-  return new AccountPcError(response.status, code);
+  const seconds = Number(response.headers.get("retry-after") ?? Number.NaN);
+  return new AccountPcError(response.status, code, Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null);
 }
 
 export async function post(fetch: PcFetch, path: string, body: unknown): Promise<Response> {
@@ -39,6 +41,7 @@ export async function post(fetch: PcFetch, path: string, body: unknown): Promise
 }
 
 export interface PcAccountStatus {
+  readonly pcAddFromAccount?: true | "unavailable";
   readonly account: string | null;
   readonly unlinked: readonly string[];
   /** the signed `remove`s behind its tombstones, as it says: unchecked until keepRemovals verifies them */
@@ -63,6 +66,8 @@ export async function pcAccountStatus(fetch: PcFetch, options: { fresh?: boolean
   const unlinked = Array.isArray(body.unlinked) ? body.unlinked.filter((id): id is string => typeof id === "string") : [];
   return {
     account: typeof body.account === "string" ? body.account : null, unlinked,
+    ...("pc_add_from_account" in body && (body.pc_add_from_account === true || body.pc_add_from_account === "unavailable")
+      ? { pcAddFromAccount: body.pc_add_from_account } : {}),
     removals: Array.isArray(body.removals) ? body.removals : [], adds: Array.isArray(body.adds) ? body.adds : [],
     blocked: Array.isArray(body.blocked) ? body.blocked.filter(isAccountKeyEncoding) : [],
     // an Ovis from before enrollments sends no `fresh` at all

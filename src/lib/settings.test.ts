@@ -1502,6 +1502,13 @@ it("keeps where web links open to a tab or the panel, a tab by default", () => {
   for (const bad of ["minimal", "High", null]) expect(sanitizeSettings({ codexLaunchEffort: bad }).codexLaunchEffort).toBe("");
 });
 
+it("keeps a known browser tool only for an agent that takes one, none by default", () => {
+  expect(DEFAULT_SETTINGS.agentBrowserTools).toEqual({});
+  expect(sanitizeSettings({ agentBrowserTools: { claude: "playwright", copilot: "chrome-devtools", grok: "playwright", codex: "npx evil" } }).agentBrowserTools)
+    .toEqual({ claude: "playwright", copilot: "chrome-devtools" });
+  expect(sanitizeSettings({ agentBrowserTools: "playwright" }).agentBrowserTools).toEqual({});
+});
+
 describe("shared settings", () => {
   it("shares exactly the settings SETTING_SCOPE marks shared", () => {
     const shared = Object.entries(SETTING_SCOPE).filter(([, scope]) => scope === "shared").map(([key]) => key).sort();

@@ -6,9 +6,11 @@ import { dirname, join, posix, sep } from "node:path";
 import { fixedSleepCounts, fixedSleeps, sleepFiles } from "./fixed-sleeps.ts";
 import { fail, files, lineOf, read, repo, stripComments } from "./source-scan.ts";
 
-const SOURCES = [...files("{src,server,shared,scripts,site,telemetry,integrations}/**/*.{ts,tsx,mjs,js}"), "vite.config.ts"];
+const SOURCES = [...files("{src,server,shared,scripts,site,telemetry,integrations,tui}/**/*.{ts,tsx,mjs,js}"), "vite.config.ts"];
 
-const SPECIFIER = /(?:^|[\s;])(?:import|export)\s[^;]*?\sfrom\s*["']([^"']+)["']|(?:^|[\s;])import\s*["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/gm;
+// A declaration never runs on into the next `import`: one that no semicolon ends would otherwise take the import
+// after it for its own `from`, and that import's specifier would go unread.
+const SPECIFIER = /(?:^|[\s;])(?:import|export)\s(?:(?!\bimport\b)[^;])*?\sfrom\s*["']([^"']+)["']|(?:^|[\s;])import\s*["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/gm;
 
 const specifiersIn = (code: string): { specifier: string; line: number }[] =>
   [...code.matchAll(SPECIFIER)].map((match) => {
@@ -22,7 +24,7 @@ const specifiers = (file: string): { specifier: string; at: string }[] =>
 describe("imports", () => {
   it("name relative modules with their extension and never use the @shared alias", () => {
     const offenders = SOURCES.flatMap((file) => specifiers(file)
-      .filter(({ specifier }) => specifier.startsWith("@shared/") || (specifier.startsWith(".") && !/\.(?:ts|tsx|mjs|js|css|json|md|svg|png|woff2|html|txt|sh)(?:\?[\w&=-]*)?$/.test(specifier)))
+      .filter(({ specifier }) => specifier.startsWith("@shared/") || (specifier.startsWith(".") && !/\.(?:ts|tsx|mjs|js|css|json|md|svg|png|woff2|html|txt|wasm|sh)(?:\?[\w&=-]*)?$/.test(specifier)))
       .map(({ at }) => at));
     fail(offenders, "Imports carry explicit .ts/.tsx extensions and relative paths (AGENTS.md, Code conventions): write \"./x.ts\" or \"../shared/x.ts\", never \"./x\" or \"@shared/x\".");
   });
@@ -329,13 +331,25 @@ describe("demo transport", () => {
   const answered = (route: string) => exact.has(route) || prefixes.some((prefix) => route.startsWith(prefix));
 
   const DEMO_404: Record<string, string> = {
+    "/api/account/confirm": "a PC-local screen confirmation (the PC's own confirm page); a browser over the demo never answers one",
+    "/api/account/forget": "a PC-local recovery act (ovis recover / the PC's screen); the demo's browser never asks for it",
+    "/api/account/leave": "the PC leaving its account is a PC-local act; the app's own leave goes through the account service",
+    "/api/runtime/move/install": "the demo reports runtime move unavailable (not_herdr), so the app never offers an install",
+    "/api/runtime/move/stop": "the demo reports runtime move unavailable (not_herdr), so the app never offers a stop",
+    "/api/runtime/move/stop-all": "the demo reports runtime move unavailable (not_herdr), so the app never offers a stop",
     "/api/account/enroll": "account linking: no screen of the app asks for it yet (the account screens come with their own demo answers)",
     "/api/updates/cancel": "a connection server asks a PC's own Ovis to stop its update; the demo's browser never does",
     "/api/account/introduce": "account linking: no screen of the app asks for it yet (the account screens come with their own demo answers)",
     "/api/account/introduction": "account linking: no screen of the app asks for it yet (the account screens come with their own demo answers)",
     "/api/account/link": "account linking: no screen of the app asks for it yet (the account screens come with their own demo answers)",
     "/api/account/records": "account linking: no screen of the app asks for it yet (the account screens come with their own demo answers)",
+    "/api/devices/pending": "devices waiting for this PC's screen: only with the release flag on, which the demo never is",
+    "/api/devices/pending/decline": "devices waiting for this PC's screen: only with the release flag on, which the demo never is",
+    "/api/account/lock": "strict mode: only with the release flag on, which the demo never is",
+    "/api/account/unlock": "strict mode: only with the release flag on, which the demo never is",
+    "/api/account/local-confirm": "refused to every caller (local_required): an act is confirmed on the PC's own screen, never through a route",
     "/api/account/relay-account": "relay pass: named by a signed-in owner's account screen, which the demo never reaches (no sign-in there)",
+    "/api/account/one-press": "one-press PC add: only with the release flag on and after the account service admitted the PC, which the demo never reaches (no sign-in there)",
     "/api/devices/pair/cancel": "called by the plugin's terminal `link --code` only (scripts/plugin-link.ts); no screen of the app asks for it",
     "/api/auth": "the demo is never locked (/api/health says authenticated), so neither the token form nor sign-out runs",
     "/api/bridge": "a remote PC's bridge endpoint, asked by another server, never by the browser",
@@ -344,6 +358,7 @@ describe("demo transport", () => {
     "/api/info": "OpenCode v2's own service's identity, checked by this server (opencode-service.ts), never by the browser",
     "/api/devices/pair": "pairing a device: the demo is never locked, so the pairing form does not run",
     "/api/relay/pairings": "the waiting relay pairings, read by `plugin.ts pair --approve` in the PC's terminal; the browser hears of them on its event stream",
+    "/api/relay/offer/keep": "the state of a code made for an account, by its id: no screen of the app calls this route. This PC itself, or any device with drive access on a direct connection that has the id, may read it",
     "/api/pane/conversation/image": "an image in a chat turn: the demo's transcripts carry none (listed when this guard was added)",
     "/api/pane/conversation/tool-output": "a tool call's full output: not part of the demo (listed when this guard was added)",
     "/api/pane/image": "pasting an image: the demo stores no files (listed when this guard was added)",

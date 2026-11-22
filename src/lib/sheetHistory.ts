@@ -39,6 +39,8 @@ const heirs = new Map<string, string>();
 const SKIPS = typeof navigator !== "undefined" && "userActivation" in navigator && /Chrome\/|Chromium\//.test(navigator.userAgent);
 let tapped = !SKIPS;
 const waiting = new Set<string>();
+/** sheets still up whose way back onto their entry the browser dropped: they wait for the next tap to make one */
+const stranded = new Set<string>();
 let seen: string | null = null;
 let returning: { entry: string; owner: string; href: string } | null = null;
 interface NavigationApi {
@@ -123,6 +125,14 @@ function cover(state: unknown): void {
 }
 let pushing = false;
 let stepping: Set<string> | null = null;
+/**
+ * Where the browser tells its entries (the Navigation API), the key of the one the step on its way lands on: the entry
+ * under the one it leaves, named as the step is asked, as the browser names it then. A sheet that makes its entry
+ * meanwhile changes neither. Its landing is the popstate onto that entry (`landing`); any other is not the step's.
+ */
+let stepOnto: string | null = null;
+let landing: Event | null = null;
+let landedOn: (event: Event) => boolean = () => false;
 let steppedOff = false;
 /**
  * A step the browser drops lands nowhere: the wait ends by itself (LANDING_MS), so the next Back is
@@ -131,11 +141,59 @@ let steppedOff = false;
 let asked: ReturnType<typeof setTimeout> | null = null;
 const LANDING_MS = 1000;
 function makeWaiting(): void {
-  for (const id of [...waiting]) { waiting.delete(id); if (open.has(id)) write(id); }
+  for (const id of [...waiting]) { waiting.delete(id); if (open.has(id)) write(id); else stranded.delete(id); }
 }
 
 export function sheetSteppedOff(): boolean {
   return steppedOff;
+}
+
+/**
+ * Whether the history is off the entry of what is shown for a traversal of the sheets' own: a closed
+ * sheet's step off its entry on its way, or a sheet still up whose way back onto the entry a Back left
+ * is on its way, or was dropped and waits for the next tap to make its entry. An address written now
+ * would land on the entry under it. A way back counts only while the sheet it is for is up: one the
+ * browser drops with no word (no Navigation API) holds nothing once that sheet closed.
+ */
+export function sheetTraversalPending(): boolean {
+  return stepping !== null || (returning !== null && open.has(returning.owner)) || (climbing !== null && open.has(climbing.owner))
+    || stood?.pending === true || [...stranded].some((id) => open.has(id));
+}
+
+const traversalOver = new Set<() => void>();
+
+/**
+ * Calls `listener` when a sheet made its entry and nothing is pending then: the history is on the
+ * entry of what is shown with no landing to tell it. A way back that only ended (dropped, given up,
+ * or its sheet closed) tells nothing: after Back past more than one entry the history may still be
+ * on another pane's entry.
+ */
+export function onSheetTraversalOver(listener: () => void): () => void {
+  traversalOver.add(listener);
+  return () => { traversalOver.delete(listener); };
+}
+
+function tellTraversalOver(): void {
+  if (sheetTraversalPending()) return;
+  for (const listener of [...traversalOver]) listener();
+}
+
+/** The key of the entry the step on its way lands on; null with no step on its way, or where the browser tells no entries. */
+export function sheetBackOnto(): string | null {
+  return stepping === null ? null : stepOnto;
+}
+
+/** Whether a popstate is the step on its way landing on the entry it was asked for, and no traversal of anyone else's. */
+export function sheetBackLanded(event: Event): boolean {
+  return landedOn(event);
+}
+
+function stepBack(): void {
+  const api = (window as unknown as { navigation?: NavigationApi }).navigation;
+  const at = api?.currentEntry;
+  stepOnto = api && at ? api.entries().find((entry) => entry.index === at.index - 1)?.key ?? null : null;
+  stepping = new Set();
+  window.history.back();
 }
 
 function sheetOf(state: unknown): string | null {
@@ -187,7 +245,7 @@ function climb(id: string, key: string): void {
   const dropped = (): void => {
     if (climbing?.owner !== id) return;
     climbing = null;
-    if (open.has(id)) waiting.add(id);
+    if (open.has(id)) { waiting.add(id); stranded.add(id); }
   };
   const way = navigation()!.traverseTo(key);
   way.committed.catch(dropped);
@@ -214,6 +272,8 @@ function write(id: string): void {
   addresses.set(id, window.location.href);
   seen = id;
   keep(id);
+  stranded.delete(id);
+  tellTraversalOver();
 }
 
 function remake(id: string, onBack: () => boolean | void): void {
@@ -234,6 +294,7 @@ export function leaveSheet(id: string): void {
   underNavigation.delete(id);
   staying.delete(id);
   waiting.delete(id);
+  stranded.delete(id);
   if (!open.delete(id)) return;
   leaving.set(id, setTimeout(() => {
     leaving.delete(id);
@@ -250,10 +311,11 @@ export function leaveSheet(id: string): void {
       addresses.set(heir, window.location.href);
       if (key !== undefined) entryKeys.set(heir, key);
       seen = heir;
-    } else {
-      // the traversal runs later: a sheet that opens before its popstate keeps its entry
-      stepping = new Set();
-      window.history.back();
+    } else if (stepOnto === null || !stepping?.has(id)) {
+      // the traversal runs later: a sheet that opens before its popstate keeps its entry. One that opened over the
+      // entry a step on its way leaves, and closed before it landed, takes none where that step's landing is told by
+      // its entry: the step leaves this entry too, and a second one would land under the entry it names
+      stepBack();
     }
   }, 0));
 }
@@ -331,6 +393,7 @@ if (typeof window !== "undefined") {
     holding = false;
     const was = here;
     here = where();
+    landing = stepping !== null && stepOnto !== null && here?.key === stepOnto ? event : null;
     settle(here);
     ahead = null;
     took = climbing !== null && here?.key === climbing.key;
@@ -345,8 +408,7 @@ if (typeof window !== "undefined") {
         keep(owner);
       } else {
         seen = sheetOf(event.state);
-        stepping = new Set();
-        window.history.back();
+        stepBack();
       }
       return;
     }
@@ -367,10 +429,8 @@ if (typeof window !== "undefined") {
       returning = null;
       if (seen === entry) {
         steppedOff = true;
-        if (!open.has(owner)) {
-          stepping = new Set();
-          window.history.back();
-        } else if (owner !== entry) {
+        if (!open.has(owner)) stepBack();
+        else if (owner !== entry) {
           window.history.replaceState({ ...(event.state as Record<string, unknown>), [KEY]: owner }, "", href);
           addresses.set(owner, href);
           seen = owner;
@@ -408,7 +468,7 @@ if (typeof window !== "undefined") {
       const dropped = (): void => {
         if (returning?.entry !== from) return;
         returning = null;
-        for (const kept of again) { covered.delete(kept.id); waiting.add(kept.id); }
+        for (const kept of again) { covered.delete(kept.id); waiting.add(kept.id); if (open.has(kept.id)) stranded.add(kept.id); }
       };
       const way = navigation()!.traverseTo(left);
       way.committed.catch(dropped);
@@ -454,6 +514,7 @@ if (typeof window !== "undefined") {
   };
   window.addEventListener("popstate", hear);
   sheetStep.holds = (event) => { hear(event as PopStateEvent); return holding; };
+  landedOn = (event) => { hear(event as PopStateEvent); return event === landing; };
   if (sheetOf(window.history.state) !== null) window.history.replaceState(ordinary(window.history.state, true), "");
 }
 

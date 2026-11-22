@@ -2,7 +2,7 @@ import type { AlertPrefs } from "../../shared/notify-policy.ts";
 import { ApiError, fetchPushKey, registerPushSubscription, sendTestPush, unregisterPushSubscription } from "./api.ts";
 import { callNative, hasNativePlugin, PUSH_PLUGIN } from "./nativeApp.ts";
 import { notificationState } from "./notifications.ts";
-import { recordConfirmation } from "./pushConfirm.ts";
+import { recordConfirmation, recordTestFailure } from "./pushConfirm.ts";
 
 /**
  * A browser needs a service worker and PushManager, which exist only in secure contexts (https or
@@ -42,11 +42,10 @@ export async function testDevicePush(tested?: (endpoint: string) => void): Promi
   const subscription = appPush() ? await appSubscription() : await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription();
   if (!subscription) return "missing";
   tested?.(subscription.endpoint);
-  // a watching device's refusal says nothing of delivery
   try {
     await sendTestPush(subscription.endpoint);
   } catch (error) {
-    if (!(error instanceof ApiError && error.code === "read_only")) recordConfirmation(subscription.endpoint, false);
+    recordTestFailure(subscription.endpoint, error);
     throw error;
   }
   recordConfirmation(subscription.endpoint, true);

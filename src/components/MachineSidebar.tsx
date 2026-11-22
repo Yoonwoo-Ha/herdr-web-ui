@@ -1,10 +1,19 @@
+/**
+ * Where a PC's folded header is kept: by its id, and in the hosted app also by the PC whose page this is, as every PC
+ * there names its own machine "local".
+ */
+export function collapsedKey(machineId: string, page: { relayShell: boolean; pathname: string } = { relayShell: shellMode() === "relay", pathname: window.location.pathname }): string {
+  const server = page.relayShell ? serverIdOfPath(page.pathname) : null;
+  return server === null ? `ovis:pc-collapsed:${machineId}` : `ovis:pc-collapsed:${server}:${machineId}`;
+}
+
 import { tally } from "../lib/usageCounters.ts";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from "react";
 import { ArrowLeftRight, ChevronDown, ChevronRight, Download, EyeOff, Monitor, Pencil, Plug, Plus, RefreshCw, Search, Settings, SlidersHorizontal, Trash2, Unplug, X } from "lucide-react";
-import { OWN_UPDATE_OFFER, type Machine, type MachineState, type MachineUpdate, type RemoteOvis } from "../../shared/machines.ts";
+import { OWN_UPDATE_OFFER, pairedPc, type Machine, type MachineState, type MachineUpdate, type RemoteOvis } from "../../shared/machines.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { AppLayoutContext, FULL_LAYOUT, MachineContext, type LayoutOffer } from "../lib/machineContext.tsx";
-import { answerMachineSetup, machineRequest } from "../lib/api.ts";
+import { answerMachineSetup, askMachineRetry, machineRequest } from "../lib/api.ts";
 import { describeProgress } from "../lib/bridgeProgress.ts";
 import { keepDismissed, noticeKey, readDismissed, waitingMachines, writeDismissed } from "../lib/machineNotice.ts";
 import type { AppActions } from "../lib/actions.ts";
@@ -16,6 +25,8 @@ import { SidebarActivityProvider, type SidebarActivity } from "../lib/sidebarAct
 import { filterSuggestions, machineFilter, sidebarFilter, type SidebarBranchLabels } from "../lib/sidebarFilter.ts";
 import { SidebarFilterProvider, useSidebarFilter } from "../lib/sidebarFilterContext.ts";
 import { UsageMeters } from "./UsageMeters.tsx";
+import { SidebarAccountPcs } from "./SidebarAccountPcs.tsx";
+import { ShellPcs, useShellPcs } from "./ShellPcs.tsx";
 import { RowMenu, rowMenuAnchor, type RowMenuItem } from "./RowMenu.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { sidebarAgents } from "../lib/sidebarAgents.ts";
@@ -32,6 +43,9 @@ import { SHEET_QUERY } from "../lib/sheets.ts";
 import { changePc, inNativeApp } from "../lib/nativeApp.ts";
 import { serverIdOfPath, shellMode } from "../lib/shellMode.ts";
 import { canHideMachine, HIDDEN_MACHINES_MAX, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
+import { MachineOffLine, useRecheck } from "./MachineOffLine.tsx";
+import { outOfReachReason } from "./relayPcState.tsx";
 
 export const DRAWER_QUERY = "(max-width: 768px)";
 
@@ -47,6 +61,26 @@ export function leavePcList(exit: "app" | "shell"): void {
   if (exit === "app") void changePc(); else window.location.assign("/");
 }
 
+/**
+ * Where a phone's More → Add a PC leads (relay step 1): a PC page of the hosted app, in a browser or inside the phone
+ * app (which opens it there), goes to the hosted app's Add a PC ("shell"); a PC the phone app opened by its address
+ * goes back to the app's own screens ("app"); anywhere else there is none. Unlike pcListExit, the phone app does not
+ * come first: a hosted PC page inside it adds a PC on the hosted side, where its pairings are.
+ */
+export function addPcExit(page: { nativeApp: boolean; relayShell: boolean; pathname: string }): "app" | "shell" | null {
+  return pcListExit({ ...page, nativeApp: false }) ?? (page.nativeApp ? "app" : null);
+}
+
+/** The hosted app's Add a PC, opened from a PC's More: its Back comes back here (RelayShell's `addEntry`). */
+export const ADD_PC_FROM_KEY = "ovis-add-pc-from";
+
+/** Opens Add a PC where `exit` (addPcExit) leads. */
+export function openAddPc(exit: "app" | "shell"): void {
+  if (exit === "app") { void changePc(); return; }
+  try { sessionStorage.setItem(ADD_PC_FROM_KEY, window.location.pathname); } catch { /* no storage: Back drops #add and stays */ }
+  window.location.assign("/#add");
+}
+
 function asksWhatToConnect(machine: Machine): boolean {
   return machine.action_required === "choose_herdr" && asksChoice(machine.error, machine.found_herdr_sessions ?? [], machine.found_ovis ?? []);
 }
@@ -59,7 +93,7 @@ export const STATE_WORD: Readonly<Record<MachineState, string>> = {
   error: "Connection error",
 };
 
-interface Props { machines: Machine[]; footerStart?: ReactNode; allMachines?: Machine[]; selectedMachineId: string; selectedPaneId: string | null; activity: SidebarActivity; actions: AppActions; watching?: boolean; appLayout?: (machineId: string) => LayoutOffer; drawerOpen?: boolean; filterRequest?: number; onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void; onSetup(machine: Machine, update?: boolean): void; onUsageLogin(paneId: string): void }
+interface Props { machines: Machine[]; footerStart?: ReactNode; afterPcs?: ReactNode; allMachines?: Machine[]; selectedMachineId: string; selectedPaneId: string | null; activity: SidebarActivity; actions: AppActions; watching?: boolean; appLayout?: (machineId: string) => LayoutOffer; drawerOpen?: boolean; filterRequest?: number; onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void; onSetup(machine: Machine, update?: boolean): void; onUsageLogin(paneId: string): void }
 export function MachineSidebar(props: Props) {
   const t = useT();
   const activity = props.activity;
@@ -79,9 +113,13 @@ export function MachineSidebar(props: Props) {
     return next;
   }), []);
   const loneHost = props.machines.length === 1 && props.machines[0]!.kind === "local" ? props.machines[0]!.id : null;
-  const unnamed = useMemo(() => new Set(loneHost === null ? [] : [loneHost]), [loneHost]);
+
   const exitToPcs = useMemo(() => pcListExit({ nativeApp: inNativeApp(), relayShell: shellMode() === "relay", pathname: window.location.pathname }), []);
   const drawerWidth = useMediaQuery(DRAWER_QUERY);
+  const shellPcs = useShellPcs(exitToPcs === "shell", drawerWidth ? props.drawerOpen === true : true);
+  // the lone host goes unnamed only while it is drawn without its header: beside other PCs its name is shown, and found
+  const headerless = loneHost !== null && shellPcs.pcs.length === 0;
+  const unnamed = useMemo(() => new Set(headerless ? [loneHost] : []), [headerless, loneHost]);
   const loneHostName = loneHost === null ? null : props.machines[0]!.name || null;
   const filter = useMemo(() => sidebarFilter(query, props.machines, { machineId: props.selectedMachineId, paneId: props.selectedPaneId }, t, branchLabels, unnamed), [query, props.machines, props.selectedMachineId, props.selectedPaneId, t, branchLabels, unnamed]);
   const filterView = useMemo(() => ({ filter, reportBranches }), [filter, reportBranches]);
@@ -226,9 +264,15 @@ export function MachineSidebar(props: Props) {
     <section className="pcs-sidebar" aria-label={t("PCs")}>
       <div ref={machineList} className="machine-list" id={listId} aria-label={t("PCs and workspaces")}>
         <p className={noMatchWords === null ? "visually-hidden" : "tree-state sidebar-filter-empty"} role="status">{noMatchWords}</p>
-        {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} headerless={machine.id === loneHost} canHide={canHideMachine(roster, hiddenIds, machine.id)} onHide={() => hideMachine(machine.id)} />)}
+        {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} headerless={headerless && machine.id === loneHost} canHide={canHideMachine(roster, hiddenIds, machine.id)} onHide={() => hideMachine(machine.id)} />)}
+        {/* a PC's own window, driven by its owner: the account's PCs not added yet (the phone app and the hosted shell list their own) */}
+        {exitToPcs === null && !props.watching && <SidebarAccountPcs machines={roster} hidden={filter.active} onAdded={props.actions.connectPc} />}
         <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
+        {/* the hosted app on a PC's page: the other PCs this device opens, a tap away (ShellPcs.tsx) */}
+        {exitToPcs === "shell" && <ShellPcs {...shellPcs} />}
       </div>
+      {/* part of the PC section, so the split below measures it with the PCs (SidebarSplit.tsx) */}
+      {props.afterPcs}
     </section>
     {!settings.agentGroups && <SidebarSplit shell={shell} order={order} split={splits[order]} controls={listId} onSplit={changeSplit} onFold={foldSections} />}
     {!settings.agentGroups && agentList}
@@ -256,7 +300,39 @@ function SidebarCount({ className, n, words, tooltip = true }: { className: stri
   return <span className={className} title={tooltip ? words : undefined}><span aria-hidden="true">{n}</span><span className="visually-hidden">{words}</span></span>;
 }
 
+// the server's words for a relay PC's failed connection (shared/relay-channel.ts, server/relay-pc.ts)
+const RELAY_UNREACHABLE = /^(The relay (could not be reached|connection failed|closed the connection|did not answer)|Relay carrier lost during admission)/;
+const RELAY_PC_SILENT = /^The PC did not answer through the relay/;
+
+export type MachineAway = "off" | "unreachable" | "refused" | "unresponsive";
+
+/**
+ * Whether a PC this server added keeps failing to connect for a reason a later try may clear (it retries on its
+ * own: `reconnecting` with the last failure), and which: the relay had nobody for it (`off`, as #4230's PCs list
+ * says it), the relay or ssh could not reach it (`unreachable`: ssh's refusal or silence does not prove it off),
+ * the relay turned this server away (`refused`), or it answered and did not finish connecting (`unresponsive`).
+ * Null for a failure that does not say which (a lost connection, until the next try's), anything a later try cannot
+ * clear (a refusal for good, a sign-in, a setup, an update), and a PC herdr or herdr-core manages.
+ */
+export function machineAway(machine: Pick<Machine, "kind" | "enabled" | "state" | "error" | "action_required" | "updating" | "herdr_profile_id">): MachineAway | null {
+  if (!machine.enabled || machine.state !== "reconnecting" || machine.error === null || machine.action_required || machine.updating || machine.herdr_profile_id) return null;
+  if (machine.kind === "relay") {
+    if (machine.error.startsWith("The relay turned this device away")) return "refused";
+    if (machine.error.startsWith("The PC did not finish the connection")) return "unresponsive";
+    if (RELAY_UNREACHABLE.test(machine.error)) return "unreachable";
+    return RELAY_PC_SILENT.test(machine.error) ? "off" : null;
+  }
+  if (machine.kind !== "ssh" || !/connect to host/i.test(machine.error)) return null;
+  const reason = sshFailure(machine.error)?.reason;
+  return reason === "refused" || reason === "timeout" || reason === "unreachable" ? "unreachable" : null;
+}
+
 export type ManageAction = "rename" | "toggle" | "setup" | "update" | "hide" | "remove";
+
+/** Settings → Devices and PCs offers Remove for a PC added here that is not connected (herdr's own and herdr-core's stay). */
+export function removablePc(machine: Pick<Machine, "kind" | "state" | "herdr_profile_id">): boolean {
+  return machine.state !== "connected" && machine.herdr_profile_id === undefined && (machine.kind === "ssh" || pairedPc(machine));
+}
 
 export function manageActions(machine: Pick<Machine, "kind" | "herdr_profile_id" | "enabled" | "target" | "action_required">, { busy, canHide }: { busy: boolean; canHide: boolean }): { id: ManageAction; disabled: boolean }[] {
   const own = !machine.herdr_profile_id && machine.kind !== "hc";
@@ -277,9 +353,10 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
   const compact = useSettings().settings.sidebarRows === "one";
   const drawer = useMediaQuery(DRAWER_QUERY);
   const sheet = useMediaQuery(SHEET_QUERY);
-  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(`ovis:pc-collapsed:${machine.id}`) === "1"; } catch { return false; } });
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(collapsedKey(machine.id)) === "1"; } catch { return false; } });
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const manageButton = useRef<HTMLButtonElement>(null);
+  const titleButton = useRef<HTMLButtonElement>(null);
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(machine.name);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -298,6 +375,13 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
       case "auth": return t("{where} did not accept this web server's SSH key or password.", { where });
     }
   })();
+  const away = machineAway(machine);
+  const awayReason = away === null ? null
+    : machine.kind === "ssh" ? sshWords
+    : away === "unresponsive" ? t("{name} answered but did not finish connecting in time. It may be busy or restarting. Try again; if it keeps happening, restart Ovis on {name}.", { name: machine.name })
+    : away === "off" ? outOfReachReason({ displayState: "offline", last_seen_at: null }, t)
+    // the relay's own words: #4230's reasons for it name the viewing device's network, and this is this server's
+    : machineErrorText(machine.error!, t);
   const nextStep = !noticed && machine.kind === "local" && machine.error !== null && saysHerdrAway(machine.error) ? t("Start herdr on this PC, or check HERDR_SOCKET.")
     : ssh !== null ? t("Reconnect or change its address from Manage PC, the sliders beside its name.") : null;
   // one request at a time: a double-clicked Disconnect/Connect can otherwise race and leave this
@@ -322,6 +406,7 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
     }
     finally { inFlight.current = false; setBusy(false); }
   };
+  const recheck = useRecheck(machine.id, () => askMachineRetry(machine.id), away !== null);
   const closeMenu = useCallback(() => setMenu(null), []);
   const endRename = (save: boolean) => {
     setRenaming(false);
@@ -329,7 +414,7 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
     if (save && typed !== "" && typed !== machine.name) void mutate("PATCH", { name: typed });
   };
   const stateWords = machine.action_required === "setup" ? t("Setup needed") : asksWhatToConnect(machine) ? t("Choose what to connect to") : t(STATE_WORD[machine.state]);
-  const stateLine = machine.kind === "hc" ? stateWords : `${stateWords} · ${machine.kind === "relay" ? t("through the relay") : t("over SSH")}`;
+  const stateLine = machine.kind === "hc" ? stateWords : `${stateWords} · ${machine.kind === "relay" ? t("through the relay") : machine.kind === "address" ? t("by its address") : t("over SSH")}`;
   const manageNote = machine.kind === "hc" ? t("A machine of herdr-core. Add, rename or remove it with hc machine or in the Herdr app.") : machine.herdr_profile_id ? t("Managed by herdr. Rename, disable or remove it there.") : null;
   const manageItems = (): RowMenuItem[] => manageActions(machine, { busy, canHide }).map(({ id, disabled }): RowMenuItem => {
     switch (id) {
@@ -354,7 +439,7 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
   const toggle = () => {
     if (filtered !== null) { setFilterFold(!folded); return; }
     setCollapsed(!collapsed);
-    try { localStorage.setItem(`ovis:pc-collapsed:${machine.id}`, collapsed ? "0" : "1"); } catch {}
+    try { localStorage.setItem(collapsedKey(machine.id), collapsed ? "0" : "1"); } catch {}
   };
   const agentCount = useMemo(() => sidebarAgents(machine.snapshot).length, [machine.snapshot]);
   const current = props.selectedMachineId === machine.id;
@@ -384,32 +469,33 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
           }}
     /> : <span className="machine-name" title={machine.name}>{machine.name}</span>}
     {machine.kind === "local" && <span className="machine-kind" title={t("The computer this app runs on")}>{t("Host")}</span>}
-    <span className={`machine-dot is-${machine.action_required === "setup" || asksWhatToConnect(machine) ? "setup" : machine.state}`} title={stateWords} aria-hidden="true" />
+    <span className={`machine-dot is-${machine.action_required === "setup" || asksWhatToConnect(machine) ? "setup" : away !== null ? "disconnected" : machine.state}`} title={stateWords} aria-hidden="true" />
   </>;
   return <section className={`machine-group${current ? " is-current" : ""}${online ? "" : " is-offline"}${context ? " is-filter-context" : ""}${headerless ? " is-headerless" : ""}${folded ? " is-folded" : ""}${compact ? "" : " is-two-line"}`} hidden={hidden} aria-label={t("PC {name}", { name: machine.name })}>
     {!headerless && <header className={`machine-header${compact ? " is-compact" : ""}`}>
       {renaming
         ? <div className="machine-title">{titleBody}</div>
-        : <button type="button" className={`machine-title${current ? " is-current" : ""}`} aria-expanded={!folded} aria-label={foldLabel} title={machine.name} aria-current={current ? "true" : undefined} onClick={toggle}>{titleBody}</button>}
+        : <button ref={titleButton} type="button" className={`machine-title${current ? " is-current" : ""}`} aria-expanded={!folded} aria-label={foldLabel} title={machine.name} aria-current={current ? "true" : undefined} onClick={toggle}>{titleBody}</button>}
       {online && agentCount > 0 && <SidebarCount className="machine-agent-count" n={agentCount} words={agentCount === 1 ? t("1 agent") : t("{n} agents", { n: agentCount })} tooltip={false} />}
       {machine.kind !== "local" && <button ref={manageButton} type="button" className="sidebar-row-action machine-manage" aria-label={t("Manage {name}", { name: machine.name })} title={t("Manage PC")} aria-haspopup={sheet ? "dialog" : "menu"} aria-expanded={menu !== null} onClick={(event) => setMenu(menu === null ? event.currentTarget : null)}><SlidersHorizontal aria-hidden="true" /></button>}
       <button className="sidebar-row-action machine-toggle" tabIndex={-1} aria-hidden="true" aria-expanded={!folded} aria-label={foldLabel} title={foldLabel} onClick={toggle}>{folded ? <ChevronRight aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}</button>
       <button className="sidebar-row-action machine-new" disabled={!canCreate} aria-label={t("New workspace on {name}", { name: machine.name })} title={createTitle} onClick={() => props.onNew(machine.id)}><Plus aria-hidden="true" /></button>
     </header>}
     {noticed && <MachineActionNotice machine={machine} onSetup={props.onSetup} />}
-    <p className={`machine-state is-${machine.state}${online || stateWord === null ? " visually-hidden" : ""}`} role={machine.state === "error" ? "alert" : "status"} title={noticed || machine.error === null ? undefined : machineErrorText(machine.error, t)}>
+    {away !== null ? <MachineOffLine state={away === "off" ? "off" : "unreachable"} reason={awayReason} title={awayReason ?? machineErrorText(machine.error!, t)} checking={recheck.checking} failure={recheck.failure} onCheck={props.watching ? undefined : recheck.check} returnFocus={() => titleButton.current} />
+    : <p className={`machine-state is-${machine.state}${online || stateWord === null ? " visually-hidden" : ""}`} role={machine.state === "error" ? "alert" : "status"} title={noticed || machine.error === null ? undefined : machineErrorText(machine.error, t)}>
       <span className="machine-state-word">{stateWord}</span>
       {!noticed && machine.error && <span className="machine-state-detail">{sshWords ?? machineErrorText(machine.error, t)}</span>}
       {sshWords !== null && <code className="machine-state-raw">{machine.error}</code>}
       {nextStep !== null && <span className="machine-state-next">{nextStep}</span>}
-    </p>
+    </p>}
     {menu && <RowMenu anchor={menu} title={machine.name} items={manageItems()} onClose={closeMenu} header={<span className="machine-menu-head">
       <span className="machine-menu-name">{machine.name}</span>
       <span className="machine-menu-state">{stateLine}</span>
       {machine.runtime && <span className="machine-menu-note">{t("Runtime: {runtime}", { runtime: machine.runtime })}</span>}
       {manageNote !== null && <span className="machine-menu-note">{manageNote}</span>}
     </span>} />}
-    {confirmRemove && <ConfirmDialog title={t("Remove PC {name}?", { name: machine.name })} body={t(machine.kind === "relay" ? "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC." : "Removes this registration. Remote sessions keep running.")} confirmLabel={t("Remove PC")}
+    {confirmRemove && <ConfirmDialog title={t("Remove PC {name}?", { name: machine.name })} body={t(pairedPc(machine) ? "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC." : "Removes this registration. Remote sessions keep running.")} confirmLabel={t("Remove PC")}
       onConfirm={async () => { await mutate("DELETE", undefined, true); setConfirmRemove(false); }} onClose={() => setConfirmRemove(false)} />}
     {error && <p className="machine-error" role="alert">{error}</p>}
     {!folded && !online && !machine.snapshot && (machine.state === "disconnected" || machine.state === "error") && <p className="tree-state machine-empty" role="status">{t("No saved sessions")}</p>}
@@ -523,7 +609,7 @@ export function OwnOvisAddress({ own }: { own: Pick<RemoteOvis, "address" | "url
   const [copied, setCopied] = useState(false);
   const field = useRef<HTMLElement>(null);
   // the host it named is shown with the link: an address that PC chose, which the link text alone would hide
-  if (own.url) return <p className="machine-own-address"><a href={own.url} target="_blank" rel="noopener noreferrer">{t("Open that PC's Ovis")}</a><code>{urlHost(own.url)}</code></p>;
+  if (own.url) return <p className="machine-own-address"><ExternalLink kind="ovis" href={own.url}>{t("Open that PC's Ovis")}</ExternalLink><code>{urlHost(own.url)}</code></p>;
   return <div className="machine-own-address">
     <span>{t("Open it on that PC or through its own tailnet address:")}</span>
     <span className="machine-own-address-row">

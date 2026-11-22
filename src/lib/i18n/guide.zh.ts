@@ -86,9 +86,7 @@ export const GUIDE_ZH: Record<string, string> = {
   "This browser is connected first.": "已先连接这个浏览器。",
   "Not available on this PC.": "这台电脑不能用。",
   "No Wi-Fi address to show here. Use Anywhere instead.": "这里无法显示 Wi-Fi 地址。请用“随处”。",
-  "Run this once on this PC.": "在这台电脑上运行一次。",
   "Tailscale isn't running.": "Tailscale 没有运行。",
-  "Tailscale isn't installed.": "没有安装 Tailscale。",
   "Couldn't check for Tailscale.": "无法检查 Tailscale。",
   "Scan with your phone's camera.": "用手机相机扫描。",
   "Scan to open {store}.": "扫描即可打开 {store}。",
@@ -101,4 +99,5 @@ export const GUIDE_ZH: Record<string, string> = {
   "Setup isn't finished.": "设置还没完成。",
   "Reach this PC from anywhere.": "随处连接这台电脑。",
   "Set up later": "稍后设置",
+  "Keep SSH or a screen working on this PC: reached only through the relay, one stolen older device could lock you out of it.": "请在这台 PC 上保留 SSH 或屏幕访问：如果只能通过中继访问，一台较早的设备被盗就可能让你无法进入。",
 };

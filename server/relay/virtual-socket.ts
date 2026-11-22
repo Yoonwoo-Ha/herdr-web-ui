@@ -14,7 +14,7 @@ export class VirtualSocket implements SocketLike {
   private aboveLow = false;
   readonly closed: Promise<void>;
 
-  constructor(readonly data: SocketData, private readonly stream: WsStream, private readonly handlers: RelaySocketHandlers) {
+  constructor(readonly data: SocketData, private readonly stream: WsStream, private readonly handlers: RelaySocketHandlers, private readonly listed: boolean) {
     const closed = Promise.withResolvers<void>();
     this.closed = closed.promise;
     stream.onClose = ({ code, reason }) => {
@@ -84,7 +84,8 @@ export class VirtualSocket implements SocketLike {
     if (this.closing || this.ended || this.detached || !this.stream.live) return;
     this.closing = true;
     if (code === 1006 || code === 1012 && this.data.relay) this.stream.reset("upstream_lost");
-    else this.stream.close(code, reason, code === OUTPUT_STALLED_CLOSE_CODE);
+    // A listed principal's policy close must not drain its stale events; ordinary sockets keep their bounded close handshake.
+    else this.stream.close(code, reason, (this.listed && code === 1008) || code === OUTPUT_STALLED_CLOSE_CODE);
     this.detach(code, reason);
   }
 

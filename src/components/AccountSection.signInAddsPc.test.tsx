@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { createElement, type ReactNode } from "react";
+import * as ReactDom from "react-dom";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 
 import { FakeAccountService } from "../../shared/account-service-fake.ts";
@@ -10,7 +12,10 @@ import { indexedAccountStore, type AccountSession } from "../lib/account/store.t
 import { fakeIndexedDB } from "../lib/indexedDB.fake.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { nativeTransport, setTransport } from "../lib/transport.ts";
-import { AccountSection } from "./AccountSection.tsx";
+
+// a portal is drawn in place, so the test renderer sees Manage account's sheet
+await mock.module("react-dom", () => ({ ...ReactDom, createPortal: (node: ReactNode) => createElement("div", { "data-portal": "" }, node) }));
+const { AccountSection } = await import("./AccountSection.tsx");
 
 // Signing in on a PC's own page adds the PC in the same step (docs/account.md, "Adding a PC"): the sign-in
 // that finishes on this screen lists the PC and waits; one that was already there only offers the button.
@@ -36,6 +41,8 @@ describe("signing in on a PC's own page", () => {
   let statusHangs: boolean;
   let refuses: boolean;
   let ended: AccountSession | undefined;
+  let directoryWrites: string[];
+  let boundOnDirectoryRead: boolean;
 
   beforeEach(() => {
     ahead = 0;
@@ -49,9 +56,13 @@ describe("signing in on a PC's own page", () => {
     fake.offerLinkPage(["github", "google"]);
     pcAccount = null;
     asked = [];
+    directoryWrites = [];
+    boundOnDirectoryRead = false;
     tab = new Map();
     userCode = null;
-    for (const key of ["window", "document", "navigator", "indexedDB", "getComputedStyle", "location", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    for (const key of ["window", "document", "navigator", "indexedDB", "getComputedStyle", "location", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    // Manage account's sheet keeps the focus in it, which asks what an element is
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: class {} });
     Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, writable: true, value: true });
     Object.defineProperty(globalThis, "getComputedStyle", { configurable: true, value: () => ({ getPropertyValue: () => "" }) });
     Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: fakeIndexedDB().factory });
@@ -81,7 +92,7 @@ describe("signing in on a PC's own page", () => {
         if (url.pathname === "/api/health") return Response.json({ ok: true, bridge_protocol: 1, auth: { required: false, authenticated: true, via: "loopback", role }, security: { pairing_gate: "closed", token_configured: false } });
         if (url.pathname === "/api/relay/link" && relay === "off") return Response.json({ error: { code: "relay_off", message: "Start the relay before pairing." } }, { status: 409 });
         if (url.pathname === "/api/account/status") return Response.json({ account: pcAccount, unlinked: [], removals: [], adds: [], blocked: [] });
-        if (url.pathname === "/api/relay/link") return Response.json({ url: OFFER });
+        if (url.pathname === "/api/relay/link") return Response.json({ url: OFFER, window_id: "1".repeat(32) });
         if (url.pathname === "/api/relay/link/close") return Response.json({ ok: true });
         return Response.json({ error: { code: "not_found", message: "no such route" } }, { status: 404 });
       }
@@ -90,6 +101,12 @@ describe("signing in on a PC's own page", () => {
         return Response.json({ error: { code: "unauthorized", message: "Sign in again" } }, { status: 401 });
       }
       if (url.pathname === "/v1/token" && userCode !== null) { fake.approveOnLinkPage(userCode, ACCOUNT, approveWith); fake.approveDevice(userCode, ACCOUNT); userCode = null; }
+      const method = input instanceof Request ? input.method : init?.method ?? "GET";
+      if (url.pathname === `/v1/pcs/${SERVER}` && (method === "DELETE" || method === "PUT")) directoryWrites.push(method);
+      if (url.pathname === "/v1/pcs" && method === "GET" && boundOnDirectoryRead) {
+        boundOnDirectoryRead = false;
+        pcAccount = ACCOUNT;
+      }
       const answer = await fake.fetch(input, init);
       if (!url.pathname.startsWith("/v1/signin/") || !answer.ok) return answer;
       const started = await answer.json() as Record<string, unknown>;
@@ -130,6 +147,8 @@ describe("signing in on a PC's own page", () => {
     expect(found).toHaveLength(1);
     await act(async () => { (found[0]!.props as { onClick: () => void }).onClick(); });
   };
+  /** the one button that also turns the relay on: it reads like the plain one, and is marked apart */
+  const relayButtons = (): ReactTestInstance[] => renderer!.root.findAll((node) => node.type === "button" && node.props["data-relay"] === "off");
   const links = (): { path: string; localOnly: boolean }[] => asked.filter((request) => request.path === "/api/relay/link");
 
   it("lists the PC and waits once the sign-in finishes, with no second press, and only then", async () => {
@@ -139,8 +158,7 @@ describe("signing in on a PC's own page", () => {
     await press("Sign in and add this PC");
     await until(() => buttons().includes("Stop waiting"));
     expect((await indexedAccountStore.get("session"))?.account).toBe(ACCOUNT);
-    expect(text(renderer!.root)).toContain("Signed in. Adding this PC to your account…");
-    expect(text(renderer!.root)).toContain("choose Add on desk.");
+    expect(text(renderer!.root)).toContain("On another device of your account, choose Add on desk.");
     // listed once in the account's directory, behind a window only this PC approves; the relay was not asked to start
     expect(links()).toEqual([{ path: "/api/relay/link", localOnly: true }]);
     expect(asked.some((request) => request.path === "/api/relay/start")).toBe(false);
@@ -159,18 +177,54 @@ describe("signing in on a PC's own page", () => {
     expect(asked.slice(before).map((request) => request.path).filter((path) => path !== "/api/account/status" && path !== "/api/health")).toEqual([]);
   });
 
+  it.each([true, false])("retrying a stale listing uses the local binding at write time (bound: %s)", async (bound) => {
+    await mount();
+    await until(() => buttons().includes("Sign in and add this PC"));
+    await press("Sign in and add this PC");
+    await until(() => buttons().includes("Stop waiting"));
+    await press("Stop waiting");
+
+    const service = new AccountService({ store: indexedAccountStore });
+    const [listed] = await service.listPcs();
+    // Start with an actually stale row in the fake: the browser and service use the same time for this retry.
+    const realNow = Date.now;
+    const clock = spyOn(Date, "now").mockImplementation(() => realNow() + 2 * 60_000);
+    try {
+      directoryWrites.length = 0;
+      boundOnDirectoryRead = bound;
+      await press("Add this PC to my account");
+      await until(() => text(renderer!.root).includes("Added") || buttons().includes("Stop waiting"));
+      expect(directoryWrites).toEqual(bound ? [] : ["DELETE", "PUT"]);
+      const [after] = await service.listPcs();
+      expect(after?.server_id).toBe(SERVER);
+      if (bound) {
+        expect(after?.added_at).toBe(listed?.added_at);
+        expect(pcAccount).toBe(ACCOUNT);
+        expect(text(renderer!.root)).toContain("Added");
+        expect(buttons()).not.toContain("Stop waiting");
+      } else {
+        expect(Date.parse(after?.added_at ?? "")).toBeGreaterThan(Date.parse(listed?.added_at ?? ""));
+        expect(buttons()).toContain("Stop waiting");
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("a sign-in again for the same account, to change its sign-in methods, lists nothing by itself", async () => {
     await mount();
     await until(() => buttons().includes("Sign in and add this PC"));
     await press("Sign in and add this PC");
     await until(() => buttons().includes("Stop waiting"));
     await press("Stop waiting");
-    await press("Sign out of GitHub");
+    await press("Sign out");
     await until(() => buttons().includes("Sign in and add this PC"));
     approveWith = "google";
     await press("Sign in and add this PC");
     await until(() => buttons().includes("Stop waiting"));
     await press("Stop waiting");
+    await until(() => buttons().includes("Manage account"));
+    await press("Manage account");
     await until(() => buttons().includes("Remove GitHub"));
 
     // later than the service takes a sign-in for recent: removing a method asks for a sign-in again
@@ -193,7 +247,7 @@ describe("signing in on a PC's own page", () => {
     await until(() => buttons().includes("Sign in"));
     expect(buttons()).not.toContain("Sign in and add this PC");
     await press("Sign in");
-    await until(() => text(renderer!.root).includes("Signed in with GitHub"));
+    await until(() => buttons().includes("Sign out"));
     // fixed wait: proves that nothing is listed or opened after the sign-in
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     expect(links()).toHaveLength(0);
@@ -209,10 +263,10 @@ describe("signing in on a PC's own page", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     expect(buttons()).not.toContain("Sign in and add this PC");
     await press("Sign in");
-    await until(() => buttons().includes("Turn on the relay and add this PC"));
+    await until(() => relayButtons().length === 1);
     expect(asked.some((request) => request.path === "/api/relay/start")).toBe(false);
     expect(await new AccountService({ store: indexedAccountStore }).listPcs()).toEqual([]);
-    await press("Turn on the relay and add this PC");
+    await act(async () => { (relayButtons()[0]!.props as { onClick: () => void }).onClick(); });
     await until(() => buttons().includes("Stop waiting"));
     expect(asked.filter((request) => request.path === "/api/relay/start")).toHaveLength(1);
     expect(links().every((request) => request.localOnly)).toBe(true);
@@ -233,14 +287,14 @@ describe("signing in on a PC's own page", () => {
     await mount();
     await until(() => buttons().includes("Sign in"));
     await press("Sign in");
-    await until(() => text(renderer!.root).includes("Signed in with GitHub"));
+    await until(() => buttons().includes("Sign out"));
     // fixed wait: proves that nothing is listed, opened or offered after the sign-in
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     expect(links()).toHaveLength(0);
     expect(text(renderer!.root)).not.toContain("Adding this PC");
     expect(text(renderer!.root)).not.toContain("could not be listed");
     expect(buttons()).not.toContain("Add this PC to my account");
-    expect(buttons()).not.toContain("Turn on the relay and add this PC");
+    expect(relayButtons()).toHaveLength(0);
   });
 
   it("a press of a button that read only Sign in adds nothing, though the relay was turned on since the button was drawn", async () => {
@@ -294,7 +348,7 @@ describe("signing in on a PC's own page", () => {
     await until(() => buttons().includes("Sign in and add this PC"));
     statusHangs = true;
     await press("Sign in and add this PC");
-    await until(() => text(renderer!.root).includes("Signed in with GitHub"));
+    await until(() => buttons().includes("Sign out"));
     refuses = true;
     await recheck(1);
     await until(() => text(renderer!.root).includes("Your sign-in ended."));

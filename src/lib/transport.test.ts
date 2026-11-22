@@ -62,6 +62,21 @@ it("relay controls use the selected transport even for a refusal carrying relay 
   expect(new Headers(calls[0]?.init?.headers).get("x-herdr-update")).toBe("1");
 });
 
+it("a redirect is no answer from this server or a PC through it: the native transport never follows one (S32-1)", async () => {
+  const original = globalThis.fetch;
+  // as a browser does: a redirect it may follow comes back as the redirect target's answer
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.redirect === "error") throw new TypeError("redirected");
+    return Response.json({ receipts: [{ outcome: "applied" }] });
+  }) as typeof fetch;
+  try {
+    await expect(nativeTransport.fetch("/api/machines/lab/account/records", { method: "POST", body: "{}" })).rejects.toBeInstanceOf(TypeError);
+    await expect(nativeTransport.fetch("/api/machines/lab/account/status")).rejects.toBeInstanceOf(TypeError);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 it("gives up the reads in flight on the browser's own connections, not a write nor a read sent after", async () => {
   const original = globalThis.fetch;
   const signals = new Map<string, AbortSignal>();

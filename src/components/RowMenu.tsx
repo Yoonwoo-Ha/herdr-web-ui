@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, type FocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check, type LucideIcon } from "lucide-react";
 
@@ -9,7 +9,7 @@ import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { SHEET_QUERY, useSheetSwipe } from "../lib/sheets.ts";
 import { BACK_QUERY, useSheetHistory } from "../lib/sheetHistory.ts";
 import { typeAheadFocused } from "../lib/typeAhead.ts";
-import { safeAreaInsets } from "../lib/safeArea.ts";
+import { useRowMenuPosition } from "./useRowMenuPosition.ts";
 
 export interface RowMenuItem {
   id: string;
@@ -44,8 +44,6 @@ interface Props {
   choice?: boolean;
 }
 
-const GAP = 4;
-const EDGE = 8;
 const TYPE_AHEAD_MS = 500;
 const POPOVER_ITEMS = '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]';
 const SHEET_ITEMS = '.row-sheet-item, .row-sheet-aside, .row-sheet-cancel';
@@ -65,8 +63,7 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, alert,
   const typed = useRef<{ text: string; at: number }>({ text: "", at: 0 });
   useSheetSwipe(surface, sheet ? onClose : null);
   useSheetHistory(useMediaQuery(BACK_QUERY), onClose);
-  const [place, setPlace] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
-  const placedAt = useRef<{ top: number; left: number } | null>(null);
+  const place = useRowMenuPosition({ anchor, surface, point, align, sheet, onClose });
   // The press keeps the focus in the sheet: its blur would close it on the mousedown, and the mouseup
   // after it would land on what lies behind
   const pressedScrim = useRef(false);
@@ -83,34 +80,6 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, alert,
     const target = restoreFocusTo === undefined ? anchor : restoreFocusTo;
     if (target?.isConnected) target.focus({ preventScroll: true });
   }, [anchor, restoreFocusTo]);
-
-  useLayoutEffect(() => {
-    if (sheet) return;
-    const menu = surface.current;
-    if (!menu || !anchor.isConnected) { onClose(); return; }
-    const rect = anchor.getBoundingClientRect();
-    placedAt.current = { top: rect.top, left: rect.left };
-    const safe = safeAreaInsets();
-    const minX = safe.left + EDGE;
-    const maxX = window.innerWidth - safe.right - EDGE;
-    const minY = safe.top + EDGE;
-    const maxY = window.innerHeight - safe.bottom - EDGE;
-    if (point) {
-      setPlace({
-        left: Math.max(minX, Math.min(point.x, maxX - menu.offsetWidth)),
-        top: Math.max(minY, Math.min(point.y, maxY - menu.offsetHeight)),
-        maxHeight: maxY - minY,
-      });
-      return;
-    }
-    const left = Math.max(minX, Math.min(align === "start" ? rect.left : rect.right - menu.offsetWidth, maxX - menu.offsetWidth));
-    const below = rect.bottom + GAP;
-    const roomBelow = maxY - below;
-    const roomAbove = rect.top - GAP - minY;
-    const up = below + menu.offsetHeight > maxY && roomAbove > roomBelow;
-    const top = up ? Math.max(minY, rect.top - GAP - menu.offsetHeight) : below;
-    setPlace({ top, left, maxHeight: Math.max(EDGE, up ? roomAbove : roomBelow) });
-  }, [align, anchor, onClose, point, sheet]);
 
   useEffect(() => {
     const first = (sheet && choice ? surface.current?.querySelector<HTMLElement>(CHOSEN) : null) ?? surface.current?.querySelector<HTMLElement>(sheet ? SHEET_ITEMS : POPOVER_ITEMS);
@@ -134,29 +103,14 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, alert,
       if (surface.current?.contains(target) || (!point && anchor.contains(target))) return;
       onClose();
     };
-    // only a scroll that moves the button out from under the menu: a terminal printing in the
-    // pane scrolls too, and the click that opened the menu can scroll the roster a little
-    // (the browser brings a focused button into view) without the button going anywhere
-    const onScroll = (): void => {
-      const was = placedAt.current;
-      const rect = anchor.getBoundingClientRect();
-      if (was && Math.abs(rect.top - was.top) < 1 && Math.abs(rect.left - was.left) < 1) return;
-      onClose();
-    };
     window.addEventListener("keydown", onKey, true);
     // the popover goes on a press outside, which goes on to what was pressed. The sheet is modal and goes on its
     // scrim's click (below): closed on the press, its scrim would let the rest of that tap (the touch's end, the
     // mouse events and the click a browser sends after it) through to the row or the pane behind it
-    if (!sheet) {
-      window.addEventListener("pointerdown", onPointer, true);
-      window.addEventListener("scroll", onScroll, true);
-      window.addEventListener("resize", onClose);
-    }
+    if (!sheet) window.addEventListener("pointerdown", onPointer, true);
     return () => {
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("pointerdown", onPointer, true);
-      window.removeEventListener("scroll", onScroll, true);
-      window.removeEventListener("resize", onClose);
     };
   }, [anchor, onClose, point, sheet]);
 

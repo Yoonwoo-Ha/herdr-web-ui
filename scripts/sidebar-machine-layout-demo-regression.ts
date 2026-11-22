@@ -133,6 +133,43 @@ async function menuGeometry(page: Page, manage: Locator, scenario: Scenario): Pr
   }
 }
 
+const OFF_ERROR = "ssh: connect to host a-long-fixture-hostname.tail1234.ts.net port 22: Connection refused";
+
+// a PC it keeps failing to reach: Switched off with why, whole and beside or under Check again, which asks once
+async function offRow(page: Page, group: Locator, scenario: Scenario): Promise<void> {
+  const setRemote = (patch: Record<string, unknown>) => page.evaluate((fields) => (window as unknown as { machineControlsFixture: { setRemote(patch: unknown): void } }).machineControlsFixture.setRemote(fields), patch);
+  await setRemote({ state: "reconnecting", error: OFF_ERROR });
+  const row = group.locator(".machine-off");
+  await row.waitFor({ state: "visible" });
+  const button = row.locator(".machine-recheck");
+  const fit = await row.evaluate((element) => {
+    const box = (node: Element | null) => { const rect = node!.getBoundingClientRect(); return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }; };
+    const detail = element.querySelector<HTMLElement>(".machine-state-detail")!;
+    const list = document.querySelector<HTMLElement>(".machine-list")!;
+    return { row: box(element), words: box(element.querySelector(".machine-state")), button: box(element.querySelector(".machine-recheck")), sidebar: box(document.querySelector(".sidebar")), whole: detail.clientHeight > 0 && detail.scrollHeight <= detail.clientHeight + 1 && detail.getBoundingClientRect().right <= element.getBoundingClientRect().right + 1, list: { clientWidth: list.clientWidth, scrollWidth: list.scrollWidth } };
+  });
+  const apart = fit.button.left >= fit.words.right - 1 || fit.button.top >= fit.words.bottom - 1;
+  assert.ok(apart, `${scenario.name} Check again lies beside or under the words, not over them: ${JSON.stringify(fit)}`);
+  assert.ok(fit.button.left >= fit.sidebar.left - 1 && fit.button.right <= fit.sidebar.right + 1 && fit.words.right <= fit.sidebar.right + 1, `${scenario.name} the off row fits the sidebar: ${JSON.stringify(fit)}`);
+  assert.ok(fit.list.scrollWidth <= fit.list.clientWidth + 1, `${scenario.name} the off row does not widen the PC list: ${JSON.stringify(fit)}`);
+  assert.ok(fit.whole, `${scenario.name} why the PC is off is shown whole: ${JSON.stringify(fit)}`);
+  // a 240 px sidebar has no room beside the words: Check again goes under them
+  if (scenario.desktopSidebar && (scenario.sidebarWidth ?? 240) === 240) assert.ok(fit.button.top >= fit.words.bottom - 1, `${scenario.name} Check again wraps under the words in a narrow sidebar: ${JSON.stringify(fit)}`);
+  if (scenario.screenshots && evidenceDir) await page.screenshot({ path: join(evidenceDir, `sidebar-machine-layout-${scenario.name}-off.png`) });
+  const reads = await getHook(page, "calls.sessionReads") as number;
+  await press(button, scenario);
+  await page.waitForFunction((count) => (window as unknown as { machineControlsFixture: { calls: { sessionReads: number } } }).machineControlsFixture.calls.sessionReads === count, reads + 1);
+  assert.equal(await button.getAttribute("aria-disabled"), "true", `${scenario.name} Check again is held after a press`);
+  // Playwright waits for an aria-disabled button to be enabled, which would press it after the hold: the click is sent now
+  await button.dispatchEvent("click");
+  assert.equal(await getHook(page, "calls.sessionReads"), reads + 1, `${scenario.name} a second press while held asks nothing`);
+  await button.focus();
+  await setRemote({ state: "connected", error: null });
+  await row.waitFor({ state: "detached" });
+  assert.equal(await group.locator(".machine-title").evaluate((title) => document.activeElement === title), true, `${scenario.name} the PC answering hands the focus from Check again to the PC's name`);
+  await setRemote({ state: "disconnected", error: null });
+}
+
 async function capture(page: Page, scenario: Scenario, state: "menu" | "renaming"): Promise<void> {
   if (!evidenceDir || !scenario.screenshots) return;
   await page.screenshot({ path: join(evidenceDir, `sidebar-machine-layout-${scenario.name}-${state}.png`) });
@@ -226,6 +263,7 @@ async function withScenario(browser: Awaited<ReturnType<typeof chromium.launch>>
     await menuGeometry(page, manage, scenario);
     await capture(page, scenario, "menu");
     await renameGeometry(page, manage, scenario);
+    await offRow(page, remoteGroup, scenario);
     if (!scenario.desktopSidebar) {
       const removeManage = await openMenu(page, remoteGroup, scenario);
       await press(item(page, REMOVE_LABEL[scenario.language]!), scenario);

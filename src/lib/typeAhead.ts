@@ -9,11 +9,15 @@
  */
 import { paneStorageId } from "../../shared/machines.ts";
 import { t } from "./i18n.ts";
+import { markTyped } from "./ws.ts";
 
 export interface TypeAheadItem {
   input: string;
   arrow?: string;
 }
+
+/** `typedAt`: when the key was captured (markTyped), so it goes only over a link up since then, never after a loss */
+export type CaughtKey = TypeAheadItem & { typedAt: number };
 
 export interface TypeAheadCatch {
   handTo: (machineId: string, paneId: string, shown?: boolean) => void;
@@ -21,7 +25,7 @@ export interface TypeAheadCatch {
 }
 
 export interface TypeAhead {
-  items: TypeAheadItem[];
+  items: CaughtKey[];
   since: number;
   at: number;
   /** held for review, never sent by itself: keys typed before the user went elsewhere, or around a paste */
@@ -32,15 +36,17 @@ export interface TypeAhead {
 }
 
 export interface TypeAheadLater {
-  more: (items: TypeAheadItem[], held: boolean) => void;
+  more: (items: CaughtKey[], held: boolean) => void;
   done: (focused: boolean) => void;
 }
 
 interface Pending {
   field: HTMLTextAreaElement;
-  items: TypeAheadItem[];
+  items: CaughtKey[];
   since: number;
   at: number;
+  /** when the text now in the field began: its first input, or the composition it came from */
+  textAt: number | null;
   held: boolean;
   pasteRefused: boolean;
   composing: boolean;
@@ -99,10 +105,15 @@ export function catchTypeAhead(): TypeAheadCatch | null {
   field.spellcheck = false;
   field.tabIndex = -1;
   Object.assign(field.style, { position: "fixed", left: "0", top: "0", width: "1px", height: "1px", opacity: "0", pointerEvents: "none" });
-  const caught: Pending = { field, items: [], since: performance.now(), at: Date.now(), held: false, pasteRefused: false, composing: false, later: null, pane: null, paneId: null, end: () => false };
+  const caught: Pending = { field, items: [], since: performance.now(), at: Date.now(), textAt: null, held: false, pasteRefused: false, composing: false, later: null, pane: null, paneId: null, end: () => false };
   const commit = (): void => {
-    if (field.value === "") return;
-    caught.items.push({ input: field.value });
+    // a composition that commits nothing (cancelled, or its preedit deleted) leaves nothing to date
+    if (field.value === "") {
+      caught.textAt = null;
+      return;
+    }
+    caught.items.push({ input: field.value, typedAt: caught.textAt ?? markTyped() });
+    caught.textAt = null;
     field.value = "";
   };
   const onKeyDown = (event: KeyboardEvent): void => {
@@ -112,16 +123,22 @@ export function catchTypeAhead(): TypeAheadCatch | null {
     event.preventDefault();
     if (item === "hold") { caught.held = true; return; }
     commit();
-    caught.items.push(item);
+    caught.items.push({ ...item, typedAt: markTyped() });
   };
-  const onInput = (event: Event): void => { if (!(event as InputEvent).isComposing) commit(); };
+  const onInput = (event: Event): void => {
+    caught.textAt ??= markTyped();
+    if (!(event as InputEvent).isComposing) commit();
+  };
   // a paste is the terminal's to bracket once the program says it takes one: refused here, the keys around it held
   const onPaste = (event: ClipboardEvent): void => {
     event.preventDefault();
     caught.held = true;
     caught.pasteRefused = true;
   };
-  const onCompositionStart = (): void => { caught.composing = true; };
+  const onCompositionStart = (): void => {
+    caught.composing = true;
+    caught.textAt ??= markTyped();
+  };
   const onCompositionEnd = (): void => {
     caught.composing = false;
     commit();

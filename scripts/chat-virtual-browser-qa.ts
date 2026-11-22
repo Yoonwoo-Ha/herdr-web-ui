@@ -624,9 +624,8 @@ try {
     }
     console.log(`PASS ${width} ${theme}: a grown last row is followed; a row above folding or growing then keeps following, as does a fold at the end; an upward wheel stops it`);
 
-    // A scroll that sends no input this page sees (a screen reader's, a Firefox scrollbar's), in small
-    // steps over a transcript that does not shrink: past the layout allowance from the end, following
-    // stops however small each step was (#1902).
+    // A screen reader or Firefox scrollbar can scroll without delivering input to ChatView.
+    // On an unchanged transcript, even small steps stop following once they pass 48 px (#1902).
     await page.locator(".chat-view").evaluate(async (node) => {
       const delivered = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       for (const step of [30, 30]) {
@@ -635,6 +634,7 @@ try {
         await delivered();
       }
     });
+    await page.getByRole("button", { name: "Jump to latest" }).waitFor();
     revision++;
     await update(page);
     await page.getByText(`REVISION-${revision}`, { exact: true }).waitFor();
@@ -642,7 +642,7 @@ try {
     assert.ok((await metrics(page)).bottom > 48, "output leaves the reader where the steps took them");
     await page.getByRole("button", { name: "New messages" }).click();
     await settleBottom(page);
-    console.log(`PASS ${width} ${theme}: small upward steps without input past the layout allowance stop following`);
+    console.log(`PASS ${width} ${theme}: small upward steps without input past the layout allowance stop following (#1902)`);
 
     const height = width === 390 ? 844 : 900;
     await page.evaluate((height) => window.chatQa.resize(height - 180), height);
@@ -826,7 +826,10 @@ try {
     // restoration after actual eviction rather than a cached offscreen DOM node.
     await page.setViewportSize({ width, height: 5000 });
     await page.evaluate(() => window.chatQa.resize(5000));
-    await page.locator(".chat-view").evaluate((node) => { node.scrollTop = 0; });
+    await page.locator(".chat-view").evaluate((node) => {
+      node.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -node.scrollTop }));
+      node.scrollTop = 0;
+    });
     await page.waitForFunction(() => ![...document.querySelectorAll("[data-chat-row]")].some((row) => row.textContent?.includes("local E1 ROW-497")));
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.evaluate((height) => window.chatQa.resize(height), width === 390 ? 844 : 900);

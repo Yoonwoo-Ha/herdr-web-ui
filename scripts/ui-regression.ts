@@ -767,10 +767,10 @@ try {
     await openSettingsPage(page, "Devices and PCs");
     await page.getByRole("dialog", { name: "Settings" }).getByRole("button", { name: "Add a connection", exact: true }).click();
     const connectSheet = page.getByRole("dialog", { name: "Add a connection", exact: true });
-    await connectSheet.locator('.connect-tabs [data-tab="ssh"]').click();
-    const sshAdd = connectSheet.locator(".connect-ssh-form").getByRole("button", { name: "Add", exact: true });
-    assert.equal(await sshAdd.isDisabled(), true, "Add waits for an SSH address");
-    await connectSheet.getByLabel("Or type an SSH address", { exact: true }).fill("qa@pc.invalid");
+    await connectSheet.locator('.connect-tabs [data-tab="direct"]').click();
+    const sshAdd = connectSheet.locator(".connect-ssh-form").getByRole("button", { name: "Connect", exact: true });
+    assert.equal(await sshAdd.isDisabled(), true, "Connect waits for an address");
+    await connectSheet.getByLabel("Address or SSH", { exact: true }).fill("qa@pc.invalid");
     await sshAdd.click();
     await page.getByRole("dialog", { name: "Add PC", exact: true }).waitFor();
     assert.equal(await page.getByRole("dialog", { name: "Add PC", exact: true }).getByLabel("SSH alias or user@address", { exact: true }).inputValue(), "qa@pc.invalid", "Add PC opens with the typed address");
@@ -1064,6 +1064,9 @@ try {
       }
       return { x: Math.round(card.x), width: Math.round(card.width), pane: Math.round(pane.width) };
     };
+    // Pane A has no conversation to show: its first answer takes the empty list's .chat-transcript out of the page and
+    // puts the notice's own in. A box read between the two is null, the removed element's (#4026).
+    await page.locator(".chat-unavailable-reason").waitFor();
     const floor = await laneColumn();
     assert.ok(floor.pane < 1148, "71% of this pane is under the lane's floor");
     assert.equal(floor.width, 820);
@@ -1479,7 +1482,9 @@ try {
     const dialog = page.getByRole("dialog", { name: /^New workspace/ });
     await dialog.getByLabel(/^Directory/).fill("~");
     await dialog.getByRole("button", { name: "Browse", exact: true }).click();
-    await dialog.locator(".dir-browser-item").first().waitFor();
+    // A runner's home may have no visible subfolders. Wait for the resolved home itself.
+    await dialog.locator('.dir-browser[aria-busy="false"] .dir-browser-path[title]:not([title=""])')
+      .getByText("~", { exact: true }).waitFor();
     assert.equal(await dialog.getByLabel(/^Directory/).inputValue(), "~", "Browse keeps the home-relative form");
     await dialog.getByRole("button", { name: "Browse", exact: true }).click();
     await dialog.getByLabel(/^Directory/).fill(root);

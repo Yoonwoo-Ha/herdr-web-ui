@@ -8,7 +8,7 @@ import { HerdrError, paneRead, paneSendKeys, paneSendText } from "../herdr/clien
 import { secretPrompt, validSecret } from "../../shared/secret-prompt.ts";
 import { insertTextProblem } from "../../shared/terminal-insert.ts";
 import { mirrorInput } from "../mirror-input.ts";
-import { CoreAttachSession, CURSOR_KEY } from "../herdr-core/attach-session.ts";
+import { CoreAttachSession, CURSOR_KEY, CURSOR_KEY_NAMES } from "../herdr-core/attach-session.ts";
 
 /** Keys that may wait to join one `pane.send_keys` while herdr answers the one before (a held arrow repeats ~30/s). */
 const MAX_WAITING_KEYS = 256;
@@ -129,7 +129,12 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
       // behind queued input, the program would read those answers as keystrokes. Tagged by a client, so
       // only what one answer looks like: a single CSI report, OSC reply or DCS string, nothing around it.
       const reply = !stop && message.automatic === true && REPLY_RE.test(message.text);
-      if ((paneQueues.has(message.pane_id) && !reply) || stop) {
+      const coreAttach = message.automatic !== true && sighting.pty instanceof CoreAttachSession ? sighting.pty : null;
+      const cursorKey = coreAttach !== null ? CURSOR_KEY.exec(message.text) : null;
+      // the attach's cursor mode may be older than the program's while hc's stream is paused: the key goes as hc's named
+      // key then, which hc encodes from its own screen, in its turn behind what was typed before it
+      const namedKey = () => (cursorKey !== null && !coreAttach!.modeCurrent ? CURSOR_KEY_NAMES[cursorKey[1]!]! : null);
+      if ((paneQueues.has(message.pane_id) && !reply) || stop || namedKey() !== null) {
         const text = message.text;
         // a click or a wheel (a click replayed behind a held arrow) is the attach's own mouse:
         // herdr encodes it for the program's mouse mode, send_text would type its bytes (#667).
@@ -137,21 +142,28 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
         // only what the browser's terminal made itself, so a paste of the same bytes is still typed
         // A lone cursor key typed into a herdr-core attach goes there too, which sends it in the form the program reads
         // when its turn comes, not the one the viewer's terminal believed in when it was pressed
-        const cursorKey = message.automatic !== true && sighting.pty instanceof CoreAttachSession && CURSOR_KEY.test(text);
-        const viaAttach = cursorKey || isMouseReport(text) || (message.automatic === true && isTerminalReply(text));
+        const viaAttach = cursorKey !== null || isMouseReport(text) || (message.automatic === true && isTerminalReply(text));
         // typed into the attach it saw: one that ended meanwhile (and was attached again) takes none of it
         const roles = connectionOf(client).roles;
         const allowed = () => mayType(client) && connectionOf(client).roles === roles && typingGuards.queuedTyping(sighting.facts());
         void serialize(message.pane_id, async () => {
-          if (stop) await settleAfterTyping(message.pane_id);
+          if (stop || namedKey() !== null) await settleAfterTyping(message.pane_id);
           if (!typingGuards.queuedTyping(sighting.facts())) { inputFailed(); return; }
           // nothing typed outlives its connection
           if (!clients.has(client)) return;
           authorizeSocket(client);
+          const named = namedKey();
+          if (named !== null) {
+            await paneSendKeys(message.pane_id, [named], undefined, allowed);
+            personTyped(message.pane_id);
+            receipt(true);
+            poke(message.pane_id);
+            return;
+          }
           if (viaAttach) {
             if (!allowed() || !sighting.write(text, message.automatic === true)) { inputFailed(); return; }
             typedIntoPty(text);
-            if (cursorKey) personTyped(message.pane_id);
+            if (cursorKey !== null) personTyped(message.pane_id);
             receipt(true);
             return;
           }

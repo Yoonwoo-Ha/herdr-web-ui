@@ -148,9 +148,9 @@ describe("RelayPcDetails", () => {
     });
     expect(html).toContain('data-pc-details="0123456789abcdef0123456789abcdef"');
     expect(html).toContain("Home server");
-    expect(html).toContain("Offline");
+    expect(html).toContain("Machine offline");
     expect(html).not.toContain("Account directory");
-    expect(/<dt>State<\/dt><dd>([\s\S]*?)<\/dd>/.exec(html)?.[1]).toBe('<span class="relay-pc-details-value">Offline</span>');
+    expect(/<dt>State<\/dt><dd>([\s\S]*?)<\/dd>/.exec(html)?.[1]).toStartWith('<span class="relay-pc-details-value">Machine offline</span><small class="relay-pc-details-sub">Last seen ');
     expect(html).toContain("relay.ovis.sh");
     expect(html).toContain('dateTime="2026-11-08T10:00:00.000Z"');
     expect(html).toContain("This device: no answer");
@@ -254,6 +254,33 @@ describe("RelayPcDetails", () => {
     expect(closed).toBe(2);
   });
 
+  it("says Machine offline with when and why, or Could not reach this machine with why, in the State row, from the account or from this device's own check, and keeps the cause out of This device", () => {
+    const stateParts = (pc: ReturnType<typeof makeRow>) => {
+      const html = renderHtml({ pc, now: NOW, onClose: none, onCheckPc: none });
+      const parts = (label: string) => [...(new RegExp(`<dt>${label}<\\/dt><dd[^>]*>([\\s\\S]*?)<\\/dd>`).exec(html)?.[1] ?? "").matchAll(/>([^<]+)</g)].map(([, part]) => part?.replaceAll("&#x27;", "'"));
+      return { state: parts("State"), device: parts("This device") };
+    };
+    const cause = "It is off, has no network, or Ovis is not running on it.";
+    // the account has not heard from it for two hours, and nothing checked it yet
+    expect(stateParts(makeRow())).toEqual({ state: ["Machine offline", `Last seen 2 h ago. ${cause}`], device: ["Not checked"] });
+    // the account heard from it five minutes ago; this device's check found nobody for it, or reached no relay
+    const lately = { state: "paired", last_seen_at: "2026-11-08T11:55:00.000Z" } as const;
+    expect(stateParts(makeRow(lately, { kind: "offline", reason: "pc" }))).toEqual({ state: ["Machine offline", `Last seen 5 min ago. ${cause}`], device: ["This device: no answer"] });
+    expect(stateParts(makeRow(lately, { kind: "offline", reason: "relay" }))).toEqual({ state: ["Could not reach this machine", "This device could not reach the relay. Check this device's network."], device: ["This device: no answer"] });
+    // the account has not heard from it for two hours: State says so, and This device keeps its own check's cause when
+    // that check learned nothing of the PC
+    const accountOffline = { state: ["Machine offline", `Last seen 2 h ago. ${cause}`] };
+    expect([
+      stateParts(makeRow({}, { kind: "offline", reason: "pc" })),
+      stateParts(makeRow({}, { kind: "offline", reason: "relay" })),
+      stateParts(makeRow({}, { kind: "offline", reason: "refused" })),
+    ]).toEqual([
+      { ...accountOffline, device: ["This device: no answer"] },
+      { ...accountOffline, device: ["This device: no answer", "This device could not reach the relay. Check this device's network."] },
+      { ...accountOffline, device: ["This device: no answer", "The relay turned this device away. Wait a minute, then check again."] },
+    ]);
+  });
+
   it("names the route this device reaches the PC by in its own labelled row: the way and the round trip, No answer, Not checked, or nothing for an unpaired PC", () => {
     const routeOf = (html: string) => /<dt>Route<\/dt><dd[^>]*>([\s\S]*?)<\/dd>/.exec(html)?.[1] ?? "";
     const text = (cell: string) => cell.replace(/<[^>]+>/g, "");
@@ -296,7 +323,8 @@ describe("RelayPcDetails", () => {
     expect(approval + update).not.toContain("Needs you");
     const unlisted = (status: PcStatus, over: Partial<DashboardPc> = {}) => renderHtml({ pc: makeRow({ state: "paired", listed: false, linked: false, last_seen_at: null, ...over }, status), onClose: none });
     expect(stateOf(unlisted({ kind: "answered", route: "lan", rttMs: 9 }))).toBe("Answers");
-    expect(stateOf(unlisted({ kind: "offline", reason: "pc" }))).toBe("No answer");
+    expect(stateOf(unlisted({ kind: "offline", reason: "pc" }))).toBe("Machine offline");
+    expect(stateOf(unlisted({ kind: "offline", reason: "relay" }))).toBe("Could not reach this machine");
     expect(stateOf(unlisted({ kind: "answered", route: "lan", rttMs: 9 }, { state: "needs-update" }))).toBe("Needs update");
     const reached = renderHtml({ pc: makeRow({}, { kind: "answered", route: "relay", relay: GLOBAL, rttMs: 42 }), onClose: none });
     expect(stateOf(reached)).toBe("Ready");

@@ -47,7 +47,14 @@ async function pcFixture(extraCarriers: readonly string[] = []) {
     },
     direct: { addresses: () => ["127.0.0.1"], peerAllowed: () => true, preferredPort: 0, advertise: (port) => [...extraCarriers, `ws://${LAN}:${port}`] },
   });
-  const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, sidecar: false, relay: service });
+  const previous = process.env["OVIS_ACCOUNT_OPENS_ALL"];
+  process.env["OVIS_ACCOUNT_OPENS_ALL"] = "0";
+  let app: ReturnType<typeof createServer>;
+  try { app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, sidecar: false, relay: service }); }
+  finally {
+    if (previous === undefined) delete process.env["OVIS_ACCOUNT_OPENS_ALL"];
+    else process.env["OVIS_ACCOUNT_OPENS_ALL"] = previous;
+  }
   cleanup.push(() => rmSync(stateDir, { recursive: true, force: true }), () => relay.stop(), async () => { await service.shutdown(); await app.stop(); });
   const base = `http://127.0.0.1:${app.port}`;
   await fetch(`${base}/api/relay/start`, { method: "POST", headers: { origin: base, "x-herdr-update": "1" } });

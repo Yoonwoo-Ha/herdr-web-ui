@@ -76,6 +76,26 @@ it("gives no code to a device that was revoked while its code waited on the rela
   } finally { done(); }
 });
 
+it("gives no code, plain or made for an account, to a device made one that only watches while its code waited on the relay", async () => {
+  const { pairCodes, sockets, devices, done } = codes();
+  try {
+    const paired = devices.pair(devices.startPairing().code, "Laptop", "drive")!;
+    devices.match(paired.token);
+    const laptop = paired.device.id;
+    for (const [index, account] of [undefined, "acct_owner"].entries()) {
+      const minted = pairCodes.mint(laptop, account).catch((error: unknown) => error);
+      devices.update(laptop, { role: "watch" });
+      sockets[index]!.relay(JSON.stringify({ type: "waiting" }));
+      const refused = await minted;
+      expect([account, refused instanceof Error, (refused as { code?: unknown }).code]).toEqual([account, true, "read_only"]);
+      expect(devices.activePairing()).toBeNull();
+      expect(pairCodes.showing).toBeNull();
+      expect(sockets.filter((socket) => !socket.closed).map((socket) => socket.url)).toEqual([]);
+      devices.update(laptop, { role: "drive" });
+    }
+  } finally { done(); }
+});
+
 it("keeps its nameplate on the relay with keepalives while no device comes", async () => {
   const { pairCodes, sockets, done } = codes(10);
   try {
@@ -109,6 +129,24 @@ it("a code the relay did not take leaves the six-digit code, and so the QR code,
     sockets[0]!.end(1006);
     expect(await minted).toBeInstanceOf(Error);
     expect(devices.activePairing()).toEqual(before);
+  } finally { done(); }
+});
+
+it("is bound to a six-digit code of its own, never the code of the relay tab's QR code: the device that pairs with it is paired at once", async () => {
+  const { pairCodes, sockets, devices, done } = codes();
+  try {
+    // the relay tab's QR code is up: its code is the one pending, and a device that pairs with that one waits to link
+    devices.pairingForNoAccount();
+    let started = 0;
+    devices.onPairingStarted(() => { started++; });
+    const minted = pairCodes.mint();
+    sockets[0]!.relay(JSON.stringify({ type: "waiting" }));
+    await minted;
+    expect(started).toBe(1);
+    const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+    const key = Buffer.from(await crypto.subtle.exportKey("spki", keys.publicKey)).toString("base64url");
+    expect(devices.pairRelay(devices.activePairing()!.code, "Phone", key)?.device.role).toBe("drive");
+    expect(devices.list(null).map((device) => device.label)).toEqual(["Phone"]);
   } finally { done(); }
 });
 

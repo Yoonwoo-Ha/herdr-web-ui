@@ -1,4 +1,5 @@
 import type { AgentCatalogEntry, AgentCatalogRow } from "../../shared/agent-catalog.ts";
+import type { SecuritySummary } from "../../shared/access.ts";
 import type { HealthAuth, PairedDevice, RelayStatus } from "../../shared/protocol.ts";
 import type { SetupStep } from "./agentSetup.ts";
 import type { ProviderUsage } from "../../shared/usage.ts";
@@ -74,6 +75,11 @@ export function phoneWay(relay: { unsupported: boolean; status: Pick<RelayStatus
   if (auth.role === "watch" || auth.via === "portal") return "other";
   if (relay.status === null) return "wait";
   return relay.status.blocked === null ? "relay" : "other";
+}
+
+/** Device table T70: other devices reach this PC only through the relay when it is bound to its loopback and this page came in on it directly; any other or unnamed ingress may be a route of its own (SSH this setup cannot see). */
+export function relayOnlyPc(summary: Pick<SecuritySummary, "bind_scope" | "observed_ingress">): boolean {
+  return summary.bind_scope === "loopback" && summary.observed_ingress === "direct";
 }
 
 export type PhoneBoxOpening = "tap" | "first-run";
@@ -279,10 +285,10 @@ export function alertsHere({ alertsOn, notifications, desktop, pushSupported, pu
   return push.delivered ? "on" : "off";
 }
 
-export function alertsSurfaces(alerts: AlertsHere): { step: "send-test" | "turn-on" | "checking" | "note"; done: "done" | "not-yet" | "checking"; row: "done" | "left" | "wait" } {
+export function alertsSurfaces(alerts: AlertsHere): { step: "send-test" | "turn-on" | "checking" | "note"; done: "done" | "not-yet" | "checking" | "unavailable"; row: "done" | "left" | "wait" } {
   if (alerts === "on") return { step: "send-test", done: "done", row: "done" };
   if (alerts === "checking") return { step: "checking", done: "checking", row: "wait" };
   // nothing can be set up here (plain http): the row does not count it as left
-  if (alerts === "unavailable") return { step: "note", done: "not-yet", row: "done" };
+  if (alerts === "unavailable") return { step: "note", done: "unavailable", row: "done" };
   return { step: "turn-on", done: "not-yet", row: "left" };
 }

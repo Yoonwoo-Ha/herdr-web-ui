@@ -1480,3 +1480,52 @@ describe("carrier loss never resends", () => {
     expect(e.closes).toEqual([4000]);
   });
 });
+
+describe("key proof setup (device-row-states T71, T72; S2-13 wire)", () => {
+  function unauthenticated() {
+    const clock = new Clock();
+    const seen = { client: [] as MuxFrame[], server: [] as MuxFrame[] };
+    const errors: MuxProtocolError[] = [];
+    let client!: MuxEngine;
+    let server!: MuxEngine;
+    const make = (role: "client" | "server") => new MuxEngine({
+      role, clock, send: async (bytes) => { (role === "client" ? server : client).receive(bytes); },
+      close: () => {}, onClose: (error) => { errors.push(error); },
+      outboundWireByteLength: (bytes) => bytes.length + 24, routingOverhead: 0, maxWireMessageBytes: 32 * KiB,
+      onSession: (frame) => { seen[role].push(frame); }, requestTimeoutMs: () => 0,
+    });
+    client = make("client");
+    server = make("server");
+    engines.push(client, server);
+    return { client, server, seen, errors };
+  }
+
+  it("T71: the PC sends the challenge and the wait, and the device sends the proof", async () => {
+    const { client, server, seen, errors } = unauthenticated();
+    server.sendSession({ type: FrameType.KEY_CHALLENGE, flags: 0, stream_id: 0, payload: { challenge: "A".repeat(43) } });
+    await server.flush();
+    client.sendSession({ type: FrameType.KEY_PROVE, flags: 0, stream_id: 0, payload: { signature: "A".repeat(86) } });
+    await client.flush();
+    server.sendSession({ type: FrameType.KEY_PENDING, flags: 0, stream_id: 0, payload: {} });
+    await server.flush();
+    expect(seen.client.map((frame) => frame.type)).toEqual([FrameType.KEY_CHALLENGE, FrameType.KEY_PENDING]);
+    expect(seen.server.map((frame) => frame.type)).toEqual([FrameType.KEY_PROVE]);
+    expect(errors).toEqual([]);
+  });
+
+  it("T71: neither end may send the other's key proof frame", () => {
+    const { client, server } = unauthenticated();
+    expect(() => client.sendSession({ type: FrameType.KEY_CHALLENGE, flags: 0, stream_id: 0, payload: { challenge: "A".repeat(43) } })).toThrow();
+    expect(() => server.sendSession({ type: FrameType.KEY_PROVE, flags: 0, stream_id: 0, payload: { signature: "A".repeat(86) } })).toThrow();
+  });
+});
+
+describe("S2-25 a held refusal reaches the app with its hold state (S25)", () => {
+  it("S25: the server's held failure arrives as the client's error, hold and all", async () => {
+    const mux = pair();
+    mux.server.fail("held", "This device waits for its join hold", undefined, { reason: "join_hold", until: "2026-11-20T05:00:10.000Z" });
+    await mux.flush();
+    const received = mux.errors.find((error) => error.code === "held");
+    expect(received?.hold).toEqual({ reason: "join_hold", until: "2026-11-20T05:00:10.000Z" });
+  });
+});

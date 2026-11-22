@@ -173,6 +173,8 @@ export interface PreferencesSync {
   disconnected(): void;
   /** the browser gave up on the event stream (EventSource CLOSED, App opens a new one): a change nobody refused stops waiting for it; a refused one waits for `resubscribed` or `retry` */
   closed(): void;
+  /** the server's shared settings were read once, or the server has none: until then a shared setting here may be stale */
+  known: boolean;
 }
 
 export function usePreferencesSync(enabled: boolean): PreferencesSync {
@@ -189,6 +191,7 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
   const revision = useRef(0);
   const loadedRef = useRef(false);
   const [loaded, setLoaded] = useState(false);
+  const [none, setNone] = useState(false);
   const off = useRef(false);
   // a watching device: it takes what the others share and sends nothing; a change of its own lasts until the next shared one
   const readOnly = useRef(false);
@@ -300,7 +303,7 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
     let retry: number | undefined;
     fetchPreferences().then((remote) => {
       if (cancelled) return;
-      if (remote === null) { off.current = true; return; }
+      if (remote === null) { off.current = true; setNone(true); return; }
       receive(remote);
     }).catch(() => { if (!cancelled) retry = window.setTimeout(() => setLoadAttempt((count) => count + 1), RETRY_MS); });
     return () => { cancelled = true; window.clearTimeout(retry); };
@@ -442,5 +445,5 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
     };
   }, [enabled, loaded, paused, streamLost, pending, attempt, absorb, settled, standDown, here, rest]);
 
-  return { receive, saveError, paused, retrying, retry, resubscribed, disconnected, closed };
+  return { receive, saveError, paused, retrying, retry, resubscribed, disconnected, closed, known: loaded || none };
 }

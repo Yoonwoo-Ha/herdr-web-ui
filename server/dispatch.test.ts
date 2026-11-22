@@ -289,6 +289,55 @@ it("marks a socket that only the open LAN let in, one relayed to another PC too,
   }
 });
 
+it("names a visit's way in from what the server knows, its relay session or Portal's proof, never from forwarding headers alone", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "ovis-dispatch-visit-ingress-"));
+  const portal = new PortalService({ stateDir });
+  const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, portal, token: "", bridgeToken: "bridge-token", tailscaleOwner: null, machines: false, sidecar: false });
+  const proof = spyOn(portal, "vouches").mockImplementation((value) => value === "valid-portal-proof");
+  const role = spyOn(portal, "roleFor").mockReturnValue("drive");
+  const taken: (string | undefined)[] = [];
+  const local: ServerContext = {
+    ...app.context, requestIP: () => ({ address: "127.0.0.1" }), timeout: () => {},
+    upgrade: (_request, options) => { taken.push(options.data.ingress); return true; },
+  };
+  const relay: ServerContext = { ...local, requestIP: () => null,
+    peer: { kind: "relay", device: { id: "0123456789abcdef", label: "Relay phone", role: "drive" }, sessionId: "session-a", serverId: "0123456789abcdef0123456789abcdef", key: "" } };
+  const visit = async (ctx: ServerContext, origin: string, headers: Record<string, string> = {}) => {
+    const response = await handleRequest(new Request(`${origin}/ws?surface=browser`, { headers: { host: new URL(origin).host, origin, ...headers } }), ctx);
+    expect(response).toBeUndefined();
+    return taken.at(-1);
+  };
+  const here = `http://127.0.0.1:${app.port}`;
+  // what Portal forwards: a page it served over HTTPS, under this PC's address
+  const forwarded = { "x-forwarded-for": "203.0.113.7", "x-forwarded-proto": "https", origin: `https://127.0.0.1:${app.port}` };
+  const portalHeaders = { "x-portal-user": "owner", "x-portal-auth": "credential" };
+  try {
+    expect(await visit(relay, "https://relay.ovis.invalid", { ...forwarded, origin: "https://relay.ovis.invalid" })).toBe("relay");
+    expect(await visit(local, here, { ...forwarded, ...portalHeaders, "x-portal-proof": "valid-portal-proof" })).toBe("portal");
+    // Portal's headers without its proof are any proxy's
+    expect(await visit(local, here, { ...forwarded, ...portalHeaders, "x-portal-proof": "forged" })).toBe("proxy");
+    // a Portal with no sign-in sends no proof: /api/health takes its shape (from this PC, over HTTPS, to an address
+    // Portal serves) as Portal's, but that shape is headers, so a visit counts it as any proxy
+    const serves = spyOn(portal, "serves").mockReturnValue(true);
+    const ping = spyOn(herdr, "ping").mockResolvedValue({ version: "fixture", protocol: 22, terminal_attach: false, terminal_mirror: true });
+    try {
+      expect(await visit(local, here, forwarded)).toBe("proxy");
+      const health = await handleRequest(new Request(`${here}/api/health`, { headers: { host: new URL(here).host, ...forwarded } }), local);
+      expect(await health?.json()).toMatchObject({ security: { observed_ingress: "portal" } });
+      // another server's bridge is not a visit: nothing is worked out for it
+      serves.mockClear();
+      expect(await visit(local, here, { ...forwarded, authorization: "Bearer bridge-token" })).toBeUndefined();
+      expect(serves).not.toHaveBeenCalled();
+    } finally { serves.mockRestore(); ping.mockRestore(); }
+    expect(await visit(local, here)).toBe("local");
+  } finally {
+    proof.mockRestore(); role.mockRestore();
+    await portal.shutdown();
+    app.stop();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 it("tells the server's built version to a signed-in client only", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "ovis-dispatch-version-"));
   const ping = spyOn(herdr, "ping").mockResolvedValue({ version: "fixture", protocol: 22, terminal_attach: false, terminal_mirror: true });

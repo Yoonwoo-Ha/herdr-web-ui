@@ -318,7 +318,9 @@ describe("bridge pending input", () => {
     f.queue.status("p1", "working");
     expect(f.queue.claim(first, false)).toBe(true); f.queue.committing(first, true); f.queue.settle(first);
     expect(f.queue.next("p1")).toBeNull();
-    f.queue.status("p1", "done"); expect(f.queue.next("p1")).toBe(second);
+    // right after the Enter, that rest may be the end of a turn the steer started by landing as the work ended (#4118)
+    f.queue.status("p1", "done"); expect(f.queue.next("p1")).toBeNull();
+    f.queue.status("p1", "working"); f.queue.status("p1", "done"); expect(f.queue.next("p1")).toBe(second);
   });
 
   for (const settleBeforeIdle of [true, false]) it(`keeps the interruption's ready state from draining the queue (${settleBeforeIdle ? "settled" : "in flight"})`, () => {

@@ -1,13 +1,15 @@
 /**
  * GENERATED FILE - DO NOT EDIT.
  *
- * Source: herdr-core (hc) OpenRPC schema, hc 0.1.14, Apache-2.0.
+ * Source: herdr-core (hc) OpenRPC schema, hc 0.1.18, Apache-2.0.
  * Regenerate with: bun run generate:types
  * Verify freshness with: bun run generate:types --check
  */
 
 export interface AttachResult {
+  automatic_input: boolean;
   channel: number;
+  resize_notifications: boolean;
   terminal: Terminal;
 }
 
@@ -77,6 +79,7 @@ export interface Foreground {
 export interface HelloParams {
   calls_you?: string | null;
   core?: CoreInfo | null;
+  features?: string[];
   framed?: boolean;
   generation?: number | null;
 }
@@ -98,6 +101,11 @@ export interface HolderInfo {
 }
 
 export type IdleOrWorking = "idle" | "working" | (string & {});
+
+export interface InitialSize {
+  cols: number;
+  rows: number;
+}
 
 export interface KeysResult {
   status?: string | null;
@@ -234,6 +242,7 @@ export interface Terminal {
   die_with_parent?: boolean;
   exit_code?: number | null;
   finished_ms?: number | null;
+  first_message?: FirstMessage | null;
   foreground?: Foreground | null;
   identity?: string;
   keep?: boolean;
@@ -266,6 +275,7 @@ export interface TerminalAttachParams {
   display?: Display;
   history?: number;
   observe?: boolean;
+  resize_notifications?: boolean;
   resumed?: boolean;
   rows: number;
   terminal: string;
@@ -313,6 +323,7 @@ export interface TerminalRunParams {
   caller?: string | null;
   cwd?: string | null;
   die_with_parent?: boolean;
+  display?: Display | null;
   env?: Record<string, string>;
   keep?: boolean;
   labels?: Record<string, string>;
@@ -324,6 +335,7 @@ export interface TerminalRunParams {
   outlive_parent?: boolean;
   parent?: string | null;
   rm?: boolean;
+  size?: InitialSize | null;
   timeout?: number | null;
   wait?: boolean;
 }

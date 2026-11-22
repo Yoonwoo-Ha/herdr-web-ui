@@ -14,6 +14,71 @@ function declarationValues(css: string): string[] {
   return values;
 }
 
+const CSS_STRING = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g;
+
+function selectors(css: string): string[] {
+  const preludes: string[] = [];
+  let text = "", quote = "";
+  for (let at = 0; at < css.length; at += 1) {
+    const char = css[at]!;
+    if (quote === "" && css.startsWith("/*", at)) { at = css.indexOf("*/", at + 2) + 1 || css.length; continue; }
+    if (char === "\\") { text += char + (css[at + 1] ?? ""); at += 1; continue; }
+    if (quote !== "") { if (char === quote) quote = ""; }
+    else if (char === "\"" || char === "'") quote = char;
+    else if (char === "{") { preludes.push(text.trim()); text = ""; continue; }
+    else if (char === ";" || char === "}") { text = ""; continue; }
+    text += char;
+  }
+  return preludes.filter((prelude) => !prelude.startsWith("@")).flatMap((prelude) => splitTopLevel(prelude, /,/)).map((selector) => selector.replace(/\s+/g, " ").trim());
+}
+
+/** `:ha\s(` is `:has(` to the browser. */
+function unescapeCss(text: string): string {
+  return text.replace(/\\([0-9a-f]{1,6})\s?|\\(.)/gi, (_, hex: string | undefined, char: string) => hex !== undefined ? String.fromCodePoint(parseInt(hex, 16)) : char);
+}
+
+function hasPseudo(selector: string): boolean {
+  return /:has\(/i.test(unescapeCss(selector.replace(CSS_STRING, "\"\"")));
+}
+
+/** Splits on `separator` outside parentheses, brackets, strings and escapes. */
+function splitTopLevel(text: string, separator: RegExp): string[] {
+  const parts = [""];
+  let depth = 0;
+  let quote = "";
+  for (let at = 0; at < text.length; at += 1) {
+    const char = text[at]!;
+    if (char === "\\") { parts[parts.length - 1] += char + (text[at + 1] ?? ""); at += 1; continue; }
+    if (quote !== "") { if (char === quote) quote = ""; }
+    else if (char === "\"" || char === "'") quote = char;
+    else if (char === "(" || char === "[") depth += 1;
+    else if (char === ")" || char === "]") depth -= 1;
+    else if (depth === 0 && separator.test(char)) { parts.push(""); continue; }
+    parts[parts.length - 1] += char;
+  }
+  return parts.filter((part) => part.trim() !== "");
+}
+
+/**
+ * The last compound of a selector has a class, an id or a tag to match on: its own, or one in every
+ * alternative of an :is() or :where() in it. :not(), :has() and other pseudo-classes name nothing.
+ */
+function subjectNamesElements(selector: string): boolean {
+  const compound = unescapeCss((splitTopLevel(selector, /[\s>+~]/).at(-1) ?? "").replace(CSS_STRING, "\"\""));
+  const lists: string[] = [];
+  let own = "";
+  for (let at = 0; at < compound.length;) {
+    const call = /^::?([\w-]+)\(/.exec(compound.slice(at));
+    if (call === null) { own += compound[at]; at += 1; continue; }
+    let depth = 0, end = at + call[0].length - 1;
+    for (; end < compound.length; end += 1) { if (compound[end] === "(") depth += 1; if (compound[end] === ")" && --depth === 0) break; }
+    if (["is", "where"].includes(call[1]!.toLowerCase())) lists.push(compound.slice(at + call[0].length, end));
+    at = end + 1;
+  }
+  own = own.replace(/\[[^\]]*\]|::?[\w-]+/g, "");
+  return /^[a-z]|[.#](?:[\w-]|[^\x00-\x7f]|\\.)/i.test(own) || lists.some((list) => splitTopLevel(list, /,/).every(subjectNamesElements));
+}
+
 /** The CSS named colors (CSS Color 4), which match in any case like the rest of CSS. */
 const NAMED_COLORS = "aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow yellowgreen".split(" ");
 const COLOR_LITERAL = new RegExp(String.raw`#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(|(?<![\w-])(?:${NAMED_COLORS.join("|")})(?![\w-])`, "i");
@@ -38,6 +103,23 @@ describe("component CSS", () => {
       ];
     });
     fail(offenders, "Component CSS takes colors from the tokens in src/styles.css (var(--…), or color-mix() of tokens) and wins by order at the same specificity, never by !important. Add a token to src/styles.css (both themes) and DESIGN.md if none fits.");
+  });
+
+  // Blink restyles the whole subtree under a `:has()` anchor (the pane's, with the terminal in it)
+  // on any change below it when some `:has()` rule's subject has nothing to match on (#3921).
+  it("gives every :has() rule a subject with a class, an id or a tag", () => {
+    const offenders = scan("src/**/*.css").flatMap((file) =>
+      selectors(read(file)).filter((selector) => hasPseudo(selector) && !subjectNamesElements(selector)).map((selector) => `${file}: ${selector}`));
+    fail(offenders, "A :has() rule whose subject is only `*`, :not(…) or other pseudo-classes makes Blink restyle every element under each :has() anchor on any DOM change, the terminal's rows included. Name the subject's class or tag (`> :is(.a, .b)`), or move the condition into a class the component sets.");
+  });
+
+  it("finds the subject of a :has() rule", () => {
+    expect(selectors("/* .a:has(b) > * {} */ .a:has(> .b) > :not(.c), .d > button { x: y } @media (width < 1px) { .e:has(.f) { x: y } }"))
+      .toEqual([".a:has(> .b) > :not(.c)", ".d > button", ".e:has(.f)"]);
+    expect(selectors(".a:has([data-note=\";\"]) > * { x: y } .b::after { content: \"}\" }")).toEqual([".a:has([data-note=\";\"]) > *", ".b::after"]);
+    expect([".a:HAS(.b) > *", "[data-selector=\":has(foo)\"] > *", ".a:not(:has(.b)) > *", ".a:ha\\s(.b) > *"].map(hasPseudo)).toEqual([true, false, true, true]);
+    expect([".a:has(> .b) > :not(.c)", ".a:has(.b) > *", ".a:has(.b) :is(:hover)", ".a:has(.b)>::before", ".a:has(.b) > :not(:is(.c))", ".a:has(.b) > :is(.c, *)", ".a:has(.b) > :where(.c > *)", ".a:has(.b) > :IS(.c, *)", ".a:has(.b) > [data-x]", ".a:has(.b) > :n\\ot(.c)"].filter(subjectNamesElements)).toEqual([]);
+    expect([".a:has(.b) > button", ".a:has(.b) > :not(.c).d", ".a:not(:has(.b)) .c", ".a:has(> .b)", "#a:has(.b) > :is(.c, .d)", ".a:has(.b) > :where(li)", ".a:has(.b) > .c[data-label=\"row 1\"]", ".a:has(.b) > :is(.c .d, e > f)", ".a:has(.b) > :is(.c, *).d", ".a:has(.b) > .é", ".a:has(.b) > [data-x=\":is(*)\"].c"].filter((selector) => !subjectNamesElements(selector))).toEqual([]);
   });
 
   it("reads declaration values, not selectors or comments", () => {
@@ -167,11 +249,11 @@ describe("icon cache", () => {
 
 describe("UI wording", () => {
   it("says New workspace, never New session", () => {
-    const offenders = [...scan("src/**/*.{ts,tsx}"), ...scan("site/**/*.{ts,tsx,html}"), "index.html"]
+    const offenders = [...scan("src/**/*.{ts,tsx}"), ...scan("site/**/*.{ts,tsx,html}"), "index.html", ...scan("tui/**/*.ts").filter((file) => !file.startsWith("tui/testing/"))]
       .filter((file) => !file.endsWith(".test.ts"))
       .flatMap((file) => read(file).split("\n").flatMap((line, index) =>
         /^\s*(?:\/\/|\/?\*)/.test(line) || !/\bNew [Ss]ession\b/.test(line) ? [] : [`${file}:${index + 1}: ${line.trim()}`]));
-    fail(offenders, "UI text says \"New workspace\", not \"New session\" (AGENTS.md, UI wording). Change the string and its i18n entries in src/lib/i18n.*.ts or src/lib/i18n/*.ts.");
+    fail(offenders, "UI text says \"New workspace\", not \"New session\" (AGENTS.md, UI wording). Change the string, and in src/ its i18n entries in src/lib/i18n.*.ts or src/lib/i18n/*.ts.");
   });
 });
 
@@ -185,6 +267,31 @@ describe("regular expressions", () => {
       return [...source.matchAll(/\(\?<[=!]/g)].map((match) => `${file}:${lineOf(source, match.index)}`);
     });
     fail(offenders, "No lookbehind ((?<= or (?<!) in the client: match the character before with the pattern, or check it in code (shared/lookbehind.ts).");
+  });
+});
+
+describe("opening outside the app", () => {
+  // src/lib/externalLink.ts is the one way out: the place that will decide which browser a link opens in
+  const OWNER = "src/lib/externalLink.ts";
+  const RAW = /["'\x60]_blank["'\x60]|\bwindow\s*\.\s*open\s*(?:\?\.\s*)?\(/gi;
+
+  it("goes through src/lib/externalLink.ts, never a raw new tab or window.open", () => {
+    const offenders = scan("src/**/*.{ts,tsx}").filter((name) => name !== OWNER && !/\.test\./.test(name)).flatMap((file) => {
+      const code = stripComments(read(file));
+      return [...code.matchAll(RAW)].map((match) => `${file}:${lineOf(code, match.index)}: ${match[0]}`);
+    });
+    fail(offenders, `A link that opens outside the app is an <ExternalLink kind=...> and an address opened from code goes to openExternal(url, kind), or reserveTab() for a sign-in, all from ${OWNER}: no target="_blank" or window.open( anywhere else.`);
+  });
+
+  it("tells a raw new tab from a comment that names one", () => {
+    const found = (code: string): number => [...stripComments(code).matchAll(RAW)].length;
+    expect(found('<a href={url} target="_blank" rel="noreferrer">')).toBe(1);
+    expect(found('link.target = "_blank";')).toBe(1);
+    expect(found('const tab = window.open("about:blank", "_blank");')).toBe(2);
+    expect(found('// opens a tab (`target="_blank"`) with window.open(')).toBe(0);
+    expect(found('<a target="_BLANK" href={url}>')).toBe(1);
+    expect(found("window.open (url); window.open?.(url);")).toBe(2);
+    expect(found("const blank = isBlank(window.opener);")).toBe(0);
   });
 });
 
@@ -256,7 +363,7 @@ describe("surfaces over the app", () => {
 });
 
 describe("terminal mount", () => {
-  // The attach stream is the only writer of the terminal and herdr owns scrollback (AGENTS.md): xterm
+  // The attach stream is the only writer of the terminal and herdr owns scrollback: xterm
   // keeps none, or the fit addon reserves a scrollbar column and the last columns go dead.
   it("creates every xterm Terminal with scrollback: 0", () => {
     const options: string[] = [];
@@ -271,7 +378,7 @@ describe("terminal mount", () => {
     }
     expect(options.length).toBeGreaterThan(0);
     fail(options.filter((entry) => !/\bscrollback:\s*0\b/.test(entry)).map((entry) => entry.split("\n")[0]!),
-      "Every new Terminal({...}) sets scrollback: 0: herdr owns scrollback, and xterm's own would reserve a scrollbar column (AGENTS.md).");
+      "Every new Terminal({...}) sets scrollback: 0: herdr owns scrollback, and xterm's own would reserve a scrollbar column.");
   });
 
   it("mounts the terminal before the attach reset effect runs", () => {
@@ -281,5 +388,28 @@ describe("terminal mount", () => {
     expect(mount).toBeGreaterThan(-1);
     expect(reset).toBeGreaterThan(-1);
     expect(mount).toBeLessThan(reset);
+  });
+});
+
+describe("herdr focus", () => {
+  const USERS: Record<string, string> = {
+    "src/lib/api.ts": "focusPane, the request itself",
+    "src/lib/machineContext.tsx": "hands focusPane to a machine's context",
+  };
+
+  it("asks herdr to move its focus from no selection", () => {
+    const uses: string[] = [];
+    const users = new Set<string>();
+    for (const file of scan("src/**/*.{ts,tsx}").filter((name) => !/\.test\./.test(name))) {
+      const code = stripComments(read(file));
+      for (const match of code.matchAll(/\bfocusPane\b|\/api\/pane\/focus/g)) {
+        users.add(file);
+        if (!(file in USERS)) uses.push(`${file}:${lineOf(code, match.index)}: ${code.split("\n")[lineOf(code, match.index) - 1]!.trim().slice(0, 160)}`);
+      }
+    }
+    fail(uses,
+      "Selecting a pane or tab in the browser never moves herdr's own focus: nothing in the client calls focusPane for a selection. A new caller is an explicit action that needs herdr to show the pane: list its file in USERS in src/conventions.test.ts with that action.");
+    fail(Object.keys(USERS).filter((file) => !users.has(file)),
+      "These files no longer name focusPane: remove them from USERS in src/conventions.test.ts.");
   });
 });

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
@@ -6,7 +6,10 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from "rea
 import type { MyPc } from "../lib/account/myPcs.ts";
 import { dashboardPcs, type DashboardPc } from "../lib/relay/dashboard.ts";
 import { loadSettings, SettingsProvider } from "../lib/settings.ts";
+import * as sheetHistory from "../lib/sheetHistory.ts";
 import { RelayDashboard, type RelayDashboardProps } from "./RelayDashboard.tsx";
+
+const loadedSheet = { ...sheetHistory };
 
 const AP = "wss://relay-ap.ovis.sh";
 const GLOBAL = "wss://relay.ovis.sh";
@@ -272,6 +275,103 @@ describe("RelayDashboard frame and routes", () => {
 
     const tabLinks = [...(/<nav class="relay-dash-tabs"[^>]*>([\s\S]*?)<\/nav>/.exec(html)?.[1] ?? "").matchAll(/<a [^>]*href="([^"]+)"[^>]*>/g)].map(([, href]) => href);
     expect(tabLinks).toEqual(["#overview", "#pcs", "#devices", "#relay", "#settings"]);
+  });
+
+  describe("a closed sheet's Back still on its way", () => {
+    let pending = false;
+    let pushed: string[] = [];
+    // what sheetHistory answers: the key of the entry the Back lands on (none where the browser tells no entries),
+    // and whether a popstate is that landing
+    let onto: string | null = "details";
+    let landed = false;
+    const details = () => renderer!.root.findAll((n) => n.props["data-pc-details"] !== undefined);
+    const back = async () => { await act(async () => { renderer!.root.find((n) => n.type === "button" && textOf(n).trim() === "Back").props.onClick(); }); };
+    const place = async (name: string) => { await act(async () => { renderer!.root.find((n) => n.type === "a" && n.props.className?.includes("relay-dash-nav-item") && textOf(n).includes(name)).props.onClick({ preventDefault() {}, button: 0 }); }); };
+    /** the sheet's Back lands on the details' entry, or the user's own Back or Forward lands elsewhere */
+    const lands = async (hash: string, sheets: boolean) => {
+      pending = false;
+      landed = sheets;
+      await navigateHash(hash, "popstate");
+    };
+    beforeEach(async () => {
+      pending = false;
+      pushed = [];
+      onto = "details";
+      landed = false;
+      mock.module("../lib/sheetHistory.ts", () => ({ ...loadedSheet, sheetBackOnto: () => (pending ? onto : null), sheetBackLanded: () => landed }));
+      const push = window.history.pushState.bind(window.history);
+      window.history.pushState = (data: unknown, unused: string, url?: string | URL | null) => { pushed.push(String(url)); push(data, unused, url); };
+      phoneMatches = true;
+      narrowMatches = true;
+      window.location.hash = `#pcs?pc=${IDS.home}`;
+      await mount();
+      expect(details()).toHaveLength(1);
+    });
+    afterEach(() => { mock.module("../lib/sheetHistory.ts", () => loadedSheet); });
+
+    it("keeps the details closed when that Back lands on them: the list's address is written then, and Back opens them again", async () => {
+      pending = true;
+      await back();
+      expect(details()).toHaveLength(0);
+      expect(pushed).toEqual([]);
+      expect(window.location.hash).toBe(`#pcs?pc=${IDS.home}`);
+      await lands(`#pcs?pc=${IDS.home}`, true);
+      expect(details()).toHaveLength(0);
+      expect(window.location.hash).toBe("#pcs");
+      expect(pushed).toEqual(["/#pcs"]);
+      await navigateHash(`#pcs?pc=${IDS.home}`, "popstate");
+      expect(details()).toHaveLength(1);
+    });
+
+    it("writes every place opened meanwhile, in order, so Back goes through each", async () => {
+      pending = true;
+      await back();
+      await place("Devices");
+      expect(pushed).toEqual([]);
+      await lands(`#pcs?pc=${IDS.home}`, true);
+      expect(pushed).toEqual(["/#pcs", "/#devices"]);
+      expect(renderer!.root.findByType("h1").children.join("")).toBe("Devices");
+    });
+
+    it("lets the user's own Back or Forward win over what it held", async () => {
+      pending = true;
+      await back();
+      await lands("#relay", false);
+      expect(pushed).toEqual([]);
+      expect(window.location.hash).toBe("#relay");
+      expect(renderer!.root.findByType("h1").children.join("")).toBe("Relay");
+    });
+
+    it("keeps what it held for a dashboard mounted before that Back lands", async () => {
+      pending = true;
+      await back();
+      await act(async () => { renderer!.unmount(); });
+      await mount();
+      expect(details()).toHaveLength(0);
+      await lands(`#pcs?pc=${IDS.home}`, true);
+      expect(details()).toHaveLength(0);
+      expect(pushed).toEqual(["/#pcs"]);
+    });
+
+    it("lets a Back of the user's own made while no dashboard is mounted win over what it held", async () => {
+      pending = true;
+      await back();
+      await act(async () => { renderer!.unmount(); });
+      pending = false;
+      window.location.hash = "#overview";
+      window.location.href = "https://app.ovis.sh/#overview";
+      window.dispatchEvent(new Event("popstate"));
+      await mount();
+      expect(pushed).toEqual([]);
+      expect(renderer!.root.findByType("h1").children.join("")).toBe("Overview");
+    });
+
+    it("holds nothing where sheetHistory names no entry the Back lands on (no Navigation API), and writes the address at once as before", async () => {
+      onto = null;
+      pending = true;
+      await back();
+      expect(pushed).toEqual(["/#pcs"]);
+    });
   });
 
   it("loads directly into any of the five routes, updates aria-current on Back/Forward, and moves focus to the view heading only on route changes", async () => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { NEW_PC_MS, type MyPc } from "../account/myPcs.ts";
 import type { PcStatus } from "./pcStatus.ts";
 import type { DashboardPc } from "./dashboard.ts";
-import { dashboardModel, dashboardPcs, relayHost } from "./dashboard.ts";
+import { dashboardModel, dashboardPcs, dashboardState, relayHost } from "./dashboard.ts";
 
 const NOW = Date.parse("2026-11-08T12:00:00Z");
 const GLOBAL = "wss://relay.ovis.sh";
@@ -81,6 +81,41 @@ describe("dashboardModel provenance", () => {
   it("puts no probe on a PC this device is not paired with", () => {
     const m = model([pc("join", "needs-approval")], new Map([["join", { kind: "offline", reason: "pc" }]]));
     expect(m.rows[0]?.check).toBeNull();
+  });
+});
+
+describe("this device's own check of a paired PC", () => {
+  const answered: PcStatus = { kind: "answered", route: "relay", relay: GLOBAL, rttMs: 41 };
+  const nobody: PcStatus = { kind: "offline", reason: "pc" };
+  const unreached: PcStatus = { kind: "offline", reason: "relay" };
+  const turnedAway: PcStatus = { kind: "offline", reason: "refused" };
+
+  // `paired`: the account heard from it lately; `offline`: it confirmed it has not for fifteen minutes (a failed read ages
+  // no row, accountController.ts). An answer beats that Offline, nobody at the relay is Machine offline whatever the account
+  // last heard, and a relay this device could not reach, or that turned it away, says nothing of the PC, so the account's
+  // word stands beside it. A re-check in flight keeps the last finished check's word; before any has finished, the account's
+  // word stands
+  it.each([
+    ["paired", null, "paired"], ["paired", { kind: "checking" }, "paired"], ["paired", answered, "paired"],
+    ["paired", nobody, "offline"], ["paired", unreached, "unreachable"], ["paired", turnedAway, "unreachable"],
+    ["paired", { kind: "checking", previous: nobody }, "offline"], ["paired", { kind: "checking", previous: unreached }, "unreachable"],
+    ["offline", null, "offline"], ["offline", { kind: "checking" }, "offline"], ["offline", answered, "paired"],
+    ["offline", nobody, "offline"], ["offline", unreached, "offline"], ["offline", turnedAway, "offline"],
+    ["offline", { kind: "checking", previous: answered }, "paired"], ["offline", { kind: "checking", previous: unreached }, "offline"],
+  ] as const)("reads a listed PC the account calls %s, checked %j, as %s", (state, check, expected) => {
+    expect(dashboardState({ state, listed: true }, check)).toBe(expected);
+  });
+
+  it("reads a pairing the account does not list by the check alone", () => {
+    expect([null, answered, nobody, unreached].map((check) => dashboardState({ state: "paired", listed: false }, check))).toEqual(["unchecked", "paired", "offline", "unreachable"]);
+  });
+
+  it("puts a PC nobody answered for under Offline and Needs you, and one this device could not reach under Needs you alone: neither is Ready", () => {
+    const m = model([pc("off", "paired"), pc("far", "paired"), pc("up", "paired")], new Map<string, PcStatus>([["off", nobody], ["far", unreached], ["up", answered]]));
+    expect(m.counts).toEqual({ ready: 1, needsYou: 2, offline: 1, paired: 3 });
+    expect([m.filters.ready, m.filters.offline, m.filters.needs]).toEqual([["up"], ["off"], ["far", "off"]]);
+    expect(m.attention.map(({ server_id, reason }) => [server_id, reason])).toEqual([["far", "unreachable"], ["off", "offline"]]);
+    expect(Object.fromEntries(m.map.hubs[0]?.nodes.map((node) => [node.server_id, node.state]) ?? [])).toEqual({ far: "unreachable", off: "offline", up: "paired" });
   });
 });
 

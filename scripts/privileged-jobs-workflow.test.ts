@@ -852,8 +852,11 @@ describe("a whole-run run (a Pages run, or one whose privileged job takes an art
 
   test("the remote bundles and the Rust PTY host take the pull-request Mac form, and their publishing jobs skip pull requests", () => {
     expect(repository["remote-bundles.yml"]!.jobs.bundle!["runs-on"]).toBe(MAC_PULL_REQUEST);
+    expect(repository["remote-bundles-platforms.yml"]!.jobs.bundle!["runs-on"]).toBe(MAC_PULL_REQUEST);
     expect(repository["pty-sidecar.yml"]!.jobs.build!["runs-on"]).toBe(MAC_PULL_REQUEST);
     expect(pullRequestProblems(repository, "remote-bundles.yml")).toEqual([]);
+    expect(pullRequestProblems(repository, "remote-bundles-platforms.yml")).toEqual([]);
+    expect(Object.keys(repository["remote-bundles-platforms.yml"]!.on as object)).toEqual(["pull_request"]);
     expect(pullRequestProblems(repository, "pty-sidecar.yml")).toEqual([]);
   });
 

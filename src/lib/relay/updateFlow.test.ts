@@ -11,7 +11,7 @@ import { forgetSavedPc, mountRelayShell, type RelayShellMount } from "./shell.ts
 import { exportPublicKey, generateKeyPair } from "../../../shared/relay-e2ee.ts";
 import { deriveServerId } from "../../../shared/relay-server-proof.ts";
 import { encodeOffer } from "../../../shared/relay-offer.ts";
-import { observedVersionOf, type RelayDevice, type RelayDeviceStore, type SavedDevice } from "./device.ts";
+import { observedVersionOf, type RelayDevice, type RelayDeviceStore, type ShellDeviceStore, type SavedDevice } from "./device.ts";
 
 const storageKeys = ["localStorage", "sessionStorage"] as const;
 const descriptors = [...storageKeys, "window"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
@@ -35,10 +35,11 @@ function webStorage(): { readonly local: Map<string, string>; readonly session: 
   return { local, session };
 }
 
-function memoryStore(devices: Map<string, RelayDevice>): RelayDeviceStore {
+function memoryStore(devices: Map<string, RelayDevice>): ShellDeviceStore {
   return {
     get: async (id) => devices.get(id), list: async () => [...devices.values()],
     remove: async (id) => { devices.delete(id); },
+    removeRow: async (id, row) => { if (devices.get(id)?.device_id !== row) return false; devices.delete(id); return true; },
     update: async (id, change) => { const next = change(devices.get(id)); devices.set(id, next); return next; },
   };
 }
@@ -179,6 +180,7 @@ function shellFixture() {
     store: {
       get: async (id) => devices.get(id), list: async () => [...devices.values()],
       remove: async (id) => { devices.delete(id); },
+      removeRow: async (id, row) => { if (devices.get(id)?.device_id !== row) return false; devices.delete(id); return true; },
       update: async (id, change) => { const next = change(devices.get(id)); devices.set(id, next); return next; },
     },
     renderApp: () => { apps++; return { render() {}, unmount() {} }; },

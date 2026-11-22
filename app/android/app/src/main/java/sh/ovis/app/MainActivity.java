@@ -49,6 +49,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import sh.ovis.push.AlertProof;
 import sh.ovis.push.OvisMessagingService;
@@ -165,10 +166,11 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(OvisAuthPlugin.class);
         registerPlugin(SaveImagePlugin.class);
         registerPlugin(OvisDirectPlugin.class);
+        registerPlugin(OvisSshPlugin.class);
         String link = takeAppLink(getIntent(), savedInstanceState == null);
         if (link != null) openAppLink(link);
         else openAlert(getIntent(), savedInstanceState == null);
-        String pc = PCStore.link != null ? null : PCStore.current(this);
+        String pc = OvisSshPlugin.opening(this, PCStore.link != null ? null : PCStore.current(this));
         String origin = pc == null ? null : PCStore.origin(pc);
         String host = origin == null ? null : Uri.parse(origin).getHost();
         if (host != null) {
@@ -200,6 +202,10 @@ public class MainActivity extends BridgeActivity {
                 .create();
         }
         super.onCreate(savedInstanceState);
+        // CapacitorCookies makes the WebView's cookies the process's CookieHandler, so the native
+        // CapacitorHttp would carry them, an SSH PC's tunnel gate among them, for any page with the
+        // bridge to any address; nothing in the app uses it, and the WebView keeps its own cookies
+        java.net.CookieHandler.setDefault(null);
         keepClearOfNavigationButtons();
         String appOrigin = bridge.getScheme() + "://" + bridge.getHost();
         getOnBackPressedDispatcher().addCallback(this, pageBack);
@@ -239,6 +245,7 @@ public class MainActivity extends BridgeActivity {
                             state.put("name", last == null ? "" : PCStore.names(this).optString(last, ""));
                             state.put("failure", PCStore.failure == null ? "" : PCStore.failure);
                             state.put("kind", PCStore.failureKind == null ? "" : PCStore.failureKind);
+                            state.put("command", PCStore.failureCommand == null ? "" : PCStore.failureCommand);
                             replyProxy.postMessage(state.toString());
                         } else if ("retry".equals(asked)) {
                             retry();
@@ -322,6 +329,10 @@ public class MainActivity extends BridgeActivity {
                     @Override
                     public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                         Uri url = request.getUrl();
+                        // an SSH PC's host at another port would get that PC's gate cookie (SshPcs.otherLoopbackPort)
+                        if (SshPcs.otherLoopbackPort(url.toString())) {
+                            return new WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", null, new ByteArrayInputStream(new byte[0]));
+                        }
                         if (
                             signingIn &&
                             request.isForMainFrame() &&
@@ -358,7 +369,8 @@ public class MainActivity extends BridgeActivity {
                         if (request.isForMainFrame()) {
                             pageFailed = true;
                             String reason = response.getReasonPhrase();
-                            PCStore.fail("HTTP " + response.getStatusCode() + (reason == null || reason.isEmpty() ? "" : " " + reason), null);
+                            // an SSH PC's tunnel said why itself (OvisSshPlugin), in more words than its 503
+                            if (!sshFailure(response)) PCStore.fail("HTTP " + response.getStatusCode() + (reason == null || reason.isEmpty() ? "" : " " + reason), null);
                         }
                         super.onReceivedHttpError(view, request, response);
                     }
@@ -391,9 +403,10 @@ public class MainActivity extends BridgeActivity {
                         // Chromium reports a page that failed as loaded too, before the error page;
                         // only a page of this very PC (its scheme, host and port, and its scope for a relay PC) counts
                         String url = webView.getUrl();
-                        if (pageFailed || url == null || !PCStore.belongs(url, pc)) return;
+                        // a page that finishes once this activity is leaving (reopen) is not the page the app shows next
+                        if (leaving || pageFailed || url == null || !PCStore.belongs(url, pc)) return;
                         signingIn = false;
-                        PCStore.pendingStart = null;
+                        PCStore.startLoaded(pc);
                         PCStore.fail(null, null);
                         PCStore.redirects = 0;
                         pageLoaded = true;
@@ -800,12 +813,19 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * A link to pair from waits for the connect screen (PCStore.link); a view of a PC (a file, a pane)
-     * opens that PC at that view when the app has it saved, as the browser would have; for any other
-     * PC the app has nothing to show.
+     * A link to pair from opens at its PC's page when the app shows the hosted shell (its account's
+     * list), so a scanned QR code lands on that PC; otherwise it waits for the connect screen
+     * (PCStore.link). A view of a PC (a file, a pane) opens that PC at that view when the app has it
+     * saved, as the browser would have; for any other PC the app has nothing to show.
      */
     private boolean openAppLink(String link) {
         if (PCStore.pairingLink(link)) {
+            if (PCStore.showsHostedShell(PCStore.current(this))) {
+                PCStore.open(this, PCStore.appScope(link), link);
+                PCStore.fail(null, null);
+                PCStore.redirects = 0;
+                return true;
+            }
             PCStore.link = link;
             return true;
         }
@@ -831,6 +851,19 @@ public class MainActivity extends BridgeActivity {
         intent.setData(null);
         boolean fromRecents = (intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0;
         return fresh && !fromRecents ? link : null;
+    }
+
+    /**
+     * Whether `response` is an SSH PC tunnel's failure (SshTunnel.FAILURE_HEADER) whose reason the tunnel already
+     * gave (OvisSshPlugin.failed). The header alone is not enough: the PC's own servers can send it through the tunnel.
+     */
+    private static boolean sshFailure(WebResourceResponse response) {
+        String kind = PCStore.failureKind;
+        if (kind == null || !kind.startsWith("ssh-")) return false;
+        Map<String, String> headers = response.getResponseHeaders();
+        if (headers == null) return false;
+        for (String name : headers.keySet()) if (SshTunnel.FAILURE_HEADER.equalsIgnoreCase(name)) return true;
+        return false;
     }
 
     /**

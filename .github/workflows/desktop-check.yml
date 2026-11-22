@@ -1,0 +1,79 @@
+name: Desktop app check
+# A pull request that changes the desktop app runs the app's unit tests, its type check and its build on
+# Linux x64 and Windows x64: children.test.ts has Windows-only cases, and these are two of the three
+# packagers. No test is macOS-only, but the ones that read the host (a live process's start through its
+# own ps) run on a Mac only in desktop.yml, as the macOS and Linux arm64 builds do: every day on main, for
+# a pull request that changes desktop.yml itself, and from Actions. A release builds without the tests.
+on:
+  pull_request:
+    paths:
+      - 'app/electron/**'
+      - '.github/workflows/desktop-check.yml'
+permissions:
+  contents: read
+concurrency:
+  group: desktop-check-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check:
+    name: check (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x64, os: ubuntu-24.04 }
+          - { target: win32-x64, os: windows-2025 }
+    # GitHub's images: the Linux tests start a real Electron, which needs GTK and other libraries the
+    # self-hosted runner image (scripts/self-hosted-runner/Dockerfile: Chromium's only) does not have, and
+    # a job there cannot install them
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    # the steps are bash on both runners (Git Bash on Windows)
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+          no-cache: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Install the client's packages
+        run: bun install --frozen-lockfile
+      - name: Install the app's packages
+        working-directory: app/electron
+        run: bun install --frozen-lockfile
+      # the built-in browser's tests run a real Electron without a display (Linux only): its binary, which
+      # electron-builder fetches on its own later, is not there after bun install
+      - name: Electron for the built-in browser tests
+        if: startsWith(matrix.target, 'linux-')
+        working-directory: app/electron
+        run: node node_modules/electron/install.js
+      - name: Unit tests
+        working-directory: app/electron
+        run: bun test
+      - name: Type check
+        working-directory: app/electron
+        run: bun run typecheck
+      # unsigned, with no release tag and no update feed, as desktop.yml builds when it only builds: both are
+      # set empty here, so a .env file in the pull request cannot give the build a feed
+      - name: Build ${{ matrix.target }}
+        working-directory: app/electron
+        env:
+          OVIS_RELEASE_TAG: ''
+          OVIS_UPDATE_FEED: ''
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: bun run dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ovis-desktop-check-${{ matrix.target }}
+          path: |
+            app/electron/dist/Ovis-*
+            app/electron/dist/latest*.yml
+          if-no-files-found: error

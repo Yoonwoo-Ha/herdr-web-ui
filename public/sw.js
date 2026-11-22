@@ -250,6 +250,8 @@ self.addEventListener("fetch", (event) => {
     }
   }
 
+  // a sign-in's return carries its code in the address: never answered or kept by this worker
+  if (request.mode === "navigate" && url.pathname === "/callback") return;
   if (request.mode === "navigate") {
     event.respondWith(
       (async () => {

@@ -13,13 +13,13 @@
 import type { Machine } from "../../shared/machines.ts";
 import { paneTitle } from "../../shared/notify-policy.ts";
 import type { HerdrPane, SessionSnapshot, TabInfo, WorkspaceInfo } from "../../shared/protocol.ts";
+import { worktreeGroups } from "../../shared/worktree-groups.ts";
 import { rosterPanes } from "./dagPane.ts";
 import type { Translate } from "./i18n.ts";
 import { matchesQuery } from "./paletteSearch.ts";
 import { shortPathTitle, stripPaneChrome } from "./paneName.ts";
 import { agentTabName, sidebarAgents, type SidebarAgent } from "./sidebarAgents.ts";
 import type { WorkspaceGroup } from "./sidebarPins.ts";
-import { worktreeGroups } from "./workspaceOrder.ts";
 
 export interface SidebarSelection {
   machineId: string;

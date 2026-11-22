@@ -87,7 +87,8 @@ async function fixture(mode: Mode, newSessions: boolean | undefined, enforceAt =
   const passTime = { ahead: 0 };
   const passClock = { now: () => Date.now() + passTime.ahead, setTimeout: (callback: () => void, ms: number) => { const timer = setTimeout(callback, ms); return () => clearTimeout(timer); } };
   const service = new RelayService({ stateDir, relay: origin, regionalRelays: [], connect, random: () => 0, accountService: "https://account.test", accountFetch, ovisRelays: [origin], pairCodeRelay: origin, passClock });
-  const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, sidecar: false, relay: service });
+  // These clients use Step 1 pairing to exercise the relay's new-session pass versions.
+  const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, sidecar: false, relay: service, accountOpensAll: false });
   cleanup.push(async () => { await service.shutdown(); app.stop(); });
   const base = `http://127.0.0.1:${app.port}`;
   const nameAccount = async (account: string) => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { CircleCheck, CircleDot, CircleMinus, CircleX, ExternalLink, GitBranch, GitMerge, MessageSquare, RefreshCw } from "lucide-react";
+import { CircleCheck, CircleDot, CircleMinus, CircleX, ExternalLink as ExternalLinkIcon, GitBranch, GitMerge, MessageSquare, RefreshCw } from "lucide-react";
 
 import "./PullRequestPanel.css";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
@@ -12,6 +12,7 @@ import { useLocale, useT } from "../lib/i18n.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { skeletonRows } from "../lib/skeleton.ts";
 import { checkDraft, mergeBlockedWord, mergeLabel, pullRequestErrorMessage, threadDraft } from "../lib/pullRequest.ts";
+import { ExternalLink } from "../lib/externalLink.ts";
 
 export interface PullRequestPanelProps {
   paneId: string;
@@ -99,10 +100,10 @@ export function PullRequestPanel({ paneId, directory, machineName }: PullRequest
       <div className="pull-request-bar">
         {view === null
           ? <span className="pull-request-heading" title={directory || undefined}><span dir="ltr">{fallbackHeading}</span></span>
-          : <a className="pull-request-heading pull-request-title" href={view.url} target="_blank" rel="noreferrer" title={view.title}>
+          : <ExternalLink kind="link" className="pull-request-heading pull-request-title" href={view.url} title={view.title}>
             <span className="pull-request-number">#{view.number}</span> <span>{view.title}</span>
-            <ExternalLink aria-hidden="true" />
-          </a>}
+            <ExternalLinkIcon aria-hidden="true" />
+          </ExternalLink>}
         <button type="button" className="icon-button" aria-label={t("Refresh pull request")} title={t("Refresh pull request")} disabled={load.status === "pending"} onClick={read}>
           <RefreshCw aria-hidden="true" />
         </button>
@@ -132,7 +133,7 @@ export function PullRequestPanel({ paneId, directory, machineName }: PullRequest
                     <Icon className="pull-request-check-icon" aria-hidden="true" />
                     <span className="visually-hidden">{checkStateWord(t, check.state)}</span>
                     <span className="pull-request-check-name">{check.workflow !== null && <span className="pull-request-workflow">{check.workflow} / </span>}{check.name}</span>
-                    {check.url !== null && <a className="icon-button pull-request-link" href={check.url} target="_blank" rel="noreferrer" aria-label={t("Open {name} on GitHub", { name: check.name })} title={t("Open on GitHub")}><ExternalLink aria-hidden="true" /></a>}
+                    {check.url !== null && <ExternalLink kind="link" className="icon-button pull-request-link" href={check.url} aria-label={t("Open {name} on GitHub", { name: check.name })} title={t("Open on GitHub")}><ExternalLinkIcon aria-hidden="true" /></ExternalLink>}
                     {check.state === "fail" && sendButton(key, () => void sendCheck(view, check, key))}
                   </div>
                   {sentNote(key)}
@@ -154,7 +155,7 @@ export function PullRequestPanel({ paneId, directory, machineName }: PullRequest
                     <MessageSquare className="pull-request-check-icon" aria-hidden="true" />
                     <span className="pull-request-thread-place" dir="ltr">{breakAfterSlashes(thread.line === null ? thread.path : `${thread.path}:${thread.line}`)}</span>
                     {thread.outdated && <span className="pull-request-tag">{t("Outdated")}</span>}
-                    {thread.url !== null && <a className="icon-button pull-request-link" href={thread.url} target="_blank" rel="noreferrer" aria-label={t("Open this thread on GitHub")} title={t("Open on GitHub")}><ExternalLink aria-hidden="true" /></a>}
+                    {thread.url !== null && <ExternalLink kind="link" className="icon-button pull-request-link" href={thread.url} aria-label={t("Open this thread on GitHub")} title={t("Open on GitHub")}><ExternalLinkIcon aria-hidden="true" /></ExternalLink>}
                     {sendButton(key, () => sendThread(view, thread, key))}
                   </div>
                   <p className="pull-request-comment">

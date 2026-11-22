@@ -19,7 +19,8 @@ The Mac (`app/mac`) and Windows (`app/windows`) shells stay as they are; this ap
    `hc update --from`, as hc's own installer does, and the terminals keep running. A copy newer than
    the bundled one (left by a newer app before a rollback) is kept, since hc does not go back.
 2. Starts the Ovis server on the bundled Bun with `OVIS_RUNTIME=herdr-core`, `OVIS_HC_BIN` set to
-   that hc, `HOST=127.0.0.1` and its own state folder (`<user data>/server`, or
+   that hc with `OVIS_HC_BIN_BUNDLED=1` (the app's own hc gets 10 seconds to answer, and the server
+   finds another and says so in its log when it does not), `HOST=127.0.0.1` and its own state folder (`<user data>/server`, or
    `OVIS_STATE_DIR`), and `OVIS_DESKTOP_APP=1`, so Settings → About says updates come with the app. The
    server is the same code the installer runs; the app only starts it.
 3. Opens a window on the server's address. It keeps the port it had last time while that port is
@@ -48,6 +49,17 @@ when the Ovis pages have it (Korean, Japanese, Chinese; `src/text.ts`), English 
   default browser. A blank window a page opens for a sign-in sends its address to the default
   browser and closes. Only the microphone (dictation, never the camera), the clipboard,
   notifications and full screen are granted, and only to the server's own pages.
+- **Browser for links** (Settings → Chat → Files, system default unless chosen): a web link the
+  page opens (`kind` link in `src/lib/externalLink.ts`, through the `ovisBrowsers` bridge) opens in
+  the browser chosen there; sign-ins, Ovis pages and mailto stay with the default browser.
+  `src/browsers.ts` lists the browsers: Linux's `.desktop` files that take https, Windows'
+  `StartMenuInternet` clients, the apps a Mac's LaunchServices opens https with, and agent-browser
+  when its program is on the PC (headed, in a session `ovis-links` of its own). A page names one by
+  its id, and only the server's own page (its main frame, by its real origin) may ask; the program
+  runs without a shell, the address as one argument. A registration that names a shell or another
+  interpreter, or puts the address inside a larger or quoted argument, is not offered. When the chosen browser
+  is gone or fails at once, the default browser opens the link and a notification says so. The
+  choice is kept in `<user data>/link-browser.json`.
 - **Links to a pane**: another program on the PC shows a pane in the window, instead of a browser
   tab, with an `ovis://open` link: `ws` (the workspace's id), `pane`, and optionally `view`
   (`terminal` or `chat`) and `machine` (another PC), as the server's own deep links name them. The
@@ -250,7 +262,8 @@ bun scripts/e2e.ts --update --from-tray       # the same, restarting from the tr
 
 It covers the first launch (connection screen, then Ovis), a terminal and an agent pane (a
 stand-in `claude`) in the app's core, quit and relaunch (the terminals keep running, the address
-stays), the tray's items, a killed app (the next start ends the server left behind) and, with
+stays), the tray's items, Browser for links on Linux (a browser of the run's own is listed, chosen
+and given a link as one argument), a killed app (the next start ends the server left behind) and, with
 `--update`, the app's updates: an AppImage in a folder that cannot be written keeps them off; a
 downloaded update's one notification and that notification's click, its line in the window and
 on the connection screen, a later check that leaves the held version alone, the downloaded file

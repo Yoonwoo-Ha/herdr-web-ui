@@ -8,7 +8,7 @@ import { INBOX_FROM_KEY, type useInbox } from "./useInbox.ts";
 import { pageAddress, pageSearch } from "./pageQuery.ts";
 import type { SelectionMark } from "./selectionMark.ts";
 import { settingsEntry, settingsSteppedOff } from "./settingsHistory.ts";
-import { sheetSteppedOff } from "./sheetHistory.ts";
+import { onSheetTraversalOver, sheetSteppedOff, sheetTraversalPending } from "./sheetHistory.ts";
 import type { useFilePanels } from "./useFilePanels.ts";
 import type { useNewSessionState } from "./useNewSessionDialog.ts";
 import type { usePaneLens } from "./usePaneLens.ts";
@@ -113,6 +113,10 @@ export function useAddressBar({ inbox, mode, newSessionOpen, newSessionMachineId
   useEffect(() => { forgetLeftFiles(paneLive); }, [machines, forgetLeftFiles, paneLive]);
   useEffect(() => {
     if (locked !== false || machines.length === 0 || snapshot === null || !linkLanded) return;
+    // A sheet's own traversal (its step off its entry, or its way back onto the entry a Back left)
+    // has the history on another entry until it lands; release the write when its popstate lands,
+    // or when the sheets say it is over with none (a way back dropped, then the entry made by a tap).
+    if (sheetTraversalPending()) { heldWrite.current = true; return; }
     if (linkWorkspaceId === undefined) {
       const written = writtenLink.current;
       if (listWritten.current && !newSessionOpen && written?.create && !popUnread(window.event, readPop.current)) {
@@ -232,6 +236,7 @@ export function useAddressBar({ inbox, mode, newSessionOpen, newSessionMachineId
       if (pop !== 0 && !popMoving.current) { popStill.current = pop; setPopSettled((count) => count + 1); }
     };
     window.addEventListener("popstate", decidePop);
-    return () => window.removeEventListener("popstate", decidePop);
+    const leaveTraversal = onSheetTraversalOver(() => { if (heldWrite.current) { heldWrite.current = false; setReleased((count) => count + 1); } });
+    return () => { window.removeEventListener("popstate", decidePop); leaveTraversal(); };
   }, []);
 }

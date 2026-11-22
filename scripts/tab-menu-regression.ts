@@ -581,6 +581,10 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
     assert.deepEqual(phoneItems.slice(2), ["Pane and tab…", "Open agent inbox"], "More ends in Pane and tab… and Open agent inbox on a phone");
     const paneSheet = page.getByRole("dialog", { name: "Pane and tab…", exact: true });
     const openPaneSheet = async (): Promise<void> => {
+      // Every entry to this submenu needs the parent sheet to finish rising
+      // and to own focus; some entry points reopen More inside a roster check.
+      await tabSheet.locator(":focus").waitFor({ state: "attached" });
+      await sheetsSettled(page);
       await tabSheet.getByRole("button", { name: "Pane and tab…", exact: true }).tap();
       await paneSheet.waitFor();
       await sheetsSettled(page);

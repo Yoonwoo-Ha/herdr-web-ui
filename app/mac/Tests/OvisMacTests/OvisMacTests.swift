@@ -200,3 +200,20 @@ final class LogRotationTests: XCTestCase {
         XCTAssertEqual(try String(contentsOfFile: "\(target).1", encoding: .utf8).count, 64)
     }
 }
+
+final class LinkBrowsersTests: XCTestCase {
+    func testHandsOnlyAWebAddressToTheChosenBrowser() {
+        XCTAssertEqual(LinkBrowsers.webAddress("https://example.com/a?b=c")?.host, "example.com")
+        XCTAssertNotNil(LinkBrowsers.webAddress("HTTP://example.com"))
+        for refused in ["mailto:team@ovis.sh", "file:///etc/passwd", "javascript:alert(1)", "ovis://open?pane=t3", "x-other-app://open", "not an address"] {
+            XCTAssertNil(LinkBrowsers.webAddress(refused), refused)
+        }
+    }
+
+    func testFindsAgentBrowserOnThePathOrWhereNpmBunAndHomebrewPutIt() {
+        let at = { (paths: [String]) in { (path: String) in paths.contains(path) } }
+        XCTAssertEqual(LinkBrowsers.agentBrowserProgram(path: "/usr/bin:/opt/bin", home: "/Users/u", isProgram: at(["/opt/bin/agent-browser", "/opt/homebrew/bin/agent-browser"]))?.path, "/opt/bin/agent-browser")
+        XCTAssertEqual(LinkBrowsers.agentBrowserProgram(path: "/usr/bin", home: "/Users/u", isProgram: at(["/Users/u/.bun/bin/agent-browser"]))?.path, "/Users/u/.bun/bin/agent-browser")
+        XCTAssertNil(LinkBrowsers.agentBrowserProgram(path: "", home: "/Users/u", isProgram: at([])))
+    }
+}

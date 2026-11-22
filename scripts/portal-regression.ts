@@ -58,9 +58,11 @@ const openPhoneSettings = async (page: Page): Promise<void> => {
   await page.locator('.settings-dialog [data-section="devices"]').getByRole("button", { name: "Add a connection", exact: true }).click();
   const connect = settingsOf(page);
   await connect.waitFor({ timeout: 10_000 });
-  const devicesTab = connect.locator('.connect-tabs [data-tab="devices"]');
+  const devicesTab = connect.locator('.connect-ways [data-tab="devices"]');
   if (await devicesTab.count() > 0) await devicesTab.click();
   await connect.locator('[data-tab-panel="devices"]').waitFor({ timeout: 10_000 });
+  const local = connect.locator('.connect-devices-ways [data-way="local"]');
+  if (await local.count() > 0) await local.click();
 };
 const settingsOf = (page: Page) => page.getByRole("dialog", { name: "Add a connection", exact: true });
 const reopenPhoneSettings = async (page: Page): Promise<void> => {
@@ -117,7 +119,7 @@ try {
     hostname: "127.0.0.1",
     stateDir,
     token,
-    tailscaleOwner: null,
+    tailscaleOwner: null, accountOpensAll: true,
     tailscaleServeOnly: false,
     portal,
     usage: new UsageService(undefined, []),
@@ -143,8 +145,13 @@ try {
   await ownerPage.getByLabel("Access token", { exact: true }).fill(token);
   await ownerPage.getByRole("button", { name: "Unlock", exact: true }).click();
   await ownerPage.locator(".conn-live").waitFor({ state: "attached", timeout: 15_000 });
-  const ownerAuth = await ownerPage.evaluate(async () => (await (await fetch("/api/health?scope=bridge")).json()).auth);
-  assert.deepEqual(ownerAuth, { required: false, authenticated: true, via: "token", role: "drive" }, "the UI token login receives the owner role");
+  const ownerAuth = () => ownerPage.evaluate(async () => (await (await fetch("/api/health?scope=bridge")).json()).auth);
+  const tokenOwner = { required: false, authenticated: true, via: "token", role: "drive" };
+  assert.deepEqual(await ownerAuth(), tokenOwner, "an unbound token owner drives without a Step 2 lock hint");
+  server.context.services.devices.bindByService("acct_portal_fixture");
+  assert.deepEqual(await ownerAuth(), { ...tokenOwner, own_window: true }, "binding the same PC enables its own-window hint");
+  assert.equal(server.context.services.devices.clearAccountBinding("unlisted", "account"), true);
+  assert.deepEqual(await ownerAuth(), tokenOwner, "leaving the account restores the unbound portal fixture");
 
   await openPhoneSettings(ownerPage);
   const ownerSettings = settingsOf(ownerPage);
@@ -297,7 +304,7 @@ try {
     await reopenPhoneSettings(page);
     await asked;
     const settings = settingsOf(page);
-    await settings.locator('[data-tab-panel="devices"]').locator(":scope > .connect-section, :scope > .settings-description").first().waitFor({ timeout: 10_000 });
+    await settings.locator('[data-tab-panel="devices"]').locator(".connect-section, :scope > .settings-description").first().waitFor({ timeout: 10_000 });
     assert.equal(await settings.locator('section[aria-label="Portal"]').count(), 0, "an older server offers no Portal on Phones and devices");
     assert.equal(await settings.locator("#portal-relay").count(), 0, "an older server's page offers no relay");
   }
@@ -372,7 +379,7 @@ try {
   await blockedPage.locator(".conn-live").waitFor({ state: "attached", timeout: 15_000 });
   await openPhoneSettings(blockedPage);
   const blockedSettings = settingsOf(blockedPage);
-  await blockedSettings.locator('[data-tab-panel="devices"]').locator(":scope > .connect-section, :scope > .settings-description").first().waitFor({ timeout: 10_000 });
+  await blockedSettings.locator('[data-tab-panel="devices"]').locator(".connect-section, :scope > .settings-description").first().waitFor({ timeout: 10_000 });
   assert.equal(await blockedSettings.locator('section[aria-label="Portal"]').count(), 0, "a Portal that needs a configured token is not offered");
   assert.equal(await blockedSettings.getByRole("button", { name: "Start", exact: true }).count(), 0, "Portal Start is unavailable without a configured token");
   assert.deepEqual(pageErrors, [], "the token-required page has no browser errors");

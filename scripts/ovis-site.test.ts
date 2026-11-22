@@ -2,6 +2,7 @@ import { describe, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { BETA_LINKS } from "../ovis-site/assets/beta.js";
+import { INSTALLERS } from "../ovis-site/assets/platform.js";
 import { fail, files, read, repo } from "./source-scan.ts";
 
 const ORIGIN = "https://ovis.sh";
@@ -341,6 +342,13 @@ describe("ovis.sh download links", () => {
       ...(released.has(name) ? [] : [`${name} (${linked.get(name) ?? "platform.js"}): no release attaches it; .github/workflows/desktop.yml checks for ${desktop.join(", ")}`]),
       ...(rules.get(`/${name}`) === `https://github.com/devswha/ovis/releases/latest/download/${name}` ? [] : [`${name}: no rule /${name} -> releases/latest/download/${name} in ovis-site/_redirects`]),
     ]), "Download links must name a file the release uploads, under the same name, through ovis-site/_redirects:");
+  });
+
+  it("show the release line only for a release that holds every installer the rows link", () => {
+    const installers = desktop.filter((name) => /\.(dmg|exe|deb|AppImage)$/.test(name));
+    const want = [...linked.keys()].flatMap((name) => name.includes("${") ? ["x64", "arm64"].map((cpu) => name.replace(/\$\{\w+\}/, cpu)) : [name]).filter((name) => installers.includes(name));
+    fail([...new Set(want)].filter((name) => !(INSTALLERS as string[]).includes(name)), "INSTALLERS in ovis-site/assets/platform.js lists every desktop installer the site links, so the version line never names a release missing one. Add:");
+    fail((INSTALLERS as string[]).filter((name) => !installers.includes(name)), "INSTALLERS in ovis-site/assets/platform.js names only files .github/workflows/desktop.yml attaches. Remove:");
   });
 
   it("offer every installer the desktop app ships", () => {

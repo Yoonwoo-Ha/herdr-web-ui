@@ -20,6 +20,8 @@ export const CLEAR_HISTORY = "\x1b[?1049l\x1b[3J\x1b[H\x1b[2J";
 export const CLEAR_JOINER_HISTORY = "\x1b[?1049l\x1b[3J";
 /** One unmodified cursor or Home/End key, in either cursor mode's form. */
 export const CURSOR_KEY = /^\x1b[[O]([ABCDHF])$/;
+/** The key a CURSOR_KEY names, as hc's `terminal.keys` names it. */
+export const CURSOR_KEY_NAMES: Record<string, string> = { A: "up", B: "down", C: "right", D: "left", H: "home", F: "end" };
 
 type Display = { fg?: string; bg?: string; cursor?: string; cell?: [number, number] };
 
@@ -247,6 +249,14 @@ export class CoreAttachSession {
    */
   winch(): void {}
 
+  /**
+   * Whether the cursor mode this attach parsed is hc's latest: while the stream is paused (a viewer behind on output
+   * holds hc's credit back), hc may hold output that changed the mode, and only hc's `terminal.keys` reads it.
+   */
+  get modeCurrent(): boolean {
+    return !this.paused;
+  }
+
   pause(): void {
     this.paused = true;
   }
@@ -264,6 +274,11 @@ export class CoreAttachSession {
     if (this.closed) return;
     this.closed = true;
     if (this.channel) void this.channel.close().then(() => this.end(null));
+  }
+
+  /** As `kill`: hc reads the close after what was typed, both going over the one connection in the order written. */
+  leave(): void {
+    this.kill();
   }
 
   private report(): void {

@@ -241,10 +241,12 @@ export const TELEMETRY_SURFACES = ["android-app", "browser", "ios-app", "mac-app
 export type TelemetrySurface = typeof TELEMETRY_SURFACES[number];
 
 /**
- * How a visit reached this server: server/access.ts `observedIngress`, with an unforwarded request
- * split into one from this PC itself (`local`) and one from another device (`lan`).
+ * How a visit reached this server: the observed ingress /api/health reports (server/dispatch.ts
+ * `requestIngress`), with the Ovis relay and Portal, and an unforwarded request split into one from
+ * this PC itself (`local`) and one from another device (`lan`). Only the word, never an address,
+ * Portal name or relay id.
  */
-export const TELEMETRY_INGRESS = ["funnel", "lan", "local", "proxy", "tailscale", "unknown"] as const;
+export const TELEMETRY_INGRESS = ["funnel", "lan", "local", "portal", "proxy", "relay", "tailscale", "unknown"] as const;
 export type TelemetryIngress = typeof TELEMETRY_INGRESS[number];
 
 /** The most a usage count says: a busier day is reported as this many. */

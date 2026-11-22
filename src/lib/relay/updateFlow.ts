@@ -106,6 +106,8 @@ export function createUpdateFlow(shellVersion: string, view: {
   readonly accepted: (opened: RelayTransport, attempt: Attempt) => void;
   readonly failed: (error: unknown, attempt: Attempt) => Promise<void>;
   readonly reload: () => Promise<void>;
+  /** The attempt goes on in this page even on a newer PC: the newer shell is loaded at a later admission instead. */
+  readonly holdsReload?: (attempt: Attempt) => boolean;
 }, store: RelayDeviceStore = indexedDeviceStore) {
   let outdated: { opened: RelayTransport; attempt: Attempt; name: string | null; version: string } | null = null;
   let updating = false;
@@ -125,7 +127,7 @@ export function createUpdateFlow(shellVersion: string, view: {
     await keepVersion(store, attempt.offer.server_id, version);
     if (generation !== mine) return;
     const memory = tabMemory();
-    if (skew === "server-newer" && memory !== null && reloadOnce(memory, shellVersion, server.version)) { opened.close(); await reload(); return; }
+    if (skew === "server-newer" && memory !== null && view.holdsReload?.(attempt) !== true && reloadOnce(memory, shellVersion, server.version)) { opened.close(); await reload(); return; }
     if (skew !== "pc-outdated") { outdated = null; view.accepted(opened, attempt); return; }
     setTransport(opened);
     outdated = { opened, attempt, name: attempt.offer.name ?? null, version: server.version };

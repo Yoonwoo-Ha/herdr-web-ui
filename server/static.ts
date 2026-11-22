@@ -203,6 +203,7 @@ export async function serveStatic(pathname: string, acceptEncoding?: string | nu
     return new Response(null, { status: 404, headers: { "cache-control": REVALIDATE, ...cspHeader() } });
   }
   return new Response(await body(Bun.file(indexPath), "shell"), {
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": REVALIDATE, ...cspHeader(origin) },
+    // a sign-in's return carries its code in the address (src/lib/account/ownWindow.ts): no cache keeps that page
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": pathname === "/callback" ? "no-store" : REVALIDATE, ...cspHeader(origin) },
   });
 }

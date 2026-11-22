@@ -4,6 +4,7 @@ import { paneStorageId, type HerdrIdentity, type Machine } from "../../shared/ma
 import { fetchSession, type HealthInfo } from "./api.ts";
 import { activateSlot as activatedSlot, besideSide, MAX_SPLIT_SLOTS, closeSlots, dockPane, draggedPane, dropZone, pickInSlot, PANE_DRAG_TYPE, replaceSlotPane, resizeSplit, sameTarget, sideZone, slotRects, slotsOf, splitDividers, storedSplit, storeSplit, withoutSlots, zoneRect, type DropZone, type SplitChange, type SplitRect, type SplitSide, type SplitSlot, type SplitState, type SplitTarget } from "./split.ts";
 import { paneDrag, type PaneDrag } from "./paneDrag.ts";
+import { noteAfterSelection, type LinkNote } from "./deepLink.ts";
 
 const SELECTION_KEY = "ovis:selection";
 type StoredSelection = { machine_id?: string; pane_id?: string | null };
@@ -100,7 +101,7 @@ export interface SlotView {
   attach: boolean;
 }
 
-export function useSplitLayout({ machines, split, wideScreen, selectedPaneId, selectedPane, selectedMachineId, splitShownRef, health, machineRosterLoaded, endSplit, otherRecheck, otherRosterTick, setSplit, soloSlot, setConnected, setConnectedBefore, setSelectedMachineId, setSelectedPaneId, setAutoSelected, setOutputStopped, splitRef, selectPane, paneAreaRef, gridDrop, gridDropRef, clearDropPreview, tabDrag, showGridDrop, hideDropTarget, setPaneDragging, movingPanes, draggedPaneRef, markSwap, markMove, swapPanes, movePanes, arrangeRefused, followPaneMove, threadDrawn }: {
+export function useSplitLayout({ machines, split, wideScreen, selectedPaneId, selectedPane, selectedMachineId, splitShownRef, health, machineRosterLoaded, endSplit, otherRecheck, otherRosterTick, setSplit, soloSlot, setConnected, setConnectedBefore, setSelectedMachineId, setSelectedPaneId, setAutoSelected, setOutputStopped, setHeaderNote, splitRef, selectPane, paneAreaRef, gridDrop, gridDropRef, clearDropPreview, tabDrag, showGridDrop, hideDropTarget, setPaneDragging, movingPanes, draggedPaneRef, markSwap, markMove, swapPanes, movePanes, arrangeRefused, followPaneMove, threadDrawn }: {
   machines: Machine[];
   split: SplitState | null;
   wideScreen: boolean;
@@ -121,6 +122,7 @@ export function useSplitLayout({ machines, split, wideScreen, selectedPaneId, se
   setSelectedPaneId: Dispatch<SetStateAction<string | null>>;
   setAutoSelected: Dispatch<SetStateAction<boolean>>;
   setOutputStopped: Dispatch<SetStateAction<boolean>>;
+  setHeaderNote: Dispatch<SetStateAction<LinkNote | "copied" | null>>;
   splitRef: RefObject<SplitState | null>;
   selectPane: (paneId: string, focusInput?: boolean) => void;
   paneAreaRef: RefObject<HTMLDivElement | null>;
@@ -240,6 +242,8 @@ export function useSplitLayout({ machines, split, wideScreen, selectedPaneId, se
     if (before === null || before.machineId !== change.select.machineId) { setConnected(false); setConnectedBefore(false); }
     applyLayout(change);
     setSelectedMachineId(change.select.machineId); setSelectedPaneId(change.select.paneId); setAutoSelected(keepFocus); setOutputStopped(false);
+    // a layout change that keeps the pane shown keeps its note
+    if (current === null || current.machineId !== change.select.machineId || current.paneId !== change.select.paneId) setHeaderNote(noteAfterSelection);
     storeSelection(change.select.machineId, change.select.paneId);
   };
   const activateSlot = (slot: SplitSlot, keepFocus = false): void => {

@@ -25,9 +25,9 @@ describe("the sign-ins a service offers", () => {
   it("lists Google only when the service says it is set up for it, and a PC's page only the device ones", async () => {
     const fake = new FakeAccountService();
     fake.offerSignIns(["github", "google"], ["github"]);
-    expect(await offeredProviders(SERVICE, ["github"], { fetch: fake.fetch })).toEqual({ providers: ["github", "google"], device: ["github"], page: [] });
+    expect(await offeredProviders(SERVICE, ["github"], { fetch: fake.fetch })).toEqual({ providers: ["github", "google"], listed: ["github", "google"], device: ["github"], page: [] });
     fake.offerSignIns(["github"], ["github"]);
-    expect(await offeredProviders(SERVICE, ["github"], { fetch: fake.fetch })).toEqual({ providers: ["github"], device: ["github"], page: [] });
+    expect(await offeredProviders(SERVICE, ["github"], { fetch: fake.fetch })).toEqual({ providers: ["github"], listed: ["github"], device: ["github"], page: [] });
   });
 
   it("names the sign-ins the Ovis link page offers, only among those set up", async () => {
@@ -39,11 +39,14 @@ describe("the sign-ins a service offers", () => {
 
   it("keeps the build's own list when the service cannot say, so no Google button leads nowhere", async () => {
     const down = async () => new Response("", { status: 404 });
-    expect(await offeredProviders(SERVICE, ["github", "apple"], { fetch: down })).toEqual({ providers: ["github", "apple"], device: ["github"], page: [] });
+    expect(await offeredProviders(SERVICE, ["github", "apple"], { fetch: down })).toEqual({ providers: ["github", "apple"], listed: null, device: ["github"], page: [] });
     const offline = async (): Promise<Response> => { throw new TypeError("offline"); };
-    expect(await offeredProviders(SERVICE, ["github"], { fetch: offline })).toEqual({ providers: ["github"], device: ["github"], page: [] });
+    expect(await offeredProviders(SERVICE, ["github"], { fetch: offline })).toEqual({ providers: ["github"], listed: null, device: ["github"], page: [] });
     const odd = async () => Response.json({ providers: ["gitlab"], device: "google" });
-    expect(await offeredProviders(SERVICE, ["github"], { fetch: odd })).toEqual({ providers: ["github"], device: ["github"], page: [] });
+    expect(await offeredProviders(SERVICE, ["github"], { fetch: odd })).toEqual({ providers: ["github"], listed: null, device: ["github"], page: [] });
+    // an answer naming none keeps the build's buttons, and says it named none
+    const none = async () => Response.json({ providers: [], device: [] });
+    expect(await offeredProviders(SERVICE, ["github"], { fetch: none })).toEqual({ providers: ["github"], listed: [], device: ["github"], page: [] });
   });
 });
 

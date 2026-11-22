@@ -115,7 +115,11 @@ export function useComposerSends(deps: ComposerSendsDeps) {
       }
       // herdr reads an idle Claude with a live subagent as working (a braille title spinner, and
       // "Waiting for N background agents to finish"); its own box at rest says it can take the message
-      const settled = composerDelivery(agent, agentStatus);
+      // a herdr-core server (`terminal-modes`) also shows a pane blocked while it reads a card its agent did not report.
+      // Until this connection's features are known that cannot be told apart: a blocked pane is then taken as one
+      const listening = socketRef.current;
+      const cardWaits = listening?.featuresListed?.() === true ? listening.typesArrows() : true;
+      const settled = composerDelivery(agent, agentStatus, cardWaits);
       const queued = settled === "queue" && inputAtRest?.() === true ? "immediate" : settled;
       const delivery: SubmitDelivery = hold ? "hold" : queued === "queue" && !settings.autoSendQueued ? "hold" : queued;
       // Send anyway answered a box seen at once: an agent that started working since would queue it unchecked.

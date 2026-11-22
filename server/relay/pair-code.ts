@@ -17,6 +17,7 @@ import { importPublicKey, importSecretKey } from "../../shared/relay-e2ee.ts";
 import { PairCodeHost, PairCodeProtocolError, PAIR_ATTEMPT_BYTES as ATTEMPT_BYTES, PAIR_CLOSE, PAIR_CODE_TRIES, formatPairCode, randomPairCode, splitPairCode } from "../../shared/relay-pair-code.ts";
 import { RELAY_PASS_HEADER } from "../../shared/relay-pass.ts";
 import type { RelayOffer } from "../../shared/relay-offer.ts";
+import type { AccountPairing } from "../../shared/protocol.ts";
 import { answerServerChallenge } from "../../shared/relay-server-proof.ts";
 import type { DeviceStore } from "../devices.ts";
 import type { RelayIdentity } from "./identity.ts";
@@ -88,7 +89,7 @@ export class RelayPairCodes {
     return url.href;
   }
 
-  async mint(by: string | null = null): Promise<{ code: string; expires_at: string }> {
+  async mint(by: string | null = null, account?: string): Promise<{ code: string; expires_at: string } & Partial<AccountPairing>> {
     this.cancel();
     const generation = this.generation;
     const { devices } = this.options;
@@ -111,17 +112,23 @@ export class RelayPairCodes {
         if (held === "failed") break;
         continue;
       }
-      let pairing: { code: string; expires_at: string };
+      let pairing: { code: string; expires_at: string } & Partial<AccountPairing>;
       this.binding = true;
-      // `by`: the paired device that asked for the code, which holds the six digits behind it (DeviceStore.revoke)
-      try { pairing = devices.startPairing(Date.now(), { remote: false, startedBy: null, memberRequired: false, by }); }
+      // `by`: the paired device that asked for the code, which holds the six digits behind it (DeviceStore.revoke). It
+      // is checked again here, after the wait on the relay: one removed or made one that only watches meanwhile gets
+      // no code (DeviceGoneError, DeviceReadOnlyError), and the nameplate is let go
+      try {
+        pairing = account === undefined ? { ...devices.startPairing(Date.now(), { remote: false, startedBy: null, memberRequired: false, by }), pairing: { id: devices.pairingId()! } }
+          : devices.startAccountPairing(account, by);
+      }
       catch (error) { this.finish(current); throw error; }
       finally { this.binding = false; }
-      current.bound = pairing;
-      current.expires = Date.parse(pairing.expires_at);
+      const { code: bound, expires_at, ...named } = pairing;
+      current.bound = { code: bound, expires_at };
+      current.expires = Date.parse(expires_at);
       clearTimeout(current.expiry);
       current.expiry = setTimeout(() => this.finish(current), Math.max(0, current.expires - Date.now()));
-      return { code: formatPairCode(code), expires_at: pairing.expires_at };
+      return { code: formatPairCode(code), expires_at, ...named };
     }
     throw new PairCodeUnavailableError("The relay did not take a pairing code. Try again, or scan the QR code.");
   }

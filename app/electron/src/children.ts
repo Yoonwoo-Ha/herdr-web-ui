@@ -76,6 +76,8 @@ export function serverEnv(base: Env, options: { hc: string; stateDir: string; po
     ...coreEnv(base),
     OVIS_RUNTIME: "herdr-core",
     OVIS_HC_BIN: options.hc,
+    // the app's own hc, not one the user named: one that does not answer leaves the server to find another, and say so
+    OVIS_HC_BIN_BUNDLED: "1",
     OVIS_STATE_DIR: options.stateDir,
     HOST: "127.0.0.1",
     PORT: String(options.port),

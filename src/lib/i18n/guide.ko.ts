@@ -86,9 +86,7 @@ export const GUIDE_KO: Record<string, string> = {
   "This browser is connected first.": "이 브라우저를 먼저 연결했어요.",
   "Not available on this PC.": "이 PC에서는 쓸 수 없어요.",
   "No Wi-Fi address to show here. Use Anywhere instead.": "여기서는 Wi-Fi 주소를 보여줄 수 없어요. '어디서든'을 써 주세요.",
-  "Run this once on this PC.": "이 PC에서 한 번 실행해요.",
   "Tailscale isn't running.": "Tailscale이 꺼져 있어요.",
-  "Tailscale isn't installed.": "Tailscale이 설치되어 있지 않아요.",
   "Couldn't check for Tailscale.": "Tailscale을 확인하지 못했어요.",
   "Scan with your phone's camera.": "폰 카메라로 찍어요.",
   "Scan to open {store}.": "찍으면 {store}가 열려요.",
@@ -101,4 +99,5 @@ export const GUIDE_KO: Record<string, string> = {
   "Setup isn't finished.": "설정이 남았어요.",
   "Reach this PC from anywhere.": "어디서든 이 PC에 연결해요.",
   "Set up later": "나중에 설정",
+  "Keep SSH or a screen working on this PC: reached only through the relay, one stolen older device could lock you out of it.": "이 PC에 SSH나 화면 접근을 남겨 두세요. 릴레이로만 닿으면, 오래된 기기 하나를 도난당했을 때 이 PC에 못 들어갈 수 있어요.",
 };

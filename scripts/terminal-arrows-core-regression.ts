@@ -1,7 +1,8 @@
 /**
  * Arrows on herdr-core: browser → WS → hc's attach → a raw-mode PTY that logs its stdin. A current
  * pty parse of `CSI ? 1 h/l` witnesses DECCKM; only then is a physical arrow typed as xterm encodes it.
- * Earlier or logical type-ahead arrows use named keys. The ordinary fast path avoids hc's `terminal.keys` quiet wait of about 3 s.
+ * Earlier or logical type-ahead arrows use named keys. The ordinary fast path avoids hc's `terminal.keys` quiet wait of about 3 s,
+ * also for an arrow pressed while output is still on its way to xterm (#4123).
  */
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
@@ -50,6 +51,8 @@ interface Session {
   isReady: (pane: string) => boolean;
   /** what the program in the pane has read since the last call */
   received: () => string;
+  /** the probe's stdin log, which its command line names */
+  log: string;
 }
 
 const readProbe = (log: string): (() => string) => {
@@ -81,7 +84,7 @@ async function open(name: string, before: string, probeBeforeAttach = false, hol
     localStorage.setItem("ovis:sidebar-filter-shown", "true");
     const qa = window as unknown as {
       terminalArrowSentByPage: number;
-      delayedTerminalOutput?: { pending: () => number; queryDelivered: () => number; release: () => void };
+      delayedTerminalOutput: { pending: () => number; held: () => string; queryDelivered: () => number; release: () => void; hold: () => void; releaseOnKeyDown: (key: string) => void };
     };
     qa.terminalArrowSentByPage = 0;
     const send = WebSocket.prototype.send;
@@ -96,14 +99,27 @@ async function open(name: string, before: string, probeBeforeAttach = false, hol
       }
       return result;
     };
-    if (holdOutput) {
-      let holding = true;
+    {
+      let holding = holdOutput;
       let queryDelivered = 0;
       const queued: Array<() => void> = [];
+      let held = "";
+      const release = () => { holding = false; held = ""; for (const deliver of queued.splice(0)) deliver(); };
       qa.delayedTerminalOutput = {
         pending: () => queued.length,
+        held: () => held,
         queryDelivered: () => queryDelivered,
-        release: () => { holding = false; for (const deliver of queued.splice(0)) deliver(); },
+        release,
+        hold: () => { holding = true; },
+        // the held output reaches the page right before xterm reads the key, so xterm is still parsing it then
+        releaseOnKeyDown: (key) => {
+          const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key !== key) return;
+            window.removeEventListener("keydown", onKeyDown, true);
+            release();
+          };
+          window.addEventListener("keydown", onKeyDown, true);
+        },
       };
       const prototype = WebSocket.prototype as unknown as {
         addEventListener: (type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions) => void;
@@ -126,7 +142,10 @@ async function open(name: string, before: string, probeBeforeAttach = false, hol
             else listener.handleEvent(delivered);
           };
           const queryOnly = /^(?:\x1b\[\?1004h)?\x1b\]10;\?\x1b\\\x1b\]11;\?\x1b\\\x1b\]12;\?\x1b\\\x1b\[16t\x1b\[c$/.test(message.data ?? "");
-          if (holding && message.type === "pty-data" && message.pane_id === pane && !queryOnly) queued.push(invoke);
+          if (holding && message.type === "pty-data" && message.pane_id === pane && !queryOnly) {
+            queued.push(invoke);
+            held += message.data ?? "";
+          }
           else {
             if (holding && message.type === "pty-data" && message.pane_id === pane && queryOnly) {
               queryDelivered++;
@@ -169,6 +188,7 @@ async function open(name: string, before: string, probeBeforeAttach = false, hol
     sentByPage: () => page.evaluate(() => (window as unknown as { terminalArrowSentByPage: number }).terminalArrowSentByPage),
     isReady: (current) => ready.has(current),
     received,
+    log,
   };
 }
 
@@ -292,6 +312,42 @@ async function abandonedTypeAheadArrow(): Promise<void> {
   assert.deepEqual(s.frames.filter((frame) => frame.pane_id === pane && !frame.automatic), [], "an abandoned type-ahead arrow is never sent to its new pane");
 }
 
+/**
+ * An arrow pressed while the program's output is still on its way to xterm, as a shell's output after Enter is (#4123),
+ * is typed too: named, it waited out hc's quiet period since the last key, and so did every key typed behind it. hc's
+ * attach types it in the mode the program reads now, even when that output turns the mode xterm encoded it in off.
+ */
+async function arrowBehindOutput(): Promise<void> {
+  const s = await open("behind-output", "printf '\\033[?1049h\\033[?1l';", true);
+  await browserProbeReady(s, "arrow behind output");
+  await s.page.locator(".xterm-helper-textarea").focus();
+  const signal = async (name: "USR1" | "USR2"): Promise<void> => {
+    const kill = Bun.spawn(["pkill", `-${name}`, "-f", s.log], { stderr: "pipe" });
+    assert.equal(await kill.exited, 0, `pkill -${name}: ${await new Response(kill.stderr).text()}`);
+  };
+  type Delayed = { delayedTerminalOutput: { held: () => string; hold: () => void; releaseOnKeyDown: (key: string) => void } };
+  let got = "";
+  // a person typed: hc's quiet period for a named key runs from here
+  await s.page.keyboard.press("a");
+  await until(() => (got += s.received()) === "a", "arrow behind output: the letter reached the probe");
+  await signal("USR1");
+  await until(() => s.page.locator(".xterm-screen").evaluate((screen) => screen.textContent?.includes("CURSOR KEYS APPLICATION") === true), "arrow behind output: xterm parsed application cursor keys");
+  await s.page.evaluate(() => (window as unknown as Delayed).delayedTerminalOutput.hold());
+  await signal("USR2");
+  await until(async () => (await s.page.evaluate(() => (window as unknown as Delayed).delayedTerminalOutput.held())).includes("\x1b[?1l"), "arrow behind output: the output leaving application cursor keys is held from xterm");
+  await s.page.evaluate(() => (window as unknown as Delayed).delayedTerminalOutput.releaseOnKeyDown("ArrowUp"));
+  const before = s.frames.length;
+  const pressed = performance.now();
+  await s.page.keyboard.press("ArrowUp");
+  got = "";
+  await until(() => (got += s.received()).length >= 3, () => `arrow behind output: ArrowUp received (read ${JSON.stringify(got)})`);
+  const took = performance.now() - pressed;
+  await frameFence(s, "arrow behind output");
+  assert.deepEqual(s.frames.slice(before).filter((frame) => frame.pane_id === s.pane && !frame.automatic).map((frame) => [frame.type, frame.text]), [["input", "\x1bOA"]], "arrow behind output: typed as xterm encoded it, in the application mode it still believed in, not a named key");
+  assert(took < NO_QUIET_WAIT_MS, `arrow behind output: ArrowUp took ${took.toFixed(0)} ms: exceeded the end-to-end latency budget`);
+  assert.equal(got, "\x1b[A", "arrow behind output: the program reads the arrow in the normal cursor mode it is in now");
+}
+
 /** Input-ready alone is not the parser fence: delay first-paint output while a real key reaches DECCKM. */
 async function delayedFirstPaint(): Promise<void> {
   const s = await open("delayed-first-paint", "printf '\\033[?1049h\\033[?1h';", true, true);
@@ -386,6 +442,10 @@ try {
 
   // 5. input-ready is not the xterm parse fence: hold first-paint output, send before parse, then prove fast path returns.
   await delayedFirstPaint();
+
+  // 6. An arrow pressed while output is still on its way to xterm (a shell's prompt after Enter) is typed, in the mode
+  // the program reads now.
+  await arrowBehindOutput();
 
   assert.deepEqual(errors, [], "no page errors");
   console.log("terminal arrows on herdr-core: PASS");

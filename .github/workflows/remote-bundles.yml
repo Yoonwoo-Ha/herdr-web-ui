@@ -25,7 +25,11 @@ concurrency:
   group: remote-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  # A pull request builds and smokes the Linux x64 bundle here (bundle-linux); the arm64 and macOS ones run in
+  # remote-bundles-platforms.yml, only for a change to what differs between platforms. In two weeks of pull
+  # request runs (1,269, to 2026-11-21) those three jobs failed alone nine times, never in the smoke step.
   bundle:
+    if: github.event_name != 'pull_request'
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -56,6 +60,26 @@ jobs:
         with:
           name: remote-${{ matrix.os }}
           path: remote-bundles/*
+  bundle-linux:
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    env:
+      HERDR_BUNDLE_PTY_SIDECAR: ${{ github.workspace }}/pty-sidecar/ovis-pty-sidecar-linux-x64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-ci
+        with:
+          bun-version: 1.4.4
+          node: 'true'
+          cache: none
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck && bun run build
+      - run: bun scripts/pty-sidecar.ts build linux-x64 pty-sidecar
+      - run: bun run scripts/build-remote-bundle.ts
+      - run: bun run scripts/remote-bundle-smoke.ts
   bundle-windows:
     timeout-minutes: 20
     # release publishes its bundle: GitHub-hosted whatever the runner variables say, and no shared cache (scripts/privileged-jobs-workflow.test.ts)
@@ -128,13 +152,16 @@ jobs:
           fi
       - run: bun install --frozen-lockfile && bun run build && bun run scripts/build-remote-bundle.ts
       # password mode creates an account and starts sshd as root; without sudo (the self-hosted image) the
-      # key-only flow runs, with sshd as the runner user on a port of its own
+      # key-only flow runs, with sshd as the runner user on a port of its own. Only a self-hosted runner
+      # may go without sudo or Docker: a hosted one that lost either fails, since release needs this job (#3829)
       - name: SSH integration
         run: |
+          if [ "$RUNNER_ENVIRONMENT" != self-hosted ]; then sudo -n true; fi
           if sudo -n true 2>/dev/null; then export SSH_TEST_PASSWORD=1; fi
           bun run scripts/ssh-integration.ts
       - name: SSH password in a disposable container
         run: |
+          if [ "$RUNNER_ENVIRONMENT" != self-hosted ]; then docker info >/dev/null; fi
           if docker info >/dev/null 2>&1; then bun run scripts/ssh-password-docker.ts; else echo "::notice::no Docker here, password flow skipped"; fi
   release:
     if: startsWith(github.ref, 'refs/tags/remote-v')

@@ -21,10 +21,10 @@ describe("PTY sidecar boundary", () => {
   const LOAD = /\bfrom\s*["'](?:@lydell\/)?node-pty[^"']*["']|\bimport\s*\(?\s*["'](?:@lydell\/)?node-pty[^"']*["']|\b(?:require|createRequire\s*\([^()]*(?:\([^()]*\))?[^()]*\))\s*\(\s*["'](?:@lydell\/)?node-pty[^"']*["']/;
 
   it("loads node-pty only in the Node sidecar", () => {
-    const code = [...files("{server,src,shared,scripts,site,telemetry}/**/*.{ts,tsx,mjs,cjs,js}"), "vite.config.ts"].filter((file) => file !== "server/conventions.test.ts");
+    const code = [...files("{server,src,shared,scripts,site,telemetry,tui}/**/*.{ts,tsx,mjs,cjs,js}"), "vite.config.ts"].filter((file) => file !== "server/conventions.test.ts");
     const loads = matches(code, LOAD);
     fail(loads.filter((load) => !NODE_SIDE.has(load.file)).map((load) => load.at),
-      "node-pty must never load inside Bun (AGENTS.md, Bridge invariants). PTY work goes through the Node sidecar server/pty/pty-host.mjs via PtySession (server/pty/session.ts).");
+      "node-pty must never load inside Bun: it panics the runtime (oven-sh/bun#18546). PTY work goes through PtySession (server/pty/session.ts): the Rust PTY host (crates/pty-sidecar), or the Node sidecar server/pty/pty-host.mjs as its fallback.");
     expect(loads.map((load) => load.file)).toContain("server/pty/pty-host.mjs");
   });
 
@@ -42,6 +42,14 @@ describe("web push", () => {
   it("never calls sendNotification", () => {
     fail(matches(files("{server,src,shared,scripts,telemetry}/**/*.{ts,tsx,mjs,js}").filter((file) => !file.endsWith(".test.ts")), /\bsendNotification\b/).map((match) => match.at),
       "Web push requests are built with webpush.generateRequestDetails and sent with fetch (server/push.ts); never call sendNotification (AGENTS.md, Bridge invariants).");
+  });
+});
+
+describe("account service fake", () => {
+  it("is imported by tests and their helpers only", () => {
+    const shipped = files("{server,src,shared,app}/**/*.{ts,tsx,mjs,js}").filter((file) => !/\.test\.tsx?$|\.test-helpers\.ts$/.test(file) && file !== "shared/account-service-fake.ts" && !file.includes("/node_modules/"));
+    fail(matches(shipped, /(?:from|import)\s*\(?\s*["'][^"']*account-service-fake(?:\.ts)?["']/).map((match) => match.at),
+      "shared/account-service-fake.ts is test support: import it from a test or a *.test-helpers.ts file only.");
   });
 });
 
@@ -139,12 +147,14 @@ describe("herdr socket", () => {
   const UNIX_CONNECT_ALLOWED: Record<string, string> = {
     "server/herdr/client.ts": "the one herdr RPC client: one connection per call, plus subscribeEvents",
     "server/herdr-marker.ts": "a liveness probe: connects and ends at once, sends no request",
+    "server/account/recovery.ts": "ovis recover's own private recovery socket in this PC's state folder, not herdr's",
   };
   const NET_CONNECT_ALLOWED: Record<string, string> = {
     "server/ssh-askpass.ts": "the SSH askpass helper's own private socket, not herdr's",
     "server/herdr-core/adapter.ts": "a liveness probe of the core adapter's own socket before startup: sends no request",
     "server/herdr-core/runtime.ts": "a liveness probe of herdr-core's socket, not herdr's: connects and closes, sends nothing",
     "server/runtime-move-lock.ts": "the herdr-core move's own lock socket, not herdr's: asks which Ovis server holds it",
+    "server/browser-mcp.ts": "the desktop app's built-in browser socket (app/electron/src/browserBroker.ts), not herdr's: one call per connection",
   };
 
   it("opens herdr's socket only in server/herdr/client.ts", () => {
@@ -287,5 +297,126 @@ describe("server entries", () => {
     expect(START_BY_PATH.test("run([process.execPath, \"install\", \"--frozen-lockfile\"])")).toBe(false);
     expect(START_BY_PATH.test("[process.execPath, \"-e\", SCRIPT, String(pid)]")).toBe(false);
     expect(START_BY_PATH.test("Bun.spawn(entryCommand(\"machine\"), {")).toBe(false);
+  });
+});
+
+describe("herdr focus", () => {
+  const SENDS: Record<string, number> = { "server/herdr/client.ts": 3 };
+  const CALLERS: Record<string, string> = {
+    "server/pane-routes.ts": "POST /api/pane/focus, the request a person's own action sends",
+  };
+  const RULE = "Selecting a pane or tab in the browser never moves herdr's own focus. `pane.focus` is sent by paneFocus (POST /api/pane/focus) and by the two restores in server/herdr/client.ts that put herdr's focus back after a swap or a move took it.";
+
+  it("sends pane.focus only from the focus route and the two restores", () => {
+    const code = files("{server,shared}/**/*.{ts,mjs,js}").filter((file) => !/\.test\.ts$|\.fake\.ts$|\.generated\.ts$/.test(file));
+    const sends = matches(code, /["']pane\.focus["']/);
+    const counts = new Map<string, number>();
+    for (const send of sends) counts.set(send.file, (counts.get(send.file) ?? 0) + 1);
+    fail(sends.filter((send) => counts.get(send.file) !== SENDS[send.file]).map((send) => send.at),
+      `${RULE} A new sender is an explicit action that needs herdr to show the pane: route it through paneFocus, or raise the file's count in SENDS in server/conventions.test.ts with that reason in the pull request.`);
+    fail(Object.keys(SENDS).filter((file) => counts.get(file) !== SENDS[file]),
+      "These files no longer send pane.focus that many times: set their count in SENDS in server/conventions.test.ts.");
+  });
+
+  it("calls paneFocus only from the focus route", () => {
+    const calls = matches(serverCode().filter((file) => file !== "server/herdr/client.ts"), /\bpaneFocus\s*\(/);
+    fail(calls.filter((call) => !(call.file in CALLERS)).map((call) => call.at),
+      `${RULE} A new caller is an explicit action that needs herdr to show the pane: list its file in CALLERS in server/conventions.test.ts with that action.`);
+    const users = new Set(calls.map((call) => call.file));
+    fail(Object.keys(CALLERS).filter((file) => !users.has(file)),
+      "These files no longer call paneFocus: remove them from CALLERS in server/conventions.test.ts.");
+  });
+});
+
+describe("herdr update", () => {
+  const REAL = "server/index.ts";
+  const STAND_IN = /^new HerdrUpdater\(\s*\{(?:[^}]*,)?\s*bin\s*[:,}]/;
+
+  it("builds a HerdrUpdater for the real herdr only in the server's own start", () => {
+    const code = files("{server,scripts,src,shared}/**/*.{ts,tsx,mjs,js}").filter((file) => file !== REAL && file !== "server/conventions.test.ts");
+    const builds = matches(code, /new HerdrUpdater\(/).filter((build) => !STAND_IN.test(build.code.slice(build.index, build.index + 400)));
+    fail(builds.map((build) => build.at),
+      "A test never runs the real `herdr update`: it would update the herdr of whoever runs the tests. Give the updater a stand-in, `new HerdrUpdater({ bin: <a script the test wrote> })`, as server/herdr-update.test.ts does. Only server/index.ts builds one for the real herdr.");
+  });
+
+  it("knows a stand-in binary from the real herdr", () => {
+    expect(STAND_IN.test("new HerdrUpdater({ bin: herdr.path, socketPath: \"/srv/herdr.sock\" })")).toBe(true);
+    expect(STAND_IN.test("new HerdrUpdater({ timeoutMs: 200, bin })")).toBe(true);
+    expect(STAND_IN.test("new HerdrUpdater()")).toBe(false);
+    expect(STAND_IN.test("new HerdrUpdater({ timeoutMs: 200 })")).toBe(false);
+    expect(STAND_IN.test("new HerdrUpdater({ socketPath: \"/tmp/bin/herdr.sock\" })")).toBe(false);
+  });
+});
+
+describe("test servers", () => {
+  const FROM_INDEX = /import\s*\{[^}]*\bcreateServer\b[^}]*\}\s*from\s*["'](?:\.\.?\/)+(?:server\/)?index\.ts["']/;
+  const CALL = /(?<![.\w$])createServer\(/g;
+  const OWN: Record<string, { calls: number; why: string }> = {
+    "server/copilot.contract.test.ts": { calls: 1, why: "node's net.createServer, inside the text of the stand-in Copilot script" },
+    "server/device-access.contract.test.ts": { calls: 1, why: "the default state folder, under an XDG_CONFIG_HOME the test made" },
+    "server/ipv6-loopback.contract.test.ts": { calls: 1, why: "a port the test took itself, to see the start fail" },
+  };
+
+  function closing(code: string, open: number): number {
+    let depth = 1;
+    let end = open + 1;
+    for (; depth > 0 && end < code.length; end++) depth += "({[".includes(code[end]!) ? 1 : ")}]".includes(code[end]!) ? -1 : 0;
+    return end;
+  }
+
+  function ownProperties(object: string): string {
+    let depth = 0;
+    let own = "";
+    for (const char of object) {
+      if ("({[".includes(char)) depth += 1;
+      if (depth <= 1) own += char;
+      if (")}]".includes(char)) depth -= 1;
+    }
+    return own;
+  }
+
+  function serverCalls(file: string, code: string): { at: string; isolated: boolean }[] {
+    if (!FROM_INDEX.test(code)) return [];
+    return [...code.matchAll(CALL)].map((match) => {
+      const open = match.index + match[0].length - 1;
+      const args = code.slice(open + 1, closing(code, open) - 1).trim();
+      const before = code.slice(0, match.index);
+      const declared = (name: string): string => {
+        const at = before.lastIndexOf(`const ${name} = {`);
+        return at < 0 ? "" : ownProperties(code.slice(code.indexOf("{", at), closing(code, code.indexOf("{", at))));
+      };
+      const literal = args.startsWith("{") ? ownProperties(args) : "";
+      const named = literal ? [...literal.matchAll(/\.\.\.([A-Za-z_$][\w$]*)/g)].map((spread) => declared(spread[1]!)).join("") : /^[A-Za-z_$][\w$]*$/.test(args) ? declared(args) : "";
+      const port = /\bport:\s*([^,}\s]+)/.exec(literal) ?? /\bport:\s*([^,}\s]+)/.exec(named);
+      const line = lineOf(code, match.index);
+      return { at: `${file}:${line}: ${code.split("\n")[line - 1]!.trim().slice(0, 160)}`, isolated: port?.[1] === "0" && /(?<![\w$.])stateDir\b/.test(literal + named) };
+    });
+  }
+
+  it("start on a free port with a state folder of their own", () => {
+    const tests = files("{server,scripts,src,shared}/**/*.{ts,tsx}").filter((file) => /\.test\.tsx?$|test-helpers\.ts$/.test(file) || file.startsWith("scripts/"));
+    const open = tests.flatMap((file) => serverCalls(file, stripComments(read(file))).filter((call) => !call.isolated).map((call) => ({ file, at: call.at })));
+    const counts = new Map<string, number>();
+    for (const call of open) counts.set(call.file, (counts.get(call.file) ?? 0) + 1);
+    fail(open.filter((call) => counts.get(call.file) !== OWN[call.file]?.calls).map((call) => call.at),
+      "A test's createServer takes `port: 0` and a `stateDir` the test made (`mkdtempSync(join(tmpdir(), \"ovis-…\"))`), in the call or in the `const` object it passes or spreads: without them it binds the port and reads and writes the state folder of whoever runs the tests. A call that cannot is counted in OWN in server/conventions.test.ts with its reason.");
+    fail(Object.keys(OWN).filter((file) => counts.get(file) !== OWN[file]!.calls),
+      "These files no longer hold that many createServer calls without port: 0 and a stateDir: set their count in OWN in server/conventions.test.ts, or remove them.");
+  });
+
+  it("reads a call's options, in place or from the const it names", () => {
+    const from = "import { createServer } from \"./index.ts\";\n";
+    const isolated = (code: string): boolean[] => serverCalls("x.test.ts", from + code).map((call) => call.isolated);
+    expect(isolated("createServer({ port: 0, stateDir: dir, token: \"\" });")).toEqual([true]);
+    expect(isolated("const base = { port: 0, token: \"\" } as const;\ncreateServer({ ...base, stateDir: tempDir() });")).toEqual([true]);
+    expect(isolated("const options = { port: 0, stateDir: root } as const;\ncreateServer(options);")).toEqual([true]);
+    expect(isolated("const options = {\n  port: 0,\n  stateDir: root,\n} as const;\ncreateServer(options);")).toEqual([true]);
+    expect(isolated("const base = { port: 0, stateDir: dir };\ncreateServer({ ...base, port: 7317 });")).toEqual([false]);
+    expect(isolated("const base = { port: 0, token: \"\" };\ncreateServer({ ...base, stateDir: dir, lanHttps: { port: 8443 } });")).toEqual([true]);
+    expect(isolated("createServer({ port: 0, siblingStateDir: legacy });")).toEqual([false]);
+    expect(isolated("createServer({ port: 7317, stateDir: dir });")).toEqual([false]);
+    expect(isolated("createServer(options);")).toEqual([false]);
+    expect(isolated("net.createServer((socket) => socket.end());")).toEqual([]);
+    expect(serverCalls("x.test.ts", "import { createServer } from \"node:net\";\ncreateServer();")).toEqual([]);
   });
 });
