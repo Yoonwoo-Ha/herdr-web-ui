@@ -84,6 +84,11 @@ export const STRINGS = {
   confirmCloseWorkspace: (name: string): string => `Close workspace ${name}? [y/N]`,
   gotoTitle: "Go to",
   gotoPromptHint: "Type to filter · Enter to jump",
+  menuTitle: "Menu",
+  /** at the right of the narrow screen's header, which opens the menu */
+  menuMark: "[menu]",
+  /** what kind of place a menu entry goes to */
+  menuPlaces: { workspace: "workspace", tab: "tab", pane: "pane", agent: "agent" } as const,
 
   // Keymap notes in help & mode bar
   notePrefixFallback: (binding: string, fallback: string): string =>
@@ -160,6 +165,7 @@ export const STRINGS = {
     resize_pane_right: "grow >",
     toggle_sidebar: "sidebar",
     lock: "lock",
+    menu: "menu",
     navigate_workspace_up: "workspace ^",
     navigate_workspace_down: "workspace v",
     navigate_pane_left: "pane <",
@@ -201,6 +207,12 @@ export const STRINGS = {
         return `locked: screen is locked (${data["action"] ?? ""})`;
       case "nothing_focused":
         return `nothing_focused: no target for ${data["action"] ?? "action"}`;
+      case "view_moved":
+        return "view_moved: the place this core was left at is gone; showing the nearest one";
+      case "view_unread":
+        return `view_unread: the view kept for this core could not be read (${data["reason"] ?? "unknown"})`;
+      case "view_unsaved":
+        return `view_unsaved: the view could not be kept for the next run (${data["reason"] ?? "unknown"})`;
       case "target_gone": {
         const detail = Object.entries(data).map(([k, v]) => `${k}=${v}`).join(" ");
         return `target_gone: ${detail || "target closed"}`;

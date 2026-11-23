@@ -21,6 +21,7 @@ import { FakeHcCore } from "../../server/herdr-core/core.fake.ts";
 import { connectCoreSocket } from "../../server/herdr-core/socket-transport.ts";
 import { crashRecord, recordCrash } from "../crash.ts";
 import { type Loop, type LoopClock, type LoopEnd, startLoop } from "../loop.ts";
+import type { ViewStore } from "../view-store.ts";
 import { agents } from "./fixtures/agents.ts";
 import { demo } from "./fixtures/demo.ts";
 import type { Fixture } from "./fixtures/fixture.ts";
@@ -91,6 +92,8 @@ export interface RunOptions {
   rows?: number;
   /** the host's COLORTERM: "truecolor" by default; anything else is a 256-colour host (tui/host colorDepth) */
   colorTerm?: string;
+  /** where the screen keeps its view per core (a scratch folder's store); none: nothing is kept */
+  views?: ViewStore;
 }
 
 export class Run {
@@ -111,9 +114,10 @@ export class Run {
     readonly clock: ManualClock,
     readonly folder: string,
     readonly socket: string,
+    views: ViewStore | undefined,
   ) {
     this.nextBeat = HEARTBEAT_MS;
-    this.loop = startLoop({ host, clock, socket, keys: undefined, connect: (path) => this.connect(path) });
+    this.loop = startLoop({ host, clock, socket, keys: undefined, connect: (path) => this.connect(path), ...(views ? { views } : {}) });
   }
 
   readonly loop: Loop;
@@ -125,7 +129,7 @@ export class Run {
     const folder = mkdtempSync(join(process.env["TMPDIR"] || tmpdir(), "run-"));
     const socket = join(folder, "hc.sock");
     const host = new HeadlessHost({ cols: options.cols ?? 120, rows: options.rows ?? 40, colorTerm: options.colorTerm ?? "truecolor", answer: PROBE_ANSWER });
-    const run = new Run(core, host, new ManualClock(), folder, socket);
+    const run = new Run(core, host, new ManualClock(), folder, socket, options.views);
     try {
       await run.listen();
       await run.settle();
@@ -369,7 +373,8 @@ async function main(argv: string[]): Promise<number> {
   if (choice.dump) process.stdout.write(`${run.grid().join("\n")}\n`);
   const report = run.loop.report();
   const end = await run.close();
-  process.stderr.write(`fixture=${choice.fixture} size=${choice.size.cols}x${choice.size.rows} passes=${report.passes} writes=${report.writes} link=${report.link.kind}${report.link.code ? `:${report.link.code}` : ""} end=${end.kind} maxArmed=${run.clock.maxArmed}\n`);
+  const docSets = run.core.calls().filter((call) => call.method === "doc.set").length;
+  process.stderr.write(`fixture=${choice.fixture} size=${choice.size.cols}x${choice.size.rows} passes=${report.passes} writes=${report.writes} link=${report.link.kind}${report.link.code ? `:${report.link.code}` : ""} end=${end.kind} maxArmed=${run.clock.maxArmed} doc.set=${docSets}\n`);
   return 0;
 }
 

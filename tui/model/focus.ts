@@ -2,13 +2,15 @@
  * What exists (workspaces, their tabs, each tab's panes in tree order) and where this screen looks.
  * Focus is the screen's own: herdr-core has none, and it is never written anywhere shared.
  */
+import type { LayoutNode } from "../../server/herdr-core/layout-doc.ts";
 
 /** `created`: when the core made the pane's terminal (its `created_ms`), so a later terminal at the same address is told apart */
 export interface PaneNode { readonly id: string; readonly name: string; readonly created?: number }
 /** `zoomed`: the pane a zoom shows alone; while it lasts it is the tab's shown pane, whatever pane the focus remembers */
-export interface TabNode { readonly id: string; readonly name: string; readonly panes: readonly PaneNode[]; readonly zoomed?: string }
+export interface TabNode { readonly id: string; readonly name: string; readonly panes: readonly PaneNode[]; readonly zoomed?: string; readonly root?: LayoutNode }
 export interface WorkspaceNode { readonly id: string; readonly name: string; readonly tabs: readonly TabNode[] }
-export interface World { readonly workspaces: readonly WorkspaceNode[] }
+/** `agents`: the panes that run an agent, in the sidebar's order (shared/attention.ts); none when not told */
+export interface World { readonly workspaces: readonly WorkspaceNode[]; readonly agents?: readonly string[] }
 
 export const EMPTY_WORLD: World = { workspaces: [] };
 

@@ -15,11 +15,18 @@ export interface ScreenShape { regions: Regions; spots: PaneSpot[]; splits: Spli
 /**
  * Where the shown tab's panes go on a screen of `width` x `height`: the regions, and each pane's cells cut from the panes'
  * region by the tab's tree. A zoomed tab gives its zoomed pane the whole region and keeps the others at their cells,
- * covered. No tab: no panes.
+ * covered. No tab: no panes. A narrow screen shows the tab's pane `pane` alone in the whole region (its first when that
+ * one is not in it) and none of the others: they are not attached. That one-pane view is the screen's own and changes
+ * nothing in the tab's layout.
  */
-export function layOut(width: number, height: number, tab: TabShape | null, options: { sidebarCollapsed: boolean }): ScreenShape {
+export function layOut(width: number, height: number, tab: TabShape | null, options: { sidebarCollapsed: boolean; pane: string | null }): ScreenShape {
   const shape = regions(width, height, { sidebar: options.sidebarCollapsed ? 0 : SIDEBAR_COLUMNS, tabBar: true, modeBar: true });
   if (!tab) return { regions: shape, spots: [], splits: [] };
+  if (shape.narrow) {
+    const leaves = cellsOf(tab.root, shape.panes).panes.map((cells) => cells.pane);
+    const shown = options.pane !== null && leaves.includes(options.pane) ? options.pane : leaves[0];
+    return { regions: shape, spots: shown === undefined ? [] : [{ pane: shown, cells: cellsOf({ leaf: shown }, shape.panes).panes[0]!, covered: false }], splits: [] };
+  }
   const cut = cellsOf(tab.root, shape.panes);
   const all = cut.panes;
   const zoomed = tab.zoomed !== null && all.some(({ pane }) => pane === tab.zoomed) ? tab.zoomed : null;

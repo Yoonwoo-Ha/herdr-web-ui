@@ -16,7 +16,7 @@ import { editLayout } from "../server/herdr-core/layout-ops.ts";
 import type { ScreenRange } from "./emulator/index.ts";
 import { DividerWrites } from "./core/divider.ts";
 import { type LayoutDone, LayoutWrites } from "./core/layout.ts";
-import { type CoreLink, type LinkNotice, type LinkState, openLink } from "./core/link.ts";
+import { type CoreLink, LINK_DOCS, type LinkNotice, type LinkState, openLink } from "./core/link.ts";
 import { createPanes, type PaneInput, type PaneNotice, type Panes } from "./core/pane.ts";
 import { CoreWorld, focusDirection, paneToward } from "./core/world.ts";
 import { errorCode } from "./crash.ts";
@@ -29,12 +29,14 @@ import { buildChrome, sessionFromSocket } from "./view/chrome.ts";
 import { LINK_UNKNOWN, paneLive, shownLink, type ShownLink } from "./view/link-view.ts";
 import { BEHIND_WRITE_BYTES, BEHIND_WRITE_EVENTS, type Deadlines, earliest, FRAME_PASS_MS, HOLD_RELEASE_MS, LAYOUT_SHOWN_WAIT_MS, PASS_CREDIT_BYTES, PASTE_ABANDON_MS, QUIT_BOUND_MS, STYLE_TABLE_LIMIT, CRASH_ACTIONS_KEPT } from "./model/deadlines.ts";
 import type { Effect, MouseInput } from "./model/effects.ts";
+import { menuChoice } from "./model/overlays.ts";
 import { exists, focused } from "./model/focus.ts";
-import { type Following, initialState, type ModelEvent, type ModelState, reduce } from "./model/reduce.ts";
+import { type Following, initialState, type ModelEvent, type ModelState, presentedMenu, reduce } from "./model/reduce.ts";
 import { PaneGrid } from "./view/grid.ts";
-import { type PaneLook, type PanePicture, Pointer, type PointerAct, type PointerScene, rowsAboveBottom } from "./view/mouse.ts";
+import { type DeferredMouse, type PaneLook, type PanePicture, Pointer, type PointerAct, type PointerScene, rowsAboveBottom } from "./view/mouse.ts";
 import { type HitMap, Painter, type PaneScene } from "./view/paint.ts";
 import { layOut, paneScene, type ScreenShape } from "./view/screen.ts";
+import type { ViewStore } from "./view-store.ts";
 
 /** The caller's clock and its one timer: `arm` sets the timer for `at` (on the same clock) and answers its cancel. */
 export interface LoopClock {
@@ -57,6 +59,8 @@ export interface LoopOptions {
   session?: string;
   /** the folder the command was typed in, shown when the core has no workspaces */
   cwd?: string;
+  /** where the view is kept per core between runs; none: nothing is kept */
+  views?: ViewStore;
 }
 
 /**
@@ -138,6 +142,9 @@ export function startLoop(options: LoopOptions): Loop {
   let shownKey = "";
   let paneFocus: string | null = null;
   let hello: HelloInfo | null = null;
+  let helloEpoch = 0;
+  /** One snapshot publication: the terminals and both layout documents, possibly ahead of this line's hello. */
+  let snapshot: { epoch: number; complete: boolean; core: string | null } | null = null;
   let entered = false;
   let ended = false;
   let quitting: { at: number; settle: () => void } | null = null;
@@ -245,19 +252,36 @@ export function startLoop(options: LoopOptions): Loop {
         void link.hello().then((info) => {
           if (link.state.kind === "Online" && link.state.epoch === epoch) {
             hello = info;
+            helloEpoch = epoch;
             world.setVersion(info.version);
+            guard(identifySnapshot);
+            arm();
           }
         }, () => {});
       }
       owePass();
       return;
     }
+    if (notice.type === "snapshot") {
+      snapshot = { epoch: notice.epoch, complete: false, core: null };
+      options.views?.suspend();
+    }
     if (world.notice(notice)) worldChanged();
+    if (snapshot && !snapshot.complete && notice.type === "doc" && notice.epoch === snapshot.epoch && notice.name === LINK_DOCS.at(-1)) {
+      snapshot.complete = true;
+      identifySnapshot();
+    }
     readCore();
   }
 
+  function identifySnapshot(): void {
+    if (!snapshot?.complete || snapshot.core !== null || snapshot.epoch !== helloEpoch || !hello) return;
+    snapshot.core = hello.core.id;
+    if (options.views) dispatch({ type: "restore", core: snapshot.core, ...options.views.open(snapshot.core), at: clock.now() });
+  }
+
   function worldChanged(): void {
-    dispatch({ type: "world", world: world.view().world, at: clock.now() });
+    dispatch({ type: "world", world: world.view().world, core: snapshot?.core ?? null, epoch: snapshot?.epoch ?? 0, at: clock.now() });
     reshow();
   }
 
@@ -292,8 +316,9 @@ export function startLoop(options: LoopOptions): Loop {
    * What the user typed, pasted or clicked while a layout write that one of their actions started is under way: it
    * waits behind that write, in order, and goes through once the write is done, so it meets the layout the write
    * leaves (the pane a close focuses, the pane a split follows), as a later read would. null when no write holds it.
-   * `ahead` is the state core as if what waits had gone through: to see a detach in it, which never waits, and a layout
-   * action, which is refused as busy when it is read, against the layout the user saw. `awaiting`: the write is done
+   * What waits is classified when read: pane input, and mouse reports bound to what they meet. A detach never waits,
+   * and any other action, overlay or mode input is refused when it is read. `armed`: the prefix state of what was read,
+   * kept apart so a refused chord takes no place in what waits. `awaiting`: the write is done
    * and the screen does not show what it did yet: the pane it made or moved (`follow`: what waits goes there once
    * focus follows it), or the panes a close ended still in the world (`gone`: what waits goes through once they left
    * and focus moved off them). It is refused if that is not so by `until`, never sent to the pane focused before.
@@ -301,14 +326,24 @@ export function startLoop(options: LoopOptions): Loop {
    * BEHIND_WRITE_EVENTS or BEHIND_WRITE_BYTES, and nothing more waits.
    */
   let behindWrite: {
-    readonly events: (ModelEvent | { type: "held_mouse"; input: MouseInput; matches: (scene: PointerScene) => boolean })[];
-    ahead: ModelState;
+    readonly events: HeldInput[];
+    /** the prefix state of what was read during the hold, kept apart from what waits */
+    armed: boolean;
+    /** Only a prefix begun in terminal context may survive release; overlay prefixes recognize held detach only. */
+    terminalArmed: boolean;
+    readonly mouse: ReturnType<Pointer["defer"]>;
+    /** Only the owning write's success can supply a recipient for input read without a pane. */
+    inputTarget: string | null;
     awaiting: ({ readonly kind: "follow"; readonly following: Following } | { readonly kind: "gone"; readonly done: LayoutDone } | { readonly kind: "zoom"; readonly read: AbortController }) & { readonly until: number } | null;
     bytes: number;
     full: boolean;
+    ready: boolean;
   } | null = null;
   /** what waited behind a write is going through: a layout action in it was refused when it was read */
   let replaying = false;
+  let busyReported = false;
+  type HeldInput = (Extract<Effect, { type: "held_pane" }> & { readonly unassigned: boolean })
+    | { type: "held_mouse"; input: MouseInput; continuation: boolean; route: DeferredMouse };
 
   /**
    * A user's input event: through the state core now, or behind the layout write under way. A detach among what would
@@ -323,65 +358,69 @@ export function startLoop(options: LoopOptions): Loop {
       dispatch(event);
       return;
     }
-    // read ahead the way the loop would go: the event, then each rest of a read it hands back, in order. What waits is
-    // what the read-ahead took in each step (a text run cut where it handed its rest back, as split reads give it), and
-    // a layout action refused here waits as `consumed`: its keys are taken, and never chose anything in another layout
-    const pieces: ModelEvent[] = [];
-    const units = [event];
+    // What waits is classified now: pane input, or a mouse report bound to what it meets. Overlay and mode input,
+    // refused chords and prefixes take no place in it; the prefix state is kept apart.
+    const pieces: HeldInput[] = [];
+    if (event.type === "mouse") {
+      const scene = pointerScene();
+      const continuation = behindWrite.mouse.continuation(event);
+      if (!continuation) {
+        const blocked = state.overlays.length > 0 || state.mode.name !== "terminal" || state.menuDismissed;
+        // the last accepted frame's overlay owns its cells even once the model closed it
+        const hit = hits?.at(event.col, event.row);
+        if (blocked || (hit && "part" in hit && (hit.part.startsWith("overlay:") || hit.id === "menu"))) {
+          busy(state.overlays.at(-1)?.kind ?? (blocked ? state.mode.name : "menu"));
+          return;
+        }
+        const route = behindWrite.mouse.bind(event, scene);
+        const owner = overlayGeneration;
+        pieces.push({ type: "held_mouse", input: event, continuation: false,
+          route: (over, now) => owner === overlayGeneration && paintedOverlay === state.overlays.at(-1)
+            ? route(over, now) : pointer.cancel(now, event.at) });
+      } else pieces.push({ type: "held_mouse", input: event, continuation: true, route: behindWrite.mouse.bind(event, scene) });
+    }
+    // read the event the way the loop would, then each rest of a read it hands back, in order. The hold parser knows
+    // pane input, prefix chords and detach only: it never runs the overlay or mode ladder
+    const units: ModelEvent[] = [event];
     for (let next = units.shift(); next !== undefined; next = units.shift()) {
-      const before = behindWrite.ahead;
-      const step = reduce(before, next);
-      behindWrite.ahead = step.state;
-      let rest = "";
-      let refused = false;
+      const before = { ...state, armed: behindWrite.armed };
+      const step = reduce(before, next, true);
+      behindWrite.armed = step.state.armed;
+      if (!step.state.armed) behindWrite.terminalArmed = false;
+      else if (step.prefixStarted) behindWrite.terminalArmed = before.overlays.length === 0 && before.mode.name === "terminal" && !before.menuDismissed;
+      for (const notice of step.state.notices) {
+        if (notice.id >= before.nextNotice) dispatch({ type: "notice", code: notice.code, data: notice.data, ...(notice.calm ? { calm: true } : {}), at: clock.now() });
+      }
       for (const effect of step.effects) {
         if (effect.type === "quit") {
           drop("detach", false);
           perform({ type: "quit" });
           return;
         }
-        if (effect.type === "input") {
-          units.push(effect.event);
-          if (effect.event.type === "text") rest = effect.event.text;
-        }
-        if (effect.type === "run" && layout.writes(effect)) {
-          busy(effect.action);
-          refused = true;
-        }
+        if (effect.type === "input") units.push(effect.event);
+        if (effect.type === "busy") busy(effect.action);
+        if (effect.type === "held_pane") pieces.push({ ...effect, unassigned: focused(before.world, before.focus).pane === null });
       }
-      const taken = next.type === "text" ? next.text.slice(0, next.text.length - rest.length) : "";
-      if (!refused) {
-        pieces.push(next.type === "text" ? { ...next, text: taken } : next);
-        continue;
-      }
-      // the action was chosen by the last code point taken: what came before it in the run waits as typed
-      if (next.type === "text" && step.textAction && step.textAction.offset > 0) pieces.push({ ...next, text: next.text.slice(0, step.textAction.offset) });
-      const source = step.textAction?.before ?? before;
-      pieces.push({ type: "consumed", overlay: step.state.overlays.length < source.overlays.length, mode: source.mode.name !== "terminal" && step.state.mode.name === "terminal", at: next.at });
     }
+    // the host's focus is no pane input: the screen takes it now, after the hold's prefix state took it in order
+    if (event.type === "focus") dispatch(event);
     if (behindWrite.full) return;
     // the text a key typed (a kitty key reports it) costs its bytes too, as the same text read as text does
-    const bytes = pieces.reduce((sum, piece) => sum + (piece.type === "text" || piece.type === "paste" || piece.type === "key" ? Buffer.byteLength(piece.text ?? "") : 0), 0);
+    const bytes = pieces.reduce((sum, piece) => sum + (piece.type === "held_pane" ? Buffer.byteLength(piece.input.text ?? "") : 0), 0);
     if (behindWrite.events.length + pieces.length > BEHIND_WRITE_EVENTS || behindWrite.bytes + bytes > BEHIND_WRITE_BYTES) {
       // nothing more waits, so what goes through later keeps its order and no paste is cut; a detach still leaves above
       behindWrite.full = true;
       dispatch({ type: "notice", code: "input_dropped", data: { reason: "full" }, at: clock.now() });
       return;
     }
-    for (const piece of pieces) {
-      if (piece.type !== "mouse") behindWrite.events.push(piece);
-      else {
-        const matches = pointer.bind(piece, pointerScene());
-        const owner = overlayGeneration;
-        behindWrite.events.push({ type: "held_mouse", input: piece,
-          matches: (scene) => owner === overlayGeneration && paintedOverlay === state.overlays.at(-1) && matches(scene) });
-      }
-    }
+    behindWrite.events.push(...pieces);
     behindWrite.bytes += bytes;
   }
 
   /** A layout action chosen while a write, or what waits behind it, is under way: one notice, nothing written. */
   function busy(action: string): void {
+    if (busyReported) return;
+    busyReported = true;
     dispatch({ type: "notice", code: "layout_busy", data: { action }, at: clock.now() });
   }
 
@@ -391,12 +430,17 @@ export function startLoop(options: LoopOptions): Loop {
    * what it did.
    */
   function holdUntil(writing: Promise<LayoutDone>): void {
-    behindWrite ??= { events: [], ahead: state, awaiting: null, bytes: 0, full: false };
+    if (behindWrite === null) {
+      behindWrite = { events: [], armed: state.armed, terminalArmed: state.armed, mouse: pointer.defer(), inputTarget: null, awaiting: null, bytes: 0, full: false, ready: false };
+      busyReported = false;
+    }
+    const held = behindWrite;
     const before = state.following;
     const line = link.state;
     void writing.then((done) => {
       guard(() => {
-        if (behindWrite === null) return;
+        if (behindWrite !== held) return;
+        held.inputTarget = done.inputTarget ?? null;
         const until = clock.now() + LAYOUT_SHOWN_WAIT_MS;
         if (!closedShown(done.ended)) behindWrite.awaiting = { kind: "gone", done, until };
         else if (done.dropInput) drop(done.dropInput);
@@ -426,20 +470,39 @@ export function startLoop(options: LoopOptions): Loop {
     return panes.every((id) => !exists(state.world, { kind: "pane", id }));
   }
 
-  /** What waited behind a write goes through, in order. */
+  /** A settled write remains a hold until a frame built after it settled is accepted. */
   function release(): void {
+    if (behindWrite === null) return;
+    behindWrite.awaiting = null;
+    behindWrite.ready = true;
+    owePass();
+  }
+
+  /** What waited goes through as it was classified when read; overlay and mode input never reaches replay. */
+  function replay(): void {
     const waited = behindWrite?.events ?? [];
     const full = behindWrite?.full === true;
+    const armed = behindWrite?.armed === true && behindWrite.terminalArmed;
+    const inputTarget = behindWrite?.inputTarget ?? null;
     behindWrite = null;
     replaying = true;
     try {
+      let unassigned = 0;
       for (const event of waited) {
-        if (event.type === "held_mouse") dispatch(event.input, event.matches);
-        else userInput(event);
+        if (event.type === "held_pane") {
+          if (event.unassigned) {
+            if (inputTarget === null || !exists(state.world, { kind: "pane", id: inputTarget })) {
+              unassigned++;
+              continue;
+            }
+            perform({ type: "pane", pane: inputTarget, input: event.input });
+          } else perform(event);
+        } else if (event.continuation) routeMouse(event.input, "screen", event.route);
+        else dispatch(event.input, event.route);
       }
-      // what came after the queue filled went nowhere, a focus loss or the key after a prefix among it: a prefix the
-      // replay armed would take the next key typed as its own, so it returns to Idle
-      if (full) dispatch({ type: "consumed", overlay: false, mode: false, at: clock.now() });
+      if (unassigned > 0) dispatch({ type: "notice", code: "input_dropped", data: { reason: "not_shown", events: unassigned }, at: clock.now() });
+      // what came after the queue filled went nowhere, possibly the key a prefix waited for: the prefix returns to Idle
+      dispatch({ type: "armed", armed: armed && !full, at: clock.now() });
     } finally {
       replaying = false;
     }
@@ -472,20 +535,33 @@ export function startLoop(options: LoopOptions): Loop {
   }
 
   /** One event through the state core, and its effects performed in order, now. */
-  function dispatch(event: ModelEvent, matches?: (scene: PointerScene) => boolean): void {
+  function dispatch(event: ModelEvent, route?: DeferredMouse): void {
     const before = state;
     const step = reduce(state, event);
     state = step.state;
-    for (const effect of step.effects) perform(effect, matches);
+    for (const effect of step.effects) perform(effect, route);
     if (state !== before) {
+      keepView();
       reshow();
       owePass();
     }
     onceShown();
   }
 
-  function perform(effect: Effect, matches?: (scene: PointerScene) => boolean): void {
+  /** The view written to this core's file when it changed; a failed write said once. */
+  function keepView(): void {
+    const unsaved = options.views?.keep(state) ?? null;
+    if (unsaved !== null) dispatch({ type: "notice", code: "view_unsaved", data: { reason: unsaved }, at: clock.now() });
+  }
+
+  function perform(effect: Effect, route?: DeferredMouse): void {
     switch (effect.type) {
+      case "held_pane": {
+        // Classification needs no current destination; the completed write supplies it at replay.
+        const pane = focused(state.world, state.focus).pane;
+        if (pane !== null) perform({ type: "pane", pane: pane.id, input: effect.input });
+        return;
+      }
       case "pane":
         for (const step of pointer.typed(effect.pane, lookOf(effect.pane))) performPointer(step);
         toPane(effect.pane, effect.input);
@@ -497,6 +573,10 @@ export function startLoop(options: LoopOptions): Loop {
           const tab = focused(state.world, state.focus).tab;
           const shapeOf = tab ? world.view().tabs.get(tab.id) : undefined;
           const toward = shapeOf ? paneToward(shapeOf, effect.target.id, direction) : null;
+          if (effect.neighbor !== undefined && toward !== effect.neighbor) {
+            dispatch({ type: "notice", code: "target_changed", data: { action: effect.action }, at: clock.now() });
+            return;
+          }
           if (toward !== null) dispatch({ type: "select", target: { kind: "pane", id: toward }, at: clock.now() });
           return;
         }
@@ -525,16 +605,22 @@ export function startLoop(options: LoopOptions): Loop {
         act("reload_keys");
         dispatch({ type: "keys", keys: options.readKeys ? options.readKeys() : options.keys, at: clock.now() });
         return;
-      case "mouse": {
-        act(`mouse:${effect.over}`);
-        const scene = pointerScene();
-        const acts = matches && !matches(scene) ? pointer.cancel(scene, effect.event.at) : pointer.mouse(effect.over, effect.event, scene);
-        for (const step of acts) performPointer(step);
+      case "busy":
+        busy(effect.action);
         return;
-      }
+      case "mouse":
+        act(`mouse:${effect.over}`);
+        routeMouse(effect.event, effect.over, route);
+        return;
       case "host_reply":
         return;
     }
+  }
+
+  function routeMouse(event: MouseInput, over: "overlay" | "screen", route?: DeferredMouse): void {
+    const scene = pointerScene();
+    const acts = route ? route(over, scene) : pointer.mouse(over, event, scene);
+    for (const step of acts) performPointer(step);
   }
 
   /** Input for a pane: each goes to the pane it names, in order (a prefix in a text run can move focus between two). */
@@ -579,6 +665,9 @@ export function startLoop(options: LoopOptions): Loop {
       case "close_overlay":
         dispatch({ type: "close_overlay", at: clock.now() });
         return;
+      case "choose":
+        dispatch({ type: "choose", entry: step.entry, at: clock.now() });
+        return;
     }
   }
 
@@ -614,7 +703,11 @@ export function startLoop(options: LoopOptions): Loop {
   }
 
   function pointerScene(): PointerScene {
-    return { hits, focus: paneFocus, ...paintedLayout, look: lookOf, painted: (pane) => drawn.get(pane) ?? null };
+    return { hits, focus: paneFocus, ...paintedLayout, look: lookOf, painted: (pane) => drawn.get(pane) ?? null,
+      acceptsMenu: (entry) => {
+        const menu = state.overlays.at(-1);
+        return menu?.kind === "menu" && menuChoice(menu, entry).accepted;
+      } };
   }
 
   /** The shown tab's panes with their cells, told to the pane machine when anything about them changed. */
@@ -629,7 +722,7 @@ export function startLoop(options: LoopOptions): Loop {
       pointer.focusChanged(paneFocus);
       panes.focus(paneFocus);
     }
-    shape = layOut(size.cols, size.rows, tab ? dividers.shape(tab.id, view.tabs.get(tab.id)) ?? null : null, { sidebarCollapsed: state.sidebarCollapsed });
+    shape = layOut(size.cols, size.rows, tab ? dividers.shape(tab.id, view.tabs.get(tab.id)) ?? null : null, { sidebarCollapsed: state.sidebarCollapsed, pane: pane?.id ?? null });
     // a pane that left the shown tab keeps no grid: shown again, it is drawn anew from its new attach
     for (const pane of grids.keys()) if (!shape.spots.some((spot) => spot.pane === pane)) grids.delete(pane);
     const shown = shape.spots.map(({ pane, cells, covered }) => ({ terminal: pane, cols: cells.cols, rows: cells.rows, covered }));
@@ -695,11 +788,11 @@ export function startLoop(options: LoopOptions): Loop {
 
   function pass(now: number): void {
     if (!painter || !shape || ended) return;
+    const releaseHeld = behindWrite?.ready === true ? behindWrite : null;
     const frameShape = shape;
     const tab = focused(state.world, state.focus).tab;
     const tree = tab ? dividers.shape(tab.id, world.view().tabs.get(tab.id)) : undefined;
     const nextLayout = { tab: tab && tree ? { id: tab.id, root: tree.root } : null, splits: frameShape.splits };
-    const nextOverlay = state.overlays.at(-1);
     passOwed = false;
     lastPass = now;
     passes++;
@@ -735,6 +828,8 @@ export function startLoop(options: LoopOptions): Loop {
     }
     const size = host.size();
     const paneViews = new Map(panes.views().map((v) => [v.terminal, v]));
+    const frameMenu = state.overlays.at(-1);
+    const frameMenuDismissed = state.menuDismissed;
     const chrome = buildChrome({
       regions: frameShape.regions,
       spots: frameShape.spots,
@@ -762,10 +857,15 @@ export function startLoop(options: LoopOptions): Loop {
     hits = frame.hits;
     drawn = nextDrawn;
     paintedLayout = nextLayout;
-    if (paintedOverlay !== nextOverlay) {
-      paintedOverlay = nextOverlay;
+    if (paintedOverlay !== frameMenu) {
+      paintedOverlay = frameMenu;
       overlayGeneration++;
     }
+    // A menu acknowledgement changes only presentation metadata. Keep that same painted owner,
+    // but never bless an overlay changed by input or a world update during the host write.
+    const sameOverlay = state.overlays.at(-1) === paintedOverlay;
+    state = presentedMenu(state, frameMenu, frameMenuDismissed);
+    if (sameOverlay) paintedOverlay = state.overlays.at(-1);
     // credit after the write was taken: the focused pane first, then the others (the pane machine credits a covered pane nothing)
     let budget = PASS_CREDIT_BYTES;
     const order = [...frameShape.spots].sort((a, b) => Number(b.pane === paneFocus) - Number(a.pane === paneFocus));
@@ -777,6 +877,7 @@ export function startLoop(options: LoopOptions): Loop {
     if (order.some((spot) => { const view = panes.view(spot.pane); return view !== undefined && !view.covered && view.owed > 0; })) owePass();
     const ready = [...copied].filter((pane) => panes.view(pane)?.ready);
     if (ready.length > 0 && !draining) drainThenLive(ready);
+    if (releaseHeld !== null && behindWrite === releaseHeld) replay();
   }
 
   /**

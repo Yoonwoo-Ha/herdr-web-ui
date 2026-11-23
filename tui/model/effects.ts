@@ -13,6 +13,9 @@ export type MouseInput = Extract<InputEvent, { type: "mouse" }>;
 /** What reaches a pane: the key, the text run (or what is left of it) or the paste, as read. */
 export type PaneInput = KeyInput | TextInput | PasteInput;
 
+/** What an overlay chose for the reducer to do once it closed: run an action, or focus a place. */
+export type OverlayChoice = { readonly kind: "action"; readonly action: HerdrAction } | { readonly kind: "select"; readonly target: Target };
+
 /** A terminal as the screen showed it when an action was chosen: its address and when the core made it (null: not known). */
 export interface Seen { readonly id: string; readonly created: number | null }
 
@@ -30,6 +33,8 @@ export interface RunEffect {
   readonly name: string | null;
   /** a close: every terminal it ends, as the screen showed them; the caller ends nothing when the core holds others */
   readonly seen?: readonly Seen[];
+  /** A directional focus or swap: the resolved neighbour at selection time, null at an edge. */
+  readonly neighbor?: string | null;
   /** a pane moved to another workspace: that workspace */
   readonly to?: string;
 }
@@ -37,6 +42,8 @@ export interface RunEffect {
 export type Effect =
   /** level 6: send this input to the pane through its gate (encodeKey, or encodePaste) */
   | { readonly type: "pane"; readonly pane: string; readonly input: PaneInput }
+  /** Pane input classified during a hold; its destination is resolved only after the write. */
+  | { readonly type: "held_pane"; readonly input: PaneInput }
   | RunEffect
   /** the rest of a text run behind a run effect: dispatch it as an event once the effects before it are performed */
   | { readonly type: "input"; readonly event: TextInput }
@@ -44,6 +51,8 @@ export type Effect =
   | { readonly type: "quit" }
   /** read herdr's config again and answer with a `keys` event */
   | { readonly type: "reload_keys" }
+  /** An action or overlay/mode input refused at the hold boundary, before it changes any UI state. */
+  | { readonly type: "busy"; readonly action: string }
   /** a mouse event for the caller's hit map: inside the top overlay, or over the screen's chrome and panes */
   | { readonly type: "mouse"; readonly over: "overlay" | "screen"; readonly event: MouseInput }
   /** a reply to the start probe (the host's colours, flags, cell size) */

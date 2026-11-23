@@ -34,7 +34,10 @@ function hints(rows: readonly KeyRow[], prefixed: boolean | null): Hint[] {
   });
 }
 
-/** The keys of the current mode: after the prefix while it is armed, the unlock chord while locked, the mode's own keys otherwise. */
+/**
+ * The keys of the current mode: after the prefix while it is armed, the unlock chord while locked, the mode's own keys
+ * otherwise. In Terminal mode: the prefix, the menu (which reaches every action), then the help.
+ */
 export function modeBar(state: ModelState): ModeBar {
   const { rows } = state.keymap;
   if (state.locked) return { mode: "locked", hints: hints(rows.filter((row) => row.action === "lock"), null) };
@@ -45,7 +48,11 @@ export function modeBar(state: ModelState): ModeBar {
   }
   return {
     mode: "terminal",
-    hints: [{ action: "prefix", keys: state.keymap.prefixes.map((prefix) => cleanConfigText(prefix.text)) }, ...hints(rows.filter((row) => row.action === "help"), null)],
+    hints: [
+      { action: "prefix", keys: state.keymap.prefixes.map((prefix) => cleanConfigText(prefix.text)) },
+      ...hints(rows.filter((row) => row.action === "menu"), null),
+      ...hints(rows.filter((row) => row.action === "help"), null),
+    ],
   };
 }
 

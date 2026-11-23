@@ -5,9 +5,12 @@
  */
 import { parseHerdrBinding } from "../../shared/herdr-keys.ts";
 import { TEXT_FIELD_MAX_CODE_POINTS, TEXT_FIELD_MAX_GRAPHEMES } from "./deadlines.ts";
-import type { KeyInput, PasteInput, RunEffect, Seen, TextInput } from "./effects.ts";
+import type { KeyInput, OverlayChoice, PasteInput, RunEffect, Seen, TextInput } from "./effects.ts";
 import type { Target } from "./focus.ts";
 import { charChords, chordId, keyChords } from "./keymap.ts";
+import { chooseEntry, entryKey, indexOfEntry, labelled, type MenuEntry, movedCursor } from "./menu.ts";
+
+interface MenuList { readonly entries: readonly MenuEntry[]; readonly cursor: number }
 
 /** `fresh`: typing replaces the suggestion. Moving the cursor clears `fresh` without editing the name. */
 export interface Field { readonly graphemes: readonly string[]; readonly cursor: number; readonly fresh: boolean; readonly edited: boolean; readonly original: string }
@@ -19,12 +22,14 @@ export type Overlay =
   | { readonly kind: "text"; readonly purpose: TextPurpose; readonly target: Target; readonly field: Field }
   /** `seen`: the terminals the close ends, as the screen showed them when the dialog opened */
   | { readonly kind: "confirm"; readonly purpose: "close_workspace"; readonly target: Target; readonly seen: readonly Seen[] }
-  | { readonly kind: "goto"; readonly field: Field };
+  | { readonly kind: "goto"; readonly field: Field }
+  /** `presented` is null after a stale choice: input waits for an accepted menu frame, never queued. */
+  | ({ readonly kind: "menu"; readonly presented: MenuList | null } & MenuList);
 
 export type OverlayInput = { readonly kind: "key"; readonly event: KeyInput } | { readonly kind: "text"; readonly event: TextInput } | { readonly kind: "paste"; readonly event: PasteInput };
 
-/** The overlay after the input (null: closed) and what it asks for. */
-export interface OverlayAnswer { readonly overlay: Overlay | null; readonly effects: readonly RunEffect[] }
+/** The overlay after the input (null: closed), what it asks of the caller, and what the reducer does once it closed. */
+export interface OverlayAnswer { readonly overlay: Overlay | null; readonly effects: readonly RunEffect[]; readonly choice?: OverlayChoice }
 
 interface OverlayEntry<O extends Overlay> {
   /** the keys that close it, in herdr's syntax, shown in its frame; never empty */
@@ -148,6 +153,16 @@ function fieldInput<O extends Extract<Overlay, { field: Field }>>(overlay: O, in
 
 const run = (action: RunEffect["action"], target: Target | null, name: string | null): RunEffect => ({ type: "run", action, target, index: null, name });
 
+/** Choose a presented identity: move the cursor, close with its choice, or refuse it without retargeting. */
+export function menuChoice(overlay: Extract<Overlay, { kind: "menu" }>, entry: string | null): OverlayAnswer & { readonly accepted: boolean } {
+  const at = overlay.entries.findIndex((candidate) => entryKey(candidate) === entry);
+  const chosen = overlay.presented === null ? null : chooseEntry(overlay.entries, at);
+  if (chosen === null || overlay.presented === null) return { overlay: { ...overlay, presented: null }, effects: [], accepted: false };
+  if (!("cursor" in chosen)) return { overlay: null, effects: [], choice: chosen.choice, accepted: true };
+  const cursor = indexOfEntry(overlay.presented.entries, overlay.entries[chosen.cursor]!);
+  return { overlay: { ...overlay, cursor: chosen.cursor, presented: { ...overlay.presented, cursor } }, effects: [], accepted: true };
+}
+
 export const OVERLAYS: { readonly [K in Overlay["kind"]]: OverlayEntry<Extract<Overlay, { kind: K }>> } = {
   help: {
     closeKeys: ["esc", "q", "?"],
@@ -177,6 +192,34 @@ export const OVERLAYS: { readonly [K in Overlay["kind"]]: OverlayEntry<Extract<O
     closeKeys: ["esc"],
     target: () => null,
     input: (overlay, input) => fieldInput(overlay, input, (query) => ({ overlay: null, effects: [run("goto", null, query)] })),
+  },
+  menu: {
+    closeKeys: ["esc"],
+    target: () => null,
+    input: (overlay, input) => {
+      const presented = overlay.presented;
+      if (presented === null) return { overlay, effects: [] };
+      const current = (at: number) => {
+        const shown = presented.entries[at];
+        return shown === undefined ? -1 : indexOfEntry(overlay.entries, shown);
+      };
+      const choose = (at: number) => {
+        const entry = presented.entries[at];
+        return menuChoice(overlay, entry === undefined ? null : entryKey(entry));
+      };
+      if (isEnter(input)) return choose(presented.cursor);
+      if (input.kind === "key") {
+        const cursor = movedCursor(presented.entries, presented.cursor, input.event);
+        if (cursor !== null) {
+          const next = current(cursor);
+          return { overlay: { ...overlay, cursor: next < 0 ? overlay.cursor : next, presented: { ...presented, cursor } }, effects: [] };
+        }
+      }
+      // a label is one character typed as it is: under an input method a letter arrives composed and chooses nothing
+      const typed = input.kind === "paste" || (input.kind === "key" && (input.event.mods.alt || input.event.mods.ctrl)) ? "" : input.event.text ?? "";
+      const at = labelled(presented.entries, [...typed][0] ?? "");
+      return at < 0 ? { overlay, effects: [] } : choose(at);
+    },
   },
 };
 

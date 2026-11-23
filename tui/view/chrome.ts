@@ -17,6 +17,7 @@ import type { ColorDepth } from "../host/index.ts";
 import { focused } from "../model/focus.ts";
 import { helpRows, modeBar, shownRefusals } from "../model/hints.ts";
 import type { KeymapNote } from "../model/keymap.ts";
+import { entryKey, type MenuEntry } from "../model/menu.ts";
 import { type Field, type Overlay, OVERLAYS } from "../model/overlays.ts";
 import type { ModelState } from "../model/reduce.ts";
 import { STRINGS } from "../strings.ts";
@@ -197,6 +198,7 @@ function sidebarPart(input: ChromeInput, colors: Colors, look: string): Part {
     fillSpan(canvas, rect.x, row, width, head);
     const toggle = STRINGS.sidebarToggleCollapse;
     printFit(canvas, rect.x, row, header, Math.max(0, width - toggle.length - 1), head, true);
+    if (width > toggle.length) canvas.hit({ x: rect.x, y: row, width: width - toggle.length, height: 1 }, "menu");
     if (width >= toggle.length) {
       const at = rect.x + width - toggle.length;
       printFit(canvas, at, row, toggle, toggle.length, canvas.style({ fg: colors.accent, bg: colors.bgElevated, flags: STYLE_BOLD }));
@@ -272,9 +274,45 @@ function tabWindow(entries: readonly { width: number; active: boolean }[], room:
   }
 }
 
+/**
+ * The narrow screen's header, in the tab bar's row: the shown workspace with its state mark, the shown tab of how many,
+ * the hc session, how many agents elsewhere need the user, and the menu's mark. A click anywhere on it opens the menu.
+ */
+function headerPart(input: ChromeInput, colors: Colors, look: string): Part {
+  const { regions, state, world, session } = input;
+  const rect = regions.tabBar;
+  const shown = focused(state.world, state.focus);
+  const row = world.workspaceGroups.flatMap((group) => [group, ...group.children]).find((one) => one.id === shown.workspace?.id);
+  const tabs = shown.workspace?.tabs ?? [];
+  const tabAt = tabs.findIndex((tab) => tab.id === shown.tab?.id);
+  const tab = tabAt < 0 ? "" : ` ${tabAt + 1}/${tabs.length}:${tabs[tabAt]!.name || tabAt + 1}`;
+  const waiting = world.agents.filter((agent) => knownStatus(agent.status) === "blocked" && agent.paneId !== shown.pane?.id).length;
+  const data = {
+    status: row?.status ?? "unknown",
+    place: row ? `${row.number}:${row.name}${tab} ${STRINGS.sessionHeader(session)}` : `${STRINGS.noSpaces} ${STRINGS.sessionHeader(session)}`,
+    waiting: waiting > 0 ? ` ${STRINGS.glyphBlocked}${waiting}` : "",
+  };
+  return part("header", rect, look, data, (canvas, { status, place, waiting: others }) => {
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const head = canvas.style({ fg: colors.textStrong, bg: colors.bgElevated, flags: STYLE_BOLD });
+    canvas.fill(head);
+    const right = rect.x + rect.width;
+    const mark = ` ${STRINGS.menuMark}`;
+    const markAt = Math.max(rect.x, right - measure(mark).width);
+    const othersAt = Math.max(rect.x, markAt - measure(others).width);
+    const state = STATE_LOOK[status];
+    const col = printFit(canvas, rect.x, rect.y, state.glyph, Math.min(1, othersAt - rect.x), canvas.style({ fg: colors[state.role], bg: colors.bgElevated, flags: STYLE_BOLD }));
+    printFit(canvas, col, rect.y, place, othersAt - col, head, true);
+    printFit(canvas, othersAt, rect.y, others, markAt - othersAt, canvas.style({ fg: colors.statusBlocked, bg: colors.bgElevated, flags: STYLE_BOLD }));
+    printFit(canvas, markAt, rect.y, mark, right - markAt, canvas.style({ fg: colors.accent, bg: colors.bgElevated, flags: STYLE_BOLD }));
+    canvas.hit(rect, "menu");
+  });
+}
+
 function tabBarPart(input: ChromeInput, colors: Colors, look: string): Part {
   const { regions, state, world, session } = input;
   const rect = regions.tabBar;
+  if (regions.narrow) return headerPart(input, colors, look);
   const shown = focused(state.world, state.focus);
   const activeTab = shown.tab?.id ?? null;
   const zoomed = activeTab !== null && (world.tabs.get(activeTab)?.zoomed ?? null) !== null;
@@ -481,29 +519,27 @@ function modeBarPart(input: ChromeInput, colors: Colors, look: string): Part {
     canvas.fill(canvas.style({ fg: colors.text, bg: colors.bgPanel }));
     const row = rect.y;
     const right = rect.x + rect.width;
+    // the notice takes the row's right end; what is left of it is fitted into the cells before it, never painted over
+    const noticeWidth = notice === null ? 0 : Math.min(measure(notice).width, Math.floor(rect.width * 0.65));
+    const end = right - noticeWidth;
     const badge = ` ${MODE_LABELS[mode]} `;
     const terminal = mode === "terminal";
     const badgeBg = mode === "prefix" ? colors.accent : mode === "locked" ? colors.statusBlocked : terminal ? colors.bgElevated : colors.statusWorking;
     let col = printFit(canvas, rect.x, row, badge, rect.width, canvas.style({ fg: terminal ? colors.textStrong : colors.primaryText, bg: badgeBg, flags: STYLE_BOLD }));
-    if (offline !== null) col = printFit(canvas, col, row, ` ${offline} `, right - col, canvas.style({ fg: colors.notice, bg: colors.bgPanel, flags: STYLE_BOLD }), true);
-    for (const code of unreachable) col = printFit(canvas, col, row, ` [${code}] `, right - col, canvas.style({ fg: colors.dangerText, bg: colors.bgPanel, flags: STYLE_BOLD }), true);
+    if (offline !== null) col = printFit(canvas, col, row, ` ${offline} `, end - col, canvas.style({ fg: colors.notice, bg: colors.bgPanel, flags: STYLE_BOLD }), true);
+    for (const code of unreachable) col = printFit(canvas, col, row, ` [${code}] `, end - col, canvas.style({ fg: colors.dangerText, bg: colors.bgPanel, flags: STYLE_BOLD }), true);
     const keyStyle = canvas.style({ fg: colors.accent, bg: colors.bgPanel, flags: STYLE_BOLD });
     const labelStyle = canvas.style({ fg: colors.textDim, bg: colors.bgPanel });
-    const badgeEnd = rect.x + measure(badge).width;
+    // a hint is drawn whole or not at all, so the keys shown are never a cut-off key
     for (const hint of hints) {
-      if (col >= right) break;
-      const last = col + measure(` ${hint.keys} ${hint.label}`).width > right && col > badgeEnd;
-      col = printFit(canvas, col, row, ` ${hint.keys}`, right - col, keyStyle);
-      col = printFit(canvas, col, row, ` ${hint.label}`, right - col, labelStyle, last);
-      if (last) break;
+      if (col + measure(` ${hint.keys} ${hint.label}`).width > end) break;
+      col = printFit(canvas, col, row, ` ${hint.keys}`, end - col, keyStyle);
+      col = printFit(canvas, col, row, ` ${hint.label}`, end - col, labelStyle);
     }
-    if (notice !== null) {
-      const width = Math.min(measure(notice).width, Math.floor(rect.width * 0.65));
-      if (width > 0) {
-        const style = canvas.style({ fg: colors.dangerText, bg: colors.bgElevated, flags: STYLE_BOLD });
-        fillSpan(canvas, right - width, row, width, style);
-        printFit(canvas, right - width, row, notice, width, style, true);
-      }
+    if (notice !== null && noticeWidth > 0) {
+      const style = canvas.style({ fg: colors.dangerText, bg: colors.bgElevated, flags: STYLE_BOLD });
+      fillSpan(canvas, end, row, noticeWidth, style);
+      printFit(canvas, end, row, notice, noticeWidth, style, true);
     }
   });
 }
@@ -656,7 +692,66 @@ function buildOverlays(width: number, height: number, state: ModelState, world: 
       const field = fieldOverlay("overlay:goto", centred(width, height, 64, 14), STRINGS.gotoTitle, STRINGS.gotoPromptHint, top.field, closeKeys, colors);
       return { overlays: [...overlays, field.overlay], input: field.input };
     }
+    case "menu":
+      return { overlays: [...overlays, menuPart(width, height, top, state, world, colors)], input: "overlay" };
   }
+}
+
+/** One menu entry as drawn: its key (blank for none), what it is, and its state mark for a place that has one. */
+function menuLine(entry: MenuEntry, state: ModelState, world: CoreView): { label: string; text: string; status: KnownStatus | null; keys: string } {
+  const label = entry.label ?? " ";
+  if (entry.kind === "action") return { label, text: actionLabel(entry.action), status: null, keys: keyText(state, entry.action) ?? "" };
+  const kind = STRINGS.menuPlaces[entry.kind];
+  if (entry.kind === "workspace") {
+    const row = world.workspaceGroups.flatMap((group) => [group, ...group.children]).find((one) => one.id === entry.id);
+    return { label, text: `${kind} ${row ? `${row.number}:${row.name}` : entry.id}`, status: row?.status ?? null, keys: "" };
+  }
+  if (entry.kind === "tab") {
+    const tabs = state.world.workspaces.flatMap((workspace) => workspace.tabs.map((tab, at) => ({ tab, number: at + 1 })));
+    const found = tabs.find(({ tab }) => tab.id === entry.id);
+    return { label, text: `${kind} ${found ? `${found.number}:${found.tab.name || found.number}` : entry.id}`, status: knownStatus(world.tabStatuses.get(entry.id)), keys: "" };
+  }
+  const pane = world.panes.get(entry.id);
+  const agent = entry.kind === "agent" ? world.agents.find((row) => row.paneId === entry.id) : undefined;
+  const name = agent?.name || pane?.label || pane?.title || entry.id;
+  const folder = pane?.folder && pane.folder !== name ? ` ${pane.folder}` : "";
+  return { label, text: `${kind} ${name}${folder}`, status: pane ? knownStatus(pane.status) : null, keys: "" };
+}
+
+/** The menu: a window of its entries around the cursor, each a click target that chooses it. */
+function menuPart(width: number, height: number, menu: Extract<Overlay, { kind: "menu" }>, state: ModelState, world: CoreView, colors: Colors): Part {
+  const rect = centred(width, height, 56, menu.entries.length + 2);
+  const lines = menu.entries.map((entry) => menuLine(entry, state, world));
+  return {
+    key: "overlay:menu", rect, version: 0,
+    draw(canvas) {
+      const inner = overlayFrame(canvas, rect, STRINGS.menuTitle, OVERLAYS.menu.closeKeys, colors);
+      if (inner.width <= 0 || inner.height <= 0) return;
+      const start = windowStart(lines.length, inner.height, menu.cursor);
+      lines.slice(start, start + inner.height).forEach((line, at) => {
+        const index = start + at;
+        const y = inner.y + at;
+        const chosen = index === menu.cursor;
+        const bg = chosen ? colors.bgHover : colors.bgElevated;
+        const text = canvas.style({ fg: chosen ? colors.textStrong : colors.text, bg, flags: chosen ? STYLE_BOLD : 0 });
+        fillSpan(canvas, inner.x, y, inner.width, text);
+        const end = inner.x + inner.width;
+        let col = printFit(canvas, inner.x, y, chosen ? ">" : " ", 1, canvas.style({ fg: colors.accent, bg, flags: STYLE_BOLD }));
+        col = printFit(canvas, col, y, `${line.label} `, end - col, canvas.style({ fg: colors.accent, bg, flags: STYLE_BOLD }));
+        if (line.status !== null) {
+          const look = STATE_LOOK[line.status];
+          col = printFit(canvas, col, y, `${look.glyph} `, end - col, canvas.style({ fg: colors[look.role], bg, flags: STYLE_BOLD }));
+        }
+        const keys = line.keys === "" ? "" : ` ${line.keys}`;
+        const keysWidth = measure(keys).width;
+        const room = end - col > keysWidth + 8 ? end - col - keysWidth : end - col;
+        col = printFit(canvas, col, y, line.text, room, text, true);
+        if (keys && end - col >= keysWidth) printFit(canvas, end - keysWidth, y, keys, keysWidth, canvas.style({ fg: colors.textDim, bg }));
+        // the entry's key, not its index: a world update before the next paint shifts the indices under the click
+        canvas.hit({ x: inner.x, y, width: inner.width, height: 1 }, `menu:${entryKey(menu.entries[index]!)}`);
+      });
+    },
+  };
 }
 
 /** Every chrome part and overlay of one frame pass. */

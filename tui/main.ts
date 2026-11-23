@@ -35,9 +35,13 @@ if (insideOwnCore(env, target.path, coreSocket({ env }).path, sameSocket)) {
 }
 
 const { herdrConfigPath, readHerdrConfig } = await import("../server/herdr-sidebar.ts");
+const { userHome } = await import("../server/user-home.ts");
 const { createUnixHost } = await import("./host/unix.ts");
 const { startLoop } = await import("./loop.ts");
 const { crashRecord, recordCrash } = await import("./crash.ts");
+const { ViewStore } = await import("./view-store.ts");
+
+const states = stateFolder(env, userHome(env) || homedir());
 
 const readKeys = (): unknown => {
   const config = readHerdrConfig(herdrConfigPath(env));
@@ -53,13 +57,14 @@ const loop = startLoop({
   cwd: screenFolder(env, process.cwd()),
   keys: readKeys(),
   readKeys,
+  views: new ViewStore(states),
 });
 
 /** An error nothing expected: the terminal back first, then the record, its path, and the crash's exit code. */
 const crash = (error: unknown): never => {
   let where = "";
   try {
-    where = recordCrash(() => host.leave(), stateFolder(env, homedir()), crashRecord(version, loop.report(), error, new Date()), process.pid);
+    where = recordCrash(() => host.leave(), states, crashRecord(version, loop.report(), error, new Date()), process.pid);
   } catch {
     // the folder cannot be written: the line below says so
   }

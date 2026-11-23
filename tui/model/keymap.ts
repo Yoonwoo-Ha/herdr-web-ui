@@ -13,7 +13,7 @@ export type Mode = "terminal" | "navigate" | "resize" | "copy";
 /** Actions only the screen's modes and its lock know. */
 /** Navigate mode's moves (herdr has no key for them): the workspace pointed at one place up or down, the focused pane into it. */
 export type MoveAction = "navigate_move_up" | "navigate_move_down" | "navigate_move_pane";
-export type LocalAction = "lock" | "navigate_focus" | "navigate_cancel" | "navigate_index" | "navigate_cycle_next" | "navigate_cycle_previous" | "resize_leave" | "copy_leave" | MoveAction;
+export type LocalAction = "lock" | "menu" | "navigate_focus" | "navigate_cancel" | "navigate_index" | "navigate_cycle_next" | "navigate_cycle_previous" | "resize_leave" | "copy_leave" | MoveAction;
 export type KeyAction = HerdrAction | HerdrNavigateKey | LocalAction;
 
 export interface KeyRow {
@@ -99,6 +99,13 @@ export interface Keymap {
 
 // The screen's own lock chord (herdr has no lock), pending the owner's decision on how the lock is switched.
 const LOCK_KEY = "ctrl+alt+g";
+
+/**
+ * The screen's menu of every action (herdr has none): Enter after the prefix, a key every keyboard has, a phone's
+ * included, and one an input method never composes. It holds its key before the config's bindings, as navigate mode's
+ * fixed keys do: a binding of the config on it is dropped with a `fixed_key` note.
+ */
+const MENU_KEY = "prefix+enter";
 
 /**
  * The prefix when none of the config's can be typed: herdr's default ctrl+b, then the next one no binding of the config
@@ -270,6 +277,12 @@ export function buildKeymap(keys: unknown): Keymap {
   const afterPrefix: Record<string, Bound> = {};
   const direct: Record<string, Bound> = {};
   const rows: KeyRow[] = [];
+  // the menu's key, claimed first (no prefix at all: nothing after it fires, and the menu opens by a click)
+  const menuChord = parseHerdrBinding(MENU_KEY)!.chord;
+  const menuId = matchId(menuChord);
+  const menuHeld = prefixes.length > 0 && !Object.hasOwn(prefixIds, menuId);
+  if (menuHeld) afterPrefix[menuId] = { action: "menu", index: null };
+  const afterFixed: ReadonlySet<string> = menuHeld ? new Set([menuId]) : NOTHING_FIXED;
   /** What holds the key `chord` arrives as in `lookup` (in Terminal mode a prefix holds its own key), or null. */
   const holderIn = (lookup: Record<string, Bound>, chord: HerdrChord): string | null => {
     const id = matchId(chord);
@@ -306,7 +319,7 @@ export function buildKeymap(keys: unknown): Keymap {
   for (const pass of [true, false]) {
     for (const { action, bindings } of resolved.actions) {
       if (written(action) !== pass) continue;
-      const live = bindings.flatMap((binding) => firing(action, binding, binding.prefixed ? "after_prefix" : "direct", NOTHING_FIXED) ?? []);
+      const live = bindings.flatMap((binding) => firing(action, binding, binding.prefixed ? "after_prefix" : "direct", binding.prefixed ? afterFixed : NOTHING_FIXED) ?? []);
       held.set(action, live.flatMap((binding) => take(binding.prefixed ? afterPrefix : direct, action, binding) ?? []));
     }
   }
@@ -329,6 +342,7 @@ export function buildKeymap(keys: unknown): Keymap {
   if (lockHolder === null) claim(direct, "lock")(lockBinding.chords[0]!.chord, null);
   else notes.push({ code: "lock_taken", holder: lockHolder });
   rows.push({ action: "lock", default: LOCK_KEY, mode: "terminal", source: "fixed", bindings: lockHolder === null ? [lockBinding] : [] });
+  rows.push({ action: "menu", default: MENU_KEY, mode: "terminal", source: "fixed", bindings: menuHeld ? [{ text: MENU_KEY, prefixed: true, range: false, chords: [{ chord: menuChord, index: null }] }] : [] });
 
   const modeKeys = { navigate: {}, resize: {}, copy: {} } as Record<Exclude<Mode, "terminal">, Record<string, Bound>>;
   const fixedRows = new Map<string, HerdrKeptBinding[]>();

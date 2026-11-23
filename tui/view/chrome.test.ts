@@ -5,6 +5,7 @@ import { LAYOUT_DOC, PANE_NAME_LABEL, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WO
 import type { PaneState, PaneView } from "../core/pane.ts";
 import { CoreWorld } from "../core/world.ts";
 import { STYLE_BOLD } from "../emulator/index.ts";
+import { focused } from "../model/focus.ts";
 import { initialState, type ModelEvent, type ModelState, reduce } from "../model/reduce.ts";
 import { agents } from "../testing/fixtures/agents.ts";
 import { demo } from "../testing/fixtures/demo.ts";
@@ -73,7 +74,7 @@ function setup(options: Setup): { state: ModelState; shape: ScreenShape; input: 
   let state = reduce(initialState(options.keys), { type: "world", world: view.world, at: 0 }).state;
   for (const event of options.events ?? []) state = reduce(state, event).state;
   const tab = state.world.workspaces.flatMap((workspace) => workspace.tabs).find((one) => one.id === (state.focus.tabs[state.focus.workspace ?? ""] ?? state.world.workspaces[0]?.tabs[0]?.id));
-  const shape = layOut(options.cols, options.rows, tab ? view.tabs.get(tab.id) ?? null : null, { sidebarCollapsed: state.sidebarCollapsed });
+  const shape = layOut(options.cols, options.rows, tab ? view.tabs.get(tab.id) ?? null : null, { sidebarCollapsed: state.sidebarCollapsed, pane: focused(state.world, state.focus).pane?.id ?? null });
   const panes = new Map(Object.entries(options.panes ?? Object.fromEntries(shape.spots.map((spot) => [spot.pane, pane(spot.pane)]))));
   return {
     state, shape,
@@ -131,7 +132,7 @@ describe("chrome frames as rows of cells", () => {
       "                       ||                                              ||                                              |",
     ]);
     expect(shot.rows[38]).toBe(`                       |+${"-".repeat(46)}++${"-".repeat(46)}+`);
-    expect(shot.rows[39]).toBe(` TERMINAL  ctrl+b prefix prefix+? help${" ".repeat(82)}`);
+    expect(shot.rows[39]).toBe(` TERMINAL  ctrl+b prefix prefix+enter menu prefix+? help${" ".repeat(64)}`);
     expect(cell(shot, 0, 0)).toEqual({ text: "h", fg: TEXT_STRONG, bg: BG_ELEVATED, bold: true });
     expect(cell(shot, 21, 0)).toMatchObject({ text: "<", fg: ACCENT, bold: true });
     expect(cell(shot, 0, 2)).toMatchObject({ text: ">", fg: ACCENT, bold: true });
@@ -156,7 +157,7 @@ describe("chrome frames as rows of cells", () => {
       " ~ files /tui … Working||                          ||                          |",
       " * claude /proj    Done||                          ||                          |",
     ]);
-    expect(shot.rows[23]).toBe(` TERMINAL  ctrl+b prefix prefix+? help${" ".repeat(42)}`);
+    expect(shot.rows[23]).toBe(` TERMINAL  ctrl+b prefix prefix+enter menu prefix+? help${" ".repeat(24)}`);
   });
 });
 
@@ -409,7 +410,7 @@ describe("whole-screen proofs on the runner", () => {
         await run.advance(10);
         const grid = run.grid();
         for (const [row, text] of expected[`${cols}x${rows}`]!) expect({ cols, row, text: grid[row]!.slice(0, [...text].length) }).toEqual({ cols, row, text });
-        expect(grid[rows - 1]!.startsWith(" TERMINAL  ctrl+b prefix prefix+? help")).toBe(true);
+        expect(grid[rows - 1]!.startsWith(" TERMINAL  ctrl+b prefix prefix+enter menu prefix+? help")).toBe(true);
       } finally {
         await run.close();
       }

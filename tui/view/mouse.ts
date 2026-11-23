@@ -5,7 +5,7 @@
  * pane the event goes to its program, in its own grid's cells, when the program asked for a mouse mode and shift
  * is not held; otherwise the wheel scrolls the pane's history here and a drag selects, and the release copies.
  * A program gets a drag and its release only if its press went there, it is focused, and the grab is still active.
- * Over an open overlay only its close control acts.
+ * Over an open overlay only its close control and its entries (the menu's) act.
  * The answer is a list of acts for the loop to perform; nothing here writes, sends or draws.
  */
 import { isDeepStrictEqual } from "node:util";
@@ -52,11 +52,15 @@ export interface PointerScene {
   readonly splits: readonly SplitCells[];
   look(pane: string): PaneLook | null;
   painted(pane: string): PanePicture | null;
+  /** The model checks a painted menu identity before a press can cancel another button's gesture. */
+  acceptsMenu?(entry: string): boolean;
 }
 
 export type PointerAct =
   | { readonly kind: "select"; readonly target: Target }
-  | { readonly kind: "action"; readonly action: "toggle_sidebar" | "new_workspace" }
+  | { readonly kind: "action"; readonly action: "toggle_sidebar" | "new_workspace" | "menu" }
+  /** the top overlay's entry with this key (the menu's `entryKey`, as painted) was clicked */
+  | { readonly kind: "choose"; readonly entry: string }
   /** to the focused pane's program, in its grid's cells */
   | { readonly kind: "forward"; readonly pane: string; readonly event: MouseInput }
   /** show the pane's screen this many rows above its newest rows */
@@ -69,9 +73,12 @@ export type PointerAct =
   /** the top overlay's close control was clicked */
   | { readonly kind: "close_overlay" };
 
+/** A queued report validated and applied to its own gesture at replay time. */
+export type DeferredMouse = (over: "overlay" | "screen", scene: PointerScene) => PointerAct[];
+
 type Grab =
   | { readonly kind: "none" }
-  | { readonly kind: "forward"; readonly pane: string; readonly attachment: symbol; readonly screen: number; last: MouseInput }
+  | { readonly kind: "forward"; readonly pane: string; readonly button: MouseInput["button"]; readonly attachment: symbol; readonly screen: number; last: MouseInput }
   /** bound to the emulator and the screen (main or alternate) it was pressed on: the anchor means nothing on another */
   | ({ readonly kind: "select"; readonly pane: string; readonly anchor: ScreenPoint; readonly contentVersion: number } & ScreenOf)
   | { readonly kind: "divider"; readonly id: number; readonly tab: string; readonly name: DividerName; readonly rect: Rect; readonly direction: SplitDirection; readonly offset: number; moved: number | null };
@@ -98,6 +105,50 @@ export class Pointer {
   private selection: Selection | null = null;
   private grabs = 0;
   private readonly identities = new WeakMap<object, symbol>();
+
+  /** A hold's gesture ledger: accepted presses open owners and matching releases close them in read order. */
+  defer(): { continuation(event: MouseInput): boolean; bind(event: MouseInput, scene: PointerScene): DeferredMouse } {
+    type Owner = { pane: string; button: MouseInput["button"]; live: Extract<Grab, { kind: "forward" }> | null };
+    let owner: Owner | null = this.grab.kind === "forward" ? { pane: this.grab.pane, button: this.grab.button, live: this.grab } : null;
+    const continuation = (event: MouseInput) => owner !== null &&
+      (event.action === "motion" || event.action === "release") && event.button === owner.button;
+    return {
+      continuation,
+      bind: (event, scene) => {
+        const from = owner;
+        if (from !== null && continuation(event)) {
+          const mapping = (now: PointerScene) => {
+            const picture = now.painted(from.pane);
+            return [picture?.rect, picture?.top, picture?.grid];
+          };
+          const cells = mapping(scene);
+          if (event.action === "release") owner = null;
+          return (_over, now) => {
+            const live = from.live;
+            // An old continuation owns neither a replacement grab nor a press that never reached its program.
+            if (live === null || this.grab !== live) return [];
+            if (this.pressedScreen(live, now) === null || !isDeepStrictEqual(cells, mapping(now))) return this.cancel(now, event.at);
+            return this.mouse("screen", event, now);
+          };
+        }
+        let started: Owner | null = null;
+        if (event.action === "press" && !isWheel(event)) {
+          const hit = scene.hits?.at(event.col, event.row);
+          owner = null;
+          if (hit && "pane" in hit && hit.pane === scene.focus && scene.look(hit.pane)?.programMouse && !event.mods.shift) {
+            owner = started = { pane: hit.pane, button: event.button, live: null };
+          }
+        }
+        const matches = this.bind(event, scene);
+        return (over, now) => {
+          const valid = matches(now);
+          const acts = valid ? this.mouse(over, event, now) : this.cancel(now, event.at);
+          if (started !== null) started.live = valid && this.grab.kind === "forward" ? this.grab : null;
+          return acts;
+        };
+      },
+    };
+  }
 
   private identity(object: object): symbol {
     const known = this.identities.get(object);
@@ -153,7 +204,7 @@ export class Pointer {
     // Balance a press already delivered, on its original attachment at its last valid cell. A stale
     // queued press never reached a program, so it has no forward grab to release.
     if (grab.kind === "forward" && this.pressedScreen(grab, scene)) {
-      acts.push({ kind: "forward", pane: grab.pane, event: { ...grab.last, action: "release", at } });
+      acts.push({ kind: "forward", pane: grab.pane, event: { ...grab.last, button: grab.button, action: "release", at } });
     }
     if (this.selection) acts.push({ kind: "redraw" });
     this.selection = null;
@@ -161,6 +212,8 @@ export class Pointer {
   }
 
   mouse(over: "overlay" | "screen", event: MouseInput, scene: PointerScene): PointerAct[] {
+    // A refused press on another button has no release to forward and cannot end the initiating button's grab.
+    if (event.action === "release" && this.grab.kind === "forward" && event.button !== this.grab.button) return [];
     if (over === "overlay") {
       // an open overlay owns the mouse: nothing reaches the chrome or a pane under it; its close control closes it.
       // A gesture that began before it opened ends at its release: a program that got the press gets that release,
@@ -174,11 +227,16 @@ export class Pointer {
         const look = grab.kind === "forward" ? this.pressedScreen(grab, scene) : null;
         return grab.kind === "forward" && look ? [{ kind: "forward", pane: grab.pane, event: inGrid(event, look) }] : [];
       }
-      if (event.action !== "press") return [];
-      const dropped = finished(this.grab);
-      this.grab = NONE;
-      const hit = event.button === "left" ? scene.hits?.at(event.col, event.row) : null;
-      return hit && "part" in hit && hit.part.startsWith("overlay:") && hit.id === "close" ? [...dropped, { kind: "close_overlay" }] : dropped;
+      if (event.action !== "press" || event.button !== "left") return [];
+      const hit = scene.hits?.at(event.col, event.row);
+      if (!hit || !("part" in hit) || !hit.part.startsWith("overlay:")) return [];
+      const [kind, entry] = splitId(hit.id);
+      if (hit.id !== "close" && (kind !== "menu" || entry === "")) return [];
+      if (kind === "menu" && scene.acceptsMenu?.(entry) === false) return [{ kind: "choose", entry }];
+      // End any delivered gesture before the choice can change focus or reject a stale entry.
+      const dropped = this.cancel(scene, event.at);
+      if (hit.id === "close") return [...dropped, { kind: "close_overlay" }];
+      return [...dropped, { kind: "choose", entry }];
     }
     if (isWheel(event)) return this.wheel(event, scene);
     if (event.action === "press") return this.press(event, scene);
@@ -247,7 +305,7 @@ export class Pointer {
       if (!look) return dropped;
       if (look.programMouse && !event.mods.shift) {
         const press = inGrid(event, look);
-        this.grab = { kind: "forward", pane: hit.pane, attachment: this.identity(look.emulator), screen: look.screen, last: press };
+        this.grab = { kind: "forward", pane: hit.pane, button: event.button, attachment: this.identity(look.emulator), screen: look.screen, last: press };
         return [...dropped, { kind: "forward", pane: hit.pane, event: press }];
       }
       const picture = scene.painted(hit.pane);
@@ -260,7 +318,7 @@ export class Pointer {
     const [kind, id] = splitId(hit.id);
     if (kind === "tab" || kind === "workspace") return [...dropped, { kind: "select", target: { kind, id } }];
     if (kind === "agent") return [...dropped, { kind: "select", target: { kind: "pane", id } }];
-    if (hit.id === "toggle_sidebar" || hit.id === "new_workspace") return [...dropped, { kind: "action", action: hit.id }];
+    if (hit.id === "toggle_sidebar" || hit.id === "new_workspace" || hit.id === "menu") return [...dropped, { kind: "action", action: hit.id }];
     const divider = namedSplit(hit.id, scene);
     if (divider && scene.tab) {
       const { split, name } = divider;

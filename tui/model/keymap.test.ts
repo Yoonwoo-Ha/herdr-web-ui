@@ -33,6 +33,17 @@ const asAction = (state: ModelState, action: string, index?: number) => {
 };
 const noteFor = (state: ModelState | ReturnType<typeof buildKeymap>, action: string) => ("keymap" in state ? state.keymap : state).notes.filter((note) => "action" in note && note.action === action);
 
+describe("the menu's key", () => {
+  it("Enter after the prefix opens the menu; a config binding on prefix+enter is dropped with a fixed_key note", () => {
+    const keymap = buildKeymap({ new_tab: "prefix+enter" });
+    expect(keymap.notes).toEqual([{ code: "fixed_key", action: "new_tab", binding: "prefix+enter" }]);
+    expect(keymap.rows.find((row) => row.action === "menu")!.bindings.map((binding) => binding.text)).toEqual(["prefix+enter"]);
+    expect(keymap.rows.find((row) => row.action === "new_tab")!.bindings).toEqual([]);
+    const opened = typed(start({ new_tab: "prefix+enter" }), "\x02", "\r").state;
+    expect(opened.overlays.map((overlay) => overlay.kind)).toEqual(["menu"]);
+  });
+});
+
 describe("the keymap table", () => {
   it("has one row per herdr action, with the resolver's default and bindings, in Terminal mode", () => {
     for (const keys of [undefined, { prefix: "ctrl+a" }, { new_tab: "alt+t" }, { zoom: "" }]) {

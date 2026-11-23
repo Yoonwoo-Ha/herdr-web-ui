@@ -26,7 +26,13 @@ export type LayoutAnswer =
   | { readonly type: "follow"; readonly target: Target; readonly away: string | null };
 
 /** What a layout write did that the screen is still to show: the terminals a close ended (none for any other write). */
-export interface LayoutDone { readonly ended: readonly string[]; readonly dropInput?: "layout_unknown" | "not_closed"; readonly refreshZoom?: true }
+export interface LayoutDone {
+  readonly ended: readonly string[];
+  readonly dropInput?: "layout_unknown" | "not_closed";
+  readonly refreshZoom?: true;
+  /** The destination this successful create or move established, independent of subsequent focus changes. */
+  readonly inputTarget?: string;
+}
 
 const NOTHING_ENDED: LayoutDone = { ended: [] };
 
@@ -132,7 +138,11 @@ export class LayoutWrites {
       this.unchanged(action, result);
       return NOTHING_ENDED;
     };
-    if (Object.hasOwn(SWAPS, action)) return async () => this.unchanged(action, await store.edit(swapEdit(id, null, SWAPS[action]!)));
+    if (Object.hasOwn(SWAPS, action)) return async () => this.unchanged(action, await store.edit((layout) => {
+      const result = swapEdit(id, null, SWAPS[action]!)(layout);
+      return effect.neighbor !== undefined && result.target !== effect.neighbor
+        ? { layout: null, reason: "target_changed" } : result;
+    }));
     if (Object.hasOwn(RESIZES, action)) return async () => this.unchanged(action, await store.edit(resizeEdit(id, RESIZES[action]!, RESIZE_STEP)));
     if (action === "move_tab_previous" || action === "move_tab_next") {
       return async () => {
@@ -199,8 +209,9 @@ export class LayoutWrites {
     return dropInput ? { ended, dropInput } : { ended };
   }
 
-  private follow(pane: string, away: string | null): void {
+  private follow(pane: string, away: string | null): LayoutDone {
     this.options.answer({ type: "follow", target: { kind: "pane", id: pane }, away });
+    return { ended: [], inputTarget: pane };
   }
 
   private notice(code: string, data: Readonly<Record<string, string>>, calm = false): void {
