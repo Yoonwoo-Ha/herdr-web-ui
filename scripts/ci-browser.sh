@@ -271,6 +271,7 @@ run_script scripts/relay-pairing-prompt-regression.ts
 run_script scripts/relay-account-pcs-regression.ts
 run_script scripts/relay-first-link-regression.ts
 run_script scripts/relay-second-device-join-regression.ts
+run_script scripts/relay-new-pc-press-regression.ts
 run_script scripts/machine-own-ovis-regression.ts
 run_script scripts/herdr-profiles-browser-qa.ts
 run_script scripts/relay-e2e-regression.ts

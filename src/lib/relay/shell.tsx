@@ -695,8 +695,14 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
         case "retry": await connect({ ...attempt, retriedAccountOpen: true }); return;
         case "pair":
           cancelAttempt();
-          // the press that tried the account's way asked for this join too: its sheet sends it at once (arrived)
-          if (attempt.pressed) keepConfirmedPc(attempt.offer.server_id);
+          // the press that tried the account's way asked for this join too: sent at once from the sheet it was made on,
+          // never by a link to that sheet again. A link's fragment change pops the history entry a phone's sheet holds,
+          // which sheetHistory.ts takes for Back: the sheet closes, and the page goes to the front page with no join
+          if (attempt.pressed && entry.offer?.server_id === attempt.offer.server_id && sheetJoin?.server_id === attempt.offer.server_id) {
+            show(confirmOf(entry.offer));
+            pair();
+            return;
+          }
           joinPc({ ...attempt.offer, join: attempt.offer }, { sheet: attempt.freshPc ? "new" : "join", alone: true, ...(attempt.freshPc ? { typed: true } : {}) });
           return;
         case "wait": {
