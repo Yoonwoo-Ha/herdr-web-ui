@@ -725,6 +725,38 @@ it("reconnects on online and visible-page events and removes wake listeners on c
   expect(f.attempts.count).toBe(3);
 });
 
+it("takes its carrier as gone when the page comes back from the back/forward cache, though it still reads open, and connects again", async () => {
+  const browser = new EventTarget();
+  const descriptors = new Map<string, PropertyDescriptor | undefined>();
+  for (const [key, value] of Object.entries({ addEventListener: browser.addEventListener.bind(browser), removeEventListener: browser.removeEventListener.bind(browser) })) {
+    descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, { configurable: true, value });
+  }
+  cleanups.push(() => {
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  });
+  page("visible");
+  const pageshow = (persisted: boolean): Event => Object.assign(new Event("pageshow"), { persisted });
+  const f = await fixture();
+  // a page loaded fresh says nothing of its carrier
+  browser.dispatchEvent(pageshow(false));
+  expect([f.attempts.count, f.carriers[0]!.open]).toEqual([1, true]);
+  // restored whole: the browser (or the phone app, at the navigation away) ended the socket under it with no close event
+  browser.dispatchEvent(pageshow(true));
+  await bounded(f.connections[0]!.closed);
+  expect([...f.clock.tasks.values()].map((task) => task.at - f.clock.now())).toEqual([1000]);
+  f.clock.advance(1000);
+  await f.transport.connect();
+  expect(f.connections).toHaveLength(2);
+  expect(f.fatal).toEqual([]);
+  f.transport.close();
+  browser.dispatchEvent(pageshow(true));
+  expect(f.attempts.count).toBe(2);
+});
+
 function page(visibilityState: "visible" | "hidden") {
   const target = Object.assign(new EventTarget(), { visibilityState });
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, "document");

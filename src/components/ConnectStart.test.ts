@@ -32,6 +32,13 @@ describe("the relay PCs of My PCs", () => {
     expect(checked.map((row) => row.status)).toEqual(["off", "online"]);
   });
 
+  it("says On for a PC this phone paired that the directory lists and does not call off, after what this device knows itself", () => {
+    const rows = relayTabPcs([{ server_id: id("a"), name: "desk" }, { server_id: id("b"), name: "attic" }, { server_id: id("c"), name: "nuc", status: "off" }, { server_id: id("d"), name: "lab" }],
+      [accountPc("a", { paired: true }), accountPc("b", { paired: true, listed: false }), accountPc("c", { paired: true })]);
+    // attic: the directory does not list it, so it says nothing of it; lab: in no account
+    expect(rows.map((row) => [row.name, row.status ?? ""])).toEqual([["desk", "online"], ["attic", ""], ["nuc", "off"], ["lab", ""]]);
+  });
+
   it("says Removed, with no state word, for a PC that turned this phone away as removed, and leaves it out once forgotten", () => {
     const removed = relayTabPcs([], [accountPc("b"), accountPc("c")], { [id("b")]: "removed" });
     expect(removed.map((row) => [row.name, row.status ?? ""])).toEqual([["pc-b", "removed"], ["pc-c", "online"]]);
@@ -52,6 +59,11 @@ describe("the phone app's PCs on My PCs", () => {
     const saved = ["https://desk.tail1e211e.ts.net", "http://100.101.1.2:7317", "http://192.168.0.5:7317", "http://127.0.0.1:41234", `https://app.ovis.sh/s/${id("a")}/`, "not an address"];
     const rows = phoneSavedPcs(saved, { "https://desk.tail1e211e.ts.net": "Desk" }, "https://app.ovis.sh");
     expect(rows.map((row) => [row.name, row.way])).toEqual([["Desk", "tailscale"], ["100.101.1.2:7317", "tailscale"], ["192.168.0.5:7317", "address"], ["127.0.0.1:41234", "ssh"]]);
+  });
+
+  it("names a PC saved by its address by the name the app keeps for it, with its address as the second line", () => {
+    const rows = phoneSavedPcs(["http://192.168.0.5:7317"], { "http://192.168.0.5:7317": "home-nas" }, "https://app.ovis.sh");
+    expect(rows.map((row) => [row.name, row.host, row.way])).toEqual([["home-nas", "192.168.0.5:7317", "address"]]);
   });
 });
 

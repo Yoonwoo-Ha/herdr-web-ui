@@ -16,7 +16,6 @@ import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { SHEET_QUERY, useSheetSwipe } from "../lib/sheets.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
-import { StartScreenAccountMenu } from "./AccountHead.tsx";
 import { AccountJoinRequests } from "./AccountJoinRequests.tsx";
 import { AccountSignIn } from "./AccountPcs.tsx";
 import { AddPcSheet } from "./AddPcSheet.tsx";
@@ -295,12 +294,12 @@ export function RelayShell(props: RelayShellProps) {
     ? <p className={account.error !== null ? "account-error" : "account-fineprint account-notice"} role={account.error !== null ? "alert" : "status"}>{signInEnded}</p> : null;
   // My PCs and Add a PC under one parent that stays across the 1024 px line: the layout and what shows change in place, so
   // the chosen tab, what is typed, the focus, the list's search and an open under way survive a rotation or a resize
-  const frontView = (top: ReactNode, menu?: ReactNode): ReactNode => (
+  const frontView = (top: ReactNode, accountMenu = false): ReactNode => (
     <div className={desk ? "connect-panes connect-desk" : "connect-panes"}>
       {listed && (
         <MyPcs key="list" hidden={addOver} devices={savedPcs} accountPcs={account?.kind === "signed-in" ? account.pcs : null} checked={checked} phone={phone} onForget={props.onForgetSaved} wide={desk} focusAdd={listFocus}
           inUse={addOpen && addFrom !== null ? serverIdOfPath(addFrom) : null} onBack={addOpen ? () => { setAddOpen(false); leaveAddEntry(addFrom); } : undefined}
-          onAdd={desk ? undefined : () => { setAddView(true); setAddFocus((count) => count + 1); }} menu={menu} top={top}
+          onAdd={desk ? undefined : () => { setAddView(true); setAddFocus((count) => count + 1); }} accountMenu={accountMenu} top={top}
           empty={account?.kind === "signed-in" && account.pcs !== null ? <p className="relay-shell-copy">{t("Sign in with the same account on the PC where Ovis runs")}</p> : undefined} />
       )}
       <AddPcTabs key="add" title={listed ? t("Add PC") : t("Connect a PC")} relay={relayPanel} way={addTab} onWay={chooseTab} away={endedLine}
@@ -323,7 +322,7 @@ export function RelayShell(props: RelayShellProps) {
       <main className={frontClass(myPcsShown)} data-relay-state={stateName} data-account-state={account.kind}>
         {/* one wrapper whether the dialog is open or not: swapping it in would remount the page, losing the control that opened it before its focus trap records it */}
         <div className="relay-shell account-centered relay-shell-signin" inert={addingPc || undefined}>
-          {frontView(<>{noneOnline}<NewPcNotices /><AccountJoinRequests /><UnconfirmedPcNotices tellConfirmed={false} onSignInAgain={onSignIn} />{directoryError}</>, <StartScreenAccountMenu />)}
+          {frontView(<>{noneOnline}<NewPcNotices /><AccountJoinRequests /><UnconfirmedPcNotices tellConfirmed={false} onSignInAgain={onSignIn} />{directoryError}</>, true)}
           {!myPcsShown && directoryError}
         </div>
         {addingPc && (

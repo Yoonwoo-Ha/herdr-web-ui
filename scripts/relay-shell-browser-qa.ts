@@ -746,9 +746,13 @@ async function legacyRelayShellQa(tree: RelayServerTree): Promise<void> {
       await pc2.mailbox.pull();
       await a.goto(`${APP}/`);
       await pcLink(a, "Mac mini").waitFor();
-      // Mac mini is this device's own PC now, which it can forget
-      await front(a).locator("li.my-pc", { hasText: "Mac mini" }).locator(".phone-pc-forget").waitFor();
+      // Mac mini is this device's own PC now, which it can forget: the ⋮ menu's Forget PCs puts Forget on its row
       assert.equal(await pcLink(a, "Mac mini").count(), 1, "Mac mini is listed once");
+      await front(a).locator('[data-action="account-menu"]').click();
+      await a.locator('.row-menu [data-item="forget-pcs"], .row-sheet [data-item="forget-pcs"]').click();
+      await front(a).locator("li.my-pc", { hasText: "Mac mini" }).locator('[data-action="forget-pc"]').waitFor();
+      await front(a).locator('[data-action="forget-done"]').click();
+      await front(a).locator("li.my-pc", { hasText: "Mac mini" }).locator("a.relay-add-saved-pc").waitFor();
       log9(`new PC: Mac mini ${pc2.id} listed itself and opened its local-only window -> My PCs (/#add) notes it On -> its own page's sheet (new) -> Ask to join (no confirm step after it, no second Pair) -> typed the ${asked!.digits.length} digits its own screen listed -> approved on the PC -> app -> listed as this device's own`);
 
       await a.goto(`${APP}/s/${pc1.id}/`);
@@ -812,16 +816,28 @@ async function legacyRelayShellQa(tree: RelayServerTree): Promise<void> {
           if (!desk) await front(page).locator('[data-view="add-pc"] .relay-add-back').click();
           await pcLink(page, "Desk PC").waitFor();
           await page.waitForFunction(() => !Object.keys(history.state ?? {}).includes("ovis:sheet"));
-          // the account is in the ⋮ menu at the top of My PCs: who is signed in, Manage account and Sign out
+          // the account is in the ⋮ menu at the top of My PCs: who is signed in, Manage account and Sign out, after
+          // Forget PCs (Desk PC is this device's own); a row carries no Forget of its own
           assert.equal(await front(page).locator('[data-action="manage-account"]').count(), 0, "no Manage account link on My PCs");
+          assert.equal(await front(page).locator('[data-action="forget-pc"]').count(), 0, `no row carries Forget (${width}px)`);
           await front(page).locator('[data-action="account-menu"]').click();
           const menu = page.locator(".row-menu, .row-sheet");
           await menu.getByText("Signed in with GitHub").waitFor();
-          assert.deepEqual(await menu.locator("[data-item]").evaluateAll((items) => items.map((item) => item.getAttribute("data-item"))), ["manage-account", "sign-out"], `the account menu holds Manage account and Sign out (${width}px)`);
+          assert.deepEqual(await menu.locator("[data-item]").evaluateAll((items) => items.map((item) => item.getAttribute("data-item"))), ["forget-pcs", "manage-account", "sign-out"], `the account menu holds Forget PCs, Manage account and Sign out (${width}px)`);
           await capture(page, `account-menu-${width}-${theme}`);
           await page.keyboard.press("Escape");
           await menu.waitFor({ state: "detached" });
           // a phone's menu is a sheet with a history entry: its Escape goes back, and the next goto must not cut that short
+          await page.waitForFunction(() => !Object.keys(history.state ?? {}).includes("ovis:sheet"));
+          // Forget PCs: Forget in the chevron's place on Desk PC, whose row opens nothing, until Done
+          await front(page).locator('[data-action="account-menu"]').click();
+          await menu.locator('[data-item="forget-pcs"]').click();
+          await menu.waitFor({ state: "detached" });
+          await front(page).locator("li.my-pc", { hasText: "Desk PC" }).locator('[data-action="forget-pc"]').waitFor();
+          assert.equal(await front(page).locator("li.my-pc", { hasText: "Desk PC" }).locator("a.relay-add-saved-pc, .relay-shell-pc-glyph").count(), 0, `Desk PC opens nothing while PCs are being forgotten (${width}px)`);
+          await capture(page, `forget-pcs-${width}-${theme}`);
+          await front(page).locator('[data-action="forget-done"]').click();
+          await front(page).locator("li.my-pc", { hasText: "Desk PC" }).locator("a.relay-add-saved-pc").waitFor();
           await page.waitForFunction(() => !Object.keys(history.state ?? {}).includes("ovis:sheet"));
         }
       }
@@ -856,7 +872,7 @@ async function legacyRelayShellQa(tree: RelayServerTree): Promise<void> {
       }, extra.map((pc) => pc.server_id));
       await a.setViewportSize({ width: 1440, height: 900 });
       assert.deepEqual([...A.errors, ...B.errors], [], "no page error on either device");
-      log9("front page: My PCs, its Add a PC's code field (a code that does not read stays to correct, Cancel closes it) and the account menu at 1440 and 390, dark and light; at 1024x400 with 16 PCs My PCs scrolls on its own, and Pair and the last PC are reached with the wheel; page errors on both devices: none");
+      log9("front page: My PCs, its Add a PC's code field (a code that does not read stays to correct, Cancel closes it), the account menu (Forget PCs first) and Forget PCs' edit state at 1440 and 390, dark and light; at 1024x400 with 16 PCs My PCs scrolls on its own, and Pair and the last PC are reached with the wheel; page errors on both devices: none");
       keep("task-9-account.txt", `# relay-shell-browser-qa (n): the sign-in screen and Add a PC on ${APP} (routed to ${origin}), account service ${ACCOUNT_SERVICE} (shared/account-service-fake.ts), PCs on the Bun relay as ${RELAY}\n${lines.join("\n")}\n`);
     } finally {
       keep("task-9-console.txt", `${consoleLines.join("\n")}\n`);

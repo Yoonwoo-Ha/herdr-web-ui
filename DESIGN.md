@@ -5156,8 +5156,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   pairing, or one the phone app saved by a Tailscale address, over SSH or at another address), else **Connect a PC**;
   it has no account overview page. My PCs is one list of every such PC, each row its name, a small way tag (Relay,
   Tailscale, SSH, Address) and, for a relay PC, On, Off or Update needed (never Needs approval: a PC this device is not
-  let into yet asks for that on its own page), Forget where this phone can forget it, and **Add PC** pinned at the
-  bottom while the list scrolls, as the Claude app keeps New chat in reach over its list. With no PC on it is the same
+  let into yet asks for that on its own page; a pairing of this phone's is On once its own check or the directory says
+  so), its name on one line ending in an ellipsis, and **Add PC** pinned at the bottom while the list scrolls, as the
+  Claude app keeps New chat in reach over its list. No row carries Forget: the ⋮ menu (there whenever a row can be
+  forgotten, signed in or not) has Forget PCs, after which each row this phone can forget shows Forget in its chevron's
+  place and no row opens, until Done in Add PC's place; Forget on the PC in use asks once more in the row (This is the
+  PC in use now. Forget it?). With no PC on it is the same
   list, the rows Off under No PC is online and Check again; with none in the account yet, the list says to sign in with
   the same account on the PC where Ovis runs, over Add PC (#16 drew both as a page of their own). On a screen 1024 px
   wide or more the two stand side by side: My PCs on the left and Add a PC always open on the right in a panel, each
@@ -5181,9 +5185,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   app's own words, which are not the person's language; a saved Tailscale PC tapped while the app says
   Tailscale is off shows Open Tailscale instead of trying it; an SSH PC whose address another app on the phone
   took says so above the list; and while the app keeps a PC open as the person chooses another, My PCs marks it In use
-  now and its Back goes back to it (backToCurrent), the app's own connect page's ‹ PC. Add PC (and Connect a PC, the
-  same screen as the front page) is the desktop's Add a connection tabs holding only the ways in: the sign-in signed out,
-  the PC's QR (its code in a browser), a Tailscale address, user@host. A PC page's More → Connect a PC opens My PCs
+  now and its Back goes back to it (backToCurrent), the app's own connect page's ‹ PC; the In use now row goes back too,
+  rather than load that PC again. Add PC (and Connect a PC, the
+  same screen as the front page) is the desktop's Add a connection tabs holding only the ways in: the sign-in signed out
+  (under Reach your PCs from anywhere with your Ovis account, and over Tailscale and SSH need no sign-in), the PC's QR
+  (its code in a browser), a Tailscale address (with Tailscale off on the phone, under Open Tailscale, for an address on
+  the home network), user@host. A PC page's More → Connect a PC opens My PCs
   (`/#add`) with Back to that PC and its row marked In use now. A launch opens the PC this device opened last unless its
   check finds it off (the relay had nobody for it), then the next saved PC not found off (`launchOrder`, at most
   four, two at a time; signed in with none saved here or every saved one found off, the account's PC opened last, else the one seen most
@@ -5196,7 +5203,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   the hash is dropped and the launch goes on. The account's devices and PCs are managed in Settings →
   Devices and PCs → Manage account.
   A launch is asked once a page; an address taken while it waits wins over it, and a page Back restores whole from
-  the browser's cache loads again rather than keep the launch's wait.
+  the browser's cache loads again rather than keep the launch's wait. A PC page restored that way connects again: in a
+  browser its transports take their sockets as gone and reconnect in place; in the phone app, whose bridge dropped its
+  native listeners and sockets at the navigation away, the page loads again once its unsent text is in storage. When
+  storage refuses that text, the page stays as it is, the text in its fields, under a warning line with Reload app (as
+  the update notice draws it) that reloads once the text is stored or gone, and while it is not connected its
+  connection reads Disconnected, as stopped output does, never Reconnecting.
 - Portal, under the phone part of Add a connection's Direct tab where the server offers it: while it runs,
   the address and QR code as the Tailscale way draws them over a Relay row with Stop; otherwise one
   hint for what blocks it (no token, serve-only, no `portal` or an old one, with a link to get it)

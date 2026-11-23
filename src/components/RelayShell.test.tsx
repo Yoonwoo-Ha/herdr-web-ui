@@ -221,7 +221,7 @@ describe("the hosted front page", () => {
   describe("in a browser", () => {
     const descriptors = new Map<string, PropertyDescriptor | undefined>();
     let renderer: ReactTestRenderer | undefined;
-    const node = () => ({ isConnected: true, focus() {}, contains: () => false, querySelectorAll: () => [], getClientRects: () => [], closest: () => null, addEventListener() {}, removeEventListener() {}, pauseAnimations() {}, unpauseAnimations() {} });
+    const node = () => ({ isConnected: true, focus() {}, contains: () => false, querySelector: () => null, querySelectorAll: () => [], getClientRects: () => [], getBoundingClientRect: () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0 }), closest: () => null, addEventListener() {}, removeEventListener() {}, pauseAnimations() {}, unpauseAnimations() {} });
 
     beforeEach(() => {
       for (const key of ["window", "document", "navigator", "localStorage", "sessionStorage", "getComputedStyle", "matchMedia", "HTMLElement", "IntersectionObserver", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
@@ -1316,7 +1316,7 @@ describe("the hosted front page", () => {
 
     it("never says Needs approval: an account PC this device is not let into yet is On or Off like any other", async () => {
       await mount(signedIn(four()));
-      expect(rowTexts()).toEqual([["relay", "Desk PCRelay"], ["relay", "MacBookRelay"], ["relay", "Home serverRelayOff"], ["relay", "Mac miniRelayOn"]]);
+      expect(rowTexts()).toEqual([["relay", "Desk PCRelayOn"], ["relay", "MacBookRelay"], ["relay", "Home serverRelayOff"], ["relay", "Mac miniRelayOn"]]);
       expect(textOf(renderer!.root)).not.toContain("Needs approval");
     });
 
@@ -1336,17 +1336,20 @@ describe("the hosted front page", () => {
         await mount({ ...props({ kind: "list", devices: [device(ids.mac, "MacBook", AP)], account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none, onForgetSaved: none });
         expect(view()).toBe("my-pcs");
         // the relay's PC first, then the app's: Tailscale, then the others in the order the app saved them
-        expect(rowTexts()).toEqual([["relay", "MacBookRelayForget"], ["tailscale", "DeskTailscaledesk.tail1e211e.ts.netForget"], ["address", "192.168.0.5:7317AddressForget"], ["ssh", "lab-linuxSSH127.0.0.1:41234"]]);
+        expect(rowTexts()).toEqual([["relay", "MacBookRelay"], ["tailscale", "DeskTailscaledesk.tail1e211e.ts.net"], ["address", "192.168.0.5:7317Address"], ["ssh", "lab-linuxSSH127.0.0.1:41234"]]);
         expect(renderer!.root.find((node) => node.type === "a" && node.props.className === "relay-add-saved-pc").props.href).toBe(`/s/${ids.mac}/`);
         const rows = () => renderer!.root.findAll((node) => node.type === "li" && node.props["data-pc-way"] !== "relay" && typeof node.props["data-pc-way"] === "string");
         for (const [index, opens] of ["https://desk.tail1e211e.ts.net/", "http://192.168.0.5:7317/", "http://127.0.0.1:41234/"].entries()) {
           await act(async () => { rows()[index]!.find((node) => node.type === "button" && node.props.className === "relay-add-saved-pc").props.onClick(); });
           expect(called.filter((call) => call.startsWith("HerdrShell.open")).at(-1)).toBe(`HerdrShell.open ${opens}`);
         }
+        await act(async () => { action("account-menu").props.onClick(); });
+        await act(async () => { renderer!.root.find((node) => node.type === "button" && node.props["data-item"] === "forget-pcs").props.onClick(); });
         const deskRow = renderer!.root.find((node) => node.type === "li" && node.props["data-tailnet-pc"] === "https://desk.tail1e211e.ts.net");
-        await act(async () => { deskRow.find((node) => node.type === "button" && node.props.className === "btn btn-ghost phone-pc-forget").props.onClick(); });
+        await act(async () => { deskRow.find((node) => node.type === "button" && node.props["data-action"] === "forget-pc").props.onClick(); });
         expect(called).toContain("HerdrShell.forget https://desk.tail1e211e.ts.net");
         expect(called.filter((call) => call === "HerdrShell.getState")).toHaveLength(2);
+        await act(async () => { action("forget-done").props.onClick(); });
         await openAdd();
         for (const way of ["tailscale", "ssh"]) {
           await act(async () => { tab(way).props.onClick(); });
@@ -1358,7 +1361,7 @@ describe("the hosted front page", () => {
       }
     });
 
-    it("scans a PC's QR from Add PC's relay tab in the phone app, and has Open Tailscale alone on the Tailscale tab while Tailscale is off", async () => {
+    it("scans a PC's QR from Add PC's relay tab in the phone app, and keeps the address field under Open Tailscale on the Tailscale tab while Tailscale is off", async () => {
       const assigned: string[] = [];
       const called: string[] = [];
       (window.location as unknown as { assign: (href: string) => void }).assign = (href) => { assigned.push(href); };
@@ -1392,7 +1395,11 @@ describe("the hosted front page", () => {
         await mount(page);
         await openAdd();
         await act(async () => { tab("tailscale").props.onClick(); });
-        expect(renderer!.root.findAll((node) => node.type === "input")).toHaveLength(0);
+        // a home Wi-Fi address opens without Tailscale: its field stays, under the card
+        const tailscalePanel = renderer!.root.find((node) => node.props["data-tab-panel"] === "tailscale");
+        const [card, field] = [tailscalePanel.find((node) => node.props["data-tailscale-off"] !== undefined), tailscalePanel.find((node) => node.type === "input")];
+        const order = tailscalePanel.findAll((node) => node === card || node === field);
+        expect(order).toEqual([card, field]);
         await act(async () => { button("Open Tailscale").props.onClick(); });
         expect(called).toContain("HerdrShell.openTailscale");
       } finally {
@@ -1517,7 +1524,7 @@ describe("the hosted front page", () => {
       sessionStorage.setItem(ADD_PC_FROM_KEY, `/s/${ids.home}/`);
       await mount({ ...signedIn(four()), addEntry: true });
       expect(title()).toBe("Your PCs");
-      expect(rowTexts()).toEqual([["relay", "Desk PCRelay"], ["relay", "MacBookRelay"], ["relay", "Home serverRelayIn use now"], ["relay", "Mac miniRelayOn"]]);
+      expect(rowTexts()).toEqual([["relay", "Desk PCRelayOn"], ["relay", "MacBookRelay"], ["relay", "Home serverRelayIn use now"], ["relay", "Mac miniRelayOn"]]);
       // the mark serves that one opening alone
       expect(sessionStorage.getItem(ADD_PC_FROM_KEY)).toBeNull();
       await act(async () => { back()[0]!.props.onClick(); });
@@ -1526,6 +1533,109 @@ describe("the hosted front page", () => {
       expect(back()).toHaveLength(0);
       expect(title()).toBe("Your PCs");
       expect(rowTexts().map(([, text]) => text)).toContain("Home serverRelayOff");
+    });
+
+    const forgets = () => renderer!.root.findAll((node) => node.type === "button" && node.props["data-action"] === "forget-pc" && shown(node));
+    const openers = () => renderer!.root.findAll((node) => (node.type === "a" || node.type === "button") && node.props.className === "relay-add-saved-pc" && shown(node));
+    const forgetPcs = async () => {
+      await act(async () => { action("account-menu").props.onClick(); });
+      await act(async () => { renderer!.root.find((node) => node.type === "button" && node.props["data-item"] === "forget-pcs").props.onClick(); });
+    };
+
+    it("carries no Forget on a row; the menu's Forget PCs, signed out too, puts Forget in place of each forgettable row's chevron, opens no row, and Done ends it", async () => {
+      await withApp(async () => {
+        const called = app([{ name: "HerdrShell", methods: ["getState", "open", "forget"] }], (method) =>
+          method === "getState" ? { saved: ["https://desk.tail1e211e.ts.net", "http://192.168.0.5:7317", "http://127.0.0.1:41234"], names: { "https://desk.tail1e211e.ts.net": "Desk", "http://127.0.0.1:41234": "lab-linux" } } : {});
+        const forgot: string[] = [];
+        await mount({ ...props({ kind: "list", devices: [device(ids.mac, "MacBook", AP)], account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none, onForgetSaved: (serverId) => { forgot.push(serverId); } });
+        // nothing to forget by mistake on a row, whose name has the row to itself
+        expect(renderer!.root.findAll((node) => node.type === "button" && textOf(node) === "Forget" && shown(node))).toHaveLength(0);
+        expect(openers()).toHaveLength(4);
+        await forgetPcs();
+        // the SSH PC goes from the app's own screen, with its keys: no Forget here, as before
+        expect(forgets().map((node) => node.props["aria-label"])).toEqual(["Forget MacBook", "Forget Desk", "Forget 192.168.0.5:7317"]);
+        expect(openers()).toHaveLength(0);
+        expect(renderer!.root.findAll((node) => node.props.className === "relay-shell-pc-glyph" && shown(node))).toHaveLength(0);
+        // what Forget does stays as it was, row by row
+        await act(async () => { forgets()[0]!.props.onClick(); });
+        await act(async () => { forgets()[1]!.props.onClick(); });
+        expect(forgot).toEqual([ids.mac]);
+        expect(called).toContain("HerdrShell.forget https://desk.tail1e211e.ts.net");
+        await act(async () => { action("forget-done").props.onClick(); });
+        expect(forgets()).toHaveLength(0);
+        expect(openers()).toHaveLength(4);
+        expect(renderer!.root.findAll((node) => node.type === "button" && node.props["data-action"] === "add-pc" && shown(node))).toHaveLength(1);
+      });
+    });
+
+    it("asks once more, in the row, before it forgets the PC in use, and offers no Forget PCs with nothing to forget", async () => {
+      await withApp(async () => {
+        const called = app([{ name: "HerdrShell", methods: ["getState", "open", "forget", "backToCurrent"] }], (method) =>
+          method === "getState" ? { saved: ["https://desk.tail1e211e.ts.net", "http://192.168.0.5:7317"], names: { "https://desk.tail1e211e.ts.net": "Desk" }, choosing: true, current: "http://192.168.0.5:7317" } : {});
+        await mount({ ...props({ kind: "empty", account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none });
+        await forgetPcs();
+        const inUse = () => forgets().find((node) => node.props["aria-label"] === "Forget 192.168.0.5:7317")!;
+        const ask = () => renderer!.root.findAll((node) => node.props["data-forget-ask"] !== undefined && shown(node));
+        await act(async () => { inUse().props.onClick(); });
+        expect(called.filter((call) => call.startsWith("HerdrShell.forget"))).toEqual([]);
+        expect(ask().map(textOf)).toEqual(["This is the PC in use now. Forget it?ForgetCancel"]);
+        await act(async () => { ask()[0]!.findAll((node) => node.type === "button").find((node) => textOf(node) === "Cancel")!.props.onClick(); });
+        expect(ask()).toHaveLength(0);
+        expect(called.filter((call) => call.startsWith("HerdrShell.forget"))).toEqual([]);
+        await act(async () => { inUse().props.onClick(); });
+        await act(async () => { ask()[0]!.findAll((node) => node.type === "button").find((node) => textOf(node) === "Forget")!.props.onClick(); });
+        expect(called.filter((call) => call.startsWith("HerdrShell.forget"))).toEqual(["HerdrShell.forget http://192.168.0.5:7317"]);
+        await act(async () => { renderer!.unmount(); });
+        // only an SSH PC saved: nothing this screen forgets, so no menu signed out
+        app([{ name: "HerdrShell", methods: ["getState", "open", "forget"] }], (method) => method === "getState" ? { saved: ["http://127.0.0.1:41234"], names: {} } : {});
+        await mount({ ...props({ kind: "empty", account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none });
+        expect(view()).toBe("my-pcs");
+        expect(renderer!.root.findAll((node) => node.type === "button" && node.props["data-action"] === "account-menu" && shown(node))).toHaveLength(0);
+      });
+    });
+
+    it("offers Forget PCs in the signed-in menu too", async () => {
+      await mount({ ...signedIn(four()), onForgetSaved: none });
+      await forgetPcs();
+      expect(forgets().map((node) => node.props["aria-label"])).toEqual(["Forget Desk PC", "Forget MacBook", "Forget Home server"]);
+    });
+
+    it("goes back to the PC in use when its row is tapped, as Back does, rather than opening that PC again", async () => {
+      (window.location as { hash?: string }).hash = "#add";
+      const went: string[] = [];
+      (window.history as { back: () => void }).back = () => { went.push("back"); };
+      sessionStorage.setItem(ADD_PC_FROM_KEY, `/s/${ids.home}/`);
+      await mount({ ...signedIn(four()), addEntry: true });
+      const inUse = () => renderer!.root.find((node) => node.type === "li" && textOf(node).includes("In use now")).find((node) => node.props.className === "relay-add-saved-pc");
+      expect(inUse().type).toBe("button");
+      await act(async () => { inUse().props.onClick(); });
+      expect(went).toEqual(["back"]);
+      await act(async () => { renderer!.unmount(); });
+      // the PC the phone app keeps open while the person chooses another: back to it
+      (window.location as { hash?: string }).hash = "";
+      await withApp(async () => {
+        const called = app([{ name: "HerdrShell", methods: ["getState", "open", "backToCurrent"] }], (method) =>
+          method === "getState" ? { saved: ["https://desk.tail1e211e.ts.net"], names: { "https://desk.tail1e211e.ts.net": "Desk" }, choosing: true, current: "https://desk.tail1e211e.ts.net" } : {});
+        await mount(signedIn(four()));
+        await act(async () => { inUse().props.onClick(); });
+        expect(called).toContain("HerdrShell.backToCurrent");
+        expect(called.filter((call) => call.startsWith("HerdrShell.open"))).toEqual([]);
+      });
+    });
+
+    it("says over the signed-out relay tab's sign-in what an account gives, and under its ways in that Tailscale and SSH need none", async () => {
+      await mount({ ...props({ kind: "empty", account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none });
+      const relay = textOf(renderer!.root.find((node) => node.props["data-tab-panel"] === "relay"));
+      const at = (words: string) => relay.indexOf(words);
+      expect(at("Reach your PCs from anywhere with your Ovis account")).toBeGreaterThanOrEqual(0);
+      expect(at("Reach your PCs from anywhere with your Ovis account")).toBeLessThan(at("Continue with GitHub"));
+      expect(at("Tailscale and SSH need no sign-in.")).toBeGreaterThan(at("Pair with a code"));
+      await act(async () => { renderer!.unmount(); });
+      // signed in, neither: there is no sign-in to explain
+      await mount(signedIn(four()));
+      await openAdd();
+      const signedInRelay = textOf(renderer!.root.find((node) => node.props["data-tab-panel"] === "relay"));
+      expect([signedInRelay.includes("Reach your PCs"), signedInRelay.includes("need no sign-in")]).toEqual([false, false]);
     });
 
   });

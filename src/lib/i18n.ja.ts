@@ -407,6 +407,9 @@ const BASE: Record<string, string> = {
 
   "Loading…": "読み込んでいます…",
   "Done": "完了",
+  "Forget PCs": "PC を削除",
+  "This page came back without its connection, and this device would not keep its unsent text through a reload. Copy what you need, then reload.": "この画面は接続がないまま戻りました。この端末は再読み込みのあいだ未送信のテキストを保持できませんでした。必要な分をコピーしてから再読み込みしてください。",
+  "The unsent text is still not kept. Copy it or clear it, then reload.": "未送信のテキストはまだ保持されていません。コピーするか消してから再読み込みしてください。",
   "Name": "名前",
   "Recent": "最近",
   "Needs you": "応答待ち",

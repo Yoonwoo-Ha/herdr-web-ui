@@ -82,6 +82,7 @@ import { resetPushHealth, usePushHealth } from "./lib/pushHealth.ts";
 import { useUpdates } from "./lib/updates.ts";
 import { desktopUpdateBridge, useDesktopUpdate } from "./lib/desktopUpdate.ts";
 import { DesktopUpdateNotice, UpdateNotice } from "./components/UpdateControls.tsx";
+import { RestoreNotice } from "./components/RestoreNotice.tsx";
 import { LanExposureNotice } from "./components/LanExposureNotice.tsx";
 import { PushHealthNotice } from "./components/PushHealthNotice.tsx";
 import { RelayNotice } from "./components/RelayNotice.tsx";
@@ -130,6 +131,7 @@ import { usePaneCoverage } from "./lib/usePaneCoverage.ts";
 import { useT } from "./lib/i18n.ts";
 import { useConnectionChip, useServerMessageHandler } from "./lib/useConnectionChip.ts";
 import { connectionWord, useHeaderConnection, type HeaderConnection } from "./lib/headerConnection.ts";
+import { useRestoreHeld } from "./lib/pageRestore.ts";
 import { ConnectionRouteMark } from "./components/ConnectionRouteMark.tsx";
 import { StatusBar } from "./components/StatusBar.tsx";
 import { LensToggle } from "./components/LensToggle.tsx";
@@ -550,10 +552,14 @@ export function App() {
 
 
   const { bell, alertsOffDot } = alertsBell({ t, alertsOn, notifications, pushOn, enableNotifications, disableNotifications });
-  const headerConnection = useHeaderConnection({ scope: `${split ? split.active : soloSlot}:${selectedMachineId}`, reportedBy, connected, connectedBefore, outputStopped });
+  // a page the phone app restored whose reload waits for the person (RestoreNotice): while it is not connected it says
+  // so as stopped output does, never that it is reconnecting
+  const restoreHeld = useRestoreHeld() > 0;
+  const waitsForPerson = outputStopped || (restoreHeld && !connected);
+  const headerConnection = useHeaderConnection({ scope: `${split ? split.active : soloSlot}:${selectedMachineId}`, reportedBy, connected, connectedBefore, outputStopped: waitsForPerson });
   // a reconnect the header does not name yet (its first second) shows the connection as it was: nothing flashes
-  const chipConnected = connected || (connectedBefore && !outputStopped && headerConnection === null);
-  const connWord = t(chipConnected ? "live" : outputStopped ? "disconnected" : connectedBefore ? "reconnecting" : "connecting");
+  const chipConnected = connected || (connectedBefore && !waitsForPerson && headerConnection === null);
+  const connWord = t(chipConnected ? "live" : waitsForPerson ? "disconnected" : connectedBefore ? "reconnecting" : "connecting");
   const session = useSessionStats(selectedMachineId, selectedPane?.pane_id ?? null);
   const sessionLines = session === null ? null : sessionMenuLines(session);
   const sessionShort = session === null ? [] : [workedWords(session), sizeWords(session)].filter((part) => part !== null);
@@ -1179,6 +1185,7 @@ export function App() {
         <WebPanelContext.Provider value={openWebPage}>
         <div className={`pane-column${chatShown ? " is-chat" : ""}`} inert={drawerModal || undefined}>
         <UpdateNotice updates={updates} onOpen={() => { setSettingsSection("updates"); setSettingsOpen(true); }} />
+        <RestoreNotice />
         <DesktopUpdateNotice update={desktopUpdate} />
         <TelemetryNotice enabled={locked === false && setupGuide.settled && !guideShown} onOpen={() => { setSettingsLinkPage("about"); setSettingsLinkSection("telemetry"); setSettingsOpen(true); }} />
         <MachineActionBanner machines={machines} onSetup={(machine, update = false) => { setDrawerOpen(false); setUpdateRemote(update); setMachineDialog(machine); }} />

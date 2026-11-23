@@ -291,17 +291,20 @@ export class PaneLifetimes {
   /**
    * The app is replacing this page (PAGE_LEAVING_EVENT): the pane state it keeps in memory alone waits
    * in storage for the next page of this address (takeCarried), with any an earlier page left there.
-   * Nothing of it is sent. Storage that refuses it leaves it with this page, as before. Two pages of one
-   * origin would overwrite each other's carry for the same pane: the Android app, the only one to send
-   * the event, shows one page at a time.
+   * Nothing of it is sent. Storage that refuses it leaves it with this page, as before, and the answer
+   * is false: true says it is in storage, or that this page held none. Two pages of one origin would
+   * overwrite each other's carry for the same pane: a page carries only as it is replaced (the Android
+   * app leaving it, a PC page moving to another PC, a page the phone app restored loading again,
+   * lib/pageRestore.ts), one page at a time.
    */
-  carry(): void {
-    if (this.memory.size === 0) return;
+  carry(): boolean {
+    if (this.memory.size === 0) return true;
     try {
       const storage = this.storage();
       const carried = this.live([...Object.entries(readCarried(storage.getItem(carriedKey()))), ...this.memory]);
       storage.setItem(carriedKey(), JSON.stringify(Object.fromEntries(carried)));
-    } catch {}
+      return true;
+    } catch { return false; }
   }
 
   private takeCarried(machineId: string): boolean {

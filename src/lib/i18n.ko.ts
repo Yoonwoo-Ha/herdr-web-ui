@@ -405,6 +405,9 @@ const BASE: Record<string, string> = {
 
   "Loading…": "불러오는 중…",
   "Done": "완료",
+  "Forget PCs": "PC 지우기",
+  "This page came back without its connection, and this device would not keep its unsent text through a reload. Copy what you need, then reload.": "이 화면이 연결 없이 돌아왔고, 이 기기가 새로 고치는 동안 보내지 않은 글을 보관하지 못했어요. 필요한 글을 복사한 뒤 새로 고치세요.",
+  "The unsent text is still not kept. Copy it or clear it, then reload.": "보내지 않은 글을 아직 보관하지 못했어요. 복사하거나 지운 뒤 새로 고치세요.",
   "Name": "이름",
   "Recent": "최근",
   "Needs you": "응답 필요",

@@ -199,7 +199,14 @@
 
 .my-pc-text { display: contents; }
 
-.my-pc-text > .relay-add-saved-name { grid-area: name; }
+/* a long name keeps to one line and ends in an ellipsis, as a name does everywhere else, never broken mid-word */
+.my-pc-text > .relay-add-saved-name {
+  grid-area: name;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .my-pc > .relay-add-saved-pc > .relay-shell-pc-glyph { grid-area: chevron; }
 
@@ -245,6 +252,27 @@
   background: var(--accent-tint);
   color: var(--accent);
   font-weight: var(--fw-semibold);
+}
+
+/* Forget PCs: a row opens nothing */
+.my-pc > .relay-add-saved-pc.is-editing {
+  cursor: default;
+}
+
+/* Forget on the PC in use asks once more, under the row */
+.my-pc-ask {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+.my-pc-ask > .relay-shell-copy {
+  flex: 1 1 100%;
+  margin: 0;
+  text-align: start;
 }
 
 .my-pc > .phone-pc-forget {

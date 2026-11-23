@@ -1,7 +1,9 @@
 /**
  * More → Connect a PC on a phone's PC page of the hosted app opens My PCs (`/#add`), the PC it came from marked In use
- * now, and stays there; My PCs' own Back and the browser's land on the PC page it was opened from, and Back from that
- * page leaves it in one press, with the sheet closed throughout.
+ * now, and stays there; My PCs' own Back, the browser's and the In use now row itself land on the PC page it was opened
+ * from, and Back from that page leaves it in one press, with the sheet closed throughout. That PC page, brought back
+ * whole as WebKit's back/forward cache brings it (pagehide, then pageshow, both persisted) with its relay socket dead
+ * though still open, connects again.
  *
  * The More sheet closes with a step back off its own history entry. An item that starts loading another page before
  * that step has landed loses it to the step: Chromium cancels the load for it, Android's WebView lands it after the new
@@ -43,6 +45,9 @@ const PHONE_LATENCY_MS = 150;
 /** Android's WebView brought the PC page back about 30 ms after `/` loaded: a page that holds this long stays */
 const STAYS_MS = 2_000;
 const LOAD_MS = 20_000;
+/** the relay sockets the page opened, and the ones a test made dead: still open, nothing passing either way */
+let relaySockets = 0;
+const dead = new Set<number>();
 
 const root = mkdtempSync(join(tmpdir(), "ovis-add-pc-more-"));
 const relay = startBunRelay({ port: 0, limits: { perAddressPerMinute: 10_000, globalPerMinute: 10_000 } });
@@ -118,7 +123,19 @@ try {
 
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, colorScheme: "light", locale: "en-US" });
-  await context.routeWebSocket(/^wss:\/\/relay\.test\//, (ws) => relayBrowserSocket(ws, () => relayAddress(ws.url())));
+  await context.routeWebSocket(/^wss:\/\/relay\.test\//, (ws) => {
+    const socket = ++relaySockets;
+    const alive = (): boolean => !dead.has(socket);
+    // a socket a test made dead neither delivers nor closes, as one the browser ended under a frozen page that still reads open
+    const route = {
+      url: () => ws.url(),
+      onMessage: (handler: Parameters<typeof ws.onMessage>[0]) => ws.onMessage((message) => { if (alive()) handler(message); }),
+      onClose: (handler: Parameters<typeof ws.onClose>[0]) => ws.onClose(handler),
+      send: (message: string | Buffer) => { if (alive()) ws.send(message); },
+      close: (options?: { code?: number; reason?: string }) => { if (alive()) void ws.close(options); },
+    } as unknown as typeof ws;
+    relayBrowserSocket(route, () => relayAddress(ws.url()));
+  });
   await context.addInitScript(() => {
     if (window !== window.top) return;
     if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
@@ -155,7 +172,7 @@ try {
   const item = page.locator('.row-sheet [data-item="add-pc"]');
   const addScreen = page.locator('main.relay-add-screen [data-view="my-pcs"] .relay-add-back');
   /** the row of the PC More was opened on, marked as the one in use instead of its state */
-  const inUse = page.locator(`li.my-pc:has(a.relay-add-saved-pc[href="${pcPage}"]) .my-pc-state[data-pc-state="in-use"]`);
+  const inUse = page.locator("li.my-pc", { hasText: "Desk PC" }).locator('.my-pc-state[data-pc-state="in-use"]');
 
   /** More → Connect a PC over a phone's round trip: My PCs opens one entry over the PC page and stays. */
   async function connectAPc(round: string): Promise<void> {
@@ -205,25 +222,56 @@ try {
     assert.deepEqual({ entry: history.ids[history.current], path: back.path, sheet: back.sheet }, { entry: pcEntry, path: pcPage, sheet: false }, `${round}: Back from My PCs lands on the PC page it was opened from, its sheet closed (${history.text})`);
   }
 
-  /** A row of My PCs with Forget: its chevron and its middle open the PC (the link), never Forget, at either density. */
+  /**
+   * The row of the PC in use carries no Forget: its chevron and its middle hit the row's own control, at either density.
+   * The ⋮ menu's Forget PCs puts Forget in the chevron's place, the row then opening nothing, until Done.
+   */
   async function rowHits(): Promise<void> {
+    const hits = (density: "compact" | "comfortable") => page.evaluate((density) => {
+      const root = document.documentElement;
+      const was = root.dataset["density"];
+      root.dataset["density"] = density;
+      try {
+        const row = document.querySelector<HTMLElement>("li.my-pc")!;
+        const own = row.querySelector(".relay-add-saved-pc")!, forget = row.querySelector(".phone-pc-forget"), glyph = row.querySelector(".relay-shell-pc-glyph");
+        const middle = (rect: DOMRect): Element | null => document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        const hit = (element: Element | null): string => element === null ? "nothing" : element.closest(".phone-pc-forget") ? "forget" : element.closest(".relay-add-saved-pc") === own ? own.tagName.toLowerCase() : "other";
+        return { chevron: glyph === null ? null : hit(middle(glyph.getBoundingClientRect())), row: hit(middle(row.getBoundingClientRect())), forget: forget === null ? null : hit(middle(forget.getBoundingClientRect())) };
+      } finally { if (was === undefined) delete root.dataset["density"]; else root.dataset["density"] = was; }
+    }, density);
     for (const density of ["compact", "comfortable"] as const) {
-      const hits = await page.evaluate((density) => {
-        const root = document.documentElement;
-        const was = root.dataset["density"];
-        root.dataset["density"] = density;
-        try {
-          const row = [...document.querySelectorAll<HTMLElement>("li.my-pc")].find((each) => each.querySelector(".phone-pc-forget") !== null);
-          if (row === undefined) return null;
-          const link = row.querySelector("a.relay-add-saved-pc")!, forget = row.querySelector(".phone-pc-forget")!;
-          const middle = (rect: DOMRect): Element | null => document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-          const hit = (element: Element | null): string => element === null ? "nothing" : element.closest(".phone-pc-forget") ? "forget" : element.closest("a.relay-add-saved-pc") === link ? "link" : "other";
-          const open = link.getBoundingClientRect(), gone = forget.getBoundingClientRect();
-          return { chevron: hit(middle(link.querySelector(".relay-shell-pc-glyph")!.getBoundingClientRect())), row: hit(middle(row.getBoundingClientRect())), apart: open.right <= gone.left || gone.right <= open.left || open.bottom <= gone.top || gone.bottom <= open.top };
-        } finally { if (was === undefined) delete root.dataset["density"]; else root.dataset["density"] = was; }
-      }, density);
-      assert.deepEqual(hits, { chevron: "link", row: "link", apart: true }, `${density}: the chevron and the middle of a row with Forget open the PC, and Forget's own area lies beside the link, not over it`);
+      assert.deepEqual(await hits(density), { chevron: "button", row: "button", forget: null }, `${density}: the PC in use carries no Forget, and its chevron and middle hit its own row`);
     }
+    await page.locator('[data-view="my-pcs"] [data-action="account-menu"]').tap();
+    await page.locator('.row-sheet [data-item="forget-pcs"]').tap();
+    await page.locator('[data-view="my-pcs"] [data-action="forget-pc"]').waitFor();
+    await page.waitForFunction(() => !Object.keys(window.history.state ?? {}).includes("ovis:sheet"));
+    await shot("forget-pcs");
+    for (const density of ["compact", "comfortable"] as const) {
+      assert.deepEqual(await hits(density), { chevron: null, row: "div", forget: "forget" }, `${density}: Forget PCs puts Forget in the chevron's place, the row opening nothing`);
+    }
+    await page.locator('[data-view="my-pcs"] [data-action="forget-done"]').tap();
+    await page.locator('[data-view="my-pcs"] [data-action="add-pc"]').waitFor();
+  }
+
+  /** The PC page brought back whole from the back/forward cache with its relay socket dead, though still open: it connects again. */
+  async function restoredFromCache(): Promise<void> {
+    const live = page.locator(".conn.conn-live");
+    await live.waitFor();
+    const before = relaySockets;
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })));
+    for (let socket = 1; socket <= before; socket++) dead.add(socket);
+    await live.waitFor({ state: "detached" });
+    // fixed wait: proving that nothing connects again while the page is put away
+    await page.waitForTimeout(STAYS_MS);
+    assert.equal(relaySockets, before, "no relay socket opens while the page is put away");
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+    await live.waitFor({ timeout: LOAD_MS }).catch(async () => {
+      await shot("restored-stuck");
+      assert.fail(`the PC page restored from the back/forward cache never connected again (relay sockets: ${before} before, ${relaySockets} after)`);
+    });
+    assert.ok(relaySockets > before, `the restored page opened a new relay socket (${before} before, ${relaySockets} after)`);
+    await shot("restored");
   }
 
   /** Add PC over My PCs is an entry of its own: the browser's Back comes back to My PCs on /#add, the focus with it. */
@@ -248,6 +296,12 @@ try {
   await connectAPc("browser-back");
   await page.goBack();
   await backOnPcPage("browser-back");
+  // the row of the PC in use goes back to it, as Back does: no new load of that PC, no Ready step on the way
+  await connectAPc("row-back");
+  await page.locator('li.my-pc:has([data-pc-state="in-use"]) button.relay-add-saved-pc').tap();
+  await backOnPcPage("row-back");
+  assert.equal(await page.locator('[data-add-pc-phase="ready"]').count(), 0, "no Ready step on the way back to the PC in use");
+  await restoredFromCache();
 
   // Back from the PC page leaves it in one press: no entry of the sheet is left over it
   await page.goBack();
@@ -257,7 +311,7 @@ try {
   assert.equal(left.sheet, false, "Back from the PC page opens no sheet");
   assert.deepEqual(errors, [], "no page errors");
   await context.close();
-  console.log(`PASS More → Connect a PC opens My PCs over a phone's round trip (${PHONE_LATENCY_MS} ms), the PC marked In use now, and it stays; a row's chevron and middle open the PC, never Forget, at both densities; Back from Add PC lands on My PCs with the focus; My PCs' Back and the browser's land on the PC page, whose Back leaves it in one press`);
+  console.log(`PASS More → Connect a PC opens My PCs over a phone's round trip (${PHONE_LATENCY_MS} ms), the PC marked In use now, and it stays; its row carries no Forget, and Forget PCs puts Forget in the chevron's place until Done, at both densities; Back from Add PC lands on My PCs with the focus; My PCs' Back, the browser's and the In use now row land on the PC page, whose Back leaves it in one press; restored from the back/forward cache with its relay socket dead, the PC page connects again`);
 } finally {
   await browser?.close();
   site.stop(true);

@@ -214,6 +214,17 @@ export class RelayTransport implements Transport {
     this.cancelRetry = undefined;
     void this.connect().catch((error: unknown) => this.failed(error));
   };
+  /**
+   * The page came back whole from the browser's back/forward cache (pageshow, persisted): what it left open may have been
+   * ended under it with no close event, still reading open (WebKit's socket; the phone app's direct socket, whose plugin
+   * closes them as the page is left). Its carrier is taken as gone, as wake takes one that reads closed.
+   */
+  private readonly restored = (event: Event): void => {
+    if ((event as { persisted?: unknown }).persisted !== true || this.stopped) return;
+    if (this.attempt) this.attempt.hidden = true;
+    if (this.channel) { this.channel.close(); return; }
+    this.wake();
+  };
   private readonly aborted = (): void => this.close();
 
   constructor(private readonly offer: RelayOffer, private readonly options: RelayTransportOptions = {}) {
@@ -222,6 +233,7 @@ export class RelayTransport implements Transport {
     this.stopResources = serveRelayResources(this, offer.server_id, () => !this.stopped && this.channel?.mux.active === true);
     options.signal?.addEventListener("abort", this.aborted, { once: true });
     globalThis.addEventListener?.("online", this.wake);
+    globalThis.addEventListener?.("pageshow", this.restored);
     if (typeof document !== "undefined") document.addEventListener("visibilitychange", this.wake);
   }
 
@@ -726,6 +738,7 @@ export class RelayTransport implements Transport {
     this.routeChanged();
     this.options.signal?.removeEventListener("abort", this.aborted);
     globalThis.removeEventListener?.("online", this.wake);
+    globalThis.removeEventListener?.("pageshow", this.restored);
     if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.wake);
   }
 }

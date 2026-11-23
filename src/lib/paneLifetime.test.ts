@@ -209,6 +209,19 @@ describe("pane state per herdr lifetime", () => {
     expect(again.unsent()).toHaveLength(3);
   });
 
+  it("says whether a replaced page's pane state reached storage: nothing to hand over is done, and a refused write leaves it with this page", () => {
+    const storage = new MemoryStorage();
+    storage.refuse = "ovis:pane-carried:";
+    const leaving = page(storage);
+    expect(leaving.carry()).toBe(true);
+    leaving.observe([pc("local", undefined)], title);
+    leaving.paneStorage.setItem(DRAFT, "typed under an older bridge");
+    expect(leaving.carry()).toBe(false);
+    expect(leaving.paneStorage.getItem(DRAFT)).toBe("typed under an older bridge");
+    storage.refuse = null;
+    expect(leaving.carry()).toBe(true);
+  });
+
   it("never puts a carried draft into the pane that reuses its ID after herdr was replaced under a PC naming no herdr", () => {
     const storage = new MemoryStorage();
     const leaving = page(storage);

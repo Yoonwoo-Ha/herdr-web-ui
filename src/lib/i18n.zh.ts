@@ -412,6 +412,9 @@ const BASE: Record<string, string> = {
 
   "Loading…": "正在加载…",
   "Done": "完成",
+  "Forget PCs": "移除电脑",
+  "This page came back without its connection, and this device would not keep its unsent text through a reload. Copy what you need, then reload.": "此页面恢复时已失去连接，且此设备无法在重新加载期间保留未发送的文字。请先复制需要的内容，再重新加载。",
+  "The unsent text is still not kept. Copy it or clear it, then reload.": "未发送的文字仍未保留。请复制或清除后再重新加载。",
   "Name": "名称",
   "Recent": "最近",
   "Needs you": "需回应",
