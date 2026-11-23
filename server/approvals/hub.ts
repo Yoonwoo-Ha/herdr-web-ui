@@ -16,8 +16,9 @@
  *
  * A held request is kept apart from any screen: `held` lists a pane's requests and `settle` answers one by its id. A
  * card is built from the request alone (`shown`, `holds`, `answer`); the agent's dialog on the screen (Claude's Bash
- * dialog, dialogs/claude.ts) only says whether the request is still open: one the screen shows no dialog for, or a
- * dialog showing another command whole, was answered in the terminal.
+ * dialog, dialogs/claude.ts; OmO's permission dialog and the one Ovis's pi extension draws like it, dialogs/pi.ts)
+ * only says whether the request is still open: one the screen shows no dialog for, or a dialog showing another command
+ * whole, was answered in the terminal. The adapters: Claude Code (claude.ts), pi (pi.ts) and OmO (omo.ts).
  */
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs";
@@ -85,7 +86,10 @@ interface Pending extends ApprovalRequest {
 const EVENT_MAX = 256 * 1024;
 /** A read of the screen just before the agent draws its dialog must not release the hook it sent with it. */
 const GRACE_MS = 3_000;
-/** Claude Code's own default for a command hook: past it the agent has stopped waiting on the request. */
+/**
+ * Claude Code's own default for a command hook: past it the agent has stopped waiting on the request. pi's and OmO's
+ * extensions wait on as long as their dialog does, which then stands alone.
+ */
 const HELD_MS = 600_000;
 /** Under the shortest limit on a socket's path (104 bytes on macOS), with room for its terminating byte. */
 const SOCKET_PATH_MAX = 100;
@@ -173,9 +177,12 @@ export class ApprovalHub {
     return this.adapters.has(kind);
   }
 
-  /** The decision a card option of this agent is, or null for one that goes as keys. */
-  decision(kind: string, label: string): ApprovalDecision | null {
-    return this.adapters.get(kind)?.decision(label) ?? null;
+  /**
+   * The decision a card option is for the request of `paneId` whose id is `id`, by the adapter of the agent that sent it
+   * (herdr may name the pane otherwise: an OmO waiting on its user, pi), or null for one that goes as keys.
+   */
+  decision(paneId: string, id: string, label: string): ApprovalDecision | null {
+    return (this.pending.get(paneId) ?? []).find((entry) => idOf(entry) === id)?.adapter.decision(label) ?? null;
   }
 
   private listen(): void {
@@ -186,9 +193,9 @@ export class ApprovalHub {
     const uid = process.getuid?.();
     if (!folder.isDirectory() || (uid !== undefined && folder.uid !== uid)) throw new Error(`${this.dir} is not a folder of this account`);
     chmodSync(this.dir, 0o700);
-    // a settings file names a key of an earlier run of this server, which nothing here answers any more, and the
-    // socket of that run is in the way of this one's
-    for (const name of readdirSync(this.dir)) if (name.endsWith(".json") || name === SOCKET_NAME) rmSync(join(this.dir, name), { force: true });
+    // a settings file or extension names a key of an earlier run of this server, which nothing here answers any more,
+    // and the socket of that run is in the way of this one's
+    for (const name of readdirSync(this.dir)) if (/\.js(?:on)?$/.test(name) || name === SOCKET_NAME) rmSync(join(this.dir, name), { force: true });
     const listener = createServer((socket) => this.receive(socket));
     // a bind that fails comes as an event on the next tick (a pipe's name taken, a folder it may not bind in): no
     // hook works then, as its relay finds no answer, and the server goes on

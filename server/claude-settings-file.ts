@@ -113,15 +113,15 @@ const holds = (path: string, text: string, checkDirectory: () => void): boolean 
 };
 
 /**
- * The path of a file in `dir` holding `json`, named by its sha256: the same text is one file, written
- * once. The first launch makes it new, with no rename that Defender or the indexer could hold up for
+ * The path of a file in `dir` holding `json` (or other text, under another `suffix`), named by its sha256: the same
+ * text is one file, written once. The first launch makes it new, with no rename that Defender or the indexer could hold up for
  * a moment on Windows, and a later one finds it there. Only a file under its name that holds other
  * text (cut short, or edited) is replaced, written under a temporary name and renamed into place so
  * nothing reads half of it.
  */
-export function settingsFile(json: string, dir: string = claudeSettingsDir()): string {
+export function settingsFile(json: string, dir: string = claudeSettingsDir(), suffix = ".json"): string {
   dir = resolve(dir);
-  const path = join(dir, `${createHash("sha256").update(json).digest("hex")}.json`);
+  const path = join(dir, `${createHash("sha256").update(json).digest("hex")}${suffix}`);
   const checkDirectory = cacheDirectory(dir);
   const writeNew = (file: string): void => {
     checkDirectory();

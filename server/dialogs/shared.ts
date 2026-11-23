@@ -150,10 +150,11 @@ export type ParsedPrompt = InteractivePrompt & {
   ompCall?: string;
   claudeUltracode?: boolean | null;
   /**
-   * a Claude Bash approval's command, as its panel shows it between its dashed rules; null for a command panel the screen
-   * does not show whole (taller than the pane)
+   * the shell command of an approval dialog the approval hub binds a held request to (server/approvals/hub.ts): Claude's
+   * Bash approval, as its panel shows it between its dashed rules, and OmO's permission dialog for a shell command and
+   * the one Ovis's pi extension draws like it (dialogs/pi.ts); null for a dialog the screen does not show whole
    */
-  claudeBashCommand?: string | null;
+  approvalCommand?: string | null;
   lettaSearch?: string;
   lettaTab?: string;
   lettaTabs?: string[];

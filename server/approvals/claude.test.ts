@@ -218,12 +218,12 @@ describe("the hook relay", () => {
   it("matches the command of Claude Code's own Bash dialog, and no other dialog", async () => {
     for (const version of ["2.1.318", "2.1.319"]) {
       const prompt = parseInteractivePrompt("claude", readFileSync(new URL(`../fixtures/claude-diff-panel-${version}-borderless-bash-196.txt`, import.meta.url), "utf8"))!;
-      expect(parsedByPublicPrompt.get(prompt)?.claudeBashCommand, version).toBe("git status --short > status.txt");
+      expect(parsedByPublicPrompt.get(prompt)?.approvalCommand, version).toBe("git status --short > status.txt");
     }
     const write = parseInteractivePrompt("claude", ["● Write(hello.txt)", "─".repeat(40), " Create file", " hello.txt", "╌".repeat(40), "  rm -rf .", "╌".repeat(40),
       " Do you want to create hello.txt?", " ❯ 1. Yes", "   2. No", " Esc to cancel · Tab to amend"].join("\n"))!;
     expect(write).toMatchObject({ kind: "approval", title: "Create file" });
-    expect(parsedByPublicPrompt.get(write)?.claudeBashCommand).toBeUndefined();
+    expect(parsedByPublicPrompt.get(write)?.approvalCommand).toBeUndefined();
   });
 
   // hook-vs-screen (2026-11-23): Claude Code 2.1.330 put this line under the long find command's panel, and no card bound
@@ -237,7 +237,7 @@ describe("the hook relay", () => {
     for (const width of [121, 47]) {
       const prompt = parseInteractivePrompt("claude", readFileSync(new URL(`../fixtures/claude-bash-requires-approval-2.1.330-${width}.txt`, import.meta.url), "utf8"))!;
       expect(prompt, `${width}`).toMatchObject({ kind: "approval", title: "Bash command" });
-      const screen = parsedByPublicPrompt.get(prompt)?.claudeBashCommand;
+      const screen = parsedByPublicPrompt.get(prompt)?.approvalCommand;
       expect(typeof screen, `${width}`).toBe("string");
       expect(hooks.shown("p1", on(screen!))?.command, `${width}`).toBe(command);
     }
@@ -250,14 +250,14 @@ describe("the hook relay", () => {
     const lines = readFileSync(new URL("../fixtures/claude-bash-requires-approval-2.1.330-47.txt", import.meta.url), "utf8").split("\n");
     const clipped = parseInteractivePrompt("claude", lines.slice(17).join("\n"))!;
     expect(clipped).toMatchObject({ kind: "approval", title: "Command approval" });
-    expect(parsedByPublicPrompt.get(clipped)?.claudeBashCommand).toBeNull();
+    expect(parsedByPublicPrompt.get(clipped)?.approvalCommand).toBeNull();
   });
 
   it("says a dialog whose panel is taller than the pane shows a command it cannot read whole", () => {
     const scrolled = parseInteractivePrompt("claude", [" │ cat <<'EOF' > notes.txt", " │ line 2", " │ EOF", "╌".repeat(40),
       " Do you want to proceed?", " ❯ 1. Yes", "   2. Yes, and don't ask again for: cat", "   3. No", "", " Esc to cancel · Tab to amend"].join("\n"))!;
     expect(scrolled).toMatchObject({ kind: "approval" });
-    expect(parsedByPublicPrompt.get(scrolled)?.claudeBashCommand).toBeNull();
+    expect(parsedByPublicPrompt.get(scrolled)?.approvalCommand).toBeNull();
   });
 
   it("releases a request the screen no longer shows, once Claude has had time to draw it", async () => {

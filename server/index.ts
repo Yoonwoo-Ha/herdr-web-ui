@@ -25,6 +25,8 @@ import { readOmpHeldFilesSetting } from "./omp.ts";
 import { readBrowserToolSetting, useApprovalHub } from "./agent-launch.ts";
 import { ApprovalHub } from "./approvals/hub.ts";
 import { claudeApprovals } from "./approvals/claude.ts";
+import { omoApprovals } from "./approvals/omo.ts";
+import { piApprovals } from "./approvals/pi.ts";
 import { SeenStore } from "./seen.ts";
 import type { SeenFinish } from "../shared/seen.ts";
 import { TailnetIdentitySource } from "./tailscale.ts";
@@ -410,7 +412,7 @@ export function createServer(
   const preferences = new PreferenceStore(stateDir);
   readOmpHeldFilesSetting(() => preferences.get().settings.ompHeldFiles === true);
   readBrowserToolSetting(() => preferences.get().settings.agentBrowserTools, join(stateDir, "browser tools"));
-  const approvals = new ApprovalHub(join(stateDir, "approval hooks"), [claudeApprovals]);
+  const approvals = new ApprovalHub(join(stateDir, "approval hooks"), [claudeApprovals, piApprovals, omoApprovals]);
   // on herdr-core an agent pinned here is pinned in the Herdr app and its other clients too
   const stopPinBridge = capabilities().pins ? bridgePins(coreConnection(), preferences, LOCAL_MACHINE, stateDir) : null;
   try {

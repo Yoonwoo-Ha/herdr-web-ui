@@ -649,7 +649,7 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
   }, {
     responder: "claude-approval", menuLabels: rows.map((row) => row.label), selectedIndex: rows.findIndex((row) => row.selected),
     checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
-    ...(bashCommand === undefined ? {} : { claudeBashCommand: bashCommand }),
+    ...(bashCommand === undefined ? {} : { approvalCommand: bashCommand }),
   });
 }
 

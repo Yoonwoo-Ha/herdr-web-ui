@@ -101,8 +101,9 @@ describe("the channel", () => {
     const [request] = hub.held("p1");
     expect(request).toEqual({ id: expect.stringMatching(/^[0-9a-f]{16}$/), kind: "fake", command: "make deploy", description: "Deploy" });
     expect(hub.held("p2")).toEqual([]);
-    expect(hub.decision("fake", "Allow")).toBe("allow");
-    expect(hub.decision("fake", "Later")).toBeNull();
+    expect(hub.decision("p1", request!.id, "Allow")).toBe("allow");
+    expect(hub.decision("p1", request!.id, "Later")).toBeNull();
+    expect(hub.decision("p2", request!.id, "Allow")).toBeNull();
     expect(hub.settle("p1", "0".repeat(16), "allow")).toBe(false);
     expect(hub.settle("p1", request!.id, "allow")).toBe(true);
     expect(await answer()).toEqual({ decision: "allow" });
