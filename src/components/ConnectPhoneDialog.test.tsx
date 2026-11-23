@@ -20,7 +20,7 @@ import { QrCode } from "./QrCode.tsx";
 
 // the confirmation before Revoke all is a portal on document.body, which this renderer has none of
 await mock.module("react-dom", () => ({ ...ReactDom, createPortal: (node: ReactNode) => node }));
-const { ACCOUNT_QR_HIDDEN_MS, ACCOUNT_QR_MAX_MS, CodeRoute, ConnectPhoneDialog, connectTabs, TAILSCALE_POLL_MS, localWays, openingTab, RelayRoute, RelayTab, sameNameRelayDevice, signInLink, TailscaleTab, SshTab, useFoundPcs } = await import("./ConnectPhoneDialog.tsx");
+const { ACCOUNT_QR_HIDDEN_MS, ACCOUNT_QR_MAX_MS, closedBySignIn, CodeRoute, ConnectPhoneDialog, connectTabs, TAILSCALE_POLL_MS, localWays, openingTab, RelayRoute, RelayTab, sameNameRelayDevice, signInLink, TailscaleTab, SshTab, useFoundPcs } = await import("./ConnectPhoneDialog.tsx");
 const { ConfirmDialog } = await import("./ConfirmDialog.tsx");
 const { announcePairingCode, QR_CODE_ENDED_CHANNEL, useRelay } = await import("../lib/useRelay.ts");
 const { ACCOUNT_QR_ALONE_MS, ACCOUNT_QR_LATE_MS, ACCOUNT_QR_POLL_MS, accountQrFindings, accountQrNoticeWaiting, addedBy, accountQrPending, resetAccountQrWatch, unvouched } = await import("../lib/accountQrWatch.ts");
@@ -808,6 +808,15 @@ describe("Connect a phone on a phone", () => {
     expect(takeAddConnection()).toBeNull();
     expect(openingTab({ tabs: all, noticeWaiting: false, hasAccount: false, asked: tab })).toBe("relay");
     expect(openingTab({ tabs: ["tailscale", "ssh"], noticeWaiting: false, hasAccount: false, asked: tab })).toBe("tailscale");
+  });
+
+  // owner, Mac app preview: a sign-in started in Settings leaves Settings open, on the page that shows the account
+  it("a sign-in to the account this PC is already in closes the sheet and leaves Settings open, unless the setup checklist opened the sheet", () => {
+    expect(closedBySignIn(true, null)).toBe("sheet");
+    expect(closedBySignIn(true, "relay")).toBe("settings");
+    // a sign-in to another account, or one with the relay off, stays on the tab
+    expect(closedBySignIn(false, null)).toBe("nothing");
+    expect(closedBySignIn(false, "relay")).toBe("nothing");
   });
 
   it("the QR code of a PC in an account opens its page in the hosted app with this page's sign-in, and carries nothing else", () => {

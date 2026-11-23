@@ -129,4 +129,14 @@ describe("Settings → Devices and PCs", () => {
     expect(account).toBeLessThan(fold);
     expect(page.slice(page.indexOf("const openAccount"), page.indexOf("const accountService"))).not.toContain("details");
   });
+
+  it("closes Settings after a sign-in on Add a connection only where closedBySignIn says so", () => {
+    const source = readFileSync(new URL("./SettingsDialog.tsx", import.meta.url), "utf8");
+    const page = source.slice(source.indexOf("function DevicesPage("), source.indexOf("function UseRelayHere("));
+    const start = page.indexOf("onSignedIn:");
+    const signedIn = page.slice(start, page.indexOf("...(opensAll", start));
+    expect(signedIn).toContain("closedBySignIn(home, connectAsked)");
+    expect(page.match(/onHome\(\)/g)).toHaveLength(1);
+    expect(signedIn).toMatch(/=== "settings"\) onHome\(\)/);
+  });
 });

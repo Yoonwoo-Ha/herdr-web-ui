@@ -68,7 +68,7 @@ import { removablePc, STATE_WORD } from "./MachineSidebar.tsx";
 import { AccountPcError, pcAccountStatus, type PcAccountStatus } from "../lib/account/join.ts";
 import { apiFetch } from "../lib/api-request-id.ts";
 import type { MyPc } from "../lib/account/myPcs.ts";
-import { ConnectPhoneDialog, relayOffered, relayPending } from "./ConnectPhoneDialog.tsx";
+import { closedBySignIn, ConnectPhoneDialog, relayOffered, relayPending } from "./ConnectPhoneDialog.tsx";
 import { ACCOUNT_QR_WATCH_EVENT, accountQrNoticeWaiting } from "../lib/accountQrWatch.ts";
 import { ADD_CONNECTION_EVENT, takeAddConnection, type AddConnectionTab } from "../lib/addConnectionRequest.ts";
 import { PushTestControls } from "./PushTestControls.tsx";
@@ -1205,7 +1205,7 @@ function deviceKind(label: string, t: ReturnType<typeof useT>): string | null {
 }
 
 function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSettings, pcSettingsError, onPcSettings, openAddPc, connectPc, onHome, opensAll, withdrawn }: {
-  /** closes Settings onto the main screen: a sign-in to the account this PC is already in leaves nothing to add */
+  /** closes Settings onto the main screen, after a sign-in in the sheet the setup checklist opened (closedBySignIn) */
   onHome: () => void;
   opensAll?: (() => boolean) | undefined;
   withdrawn?: (() => boolean) | undefined;
@@ -1373,7 +1373,12 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
           relay={relay} readOnly={relayReadOnly} closesGate={closesGate} canPair={auth?.via !== "portal"}
           signedIn={account.signedIn} accountId={account.account} provider={account.provider} joinBySignIn={joinBySignIn}
           pcAddFromAccount={pcAddFromAccount} onAccountSetup={openAccount}
-          account={accountService !== null && account.reachable ? { service: accountService, onOpen: openAccount, onSignedIn: (home) => { readAccountAgain(); if (home) { setConnecting(false); onHome(); } }, ...(opensAll === undefined ? {} : { opensAll }) } : null}
+          account={accountService !== null && account.reachable ? { service: accountService, onOpen: openAccount, onSignedIn: (home) => {
+            readAccountAgain();
+            const closed = closedBySignIn(home, connectAsked);
+            if (closed !== "nothing") setConnecting(false);
+            if (closed === "settings") onHome();
+          }, ...(opensAll === undefined ? {} : { opensAll }) } : null}
           onAddPc={(preset) => { setConnecting(false); openAddPc(preset); }} machines={machines}
           onConnectMachine={(machine) => { setConnecting(false); connectPc(machine); }}
           onPairingHeld={holdPairing} onRevokedAll={onRevokedAll} onClose={closeConnect} />

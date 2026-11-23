@@ -249,8 +249,11 @@ try {
       const first = signIn.getByRole("button").first();
       await first.waitFor();
       assert.equal(await first.isEnabled(), true);
-      // signing in on this PC, already in that account, leaves nothing to add: Add a connection and Settings close onto
-      // the main screen
+      // signing in on this PC, already in that account, leaves nothing to add: Add a connection closes, and Settings stays
+      // on Devices and PCs with the account and its PCs
+      const settings = page.locator(".settings-dialog");
+      const awayInSettings = settings.locator(".my-pcs .devices-row .settings-label").filter({ hasText: /^Away/ });
+      assert.equal(await awayInSettings.count(), 0, "signed out, Settings lists no PC of the account");
       const linkPage = page.context().waitForEvent("page");
       await signIn.getByRole("button", { name: "Sign in to Ovis", exact: true }).click();
       await linkPage;
@@ -258,8 +261,10 @@ try {
       assert.ok(userCode, "the sign-in shows its code");
       service.approveOnLinkPage(userCode, ACCOUNT, "github");
       await page.locator(".connect-phone-dialog").waitFor({ state: "detached" });
-      await page.locator(".settings-dialog").waitFor({ state: "detached" });
-      await shot(page, "signed-in-home");
+      await settings.locator('[data-section="account"]').getByRole("button", { name: "Sign out of GitHub", exact: true }).waitFor();
+      await awayInSettings.waitFor();
+      assert.equal(await settings.locator('[data-section="devices"]').getByRole("button", { name: "Add a connection", exact: true }).isVisible(), true, "Settings is still on Devices and PCs");
+      await shot(page, "signed-in-settings");
     } else {
       // signed in to another account than this PC's (owner #25): the sign-in buttons alone, so the right one can be picked;
       // no Add from account, no line about the account, no paragraph to act on
@@ -280,7 +285,7 @@ try {
     if (!strict) await shot(page, "unavailable");
   }
   assert.deepEqual(pageErrors, [], "no page error");
-  console.log("PASS the account's PCs: the sidebar lists those not in this app yet with nothing opened, marks offline PCs and automatically asks a member to pair a ready PC; it opens in the sidebar with no SSH setup dialog; a sign-in on this PC, already in the account, lands on the main screen; Add a connection → Ovis relay is the signed-in line and the QR code, with no PC list");
+  console.log("PASS the account's PCs: the sidebar lists those not in this app yet with nothing opened, marks offline PCs and automatically asks a member to pair a ready PC; it opens in the sidebar with no SSH setup dialog; a sign-in on this PC, already in the account, closes Add a connection and leaves Settings open with the account and its PCs; Add a connection → Ovis relay is the signed-in line and the QR code, with no PC list");
 } catch (error) {
   code = 1;
   console.error("FAIL relay account PCs:", error);

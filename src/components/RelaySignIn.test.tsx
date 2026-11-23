@@ -208,9 +208,9 @@ describe("the relay tab's Sign in", () => {
     expect(after[0]).toBe(before?.[0]);
   });
 
-  // the owner's sign-out and sign-in on a PC already in the account: nothing is left to add, so the page goes to its sessions
+  // the owner's sign-out and sign-in on a PC already in the account: nothing is left to add, so the sheet closes (closedBySignIn)
   for (const [name, pcIn, home] of [["already in that account", "acct_one", true], ["in another account", "acct_two", false], ["in no account", null, false]] as const) {
-    it(`a sign-in on a PC ${name} ${home ? "sends the page home" : "stays on the tab"}`, async () => {
+    it(`a sign-in on a PC ${name} ${home ? "says nothing is left to add" : "stays on the tab"}`, async () => {
       pcAccountId = pcIn;
       approveOnPoll = true;
       const finished = Promise.withResolvers<boolean>();
@@ -543,8 +543,8 @@ describe("the relay tab's Sign in in the desktop app", () => {
     expect((await indexedAccountStore.get("session"))?.provider).toBe("google");
   });
 
-  // owner #25 (packaged Mac app): signing in again on a PC that is already in that account goes to the main screen
-  it("a sign-in through the app's loopback on a PC already in that account sends the page home", async () => {
+  // owner #25 (packaged Mac app): signing in again on a PC that is already in that account leaves no connect dialog
+  it("a sign-in through the app's loopback on a PC already in that account says nothing is left to add", async () => {
     pcAccountId = "acct_mine";
     fake.signInAs("google", "acct_mine");
     const home = Promise.withResolvers<boolean>();

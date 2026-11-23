@@ -110,11 +110,21 @@ export function openingTab({ tabs, noticeWaiting, hasAccount, asked = null }: { 
 export interface RelayAccount {
   service: string;
   onOpen: () => void;
-  /** `home`: the sign-in is to the account this PC is already in, with its relay on, so nothing is left to do here and the
-   * page goes to its sessions; with the relay off the tab stays, with the relay's switch */
+  /** `home`: the sign-in is to the account this PC is already in, with its relay on, so nothing is left to do here
+   * (closedBySignIn); with the relay off the tab stays, with the relay's switch */
   onSignedIn: (home: boolean) => void;
   /** this PC's step-2 switch, as Settings reads it: only then does Add this PC try the one press */
   opensAll?: () => boolean;
+}
+
+/**
+ * What a sign-in on the relay tab closes. One with nothing left to do here (`home`) closes the sheet, and Settings stays
+ * open on the page that now shows the account and its PCs; a sheet the setup checklist's Connect your phone opened
+ * (`asked`) goes on to the main screen, where that step began.
+ */
+export function closedBySignIn(home: boolean, asked: ConnectTab | null): "nothing" | "sheet" | "settings" {
+  if (!home) return "nothing";
+  return asked === null ? "sheet" : "settings";
 }
 
 export interface ConnectPhoneDialogProps {
