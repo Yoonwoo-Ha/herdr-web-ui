@@ -128,6 +128,20 @@
   height: var(--touch-target);
 }
 
+/* My PCs and Add a PC under one parent that stays across the 1024 px line (RelayShell frontView): on a phone one shows and
+   the other is kept, hidden, with what it holds; on a wide screen they stand side by side */
+.connect-panes {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.my-pcs[hidden],
+.connect-add[hidden] {
+  display: none;
+}
+
 /* My PCs fills the screen, so Add PC can stay at its bottom while the list scrolls under it */
 .relay-shell-screen.relay-add-screen.my-pcs-screen {
   place-items: stretch center;
@@ -139,8 +153,11 @@
 }
 
 /* two columns for every row (a subgrid each): the row's open link, then Forget where the row has one, in a cell of its
-   own beside the link, so a tap on the link never lands on Forget and every row's state lines up */
+   own beside the link, so a tap on the link never lands on Forget and every row's state lines up. It keeps its full
+   height (its overflow clips the rounded corners, so a column with a height cap could otherwise shrink it and cut rows
+   off): the pane around it scrolls instead */
 .my-pcs-list {
+  flex: none;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   margin: 0;
@@ -256,7 +273,37 @@
   height: var(--icon-size);
 }
 
+/* past eight PCs: a search by name, and on a wide screen the All, On and Off chips beside it */
+.my-pcs-find {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.my-pcs-search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.my-pcs-chips {
+  flex: none;
+}
+
+/* Tailscale off on the phone, over a saved Tailscale PC's tap: what to do, and Open Tailscale */
+.connect-tailscale-off {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.connect-tailscale-off > .relay-shell-copy {
+  margin: 0;
+}
+
 .my-pcs > .relay-shell-copy,
+.my-pcs > .connect-tailscale-off,
+.my-pcs > .relay-add-opening,
 .my-pcs > .account-error,
 .my-pcs > .account-notice,
 .my-pcs > .relay-shell-none-online {
@@ -563,4 +610,48 @@
   text-decoration: underline;
   text-underline-offset: 0.15em;
   cursor: pointer;
+}
+
+/* a wide screen (a desktop browser): My PCs on the left, its list scrolling on its own, and Add a PC always open beside
+   it; Connect a PC alone, signed out with nothing saved, as one centred card */
+@media (min-width: 1024px) {
+  .relay-shell-screen.relay-add-screen.connect-desk-screen {
+    height: var(--app-height, 100dvh);
+    padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
+    overflow: hidden;
+  }
+
+  .connect-desk-screen > .relay-shell {
+    width: min(100%, var(--content-w));
+    min-height: 0;
+  }
+
+  .connect-panes.connect-desk {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--relay-signin-w);
+    grid-template-rows: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-8);
+  }
+
+  /* each pane scrolls on its own when it is taller than the window: a long list, a tall stack of notices, an opened
+     code field; the other pane stays where it is */
+  .connect-desk > .my-pcs,
+  .connect-desk > .connect-add-side {
+    max-height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .connect-add-side,
+  .connect-add-front {
+    padding: var(--space-5);
+    border: var(--hairline) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel);
+  }
+
+  .connect-add-side > .connect-start-head > .connect-start-title {
+    font-size: var(--fs-lg);
+  }
 }

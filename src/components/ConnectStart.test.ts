@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { MyPc } from "../lib/account/myPcs.ts";
-import { phoneSavedPcs, relayTabPcs } from "./ConnectStart.tsx";
+import { pcsShown, phoneShellState, phoneSavedPcs, relayTabPcs } from "./ConnectStart.tsx";
 
 const id = (letter: string) => letter.repeat(32);
 const accountPc = (letter: string, patch: Partial<MyPc> = {}) => ({ server_id: id(letter), name: `pc-${letter}`, state: "paired", paired: false, listed: true, linked: false, join: { relay: "wss://relay.ovis.sh" }, ...patch }) as unknown as MyPc;
@@ -52,5 +52,41 @@ describe("the phone app's PCs on My PCs", () => {
     const saved = ["https://desk.tail1e211e.ts.net", "http://100.101.1.2:7317", "http://192.168.0.5:7317", "http://127.0.0.1:41234", `https://app.ovis.sh/s/${id("a")}/`, "not an address"];
     const rows = phoneSavedPcs(saved, { "https://desk.tail1e211e.ts.net": "Desk" }, "https://app.ovis.sh");
     expect(rows.map((row) => [row.name, row.way])).toEqual([["Desk", "tailscale"], ["100.101.1.2:7317", "tailscale"], ["192.168.0.5:7317", "address"], ["127.0.0.1:41234", "ssh"]]);
+  });
+});
+
+describe("finding a PC on a long My PCs", () => {
+  const rows = [{ name: "eaui-MacBookAir.local", word: "in-use" }, { name: "render-box", word: "online" }, { name: "office-imac", word: "update" }, { name: "studio-pc", word: "off" }, { name: "lab-mini", word: undefined }] as const;
+  const names = (query: string, show: "all" | "on" | "off" = "all") => pcsShown(rows, query, show).map((row) => row.name);
+
+  it("matches the name anywhere, in any case, the PC in use like any other", () => {
+    expect(names("MAC")).toEqual(["eaui-MacBookAir.local", "office-imac"]);
+    expect(names("  box ")).toEqual(["render-box"]);
+    expect(names("")).toEqual(rows.map((row) => row.name));
+    expect(names("nothing")).toEqual([]);
+  });
+
+  it("keeps to the PCs on or off: the PC in use is on, one with no word only under All", () => {
+    expect(names("", "on")).toEqual(["eaui-MacBookAir.local", "render-box"]);
+    expect(names("", "off")).toEqual(["studio-pc"]);
+    expect(names("mac", "on")).toEqual(["eaui-MacBookAir.local"]);
+  });
+});
+
+describe("the phone app's own word on what is open", () => {
+  const app = "https://app.ovis.sh";
+  it("names the PC still open while the person chooses another, a relay PC by its page and any other by its address", () => {
+    expect(phoneShellState({ saved: [], choosing: true, current: `${app}/s/${id("a")}/` }, app).current).toEqual({ serverId: id("a") });
+    expect(phoneShellState({ saved: [], choosing: true, current: "https://desk.tail1e211e.ts.net" }, app).current).toEqual({ origin: "https://desk.tail1e211e.ts.net", scope: null });
+    // a relay PC of another origin (a self-hosted relay) by its scope there, so another scope on it is not the one open
+    expect(phoneShellState({ saved: [], choosing: true, current: `https://relay.example/s/${id("b")}/` }, app).current).toEqual({ origin: "https://relay.example", scope: id("b") });
+    expect(phoneShellState({ saved: [], choosing: false, current: "https://desk.tail1e211e.ts.net" }, app).current).toBeNull();
+    expect(phoneShellState({ saved: [], choosing: true, current: "" }, app).current).toBeNull();
+    expect(phoneShellState({ saved: [], choosing: true, current: `${app}/` }, app).current).toBeNull();
+  });
+
+  it("passes on an SSH PC whose address on the phone another app took", () => {
+    expect(phoneShellState({ kind: "ssh-port", failure: "127.0.0.1:41234" }, app).sshPort).toBe("127.0.0.1:41234");
+    expect(phoneShellState({ kind: "", failure: "" }, app).sshPort).toBeNull();
   });
 });

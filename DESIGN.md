@@ -5159,7 +5159,29 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   let into yet asks for that on its own page), Forget where this phone can forget it, and **Add PC** pinned at the
   bottom while the list scrolls, as the Claude app keeps New chat in reach over its list. With no PC on it is the same
   list, the rows Off under No PC is online and Check again; with none in the account yet, the list says to sign in with
-  the same account on the PC where Ovis runs, over Add PC (#16 drew both as a page of their own). Add PC (and Connect a PC, the
+  the same account on the PC where Ovis runs, over Add PC (#16 drew both as a page of their own). On a screen 1024 px
+  wide or more the two stand side by side: My PCs on the left and Add a PC always open on the right in a panel, each
+  pane scrolling on its own when it is taller than the window, with no Add PC button; Connect a PC alone is one centred
+  card. Both stay mounted under one parent across the 1024 px line, so a rotation or a resize keeps the chosen tab, what
+  is typed, the focus, the search and an open under way; a pairing dialog open when the window narrows again stays the
+  top of the history, and Add PC takes its entry once the dialog closes. Past eight PCs My PCs offers a
+  search by name (any case, the PC in use found like any other, one line when nothing matches), and on the wide screen
+  the All, On and Off chips. The code is one small Pair with a code line that opens its field in place, under what to
+  do on the PC (beside the QR way in the phone app, both held while a sign-in is under way); the code is looked up
+  right there, the field read-only while it looks and keeping what was typed through a failure to correct, until it
+  finds its PC (the comparison) or Cancel closes it; the screen owns that lookup, so folding the field, Add PC's Back,
+  another tab, the comparison's Cancel or a sign-in each end it too, and what it answers later opens nothing. In the
+  phone app, a PC opened by its address says Opening it, with Cancel (only where the app has cancelOpen: iOS opens at
+  once), one at a time for the whole screen, which owns it: it follows the person to Add PC and back on a phone and
+  stands in both panes on a wide screen, a tab or a pane giving way does not end it, a QR read after its scanner's tab is
+  gone starts none, and an open the app has not answered in 25 s ends with the PC did not answer, taking taps again (a
+  second tap while the app is asked whether Tailscale is on replaces the first; one already opening holds the next;
+  leaving the screen ends it). The Tailscale tab asks the app whether Tailscale is on only while it is on screen. A
+  failed open says why from the app's own reason, with Tailscale's hint for a tailnet address (its IPv6 too), never the
+  app's own words, which are not the person's language; a saved Tailscale PC tapped while the app says
+  Tailscale is off shows Open Tailscale instead of trying it; an SSH PC whose address another app on the phone
+  took says so above the list; and while the app keeps a PC open as the person chooses another, My PCs marks it In use
+  now and its Back goes back to it (backToCurrent), the app's own connect page's ‹ PC. Add PC (and Connect a PC, the
   same screen as the front page) is the desktop's Add a connection tabs holding only the ways in: the sign-in signed out,
   the PC's QR (its code in a browser), a Tailscale address, user@host. A PC page's More → Connect a PC opens My PCs
   (`/#add`) with Back to that PC and its row marked In use now. A launch opens the PC this device opened last unless its

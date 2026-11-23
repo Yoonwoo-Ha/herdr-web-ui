@@ -20,9 +20,13 @@ export type PhonePlan =
   | { kind: "missing" }
   | { kind: "unknown" };
 
-/** A MagicDNS name or a Tailscale address: a page open at one is this PC's Tailscale address already. */
+/**
+ * A MagicDNS name or a Tailscale address (100.64.0.0/10, or fd7a:115c:a1e0::/48 as the phone app's own page reads it): a
+ * page open at one is this PC's Tailscale address already.
+ */
 export function tailnetHost(hostname: string): boolean {
-  return hostname.toLowerCase().endsWith(".ts.net") || isTailnetAddress(hostname);
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return host.endsWith(".ts.net") || host.startsWith("fd7a:115c:a1e0:") || isTailnetAddress(host);
 }
 
 export function isLoopbackHost(hostname: string): boolean {

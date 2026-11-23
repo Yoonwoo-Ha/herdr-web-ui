@@ -88,3 +88,26 @@
 .relay-add-saved-name { flex: 1; min-width: 0; text-align: start; overflow-wrap: anywhere; }
 
 .relay-add-saved-note { margin-inline: var(--space-2); color: var(--text-dim); font-size: var(--fs-sm); white-space: nowrap; }
+
+/* the phone app opening a PC: a small spinner, what it opens, and Cancel at the end */
+.relay-add-opening {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.relay-add-opening > .boot-spinner {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  border-width: var(--hairline);
+}
+
+.relay-add-opening-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
