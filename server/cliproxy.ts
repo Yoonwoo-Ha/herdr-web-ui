@@ -585,7 +585,8 @@ export class CLIProxyService {
       return await Promise.all(files.flatMap((file) => {
         const provider = USAGE_PROVIDERS.find((item) => (item.id === "claude" || item.id === "codex") && item.id === file["provider"]);
         const index = file["auth_index"];
-        if (!provider || typeof index !== "string" || !index) return [];
+        // an account turned off in the Hub is not listed at all (nor its last row): turned on again, it is listed anew
+        if (!provider || typeof index !== "string" || !index || file["disabled"] === true) return [];
         const name = typeof file["name"] === "string" ? file["name"] : index;
         const account = typeof file["email"] === "string" ? file["email"] : name;
         const claims = file["id_token"];
@@ -608,7 +609,7 @@ export class CLIProxyService {
           return row;
         };
         if (unreadableIn(start, entry.key, identities) || unreadableIn(live, entry.key, identities)) return [Promise.resolve(held({ ...entry, problem: null }))];
-        if (file["disabled"] === true || file["unavailable"] === true) return [Promise.resolve(held(entry))];
+        if (file["unavailable"] === true) return [Promise.resolve(held(entry))];
         return [(async (): Promise<ProviderUsage> => {
           try {
             const reading = await provider.read({ ...ctx, fetch: async (url, init) => {
