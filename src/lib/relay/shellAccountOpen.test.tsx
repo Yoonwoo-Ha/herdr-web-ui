@@ -32,9 +32,9 @@ let browser: ReturnType<typeof createShellTestPage>;
 beforeEach(() => { browser = createShellTestPage(); browser.setVisibility("hidden"); });
 afterEach(() => { jest.useRealTimers(); setTransport(nativeTransport); browser.dispose(); });
 
-async function accountPc({ release = true, loseRegistrationReply = false, newUntil = null, seen = true, open }: {
+async function accountPc({ release = true, loseRegistrationReply = false, newUntil = null, seen = true, label, open }: {
   release?: boolean; loseRegistrationReply?: boolean; seen?: boolean;
-  newUntil?: string | null;
+  newUntil?: string | null; label?: string;
   open: (...args: [...Parameters<NonNullable<RelayShellMount["open"]>>, ReturnType<typeof generateKeyPair>]) => Promise<RelayTransport>;
 }) {
   const identity = generateKeyPair();
@@ -48,6 +48,7 @@ async function accountPc({ release = true, loseRegistrationReply = false, newUnt
   if (returned === null) throw new TypeError("Missing OAuth return");
   const requests: string[] = [];
   const registrationKeys: string[] = [];
+  const registrationLabels: (string | undefined)[] = [];
   const navigations: string[] = [];
   const navigated = Promise.withResolvers<string>();
   const appOpened = Promise.withResolvers<void>();
@@ -59,7 +60,7 @@ async function accountPc({ release = true, loseRegistrationReply = false, newUnt
     render(node.props.children);
   };
   const mountAt = (entryUrl: string) => mountRelayShell({
-    container: Object.create(null), entryUrl, shellVersion: "1.0.0", store, accountStore,
+    container: Object.create(null), entryUrl, shellVersion: "1.0.0", store, accountStore, ...(label === undefined ? {} : { label }),
     // these read the account's rows on the front page: a launch that leaves it for the PC (shell.test.tsx) does not run
     ...(new URL(entryUrl).pathname === "/" ? { navigatedSinceEntry: () => true } : {}),
     accountService: SERVICE, accountFetch: async (input, init) => {
@@ -71,8 +72,9 @@ async function accountPc({ release = true, loseRegistrationReply = false, newUnt
           ? Response.json({ challenge_id: "12".repeat(16), challenge: "register-this-sign-in" })
           : new Response(null, { status: 404 });
         case "/v1/devices": {
-          const key = JSON.parse(String(init?.body)).key;
+          const { key, label: named } = JSON.parse(String(init?.body)) as { key: string; label?: string };
           registrationKeys.push(key);
+          registrationLabels.push(named);
           if (key !== registrationKeys[0]) return new Response(null, { status: 409 });
           if (loseRegistrationReply && registrationKeys.length === 1) throw new TypeError("Registration reply lost after commit");
           return Response.json({ no: 7, key });
@@ -96,7 +98,7 @@ async function accountPc({ release = true, loseRegistrationReply = false, newUnt
     const row = state.account.pcs[0];
     return row?.accountOpen === true && !isNewAccountPc(row, Date.now()) ? "open" : "join";
   };
-  return { accountStore, serverId, requests, registrationKeys, navigations, navigated: navigated.promise, appOpened: appOpened.promise, current, action, apps: () => apps, reload: () => mountAt(`${APP}/`), openPage: () => mountAt(`${APP}/s/${serverId}/`), follow: (path: string) => mountAt(`${APP}${path}`) };
+  return { accountStore, serverId, requests, registrationKeys, registrationLabels, navigations, navigated: navigated.promise, appOpened: appOpened.promise, current, action, apps: () => apps, reload: () => mountAt(`${APP}/`), openPage: () => mountAt(`${APP}/s/${serverId}/`), follow: (path: string) => mountAt(`${APP}${path}`) };
 }
 
 it.each([
@@ -151,6 +153,11 @@ it("T34, P18: a normal sign-in opens a listed unpaired PC as its registered acco
     admissions: key ? [{ feature: true, row: accountDeviceId(run.serverId, key.key.public_spki), key: key.key.public_spki }] : [],
     apps: 1, navigations: [],
   });
+});
+
+it("T34: a sign-in on the hosted page registers its key under this device's name, which the PC's notice and lists then show", async () => {
+  const run = await accountPc({ label: "Chrome (Android)", open: () => { throw new TypeError("no PC opens in this test"); } });
+  expect(run.registrationLabels).toEqual(["Chrome (Android)"]);
 });
 
 it("C3: a reload of the join card a launch put up, not pressed yet, asks again and opens nothing by the account's key", async () => {

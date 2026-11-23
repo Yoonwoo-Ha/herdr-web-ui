@@ -1270,8 +1270,8 @@ These limits apply while Step 2 is on, which is the default.
 
 - **Lifting a block needs a two-step sign-in.** Only a device that is older than the block, and
   whose own sign-in has two-step sign-in set on the account, can lift a block from the app. A
-  Google sign-in whose two-step state the account cannot see ("Two-step sign-in not confirmed")
-  can block a device but cannot lift a block. If every device you still have is like that, lift
+  Google sign-in whose two-step state the account cannot see (its notices say only "Google
+  sign-in") can block a device but cannot lift a block. If every device you still have is like that, lift
   the block on the PC itself: run `ovis recover` to list what stands there, then
   `ovis recover --lift <block id>` for the one to lift. `ovis recover` asks you to confirm in
   that terminal.

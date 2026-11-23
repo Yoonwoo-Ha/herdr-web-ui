@@ -59,6 +59,17 @@ describe("device notices", () => {
     expect(shown.toLowerCase()).not.toContain("used");
   });
 
+  it("an admission whose two-step nobody knows says nothing of two-step, and still names the device, its sign-in and its key", async () => {
+    const [unnamed, google] = await mount([
+      notice({ method: null, two_step: "unknown", label: "Chrome (Android)" }),
+      notice({ seq: 2, id: "2".padStart(32, "0"), method: "google", two_step: "unknown" }),
+    ]);
+    const lines = (card: ReactTestInstance) => card.findAllByProps({ className: "settings-hint" }).map(text);
+    expect(text(unnamed!)).toContain("a new device was added on Desk: Chrome (Android)");
+    expect(lines(unnamed!)).toEqual([`Key ${keyFingerprint(KEY)}`]);
+    expect(lines(google!)).toEqual(["Google sign-in", `Key ${keyFingerprint(KEY)}`]);
+  });
+
   it("T57: hiding an undecided admission neither records a dismissal nor answers or acknowledges it again", async () => {
     const onDismiss = mock();
     const onShown = mock();

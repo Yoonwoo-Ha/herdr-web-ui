@@ -12,7 +12,7 @@ const P256 = { name: "ECDSA", namedCurve: "P-256" } as const;
 /** The account service's S2-19 routes, in front of the fake: a challenge per sign-in, one key per sign-in, a key once per account. */
 function withDeviceRoutes(fake: FakeAccountService, options: { opensAll: boolean }) {
   const challenges = new Map<string, string>();
-  const registered: { key: string; signature: string; challenge_id: string; challenge: string }[] = [];
+  const registered: { key: string; signature: string; challenge_id: string; challenge: string; label?: string }[] = [];
   const fetch = async (input: Request | string | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input instanceof Request ? input.url : input));
     if (!url.pathname.startsWith("/v1/devices")) return fake.fetch(input, init);
@@ -22,7 +22,7 @@ function withDeviceRoutes(fake: FakeAccountService, options: { opensAll: boolean
       challenges.set(id, `challenge-${id}`);
       return Response.json({ challenge_id: id, challenge: `challenge-${id}`, expires_in: 60 });
     }
-    const body = JSON.parse(String(init?.body)) as { challenge_id: string; key: string; signature: string };
+    const body = JSON.parse(String(init?.body)) as { challenge_id: string; key: string; signature: string; label?: string };
     const challenge = challenges.get(body.challenge_id) ?? "";
     challenges.delete(body.challenge_id);
     if (registered.length > 0 && registered[0]!.key !== body.key) return Response.json({ error: "session_has_key", message: "no" }, { status: 409 });
@@ -58,6 +58,24 @@ describe("registering this sign-in's device key", () => {
     expect(await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key.public_key, signature, bytes)).toBe(true);
   });
 
+  it("names the key after this device, as one plain line, so the account's lists and notices do not say \"Device 9\"", async () => {
+    const fake = new FakeAccountService();
+    const routes = withDeviceRoutes(fake, { opensAll: true });
+    const service = await signedIn(routes.fetch, fake);
+    await service.registerDeviceKey(await deviceKey(), " Chrome\u0000 (Android)\u202e ");
+    expect(routes.registered.map((entry) => entry.label)).toEqual(["Chrome (Android)"]);
+  });
+
+  it("sends no name when it has none, and the service numbers the key as before", async () => {
+    for (const label of [undefined, " \u0007 "]) {
+      const fake = new FakeAccountService();
+      const routes = withDeviceRoutes(fake, { opensAll: true });
+      const service = await signedIn(routes.fetch, fake);
+      await service.registerDeviceKey(await deviceKey(), label);
+      expect(routes.registered.map((entry) => "label" in entry)).toEqual([false]);
+    }
+  });
+
   it("G5: a service with the release off answers nothing to register, and the QR or digits path stays", async () => {
     const fake = new FakeAccountService();
     const service = await signedIn(withDeviceRoutes(fake, { opensAll: false }).fetch, fake);
@@ -84,6 +102,14 @@ describe("this sign-in's own key", () => {
     expect(first?.key.public_spki).not.toBe((await store.key()).public_spki);
     expect((await signInKey(store, service))?.key.public_spki).toBe(first!.key.public_spki);
     expect(routes.registered).toHaveLength(1);
+  });
+
+  it("T34: the sign-in's key registers under the name this device goes by", async () => {
+    const fake = new FakeAccountService();
+    const routes = withDeviceRoutes(fake, { opensAll: true });
+    const store = memoryAccountStore();
+    await signInKey(store, await signedIn(routes.fetch, fake, store), undefined, "Safari (iPhone)");
+    expect(routes.registered.map((entry) => entry.label)).toEqual(["Safari (iPhone)"]);
   });
 
   it("P18: when the service took the key but its answer was lost, the retry registers that same key, never a second one", async () => {

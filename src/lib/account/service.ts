@@ -490,9 +490,10 @@ export class AccountService {
   /**
    * Registers `key` for this sign-in (device table T34, P18) by signing the service's single-use challenge, and
    * answers its place in the account's order. Null when the service has no such route (release off, or older):
-   * the QR or digits path stays (G5). A sign-in registers one key; another key for it is refused (T40).
+   * the QR or digits path stays (G5). A sign-in registers one key; another key for it is refused (T40). `label` is
+   * the name the account's lists and the PCs' notices show for the key; without one the service names it "Device {no}".
    */
-  async registerDeviceKey(key: { readonly private_key: CryptoKey; readonly public_spki: string }): Promise<{ no: number; key: string } | null> {
+  async registerDeviceKey(key: { readonly private_key: CryptoKey; readonly public_spki: string }, label?: string): Promise<{ no: number; key: string } | null> {
     let issued: unknown;
     try { issued = await this.call("POST", "/v1/devices/challenge", {}); }
     catch (error) {
@@ -504,7 +505,8 @@ export class AccountService {
     if (!isRecord(issued) || typeof issued.challenge_id !== "string" || typeof issued.challenge !== "string") throw new AccountServiceError(502, "invalid_answer", "The account service sent no challenge");
     const bytes = registerSigningBytes(session.account, key.public_spki, issued.challenge_id, issued.challenge);
     const signature = toBase64Url(new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key.private_key, bytes)));
-    const body = await this.call("POST", "/v1/devices", { challenge_id: issued.challenge_id, key: key.public_spki, signature });
+    const name = accountLabel(label ?? "");
+    const body = await this.call("POST", "/v1/devices", { challenge_id: issued.challenge_id, key: key.public_spki, signature, ...(name === "" ? {} : { label: name }) });
     if (!isRecord(body) || !Number.isSafeInteger(body.no) || body.key !== key.public_spki) throw new AccountServiceError(502, "invalid_answer", "The account service answered for another key");
     return { no: body.no as number, key: key.public_spki };
   }

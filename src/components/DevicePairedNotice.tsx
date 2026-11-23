@@ -12,8 +12,9 @@ const METHOD_NAMES = { github: "GitHub", google: "Google", apple: "Apple" } as c
 
 /**
  * One PC's journal notices (device table P10, T34, T57, T58): who joined, how they signed in, and their key.
- * Two-step sign-in is said as the account record states it, never as used. Hiding an undecided admission
- * leaves its PC's decision untouched; `actions` adds that PC's answers to it.
+ * Two-step sign-in is said only when the account record states it set or verified, never as used: one press no
+ * longer asks for it, and most sign-ins do not report it, so its absence is not a warning. Hiding an undecided
+ * admission leaves its PC's decision untouched; `actions` adds that PC's answers to it.
  */
 export function DeviceNotices({ pc, notices, cut = 0, onDismiss, onHide, onShown, actions }: { pc: string; notices: readonly DeviceNotice[]; cut?: number; onDismiss: (notice: DeviceNotice) => void; onHide?: (notice: DeviceNotice) => void; onShown?: (seq: number) => void; actions?: (notice: DeviceNotice) => ReactNode }) {
   const t = useT();
@@ -36,10 +37,8 @@ export function DeviceNotices({ pc, notices, cut = 0, onDismiss, onHide, onShown
         how = method === null ? t("Two-step sign-in set on the account") : t("{method} sign-in, two-step sign-in set on the account", { method });
         break;
       default:
-        // Older or newer PC notices may omit the field or send an unrecognised wire value.
-        how = method !== null ? t("{method} sign-in, two-step sign-in not confirmed", { method })
-          : notice.two_step === null || (notice.two_step === undefined && notice.how !== "list") ? null
-          : t("Two-step sign-in not confirmed");
+        // unknown, null, and what older or newer PCs send: an omitted field or an unrecognised wire value
+        how = method === null ? null : t("{method} sign-in", { method });
     }
     return (
       <div key={notice.id} className="update-notice is-paired device-notice" role="status" data-testid="device-notice">

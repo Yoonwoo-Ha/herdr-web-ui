@@ -392,7 +392,7 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
 
 
   const registerSignIn = async (session: AccountSession): Promise<SignInKey | null> => {
-    try { return await signInKey(accountStore, account, session); }
+    try { return await signInKey(accountStore, account, session, label); }
     catch (error) {
       if (error instanceof AccountServiceError || error instanceof AccountServiceUnreachableError || error instanceof SignedOutError) return null;
       throw error;

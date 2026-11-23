@@ -6,7 +6,6 @@ import { DeviceNotices } from "../components/DevicePairedNotice.tsx";
 import type { DeviceNotice, NoticeAnswer, NoticeSeen } from "../../shared/account-devices-api.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import { DEVICE_NOTICE_FEATURE, DeviceNoticeWire, deviceNotice } from "./deviceNoticeWire.fixture.ts";
-import { translate } from "./i18n.ts";
 import { SettingsProvider } from "./settings.ts";
 import { useDeviceNotices, type NoticeSocket } from "./useDeviceNotices.ts";
 import { HerdrSocket } from "./ws.ts";
@@ -61,7 +60,7 @@ describe("device notices on the real PC socket", () => {
     restorations.clear();
   });
 
-  it("a notice with two-step missing, unknown, null or unrecognised never says it is set (T57)", async () => {
+  it("a notice with two-step missing, unknown, null or unrecognised says how it signed in and nothing of two-step (T57)", async () => {
     const { wire } = await connect();
     await act(async () => {
       wire.snapshot();
@@ -74,15 +73,14 @@ describe("device notices on the real PC socket", () => {
     });
     const rendered = renderer?.root.findAllByProps({ "data-testid": "device-notice" }) ?? [];
     expect(rendered).toHaveLength(4);
-    const expected = translate("en", "{method} sign-in, two-step sign-in not confirmed", { method: "Google" });
     for (const card of rendered) {
-      const methodLines = card.findAllByProps({ className: "settings-hint" })
-        .flatMap((line) => line.children).filter((line) => typeof line === "string" && line.startsWith("Google sign-in"));
-      expect(methodLines).toEqual([expected]);
+      const lines = card.findAllByProps({ className: "settings-hint" }).flatMap((line) => line.children).filter((line) => typeof line === "string");
+      expect(lines.filter((line) => line.startsWith("Google sign-in"))).toEqual(["Google sign-in"]);
+      expect(lines.filter((line) => line.toLowerCase().includes("two-step"))).toEqual([]);
     }
   });
 
-  it("a list admission distinguishes two-step set from unknown without a sign-in method (T34, T57)", async () => {
+  it("a list admission without a sign-in method speaks of two-step only when the account has it set (T34, T57)", async () => {
     const { wire } = await connect();
     const twoStepValues = ["unknown", null, "set", "verified", undefined, "bogus"] as const;
     await act(async () => {
@@ -94,11 +92,10 @@ describe("device notices on the real PC socket", () => {
     });
     const rendered = renderer?.root.findAllByProps({ "data-testid": "device-notice" }) ?? [];
     expect(rendered).toHaveLength(twoStepValues.length);
-    const expected = translate("en", "Two-step sign-in not confirmed");
     const labels = rendered.map((card) => card.findAllByProps({ className: "settings-hint" })
       .flatMap((line) => line.children)
       .filter((line) => typeof line === "string" && line.toLowerCase().includes("two-step sign-in")));
-    expect(labels).toEqual([[expected], [], ["Two-step sign-in set on the account"], [], [expected], [expected]]);
+    expect(labels).toEqual([[], [], ["Two-step sign-in set on the account"], [], [], []]);
   });
 
   const cards = () => result?.byPc.get("desk")?.notices ?? [];
