@@ -7,6 +7,7 @@
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const DEVICES_ZH: Record<string, string> = {
+  "Online": "在线",
   "Sign in to this PC's account.": "请登录这台 PC 所在的账号。",
   "This PC is in your account.": "这台 PC 已连接到你的账号。",
   "The PCs of this Tailscale login. Connect goes over SSH, with nothing to install there.": "此 Tailscale 登录下的 PC。通过 SSH 连接，无需在那台 PC 上安装任何东西。",

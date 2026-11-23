@@ -7,6 +7,7 @@
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const DEVICES_JA: Record<string, string> = {
+  "Online": "オンライン",
   "Sign in to this PC's account.": "この PC のアカウントにサインインしてください。",
   "This PC is in your account.": "この PC はあなたのアカウントに接続されています。",
   "The PCs of this Tailscale login. Connect goes over SSH, with nothing to install there.": "この Tailscale ログインの PC です。SSH で接続し、その PC に何もインストールしません。",

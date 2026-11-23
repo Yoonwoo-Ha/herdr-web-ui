@@ -1,13 +1,12 @@
 import "./RelayAddPc.css";
 
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Globe, QrCode, SquareTerminal, type LucideIcon } from "lucide-react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { ChevronRight, type LucideIcon } from "lucide-react";
 
 import { useT, type Translate } from "../lib/i18n.ts";
 import { callNative, hasNativeMethod, hasNativePlugin } from "../lib/nativeApp.ts";
 import { ACCOUNT_PROVIDERS } from "../lib/account/store.ts";
 import { serverIdOfPath, serverScopePath } from "../lib/shellMode.ts";
-import { SheepMascot } from "./SheepMascot.tsx";
 
 /** The phone app's QR scanner (@capacitor/barcode-scanner, app/package.json) and its SSH screen (Android's OvisSsh). */
 const SCANNER = "CapacitorBarcodeScanner";
@@ -92,9 +91,10 @@ async function openAddress(url: URL): Promise<void> {
   else window.location.assign(url.href);
 }
 
-export function Way({ icon: Icon, title, sub, onClick, action }: { readonly icon: LucideIcon; readonly title: string; readonly sub: string; readonly onClick: () => void; readonly action: string }) {
+/** One way to add a PC, as a card: its icon, what it is and where it takes the person. */
+export function Way({ icon: Icon, title, sub, onClick, action, disabled = false }: { readonly icon: LucideIcon; readonly title: string; readonly sub: string; readonly onClick: () => void; readonly action: string; readonly disabled?: boolean }) {
   return (
-    <button type="button" className="relay-add-way" data-action={action} onClick={onClick}>
+    <button type="button" className="relay-add-way" data-action={action} disabled={disabled} onClick={onClick}>
       <span className="relay-add-way-icon"><Icon aria-hidden="true" /></span>
       <span className="relay-add-way-text"><span className="relay-add-way-title">{title}</span><span className="relay-add-way-sub">{sub}</span></span>
       <ChevronRight className="relay-add-way-chevron" aria-hidden="true" />
@@ -102,22 +102,8 @@ export function Way({ icon: Icon, title, sub, onClick, action }: { readonly icon
   );
 }
 
-export type SavedPc = { readonly server_id: string; readonly name?: string | undefined; readonly note?: string | undefined; readonly status?: "online" | "off" | undefined };
-
-/** The PCs this device paired before (and, signed in, the account's PCs not on it yet), each by its page. */
-export function SavedPcs({ devices }: { readonly devices: readonly SavedPc[] }) {
-  const t = useT();
-  return (
-    <section className="relay-add-saved">
-      <h2 className="relay-add-saved-title">{t("Your PCs")}</h2>
-      <ul>
-        {devices.map((device) => (
-          <li key={device.server_id}><a className="relay-add-saved-pc" href={serverScopePath(device.server_id)}><span className="relay-add-saved-name">{device.name ?? t("Unnamed PC")}</span>{device.note !== undefined && <span className="relay-add-saved-note">{device.note}</span>}<ChevronRight aria-hidden="true" /></a></li>
-        ))}
-      </ul>
-    </section>
-  );
-}
+/** A PC this device paired, as this device knows it: its saved Ovis too old, or as its last check found it. */
+export type SavedPc = { readonly server_id: string; readonly name?: string | undefined; readonly status?: "online" | "off" | "update" | undefined };
 
 /** Whether the phone app around this page can scan a PC's QR code itself (a browser cannot). */
 export function canScanQr(): boolean {
@@ -217,56 +203,5 @@ export function AddressForm({ label, placeholder, submit: submitLabel, labelShow
       </form>
       {open === undefined && error !== null && <p className="account-error" role="alert">{error}</p>}
     </>
-  );
-}
-
-/**
- * Add a PC, the app's Add a PC (More → Add a PC, `/#add`): scan the PC's QR code, enter an address on Tailscale or
- * Wi-Fi, or SSH where the phone app can, then the PCs this device paired before and, signed in, the account's PCs not
- * on it yet, each with what is known of it (`note`: off, needs approval). `qr`: the screen that says where the QR code
- * is and offers a code, for a page with no scanner of its own (a browser).
- */
-export function RelayAddPc({ onBack, devices, qr }: {
-  readonly onBack?: (() => void) | undefined;
-  readonly devices: readonly SavedPc[];
-  readonly qr: (back: () => void) => ReactNode;
-}) {
-  const t = useT(), title = useRef<HTMLHeadingElement>(null);
-  const [step, setStep] = useState<"ways" | "address" | "qr">("ways");
-  const { error, setError, failed, cancel, take } = useAddressOpen();
-  const go = (next: "ways" | "address" | "qr"): void => { cancel(); setError(null); setStep(next); };
-  // a step that replaces the control that had the focus gives it to its own title, so a keyboard keeps its place
-  useEffect(() => { if (step === "ways" && document.activeElement === document.body) title.current?.focus(); }, [step]);
-  const scan = (): void => {
-    if (!canScanQr()) { go("qr"); return; }
-    setError(null);
-    // a scanner that cannot run (the camera refused) leads to the QR step, which offers a code instead
-    scanQr(t, take, () => go("qr"));
-  };
-  const back = step === "ways" ? onBack : () => go("ways");
-  if (step === "qr") return <>{qr(() => go("ways"))}</>;
-  return (
-    <div className="relay-add" data-add-step={step}>
-      {back && <button type="button" className="relay-add-back" aria-label={t("Back")} onClick={back}><ChevronLeft aria-hidden="true" /></button>}
-      {step === "ways" ? (
-        <>
-          <SheepMascot screen="header" size={56} badge />
-          <h1 className="relay-add-title" ref={title} tabIndex={-1}>{t("Connect a PC")}</h1>
-          <div className="relay-add-ways">
-            <Way icon={QrCode} title={t("Scan a QR code")} sub={t("The QR on the PC's screen")} action="add-qr" onClick={scan} />
-            <Way icon={Globe} title={t("Enter an address")} sub="Tailscale · Wi-Fi" action="add-address" onClick={() => go("address")} />
-            {/* only where the phone app can take SSH to its own screen: a page without it draws no way it cannot take */}
-            {sshHandoff() && <Way icon={SquareTerminal} title="SSH" sub="user@host" action="add-ssh" onClick={() => { setError(null); openSshSetup("").catch(failed); }} />}
-          </div>
-          {devices.length > 0 && <SavedPcs devices={devices} />}
-        </>
-      ) : (
-        <>
-          <h1 className="relay-add-title">{t("Enter an address")}</h1>
-          <AddressForm label={t("PC address")} placeholder="https://my-pc.tailnet.ts.net" submit={t("Open")} autoFocus />
-        </>
-      )}
-      {error !== null && <p className="account-error" role="alert">{error}</p>}
-    </div>
   );
 }

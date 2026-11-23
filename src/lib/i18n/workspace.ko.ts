@@ -5,6 +5,7 @@
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const WORKSPACE_KO: Record<string, string> = {
+  "Open": "열기",
   "Use folder {path}": "{path} 폴더 사용",
   "{n} more recent folders": "최근 폴더 {n}개 더",
   "New worktree · {name}": "새 워크트리 · {name}",

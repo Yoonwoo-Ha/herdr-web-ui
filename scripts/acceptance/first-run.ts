@@ -255,7 +255,7 @@ async function typeInto(device: Device, pane: string, what: string): Promise<str
 
 async function listedPcs(device: Device): Promise<string[]> {
   const { page } = device;
-  // Add a PC (#16: the signed-in front page lists only this device's own PCs): each PC a link to its own page, /s/<id>/
+  // My PCs, as a PC's More opens it (/#add): each PC a link to its own page, /s/<id>/
   await page.goto(`${APP}/#add`, { waitUntil: "domcontentloaded" });
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.locator("a.relay-add-saved-pc").first().waitFor();
@@ -406,7 +406,7 @@ const steps: Step<World>[] = [
     await shot(w.phone!.page, "opened-from-list-390");
     return "opened from the list; its terminal drew";
   } },
-  { id: "desktop.forgets-pc", title: "The desktop forgets the second PC from its Settings: its key is deleted there and Add a PC no longer lists it as this device's", needs: ["desktop.opens-from-list"], run: async (w) => {
+  { id: "desktop.forgets-pc", title: "The desktop forgets the second PC from its Settings: its key is deleted there and My PCs no longer lists it as this device's", needs: ["desktop.opens-from-list"], run: async (w) => {
     const { page } = w.desktop!;
     const id = w.laptop.offer!.server_id;
     await openFromList(w.desktop!, w.laptop);
@@ -414,16 +414,20 @@ const steps: Step<World>[] = [
     await openSettingsPage(page, "Devices and PCs");
     await page.locator(".settings-dialog").getByRole("button", { name: "Forget this PC", exact: true }).click();
     await page.getByRole("button", { name: "Forget", exact: true }).click();
-    // Forget goes to the front page; Add a PC lists the PC, still in the account, only as one needing approval
+    // Forget goes to the front page; My PCs lists the PC, still in the account, as the account's alone: On or Off, no Forget
     await page.waitForURL(`${APP}/`);
     await page.goto(`${APP}/#add`, { waitUntil: "domcontentloaded" });
     await page.reload({ waitUntil: "domcontentloaded" });
-    await page.locator("a.relay-add-saved-pc").first().waitFor();
+    // the laptop's own row, once: still in the account, so still listed, but as the account's alone
+    const row = page.locator(`a.relay-add-saved-pc[href="/s/${id}/"]`);
+    await row.first().waitFor();
+    assert.equal(await row.count(), 1, "My PCs lists the forgotten PC exactly once");
     assert.equal(await savedKey(page, id), false, "the desktop's key for the PC is gone");
-    const notes = await page.locator(`a.relay-add-saved-pc[href="/s/${id}/"]`).evaluateAll((links) => links.map((link) => link.querySelector(".relay-add-saved-note")?.textContent ?? null));
-    assert.ok(notes.every((note) => note === "Needs approval"), `Add a PC lists the forgotten PC only as the account's (${JSON.stringify(notes)})`);
+    const note = await row.locator(".relay-add-saved-note").textContent();
+    assert.ok(note === "On" || note === "Off", `My PCs lists the forgotten PC as the account's, On or Off (${JSON.stringify(note)})`);
+    assert.equal(await page.locator("li.my-pc", { has: page.locator(`a.relay-add-saved-pc[href="/s/${id}/"]`) }).locator(".phone-pc-forget").count(), 0, "no Forget on the account's row");
     await shot(page, "forgot-1440");
-    return `Forget this PC deleted the key; Add a PC lists it ${notes.length === 0 ? "no more" : "as needing approval"}`;
+    return `Forget this PC deleted the key; My PCs lists it once, as the account's (${note}), with no Forget`;
   } },
   { id: "network.stays-in", title: "Every request of both devices went to the app, the account service or the relay; none reached a PC directly", run: async (w) => {
     const pcs = [w.desk.base, w.laptop.base];

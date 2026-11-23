@@ -14,8 +14,6 @@ import { SettingsProvider } from "../lib/settings.ts";
 
 await mock.module("react-dom", () => ({ ...ReactDom, createPortal: (node: ReactNode) => node }));
 const { AccountJoinRequests } = await import("./AccountJoinRequests.tsx");
-const { AccountRelayPanel } = await import("./ConnectStart.tsx");
-const { NewPcNotices } = await import("./NewPcNotices.tsx");
 
 const ORIGIN = "https://account.ovis.sh";
 const ACCOUNT = "acct_owner";
@@ -211,15 +209,5 @@ describe("a PC that asks to join the account, on a signed-in phone", () => {
     paired = [...paired, { server_id: MAC, name: "Mac", device_id: "e".repeat(16) } as RelayDevice];
     await mount();
     expect(buttons()).toEqual([]);
-  });
-});
-
-describe("the hosted front page's Ovis relay tab", () => {
-  it("tells of a PC new in the account there too: the new-PC card with its one-tap removal", async () => {
-    await act(async () => {
-      renderer = create(createElement(SettingsProvider, { children: createElement(AccountRelayPanel, { onCodeStart: () => {} }) }));
-    });
-    expect(renderer!.root.findAllByType(NewPcNotices)).toHaveLength(1);
-    expect(renderer!.root.findAllByType(AccountJoinRequests)).toHaveLength(1);
   });
 });

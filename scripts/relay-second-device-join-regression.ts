@@ -1,6 +1,6 @@
 /**
- * A second device of the account, signed in, finds the account's PCs it is not in yet on Add a PC (/#add; the signed-in front page lists only its own, #16),
- * each noted Needs approval, and joins one from that PC's own page: m1-box, which the directory heard from, asks to
+ * A second device of the account, signed in, finds the account's PCs it is not in yet on My PCs (/#add, as a PC's More opens it),
+ * each noted On like any other PC (never Needs approval: its own page asks for that), and joins one from that PC's own page: m1-box, which the directory heard from, asks to
  * join (the join sheet); desk2, never seen and new in the account, takes the number its own screen shows (the new
  * sheet). Escape leaves the sheet for the front page. The shell is the real build on https://app.ovis.sh (routed
  * here), the account service the in-memory fake with the directory answered here and no device-key route (404, as one
@@ -103,13 +103,13 @@ try {
 
         await page.goto(`${APP}/`);
         await page.locator(".account-provider").first().click();
-        // a sign-in lands on the connect tabs, or on the join an account PC its launch picked asks by itself (#16)
-        await page.locator('main.relay-add-screen[data-account-state="signed-in"] .connect-start-tabs, [data-add-pc-mode], [data-approval-wait]').first().waitFor({ timeout: 45_000 });
+        // a sign-in lands on My PCs, or on the join an account PC its launch picked asks by itself (#16)
+        await page.locator('main.relay-add-screen[data-account-state="signed-in"] [data-view="my-pcs"], [data-add-pc-mode], [data-approval-wait]').first().waitFor({ timeout: 45_000 });
 
-        // the tab's launch is past: Add a PC lists both PCs as not in on this device yet
+        // the tab's launch is past: My PCs lists both PCs, which this device is not in yet
         const front = async (): Promise<void> => {
           await page.goto(`${APP}/#add`);
-          // from the front page that is a same-document hash change: the load draws Add a PC
+          // from the front page that is a same-document hash change: the load draws My PCs
           await page.reload();
           await page.locator('main.relay-add-screen[data-account-state="signed-in"] a.relay-add-saved-pc').filter({ hasText: "desk2" }).waitFor({ timeout: 45_000 });
         };
@@ -117,8 +117,9 @@ try {
         await front();
         const notes = { m1: await link("m1-box").locator(".relay-add-saved-note").innerText(), desk2: await link("desk2").locator(".relay-add-saved-note").innerText() };
         await shot("front");
-        const needs = translate(language, "Needs approval");
-        if (notes.m1 !== needs || notes.desk2 !== needs) fail(`${name}: notes ${JSON.stringify(notes)}, want "${needs}" on both`);
+        const on = translate(language, "On|pc state");
+        if (notes.m1 !== on || notes.desk2 !== on) fail(`${name}: notes ${JSON.stringify(notes)}, want "${on}" on both`);
+        if (await page.getByText(translate(language, "Needs approval"), { exact: true }).count() !== 0) fail(`${name}: My PCs says Needs approval`);
 
         /** The PC's own page from its row: its join sheet, one press from asking; Escape leaves it for the front page. */
         const joinFrom = async (label: string, mode: "join" | "new"): Promise<void> => {
@@ -129,7 +130,7 @@ try {
           if (await sheet.locator("[data-sheet-primary]").count() !== 1) fail(`${name}: ${label}'s sheet has no one press to ask`);
           await shot(`sheet-${mode}`);
           await page.keyboard.press("Escape");
-          await page.locator('main.relay-add-screen[data-account-state="signed-in"] .connect-start-tabs').waitFor();
+          await page.locator('main.relay-add-screen[data-account-state="signed-in"] [data-view="my-pcs"]').waitFor();
           if (await page.locator("[data-add-pc-phase]").count() !== 0) fail(`${name}: Escape left ${label}'s sheet up`);
         };
         await joinFrom("m1-box", "join");
@@ -139,7 +140,7 @@ try {
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
         if (overflow) fail(`${name}: the page scrolls sideways`);
         if (errors.length > 0) fail(`${name}: ${errors.slice(0, 3).join("; ")}`);
-        console.log(`PASS ${name}: Add a PC lists m1-box and desk2 as needing approval; m1-box's own page (seen by the directory) offers the join sheet, desk2's (never seen) the new one, and Escape leaves each for the front page`);
+        console.log(`PASS ${name}: My PCs lists m1-box and desk2 as On, never Needs approval; m1-box's own page (seen by the directory) offers the join sheet, desk2's (never seen) the new one, and Escape leaves each for the front page`);
       } finally {
         await closeMarked(context);
       }

@@ -5152,14 +5152,24 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   opens with a **This app** row the native build never shows: **Forget this PC** (a neutral button that asks once in a `ConfirmDialog`, **Forget**, then
   deletes this phone's key for the PC and leaves for the front page). Neither is destructive on the
   PC, which keeps listing the phone until it is revoked there, so neither is a `.btn-danger`.
-- The hosted shell's front page is Add a PC; it has no account overview page. A launch opens the PC this device opened last unless its
+- The hosted shell's front page is **My PCs** once anything opens here (signed in, or a PC saved on this phone: a relay
+  pairing, or one the phone app saved by a Tailscale address, over SSH or at another address), else **Connect a PC**;
+  it has no account overview page. My PCs is one list of every such PC, each row its name, a small way tag (Relay,
+  Tailscale, SSH, Address) and, for a relay PC, On, Off or Update needed (never Needs approval: a PC this device is not
+  let into yet asks for that on its own page), Forget where this phone can forget it, and **Add PC** pinned at the
+  bottom while the list scrolls, as the Claude app keeps New chat in reach over its list. With no PC on it is the same
+  list, the rows Off under No PC is online and Check again; with none in the account yet, the list says to sign in with
+  the same account on the PC where Ovis runs, over Add PC (#16 drew both as a page of their own). Add PC (and Connect a PC, the
+  same screen as the front page) is the desktop's Add a connection tabs holding only the ways in: the sign-in signed out,
+  the PC's QR (its code in a browser), a Tailscale address, user@host. A PC page's More → Connect a PC opens My PCs
+  (`/#add`) with Back to that PC and its row marked In use now. A launch opens the PC this device opened last unless its
   check finds it off (the relay had nobody for it), then the next saved PC not found off (`launchOrder`, at most
   four, two at a time; signed in with none saved here or every saved one found off, the account's PC opened last, else the one seen most
   recently that has a way to join and is not off, on its own page with its join card; a check still running after four seconds, or one the relay refused, opens that PC, and when its
   page then hears from the relay that it is off, the launch goes on to the front page, once; a PC a person opened
   keeps its failure card and Try again; the connecting card meanwhile); every one off, a later visit, Back, a sign-in's return or the phone app's own row
-  (`#pcs` inside the app) shows Add a PC, whose list says Off or Needs approval beside a PC, as the Claude and
-  ChatGPT apps open on the last conversation and keep account pages behind Settings. An old link to
+  (`#pcs` inside the app) shows the front page, as the Claude and ChatGPT apps open on the last conversation and keep
+  account pages behind Settings. An old link to
   `#overview`, `#pcs`, `#devices`, `#relay`, `#settings` or `#relay-dash-*` lands like the bare address:
   the hash is dropped and the launch goes on. The account's devices and PCs are managed in Settings →
   Devices and PCs → Manage account.

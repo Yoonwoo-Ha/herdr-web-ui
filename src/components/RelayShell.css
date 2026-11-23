@@ -89,13 +89,20 @@
   color: var(--text-dim);
 }
 
-/* the signed-out front page (ConnectStart): its title, the desktop's Add a connection tabs, then the chosen tab's way in */
-.connect-start-title {
-  margin-bottom: var(--space-4);
-  font-size: var(--fs-display);
+/* the connect screens (ConnectStart.tsx: My PCs, Add a PC): the sheep, then the title centred, Back at its start and the
+   account's ⋮ menu at its end */
+.my-pcs,
+.connect-add {
+  display: flex;
+  flex-direction: column;
 }
 
-/* signed in: the title with the account's ⋮ menu at its right, the title still centred */
+.my-pcs > .sheep-mascot,
+.connect-add > .sheep-mascot {
+  align-self: center;
+  margin-bottom: var(--space-2);
+}
+
 .connect-start-head {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -103,9 +110,15 @@
   margin-bottom: var(--space-4);
 }
 
+.connect-start-head > .relay-add-back {
+  grid-column: 1;
+  justify-self: start;
+}
+
 .connect-start-head > .connect-start-title {
   grid-column: 2;
   margin: 0;
+  font-size: var(--fs-display);
 }
 
 .connect-start-menu {
@@ -115,31 +128,72 @@
   height: var(--touch-target);
 }
 
-/* a tab's list of the PCs this phone is on (ConnectStart PhonePcs): a row opens its PC, Forget at its end */
-.phone-pc {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+/* My PCs fills the screen, so Add PC can stay at its bottom while the list scrolls under it */
+.relay-shell-screen.relay-add-screen.my-pcs-screen {
+  place-items: stretch center;
+  padding-bottom: 0;
 }
 
-.phone-pc > .relay-add-saved-pc {
+.my-pcs {
   flex: 1;
-  min-width: 0;
+}
+
+/* two columns for every row (a subgrid each): the row's open link, then Forget where the row has one, in a cell of its
+   own beside the link, so a tap on the link never lands on Forget and every row's state lines up */
+.my-pcs-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin: 0;
   padding: 0;
+  list-style: none;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+/* a PC's row (ConnectStart PcRow): its name over the way it connects, its state word and chevron at the end of the link */
+.my-pc {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+}
+
+.my-pc + .my-pc {
+  border-top: var(--hairline) solid var(--border);
+}
+
+.my-pc > .relay-add-saved-pc {
+  grid-column: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas: "name state chevron" "meta meta meta";
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
   border: 0;
   background: none;
   font: inherit;
+  text-align: start;
   cursor: pointer;
 }
 
+.my-pc-text { display: contents; }
+
+.my-pc-text > .relay-add-saved-name { grid-area: name; }
+
+.my-pc > .relay-add-saved-pc > .relay-shell-pc-glyph { grid-area: chevron; }
+
 .phone-pc-meta {
   display: flex;
+  grid-area: meta;
   align-items: center;
   gap: var(--space-2);
+  max-width: 100%;
   min-width: 0;
 }
-
-.phone-pc-meta > .relay-add-saved-note { margin-inline: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .phone-pc-tag {
   flex: none;
@@ -150,15 +204,64 @@
   font-size: var(--fs-xs);
 }
 
-.phone-pc-dot {
-  flex: none;
-  width: var(--space-2);
-  height: var(--space-2);
-  border-radius: 50%;
-  background: var(--status-done);
+.my-pc-address {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.phone-pc-forget { flex: none; }
+.my-pc-state {
+  display: inline-flex;
+  grid-area: state;
+  align-items: center;
+  gap: var(--space-1);
+  margin-inline: 0;
+}
+
+/* the PC whose More opened My PCs: the word on the accent's tint, as a selected row says it */
+.my-pc-state[data-pc-state="in-use"] {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-weight: var(--fw-semibold);
+}
+
+.my-pc > .phone-pc-forget {
+  grid-column: 2;
+  height: var(--touch-target);
+  margin-inline-end: var(--space-2);
+  padding-inline: var(--space-2);
+  color: var(--text-dim);
+}
+
+.my-pcs-add {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding: var(--space-4) 0 calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+  background: var(--bg);
+}
+
+.my-pcs-add > .btn {
+  width: 100%;
+  gap: var(--space-2);
+}
+
+.my-pcs-add > .btn > svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.my-pcs > .relay-shell-copy,
+.my-pcs > .account-error,
+.my-pcs > .account-notice,
+.my-pcs > .relay-shell-none-online {
+  margin: 0 0 var(--space-4);
+}
 
 .connect-start-tabs {
   display: flex;
@@ -186,10 +289,6 @@
   color: var(--text-dim);
   font-size: var(--fs-md);
   text-align: center;
-}
-
-.connect-start-code {
-  align-self: center;
 }
 
 .relay-shell-pair-signin {
@@ -450,13 +549,6 @@
   margin: var(--space-4) 0;
 }
 
-
-/* #16: the plain line a signed-in device shows instead of the connect tabs, its account menu at the top end */
-.relay-approval-wait-menu {
-  display: flex;
-  justify-content: flex-end;
-  width: 100%;
-}
 
 /* Add by address on the SSH tab: a text link, its field behind it */
 .connect-start-panel .connect-address-link {

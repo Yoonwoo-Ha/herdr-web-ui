@@ -1,7 +1,7 @@
 /**
- * More → Connect a PC on a phone's PC page of the hosted app opens Add a PC (`/#add`) and stays there; Add a PC's own
- * Back and the browser's land on the PC page it was opened from, and Back from that page leaves it in one press, with the
- * sheet closed throughout.
+ * More → Connect a PC on a phone's PC page of the hosted app opens My PCs (`/#add`), the PC it came from marked In use
+ * now, and stays there; My PCs' own Back and the browser's land on the PC page it was opened from, and Back from that
+ * page leaves it in one press, with the sheet closed throughout.
  *
  * The More sheet closes with a step back off its own history entry. An item that starts loading another page before
  * that step has landed loses it to the step: Chromium cancels the load for it, Android's WebView lands it after the new
@@ -71,7 +71,7 @@ async function place(page: Page): Promise<{ path: string; hash: string; sheet: b
 /**
  * The tab's history as the browser keeps it, each entry by its own id. Not the Navigation API's: each page sees only
  * a part of it, and two pages of the same tab may see different parts (the PC page here left out the pairing page's
- * entry that Add a PC listed), so its indexes do not compare across pages.
+ * entry that My PCs listed), so its indexes do not compare across pages.
  */
 async function tabHistory(cdp: CDPSession): Promise<{ current: number; ids: number[]; text: string }> {
   const { currentIndex, entries } = await cdp.send("Page.getNavigationHistory");
@@ -147,15 +147,17 @@ try {
   assert.equal(before.sheet, false, "no sheet is up on the PC page");
   const tab = await context.newCDPSession(page);
   const opened = await tabHistory(tab);
-  /** the PC page's own entry: Add a PC goes one over it, and every Back from Add a PC lands on it */
+  /** the PC page's own entry: My PCs goes one over it, and every Back from My PCs lands on it */
   const pcEntry = opened.ids[opened.current]!;
   const pcEntryIndex = opened.current;
 
   const more = page.locator("button.header-more-button").filter({ visible: true }).first();
   const item = page.locator('.row-sheet [data-item="add-pc"]');
-  const addScreen = page.locator("main.relay-add-screen .relay-add-back");
+  const addScreen = page.locator('main.relay-add-screen [data-view="my-pcs"] .relay-add-back');
+  /** the row of the PC More was opened on, marked as the one in use instead of its state */
+  const inUse = page.locator(`li.my-pc:has(a.relay-add-saved-pc[href="${pcPage}"]) .my-pc-state[data-pc-state="in-use"]`);
 
-  /** More → Connect a PC over a phone's round trip: Add a PC opens one entry over the PC page and stays. */
+  /** More → Connect a PC over a phone's round trip: My PCs opens one entry over the PC page and stays. */
   async function connectAPc(round: string): Promise<void> {
     const { cdp, order, mark } = await watchOrder(page);
     const report = (): string => `order of events (${round}):\n${order.join("\n")}`;
@@ -173,37 +175,74 @@ try {
     if (!loaded) {
       await shot(`${round}-stayed`);
       const now = await place(page).catch(() => null);
-      assert.fail(`${round}: More → Connect a PC never opened Add a PC: the tab stayed on ${now === null ? page.url() : now.path + now.hash}${now?.sheet ? " with the sheet up" : ", the sheet closed"}\n${report()}`);
+      assert.fail(`${round}: More → Connect a PC never opened My PCs: the tab stayed on ${now === null ? page.url() : now.path + now.hash}${now?.sheet ? " with the sheet up" : ", the sheet closed"}\n${report()}`);
     }
     await addScreen.waitFor();
     // fixed wait: nothing may take the tab back to the PC page in this time (Android's WebView did after about 30 ms)
     await page.waitForTimeout(STAYS_MS);
     const added = await place(page);
     await shot(`${round}-add`);
-    assert.equal(added.path + added.hash, "/#add", `${round}: Add a PC stays open for ${STAYS_MS} ms, not taken back to the PC page\n${report()}`);
-    assert.equal(await addScreen.count(), 1, `${round}: Add a PC is on screen`);
-    // the tab's history ends [..., PC page, Add a PC]: the sheet's entry went with the step back, and nothing is ahead
+    assert.equal(added.path + added.hash, "/#add", `${round}: My PCs stays open for ${STAYS_MS} ms, not taken back to the PC page\n${report()}`);
+    assert.equal(await addScreen.count(), 1, `${round}: My PCs is on screen, with its Back`);
+    assert.equal(await inUse.count(), 1, `${round}: the PC More was opened on is marked In use now`);
+    // the tab's history ends [..., PC page, My PCs]: the sheet's entry went with the step back, and nothing is ahead
     const history = await tabHistory(tab);
     assert.deepEqual({ under: history.ids[history.current - 1], at: history.current, ahead: history.ids.length - history.current - 1 }, { under: pcEntry, at: pcEntryIndex + 1, ahead: 0 },
-      `${round}: Add a PC is one entry over the PC page it was opened from, with no entry of the closed sheet between them and none ahead (${history.text})\n${report()}`);
+      `${round}: My PCs is one entry over the PC page it was opened from, with no entry of the closed sheet between them and none ahead (${history.text})\n${report()}`);
     if (evidence) writeFileSync(join(evidence, `add-pc-more-order-${round}.txt`), `${report()}\n`);
     console.log(report());
     await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     await cdp.detach();
   }
 
-  /** Back from Add a PC lands on the PC page it was opened from, with the sheet closed. */
+  /** Back from My PCs lands on the PC page it was opened from, with the sheet closed. */
   async function backOnPcPage(round: string): Promise<void> {
     await page.waitForURL((url) => url.pathname === pcPage);
     await page.locator(".app").waitFor();
     const back = await place(page);
     const history = await tabHistory(tab);
     await shot(`${round}-back`);
-    assert.deepEqual({ entry: history.ids[history.current], path: back.path, sheet: back.sheet }, { entry: pcEntry, path: pcPage, sheet: false }, `${round}: Back from Add a PC lands on the PC page it was opened from, its sheet closed (${history.text})`);
+    assert.deepEqual({ entry: history.ids[history.current], path: back.path, sheet: back.sheet }, { entry: pcEntry, path: pcPage, sheet: false }, `${round}: Back from My PCs lands on the PC page it was opened from, its sheet closed (${history.text})`);
   }
 
-  // Add a PC's own Back, then the browser's (a phone's Back button)
+  /** A row of My PCs with Forget: its chevron and its middle open the PC (the link), never Forget, at either density. */
+  async function rowHits(): Promise<void> {
+    for (const density of ["compact", "comfortable"] as const) {
+      const hits = await page.evaluate((density) => {
+        const root = document.documentElement;
+        const was = root.dataset["density"];
+        root.dataset["density"] = density;
+        try {
+          const row = [...document.querySelectorAll<HTMLElement>("li.my-pc")].find((each) => each.querySelector(".phone-pc-forget") !== null);
+          if (row === undefined) return null;
+          const link = row.querySelector("a.relay-add-saved-pc")!, forget = row.querySelector(".phone-pc-forget")!;
+          const middle = (rect: DOMRect): Element | null => document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          const hit = (element: Element | null): string => element === null ? "nothing" : element.closest(".phone-pc-forget") ? "forget" : element.closest("a.relay-add-saved-pc") === link ? "link" : "other";
+          const open = link.getBoundingClientRect(), gone = forget.getBoundingClientRect();
+          return { chevron: hit(middle(link.querySelector(".relay-shell-pc-glyph")!.getBoundingClientRect())), row: hit(middle(row.getBoundingClientRect())), apart: open.right <= gone.left || gone.right <= open.left || open.bottom <= gone.top || gone.bottom <= open.top };
+        } finally { if (was === undefined) delete root.dataset["density"]; else root.dataset["density"] = was; }
+      }, density);
+      assert.deepEqual(hits, { chevron: "link", row: "link", apart: true }, `${density}: the chevron and the middle of a row with Forget open the PC, and Forget's own area lies beside the link, not over it`);
+    }
+  }
+
+  /** Add PC over My PCs is an entry of its own: the browser's Back comes back to My PCs on /#add, the focus with it. */
+  async function addAndBack(): Promise<void> {
+    await page.locator('[data-view="my-pcs"] [data-action="add-pc"]').tap();
+    await page.locator('[data-view="add-pc"]').waitFor();
+    await page.waitForFunction(() => document.activeElement?.tagName === "H1" && document.activeElement.textContent === "Add PC");
+    await shot("add-pc");
+    await page.goBack();
+    await page.locator('[data-view="my-pcs"]').waitFor();
+    const back = await place(page);
+    assert.equal(back.path + back.hash, "/#add", "the browser's Back from Add PC lands on My PCs, still the page More opened");
+    await page.waitForFunction(() => document.activeElement?.getAttribute("data-action") === "add-pc");
+  }
+
+  // My PCs' own Back, then the browser's (a phone's Back button)
   await connectAPc("own-back");
+  await rowHits();
+  await addAndBack();
   await addScreen.tap();
   await backOnPcPage("own-back");
   await connectAPc("browser-back");
@@ -218,7 +257,7 @@ try {
   assert.equal(left.sheet, false, "Back from the PC page opens no sheet");
   assert.deepEqual(errors, [], "no page errors");
   await context.close();
-  console.log(`PASS More → Connect a PC opens Add a PC over a phone's round trip (${PHONE_LATENCY_MS} ms) and it stays; Add a PC's Back and the browser's land on the PC page, whose Back leaves it in one press`);
+  console.log(`PASS More → Connect a PC opens My PCs over a phone's round trip (${PHONE_LATENCY_MS} ms), the PC marked In use now, and it stays; a row's chevron and middle open the PC, never Forget, at both densities; Back from Add PC lands on My PCs with the focus; My PCs' Back and the browser's land on the PC page, whose Back leaves it in one press`);
 } finally {
   await browser?.close();
   site.stop(true);

@@ -104,8 +104,8 @@ function keptNewPc(serverId: string): { readonly until: number; readonly beforeY
  */
 const LAUNCH_ACCOUNT = "ovis-launch-account";
 /**
- * The person left a join or a PC for the front page in this tab (Cancel, Back, a sheet closed): the front page then draws the
- * connect tabs, and a load of it starts no launch of its own (#16). A sign-in, Check again or Ask again clears it.
+ * The person left a join or a PC for the front page in this tab (Cancel, Back, a sheet closed): the front page then draws My
+ * PCs, and a load of it starts no launch of its own (#16). A sign-in, Check again or Ask again clears it.
  */
 const FRONT_CHOSEN = "ovis-front-chosen";
 function keepFrontChosen(chosen: boolean): void {
@@ -115,7 +115,7 @@ function frontChosen(): boolean {
   try { return sessionStorage.getItem(FRONT_CHOSEN) !== null; } catch { return false; }
 }
 function keepLaunchAccount(): void {
-  try { sessionStorage.setItem(LAUNCH_ACCOUNT, "1"); } catch { /* the front page draws Add a PC */ }
+  try { sessionStorage.setItem(LAUNCH_ACCOUNT, "1"); } catch { /* the front page draws My PCs */ }
 }
 function takeLaunchAccount(): boolean {
   try { const kept = sessionStorage.getItem(LAUNCH_ACCOUNT) !== null; sessionStorage.removeItem(LAUNCH_ACCOUNT); return kept; } catch { return false; }
@@ -138,7 +138,7 @@ function markLaunched(): void {
   try { sessionStorage.setItem(LAUNCHED, "1"); } catch { /* no storage: launchPc opens nothing */ }
 }
 
-/** How many saved PCs a launch asks, and how long it waits for one to answer before it opens none (Add a PC lists them). */
+/** How many saved PCs a launch asks, and how long it waits for one to answer before it opens none (My PCs lists them). */
 const LAUNCH_PCS = 4;
 const LAUNCH_WAIT_MS = 4_000;
 
@@ -227,7 +227,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   // this PC's page was opened by a launch, not by a person: if the PC turns out off, the launch goes on with the others.
   // So was the PC page the phone app reopens by itself as it starts (a new web view, a new tab session): nobody chose it now
   const launchedHere = scoped && (launchedPc === entry.serverId || (firstOfTab && inNativeApp() && !picked));
-  // only a press on a link to that PC (a row of Add a PC, the dashboard, a sidebar) ends a launch's join card: Back, Forward
+  // only a press on a link to that PC (a row of My PCs, the dashboard, a sidebar) ends a launch's join card: Back, Forward
   // or a reload into it keeps it, so it never opens by the account's key without the person's word
   if (pressedJoin !== null) document.removeEventListener("click", pressedJoin, true);
   pressedJoin = (event: MouseEvent) => {
@@ -425,7 +425,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
       state, scoped, iosTab, addEntry: !scoped && entryHash === "#add", pcStatus: new Map(sweep.status), onCheckPcs: () => void sweep.check(), onFindPc: () => void findPc(), onPair: confirmed, onRetry: retry, onCancel: cancel, onBack: toFront, onForget: forget, onForgetSaved: forgetSaved,
       onUpdate: updates.update, onMatch: match, onJoinInstead: joinInstead, onCodeStart: codeStart, onCodeSubmit: codeSubmit, onCodeMatch: codeMatch, onOpenPc: openPc,
       sheetJoin, launchJoin: entry.serverId !== null && launchJoinFor(entry.serverId), onWaitAgain: () => void waitAgain(),
-      plainFront: !frontChosen(), signedIn: account.state?.kind === "signed-in", onAskAgain: askAgain,
+      signedIn: account.state?.kind === "signed-in", onAskAgain: askAgain,
       ...(account.enabled ? { onSignIn: signInFirst ? signInToPair : unpaired !== null ? signInForPc : account.signIn, accountProviders: offered ?? account.providers, onRefreshAccount: () => account.refreshNow() } : {}),
     })))); account.armRefresh();
   };
@@ -462,7 +462,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     if (accountLaunch) {
       const view = account.state;
       // the stored sign-in is not read yet, or its directory: the launch waits on its card until they are (#16: a slow read
-      // never falls back to the connect tabs), and its Cancel ends it
+      // never falls back to My PCs), and its Cancel ends it
       const unread = account.enabled && (!accountRead || view?.kind === "signing-in" || (view?.kind === "signed-in" && view.pcs === null && view.error === null));
       if (unread && launchCard === null) {
         launchCard = { kind: "connecting", name: null };

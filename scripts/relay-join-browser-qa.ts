@@ -70,11 +70,11 @@ try {
         page.on("pageerror", (error) => errors.push(error.message));
         await page.goto(APP);
         await page.locator(".account-provider").first().click();
-        // a sign-in lands on the connect tabs, or on the join an account PC its launch picked asks by itself (#16)
-        await page.locator('main.relay-add-screen[data-account-state="signed-in"] .connect-start-tabs, [data-add-pc-mode], [data-approval-wait]').first().waitFor({ timeout: 45_000 });
-        // the tab's launch is past; the account's PCs are listed on Add a PC, not on the signed-in front page (#16)
+        // a sign-in lands on My PCs, or on the join an account PC its launch picked asks by itself (#16)
+        await page.locator('main.relay-add-screen[data-account-state="signed-in"] [data-view="my-pcs"], [data-add-pc-mode], [data-approval-wait]').first().waitFor({ timeout: 45_000 });
+        // the tab's launch is past; a PC's More opens My PCs (/#add), which lists the account's PCs
         await page.goto(`${APP}/#add`);
-        // from the front page that is a same-document hash change: the load draws Add a PC
+        // from the front page that is a same-document hash change: the load draws My PCs
         await page.reload();
         const pc = mode === "new" ? "New mini PC" : "Old MacBook";
         await page.locator('main.relay-add-screen[data-account-state="signed-in"] a.relay-add-saved-pc').filter({ hasText: pc }).click();
@@ -106,7 +106,7 @@ try {
         report.push({ name, ...geometry });
         console.log(`PASS ${name}: one confirmation reaches connecting; focus and footer contained`);
         await page.keyboard.press("Escape");
-        await page.locator('main.relay-add-screen[data-account-state="signed-in"] .connect-start-tabs').waitFor();
+        await page.locator('main.relay-add-screen[data-account-state="signed-in"] [data-view="my-pcs"]').waitFor();
         if (await page.locator("[data-add-pc-phase]").count() !== 0) throw new TypeError(`${name}: Cancel retained the sheet`);
       } finally {
         await closeMarked(context);

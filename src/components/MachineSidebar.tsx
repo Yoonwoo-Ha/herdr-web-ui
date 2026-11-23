@@ -52,8 +52,8 @@ export function pcListExit(page: { nativeApp: boolean; relayShell: boolean; path
 }
 
 /**
- * Where a phone's More → Add a PC leads (relay step 1): a PC page of the hosted app, in a browser or inside the phone
- * app (which opens it there), goes to the hosted app's Add a PC ("shell"); a PC the phone app opened by its address
+ * Where a phone's More → Connect a PC leads (relay step 1): a PC page of the hosted app, in a browser or inside the phone
+ * app (which opens it there), goes to the hosted app's My PCs ("shell"); a PC the phone app opened by its address
  * goes back to the app's own screens ("app"); anywhere else there is none. Unlike pcListExit, the phone app does not
  * come first: a hosted PC page inside it adds a PC on the hosted side, where its pairings are.
  */
@@ -61,7 +61,7 @@ export function addPcExit(page: { nativeApp: boolean; relayShell: boolean; pathn
   return pcListExit({ ...page, nativeApp: false }) ?? (page.nativeApp ? "app" : null);
 }
 
-/** The hosted app's Add a PC, opened from a PC's More: its Back comes back here (RelayShell's `addEntry`). */
+/** The hosted app's My PCs, opened from a PC's More: its Back comes back here (RelayShell's `addEntry`). */
 export const ADD_PC_FROM_KEY = "ovis-add-pc-from";
 
 /**
@@ -73,7 +73,7 @@ export function addPcMoreItem(exit: "app" | "shell" | null, sheetWidth: boolean)
 }
 
 /**
- * Opens Add a PC where `exit` (addPcExit) leads: the phone app's connect tabs keep this PC open until another is picked;
+ * Opens Connect a PC where `exit` (addPcExit) leads: the phone app's connect tabs keep this PC open until another is picked;
  * the hosted app's loads once More's step off its entry has landed, which would otherwise cancel it or bring this page back.
  */
 export async function openAddPc(exit: "app" | "shell"): Promise<void> {
