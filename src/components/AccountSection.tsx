@@ -15,13 +15,12 @@ import { ApiError, fetchBridgeHealth, fetchRelay, requestRelay } from "../lib/ap
 import { startDeviceSignIn, startLinkPageSignIn, type DeviceSignInProvider } from "../lib/account/deviceSignIn.ts";
 import { AccountPcError, within } from "../lib/account/join.ts";
 import { myPcs, type MyPc } from "../lib/account/myPcs.ts";
-import { ownSignIn, ownWindowSignIn, useOwnWindowRedirect } from "../lib/account/ownWindow.ts";
-import { AccountServiceError, DEVICE_PROVIDERS, indexedAccountService, offeredProviders, pcAccountServiceOf, sameSignIn, SignedOutError, type AccountIdentity, type AccountService, type DeviceProvider, type OfferedProviders } from "../lib/account/service.ts";
+import { ownSignIn, ownWindowSignIn, pcServiceHere, useOwnWindowRedirect } from "../lib/account/ownWindow.ts";
+import { AccountServiceError, DEVICE_PROVIDERS, indexedAccountService, offeredProviders, sameSignIn, SignedOutError, type AccountIdentity, type AccountService, type DeviceProvider, type OfferedProviders } from "../lib/account/service.ts";
 import { SignInError } from "../lib/account/signin.ts";
 import { indexedAccountStore, type AccountProvider, type AccountSession, type AccountStore } from "../lib/account/store.ts";
 import { postKept, refusalShown, unsentBlocks, type UnsentBlocks } from "../lib/account/unsentBlocks.ts";
 import { currentLocale, useT, type Translate } from "../lib/i18n.ts";
-import { inMacApp, inNativeApp } from "../lib/nativeApp.ts";
 import { pairThisBrowser, UnconfirmedPairing } from "../lib/pairing.ts";
 import { deviceOs, thisDeviceLabel } from "../lib/phone.ts";
 import { ExternalLink } from "../lib/externalLink.ts";
@@ -919,12 +918,6 @@ export interface AccountState {
   noPcs: boolean;
   reachable: boolean;
 }
-
-/** the phone and Mac apps sign in their own way, never with a code from a PC's page */
-// read while rendering (usePcRemoval in the join requests), so also where a page is drawn with no document
-const pcServiceHere = (): string | null => desktopAccount() === null && !inNativeApp() && !inMacApp() && typeof document !== "undefined" ? pcAccountServiceOf(document, window.isSecureContext) : null;
-
-export const accountServiceHere = (): string | null => desktopAccount()?.service ?? pcServiceHere();
 
 export function AccountSection({ onAccount, recheck = 0, opensAll, withdrawn, signInElsewhere = false, watching = false }: {
   onAccount?: (state: AccountState) => void;

@@ -7,6 +7,11 @@ import * as i18n from "../lib/i18n.ts";
 import { getTransport, setTransport } from "../lib/transport.ts";
 import { MachineDialog } from "./MachineDialog.tsx";
 
+const PC_META = 'meta[name="ovis-pc-account-service"]';
+const HOSTED_META = 'meta[name="ovis-account-service"]';
+/** a page that has only `meta` naming the account service: a PC's own page has the PC's, never the hosted shell's */
+const pcPage = (meta: string | null) => ({ querySelector: (selector: string) => selector === meta ? { getAttribute: () => "https://account.test" } : null });
+
 async function exercise(action: "install_ovis" | "update_bridge") {
   const saved = new Map<string, PropertyDescriptor | undefined>();
   const define = (key: string, value: unknown) => {
@@ -15,7 +20,7 @@ async function exercise(action: "install_ovis" | "update_bridge") {
   };
   let poll: (() => void) | undefined;
   define("window", { isSecureContext: true, requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout(callback: () => void) { poll = callback; return 1; }, clearTimeout() {} });
-  define("document", { querySelector: () => ({ getAttribute: () => "https://account.test" }) });
+  define("document", pcPage(PC_META));
   define("IS_REACT_ACT_ENVIRONMENT", true);
   const translation = spyOn(i18n, "useT").mockImplementation(() => (key) => key);
   const session = spyOn(AccountService.prototype, "session").mockResolvedValue({ service: "https://account.test", account: "acct_1", provider: "google", access_token: "test", refresh_token: "test", expires_at: Date.now() + 60_000 });
@@ -68,3 +73,47 @@ async function exercise(action: "install_ovis" | "update_bridge") {
 
 test("install completion resumes the account add after its setup lookup returns", () => exercise("install_ovis"));
 test("update-and-connect submits a setup the server accepts", () => exercise("update_bridge"));
+
+/** Add on a row of the relay tab's list opens this dialog for that host; what it offers, on a page with `meta` alone */
+async function offered(meta: string | null): Promise<{ label: boolean; ticked: boolean | null; sent: SetupRequest[] }> {
+  const saved = new Map<string, PropertyDescriptor | undefined>();
+  const define = (key: string, value: unknown) => {
+    saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, { configurable: true, value });
+  };
+  define("window", { isSecureContext: true, requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout: () => 1, clearTimeout() {} });
+  define("document", pcPage(meta));
+  define("IS_REACT_ACT_ENVIRONMENT", true);
+  const translation = spyOn(i18n, "useT").mockImplementation(() => (key) => key);
+  const session = spyOn(AccountService.prototype, "session").mockResolvedValue({ service: "https://account.test", account: "acct_1", provider: "google", access_token: "test", refresh_token: "test", expires_at: Date.now() + 60_000 });
+  const transport = getTransport();
+  const sent: SetupRequest[] = [];
+  let view: ReactTestRenderer | undefined;
+  setTransport({ ...transport, fetch: async (input, init) => {
+    switch (String(input)) {
+      case "/api/health": return Response.json({ auth: { via: "local" }, own_window: true });
+      case "/api/account/status": return Response.json({ account: "acct_1", pc_add_from_account: true });
+      case "/api/machines/setup": sent.push(JSON.parse(String(init?.body)) as SetupRequest); return new Promise<Response>(() => {});
+      default: throw new Error(`Unexpected request: ${input}`);
+    }
+  } });
+  try {
+    await act(async () => { view = create(createElement(MachineDialog, { preset: { destination: "p23pcb", name: "p23pcb" }, onClose() {}, onConnected() {} })); });
+    for (let flush = 0; flush < 4; flush += 1) await act(async () => {});
+    const label = view!.root.findAll((node) => node.type === "label" && node.props.className === "machine-check" && node.children.includes("Add it to my account"));
+    const ticked = label.length === 0 ? null : label[0]!.findByType("input").props.checked as boolean;
+    await act(async () => { view!.root.findByType("form").props.onSubmit({ preventDefault() {} }); });
+    return { label: label.length === 1, ticked, sent };
+  } finally {
+    await act(async () => view?.unmount()); setTransport(transport); session.mockRestore(); translation.mockRestore();
+    for (const [key, descriptor] of saved) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+}
+
+test("a PC's own page, signed in to this PC's account, offers Add it to my account ticked, read from the PC's own meta", async () => {
+  expect(await offered(PC_META)).toEqual({ label: true, ticked: true, sent: [{ destination: "p23pcb", account_add: true }] });
+});
+
+test("a page with no account service of a PC's own offers the plain SSH add alone: the hosted shell's meta is not this PC's", async () => {
+  for (const meta of [HOSTED_META, null]) expect(await offered(meta)).toEqual({ label: false, ticked: null, sent: [{ destination: "p23pcb" }] });
+});

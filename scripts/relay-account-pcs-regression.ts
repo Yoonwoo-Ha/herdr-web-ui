@@ -102,10 +102,13 @@ await service.fetch(new Request(`${ACCOUNT_SERVICE}/v1/pcs/${deriveServerId(away
   body: JSON.stringify({ label: "Away", public_key: bytesToHex(awayKey), relay: offer.relay }) }));
 
 const aState = stateDir();
+// one host in A's ssh config: the relay tab lists it with Add, which opens Add PC for it
+mkdirSync(join(aState, "ssh"), { recursive: true });
+writeFileSync(join(aState, "ssh", "config"), "Host p23pcb\n  HostName 192.0.2.10\n  User fixture\n", { mode: 0o600 });
 const aRelay = relayService(aState);
 const a = createServer({ port: 0, hostname: "127.0.0.1", stateDir: aState, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false,
   relay: aRelay.relayService, relayPcSocket: aRelay.local, accountService, accountOpensAll: false, usage: new UsageService(undefined, []),
-  tailnetPcs: { readStatus: async () => null }, sshCandidates: { sshDir: join(aState, "no-ssh"), readStatus: async () => null } });
+  tailnetPcs: { readStatus: async () => null }, sshCandidates: { sshDir: join(aState, "ssh"), home: aState, readStatus: async () => null } });
 cleanup.push(() => a.stop());
 const origin = `http://127.0.0.1:${a.port}`;
 await startRelay(origin, aRelay.synced);
@@ -265,6 +268,18 @@ try {
   await reachable.getByRole("textbox", { name: "A PC not in the list", exact: true }).waitFor();
   assert.ok(qrBottom <= await reachable.evaluate((list) => list.getBoundingClientRect().top), "the PCs to add come under the phone's QR code");
   await shot(connecting.page, "relay-tab");
+  // Add on a row opens Add PC for that host with Add it to my account offered and ticked. This PC's own page carries the
+  // PC's account service meta alone (server/static.ts), never the hosted shell's, and the dialog reads that one
+  assert.deepEqual(await connecting.page.evaluate(() => ["ovis-pc-account-service", "ovis-account-service"].map((name) => document.querySelector(`meta[name="${name}"]`) !== null)),
+    [true, false], "this PC's own page has the PC's account service meta alone");
+  await reachable.getByRole("button", { name: "Add p23pcb", exact: true }).click();
+  const addPc = connecting.page.locator("dialog.machine-dialog[open]");
+  await addPc.waitFor();
+  assert.equal(await addPc.getByRole("textbox", { name: "SSH alias or user@address", exact: true }).inputValue(), "p23pcb", "Add PC opens for that host");
+  const toAccount = addPc.getByRole("checkbox", { name: "Add it to my account", exact: true });
+  await toAccount.waitFor();
+  assert.equal(await toAccount.isChecked(), true, "Add it to my account, ticked");
+  await shot(connecting.page, "add-pc-from-row");
 
   // the same account in a window that is not this PC's own: the tab as before (the account QR code alone), no PCs to add
   const elsewhere = await accountWindow(browser, pageErrors, "elsewhere");

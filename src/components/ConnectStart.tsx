@@ -10,7 +10,7 @@ import { serverIdOfPath, serverScopePath } from "../lib/shellMode.ts";
 import { markRemovedPc, removedPcs, type RemovedPcMark } from "../lib/relay/shellState.ts";
 import { StartScreenAccountMenu } from "./AccountHead.tsx";
 import { deviceOffline, useOffline } from "../lib/useOffline.ts";
-import { AddressForm, atDots, canScanQr, clearOutcome, offlineOpenText, OpenError, OpenStatus, scanQr, sshHandoff, tailscaleOn, useAddressOpen, Way, type AddressOpen, type SavedPc } from "./RelayAddPc.tsx";
+import { AddressForm, atDots, canScanQr, clearOutcome, offlineOpenText, OpenError, OpenStatus, scanQr, sshHandoff, TailscaleOff, tailscaleOn, useAddressOpen, Way, type AddressOpen, type SavedPc } from "./RelayAddPc.tsx";
 import { codeFailureText, type TypedCodeFailure } from "./codeFailureText.ts";
 import { SheepMascot } from "./SheepMascot.tsx";
 import { StatusDot, type StatusDotState } from "./StatusDot.tsx";
@@ -468,7 +468,7 @@ export function MyPcs({ devices, accountPcs = null, knownPcs, accountUnread = fa
     <div className="my-pcs" data-view="my-pcs" hidden={hidden || undefined}>
       <ConnectHead title={t("Your PCs")} onBack={onBack ?? backToCurrent} backLabel={backToCurrent ? t("Back to {name}", { name: currentName }) : undefined} menu={<StartScreenAccountMenu account={accountMenu} onForgetPcs={forgettable ? () => setEditing(true) : undefined} />} />
       {top}
-      {!hidden && <OpenStatus view="list" anyView={!wide} tailscaleOff={<TailscaleOff />} />}
+      {!hidden && <OpenStatus view="list" anyView={!wide} />}
       <OpenError open={open} />
       {phone.sshPort !== null && <p className="account-error" role="alert">{t("Another app on this phone took the address the SSH PC opens on ({address}), so the app did not open it: that app would have answered in its place. Close or uninstall the app you do not know, or restart the phone, then open the PC again.", { address: phone.sshPort })}</p>}
       {searchable && (
@@ -602,19 +602,6 @@ export function AccountlessRelayPanel({ code }: { readonly code: CodeWays }) {
   );
 }
 
-/** With Tailscale off on the phone a Tailscale address opens nothing: one line and Open Tailscale, where the app has it. */
-function TailscaleOff() {
-  const t = useT();
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <div className="connect-tailscale-off" role="alert" data-tailscale-off="">
-      <p className="relay-shell-copy">{t("Turn on Tailscale to connect")}</p>
-      {hasNativeMethod(SHELL, "openTailscale") && <button type="button" className="btn btn-primary" onClick={() => { setError(null); callNative(SHELL, "openTailscale").catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause))); }}>{t("Open Tailscale")}</button>}
-      {error !== null && <p className="account-error">{error}</p>}
-    </div>
-  );
-}
-
 /**
  * My PCs with no network on this device (useOffline): one line that says so, naming the phone in the phone app, and Try
  * again, which reads what the screen shows once more (as the network coming back does by itself).
@@ -706,7 +693,7 @@ export function AddPcTabs({ title, relay, way, onWay, away, onBack, layout = "pa
   const t = useT();
   const label: Record<ConnectWay, string> = { relay: t("Ovis relay"), tailscale: "Tailscale", ssh: "SSH" };
   // in the pane on screen only; beside My PCs, why an open started there did not go is said there, on its own here
-  const status = hidden ? null : <OpenStatus view="add" anyView={layout !== "side"} tailscaleOff={<TailscaleOff />} />;
+  const status = hidden ? null : <OpenStatus view="add" anyView={layout !== "side"} />;
   return (
     <div className={layout === "page" ? "connect-add" : `connect-add connect-add-${layout}`} data-view="add-pc" hidden={hidden || undefined}>
       <ConnectHead title={title} onBack={onBack} side={layout === "side"} focus={focus} />

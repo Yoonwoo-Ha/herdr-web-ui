@@ -1877,6 +1877,43 @@ describe("the hosted front page", () => {
       });
     });
 
+    // device pass r14 (b): on Android with Tailscale off, the relay failure card's other-way button did nothing at all
+    it("ends the other way's open of a Tailscale address in the Tailscale-off card while the phone's Tailscale is off: a relay PC's own page, and My PCs", async () => {
+      await withApp(async () => {
+        const lan = "http://192.168.0.5:7317";
+        const offer = () => renderer!.root.findAll((node) => node.type === "button" && node.props["data-action"] === "open-other-way" && shown(node));
+        const card = () => renderer!.root.findAll((node) => node.props["data-tailscale-off"] !== undefined && shown(node));
+        const settle = async () => { for (let turn = 0; turn < 4; turn += 1) await act(async () => { await Promise.resolve(); }); };
+        // the relay PC's own page, whose open over the relay failed, offers the Tailscale address the app saved it by
+        const called = app([{ name: "HerdrShell", methods: ["getState", "open", "tailscale", "openTailscale"] }], (method) =>
+          method === "getState" ? { saved: [tail], names: {}, ids: { [tail]: ids.mac } } : method === "tailscale" ? { on: false } : method === "open" ? new Promise(() => {}) : {});
+        await mount({ ...props({ kind: "failed", failure: "pc-offline", name: "hasang-uui-MacBookPro", detail: null, server_id: ids.mac }) });
+        await settle();
+        expect(card()).toHaveLength(0);
+        await act(async () => { offer()[0]!.props.onClick(); });
+        await settle();
+        // as a Tailscale row of My PCs does with Tailscale off: the line and Open Tailscale, nothing opened
+        expect(card().map(textOf)).toEqual(["Turn on Tailscale to connectOpen Tailscale"]);
+        expect(called.filter((call) => call.startsWith("HerdrShell.open "))).toEqual([]);
+        await act(async () => { card()[0]!.find((node) => node.type === "button").props.onClick(); });
+        expect(called).toContain("HerdrShell.openTailscale");
+        await act(async () => { renderer!.unmount(); });
+
+        // My PCs: a row of two saved ways opens by the one that loaded last; that open fails, and the Tailscale way it offers meets Tailscale off
+        const again = app([{ name: "HerdrShell", methods: ["getState", "open", "tailscale", "openTailscale"] }], (method, options) =>
+          method === "getState" ? { saved: [lan, tail], names: {}, ids: { [tail]: ids.mac, [lan]: ids.mac } } : method === "tailscale" ? { on: false }
+            : method === "open" && options.url === `${lan}/` ? Promise.reject(Object.assign(new Error("unknown-host"), { code: "unknown-host" })) : method === "open" ? new Promise(() => {}) : {});
+        await mount({ ...props({ kind: "empty", account: { kind: "signed-out", error: null } }), scoped: false, onSignIn: none });
+        await act(async () => { openers()[0]!.props.onClick(); });
+        await settle();
+        expect(offer().map((node) => node.props["aria-label"])).toEqual(["Open macbookpro.tail1e211e.ts.net:17317 (Tailscale)"]);
+        await act(async () => { offer()[0]!.props.onClick(); });
+        await settle();
+        expect(card().map(textOf)).toEqual(["Turn on Tailscale to connectOpen Tailscale"]);
+        expect(again.filter((call) => call.startsWith("HerdrShell.open "))).toEqual([`HerdrShell.open ${lan}/`]);
+      });
+    });
+
     it("offers Forget PCs in the signed-in menu too", async () => {
       await mount({ ...signedIn(four()), onForgetSaved: none });
       await forgetPcs();

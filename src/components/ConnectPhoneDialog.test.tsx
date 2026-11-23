@@ -430,6 +430,10 @@ describe("Connect a phone on a phone", () => {
     await mount(<><RelayPairing /><CodeRoute pairUrl="https://workstation.example.ts.net" startAtOnce={false} /></>);
     for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
     const shown = () => renderer!.root.findAll((node) => node.type === "p" && typeof node.props.className === "string" && node.props.className.includes("devices-code")).map(text);
+    // the relay QR code's own code is not drawn as digits until they are asked for here
+    expect(shown()).toEqual([]);
+    await act(async () => { await button("Get a pairing code").props.onClick(); });
+    for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
     expect(shown()).toEqual(["482 913"]);
     await act(async () => { await button("Show a code to type").props.onClick(); });
     for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
@@ -1527,6 +1531,77 @@ describe("the relay tab's QR code behind a press", () => {
     await mount({ joinBySignIn: true, provider: "github", addsOverSsh: true, relay: relayState({ ...ONLINE, phase: "off" }) });
     expect(qrCodes()).toHaveLength(0);
     expect(minted()).toEqual([]);
+  });
+  // device pass r14 (h): right after a fresh account's first add, the sheet drew six digits nobody pressed for. The setup
+  // guide under it showed its relay QR code once the add turned the relay on, and that offer's code was announced to the page
+  describe("a code another place of the page made, right after Add this PC", () => {
+    const served = { kind: "served", url: "https://workstation.example.ts.net" } as const;
+    const sheet = (addsOverSsh: boolean) => (
+      <SettingsProvider>
+        <ConnectPhoneDialog asked="relay" plan={served} tailscale={served} pairUrl={served.url} relay={relayState()} readOnly={false} closesGate={false} canPair
+          signedIn accountId={ACCOUNT_ID} provider="github" joinBySignIn account={SERVICE} onAddPc={() => {}} machines={[thisPc]} onConnectMachine={() => {}} onClose={() => {}}
+          addsOverSsh={addsOverSsh} accountPcs={[SERVER_ID]} />
+      </SettingsProvider>
+    );
+    const open = async (addsOverSsh: boolean) => {
+      Object.assign(window, { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), history: { state: null, pushState() {}, replaceState() {}, back() {} } });
+      Object.assign(document, { body: {} });
+      const node = () => ({ closest: () => null, querySelector: () => null, querySelectorAll: () => [], focus() {}, contains: () => false, addEventListener() {}, removeEventListener() {}, getAttribute: () => null, style: {}, dataset: {} });
+      await act(async () => { renderer = create(sheet(addsOverSsh), { createNodeMock: node }); });
+      await flush();
+    };
+    const relayPanel = () => renderer!.root.find((node) => node.props["data-tab-panel"] === "relay" && node.type === "div");
+    const digits = () => relayPanel().findAll((node) => node.props.className === "compact-pair-code").map(text);
+    const getCode = () => relayPanel().findAll((node) => node.type === "button" && text(node).trim() === "Get a pairing code");
+    /** what the setup guide's relay QR code does when its offer comes (RelayPanel announceFromRelay): the PC's pending code */
+    const guideOffer = async (code: string) => { await act(async () => { announcePairingCode({ code, expires_at: new Date(Date.now() + 600_000).toISOString() }); }); await flush(); };
+    const starts = () => requests.filter((path) => path === "/api/devices/pair/start").length;
+
+    it("draws no digits the sheet did not ask for, under the tab and on the top that comes after the add; its press makes and keeps them", async () => {
+      pcAccount = ACCOUNT_ID;
+      await open(false);
+      expect([digits(), getCode().length]).toEqual([[], 1]);
+      await guideOffer("023060");
+      // Pair with a code keeps its button: the six digits wait for the press here, whoever made the PC's pending code
+      expect([digits(), getCode().length, starts()]).toEqual([[], 1, 0]);
+      // the add's answer lays the top out as the Tailscale tab's: no digits there either
+      await act(async () => { renderer!.update(sheet(true)); });
+      await flush();
+      expect([digits(), getCode().length]).toEqual([[], 1]);
+      await act(async () => { getCode()[0]!.props.onClick(); });
+      await flush();
+      expect([digits(), starts()]).toEqual([["246 813"], 1]);
+      // the guide's QR code asks again and gets the PC's pending code, the one pressed for: it stays on screen
+      await guideOffer("246813");
+      expect(digits()).toEqual(["246 813"]);
+    });
+
+    it("shows the code the Tailscale tab took on opening under the relay tab too, with no second code made", async () => {
+      pcAccount = ACCOUNT_ID;
+      await open(false);
+      await guideOffer("023060");
+      expect(digits()).toEqual([]);
+      // the Tailscale tab shows a code as it opens: the PC's pending one, which the sheet now wants
+      await act(async () => { renderer!.root.findByProps({ "data-tab": "tailscale" }).props.onClick(); });
+      await flush();
+      const tailscalePanel = () => renderer!.root.find((node) => node.props["data-tab-panel"] === "tailscale" && node.type === "div");
+      expect(tailscalePanel().findAll((node) => node.props.className === "compact-pair-code").map(text)).toEqual(["023 060"]);
+      await act(async () => { renderer!.root.findByProps({ "data-tab": "relay" }).props.onClick(); });
+      await flush();
+      expect([digits(), getCode().length, starts()]).toEqual([["023 060"], 0, 0]);
+    });
+
+    it("keeps a code pressed for in this sheet before the add on screen after it", async () => {
+      pcAccount = ACCOUNT_ID;
+      await open(false);
+      await act(async () => { getCode()[0]!.props.onClick(); });
+      await flush();
+      expect(digits()).toEqual(["246 813"]);
+      await guideOffer("246813");
+      await act(async () => { renderer!.update(sheet(true)); });
+      await flush();
+      expect([digits(), getCode().length, starts()]).toEqual([["246 813"], 0, 1]);
+    });
   });
   it("for a PC in an account this page cannot tell is its own, the QR code names no sign-in: the phone picks one", async () => {
     pcAccount = ACCOUNT_ID;

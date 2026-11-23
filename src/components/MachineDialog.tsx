@@ -5,7 +5,8 @@ import type { AddPcPreset } from "../lib/actions.ts";
 import { answerMachineSetup, fetchHealth, fetchMachineSetup, fetchPcInstall, startMachineSetup, startPcInstall } from "../lib/api.ts";
 import { apiFetch } from "../lib/api-request-id.ts";
 import { pcAccountStatus } from "../lib/account/join.ts";
-import { AccountService, accountServiceOf } from "../lib/account/service.ts";
+import { accountServiceHere } from "../lib/account/ownWindow.ts";
+import { AccountService } from "../lib/account/service.ts";
 import { addOverSsh, sshAddListed, type SshAddOutcome } from "../lib/account/sshAdd.ts";
 import { indexedAccountStore } from "../lib/account/store.ts";
 import { hostKeyFingerprints } from "../lib/hostKey.ts";
@@ -70,7 +71,8 @@ export function MachineDialog({ machine, preset, updateRemote = false, onClose, 
     let live = true;
     void (async () => {
       const [health, status] = await Promise.all([fetchHealth(), pcAccountStatus(apiFetch)]);
-      const session = accountServiceOf(document) === null ? undefined : await new AccountService({ store: indexedAccountStore }).session();
+      // this PC's own page signs in with the PC's account service (the PC's own meta, or the desktop app's), never the hosted shell's
+      const session = accountServiceHere() === null ? undefined : await new AccountService({ store: indexedAccountStore }).session();
       if (live && sshAddListed({ pcAddFromAccount: status.pcAddFromAccount, auth: health.auth, signedInAccount: session?.account ?? null, pcAccount: status.account })) setAccountAdd(status.account);
     })().catch(() => { /* not offered: the plain SSH add stays */ });
     return () => { live = false; };

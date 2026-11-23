@@ -353,9 +353,10 @@ export function OpenError({ open }: { readonly open: AddressOpen }) {
  * The connect screen's attempt, in a pane (`view`): the host being opened, in every pane on screen, with Cancel where it
  * can be stopped (one still asking about Tailscale always; one opening only where the app has cancelOpen); or why the
  * last one did not open, in the pane it was started from (`anyView`: a phone, one pane on screen at a time, says it in
- * whichever that is), a Tailscale-off outcome drawn by `tailscaleOff`.
+ * whichever that is), a Tailscale-off outcome as the Tailscale-off card. Every place that starts an open draws its end
+ * here, so none ends in nothing: an open, the card, or a line.
  */
-export function OpenStatus({ view, anyView = false, tailscaleOff }: { readonly view: string; readonly anyView?: boolean; readonly tailscaleOff?: ReactNode }) {
+export function OpenStatus({ view, anyView = false }: { readonly view: string; readonly anyView?: boolean }) {
   const t = useT();
   const { pending, outcome: ended } = useOpening();
   if (pending !== null) {
@@ -373,7 +374,20 @@ export function OpenStatus({ view, anyView = false, tailscaleOff }: { readonly v
       <OtherWayButton way={ended.other.way} host={ended.other.host} onClick={() => { const run = ended.other?.run; clearOutcome(); run?.(); }} />
     </div>
   );
-  return <>{ended.kind === "error" ? <p className="account-error" role="alert">{ended.text}</p> : tailscaleOff}{other}</>;
+  return <>{ended.kind === "error" ? <p className="account-error" role="alert">{ended.text}</p> : <TailscaleOff />}{other}</>;
+}
+
+/** With Tailscale off on the phone a Tailscale address opens nothing: one line and Open Tailscale, where the app has it. */
+export function TailscaleOff() {
+  const t = useT();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="connect-tailscale-off" role="alert" data-tailscale-off="">
+      <p className="relay-shell-copy">{t("Turn on Tailscale to connect")}</p>
+      {hasNativeMethod(SHELL, "openTailscale") && <button type="button" className="btn btn-primary" onClick={() => { setError(null); callNative(SHELL, "openTailscale").catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause))); }}>{t("Open Tailscale")}</button>}
+      {error !== null && <p className="account-error">{error}</p>}
+    </div>
+  );
 }
 
 /** An opener's own refusal and the screen's attempt, on a screen of one pane (the plain wait). */
