@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { act, create as createRenderer, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import type { MyPc } from "../lib/account/myPcs.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { signInLink } from "./ConnectPhoneDialog.tsx";
@@ -11,6 +11,16 @@ import { ADD_PC_FROM_KEY } from "./MachineSidebar.tsx";
 import { NewPcNotices } from "./NewPcNotices.tsx";
 import { leaveAddEntry, RelayShell, type RelayShellProps } from "./RelayShell.tsx";
 import { UnconfirmedPcNotices } from "./UnconfirmedPcNotices.tsx";
+
+/** every tree a test draws, still mounted: the test's end unmounts each one, not only the last it kept */
+const drawn = new Set<ReactTestRenderer>();
+const create = (...args: Parameters<typeof createRenderer>): ReactTestRenderer => {
+  const tree = createRenderer(...args);
+  const unmount = tree.unmount.bind(tree);
+  tree.unmount = () => { drawn.delete(tree); unmount(); };
+  drawn.add(tree);
+  return tree;
+};
 
 const EXPECTED = "0123456789abcdef0123456789abcdef";
 const RECEIVED = "01234567ffffcdef0123456789abeeee";
@@ -248,8 +258,12 @@ describe("the hosted front page", () => {
     });
 
     afterEach(async () => {
-      await act(async () => { renderer?.unmount(); });
+      // every tree goes, then what was left to run on a timer runs while this window is still here: a closed sheet (Add
+      // a PC over My PCs) leaves its history entry a turn later (sheetHistory leaveSheet), whether it closed in the
+      // test's last step or as its tree unmounted; run after the window went, it found another or none
+      await act(async () => { for (const tree of [...drawn]) tree.unmount(); });
       renderer = undefined;
+      await act(async () => { for (let turn = 0; turn < 3; turn++) await new Promise((resolve) => setTimeout(resolve, 0)); });
       for (const [key, descriptor] of descriptors) {
         if (descriptor) Object.defineProperty(globalThis, key, descriptor);
         else Reflect.deleteProperty(globalThis, key);

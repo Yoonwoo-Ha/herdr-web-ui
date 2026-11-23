@@ -62,7 +62,8 @@ beforeAll(async () => {
     get state() { return entries[index]; },
     pushState(state: unknown) { entries.splice(index + 1); entries.push(state); index += 1; },
     replaceState(state: unknown) { entries[index] = state; },
-    back() { traverseBack(); },
+    // a browser's Back on its first entry does nothing
+    back() { if (index > 0) traverseBack(); },
     forward() {},
     go() {},
   };
@@ -96,7 +97,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // the tree goes, then what its unmount left to run on a timer (a sheet leaving its history entry) runs while this
+  // window is still here
   await act(async () => { renderer?.unmount(); });
+  await turn();
   mock.module("../lib/sheetHistory.ts", () => loaded);
   for (const [key, descriptor] of descriptors) {
     if (descriptor) Object.defineProperty(globalThis, key, descriptor);

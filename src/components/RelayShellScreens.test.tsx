@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { act, create as createRenderer, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 
 import { SettingsProvider } from "../lib/settings.ts";
 import {
@@ -14,6 +14,16 @@ import { CodeEntry, RelayShell, type RelayShellProps } from "./RelayShell.tsx";
 import { PROVIDER_NAMES } from "./AccountPcs.tsx";
 import { relayFailureText } from "./relayFailureText.ts";
 import { translate, type Vars } from "../lib/i18n.ts";
+
+/** every tree a test draws, still mounted: the test's end unmounts each one, not only the ones it unmounted itself */
+const drawn = new Set<ReactTestRenderer>();
+const create = (...args: Parameters<typeof createRenderer>): ReactTestRenderer => {
+  const tree = createRenderer(...args);
+  const unmount = tree.unmount.bind(tree);
+  tree.unmount = () => { drawn.delete(tree); unmount(); };
+  drawn.add(tree);
+  return tree;
+};
 
 const none = () => {};
 const baseProps = (state: RelayShellProps["state"]): RelayShellProps => ({
@@ -103,7 +113,11 @@ describe("RelayShellScreens", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // every tree goes, then what its unmount left to run on a timer (a sheet leaving its history entry) runs while
+    // this window is still here
+    await act(async () => { for (const tree of [...drawn]) tree.unmount(); });
+    await act(async () => { for (let turn = 0; turn < 3; turn++) await new Promise((resolve) => setTimeout(resolve, 0)); });
     for (const [key, descriptor] of descriptors) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
       else Reflect.deleteProperty(globalThis, key);
