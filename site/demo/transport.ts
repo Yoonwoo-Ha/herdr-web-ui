@@ -1011,7 +1011,13 @@ if (PAIRING_HELD) (globalThis as { herdrDemoReleasePairing?: () => boolean }).he
   return release !== undefined;
 };
 const deviceListHeld = DEVICE_STATE === "slow" ? new Promise<void>((resolve) => { (globalThis as { herdrDemoReleaseDevices?: () => void }).herdrDemoReleaseDevices = resolve; }) : null;
-const demoDevices: PairedDevice[] = DEVICE_STATE === "empty" ? [] : [
+// `account`: no device paired here, two the PC's account let in (`through_account`): this one, and one connected through the relay
+const demoDevices: PairedDevice[] = DEVICE_STATE === "empty" ? [] : DEVICE_STATE === "account" ? [
+  { id: "7b4e1f0a9c2d5836", label: "iPhone · Safari", role: "drive", created_at: ago(24 * 60), last_seen_at: `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`,
+    current: true, via_relay: true, through_account: true, connection: { route: "relay", relay: "wss://relay.ovis.sh", rtt_ms: 31, since: ago(2) } },
+  { id: "5e2d8c1a7f3b9046", label: "Galaxy S25", role: "drive", created_at: ago(2 * 24 * 60), last_seen_at: `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`,
+    current: false, via_relay: true, through_account: true, connection: { route: "relay", relay: "wss://relay.ovis.sh", rtt_ms: 48, since: ago(6) } },
+] : [
   { id: "6f1c2a9d4b7e8503", label: "Pixel 9", role: "drive", created_at: ago(41 * 24 * 60), last_seen_at: ago(3), current: DEVICE_STATE === "watch" },
   { id: "0b8e7d6c5a493f21", label: "iPad", role: "drive", created_at: ago(12 * 24 * 60), last_seen_at: ago(26 * 60), current: false },
   { id: "c3d9e1f24a5b6078", label: "Kitchen laptop, the old one with the broken hinge", role: "drive", created_at: ago(3 * 24 * 60), last_seen_at: null, current: false },

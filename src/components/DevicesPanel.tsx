@@ -14,14 +14,17 @@ import type { TailnetNodeView } from "../../shared/tailnet-nodes.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { ConnectionLine } from "./ConnectionLine.tsx";
 import { SettingsRow } from "./SettingsControls.tsx";
-import { useT } from "../lib/i18n.ts";
+import { currentLocale, useT } from "../lib/i18n.ts";
 import { lastSeen } from "../lib/lastSeen.ts";
 import { pairThisBrowser, UnconfirmedPairing } from "../lib/pairing.ts";
 
 const POLL_MS = 3000;
 /** a device seen this recently is not called offline, whatever its sessions: it may be in by its cookie */
 const SEEN_LATELY_MS = 2 * 60_000;
-const seenLately = (at: string | null): boolean => at !== null && Date.now() - Date.parse(at) < SEEN_LATELY_MS;
+const seenLately = (d: PairedDevice): boolean => !d.through_account && d.last_seen_at !== null && Date.now() - Date.parse(d.last_seen_at) < SEEN_LATELY_MS;
+/** a row the account let in is last seen by the day (its UTC day, as the PC keeps it), never as a time of day */
+const seenWhen = (d: PairedDevice): string => d.through_account && d.last_seen_at !== null
+  ? new Date(d.last_seen_at).toLocaleDateString(currentLocale(), { timeZone: "UTC" }) : lastSeen(d.last_seen_at);
 const REFRESH_MS = 30_000;
 /** a Tailscale device of the owner's login seen this recently is offered in the removal dialog */
 const TAILNET_RECENT_MS = 30 * 24 * 60 * 60_000;
@@ -82,7 +85,8 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
       reads.current.landed = read;
       setDevices(list);
       if (!quiet) setError(null);
-      const fresh = list.filter((d) => !known.current.has(d.id));
+      // a device the account's list let in spent no code here: the PC's own banner tells of it, and a code shown stays
+      const fresh = list.filter((d) => !d.through_account && !known.current.has(d.id));
       if (loaded.current && fresh.length > 0) {
         for (const d of fresh) { setJustPaired(d.label); setCode(null); setRevokedAll(false); }
         onDevicePaired?.();
@@ -234,7 +238,8 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
           <button type="button" className="btn" onClick={() => { setAlsoBlock(new Set()); setRemoving({ id: null, label: "" }); }}>{t("Choose…")}</button>
         </SettingsRow>
       )}
-      {devices !== null && devices.length > 0 && !guest && (
+      {/* the account's own devices alone are no reason for Revoke all: each has its own Revoke */}
+      {devices !== null && devices.some((d) => !d.through_account) && !guest && (
         <div className="devices-revoke-all">
           <SettingsRow label={t("Revoke every device")} description={t(watching
             ? "Every paired device, this one included, would lose its pairing access at once. A device that only watches cannot do it: use the PC or a device that can drive."
@@ -257,7 +262,7 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
         {check !== null && (checkSlot !== null ? createPortal(check, checkSlot) : <div className="devices-check">{check}</div>)}
         <ul className="devices-list">
           {[...devices].sort((a, b) => Number(b.current) - Number(a.current)).map((d) => (
-            <li key={d.id} className={!d.connection && d.via_relay && !watching && !guest && !seenLately(d.last_seen_at) ? "devices-row is-away" : "devices-row"}>
+            <li key={d.id} className={!d.connection && d.via_relay && !watching && !guest && !seenLately(d) ? "devices-row is-away" : "devices-row"}>
               {renaming?.id === d.id ? (
                 <form className="devices-rename" onSubmit={(e) => { e.preventDefault(); void rename(); }}>
                   <input className="input" value={renaming.label} maxLength={48} autoFocus aria-label={t("Device name")} onChange={(e) => setRenaming({ id: d.id, label: e.target.value })} />
@@ -267,15 +272,15 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
               ) : (
                 <>
                   <div className="devices-name">
-                    <span className="settings-label">{d.label}{kindOf?.(d.label) != null && <span className="devices-kind">{kindOf(d.label)}</span>}{d.current && <span className="devices-current">{t("This device now")}</span>}</span>
+                    <span className="settings-label">{d.label}{kindOf?.(d.label) != null && <span className="devices-kind">{kindOf(d.label)}</span>}{d.through_account && <span className="devices-kind">{t("Through your account")}</span>}{d.current && <span className="devices-current">{t("This device now")}</span>}</span>
                     {d.connection
                       ? <ConnectionLine state={{ kind: "connected", route: d.connection.route, ...(d.connection.relay === undefined ? {} : { relay: d.connection.relay }), rttMs: d.connection.rtt_ms }} />
                       // a device with a relay key connects through an encrypted session, which the PC sees come and go; a browser's cookie does not
                       // a device that watches, or a Portal visitor, is not told how the others are connected: for them no row says offline
                       // nor one seen in the last minutes, which may be reaching this PC another way (its browser cookie)
-                      : d.via_relay && !watching && !guest && !seenLately(d.last_seen_at)
-                        ? <ConnectionLine state={{ kind: "offline", text: t("Offline · last seen {when}", { when: lastSeen(d.last_seen_at) }) }} reason={t("The app is closed, or its network is off.")} />
-                        : <span className="settings-description">{t("Last seen {when}", { when: lastSeen(d.last_seen_at) })}</span>}
+                      : d.via_relay && !watching && !guest && !seenLately(d)
+                        ? <ConnectionLine state={{ kind: "offline", text: t("Offline · last seen {when}", { when: seenWhen(d) }) }} reason={t("The app is closed, or its network is off.")} />
+                        : <span className="settings-description">{t("Last seen {when}", { when: seenWhen(d) })}</span>}
                     {d.not_me_waiting && <span className="settings-description" role="status">{t("Not me is waiting. Revoke this device to stop its access now.")}</span>}
                   </div>
                   {d.current && currentAction}

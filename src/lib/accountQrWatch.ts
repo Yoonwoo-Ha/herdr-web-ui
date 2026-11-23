@@ -51,9 +51,10 @@ export function addedBy(devices: readonly PairedDevice[], known: ReadonlySet<str
 /**
  * The devices the code let in that nobody vouched for: every one that came since `known` was read, through the relay
  * or at the PC's own address, and is no member of the account the PC is in (`account`; null: in none, so none is one).
+ * A device the account's own list let in (`through_account`) came by no code: that account vouches for it.
  */
 export function unvouched(devices: readonly PairedDevice[], known: ReadonlySet<string>, account: string | null): PairedDevice[] {
-  return devices.filter((device) => !known.has(device.id) && (account === null || device.account !== account));
+  return devices.filter((device) => !device.through_account && !known.has(device.id) && (account === null || device.account !== account));
 }
 
 export const strayOf = (device: PairedDevice): AccountQrStray => ({ id: device.id, label: device.label, relay: device.via_relay === true });

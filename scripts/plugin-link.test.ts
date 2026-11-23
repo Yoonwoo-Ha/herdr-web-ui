@@ -1762,6 +1762,18 @@ describe("ovis link, on the PC itself", () => {
     expect(service.pcs("acct_1").length).toBe(1);
   });
 
+  it("leaves alone the account's own devices the PC lets in as it joins: they came by the account's list, not by the code", async () => {
+    // GET /api/devices names a device the account's list let in `through_account`, with no `account` of its own
+    const JOINED: Row & { through_account: true } = { id: "00000000000000d4", label: "Pixel", role: "drive", created_at: "2026-11-06T12:00:50.000Z", last_seen_at: null, current: false, via_relay: true, through_account: true };
+    const { code, out, revoked, paths } = await scanning({
+      step: (state, looks) => { if (looks === 3) { state.account = "acct_1"; state.devices = [OLD, MEMBER, JOINED]; } },
+    });
+    expect(code).toBe(0);
+    expect(revoked).toEqual([]);
+    expect(paths.some((path) => path.startsWith("DELETE /api/devices/"))).toBe(false);
+    expect(out.at(-1)).toBe("This PC is in your account (acct_1), added by Hako's iPhone: every device of your account can use it.\n" + CLOSING);
+  });
+
   it("draws no QR code where there is no terminal, and asks for no sign-in first; --print writes it as plain lines", async () => {
     const refused = await scanning({ isTty: false });
     expect(refused.code).toBe(1);

@@ -233,6 +233,14 @@ export function otherDevice(devices: readonly PairedDevice[]): string | null {
   return devices.find((device) => !device.current)?.label ?? null;
 }
 
+/**
+ * The device a code shown since `known` was read paired here, if one did; null `known`: not read yet, so none. One the
+ * PC's account let in (`through_account`) came by no code, so it is not that one.
+ */
+export function pairedSince(devices: readonly PairedDevice[], known: ReadonlySet<string> | null): PairedDevice | undefined {
+  return known === null ? undefined : devices.find((device) => !device.through_account && !known.has(device.id));
+}
+
 export interface SetupFacts {
   workspace: boolean;
   phone: boolean;

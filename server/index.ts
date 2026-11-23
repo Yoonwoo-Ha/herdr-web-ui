@@ -375,6 +375,7 @@ export function createServer(
       },
     },
     admitListedRows: write => devices.admitListedRows(write),
+    admitted: (rows) => { devices.announceListAdmissions(rows); },
   }) : null;
   const devices: DeviceStore = new DeviceStore(stateDir, merge?.devicesBlocked ?? blocked, accountBlocked, {
     safety: safetyLog, pc: pcAccount, removals, journal, carried, joinedRows: rowsForDevices, held: (key) => accountMailbox.gates().held(key),
@@ -382,8 +383,11 @@ export function createServer(
   });
   devices.attachTailnetNodes(tailnetNodes);
   // a join is told to every window of this PC that opens until one of them sees it (server/join-notices.ts)
-  const joins = new JoinNotices(join(stateDir, "join-notices.json"), (id) => devices.has(id));
+  const joins = new JoinNotices(join(stateDir, "join-notices.json"), (id) => devices.has(id), (id) => devices.listsAccountRow(id));
   devices.onPaired((event, origin) => joins.add(event, origin));
+  // the devices the account's list let in: one notice a whole read, for this PC's own window, taken back as they go
+  devices.onListAdmissions((rows) => joins.addListed(rows.map(({ id, label }) => ({ id, label })), rows[0]!.confirmed_at));
+  devices.onListedChange(() => joins.settleListed());
   const accountRows = opened.rows;
   const accountHolds = new AccountHolds({ enrollingPath: join(stateDir, "account-enrolling.json"), heldPath: join(stateDir, "account-held.json") });
   const accountMailbox = new AccountMailbox({

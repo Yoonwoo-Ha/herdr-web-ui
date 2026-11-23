@@ -47,6 +47,7 @@ export const DEVICES_JA: Record<string, string> = {
   "Save name": "名前を保存",
   "Last seen {when}": "最終アクセス {when}",
   "This device now": "いま使っているデバイス",
+  "Through your account": "アカウントで接続",
   "Offline · last seen {when}": "オフライン · 最終接続 {when}",
   "The app is closed, or its network is off.": "アプリが閉じているか、ネットワークが切れています。",
   "Rename {name}": "{name} の名前を変更",

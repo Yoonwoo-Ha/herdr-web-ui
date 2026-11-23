@@ -89,11 +89,17 @@ export interface PairedDevice {
   readonly label: string;
   readonly role: DeviceRole;
   readonly created_at: string;
+  /** on a row `through_account`: the start (UTC) of the day it was last used here, the finest this PC keeps for one */
   readonly last_seen_at: string | null;
   /** the device this request came from */
   readonly current: boolean;
   /** paired with a public key for relay access, not a browser cookie */
   readonly via_relay?: true;
+  /**
+   * let in by the account's own list (account-devices.json), not paired here: a device signed in to the PC's account.
+   * Listed while it may sign in here, now or once its hold or wait ends; renamed and revoked by its id like any row.
+   */
+  readonly through_account?: true;
   /** account members only, and only to a caller that may drive (docs/account.md, "Account members") */
   readonly account?: string;
   /** that member's account key: its `relay_public_key`, which is public */

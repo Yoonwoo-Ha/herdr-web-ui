@@ -1,7 +1,10 @@
 /**
  * Joins this PC announced and nobody has seen yet (`join-notices.json` beside devices.json): any of this PC's windows
  * that opens later is told of them (machine-pairing-events.ts), until one window marks one seen, which is seen for all.
+ * The devices the account's list let in during one whole read are one notice, for this PC's own window alone: every
+ * older device was told of each by its journal notice already.
  */
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { DevicePairedEvent } from "../shared/protocol.ts";
 import type { Access } from "./access.ts";
@@ -14,19 +17,36 @@ export const WAITING_JOIN_LIMIT = 3;
 export const WAITING_JOIN_MS = 7 * 24 * 60 * 60 * 1000;
 export const JOIN_SEEN_PATH = "/api/devices/joins/seen";
 
-/** `origin`: the stream keys of the browser that paired, which is never told of its own pairing. */
-export interface WaitingJoin { readonly event: DevicePairedEvent; readonly origin: readonly string[] }
+/**
+ * `origin`: the stream keys of the browser that paired, which is never told of its own pairing. `rows`: on a list
+ * admission's notice, the account rows it names; it stands while one of them is listed here.
+ */
+export interface WaitingJoin { readonly event: DevicePairedEvent; readonly origin: readonly string[]; readonly rows?: readonly ListedRow[] }
+
+export interface ListedRow { readonly id: string; readonly label: string }
 
 /** The window asking: this PC's own (dispatch.ts ownWindow), and when it is a device, when that device was added here. */
 export interface JoinViewer { readonly ownWindow: boolean; readonly since: string | undefined }
 
 /**
  * Who is told of a waiting join, and so may mark it seen for all: this PC's own window, or a device that was here before
- * the join (the journal's T57 rule). A device paired later never hears of older joins, nor clears them.
+ * the join (the journal's T57 rule). A device paired later never hears of older joins, nor clears them. A list
+ * admission's notice is this PC's own window's alone.
  */
 export function shownTo(join: WaitingJoin, viewer: JoinViewer): boolean {
+  if (join.rows !== undefined) return viewer.ownWindow;
   return viewer.ownWindow || (viewer.since !== undefined && Date.parse(viewer.since) < Date.parse(join.event.enrolled_at));
 }
+
+/** One notice for the rows one whole read let in: the first one's name, and how many more ("Pixel 9 +2"). */
+function listedEvent(rows: readonly ListedRow[], enrolledAt: string): DevicePairedEvent {
+  const more = rows.length > 1 ? ` +${rows.length - 1}` : "";
+  return { type: "device-paired", event_id: randomBytes(8).toString("hex"), device_id: rows[0]!.id,
+    label: `${rows[0]!.label.slice(0, 48 - more.length)}${more}`, enrolled_at: enrolledAt };
+}
+
+const isListedRows = (rows: unknown): boolean => rows === undefined
+  || (Array.isArray(rows) && rows.length > 0 && rows.every((row) => typeof row?.id === "string" && typeof row?.label === "string"));
 
 function readJoins(path: string): WaitingJoin[] {
   let text: string;
@@ -34,7 +54,7 @@ function readJoins(path: string): WaitingJoin[] {
   try {
     const joins = (JSON.parse(text) as { joins?: unknown }).joins;
     return Array.isArray(joins) ? joins.filter((join): join is WaitingJoin => typeof join?.event?.event_id === "string"
-      && typeof join.event.device_id === "string" && typeof join.event.enrolled_at === "string" && Array.isArray(join.origin)) : [];
+      && typeof join.event.device_id === "string" && typeof join.event.enrolled_at === "string" && Array.isArray(join.origin) && isListedRows(join.rows)) : [];
   } catch (error) {
     // a notice that cannot be read is only a notice: the PC starts with none rather than refusing anything
     console.warn(`[devices] ${path} could not be read, so no join waits to be seen: ${error instanceof Error ? error.message : String(error)}`);
@@ -45,10 +65,38 @@ function readJoins(path: string): WaitingJoin[] {
 export class JoinNotices {
   private joins: WaitingJoin[];
   private readonly seenListeners = new Set<(eventId: string) => void>();
+  private readonly listedListeners = new Set<(event: DevicePairedEvent) => void>();
 
-  /** `stands`: whether the device a join names is still here; a removed device's join is not news any more. */
-  constructor(private readonly path: string, private readonly stands: (deviceId: string) => boolean) {
+  /**
+   * `stands`: whether the device a join names is still here; a removed device's join is not news any more. `listed`:
+   * whether an account row is listed here (DeviceStore.listsAccountRow); one that is not is no longer news either.
+   */
+  constructor(private readonly path: string, private readonly stands: (deviceId: string) => boolean, private readonly listed: (rowId: string) => boolean = () => false) {
     this.joins = readJoins(path);
+  }
+
+  /** The account rows one whole read let in: one notice for those still listed, told to this PC's own window alone. */
+  addListed(rows: readonly ListedRow[], enrolledAt: string, now = Date.now()): void {
+    const standing = rows.filter((row) => this.listed(row.id));
+    if (standing.length > 0) this.tellListed(standing, enrolledAt, now);
+  }
+
+  /**
+   * A list admission's notice says nothing of a row that is no longer listed (dropped, refused, expired, frozen): it is
+   * taken back from every window (`device-paired-seen`), and told again naming the rows that still are, if any.
+   */
+  settleListed(now = Date.now()): void {
+    for (const join of this.joins) {
+      if (join.rows === undefined) continue;
+      const standing = join.rows.filter((row) => this.listed(row.id));
+      if (standing.length === join.rows.length || !this.see(join.event.event_id)) continue;
+      if (standing.length > 0) this.tellListed(standing, join.event.enrolled_at, now);
+    }
+  }
+
+  onListed(listener: (event: DevicePairedEvent) => void): () => void {
+    this.listedListeners.add(listener);
+    return () => { this.listedListeners.delete(listener); };
   }
 
   /** A durable join, kept until seen; the newest few within the week. A failed write keeps it for this run. */
@@ -58,7 +106,7 @@ export class JoinNotices {
   }
 
   waiting(now = Date.now()): readonly WaitingJoin[] {
-    const kept = this.fresh(this.joins, now).filter((join) => this.stands(join.event.device_id));
+    const kept = this.fresh(this.joins, now).filter((join) => join.rows === undefined ? this.stands(join.event.device_id) : join.rows.some((row) => this.listed(row.id)));
     if (kept.length !== this.joins.length) {
       this.joins = kept;
       this.save();
@@ -83,8 +131,20 @@ export class JoinNotices {
     return () => { this.seenListeners.delete(listener); };
   }
 
+  private tellListed(rows: readonly ListedRow[], enrolledAt: string, now: number): void {
+    const join = { event: listedEvent(rows, enrolledAt), origin: [], rows };
+    this.joins = this.fresh([...this.joins, join], now);
+    this.save();
+    for (const listener of [...this.listedListeners]) {
+      try { listener(join.event); } catch (error) { console.warn(`[devices] a listed-join listener failed: ${error instanceof Error ? error.message : String(error)}`); }
+    }
+  }
+
+  /** The newest few of each within the week: a list admission's notice never pushes out a pairing's. */
   private fresh(joins: readonly WaitingJoin[], now: number): WaitingJoin[] {
-    return joins.filter((join) => now - Date.parse(join.event.enrolled_at) < WAITING_JOIN_MS).slice(-WAITING_JOIN_LIMIT);
+    const recent = joins.filter((join) => now - Date.parse(join.event.enrolled_at) < WAITING_JOIN_MS);
+    const kept = new Set([...recent.filter((join) => join.rows === undefined).slice(-WAITING_JOIN_LIMIT), ...recent.filter((join) => join.rows !== undefined).slice(-WAITING_JOIN_LIMIT)]);
+    return recent.filter((join) => kept.has(join));
   }
 
   private save(): void {

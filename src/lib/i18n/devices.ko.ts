@@ -47,6 +47,7 @@ export const DEVICES_KO: Record<string, string> = {
   "Save name": "이름 저장",
   "Last seen {when}": "마지막 접속 {when}",
   "This device now": "지금 이 기기",
+  "Through your account": "계정으로 연결됨",
   "Offline · last seen {when}": "오프라인 · 마지막 접속 {when}",
   "The app is closed, or its network is off.": "앱이 닫혀 있거나 네트워크가 끊겼습니다.",
   "Rename {name}": "{name} 이름 바꾸기",

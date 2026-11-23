@@ -21,6 +21,8 @@ export interface AccountRowSource {
   row(id: string): AccountRow | null;
   rename(id: string, label: string): AccountRow | null;
   rowsByKey(key: string): readonly AccountRow[];
+  /** Whether row `id` stands as admitted here, read only: not expired, and out of its hold only through the admission guard. */
+  standing(id: string): boolean;
   access(id: string): AccessAnswer;
   pruneDenied(evidence: RemovalEvidence, legacyRevoke?: "revoke_all"): void;
   removeRows(ids: readonly string[], reason: Exclude<DropReason, "list">, close?: (id: string) => void): void;
@@ -68,6 +70,11 @@ export interface AccountRowPorts {
   admits(key: string, account: string): boolean;
   /** Puts the admission's notice in the unseen set of every older row, on disk; throws when it could not. */
   publish(entry: JournalEntry & { readonly accountNo: number }): void;
+  /**
+   * The rows one whole read newly admitted, on disk: told once per read that admits any, never for a row read at a
+   * start, a republish or a sign-in.
+   */
+  admitted?(rows: readonly AccountRow[]): void;
   now(): number;
   /**
    * Numbers one admission on this PC and returns its origin (PcAccountState.admit in pc-binding.ts, P12, P22): its

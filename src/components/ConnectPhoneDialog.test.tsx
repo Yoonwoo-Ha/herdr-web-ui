@@ -2459,6 +2459,15 @@ describe("the relay tab's QR code behind a press", () => {
     expect(unvouched(list, known, null).map((entry) => entry.id)).toEqual(["b", "s", "c"]);
     expect(unvouched(list, new Set(["a", "s", "c"]), ACCOUNT_ID)).toEqual([]);
   });
+
+  it("never counts a device the PC's account let in as one the code let in: the account vouches for it, and it names no adder", () => {
+    const known = { ids: new Set(["a"]), seen: new Map<string, number>() };
+    const joined = phoneDevice({ id: "j", label: "Pixel", through_account: true });
+    const list = [device({ account: ACCOUNT_ID }), joined, device({ id: "c", label: "Tablet" })];
+    expect(unvouched(list, known.ids, ACCOUNT_ID).map((entry) => entry.id)).toEqual(["c"]);
+    expect(accountQrFindings(list, ACCOUNT_ID, known, 1000)).toEqual({ due: [{ id: "c", label: "Tablet", relay: false }], checking: [] });
+    expect(addedBy(list, known.ids, ACCOUNT_ID)?.label).toBe("Laptop · Chrome");
+  });
 });
 
 function tailscaleAccess(tailscale: Partial<TailscaleAccess> & Pick<TailscaleAccess, "state">): RemoteAccess {

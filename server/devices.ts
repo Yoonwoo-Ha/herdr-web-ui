@@ -593,6 +593,8 @@ export class DeviceStore {
   private readonly carried: readonly AccountTombstone[];
   private readonly journal: DeviceJournal | null;
   private readonly noticeListeners = new Set<(entry: JournalEntry) => void>();
+  private readonly listAdmissions = new Set<(rows: readonly AccountRow[]) => void>();
+  private readonly listedChanges = new Set<() => void>();
   private readonly keyRemovedListeners = new Set<(key: string, cause: KeyRemovedCause) => void>();
   /** A deny that could not reach the disk (P8 step 1): only this PC itself gets in until one is written. */
   private denyProblem: string | null = null;
@@ -1757,6 +1759,63 @@ export class DeviceStore {
   }
 
   /**
+   * The account-joined rows GET /api/devices shows after `list`, which stays devices.json alone for its other callers.
+   * A row is shown while it stands as admitted here (AccountRowSource.standing), in its hold or the wait after a start
+   * too. One that can no longer sign in here is left out: expired (by its state or the clock), refused by the admission
+   * guard as its hold ended, or stale (accountRowStale: removal evidence, a tombstone, a freeze, the lock, a failed
+   * deny, unreadable account state). A key devices.json holds is listed once, as its row there. Reading it changes no
+   * row: no hold ends, nothing expires.
+   */
+  listAccountJoined(currentId: string | null): PairedDevice[] {
+    return (this.joinedRows?.rows() ?? []).filter((row) => this.listsJoined(row)).map((row) => this.joinedAsPaired(row, currentId));
+  }
+
+  /** Whether GET /api/devices lists the account row `id` (listAccountJoined). */
+  listsAccountRow(id: string): boolean {
+    const row = this.joinedRows?.row(id) ?? null;
+    return row !== null && this.listsJoined(row);
+  }
+
+  private listsJoined(row: AccountRow): boolean {
+    return this.joinedRows?.standing(row.id) === true && !this.accountRowStale(row)
+      && !this.devices.some((d) => d.id === row.id || d.relay_public_key === row.key);
+  }
+
+  /** An account-joined row as GET /api/devices and PATCH /api/devices/:id answer it: last seen by the day this PC keeps. */
+  private joinedAsPaired(row: AccountRow, currentId: string | null): PairedDevice {
+    return { id: row.id, label: row.label, role: "drive", created_at: row.confirmed_at,
+      last_seen_at: row.last_signin_day === null ? null : `${row.last_signin_day}T00:00:00.000Z`,
+      current: row.id === currentId, via_relay: true, through_account: true };
+  }
+
+  /**
+   * The rows one whole read let in (AccountRowPorts.admitted). Not announced as a pairing is (onPaired): every older
+   * device hears of each by its journal notice, so only this PC's own window is told (server/join-notices.ts).
+   */
+  announceListAdmissions(rows: readonly AccountRow[]): void {
+    for (const listener of [...this.listAdmissions]) {
+      try { listener(rows); } catch (error) { console.warn(`[devices] a list admission listener failed: ${describe(error)}`); }
+    }
+  }
+
+  onListAdmissions(listener: (rows: readonly AccountRow[]) => void): () => void {
+    this.listAdmissions.add(listener);
+    return () => { this.listAdmissions.delete(listener); };
+  }
+
+  /** Hears that an account row may have stopped being listed: after a write of either file, a refusal, a safety change. */
+  onListedChange(listener: () => void): () => void {
+    this.listedChanges.add(listener);
+    return () => { this.listedChanges.delete(listener); };
+  }
+
+  private listedChanged(): void {
+    for (const listener of [...this.listedChanges]) {
+      try { listener(); } catch (error) { console.warn(`[devices] a listed-row listener failed: ${describe(error)}`); }
+    }
+  }
+
+  /**
    * Hears of every new six-digit code, which replaces the one pending, and of a code ended (endPairing):
    * either way a typed relay code bound to the old one goes (server/relay/pair-code.ts).
    */
@@ -2183,6 +2242,7 @@ export class DeviceStore {
     for (const row of this.joinedRows?.rows() ?? []) {
       if (this.accountRowStale(row)) this.closeAccountSessions(row.id);
     }
+    this.listedChanged();
   }
 
   /** A row of either store by id, an account row as the order checks see it. */
@@ -2846,7 +2906,7 @@ export class DeviceStore {
     if (!device) {
       if (patch.label === undefined || patch.role !== undefined) return null;
       const row = this.joinedRows?.rename(id, patch.label);
-      return row ? { id, label: row.label, role: "drive", created_at: row.confirmed_at, last_seen_at: null, current: false, via_relay: true } : null;
+      return row ? this.joinedAsPaired(row, null) : null;
     }
     const updated = { ...device, ...(patch.label === undefined ? {} : { label: patch.label }), ...(patch.role === undefined ? {} : { role: patch.role }) };
     const next = this.devices.map((d) => d === device ? updated : d);
@@ -2938,13 +2998,15 @@ export class DeviceStore {
 
   /** Reconcile only against known registries, after a write or on recovery. A transfer may keep the original notice. */
   settleListNotices(rows: readonly AccountRow[], members = this.devices): void {
-    if (this.error !== null || this.journal?.strict !== null) return;
-    this.journal.settleList(n => {
-      const member = members.find(m => m.relay_public_key === n.key);
-      if (member) return member.held === n.id || member.carried_notice === n.id;
-      return rows.some(r => r.id === n.row && r.key === n.key && (r.state === "hold" || r.state === "live")
-        && (r.origin.admit_no === n.no || r.no === n.no));
-    });
+    try {
+      if (this.error !== null || this.journal?.strict !== null) return;
+      this.journal.settleList(n => {
+        const member = members.find(m => m.relay_public_key === n.key);
+        if (member) return member.held === n.id || member.carried_notice === n.id;
+        return rows.some(r => r.id === n.row && r.key === n.key && (r.state === "hold" || r.state === "live")
+          && (r.origin.admit_no === n.no || r.no === n.no));
+      });
+    } finally { this.listedChanged(); }
   }
 
   mayAnswerNotice(caller: string | undefined, id: string): boolean {
@@ -3824,7 +3886,7 @@ export async function handleDeviceRequest(request: Request, pathname: string, st
     // Callers without PC-level Revoke authority get their verdict for each row (T19, T20).
     const callerId = access.level === "full" ? access.device?.id ?? null : null;
     const pendingNotMe = ownWindow && drive ? store.pendingNotMeRows() : null;
-    const devices = store.list(callerId, drive)
+    const devices = [...store.list(callerId, drive), ...store.listAccountJoined(callerId)]
       .map((device) => { const connection = live.get(device.id); return connection ? { ...device, connection } : device; })
       .map((device) => pendingNotMe?.has(device.id) ? { ...device, not_me_waiting: true as const } : device)
       .map((device) => orderedRevoke ? { ...device, remote_revoke: drive ? store.remoteRevoke(callerId, device.id) : "read_only" as const } : device);

@@ -879,6 +879,8 @@ interface Device {
   readonly id: string; readonly label: string; readonly created_at: string; readonly via_relay?: true; readonly account?: string;
   /** on a member another member brought in: that member's id. A member without it linked itself */
   readonly added_by?: string;
+  /** let in by the list of the account this PC is in, never by a code: that account vouches for it */
+  readonly through_account?: true;
 }
 
 /**
@@ -953,7 +955,9 @@ async function addByQr(options: LinkOptions, api: Api, joining: Joining): Promis
   const { out, signal } = options;
   const now = options.now ?? Date.now;
   const wait = options.wait ?? waitFor;
-  const devices = async (within?: AbortSignal): Promise<Device[]> => (await api<{ devices: Device[] }>("GET", "/api/devices", within === undefined ? {} : { signal: within })).devices;
+  // the devices a code may have let in: one the account's own list let in came by no code, and that account vouches for it
+  const devices = async (within?: AbortSignal): Promise<Device[]> => (await api<{ devices: Device[] }>("GET", "/api/devices", within === undefined ? {} : { signal: within })).devices
+    .filter((device) => !device.through_account);
   const startedAt = now();
   const stopAt = startedAt + WAITING_MS;
   // the window the listing opened is for approving here, which this way does not do: nothing is taken through it.

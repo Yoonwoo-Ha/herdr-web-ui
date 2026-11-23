@@ -5,7 +5,7 @@ import type { SecuritySummary } from "../../shared/access.ts";
 import type { HealthAuth, RelayStatus } from "../../shared/protocol.ts";
 import type { ProviderUsage } from "../../shared/usage.ts";
 import { onSetupGuideRequest, openSetupGuide } from "./setupGuide.ts";
-import { agentRows, alertsFailed, alertsHere, alertsSurfaces, type AlertsFacts, type AlertsHere, autoOpen, CHECK_SETTLE_MS, checkList, checkStatus, foundAgents, guideStep, INSTALL_GIVE_UP_MS, installedHere, openInFolder, otherDevice, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, preferredAgent, relayOnlyPc, GUIDE_STORAGE_KEY, readGuide, readSignedIn, relayStep, REOPENED, saveGuide, settleDelay, setupLeft, setupView, signedInAgents, tileState, turnsUsageOn, FIRST_RUN, type FreshFacts, type PcCheck } from "./setupGuideFlow.ts";
+import { agentRows, alertsFailed, alertsHere, alertsSurfaces, type AlertsFacts, type AlertsHere, autoOpen, CHECK_SETTLE_MS, checkList, checkStatus, foundAgents, guideStep, INSTALL_GIVE_UP_MS, installedHere, openInFolder, otherDevice, pairedSince, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, preferredAgent, relayOnlyPc, GUIDE_STORAGE_KEY, readGuide, readSignedIn, relayStep, REOPENED, saveGuide, settleDelay, setupLeft, setupView, signedInAgents, tileState, turnsUsageOn, FIRST_RUN, type FreshFacts, type PcCheck } from "./setupGuideFlow.ts";
 
 const FRESH: FreshFacts = { workspaces: 0, savedSettings: false, sharedRevision: 0, pairingGate: "open", watching: false };
 
@@ -369,6 +369,18 @@ describe("otherDevice", () => {
     const self = { id: "self", label: "this browser", role: "drive" as const, created_at: "2026-11-15T00:00:00Z", last_seen_at: null, current: true };
     const linked = { ...self, id: "phone", label: "Pixel 9", current: false, via_relay: true, account: "me@example.com" };
     expect(otherDevice([self, linked])).toBe("Pixel 9");
+    expect(otherDevice([self, { ...self, id: "joined", label: "Pixel 8", current: false, via_relay: true, through_account: true }])).toBe("Pixel 8");
+  });
+});
+
+describe("pairedSince", () => {
+  const row = (id: string, extra = {}) => ({ id, label: `device ${id}`, role: "drive" as const, created_at: "2026-11-15T00:00:00Z", last_seen_at: null, current: false, ...extra });
+  it("names the device that came since the list was read, never one the PC's account let in", () => {
+    const known = new Set(["old"]);
+    expect(pairedSince([row("old")], known)).toBeUndefined();
+    expect(pairedSince([row("old"), row("joined", { via_relay: true, through_account: true })], known)).toBeUndefined();
+    expect(pairedSince([row("old"), row("joined", { through_account: true }), row("phone", { via_relay: true })], known)?.id).toBe("phone");
+    expect(pairedSince([row("phone")], null)).toBeUndefined();
   });
 });
 

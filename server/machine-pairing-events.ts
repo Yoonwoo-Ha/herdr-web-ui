@@ -18,6 +18,8 @@ export function machinePairingEvents({ services, peer }: ServerContext, access: 
     const tells = (event: DevicePairedEvent, origin: readonly string[]) => !openAccess && event.device_id !== deviceId
       && !(ownKey !== undefined && devices.relayKeyOf(event.device_id) === ownKey) && !sameBrowser(origin, keys);
     const stopPaired = devices.onPaired((event, origin) => { if (tells(event, origin)) listener(event); });
+    // the devices the account's list let in: this PC's own window alone, as their notice waits for it (shownTo)
+    const stopListed = viewer.ownWindow ? joins.onListed((event) => { if (tells(event, [])) listener(event); }) : undefined;
     // a join nobody has seen yet waits on the PC for the next window to open, until one window marks it seen for all: this
     // PC's own window, or a device that was here before the join (shownTo)
     for (const join of joins.waiting()) if (shownTo(join, viewer) && tells(join.event, join.origin)) listener(join.event);
@@ -37,6 +39,6 @@ export function machinePairingEvents({ services, peer }: ServerContext, access: 
       tellPending();
       stopPending = pendingRedemptions.onChange(tellPending);
     }
-    return () => { stopPaired(); stopSeen?.(); stopRemoved?.(); stopRelay?.(); stopPending?.(); };
+    return () => { stopPaired(); stopListed?.(); stopSeen?.(); stopRemoved?.(); stopRelay?.(); stopPending?.(); };
   } };
 }

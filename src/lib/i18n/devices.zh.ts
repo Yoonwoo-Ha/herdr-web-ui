@@ -47,6 +47,7 @@ export const DEVICES_ZH: Record<string, string> = {
   "Save name": "保存名称",
   "Last seen {when}": "上次在线 {when}",
   "This device now": "当前使用的设备",
+  "Through your account": "通过账户连接",
   "Offline · last seen {when}": "离线 · 上次在线 {when}",
   "The app is closed, or its network is off.": "应用已关闭，或网络已断开。",
   "Rename {name}": "重命名 {name}",

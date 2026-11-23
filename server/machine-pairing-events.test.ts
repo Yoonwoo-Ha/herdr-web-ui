@@ -18,13 +18,16 @@ function heard(access: Access, peer: ServerContext["peer"], keys: Record<string,
     relayKeyOf: (id: string) => keys[id],
     isAccountApproverSession: () => false,
   };
-  const joins = { waiting: () => waiting.map((deviceId) => ({ event: joinEvent(deviceId), origin: [] })), onSeen: () => () => {} };
+  const listed = new Set<(event: DevicePairedEvent) => void>();
+  const joins = { waiting: () => waiting.map((deviceId) => ({ event: joinEvent(deviceId), origin: [] })), onSeen: () => () => {},
+    onListed: (listener: (event: DevicePairedEvent) => void) => { listed.add(listener); return () => listed.delete(listener); } };
   const relay = { approvals: { subscribe: () => () => {}, subscribeRemote: () => () => {} } };
   const ctx = { services: { devices, joins, relay, pendingRedemptions: undefined }, peer } as unknown as ServerContext;
   const told: string[] = [];
   machinePairingEvents(ctx, access, [], viewer).subscribe((event) => { if (event.type === "device-paired") told.push(event.device_id); });
   const enroll = (deviceId: string) => { for (const listener of paired) listener(joinEvent(deviceId), []); };
-  return { told, enroll };
+  const admitFromList = (deviceId: string) => { for (const listener of listed) listener(joinEvent(deviceId)); };
+  return { told, enroll, admitFromList };
 }
 
 test("the joining device's own session is never told of its admission, also through another row of its key; others are", () => {
@@ -73,4 +76,18 @@ test("this PC's own window hears every join on it, signed in or not; a window th
   const open = heard({ level: "full", via: "open", role: "drive" }, { kind: "socket" }, keys);
   for (const window of [own, token, open]) window.enroll("phone-new-row");
   expect([own.told, token.told, open.told]).toEqual([["phone-new-row"], ["phone-new-row"], []]);
+});
+
+test("the devices the account's list let in are told live to this PC's own window alone", () => {
+  const keys = { member: "member-key", joined: "joined-key", watcher: "watcher-key" };
+  const device = (id: keyof typeof keys, role: "drive" | "watch" = "drive") => {
+    const row = { id, label: id, role };
+    return heard({ level: "full", via: "relay", role, device: row }, { kind: "relay", device: row, sessionId: id, serverId: "pc", key: keys[id] }, keys, [], { ownWindow: false, since: "2026-11-19T00:00:00.000Z" });
+  };
+  const own = heard({ level: "full", via: "local", role: "drive" }, { kind: "socket" }, keys);
+  const token = heard({ level: "full", via: "token", role: "drive" }, { kind: "socket" }, keys);
+  const portal = heard({ level: "full", via: "portal", role: "drive" }, { kind: "socket" }, keys, [], { ownWindow: false, since: undefined });
+  const windows = [own, token, device("member"), device("joined"), device("watcher", "watch"), portal];
+  for (const window of windows) window.admitFromList("pixel-row");
+  expect(windows.map((window) => window.told)).toEqual([["pixel-row"], ["pixel-row"], [], [], [], []]);
 });

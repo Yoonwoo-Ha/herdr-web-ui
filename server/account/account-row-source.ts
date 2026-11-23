@@ -29,15 +29,22 @@ export function accountRowsFor(stateDir: string, serverId: () => string | null, 
       schedule(current.rows());
     }, Math.min(2_147_483_647, Math.max(retryMs, due - ports.now())));
   };
+  let switching = false;
   const store = (): AccountDeviceStore | null => {
     const id = serverId();
     if (id === null) return null;
     if (open?.serverId !== id) {
-      // the rows of the identity this PC had end here: their sessions close, and the file is the new identity's (T44)
-      if (open !== null) {
-        open.store.clear("identity_reset");
-      }
-      open = { serverId: id, store: new AccountDeviceStore(stateDir, id, ports, schedule) };
+      // a reader the switch's own writes call back (a write settles its notices) sees no rows: the old identity's are
+      // ending and the new one's are not open yet. It never starts the switch again.
+      if (switching) return null;
+      switching = true;
+      try {
+        // the rows of the identity this PC had end here: their sessions close, and the file is the new identity's (T44)
+        if (open !== null) {
+          open.store.clear("identity_reset");
+        }
+        open = { serverId: id, store: new AccountDeviceStore(stateDir, id, ports, schedule) };
+      } finally { switching = false; }
       schedule(open.store.rows());
     }
     return open.store;
@@ -51,6 +58,7 @@ export function accountRowsFor(stateDir: string, serverId: () => string | null, 
     row: (id) => store()?.row(id) ?? null,
     rename: (id, label) => store()?.rename(id, label) ?? null,
     rowsByKey: (key) => store()?.rowsByKey(key) ?? [],
+    standing: (id) => store()?.standing(id) ?? false,
     access: (id) => store()?.access(id) ?? { refused: "not_listed" },
     pruneDenied: (evidence, legacyRevoke) => { store()?.pruneDenied(evidence, legacyRevoke); },
     removeRows: (ids, reason, close) => { store()?.removeRows(ids, reason, close); },

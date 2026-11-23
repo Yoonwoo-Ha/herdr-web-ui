@@ -34,6 +34,8 @@ export class AccountDeviceStore implements AccountRowSource {
    * signed while the PC was off (T41), and no time ends the wait. A whole read or `release` ends it.
    */
   private readonly waiting = new Set<string>();
+  /** The rows the whole read under way admitted, told together once it ends (commitList); null outside one. */
+  private admittedNow: AccountRow[] | null = null;
 
   constructor(stateDir: string, private readonly serverId: string, private readonly ports: AccountRowPorts,
     private readonly rowsChanged?: (rows: readonly AccountRow[]) => void) {
@@ -76,6 +78,14 @@ export class AccountDeviceStore implements AccountRowSource {
 
   rowsByKey(key: string): readonly AccountRow[] {
     return this.rows().filter((row) => row.key === key);
+  }
+
+  standing(id: string): boolean {
+    const row = this.row(id);
+    const now = this.ports.now();
+    if (!row || row.state === "expired" || expiresAt(row) <= now) return false;
+    const seconds = row.state === "hold" ? holdSecondsLeft(row.hold_until === null ? null : Date.parse(row.hold_until), now) : null;
+    return seconds !== 0 || this.admits(row.key);
   }
 
   /** Startup replay: finish the journal before the registry. There are no sessions to close yet. */
@@ -128,7 +138,11 @@ export class AccountDeviceStore implements AccountRowSource {
     if (row.state === "live") return { ok: true };
     const seconds = holdSecondsLeft(row.hold_until === null ? null : Date.parse(row.hold_until), this.ports.now());
     if (seconds === null || seconds > 0) return { refused: "join_hold", seconds };
-    if (!this.admits(row.key)) return { refused: "admission" };
+    if (!this.admits(row.key)) {
+      // no longer listed (standing): what was said of its admission is settled
+      this.ports.settleNotices?.(this.file.devices);
+      return { refused: "admission" };
+    }
     this.goLive(id);
     return { ok: true };
   }
@@ -231,6 +245,15 @@ export class AccountDeviceStore implements AccountRowSource {
 
   /** Applies a whole read's list: drops what it no longer names, then admits what it newly names and the guards let in. */
   commitList(list: ListCommit, readmission?: Readmission): { admitted: string[]; dropped: string[] } {
+    this.admittedNow = [];
+    try { return this.commit(list, readmission); } finally {
+      const rows = this.admittedNow;
+      this.admittedNow = null;
+      this.tellAdmitted(rows);
+    }
+  }
+
+  private commit(list: ListCommit, readmission?: Readmission): { admitted: string[]; dropped: string[] } {
     this.usable();
     const removed = new Set(list.removed.map((gone) => gone.key));
     const eligible = new Map(list.devices.filter((entry) => entry.eligible && !removed.has(entry.key)).map((entry) => [entry.key, entry]));
@@ -309,8 +332,18 @@ export class AccountDeviceStore implements AccountRowSource {
       return [row.id];
     });
     if (!standing.includes(row.id)) return false;
+    // the row is on disk: it is told even when its notice's publication or the write of its hold fails next
+    if (this.admittedNow !== null) this.admittedNow.push(row);
+    else this.tellAdmitted([row]);
     this.publish(row);
     return true;
+  }
+
+  private tellAdmitted(rows: readonly AccountRow[]): void {
+    if (rows.length === 0) return;
+    try { this.ports.admitted?.(rows); } catch (error) {
+      console.error(`[account] the admission of ${rows.map((row) => row.id).join(", ")} was not announced: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private drop(rows: readonly AccountRow[], reason: DropReason, close?: AccountRowPorts["closeSessions"]): string[] {

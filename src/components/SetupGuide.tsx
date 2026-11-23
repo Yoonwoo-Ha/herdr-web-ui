@@ -18,7 +18,7 @@ import { pageNotifications, showTestNotification, type NotificationState } from 
 import { refreshPushHealth, usePushHealth, type PushActionResult } from "../lib/pushHealth.ts";
 import { pickTheme, rowFor, THEME_IDS, type Mode, type ThemeId } from "../lib/themes.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
-import { agentRows, checkList, foundAgents, installedHere, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, openInFolder, preferredAgent, relayOnlyPc, relayStep, settleDelay, setupView, signedInAgents, turnsUsageOn, type CheckStatus, type GuideEvent, type GuideState, type PcCheck, type PhoneBoxOpening } from "../lib/setupGuideFlow.ts";
+import { agentRows, checkList, foundAgents, installedHere, pairedSince, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, openInFolder, preferredAgent, relayOnlyPc, relayStep, settleDelay, setupView, signedInAgents, turnsUsageOn, type CheckStatus, type GuideEvent, type GuideState, type PcCheck, type PhoneBoxOpening } from "../lib/setupGuideFlow.ts";
 import { focusInOtherModal, nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { inRelayShell, useRelay, type RelayState } from "../lib/useRelay.ts";
@@ -864,7 +864,7 @@ function RelayQr({ onPhonePaired }: { onPhonePaired: (name: string) => void }) {
       void fetchDevices().then((devices) => {
         if (!live) return;
         if (known === null) { known = new Set(devices.map((device) => device.id)); return; }
-        const fresh = devices.find((device) => !known!.has(device.id));
+        const fresh = pairedSince(devices, known);
         if (fresh !== undefined) { setPaired(fresh.label); onPhonePaired(fresh.label); }
       }, () => { /* asked again on the next turn */ }).finally(() => { asked = false; });
     };
@@ -919,7 +919,7 @@ function PhoneQr({ auth, onOpenSettings, onPaired, onPhonePaired, given, large =
     dropped.current = false;
     let live = true;
     fetchDevices().then((devices) => {
-      const fresh = devices.find((device) => !(before.current?.has(device.id) ?? true));
+      const fresh = pairedSince(devices, before.current);
       if (live && fresh !== undefined) { setPaired(fresh.label); onPhonePaired(fresh.label); }
     }, () => { /* unknown: New code stays offered */ });
     return () => { live = false; };
@@ -960,7 +960,7 @@ function PhoneQr({ auth, onOpenSettings, onPaired, onPhonePaired, given, large =
       asked = true;
       void fetchDevices().then((devices) => {
         if (!live) return;
-        const fresh = devices.find((device) => !(before.current?.has(device.id) ?? true));
+        const fresh = pairedSince(devices, before.current);
         if (fresh !== undefined) { setPaired(fresh.label); setCode(null); onPhonePaired(fresh.label); }
       }, () => { /* asked again on the next turn */ }).finally(() => { asked = false; });
     };
