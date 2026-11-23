@@ -139,7 +139,7 @@ export interface CoreLink {
   call<M extends HcMethod>(method: M, params: HcMethods[M]["params"], timeoutMs?: number): Promise<HcMethods[M]["result"]>;
   hello(): Promise<HelloInfo>;
   /** Publish the current Ovis layout before settling its write; false if the line ended. */
-  refreshLayout(): Promise<boolean>;
+  refreshLayout(signal?: AbortSignal): Promise<boolean>;
   /** Attaches on the current line; the channel hears `connection_lost` when that line ends, and is never reopened here. */
   attach(params: TerminalAttachParams, handlers: ChannelHandlers): Promise<{ result: HcMethods["terminal.attach"]["result"]; channel: Channel }>;
   /** Closes the event stream, then the line, and opens none again. */
@@ -267,18 +267,18 @@ class Link implements CoreLink {
     return this.online().hello!;
   }
 
-  async refreshLayout(): Promise<boolean> {
+  async refreshLayout(signal?: AbortSignal): Promise<boolean> {
     const line = this.line;
     if (line === null || this.current.kind !== "Online") return false;
     // A missed-event snapshot must finish publishing before we confirm a document to its writer.
     do {
-      while (!line.over && line.resyncing) await line.resyncing;
-      if (line.over) return false;
+      while (!line.over && !signal?.aborted && line.resyncing) await line.resyncing;
+      if (line.over || signal?.aborted) return false;
       const round = line.round;
       await this.readDoc(line, OVIS_LAYOUT_DOC);
       if (line.round === round) break;
     } while (!line.over);
-    return !line.over;
+    return !line.over && !signal?.aborted;
   }
 
   async attach(params: TerminalAttachParams, handlers: ChannelHandlers): Promise<{ result: HcMethods["terminal.attach"]["result"]; channel: Channel }> {

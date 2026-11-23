@@ -482,7 +482,16 @@ export class FakeHcCore {
     this.emit("turn", terminal, { state: status.state, turn: record.turn });
   }
 
-  /** How many `size` events are held back on their way (`late`): none once the event loop has turned. */
+  /** While set, every event and heartbeat waits on its line, in order, until `releaseEvents`: a core that answers before it tells. */
+  holdingEvents = false;
+
+  /** What `holdingEvents` held goes out, in order, and events flow again. */
+  releaseEvents(): void {
+    this.holdingEvents = false;
+    for (const line of this.lines.values()) this.release(line);
+  }
+
+  /** How many events are held back on their way (`late` sizes, none once the event loop has turned; `holdingEvents`). */
   heldEvents(): number {
     return [...this.lines.values()].reduce((sum, line) => sum + line.held.length, 0);
   }
@@ -848,8 +857,8 @@ export class FakeHcCore {
       if (!heard(stream.filter!)) continue;
       stream.carried = true;
       const { line } = stream;
-      if (size && (line.held.length > 0 || this.late?.() === true)) {
-        if (line.held.length === 0) setImmediate(() => this.release(line));
+      if (this.holdingEvents || (size && (line.held.length > 0 || this.late?.() === true))) {
+        if (!this.holdingEvents && line.held.length === 0) setImmediate(() => this.release(line));
         line.held.push({ stream, bytes: lineOf(message) });
         continue;
       }
@@ -860,6 +869,7 @@ export class FakeHcCore {
 
   /** What was held back for `line` (`late`) goes out, in order. */
   private release(line: Line): void {
+    if (this.holdingEvents) return;
     for (const { stream, bytes } of line.held.splice(0)) if (line.channels.get(stream.id) === stream) stream.push(bytes);
   }
 

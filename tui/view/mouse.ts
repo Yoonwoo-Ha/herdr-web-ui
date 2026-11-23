@@ -8,6 +8,7 @@
  * Over an open overlay only its close control acts.
  * The answer is a list of acts for the loop to perform; nothing here writes, sends or draws.
  */
+import { isDeepStrictEqual } from "node:util";
 import type { LayoutNode, SplitDirection } from "../../server/herdr-core/layout-doc.ts";
 import { type DividerName, dividerAt } from "../core/divider.ts";
 import type { EngineHistory, ScreenPoint, ScreenRange } from "../emulator/index.ts";
@@ -70,7 +71,7 @@ export type PointerAct =
 
 type Grab =
   | { readonly kind: "none" }
-  | { readonly kind: "forward"; readonly pane: string }
+  | { readonly kind: "forward"; readonly pane: string; readonly attachment: symbol; readonly screen: number; last: MouseInput }
   /** bound to the emulator and the screen (main or alternate) it was pressed on: the anchor means nothing on another */
   | ({ readonly kind: "select"; readonly pane: string; readonly anchor: ScreenPoint; readonly contentVersion: number } & ScreenOf)
   | { readonly kind: "divider"; readonly id: number; readonly tab: string; readonly name: DividerName; readonly rect: Rect; readonly direction: SplitDirection; readonly offset: number; moved: number | null };
@@ -96,10 +97,67 @@ export class Pointer {
   private grab: Grab = NONE;
   private selection: Selection | null = null;
   private grabs = 0;
+  private readonly identities = new WeakMap<object, symbol>();
+
+  private identity(object: object): symbol {
+    const known = this.identities.get(object);
+    if (known) return known;
+    const token = Symbol();
+    this.identities.set(object, token);
+    return token;
+  }
+
+  private paneStamp(pane: string, scene: PointerScene) {
+    const p = scene.painted(pane);
+    const l = scene.look(pane);
+    return [p && this.identity(p.emulator), p?.contentVersion, p?.screen, p?.altScreen, p?.rect, p?.grid, p?.top, p?.history,
+      l && this.identity(l.emulator), l?.screen, l?.altScreen, l?.programMouse, l?.grid];
+  }
 
   /** On a reported focus change, cancel a forward grab on any other pane. Selection and divider grabs keep their anchors. */
   focusChanged(pane: string | null): void {
     if (this.grab.kind === "forward" && this.grab.pane !== pane) this.grab = NONE;
+  }
+
+  /** A report belongs to the program screen that got the press, not merely the one seen when the report was read. */
+  private pressedScreen(grab: Extract<Grab, { kind: "forward" }>, scene: PointerScene): PaneLook | null {
+    const live = grab.pane === scene.focus ? scene.look(grab.pane) : null;
+    return live?.programMouse && live.screen === grab.screen && this.identity(live.emulator) === grab.attachment ? live : null;
+  }
+
+  /** Bind a deferred report without retaining a frame's hit map, tree or grids. A redraw of the same
+   * cells is harmless. A different hit, named divider, viewport, screen or program route is not. */
+  bind(event: MouseInput, scene: PointerScene): (now: PointerScene) => boolean {
+    const hit = scene.hits?.at(event.col, event.row);
+    const focus = scene.focus;
+    const site = mouseSite(event, scene);
+    const panes = new Set([focus, hit && "pane" in hit ? hit.pane : null,
+      this.grab.kind === "select" || this.grab.kind === "forward" ? this.grab.pane : null]);
+    const pictures = new Map([...panes].flatMap((pane) => pane === null ? [] : [[pane, this.paneStamp(pane, scene)] as const]));
+    return (now) => {
+      if (now.focus !== focus || !isDeepStrictEqual(site, mouseSite(event, now))) return false;
+      // Earlier reports in this queue may just have established the grab. Its pane, not the
+      // pane under the moving pointer, owns a drag; a divider does not depend on terminal output.
+      const grab = event.action !== "press" || isWheel(event) ? this.grab : NONE;
+      const pane = grab.kind === "select" || grab.kind === "forward" ? grab.pane
+        : grab.kind !== "divider" && hit && "pane" in hit ? hit.pane : null;
+      return pane === null || isDeepStrictEqual(pictures.get(pane), this.paneStamp(pane, now));
+    };
+  }
+
+  /** A stale report must not start or continue a grab. Close out only effects already delivered. */
+  cancel(scene: PointerScene, at: number): PointerAct[] {
+    const grab = this.grab;
+    const acts = finished(grab);
+    this.grab = NONE;
+    // Balance a press already delivered, on its original attachment at its last valid cell. A stale
+    // queued press never reached a program, so it has no forward grab to release.
+    if (grab.kind === "forward" && this.pressedScreen(grab, scene)) {
+      acts.push({ kind: "forward", pane: grab.pane, event: { ...grab.last, action: "release", at } });
+    }
+    if (this.selection) acts.push({ kind: "redraw" });
+    this.selection = null;
+    return acts;
   }
 
   mouse(over: "overlay" | "screen", event: MouseInput, scene: PointerScene): PointerAct[] {
@@ -113,7 +171,7 @@ export class Pointer {
         const grab = this.grab;
         this.grab = NONE;
         if (grab.kind === "divider") return finished(grab);
-        const look = grab.kind === "forward" && grab.pane === scene.focus ? scene.look(grab.pane) : null;
+        const look = grab.kind === "forward" ? this.pressedScreen(grab, scene) : null;
         return grab.kind === "forward" && look ? [{ kind: "forward", pane: grab.pane, event: inGrid(event, look) }] : [];
       }
       if (event.action !== "press") return [];
@@ -128,12 +186,13 @@ export class Pointer {
     if (event.action === "release") this.grab = NONE;
     switch (grab.kind) {
       case "forward": {
-        if (grab.pane !== scene.focus) {
+        const look = this.pressedScreen(grab, scene);
+        if (!look) {
           this.grab = NONE;
           return [];
         }
-        const look = scene.look(grab.pane);
-        return look ? [{ kind: "forward", pane: grab.pane, event: inGrid(event, look) }] : [];
+        grab.last = inGrid(event, look);
+        return [{ kind: "forward", pane: grab.pane, event: grab.last }];
       }
       case "select":
         return this.extend(grab, event, scene);
@@ -187,8 +246,9 @@ export class Pointer {
       const look = scene.look(hit.pane);
       if (!look) return dropped;
       if (look.programMouse && !event.mods.shift) {
-        this.grab = { kind: "forward", pane: hit.pane };
-        return [...dropped, { kind: "forward", pane: hit.pane, event: inGrid(event, look) }];
+        const press = inGrid(event, look);
+        this.grab = { kind: "forward", pane: hit.pane, attachment: this.identity(look.emulator), screen: look.screen, last: press };
+        return [...dropped, { kind: "forward", pane: hit.pane, event: press }];
       }
       const picture = scene.painted(hit.pane);
       if (event.button === "left" && picture && onScreen(look, picture)) {
@@ -201,10 +261,9 @@ export class Pointer {
     if (kind === "tab" || kind === "workspace") return [...dropped, { kind: "select", target: { kind, id } }];
     if (kind === "agent") return [...dropped, { kind: "select", target: { kind: "pane", id } }];
     if (hit.id === "toggle_sidebar" || hit.id === "new_workspace") return [...dropped, { kind: "action", action: hit.id }];
-    const split = scene.splits.find((candidate) => candidate.id === hit.id);
-    const path = split ? pathOf(split.id) : null;
-    const name = split && path && scene.tab ? dividerAt(scene.tab.root, path) : null;
-    if (split && name && scene.tab) {
+    const divider = namedSplit(hit.id, scene);
+    if (divider && scene.tab) {
+      const { split, name } = divider;
       const across = split.direction === "right";
       const first = (across ? split.divider.x - split.rect.x : split.divider.y - split.rect.y) + 1;
       const at = (across ? event.col - split.rect.x : event.row - split.rect.y) + 1;
@@ -267,6 +326,19 @@ export class Pointer {
     grab.moved = ratio;
     return [{ kind: "divider", grab: grab.id, tab: grab.tab, name: grab.name, ratio, done: false }];
   }
+}
+
+function namedSplit(id: string, scene: PointerScene) {
+  const path = pathOf(id);
+  const split = path && scene.splits.find((candidate) => candidate.id === id);
+  const name = split && scene.tab ? dividerAt(scene.tab.root, path) : null;
+  return split && name ? { split, name } : null;
+}
+
+/** Only the hit at this coordinate; divider ids are paths, not identities. */
+function mouseSite(event: MouseInput, scene: PointerScene) {
+  const hit = scene.hits?.at(event.col, event.row) ?? null;
+  return [scene.tab?.id, hit, hit && "id" in hit ? namedSplit(hit.id, scene) : null];
 }
 
 /** The end of a divider drag that moved, at the last ratio it moved to: at its release, or when its grab is dropped. */

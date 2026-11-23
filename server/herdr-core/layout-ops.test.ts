@@ -306,6 +306,26 @@ describe("closing and reading the core, shared with the screen", () => {
     expect(core.calls.map((call) => `${call.method} ${String(call.params["terminal"])}`).sort()).toEqual(["terminal.kill t1", "terminal.rm t1", "terminal.rm t2"]);
   });
 
+  it("end still tries every terminal and throws the first failure in request order", async () => {
+    const core = fakeCore();
+    const first = new HcError("blocked", "kill refused");
+    const secondFailed = Promise.withResolvers<void>();
+    const call = core.hc.call.bind(core.hc);
+    core.hc.call = async (method, params) => {
+      if (method === "terminal.kill" && params["terminal"] === "t1") {
+        await secondFailed.promise;
+        throw first;
+      }
+      if (method === "terminal.rm" && params["terminal"] === "t2") {
+        secondFailed.resolve();
+        throw new HcError("live", "remove refused");
+      }
+      return call(method, params);
+    };
+    await expect(core.store.end(["t1", "t2", "t3"])).rejects.toBe(first);
+    expect(core.terminals.map(({ address }) => address)).toEqual(["t1", "t2", "t4"]);
+  });
+
   it("endsOf names what closeTargets names and refuses Other terminals as a whole", async () => {
     const core = fakeCore();
     const { shown } = await readCore(core.hc as unknown as Pick<HcConnection, "call" | "hello">, { host: null });

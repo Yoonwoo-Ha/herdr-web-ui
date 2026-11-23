@@ -68,14 +68,26 @@ export type ScreenEvent =
   /** a notice from elsewhere (a failed layout write); `calm` for one that reports no failure */
   | { readonly type: "notice"; readonly code: string; readonly data?: Readonly<Record<string, string | number>>; readonly calm?: boolean; readonly at: number }
   /** focus the target once the world shows it (outside tab `away`): what a layout write made or moved; any other focus move drops it */
-  | { readonly type: "follow"; readonly target: Target; readonly away: string | null; readonly at: number };
+  | { readonly type: "follow"; readonly target: Target; readonly away: string | null; readonly at: number }
+  /**
+   * Input taken without running what it chose (a layout action refused as busy when it was read) or that went nowhere
+   * (input dropped behind a write): an armed prefix returns to Idle, and, as that input left them, the top overlay
+   * closes (`overlay`) and the mode returns to Terminal (`mode`). Nothing else happens: those keys meet no other layout.
+   */
+  | { readonly type: "consumed"; readonly overlay: boolean; readonly mode: boolean; readonly at: number };
 
 export type ModelEvent = InputEvent | ScreenEvent;
 
 export type Level = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 /** The next state, the effects in order, and the ladder levels that took the event (a split text run: one per part). */
-export interface Step { readonly state: ModelState; readonly effects: readonly Effect[]; readonly levels: readonly Level[] }
+export interface Step {
+  readonly state: ModelState;
+  readonly effects: readonly Effect[];
+  readonly levels: readonly Level[];
+  /** Where the character that chose an external action began, in the read and in the input ladder. */
+  readonly textAction?: { readonly offset: number; readonly before: ModelState };
+}
 
 export function initialState(keys: unknown): ModelState {
   return {
@@ -121,9 +133,11 @@ export function reduce(state: ModelState, event: ModelEvent): Step {
         notice(acc, "paste_refused", { length: event.text.length }, event.at);
       }
       break;
-    case "text":
-      ladderText(acc, event);
+    case "text": {
+      const textAction = ladderText(acc, event);
+      if (textAction) return { textAction, state: acc.s, effects: acc.effects, levels: acc.levels };
       break;
+    }
     case "mouse":
       mouse(acc, event);
       break;
@@ -152,6 +166,11 @@ export function reduce(state: ModelState, event: ModelEvent): Step {
     case "follow":
       acc.s = { ...acc.s, following: { target: event.target, away: event.away } };
       follow(acc);
+      break;
+    case "consumed":
+      disarm(acc);
+      if (event.overlay && acc.s.overlays.length > 0) acc.s = { ...acc.s, overlays: acc.s.overlays.slice(0, -1) };
+      if (event.mode && acc.s.mode.name !== "terminal") setMode(acc, { name: "terminal" });
       break;
     default:
       // an event of a kind the model does not know changes nothing
@@ -240,7 +259,7 @@ function prefixIndex(text: string, keymap: Keymap): number {
 }
 
 /** A text run down the ladder: whole to the pane where nothing above takes a code point, else one code point at a time. */
-function ladderText(acc: Acc, event: TextInput): void {
+function ladderText(acc: Acc, event: TextInput): Step["textAction"] {
   let rest = event.text;
   while (rest.length > 0) {
     const s = acc.s;
@@ -249,18 +268,23 @@ function ladderText(acc: Acc, event: TextInput): void {
       toPane(acc, run);
       return;
     }
-    if (s.overlays.length > 0) {
-      acc.levels.push(2);
-      toOverlay(acc, { kind: "text", event: run });
-      return;
-    }
     const [first, after] = splitFirst(rest);
+    if (s.overlays.length > 0) {
+      // one code point at a time, as reads that split the run would give them: a choice the overlay makes from one
+      // (a digit, a letter) leaves the rest of the run to whatever is below once it closed, never dropped
+      acc.levels.push(2);
+      const from = acc.effects.length;
+      toOverlay(acc, { kind: "text", event: { type: "text", text: first, at: event.at } });
+      if (handBack(acc, from, after, event.at)) return { offset: event.text.length - rest.length, before: s };
+      rest = after;
+      continue;
+    }
     if (s.mode.name !== "terminal") {
       acc.levels.push(3);
       const bound = boundIn(s.keymap.modeKeys[s.mode.name], charChords(first, false));
       const from = acc.effects.length;
       if (bound !== undefined) runAction(acc, bound.action, bound.index, event.at);
-      if (handBack(acc, from, after, event.at)) return;
+      if (handBack(acc, from, after, event.at)) return { offset: event.text.length - rest.length, before: s };
       rest = after;
       continue;
     }
@@ -274,7 +298,7 @@ function ladderText(acc: Acc, event: TextInput): void {
         const from = acc.effects.length;
         if (bound !== undefined) runAction(acc, bound.action, bound.index, event.at);
         else if (HANGUL.test(first)) notice(acc, "ime_prefix", {}, event.at);
-        if (handBack(acc, from, after, event.at)) return;
+        if (handBack(acc, from, after, event.at)) return { offset: event.text.length - rest.length, before: s };
       }
       rest = after;
       continue;
@@ -295,9 +319,11 @@ function ladderText(acc: Acc, event: TextInput): void {
  * After an action the caller performs (a run effect, such as a directional focus), the rest of the text run waits
  * for it: it goes back to the caller as an `input` effect behind the run, and the caller dispatches it once the run
  * is performed, so it meets the focus the action left. One read then routes as the same bytes split across reads do.
- * True when the run handed the rest back.
+ * After a detach the rest is dropped. True when the run handed the rest back or dropped it.
  */
 function handBack(acc: Acc, from: number, rest: string, at: number): boolean {
+  // nothing typed after a detach goes anywhere: the rest of the run ends with it, as a later read would
+  if (acc.effects.slice(from).some((effect) => effect.type === "quit")) return true;
   if (!acc.effects.slice(from).some((effect) => effect.type === "run")) return false;
   if (rest.length > 0) acc.effects.push({ type: "input", event: { type: "text", text: rest, at } });
   return true;

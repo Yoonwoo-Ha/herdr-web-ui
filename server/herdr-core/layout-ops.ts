@@ -289,6 +289,8 @@ export interface LayoutStoreOptions {
 /** How a new shell starts: in `cwd`, with `env` over the store's, carrying `labels` besides its place. */
 export interface NewShell { cwd?: string; env?: Record<string, string>; labels?: Record<string, string> }
 
+type EndResult = { terminal: string; step: "removed" } | { terminal: string; step: "kill" | "rm"; error: unknown };
+
 /**
  * The one writer of Ovis's layout on a core: workspaces and tabs are shells hc starts and labels, names
  * are labels, and order, splits and zoom are one document (docs/herdr-core-layout.md). Each operation
@@ -315,12 +317,23 @@ export class LayoutStore {
    * `finished` (its program already ended) only has its record removed.
    */
   async end(addresses: string[], finished: ReadonlySet<string> = new Set()): Promise<void> {
-    const ended = await Promise.allSettled(addresses.map(async (address) => {
-      if (!finished.has(address)) await this.hc.call("terminal.kill", { terminal: address });
-      await this.hc.call("terminal.rm", { terminal: address });
+    const failed = (await this.endEach(addresses, finished)).find((one) => one.step !== "removed");
+    if (failed) throw failed.error;
+  }
+
+  /** Same close, with the outcome for each address in request order, including the call that failed. */
+  endEach(addresses: string[], finished: ReadonlySet<string>): Promise<EndResult[]> {
+    return Promise.all(addresses.map(async (terminal): Promise<EndResult> => {
+      let step: "kill" | "rm" = "kill";
+      try {
+        if (!finished.has(terminal)) await this.hc.call("terminal.kill", { terminal });
+        step = "rm";
+        await this.hc.call("terminal.rm", { terminal });
+        return { terminal, step: "removed" };
+      } catch (error) {
+        return { terminal, step, error };
+      }
     }));
-    const failed = ended.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
-    if (failed) throw failed.reason;
   }
 
   /**

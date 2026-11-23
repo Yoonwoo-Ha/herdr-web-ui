@@ -85,6 +85,11 @@ export const CONFIG_TEXT_MAX_CHARS = 80;
 export const REFUSALS_SHOWN = 20;
 /** The most graphemes a one-line text field (rename, new tab name, goto) holds; typing or pasting past it is cut. */
 export const TEXT_FIELD_MAX_GRAPHEMES = 256;
+/**
+ * The most code points such a field holds, whatever its graphemes: a letter with endless marks after it is one
+ * grapheme, and its marks past this are refused. Room for every grapheme to carry three more (an emoji sequence).
+ */
+export const TEXT_FIELD_MAX_CODE_POINTS = 4 * TEXT_FIELD_MAX_GRAPHEMES;
 
 /**
  * A pane's first paint normally ends at hc's mark. Without one it counts as complete once the stream
@@ -113,6 +118,16 @@ export const FRAME_PASS_MS = 8;
 export const PASS_CREDIT_BYTES = 512 * 1024;
 /** Quit and a hang-up close every pane channel and the event stream within this long, answered or not. */
 export const QUIT_BOUND_MS = 2_000;
+/**
+ * Input that waited behind a layout write waits this long more, once the write is done, for the screen to show what the
+ * write did (the pane it made or moved, with focus on it; the panes a close ended, gone); past it that input is
+ * refused, never sent to the pane focused before.
+ */
+export const LAYOUT_SHOWN_WAIT_MS = 2_000;
+/** The most input events that wait behind a layout write; past it nothing more waits until the write is done. */
+export const BEHIND_WRITE_EVENTS = 4_096;
+/** The most bytes of typed and pasted text that wait behind a layout write: one paste at its limit. */
+export const BEHIND_WRITE_BYTES = PASTE_LIMIT_BYTES;
 /** A program's synchronized-output hold is ended this long after it began, if the program did not end it. */
 export const HOLD_RELEASE_MS = 1_000;
 /**

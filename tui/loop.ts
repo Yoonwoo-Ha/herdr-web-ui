@@ -15,6 +15,7 @@ import type { HcTransport, HelloInfo } from "../server/herdr-core/connection.ts"
 import { editLayout } from "../server/herdr-core/layout-ops.ts";
 import type { ScreenRange } from "./emulator/index.ts";
 import { DividerWrites } from "./core/divider.ts";
+import { type LayoutDone, LayoutWrites } from "./core/layout.ts";
 import { type CoreLink, type LinkNotice, type LinkState, openLink } from "./core/link.ts";
 import { createPanes, type PaneInput, type PaneNotice, type Panes } from "./core/pane.ts";
 import { CoreWorld, focusDirection, paneToward } from "./core/world.ts";
@@ -26,10 +27,10 @@ import { Framer } from "./input/framer.ts";
 import type { TuiThemeMode } from "./theme.generated.ts";
 import { buildChrome, sessionFromSocket } from "./view/chrome.ts";
 import { LINK_UNKNOWN, paneLive, shownLink, type ShownLink } from "./view/link-view.ts";
-import { type Deadlines, earliest, FRAME_PASS_MS, HOLD_RELEASE_MS, PASS_CREDIT_BYTES, PASTE_ABANDON_MS, QUIT_BOUND_MS, STYLE_TABLE_LIMIT, CRASH_ACTIONS_KEPT } from "./model/deadlines.ts";
-import type { Effect } from "./model/effects.ts";
-import { focused } from "./model/focus.ts";
-import { initialState, type ModelEvent, type ModelState, reduce } from "./model/reduce.ts";
+import { BEHIND_WRITE_BYTES, BEHIND_WRITE_EVENTS, type Deadlines, earliest, FRAME_PASS_MS, HOLD_RELEASE_MS, LAYOUT_SHOWN_WAIT_MS, PASS_CREDIT_BYTES, PASTE_ABANDON_MS, QUIT_BOUND_MS, STYLE_TABLE_LIMIT, CRASH_ACTIONS_KEPT } from "./model/deadlines.ts";
+import type { Effect, MouseInput } from "./model/effects.ts";
+import { exists, focused } from "./model/focus.ts";
+import { type Following, initialState, type ModelEvent, type ModelState, reduce } from "./model/reduce.ts";
 import { PaneGrid } from "./view/grid.ts";
 import { type PaneLook, type PanePicture, Pointer, type PointerAct, type PointerScene, rowsAboveBottom } from "./view/mouse.ts";
 import { type HitMap, Painter, type PaneScene } from "./view/paint.ts";
@@ -132,6 +133,8 @@ export function startLoop(options: LoopOptions): Loop {
   let hits: HitMap | null = null;
   let drawn = new Map<string, PanePicture>();
   let paintedLayout: Pick<PointerScene, "tab" | "splits"> = { tab: null, splits: [] };
+  let paintedOverlay: ModelState["overlays"][number] | undefined;
+  let overlayGeneration = 0;
   let shownKey = "";
   let paneFocus: string | null = null;
   let hello: HelloInfo | null = null;
@@ -215,6 +218,18 @@ export function startLoop(options: LoopOptions): Loop {
     },
   });
 
+  const layout = new LayoutWrites({
+    hc: link,
+    model: world.model,
+    folder: options.cwd,
+    answer: (answer) => {
+      guard(() => dispatch(answer.type === "notice"
+        ? { type: "notice", code: answer.code, data: answer.data, ...(answer.calm ? { calm: true } : {}), at: clock.now() }
+        : { type: "follow", target: answer.target, away: answer.away, at: clock.now() }));
+      arm();
+    },
+  });
+
   function onLinkNotice(notice: LinkNotice): void {
     panes.notice(notice);
     if (notice.type === "state") {
@@ -273,19 +288,203 @@ export function startLoop(options: LoopOptions): Loop {
     owePass();
   }
 
+  /**
+   * What the user typed, pasted or clicked while a layout write that one of their actions started is under way: it
+   * waits behind that write, in order, and goes through once the write is done, so it meets the layout the write
+   * leaves (the pane a close focuses, the pane a split follows), as a later read would. null when no write holds it.
+   * `ahead` is the state core as if what waits had gone through: to see a detach in it, which never waits, and a layout
+   * action, which is refused as busy when it is read, against the layout the user saw. `awaiting`: the write is done
+   * and the screen does not show what it did yet: the pane it made or moved (`follow`: what waits goes there once
+   * focus follows it), or the panes a close ended still in the world (`gone`: what waits goes through once they left
+   * and focus moved off them). It is refused if that is not so by `until`, never sent to the pane focused before.
+   * `bytes`: the text among what waits (typed, pasted, or carried by a key); `full`: what waits reached
+   * BEHIND_WRITE_EVENTS or BEHIND_WRITE_BYTES, and nothing more waits.
+   */
+  let behindWrite: {
+    readonly events: (ModelEvent | { type: "held_mouse"; input: MouseInput; matches: (scene: PointerScene) => boolean })[];
+    ahead: ModelState;
+    awaiting: ({ readonly kind: "follow"; readonly following: Following } | { readonly kind: "gone"; readonly done: LayoutDone } | { readonly kind: "zoom"; readonly read: AbortController }) & { readonly until: number } | null;
+    bytes: number;
+    full: boolean;
+  } | null = null;
+  /** what waited behind a write is going through: a layout action in it was refused when it was read */
+  let replaying = false;
+
+  /**
+   * A user's input event: through the state core now, or behind the layout write under way. A detach among what would
+   * wait leaves at once: a user leaving never waits for a write (what waited, typed before it, goes nowhere). A layout
+   * action among it is refused now: once the write is done it would meet another layout and act on another target.
+   */
+  function userInput(event: ModelEvent): void {
+    // nothing after a detach goes anywhere, from the same read either: the screen is leaving
+    if (closing) return;
+    // the host's focus waits in order too: a focus loss returns an armed prefix to Idle, for the read-ahead and the replay alike
+    if (behindWrite === null || !(event.type === "key" || event.type === "text" || event.type === "paste" || event.type === "mouse" || event.type === "focus")) {
+      dispatch(event);
+      return;
+    }
+    // read ahead the way the loop would go: the event, then each rest of a read it hands back, in order. What waits is
+    // what the read-ahead took in each step (a text run cut where it handed its rest back, as split reads give it), and
+    // a layout action refused here waits as `consumed`: its keys are taken, and never chose anything in another layout
+    const pieces: ModelEvent[] = [];
+    const units = [event];
+    for (let next = units.shift(); next !== undefined; next = units.shift()) {
+      const before = behindWrite.ahead;
+      const step = reduce(before, next);
+      behindWrite.ahead = step.state;
+      let rest = "";
+      let refused = false;
+      for (const effect of step.effects) {
+        if (effect.type === "quit") {
+          drop("detach", false);
+          perform({ type: "quit" });
+          return;
+        }
+        if (effect.type === "input") {
+          units.push(effect.event);
+          if (effect.event.type === "text") rest = effect.event.text;
+        }
+        if (effect.type === "run" && layout.writes(effect)) {
+          busy(effect.action);
+          refused = true;
+        }
+      }
+      const taken = next.type === "text" ? next.text.slice(0, next.text.length - rest.length) : "";
+      if (!refused) {
+        pieces.push(next.type === "text" ? { ...next, text: taken } : next);
+        continue;
+      }
+      // the action was chosen by the last code point taken: what came before it in the run waits as typed
+      if (next.type === "text" && step.textAction && step.textAction.offset > 0) pieces.push({ ...next, text: next.text.slice(0, step.textAction.offset) });
+      const source = step.textAction?.before ?? before;
+      pieces.push({ type: "consumed", overlay: step.state.overlays.length < source.overlays.length, mode: source.mode.name !== "terminal" && step.state.mode.name === "terminal", at: next.at });
+    }
+    if (behindWrite.full) return;
+    // the text a key typed (a kitty key reports it) costs its bytes too, as the same text read as text does
+    const bytes = pieces.reduce((sum, piece) => sum + (piece.type === "text" || piece.type === "paste" || piece.type === "key" ? Buffer.byteLength(piece.text ?? "") : 0), 0);
+    if (behindWrite.events.length + pieces.length > BEHIND_WRITE_EVENTS || behindWrite.bytes + bytes > BEHIND_WRITE_BYTES) {
+      // nothing more waits, so what goes through later keeps its order and no paste is cut; a detach still leaves above
+      behindWrite.full = true;
+      dispatch({ type: "notice", code: "input_dropped", data: { reason: "full" }, at: clock.now() });
+      return;
+    }
+    for (const piece of pieces) {
+      if (piece.type !== "mouse") behindWrite.events.push(piece);
+      else {
+        const matches = pointer.bind(piece, pointerScene());
+        const owner = overlayGeneration;
+        behindWrite.events.push({ type: "held_mouse", input: piece,
+          matches: (scene) => owner === overlayGeneration && paintedOverlay === state.overlays.at(-1) && matches(scene) });
+      }
+    }
+    behindWrite.bytes += bytes;
+  }
+
+  /** A layout action chosen while a write, or what waits behind it, is under way: one notice, nothing written. */
+  function busy(action: string): void {
+    dispatch({ type: "notice", code: "layout_busy", data: { action }, at: clock.now() });
+  }
+
+  /**
+   * Holds the user's input until `writing` is done; then what waited goes through in order, or, when the write asked
+   * focus to follow a pane the screen does not show yet or ended panes the screen still shows, once the screen shows
+   * what it did.
+   */
+  function holdUntil(writing: Promise<LayoutDone>): void {
+    behindWrite ??= { events: [], ahead: state, awaiting: null, bytes: 0, full: false };
+    const before = state.following;
+    const line = link.state;
+    void writing.then((done) => {
+      guard(() => {
+        if (behindWrite === null) return;
+        const until = clock.now() + LAYOUT_SHOWN_WAIT_MS;
+        if (!closedShown(done.ended)) behindWrite.awaiting = { kind: "gone", done, until };
+        else if (done.dropInput) drop(done.dropInput);
+        else if (done.refreshZoom) {
+          // An unzoom restores remembered focus. A doc.set reply alone cannot tell the model which pane to route to.
+          const wait = { kind: "zoom", read: new AbortController(), until } as const;
+          behindWrite.awaiting = wait;
+          const confirmed = (ok: boolean) => {
+            guard(() => {
+              if (behindWrite?.awaiting !== wait) return;
+              if (ok && line === link.state && clock.now() < until) release();
+              else drop("not_shown");
+            });
+            arm();
+          };
+          if (line !== link.state) confirmed(false);
+          else void link.refreshLayout(wait.read.signal).then(confirmed, () => confirmed(false));
+        } else if (state.following !== null && state.following !== before) behindWrite.awaiting = { kind: "follow", following: state.following, until };
+        else release();
+      });
+      arm();
+    });
+  }
+
+  /** Whether the screen shows these ended panes gone: none of them is in the world any more. */
+  function closedShown(panes: readonly string[]): boolean {
+    return panes.every((id) => !exists(state.world, { kind: "pane", id }));
+  }
+
+  /** What waited behind a write goes through, in order. */
+  function release(): void {
+    const waited = behindWrite?.events ?? [];
+    const full = behindWrite?.full === true;
+    behindWrite = null;
+    replaying = true;
+    try {
+      for (const event of waited) {
+        if (event.type === "held_mouse") dispatch(event.input, event.matches);
+        else userInput(event);
+      }
+      // what came after the queue filled went nowhere, a focus loss or the key after a prefix among it: a prefix the
+      // replay armed would take the next key typed as its own, so it returns to Idle
+      if (full) dispatch({ type: "consumed", overlay: false, mode: false, at: clock.now() });
+    } finally {
+      replaying = false;
+    }
+  }
+
+  /** What waited behind a write goes nowhere, with one notice saying so when anything did. */
+  function drop(reason: string, notify = true): void {
+    const count = behindWrite?.events.length ?? 0;
+    if (behindWrite?.awaiting?.kind === "zoom") behindWrite.awaiting.read.abort();
+    behindWrite = null;
+    if (notify && count > 0) dispatch({ type: "notice", code: "input_dropped", data: { reason, events: count }, at: clock.now() });
+  }
+
+  /** Once focus no longer waits for the pane a write made or moved: what waited goes there if focus landed on it, else nowhere. */
+  function followed(following: Following): void {
+    if (focused(state.world, state.focus).pane?.id === following.target.id) release();
+    else drop("not_shown");
+  }
+
+  /** What waits for the screen to show what a write did goes on once it does. */
+  function onceShown(): void {
+    const awaiting = behindWrite?.awaiting;
+    if (!awaiting) return;
+    if (awaiting.kind === "follow") {
+      if (state.following !== awaiting.following) followed(awaiting.following);
+    } else if (awaiting.kind === "gone" && closedShown(awaiting.done.ended)) {
+      if (awaiting.done.dropInput) drop(awaiting.done.dropInput);
+      else release();
+    }
+  }
+
   /** One event through the state core, and its effects performed in order, now. */
-  function dispatch(event: ModelEvent): void {
+  function dispatch(event: ModelEvent, matches?: (scene: PointerScene) => boolean): void {
     const before = state;
     const step = reduce(state, event);
     state = step.state;
-    for (const effect of step.effects) perform(effect);
+    for (const effect of step.effects) perform(effect, matches);
     if (state !== before) {
       reshow();
       owePass();
     }
+    onceShown();
   }
 
-  function perform(effect: Effect): void {
+  function perform(effect: Effect, matches?: (scene: PointerScene) => boolean): void {
     switch (effect.type) {
       case "pane":
         for (const step of pointer.typed(effect.pane, lookOf(effect.pane))) performPointer(step);
@@ -301,13 +500,22 @@ export function startLoop(options: LoopOptions): Loop {
           if (toward !== null) dispatch({ type: "select", target: { kind: "pane", id: toward }, at: clock.now() });
           return;
         }
-        // layout writes and the agent list come with later rows of the plan: one notice per press, never silence
+        if ((behindWrite !== null || replaying) && layout.writes(effect)) {
+          busy(effect.action);
+          return;
+        }
+        const writing = layout.run(effect);
+        if (writing !== null) {
+          holdUntil(writing);
+          return;
+        }
+        // the agent list comes with a later row of the plan: one notice per press, never silence
         dispatch({ type: "notice", code: "not_built", data: { action: effect.action }, at: clock.now() });
         return;
       }
       case "input":
         // the rest of a text run, behind the action before it: it meets the focus and mode that action left
-        dispatch(effect.event);
+        userInput(effect.event);
         return;
       case "quit":
         act("quit");
@@ -317,10 +525,13 @@ export function startLoop(options: LoopOptions): Loop {
         act("reload_keys");
         dispatch({ type: "keys", keys: options.readKeys ? options.readKeys() : options.keys, at: clock.now() });
         return;
-      case "mouse":
+      case "mouse": {
         act(`mouse:${effect.over}`);
-        for (const step of pointer.mouse(effect.over, effect.event, pointerScene())) performPointer(step);
+        const scene = pointerScene();
+        const acts = matches && !matches(scene) ? pointer.cancel(scene, effect.event.at) : pointer.mouse(effect.over, effect.event, scene);
+        for (const step of acts) performPointer(step);
         return;
+      }
       case "host_reply":
         return;
     }
@@ -439,6 +650,8 @@ export function startLoop(options: LoopOptions): Loop {
     // only a refused paste whose end mark has not come yet is waited for: a paste begun after its end is framed as any paste
     pasteAt = framer.discarding() ? clock.now() + PASTE_ABANDON_MS : null;
     for (const event of events) {
+      // the rest of a read that detached goes nowhere, as a later read would not
+      if (closing) break;
       act(`read:${event.type}`);
       if (event.type === "reply") {
         if (event.kind === "scheme") host.refreshDisplay();
@@ -449,7 +662,7 @@ export function startLoop(options: LoopOptions): Loop {
         // the host lost its screen meanwhile, or redrew it: the next frame writes every cell
         if (event.focused) painter?.invalidate();
       }
-      dispatch(event);
+      userInput(event);
     }
   }
 
@@ -460,7 +673,9 @@ export function startLoop(options: LoopOptions): Loop {
       if (quitting && now >= quitting.at) quitting.settle();
       return;
     }
-    for (const event of framer.tick(now)) dispatch(event);
+    // what a write did never showed in time: what waited for it is refused, not sent elsewhere
+    if (behindWrite?.awaiting && now >= behindWrite.awaiting.until) drop(behindWrite.awaiting.kind === "gone" ? behindWrite.awaiting.done.dropInput ?? "not_closed" : "not_shown");
+    for (const event of framer.tick(now)) userInput(event);
     if (pasteAt !== null && now >= pasteAt) {
       pasteAt = null;
       framer.reset();
@@ -484,6 +699,7 @@ export function startLoop(options: LoopOptions): Loop {
     const tab = focused(state.world, state.focus).tab;
     const tree = tab ? dividers.shape(tab.id, world.view().tabs.get(tab.id)) : undefined;
     const nextLayout = { tab: tab && tree ? { id: tab.id, root: tree.root } : null, splits: frameShape.splits };
+    const nextOverlay = state.overlays.at(-1);
     passOwed = false;
     lastPass = now;
     passes++;
@@ -546,6 +762,10 @@ export function startLoop(options: LoopOptions): Loop {
     hits = frame.hits;
     drawn = nextDrawn;
     paintedLayout = nextLayout;
+    if (paintedOverlay !== nextOverlay) {
+      paintedOverlay = nextOverlay;
+      overlayGeneration++;
+    }
     // credit after the write was taken: the focused pane first, then the others (the pane machine credits a covered pane nothing)
     let budget = PASS_CREDIT_BYTES;
     const order = [...frameShape.spots].sort((a, b) => Number(b.pane === paneFocus) - Number(a.pane === paneFocus));
@@ -587,6 +807,7 @@ export function startLoop(options: LoopOptions): Loop {
     const input = framer.deadline();
     if (input !== undefined) all.set("input", input);
     if (pasteAt !== null) all.set("paste", pasteAt);
+    if (behindWrite?.awaiting) all.set("layout_shown", behindWrite.awaiting.until);
     for (const [name, at] of link.deadlines()) all.set(`link:${name}`, at);
     for (const [name, at] of panes.deadlines()) all.set(`panes:${name}`, at);
     for (const [name, at] of state.deadlines) all.set(`model:${name}`, at);

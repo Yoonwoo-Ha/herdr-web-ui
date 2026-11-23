@@ -49,6 +49,9 @@ export class HcError extends Error {
   }
 }
 
+/** An error answer from the core, rather than a local failure to receive the answer. */
+export class HcReplyError extends HcError {}
+
 export function encodeFrame(channel: number, kind: number, payload: Uint8Array | string): Uint8Array {
   const body = typeof payload === "string" ? new TextEncoder().encode(payload) : payload;
   const frame = new Uint8Array(HEADER_BYTES + body.length);
@@ -395,7 +398,7 @@ export class HcConnection {
       const error = message.error;
       const data = "data" in error && typeof error.data === "object" && error.data !== null ? error.data : null;
       const kind = data && "kind" in data && typeof data.kind === "string" ? data.kind : "error";
-      call.reject(new HcError(kind, "message" in error && typeof error.message === "string" ? error.message : "hc refused the call"));
+      call.reject(new HcReplyError(kind, "message" in error && typeof error.message === "string" ? error.message : "hc refused the call"));
       return;
     }
     const result = "result" in message ? message.result : null;
