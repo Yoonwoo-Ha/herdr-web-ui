@@ -43,6 +43,7 @@ import type { StopRefusal } from "./runtime-move-service.ts";
 import type { MoveService } from "./runtime-move-service.ts";
 import { handlePushRequest } from "./push.ts";
 import { handlePromptRequest, type OpenCodePromptState } from "./prompt.ts";
+import type { ClaudePermissionHooks } from "./claude-permission-hook.ts";
 import { attachableIdentity } from "./pty/sidecar.ts";
 import { runtime } from "./herdr-core/runtime.ts";
 import { handleUpdateRequest, updateRequestAllowed } from "./update-api.ts";
@@ -131,6 +132,7 @@ export interface RequestServices {
   readonly agentOffered: (kind: string) => Promise<boolean>;
   readonly agentInstaller: AgentInstaller;
   readonly openCodeState: OpenCodePromptState;
+  readonly permissionHooks: ClaudePermissionHooks;
   readonly cliProxyRoutes: CLIProxyRoutes;
   readonly usageLogin: UsageLoginService;
   readonly usage: UsageService;
@@ -199,7 +201,7 @@ const tailscaleCli = (ctx: ServerContext): string | null => ctx.services.tailsca
 const OTHER_MACHINE_FILES = /^\/api\/(?:fs\/|pane\/(?:files|docs|image)$|workspace\/(?:diff\/|git\/|directories$|pr(?:$|\/)))/;
 
 export async function handleRequest(request: Request, ctx: ServerContext): Promise<Response | undefined> {
-  const { options, hostname, token, bridgeToken, bootId, devices, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, cliProxyRoutes, usageLogin, usage, voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartupResult, portalStartup } = ctx.services;
+  const { options, hostname, token, bridgeToken, bootId, devices, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, permissionHooks, cliProxyRoutes, usageLogin, usage, voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartupResult, portalStartup } = ctx.services;
   const { sidecar, serialize, push, alertWebhook, logPushError, omo, claudeAgents, opencodeAgents, plans, clientSnapshot, machines, broadcastAll, collector, queueFirstMessage, askFirstMessage } = core;
   return requestLog.handle(request, async (headers) => {
   if (options.profile === "machine") wordHerdrFailures(machineFailure, machineLayoutReason);
@@ -1037,7 +1039,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
 
   if (pathname.startsWith("/api/pane/prompt")) {
     try {
-      const response = await handlePromptRequest(request, url, { serialize, codexHome: options.codexHome, claudeTranscript: (paneId) => claudeAgents.sessionOf(paneId)?.path ?? null, readOnly, openCodeStateDir: options.openCodeStateDir, openCodeState, onAnswered: () => options.telemetry?.tally("prompt_answers") });
+      const response = await handlePromptRequest(request, url, { serialize, codexHome: options.codexHome, claudeTranscript: (paneId) => claudeAgents.sessionOf(paneId)?.path ?? null, readOnly, openCodeStateDir: options.openCodeStateDir, openCodeState, permissionHooks, onAnswered: () => options.telemetry?.tally("prompt_answers") });
       if (response) return response;
     } catch (error) {
       return errorResponse(error);

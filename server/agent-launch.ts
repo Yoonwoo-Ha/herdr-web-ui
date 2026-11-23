@@ -7,6 +7,7 @@ import { isShellAgentKind, startShellAgent, type ShellAgentLocator } from "./she
 import { agentStart, HerdrError, sessionSnapshot } from "./herdr/client.ts";
 import { requestFault } from "./http.ts";
 import { agentStartArgs } from "./claude-settings-file.ts";
+import type { ClaudePermissionHooks } from "./claude-permission-hook.ts";
 import { DSH_EFFORTS, launchArgsFault } from "../shared/launch-rules.ts";
 import { browserToolArgs, browserToolChoices, browserToolConfig, isBrowserToolAgent, withBrowserToolArgs } from "../shared/browser-tools.ts";
 import { hcMachine } from "./herdr-core/runtime.ts";
@@ -80,6 +81,13 @@ async function startDshTui(paneId: string, args: string[], options: { locator?: 
   }
 }
 
+let permissionHooks: ClaudePermissionHooks | null = null;
+
+/** What a Claude this server starts asks its command approvals through (server/claude-permission-hook.ts). */
+export function useClaudePermissionHooks(hooks: ClaudePermissionHooks | null): void {
+  permissionHooks = hooks;
+}
+
 let browserTools: { read: () => unknown; dir: string } | null = null;
 
 /** Where the launch reads the shared `agentBrowserTools` setting from, and the folder its MCP config files go in. */
@@ -136,7 +144,9 @@ export async function agentLaunch(paneId: string, agent: AgentPayload, launched?
     else {
       const given = typeof agent.name === "string" && agent.name.length > 0 ? agent.name : null;
       // on Windows a Claude Code's inline JSON --settings goes as a file's path (server/claude-settings-file.ts)
-      const launchArgs = withBrowserTool(kind, args, options.platform ?? process.platform);
+      // a Claude another machine of the core starts could not reach this PC's loopback hook
+      const hooked = kind === "claude" && permissionHooks !== null && hcMachine() === null ? permissionHooks.launchArgs(paneId, args) : args;
+      const launchArgs = withBrowserTool(kind, hooked, options.platform ?? process.platform);
       const startArgs = launchArgs === undefined ? undefined : agentStartArgs(kind, launchArgs, { platform: options.platform, dir: options.settingsDir });
       // herdr refuses a name another agent holds. Two creations at once can pick the same
       // free one: the refused one picks again. It also refuses a pane whose shell is not up

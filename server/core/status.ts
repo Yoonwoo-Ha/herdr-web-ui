@@ -94,6 +94,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     openCodeStateDir?: string;
     orderSequence?: OrderSequence;
     seenMoved?: (from: string, to: string, renumber: (id: number) => number) => void;
+    /** a pane that ended, closed or moved to another ID: what was kept under its ID is no longer that pane's */
+    paneVacated?: (paneId: string) => void;
     /** runs each tick of the card reads (CARD_READ_MS) and returns how to stop them; tests tick by hand */
     cardTimer?: (tick: () => Promise<void>) => () => void;
   };
@@ -889,14 +891,17 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     },
     onPaneEnded: (paneId) => {
       paneGone(paneId);
+      options.paneVacated?.(paneId);
       broadcastAll({ type: "pane-exited", pane_id: paneId });
       push.onEnded(paneId).catch(logPushError);
     },
     onPaneClosed: (paneId) => {
       paneGone(paneId);
+      options.paneVacated?.(paneId);
       push.closed(paneId);
     },
     onPaneMoved: (from, to) => {
+      options.paneVacated?.(from);
       const renumber = finishes.moved(from, to);
       for (const state of [codexFailedAt, codexTurns, codexLooked] as Map<string, unknown>[]) if (state.has(from)) { state.set(to, state.get(from)); state.delete(from); }
       if (codexFailed.delete(from)) codexFailed.add(to);

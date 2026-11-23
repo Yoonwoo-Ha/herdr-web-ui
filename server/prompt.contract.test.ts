@@ -2,8 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ClaudePermissionHooks } from "./claude-permission-hook.ts";
 import { createServer } from "./index.ts";
 import { herdrRpc } from "./herdr/client.ts";
+import { handlePromptRequest } from "./prompt.ts";
 import { startFakePushService } from "./push.fake.ts";
 
 const root = mkdtempSync(join(tmpdir(), "ovis-prompt-"));
@@ -53,16 +55,16 @@ writeFileSync(out, "");
 `;
 
 /**
- * Claude's command approval with two numbered rows, its whole panel under its rule: ↑/↓ move its `❯`, Enter or a row's number
- * logs the row it picks.
+ * Claude's command approval with numbered rows, its whole panel under its rule: ↑/↓ move its `❯`, Enter or a row's number
+ * logs the row it picks. Its command is `pwd`; lines given as its head are its panel instead.
  */
 const APPROVAL = `
 const { appendFileSync, writeFileSync } = require("node:fs");
 const [out, spec] = process.argv.slice(2);
-const { rows } = JSON.parse(spec);
+const { head, rows } = JSON.parse(spec);
 let cursor = 0;
 const draw = () => process.stdout.write("\\u001b[2J\\u001b[H" + [
-  "─".repeat(40), " Bash command", "", "   pwd", "", " Do you want to proceed?",
+  "─".repeat(40), ...(head.length ? head : [" Bash command", "", "   pwd", ""]), " Do you want to proceed?",
   ...rows.map((row, index) => " " + (index === cursor ? "❯" : " ") + " " + (index + 1) + ". " + row), "", " Esc to cancel",
 ].join("\\r\\n"));
 process.stdin.setRawMode(true);
@@ -233,6 +235,126 @@ describe("answer buttons on a question's alert (#2916)", () => {
       alerting.stop();
       device.stop();
     }
+  }, 30_000);
+});
+
+describe("a Claude command approval its PermissionRequest hook holds", () => {
+  // no quote in a row: the pane's shell gets them inside single quotes
+  const ROWS = ["Yes", "Yes, and always allow pwd in this project", "No"];
+  const DASH = "╌".repeat(40);
+  /** the panel as Claude Code 2.1.319 draws it: Claude's words, then the command between dashed rules */
+  const BASH = [" Bash command", " Print the working folder", DASH, " pwd", DASH];
+  let hooks: ClaudePermissionHooks;
+  const holding: (() => void)[] = [];
+
+  beforeAll(() => {
+    writeFileSync(join(root, "approval.js"), APPROVAL);
+    hooks = new ClaudePermissionHooks(join(root, "claude hooks"), { onHeld: () => holding.shift()?.() });
+  });
+  afterAll(() => hooks.stop());
+
+  /** The hook a Claude started in `target` runs. */
+  function launched(target: Menu): { command: string; args: string[] } {
+    const args = hooks.launchArgs(target.pane, undefined)!;
+    const settings = JSON.parse(readFileSync(args[args.indexOf("--settings") + 1]!, "utf8")) as { hooks: { PermissionRequest: { hooks: { command: string; args: string[] }[] }[] } };
+    return settings.hooks.PermissionRequest[0]!.hooks[0]!;
+  }
+  /** What that Claude's hook sends for this command: the relay's answer, once the server holds it. */
+  async function asks(target: Menu | { command: string; args: string[] }, command: string): Promise<{ answer: () => Promise<unknown> }> {
+    const hook = "pane" in target ? launched(target) : target;
+    const held = new Promise<void>((resolve) => holding.push(resolve));
+    const relay = Bun.spawn([hook.command, ...hook.args], {
+      stdin: new Blob([JSON.stringify({ hook_event_name: "PermissionRequest", tool_name: "Bash", tool_input: { command } })]), stdout: "pipe",
+    });
+    await held;
+    return { answer: async () => JSON.parse(await new Response(relay.stdout).text()) as unknown };
+  }
+  const route = async (path: string, init?: RequestInit) => {
+    const url = new URL(path, "http://localhost");
+    return (await handlePromptRequest(new Request(url, init), url, { permissionHooks: hooks }))!;
+  };
+  async function read(target: Menu): Promise<{ id: string; body: string | null }> {
+    for (let i = 0; i < 100; i++) {
+      const { prompt } = await (await route(`/api/pane/prompt?pane_id=${encodeURIComponent(target.pane)}`)).json() as { prompt: { id: string; body: string | null } | null };
+      if (prompt) return prompt;
+      await Bun.sleep(50);
+    }
+    throw new Error("no card within 5s");
+  }
+  const post = async (target: Menu, promptId: string, optionIndex: number) => route("/api/pane/prompt/answer", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ pane_id: target.pane, prompt_id: promptId, option_index: optionIndex }),
+  });
+  const ALLOW = { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } } };
+
+  it("answers only the held request its card showed, with no key, and a card read on the screen alone with keys", async () => {
+    const asked = await menu("hooked", BASH, ROWS, false, "approval.js");
+    const relay = await asks(asked, "pwd");
+    const bound = await read(asked);
+    expect(bound.body).toBe("pwd");
+    const [screenId, heldId] = bound.id.split(".");
+    expect(heldId).toMatch(/^[0-9a-f]{16}$/);
+    // an id naming a request other than the one held: refused, and nothing is sent
+    expect((await post(asked, `${screenId}.${"0".repeat(16)}`, 0)).status).toBe(409);
+    expect((await post(asked, bound.id, 0)).status).toBe(200);
+    expect(await relay.answer()).toEqual(ALLOW);
+    expect((await post(asked, bound.id, 0)).status).toBe(409);
+
+    // nothing held any more: the card is the screen's again (the same dialog still drawn is another asking), and its
+    // answer goes as keys
+    const plain = await read(asked);
+    expect(plain.id).not.toContain(".");
+    expect(plain.body).toBe("Print the working folder\npwd");
+    expect((await post(asked, plain.id, 2)).status).toBe(200);
+    // the hook's Yes pressed no key: the dialog logged only the No that went as keys
+    expect(await confirmed(asked)).toEqual(["No"]);
+  }, 30_000);
+
+  it("takes another option of a card built on a held request as keys, its dialog being that request's command", async () => {
+    const whole = await menu("hooked-whole", BASH, ROWS, false, "approval.js");
+    const relay = await asks(whole, "pwd");
+    const card = await read(whole);
+    expect(card.id).toContain(".");
+    expect((await post(whole, card.id, 1)).status).toBe(200);
+    expect(await confirmed(whole)).toEqual([ROWS[1]!]);
+    hooks.forget(whole.pane);
+    expect(await relay.answer()).toEqual({});
+  }, 30_000);
+
+  // the adversarial review of #4480: the held request was matched by its first 40 characters anywhere in any approval
+  it("binds no card to a dialog whose command only starts as the held one's, or that is not a Bash command's", async () => {
+    for (const [label, panel] of [
+      ["hooked-longer", [" Bash command", " Print the working folder", DASH, " pwd; touch extra.txt", DASH]],
+      ["hooked-file", [" Create file", " notes.md", DASH, " pwd", DASH]],
+    ] as const) {
+      const dialog = await menu(label, [...panel], ROWS, false, "approval.js");
+      const held = await asks(dialog, "pwd");
+      const card = await read(dialog);
+      expect(card.id, label).not.toContain(".");
+      expect(card.body, label).not.toBe("pwd");
+      // the card is the screen's, and its Yes goes as keys to the dialog it showed
+      expect((await post(dialog, card.id, 0)).status, label).toBe(200);
+      expect(await confirmed(dialog), label).toEqual(["Yes"]);
+      hooks.forget(dialog.pane);
+      expect(await held.answer(), label).toEqual({});
+    }
+  }, 30_000);
+
+  // the adversarial review of #4480: a card drawn before the hook's request came kept its id, and its Yes then allowed it
+  it("lets a card read before the hook's request came settle nothing of it, and gives the page the held request's card under another id", async () => {
+    const early = await menu("hooked-early", BASH, ROWS, false, "approval.js");
+    const hook = launched(early);
+    const before = await read(early);
+    expect(before.id).not.toContain(".");
+    const held = await asks(hook, "pwd");
+    const after = await read(early);
+    expect(after.id).not.toBe(before.id);
+    expect(after.id.startsWith(`${before.id}.`)).toBe(true);
+    // the early card's Yes goes as keys to the dialog, as any card read on the screen alone
+    expect((await post(early, before.id, 0)).status).toBe(200);
+    expect(await confirmed(early)).toEqual(["Yes"]);
+    hooks.forget(early.pane);
+    expect(await held.answer()).toEqual({});
   }, 30_000);
 });
 

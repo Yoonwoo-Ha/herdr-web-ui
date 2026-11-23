@@ -16,6 +16,7 @@ export const ENTRIES = {
   askpass: "server/ssh-askpass.ts",
   "windows-launch": "server/windows-launch.ts",
   "browser-mcp": "server/browser-mcp.ts",
+  "claude-hook": "server/claude-hook-relay.ts",
 } as const;
 
 export type EntryName = keyof typeof ENTRIES;

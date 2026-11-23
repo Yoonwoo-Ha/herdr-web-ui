@@ -589,6 +589,7 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
   if (/esc to\s+cancel/i.test(lines.slice(rows.at(-1)!.lineIndex + 1, hintIndex).map(cleanLine).join(" "))) return null;
   let title: CardWords;
   let body: string;
+  let bashCommand: string | undefined;
   if (approvalIndex >= 0 && approvalIndex < questionIndex) {
     title = nearestQuestion(lines, approvalIndex) ?? own("Command approval");
     const bodyEnd = dangerousRmIndex > requiredIndex ? questionIndex : approvalIndex;
@@ -622,6 +623,13 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
     if (panel.length === 0) return null;
     title = scrolled ? own("Command approval") : panel[0]!;
     body = (scrolled ? panel : panel.slice(1)).join("\n");
+    // a Bash panel's command, whole, between its first and last dashed rules (Claude Code 2.1.29x on): what a request
+    // its PermissionRequest hook holds must equal to be answered from this card (server/claude-permission-hook.ts)
+    if (!scrolled && /^Bash command\b/.test(panel[0]!)) {
+      const dashed = lines.slice(ruleIndex + 1, questionIndex).flatMap((line, index) => /^╌{8,}$/.test(cleanLine(line)) ? [ruleIndex + 1 + index] : []);
+      const command = dashed.length < 2 ? "" : lines.slice(dashed[0]! + 1, dashed.at(-1)!).map(cleanLine).filter(Boolean).join("\n");
+      if (command !== "") bashCommand = command;
+    }
   }
   return finishPrompt("claude", {
     kind: "approval", title, question: cleanLine(lines[questionIndex]!),
@@ -633,6 +641,7 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
   }, {
     responder: "claude-approval", menuLabels: rows.map((row) => row.label), selectedIndex: rows.findIndex((row) => row.selected),
     checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
+    ...(bashCommand === undefined ? {} : { claudeBashCommand: bashCommand }),
   });
 }
 
