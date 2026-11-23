@@ -1491,9 +1491,9 @@ describe("pair --approve", () => {
   });
 
   /** `pair --approve` at a real terminal (script), against the Ovis on `port`: what it shows, and what is typed at it. */
-  function atTerminal(port: number) {
+  function atTerminal(port: number, extra: Record<string, string> = {}) {
     const bin = join(scratch, "bin");
-    const env: Record<string, string | undefined> = { ...process.env, PATH: `${bin}:${process.env["PATH"] ?? ""}`, HOME: scratch, HERDR_PLUGIN_STATE_DIR: join(scratch, "state"), PORT: String(port) };
+    const env: Record<string, string | undefined> = { ...process.env, PATH: `${bin}:${process.env["PATH"] ?? ""}`, HOME: scratch, HERDR_PLUGIN_STATE_DIR: join(scratch, "state"), PORT: String(port), ...extra };
     for (const key of ["HERDR_PLUGIN_CONFIG_DIR", "HOST", "OVIS_TOKEN", "OVIS_STATE_DIR", "XDG_CONFIG_HOME", "XDG_STATE_HOME"]) delete env[key];
     // util-linux takes the command as one string, BSD (macOS) as arguments after the file it records to. Behind cat:
     // Bun hands a child a socket for stdin, which macOS's script refuses (tcgetattr), and cat gives it a pipe
@@ -1606,6 +1606,89 @@ describe("pair --approve", () => {
         expect(typed).toEqual([]);
       } finally { await server.stop(true); }
     }
+  });
+
+  /**
+   * A PC added in one press, with no member yet, that the first device opening it asks to join: a first join, which
+   * comes with its digits for this PC's own window (GET /api/relay/joins) and which only this PC may let in.
+   */
+  function firstJoinWaitingPc(answer: (body: { id: string; digits: string }) => Response | undefined = () => undefined) {
+    const typed: unknown[] = [];
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 60, async fetch(request) {
+      const path = new URL(request.url).pathname;
+      if (path === "/api/health") return Response.json(APP_HEALTH);
+      if (path === "/api/relay/pairings") return Response.json({ pairings: [] });
+      if (path === "/api/relay/joins") {
+        return Response.json({ joins: [
+          { id: "f1", label: "Pixel", asked_at: FIRST_ASKED_AT, left_ms: 80_000, digits: "482913" },
+          { id: "f2", label: "Galaxy", asked_at: FIRST_ASKED_AT, left_ms: 80_000, digits: "555666" },
+        ] });
+      }
+      if (path === "/api/account/status") return Response.json({ account: "acct_1a2b3c4d5e6f", members: 0 });
+      if (path === "/api/relay/join") {
+        const body = await request.json() as { id: string; digits: string };
+        typed.push(body);
+        return answer(body) ?? Response.json({ ok: true });
+      }
+      return new Response(null, { status: 404 });
+    } });
+    return { server, typed };
+  }
+  const FIRST_ASKED_AT = "2026-11-24T09:41:00.000Z";
+  // the command names the time on this PC's clock: UTC here, for the child as for the test
+  const firstAsked = (label: string) => `${label} asks to open this PC (from Ovis account acct_1a2b3c4, asked at 09:41)`;
+
+  it.skipIf(platform() === "win32" || Bun.which("script") === null)("lets a first join in with the six digits its device shows typed at the terminal, naming the device, its account and when it asked, and showing none of the digits", async () => {
+    const { server, typed } = firstJoinWaitingPc();
+    const terminal = atTerminal(server.port!, { TZ: "UTC" });
+    try {
+      await terminal.shows(`${firstAsked("Pixel")}. Type the six digits Pixel shows (one wrong entry ends this request), or press Enter to skip: `);
+      expect(terminal.screen).not.toMatch(/482|913/);
+      // fixed wait: a line counts only a second and a half after its question showed, by the command's own clock
+      await Bun.sleep(1_700);
+      terminal.type("482913\n");
+      await terminal.shows("Pixel is let in; it opens this PC in a moment.");
+      await terminal.shows("Galaxy shows (one wrong entry ends this request), or press Enter to skip: ");
+      // fixed wait: as above, for the next question
+      await Bun.sleep(1_700);
+      terminal.type("\n");
+      await terminal.shows("Galaxy is left waiting until its time runs out.");
+      expect(typed).toEqual([{ id: "f1", digits: "482913" }]);
+      terminal.child.stdin.end();
+      expect(await terminal.child.exited).toBe(0);
+    } finally {
+      await terminal.close();
+      await server.stop(true);
+    }
+  }, 40_000);
+
+  it.skipIf(platform() === "win32" || Bun.which("script") === null)("says so when the digits typed for a first join are not its device's, which ends that join here", async () => {
+    const { server, typed } = firstJoinWaitingPc((body) => body.id === "f1" ? Response.json({ error: { code: "wrong_digits", message: "Those are not the digits the new device shows; it was not let in." } }, { status: 409 }) : undefined);
+    const terminal = atTerminal(server.port!);
+    try {
+      await terminal.shows("Pixel shows (one wrong entry ends this request), or press Enter to skip: ");
+      // fixed wait: a line counts only a second and a half after its question showed, by the command's own clock
+      await Bun.sleep(1_700);
+      terminal.type("000000\n");
+      await terminal.shows("That is not the number Pixel shows, so it was not let in. To try again, have Pixel ask again, then run ovis approve again.");
+      expect(terminal.screen).not.toContain("Pixel is let in");
+      expect(typed).toEqual([{ id: "f1", digits: "000000" }]);
+    } finally {
+      await terminal.close();
+      await server.stop(true);
+    }
+  }, 40_000);
+
+  it("lists a first join where its input is not a terminal, with the way to let it in, and approves nothing", async () => {
+    const { server, typed } = firstJoinWaitingPc();
+    try {
+      const result = await run("pair", { PORT: String(server.port), TZ: "UTC" }, { args: ["--approve"], stdin: "482913\n" });
+      expect(result.exitCode, result.err).toBe(1);
+      expect(result.out).toContain(`${firstAsked("Pixel")}. Run ovis approve in a terminal on this PC and type the six digits Pixel shows.\n`);
+      expect(result.out).toContain("This is not run in a terminal");
+      expect(result.out).not.toContain("No device is waiting");
+      expect(typed).toEqual([]);
+    } finally { await server.stop(true); }
   });
 
   it("says so when no device waits", async () => {

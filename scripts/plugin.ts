@@ -39,7 +39,7 @@ import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import type { RemoteAccess } from "../shared/protocol.ts";
 import { canServe, FALLBACK_PORTS, freePort, savedPort } from "./plugin-port.ts";
-import type { WaitingDevice } from "./plugin-link.ts";
+import type { OwnJoin, WaitingDevice } from "./plugin-link.ts";
 import { activePluginScript } from "./plugin-runtime.ts";
 import { coreAnswers, findTui, runTui } from "./plugin-tui.ts";
 import { mainHelp, parseCommand, shortAccount, unknownCommand, type CliContext } from "./plugin-cli.ts";
@@ -1009,8 +1009,9 @@ async function pair(args: readonly string[], parts?: Awaited<ReturnType<typeof p
 
 /**
  * The PC's terminal is the PC itself, so this is approval on this PC (docs/account.md, "Who may admit a device"): the
- * devices waiting with their digits, and the account joins a member could also approve, which this PC's own route
- * lists (GET /api/relay/joins, as its own window's card does) and lets in with all six digits typed (#28).
+ * devices waiting with their digits, and the account joins this PC's own route lists (GET /api/relay/joins, as its own
+ * window's card does), each let in with all six digits its device shows typed here: one a member could also approve
+ * (#28), and a first join, which only this PC may let in (the first device that opens a PC added in one press).
  */
 async function approvePairings(): Promise<number> {
   const { approveJoins, approveWaiting, discardTyped, lockRefusal } = await import("./plugin-link.ts");
@@ -1027,16 +1028,23 @@ async function approvePairings(): Promise<number> {
     return 1;
   };
   let pairings: WaitingDevice[];
-  let joins: { id: string; label: string }[];
+  let joins: OwnJoin[];
+  let account: string | null = null;
   try {
     const listed = await serverFetch("/api/relay/pairings", { headers, signal: AbortSignal.timeout(15_000) });
     if (!listed.ok) return await refused("the waiting pairings", listed);
     ({ pairings } = (await listed.json()) as { pairings: WaitingDevice[] });
-    // an Ovis older than this route lists none (404, 405); a first join, which comes with its digits, stays its window's
+    // an Ovis older than this route lists none (404, 405)
     const asked = await serverFetch("/api/relay/joins", { headers, signal: AbortSignal.timeout(15_000) });
     if (asked.status === 404 || asked.status === 405) joins = [];
     else if (!asked.ok) return await refused("the waiting account joins", asked);
-    else joins = ((await asked.json()) as { joins: { id: string; label: string; digits?: string }[] }).joins.filter((join) => join.digits === undefined);
+    else joins = ((await asked.json()) as { joins: OwnJoin[] }).joins;
+    // a first join's admission came from this PC's account, named beside its device; left out when it cannot be read
+    if (joins.some((join) => join.digits !== undefined)) {
+      const status = await serverFetch("/api/account/status", { headers, signal: AbortSignal.timeout(5_000) }).catch(() => null);
+      const named = status?.ok === true ? ((await status.json().catch(() => null)) as { account?: unknown } | null)?.account : null;
+      if (typeof named === "string") account = named;
+    }
   } catch (error) {
     if (!timedOut(error)) throw error;
     process.stderr.write(`Ovis at ${origin} did not answer in time; try again\n`);
@@ -1053,7 +1061,7 @@ async function approvePairings(): Promise<number> {
   const signal = new AbortController().signal;
   if (joins.length > 0) {
     const code = await approveJoins(joins, {
-      out, lines, terminal, discard: discardTyped, signal,
+      out, lines, terminal, discard: discardTyped, signal, account, command: `${env["OVIS_CLI_NAME"] || "ovis"} approve`,
       approve: async (id, digits) => {
         try {
           const typed = await serverFetch("/api/relay/join", { method: "POST", headers, body: JSON.stringify({ id, digits }), signal: AbortSignal.timeout(15_000) });

@@ -11,11 +11,15 @@ import { DEFAULT_ACCOUNT_SERVICE } from "../shared/web-policy.ts";
 import { loadRelayIdentity } from "../server/relay/identity.ts";
 import { updateStateDir } from "../server/update-state.ts";
 import { mergeEnvLayers } from "../server/legacy-env.ts";
-import { approveJoins, approveWaiting, link, linkSettings, type JoinOutcome, type WaitingDevice } from "./plugin-link.ts";
+import { approveJoins, approveWaiting, link, linkSettings, type JoinOutcome, type OwnJoin, type WaitingDevice } from "./plugin-link.ts";
 import { COMMAND_ALIASES } from "./plugin-runtime.ts";
 
 const ORIGIN = "http://127.0.0.1:7317";
 const CLOSING = "The sign-in was only for this and ends with it; nothing of it is kept on this PC.\nCheck: ovis status      Undo: ovis logout\n";
+const FIRST_JOIN_HINT = "If your phone asks for six digits when you open old-desktop, run ovis approve on this PC and type them.\n";
+/** How `ovis add` ends at a terminal once this PC is added, with Enter typed at its first question */
+const ADDED_HERE = "Added. Open old-desktop from My PCs on your phone. If the phone shows six digits, type them here (Enter to finish without): ";
+const FINISHED = `${ADDED_HERE}Finished without letting a device in. ${FIRST_JOIN_HINT}${CLOSING}`;
 const SERVICE = "https://account.test";
 const RELAY = "wss://relay.test";
 
@@ -1624,6 +1628,17 @@ describe("ovis link, on the PC itself", () => {
     answer?: (asks: number, state: { account: string | null }) => Response | undefined;
     prepare?: (service: FakeAccountService, pc: ReturnType<typeof identity>, time: ReturnType<typeof clock>) => Promise<void> | void;
     relay?: () => string;
+    /** the joins waiting on this PC's own window at its Nth read (GET /api/relay/joins); none by default */
+    joins?: (reads: number) => OwnJoin[] | Response;
+    /** this PC's answer to the Nth six digits typed for a join (POST /api/relay/join); it lets the device in by default */
+    join?: (typed: { id: string; digits: string }, count: number) => Response | undefined;
+    /** this PC's devices at its Nth read (GET /api/devices); not answered by default */
+    devices?: (reads: number) => unknown[];
+    /**
+     * each text the command writes once this PC is added; `answer` types a line `after` ms (2 s by default: once it
+     * could be read). By default Enter is typed at the first question
+     */
+    watch?: (said: string, answer: (line: string, after?: number) => void, stop: () => void) => void;
   } = {}) {
     const pc = identity();
     const time = clock();
@@ -1635,6 +1650,11 @@ describe("ovis link, on the PC itself", () => {
     const askedAt: number[] = [];
     const pressed: unknown[] = [];
     const named: unknown[] = [];
+    const typed: { id: string; digits: string }[] = [];
+    let joinReads = 0;
+    let deviceReads = 0;
+    let added = false;
+    let signedOutBeforeAdded: boolean | undefined;
     let token = "";
     const pressAdd = async (): Promise<void> => {
       const own = service.issueToken("acct_1");
@@ -1655,6 +1675,16 @@ describe("ovis link, on the PC itself", () => {
       }
       if (path === "/api/relay/link") return Response.json({ url: encodeOffer({ v: 1, server_id: pc.server_id, server_public_key: pc.public_key, relay: RELAY, name: "old-desktop" }, "https://app.ovis.sh") });
       if (path === "/api/relay/link/close") return Response.json({ ok: true });
+      if (path === "/api/relay/joins") {
+        const listed = options.joins?.(++joinReads) ?? [];
+        return listed instanceof Response ? listed : Response.json({ joins: listed });
+      }
+      if (path === "/api/relay/join") {
+        const body = await request.json() as { id: string; digits: string };
+        typed.push(body);
+        return options.join?.(body, typed.length) ?? Response.json({ ok: true });
+      }
+      if (path === "/api/devices" && options.devices !== undefined) return Response.json({ devices: options.devices(++deviceReads) });
       if (path === "/api/account/one-press") {
         const body = await request.json() as { account?: unknown };
         if (typeof body.account !== "string") return refuse("invalid_account", "Name the account", 400);
@@ -1689,6 +1719,7 @@ describe("ovis link, on the PC itself", () => {
         const request = new Request(input, init);
         const answer = await service.fetch(request);
         if (new URL(request.url).pathname === "/v1/token" && answer.ok) token = (await answer.clone().json() as { access_token: string }).access_token;
+        if (new URL(request.url).pathname === "/v1/signout") signedOutBeforeAdded ??= !added;
         return answer;
       },
       out: (text) => {
@@ -1697,12 +1728,18 @@ describe("ovis link, on the PC itself", () => {
         if (shown) service.approveDevice(shown[1]!, "acct_1");
         // typed once the question could be read
         if (text.includes("Is this your account? Type yes") && options.confirm !== false) { time.pass(2_000); keys.type(options.confirm ?? "yes"); }
+        if (text.startsWith("Added")) added = true;
+        if (added) {
+          const answer = (line: string, after = 2_000): void => { setTimeout(() => { time.pass(after); keys.type(line); }, 0); };
+          if (options.watch !== undefined) options.watch(text, answer, () => stop.abort());
+          else if (text.endsWith("type them here (Enter to finish without): ")) answer("");
+        }
       },
     });
     const listed = () => service.pcs("acct_1").filter((entry) => entry.server_id === pc.server_id);
     // the sign-in ends with the run, whatever ended it
     const signedOut = (await service.fetch(new Request(`${SERVICE}/v1/session`, { headers: { authorization: `Bearer ${token}` } }))).status === 401;
-    return { code, text: out.join(""), askedAt, pressed, named, service, pc, listed, signedOut, paths: local.calls.map((call) => `${call.method} ${call.path}`) };
+    return { code, text: out.join(""), askedAt, pressed, named, typed, service, pc, listed, signedOut, signedOutBeforeAdded, paths: local.calls.map((call) => `${call.method} ${call.path}`) };
   }
 
   // the id first, with where to compare it; the PCs as what that account lists, which a decoy account can copy
@@ -1722,12 +1759,12 @@ describe("ovis link, on the PC itself", () => {
     // the account is named and confirmed before anything is listed in it
     expect(run.text).toContain(ASKED);
     expect(run.text).toContain(`${LISTED_AND_NAMED}     Waiting… (up to 10:00, Ctrl+C to stop)\n`);
-    expect(run.text.endsWith(`Added. Open old-desktop from My PCs.\n${CLOSING}`)).toBe(true);
+    expect(run.text.endsWith(FINISHED)).toBe(true);
     // asked every six seconds, each time for the account that signed in, until the admission was there
     expect(run.pressed).toEqual(["acct_1", "acct_1", "acct_1"]);
     expect(run.askedAt.map((at) => at - run.askedAt[0]!)).toEqual([0, 6_000, 12_000]);
     // nothing that lets its holder in is made or shown, and the window for digits approved here is closed
-    expect(run.paths.filter((path) => ["POST /api/relay/offer", "POST /api/relay/code", "GET /api/relay/pairings", "GET /api/devices"].includes(path))).toEqual([]);
+    expect(run.paths.filter((path) => ["POST /api/relay/offer", "POST /api/relay/code", "GET /api/relay/pairings"].includes(path))).toEqual([]);
     expect(run.paths).toContain("POST /api/relay/link/close");
     expect(run.text).not.toContain("QR code");
     // listed, named for its relay pass, and named again once added, which asks for the pass the account now gives
@@ -1777,8 +1814,10 @@ describe("ovis link, on the PC itself", () => {
       expect([args, run.code]).toEqual([args, 0]);
       expect(run.text).not.toContain("Is this your account?");
       expect(run.text).toContain("     Ovis account acct_1 (signed in with GitHub) is the one --account names.\n");
-      expect(run.text.endsWith(`Added. Open old-desktop from My PCs.\n${CLOSING}`)).toBe(true);
+      expect(run.text.endsWith(`Added. Open old-desktop from My PCs.\n${FIRST_JOIN_HINT}${CLOSING}`)).toBe(true);
       expect(run.text).not.toContain("\x1b");
+      // nothing can be typed here, so no join is watched for
+      expect(run.paths).not.toContain("GET /api/relay/joins");
     }
   });
 
@@ -1827,7 +1866,7 @@ describe("ovis link, on the PC itself", () => {
     } });
     expect(lost.code).toBe(0);
     expect(lost.text).not.toContain("Nobody pressed Add");
-    expect(lost.text.endsWith(`Added. Open old-desktop from My PCs.\n${CLOSING}`)).toBe(true);
+    expect(lost.text.endsWith(FINISHED)).toBe(true);
     // an Add as the time ran out kept the listing; the ask after it found this PC in the account (another window took it)
     const joined = await pressing({ pressAfter: 101, answer: (asks, state) => {
       if (asks !== 102) return undefined;
@@ -1835,7 +1874,7 @@ describe("ovis link, on the PC itself", () => {
       return Response.json({ error: { code: "in_account", message: "This PC is already in an account" } }, { status: 409 });
     } });
     expect(joined.code).toBe(0);
-    expect(joined.text.endsWith(`Added. Open old-desktop from My PCs.\n${CLOSING}`)).toBe(true);
+    expect(joined.text.endsWith(FINISHED)).toBe(true);
   });
 
   it("stops after the ten minutes Add is offered for, takes this PC off the account's list, and says it is in no account", async () => {
@@ -1852,7 +1891,7 @@ describe("ovis link, on the PC itself", () => {
     expect(run.code).toBe(0);
     expect(run.pressed).toHaveLength(102);
     expect(run.text).not.toContain("Nobody pressed Add");
-    expect(run.text.endsWith(`Added. Open old-desktop from My PCs.\n${CLOSING}`)).toBe(true);
+    expect(run.text.endsWith(FINISHED)).toBe(true);
   });
 
   it("Ctrl+C while it waits takes this PC off the account's list, says it is in no account, and ends the sign-in", async () => {
@@ -1953,7 +1992,132 @@ describe("ovis link, on the PC itself", () => {
   it("says this PC is added even when its relay does not come online in time", async () => {
     const run = await pressing({ pressAfter: 1, relay: () => "connecting" });
     expect(run.code).toBe(0);
-    expect(run.text).toContain("Added: this PC is in your account (acct_1), but its Ovis relay did not come online within 30 seconds. Your devices can open old-desktop from My PCs once it does (ovis status says when).\n");
+    expect(run.text).toContain(`Added: this PC is in your account (acct_1), but its Ovis relay did not come online within 30 seconds. Your devices can open old-desktop from My PCs once it does (ovis status says when).\n${FIRST_JOIN_HINT}${CLOSING}`);
+    expect(run.paths).not.toContain("GET /api/relay/joins");
+  });
+
+  /**
+   * A PC added in one press has no member yet, so the first device that opens it sends a first join: six digits only
+   * this PC may let in (docs/account.md, "Who may admit a device"). With no screen, its terminal does.
+   */
+  describe("after Added, at a terminal: the first device that opens this PC", () => {
+    const WATCH = ADDED_HERE;
+    const ASKED_AT = "2026-11-06T12:00:30.000Z";
+    const at = new Date(ASKED_AT).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    const first = (id: string, label: string, digits: string): OwnJoin => ({ id, label, asked_at: ASKED_AT, digits });
+    const asks = (label: string) => `${label} asks to open this PC (from Ovis account acct_1, asked at ${at}). Type the six digits ${label} shows (one wrong entry ends this request), or press Enter to finish without: `;
+    const after = (text: string) => text.slice(text.indexOf(WATCH));
+
+    it("asks about the first join that comes by its device, shows none of its digits, and lets it in with the six typed here", async () => {
+      const run = await pressing({
+        pressAfter: 2,
+        joins: (reads) => reads < 3 ? [] : [first("f1", "Pixel", "482913")],
+        watch: (said, answer) => { if (said.endsWith(asks("Pixel"))) answer("482 913"); },
+      });
+      expect(run.code).toBe(0);
+      expect(after(run.text)).toBe(`${WATCH}\n${asks("Pixel")}Pixel is let in; it opens this PC in a moment.\n${CLOSING}`);
+      expect(run.typed).toEqual([{ id: "f1", digits: "482913" }]);
+      // the sign-in ended before the watch: nothing in it needs the account service
+      expect([run.signedOut, run.signedOutBeforeAdded]).toEqual([true, true]);
+    });
+
+    it("says so when the digits are wrong, which ends that join, and lets the device's next request in", async () => {
+      const device = { wrong: false };
+      const run = await pressing({
+        pressAfter: 1,
+        // the device asks again once its first request ended
+        joins: () => [first(device.wrong ? "f2" : "f1", "Pixel", device.wrong ? "555666" : "482913")],
+        join: (typed) => {
+          if (typed.id !== "f1") return undefined;
+          device.wrong = true;
+          return Response.json({ error: { code: "wrong_digits", message: "Those are not the digits the new device shows; it was not let in." } }, { status: 409 });
+        },
+        watch: (said, answer) => { if (said.endsWith(asks("Pixel"))) answer(device.wrong ? "555666" : "111111"); },
+      });
+      expect(run.code).toBe(0);
+      expect(run.typed).toEqual([{ id: "f1", digits: "111111" }, { id: "f2", digits: "555666" }]);
+      expect(after(run.text)).toContain(`${asks("Pixel")}That is not the number Pixel shows, so it was not let in. Have Pixel ask again: its request shows here.\n${asks("Pixel")}Pixel is let in; it opens this PC in a moment.\n`);
+    });
+
+    it("finishes without letting a device in on Enter by itself, also with a first join waiting, and says how to let it in later", async () => {
+      const run = await pressing({
+        pressAfter: 1,
+        joins: () => [first("f1", "Pixel", "482913")],
+        watch: (said, answer) => { if (said.endsWith(asks("Pixel"))) answer(""); },
+      });
+      expect(run.code).toBe(0);
+      expect(run.typed).toEqual([]);
+      expect(run.text.endsWith(`${asks("Pixel")}Finished without letting a device in. ${FIRST_JOIN_HINT}${CLOSING}`)).toBe(true);
+    });
+
+    it("takes no line that came before the question could be read, nor one that answers neither way", async () => {
+      let shown = 0;
+      const run = await pressing({
+        pressAfter: 1,
+        joins: () => [first("f1", "Pixel", "482913")],
+        watch: (said, answer) => {
+          if (!said.endsWith(asks("Pixel"))) return;
+          shown++;
+          // the first comes as the question shows, a key pressed twice
+          answer(shown === 2 ? "yes" : "482913", shown === 1 ? 0 : 2_000);
+        },
+      });
+      expect(run.code).toBe(0);
+      expect(run.typed).toEqual([{ id: "f1", digits: "482913" }]);
+      expect(after(run.text)).toContain("That line answered nothing: it came before the question could be read. Answer again.\n");
+      expect(after(run.text)).toContain("That line answered nothing: type all six digits Pixel shows, or press Enter by itself to finish without. Answer again.\n");
+    });
+
+    it("says so and ends when a row of the account's list it knew from the start signs in: the phone that pressed Add, with no join", async () => {
+      // one press read the account's list before it answered, so the phone is a row already, never used here
+      const row = { id: "00000000000000c3", label: "Pixel", role: "drive", created_at: ASKED_AT, last_seen_at: null, current: false, via_relay: true, through_account: true };
+      const connection = { route: "relay", relay: RELAY, rtt_ms: null, since: "2026-11-06T12:01:00.000Z" };
+      for (const used of [{ connection }, { last_seen_at: "2026-11-06T00:00:00.000Z" }]) {
+        const run = await pressing({ pressAfter: 1, devices: (reads) => [reads < 3 ? row : { ...row, ...used }], watch: () => undefined });
+        expect(run.code).toBe(0);
+        expect(after(run.text)).toBe(`${WATCH}\nPixel can open this PC now: it got in through your account. ${FIRST_JOIN_HINT}${CLOSING}`);
+      }
+    });
+
+    it("takes no session that ended, nor a member in use, as a device getting in", async () => {
+      const row = { id: "00000000000000c3", label: "Pixel", role: "drive", created_at: ASKED_AT, last_seen_at: "2026-11-05T00:00:00.000Z", current: false, via_relay: true, through_account: true };
+      const member = { id: "00000000000000d4", label: "Desk", role: "drive", created_at: ASKED_AT, last_seen_at: ASKED_AT, current: false, via_relay: true, account: "acct_1" };
+      const run = await pressing({
+        pressAfter: 1, watch: () => undefined,
+        devices: (reads) => reads < 3
+          ? [{ ...row, connection: { route: "relay", rtt_ms: 40, since: "2026-11-06T11:00:00.000Z" } }, member]
+          : [row, { ...member, last_seen_at: "2026-11-06T12:05:00.000Z" }],
+      });
+      expect(run.code).toBe(0);
+      expect(after(run.text)).toBe(`${WATCH}\nStopped watching after 10 minutes. ${FIRST_JOIN_HINT}${CLOSING}`);
+    });
+
+    it("says so and ends when a device got in through the account meanwhile", async () => {
+      const run = await pressing({
+        pressAfter: 1,
+        devices: (reads) => reads < 3 ? [] : [{ id: "00000000000000c3", label: "Pixel", role: "drive", created_at: ASKED_AT, last_seen_at: null, current: false, via_relay: true, through_account: true }],
+        watch: () => undefined,
+      });
+      expect(run.code).toBe(0);
+      expect(after(run.text)).toBe(`${WATCH}\nPixel can open this PC now: it got in through your account. ${FIRST_JOIN_HINT}${CLOSING}`);
+    });
+
+    it("stops by itself after ten minutes, and on Ctrl+C; the PC stays added either way", async () => {
+      const quiet = await pressing({ pressAfter: 1, watch: () => undefined });
+      expect(quiet.code).toBe(0);
+      expect(after(quiet.text)).toBe(`${WATCH}\nStopped watching after 10 minutes. ${FIRST_JOIN_HINT}${CLOSING}`);
+      const stopped = await pressing({ pressAfter: 1, joins: () => [first("f1", "Pixel", "482913")], watch: (said, _answer, stop) => { if (said.endsWith(asks("Pixel"))) setTimeout(stop, 0); } });
+      expect(stopped.code).toBe(0);
+      expect(stopped.typed).toEqual([]);
+      expect(stopped.text.endsWith(`${asks("Pixel")}\nStopped. ${FIRST_JOIN_HINT}${CLOSING}`)).toBe(true);
+      expect(stopped.signedOut).toBe(true);
+    });
+
+    it("ends as before, with the way to let a device in later, at an Ovis that lists no joins to its terminal", async () => {
+      const run = await pressing({ pressAfter: 1, joins: () => Response.json({ error: { code: "not_found" } }, { status: 404 }), watch: () => undefined });
+      expect(run.code).toBe(0);
+      expect(run.text.endsWith(`Added. Open old-desktop from My PCs.\n${FIRST_JOIN_HINT}${CLOSING}`)).toBe(true);
+    });
   });
 
   it("--qr keeps the QR code a device of the account scans, and never asks this PC for the admission", async () => {
@@ -3790,13 +3954,14 @@ describe("ovis approve, a members join typed with all six of its digits (#28)", 
   // labels without digits, so a digit on the screen can only be one the command showed
   const joinOf = (id: string) => ({ id, label: `Tablet ${id === "j1" ? "one" : "two"}` });
   /** `said`: each text the command writes; `answer` types lines once the prompt was on the screen long enough. */
-  async function joining(options: { joins: { id: string; label: string }[]; said: (text: string, answer: (...lines: string[]) => void) => void; terminal?: boolean; approve?: (attempt: number) => JoinOutcome }) {
+  async function joining(options: { joins: OwnJoin[]; said: (text: string, answer: (...lines: string[]) => void) => void; terminal?: boolean; approve?: (attempt: number) => JoinOutcome; account?: string | null }) {
     let at = Date.parse("2026-11-22T12:00:00Z");
     const keys = keyboard();
     const out: string[] = [];
     const sent: { id: string; digits: string }[] = [];
     let reads = 0;
     const code = await approveJoins(options.joins, {
+      ...options.account === undefined ? {} : { account: options.account },
       lines: { next: () => { reads++; return keys.lines.next(); } }, terminal: options.terminal ?? true, signal: new AbortController().signal, now: () => at, discard: keys.discard,
       out: (text) => {
         out.push(text);
@@ -3855,5 +4020,68 @@ describe("ovis approve, a members join typed with all six of its digits (#28)", 
     const { code, sent, reads } = await joining({ joins: [joinOf("j1")], terminal: false, said: (_said, answer) => answer("123456") });
     expect(code).toBe(1);
     expect([sent, reads]).toEqual([[], 0]);
+  });
+
+  describe("a first join: the first device that opens a PC with no member, which only this PC may let in", () => {
+    const ASKED_AT = "2026-11-22T11:58:00.000Z";
+    const clock = new Date(ASKED_AT).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    // the digits come with a first join (its own window's card shows them); the terminal never does
+    const firstOf = (id: string, digits: string) => ({ id, label: id === "f1" ? "Pixel" : "Galaxy", asked_at: ASKED_AT, digits });
+    const firstPrompt = (label: string) => `${label} asks to open this PC (from Ovis account acct_1a2b3c4, asked at ${clock}). Type the six digits ${label} shows (one wrong entry ends this request), or press Enter to skip: `;
+
+    it("names the device, the account it comes from and when it asked, shows none of its digits, and lets it in with all six typed", async () => {
+      let asked = 0;
+      const { code, out, sent } = await joining({
+        joins: [firstOf("f1", "482913")], account: "acct_1a2b3c4d5e6f",
+        said: (said, answer) => { if (said === firstPrompt("Pixel")) answer(++asked === 1 ? "913" : "482 913"); },
+      });
+      expect(code).toBe(0);
+      expect(asked).toBe(2);
+      expect(out[0]).toBe(firstPrompt("Pixel"));
+      for (const said of out) expect(said).not.toMatch(/482|913/);
+      expect(sent).toEqual([{ id: "f1", digits: "482913" }]);
+      expect(out.at(-1)).toBe("Pixel is let in; it opens this PC in a moment.\n");
+    });
+
+    it("says so when the digits are wrong, which ends that join, and how to try again; Enter by itself skips the next and sends nothing", async () => {
+      const { code, out, sent } = await joining({
+        joins: [firstOf("f1", "482913"), firstOf("f2", "111222")], account: "acct_1a2b3c4d5e6f",
+        said: (said, answer) => {
+          if (said === firstPrompt("Pixel")) answer("000000");
+          if (said === firstPrompt("Galaxy")) answer("");
+        },
+        approve: () => "wrong_digits",
+      });
+      expect(code).toBe(0);
+      expect(sent).toEqual([{ id: "f1", digits: "000000" }]);
+      expect(out).toContain("That is not the number Pixel shows, so it was not let in. To try again, have Pixel ask again, then run ovis approve again.\n");
+      expect(out).toContain("Galaxy is left waiting until its time runs out.\n");
+    });
+
+    it("leaves out the account when this PC did not say which, and asks about a members join as before", async () => {
+      const { out, sent } = await joining({
+        joins: [firstOf("f1", "482913"), joinOf("j1")], account: null,
+        said: (said, answer) => {
+          if (said.startsWith("Pixel asks")) answer("482913");
+          if (prompt(said, "j1")) answer("123456");
+        },
+      });
+      expect(out[0]).toBe(`Pixel asks to open this PC (asked at ${clock}). Type the six digits Pixel shows (one wrong entry ends this request), or press Enter to skip: `);
+      expect(out).toContain("Approved: Tablet one joins your account once it confirms.\n");
+      expect(sent).toEqual([{ id: "f1", digits: "482913" }, { id: "j1", digits: "123456" }]);
+    });
+
+    it("where its input is not a terminal, lists each first join with the way to let it in, and approves nothing", async () => {
+      const { code, out, sent, reads } = await joining({
+        joins: [firstOf("f1", "482913")], account: "acct_1a2b3c4d5e6f", terminal: false,
+        said: (_said, answer) => answer("482913"),
+      });
+      expect(code).toBe(1);
+      expect([sent, reads]).toEqual([[], 0]);
+      expect(out).toEqual([
+        `Pixel asks to open this PC (from Ovis account acct_1a2b3c4, asked at ${clock}). Run ovis approve in a terminal on this PC and type the six digits Pixel shows.\n`,
+        "This is not run in a terminal, so no request can be answered here. Nothing was declined: the requests keep waiting. Run this in a terminal to answer them (over ssh, run ssh -t).\n",
+      ]);
+    });
   });
 });

@@ -8,7 +8,8 @@
  *   once the person here confirmed the account that signed in (typed yes at its name, or named it with `--account`, the
  *   only way without a terminal: whoever signs in with the code picks the account), and wait until a device signed in to
  *   it presses Add on this PC's card: that is the account's one-press admission, which this PC takes with its own key's
- *   proof (`addByPress`).
+ *   proof (`addByPress`). At a terminal it then lets in the first device that opens this PC, which nobody else may,
+ *   once the six digits that device shows are typed (`watchFirstJoins`).
  * - `link --qr` (or `--print`), and `link` on a PC that takes no such admission: the same sign-in, then
  *   one QR code: a device signed in to that account that scans it puts this PC in the account, with nothing
  *   to type and nothing to approve here (docs/account.md, "Who may admit a device": a code admits whoever holds it).
@@ -654,33 +655,59 @@ export function lockRefusal(code: "locked" | "strict"): string {
     : "This PC cannot read its safety log, so no device can be approved from its terminal. Open it on its own screen, or run ovis recover there, then run this again.\n";
 }
 
-/** A members-only account join waiting for this PC (`GET /api/relay/joins` without digits): its digits are typed, never shown. */
-export interface OwnJoin { readonly id: string; readonly label: string }
+/**
+ * An account join waiting on this PC's own window (`GET /api/relay/joins`). A members join comes without its digits.
+ * A first join (`digits`: asked while this PC had no member to approve it, as a PC added in one press has) comes with
+ * them, for the own window's card to show; this terminal never shows them, and asks for them typed all the same.
+ */
+export interface OwnJoin { readonly id: string; readonly label: string; readonly asked_at?: string; readonly digits?: string }
 
 /** What `POST /api/relay/join` made of the six digits typed: `away` when its answer did not come. */
 export type JoinOutcome = "approved" | "wrong_digits" | "gone" | "locked" | "strict" | "away";
 
 export interface JoinOptions extends AnswerInput {
   readonly approve: (id: string, digits: string) => Promise<JoinOutcome>;
+  /** this PC's account, which a first join's admission came from (GET /api/account/status); null or unset when not known */
+  readonly account?: string | null;
+  /** how this command is typed here, for a run at a terminal */
+  readonly command?: string;
+}
+
+const clockTime = (at: number): string => new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+/** How a first join is named at this terminal: its device, the account its admission came from, and when it asked. */
+function firstJoinLead(join: OwnJoin, account: string | null | undefined): string {
+  const asked = join.asked_at === undefined ? Number.NaN : Date.parse(join.asked_at);
+  const about = [...typeof account === "string" ? [`from Ovis account ${shortAccount(account)}`] : [], ...Number.isFinite(asked) ? [`asked at ${clockTime(asked)}`] : []];
+  return `${plainLabel(join.label)} asks to open this PC${about.length === 0 ? "" : ` (${about.join(", ")})`}.`;
 }
 
 /**
- * `ovis approve` for account joins a member could also approve (#28): the PC's terminal is the PC itself, so it asks
- * as the own window's card does (src/components/OwnJoins.tsx OwnJoinCard). Its person types all six digits the new
- * device shows: no candidates are shown and three digits are not enough. The PC compares them (pairing-approvals.ts
- * decideTyped), and one wrong entry ends that join. Enter by itself leaves it waiting until its own deadline. A locked
- * or strict PC refuses, and nothing more is asked. What is not a terminal answers nothing. The exit code.
+ * `ovis approve` for the account joins this PC's own window lists: the PC's terminal is the PC itself, so it asks as
+ * that window does (src/components/OwnJoins.tsx OwnJoinCard). A join a member could also approve (#28) and a first
+ * join, which nobody but this PC may let in (docs/account.md, "Who may admit a device"), are both let in only by all six
+ * digits the new device shows, typed here: none are shown, three are not enough. The PC compares them
+ * (pairing-approvals.ts decideTyped), and one wrong entry ends that join; the device may ask again. Enter by itself
+ * leaves it waiting until its own deadline. A locked or strict PC refuses, and nothing more is asked. What is not a
+ * terminal answers nothing, and names each first join with the way to let it in. The exit code.
  */
 export async function approveJoins(joins: readonly OwnJoin[], options: JoinOptions): Promise<number> {
   const { out } = options;
+  const command = options.command ?? "ovis approve";
   if (options.terminal !== true) {
+    for (const join of joins) {
+      if (join.digits !== undefined) out(`${firstJoinLead(join, options.account)} Run ${command} in a terminal on this PC and type the six digits ${plainLabel(join.label)} shows.\n`);
+    }
     out(NOT_A_TERMINAL);
     return 1;
   }
   for (const join of joins) {
     const label = plainLabel(join.label);
+    const first = join.digits !== undefined;
+    const prompt = first ? `${firstJoinLead(join, options.account)} Type the six digits ${label} shows (one wrong entry ends this request), or press Enter to skip: `
+      : `${label} asks to join your account. Type all six digits its screen shows to let it in (one wrong entry ends this request), or press Enter by itself to leave it waiting: `;
     for (;;) {
-      const line = await askLine(options, `${label} asks to join your account. Type all six digits its screen shows to let it in (one wrong entry ends this request), or press Enter by itself to leave it waiting: `);
+      const line = await askLine(options, prompt);
       if (line === null) { out("The terminal's input ended: nothing more is approved here.\n"); return 1; }
       const typed = line.normalize("NFKC").replace(/\s/g, "");
       if (typed === "") { out(`${label} is left waiting until its time runs out.\n`); break; }
@@ -688,8 +715,9 @@ export async function approveJoins(joins: readonly OwnJoin[], options: JoinOptio
       const outcome = await options.approve(join.id, typed);
       if (outcome === "locked" || outcome === "strict") { out(lockRefusal(outcome)); return 1; }
       if (outcome === "away") { out("Your answer may not have reached the Ovis on this PC. Run this again once it answers.\n"); return 1; }
-      out(outcome === "approved" ? `Approved: ${label} joins your account once it confirms.\n`
-        : outcome === "wrong_digits" ? `That is not the number ${label} shows. It was not let in; it can ask again.\n`
+      out(outcome === "approved" ? first ? `${label} is let in; it opens this PC in a moment.\n` : `Approved: ${label} joins your account once it confirms.\n`
+        : outcome === "wrong_digits" ? first ? `That is not the number ${label} shows, so it was not let in. To try again, have ${label} ask again, then run ${command} again.\n`
+          : `That is not the number ${label} shows. It was not let in; it can ask again.\n`
         : `${label} is no longer waiting.\n`);
       break;
     }
@@ -898,6 +926,10 @@ interface Device {
   readonly added_by?: string;
   /** let in by the list of the account this PC is in, never by a code: that account vouches for it */
   readonly through_account?: true;
+  /** on a row `through_account`: the day it last signed in here (null before its first sign-in) */
+  readonly last_seen_at?: string | null;
+  /** to this PC's own window: while one of its sessions is up, and since when */
+  readonly connection?: { readonly since: string };
 }
 
 /**
@@ -1532,9 +1564,170 @@ interface Pressing {
   readonly unlist: () => Promise<Unlisted>;
   /** names the account that signed in as the one this PC's relay pass is asked under, which asks for the pass again */
   readonly named: () => Promise<void>;
+  /** ends the sign-in, which nothing needs once this PC is added, after a listing a renewal took away went back */
+  readonly signOut: () => Promise<void>;
 }
 
-const clockTime = (at: number): string => new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+/** How long `add` waits, once this PC is added, for the first device that opens it to ask for its six digits. */
+const FIRST_JOIN_MS = 10 * 60_000;
+
+/**
+ * The end of `add` at a terminal, once this PC is in the account. A PC added in one press has no member yet, so the
+ * first device that opens it sends a first join, which nobody but this PC may let in (docs/account.md, "Who may admit
+ * a device"), and a PC with no screen has no window to do that in: its terminal stands in, as `ovis approve` does.
+ * For up to ten minutes it reads this PC's waiting joins (GET /api/relay/joins), asks about each first join by its
+ * device, the account and when it asked, and lets it in once the six digits that device shows are typed here (POST
+ * /api/relay/join, which compares them and ends that join at one wrong entry; the device may ask again). It never shows
+ * the digits. A line answers only the question it was typed under, and only once that was on the screen long enough to
+ * read (DWELL_MS); what the terminal held as a question first showed is discarded, as `asking` does. Enter by itself,
+ * the input ending, Ctrl+C and the ten minutes end it, as does a device that got in through the account meanwhile (a
+ * member or a row of the account's list that GET /api/devices did not show before, or such a row it showed that signs
+ * in during the wait); each end says how to let a device in later. False, with nothing shown, where
+ * this PC lists no joins to its terminal (an Ovis from before the route), or the run stopped before the first question.
+ */
+async function watchFirstJoins(options: LinkOptions, api: Api, watched: { readonly name: string; readonly account: string; readonly hint: string }): Promise<boolean> {
+  const { out, signal } = options;
+  const now = options.now ?? Date.now;
+  const wait = options.wait ?? waitFor;
+  const { name, account, hint } = watched;
+  const joins = async (): Promise<OwnJoin[]> => (await api<{ joins: OwnJoin[] }>("GET", "/api/relay/joins")).joins;
+  // the devices that open this PC through its account; null when that could not be read just now
+  const throughAccount = async (): Promise<Device[] | null> => {
+    try { return (await api<{ devices: Device[] }>("GET", "/api/devices")).devices.filter((device) => device.account !== undefined || device.through_account === true); }
+    catch (error) { if (signal.aborted) throw error; return null; }
+  };
+  try {
+    await joins();
+  } catch (error) {
+    if (signal.aborted || error instanceof LocalError && (error.status === 404 || error.status === 405)) return false;
+    if (!(error instanceof LocalError || error instanceof AwayError)) throw error;
+  }
+  // The devices that could open it already, and how far each was used: one that comes after them got in by itself, and
+  // so did a row of the account's list that signs in after them. One press reads the account's list before it answers,
+  // so the phone that pressed Add is usually such a row already, and it signs in with no join. GET /api/devices tells
+  // that by the day it last signed in (`last_seen_at`, null before its first) and, to this PC's own window, by a session
+  // that is up (`connection.since`). Taken at the next look when this read was not answered
+  interface Usage { readonly seen: string | null; readonly since: string | null }
+  const usage = (device: Device): Usage => ({ seen: device.last_seen_at ?? null, since: device.connection?.since ?? null });
+  // a session that ended, or a day that went back, is no sign-in
+  const signedIn = (before: Usage, device: Device): boolean => device.through_account === true
+    && ((device.last_seen_at ?? null) !== null && device.last_seen_at !== before.seen || (device.connection?.since ?? null) !== null && device.connection?.since !== before.since);
+  let known: ReadonlyMap<string, Usage> | null;
+  try {
+    const rows = await throughAccount();
+    known = rows === null ? null : new Map(rows.map((device) => [device.id, usage(device)]));
+  } catch { return false; }
+  const stopAt = now() + FIRST_JOIN_MS;
+  interface Question { readonly prompt: string; shownAt: number | null }
+  const intro: Question = { prompt: `Open ${name} from My PCs on your phone. If the phone shows six digits, type them here (Enter to finish without): `, shownAt: null };
+  let asked: (Question & { readonly id: string; readonly label: string }) | null = null;
+  const current = (): Question => asked ?? intro;
+  const seen = new Set<string>();
+  let onScreen: Question | null = null;
+  let atPrompt = false;
+  // why the next line handed over answers nothing, whatever it says: it may have been begun under a question that is gone
+  let held: string | null = null;
+  let away = false;
+  const say = (text: string): void => { out(atPrompt ? `\n${text}` : text); atPrompt = false; };
+  const show = (): void => {
+    const question = current();
+    if (atPrompt && onScreen === question) return;
+    if (question.shownAt === null) {
+      // what was typed before this question and not sent would come with the Enter pressed at it
+      let emptied = false;
+      try { emptied = options.discard?.() === true; } catch {}
+      if (!emptied) held ??= "this terminal's input could not be emptied as the question showed, so it may have been typed before it.";
+      question.shownAt = now();
+    }
+    say(question.prompt);
+    atPrompt = true;
+    onScreen = question;
+  };
+  show();
+  const keys = typing(options.lines, signal, current, now);
+  try {
+    for (;;) {
+      for (const line of keys.take()) {
+        atPrompt = false;
+        const question = current();
+        if (held !== null) { say(`That line answered nothing: ${held} Answer again.\n`); held = null; continue; }
+        if (line.under !== question) { say("That line answered nothing: it was typed before the question shown now. Answer again.\n"); continue; }
+        if (question.shownAt === null || line.at - question.shownAt < DWELL_MS) {
+          say("That line answered nothing: it came before the question could be read. Answer again.\n");
+          question.shownAt = now();
+          continue;
+        }
+        const typed = line.text.normalize("NFKC").replace(/\s/g, "");
+        if (typed === "") { say(`Finished without letting a device in. ${hint}`); return true; }
+        if (asked === null) { say(`That line answered nothing: no device is asking to open this PC yet. Open ${name} from My PCs on your phone; what it asks shows here.\n`); continue; }
+        const { id, label } = asked;
+        if (!SIX_DIGITS.test(typed)) { say(`That line answered nothing: type all six digits ${label} shows, or press Enter by itself to finish without. Answer again.\n`); continue; }
+        try {
+          await api("POST", "/api/relay/join", { body: { id, digits: typed } });
+          say(`${label} is let in; it opens this PC in a moment.\n`);
+          return true;
+        } catch (error) {
+          if (signal.aborted || !(error instanceof LocalError || error instanceof AwayError)) throw error;
+          asked = null;
+          if (error instanceof AwayError) {
+            // asked about again while it still waits, never answered by itself, nor by a line typed meanwhile
+            seen.delete(id);
+            held = "the answer before it may not have reached the Ovis on this PC, and it may have been typed meanwhile.";
+            say(`Your answer may not have reached the Ovis on this PC. ${label} is asked about again if it is still waiting.\n`);
+          } else if (error.code === "locked" || error.code === "strict") {
+            say(`${lockRefusal(error.code)}${hint}`);
+            return true;
+          } else {
+            say(error.code === "wrong_digits" ? `That is not the number ${label} shows, so it was not let in. Have ${label} ask again: its request shows here.\n`
+              : error.code === "relay_pairing_gone" ? `${label} is no longer waiting.\n` : `Could not let ${label} in: ${error.reason}\n`);
+          }
+        }
+      }
+      if (signal.aborted) break;
+      if (keys.ended) { say(`The terminal's input ended. ${hint}`); return true; }
+      try {
+        const waiting = (await joins()).filter((join) => join.digits !== undefined);
+        if (away) { away = false; say("The Ovis on this PC answers again.\n"); }
+        if (asked !== null && !waiting.some((join) => join.id === asked!.id)) {
+          say(`${asked.label} is no longer waiting.\n`);
+          if (asked.shownAt !== null) held = "a request went away while it may have been typed.";
+          asked = null;
+        }
+        const next: OwnJoin | undefined = asked === null ? waiting.find((join) => !seen.has(join.id)) : undefined;
+        if (next !== undefined) {
+          seen.add(next.id);
+          const label = plainLabel(next.label);
+          asked = { id: next.id, label, prompt: `${firstJoinLead(next, account)} Type the six digits ${label} shows (one wrong entry ends this request), or press Enter to finish without: `, shownAt: null };
+        }
+        const rows = await throughAccount();
+        if (rows !== null && known === null) known = new Map(rows.map((row) => [row.id, usage(row)]));
+        // the device named may not be the phone in hand: the way to let that one in is said too
+        const came = rows?.find((row) => { const before = known!.get(row.id); return before === undefined || signedIn(before, row); });
+        if (came !== undefined) { say(`${plainLabel(came.label)} can open this PC now: it got in through your account. ${hint}`); return true; }
+      } catch (error) {
+        if (signal.aborted) break;
+        if (error instanceof AwayError) {
+          if (!away) say("The Ovis on this PC is not answering (is it restarting?). Waiting for it…\n");
+          away = true;
+        } else if (error instanceof LocalError) {
+          say(`${error.code === "locked" || error.code === "strict" ? lockRefusal(error.code) : `Could not read which devices ask to open this PC: ${error.reason}\n`}${hint}`);
+          return true;
+        } else throw error;
+      }
+      if (now() >= stopAt) { say(`Stopped watching after 10 minutes. ${hint}`); return true; }
+      show();
+      const early = new AbortController();
+      const pause = wait(Math.min(POLL_MS, Math.max(0, stopAt - now())), AbortSignal.any([signal, early.signal]));
+      const first = await Promise.race([pause.then(() => "waited" as const), keys.arrived().then(() => "typed" as const)]);
+      if (first === "typed") { pause.catch(() => undefined); early.abort(); }
+    }
+  } catch (error) {
+    // the PC is added whatever went wrong here: that is not to be told as a failed add
+    if (!signal.aborted) { say(`Stopped waiting for a device: ${error instanceof Error ? error.message : String(error)}. ${hint}`); return true; }
+  }
+  say(`Stopped. ${hint}`);
+  return true;
+}
 
 /**
  * The end of `add`, once the person at this PC confirmed the account that signed in (or named it with --account): a
@@ -1585,8 +1778,18 @@ async function addByPress(options: LinkOptions, api: Api, press: Pressing): Prom
       if (signal.aborted || !(error instanceof LocalError || error instanceof AwayError)) throw error;
       online = false;
     }
-    out(online ? `Added. Open ${name} from My PCs.\n${loginClosing(options)}`
-      : `Added: this PC is in your account (${mine}), but its Ovis relay did not come online within 30 seconds. Your devices can open ${name} from My PCs once it does (${cli(options)} status says when).\n${loginClosing(options)}`);
+    // what follows reads this PC only: the sign-in ends here, not with the run up to ten minutes later
+    await press.signOut();
+    // the first device that opens this PC asks for six digits only this PC may let in (a first join): here, at a
+    // terminal, they are typed in the same run; elsewhere it is said where to type them
+    const hint = `If your phone asks for six digits when you open ${name}, run ${cli(options)} approve on this PC and type them.\n`;
+    if (!online) {
+      out(`Added: this PC is in your account (${mine}), but its Ovis relay did not come online within 30 seconds. Your devices can open ${name} from My PCs once it does (${cli(options)} status says when).\n${hint}${loginClosing(options)}`);
+      return 0;
+    }
+    out("Added. ");
+    const watched = options.terminal === true && options.isTty === true && await watchFirstJoins(options, api, { name, account: press.signedIn, hint });
+    out(`${watched ? "" : `Open ${name} from My PCs.\n${hint}`}${loginClosing(options)}`);
     return 0;
   };
   // in another account than the one that signed in: taken off that one's list, and both named
@@ -1793,6 +1996,14 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
   const signedIn = session?.account ?? null;
   const pending: { listing: Listing | null; kept: boolean } = { listing: null, kept: false };
   const unlisted = "This PC could not be listed in your account again just now; it is tried again until it is.\n";
+  let ended = false;
+  // the sign-in was only for this: it ends with it, and nothing of it stays on the PC. A listing a renewal took away goes back first
+  const signOut = async (): Promise<void> => {
+    if (ended) return;
+    ended = true;
+    if (pending.listing !== null && !await putListing(api, service, pending.listing)) out("This PC dropped out of your account's list; run link again to list it.\n");
+    await service.signOut().catch(() => out("The sign-in could not be ended at the account service; it ends by itself when it runs out.\n"));
+  };
   const kept = "This PC stays listed, but an earlier run listed it, so your other devices may no longer show it as new.\n";
   try {
     if (session === undefined || signedIn === null) throw new LocalError("The sign-in did not last. Run this again.");
@@ -1837,6 +2048,7 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
         signedIn, name: first.entry.label, listedAt: Number.isFinite(at) ? at : null,
         confirmed: lists[1].some((pc) => pc.server_id === first.serverId),
         named: () => nameRelayAccount(api, service),
+        signOut,
         unlist: async () => {
           try { await service.deletePc(first.serverId); return "removed"; } catch (error) {
             if (!(error instanceof AccountServiceError && error.status === 403 && error.code === "own_sign_in_required")) return "failed";
@@ -2015,9 +2227,7 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
       }
     }
   } finally {
-    if (pending.listing !== null && !await putListing(api, service, pending.listing)) out("This PC dropped out of your account's list; run link again to list it.\n");
-    // the sign-in was only for this: it ends with it, and nothing of it stays on the PC
-    await service.signOut().catch(() => out("The sign-in could not be ended at the account service; it ends by itself when it runs out.\n"));
+    await signOut();
   }
 }
 

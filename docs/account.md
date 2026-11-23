@@ -305,7 +305,18 @@ token: without one, any local OS account counts as this PC's own window and coul
 A first join (a PC added in one press, its owner's first phone) has nobody else to approve it: this PC's
 own window alone shows it, as a card with the digits to compare and Allow / Decline (`POST /api/relay/join`
 with a `decision`), and no member that joins meanwhile may decide it. Its `PAIR_CHALLENGE` carries
-`approve_on` (`mac`, `windows`, `linux` or `pc`), so the phone says which PC to press Allow on. A PC vouched
+`approve_on` (`mac`, `windows`, `linux` or `pc`), so the phone says which PC to press Allow on. On a PC
+with no screen, its terminal stands in for that window: `ovis approve` lists a first join with the device's
+name, the account its admission came from and when it asked, never with its digits, and lets it in only
+when the six digits the device shows are typed there (`POST /api/relay/join` with `digits`, compared as
+for a members join: one wrong entry ends that join, and the device may ask again). `ovis add` asks the same
+way right after it added the PC ([A PC with no screen](relay.md#a-pc-with-no-screen)). That is the
+authority of the own window's Allow, not a new one: the request comes from a shell on this PC that reaches
+its loopback, unforwarded, as the owner (with the access token where there is one), which is what makes a
+window this PC's own, and it carries the digits only the asking device shows. The terminal asks for them
+typed where the window asks for a tap: nothing is approved there without them, an input that is not a
+terminal approves nothing, and no flag takes them. The asking device still needs a fresh admission in
+this PC's account (condition 2 above), so nobody away from this PC gains anything. A PC vouched
 for still needs a member. A key that a QR or code pairing waits with on this PC's screen shows in the same place in
 the PC's own window, with its fingerprint and one button, Confirm on this PC (`POST /api/account/confirm-page`, own
 window only): the server opens the local confirm page in a browser on this PC's desktop, as `ovis confirm` does, so

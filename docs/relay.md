@@ -164,8 +164,9 @@ two screens instead, as in Bluetooth's numeric comparison:
    it sends an approval typed as three digits. Input that is not a terminal (a pipe, `ssh` without
    `-t`) answers nothing: the command says so and fails, and no request is declined, so each keeps
    waiting for a run at a terminal. The PC's terminal is the PC itself, so it also asks about each
-   account join a member could approve ([Who may admit a device](account.md#who-may-admit-a-device)):
-   no digits are shown for it, all six the new device shows are typed, and one wrong entry ends it.
+   account join a member could approve, and each first join, which only the PC may let in
+   ([Who may admit a device](account.md#who-may-admit-a-device)): no digits are shown for either, all
+   six the new device shows are typed, and one wrong entry ends it.
    On a machine several people log in to, set an access token: without one, any local OS account
    counts as this PC's own window and could approve a join (it would still need the six digits the
    asking device shows).
@@ -370,8 +371,8 @@ for it before they show or ask anything.
   pipe, a script, CI, a coding agent's shell), nobody can type yes, so it runs only with
   `--account` and otherwise refuses before the sign-in, in one line that says to pass it or run in a
   terminal. That is the way to script it: `ovis add --account <id>` prints plain lines with no cursor
-  control, the sign-in address and code first (and the QR code of the page), then **Added. Open (this PC) from My PCs.** and exit
-  code 0, or a line saying why not and a non-zero exit. Under the fleet preview it asks at a terminal
+  control, the sign-in address and code first (and the QR code of the page), then **Added. Open (this PC) from My PCs.**, the
+  line that says where to type a phone's six digits (below) and exit code 0, or a line saying why not and a non-zero exit. Under the fleet preview it asks at a terminal
   only, `--account` or not. Then it lists this PC in the account ([Adding a PC](account.md#adding-a-pc))
   and waits: **Open Ovis on your phone or another PC and press Add for (this PC)**. Every device signed in
   to that account with a sign-in of its own shows this PC's card, **Add this PC to your account?**,
@@ -384,10 +385,10 @@ for it before they show or ask anything.
   with the account that signed in): the PC asks the account service itself, with its relay key's
   proof, so only an admission by that account, made for this PC's listing, binds it. Then the PC
   names that account for its relay pass again, which asks for the pass the account now gives it,
-  and the command ends with **Added. Open (this PC) from My PCs.** once the relay is online (when it
-  is not within 30 seconds, it says so: the PC is in the account all the same). Past the sign-in,
-  nothing it shows lets anyone in, and the approve-here window that listing the PC opens is closed at
-  once (`POST /api/relay/link/close`): this way takes no digits. The wait lasts as long as the card offers
+  and the command says **Added.** once the relay is online (when it is not within 30 seconds, it
+  says so: the PC is in the account all the same). Past the sign-in, nothing it shows lets anyone
+  in, and the approve-here window that listing the PC opens is closed at once (`POST
+  /api/relay/link/close`): no digits come through it. The wait lasts as long as the card offers
   **Add**: 10 minutes from when this PC was listed, so less for a listing an earlier run left, and
   none for one listed more than 10 minutes ago, which the card offers to remove only (the command
   says so). A PC the account lists as its own already (an **Add** pressed for an earlier run) shows
@@ -406,6 +407,43 @@ for it before they show or ask anything.
   this terminal as the PC itself: `403 owner_only`, as for a forwarded port) answers the command's
   first ask, made with no account, otherwise than `400 invalid_account`: `add` then says which and
   goes the `--qr` way.
+
+  **Then the phone opens the PC.** The sign-in ends as the PC is added; what follows reads this PC
+  only. Adding the PC read the account's list of devices, so the phone that pressed **Add** usually
+  opens it at once with the account's key, with nothing to type. If the phone shows six digits instead,
+  only this PC may let it in: it does when this PC does not list that phone from the account yet (for
+  example the phone whose sign-in created the account, during that sign-in's first day), and a PC added
+  this way has no other device of the account to approve it, so its request is a first join
+  ([Who may admit a device](account.md#who-may-admit-a-device)). At a terminal the command goes on
+  after **Added.** for that case:
+
+  ```
+  Added. Open Desk from My PCs on your phone. If the phone shows six digits, type them here (Enter to finish without):
+  Pixel asks to open this PC (from Ovis account acct_1a2b3c4, asked at 10:02). Type the six digits Pixel shows (one wrong entry ends this request), or press Enter to finish without: 482913
+  Pixel is let in; it opens this PC in a moment.
+  ```
+
+  1. Open the PC from **My PCs** on the phone. If it shows six digits, go on here.
+  2. The terminal names the request it reads from this PC (`GET /api/relay/joins`, as `ovis approve`
+     does): the phone's name, the account its admission came from and when it asked. It never shows
+     the digits.
+  3. Type the six digits the phone shows. They go to this PC (`POST /api/relay/join`), which compares
+     them: right, the phone is let in; wrong, that request ends and the command says so (**That is not
+     the number Pixel shows, so it was not let in**). The phone may ask again, and its new request
+     shows in the terminal the same way.
+
+  A line answers only the request it was typed under, once that was on the screen a second and a half;
+  what was typed before a question showed is discarded as it shows, as for `--approve` below, and
+  anything but six digits or Enter answers nothing and is asked again. The command waits up to 10
+  minutes; Enter by itself, Ctrl+C or the input ending (Ctrl+D) end it sooner, as does a device of the
+  account that got in another way meanwhile (**Pixel can open this PC now: it got in through your
+  account**): a row of `GET /api/devices` that was not there as the wait began, or a row of the
+  account's list that signs in during it (its `last_seen_at`, the day it last signed in, or its live
+  `connection` changes). That row may be another device than the phone in hand, so each end says how
+  to let a device in later: **If your phone asks for six digits when you open (this PC), run `ovis
+  approve` on this PC and type them.** Where nobody can type (no terminal, with `--account`), or the
+  relay did not come online in time, the command prints that line right after **Added.** and ends. The
+  PC stays added however this part ends, and the exit code is 0.
 - **`add --qr`** (also `--print`) signs in and lists this PC the same way and, once the relay is
   online, shows **one QR code** with a code to type and this PC's ID. Ovis's own account service gives a
   PC listed by such a sign-in no relay pass until a device of the account pressed **Add** for it, so
