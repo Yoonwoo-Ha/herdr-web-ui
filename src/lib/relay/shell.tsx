@@ -3,6 +3,7 @@ import { createElement, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { encodeOffer, type RelayOffer } from "../../../shared/relay-offer.ts";
 import { AccountOpenUnsupportedError, RelayPcOfflineError } from "../../../shared/relay-channel.ts";
+import { MuxProtocolError } from "../../../shared/relay-mux.ts";
 import { RelayShell } from "../../components/RelayShell.tsx";
 import { accountDevice, withAccountDevice } from "../account/accountDevice.ts";
 import { nextOpenStep, openRefusalOf } from "../account/openPc.ts";
@@ -165,7 +166,8 @@ function launchOrder(devices: readonly RelayDevice[], opens: boolean, signedIn =
  * The account's PCs a launch with no saved PC to open may go to, to ask to join one on its own page (approved on that PC
  * or a device already in): those this device has no pairing for, that have a way to join and were seen lately, the one
  * opened last first, then the one seen most recently. The launch asks the first its check does not find off. A PC new in the account (new_until) is asked
- * too (security-triage, #16): the request grants nothing, and its approval opens no session without a tap (App).
+ * too (security-triage, #16): the request grants nothing, and its approval opens no session without a tap (App). One
+ * this device may sign in to by the account's key is not asked: its sheet waits for the press that opens it that way.
  */
 function accountLaunchPcs(pcs: readonly MyPc[]): (MyPc & { readonly join: NonNullable<MyPc["join"]> })[] {
   const open = pcs.filter((pc): pc is MyPc & { readonly join: NonNullable<MyPc["join"]> } => !pc.paired && pc.join !== undefined && pc.state !== "offline");
@@ -499,6 +501,13 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
         if (entries !== loaded || shown !== asking || left) return;
         pc = order.find((row) => row.server_id === on) ?? null;
       }
+      // a PC new in the account that this device may sign in to by the account's key gets its sheet and is asked nothing:
+      // the person's one press opens it that way (pressedAccountOpen), where a join asked by itself would wait, on a PC no
+      // device is in yet, for its own window's Allow. Its page opens nothing by itself, a reload included
+      if (pc !== null && isNewAccountPc(pc, Date.now()) && accountOpenOf(pc) !== null) {
+        newnessOf(pc.server_id);
+        left = true; joinPc(pc, { sheet: "join", alone: true }); return;
+      }
       // its join, asked at once (#16: the PC pops its approval by itself), on the PC's own page: never the PC's bare page,
       // which opens a PC the account lets this device into by itself (security-triage condition 3)
       // no storage for the mark: no join a reload could open by the account's key; the front page draws the account instead
@@ -638,26 +647,56 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     // a PC's own page that goes on to its own join leaves no entry of its own behind: one Back leaves the join
     if (options.alone && link.pathname === window.location.pathname) replace(link.pathname + link.hash); else navigate(link.pathname + link.hash);
   };
+  /** The account's row for this PC, as last read, when this device is not paired with it and may ask to join it. */
+  const rowToJoin = (serverId: string): MyPc | undefined => {
+    const view = account.state;
+    // only a row this device has no pairing for carries a join (myPcs)
+    return view?.kind === "signed-in" ? view.pcs?.find((pc) => pc.server_id === serverId && pc.join !== undefined) : undefined;
+  };
   /** The signed-in account's row for this PC when this device is not paired with it and may ask to join it. */
   const accountPcToJoin = async (serverId: string): Promise<MyPc | undefined> => {
     if (!account.enabled) return undefined;
     show({ kind: "connecting", name: null });
     await account.load(null);
-    const view = account.state;
-    // only a row this device has no pairing for carries a join (myPcs)
-    return view?.kind === "signed-in" ? view.pcs?.find((pc) => pc.server_id === serverId && pc.join !== undefined) : undefined;
+    return rowToJoin(serverId);
+  };
+  /**
+   * The account's own way into a PC of the account this device is not paired with: a sign-in with this device's registered
+   * key, which the PC takes from the account's device list. None without that key, a key and relay its row's id vouches
+   * for, or for a PC whose join card a launch put up (only a press on its link ends that card).
+   */
+  const accountOpenOf = (pc: MyPc): Attempt | null => {
+    const openKey = account.openKey;
+    if (!pc.join || pc.accountOpen !== true || openKey === null || launchJoinFor(pc.server_id)) return null;
+    const fresh = newPcs([pc], Date.now()).length > 0;
+    return { offer: { v: 1, server_id: pc.server_id, ...pc.join, name: pc.name }, code: false, paired: true, accountOpen: openKey, ...(fresh ? { freshPc: true as const } : {}) };
+  };
+  /**
+   * A press on the join sheet of a PC inside its 24 hours in the account, which nothing opens without that press: the
+   * account's own way first, as a load takes for a PC past them, then the join on a refusal (failed). Null when that way
+   * cannot be tried here, or for any other PC, whose press sends the join alone, as before.
+   */
+  const pressedAccountOpen = (serverId: string): Attempt | null => {
+    const pc = rowToJoin(serverId);
+    const open = pc !== undefined && isNewAccountPc(pc, Date.now()) ? accountOpenOf(pc) : null;
+    return open === null ? null : { ...open, pressed: true };
   };
   const failed = async (error: unknown, attempt: Attempt): Promise<void> => {
     if (last !== attempt) return;
     comparison = null;
     const refusal = attempt.accountOpen === undefined ? null : openRefusalOf(error);
-    const step = attempt.accountOpen !== undefined && error instanceof AccountOpenUnsupportedError ? { kind: "pair" as const }
+    // a PC answers a key it does not list with a bare auth_failed (server/relay/session.ts): after a press on a new PC's
+    // sheet, that is the account's way refused too, and the join follows; this device was never in, so nothing is removed
+    const unlisted = attempt.pressed === true && error instanceof MuxProtocolError && error.code === "auth_failed";
+    const step = attempt.accountOpen !== undefined && (error instanceof AccountOpenUnsupportedError || unlisted) ? { kind: "pair" as const }
       : refusal === null ? null : nextOpenStep(refusal, attempt.retriedAccountOpen === true);
     if (step !== null) {
       switch (step.kind) {
         case "retry": await connect({ ...attempt, retriedAccountOpen: true }); return;
         case "pair":
           cancelAttempt();
+          // the press that tried the account's way asked for this join too: its sheet sends it at once (arrived)
+          if (attempt.pressed) keepConfirmedPc(attempt.offer.server_id);
           joinPc({ ...attempt.offer, join: attempt.offer }, { sheet: attempt.freshPc ? "new" : "join", alone: true, ...(attempt.freshPc ? { typed: true } : {}) });
           return;
         case "wait": {
@@ -1018,8 +1057,16 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const confirmed = (): void => {
     const asked = shown, offer = entry.offer;
     if (offer === null || asked?.kind !== "confirm") return;
-    // a sheet's join acts as whoever is signed in when it pairs, so it waits for no read
-    if (sheetJoin !== null) { pair(); return; }
+    // a sheet's join acts as whoever is signed in when it pairs. A PC new in the account is signed in to by the account's
+    // key first: its page opened nothing before this press. Which PC it is waits for the read of the account's PCs the
+    // sheet started (arrived), so a quick press is not taken for one this page knows nothing of
+    if (sheetJoin !== null) {
+      const go = (): void => { const open = pressedAccountOpen(offer.server_id); if (open === null) pair(); else void connect(open); };
+      const view = account.state;
+      if (account.enabled && (!accountRead || view?.kind === "signing-in" || (view?.kind === "signed-in" && view.pcs === null && view.error === null))) readAgain(offer, go);
+      else go();
+      return;
+    }
     if (asked.account === "checking") return;
     if (!account.enabled) { pair(); return; }
     const named = drawnFor.get(asked);
@@ -1208,16 +1255,17 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     if (entry.serverId === null) return;
     const joinable = await accountPcToJoin(entry.serverId);
     if (entries !== loaded) return;
-    const openKey = account.openKey;
-    // a PC added in one press is new to the account for 24 hours: on its own page, a PC this device never paired with
-    // by hand opens only on a press meanwhile (security-triage, condition 3); once that has passed it opens as before.
+    // a PC added in one press is new to the account for 24 hours (security-triage, condition 3): its page puts up the
+    // join sheet and opens nothing by itself, a reload included. The sheet's press signs in with the account's key
+    // first, and asks to join only when that is refused (pressedAccountOpen, failed). Past them it opens here as before.
     // A launch never comes here: it reopens only a pairing made on this device by hand.
     // a join card a launch put up and nobody pressed yet asks again on a reload: it never opens the PC by itself
     // a PC new in the account that no device is in yet takes the number its own screen shows, as the dashboard's Add
     // does; any other asks a device already in to approve. The account's own way in, refused, falls back the same way
     const fresh = joinable !== undefined && newPcs([joinable], Date.now()).length > 0;
-    if (joinable?.join && joinable.accountOpen && openKey !== null && !isNewAccountPc(joinable, Date.now()) && !launchJoinFor(joinable.server_id)) {
-      await connect({ offer: { v: 1, server_id: joinable.server_id, ...joinable.join, name: joinable.name }, code: false, paired: true, accountOpen: openKey, ...(fresh ? { freshPc: true as const } : {}) });
+    const open = joinable === undefined || isNewAccountPc(joinable, Date.now()) ? null : accountOpenOf(joinable);
+    if (open !== null) {
+      await connect(open);
     } else if (joinable !== undefined) {
       joinPc(joinable, { sheet: fresh ? "new" : "join", alone: true, ...(fresh ? { typed: true } : {}) });
     } else if (account.enabled && account.state?.kind === "signed-out") {

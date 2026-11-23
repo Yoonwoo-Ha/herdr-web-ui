@@ -18,6 +18,7 @@ import type { ShellDeviceStore } from "./device.ts";
 import { createShellTestPage } from "./shell.test.tsx";
 import { AccountOpenUnsupportedError } from "../../../shared/relay-channel.ts";
 import { mountRelayShell, type RelayShellMount } from "./shell.tsx";
+import { markRemovedPc, removedPcs } from "./shellState.ts";
 import { openRelayTransport, RelayTransport } from "./transport.ts";
 
 const SERVICE = "https://account.ovis.sh";
@@ -54,12 +55,38 @@ async function accountPc({ release = true, loseRegistrationReply = false, newUnt
   const appOpened = Promise.withResolvers<void>();
   let props: RelayShellProps | undefined;
   let apps = 0;
+  // woken by every screen drawn, navigation and app opened: `settled` looks again at each
+  const waiting: (() => void)[] = [];
+  const wake = (): void => { for (const resume of waiting.splice(0)) resume(); };
   const render = (node: ReactNode): void => {
     if (!isValidElement<{ readonly children?: ReactNode }>(node)) throw new TypeError("Missing shell");
-    if (node.type === RelayShell && isValidElement<RelayShellProps>(node)) { props = node.props; return; }
+    if (node.type === RelayShell && isValidElement<RelayShellProps>(node)) { props = node.props; wake(); return; }
     render(node.props.children);
   };
-  const mountAt = (entryUrl: string) => mountRelayShell({
+  const settled = async (holds: () => boolean): Promise<void> => {
+    for (;;) {
+      const next = new Promise<void>((resolve) => { waiting.push(resolve); });
+      if (holds()) return;
+      await next;
+    }
+  };
+  // each page's own fragment listeners, by the load that added them: `land` takes a link the way the browser does on
+  // the same document, where the page keeps the account's PCs it read
+  // the account service's answer for its PCs waits while a test holds it (holdDirectory)
+  let directoryHeld: Promise<void> = Promise.resolve();
+  const holdDirectory = (): (() => void) => {
+    const held = Promise.withResolvers<void>();
+    directoryHeld = held.promise;
+    return () => { directoryHeld = Promise.resolve(); held.resolve(); };
+  };
+  const fragmentListeners: { readonly load: number; readonly listener: EventListener }[] = [];
+  let loads = 0;
+  const listen = window.addEventListener.bind(window);
+  window.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) => {
+    if (type === "hashchange" && typeof listener === "function") fragmentListeners.push({ load: loads, listener });
+    listen(type, listener, options);
+  }) as typeof window.addEventListener;
+  const mountAt = (entryUrl: string) => { loads++; return mountRelayShell({
     container: Object.create(null), entryUrl, shellVersion: "1.0.0", store, accountStore, ...(label === undefined ? {} : { label }),
     // these read the account's rows on the front page: a launch that leaves it for the PC (shell.test.tsx) does not run
     ...(new URL(entryUrl).pathname === "/" ? { navigatedSinceEntry: () => true } : {}),
@@ -67,7 +94,7 @@ async function accountPc({ release = true, loseRegistrationReply = false, newUnt
       const path = new URL(input instanceof Request ? input.url : input).pathname;
       requests.push(path);
       switch (path) {
-        case "/v1/pcs": return Response.json({ pcs: [entry] });
+        case "/v1/pcs": await directoryHeld; return Response.json({ pcs: [entry] });
         case "/v1/devices/challenge": return release
           ? Response.json({ challenge_id: "12".repeat(16), challenge: "register-this-sign-in" })
           : new Response(null, { status: 404 });
@@ -83,12 +110,18 @@ async function accountPc({ release = true, loseRegistrationReply = false, newUnt
       }
     },
     createRoot: () => ({ render, unmount() {} }),
-    renderApp: () => { apps++; appOpened.resolve(); return { render() {}, unmount() {} }; },
+    renderApp: () => { apps++; appOpened.resolve(); wake(); return { render() {}, unmount() {} }; },
     pendingPush: { get: async () => undefined, clear: async () => {} },
     checkPc: async () => ({ kind: "offline", reason: "relay" }),
-    navigate: (path) => { navigations.push(path); navigated.resolve(path); },
-    open: (offer, options) => open(offer, options, identity),
-  });
+    navigate: (path) => { navigations.push(path); navigated.resolve(path); wake(); },
+    open: (offer, options) => { const opening = open(offer, options, identity); wake(); return opening; },
+  }); };
+  /** `path` taken by the last page loaded, as a fragment change of its own document (joinPc's replace in a browser). */
+  const land = (path: string): void => {
+    const url = new URL(path, APP);
+    Object.assign(window.location, { href: url.href, pathname: url.pathname, search: url.search, hash: url.hash });
+    for (const { load, listener } of fragmentListeners) if (load === loads) listener(new Event("hashchange"));
+  };
   await mountAt(`${APP}/${new URL(returned).hash}`);
   const current = (): RelayShellProps => { if (props === undefined) throw new TypeError("Missing shell props"); return props; };
   // what the account's row lets this device do with the PC: open it by the account's key, or ask to join it
@@ -98,14 +131,21 @@ async function accountPc({ release = true, loseRegistrationReply = false, newUnt
     const row = state.account.pcs[0];
     return row?.accountOpen === true && !isNewAccountPc(row, Date.now()) ? "open" : "join";
   };
-  return { accountStore, serverId, requests, registrationKeys, registrationLabels, navigations, navigated: navigated.promise, appOpened: appOpened.promise, current, action, apps: () => apps, reload: () => mountAt(`${APP}/`), openPage: () => mountAt(`${APP}/s/${serverId}/`), follow: (path: string) => mountAt(`${APP}${path}`) };
+  /** The join sheet on screen once this page read the account's PCs: what a press acts on, as on the page the PC's own load put it up on. */
+  const sheetRead = (): Promise<void> => settled(() => props?.state.kind === "confirm" && props.state.account === "listed");
+  return { accountStore, serverId, requests, registrationKeys, registrationLabels, navigations, navigated: navigated.promise, appOpened: appOpened.promise, current, action, apps: () => apps, settled, sheetRead, land, holdDirectory, reload: () => mountAt(`${APP}/`), openPage: () => mountAt(`${APP}/s/${serverId}/`), follow: (path: string) => mountAt(`${APP}${path}`) };
 }
 
+class Admitted extends RelayTransport {
+  override get server() { return { version: "1.0.0", relayProtocol: RELAY_PROTOCOL }; }
+}
+const inADay = (): string => new Date(Date.now() + 23 * 60 * 60_000).toISOString();
+
 it.each([
-  ["a newly added account PC", () => new Date(Date.now() + 23 * 60 * 60_000).toISOString()],
+  ["a newly added account PC", inADay],
   // a window that does not parse may still be open: condition 3 fails closed (security-triage)
   ["an account PC whose new window does not parse", () => "garbage"],
-])("A3: %s is marked New and its page waits for the Join press", async (_case, newUntil) => {
+])("A3: %s is marked New, its page waits for a press, and the press signs in with the account key", async (_case, newUntil) => {
   const attempts: boolean[] = [];
   const pressed = Promise.withResolvers<void>();
   const run = await accountPc({
@@ -123,13 +163,231 @@ it.each([
   if (path === undefined) throw new TypeError("Missing the PC's join screen");
   await run.follow(path);
   expect(run.current().state.kind).toBe("confirm");
+  await run.sheetRead();
   expect(attempts).toEqual([]);
   expect(run.apps()).toBe(0);
   run.current().onPair();
   await pressed.promise;
-  expect(attempts).toEqual([false]);
+  expect(attempts).toEqual([true]);
   // the account's row offers no quick Open
   expect(action).toBe("join");
+});
+
+/** A new PC's own page, then the join sheet it put up on that same page, read and waiting for its press. */
+async function newPcSheet(run: Awaited<ReturnType<typeof accountPc>>): Promise<string> {
+  await run.openPage();
+  const path = run.navigations.at(-1);
+  if (path === undefined || !path.startsWith(`/s/${run.serverId}/#offer=`)) throw new TypeError("Missing the PC's join sheet");
+  run.land(path);
+  await run.sheetRead();
+  return path;
+}
+
+it("a press on a new PC's sheet opens it by the account key when the PC lets this device in; a reload asks for the press again", async () => {
+  const attempts: boolean[] = [];
+  const run = await accountPc({ newUntil: inADay(), open: async (offer, options) => { attempts.push(options?.accountOpensAll === true); return new Admitted(offer); } });
+  const sheet = await newPcSheet(run);
+  expect({ attempts, apps: run.apps() }).toEqual({ attempts: [], apps: 0 });
+  run.current().onPair();
+  await run.appOpened;
+  expect({ attempts, apps: run.apps(), navigations: run.navigations }).toEqual({ attempts: [true], apps: 1, navigations: [sheet] });
+  expect(browser.sessionStore.has("ovis-confirmed-pc")).toBe(false);
+  // nothing was saved for it here: a reload of its page puts the sheet up again, and opens nothing by itself
+  await run.openPage();
+  expect({ attempts, apps: run.apps(), navigations: run.navigations.length }).toEqual({ attempts: [true], apps: 1, navigations: 2 });
+  await run.follow(run.navigations[1]!);
+  await run.sheetRead();
+  expect({ attempts, apps: run.apps(), screen: run.current().state.kind }).toEqual({ attempts: [true], apps: 1, screen: "confirm" });
+});
+
+it("a launch's join card for a new PC asks the PC by a join and never by the account key", async () => {
+  const attempts: boolean[] = [];
+  const asked = Promise.withResolvers<void>();
+  const run = await accountPc({ newUntil: inADay(), open: async (_offer, options) => {
+    attempts.push(options?.accountOpensAll === true);
+    asked.resolve();
+    throw new RangeError("Stop at the join");
+  } });
+  // the card's mark, as the launch leaves for the PC (shell.tsx showFront): its page asks by itself, on a reload too
+  browser.sessionStore.set("ovis-launch-join", run.serverId);
+  await run.openPage();
+  await run.follow(run.navigations[0]!);
+  await asked.promise;
+  expect({ attempts, apps: run.apps() }).toEqual({ attempts: [false], apps: 0 });
+});
+
+const refusals = [
+  ["not_listed, twice", () => refused("not_listed"), 2],
+  ["admission", () => refused("admission"), 1],
+  // what a PC answers a key it does not list (server/relay/session.ts): never a removal here, since this device was never in
+  ["auth_failed (a key the PC does not list)", () => new MuxProtocolError("auth_failed", ""), 1],
+  ["a PC without the account's way in", () => new AccountOpenUnsupportedError(), 1],
+] as const;
+
+it.each(refusals)("a new PC that refuses the pressed account sign-in (%s) gets the join the press asked for, with no second press", async (_case, refusal, tries) => {
+  const attempts: boolean[] = [];
+  const run = await accountPc({ newUntil: inADay(), open: async (_offer, options) => {
+    attempts.push(options?.accountOpensAll === true);
+    if (options?.accountOpensAll === true) throw refusal();
+    throw new RangeError("Stop at the join");
+  } });
+  const sheet = await newPcSheet(run);
+  run.current().onPair();
+  await run.settled(() => run.navigations.length === 2);
+  expect(attempts).toEqual(Array(tries).fill(true));
+  expect(run.navigations[1]).toBe(sheet);
+  expect(browser.sessionStore.get("ovis-confirmed-pc")).toBe(run.serverId);
+  // the same sheet again, which sends the join at once: the press already asked for it
+  run.land(sheet);
+  await run.settled(() => attempts.length === tries + 1);
+  expect({ attempts, apps: run.apps(), removed: removedPcs()[run.serverId] }).toEqual({ attempts: [...Array(tries).fill(true), false], apps: 0, removed: undefined });
+});
+
+it("a device its new PC removed gets only the join a press sent before, once: the PC's refusal of it ends the press, and nothing asks again by itself", async () => {
+  const attempts: ("account" | "join")[] = [];
+  let shownForApproval = 0;
+  const run = await accountPc({ newUntil: inADay(), open: async (_offer, options) => {
+    attempts.push(options?.accountOpensAll === true ? "account" : "join");
+    // a removed key's account sign-in: no row stands for it on the PC (server/relay/session.ts)
+    if (options?.accountOpensAll === true) throw new MuxProtocolError("auth_failed", "");
+    // its join: the digits go up for a person to approve, and the PC turns it down (devices.ts pairRelayApproved)
+    await options?.compare?.("123456");
+    shownForApproval++;
+    throw new MuxProtocolError("auth_failed", "");
+  } });
+  // the PC ended this device's session as a removed device's, which this page keeps (failed: markRemovedPc)
+  markRemovedPc(run.serverId, "removed");
+  const sheet = await newPcSheet(run);
+  jest.useFakeTimers();
+  run.current().onPair();
+  await run.settled(() => run.navigations.length === 2);
+  run.land(sheet);
+  await run.settled(() => { const { state } = run.current(); return state.kind === "failed" && state.failure === "pair-declined"; });
+  expect(browser.sessionStore.has("ovis-confirmed-pc")).toBe(false);
+  // past every hold and retry this page keeps: the account way is not tried again, nor the join
+  jest.advanceTimersByTime(30 * 60_000);
+  for (let turn = 0; turn < 500; turn++) await Promise.resolve();
+  expect({ attempts, shownForApproval, apps: run.apps(), navigations: run.navigations.length, removed: removedPcs()[run.serverId] }).toEqual({
+    attempts: ["account", "join"], shownForApproval: 1, apps: 0, navigations: 2, removed: "removed",
+  });
+  // a reload asks for the press again and sends nothing
+  await run.openPage();
+  expect(attempts).toHaveLength(2);
+});
+
+it("wire: a new PC that does not list this device's key answers auth_failed, and the press goes on to the join", async () => {
+  let auths = 0, joins = 0;
+  const run = await accountPc({ newUntil: inADay(), open: (offer, options, identity) => {
+    if (options?.accountOpensAll !== true) { joins++; throw new RangeError("Stop at the join"); }
+    return openRelayTransport(offer, { ...options, socket: () => accountOpenPeer(identity, { features: [ACCOUNT_OPENS_ALL_FEATURE], provisional: true, auth: () => {
+      auths++;
+      return encodeFrame({ type: FrameType.SESSION_ERROR, stream_id: 0, flags: 0, payload: { code: "auth_failed", message: "" } });
+    } }) });
+  } });
+  const sheet = await newPcSheet(run);
+  run.current().onPair();
+  await run.settled(() => run.navigations.length === 2);
+  run.land(sheet);
+  await run.settled(() => joins === 1);
+  expect({ auths, joins, removed: removedPcs()[run.serverId] }).toEqual({ auths: 1, joins: 1, removed: undefined });
+});
+
+it("a new PC that holds the pressed account sign-in shows its hold, then opens when the PC lets this device in", async () => {
+  const delay = 3_000;
+  let until = "";
+  const attempts: boolean[] = [];
+  const run = await accountPc({ newUntil: inADay(), open: async (offer, options) => {
+    attempts.push(options?.accountOpensAll === true);
+    if (attempts.length === 1) throw refused("held", { reason: "join_hold", until });
+    return new Admitted(offer);
+  } });
+  await newPcSheet(run);
+  jest.useFakeTimers();
+  until = new Date(Date.now() + delay).toISOString();
+  run.current().onPair();
+  await run.settled(() => { const { state } = run.current(); return state.kind === "connecting" && state.hold !== undefined; });
+  expect(attempts).toEqual([true]);
+  jest.advanceTimersByTime(delay);
+  await run.appOpened;
+  expect({ attempts, apps: run.apps(), navigations: run.navigations.length }).toEqual({ attempts: [true, true], apps: 1, navigations: 1 });
+});
+
+it("a PC past its 24 hours that answers its page's account sign-in with auth_failed says this device was removed, as before: only a press on a new PC's sheet goes on to the join", async () => {
+  let attempts = 0;
+  const run = await accountPc({ open: async () => { attempts++; throw new MuxProtocolError("auth_failed", ""); } });
+  await run.openPage();
+  expect({ attempts, state: run.current().state, navigations: run.navigations, removed: removedPcs()[run.serverId] }).toEqual({
+    attempts: 1, state: expect.objectContaining({ kind: "failed", failure: "revoked", server_id: run.serverId }), navigations: [], removed: "removed",
+  });
+});
+
+it("a new PC opened by the press that later ends its session with auth_failed says this device was removed, and asks to join by nothing", async () => {
+  let fatal: ((error: Error) => void) | undefined;
+  const attempts: boolean[] = [];
+  const run = await accountPc({ newUntil: inADay(), open: async (offer, options) => {
+    attempts.push(options?.accountOpensAll === true);
+    fatal = options?.onFatal;
+    return new Admitted(offer);
+  } });
+  const sheet = await newPcSheet(run);
+  run.current().onPair();
+  await run.appOpened;
+  if (fatal === undefined) throw new TypeError("the open session was given no way to end");
+  fatal(new MuxProtocolError("auth_failed", ""));
+  await run.settled(() => run.current().state.kind === "failed");
+  for (let turn = 0; turn < 500; turn++) await Promise.resolve();
+  expect({ attempts, state: run.current().state, navigations: run.navigations, removed: removedPcs()[run.serverId] }).toEqual({
+    attempts: [true], state: expect.objectContaining({ kind: "failed", failure: "revoked", server_id: run.serverId }), navigations: [sheet], removed: "removed",
+  });
+});
+
+it("a press made while the sheet's page still reads the account's PCs waits for them, then signs in by the account key", async () => {
+  const attempts: boolean[] = [];
+  const run = await accountPc({ newUntil: inADay(), open: async (offer, options) => { attempts.push(options?.accountOpensAll === true); return new Admitted(offer); } });
+  await run.openPage();
+  const release = run.holdDirectory();
+  run.land(run.navigations[0]!);
+  // the sheet is up, and its page's read of the account's PCs (arrived) is not back yet
+  await run.settled(() => { const { state } = run.current(); return state.kind === "confirm" && state.account === "checking"; });
+  run.current().onPair();
+  for (let turn = 0; turn < 500; turn++) await Promise.resolve();
+  expect(attempts).toEqual([]);
+  release();
+  await run.appOpened;
+  expect({ attempts, apps: run.apps(), navigations: run.navigations.length }).toEqual({ attempts: [true], apps: 1, navigations: 1 });
+});
+
+it("a press on a new PC's sheet with no registered key here sends the join, as before", async () => {
+  const attempts: boolean[] = [];
+  const asked = Promise.withResolvers<void>();
+  const run = await accountPc({ release: false, newUntil: inADay(), open: async (_offer, options) => {
+    attempts.push(options?.accountOpensAll === true);
+    asked.resolve();
+    throw new RangeError("Stop at the join");
+  } });
+  await newPcSheet(run);
+  run.current().onPair();
+  await asked.promise;
+  expect(attempts).toEqual([false]);
+});
+
+it("a PC past its 24 hours whose account sign-in was refused at its load keeps asking for the press, which sends the join alone", async () => {
+  const attempts: boolean[] = [];
+  const run = await accountPc({ open: async (_offer, options) => {
+    attempts.push(options?.accountOpensAll === true);
+    if (options?.accountOpensAll === true) throw refused("admission");
+    throw new RangeError("Stop at the join");
+  } });
+  await run.openPage();
+  expect({ attempts, navigations: run.navigations, confirmed: browser.sessionStore.has("ovis-confirmed-pc") }).toEqual({
+    attempts: [true], navigations: [expect.stringContaining(`/s/${run.serverId}/#offer=`)], confirmed: false,
+  });
+  run.land(run.navigations[0]!);
+  await run.sheetRead();
+  expect(attempts).toEqual([true]);
+  run.current().onPair();
+  await run.settled(() => attempts.length === 2);
+  expect(attempts).toEqual([true, false]);
 });
 
 it("T34, P18: a normal sign-in opens a listed unpaired PC as its registered account row", async () => {

@@ -261,6 +261,12 @@ export interface Attempt {
   readonly retriedAccountOpen?: true;
   /** a PC new in the account that no device is in yet: a pairing it falls back to takes the number its screen shows */
   readonly freshPc?: true;
+  /**
+   * the person's press on the join sheet of a PC inside its 24 hours in the account started this account sign-in: a
+   * refusal goes on to the join that press asked for, with no second press, and a key the PC does not list is one more
+   * refusal, never a removal
+   */
+  readonly pressed?: true;
   readonly holdRetryMs?: number;
   retryEnrollment?: boolean;
   retriedPending?: boolean;

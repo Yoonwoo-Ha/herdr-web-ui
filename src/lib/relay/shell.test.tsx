@@ -1754,6 +1754,36 @@ describe("the hosted shell's front page", () => {
       expect(went.every((path) => path.startsWith(`${bare}#offer=`))).toBe(true);
     });
 
+    it("puts up the sheet of a new PC this device may sign in to by the account's key and asks it nothing; one press there opens it by that key", async () => {
+      launch();
+      const row = accountRow({ new_until: new Date(Date.now() + 3_600_000).toISOString(), admitted_at: new Date().toISOString() });
+      const signIn = await registeredSignIn();
+      const went: string[] = [], attempts: boolean[] = [];
+      let apps = 0;
+      class Admitted extends RelayTransport { override get server() { return { version: "1.0.0", relayProtocol: RELAY_PROTOCOL }; } }
+      const load = (entryUrl: string) => mountRelayShell(mountFor({ entryUrl, store: deviceStore([]), shellVersion: "1.0.0", navigate: (path) => { went.push(path); }, ...signIn,
+        accountFetch: directoryOf([row]), checkPc: answering(), pendingPush: { get: async () => undefined, clear: async () => {} },
+        open: async (offer, options) => { attempts.push(options?.accountOpensAll === true); return new Admitted(offer); },
+        renderApp: () => { apps++; return { render() {}, unmount() {} }; } }));
+      /** what work that signs (the account's read) settles on, looked at again after each round of it */
+      const settles = async (holds: () => boolean, what: string): Promise<void> => {
+        for (let round = 0; round < 50 && !holds(); round++) await settleSigned();
+        if (!holds()) throw new Error(`gave up waiting for ${what}`);
+      };
+      await load("https://app.ovis.sh/");
+      await settles(() => went.length > 0, "the launch's end");
+      expect(went).toEqual([expect.stringMatching(new RegExp(`^/s/${row.server_id}/#offer=`))]);
+      // nothing asked by itself: no join its page would send at once, no launch card waiting on the PC's Allow
+      expect({ attempts, confirmed: browser.sessionStore.has("ovis-confirmed-pc"), card: browser.sessionStore.has("ovis-launch-join") }).toEqual({ attempts: [], confirmed: false, card: false });
+      // the PC's own page: its sheet, which opens nothing and sends nothing by itself
+      await load(`https://app.ovis.sh${went[0]}`);
+      await settles(() => { const { state } = last(); return state.kind === "confirm" && state.account === "listed"; }, "the sheet, read");
+      expect({ attempts, apps, launchJoin: last().launchJoin, sheet: last().sheetJoin }).toEqual({ attempts: [], apps: 0, launchJoin: false, sheet: expect.objectContaining({ mode: "join", server_id: row.server_id }) });
+      last().onPair();
+      await settles(() => apps === 1, "the app");
+      expect(attempts).toEqual([true]);
+    });
+
     it("C3: a launch never opens an account-listed PC that only an account introduction saved here", async () => {
       const row = accountRow();
       const [introduced] = await pcs(row.server_id);
