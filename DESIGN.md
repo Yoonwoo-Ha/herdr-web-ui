@@ -4087,7 +4087,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   the card's one red (`--status-blocked`, `--fs-sm`, semibold); the "input needed" badge is read
   by assistive tech and not drawn. The question is prose in `--text-strong`. Reference text (the
   command of an approval, a plan, a diff: the prompt's `body`) is the card's one mono box
-  (`--bg`, `--fs-xs`); a question in words is never set in mono.
+  (`--bg`, `--fs-xs`); a question in words is never set in mono. An approval's command wraps at
+  the box's edge and never scrolls sideways, so the end of what Yes runs is always in the box; it
+  follows Claude Code's own dialog, which wraps the command at the pane's edge.
 - Claude's words before its question (#2088): Claude Code 2.1.311 writes a turn's text to its
   session file only with the answer, so while a question waits the card shows the text the
   terminal draws right over the question (`screen_words`, read off the screen; the pane's wrapping

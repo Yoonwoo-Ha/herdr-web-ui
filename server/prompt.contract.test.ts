@@ -57,15 +57,16 @@ writeFileSync(out, "");
 
 /**
  * Claude's command approval with numbered rows, its whole panel under its rule: ↑/↓ move its `❯`, Enter or a row's number
- * logs the row it picks. Its command is `pwd`; lines given as its head are its panel instead.
+ * logs the row it picks. Its command is `pwd`; lines given as its head are its panel instead, and a `bare` panel has
+ * no rule over it, as when it is taller than the pane.
  */
 const APPROVAL = `
 const { appendFileSync, writeFileSync } = require("node:fs");
 const [out, spec] = process.argv.slice(2);
-const { head, rows } = JSON.parse(spec);
+const { head, rows, bare } = JSON.parse(spec);
 let cursor = 0;
 const draw = () => process.stdout.write("\\u001b[2J\\u001b[H" + [
-  "─".repeat(40), ...(head.length ? head : [" Bash command", "", "   pwd", ""]), " Do you want to proceed?",
+  ...(bare ? [] : ["─".repeat(40)]), ...(head.length ? head : [" Bash command", "", "   pwd", ""]), " Do you want to proceed?",
   ...rows.map((row, index) => " " + (index === cursor ? "❯" : " ") + " " + (index + 1) + ". " + row), "", " Esc to cancel",
 ].join("\\r\\n"));
 process.stdin.setRawMode(true);
@@ -90,13 +91,13 @@ let drifting: Menu;
 let ticking: Menu;
 let twin: Menu;
 
-async function menu(label: string, head: string[], rows: string[], drift = false, script = "menu.js"): Promise<Menu> {
+async function menu(label: string, head: string[], rows: string[], drift = false, script = "menu.js", extra: Record<string, unknown> = {}): Promise<Menu> {
   const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
     "workspace.create", { label: `ovis-test-prompt-${label}`, cwd: root, focus: false },
   );
   workspaces.push(created.workspace.workspace_id);
   const log = join(root, `${label}.log`);
-  const spec = JSON.stringify({ head, rows, drift });
+  const spec = JSON.stringify({ head, rows, drift, ...extra });
   await herdrRpc("pane.send_text", { pane_id: created.root_pane.pane_id, text: `exec '${join(root, "claude")}' '${join(root, script)}' '${log}' '${spec}'\n` });
   for (let i = 0; i < 200 && !existsSync(log); i++) await Bun.sleep(50);
   expect(existsSync(log)).toBe(true);
@@ -261,11 +262,11 @@ describe("a Claude command approval its PermissionRequest hook holds", () => {
     return settings.hooks.PermissionRequest[0]!.hooks[0]!;
   }
   /** What that Claude's hook sends for this command: the relay's answer, once the server holds it. */
-  async function asks(target: Menu | { command: string; args: string[] }, command: string): Promise<{ answer: () => Promise<unknown> }> {
+  async function asks(target: Menu | { command: string; args: string[] }, command: string, description?: string): Promise<{ answer: () => Promise<unknown> }> {
     const hook = "pane" in target ? launched(target) : target;
     const held = new Promise<void>((resolve) => holding.push(resolve));
     const relay = Bun.spawn([hook.command, ...hook.args], {
-      stdin: new Blob([JSON.stringify({ hook_event_name: "PermissionRequest", tool_name: "Bash", tool_input: { command } })]), stdout: "pipe",
+      stdin: new Blob([JSON.stringify({ hook_event_name: "PermissionRequest", tool_name: "Bash", tool_input: { command, description } })]), stdout: "pipe",
     });
     await held;
     return { answer: async () => JSON.parse(await new Response(relay.stdout).text()) as unknown };
@@ -274,9 +275,9 @@ describe("a Claude command approval its PermissionRequest hook holds", () => {
     const url = new URL(path, "http://localhost");
     return (await handlePromptRequest(new Request(url, init), url, { approvals: hooks }))!;
   };
-  async function read(target: Menu): Promise<{ id: string; body: string | null }> {
+  async function read(target: Menu): Promise<{ id: string; title: string; body: string | null }> {
     for (let i = 0; i < 100; i++) {
-      const { prompt } = await (await route(`/api/pane/prompt?pane_id=${encodeURIComponent(target.pane)}`)).json() as { prompt: { id: string; body: string | null } | null };
+      const { prompt } = await (await route(`/api/pane/prompt?pane_id=${encodeURIComponent(target.pane)}`)).json() as { prompt: { id: string; title: string; body: string | null } | null };
       if (prompt) return prompt;
       await Bun.sleep(50);
     }
@@ -309,6 +310,36 @@ describe("a Claude command approval its PermissionRequest hook holds", () => {
     expect((await post(asked, plain.id, 2)).status).toBe(200);
     // the hook's Yes pressed no key: the dialog logged only the No that went as keys
     expect(await confirmed(asked)).toEqual(["No"]);
+  }, 30_000);
+
+  // hook-vs-screen (2026-11-23): this line under the panel left the long find command's card to the screen
+  it("builds the card of a dialog that says the command requires approval from the held request", async () => {
+    const command = "find /usr/share/doc -maxdepth 2 -type f -name *.gz -newer /etc/hostname -size +1k";
+    const marked = await menu("hooked-marked", [
+      " Bash command", " Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below", " List the newest docs",
+      DASH, " │ find /usr/share/doc -maxdepth 2 -type f", " │ -name *.gz -newer /etc/hostname -size +1k", DASH, " This command requires approval", "",
+    ], ROWS, false, "approval.js");
+    const relay = await asks(marked, command, "List the newest docs");
+    const card = await read(marked);
+    expect(card.id).toContain(".");
+    expect(card.title).toBe("Bash command");
+    expect(card.body).toBe(`List the newest docs\n${command}`);
+    expect((await post(marked, card.id, 0)).status).toBe(200);
+    expect(await relay.answer()).toEqual(ALLOW);
+    expect(chosen(marked)).toEqual([]);
+  }, 30_000);
+
+  it("builds the card from the held request while the dialog's command is off the screen, and sends none of its other options as keys", async () => {
+    const tall = await menu("hooked-tall", [" │ cat <<EOF > notes.txt", " │ line 2", " │ EOF", DASH], ROWS, false, "approval.js", { bare: true });
+    const relay = await asks(tall, "cat <<EOF > notes.txt\nline 2\nEOF");
+    const card = await read(tall);
+    expect(card.id).toContain(".");
+    expect(card.body).toBe("cat <<EOF > notes.txt\nline 2\nEOF");
+    // "don't ask again" goes as keys only to a dialog shown to be that command
+    expect((await post(tall, card.id, 1)).status).toBe(409);
+    expect((await post(tall, card.id, 0)).status).toBe(200);
+    expect(await relay.answer()).toEqual(ALLOW);
+    expect(chosen(tall)).toEqual([]);
   }, 30_000);
 
   it("takes another option of a card built on a held request as keys, its dialog being that request's command", async () => {

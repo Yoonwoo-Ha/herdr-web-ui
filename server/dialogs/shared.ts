@@ -149,8 +149,11 @@ export type ParsedPrompt = InteractivePrompt & {
   /** omp: the pane's one open ask call this card was read under (session and call id, omp-ask.ts), checked again before each key */
   ompCall?: string;
   claudeUltracode?: boolean | null;
-  /** a Claude Bash approval's command, as its panel shows it between its dashed rules */
-  claudeBashCommand?: string;
+  /**
+   * a Claude Bash approval's command, as its panel shows it between its dashed rules; null for a command panel the screen
+   * does not show whole (taller than the pane)
+   */
+  claudeBashCommand?: string | null;
   lettaSearch?: string;
   lettaTab?: string;
   lettaTabs?: string[];

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { claudeApprovals, permissionDecision } from "./claude.ts";
-import { ApprovalHub, heldBody, relayCommand, showable } from "./hub.ts";
+import { ApprovalHub, heldBody, relayCommand, showable, type ApprovalDialog } from "./hub.ts";
 import { preloaded } from "./relay.ts";
 import { parsedByPublicPrompt } from "../dialogs/shared.ts";
 import { ROOT } from "../entries.ts";
@@ -63,6 +63,8 @@ function ask(hook: CommandHook, body: unknown, cwd?: string) {
   };
   return { relay, answer };
 }
+/** A dialog on the screen: its command, whole, or null where the screen does not show it whole. */
+const on = (command: string | null): ApprovalDialog => ({ command });
 const bash = (command: string, description?: string) => ({ hook_event_name: "PermissionRequest", tool_name: "Bash", tool_input: { command, ...(description ? { description } : {}) } });
 const ALLOW = { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } } };
 
@@ -145,16 +147,16 @@ describe("the hook relay", () => {
     const { answer } = ask(hook, bash("touch marker-a.txt", "Create empty marker-a.txt file"));
     await holding;
     const screen = "touch marker-a.txt";
-    const card = hooks.shown("p1", screen)!;
+    const card = hooks.shown("p1", on(screen))!;
     expect(card).toEqual({ id: expect.stringMatching(/^[0-9a-f]{16}$/), kind: "claude", command: "touch marker-a.txt", description: "Create empty marker-a.txt file" });
-    expect(hooks.answer("p2", screen, card.id, "allow")).toBe(false);
-    expect(hooks.answer("p1", screen, "0".repeat(16), "allow")).toBe(false);
-    expect(hooks.answer("p1", "touch marker-b.txt", card.id, "allow")).toBe(false);
-    expect(hooks.holds("p1", screen, card.id)).toBe(true);
-    expect(hooks.answer("p1", screen, card.id, "allow")).toBe(true);
+    expect(hooks.answer("p2", on(screen), card.id, "allow")).toBe(false);
+    expect(hooks.answer("p1", on(screen), "0".repeat(16), "allow")).toBe(false);
+    expect(hooks.answer("p1", on("touch marker-b.txt"), card.id, "allow")).toBe(false);
+    expect(hooks.holds("p1", on(screen), card.id)).toBe(true);
+    expect(hooks.answer("p1", on(screen), card.id, "allow")).toBe(true);
     expect(await answer()).toEqual(ALLOW);
-    expect(hooks.holds("p1", screen, card.id)).toBe(false);
-    expect(hooks.answer("p1", screen, card.id, "allow")).toBe(false);
+    expect(hooks.holds("p1", on(screen), card.id)).toBe(false);
+    expect(hooks.answer("p1", on(screen), card.id, "allow")).toBe(false);
   });
 
   it("answers No as a decline that stops Claude, as the terminal's No does", async () => {
@@ -163,7 +165,7 @@ describe("the hook relay", () => {
     const holding = held("p1");
     const { answer } = ask(hook, bash("rm -rf build"));
     await holding;
-    expect(hooks.answer("p1", "rm -rf build", hooks.shown("p1", "rm -rf build")!.id, "deny")).toBe(true);
+    expect(hooks.answer("p1", on("rm -rf build"), hooks.shown("p1", on("rm -rf build"))!.id, "deny")).toBe(true);
     expect(await answer()).toMatchObject({ hookSpecificOutput: { decision: { behavior: "deny", interrupt: true } } });
   });
 
@@ -182,7 +184,7 @@ describe("the hook relay", () => {
     const holding = held("p1");
     const { answer } = ask(hook, bash(command));
     await holding;
-    expect(hooks.shown("p1", "git log --oneline --graph\n  --decorate --all -- server/claude-\n  permission-hook.ts")?.command).toBe(command);
+    expect(hooks.shown("p1", on("git log --oneline --graph\n  --decorate --all -- server/claude-\n  permission-hook.ts"))?.command).toBe(command);
     hooks.stop();
     expect(await answer()).toEqual({});
   });
@@ -206,8 +208,8 @@ describe("the hook relay", () => {
       const holding = held("p1");
       const { answer } = ask(hook, bash(command));
       await holding;
-      expect(hooks.shown("p1", screen), `${command} on ${screen}`).toBeNull();
-      expect(hooks.shown("p1", command)?.command).toBe(command);
+      expect(hooks.shown("p1", on(screen)), `${command} on ${screen}`).toBeNull();
+      expect(hooks.shown("p1", on(command))?.command).toBe(command);
       hooks.forget("p1");
       expect(await answer()).toEqual({});
     }
@@ -224,6 +226,40 @@ describe("the hook relay", () => {
     expect(parsedByPublicPrompt.get(write)?.claudeBashCommand).toBeUndefined();
   });
 
+  // hook-vs-screen (2026-11-23): Claude Code 2.1.330 put this line under the long find command's panel, and no card bound
+  it("reads the Bash command of a dialog that says the command requires approval, at a desktop's width and a phone's", async () => {
+    const command = "find /usr/share/doc -maxdepth 2 -type f -name '*.gz' -newer /etc/hostname -size +1k -printf '%TY-%Tm-%Td %s %p\\n' 2>/dev/null | sort -r | head -n 5 | awk '{print $1, $2, $3}'";
+    const { hooks, held } = hooksIn();
+    const hook = ourHook(launch(hooks, "p1", undefined)!);
+    const holding = held("p1");
+    const asked = ask(hook, bash(command, "Run the command from long-A-1-yes.txt verbatim"));
+    await holding;
+    for (const width of [121, 47]) {
+      const prompt = parseInteractivePrompt("claude", readFileSync(new URL(`../fixtures/claude-bash-requires-approval-2.1.330-${width}.txt`, import.meta.url), "utf8"))!;
+      expect(prompt, `${width}`).toMatchObject({ kind: "approval", title: "Bash command" });
+      const screen = parsedByPublicPrompt.get(prompt)?.claudeBashCommand;
+      expect(typeof screen, `${width}`).toBe("string");
+      expect(hooks.shown("p1", on(screen!))?.command, `${width}`).toBe(command);
+    }
+    hooks.stop();
+    expect(await asked.answer()).toEqual({});
+  });
+
+  // gate review: the same dialog with its panel's top above the pane's read a piece of the command as its title
+  it("says a dialog that requires approval, its panel's top above the pane, shows a command it cannot read whole", () => {
+    const lines = readFileSync(new URL("../fixtures/claude-bash-requires-approval-2.1.330-47.txt", import.meta.url), "utf8").split("\n");
+    const clipped = parseInteractivePrompt("claude", lines.slice(17).join("\n"))!;
+    expect(clipped).toMatchObject({ kind: "approval", title: "Command approval" });
+    expect(parsedByPublicPrompt.get(clipped)?.claudeBashCommand).toBeNull();
+  });
+
+  it("says a dialog whose panel is taller than the pane shows a command it cannot read whole", () => {
+    const scrolled = parseInteractivePrompt("claude", [" │ cat <<'EOF' > notes.txt", " │ line 2", " │ EOF", "╌".repeat(40),
+      " Do you want to proceed?", " ❯ 1. Yes", "   2. Yes, and don't ask again for: cat", "   3. No", "", " Esc to cancel · Tab to amend"].join("\n"))!;
+    expect(scrolled).toMatchObject({ kind: "approval" });
+    expect(parsedByPublicPrompt.get(scrolled)?.claudeBashCommand).toBeNull();
+  });
+
   it("releases a request the screen no longer shows, once Claude has had time to draw it", async () => {
     let now = 1_000;
     const { hooks, held } = hooksIn({ now: () => now });
@@ -233,13 +269,13 @@ describe("the hook relay", () => {
     await holding;
     // read just before the dialog is drawn
     expect(hooks.shown("p1", null)).toBeNull();
-    const card = hooks.shown("p1", "touch marker-b.txt")!;
+    const card = hooks.shown("p1", on("touch marker-b.txt"))!;
     expect(card).not.toBeNull();
     now += 3_000;
     // answered in the terminal: the next read finds no dialog
     expect(hooks.shown("p1", null)).toBeNull();
     expect(await answer()).toEqual({});
-    expect(hooks.answer("p1", "touch marker-b.txt", card.id, "allow")).toBe(false);
+    expect(hooks.answer("p1", on("touch marker-b.txt"), card.id, "allow")).toBe(false);
   });
 
   it("leaves a Monitor command to the terminal at once", async () => {
@@ -267,10 +303,10 @@ describe("the hook relay", () => {
     const holding = held("p1");
     const { answer } = ask(hook, bash(command, description));
     await holding;
-    const card = hooks.shown("p1", command)!;
+    const card = hooks.shown("p1", on(command))!;
     expect(heldBody(card)).toHaveLength(12_000);
     expect(card.command).toBe(command);
-    expect(hooks.answer("p1", command, card.id, "allow")).toBe(true);
+    expect(hooks.answer("p1", on(command), card.id, "allow")).toBe(true);
     expect(await answer()).toEqual(ALLOW);
   });
 
@@ -320,20 +356,20 @@ describe("the hook relay", () => {
     await holding;
     now = 3_000;
     // A's dialog: the card is A's, and B stays held
-    const cardA = hooks.shown("p1", `${start} && echo a`)!;
+    const cardA = hooks.shown("p1", on(`${start} && echo a`))!;
     expect(cardA.command).toBe(`${start} && echo a`);
     expect(released).toEqual([]);
-    expect(hooks.answer("p1", `${start} && echo a`, cardA.id, "allow")).toBe(true);
+    expect(hooks.answer("p1", on(`${start} && echo a`), cardA.id, "allow")).toBe(true);
     expect(await a.answer()).toEqual(ALLOW);
     // B's dialog next: A's card settles nothing of it
-    const cardB = hooks.shown("p1", `${start} && rm -rf ~/b`)!;
+    const cardB = hooks.shown("p1", on(`${start} && rm -rf ~/b`))!;
     expect(cardB.id).not.toBe(cardA.id);
-    expect(hooks.answer("p1", `${start} && rm -rf ~/b`, cardA.id, "allow")).toBe(false);
-    expect(hooks.answer("p1", `${start} && rm -rf ~/b`, cardB.id, "deny")).toBe(true);
+    expect(hooks.answer("p1", on(`${start} && rm -rf ~/b`), cardA.id, "allow")).toBe(false);
+    expect(hooks.answer("p1", on(`${start} && rm -rf ~/b`), cardB.id, "deny")).toBe(true);
     expect(await b.answer()).toMatchObject({ hookSpecificOutput: { decision: { behavior: "deny" } } });
   });
 
-  it("binds no card while two held requests are the one command the screen shows, and keeps both", async () => {
+  it("answers two held requests of the one command each on its own card, the latest first", async () => {
     const { hooks, held, released } = hooksIn();
     const hook = ourHook(launch(hooks, "p1", undefined)!);
     let holding = held("p1");
@@ -342,11 +378,41 @@ describe("the hook relay", () => {
     holding = held("p1");
     const second = ask(hook, bash("npm  test"));
     await holding;
-    expect(hooks.shown("p1", "npm test")).toBeNull();
+    const latest = hooks.shown("p1", on("npm test"))!;
+    expect(latest.command).toBe("npm  test");
     expect(released).toEqual([]);
-    hooks.stop();
-    expect(await first.answer()).toEqual({});
-    expect(await second.answer()).toEqual({});
+    // its other options are keys to the dialog, which may be either request's
+    expect(hooks.showsOnly("p1", on("npm test"), latest.id)).toBe(false);
+    expect(hooks.answer("p1", on("npm test"), latest.id, "allow")).toBe(true);
+    expect(await second.answer()).toEqual(ALLOW);
+    expect(hooks.showsOnly("p1", on("npm test"), hooks.shown("p1", on("npm test"))!.id)).toBe(true);
+    const earlier = hooks.shown("p1", on("npm test"))!;
+    expect(earlier.command).toBe("npm test");
+    expect(hooks.answer("p1", on("npm test"), latest.id, "deny")).toBe(false);
+    expect(hooks.answer("p1", on("npm test"), earlier.id, "deny")).toBe(true);
+    expect(await first.answer()).toMatchObject({ hookSpecificOutput: { decision: { behavior: "deny" } } });
+  });
+
+  it("builds the card from the held request alone while the dialog stays, its command not on the screen whole", async () => {
+    let now = 0;
+    const { hooks, held, released } = hooksIn({ now: () => now });
+    const hook = ourHook(launch(hooks, "p1", undefined)!);
+    const command = "cat <<'EOF' > notes.txt\nline 2\nEOF";
+    const holding = held("p1");
+    const asked = ask(hook, bash(command, "Write the notes"));
+    await holding;
+    now = 10_000;
+    const card = hooks.shown("p1", on(null))!;
+    expect(card).toMatchObject({ command, description: "Write the notes" });
+    expect(released).toEqual([]);
+    expect(hooks.holds("p1", on(null), card.id)).toBe(true);
+    // its other options are keys to a dialog not shown to be this command
+    expect(hooks.showsOnly("p1", on(null), card.id)).toBe(false);
+    expect(hooks.showsOnly("p1", on(command), card.id)).toBe(true);
+    // a dialog that shows another command whole is another request's
+    expect(hooks.holds("p1", on("ls"), card.id)).toBe(false);
+    expect(hooks.answer("p1", on(null), card.id, "allow")).toBe(true);
+    expect(await asked.answer()).toEqual(ALLOW);
   });
 
   // the adversarial review of #4480: held requests stayed under the pane ID a Claude was started in, which herdr moves
@@ -359,7 +425,7 @@ describe("the hook relay", () => {
     await holding;
     hooks.forget("p1");
     expect(await waiting.answer()).toEqual({});
-    expect(hooks.shown("p1", "touch moved.txt")).toBeNull();
+    expect(hooks.shown("p1", on("touch moved.txt"))).toBeNull();
     // what that Claude asks later is no pane's: no decision
     expect(await Promise.race([ask(first, bash("touch later.txt")).answer(), held("p1").then(() => "held")])).toBeNull();
 
@@ -370,7 +436,7 @@ describe("the hook relay", () => {
     const asked = held("p2");
     const current = ask(after, bash("touch after.txt"));
     await asked;
-    expect(hooks.shown("p2", "touch after.txt")?.command).toBe("touch after.txt");
+    expect(hooks.shown("p2", on("touch after.txt"))?.command).toBe("touch after.txt");
     hooks.stop();
     expect(await current.answer()).toEqual({});
   });
@@ -386,7 +452,7 @@ describe("the hook relay", () => {
     const holding = held("p1");
     const { answer } = ask(hook, bash("touch planted.txt"), project);
     await holding;
-    expect(hooks.answer("p1", "touch planted.txt", hooks.shown("p1", "touch planted.txt")!.id, "deny")).toBe(true);
+    expect(hooks.answer("p1", on("touch planted.txt"), hooks.shown("p1", on("touch planted.txt"))!.id, "deny")).toBe(true);
     expect(await answer()).toMatchObject({ hookSpecificOutput: { decision: { behavior: "deny" } } });
     hooks.stop();
     expect(await ask(hook, bash("touch planted.txt"), project).answer()).toBeNull();
@@ -403,11 +469,11 @@ describe("the hook relay", () => {
     const holding = held("p1");
     const { relay } = ask(hook, bash("touch marker-c.txt"));
     await holding;
-    const card = hooks.shown("p1", "touch marker-c.txt")!;
+    const card = hooks.shown("p1", on("touch marker-c.txt"))!;
     const released = settled("p1");
     relay.kill();
     await released;
-    expect(hooks.answer("p1", "touch marker-c.txt", card.id, "allow")).toBe(false);
+    expect(hooks.answer("p1", on("touch marker-c.txt"), card.id, "allow")).toBe(false);
   });
 });
 

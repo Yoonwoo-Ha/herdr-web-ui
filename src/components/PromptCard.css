@@ -301,12 +301,6 @@
   overflow-wrap: anywhere;
 }
 
-.prompt-card-body.is-command {
-  overflow-x: auto;
-  white-space: pre;
-  overflow-wrap: normal;
-}
-
 .prompt-card-answers {
   flex: 0 1 auto;
   min-height: calc(2lh + 2 * var(--space-2));

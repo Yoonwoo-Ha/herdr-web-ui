@@ -589,9 +589,21 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
   if (/esc to\s+cancel/i.test(lines.slice(rows.at(-1)!.lineIndex + 1, hintIndex).map(cleanLine).join(" "))) return null;
   let title: CardWords;
   let body: string;
-  let bashCommand: string | undefined;
+  let bashCommand: string | null | undefined;
   if (approvalIndex >= 0 && approvalIndex < questionIndex) {
-    title = nearestQuestion(lines, approvalIndex) ?? own("Command approval");
+    // Claude Code 2.1.3xx can draw this line under a Bash panel's command: the panel under its rule names the tool
+    const panelRule = requiredIndex === approvalIndex ? findLastIndex(lines.slice(0, approvalIndex), (line) => SOLID_RULE_RE.test(cleanLine(line))) : -1;
+    const panelHead = panelRule < 0 || approvalIndex - panelRule > 60 ? undefined : lines.slice(panelRule + 1, approvalIndex).map(cleanLine).find(Boolean);
+    // or that panel's top is above the pane: no rule over it, its `│` command block and dashed rule right over the line
+    const clipped = requiredIndex === approvalIndex && panelRule < 0 && approvalIndex >= 2
+      && /^╌{8,}$/.test(cleanLine(lines[approvalIndex - 1]!)) && /^│\s/.test(lines[approvalIndex - 2]!.replace(ANSI_RE, "").trim());
+    if (panelHead !== undefined && /^Bash command\b/.test(panelHead)) {
+      title = panelHead;
+      bashCommand = dashedCommand(lines, panelRule, approvalIndex);
+    } else if (clipped) {
+      title = own("Command approval");
+      bashCommand = null;
+    } else title = nearestQuestion(lines, approvalIndex) ?? own("Command approval");
     const bodyEnd = dangerousRmIndex > requiredIndex ? questionIndex : approvalIndex;
     body = lines.slice(Math.max(0, approvalIndex - 8), bodyEnd).map(cleanLine).filter((line) => line && !isDivider(line)).join("\n");
   } else {
@@ -623,13 +635,9 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
     if (panel.length === 0) return null;
     title = scrolled ? own("Command approval") : panel[0]!;
     body = (scrolled ? panel : panel.slice(1)).join("\n");
-    // a Bash panel's command, whole, between its first and last dashed rules (Claude Code 2.1.29x on): what a request
-    // its PermissionRequest hook holds must equal to be answered from this card (server/approvals/hub.ts)
-    if (!scrolled && /^Bash command\b/.test(panel[0]!)) {
-      const dashed = lines.slice(ruleIndex + 1, questionIndex).flatMap((line, index) => /^╌{8,}$/.test(cleanLine(line)) ? [ruleIndex + 1 + index] : []);
-      const command = dashed.length < 2 ? "" : lines.slice(dashed[0]! + 1, dashed.at(-1)!).map(cleanLine).filter(Boolean).join("\n");
-      if (command !== "") bashCommand = command;
-    }
+    // a command panel taller than the pane: its command is not on the screen whole
+    if (scrolled) bashCommand = null;
+    else if (/^Bash command\b/.test(panel[0]!)) bashCommand = dashedCommand(lines, ruleIndex, questionIndex);
   }
   return finishPrompt("claude", {
     kind: "approval", title, question: cleanLine(lines[questionIndex]!),
@@ -643,6 +651,17 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
     checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
     ...(bashCommand === undefined ? {} : { claudeBashCommand: bashCommand }),
   });
+}
+
+/**
+ * A Bash panel's command, whole, between its first and last dashed rules under `from` and over `to` (Claude Code 2.1.29x
+ * on), or null where it shows none: what says whether a request its PermissionRequest hook holds is still open
+ * (server/approvals/hub.ts).
+ */
+function dashedCommand(lines: string[], from: number, to: number): string | null {
+  const dashed = lines.slice(from + 1, to).flatMap((line, index) => /^╌{8,}$/.test(cleanLine(line)) ? [from + 1 + index] : []);
+  const command = dashed.length < 2 ? "" : lines.slice(dashed[0]! + 1, dashed.at(-1)!).map(cleanLine).filter(Boolean).join("\n");
+  return command === "" ? null : command;
 }
 
 /** a tool call Claude drew at the top level, not one quoted inside a boxed preview (`│ ● Bash(…)`) */

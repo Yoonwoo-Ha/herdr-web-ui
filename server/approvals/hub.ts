@@ -14,9 +14,10 @@
  * adapter, a version its adapter does not support (or none read), an event its adapter does not take, a command a card
  * could not show whole, and any failure of the channel.
  *
- * A held request is kept apart from any screen: `held` lists a pane's requests and `settle` answers one by its id. The
- * card a request is shown on today is the agent's dialog on the screen (Claude's Bash dialog, dialogs/claude.ts):
- * `shown`, `holds` and `answer` bind a request to the command that dialog shows, whole, and answer only while it does.
+ * A held request is kept apart from any screen: `held` lists a pane's requests and `settle` answers one by its id. A
+ * card is built from the request alone (`shown`, `holds`, `answer`); the agent's dialog on the screen (Claude's Bash
+ * dialog, dialogs/claude.ts) only says whether the request is still open: one the screen shows no dialog for, or a
+ * dialog showing another command whole, was answered in the terminal.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs";
@@ -31,6 +32,14 @@ export type ApprovalDecision = "allow" | "deny";
 export interface ApprovalRequest {
   command: string;
   description: string | null;
+}
+
+/**
+ * What a read of the screen found of the agent's approval dialog: its command, whole, or null where the screen does not
+ * show it whole (a panel taller than the pane).
+ */
+export interface ApprovalDialog {
+  command: string | null;
 }
 
 export interface HeldApproval extends ApprovalRequest {
@@ -301,37 +310,51 @@ export class ApprovalHub {
     return entry !== undefined;
   }
 
-  private showing(paneId: string, screen: string | null): Pending[] {
-    return screen === null ? [] : (this.pending.get(paneId) ?? []).filter((entry) => shows(screen, entry.command));
+  /** The held requests a dialog on the screen leaves open, oldest first: all of them, but those showing another command whole. */
+  private open(paneId: string, dialog: ApprovalDialog | null): Pending[] {
+    if (dialog === null) return [];
+    const { command } = dialog;
+    return (this.pending.get(paneId) ?? []).filter((entry) => command === null || shows(command, entry.command));
   }
 
   /**
-   * What a read of `paneId` found: the command of the approval dialog on its screen, or null for none. A held request
-   * the screen does not show (answered in the terminal, or by another dialog) is released. The one request it shows is
-   * returned, for its card to show whole. When two show the same command, both stay held and none is returned: the
-   * card keeps the screen's text and its keys.
+   * What a read of `paneId` found: the approval dialog on its screen, or null for none. A held request it leaves no
+   * longer open (answered in the terminal) is released. The latest open request is returned, for its card to show
+   * whole, and an earlier one is the next card's: the latest is the one the agent asks now, as a request answered in
+   * the terminal stays held while a dialog of the same command is on the screen.
    */
-  shown(paneId: string, screen: string | null): HeldApproval | null {
-    const showing = this.showing(paneId, screen);
+  shown(paneId: string, dialog: ApprovalDialog | null): HeldApproval | null {
+    const open = this.open(paneId, dialog);
     for (const entry of this.pending.get(paneId) ?? []) {
-      if (!showing.includes(entry) && this.now() - entry.at >= GRACE_MS) entry.settle(null);
+      if (!open.includes(entry) && this.now() - entry.at >= GRACE_MS) entry.settle(null);
     }
-    return showing.length === 1 ? publicOf(showing[0]!) : null;
+    return open.length ? publicOf(open.at(-1)!) : null;
   }
 
-  /** The request a card built on `id` showed, while it is still held and still the one request the screen shows. */
-  private bound(paneId: string, screen: string, id: string): Pending | null {
-    const showing = this.showing(paneId, screen);
-    return showing.length === 1 && idOf(showing[0]!) === id ? showing[0]! : null;
+  /** The request a card built on `id` showed, while it is still held and still the one `shown` gives that dialog's card. */
+  private bound(paneId: string, dialog: ApprovalDialog, id: string): Pending | null {
+    const latest = this.open(paneId, dialog).at(-1);
+    return latest !== undefined && idOf(latest) === id ? latest : null;
   }
 
-  holds(paneId: string, screen: string, id: string): boolean {
-    return this.bound(paneId, screen, id) !== null;
+  holds(paneId: string, dialog: ApprovalDialog, id: string): boolean {
+    return this.bound(paneId, dialog, id) !== null;
+  }
+
+  /**
+   * Whether the dialog shows the command of the request a card built on `id` showed, whole, and of no other held
+   * request: only then is that dialog this command's, and the card's options other than a decision go to it as keys.
+   * Runs of white space count as one in `shows`, so two requests that differ only in them are both shown.
+   */
+  showsOnly(paneId: string, dialog: ApprovalDialog, id: string): boolean {
+    const open = this.open(paneId, dialog);
+    const latest = open.at(-1);
+    return dialog.command !== null && latest !== undefined && idOf(latest) === id && open.every((entry) => entry.command === latest.command);
   }
 
   /** Answers the request a card built on `id` showed. False when that request is no longer bound to the card. */
-  answer(paneId: string, screen: string, id: string, decision: ApprovalDecision): boolean {
-    const held = this.bound(paneId, screen, id);
+  answer(paneId: string, dialog: ApprovalDialog, id: string, decision: ApprovalDecision): boolean {
+    const held = this.bound(paneId, dialog, id);
     if (held === null) return false;
     held.settle(decision);
     return true;
