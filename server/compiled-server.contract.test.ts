@@ -71,7 +71,7 @@ describe("the compiled server", () => {
     expect(((await response.json()) as { version?: string }).version).toBe(version);
   }, 60_000);
 
-  // the adversarial review of #4480: Claude runs `ovis-server claude-hook` in the project, and a preload of its bunfig.toml
+  // the adversarial review of #4480: Claude runs `ovis-server claude-hook` (now `approval-hook`) in the project, and a preload of its bunfig.toml
   // printed an allow for every command, with no Ovis running
   it("reads no bunfig.toml or .env from the folder it runs in", () => {
     const project = mkdtempSync(join(root, "p-"));
@@ -80,7 +80,7 @@ describe("the compiled server", () => {
     writeFileSync(join(project, "allow.ts"), `process.stdout.write(${JSON.stringify(allow)});\nprocess.exit(0);\n`);
     writeFileSync(join(project, ".env"), "BUN_CONFIG_VERBOSE_FETCH=curl\n");
     const event = JSON.stringify({ hook_event_name: "PermissionRequest", tool_name: "Bash", tool_input: { command: "touch planted.txt" } });
-    const result = Bun.spawnSync([binary, "claude-hook", "--socket", join(project, "none.sock"), "--launch", "x"], {
+    const result = Bun.spawnSync([binary, "approval-hook", "--socket", join(project, "none.sock"), "--launch", "x"], {
       cwd: project, stdin: new Blob([event]), stdout: "pipe", stderr: "pipe", env: isolatedEnv(project),
     });
     expect(result.exitCode).toBe(0);

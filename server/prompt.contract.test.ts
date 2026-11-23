@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudePermissionHooks } from "./claude-permission-hook.ts";
+import { claudeApprovals } from "./approvals/claude.ts";
+import { ApprovalHub } from "./approvals/hub.ts";
 import { createServer } from "./index.ts";
 import { herdrRpc } from "./herdr/client.ts";
 import { handlePromptRequest } from "./prompt.ts";
@@ -244,18 +245,18 @@ describe("a Claude command approval its PermissionRequest hook holds", () => {
   const DASH = "╌".repeat(40);
   /** the panel as Claude Code 2.1.319 draws it: Claude's words, then the command between dashed rules */
   const BASH = [" Bash command", " Print the working folder", DASH, " pwd", DASH];
-  let hooks: ClaudePermissionHooks;
+  let hooks: ApprovalHub;
   const holding: (() => void)[] = [];
 
   beforeAll(() => {
     writeFileSync(join(root, "approval.js"), APPROVAL);
-    hooks = new ClaudePermissionHooks(join(root, "claude hooks"), { onHeld: () => holding.shift()?.() });
+    hooks = new ApprovalHub(join(root, "approval hooks"), [claudeApprovals], { onHeld: () => holding.shift()?.() });
   });
   afterAll(() => hooks.stop());
 
   /** The hook a Claude started in `target` runs. */
   function launched(target: Menu): { command: string; args: string[] } {
-    const args = hooks.launchArgs(target.pane, undefined)!;
+    const args = hooks.launchArgs("claude", target.pane, undefined, "2.1.330")!;
     const settings = JSON.parse(readFileSync(args[args.indexOf("--settings") + 1]!, "utf8")) as { hooks: { PermissionRequest: { hooks: { command: string; args: string[] }[] }[] } };
     return settings.hooks.PermissionRequest[0]!.hooks[0]!;
   }
@@ -271,7 +272,7 @@ describe("a Claude command approval its PermissionRequest hook holds", () => {
   }
   const route = async (path: string, init?: RequestInit) => {
     const url = new URL(path, "http://localhost");
-    return (await handlePromptRequest(new Request(url, init), url, { permissionHooks: hooks }))!;
+    return (await handlePromptRequest(new Request(url, init), url, { approvals: hooks }))!;
   };
   async function read(target: Menu): Promise<{ id: string; body: string | null }> {
     for (let i = 0; i < 100; i++) {

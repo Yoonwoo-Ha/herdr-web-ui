@@ -32,7 +32,7 @@ const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes)
  * `bun build --compile` of server/main.ts for `platform` into `outfile`: minified JavaScript and Bun bytecode, no
  * source maps. The source is not published with it, but anyone who unpacks the file can read that code.
  * `--format=esm` because the entries await at top level, which bytecode allows only in an ES module. It reads no
- * bunfig.toml or .env from the folder it runs in: Claude Code runs `ovis-server claude-hook` in the project, where a
+ * bunfig.toml or .env from the folder it runs in: an agent runs `ovis-server approval-hook` in the project, where a
  * model may write files, and a preload there could answer for the hook.
  */
 export async function buildBinary(platform: ServerPlatform, outfile: string, entry = "server/main.ts"): Promise<void> {

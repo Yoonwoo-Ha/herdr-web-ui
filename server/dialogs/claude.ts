@@ -624,7 +624,7 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
     title = scrolled ? own("Command approval") : panel[0]!;
     body = (scrolled ? panel : panel.slice(1)).join("\n");
     // a Bash panel's command, whole, between its first and last dashed rules (Claude Code 2.1.29x on): what a request
-    // its PermissionRequest hook holds must equal to be answered from this card (server/claude-permission-hook.ts)
+    // its PermissionRequest hook holds must equal to be answered from this card (server/approvals/hub.ts)
     if (!scrolled && /^Bash command\b/.test(panel[0]!)) {
       const dashed = lines.slice(ruleIndex + 1, questionIndex).flatMap((line, index) => /^╌{8,}$/.test(cleanLine(line)) ? [ruleIndex + 1 + index] : []);
       const command = dashed.length < 2 ? "" : lines.slice(dashed[0]! + 1, dashed.at(-1)!).map(cleanLine).filter(Boolean).join("\n");

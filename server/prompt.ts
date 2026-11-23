@@ -18,7 +18,7 @@ import { ompCallPrompt, ompMarkdownPrompt, ompOpenCall, ompStepPrompt } from "./
 import { answerPiAskUser, bindPiAsk, piAskActivity, piAskUserPrompt } from "./pi-ask-bridge.ts";
 import { badRequest, errorResponse, jsonResponse, setRequestRoute } from "./http.ts";
 import { claudePlanFile } from "./claude-plan.ts";
-import { heldBody, permissionDecision, type ClaudePermissionHooks } from "./claude-permission-hook.ts";
+import { heldBody, type ApprovalHub } from "./approvals/hub.ts";
 import { listPendingPermissions, listPendingQuestionForms, openCodePermissionsRead, openCodeService, replyOpenCodeForm, replyOpenCodePermission } from "./opencode-service.ts";
 import { opencodeSessionId } from "./opencode.ts";
 import { agentPickerWaits, registry, SCREEN_READ_AGENTS } from "./dialogs/registry.ts";
@@ -1340,8 +1340,8 @@ export interface PromptRequestOptions {
   openCodeStateDir?: string;
   openCodeState?: OpenCodePromptState;
   onAnswered?: () => void;
-  /** the command approvals a Claude this server started holds through its hook */
-  permissionHooks?: ClaudePermissionHooks;
+  /** the approvals an agent this server started holds through its hook */
+  approvals?: ApprovalHub;
   answerDeadlineMs?: number;
   beforeKey?: (paneId: string, agent: string, deadline: AbortSignal) => Promise<void>;
 }
@@ -1357,15 +1357,15 @@ const approvalText = (prompt: InteractivePrompt | null): string | null => {
  * Its id names that request, so that its Yes or No answers that request and no other (heldRequestOf). The read is
  * also what tells the hooks the screen no longer shows a request, which releases it.
  */
-function withHeldPermission(paneId: string, agent: string, prompt: InteractivePrompt | null, hooks: ClaudePermissionHooks | undefined): InteractivePrompt | null {
-  if (hooks === undefined || agent !== "claude") return prompt;
-  const held = hooks.shown(paneId, approvalText(prompt));
+function withHeldPermission(paneId: string, agent: string, prompt: InteractivePrompt | null, approvals: ApprovalHub | undefined): InteractivePrompt | null {
+  if (approvals === undefined || !approvals.handles(agent)) return prompt;
+  const held = approvals.shown(paneId, approvalText(prompt));
   return held === null || prompt === null ? prompt : { ...prompt, id: `${prompt.id}.${held.id}`, body: heldBody(held) };
 }
 
 /** The held request an answer's card was built on (withHeldPermission), or null for a card built on the screen alone. */
-function heldRequestOf(prompt: InteractivePrompt, promptId: string, agent: string, hooks: ClaudePermissionHooks | undefined): string | null {
-  return hooks !== undefined && agent === "claude" && approvalText(prompt) !== null && promptId.startsWith(`${prompt.id}.`)
+function heldRequestOf(prompt: InteractivePrompt, promptId: string, agent: string, approvals: ApprovalHub | undefined): string | null {
+  return approvals !== undefined && approvals.handles(agent) && approvalText(prompt) !== null && promptId.startsWith(`${prompt.id}.`)
     ? promptId.slice(prompt.id.length + 1) : null;
 }
 
@@ -1514,7 +1514,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         : await paneScrollInfo(paneId, undefined, SUGGESTION_READ_MS).then((scroll) => (scroll?.offset_from_bottom ?? 0) > 0 ? null : found, () => null);
       const outcomes = await commandOutcomes(paneId, read.pane, read.prompt, read.screen, readSendId, options.codexHome, read.snapshot);
       return jsonResponse({
-        prompt: withHeldPermission(paneId, agent, prompt, options.permissionHooks),
+        prompt: withHeldPermission(paneId, agent, prompt, options.approvals),
         suggestion,
         restored: box === null || agent !== "claude" ? null : await restoredOnLiveScreen(paneId, box).catch(() => null),
         ...(outcomes.length ? { outcomes: watching ? outcomes.map(({ preview: _preview, result_text: _resultText, ...outcome }) => outcome) : outcomes } : {}),
@@ -1552,8 +1552,8 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
       if (inputUnverified || !prompt) return promptChanged();
       // a plan card's id carries its plan file's revision: the file as it is now must match too. A command approval's
       // can carry the held hook request it showed: that request must still be held, and still the one on the screen
-      const heldId = heldRequestOf(prompt, body.prompt_id, agent, options.permissionHooks);
-      if (heldId !== null ? !options.permissionHooks!.holds(body.pane_id, approvalText(prompt)!, heldId)
+      const heldId = heldRequestOf(prompt, body.prompt_id, agent, options.approvals);
+      if (heldId !== null ? !options.approvals!.holds(body.pane_id, approvalText(prompt)!, heldId)
         : (await withPlanFile(prompt, options.claudeTranscript?.(body.pane_id)))!.id !== body.prompt_id) return promptChanged();
       log.matched = true;
       waitedOn = waitingKindOf(prompt) !== undefined;
@@ -1929,10 +1929,10 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
       // Yes or No on a card built on a held hook request is that request's answer, with no key. Any other option goes as
       // keys to the dialog on the screen, which the check above found to be that request's, whole
       const decision = heldId === null || body.option_index === undefined || body.custom_text !== undefined ? null
-        : permissionDecision(prompt.options[body.option_index]?.label ?? "");
+        : options.approvals!.decision(agent, prompt.options[body.option_index]?.label ?? "");
       if (decision !== null && parsedPrompt?.responder === "claude-approval") {
         // the request left since the read: no key either, as the dialog now on the screen may be another command's
-        if (!options.permissionHooks!.answer(body.pane_id, approvalText(prompt)!, heldId!, decision)) return promptChanged();
+        if (!options.approvals!.answer(body.pane_id, approvalText(prompt)!, heldId!, decision)) return promptChanged();
         delivered = true;
         askingEnded(body.pane_id);
         form.still = claudeStepStill(parsedPrompt);

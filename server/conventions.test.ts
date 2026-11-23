@@ -243,6 +243,7 @@ describe("herdr socket", () => {
   };
   const NET_CONNECT_ALLOWED: Record<string, string> = {
     "server/ssh-askpass.ts": "the SSH askpass helper's own private socket, not herdr's",
+    "server/approvals/relay.ts": "an agent's approval hook reaching the approval hub's own socket or pipe, not herdr's",
     "server/herdr-core/adapter.ts": "a liveness probe of the core adapter's own socket before startup: sends no request",
     "server/herdr-core/runtime.ts": "a liveness probe of herdr-core's socket, not herdr's: connects and closes, sends nothing",
     "server/runtime-move-lock.ts": "the herdr-core move's own lock socket, not herdr's: asks which Ovis server holds it",

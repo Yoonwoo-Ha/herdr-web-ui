@@ -7,7 +7,8 @@ import { dirname, join } from "node:path";
 import * as herdr from "./herdr/client.ts";
 import * as runtime from "./herdr-core/runtime.ts";
 import * as shellAgent from "./shell-agent.ts";
-import { agentLaunch, dshEffortArgs, readBrowserToolSetting } from "./agent-launch.ts";
+import { agentLaunch, dshEffortArgs, readBrowserToolSetting, useApprovalHub } from "./agent-launch.ts";
+import { ApprovalHub, type ApprovalAdapter } from "./approvals/hub.ts";
 import { launchedAgents } from "./launched-agents.ts";
 import { requestIdContext, wordHerdrFailures } from "./http.ts";
 
@@ -57,6 +58,27 @@ describe("agentLaunch", () => {
     const codex = ["--settings", ULTRACODE];
     expect((await launch("codex", codex, { platform: "win32", settingsDir: dir })).args).toBe(codex);
     expect(existsSync(dir)).toBe(false);
+  });
+
+  it("gives a shell-started agent its hook from the approval hub as one herdr starts, at the version read", async () => {
+    const adapter = (kind: string): ApprovalAdapter => ({
+      kind, supports: (version) => version === "1.0.0", launchArgs: (args, hook) => [...args ?? [], "--hook", hook.command],
+      toCard: () => null, decision: () => null, toAnswer: () => "{}",
+    });
+    const hub = new ApprovalHub(join(dirname(settingsDir()), "h"), [adapter("omo"), adapter("hooked")], { relay: ["relay"] });
+    const asked: string[] = [];
+    useApprovalHub(hub, async (kind) => { asked.push(kind); return "1.0.0"; });
+    const shell = spyOn(shellAgent, "startShellAgent").mockImplementation(async () => null);
+    try {
+      expect(await agentLaunch(PANE, { kind: "omo", args: ["--x"] })).toEqual({ agent_started: true });
+      expect(shell.mock.calls[0]![2]).toEqual(["--x", "--hook", "relay"]);
+      expect((await launch("hooked", ["--y"], { platform: "linux", settingsDir: settingsDir() })).args).toEqual(["--y", "--hook", "relay"]);
+      expect(asked).toEqual(["omo", "hooked"]);
+    } finally {
+      shell.mockRestore();
+      useApprovalHub(null);
+      hub.stop();
+    }
   });
 
   it("takes a dsh-tui launch's --effort off its command line, before -- only, and keeps only a level the check takes", () => {
