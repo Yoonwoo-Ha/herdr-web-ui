@@ -5,6 +5,7 @@ import { FakeAccountService, PC_NEW_MS, WEB_REDIRECT } from "../../shared/accoun
 import { generateKeyPair } from "../../shared/relay-e2ee.ts";
 import { deriveServerId } from "../../shared/relay-server-proof.ts";
 import { isNewAccountPc, type MyPc } from "../lib/account/myPcs.ts";
+import { newPcNoticeKey } from "../lib/account/newPcNotice.ts";
 import { AccountService } from "../lib/account/service.ts";
 import { beginSignIn, finishSignIn, signInReturn } from "../lib/account/signin.ts";
 import { memoryAccountStore, memoryLock, type AccountProvider, type AccountStore } from "../lib/account/store.ts";
@@ -38,6 +39,8 @@ const press = async (label: string): Promise<void> => {
 };
 const settle = async (): Promise<void> => { for (let i = 0; i < 20; i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); }); };
 const text = (): string => renderer === undefined ? "" : renderer.root.findAll((node) => node.type === "div").map(textOf).join(" ");
+/** the one-press admissions this device asked the account service for, for the PC on the card */
+const admits = (): number => fake.requests.filter((line) => line === `POST /v1/pcs/${PC}/admit`).length;
 
 async function signIn(provider: AccountProvider = "github"): Promise<void> {
   fake.signInAs(provider, ACCOUNT);
@@ -119,7 +122,7 @@ describe("a PC the account lists unconfirmed", () => {
     await mount();
     expect(text()).toContain(`Name the PC gave itself: "${LABEL}"`);
     expect(text()).toContain("A PC was added to your account with a sign-in code at ");
-    expect(text()).toContain("Add it only if you typed that code on that PC's own screen a moment ago.");
+    expect(text()).toContain("Add it only if you started adding that PC yourself and entered the code it showed. If someone else gave you the code, or you did not start this, press No.");
     // the label is never said as a fact: only inside its quotes
     expect(text().split(`"${LABEL}"`).join("")).not.toContain(LABEL);
     expect(buttons()).toEqual(["Add", "No"]);
@@ -167,7 +170,7 @@ it("PCR-1: a removal from a sign-in older than ten minutes removes nothing, and 
     }
   });
 
-  it("confirms with this own sign-in on Add: listed as the account's, new for 24 hours, told as new, and never opened by itself", async () => {
+  it("admits the PC with this own sign-in on Add: listed as the account's, new for 24 hours, told as new, and never opened by itself", async () => {
     await signIn();
     await listedByDeviceCode();
     await mount();
@@ -176,7 +179,10 @@ it("PCR-1: a removal from a sign-in older than ten minutes removes nothing, and 
     await press("Add");
     // the account's PCs are read again wherever they are listed (the front page's Your PCs among them)
     expect(changed).toBeGreaterThan(0);
-    expect(fake.requests.filter((line) => line === `PUT /v1/pcs/${PC}`)).toHaveLength(2);
+    // the account's admission, which the PC then takes with its own key's proof (ovis add waits for it): no confirm PUT
+    expect(admits()).toBe(1);
+    expect(fake.requests.filter((line) => line === `PUT /v1/pcs/${PC}`)).toHaveLength(1);
+    expect(fake.pcs(ACCOUNT)[0]?.admitted_at).toBe(new Date(now).toISOString());
     const [listed] = await service.forSignIn((await service.session())!).listPcs();
     expect(listed?.server_id).toBe(PC);
     expect(listed?.unconfirmed).toBeUndefined();
@@ -189,6 +195,27 @@ it("PCR-1: a removal from a sign-in older than ten minutes removes nothing, and 
     expect(text()).toContain(`New PC added to your account: ${LABEL}`);
     expect(buttons()).toContain("I didn't add this");
     expect(buttons()).not.toContain("Add");
+  });
+
+  it("keeps the new-PC card closed under the service's admission time, not this device's clock", async () => {
+    await signIn();
+    await listedByDeviceCode();
+    // the admit's answer takes a second to come back: this device's clock has moved on by then
+    service = new AccountService({ store, lock: memoryLock(), now: () => now, fetch: async (input: Request | string | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const answer = await fake.fetch(request);
+      if (new URL(request.url).pathname.endsWith("/admit")) now += 1_000;
+      return answer;
+    } });
+    await mount();
+    await press("Add");
+    const close = renderer!.root.findAll((node) => node.type === "button" && node.props["aria-label"] === "Close");
+    expect(close).toHaveLength(1);
+    await act(async () => { close[0]!.props.onClick(); });
+    // the directory's own row names the same admission, so the card closed here is closed for it too
+    const [row] = await service.forSignIn((await service.session())!).listPcs();
+    expect(row?.admitted_at).toBe(new Date(now - 1_000).toISOString());
+    expect(localStorage.getItem(newPcNoticeKey(ACCOUNT, row!))).toBe("1");
   });
 
   it("removes the listing from the account on No and hides it, for good after a reload", async () => {
@@ -212,16 +239,73 @@ it("PCR-1: a removal from a sign-in older than ten minutes removes nothing, and 
     await press("Add");
     expect(text()).toContain("Sign in again to add it: your sign-in is more than ten minutes old.");
     expect(fake.pcs(ACCOUNT)[0]?.listed_by_device).toBe(true);
+    // asked once, and refused
+    expect(admits()).toBe(1);
     await press("Sign in again");
     expect(signInsAgain).toEqual(["github"]);
     // the sign-in comes back as a page load: the add it was for goes on by itself, once
     await signIn();
     await mount();
+    expect(admits()).toBe(2);
     expect(fake.pcs(ACCOUNT)[0]?.listed_by_device).toBe(false);
+    expect(text()).toContain(`New PC added to your account: ${LABEL}`);
+    await mount();
+    expect(admits()).toBe(2);
+  });
+
+  it("admits the PC for a sign-in without two-step in a used account (a Google sign-in never says): Add is offered from the start", async () => {
+    await signIn("google");
+    await listedByItsOwnSignIn();
+    await listedByDeviceCode();
+    await mount();
+    expect(buttons()).toEqual(["Add", "No"]);
+    expect(text()).toContain("Add this PC to your account?");
+    expect(text()).not.toContain("two-step");
+    await press("Add");
+    expect(admits()).toBe(1);
+    expect(fake.pcs(ACCOUNT).find((pc) => pc.server_id === PC)?.listed_by_device).toBe(false);
     expect(text()).toContain(`New PC added to your account: ${LABEL}`);
   });
 
-  it("tells a sign-in without two-step in a used account to add the PC with the number, and never to sign in again", async () => {
+  it("says when the account added as many PCs as it may today, and admits nothing", async () => {
+    await signIn();
+    // three PCs added in one press today, the most an account adds in a day
+    const token = fake.issueToken(ACCOUNT);
+    for (let i = 0; i < 3; i++) {
+      const other = generateKeyPair().publicKey;
+      const id = deriveServerId(other);
+      const put = await fake.fetch(`${ORIGIN}/v1/pcs/${id}`, { method: "PUT", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ label: `Desk ${i}`, public_key: Buffer.from(other).toString("hex"), relay: "wss://relay.ovis.sh" }) });
+      expect(put.ok).toBe(true);
+      const admitted = await fake.fetch(`${ORIGIN}/v1/pcs/${id}/admit`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: "{}" });
+      expect(admitted.ok).toBe(true);
+    }
+    await listedByDeviceCode();
+    await mount();
+    await press("Add");
+    expect(text()).toContain("This account has added as many PCs as it can today. Try again later.");
+    expect(text()).not.toContain("The PC could not be added.");
+    expect(buttons()).toEqual(["Add", "No"]);
+    expect(fake.pcs(ACCOUNT).find((pc) => pc.server_id === PC)?.listed_by_device).toBe(true);
+  });
+
+  it("says a refused or failed admit could not add the PC, and keeps Add and No", async () => {
+    await signIn();
+    await listedByDeviceCode();
+    service = new AccountService({ store, lock: memoryLock(), now: () => now, fetch: async (input: Request | string | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (new URL(request.url).pathname.endsWith("/admit")) return Response.json({ error: { code: "internal_error", message: "down" } }, { status: 500 });
+      return fake.fetch(request);
+    } });
+    await mount();
+    await press("Add");
+    expect(text()).toContain("The PC could not be added. Try again.");
+    expect(buttons()).toEqual(["Add", "No"]);
+    expect(fake.pcs(ACCOUNT)[0]?.listed_by_device).toBe(true);
+  });
+
+  it("says what an account service that still asks for two-step answered, never to sign in again, and admits nothing", async () => {
+    fake.admitAsksTwoStep = true;
     await signIn();
     await listedByItsOwnSignIn();
     await listedByDeviceCode();
@@ -231,20 +315,6 @@ it("PCR-1: a removal from a sign-in older than ten minutes removes nothing, and 
     expect(buttons()).not.toContain("Sign in again");
     expect(buttons()).toContain("No");
     expect(fake.pcs(ACCOUNT).find((pc) => pc.server_id === PC)?.listed_by_device).toBe(true);
-    // with no Add, the warning about a typed code has nothing to warn of: the name and the time stay
-    expect(text()).not.toContain("Add it only if you typed that code");
-    expect(text()).toContain(`Name the PC gave itself: "${LABEL}"`);
-    expect(text()).toContain("A PC was added to your account with a sign-in code at ");
-  });
-
-  it("says so from the start to a Google sign-in, which never carries two-step, once the account has another PC", async () => {
-    await signIn("google");
-    await listedByItsOwnSignIn();
-    await listedByDeviceCode();
-    await mount();
-    expect(text()).toContain("This account has no two-step sign-in to add it here. Add it with the number on the PC's screen.");
-    expect(buttons()).toEqual(["No"]);
-    expect(text()).not.toContain("Add it only if you typed that code");
     expect(text()).toContain(`Name the PC gave itself: "${LABEL}"`);
   });
 
@@ -273,18 +343,18 @@ it("PCR-1: a removal from a sign-in older than ten minutes removes nothing, and 
     return sent;
   }
 
-  it("account#67: Add names the listing its card showed: a replacement is not confirmed, and the card shows it as it is now", async () => {
+  it("account#67: Add admits only the listing its card showed: a replacement is not admitted, and the card shows it as it is now", async () => {
     fake.completions = true;
     await signIn();
     await listedByDeviceCode();
     const sent = recorded();
     await mount();
-    const shown = await replacedBehindTheCard();
+    await replacedBehindTheCard();
     await press("Add");
-    expect(sent.filter((each) => each.method === "PUT").map((each) => each.body?.listing_id)).toEqual([shown]);
+    // the admit names no listing, so the listing is read first: one that is not the card's is not admitted
+    expect(sent).toEqual([]);
+    expect(admits()).toBe(0);
     expect(fake.pcs(ACCOUNT)[0]?.listed_by_device).toBe(true);
-    // the service's 409 listing_changed is no failure to show: the PCs are read again instead
-    expect(fake.requests.lastIndexOf("GET /v1/pcs")).toBeGreaterThan(fake.requests.lastIndexOf(`PUT /v1/pcs/${PC}`));
     expect(text()).not.toContain("The PC could not be added.");
     expect(text()).not.toContain("New PC added to your account");
     expect(buttons()).toEqual(["Add", "No"]);
@@ -314,6 +384,7 @@ it("PCR-1: a removal from a sign-in older than ten minutes removes nothing, and 
       sessionStorage.setItem("ovis:confirm-pc", JSON.stringify({ account: ACCOUNT, server_id: PC, ...kept }));
       await mount();
       expect(fake.requests.filter((line) => line === `PUT /v1/pcs/${PC}`)).toHaveLength(1);
+      expect(admits()).toBe(0);
       expect(fake.pcs(ACCOUNT)[0]?.listed_by_device).toBe(true);
       expect(buttons()).toEqual(["Add", "No"]);
     });

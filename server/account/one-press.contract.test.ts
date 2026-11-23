@@ -1564,6 +1564,8 @@ test("PADD-1: a Revoke all that finishes while the press waits on the account se
 
 test("first-PC exemption: the same sign-in may repeat its admit before the PC reads it, and gets the same admission", async () => {
   const f = await pc();
+  // an account service that asks a used account's admit for two-step, as until 2026-11-23
+  f.account.admitAsksTwoStep = true;
   await setUpFor(f, "acct_retry");
   const identity = f.app.context.services.relay.currentIdentity()!;
   const token = f.account.issueToken("acct_retry", { twoStep: null });

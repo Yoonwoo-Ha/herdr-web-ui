@@ -205,6 +205,11 @@ it("PCR-1: a removal that wants a fresh sign-in closes the confirm, and Sign in 
     return renderer!.root;
   };
 
+  it("names the account by the start of its ID, as ovis status does, for ovis add --account", async () => {
+    const root = await openSheet({ ...hosted(async () => ({ left: true, message: null })), account: "acct_0123456789abcdef" });
+    expect(textOf(root.find((node) => node.type === "div" && node.props["data-account-id"] === true))).toBe("Account IDacct_0123456");
+  });
+
   it("signs every device out from Manage account after one short confirm that says PCs stay", async () => {
     let asked = 0;
     const root = await openSheet(hosted(async () => ({ left: true, message: null }), async () => { asked++; return null; }));

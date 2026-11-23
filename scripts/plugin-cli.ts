@@ -39,16 +39,18 @@ interface Spec {
 const LOGIN: Spec = {
   command: "link",
   summary: "Add this PC to your Ovis account (also: add)",
-  usage: "ovis login [--no-browser] [--approve] [--print] [--github | --google]",
+  usage: "ovis login [--no-browser] [--account <id>] [--qr [--print]] [--approve] [--github | --google]",
   flags: [
     ["--no-browser", "Show the address and code to type instead of opening a browser (the default without a desktop)"],
+    ["--account <id>", "Your account's id (ovis status on a PC in it, or Manage account): needed outside a terminal"],
+    ["--qr", "After signing in, show a QR code for a device of your account to scan, instead of waiting for Add"],
+    ["--print", "With --qr: write the QR code even where the output is not a terminal"],
     ["--approve", "After signing in, approve here the device that adds this PC, comparing six digits"],
-    ["--print", "Write the QR code even where the output is not a terminal"],
     ["--github, --google", "Sign in at GitHub's or Google's own device page"],
   ],
   // `link --code` is `pair --relay`; `--device-auth` is codex's name for --no-browser
   hidden: ["--github", "--google", "--code", "--device-auth"],
-  more: "Sign in with a code, then scan the QR code it shows with a device signed in to the same account: this PC joins\nthe account, with nothing to approve. The sign-in ends with the command; nothing of it is kept on this PC.",
+  more: "Sign in with a code, confirm the account (type yes, or name it with --account), then press Add for this PC in Ovis\non your phone or another device signed in to that account: this PC joins it. The sign-in ends with the command;\nnothing of it is kept on this PC.",
 };
 
 const SPECS: Readonly<Record<string, Spec>> = {
@@ -167,7 +169,19 @@ export function parseCommand(words: readonly string[], context: CliContext): Par
   if (rest.some((arg) => HELP.has(arg))) return { kind: "help", text: commandHelp(word, spec) };
   if (spec.passThrough) return { kind: "run", command: spec.command, args: rest };
   const known = new Set([...(spec.flags ?? []).flatMap(([flag]) => flag.split(", ").map((one) => one.split(" ")[0]!)), ...spec.hidden ?? []]);
-  const stray = rest.find((arg) => !known.has(arg));
+  // a flag shown with `<value>` takes the word after it, or `=value`
+  const valued = new Set((spec.flags ?? []).flatMap(([flag]) => flag.split(", ").filter((one) => one.includes(" <")).map((one) => one.split(" ")[0]!)));
+  const plain: string[] = [];
+  for (let index = 0; index < rest.length; index++) {
+    const arg = rest[index]!;
+    const equals = arg.indexOf("=");
+    const name = equals > 0 ? arg.slice(0, equals) : arg;
+    if (!valued.has(name)) { plain.push(arg); continue; }
+    const value = equals > 0 ? arg.slice(equals + 1) : rest[index + 1];
+    if (value === undefined || value === "" || value.startsWith("-")) return { kind: "bad", text: `ovis ${word}: ${name} needs a value\nRun ovis ${word} --help for what it takes.\n` };
+    if (equals < 0) index++;
+  }
+  const stray = plain.find((arg) => !known.has(arg));
   if (stray !== undefined) {
     return { kind: "bad", text: `ovis ${word}: ${stray.startsWith("-") ? "unknown flag" : "unexpected argument"} ${stray}\nRun ovis ${word} --help for what it takes.\n` };
   }

@@ -1,10 +1,12 @@
 /**
  * `ovis add` against this PC's own server (server/index.ts on a state folder of its own and a free port), with devices
- * coming through the relay's test harness (server/account/pairing.test-helpers.ts): the code it shows is made for the
- * account that signed in, so a device signed in to no account, or to another account, gets nothing of the PC with it,
- * also once the command is gone without taking it back, and a device of that account joins with it. The relay of
- * that harness never comes online, so the command alone is told it is (GET /api/relay); every other call reaches the
- * server. No test sleeps: the command's waits between looks are released one at a time, each bounded.
+ * coming through the relay's test harness (server/account/pairing.test-helpers.ts). Without --qr, a device of the
+ * account that signed in presses Add, and this PC takes that admission from the command (POST /api/account/one-press)
+ * on its own proof to the account service. With --qr, the code it shows is made for the account that signed in, so a
+ * device signed in to no account, or to another account, gets nothing of the PC with it, also once the command is
+ * gone without taking it back, and a device of that account joins with it. The relay of that harness never comes
+ * online, so the command alone is told it is (GET /api/relay); every other call reaches the server. No test sleeps:
+ * the command's waits between looks are released one at a time, each bounded.
  */
 import { afterEach, expect, test } from "bun:test";
 import { decodeOffer } from "../shared/relay-offer.ts";
@@ -67,7 +69,7 @@ async function adding(typed?: (pc: Pc) => void) {
     told?.();
   });
   const waiting = () => new Promise<void>((resolve) => { if (parked !== null) resolve(); else onPark = resolve; });
-  const run = link([], {
+  const run = link(["--qr"], {
     origin, headers: {}, fetch, accountService: "https://account.test", serviceFetch: service.fetch, signal: stop.signal,
     lines: { next: () => new Promise(() => {}) }, terminal: true, isTty: true, wait,
     out: (text) => {
@@ -171,4 +173,53 @@ test("ovis add shows a code of its own when another run made a code for the same
   // its own code went back by its id: nothing is pending
   expect(add.text()).toContain("The code and the QR code no longer work.");
   expect(add.pc.devices.activePairing()).toBeNull();
+});
+
+test("ovis add --account, as a script or an agent runs it with no terminal: this PC takes the admission of a device of that account that pressed Add, on its own proof", async () => {
+  const made = await pairingPc();
+  pcs.push(made);
+  const service = made.account;
+  service.opensAll = true;
+  const origin = `http://127.0.0.1:${made.app.port}`;
+  const out: string[] = [];
+  const asked: number[] = [];
+  let signedIn = false;
+  let pressed: Promise<Response> | null = null;
+  const serverId = made.app.context.services.relay.currentIdentity()!.server_id;
+  const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const request = new Request(input, init);
+    const path = new URL(request.url).pathname;
+    if (path === "/api/relay" && request.method === "GET") return Response.json({ phase: made.devices.account() === null ? "connecting" : "online", blocked: null });
+    const response = await globalThis.fetch(request);
+    if (path === "/api/account/one-press") asked.push(response.status);
+    return response;
+  };
+  const code = await bounded(link(["--account", OWNER], {
+    origin, headers: {}, fetch, accountService: "https://account.test", serviceFetch: service.fetch, signal: new AbortController().signal,
+    lines: { next: () => new Promise(() => {}) }, terminal: false, isTty: false,
+    // the waits between asks end at once, until the device pressed Add
+    wait: (_ms, signal) => new Promise((resolve, reject) => { if (signal.aborted) reject(signal.reason); else setTimeout(resolve, 0); }),
+    out: (text) => {
+      out.push(text);
+      const shown = /code:? ([A-Z0-9-]{4,16})\b/.exec(text);
+      if (shown && !signedIn) { signedIn = true; service.approveDevice(shown[1]!, OWNER); }
+      // a device of the account, with a sign-in of its own made just now, presses Add on this PC's card
+      if (text.includes("press Add for")) {
+        pressed = service.fetch(new Request(`https://account.test/v1/pcs/${serverId}/admit`, {
+          method: "POST", headers: { authorization: `Bearer ${service.issueToken(OWNER)}`, "content-type": "application/json" }, body: "{}",
+        }));
+      }
+    },
+  }));
+  expect((await pressed!)?.status).toBe(200);
+  expect(code).toBe(0);
+  expect(out.join("")).toContain(`Ovis account ${OWNER.slice(0, 12)} (signed in with GitHub) is the one --account names.`);
+  expect(out.join("")).not.toContain("\x1b");
+  expect(out.join("")).toContain("Added. Open ");
+  // the first ask, with no account, only asked whether this PC takes such an add; every ask after it but the last found no admission yet
+  expect(asked[0]).toBe(400);
+  expect(asked.slice(1, -1).every((status) => status === 404)).toBe(true);
+  expect(asked.at(-1)).toBe(200);
+  expect(made.devices.account()).toBe(OWNER);
+  expect(service.pcs(OWNER).map((entry) => [entry.server_id, entry.listed_by_device])).toEqual([[serverId, false]]);
 });

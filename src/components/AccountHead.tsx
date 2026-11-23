@@ -42,8 +42,11 @@ export function AccountHead({ provider, plan = null, onManage, onSignOut }: { pr
   );
 }
 
-/** Manage account: the account's ways in, its plan and Delete account, in a sheet over Settings. */
-export function ManageAccountSheet({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+/**
+ * Manage account: the account's ways in, its plan and Delete account, in a sheet over Settings. `account`: its id, whose
+ * start is shown as `ovis status` shows it, for `ovis add --account` on a PC with no screen.
+ */
+export function ManageAccountSheet({ onClose, account, children }: { onClose: () => void; account?: string | undefined; children: ReactNode }) {
   const t = useT();
   const id = useId();
   const surface = useFocusTrap<HTMLDivElement>(true);
@@ -67,7 +70,10 @@ export function ManageAccountSheet({ onClose, children }: { onClose: () => void;
           <h2 className="modal-title" id={`${id}-title`}>{t("Manage account")}</h2>
           <button type="button" className="icon-button" aria-label={t("Close")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
-        <div className="modal-body account-manage-body">{children}</div>
+        <div className="modal-body account-manage-body">
+          {account !== undefined && <div className="settings-row account-plan-row" data-account-id><span className="settings-label">{t("Account ID")}</span><span className="account-plan" translate="no">{account.slice(0, 12)}</span></div>}
+          {children}
+        </div>
       </div>
     </div>,
     document.body,
@@ -111,7 +117,7 @@ function HostedManageSheet({ signIn, watching, pcHere, onClose }: { signIn: Host
     void from.signOutEverywhere().then(setEverywhereError, () => setEverywhereError(t("Could not sign out every device. Try again."))).finally(() => setEverywhere(null));
   };
   return (
-    <ManageAccountSheet onClose={onClose}>
+    <ManageAccountSheet onClose={onClose} account={signIn?.account}>
       {signIn !== null && <AccountManageLists key={signIn.account} account={signIn.account} watching={watching} pcHere={pcHere} onLeave={() => leave(signIn)} />}
       {leaveNote !== null && <p className="settings-condition" role="alert">{leaveNote}</p>}
       {signIn !== null && <div className="settings-item account-sign-out-everywhere">

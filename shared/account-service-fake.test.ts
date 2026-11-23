@@ -657,7 +657,8 @@ describe("the fake's first-PC exemption, as the account service has it (account#
     const response = await service.fetch(post(`/v1/pcs/${machine.serverId}/admit`, {}, token));
     return response.ok ? "admitted" : (await response.json() as { error: { code: string } }).error.code;
   };
-  const fresh = () => { const service = new FakeAccountService(); service.opensAll = true; return service; };
+  // the exemption is from the two-step the service asked of a used account's admit until 2026-11-23
+  const fresh = () => { const service = new FakeAccountService(); service.opensAll = true; service.admitAsksTwoStep = true; return service; };
 
   test("a phone signed in first, with no two-step, leaves the first PC's one press exempt", async () => {
     const service = fresh();
@@ -686,6 +687,17 @@ describe("the fake's first-PC exemption, as the account service has it (account#
     const next = pc();
     expect((await put(removed, removing, next)).ok).toBe(true);
     expect(await admit(removed, removing, next)).toBe("two_step_required");
+  });
+
+  test("since 2026-11-23 the admit asks no two-step: a used account's sign-in without it admits, and confirms a device code's listing", async () => {
+    const service = fresh();
+    service.admitAsksTwoStep = false;
+    const owner = service.issueToken("acct_1");
+    expect((await put(service, owner, pc())).ok).toBe(true);
+    const typed = pc();
+    expect((await put(service, service.issueToken("acct_1", { device: true }), typed)).ok).toBe(true);
+    expect(await admit(service, owner, typed)).toBe("admitted");
+    expect(service.pcs("acct_1").find((entry) => entry.server_id === typed.serverId)?.listed_by_device).toBe(false);
   });
 
   test("devices count once the account has a PC, and always for a confirm", async () => {

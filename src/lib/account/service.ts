@@ -447,13 +447,15 @@ export class AccountService {
   }
 
   /**
-   * Admits a PC this account lists in one press, from a fresh sign-in with two-step sign-in set: the service refuses
-   * anything else (`session_not_fresh`, `two_step_required`, `pc_add_cap`, or 404 where it has no such route).
+   * Admits a PC this account lists in one press, from a fresh own sign-in: the service refuses anything else
+   * (`session_not_fresh`, `own_sign_in_required`, `pc_add_cap`, an older service `two_step_required`, or 404 where it has
+   * no such route). `admitted_at`: the service's time of the admission, as its directory row gives it; null when the
+   * answer does not say.
    */
-  async admitPc(serverId: string, signal?: AbortSignal): Promise<{ readonly account: string; readonly new_until: string }> {
+  async admitPc(serverId: string, signal?: AbortSignal): Promise<{ readonly account: string; readonly new_until: string; readonly admitted_at: string | null }> {
     const body = await this.call("POST", `/v1/pcs/${serverId}/admit`, {}, signal);
     if (!isRecord(body) || typeof body.account !== "string" || typeof body.new_until !== "string") throw new AccountServiceError(502, "invalid_answer", "The account service sent no admission");
-    return { account: body.account, new_until: body.new_until };
+    return { account: body.account, new_until: body.new_until, admitted_at: typeof body.admitted_at === "string" && Number.isFinite(Date.parse(body.admitted_at)) ? body.admitted_at : null };
   }
 
   /**

@@ -18,6 +18,8 @@ function pcFields(account: string | null = null): AccountAddTarget {
 async function window(options: { twoStep: boolean | null; used?: boolean }) {
   const fake = new FakeAccountService();
   fake.opensAll = true;
+  // the rule these cases are about: an account service that asks a used account's admit for two-step
+  fake.admitAsksTwoStep = true;
   const store = memoryAccountStore();
   await store.set("session", { service: SERVICE, account: ACCOUNT, provider: "google", access_token: fake.issueToken(ACCOUNT, { twoStep: options.twoStep }), refresh_token: "r", expires_at: Date.now() + 3600_000 });
   const service = new AccountService({ store, fetch: fake.fetch });

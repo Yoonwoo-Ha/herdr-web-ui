@@ -1591,7 +1591,7 @@ export function AccountSection({ onAccount, recheck = 0, opensAll, withdrawn, si
           {/* while a search runs the account's rows are the group's own; otherwise they wait in Manage account's sheet */}
           {searching && <>{methodsPart}{deleteParts}</>}
           {managing && (
-            <ManageAccountSheet onClose={() => { setManagedAccount(null); deleteAsks.current++; setDeleteAsked(null); }}>
+            <ManageAccountSheet account={view.account} onClose={() => { setManagedAccount(null); deleteAsks.current++; setDeleteAsked(null); }}>
               {methodsPart}
               {plan !== null && <div className="settings-row account-plan-row"><span className="settings-label">{t("Plan|account plan")}</span><span className="account-plan">{plan}</span></div>}
               <AccountManageLists key={view.account} account={view.account} watching={watching} />

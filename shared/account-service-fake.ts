@@ -181,6 +181,11 @@ export class FakeAccountService {
    * (`listing_admitted`). Off: a service from before the field, which omits it.
    */
   saysListingAdmitted = true;
+  /**
+   * The one-press admit asks a used account's sign-in for two-step (`two_step_required`), as the service did until
+   * 2026-11-23. Off, the service since: such an admit is logged as exempt instead.
+   */
+  admitAsksTwoStep = false;
   private seq = 0;
   readonly requests: string[] = [];
 
@@ -629,7 +634,7 @@ export class FakeAccountService {
       const open = this.pcAdmissions.get(box(admitted, account));
       // a retry of this same sign-in's own admission, still open, gets the same answer: no second exemption is granted
       const retry = entry !== undefined && open !== undefined && !open.taken && open.family === session.family && this.now() - open.at <= ADMISSION_TTL_MS && entry.new_until != null;
-      if (exempt && !retry && this.everUsed(account, admitted, session.family, "admit")) return problem(403, "two_step_required", "Set up two-step sign-in first");
+      if (this.admitAsksTwoStep && exempt && !retry && this.everUsed(account, admitted, session.family, "admit")) return problem(403, "two_step_required", "Set up two-step sign-in first");
       if (entry === undefined) return problem(400, "unknown_pc", "List PCs of this account only");
       if (open !== undefined && !open.taken && this.now() - open.at <= ADMISSION_TTL_MS && entry.new_until != null) {
         return json({ server_id: admitted, account, admitted_at: new Date(open.at).toISOString(), new_until: entry.new_until });
