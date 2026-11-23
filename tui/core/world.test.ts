@@ -3,7 +3,8 @@ import { type LayoutNode, OVIS_LAYOUT_DOC, type PaneDirection, place } from "../
 import { coreModel, type HcEvent } from "../../server/herdr-core/core-model.ts";
 import { LAYOUT_DOC, PANE_NAME_LABEL, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WORKSPACE_NAME_LABEL } from "../../server/herdr-core/snapshot.ts";
 import { WORKTREE_LABEL } from "../../server/herdr-core/worktrees.ts";
-import { CoreWorld, focusDirection, paneToward, treeOf } from "./world.ts";
+import { focusDirection, paneToward } from "../model/focus.ts";
+import { CoreWorld, treeOf } from "./world.ts";
 
 const leaf = (id: string): LayoutNode => ({ leaf: id });
 const right = (ratio: number, first: LayoutNode, second: LayoutNode): LayoutNode => ({ split: "right", ratio, first, second });
@@ -47,7 +48,7 @@ describe("the pane that lies that way (layout-doc.ts neighbour, on the tree the 
   ];
   for (const [name, root, from, direction, expected] of table) {
     it(name, () => {
-      expect(paneToward({ root, zoomed: null }, from, direction)).toBe(expected);
+      expect(paneToward(root, from, direction)).toBe(expected);
     });
   }
 });
@@ -113,6 +114,17 @@ describe("core events reach the world through the shared core model", () => {
     expect(world.answer(read!, [record("t1", "w1", "a", { foreground: front })])).toBe(true);
     expect([pane("t1")?.agent, pane("t1")?.folder]).toEqual(["claude", "api"]);
     expect(world.view().agents.map((agent) => [agent.paneId, agent.folder])).toEqual([["t1", "api"]]);
+  });
+
+  it("foreground: an agent whose program left the front is no agent row at once, before the terminals are read again", () => {
+    const front = (name: string) => ({ argv: [`/home/u/bin/${name}`], cwd: "/home/u/api", name, pid: 4007445 });
+    const { world, tell, pane } = linked([record("t1", "w1", "a", { foreground: front("claude") }), record("t2", "w1", "a", { foreground: front("codex") })]);
+    const rows = () => [world.view().agents.map((agent) => agent.paneId), world.view().world.agents];
+    expect(rows()).toEqual([["t1", "t2"], ["t1", "t2"]]);
+    // claude ended and its shell is in front again: the read this asks for is not answered yet
+    const { read } = tell({ type: "foreground", terminal: "t1", data: front("bash") });
+    expect([read === null, pane("t1")?.agent, pane("t2")?.agent]).toEqual([false, null, "codex"]);
+    expect(rows()).toEqual([["t2"], ["t2"]]);
   });
 
   it("turn: a turn that ends after the screen first saw the terminal shows the agent done", () => {

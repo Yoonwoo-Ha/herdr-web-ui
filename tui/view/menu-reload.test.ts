@@ -52,9 +52,10 @@ it.each(["joined", "split", "before first paint", "shortcut joined", "shortcut s
     expect(loop.report().actions).not.toContain("quit");
     expect({
       actions: loop.report().actions.filter((action) => action === "reload_keys" || action.startsWith("run:")),
+      pane: loop.model().focus.panes["t-main"],
       bytes: ["t1", "t2"].map((id) => core.program(id).receivedHex()),
-    }).toEqual(shortcut ? { actions: ["reload_keys"], bytes: ["7e71", ""] }
-      : { actions: ["reload_keys", "run:focus_pane_right"], bytes: ["", "7a"] });
+    }).toEqual(shortcut ? { actions: ["reload_keys"], pane: "t1", bytes: ["7e71", ""] }
+      : { actions: ["reload_keys"], pane: "t2", bytes: ["", "7a"] });
     expect(loop.report().mode.overlays).toEqual([]);
     expect(reads).toBe(1);
   } finally {

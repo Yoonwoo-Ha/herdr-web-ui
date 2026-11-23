@@ -12,7 +12,7 @@
 import type { HcConnection } from "../../server/herdr-core/connection.ts";
 import { HcError, HcReplyError } from "../../server/herdr-core/connection.ts";
 import { AdapterError } from "../../server/herdr-core/errors.ts";
-import { foreignLayout, OVIS_LAYOUT_DOC, type PaneDirection, type SplitDirection } from "../../server/herdr-core/layout-doc.ts";
+import { foreignLayout, leaves, OVIS_LAYOUT_DOC, type PaneDirection, type SplitDirection } from "../../server/herdr-core/layout-doc.ts";
 import { type CloseTarget, layoutCalls, LayoutStore, type LayoutView, newLayoutId, ownsLayout, readCore, RESIZE_STEP, resizeEdit, swapEdit, TERMINAL_COLOUR, zoomEdit } from "../../server/herdr-core/layout-ops.ts";
 import { type CoreHost, type FirstTurn, LAYOUT_DOC, OTHER_WORKSPACE_ID } from "../../server/herdr-core/snapshot.ts";
 import { errorCode } from "../crash.ts";
@@ -109,7 +109,7 @@ export class LayoutWrites {
     this.busy = true;
     return work().then((done) => done ?? NOTHING_ENDED, async (error: unknown): Promise<LayoutDone> => {
       await this.refused(effect.action, error);
-      return unknownAnswer(error) ? { ended: [], dropInput: "layout_unknown" } : NOTHING_ENDED;
+      return unknownAnswer(error) ? { ended: [], dropInput: "layout_unknown" } : effect.action === "zoom_follow" ? { ended: [], refreshZoom: true } : NOTHING_ENDED;
     }).finally(() => {
       this.busy = false;
     });
@@ -138,6 +138,18 @@ export class LayoutWrites {
       this.unchanged(action, result);
       return NOTHING_ENDED;
     };
+    if (action === "zoom_follow" && effect.zoomTab !== undefined) {
+      return async () => {
+        await store.edit((layout) => {
+          const tab = layout.workspaces.flatMap((workspace) => workspace.tabs).find((candidate) => candidate.id === effect.zoomTab);
+          // A different writer may have unzoomed this tab or moved the target while the intent waited.
+          return tab && tab.zoomed !== null && leaves(tab.root).includes(id)
+            ? zoomEdit(id, "on")(layout)
+            : { layout: null, reason: "stale" };
+        });
+        return { ended: [], refreshZoom: true };
+      };
+    }
     if (Object.hasOwn(SWAPS, action)) return async () => this.unchanged(action, await store.edit((layout) => {
       const result = swapEdit(id, null, SWAPS[action]!)(layout);
       return effect.neighbor !== undefined && result.target !== effect.neighbor
@@ -215,7 +227,7 @@ export class LayoutWrites {
   }
 
   private notice(code: string, data: Readonly<Record<string, string>>, calm = false): void {
-    this.options.answer({ type: "notice", code, data, ...(calm ? { calm: true } : {}) });
+    this.options.answer({ type: "notice", code, data, ...(calm || data.action === "zoom_follow" ? { calm: true } : {}) });
   }
 
   /** An edit that changed nothing says why, calmly: the precondition was gone on the document as it is now. */

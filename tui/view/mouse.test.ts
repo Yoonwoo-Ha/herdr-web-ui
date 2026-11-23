@@ -1,3 +1,4 @@
+import { PANE_NAME_LABEL } from "../../server/herdr-core/snapshot.ts";
 import { afterEach, describe, expect, it } from "bun:test";
 import { FRAME_DATA, HcConnection } from "../../server/herdr-core/connection.ts";
 import type { FakeHcCore } from "../../server/herdr-core/core.fake.ts";
@@ -362,7 +363,7 @@ async function holdRename(run: Run): Promise<() => void> {
   const answer = Promise.withResolvers<void>();
   const call = run.loop.link.call.bind(run.loop.link);
   run.loop.link.call = async (method, params, timeout) => {
-    if (method === "terminal.label") {
+    if (method === "terminal.label" && "labels" in params && params.labels && Object.hasOwn(params.labels, PANE_NAME_LABEL)) {
       run.loop.link.call = call;
       sent.resolve();
       await answer.promise;

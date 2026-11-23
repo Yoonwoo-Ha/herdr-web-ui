@@ -6,9 +6,20 @@ import { initialState, reduce } from "./reduce.ts";
 
 const WORLD: World = {
   workspaces: [
-    { id: "w1", name: "one", tabs: [{ id: "t1", name: "a", panes: [{ id: "p1", name: "" }, { id: "p2", name: "" }] }, { id: "t2", name: "b", panes: [{ id: "p3", name: "" }] }] },
+    { id: "w1", name: "one", tabs: [{
+      id: "t1", name: "a", panes: ["p6", "p1", "p2", "p5", "p7"].map((id) => ({ id, name: "" })),
+      root: { split: "down", ratio: 0.25, first: { leaf: "p6" }, second: {
+        split: "down", ratio: 0.66, first: {
+          split: "right", ratio: 0.33, first: { leaf: "p1" }, second: {
+            split: "right", ratio: 0.5, first: { leaf: "p2" }, second: { leaf: "p5" },
+          },
+        }, second: { leaf: "p7" },
+      } },
+    }, { id: "t2", name: "b", panes: [{ id: "p3", name: "" }] }] },
     { id: "w2", name: "two", tabs: [{ id: "t3", name: "c", panes: [{ id: "p4", name: "" }] }] },
   ],
+  agents: ["p1", "p3", "p4"],
+  waiting: ["p4"],
 };
 
 describe("the action catalogue", () => {
@@ -22,9 +33,10 @@ describe("the action catalogue", () => {
   });
 
   it("a bound action that is not built shows one notice naming it, and a built one does something", () => {
-    // focus on p2, so p1 is the previous pane and index 2 names another tab and workspace
+    // p2 has neighbours on all four sides; p1 is previous, and index 2 names another tab and workspace
     const shown = reduce(initialState(undefined), { type: "world", world: WORLD, at: 0 }).state;
-    const state = reduce(shown, { type: "select", target: { kind: "pane", id: "p2" }, at: 0 }).state;
+    const left = reduce(shown, { type: "select", target: { kind: "pane", id: "p1" }, at: 0 }).state;
+    const state = reduce(left, { type: "select", target: { kind: "pane", id: "p2" }, at: 0 }).state;
     for (const entry of CATALOGUE) {
       const step = reduce(state, { type: "action", action: entry.id, index: 2, at: 10 });
       const notBuilt = step.state.notices.filter((notice) => notice.code === "not_built");

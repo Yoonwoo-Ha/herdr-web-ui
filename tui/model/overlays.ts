@@ -5,10 +5,11 @@
  */
 import { parseHerdrBinding } from "../../shared/herdr-keys.ts";
 import { TEXT_FIELD_MAX_CODE_POINTS, TEXT_FIELD_MAX_GRAPHEMES } from "./deadlines.ts";
-import type { KeyInput, OverlayChoice, PasteInput, RunEffect, Seen, TextInput } from "./effects.ts";
+import type { KeyInput, OverlayChoice, PasteInput, RunEffect, Seen, TextInput, UnreadEffect } from "./effects.ts";
 import type { Target } from "./focus.ts";
 import { charChords, chordId, keyChords } from "./keymap.ts";
 import { chooseEntry, entryKey, indexOfEntry, labelled, type MenuEntry, movedCursor } from "./menu.ts";
+import { chosenAt, type Place, placeKey, pickerMatches, placeTarget } from "./picker.ts";
 
 interface MenuList { readonly entries: readonly MenuEntry[]; readonly cursor: number }
 
@@ -22,14 +23,17 @@ export type Overlay =
   | { readonly kind: "text"; readonly purpose: TextPurpose; readonly target: Target; readonly field: Field }
   /** `seen`: the terminals the close ends, as the screen showed them when the dialog opened */
   | { readonly kind: "confirm"; readonly purpose: "close_workspace"; readonly target: Target; readonly seen: readonly Seen[] }
-  | { readonly kind: "goto"; readonly field: Field }
+  /** the picker: the places it filters, and the chosen one's identity (`placeKey`; null: the best match) */
+  | { readonly kind: "goto"; readonly field: Field; readonly places: readonly Place[]; readonly chosen: string | null }
   /** `presented` is null after a stale choice: input waits for an accepted menu frame, never queued. */
-  | ({ readonly kind: "menu"; readonly presented: MenuList | null } & MenuList);
+  | ({ readonly kind: "menu"; readonly presented: MenuList | null } & MenuList)
+  /** the full-screen agent list: `agents` the panes in the list's order, `cursor` the row Enter goes to and `u` marks unread */
+  | { readonly kind: "agents"; readonly agents: readonly string[]; readonly cursor: number };
 
 export type OverlayInput = { readonly kind: "key"; readonly event: KeyInput } | { readonly kind: "text"; readonly event: TextInput } | { readonly kind: "paste"; readonly event: PasteInput };
 
 /** The overlay after the input (null: closed), what it asks of the caller, and what the reducer does once it closed. */
-export interface OverlayAnswer { readonly overlay: Overlay | null; readonly effects: readonly RunEffect[]; readonly choice?: OverlayChoice }
+export interface OverlayAnswer { readonly overlay: Overlay | null; readonly effects: readonly (RunEffect | UnreadEffect)[]; readonly choice?: OverlayChoice }
 
 interface OverlayEntry<O extends Overlay> {
   /** the keys that close it, in herdr's syntax, shown in its frame; never empty */
@@ -153,6 +157,41 @@ function fieldInput<O extends Extract<Overlay, { field: Field }>>(overlay: O, in
 
 const run = (action: RunEffect["action"], target: Target | null, name: string | null): RunEffect => ({ type: "run", action, target, index: null, name });
 
+type Picker = Extract<Overlay, { kind: "goto" }>;
+
+/** The picker's matches for what is typed now, best first. */
+export function pickerList(overlay: Picker): Place[] {
+  return pickerMatches(overlay.places, overlay.field.graphemes.join(""));
+}
+
+/** The picker's answer to choosing its match `at`: closed, with focus moving there; kept open when there is no such match. */
+export function pickerChoice(overlay: Picker, at: number): OverlayAnswer {
+  const place = pickerList(overlay)[at];
+  return place === undefined ? { overlay, effects: [] } : { overlay: null, effects: [], choice: { kind: "select", target: placeTarget(place) } };
+}
+
+/** How far up or down the picker's arrows (and ctrl+p, ctrl+n) move its choice; 0 for any other key. */
+function pickerStep(event: KeyInput): number {
+  const plain = Object.keys(event.mods).length === 0;
+  const ctrl = Boolean(event.mods.ctrl) && !event.mods.alt && !event.mods.super && !event.mods.shift;
+  if ((plain && event.key === "ARROW_DOWN") || (ctrl && event.key === "N")) return 1;
+  if ((plain && event.key === "ARROW_UP") || (ctrl && event.key === "P")) return -1;
+  return 0;
+}
+
+/** The picker's answer to one input: Enter jumps to the chosen match; the arrows move the choice; typing filters anew. */
+function pickerInput(overlay: Picker, input: OverlayInput): OverlayAnswer {
+  const matches = pickerList(overlay);
+  const at = chosenAt(matches, overlay.chosen);
+  if (isEnter(input)) return pickerChoice(overlay, at);
+  const step = input.kind === "key" ? pickerStep(input.event) : 0;
+  if (step !== 0) return at < 0 ? { overlay, effects: [] } : { overlay: { ...overlay, chosen: placeKey(matches[(at + step + matches.length) % matches.length]!) }, effects: [] };
+  const answer = fieldInput(overlay, input, () => ({ overlay, effects: [] }));
+  const typed = answer.overlay !== null && answer.overlay.kind === "goto" ? answer.overlay : overlay;
+  const changed = typed.field.graphemes.join("") !== overlay.field.graphemes.join("");
+  return { overlay: changed ? { ...typed, chosen: null } : typed, effects: [] };
+}
+
 /** Choose a presented identity: move the cursor, close with its choice, or refuse it without retargeting. */
 export function menuChoice(overlay: Extract<Overlay, { kind: "menu" }>, entry: string | null): OverlayAnswer & { readonly accepted: boolean } {
   const at = overlay.entries.findIndex((candidate) => entryKey(candidate) === entry);
@@ -161,6 +200,18 @@ export function menuChoice(overlay: Extract<Overlay, { kind: "menu" }>, entry: s
   if (!("cursor" in chosen)) return { overlay: null, effects: [], choice: chosen.choice, accepted: true };
   const cursor = indexOfEntry(overlay.presented.entries, overlay.entries[chosen.cursor]!);
   return { overlay: { ...overlay, cursor: chosen.cursor, presented: { ...overlay.presented, cursor } }, effects: [], accepted: true };
+}
+
+/** The agent list's answer to choosing row `at` (from 0): the list closes and focus goes to that agent's pane. */
+export function agentChoice(overlay: Extract<Overlay, { kind: "agents" }>, at: number): OverlayAnswer {
+  const pane = overlay.agents[at];
+  return pane === undefined ? { overlay, effects: [] } : { overlay: null, effects: [], choice: { kind: "select", target: { kind: "pane", id: pane } } };
+}
+
+/** One character typed as it is (not with alt or ctrl, not a paste): under an input method a letter arrives composed. */
+function typedChar(input: OverlayInput): string {
+  const typed = input.kind === "paste" || (input.kind === "key" && (input.event.mods.alt || input.event.mods.ctrl)) ? "" : input.event.text ?? "";
+  return [...typed][0] ?? "";
 }
 
 export const OVERLAYS: { readonly [K in Overlay["kind"]]: OverlayEntry<Extract<Overlay, { kind: K }>> } = {
@@ -191,7 +242,7 @@ export const OVERLAYS: { readonly [K in Overlay["kind"]]: OverlayEntry<Extract<O
   goto: {
     closeKeys: ["esc"],
     target: () => null,
-    input: (overlay, input) => fieldInput(overlay, input, (query) => ({ overlay: null, effects: [run("goto", null, query)] })),
+    input: pickerInput,
   },
   menu: {
     closeKeys: ["esc"],
@@ -215,10 +266,25 @@ export const OVERLAYS: { readonly [K in Overlay["kind"]]: OverlayEntry<Extract<O
           return { overlay: { ...overlay, cursor: next < 0 ? overlay.cursor : next, presented: { ...presented, cursor } }, effects: [] };
         }
       }
-      // a label is one character typed as it is: under an input method a letter arrives composed and chooses nothing
-      const typed = input.kind === "paste" || (input.kind === "key" && (input.event.mods.alt || input.event.mods.ctrl)) ? "" : input.event.text ?? "";
-      const at = labelled(presented.entries, [...typed][0] ?? "");
+      const at = labelled(presented.entries, typedChar(input));
       return at < 0 ? { overlay, effects: [] } : choose(at);
+    },
+  },
+  agents: {
+    closeKeys: ["esc", "q"],
+    target: () => null,
+    input: (overlay, input) => {
+      if (isEnter(input)) return agentChoice(overlay, overlay.cursor);
+      if (input.kind === "key") {
+        const cursor = movedCursor(overlay.agents, overlay.cursor, input.event);
+        if (cursor !== null) return { overlay: { ...overlay, cursor }, effects: [] };
+      }
+      const typed = typedChar(input);
+      // the number keys go to the row with that number; u marks the row under the cursor unread
+      if (/^[1-9]$/.test(typed)) return agentChoice(overlay, Number(typed) - 1);
+      const pane = overlay.agents[overlay.cursor];
+      if (typed === "u" && pane !== undefined) return { overlay, effects: [{ type: "unread", pane }] };
+      return { overlay, effects: [] };
     },
   },
 };

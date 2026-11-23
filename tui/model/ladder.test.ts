@@ -11,7 +11,10 @@ import { initialState, type Level, type ModelEvent, type ModelState, reduce, typ
 const AT = 1_000;
 const WORLD: World = {
   workspaces: [
-    { id: "w1", name: "one", tabs: [{ id: "t1", name: "a", panes: [{ id: "p1", name: "" }, { id: "p2", name: "" }] }, { id: "t2", name: "b", panes: [{ id: "p3", name: "" }] }] },
+    { id: "w1", name: "one", tabs: [{
+      id: "t1", name: "a", panes: [{ id: "p1", name: "" }, { id: "p2", name: "" }],
+      root: { split: "down", ratio: 0.5, first: { leaf: "p1" }, second: { leaf: "p2" } },
+    }, { id: "t2", name: "b", panes: [{ id: "p3", name: "" }] }] },
     { id: "w2", name: "two", tabs: [{ id: "t3", name: "c", panes: [{ id: "p4", name: "" }] }] },
   ],
 };
@@ -75,7 +78,7 @@ describe("the ladder", () => {
     { level: 3, takes: true, name: "an unbound key in Navigate", state: navigating, event: key("x"), levels: [3], pane: false,
       check: (step) => expect(step.effects).toEqual([]) },
     { level: 3, takes: true, name: "a navigate key", state: navigating, event: key("j"), levels: [3], pane: false,
-      check: (step) => expect(step.effects).toEqual([{ type: "run", action: "focus_pane_down", target: { kind: "pane", id: "p1" }, index: null, name: null }]) },
+      check: (step) => expect(focusedPane(step.state)).toBe("p2") },
     { level: 3, takes: true, name: "Escape leaves Resize mode", state: resizing, event: named("ESCAPE"), levels: [3], pane: false,
       check: (step) => expect(step.state.mode).toEqual({ name: "terminal" }) },
     { level: 3, takes: true, name: "a non-ASCII navigate key never fires", state: after(start({ navigate_pane_down: "\u{3153}" }), prefix(), text("w")), event: text("\u{3153}"), levels: [3], pane: false,
@@ -281,6 +284,7 @@ describe("overlay close keys", () => {
       confirm: after(idle, prefix(), key("D")),
       goto: after(idle, prefix(), text("g")),
       menu: after(idle, prefix(), named("ENTER")),
+      agents: after(idle, prefix(), text("a")),
     };
     for (const [kind, entry] of Object.entries(OVERLAYS)) {
       const state = open[kind as keyof typeof OVERLAYS];

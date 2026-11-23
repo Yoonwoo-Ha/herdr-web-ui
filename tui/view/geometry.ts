@@ -1,4 +1,5 @@
 import { place, type LayoutNode, type SplitDirection } from "../../server/herdr-core/layout-doc.ts";
+import { NARROW_COLUMNS } from "../model/screen-size.ts";
 
 /** A rectangle of screen cells; x and y count from the screen's top-left cell, 0-based. */
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -15,9 +16,6 @@ export function intersect(a: Rect, b: Rect): Rect {
 
 export const holds = (rect: Rect, col: number, row: number): boolean =>
   col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height;
-
-/** At or below this many columns the screen is narrow: it shows no sidebar. */
-export const NARROW_COLUMNS = 64;
 
 /** What the chrome asks for: the sidebar's width in columns (0 when collapsed), and whether the tab bar and the mode bar show. */
 export interface ChromeShape { sidebar: number; tabBar: boolean; modeBar: boolean }

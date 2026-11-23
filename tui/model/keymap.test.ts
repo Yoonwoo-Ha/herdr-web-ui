@@ -54,11 +54,12 @@ describe("the keymap table", () => {
     }
   });
 
-  it("holds herdr's six navigate keys in Navigate mode, the arrows fixed first", () => {
+  it("holds herdr's six navigate keys in Navigate mode, the arrows fixed first, then the tab and workspace moves without the prefix", () => {
     const rows = buildKeymap(undefined).rows.filter((row) => row.mode === "navigate" && row.source === "herdr");
     expect(rows.map((row) => [row.action, row.bindings.map((binding) => binding.text)])).toEqual([
       ["navigate_workspace_up", ["up"]], ["navigate_workspace_down", ["down"]], ["navigate_pane_left", ["left", "h"]],
       ["navigate_pane_down", ["j"]], ["navigate_pane_up", ["k"]], ["navigate_pane_right", ["right", "l"]],
+      ["next_tab", ["n"]], ["previous_tab", ["p"]], ["next_workspace", []], ["previous_workspace", []],
     ]);
   });
 

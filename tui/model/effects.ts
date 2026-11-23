@@ -14,22 +14,22 @@ export type MouseInput = Extract<InputEvent, { type: "mouse" }>;
 export type PaneInput = KeyInput | TextInput | PasteInput;
 
 /** What an overlay chose for the reducer to do once it closed: run an action, or focus a place. */
-export type OverlayChoice = { readonly kind: "action"; readonly action: HerdrAction } | { readonly kind: "select"; readonly target: Target };
+export type OverlayChoice = { readonly kind: "action"; readonly action: HerdrAction | "agents" } | { readonly kind: "select"; readonly target: Target };
 
 /** A terminal as the screen showed it when an action was chosen: its address and when the core made it (null: not known). */
 export interface Seen { readonly id: string; readonly created: number | null }
 
 /**
- * An action the reducer cannot finish itself, for the caller to perform: a layout write, a jump through the
- * agent list, the goto query, or a directional focus (the caller finds the neighbour on the drawn layout and
- * answers with a `select` event).
+ * An action the reducer cannot finish itself, for the caller to perform.
+ * `zoom_follow`: the zoom of the target pane's tab moves to it, because focus went to a pane
+ * that tab's shared zoom covered.
  */
 export interface RunEffect {
   readonly type: "run";
-  readonly action: HerdrAction | MoveAction;
+  readonly action: HerdrAction | MoveAction | "zoom_follow";
   readonly target: Target | null;
   readonly index: number | null;
-  /** a name typed into a field (rename, new tab) or the goto query */
+  /** a name typed into a field (rename, new tab) */
   readonly name: string | null;
   /** a close: every terminal it ends, as the screen showed them; the caller ends nothing when the core holds others */
   readonly seen?: readonly Seen[];
@@ -37,7 +37,13 @@ export interface RunEffect {
   readonly neighbor?: string | null;
   /** a pane moved to another workspace: that workspace */
   readonly to?: string;
+  /** For zoom_follow, the tab whose existing shared zoom must follow the target pane. */
+  readonly zoomTab?: string;
+  /** For zoom_follow, the pane shown when the move was made (null: none): the last pane once the document confirms the move. */
+  readonly zoomFrom?: string | null;
 }
+
+export interface UnreadEffect { readonly type: "unread"; readonly pane: string }
 
 export type Effect =
   /** level 6: send this input to the pane through its gate (encodeKey, or encodePaste) */
@@ -51,6 +57,8 @@ export type Effect =
   | { readonly type: "quit" }
   /** read herdr's config again and answer with a `keys` event */
   | { readonly type: "reload_keys" }
+  /** mark the pane's agent unread: its `herdr.seen` one below its turn (server/herdr-core/seen-label.ts `unread`) */
+  | UnreadEffect
   /** An action or overlay/mode input refused at the hold boundary, before it changes any UI state. */
   | { readonly type: "busy"; readonly action: string }
   /** a mouse event for the caller's hit map: inside the top overlay, or over the screen's chrome and panes */

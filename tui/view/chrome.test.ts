@@ -120,16 +120,18 @@ const noColour = ({ painter }: Picture): string => {
 describe("chrome frames as rows of cells", () => {
   it("at 120x40: header and toggle, workspaces with roll-up marks, agents, tabs, bordered panes with titles, and the hint line", () => {
     const shot = draw({ cols: 120, rows: 40 });
-    expect(shot.rows.slice(0, 9)).toEqual([
+    expect(shot.rows.slice(0, 11)).toEqual([
       `hc:work              <<| 1:main !  2:logs${" ".repeat(79)}`,
       "Workspaces             |+- shell ovis [claude] ! Needs you ------------++- files tui [codex] ~ Working ----------------+",
       ">!1:ovis      Needs you||                                              ||                                              |",
       " *2:문서           Done||                                              ||                                              |",
       "Agents                 ||                                              ||                                              |",
-      " ! shell /ov… Needs you||                                              ||                                              |",
-      " ~ files /tui … Working||                                              ||                                              |",
-      " * claude /proj    Done||                                              ||                                              |",
-      "                       ||                                              ||                                              |",
+      " Needs you (1)         ||                                              ||                                              |",
+      " ! shell /ovis claude  ||                                              ||                                              |",
+      " Working (1)           ||                                              ||                                              |",
+      " ~ files /tui codex    ||                                              ||                                              |",
+      " Done (1)              ||                                              ||                                              |",
+      " * claude /proj        ||                                              ||                                              |",
     ]);
     expect(shot.rows[38]).toBe(`                       |+${"-".repeat(46)}++${"-".repeat(46)}+`);
     expect(shot.rows[39]).toBe(` TERMINAL  ctrl+b prefix prefix+enter menu prefix+? help${" ".repeat(64)}`);
@@ -138,7 +140,12 @@ describe("chrome frames as rows of cells", () => {
     expect(cell(shot, 0, 2)).toMatchObject({ text: ">", fg: ACCENT, bold: true });
     expect(cell(shot, 1, 2)).toMatchObject({ text: "!", fg: BLOCKED, bold: true });
     expect(cell(shot, 1, 3)).toMatchObject({ text: "*", fg: DONE, bold: true });
-    expect(cell(shot, 1, 6)).toMatchObject({ text: "~", fg: WORKING, bold: true });
+    // each section's heading in its state's colour, and each agent's glyph in it
+    expect(cell(shot, 1, 5)).toMatchObject({ text: "N", fg: BLOCKED, bold: true });
+    expect(cell(shot, 1, 6)).toMatchObject({ text: "!", fg: BLOCKED, bold: true });
+    expect(cell(shot, 1, 7)).toMatchObject({ text: "W", fg: WORKING, bold: true });
+    expect(cell(shot, 1, 8)).toMatchObject({ text: "~", fg: WORKING, bold: true });
+    expect(cell(shot, 1, 9)).toMatchObject({ text: "D", fg: DONE, bold: true });
     expect(cell(shot, 25, 0)).toMatchObject({ text: "1", fg: ACCENT, bg: BG_ELEVATED, bold: true });
     expect(cell(shot, 24, 1)).toMatchObject({ text: "+", fg: ACCENT, bold: true });
     expect(cell(shot, 72, 1)).toMatchObject({ text: "+", fg: BORDER_STRONG, bold: false });
@@ -153,9 +160,9 @@ describe("chrome frames as rows of cells", () => {
       ">!1:ovis      Needs you||                          ||                          |",
       " *2:문서           Done||                          ||                          |",
       "Agents                 ||                          ||                          |",
-      " ! shell /ov… Needs you||                          ||                          |",
-      " ~ files /tui … Working||                          ||                          |",
-      " * claude /proj    Done||                          ||                          |",
+      " Needs you (1)         ||                          ||                          |",
+      " ! shell /ovis claude  ||                          ||                          |",
+      " Working (1)           ||                          ||                          |",
     ]);
     expect(shot.rows[23]).toBe(` TERMINAL  ctrl+b prefix prefix+enter menu prefix+? help${" ".repeat(24)}`);
   });
@@ -215,7 +222,7 @@ describe("every control's cells resolve to it in the hit map, and the cells besi
   const table: [name: string, setup: Setup, id: string, rect: { x: number; y: number; width: number; height: number }][] = [
     ["the sidebar's toggle", { cols: 120, rows: 40 }, "sidebar/toggle_sidebar", { x: 21, y: 0, width: 2, height: 1 }],
     ["a workspace row", { cols: 120, rows: 40 }, "sidebar/workspace:w-docs", { x: 0, y: 3, width: 23, height: 1 }],
-    ["an agent row", { cols: 120, rows: 40 }, "sidebar/agent:t2", { x: 0, y: 6, width: 23, height: 1 }],
+    ["an agent row", { cols: 120, rows: 40 }, "sidebar/agent:t2", { x: 0, y: 8, width: 23, height: 1 }],
     ["a tab", { cols: 120, rows: 40 }, "tabs/tab:t-logs", { x: 34, y: 0, width: 8, height: 1 }],
     ["the header that brings a collapsed sidebar back", { cols: 120, rows: 40, events: [{ type: "action", action: "toggle_sidebar", at: 1 }] }, "tabs/toggle_sidebar", { x: 0, y: 0, width: 8, height: 1 }],
     ["a split's divider", { cols: 120, rows: 40 }, "borders/split_0_root", { x: 71, y: 1, width: 2, height: 38 }],
@@ -419,12 +426,16 @@ describe("whole-screen proofs on the runner", () => {
     try {
       await agentRun.live();
       await agentRun.advance(20);
-      expect(agentRun.grid().slice(3, 8).map((line) => line.slice(0, 24))).toEqual([
+      expect(agentRun.grid().slice(3, 12).map((line) => line.slice(0, 24))).toEqual([
         "Agents                 |",
-        " ! blocked /… Needs you|",
-        " ~ working / c… Working|",
-        " * done / claude   Done|",
-        " - idle / claude  Ready|",
+        " Needs you (1)         |",
+        " ! blocked / claude    |",
+        " Working (1)           |",
+        " ~ working / claude    |",
+        " Done (1)              |",
+        " * done / claude       |",
+        " Ready (1)             |",
+        " - idle / claude       |",
       ]);
     } finally {
       await agentRun.close();

@@ -19,6 +19,8 @@ export const STRINGS = {
   worktreeMark: "|-",
   /** before an agent row that another agent row started */
   helperMark: "+",
+  /** a section of an agent list: its state word and how many agents stand in it */
+  agentSection: (word: string, count: number): string => `${word} (${count})`,
 
   // Tab bar
   zoomMark: "ZOOM",
@@ -84,7 +86,10 @@ export const STRINGS = {
   confirmCloseWorkspace: (name: string): string => `Close workspace ${name}? [y/N]`,
   gotoTitle: "Go to",
   gotoPromptHint: "Type to filter · Enter to jump",
+  pickerNoMatch: "No matches",
   menuTitle: "Menu",
+  agentListTitle: "Agents",
+  agentListHint: "1-9 or Enter: go to · u: mark unread",
   /** at the right of the narrow screen's header, which opens the menu */
   menuMark: "[menu]",
   /** what kind of place a menu entry goes to */
@@ -166,6 +171,7 @@ export const STRINGS = {
     toggle_sidebar: "sidebar",
     lock: "lock",
     menu: "menu",
+    agents: "agents",
     navigate_workspace_up: "workspace ^",
     navigate_workspace_down: "workspace v",
     navigate_pane_left: "pane <",
@@ -207,6 +213,12 @@ export const STRINGS = {
         return `locked: screen is locked (${data["action"] ?? ""})`;
       case "nothing_focused":
         return `nothing_focused: no target for ${data["action"] ?? "action"}`;
+      case "agent_blocked":
+        return `${STRINGS.stateBlocked}: ${data["agent"] ?? "agent"}`;
+      case "agent_done":
+        return `${STRINGS.stateDone}: ${data["agent"] ?? "agent"}`;
+      case "nothing_waiting":
+        return "nothing_waiting: no agent needs you";
       case "view_moved":
         return "view_moved: the place this core was left at is gone; showing the nearest one";
       case "view_unread":

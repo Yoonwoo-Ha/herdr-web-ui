@@ -159,7 +159,9 @@ describe("the screen's layout writes", () => {
     await one.advance(20);
     await two.advance(20);
     const focusOf = (run: Run) => { const state = run.loop.model(); return state.focus.panes[state.focus.tabs[state.focus.workspace!]!]; };
-    const sent = core.calls().slice(before).filter((call) => !["terminal.list", "terminal.attach", "machine.list", "terminal.get", "doc.get"].includes(call.method));
+    // a person looking at a pane raises its herdr.seen (tui/core/seen.ts): the read state, not the focus
+    const seenOnly = (call: { method: string; params: Record<string, unknown> }) => call.method === "terminal.label" && Object.keys(call.params["labels"] as object).join() === "herdr.seen";
+    const sent = core.calls().slice(before).filter((call) => !["terminal.list", "terminal.attach", "machine.list", "terminal.get", "doc.get"].includes(call.method) && !seenOnly(call));
     expect({ one: focusOf(one), two: focusOf(two), sent }).toEqual({ one: "t2", two: "t4", sent: [] });
   }, TEST_MS);
 

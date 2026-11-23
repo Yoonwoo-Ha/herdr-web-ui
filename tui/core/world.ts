@@ -7,10 +7,10 @@
  */
 
 import type { CoreChange } from "../../server/herdr-core/core-model.ts";
-import type { LayoutNode, PaneDirection } from "../../server/herdr-core/layout-doc.ts";
-import { neighbour, OVIS_LAYOUT_DOC } from "../../server/herdr-core/layout-doc.ts";
+import { type LayoutNode, OVIS_LAYOUT_DOC } from "../../server/herdr-core/layout-doc.ts";
 import { buildSnapshot, coreHost, type FirstTurn, type HcTerminal, isRecord, LAYOUT_DOC } from "../../server/herdr-core/snapshot.ts";
-import { groupAgentRows, type KnownStatus, rollupStatus, stateSeqs } from "../../shared/attention.ts";
+import { nestHelpers, sidebarAgents } from "../../shared/agent-roster.ts";
+import { type AgentGroup, groupAgentRows, knownStatus, type KnownStatus, rollupStatus } from "../../shared/attention.ts";
 import type { AgentStatus, PaneLayoutSnapshot } from "../../shared/herdr-api.generated.ts";
 import { folderName } from "../../shared/pane-title.ts";
 import { worktreeGroups } from "../../shared/worktree-groups.ts";
@@ -33,7 +33,7 @@ interface PaneSummary {
   readonly parentId?: string;
 }
 
-/** One row of the sidebar's Agents section, ordered by shared/attention.ts. */
+/** One row of the agent lists (the sidebar's Agents section, the full-screen list), ordered by shared/attention.ts. */
 interface AgentRowView {
   readonly paneId: string;
   readonly name: string;
@@ -42,6 +42,10 @@ interface AgentRowView {
   readonly status: AgentStatus;
   /** a helper agent started by another agent row */
   readonly helper: boolean;
+  /** the section the row stands in: its family's most urgent state (a blocked helper brings its agent up) */
+  readonly group: AgentGroup;
+  /** the name of the workspace the agent's pane is in */
+  readonly workspace: string;
 }
 
 interface WorkspaceRowView { readonly id: string; readonly name: string; readonly number: number; readonly status: KnownStatus }
@@ -95,37 +99,47 @@ function byAddress(terminals: readonly unknown[]): Map<string, Record<string, un
   return records;
 }
 
-function buildAgents(snapshot: ReturnType<typeof buildSnapshot>, panes: ReadonlyMap<string, PaneSummary>): AgentRowView[] {
-  const seqs = stateSeqs(snapshot);
-  interface Row {
-    machine: { id: string };
-    entry: { pane: { pane_id: string; parent_pane_id?: string; agent_status: AgentStatus } };
-    id: string;
-    summary: PaneSummary;
-  }
-  const rows: Row[] = [];
-  for (const [id, summary] of panes) {
-    if (!summary.agent?.trim()) continue;
-    rows.push({
-      machine: { id: "local" },
-      entry: { pane: { pane_id: id, ...(summary.parentId === undefined ? {} : { parent_pane_id: summary.parentId }), agent_status: summary.status } },
-      id,
-      summary,
-    });
-  }
+/**
+ * The panes that need the user, in the order one key jumps through them: the blocked rows, then the done rows, each the
+ * longest in that state first (`since`: when the screen saw a row's state begin; a tie keeps the list's order).
+ */
+export function jumpOrder(rows: readonly Pick<AgentRowView, "paneId" | "status">[], since: ReadonlyMap<string, number>): string[] {
+  const inState = (state: KnownStatus) => rows.filter((row) => knownStatus(row.status) === state).sort((a, b) => (since.get(a.paneId) ?? 0) - (since.get(b.paneId) ?? 0));
+  return [...inState("blocked"), ...inState("done")].map((row) => row.paneId);
+}
+
+function buildAgents(snapshot: ReturnType<typeof buildSnapshot>, panes: ReadonlyMap<string, PaneSummary>, seqs: ReadonlyMap<string, number>): AgentRowView[] {
+  const workspaces = new Map(snapshot.workspaces.map((workspace) => [workspace.workspace_id, workspace.label]));
+  const workspaceOf = new Map(snapshot.panes.map((pane) => [pane.pane_id, workspaces.get(pane.workspace_id) ?? ""]));
+  // the browser's rows (shared/agent-roster.ts), read from the snapshot as the screen shows it: with the agent and the
+  // state the core model told since the last read
+  const shown = {
+    ...snapshot,
+    panes: snapshot.panes.map((pane) => {
+      const summary = panes.get(pane.pane_id);
+      return summary ? { ...pane, agent_status: summary.status, agent: summary.agent ?? undefined } : pane;
+    }),
+  };
+  const rows = nestHelpers(sidebarAgents(shown)).flatMap((entry) => {
+    const summary = panes.get(entry.pane.pane_id);
+    return summary ? [{ machine: { id: "local" }, entry, id: entry.pane.pane_id, summary }] : [];
+  });
+  type Row = (typeof rows)[number];
   const agentIds = new Set(rows.map((row) => row.id));
   return groupAgentRows<Row>(rows, {
     sort: "wait",
     status: (row) => row.summary.status,
     name: (row) => row.summary.label || row.summary.agent || row.id,
     seqs: () => seqs,
-  }).flatMap(({ rows: groupRows }) => groupRows.map(({ id, summary }): AgentRowView => ({
+  }).flatMap(({ group, rows: groupRows }) => groupRows.map(({ id, summary }): AgentRowView => ({
     paneId: id,
     name: summary.label || summary.title || summary.agent || id,
     agent: summary.agent ?? "",
     folder: summary.folder,
     status: summary.status,
     helper: summary.parentId !== undefined && agentIds.has(summary.parentId),
+    group,
+    workspace: workspaceOf.get(id) ?? "",
   })));
 }
 
@@ -152,18 +166,6 @@ export function treeOf(layout: Pick<PaneLayoutSnapshot, "splits" | "panes">): La
   return leaves.length === 0 ? null : build("");
 }
 
-/** herdr's directional focus actions and the side each looks to; null for any other action. */
-const FOCUS_DIRECTIONS: Readonly<Record<string, PaneDirection>> = { focus_pane_left: "left", focus_pane_right: "right", focus_pane_up: "up", focus_pane_down: "down" };
-
-export function focusDirection(action: string): PaneDirection | null {
-  return Object.hasOwn(FOCUS_DIRECTIONS, action) ? FOCUS_DIRECTIONS[action]! : null;
-}
-
-/** The pane on that side of `pane` in the tab's tree (layout-doc.ts `neighbour`): the one sharing most of its edge; null at the edge. */
-export function paneToward(shape: TabShape, pane: string, direction: PaneDirection): string | null {
-  return neighbour(shape.root, pane, direction);
-}
-
 /** The terminals and documents the link told of, and what they show. */
 export class CoreWorld {
   private records = new Map<string, Record<string, unknown>>();
@@ -172,6 +174,11 @@ export class CoreWorld {
   /** what the shared core model last told of a terminal's state, newer than its record until the next read */
   private readonly told = new Map<string, { shown: AgentStatus; agent: string | null; at: number }>();
   private tellings = 0;
+  /** the screen's own recency (UB Q7: each client keeps its own): when it saw each terminal's shown state begin */
+  private readonly since = new Map<string, { status: AgentStatus; at: number }>();
+  private changes = 0;
+  /** a view with terminals was dated: what turns up after it is newer than all of it */
+  private dated = false;
   private wanted = false;
   private reading: CoreRead | null = null;
   private shown: CoreView = EMPTY;
@@ -291,7 +298,22 @@ export class CoreWorld {
       number: workspace.number,
       status: rollupStatus(snapshot.panes.filter((pane) => pane.workspace_id === workspace.workspace_id).map((pane) => panes.get(pane.pane_id)?.status)),
     });
-    const agents = buildAgents(snapshot, panes);
+    for (const address of this.since.keys()) if (!panes.has(address)) this.since.delete(address);
+    // what is first seen in this view dates from it: every terminal of the first snapshot alike; one that turns up later
+    // (a reconnect, a `missed` snapshot, a read) from a step after every change seen before, so it never stands ahead of
+    // an agent already waiting. A change of state dates from a step of its own.
+    let fresh: number | null = null;
+    for (const [address, { status }] of panes) {
+      const was = this.since.get(address);
+      if (was === undefined) this.since.set(address, { status, at: fresh ??= this.dated ? ++this.changes : this.changes });
+      else if (was.status !== status) this.since.set(address, { status, at: ++this.changes });
+    }
+    if (panes.size > 0) this.dated = true;
+    const since = new Map([...this.since].map(([address, { at }]) => [address, at]));
+    // a status that left a pane with no agent is newer than its record, which the snapshot still lists as an agent's
+    // until the next read: such a pane is no agent row meanwhile
+    const agentless = new Set([...this.told].flatMap(([address, told]) => (told.agent === null ? [address] : [])));
+    const agents = buildAgents({ ...snapshot, agents: snapshot.agents.filter((agent) => !agentless.has(agent.pane_id)) }, panes, since);
     this.shown = {
       tabs,
       panes,
@@ -310,11 +332,13 @@ export class CoreWorld {
             ...zoomOf(tabs.get(tab.tab_id)),
             panes: (order.get(tab.tab_id) ?? []).map((id) => {
               const created = this.records.get(id)?.["created_ms"];
-              return { id, name: panes.get(id)?.label ?? "", ...(typeof created === "number" ? { created } : {}) };
+              const agent = panes.get(id)?.agent ?? null;
+              return { id, name: panes.get(id)?.label ?? "", ...(typeof created === "number" ? { created } : {}), ...(agent ? { agent } : {}) };
             }),
           })),
         })),
         agents: agents.map((agent) => agent.paneId),
+        waiting: jumpOrder(agents, since),
       },
     };
     return this.shown;

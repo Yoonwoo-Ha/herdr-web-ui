@@ -1,4 +1,5 @@
 import { afterEach, expect, it } from "bun:test";
+import { PANE_NAME_LABEL } from "../../server/herdr-core/snapshot.ts";
 import { BEHIND_WRITE_EVENTS, FRAME_PASS_MS, QUIT_BOUND_MS } from "../model/deadlines.ts";
 import { demo } from "../testing/fixtures/demo.ts";
 import { Run } from "../testing/run.ts";
@@ -26,7 +27,7 @@ async function heldRename(mouse = false) {
   replies.push(answer.resolve);
   const call = run.loop.link.call.bind(run.loop.link);
   run.loop.link.call = async (method, params, timeout) => {
-    if (method === "terminal.label") {
+    if (method === "terminal.label" && "labels" in params && params.labels && Object.hasOwn(params.labels, PANE_NAME_LABEL)) {
       run.loop.link.call = call;
       const result = await call(method, params, timeout);
       written.resolve();

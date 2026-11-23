@@ -12,10 +12,12 @@ import type { InputEvent } from "../input/decode.ts";
 import { CATALOGUE_BY_ID } from "./catalogue.ts";
 import { clearDeadline, type Deadlines, NO_DEADLINES, NOTICE_SHOW_MS, NOTICES_KEPT, setDeadline } from "./deadlines.ts";
 import type { Effect, KeyInput, MouseInput, OverlayChoice, PaneInput, PasteInput, Seen, TextInput } from "./effects.ts";
-import { EMPTY_WORLD, exists, type Focus, focused, focusOn, NO_FOCUS, nextFocus, type PaneNode, type Target, type World } from "./focus.ts";
+import { EMPTY_WORLD, exists, type Focus, focused, focusOn, NO_FOCUS, nextFocus, type PaneNode, shownZoom, type Target, type World } from "./focus.ts";
 import { boundIn, buildKeymap, charChords, isPrefix, type KeyAction, type Keymap, keyChords, unlockChords } from "./keymap.ts";
 import { directionalNeighbour, indexOfEntry, keptCursor, menuEntries } from "./menu.ts";
-import { field, menuChoice, type Overlay, type OverlayAnswer, overlayInput, type OverlayInput, overlayTarget } from "./overlays.ts";
+import { agentChoice, field, menuChoice, type Overlay, type OverlayAnswer, overlayInput, type OverlayInput, overlayTarget, pickerChoice, pickerList } from "./overlays.ts";
+import { pickerPlaces, placeKey } from "./picker.ts";
+import { NARROW_COLUMNS } from "./screen-size.ts";
 import { restoredFocus, type SavedView, type ViewProblem } from "./view-file.ts";
 
 export type ModeState =
@@ -72,6 +74,8 @@ export type ScreenEvent =
   | { readonly type: "action"; readonly action: KeyAction; readonly index?: number; readonly at: number }
   /** focus a workspace, tab or pane (a click, or the neighbour a directional focus found) */
   | { readonly type: "select"; readonly target: Target; readonly at: number }
+  /** A focus move in a wide zoomed tab, once the document confirmed its pane. */
+  | { readonly type: "zoom_followed"; readonly pane: string; readonly from: string | null; readonly at: number }
   /** the top overlay's close control was clicked: it closes as its close keys close it */
   | { readonly type: "close_overlay"; readonly at: number }
   /** a notice from elsewhere (a failed layout write); `calm` for one that reports no failure */
@@ -131,7 +135,9 @@ export function reduce(state: ModelState, event: ModelEvent, holding = false): S
       const cols = Math.trunc(event.cols);
       const rows = Math.trunc(event.rows);
       // a size that is not a whole number of cells above zero (infinite, NaN, negative) is no size: it is ignored
-      if (Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0) acc.s = { ...acc.s, host: { ...acc.s.host, cols, rows } };
+      if (Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0) {
+        acc.s = { ...acc.s, host: { ...acc.s.host, cols, rows }, focus: cols > NARROW_COLUMNS && acc.s.focus.localZoom ? { ...acc.s.focus, localZoom: undefined } : acc.s.focus };
+      }
       break;
     }
     case "key":
@@ -168,6 +174,11 @@ export function reduce(state: ModelState, event: ModelEvent, holding = false): S
     case "select":
       select(acc, event.target, event.at);
       break;
+    case "zoom_followed": {
+      const focus = focusOn(state.world, state.focus, { kind: "pane", id: event.pane });
+      if (focus) acc.s = { ...state, focus: { ...focus, previous: event.from && event.from !== event.pane && exists(state.world, { kind: "pane", id: event.from }) ? event.from : focus.previous } };
+      break;
+    }
     case "close_overlay":
       if (acc.s.overlays.length > 0) answerOverlay(acc, { overlay: null, effects: [] }, event.at);
       break;
@@ -181,6 +192,8 @@ export function reduce(state: ModelState, event: ModelEvent, holding = false): S
     case "choose": {
       const top = acc.s.overlays.at(-1);
       if (top?.kind === "menu") answerOverlay(acc, menuChoice(top, event.entry), event.at);
+      else if (top?.kind === "goto") answerOverlay(acc, pickerChoice(top, pickerList(top).findIndex((place) => placeKey(place) === event.entry)), event.at);
+      else if (top?.kind === "agents") answerOverlay(acc, agentChoice(top, event.entry === null ? -1 : top.agents.indexOf(event.entry)), event.at);
       break;
     }
     case "restore": {
@@ -477,7 +490,9 @@ function reload(acc: Acc, keymap: Keymap, at: number): void {
 
 function applyWorld(acc: Acc, world: World, core: string | null, at: number): void {
   const s = acc.s;
-  const focus = nextFocus(s.world, world, s.focus);
+  const next = nextFocus(s.world, world, s.focus);
+  const tab = focused(world, next).tab;
+  const focus = next.localZoom && (next.localZoom.tab !== tab?.id || next.localZoom.zoom !== tab.zoomed) ? { ...next, localZoom: undefined } : next;
   const gone = s.overlays.filter((overlay) => {
     const target = overlayTarget(overlay);
     return target !== null && !exists(world, target);
@@ -491,13 +506,22 @@ function applyWorld(acc: Acc, world: World, core: string | null, at: number): vo
   follow(acc);
 }
 
-/** An open menu lists what exists now, its cursor kept on the entry it was on. */
+/** An open menu, picker or agent list lists what exists now: the menu's cursor kept on its entry, the agent list's on its agent, the picker's choice while it exists. */
 function refreshMenus(acc: Acc): void {
   const { world, focus, overlays } = acc.s;
-  if (!overlays.some((overlay) => overlay.kind === "menu")) return;
+  if (!overlays.some((overlay) => overlay.kind === "menu" || overlay.kind === "goto" || overlay.kind === "agents")) return;
   acc.s = {
     ...acc.s,
     overlays: overlays.map((overlay) => {
+      if (overlay.kind === "goto") {
+        const places = pickerPlaces(world);
+        return { ...overlay, places, chosen: places.some((place) => placeKey(place) === overlay.chosen) ? overlay.chosen : null };
+      }
+      if (overlay.kind === "agents") {
+        const agents = world.agents ?? [];
+        const same = agents.indexOf(overlay.agents[overlay.cursor] ?? "");
+        return { ...overlay, agents, cursor: same >= 0 ? same : Math.max(0, Math.min(overlay.cursor, agents.length - 1)) };
+      }
       if (overlay.kind !== "menu") return overlay;
       const entries = menuEntries(world, focus, acc.s.worldEpoch);
       return { ...overlay, entries, cursor: keptCursor(overlay.entries, overlay.cursor, entries) };
@@ -523,7 +547,30 @@ function follow(acc: Acc): void {
 function select(acc: Acc, target: Target, at: number): void {
   const focus = focusOn(acc.s.world, acc.s.focus, target);
   if (focus === null) notice(acc, "target_gone", { [target.kind]: target.id }, at);
-  else acc.s = { ...acc.s, focus, following: null };
+  else focusTo(acc, focus);
+}
+
+/**
+ * Focus moved by the user. In a tab whose shared zoom covers the pane now shown, the zoom follows it with one layout write
+ * (herdr: a zoomed tab shows its focused pane), so the keys that move focus keep working while a pane is zoomed. Not on a
+ * narrow screen: it shows the focused pane alone itself and writes no layout.
+ */
+function focusTo(acc: Acc, focus: Focus): void {
+  const s = acc.s;
+  const { tab } = focused(s.world, focus);
+  const requested = tab && focus.panes[tab.id];
+  const zoom = shownZoom(tab);
+  if (tab && requested && zoom && requested !== zoom && s.host.cols > 0) {
+    // the pane this move leaves, read before focus changes: in another tab, `focus` already shows that tab's zoomed pane
+    const before = focused(s.world, s.focus).pane?.id ?? null;
+    if (s.host.cols <= NARROW_COLUMNS) {
+      acc.s = { ...s, following: null, focus: { ...focus, localZoom: { tab: tab.id, zoom }, previous: before && before !== requested ? before : focus.previous } };
+      return;
+    }
+    // Remember the move only when the document confirms it. A refused or lost write must not change what unzoom restores.
+    acc.s = { ...s, focus: { ...focus, panes: s.focus.panes }, following: null };
+    acc.effects.push({ type: "run", action: "zoom_follow", target: { kind: "pane", id: requested }, zoomTab: tab.id, zoomFrom: before, index: null, name: null });
+  } else acc.s = { ...s, focus, following: null };
 }
 
 function setMode(acc: Acc, mode: ModeState): void {
@@ -533,7 +580,7 @@ function setMode(acc: Acc, mode: ModeState): void {
 function moveFocus(acc: Acc, target: Target | undefined): void {
   if (target === undefined) return;
   const focus = focusOn(acc.s.world, acc.s.focus, target);
-  if (focus !== null) acc.s = { ...acc.s, focus, following: null };
+  if (focus !== null) focusTo(acc, focus);
 }
 
 /** The item `step` places from `id` in `list`, wrapping round. */
@@ -562,6 +609,9 @@ function runLocal(acc: Acc, action: Exclude<KeyAction, HerdrAction>, index: numb
       acc.s = { ...s, overlays: [...s.overlays, { kind: "menu", ...list, presented: list }] };
       return;
     }
+    case "agents":
+      acc.s = { ...s, overlays: [...s.overlays, { kind: "agents", agents: s.world.agents ?? [], cursor: 0 }] };
+      return;
     case "navigate_workspace_up":
     case "navigate_workspace_down": {
       if (s.mode.name !== "navigate") return;
@@ -657,7 +707,7 @@ function runHerdr(acc: Acc, action: HerdrAction, index: number | null, at: numbe
       pushOverlay({ kind: "help" });
       return;
     case "goto":
-      pushOverlay({ kind: "goto", field: field("") });
+      pushOverlay({ kind: "goto", field: field(""), places: pickerPlaces(s.world), chosen: null });
       return;
     case "workspace_picker":
       setMode(acc, { name: "navigate", preview: shown.workspace?.id ?? null });
@@ -711,6 +761,7 @@ function runHerdr(acc: Acc, action: HerdrAction, index: number | null, at: numbe
     case "previous_workspace":
     case "next_workspace":
       moveFocus(acc, target(around(s.world.workspaces, shown.workspace?.id, action === "next_workspace" ? 1 : -1), "workspace"));
+      if (s.mode.name === "navigate") setMode(acc, { name: "navigate", preview: acc.s.focus.workspace });
       return;
     case "previous_tab":
     case "next_tab":
@@ -730,12 +781,30 @@ function runHerdr(acc: Acc, action: HerdrAction, index: number | null, at: numbe
       moveFocus(acc, s.focus.previous === null ? undefined : { kind: "pane", id: s.focus.previous });
       return;
     case "new_workspace":
-    case "open_notification_target":
-    case "previous_agent":
-    case "next_agent":
-    case "focus_agent":
       acc.effects.push({ type: "run", action, target: null, index, name: null });
       return;
+    case "open_notification_target": {
+      // the next agent that needs the user, after the one shown, round; from any other pane the first
+      const waiting = s.world.waiting ?? [];
+      if (waiting.length === 0) notice(acc, "nothing_waiting", {}, at, true);
+      else moveFocus(acc, { kind: "pane", id: waiting[(waiting.indexOf(shown.pane?.id ?? "") + 1) % waiting.length]! });
+      return;
+    }
+    case "previous_agent":
+    case "next_agent": {
+      const agents = s.world.agents ?? [];
+      const step = action === "next_agent" ? 1 : -1;
+      const here = agents.indexOf(shown.pane?.id ?? "");
+      // from a pane that runs no agent: the first agent going down the list, the last going up
+      const next = here < 0 ? (step > 0 ? 0 : agents.length - 1) : (here + step + agents.length) % agents.length;
+      moveFocus(acc, target(agents[next] === undefined ? undefined : { id: agents[next]! }, "pane"));
+      return;
+    }
+    case "focus_agent": {
+      const pane = index === null ? undefined : s.world.agents?.[index - 1];
+      moveFocus(acc, target(pane === undefined ? undefined : { id: pane }, "pane"));
+      return;
+    }
     case "move_tab_previous":
     case "move_tab_next":
       runOn(target(shown.tab, "tab"));
@@ -743,7 +812,11 @@ function runHerdr(acc: Acc, action: HerdrAction, index: number | null, at: numbe
     case "focus_pane_left":
     case "focus_pane_down":
     case "focus_pane_up":
-    case "focus_pane_right":
+    case "focus_pane_right": {
+      const neighbour = directionalNeighbour(shown.tab, shown.pane, action);
+      if (neighbour != null) moveFocus(acc, { kind: "pane", id: neighbour });
+      return;
+    }
     case "swap_pane_left":
     case "swap_pane_down":
     case "swap_pane_up":

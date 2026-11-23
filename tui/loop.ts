@@ -13,12 +13,15 @@
 
 import type { HcTransport, HelloInfo } from "../server/herdr-core/connection.ts";
 import { editLayout } from "../server/herdr-core/layout-ops.ts";
+import { SeenMarker } from "../server/herdr-core/seen-label.ts";
+import { SeenWrites } from "./core/seen.ts";
+import { alertsOf } from "./model/look.ts";
 import type { ScreenRange } from "./emulator/index.ts";
 import { DividerWrites } from "./core/divider.ts";
 import { type LayoutDone, LayoutWrites } from "./core/layout.ts";
 import { type CoreLink, LINK_DOCS, type LinkNotice, type LinkState, openLink } from "./core/link.ts";
 import { createPanes, type PaneInput, type PaneNotice, type Panes } from "./core/pane.ts";
-import { CoreWorld, focusDirection, paneToward } from "./core/world.ts";
+import { CoreWorld } from "./core/world.ts";
 import { errorCode } from "./crash.ts";
 import { effectBytes, osc52 } from "./host/effects.ts";
 import type { Host, HostEnd } from "./host/index.ts";
@@ -139,6 +142,10 @@ export function startLoop(options: LoopOptions): Loop {
   let paintedLayout: Pick<PointerScene, "tab" | "splits"> = { tab: null, splits: [] };
   let paintedOverlay: ModelState["overlays"][number] | undefined;
   let overlayGeneration = 0;
+  /** What the last frame the host took showed a person: the pane drawn focused, and whether an overlay lay over the panes. */
+  let presented: { readonly pane: string | null; readonly overlay: boolean } = { pane: null, overlay: false };
+  /** What a person has in front of them, as `sight` last worked it out: the pane (null: none), and whether anything covers the panes. */
+  let sighted = presented;
   let shownKey = "";
   let paneFocus: string | null = null;
   let hello: HelloInfo | null = null;
@@ -195,13 +202,19 @@ export function startLoop(options: LoopOptions): Loop {
   const link = openLink({
     socket: options.socket,
     now: () => clock.now(),
-    model: world.model,
+    model: { ...world.model, observeSeen: (address, turn, labels) => {
+      marker.observe(address, turn, labels);
+      seen.observe(address, turn);
+    } },
     notify: (notice) => {
       guard(() => onLinkNotice(notice));
       arm();
     },
     ...(options.connect ? { connect: options.connect } : {}),
   });
+
+  const marker = new SeenMarker(link);
+  const seen = new SeenWrites(marker, (error) => act(`seen_failed:${errorCode(error)}`));
 
   const panes = createPanes({
     link,
@@ -247,6 +260,7 @@ export function startLoop(options: LoopOptions): Loop {
         told(notice.state);
       }
       shown = shownLink(shown, notice.state);
+      look();
       if (notice.state.kind === "Online") {
         const epoch = notice.state.epoch;
         void link.hello().then((info) => {
@@ -266,7 +280,24 @@ export function startLoop(options: LoopOptions): Loop {
       snapshot = { epoch: notice.epoch, complete: false, core: null };
       options.views?.suspend();
     }
+    // the core's word comes when it comes, whatever was read since the last frame: the alerts and a turn's end below
+    // ask who is in front of a person now
+    if (notice.type === "event") sight();
+    const before = world.view();
+    const alerts = notice.type === "event" ? alertsOf(notice.event.type, notice.changes, (terminal) => before.panes.get(terminal)?.status, seen.current) : [];
     if (world.notice(notice)) worldChanged();
+    const after = world.view();
+    for (const alert of alerts) {
+      const agent = after.agents.find((row) => row.paneId === alert.terminal)?.name ?? alert.terminal;
+      dispatch({ type: "notice", code: alert.kind === "blocked" ? "agent_blocked" : "agent_done", data: { agent }, calm: true, at: clock.now() });
+    }
+    if (notice.type === "event" && notice.event.type === "turn" && notice.event.terminal !== undefined) seen.turn(notice.event.terminal);
+    // a snapshot shows turns no event told (the line was down, or events were missed): the look hears of them here,
+    // after the world took the snapshot in
+    if (notice.type === "snapshot") {
+      sight();
+      seen.snapshot();
+    }
     if (snapshot && !snapshot.complete && notice.type === "doc" && notice.epoch === snapshot.epoch && notice.name === LINK_DOCS.at(-1)) {
       snapshot.complete = true;
       identifySnapshot();
@@ -309,6 +340,7 @@ export function startLoop(options: LoopOptions): Loop {
       const bytes = effectBytes(notice.effect, notice.terminal === paneFocus);
       if (bytes && !host.write(bytes)) painter?.invalidate();
     }
+    look();
     owePass();
   }
 
@@ -429,7 +461,7 @@ export function startLoop(options: LoopOptions): Loop {
    * focus to follow a pane the screen does not show yet or ended panes the screen still shows, once the screen shows
    * what it did.
    */
-  function holdUntil(writing: Promise<LayoutDone>): void {
+  function holdUntil(writing: Promise<LayoutDone>, zoom?: { tab: string; pane: string; from: string | null }): void {
     if (behindWrite === null) {
       behindWrite = { events: [], armed: state.armed, terminalArmed: state.armed, mouse: pointer.defer(), inputTarget: null, awaiting: null, bytes: 0, full: false, ready: false };
       busyReported = false;
@@ -451,8 +483,14 @@ export function startLoop(options: LoopOptions): Loop {
           const confirmed = (ok: boolean) => {
             guard(() => {
               if (behindWrite?.awaiting !== wait) return;
-              if (ok && line === link.state && clock.now() < until) release();
-              else drop("not_shown");
+              if (ok && line === link.state && clock.now() < until) {
+                // The move was issued on a wide screen: the document showing its pane confirms it, whatever the width is now.
+                const { tab, pane } = focused(state.world, state.focus);
+                if (zoom && tab?.id === zoom.tab && tab.zoomed === zoom.pane && pane?.id === zoom.pane) {
+                  dispatch({ type: "zoom_followed", pane: pane.id, from: zoom.from, at: clock.now() });
+                }
+                release();
+              } else drop("not_shown");
             });
             arm();
           };
@@ -534,6 +572,32 @@ export function startLoop(options: LoopOptions): Loop {
     }
   }
 
+  /**
+   * Works out again what a person has in front of them: the pane the last frame the host took showed focused, while the
+   * model still has it focused, and whether an overlay lies over the panes in that frame or in the model. A focus move
+   * or a closed overlay shows nothing until a frame does. Called only where the answer cannot depend on how a read was
+   * cut (a frame taken, the host's own focus, the core's events), never as a key is read: one read of two moves and two
+   * reads of one each leave the same turns read.
+   */
+  function sight(): void {
+    const pane = focused(state.world, state.focus).pane?.id ?? null;
+    sighted = { pane: pane === presented.pane ? pane : null, overlay: presented.overlay || state.overlays.length > 0 };
+    look();
+  }
+
+  /** What a person has in front of them, told to the read state: a person looking at a pane marks its turn read. */
+  function look(): void {
+    const { pane, overlay } = sighted;
+    seen.update({
+      hostFocused: state.host.focused,
+      pane,
+      live: pane !== null && panes.view(pane)?.state.kind === "Live",
+      drawn: pane !== null && drawn.has(pane),
+      overlay,
+      online: link.state.kind === "Online",
+    });
+  }
+
   /** One event through the state core, and its effects performed in order, now. */
   function dispatch(event: ModelEvent, route?: DeferredMouse): void {
     const before = state;
@@ -543,6 +607,7 @@ export function startLoop(options: LoopOptions): Loop {
     if (state !== before) {
       keepView();
       reshow();
+      if (state.host.focused !== before.host.focused) sight();
       owePass();
     }
     onceShown();
@@ -568,34 +633,28 @@ export function startLoop(options: LoopOptions): Loop {
         return;
       case "run": {
         act(`run:${effect.action}`);
-        const direction = focusDirection(effect.action);
-        if (direction && effect.target?.kind === "pane") {
-          const tab = focused(state.world, state.focus).tab;
-          const shapeOf = tab ? world.view().tabs.get(tab.id) : undefined;
-          const toward = shapeOf ? paneToward(shapeOf, effect.target.id, direction) : null;
-          if (effect.neighbor !== undefined && toward !== effect.neighbor) {
-            dispatch({ type: "notice", code: "target_changed", data: { action: effect.action }, at: clock.now() });
-            return;
-          }
-          if (toward !== null) dispatch({ type: "select", target: { kind: "pane", id: toward }, at: clock.now() });
-          return;
-        }
         if ((behindWrite !== null || replaying) && layout.writes(effect)) {
           busy(effect.action);
           return;
         }
         const writing = layout.run(effect);
         if (writing !== null) {
-          holdUntil(writing);
+          // the pane the move left is the reducer's, taken before focus changed tabs: the state here already shows the new tab
+          holdUntil(writing, effect.zoomTab && effect.target?.kind === "pane"
+            ? { tab: effect.zoomTab, pane: effect.target.id, from: effect.zoomFrom ?? null } : undefined);
           return;
         }
-        // the agent list comes with a later row of the plan: one notice per press, never silence
+        // An action without a performer is reported, never silently swallowed.
         dispatch({ type: "notice", code: "not_built", data: { action: effect.action }, at: clock.now() });
         return;
       }
       case "input":
         // the rest of a text run, behind the action before it: it meets the focus and mode that action left
         userInput(effect.event);
+        return;
+      case "unread":
+        act("unread");
+        seen.unread(effect.pane);
         return;
       case "quit":
         act("quit");
@@ -666,6 +725,8 @@ export function startLoop(options: LoopOptions): Loop {
         dispatch({ type: "close_overlay", at: clock.now() });
         return;
       case "choose":
+        // The menu validates its presented identity across updates. Picker and agent rows belong to the painted overlay.
+        if (state.overlays.at(-1)?.kind !== "menu" && paintedOverlay !== state.overlays.at(-1)) return;
         dispatch({ type: "choose", entry: step.entry, at: clock.now() });
         return;
     }
@@ -706,7 +767,7 @@ export function startLoop(options: LoopOptions): Loop {
     return { hits, focus: paneFocus, ...paintedLayout, look: lookOf, painted: (pane) => drawn.get(pane) ?? null,
       acceptsMenu: (entry) => {
         const menu = state.overlays.at(-1);
-        return menu?.kind === "menu" && menuChoice(menu, entry).accepted;
+        return menu?.kind === "menu" ? menuChoice(menu, entry).accepted : menu === paintedOverlay;
       } };
   }
 
@@ -746,6 +807,7 @@ export function startLoop(options: LoopOptions): Loop {
       // the rest of a read that detached goes nowhere, as a later read would not
       if (closing) break;
       act(`read:${event.type}`);
+      seen.input(event);
       if (event.type === "reply") {
         if (event.kind === "scheme") host.refreshDisplay();
         else panes.displayReply(event);
@@ -830,6 +892,8 @@ export function startLoop(options: LoopOptions): Loop {
     const paneViews = new Map(panes.views().map((v) => [v.terminal, v]));
     const frameMenu = state.overlays.at(-1);
     const frameMenuDismissed = state.menuDismissed;
+    // taken before the write, as the menu is: input read during it may move the focus the frame does not show
+    const frameFocus = paneFocus;
     const chrome = buildChrome({
       regions: frameShape.regions,
       spots: frameShape.spots,
@@ -856,6 +920,8 @@ export function startLoop(options: LoopOptions): Loop {
     if (ended || !taken) return;
     hits = frame.hits;
     drawn = nextDrawn;
+    presented = { pane: frameFocus, overlay: frameMenu !== undefined };
+    sight();
     paintedLayout = nextLayout;
     if (paintedOverlay !== frameMenu) {
       paintedOverlay = frameMenu;
