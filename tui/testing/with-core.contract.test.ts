@@ -471,6 +471,12 @@ describe("with-core --pty", () => {
     expect(leftovers(run)).toEqual(NOTHING_LEFT);
   }, TEST_MS);
 
+  it("keeps a finite command's exit code when it prints more than the entry runs' transcript cap", async () => {
+    const run = helper(["--no-core", "--pty", "--limit", "60", "--dump", "--", "sh", "-c", "head -c 17825793 /dev/zero | tr '\\0' x; exit 7"], noHc());
+    expect(await run.exited).toBe(7);
+    expect(leftovers(run)).toEqual(NOTHING_LEFT);
+  }, TEST_MS);
+
   it("without --dump passes the output on as it comes", async () => {
     const run = helper(["--no-core", "--pty", "--", "sh", "-c", "printf streamed"], noHc());
     expect(await run.exited).toBe(0);

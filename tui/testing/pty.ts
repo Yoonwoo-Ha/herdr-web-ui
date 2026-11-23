@@ -28,6 +28,8 @@ export interface PtyOptions {
   cols?: number;
   rows?: number;
   deadlineMs?: number;
+  /** opt-in: ends the run, through the PTY host, once its output passes this many characters; unset, the transcript is unbounded */
+  maxOutputChars?: number;
   /** called with each piece of output as it arrives */
   onData?: (text: string) => void;
 }
@@ -103,12 +105,23 @@ export function runOnPty(options: PtyOptions): PtyRun {
   let output = "";
   let ended = false;
   let timedOut = false;
+  let overflowed = false;
+  const { maxOutputChars } = options;
   let code: number | null = null;
   const wakers = new Set<() => void>();
   const wake = () => { for (const waker of [...wakers]) waker(); };
   const session = new PtySession({
     command, args, cols: options.cols ?? 80, rows: options.rows ?? 24, env: options.env, inheritEnv: false,
-    onData: (data) => { output += data; options.onData?.(data); wake(); },
+    onData: (data) => {
+      if (overflowed) return;
+      output += data;
+      if (maxOutputChars !== undefined && output.length > maxOutputChars) {
+        overflowed = true;
+        session.kill();
+      }
+      options.onData?.(data);
+      wake();
+    },
     onExit: (exit) => { code = exit; },
   });
   const deadline = setTimeout(() => { timedOut = true; session.kill(); wake(); }, deadlineMs);
@@ -130,12 +143,14 @@ export function runOnPty(options: PtyOptions): PtyRun {
     stop,
     until: (match, what) => new Promise<void>((resolve, reject) => {
       const check = () => {
-        if (typeof match === "string" ? output.includes(match) : match.test(output)) {
+        // a run past its limit never matches: its transcript is incomplete, so a marker in it proves nothing
+        if (!overflowed && (typeof match === "string" ? output.includes(match) : match.test(output))) {
           wakers.delete(check);
           resolve();
-        } else if (timedOut || ended) {
+        } else if (timedOut || ended || overflowed) {
           wakers.delete(check);
-          const why = timedOut ? `the deadline of ${deadlineMs} ms passed` : "the command ended";
+          const why = overflowed ? `the output passed ${maxOutputChars} characters`
+            : timedOut ? `the deadline of ${deadlineMs} ms passed` : "the command ended";
           reject(new Error(`${why} before ${what ?? JSON.stringify(String(match))}; output: ${JSON.stringify(output.slice(-2000))}`));
         }
       };

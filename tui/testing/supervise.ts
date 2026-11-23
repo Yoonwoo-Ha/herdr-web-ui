@@ -11,6 +11,11 @@
  * nothing else.
  */
 import { constants } from "node:os";
+import { drainTail } from "./drain.ts";
+
+// the entry's stderr is kept as a bounded tail: a flood is never held whole or sent in one message
+const STDERR_KEEP = 16 * 1024;
+const STDERR_EOF_MS = 2_000;
 
 const [socketPath, ...entry] = process.argv.slice(2);
 if (!socketPath || entry.length === 0) {
@@ -61,14 +66,15 @@ const send = (message: Record<string, unknown>) => { socket.write(`${JSON.string
 
 const before = await stty();
 child = Bun.spawn(entry, { env: process.env, stdin: "inherit", stdout: "inherit", stderr: "pipe" });
-const stderr = new Response(child.stderr as ReadableStream<Uint8Array>).text();
+const stderr = drainTail(child.stderr as ReadableStream<Uint8Array>, STDERR_KEEP);
 send({ t: "started" });
 for (const name of early.splice(0)) deliver(name);
 await child.exited;
 const after = await stty();
 const signal = child.signalCode as NodeJS.Signals | null;
 const code = signal ? 128 + (constants.signals[signal] ?? 0) : child.exitCode ?? 1;
-send({ t: "ended", code, signal, before, after, stderr: await stderr });
+const stderrEnd = await stderr.finish(STDERR_EOF_MS);
+send({ t: "ended", code, signal, before, after, stderr: stderrEnd === "complete" ? stderr.text() : `${stderr.text()}\n[stderr stayed open after the entry exited]` });
 socket.end();
 await closed;
 process.exit(code);
