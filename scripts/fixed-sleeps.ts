@@ -15,8 +15,10 @@
  * A local sleep helper (`const sleep = (ms) => new Promise(…setTimeout…)`, an alias of Bun.sleep,
  * or setTimeout from node:timers/promises) is not counted where it is defined; each call of it is.
  *
- * scripts/conventions.test.ts holds every file to its count in scripts/fixed-sleeps.json, which
- * may only shrink. `bun scripts/fixed-sleeps.ts` prints the current counts.
+ * scripts/conventions.test.ts holds every file to its count in scripts/fixed-sleeps.json, and to its
+ * count of waits a `// fixed wait:` excuses in scripts/fixed-waits.json: both may only shrink, so the
+ * marker is no way around the first. `bun scripts/fixed-sleeps.ts` prints the current counts of fixed
+ * sleeps, `bun scripts/fixed-sleeps.ts --marked` those of marked waits.
  */
 import { files, lineOf, read, stripComments } from "./source-scan.ts";
 
@@ -70,10 +72,12 @@ function sleepHelpers(code: string, source: string): { names: Set<string>; defin
   return { names, definitions, yields };
 }
 
-export function fixedSleeps(file: string, text = read(file)): string[] {
+/** The waits in `file` that pass a set time: `fixed` ones, and `marked` ones a `// fixed wait:` excuses. */
+function setWaits(file: string, text: string): { fixed: string[]; marked: string[] } {
   const code = stripComments(text, { strings: true });
   const lines = text.split("\n");
-  const found: string[] = [];
+  const fixed: string[] = [];
+  const marked: string[] = [];
   const helpers = sleepHelpers(code, stripComments(text));
   const calls = helpers.names.size ? [...code.matchAll(new RegExp(`(?<![\\w.])(?:${[...helpers.names].join("|")})\\s*\\((?!\\s*0\\s*\\))`, "g"))] : [];
   const sleeps = [...code.matchAll(SLEEP)].filter((match) => !helpers.definitions.has(match.index));
@@ -84,22 +88,30 @@ export function fixedSleeps(file: string, text = read(file)): string[] {
     const line = lineOf(code, match.index);
     const codeLine = code.split("\n")[line - 1]!;
     if (/\bPromise\.race\s*\(/.test(codeLine)) continue;
-    if (MARKER.test(lines[line - 1]!) || MARKER.test(lines[line - 2] ?? "")) continue;
     const before = codeLine.slice(0, match.index - (code.lastIndexOf("\n", match.index) + 1));
     if (/^\s*(?:while|for)\s*\(/.test(before) && BOUND.test(before)) continue;
     if (inBoundedLoop(code, match.index)) continue;
+    const found = MARKER.test(lines[line - 1]!) || MARKER.test(lines[line - 2] ?? "") ? marked : fixed;
     found.push(`${file}:${line}: ${lines[line - 1]!.trim().slice(0, 160)}`);
   }
-  return found;
+  return { fixed, marked };
 }
 
-export function fixedSleepCounts(): Record<string, number> {
+export const fixedSleeps = (file: string, text = read(file)): string[] => setWaits(file, text).fixed;
+
+export const markedWaits = (file: string, text = read(file)): string[] => setWaits(file, text).marked;
+
+function countsOf(find: (file: string) => string[]): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const file of sleepFiles()) {
-    const count = fixedSleeps(file).length;
+    const count = find(file).length;
     if (count) counts[file] = count;
   }
   return counts;
 }
 
-if (import.meta.main) console.log(JSON.stringify(fixedSleepCounts(), null, 2));
+export const fixedSleepCounts = (): Record<string, number> => countsOf(fixedSleeps);
+
+export const markedWaitCounts = (): Record<string, number> => countsOf(markedWaits);
+
+if (import.meta.main) console.log(JSON.stringify(process.argv.includes("--marked") ? markedWaitCounts() : fixedSleepCounts(), null, 2));

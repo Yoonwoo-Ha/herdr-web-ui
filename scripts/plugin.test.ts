@@ -7,7 +7,9 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 
 import { COMMAND_ALIASES } from "./plugin-runtime.ts";
 import { herdrStateDir } from "./plugin-state.ts";
-import { quietPort } from "./quiet-port.ts";
+import { savedPort } from "./plugin-port.ts";
+import { mergeEnvLayers } from "../server/legacy-env.ts";
+import { quietPort, REAL_PORTS } from "./quiet-port.ts";
 import { readProcessBirth } from "../server/process-owner.ts";
 import { updateStateDir } from "../server/update-state.ts";
 import { exportPublicKey, generateKeyPair } from "../shared/relay-e2ee.ts";
@@ -29,12 +31,46 @@ async function run(command: string, extra: Record<string, string | undefined> = 
   return { out, err, exitCode };
 }
 
+/** Preloaded into each command and the Bun processes it starts: stops them at a real port (scripts/real-ports-guard.ts). */
+const GUARD = join(import.meta.dir, "real-ports-guard.ts");
+
+/** KEY=VALUE lines, as scripts/plugin.ts reads its settings files. */
+const settingsIn = (file: string): Record<string, string> => !existsSync(file) ? {} : Object.fromEntries(readFileSync(file, "utf8").split("\n")
+  .map((line) => line.trim()).filter((line) => line !== "" && !line.startsWith("#") && line.indexOf("=") > 0)
+  .map((line) => [line.slice(0, line.indexOf("=")).trim(), line.slice(line.indexOf("=") + 1).trim().replace(/^["']|["']$/g, "")]));
+
+/**
+ * The port a command run with `env` opens and asks, found the way scripts/plugin.ts finds it: PORT from its environment
+ * and then its settings files, which win, and the kept port when that leaves none. null when it would fall back to
+ * DEFAULT_PORT.
+ */
+function portFor(env: Record<string, string | undefined>): string | null {
+  const dir = env["HERDR_PLUGIN_CONFIG_DIR"] ?? configDir;
+  const merged = mergeEnvLayers([env, ...["env", ".env"].map((name) => settingsIn(join(dir, name)))]);
+  if ((merged["PORT"] ?? "") !== "") return merged["PORT"]!;
+  const config = merged["XDG_CONFIG_HOME"] || join(scratch, ".config");
+  const kept = savedPort(join(merged["OVIS_STATE_DIR"] || join(config, "ovis"), "plugin-port")) ?? savedPort(join(config, "herdr-web-ui", "plugin-port"));
+  return kept === null ? null : String(kept);
+}
+
+/**
+ * The command's environment. PORT is a quiet port unless `extra` names it: with none, the command would ask DEFAULT_PORT
+ * (7317), where this PC's own Ovis answers. A test of the port a command finds without PORT passes `PORT: undefined`
+ * and keeps a port first (`keep`), which the command then reads. Refused when the port the command would use, after
+ * its settings files, is one this PC's own Ovis may be on.
+ */
 function launchEnv(extra: Record<string, string | undefined> = {}): Record<string, string | undefined> {
   const bin = join(scratch, "bin");
   const env: Record<string, string | undefined> = { ...process.env, PATH: `${bin}:${process.env["PATH"] ?? ""}`, HOME: scratch, HERDR_PLUGIN_STATE_DIR: join(scratch, "state") };
   for (const key of ["HERDR_PLUGIN_CONFIG_DIR", "PORT", "HOST", "OVIS_TOKEN", "OVIS_STATE_DIR", "XDG_CONFIG_HOME", "XDG_STATE_HOME"]) delete env[key];
+  if (!("PORT" in extra)) env["PORT"] = String(quietPort());
+  env["BUN_OPTIONS"] = `${process.env["BUN_OPTIONS"] ?? ""} --preload ${GUARD}`.trim();
+  env["OVIS_TEST_REAL_PORTS_LOG"] = join(scratch, "real-ports.log");
   Object.assign(env, extra);
   for (const [key, value] of Object.entries(extra)) if (value === undefined) delete env[key];
+  const port = portFor(env);
+  if (port === null) throw new Error("a test leaves PORT out with no port kept: the command would ask 7317, where this PC's own Ovis answers");
+  if (REAL_PORTS.includes(Number(port))) throw new Error(`a test hands the command PORT=${port}, a port this PC's own Ovis may be on`);
   return env;
 }
 
@@ -52,7 +88,39 @@ beforeEach(() => {
   chmodSync(herdr, 0o755);
 });
 
-afterEach(() => rmSync(scratch, { recursive: true, force: true }));
+afterEach(() => {
+  const reached = existsSync(join(scratch, "real-ports.log")) ? readFileSync(join(scratch, "real-ports.log"), "utf8") : "";
+  rmSync(scratch, { recursive: true, force: true });
+  expect(reached, "a command went for a port this PC's own Ovis may be on, and the guard stopped it").toBe("");
+});
+
+describe("the launch helper", () => {
+  it("names a quiet port, and never one this PC's own Ovis may be on", () => {
+    const port = Number(launchEnv()["PORT"]);
+    expect(Number.isInteger(port) && port > 0).toBe(true);
+    expect(REAL_PORTS).not.toContain(port);
+    for (const real of REAL_PORTS) expect(() => launchEnv({ PORT: String(real) })).toThrow(`PORT=${real}`);
+    expect(() => launchEnv({ PORT: undefined })).toThrow("no port kept");
+    expect(() => launchEnv({ PORT: "" })).toThrow("no port kept");
+    writeFileSync(join(configDir, ".env"), "PORT=7421\n");
+    expect(() => launchEnv()).toThrow("PORT=7421");
+    writeFileSync(join(configDir, ".env"), "PORT=\n");
+    expect(() => launchEnv({ PORT: "1" })).toThrow("no port kept");
+    rmSync(join(configDir, ".env"));
+    mkdirSync(join(scratch, ".config", "ovis"), { recursive: true });
+    writeFileSync(join(scratch, ".config", "ovis", "plugin-port"), "7317\n");
+    expect(() => launchEnv({ PORT: undefined })).toThrow("PORT=7317");
+  });
+
+  it("stops a command, and the Bun processes it starts, at a port this PC's own Ovis may be on", () => {
+    const env = launchEnv();
+    const script = `const child = Bun.spawnSync([process.execPath, "-e", "Bun.serve({ hostname: '127.0.0.1', port: 7317, fetch: () => new Response() })"]); process.exit(child.exitCode);`;
+    const tried = Bun.spawnSync(["bun", "-e", script], { cwd: ROOT, env, stdout: "pipe", stderr: "pipe" });
+    expect(tried.exitCode).not.toBe(0);
+    expect(readFileSync(env["OVIS_TEST_REAL_PORTS_LOG"]!, "utf8")).toContain("serving on port 7317");
+    rmSync(env["OVIS_TEST_REAL_PORTS_LOG"]!);
+  });
+});
 
 describe("plugin settings files", () => {
   it("finds the config dir through herdr and reads .env", async () => {
@@ -438,7 +506,7 @@ describe("starts at the same moment", () => {
     const { server, root } = recordedSleeper((pid) => { const reading = readProcessBirth(pid); return reading.state === "identified" ? reading.birth : null; });
     rmSync(join(scratch, "state", "server.pid"));
     try {
-      const start = launch("start", { HERDR_PLUGIN_ROOT: root });
+      const start = launch("start", { HERDR_PLUGIN_ROOT: root, PORT: undefined });
       const reader = start.stdout.getReader();
       let out = await readUntil(reader, "waiting for it to finish", "the waiting start");
       keepPort(ours.port!);
@@ -492,13 +560,13 @@ describe("port", () => {
 
   it("reports the port an earlier start fell back to", async () => {
     keep(3);
-    expect((await status()).out).toContain("down http://127.0.0.1:3");
+    expect((await run("status", { PORT: undefined })).out).toContain("down http://127.0.0.1:3");
   });
 
   it("lets a PORT the user set win over the kept one", async () => {
     keep(3);
     writeFileSync(join(configDir, ".env"), "PORT=1\n");
-    expect((await status()).out).toContain("down http://127.0.0.1:1");
+    expect((await run("status", { PORT: undefined })).out).toContain("down http://127.0.0.1:1");
   });
 
   it("does not start on another port when the PORT the user set cannot be opened, and says so", async () => {
@@ -563,7 +631,7 @@ describe("port", () => {
       keep(stranger.port!);
       mkdirSync(join(scratch, "state"), { recursive: true });
       writeFileSync(join(scratch, "state", "server.pid"), `${process.pid}\n`);
-      const started = await run("start");
+      const started = await run("start", { PORT: undefined });
       expect(started.out).toContain(`already running at http://127.0.0.1:${ours.port}`);
       expect(started.exitCode).toBe(0);
       expect(readFileSync(join(scratch, "state", "server.pid"), "utf8")).toBe(`${process.pid}\n`);
@@ -584,7 +652,7 @@ describe("port", () => {
       mkdirSync(join(scratch, "state"), { recursive: true });
       writeFileSync(join(scratch, "state", "server.pid"), `${process.pid}\n`);
       // a start that moves anyway spawns no real server: there is no server/managed.ts under this root
-      const started = await run("start", { HERDR_PLUGIN_ROOT: scratch });
+      const started = await run("start", { HERDR_PLUGIN_ROOT: scratch, PORT: undefined });
       expect(started.out).not.toContain("instead");
       expect(started.exitCode).toBe(1);
       expect(started.err).toContain(`Ovis is running at http://127.0.0.1:${ours.port} (pid ${process.pid}) but cannot reach herdr: herdr socket unreachable`);
@@ -608,7 +676,7 @@ describe("port", () => {
       keep(ours.port!);
       mkdirSync(join(scratch, "state"), { recursive: true });
       writeFileSync(join(scratch, "state", "server.pid"), `${process.pid}\n`);
-      const started = await run("start", { HERDR_PLUGIN_ROOT: scratch });
+      const started = await run("start", { HERDR_PLUGIN_ROOT: scratch, PORT: undefined });
       expect(started.err).not.toContain("cannot reach herdr");
       expect(started.exitCode).toBe(0);
       expect(started.out).toContain(`Ovis already running at http://127.0.0.1:${ours.port}`);
@@ -1492,9 +1560,7 @@ describe("pair --approve", () => {
 
   /** `pair --approve` at a real terminal (script), against the Ovis on `port`: what it shows, and what is typed at it. */
   function atTerminal(port: number, extra: Record<string, string> = {}) {
-    const bin = join(scratch, "bin");
-    const env: Record<string, string | undefined> = { ...process.env, PATH: `${bin}:${process.env["PATH"] ?? ""}`, HOME: scratch, HERDR_PLUGIN_STATE_DIR: join(scratch, "state"), PORT: String(port), ...extra };
-    for (const key of ["HERDR_PLUGIN_CONFIG_DIR", "HOST", "OVIS_TOKEN", "OVIS_STATE_DIR", "XDG_CONFIG_HOME", "XDG_STATE_HOME"]) delete env[key];
+    const env = launchEnv({ PORT: String(port), ...extra });
     // util-linux takes the command as one string, BSD (macOS) as arguments after the file it records to. Behind cat:
     // Bun hands a child a socket for stdin, which macOS's script refuses (tcgetattr), and cat gives it a pipe
     const command = platform() === "darwin" ? "script -q /dev/null bun scripts/plugin.ts pair --approve" : "script -qfec 'bun scripts/plugin.ts pair --approve' /dev/null";

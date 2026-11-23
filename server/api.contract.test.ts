@@ -28,6 +28,7 @@ import { HerdrSocket } from "../src/lib/ws.ts";
 import { HerdrError, herdrRpc, paneRead, paneSplit, ping, sessionSnapshot, subscribeEvents, tabCreate, workspaceCreate, workspaceClose } from "./herdr/client.ts";
 import { startFakePushService, type FakePushService } from "./push.fake.ts";
 import { descriptorPath, type BridgeDescriptor } from "./bridge.ts";
+import { ownProcesses } from "../scripts/own-processes.ts";
 import { handleMachineRequest } from "./machine-api.ts";
 import type { MachineManager } from "./machines.ts";
 import { TailnetIdentitySource } from "./tailscale.ts";
@@ -3686,8 +3687,7 @@ describe("WebSocket client leaving mid-attach", () => {
   }
 
   function attachProcessCount(terminalId: string): number {
-    const found = Bun.spawnSync(["pgrep", "-f", `terminal attach ${terminalId}`]);
-    return found.stdout.toString().split("\n").filter(Boolean).length;
+    return ownProcesses(new RegExp(`terminal attach ${terminalId}`)).length;
   }
 
   async function waitForAttachGone(terminalId: string, ms: number): Promise<void> {

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, posix, sep } from "node:path";
-import { fixedSleepCounts, fixedSleeps, sleepFiles } from "./fixed-sleeps.ts";
+import { fixedSleepCounts, fixedSleeps, markedWaitCounts, markedWaits, sleepFiles } from "./fixed-sleeps.ts";
 import { fail, files, lineOf, read, repo, stripComments } from "./source-scan.ts";
 
 const SOURCES = [...files("{src,server,shared,scripts,site,telemetry,integrations,tui}/**/*.{ts,tsx,mjs,js}"), "vite.config.ts"];
@@ -118,16 +118,22 @@ describe("the ratchets' base", () => {
   });
 });
 
-describe("fixed sleeps", () => {
-  const baseline = JSON.parse(read("scripts/fixed-sleeps.json")) as Record<string, number>;
+/**
+ * Holds every file to its count in `json`, which may only shrink: never above the one at the ratchets' base, and
+ * lowered when the code has fewer. `instead` says what to do in place of raising it.
+ */
+function countRatchet({ json, what, counts, list, print, instead }: {
+  json: string; what: string; counts: () => Record<string, number>; list: (file: string) => string[]; print: string; instead: string;
+}): void {
+  const baseline = JSON.parse(read(json)) as Record<string, number>;
 
   const committed = (): { counts: Record<string, number>; renames: Map<string, string> } | null => {
     const base = ratchetBase();
-    const json = base === null ? null : atBase(base, "scripts/fixed-sleeps.json");
-    return base === null || json === null ? null : { counts: JSON.parse(json) as Record<string, number>, renames: renamesSince(base) };
+    const text = base === null ? null : atBase(base, json);
+    return base === null || text === null ? null : { counts: JSON.parse(text) as Record<string, number>, renames: renamesSince(base) };
   };
 
-  it("never raises scripts/fixed-sleeps.json above the one at the ratchets' base", () => {
+  it(`never raises ${json} above the one at the ratchets' base`, () => {
     const at = committed();
     if (at === null) return;
     const before = at.counts;
@@ -136,22 +142,31 @@ describe("fixed sleeps", () => {
     fail([
       ...Object.entries(baseline).filter(([file, count]) => count > was(file)).map(([file, count]) => `${file}: ${count}, the base has ${was(file)}`),
       ...total(baseline) > total(before) ? [`total: ${total(baseline)}, the base has ${total(before)}`] : [],
-    ], "scripts/fixed-sleeps.json may only shrink: take the new fixed sleep out of the code instead (see the message of the test above for how). A renamed file takes its entry along with the same count, which keeps the total.");
+    ], `${json} may only shrink: ${instead} A renamed file takes its entry along with the same count, which keeps the total.`);
   });
 
-  it("adds no fixed sleep and lowers the baseline when one goes", () => {
-    const counts = fixedSleepCounts();
-    const grown = Object.entries(counts).filter(([file, count]) => count > (baseline[file] ?? 0));
-    fail(grown.flatMap(([file, count]) => [`${file}: ${count} fixed sleeps, baseline ${baseline[file] ?? 0}`, ...fixedSleeps(file).map((line) => `  ${line}`)]),
-      "Wait for the condition, not for a set time (AGENTS.md: bounded polls and deadlines, never fixed sleeps): poll in a loop bounded by a deadline (`const deadline = Date.now() + 10_000; while (!done()) { if (Date.now() > deadline) throw new Error(\"…\"); await Bun.sleep(25); }`), or race a timeout against the event (`Promise.race`). A wait that must be fixed (proving that nothing arrives, a settle gap herdr needs) says so with `// fixed wait: <why>` on its line or the line above. Never raise scripts/fixed-sleeps.json; when a file was renamed, move its entry to the new path with the same count.");
-    const shrunk = Object.entries(baseline).filter(([file, count]) => (counts[file] ?? 0) < count);
-    fail(shrunk.map(([file, count]) => `${file}: ${counts[file] ?? 0} now, baseline ${count}`),
-      "Fixed sleeps went away: lower these entries in scripts/fixed-sleeps.json to the counts shown (remove an entry at 0; `bun scripts/fixed-sleeps.ts` prints them all), so they cannot come back.");
+  it(`adds no ${what} and lowers the baseline when one goes`, () => {
+    const now = counts();
+    const grown = Object.entries(now).filter(([file, count]) => count > (baseline[file] ?? 0));
+    fail(grown.flatMap(([file, count]) => [`${file}: ${count} ${what}s, baseline ${baseline[file] ?? 0}`, ...list(file).map((line) => `  ${line}`)]),
+      `${instead} Never raise ${json}; when a file was renamed, move its entry to the new path with the same count.`);
+    const shrunk = Object.entries(baseline).filter(([file, count]) => (now[file] ?? 0) < count);
+    fail(shrunk.map(([file, count]) => `${file}: ${now[file] ?? 0} now, baseline ${count}`),
+      `These ${what}s went away: lower their entries in ${json} to the counts shown (remove an entry at 0; \`${print}\` prints them all), so they cannot come back.`);
   });
 
   it("lists only files that exist", () => {
     fail(Object.keys(baseline).filter((file) => !existsSync(join(repo, file)) || !sleepFiles().includes(file)),
-      "Remove these entries from scripts/fixed-sleeps.json: the files are gone or no longer covered. A renamed file keeps its entry under the new path, with the same count.");
+      `Remove these entries from ${json}: the files are gone or no longer covered. A renamed file keeps its entry under the new path, with the same count.`);
+  });
+}
+
+const WAIT_FOR_THE_CONDITION = "Wait for the condition, not for a set time (AGENTS.md: bounded polls and deadlines, never fixed sleeps): poll in a loop bounded by a deadline (`const deadline = Date.now() + 10_000; while (!done()) { if (Date.now() > deadline) throw new Error(\"…\"); await Bun.sleep(25); }`), or race a timeout against the event (`Promise.race`).";
+
+describe("fixed sleeps", () => {
+  countRatchet({
+    json: "scripts/fixed-sleeps.json", what: "fixed sleep", counts: fixedSleepCounts, list: fixedSleeps, print: "bun scripts/fixed-sleeps.ts",
+    instead: `${WAIT_FOR_THE_CONDITION} A wait that must be fixed (proving that nothing arrives, a settle gap herdr needs) says so with \`// fixed wait: <why>\` on its line or the line above, and counts in scripts/fixed-waits.json instead.`,
   });
 
   it("tells a fixed sleep from a bounded poll", () => {
@@ -186,6 +201,110 @@ describe("fixed sleeps", () => {
     expect(found("const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));\nawait tick();\nawait tick(20);")).toBe(1);
     expect(found("const wait = io.wait ?? Bun.sleep;\nwhile (Date.now() < deadline) await wait(25);")).toBe(0);
     expect(found("async function flood() {\n  await Bun.sleep(150);\n  send();\n}\nawait flood();\nawait flood();")).toBe(1);
+  });
+});
+
+/**
+ * Finding or ending processes by name (pkill, killall, pgrep -f) reaches every process on the PC, the user's own session
+ * and test app included: a lane once ended the maintainer's test app with `pkill -f server/index.ts`. The name must hold
+ * something the run made (a mkdtemp directory, a randomUUID tag, its own pid), not a fixed string or an id herdr gave
+ * out, which another session's pane has too.
+ */
+const KILLS_BY_NAME = /\b(pkill|killall|pgrep)\b/g;
+/** They run these commands only inside a container they start. */
+const IN_A_CONTAINER = ["scripts/fresh-install-docker.ts", "scripts/join/join.contract.test.ts"];
+
+/** One argument of the command, quoted or bare, or what ends the command (`]`, `)`, `;`, `||`, a redirection …). */
+const ARGUMENT = /`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\|\||&&|[)\];|<>]|(?:\$\{[^}]*\}|[^\s"'`,[\]();|&<>])+(?:\([^()]*\))?/g;
+const unquoted = (argument: string): string => argument.replace(/^["'`]|["'`]$/g, "");
+
+/** What an argument takes from the run: the values it interpolates, or a whole JavaScript expression. None for a fixed string. */
+function namesIn(argument: string, shell: boolean): string[] {
+  if (shell || argument.startsWith("`")) return [...argument.matchAll(/\$\{([^}]+)\}|\$([A-Za-z_]\w*)/g)].map((match) => match[1] ?? match[2]!);
+  return /^["']/.test(argument) ? [] : [argument];
+}
+
+/**
+ * The lines that find or end processes by a name the run did not make (`pgrep` only with `-f`). The name is the command's
+ * last argument that is no option (`-f`, `-KILL`, `-${signal}`); a command scoped to a parent the run names
+ * (`pgrep -P <pid>`) passes too.
+ */
+function killsByName(file: string, text: string): string[] {
+  const code = file.endsWith(".sh") ? text.replace(/(^|\s)#.*$/gm, "$1") : stripComments(text);
+  return [...code.matchAll(KILLS_BY_NAME)].flatMap(({ index: at, 1: command }) => {
+    const after = code.slice(at + command!.length);
+    // `["pkill", "-f", tag]` is an argument list, which may go on over lines; anything else (a .sh line, a command in a
+    // string) is a shell's, which ends with its line
+    const list = /["']$/.test(code.slice(0, at)) && /^["']/.test(after);
+    const shell = !list;
+    const args: string[] = [];
+    for (const [token] of (list ? after.slice(1) : after.slice(0, (after + "\n").indexOf("\n"))).matchAll(ARGUMENT)) {
+      if (/^(?:\|\||&&|[)\];|<>])$/.test(token)) {
+        if (token === ">" && /^\d$/.test(args.at(-1) ?? "")) args.pop();
+        break;
+      }
+      args.push(token);
+    }
+    if (command === "pgrep" && !args.some((arg) => /^-[a-zA-Z]*f[a-zA-Z]*$/.test(unquoted(arg)))) return [];
+    const scoped = args.some((arg, i) => unquoted(arg) === "-P" && namesIn(args[i + 1] ?? "", shell).length > 0);
+    const names = namesIn(args.filter((arg) => !unquoted(arg).startsWith("-")).at(-1) ?? "", shell);
+    if (scoped || (names.length > 0 && !names.some((name) => /terminal|pane/i.test(name)))) return [];
+    const line = lineOf(code, at);
+    return [`${file}:${line}: ${text.split("\n")[line - 1]!.trim()}`];
+  }).filter((offender, at, all) => all.indexOf(offender) === at);
+}
+
+describe("killing by name", () => {
+  const KILL_FILES = files("{server,src,shared,scripts,site,telemetry,integrations,tui,app}/**/*.{ts,tsx,mjs,js,sh}")
+    .filter((file) => file !== "scripts/conventions.test.ts");
+
+  it("names only what the run made", () => {
+    fail(KILL_FILES.filter((file) => !IN_A_CONTAINER.includes(file)).flatMap((file) => killsByName(file, read(file))),
+      "pkill, killall and pgrep -f reach every process on the PC, the user's own session and test app included. Name what this run made: a mkdtemp directory or a randomUUID tag in the command line (`pgrep -f ${tag}`), or the pids it started (scripts/own-processes.ts: `ownProcesses(/terminal attach t1$/)` lists the matching processes under this one). A herdr terminal or pane id is no such name: another session has the same ids.");
+  });
+
+  it("lists only files that still kill by name inside their container", () => {
+    fail(IN_A_CONTAINER.filter((file) => !existsSync(join(repo, file)) || killsByName(file, read(file)).length === 0),
+      "IN_A_CONTAINER in scripts/conventions.test.ts lets these files kill by name, and they no longer do: take them out.");
+  });
+
+  it("tells a name the run made from one any process can have", () => {
+    const found = (code: string, file = "example.ts") => killsByName(file, code).length;
+    expect(found("Bun.spawnSync([\"pkill\", \"-f\", \"server/index.ts\"]);")).toBe(1);
+    expect(found("pkill -f server/index.ts", "example.sh")).toBe(1);
+    expect(found("killall bun", "example.sh")).toBe(1);
+    expect(found("Bun.spawn([\"pkill\", \"-f\", `^[^ ]*herdr terminal attach ${terminal}$`]);")).toBe(1);
+    expect(found("Bun.spawnSync([\"pgrep\", \"-f\", `terminal session observe ${paneId}`]);")).toBe(1);
+    expect(found("Bun.spawn([\"pkill\", `-${name}`, \"-f\", \"server/index.ts\"]);")).toBe(1);
+    expect(found("pkill -f \"server/index.ts\" 2>/dev/null || true", "example.sh")).toBe(1);
+    expect(found("await m.sh(`pkill -f ${tag}-x; pkill -f server/index.ts`);")).toBe(1);
+    expect(found("Bun.spawn([\"pkill\", `-${name}`, \"-f\", s.log]);")).toBe(0);
+    expect(found("Bun.spawnSync([\"sudo\", \"-n\", \"pkill\", \"-u\", username]);")).toBe(0);
+    expect(found("Bun.spawnSync([\n  \"pgrep\",\n  \"-f\",\n  \"server/index.ts\",\n]);")).toBe(1);
+    expect(found("Bun.spawnSync([\n  \"pkill\",\n  \"-f\",\n  tag,\n]);")).toBe(0);
+    expect(found("Bun.spawnSync([\"pgrep\", \"-f\", tag]);")).toBe(0);
+    expect(found("spawnSync(\"pkill\", [\"-KILL\", \"-f\", tempDir]);")).toBe(0);
+    expect(found("pkill -f \"$r/remote.sh\" || true", "example.sh")).toBe(0);
+    expect(found("Bun.spawnSync([\"pgrep\", \"-P\", String(process.pid), \"-f\", \"pty-host.mjs\"]);")).toBe(0);
+    expect(found("kill -HUP \"$(pgrep -o -x sshd)\"", "example.sh")).toBe(0);
+    expect(found("# pkill -f server/index.ts", "example.sh")).toBe(0);
+    expect(found("// pkill -f server/index.ts")).toBe(0);
+  });
+});
+
+describe("waits marked fixed", () => {
+  countRatchet({
+    json: "scripts/fixed-waits.json", what: "marked fixed wait", counts: markedWaitCounts, list: markedWaits, print: "bun scripts/fixed-sleeps.ts --marked",
+    instead: `A \`// fixed wait:\` takes a wait out of scripts/fixed-sleeps.json, not out of this count. ${WAIT_FOR_THE_CONDITION} To keep a new wait that must be fixed, take out one that no longer has to be.`,
+  });
+
+  it("counts the set-time waits a marker excuses, and nothing else", () => {
+    const found = (code: string) => markedWaits("example.ts", code).length;
+    expect(found("// fixed wait: nothing may arrive in this time\nawait page.waitForTimeout(500);")).toBe(1);
+    expect(found("await Bun.sleep(300); // fixed wait: a settle gap herdr needs")).toBe(1);
+    expect(found("await Bun.sleep(300);")).toBe(0);
+    expect(found("// fixed wait: polled\nwhile (!done() && Date.now() < deadline) await Bun.sleep(25);")).toBe(0);
+    expect(found("// fixed wait: raced\nawait Promise.race([event, Bun.sleep(1000)]);")).toBe(0);
   });
 });
 

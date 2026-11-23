@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { stripVTControlCharacters } from "node:util";
 import { PtySession, type PtySessionOptions } from "../server/pty/session.ts";
 import { herdrRpc, herdrSocketPath } from "../server/herdr/client.ts";
+import { ownProcesses } from "./own-processes.ts";
 
 type Backend = "sidecar" | "native";
 type Session = Pick<PtySession, "write" | "resize" | "kill">;
@@ -172,7 +173,7 @@ async function herdrCompatibility(backend: Backend) {
     assert.equal(ended, false);
     session.kill();
     session = undefined;
-    await until(() => Bun.spawnSync(["pgrep", "-f", `terminal attach ${terminalId}`]).stdout.length === 0, "attach cleanup", 5000);
+    await until(() => ownProcesses(new RegExp(`terminal attach ${terminalId}`)).length === 0, "attach cleanup", 5000);
     return { attach: true, utf8Input: true, cleanup: true };
   } finally {
     session?.kill();
