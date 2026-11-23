@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, devices, type Browser, type BrowserContext, type Page } from "playwright-core";
@@ -19,7 +18,6 @@ import { serveDemo } from "./demo-server.ts";
  * before. No herdr session is opened; the app is served on loopback from a temporary directory.
  */
 const app = mkdtempSync(join(tmpdir(), "herdr-security-summary-demo-"));
-const evidence = process.env["UI_EVIDENCE_DIR"] || "";
 const SECTION = '.settings-body:not([hidden]) [data-section="access"]';
 const LAN = '[data-testid="lan-exposure-notice"]';
 const LAN_TEXT = "Anyone who can reach 0.0.0.0 on your network can type into every pane: no access token is set and no device is paired yet.Devices and PCs";
@@ -191,106 +189,31 @@ async function check(browser: Browser, width: 390 | 1440): Promise<void> {
   }
 }
 
-const STATES: Array<{ state: string; variant: string; desktopOnly?: boolean; settings?: boolean }> = [
-  { state: "rest", variant: "known" },
-  { state: "focus", variant: "known" },
-  { state: "hover", variant: "known", desktopOnly: true },
-  { state: "watch", variant: "watch" },
-  { state: "older", variant: "older" },
-  { state: "loading", variant: "loading" },
-  { state: "error", variant: "error" },
-  { state: "long", variant: "unavailable" },
-  { state: "proxy", variant: "proxy" },
-  { state: "funnel", variant: "funnel" },
-  { state: "tailnet", variant: "tailnet" },
-  { state: "unknown", variant: "unknown" },
-  { state: "lan", variant: "unknown", settings: false },
-  { state: "offline", variant: "known" },
-  { state: "end", variant: "known" },
-];
-
-type Captured = { file: string; width: number; height: number; theme: string; language: string; state: string; variant: string; sha256: string; capturedAt: string };
-
-async function measure(page: Page): Promise<unknown> {
-  return await page.evaluate((section) => {
-    const rgb = (value: string): number[] => (value.match(/[\d.]+/g) ?? []).map(Number);
-    const lum = ([r, g, b]: number[]): number => { const f = (c: number) => { const s = c / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r!) + 0.7152 * f(g!) + 0.0722 * f(b!); };
-    const behind = (node: Element): string => { for (let at: Element | null = node; at; at = at.parentElement) { const bg = getComputedStyle(at).backgroundColor; const parts = rgb(bg); if (parts.length >= 3 && (parts.length < 4 || parts[3]! > 0.99)) return bg; } return "rgb(255, 255, 255)"; };
-    const ratio = (node: Element): number => { const a = lum(rgb(getComputedStyle(node).color)); const b = lum(rgb(behind(node))); return Math.round(((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)) * 100) / 100; };
-    const root = document.querySelector(section);
-    const texts = root ? [...root.querySelectorAll(".settings-label, .settings-fact, .settings-description, h3")].map((node) => ({
-      class: node.className, text: node.textContent?.trim().slice(0, 40), fontSize: getComputedStyle(node).fontSize, contrast: ratio(node), userSelect: getComputedStyle(node).userSelect,
-    })) : [];
-    const actions = [...document.querySelectorAll<HTMLElement>(".settings-body:not([hidden]) [data-section='devices'] button, .settings-dialog .modal-header button")]
-      .filter((node) => node.getBoundingClientRect().width > 0)
-      .map((node) => { const box = node.getBoundingClientRect(); return { name: node.getAttribute("aria-label") ?? node.textContent?.trim().slice(0, 30), width: Math.round(box.width), height: Math.round(box.height) }; });
-    const active = document.activeElement as HTMLElement | null;
-    const focus = active && active !== document.body ? { name: active.getAttribute("aria-label") ?? active.textContent?.trim().slice(0, 30), focusVisible: active.matches(":focus-visible"), outline: getComputedStyle(active).outlineStyle + " " + getComputedStyle(active).outlineWidth, boxShadow: getComputedStyle(active).boxShadow } : null;
-    const pointed = [...document.querySelectorAll<HTMLElement>(":hover")].at(-1)?.closest<HTMLElement>("button, a, summary") ?? null;
-    const hover = pointed && pointed !== document.documentElement ? { name: pointed.getAttribute("aria-label") ?? pointed.textContent?.trim().slice(0, 30), background: getComputedStyle(pointed).backgroundColor } : null;
-    return { texts, actions, focus, hover };
-  }, SECTION);
-}
-
-async function capture(browser: Browser, themes: ReadonlyArray<"light" | "dark">): Promise<void> {
-  const shots: Captured[] = [];
-  const measurements: Record<string, unknown> = {};
-  for (const width of [390, 1440] as const) {
-    for (const theme of themes) {
-      for (const language of width === 390 ? ["en", "ko"] as const : ["en"] as const) {
-        const label = (name: string) => language === "ko" ? KO[name] ?? name : name;
-        const context = await browser.newContext(width === 390 ? { ...devices["iPhone 14"], locale: language } : { viewport: { width: 1440, height: 900 }, locale: language });
-        try {
-          await holdOpeningTurn(context);
-          await pairedDevices(context);
-          await context.addInitScript((settings) => localStorage.setItem("ovis:settings", settings), JSON.stringify({ language, theme }));
-          for (const { state, variant, desktopOnly, settings } of STATES) {
-            if (desktopOnly && width !== 1440) continue;
-            const page = await open(context, variant, settings ?? true, label);
-            if (settings === false) await page.locator(LAN).waitFor();
-            if (state === "focus" || state === "hover") {
-              await page.locator(SECTION).focus();
-              await page.keyboard.press("Shift+Tab");
-              const neighbour = page.locator(":focus");
-              await neighbour.scrollIntoViewIfNeeded();
-              if (state === "focus") await page.waitForFunction(() => document.activeElement?.matches(":focus-visible") === true);
-              else {
-                await neighbour.evaluate((node) => (node as HTMLElement).blur());
-                await page.getByRole("tab", { name: "Devices and PCs", exact: true }).hover();
-              }
-            }
-            if (state === "offline") {
-              await page.evaluate(() => { sessionStorage.setItem("ovis:demo-security", "error"); document.dispatchEvent(new Event("visibilitychange")); });
-              await page.locator(`${SECTION} [role='status']`, { hasText: label(STATUS["error"]!) }).waitFor();
-            }
-            if (state === "end") await page.locator(".settings-body:not([hidden])").evaluate((body) => { body.scrollTop = body.scrollHeight; });
-            else if (settings !== false && state !== "focus" && state !== "hover") await page.locator(SECTION).scrollIntoViewIfNeeded();
-            if (state !== "focus") await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-            await page.evaluate(() => document.fonts.ready);
-            const name = `security-summary-${width}-${theme}${language === "ko" ? "-ko" : ""}-${state}.png`;
-            const png = await page.screenshot({ path: join(evidence, name), animations: "disabled" });
-            const viewport = page.viewportSize()!;
-            shots.push({ file: name, width: viewport.width, height: viewport.height, theme, language, state, variant, sha256: createHash("sha256").update(png).digest("hex"), capturedAt: new Date().toISOString() });
-            if (settings !== false) measurements[name] = await measure(page);
-            await page.close();
-          }
-        } finally {
-          await context.close();
-        }
-      }
+/** a Korean phone in the light theme: each fact, its value and an unanswered check in Korean */
+async function checkKorean(browser: Browser): Promise<void> {
+  const ko = (name: string): string => { assert.ok(KO[name], `"${name}" has a Korean entry`); return KO[name]!; };
+  const context = await browser.newContext({ ...devices["iPhone 14"], locale: "ko" });
+  try {
+    await holdOpeningTurn(context);
+    await pairedDevices(context);
+    await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "ko", theme: "light" })));
+    for (const variant of ["known", "error"]) {
+      const page = await open(context, variant, true, ko);
+      const seen = await read(page);
+      if (variant === "known") assert.deepEqual(seen.facts, Object.fromEntries(Object.entries(known).map(([name, value]) => [ko(name), ko(value)])), "ko: each fact and its value in Korean");
+      else assert.equal(seen.status, ko(STATUS[variant]!), "ko: an unanswered check says so in Korean");
+      assert.deepEqual(seen.overflow, [], `${variant} ko: nothing clipped or scrolling sideways`);
+      await page.close();
     }
+    assert.deepEqual(pageErrors, [], "no page raised an error");
+    console.log("PASS @390 Korean, light: the facts and the error state in Korean, nothing clipped");
+  } finally {
+    await context.close();
   }
-  assert.deepEqual(pageErrors, [], "no page raised an error");
-  writeFileSync(join(evidence, `security-summary-captures-${themes.join("-")}.json`), JSON.stringify(shots, null, 1));
-  writeFileSync(join(evidence, `security-summary-measurements-${themes.join("-")}.json`), JSON.stringify(measurements, null, 1));
-  console.log(`captured ${shots.length} screenshots into ${evidence}`);
 }
-
-export type SecuritySummaryPart = "checks" | "captures-light" | "captures-dark";
 
 let url = "";
-export async function runSecuritySummary(part: SecuritySummaryPart): Promise<void> { try {
-  if (part !== "checks" && !evidence) { console.log(`SKIP ${part} of the security summary: UI_EVIDENCE_DIR is not set, and this part only writes its captures there`); return; }
+export async function runSecuritySummary(): Promise<void> { try {
   await buildDemoApp(app);
   const index = join(app, "index.html");
   writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>${DEMO_FILE_PREVIEW_SCRIPT}\n    <script type="module"`));
@@ -299,10 +222,9 @@ export async function runSecuritySummary(part: SecuritySummaryPart): Promise<voi
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
-      if (part === "checks") {
-        await check(browser, 1440);
-        await check(browser, 390);
-      } else { mkdirSync(evidence, { recursive: true }); await capture(browser, [part === "captures-light" ? "light" : "dark"]); }
+      await check(browser, 1440);
+      await check(browser, 390);
+      await checkKorean(browser);
     } finally {
       await browser.close();
     }

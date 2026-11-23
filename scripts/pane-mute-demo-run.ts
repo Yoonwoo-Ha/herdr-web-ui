@@ -13,7 +13,8 @@ import { handlePreferencesRequest, PreferenceStore } from "../server/preferences
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { contextMenuKey } from "./context-menu-key.ts";
-import { pressInSettings, sheetRisen } from "./settings-page.ts";
+import { sheetRisen } from "./settings-page.ts";
+import { KO } from "../src/lib/i18n.ko.ts";
 
 interface RosterPatch { secondPc?: "connected" | "disconnected" | null; longLabel?: { paneId: string; label: string } | null; empty?: boolean; loading?: boolean }
 declare global {
@@ -265,8 +266,7 @@ async function quiet(page: Page, label: string): Promise<void> {
   assert.deepEqual(seen, { notifications: [], chimes: 0 }, `${label}: no notification and no chime`);
 }
 
-export async function runPaneMute(part: "behaviour" | "captures"): Promise<void> { try {
-  if (part === "captures" && !evidence) { console.log("SKIP the captures of Mute alerts: UI_EVIDENCE_DIR is not set, and this part only writes its captures there"); return; }
+export async function runPaneMute(): Promise<void> { try {
   await buildDemoApp(app);
   const index = join(app, "index.html");
   const html = readFileSync(index, "utf8");
@@ -324,291 +324,242 @@ export async function runPaneMute(part: "behaviour" | "captures"): Promise<void>
       const checks: string[] = [];
 
       // the behaviour sections stay together and in this order: the finish and barrier counters run on from one to the next
-      if (part === "behaviour") {
-        openStore("pre-feature");
-        {
-          const context = await newContext(browser, false, {});
-          const page = await openTab(context);
-          assert.deepEqual(await getPreferences(page), { revision: 3, settings: {}, pins: [], muted_panes: [] }, "GET of a pre-feature document carries the empty list");
-          assert.deepEqual(await page.evaluate(() => window.muteFixture.documents[0]), { revision: 3, settings: {}, pins: [], muted_panes: [] }, "the stream's opening document carries the empty list");
-          await openMenu(page, false, "local", P);
-          assert.equal(await muteItem(page).getAttribute("aria-checked"), "false", "the row menu offers Mute alerts, unchecked");
-          await muteItem(page).click();
-          const saved = await storeHolds("the first mute", (document) => document.muted_panes?.includes(key) === true);
-          const { state_id: savedId, ...savedRest } = saved;
-          assert.match(savedId ?? "", /^[0-9a-f]{32}$/, "the first save names the state folder");
-          assert.deepEqual(savedRest, { revision: 4, settings: {}, pins: [], muted_panes: [key] }, "the first mute is saved over the pre-feature document");
-          await page.waitForFunction((revision) => window.muteFixture.documents.some((document) => document.revision === revision), saved.revision);
-          await row(page, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "attached" });
-          assert.deepEqual(errorsOf(page), []);
-          await context.close();
-          checks.push("pre-feature document: GET and the opening stream say muted_panes: [], and the first mute is saved and broadcast");
-        }
-        openStore("fresh");
-        {
-          const context = await newContext(browser, false, {});
-          const page = await openTab(context);
-          assert.deepEqual(await getPreferences(page), { revision: 0, settings: {}, muted_panes: [] }, "GET of a fresh store carries the empty list");
-          await toggleMute(page, false, "local", P);
-          const saved = await storeHolds("the first mute of a fresh store", (document) => document.muted_panes?.includes(key) === true);
-          const { state_id: savedId, ...savedRest } = saved;
-          assert.match(savedId ?? "", /^[0-9a-f]{32}$/, "the first save names the state folder");
-          assert.deepEqual(savedRest, { revision: 1, settings: {}, pins: [], muted_panes: [key] }, "the first mute is saved over the fresh store");
-          await context.close();
-          checks.push("fresh store: GET says muted_panes: [], and the first mute is saved as revision 1");
-        }
-
-        openStore("fresh");
+      openStore("pre-feature");
+      {
         const context = await newContext(browser, false, {});
-        const a = await openTab(context);
-        const b = await openTab(context);
-        // a key was pressed on the page: its chimes may play from here (lib/alertSound.ts unlocks on a gesture)
-        await a.keyboard.press("Shift");
-        await toggleMute(a, false, "local", P);
-        const muted = await storeHolds("tab A's mute", (document) => document.muted_panes?.includes(key) === true);
-        assert.equal(muted.revision, 1);
-        await b.waitForFunction((revision) => window.muteFixture.documents.some((document) => document.revision === revision), muted.revision);
-        await row(b, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "attached" });
-        await row(a, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "attached" });
-        checks.push("tab B received tab A's mute as preference revision 1 and draws the indicator");
-        await a.evaluate(() => window.muteFixture.roster({ secondPc: "connected" }));
-        await row(a, "pc-2", P).waitFor({ state: "attached" });
-        await a.locator(".droplet").waitFor({ state: "detached" });
-        await statusFrame(a, "local", P, "working");
-        await statusFrame(a, "local", P, "blocked");
-        await status(a, "local", P, "blocked").waitFor({ state: "attached" });
-        await quiet(a, "muted pane blocked");
-        await statusFrame(a, "local", P, "done");
-        await status(a, "local", P, "done").waitFor({ state: "attached" });
-        await quiet(a, "muted pane done");
-        await endedFrame(a, "local", P);
-        await quiet(a, "muted pane ended");
-        checks.push("local P blocked, done and exited while muted: no droplet, no chime, no notification; its row still shows each status");
-        await statusFrame(a, "pc-2", P, "working");
-        await statusFrame(a, "pc-2", P, "blocked");
-        await droplet(a).waitFor({ state: "visible" });
-        assert.match(await droplet(a).getAttribute("aria-label") ?? "", /Plan the config file/);
-        assert.equal(await a.locator(".droplet").getAttribute("data-kind"), "blocked");
-        await capture(a, "dark", "en", "alert-blocked");
-        await a.waitForFunction(() => window.muteFixture.spies.oscillators >= 2);
-        await a.locator(".droplet").waitFor({ state: "detached" });
-        await statusFrame(a, "pc-2", P, "done");
-        await droplet(a).waitFor({ state: "visible" });
-        assert.equal(await a.locator(".droplet").getAttribute("data-kind"), "done");
-        await a.locator(".droplet").waitFor({ state: "detached" });
-        await endedFrame(a, "pc-2", P);
-        await droplet(a).waitFor({ state: "visible" });
-        assert.equal(await a.locator(".droplet").getAttribute("data-kind"), "ended");
-        await a.locator(".droplet").waitFor({ state: "detached" });
-        let seen = await spies(a);
-        assert.ok(seen.chimes >= 1, `the other PC's pane chimed: ${JSON.stringify(seen)}`);
-        assert.deepEqual(seen.notifications, [], "a visible tab shows no system notification");
-        checks.push("pc-2's same-named P: droplets for blocked, done and ended, and chimes, as before");
-        await a.evaluate(() => window.muteFixture.hide(true));
-        await statusFrame(a, "local", P, "working");
-        await statusFrame(a, "local", P, "blocked");
-        await status(a, "local", P, "blocked").waitFor({ state: "attached" });
-        await barrier(a);
-        seen = await spies(a);
-        assert.deepEqual(seen.notifications, [], "the muted pane raises no notification in a hidden tab");
-        await statusFrame(a, "pc-2", P, "working");
-        await statusFrame(a, "pc-2", P, "blocked");
-        await a.waitForFunction(() => window.muteFixture.spies.notifications.length > 0);
-        seen = await spies(a);
-        assert.equal(seen.notifications.length, 1);
-        assert.match(seen.notifications[0]!.title, /Laptop · Plan the config file/);
-        assert.equal(seen.notifications[0]!.body, "waiting for your input");
-        await a.evaluate(() => window.muteFixture.hide(false));
-        checks.push("hidden tab: no notification for muted local P, one for pc-2's P");
-        const chimesBefore = seen.chimes;
-        await toggleMute(a, false, "local", P);
-        await storeHolds("tab A's unmute", (document) => document.muted_panes?.length === 0);
-        await row(a, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "detached" });
-        await row(b, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "detached" });
-        await statusFrame(a, "local", P, "blocked");
-        await barrier(a);
-        assert.equal(await droplet(a).count(), 0, "the question that came while muted is not told by the unmute");
-        await statusFrame(a, "local", P, "working");
-        await statusFrame(a, "local", P, "blocked");
-        await droplet(a).waitFor({ state: "visible" });
-        assert.match(await droplet(a).getAttribute("aria-label") ?? "", /Plan the config file/);
-        await a.waitForFunction((before) => window.muteFixture.spies.oscillators / 2 > before, chimesBefore);
-        await a.locator(".droplet").waitFor({ state: "detached" });
-        checks.push("after the unmute only a new transition alerts");
-        const theirs = paneStorageId("pc-2", P);
-        await toggleMute(a, false, "pc-2", P);
-        await storeHolds("the other PC's mute", (document) => document.muted_panes?.includes(theirs) === true);
-        await a.evaluate(() => window.muteFixture.roster({ secondPc: null }));
-        await row(a, "pc-2", P).waitFor({ state: "detached" });
-        await toggleMute(a, false, "local", P);
-        let kept = await storeHolds("a mute made with the other PC missing", (document) => document.muted_panes?.includes(key) === true);
-        assert.deepEqual([...kept.muted_panes!].sort(), [theirs, key].sort(), "a PC missing from the roster keeps its mute");
-        await a.evaluate(() => window.muteFixture.roster({ secondPc: "disconnected" }));
-        await row(a, "pc-2", P).and(a.locator(".is-offline")).waitFor({ state: "attached" });
-        await toggleMute(a, false, "local", P);
-        kept = await storeHolds("an unmute made with the other PC away", (document) => document.muted_panes?.includes(key) === false);
-        assert.deepEqual(kept.muted_panes, [theirs], "a PC that is away keeps its mute");
-        await a.evaluate(() => window.muteFixture.roster({ secondPc: "connected" }));
-        await row(a, "pc-2", P).and(a.locator(":not(.is-offline)")).waitFor({ state: "attached" });
-        await row(a, "pc-2", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "attached" });
-        await b.evaluate(() => window.muteFixture.roster({ secondPc: "connected" }));
-        await row(b, "pc-2", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "attached" });
-        assert.deepEqual(errorsOf(a), []);
-        assert.deepEqual(errorsOf(b), []);
-        checks.push("a PC missing from the roster or away keeps its mute through this page's changes, and shows it again when back");
+        const page = await openTab(context);
+        assert.deepEqual(await getPreferences(page), { revision: 3, settings: {}, pins: [], muted_panes: [] }, "GET of a pre-feature document carries the empty list");
+        assert.deepEqual(await page.evaluate(() => window.muteFixture.documents[0]), { revision: 3, settings: {}, pins: [], muted_panes: [] }, "the stream's opening document carries the empty list");
+        await openMenu(page, false, "local", P);
+        assert.equal(await muteItem(page).getAttribute("aria-checked"), "false", "the row menu offers Mute alerts, unchecked");
+        await muteItem(page).click();
+        const saved = await storeHolds("the first mute", (document) => document.muted_panes?.includes(key) === true);
+        const { state_id: savedId, ...savedRest } = saved;
+        assert.match(savedId ?? "", /^[0-9a-f]{32}$/, "the first save names the state folder");
+        assert.deepEqual(savedRest, { revision: 4, settings: {}, pins: [], muted_panes: [key] }, "the first mute is saved over the pre-feature document");
+        await page.waitForFunction((revision) => window.muteFixture.documents.some((document) => document.revision === revision), saved.revision);
+        await row(page, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "attached" });
+        assert.deepEqual(errorsOf(page), []);
         await context.close();
+        checks.push("pre-feature document: GET and the opening stream say muted_panes: [], and the first mute is saved and broadcast");
+      }
+      openStore("fresh");
+      {
+        const context = await newContext(browser, false, {});
+        const page = await openTab(context);
+        assert.deepEqual(await getPreferences(page), { revision: 0, settings: {}, muted_panes: [] }, "GET of a fresh store carries the empty list");
+        // by keys alone: the context-menu key opens the row menu, ArrowDown reaches Mute alerts, Enter flips it
+        await row(page, "local", P).locator(".agent-select").focus();
+        await contextMenuKey(page);
+        await page.locator(".row-menu").waitFor();
+        await page.waitForFunction(() => document.activeElement?.closest(".row-menu") !== null);
+        await page.keyboard.press("ArrowDown");
+        await page.waitForFunction(() => document.activeElement?.getAttribute("role") === "menuitemcheckbox");
+        await page.keyboard.press("Enter");
+        await page.locator(".row-menu").waitFor({ state: "detached" });
+        const saved = await storeHolds("the first mute of a fresh store", (document) => document.muted_panes?.includes(key) === true);
+        const { state_id: savedId, ...savedRest } = saved;
+        assert.match(savedId ?? "", /^[0-9a-f]{32}$/, "the first save names the state folder");
+        assert.deepEqual(savedRest, { revision: 1, settings: {}, pins: [], muted_panes: [key] }, "the first mute is saved over the fresh store");
+        await context.close();
+        checks.push("fresh store: GET says muted_panes: [], and the first mute, made by keys alone, is saved as revision 1");
+      }
 
-        openStore("fresh");
-        fixture.store.set({ settings: {}, pins: [] });
-        fixture.old = true;
-        {
-          const context = await newContext(browser, false, {});
-          const page = await openTab(context);
-          assert.equal("muted_panes" in (await getPreferences(page)), false, "the older server's document has no list");
-          await openMenu(page, false, "local", P);
-          assert.equal(await muteItem(page).count(), 0, "no Mute alerts on an older server");
-          await page.locator('.row-menu [role="menuitem"]', { hasText: "Pin agent" }).click();
-          await storeHolds("the pin", (document) => (document.pins?.length ?? 0) > 0);
-          assert.ok(fixture.puts.length > 0 && fixture.puts.every((body) => !("muted_panes" in body)), `no fabricated list was sent: ${JSON.stringify(fixture.puts)}`);
-          assert.deepEqual(errorsOf(page), []);
-          await context.close();
-          checks.push("older server without muted_panes: the row menu offers no mute and no list is uploaded");
-        }
-        fixture.old = false;
+      openStore("fresh");
+      const context = await newContext(browser, false, {});
+      const a = await openTab(context);
+      const b = await openTab(context);
+      // a key was pressed on the page: its chimes may play from here (lib/alertSound.ts unlocks on a gesture)
+      await a.keyboard.press("Shift");
+      await toggleMute(a, false, "local", P);
+      const muted = await storeHolds("tab A's mute", (document) => document.muted_panes?.includes(key) === true);
+      assert.equal(muted.revision, 1);
+      await b.waitForFunction((revision) => window.muteFixture.documents.some((document) => document.revision === revision), muted.revision);
+      await row(b, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "attached" });
+      await row(a, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "attached" });
+      checks.push("tab B received tab A's mute as preference revision 1 and draws the indicator");
+      await a.evaluate(() => window.muteFixture.roster({ secondPc: "connected" }));
+      await row(a, "pc-2", P).waitFor({ state: "attached" });
+      await a.locator(".droplet").waitFor({ state: "detached" });
+      await statusFrame(a, "local", P, "working");
+      await statusFrame(a, "local", P, "blocked");
+      await status(a, "local", P, "blocked").waitFor({ state: "attached" });
+      await quiet(a, "muted pane blocked");
+      await statusFrame(a, "local", P, "done");
+      await status(a, "local", P, "done").waitFor({ state: "attached" });
+      await quiet(a, "muted pane done");
+      await endedFrame(a, "local", P);
+      await quiet(a, "muted pane ended");
+      checks.push("local P blocked, done and exited while muted: no droplet, no chime, no notification; its row still shows each status");
+      await statusFrame(a, "pc-2", P, "working");
+      await statusFrame(a, "pc-2", P, "blocked");
+      await droplet(a).waitFor({ state: "visible" });
+      assert.match(await droplet(a).getAttribute("aria-label") ?? "", /Plan the config file/);
+      assert.equal(await a.locator(".droplet").getAttribute("data-kind"), "blocked");
+      await capture(a, "dark", "en", "alert-blocked");
+      await a.waitForFunction(() => window.muteFixture.spies.oscillators >= 2);
+      await a.locator(".droplet").waitFor({ state: "detached" });
+      await statusFrame(a, "pc-2", P, "done");
+      await droplet(a).waitFor({ state: "visible" });
+      assert.equal(await a.locator(".droplet").getAttribute("data-kind"), "done");
+      await a.locator(".droplet").waitFor({ state: "detached" });
+      await endedFrame(a, "pc-2", P);
+      await droplet(a).waitFor({ state: "visible" });
+      assert.equal(await a.locator(".droplet").getAttribute("data-kind"), "ended");
+      await a.locator(".droplet").waitFor({ state: "detached" });
+      let seen = await spies(a);
+      assert.ok(seen.chimes >= 1, `the other PC's pane chimed: ${JSON.stringify(seen)}`);
+      assert.deepEqual(seen.notifications, [], "a visible tab shows no system notification");
+      checks.push("pc-2's same-named P: droplets for blocked, done and ended, and chimes, as before");
+      await a.evaluate(() => window.muteFixture.hide(true));
+      await statusFrame(a, "local", P, "working");
+      await statusFrame(a, "local", P, "blocked");
+      await status(a, "local", P, "blocked").waitFor({ state: "attached" });
+      await barrier(a);
+      seen = await spies(a);
+      assert.deepEqual(seen.notifications, [], "the muted pane raises no notification in a hidden tab");
+      await statusFrame(a, "pc-2", P, "working");
+      await statusFrame(a, "pc-2", P, "blocked");
+      await a.waitForFunction(() => window.muteFixture.spies.notifications.length > 0);
+      seen = await spies(a);
+      assert.equal(seen.notifications.length, 1);
+      assert.match(seen.notifications[0]!.title, /Laptop · Plan the config file/);
+      assert.equal(seen.notifications[0]!.body, "waiting for your input");
+      await a.evaluate(() => window.muteFixture.hide(false));
+      checks.push("hidden tab: no notification for muted local P, one for pc-2's P");
+      const chimesBefore = seen.chimes;
+      await toggleMute(a, false, "local", P);
+      await storeHolds("tab A's unmute", (document) => document.muted_panes?.length === 0);
+      await row(a, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "detached" });
+      await row(b, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "detached" });
+      await statusFrame(a, "local", P, "blocked");
+      await barrier(a);
+      assert.equal(await droplet(a).count(), 0, "the question that came while muted is not told by the unmute");
+      await statusFrame(a, "local", P, "working");
+      await statusFrame(a, "local", P, "blocked");
+      await droplet(a).waitFor({ state: "visible" });
+      assert.match(await droplet(a).getAttribute("aria-label") ?? "", /Plan the config file/);
+      await a.waitForFunction((before) => window.muteFixture.spies.oscillators / 2 > before, chimesBefore);
+      await a.locator(".droplet").waitFor({ state: "detached" });
+      checks.push("after the unmute only a new transition alerts");
+      const theirs = paneStorageId("pc-2", P);
+      await toggleMute(a, false, "pc-2", P);
+      await storeHolds("the other PC's mute", (document) => document.muted_panes?.includes(theirs) === true);
+      await a.evaluate(() => window.muteFixture.roster({ secondPc: null }));
+      await row(a, "pc-2", P).waitFor({ state: "detached" });
+      await toggleMute(a, false, "local", P);
+      let kept = await storeHolds("a mute made with the other PC missing", (document) => document.muted_panes?.includes(key) === true);
+      assert.deepEqual([...kept.muted_panes!].sort(), [theirs, key].sort(), "a PC missing from the roster keeps its mute");
+      await a.evaluate(() => window.muteFixture.roster({ secondPc: "disconnected" }));
+      await row(a, "pc-2", P).and(a.locator(".is-offline")).waitFor({ state: "attached" });
+      await toggleMute(a, false, "local", P);
+      kept = await storeHolds("an unmute made with the other PC away", (document) => document.muted_panes?.includes(key) === false);
+      assert.deepEqual(kept.muted_panes, [theirs], "a PC that is away keeps its mute");
+      await a.evaluate(() => window.muteFixture.roster({ secondPc: "connected" }));
+      await row(a, "pc-2", P).and(a.locator(":not(.is-offline)")).waitFor({ state: "attached" });
+      await row(a, "pc-2", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "attached" });
+      await b.evaluate(() => window.muteFixture.roster({ secondPc: "connected" }));
+      await row(b, "pc-2", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "attached" });
+      assert.deepEqual(errorsOf(a), []);
+      assert.deepEqual(errorsOf(b), []);
+      checks.push("a PC missing from the roster or away keeps its mute through this page's changes, and shows it again when back");
+      await context.close();
 
-        // ---- a watching device: the state, not the switch ----
-        openStore("fresh");
-        fixture.store.set({ settings: {}, muted_panes: [key] });
-        fixture.watch = true;
-        {
-          const context = await newContext(browser, false, {});
-          const page = await openTab(context, "&mute-fixture=watch");
-          await row(page, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "attached" });
-          await openMenu(page, false, "local", P);
-          assert.equal(await muteItem(page).getAttribute("aria-checked"), "true", "a watching device sees the shared state");
-          assert.equal(await muteItem(page).getAttribute("aria-disabled"), "true", "and cannot flip it");
-          await muteItem(page).click({ force: true });
-          await barrier(page);
-          assert.equal(await page.locator(".row-menu").count(), 1, "a press on the disabled item leaves the menu open");
-          assert.deepEqual(fixture.puts, [], "a watching device sends no change");
-          assert.equal(fixture.store.get().revision, 1);
-          await closeMenu(page);
-          assert.deepEqual(errorsOf(page), []);
-          await context.close();
-          checks.push("watch device: Unmute alerts is shown checked and disabled, and no PUT goes out");
-        }
-        fixture.watch = false;
+      openStore("fresh");
+      fixture.store.set({ settings: {}, pins: [] });
+      fixture.old = true;
+      {
+        const context = await newContext(browser, false, {});
+        const page = await openTab(context);
+        assert.equal("muted_panes" in (await getPreferences(page)), false, "the older server's document has no list");
+        await openMenu(page, false, "local", P);
+        assert.equal(await muteItem(page).count(), 0, "no Mute alerts on an older server");
+        await page.locator('.row-menu [role="menuitem"]', { hasText: "Pin agent" }).click();
+        await storeHolds("the pin", (document) => (document.pins?.length ?? 0) > 0);
+        assert.ok(fixture.puts.length > 0 && fixture.puts.every((body) => !("muted_panes" in body)), `no fabricated list was sent: ${JSON.stringify(fixture.puts)}`);
+        assert.deepEqual(errorsOf(page), []);
+        await context.close();
+        checks.push("older server without muted_panes: the row menu offers no mute and no list is uploaded");
+      }
+      fixture.old = false;
+
+      // ---- a watching device: the state, not the switch ----
+      openStore("fresh");
+      fixture.store.set({ settings: {}, muted_panes: [key] });
+      fixture.watch = true;
+      {
+        const context = await newContext(browser, false, {});
+        const page = await openTab(context, "&mute-fixture=watch");
+        await row(page, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "attached" });
+        await openMenu(page, false, "local", P);
+        assert.equal(await muteItem(page).getAttribute("aria-checked"), "true", "a watching device sees the shared state");
+        assert.equal(await muteItem(page).getAttribute("aria-disabled"), "true", "and cannot flip it");
+        await muteItem(page).click({ force: true });
+        await barrier(page);
+        assert.equal(await page.locator(".row-menu").count(), 1, "a press on the disabled item leaves the menu open");
+        assert.deepEqual(fixture.puts, [], "a watching device sends no change");
+        assert.equal(fixture.store.get().revision, 1);
+        await closeMenu(page);
+        assert.deepEqual(errorsOf(page), []);
+        await context.close();
+        checks.push("watch device: Unmute alerts is shown checked and disabled, and no PUT goes out");
+      }
+      fixture.watch = false;
+
+      // ---- a Korean phone: the row's sheet by touch and by keys, and the roster's own lines ----
+      openStore("fresh");
+      {
+        const ko = (name: string): string => { assert.ok(KO[name], `"${name}" has a Korean entry`); return KO[name]!; };
+        const context = await newContext(browser, true, { language: "ko", theme: "light" });
+        const page = await openTab(context);
+        const sheetItem = () => page.locator('.row-sheet-item[data-item="mute"]');
+        await openMenu(page, true, "local", P);
+        assert.equal(await sheetItem().getAttribute("aria-pressed"), "false", "the phone's row sheet offers Mute alerts, not pressed");
+        assert.equal(await sheetItem().locator(".row-sheet-label").textContent(), ko("Mute alerts"));
+        assert.equal(await sheetItem().evaluate((item) => item === document.activeElement), false, "the sheet opens on another item, so the arrow keys have somewhere to go");
+        for (let step = 0; step < 4 && !await sheetItem().evaluate((item) => item === document.activeElement); step += 1) await page.keyboard.press("ArrowDown");
+        assert.equal(await sheetItem().evaluate((item) => item === document.activeElement), true, "the arrow keys reach Mute alerts in the sheet");
+        await sheetItem().tap();
+        await page.locator(".row-sheet").waitFor({ state: "detached" });
+        await storeHolds("the phone's mute", (document) => document.muted_panes?.includes(key) === true);
+        await openDrawer(page);
+        await row(page, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "visible" });
+        await openMenu(page, true, "local", P);
+        assert.equal(await sheetItem().getAttribute("aria-pressed"), "true", "a muted pane's sheet shows Mute alerts pressed");
+        assert.equal(await sheetItem().locator(".row-sheet-label").textContent(), ko("Unmute alerts"));
+        await closeMenu(page);
+        await page.evaluate((label) => window.muteFixture.roster({ longLabel: label }), { paneId: P, label: LONG_LABEL });
+        await openDrawer(page);
+        await row(page, "local", P).locator(".agent-title", { hasText: LONG_LABEL.slice(0, 20) }).waitFor();
+        const fit = await row(page, "local", P).evaluate((item) => {
+          const box = item.getBoundingClientRect();
+          const bell = item.querySelector('[data-testid="alerts-muted"]')!.getBoundingClientRect();
+          const title = item.querySelector<HTMLElement>(".agent-title")!;
+          return { bellInRow: bell.width > 0 && bell.left >= box.left - 0.5 && bell.right <= box.right + 0.5, titleClear: title.getBoundingClientRect().right <= bell.left + 0.5, titleCut: title.scrollWidth > title.clientWidth };
+        });
+        assert.deepEqual(fit, { bellInRow: true, titleClear: true, titleCut: true }, "a long muted title is cut short before the muted bell, which stays in its row");
+        const end = await page.locator(".agents-sidebar .agent-list-contents").evaluate((list) => {
+          list.scrollTop = list.scrollHeight;
+          const items = list.querySelectorAll(".agent-item");
+          const last = items[items.length - 1]!.getBoundingClientRect();
+          const box = list.getBoundingClientRect();
+          return { rows: items.length, lastShown: last.top >= Math.max(box.top, 0) - 0.5 && last.bottom <= Math.min(box.bottom, innerHeight) + 0.5 };
+        });
+        assert.equal(end.lastShown, true, `the roster's last row comes into view at its end: ${JSON.stringify(end)}`);
+        await page.evaluate(() => window.muteFixture.roster({ longLabel: null, loading: true }));
+        await openDrawer(page);
+        const empty = page.locator(".agents-sidebar .agent-empty");
+        await empty.filter({ hasText: ko("Loading agents…") }).waitFor();
+        await page.evaluate(() => window.muteFixture.roster({ loading: false, empty: true }));
+        await empty.filter({ hasText: ko("No agents running") }).waitFor();
+        assert.equal(await empty.textContent(), ko("No agents running"));
+        assert.deepEqual(errorsOf(page), []);
+        await context.close();
+        checks.push("Korean phone: the row sheet's Mute alerts by touch and by arrow keys, pressed once muted, in Korean; a long muted title cut before its bell; the roster's last row reachable; its loading and empty lines in Korean");
       }
 
       if (evidence) {
-        if (part === "captures") for (const phone of [false, true]) for (const theme of ["dark", "light"]) for (const language of phone ? ["en", "ko"] : ["en"]) {
-          if (language === "ko" && theme === "light") continue;
-          openStore("fresh");
-          const context = await newContext(browser, phone, { theme, language });
-          const page = await openTab(context);
-          if (phone) await openDrawer(page);
-          await capture(page, theme, language, "rest-unmuted");
-          await openMenu(page, phone, "local", P);
-          await capture(page, theme, language, "menu-unmuted");
-          if (!phone) {
-            await muteItem(page).hover();
-            await capture(page, theme, language, "menu-hover");
-            await page.mouse.down();
-            await capture(page, theme, language, "menu-pressed");
-            await page.mouse.move(0, 0);
-            await page.mouse.up();
-          } else {
-            const box = (await muteItem(page).boundingBox())!;
-            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-            await page.mouse.down();
-            await capture(page, theme, language, "menu-pressed");
-            await page.mouse.move(box.x + box.width / 2, box.y - box.height);
-            await page.mouse.up();
-            // the finger lifts: no pointer stays over the page. Left there, it hovers a Settings row drawn under it
-            // later, whose sentence opens once it has rested (SettingsControls' useRowSentence) and takes Escape
-            await page.mouse.move(0, 0);
-          }
-          await closeMenu(page);
-          if (phone) {
-            await openMenu(page, phone, "local", P);
-            for (let step = 0; step < 4 && !await muteItem(page).evaluate((item) => item === document.activeElement); step += 1) await page.keyboard.press("ArrowDown");
-            await page.waitForFunction(() => document.activeElement?.matches(".row-sheet-item[aria-pressed]") === true);
-            await capture(page, theme, language, "menu-focus-visible");
-            await closeMenu(page);
-          } else {
-            await row(page, "local", P).locator(".agent-select").focus();
-            await contextMenuKey(page);
-            await page.locator(".row-menu").waitFor();
-            await page.locator('.row-menu [role="menuitem"]').first().waitFor();
-            await page.waitForFunction(() => document.activeElement?.closest(".row-menu") !== null);
-            await page.keyboard.press("ArrowDown");
-            await page.waitForFunction(() => document.activeElement?.getAttribute("role") === "menuitemcheckbox");
-            await capture(page, theme, language, "menu-focus-visible");
-            await closeMenu(page);
-          }
-          await toggleMute(page, phone, "local", P);
-          await row(page, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "attached" });
-          if (phone) await openDrawer(page);
-          if (!phone) await row(page, "local", P).hover();
-          await row(page, "local", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "visible" });
-          await capture(page, theme, language, "rest-muted");
-          await openMenu(page, phone, "local", P);
-          await capture(page, theme, language, "menu-muted");
-          await closeMenu(page);
-          if (language === "en") {
-            await page.evaluate((label) => window.muteFixture.roster({ longLabel: { paneId: label.paneId, label: label.label } }), { paneId: P, label: LONG_LABEL });
-            await row(page, "local", P).locator(".agent-title", { hasText: LONG_LABEL.slice(0, 20) }).waitFor();
-            if (phone) await openDrawer(page);
-            await capture(page, theme, language, "long-name");
-            await page.evaluate(() => window.muteFixture.roster({ longLabel: null, secondPc: "connected" }));
-            await row(page, "pc-2", P).waitFor({ state: "attached" });
-            await page.locator(".droplet").waitFor({ state: "detached" });
-            await toggleMute(page, phone, "pc-2", P);
-            await row(page, "pc-2", P).locator('[data-testid="alerts-muted"]').waitFor({ state: "attached" });
-            await page.evaluate(() => window.muteFixture.roster({ secondPc: "disconnected" }));
-            await row(page, "pc-2", P).and(page.locator(".is-offline")).waitFor({ state: "attached" });
-            if (phone) await openDrawer(page);
-            await row(page, "pc-2", P).evaluate((item) => item.scrollIntoView({ block: "end" }));
-            await capture(page, theme, language, "offline-pc");
-            await page.locator(".agents-sidebar .agent-list-contents").evaluate((list) => { list.scrollTop = list.scrollHeight; });
-            await capture(page, theme, language, "list-end");
-            await page.evaluate(() => window.muteFixture.roster({ secondPc: "connected" }));
-            await statusFrame(page, "local", CONTROL, "working");
-            await statusFrame(page, "local", CONTROL, "blocked");
-            await droplet(page).waitFor({ state: "visible" });
-            await capture(page, theme, language, "alert-unmuted-pane");
-            await page.locator(".droplet").waitFor({ state: "detached" });
-            fixture.error = true;
-            await toggleMute(page, phone, "local", panes.cli);
-            await page.keyboard.press("ControlOrMeta+Shift+Comma");
-            await sheetRisen(page);
-            const settings = page.locator(".settings-dialog");
-            await pressInSettings(settings.getByRole("tab", { name: "Alerts", exact: true }));
-            await settings.getByRole("tabpanel", { name: "Alerts", exact: true }).waitFor();
-            await page.locator(".settings-save-error").waitFor({ timeout: 10_000 });
-            await capture(page, theme, language, "save-error");
-            fixture.error = false;
-            await pressInSettings(settings.getByRole("button", { name: "Close settings", exact: true }));
-            await settings.waitFor({ state: "detached" });
-            fixture.watch = true;
-            const watching = await openTab(context, "&mute-fixture=watch");
-            await openMenu(watching, phone, "local", P);
-            await capture(watching, theme, language, "menu-watch");
-            await closeMenu(watching);
-            await watching.close();
-            fixture.watch = false;
-            await page.evaluate(() => window.muteFixture.roster({ secondPc: null, loading: true }));
-            if (phone) await openDrawer(page);
-            await page.locator(".agents-sidebar .agent-empty", { hasText: "Loading" }).waitFor();
-            await capture(page, theme, language, "roster-loading");
-            await page.evaluate(() => window.muteFixture.roster({ loading: false, empty: true }));
-            await page.locator(".agents-sidebar .agent-empty", { hasText: "No agents" }).waitFor();
-            await capture(page, theme, language, "roster-empty");
-          }
-          assert.deepEqual(errorsOf(page), []);
-          await context.close();
-        }
-        writeFileSync(join(evidence, part === "captures" ? "manifest.json" : `manifest-${part}.json`), `${JSON.stringify(manifest, null, 2)}\n`);
+        writeFileSync(join(evidence, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
         checks.push(`${manifest.length} captures written to ${evidence}`);
       }
       for (const check of checks) console.log(`PASS ${check}`);

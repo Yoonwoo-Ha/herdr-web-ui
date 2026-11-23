@@ -86,8 +86,6 @@
     "scripts/replay-clipboard-demo-regression.ts",
     "scripts/revision-bound-update-demo-regression.ts",
     "scripts/roster-bench.ts",
-    "scripts/security-summary-captures-dark-demo-regression.ts",
-    "scripts/security-summary-captures-light-demo-regression.ts",
     "scripts/security-summary-demo-regression.ts",
     "scripts/security-summary-demo-run.ts",
     "scripts/self-hosted-runner.test.ts",

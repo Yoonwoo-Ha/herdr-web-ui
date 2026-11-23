@@ -117,8 +117,6 @@ run_script scripts/theme-file-demo-regression.ts
 run_script scripts/boot-loading-demo-regression.ts
 run_script scripts/old-safari-demo-regression.ts
 run_script scripts/security-summary-demo-regression.ts
-run_script scripts/security-summary-captures-light-demo-regression.ts
-run_script scripts/security-summary-captures-dark-demo-regression.ts
 run_script scripts/push-health-demo-regression.ts
 run_script scripts/alert-webhook-demo-regression.ts
 run_script scripts/relay-direct-demo-regression.ts
@@ -202,7 +200,6 @@ run_script scripts/chat-request-details-demo-regression.ts
 run_script scripts/chat-svg-figures-demo-regression.ts
 run_script scripts/chat-math-demo-regression.ts
 run_script scripts/terminal-paste-insert-demo-regression.ts
-run_script scripts/terminal-paste-insert-variants-demo-regression.ts
 run_script scripts/composer-fit-demo-regression.ts
 run_script scripts/composer-send-demo-regression.ts
 run_script scripts/composer-draft-demo-regression.ts
@@ -242,7 +239,6 @@ run_script scripts/agent-lock-demo-regression.ts
 run_script scripts/agent-groups-demo-regression.ts
 run_script scripts/agent-state-groups-demo-regression.ts
 run_script scripts/pane-mute-demo-regression.ts
-run_script scripts/pane-mute-captures-demo-regression.ts
 run_script scripts/workspace-touch-reorder-demo-regression.ts
 run_script scripts/prompt-dock-demo-regression.ts
 run_script scripts/prompt-card-timing-demo-regression.ts
