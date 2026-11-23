@@ -22,6 +22,7 @@ import { rollupStatus } from "../../src/lib/status.ts";
 import { movedTabOrder } from "../../src/lib/tabOrder.ts";
 import { agentSkillRows, CHATS, DEMO_AGENT_CATALOG, DEMO_PUSH, PROMPT, resumedSession, SESSION_HISTORY_AGENTS, sessionHistoryRows, SPECS, type DemoSpec } from "./fixtures.ts";
 import { DemoHistory } from "./history.ts";
+import { memoryRoute } from "./memory.ts";
 import { screenAgent, screenCommand, screenFrame } from "./agentScreens.ts";
 import machinesFixture from "./fixtures/machines.json";
 import agentsFixture from "./fixtures/agents.json";
@@ -1337,6 +1338,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/cliproxy/login" || path === "/api/cliproxy/callback") return error("demo", "Sign in from an installed server, not the public demo.", 409);
   if (path === "/api/push" || path.startsWith("/api/push/")) return pushRoute(path, method, init);
   if (path === "/api/alerts/webhook" || path === "/api/alerts/webhook/test") return alertWebhookRoute(path, method, init);
+  if (path === "/api/memory" || path.startsWith("/api/memory/")) return memoryRoute(path, method, init);
   if (path === "/api/machines/settings") return json({ auto_update_bridges: true });
   if (path.startsWith("/api/machines/")) return error("demo", "remote PCs need a real machine", 404);
 

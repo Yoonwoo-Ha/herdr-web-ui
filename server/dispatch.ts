@@ -74,6 +74,7 @@ import { handleUserFontsRequest } from "./user-fonts.ts";
 import { USER_FONTS_PATH } from "../shared/user-fonts.ts";
 import type { UsageAccountList } from "./usage-account-list.ts";
 import { handleVoiceRequest } from "./voice.ts";
+import { handleMemoryRequest } from "./memory/routes.ts";
 import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
 import { bridgeIdentity } from "./bridge.ts";
 import { discoverHerdrSessions } from "./herdr-discovery.ts";
@@ -93,6 +94,7 @@ import type { CLIProxyRoutes } from "./cliproxy-routes.ts";
 import type { UsageLoginService } from "./usage-login.ts";
 import type { UsageService } from "./usage.ts";
 import type { VoiceService } from "./voice.ts";
+import type { MemoryStore } from "./memory/store.ts";
 
 type PortalStartup = { ok: true } | { ok: false; error: unknown };
 
@@ -141,6 +143,8 @@ export interface RequestServices {
   /** the state folder's fonts/, served to every device that may read this PC (server/user-fonts.ts) */
   readonly fontsDir: string;
   readonly voice: VoiceService;
+  /** Settings → Memory's notes for agents (server/memory/store.ts) */
+  readonly memory: MemoryStore;
   readonly browserSnapshot: <S extends SessionSnapshot>(snapshot: S) => S;
   readonly core: ReturnType<typeof createCore>;
   readonly seen: SeenStore;
@@ -723,6 +727,11 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if (pathname === "/api/cliproxy" || pathname.startsWith("/api/cliproxy/")) { ctx.timeout(request, 60); return cliProxyRoutes.handle(request); }
   // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
   if (pathname === "/api/voice" || pathname.startsWith("/api/voice/")) { ctx.timeout(request, 120); return handleVoiceRequest(request, pathname, voice); }
+  // Settings → Memory: every change is a person's on a screen; the bridge token never reaches it (not a bridge path)
+  if (pathname === "/api/memory" || pathname.startsWith("/api/memory/")) {
+    const by = access.level !== "full" ? "unknown" : access.device ? `device:${access.device.id}` : access.via;
+    return handleMemoryRequest(request, url, ctx.services.memory, { readOnly, by });
+  }
 
   // Settings → Alerts → Also send to: one destination this PC also posts its alerts to (a watching device: none, above)
   if (pathname === "/api/alerts/webhook" || pathname === "/api/alerts/webhook/test") {

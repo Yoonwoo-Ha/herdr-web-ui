@@ -160,6 +160,7 @@ const PART_FILES: Record<string, string[]> = {
   guide: ["components/SetupGuide.tsx", "components/RelayOnlyWarning.tsx"],
   dashboard: ["components/AddPcSheet.tsx", "components/relayPcState.tsx"],
   "runtime-move": ["components/RuntimeMove.tsx", "components/RuntimeMoveViews.tsx", "lib/runtimeMove.ts"],
+  memory: ["components/MemorySettings.tsx"],
 };
 
 const PARTS = { Korean: [KO, KO_PARTS], Japanese: [JA, JA_PARTS], Chinese: [ZH, ZH_PARTS] } as const;

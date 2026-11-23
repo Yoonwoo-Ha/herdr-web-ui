@@ -2,7 +2,7 @@
  * Dispatcher policy for an account-joined row on this PC. Row Revoke uses the PC's admission order;
  * signed records, including a signed remove, are independently authorized by their handler.
  */
-import { DISPATCH_READS, LOCAL_DRIVE_POSTS, RELAY_CONTROLS, TAILSCALE_CONTROLS } from "../dispatch-routes.ts";
+import { DISPATCH_READS, LOCAL_DRIVE_POSTS, MEMORY_POSTS, RELAY_CONTROLS, TAILSCALE_CONTROLS } from "../dispatch-routes.ts";
 
 export interface AccountCaller {
   readonly rowId: string;
@@ -132,7 +132,7 @@ export function accountRouteAction(method: string, pathname: string): RowAction 
   if (row?.[1] !== undefined && method === "DELETE") return { action: "revoke", rowId: row[1] };
   const machine = /^\/api\/machines\/([^/]+)\//.exec(pathname);
   if (machine?.[1] !== undefined) return { action: "route", machine: machine[1] };
-  if (method === "POST" && LOCAL_DRIVE_POSTS.includes(pathname)) return { action: "drive" };
+  if (method === "POST" && (LOCAL_DRIVE_POSTS.includes(pathname) || MEMORY_POSTS.includes(pathname))) return { action: "drive" };
   return ROUTES[`${method} ${pathname}`] ?? null;
 }
 

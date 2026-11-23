@@ -20,6 +20,7 @@ import { PALETTE_ZH } from "./i18n/palette.zh.ts";
 import { RELAY_ZH } from "./i18n/relay.zh.ts";
 import { DASHBOARD_ZH } from "./i18n/dashboard.zh.ts";
 import { RUNTIME_MOVE_ZH } from "./i18n/runtime-move.zh.ts";
+import { MEMORY_ZH } from "./i18n/memory.zh.ts";
 
 /**
  * Simplified Chinese for every `t("…")` in src/ that no part in lib/i18n/ holds: keys more than
@@ -741,6 +742,11 @@ const BASE: Record<string, string> = {
   "Reload page": "重新加载页面",
   "Stop": "停止",
   "Disconnect": "断开连接",
+  "Confirm": "确认",
+  "Project": "项目",
+  "Add a note": "添加备注",
+  "Note": "备注",
+  "Memory|notes": "记忆",
 };
 
 export const ZH_PARTS: Record<string, Record<string, string>> = {
@@ -762,6 +768,7 @@ export const ZH_PARTS: Record<string, Record<string, string>> = {
   relay: RELAY_ZH,
   dashboard: DASHBOARD_ZH,
   "runtime-move": RUNTIME_MOVE_ZH,
+  memory: MEMORY_ZH,
 };
 
 export const ZH: Record<string, string> = Object.assign({}, ...Object.values(ZH_PARTS));

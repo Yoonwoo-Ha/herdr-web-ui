@@ -3,6 +3,7 @@ import { CompactAgentsError, expandMachine, type WireMachine } from "../../share
 import type { PreferencesChange, SharedPreferences } from "../../shared/preferences.ts";
 import type { AlertWebhookSave, AlertWebhookView } from "../../shared/alert-webhook.ts";
 import type { SeenFinish, SeenPresentation } from "../../shared/seen.ts";
+import type { MemoryView } from "../../shared/memory.ts";
 import type { AgentCatalogResponse, AgentTabStarted } from "../../shared/agent-catalog.ts";
 import type { ConversationSearchResponse } from "../../shared/conversation-search.ts";
 import { resumeConnectionTraces } from "./connectionTrace.ts";
@@ -1594,6 +1595,15 @@ export async function removeAlertWebhook(): Promise<void> {
 export async function testAlertWebhook(): Promise<void> {
   const response = await apiFetch("/api/alerts/webhook/test", { method: "POST" });
   if (!response.ok) throw await errorFrom("/api/alerts/webhook/test", response);
+}
+
+/** Settings → Memory (server/memory/routes.ts): the notes, and a person's change to them */
+export function fetchMemory(folder: string | null): Promise<MemoryView> {
+  return getJson<MemoryView>(folder === null ? "/api/memory" : `/api/memory?${new URLSearchParams({ folder }).toString()}`, { cache: "no-store" });
+}
+
+export async function memoryRequest<T>(action: "add" | "edit" | "confirm" | "remove" | "discard" | "discard-run", body: unknown): Promise<T> {
+  return (await (await sendJson(`/api/memory/${action}`, "POST", body)).json()) as T;
 }
 
 /** PUT /api/voice/config: ApiError 409 `key_from_env` when the key comes from OVIS_OPENAI_API_KEY. */

@@ -20,6 +20,7 @@ import { PALETTE_JA } from "./i18n/palette.ja.ts";
 import { RELAY_JA } from "./i18n/relay.ja.ts";
 import { DASHBOARD_JA } from "./i18n/dashboard.ja.ts";
 import { RUNTIME_MOVE_JA } from "./i18n/runtime-move.ja.ts";
+import { MEMORY_JA } from "./i18n/memory.ja.ts";
 
 /**
  * Japanese for every `t("…")` in src/ that no part in lib/i18n/ holds: keys more than one feature
@@ -736,6 +737,11 @@ const BASE: Record<string, string> = {
   "Reload page": "ページを再読み込み",
   "Stop": "停止",
   "Disconnect": "切断",
+  "Confirm": "確認",
+  "Project": "プロジェクト",
+  "Add a note": "メモを追加",
+  "Note": "メモ",
+  "Memory|notes": "メモリー",
 };
 
 export const JA_PARTS: Record<string, Record<string, string>> = {
@@ -757,6 +763,7 @@ export const JA_PARTS: Record<string, Record<string, string>> = {
   relay: RELAY_JA,
   dashboard: DASHBOARD_JA,
   "runtime-move": RUNTIME_MOVE_JA,
+  memory: MEMORY_JA,
 };
 
 export const JA: Record<string, string> = Object.assign({}, ...Object.values(JA_PARTS));

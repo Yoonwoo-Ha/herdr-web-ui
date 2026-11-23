@@ -20,6 +20,7 @@ import { PALETTE_KO } from "./i18n/palette.ko.ts";
 import { RELAY_KO } from "./i18n/relay.ko.ts";
 import { DASHBOARD_KO } from "./i18n/dashboard.ko.ts";
 import { RUNTIME_MOVE_KO } from "./i18n/runtime-move.ko.ts";
+import { MEMORY_KO } from "./i18n/memory.ko.ts";
 
 /**
  * Korean for every `t("…")` in src/ that no part in lib/i18n/ holds: keys more than one feature
@@ -734,6 +735,11 @@ const BASE: Record<string, string> = {
   "Reload page": "페이지 새로고침",
   "Stop": "중지",
   "Disconnect": "연결 끊기",
+  "Confirm": "확인",
+  "Project": "프로젝트",
+  "Add a note": "메모 추가",
+  "Note": "메모",
+  "Memory|notes": "메모리",
 };
 
 export const KO_PARTS: Record<string, Record<string, string>> = {
@@ -755,6 +761,7 @@ export const KO_PARTS: Record<string, Record<string, string>> = {
   relay: RELAY_KO,
   dashboard: DASHBOARD_KO,
   "runtime-move": RUNTIME_MOVE_KO,
+  memory: MEMORY_KO,
 };
 
 export const KO: Record<string, string> = Object.assign({}, ...Object.values(KO_PARTS));
