@@ -19,7 +19,7 @@ import { answerPiAskUser, bindPiAsk, piAskActivity, piAskUserPrompt } from "./pi
 import { badRequest, errorResponse, jsonResponse, setRequestRoute } from "./http.ts";
 import { claudePlanFile } from "./claude-plan.ts";
 import { heldBody, type ApprovalDialog, type ApprovalHub } from "./approvals/hub.ts";
-import { listPendingPermissions, listPendingQuestionForms, openCodePermissionsRead, openCodeService, replyOpenCodeForm, replyOpenCodePermission } from "./opencode-service.ts";
+import { listPendingPermissions, listPendingQuestionForms, openCodePermissionsRead, openCodeService, replyOpenCodeForm, replyOpenCodePermission, withShellInput } from "./opencode-service.ts";
 import { opencodeSessionId } from "./opencode.ts";
 import { agentPickerWaits, registry, SCREEN_READ_AGENTS } from "./dialogs/registry.ts";
 import { ANSI_RE, type AnswerStep, KEY, type OmoAsk, type ParsedPrompt, type PromptDraft, cleanLine, findLastIndex, finishPrompt, isDivider, keySteps, navigationKeys, own, parsedByPublicPrompt, publicPrompt } from "./dialogs/shared.ts";
@@ -928,7 +928,9 @@ async function readKnownPrompt(
     const issued = ++state.issued;
     const [forms, permissions] = config ? await Promise.all([
       listPendingQuestionForms(config, sessionID, signal),
-      openCodePermissionsRead(service!.version) ? listPendingPermissions(config, sessionID, signal) : null,
+      openCodePermissionsRead(service!.version)
+        ? listPendingPermissions(config, sessionID, signal).then((listed) => withShellInput(config, listed, state.permissions, signal))
+        : null,
     ]) : [null, null];
     if (signal?.aborted || openCodeState.entries.get(paneId) !== state) return { prompt: null, stale: true };
     if (state.revision === revision && issued >= state.applied) {

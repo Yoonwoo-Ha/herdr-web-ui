@@ -1,0 +1,235 @@
+{
+ "opencode": "2.2.2",
+ "recorded": "An isolated `opencode serve` (model dsapi/deepseek-v4.1-flash, permissions shell:*:ask): per case, GET /api/session/{id}/permission while the request was pending, GET /api/session/{id}/message/{source.messageID}, and the `bash -c` script strace saw run after the request was allowed once. Directory replaced.",
+ "cases": [
+  {
+   "condition": "short",
+   "executed": "touch am-short-probe-short-mwtogufz.flag",
+   "permission": {
+    "id": "per_209f35dfd001n8plXZrrje0Dhp",
+    "sessionID": "ses_df60cd5dcffeIUXXFpoT3RkSmB",
+    "action": "shell",
+    "resources": [
+     "touch am-short-probe-short-mwtogufz.flag"
+    ],
+    "save": [
+     "touch *"
+    ],
+    "source": {
+     "type": "tool",
+     "messageID": "msg_209f34635001L7quEtDMcF76HM",
+     "id": "call_10dc1a750a474923b56e9ed8"
+    }
+   },
+   "message": {
+    "data": {
+     "id": "msg_209f34635001L7quEtDMcF76HM",
+     "time": {
+      "created": 1795463267899,
+      "streamed": 1795463273947
+     },
+     "type": "assistant",
+     "agent": "build",
+     "model": {
+      "id": "deepseek-v4.1-flash",
+      "providerID": "dsapi",
+      "variant": "default"
+     },
+     "content": [
+      {
+       "type": "tool",
+       "id": "call_10dc1a750a474923b56e9ed8",
+       "name": "shell",
+       "executed": false,
+       "state": {
+        "status": "running",
+        "input": {
+         "command": "touch am-short-probe-short-mwtogufz.flag"
+        },
+        "metadata": {}
+       },
+       "time": {
+        "created": 1795463273941,
+        "ran": 1795463273946
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "condition": "long",
+   "executed": "printf '%s %s %s\\n' alpha beta gamma > am-long-probe-long-mwtod8qh.txt && ls -la /usr/share/doc/bash /usr/share/doc/coreutils /etc/hostname /etc/os-release >> am-long-probe-long-mwtod8qh.txt && wc -l am-long-probe-long-mwtod8qh.txt",
+   "permission": {
+    "id": "per_209f0c702001zJVT1V0ggHkV0x",
+    "sessionID": "ses_df60f6681ffeghE1B1gj7un04Q",
+    "action": "shell",
+    "resources": [
+     "printf '%s %s %s\\n' alpha beta gamma > am-long-probe-long-mwtod8qh.txt",
+     "ls -la /usr/share/doc/bash /usr/share/doc/coreutils /etc/hostname /etc/os-release",
+     "wc -l am-long-probe-long-mwtod8qh.txt"
+    ],
+    "save": [
+     "printf *",
+     "ls *",
+     "wc *"
+    ],
+    "source": {
+     "type": "tool",
+     "messageID": "msg_209f0b867001j1GqXGdKNrSaQ5",
+     "id": "call-5786d352-087c-44ff-98d9-0918a7a0dad7"
+    }
+   },
+   "message": {
+    "data": {
+     "id": "msg_209f0b867001j1GqXGdKNrSaQ5",
+     "time": {
+      "created": 1795463100525,
+      "streamed": 1795463104202
+     },
+     "type": "assistant",
+     "agent": "build",
+     "model": {
+      "id": "deepseek-v4.1-flash",
+      "providerID": "dsapi",
+      "variant": "default"
+     },
+     "content": [
+      {
+       "type": "tool",
+       "id": "call-5786d352-087c-44ff-98d9-0918a7a0dad7",
+       "name": "shell",
+       "executed": false,
+       "state": {
+        "status": "running",
+        "input": {
+         "command": "printf '%s %s %s\\n' alpha beta gamma > am-long-probe-long-mwtod8qh.txt && ls -la /usr/share/doc/bash /usr/share/doc/coreutils /etc/hostname /etc/os-release >> am-long-probe-long-mwtod8qh.txt && wc -l am-long-probe-long-mwtod8qh.txt"
+        },
+        "metadata": {}
+       },
+       "time": {
+        "created": 1795463104191,
+        "ran": 1795463104199
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "condition": "multi",
+   "executed": "cat <<'EOF' > am-multi-probe-multi-mwtodk5t.txt\nfirst line\nsecond line with  two spaces\n\tthird line after a tab\nEOF\nwc -l am-multi-probe-multi-mwtodk5t.txt",
+   "permission": {
+    "id": "per_209f0f8680018sWijhOV6Gd3HK",
+    "sessionID": "ses_df60f2cacffeD2R0sgHoKRI7Yc",
+    "action": "shell",
+    "resources": [
+     "cat <<'EOF' > am-multi-probe-multi-mwtodk5t.txt\nfirst line\nsecond line with  two spaces\n\tthird line after a tab\nEOF",
+     "wc -l am-multi-probe-multi-mwtodk5t.txt"
+    ],
+    "save": [
+     "cat *",
+     "wc *"
+    ],
+    "source": {
+     "type": "tool",
+     "messageID": "msg_209f0e6fb0015gNAT6jCc7a9BV",
+     "id": "call_b87f81e289df4d39bcb1b05f"
+    }
+   },
+   "message": {
+    "data": {
+     "id": "msg_209f0e6fb0015gNAT6jCc7a9BV",
+     "time": {
+      "created": 1795463112449,
+      "streamed": 1795463116898
+     },
+     "type": "assistant",
+     "agent": "build",
+     "model": {
+      "id": "deepseek-v4.1-flash",
+      "providerID": "dsapi",
+      "variant": "default"
+     },
+     "content": [
+      {
+       "type": "tool",
+       "id": "call_b87f81e289df4d39bcb1b05f",
+       "name": "shell",
+       "executed": false,
+       "state": {
+        "status": "running",
+        "input": {
+         "command": "cat <<'EOF' > am-multi-probe-multi-mwtodk5t.txt\nfirst line\nsecond line with  two spaces\n\tthird line after a tab\nEOF\nwc -l am-multi-probe-multi-mwtodk5t.txt",
+         "workdir": "/home/user/project"
+        },
+        "metadata": {}
+       },
+       "time": {
+        "created": 1795463116131,
+        "ran": 1795463116896
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "condition": "quote",
+   "executed": "echo \"안녕하세요, 'Ovis' \\\"훅\\\" 시험: \\$HOME & <tag> | {a,b} [x] ~ 100% ; 끝 probe-quote-mwtodtw6\" > am-quote-probe-quote-mwtodtw6.txt && cat am-quote-probe-quote-mwtodtw6.txt",
+   "permission": {
+    "id": "per_209f11d0a001McAEysHFCa0NVE",
+    "sessionID": "ses_df60efb66ffeyClB94YPZ91377",
+    "action": "shell",
+    "resources": [
+     "echo \"안녕하세요, 'Ovis' \\\"훅\\\" 시험: \\$HOME & <tag> | {a,b} [x] ~ 100% ; 끝 probe-quote-mwtodtw6\" > am-quote-probe-quote-mwtodtw6.txt",
+     "cat am-quote-probe-quote-mwtodtw6.txt"
+    ],
+    "save": [
+     "echo *",
+     "cat *"
+    ],
+    "source": {
+     "type": "tool",
+     "messageID": "msg_209f10f94001KKbF8Gofww4Qv1",
+     "id": "call-40d66b70-08d8-418c-b635-1c15566877de"
+    }
+   },
+   "message": {
+    "data": {
+     "id": "msg_209f10f94001KKbF8Gofww4Qv1",
+     "time": {
+      "created": 1795463122848,
+      "streamed": 1795463126277
+     },
+     "type": "assistant",
+     "agent": "build",
+     "model": {
+      "id": "deepseek-v4.1-flash",
+      "providerID": "dsapi",
+      "variant": "default"
+     },
+     "content": [
+      {
+       "type": "tool",
+       "id": "call-40d66b70-08d8-418c-b635-1c15566877de",
+       "name": "shell",
+       "executed": false,
+       "state": {
+        "status": "running",
+        "input": {
+         "command": "echo \"안녕하세요, 'Ovis' \\\"훅\\\" 시험: \\$HOME & <tag> | {a,b} [x] ~ 100% ; 끝 probe-quote-mwtodtw6\" > am-quote-probe-quote-mwtodtw6.txt && cat am-quote-probe-quote-mwtodtw6.txt"
+        },
+        "metadata": {}
+       },
+       "time": {
+        "created": 1795463126266,
+        "ran": 1795463126275
+       }
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

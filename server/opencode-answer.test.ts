@@ -23,6 +23,9 @@ async function fixture(run: (f: {
   permissionReplies: { path: string; body: unknown }[];
   permissionReply?: () => Response;
   permissionListing?: () => Promise<Response>;
+  /** GET /api/session/{id}/message/{messageID} answers, by message id */
+  messages: Record<string, unknown>;
+  messageReads: number;
   listing?: () => Promise<Response>;
   replying?: () => Promise<Response>;
   snapshot?: () => Promise<void>;
@@ -54,6 +57,7 @@ async function fixture(run: (f: {
     version: "2.0.32", permissions: [] as unknown[], permissionReplies: [] as { path: string; body: unknown }[],
     permissionReply: undefined as (() => Response) | undefined,
     permissionListing: undefined as (() => Promise<Response>) | undefined,
+    messages: Object.fromEntries(commands.map(({ message }) => [message.data.id, message])) as Record<string, unknown>, messageReads: 0,
     listing: undefined as (() => Promise<Response>) | undefined,
     replying: undefined as (() => Promise<Response>) | undefined,
     snapshot: undefined as (() => Promise<void>) | undefined,
@@ -91,6 +95,11 @@ async function fixture(run: (f: {
         const listing = f.permissionListing;
         f.permissionListing = undefined;
         return listing ? listing() : Response.json({ data: f.permissions });
+      }
+      if (request.method === "GET" && pathname.startsWith("/api/session/ses_fixture01/message/")) {
+        f.messageReads += 1;
+        const message = f.messages[decodeURIComponent(pathname.split("/").at(-1)!)];
+        return message ? Response.json(message) : Response.json({ _tag: "NotFound" }, { status: 404 });
       }
       if (request.method === "POST" && pathname.includes("/permission/")) {
         f.permissionReplies.push({ path: pathname, body: await request.json() });
@@ -503,7 +512,12 @@ describe("OpenCode answer ordering", () => {
 /** The permission requests a real OpenCode 2.2.2 asked (server/fixtures/opencode-permission-2.2.2.json), moved to the fixture's session. */
 const recorded: Record<string, unknown>[] = (JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "opencode-permission-2.2.2.json"), "utf8")) as { events: { type: string; data: Record<string, unknown> }[] })
   .events.filter((event) => event.type === "permission.asked").map((event) => ({ ...event.data, sessionID: "ses_fixture01" }));
-const asked = (action: string): Record<string, unknown> => recorded.find((request) => request.action === action)!;
+/** Shell requests a real OpenCode 2.2.2 asked, each with the message its call is in and the command that ran (server/fixtures/opencode-permission-command-2.2.2.json). */
+const commands = (JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "opencode-permission-command-2.2.2.json"), "utf8")) as {
+  cases: { condition: string; executed: string; permission: { id: string } & Record<string, unknown>; message: { data: { id: string; content: { state: { input: Record<string, unknown> } }[] } } }[];
+}).cases.map((recorded) => ({ ...recorded, permission: { ...recorded.permission, sessionID: "ses_fixture01" } }));
+const command = (condition: string) => commands.find((recorded) => recorded.condition === condition)!;
+const asked = (action: string): Record<string, unknown> => action === "shell" ? command("long").permission : recorded.find((request) => request.action === action)!;
 
 describe("OpenCode permission card", () => {
   it.each([[0, "once"], [1, "always"], [2, "reject"]] as const)("answers the pending request through its service: option %i is %s, no key typed", async (index, decision) => {
@@ -511,7 +525,7 @@ describe("OpenCode permission card", () => {
       f.forms = [];
       f.permissions = [asked("shell")];
       const prompt = await f.read();
-      expect(prompt).toMatchObject({ kind: "approval", agent: "opencode", body: "$ ls -la ." });
+      expect(prompt).toMatchObject({ kind: "approval", agent: "opencode", body: `$ ${command("long").executed}` });
       expect(prompt.options).toHaveLength(3);
       expect((await f.answer(prompt, { option_index: index })).status).toBe(200);
       expect(f.permissionReplies).toEqual([{ path: `/api/session/ses_fixture01/permission/${String(asked("shell").id)}/reply`, body: { decision } }]);
@@ -542,7 +556,30 @@ describe("OpenCode permission card", () => {
     });
   });
 
-  it.each(["version", "build", "shape", "session", "size"] as const)("leaves the request to the fallback card: %s not read", async (kind) => {
+  it("shows the command another call runs, though the request keeps its id", async () => {
+    await fixture(async (f) => {
+      f.forms = [];
+      f.permissions = [command("short").permission];
+      expect((await f.read()).body).toBe(`$ ${command("short").executed}`);
+      f.permissions = [{ ...command("long").permission, id: command("short").permission.id }];
+      expect((await f.read()).body).toBe(`$ ${command("long").executed}`);
+    });
+  });
+
+  it("shows the whole command a request's call runs, its message read again by no later read", async () => {
+    await fixture(async (f) => {
+      f.forms = [];
+      for (const { permission, executed } of commands) {
+        f.permissions = [permission];
+        const reads = f.messageReads;
+        expect((await f.read()).body).toBe(`$ ${executed}`);
+        expect((await f.read()).body).toBe(`$ ${executed}`);
+        expect(f.messageReads).toBe(reads + 1);
+      }
+    });
+  });
+
+  it.each(["version", "build", "shape", "session", "size", "message", "streaming"] as const)("leaves the request to the fallback card: %s not read", async (kind) => {
     await fixture(async (f) => {
       f.forms = [];
       f.permissions = [asked("shell")];
@@ -550,7 +587,12 @@ describe("OpenCode permission card", () => {
       if (kind === "build") f.version = "2.unknown";
       if (kind === "shape") f.permissions = [{ ...asked("shell"), resources: "ls -la ." }];
       if (kind === "session") f.permissions = [{ ...asked("shell"), sessionID: "ses_other" }];
-      if (kind === "size") f.permissions = [{ ...asked("shell"), resources: ["echo " + "x".repeat(12_000)] }];
+      const { message } = command("long");
+      const call = message.data.content[0]!;
+      const withState = (state: Record<string, unknown>) => ({ ...message, data: { ...message.data, content: [{ ...call, state: { ...call.state, ...state } }] } });
+      if (kind === "size") f.messages = { [message.data.id]: withState({ input: { command: "echo " + "x".repeat(12_000) } }) };
+      if (kind === "message") f.messages = {};
+      if (kind === "streaming") f.messages = { [message.data.id]: withState({ status: "streaming" }) };
       expect((await f.read()).fallback).toBe(true);
     });
   });

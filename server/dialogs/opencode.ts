@@ -33,9 +33,10 @@ export const nativePermissionReader: DialogReader = {
 };
 
 /** What the request asks for, as OpenCode's TUI presents it (tui/src/util/permission.ts at 2.2.2): the command, the patch, the URL, the tool's input. */
-function permissionWords({ action, resources, metadata }: OpenCodePermissionRequest): { question: CardWords; body: string | null } | null {
+function permissionWords({ action, resources, metadata, input }: OpenCodePermissionRequest): { question: CardWords; body: string | null } | null {
   const listed = resources.filter((resource) => resource !== "*");
-  if (action === "shell") return { question: own("Run a shell command"), body: listed.map((command) => `$ ${command}`).join("\n") || null };
+  // the command the call runs, never `resources`: those are pieces of it (`a && b >> f` comes as `a` and `b`)
+  if (action === "shell") return typeof input?.command === "string" && input.command ? { question: own("Run a shell command"), body: `$ ${input.command}` } : null;
   if (action === "edit") {
     // every file's patch, or no card: a card showing some of an edit would have its user allow the rest unseen
     const files = Array.isArray(metadata?.files) ? metadata.files as unknown[] : [];
@@ -46,14 +47,14 @@ function permissionWords({ action, resources, metadata }: OpenCodePermissionRequ
   if (action === "webfetch") return { question: own("Fetch {url}", { url: typeof metadata?.url === "string" ? metadata.url : listed.join(", ") }), body: null };
   if (action === "external_directory") return { question: own("Access a folder outside the project"), body: listed.join("\n") || null };
   // an MCP tool (`<server>_<tool>`) and every other tool: its name, and the input OpenCode sent with it
-  const input = metadata?.input;
-  return { question: own("Use the tool {tool}", { tool: action }), body: input === undefined ? listed.join("\n") || null : JSON.stringify(input, null, 2) };
+  const toolInput = metadata?.input;
+  return { question: own("Use the tool {tool}", { tool: action }), body: toolInput === undefined ? listed.join("\n") || null : JSON.stringify(toolInput, null, 2) };
 }
 
 /**
- * The card for a pending request, or null for one it cannot show whole (an edit without each file's patch, a command,
- * patch or input longer than a card shows): the card would have its user allow what they never saw, so the terminal
- * answers it.
+ * The card for a pending request, or null for one it cannot show whole (a command whose call was not read, an edit
+ * without each file's patch, a command, patch or input longer than a card shows): the card would have its user allow
+ * what they never saw, so the terminal answers it.
  */
 export function openCodePermissionPrompt(request: OpenCodePermissionRequest): ParsedPrompt | null {
   const words = permissionWords(request);
