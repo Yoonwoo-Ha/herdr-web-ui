@@ -190,9 +190,9 @@ What is there:
     on a home network); Connect over SSH, a row whose field takes `user@host` and opens the SSH setup (only in an app
     that announces `OvisSsh`); the PCs an SSH PC knows; and every PC this phone saved, relay scopes (by name, else the
     start of the id), Tailscale, plain addresses and SSH, in one list, each opening as before, with Forget, and Manage
-    on an SSH PC. No sign-in and no relay tab: both need the internet and the hosted page. Opened for an SSH setup it
-    goes to the SSH setup with the login filled in; opened to manage an SSH PC (Change PC where one did not open) it
-    opens that PC's Manage (the one last opened, else the only SSH PC); both with "‹ Back" to home.
+    on an SSH PC. No sign-in and no relay tab: both need the internet and the hosted page. Opened to manage an SSH PC
+    (Change PC where one did not open) it opens that PC's Manage (the one last opened, else the only SSH PC), with
+    "‹ Back" to home.
   - In a bundled-home build (`OVIS_APP_HOME=bundled`, or `OVIS_APP_ACCOUNT=0`) it is the first screen, Connect a PC with
     the desktop's Add a connection tabs in its order, picked without a history entry (the phone's Back leaves the app):
     Ovis relay (the default; the sign-ins the account service names at `/v1/providers`, a press opens the hosted app
@@ -208,7 +208,12 @@ What is there:
   address `demo` opens the bundled demo, which has no button of its own: the store review notes (app/store) send
   reviewers there. `error.html` is shown when a PC cannot be reached or answers with an HTTP error (a 502 from
   `tailscale serve` while Ovis is stopped), with the reason, Try again and Change PC, in the same look; it stands alone
-  on Android, so `build-web.ts` puts `shell.css` and the sheep into it. Every page sets its `theme-color` to its own
+  on Android, so `build-web.ts` puts `shell.css` and the sheep into it. When the phone's own connection failed, as its
+  platform says (Android's WebView error `net::ERR_INTERNET_DISCONNECTED`, the iPhone's `NSURLErrorNotConnectedToInternet`,
+  passed as the failure's kind `offline`, `Home.failureKind`), it says "Can't connect to the internet" with Try again and
+  Change PC, and nothing about the PC. A raw `net::ERR_…` is never shown: the common ones are said in words, any other
+  as "could not be opened". A failure of the hosted app itself (the current PC is its origin, `app` in the page's state)
+  is "Can't reach Ovis", never "this PC". Every page sets its `theme-color` to its own
   colour, light or dark (`barsFor` in `shell.js`, copied into `error.html`), which both apps' bars follow; a PC still
   opens on the dark one until its page gives its own. The native parts around them take the same colours, light or dark
   as the phone is: the covers ("Opening…", Try again, Change PC: `MainActivity.showOpening` with `res/values*/colors.xml`,
@@ -410,7 +415,7 @@ What opens (`Home.screen`), first match:
 
 | When | Screen |
 |---|---|
-| Something waits that only the app's own page takes (an SSH setup a page asked for, a pairing link from outside the app, an SSH PC whose address another app holds, an SSH PC to manage) and no PC is to open | the app's own page |
+| Something waits that only the app's own page takes (a pairing link from outside the app, an SSH PC whose address another app holds, an SSH PC to manage) and no PC is to open | the app's own page |
 | The demo was asked for (`HerdrShell.openDemo`, or `demo` typed where an address goes) | the bundled demo |
 | A PC is current and the person is not choosing another | that PC |
 | Home failed in this process and was not tried again, or the build has `OVIS_APP_HOME=bundled` | the app's own page |
@@ -474,9 +479,9 @@ killed while choosing opens the current PC at its next start, as before: choosin
 `HerdrShell` gained `goHome` and `openDemo` on both platforms, and `getState` the fields `home` (the
 page asking is home), `fallback`, `back` and `manage`. On home, `open` takes `https://demo/`, what the
 word `demo` becomes in the hosted screen's address field, as the bundled demo; the app's own page asks
-`openDemo` itself where it stands in for home. `openSshSetup` asked while choosing keeps the current PC,
-and `OvisSsh.add` called by the hosted app's own page (the released front page does) is that same
-hand-over. A pairing link tapped outside the app (Android) still waits for the app's own page, which
+`openDemo` itself where it stands in for home. `openSshSetup`, and `OvisSsh.add` called by the hosted
+app's own page (the released front page does), bring the SSH setup up over home itself (see [PCs over
+SSH](#pcs-over-ssh)): Back or Cancel there is home again as it was, and the current PC is untouched. A pairing link tapped outside the app (Android) still waits for the app's own page, which
 checks it and opens its PC.
 
 Known limits: the bridge's reach is what it is for every PC's page (on iOS by host and into subframes;
@@ -762,10 +767,12 @@ runs the Ovis it already has.
 
 Only the app's own pages add an SSH PC (`OvisSshPlugin.fromAppPage`); a PC's page, the hosted app's included,
 never gets that. The hosted app's SSH tab takes `user@host` in the phone app all the same: it calls
-`HerdrShell.openSshSetup`, which opens the connect screen on its SSH tab with that login filled in
-(`PCStore.sshSetup`, taken once with `takeSshSetup`, which only the connect screen answers), and the connect
-screen takes it to the SSH setup screen as a login typed there would. An app without that method, and a
-browser, offer no SSH on the hosted page.
+`HerdrShell.openSshSetup`, which brings the SSH setup screen (Android's `SshSetupActivity`, the iPhone's sheet) up
+over that page with the login filled in (`SshPcs.login`; `MainActivity.openSshSetup`, `OvisSshPlugin.presentSetup`).
+The page gets nothing back but that the screen came up: the person adds the PC there, the keys staying on the
+native side, and Back or Cancel returns to the page as it was, nothing loaded again (Android's
+`SshSetupOverPageTest`); a PC added opens. An app without that method, and a browser, offer no SSH on the hosted
+page.
 
 How a page gets there (`app/android/app/src/main/java/sh/ovis/app/Ssh*.java`, `OvisSshPlugin`):
 

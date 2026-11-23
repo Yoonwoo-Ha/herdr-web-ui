@@ -15,6 +15,9 @@
     <h1 id="title" data-ko="PC에 연결할 수 없어요">Can't reach your PC</h1>
     <p id="what">The app could not open it.</p>
     <p class="error" id="reason"></p>
+    <!-- the phone's own connection failed, as its platform says (Android's WebView error, the iPhone's kind "offline"):
+         nothing about the PC, and Change PC leads to the PCs this phone can open without the internet -->
+    <p id="offline" hidden data-ko="이 휴대폰이 인터넷에 연결되어 있지 않아요. 연결되면 다시 시도를 누르세요. 다른 PC는 PC 바꾸기에서 열 수 있어요.">This phone is not connected to the internet. Tap Try again once it is, or Change PC to open another PC.</p>
     <p id="tailscale" hidden data-ko="Tailscale 주소예요. 이 휴대폰에서 Tailscale이 꺼져 있을 수 있어요. Tailscale 앱에서 연결을 켠 뒤 다시 시도를 누르세요.">This is a Tailscale address, and Tailscale may be off on this phone. Turn it on in the Tailscale app, then tap Try again.</p>
     <p id="not-ovis" hidden data-ko="이 주소는 응답하지만 Ovis가 아니에요. 다른 웹 서버이거나, 앱이 열 수 없는 herdr 자체예요. PC 바꾸기를 누르고, PC의 Ovis에서 설정 → 기기와 PC → 연결 추가에 표시된 주소를 여세요.">This address answers, but it is not Ovis: another web server, or herdr itself, which the app cannot open. Tap Change PC and open the address Ovis shows under Settings → Devices and PCs → Add a connection on the PC.</p>
     <p id="refused" hidden data-ko="그 주소에서 기다리는 것이 없어요. PC에서 Ovis가 실행 중이어야 하고(herdr만으로는 안 돼요), Ovis는 기본으로 PC 자신(127.0.0.1)에서만 기다려요. PC의 Ovis에서 설정 → 기기와 PC → 연결 추가에 표시된 주소를 여세요.">Nothing listens at that address. Ovis has to run on the PC (herdr alone is not enough), and by default it listens only on the PC itself (127.0.0.1). Open the address Ovis shows under Settings → Devices and PCs → Add a connection on the PC.</p>
@@ -88,20 +91,42 @@
     const state = android
       ? await new Promise((resolve) => { android.onmessage = (event) => resolve(JSON.parse(event.data)); android.postMessage("state"); })
       : capacitor ? await capacitor.nativePromise("HerdrShell", "getState", {}) : {};
-    document.getElementById("what").textContent = state.last
-      ? (korean ? `앱이 이 PC(${state.last})를 열지 못했어요.` : `The app could not open ${state.last}.`)
-      : (korean ? "앱이 PC를 열지 못했어요." : "The app could not open it.");
-    document.getElementById("reason").textContent = state.failure ?? "";
+    const failure = state.failure ?? "";
     // a MagicDNS name or a Tailscale IP that sent no answer (an HTTP error came through Tailscale) (100.64.0.0/10, fd7a:115c:a1e0::/48) opens only while Tailscale is connected on the phone
     let host = "";
+    let address = "";
     let relay = false;
+    let hostedApp = false;
     const pc = state.current || state.last;
     try {
       const url = new URL(pc);
       host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+      address = url.host;
       // a PC paired over the Ovis relay is saved by its scope on the app's origin (/s/<server_id>/)
       relay = /^\/s\/[0-9a-f]{32}\/$/.test(url.pathname);
+      // the hosted app itself (the app's origin, state.app), which opens the relay's PCs: no PC of its own
+      hostedApp = !relay && Boolean(state.app) && url.origin === new URL(state.app).origin;
     } catch {}
+    document.getElementById("what").textContent = hostedApp
+      ? (korean ? `앱이 Ovis(${address})를 열지 못했어요.` : `The app could not open Ovis (${address}).`)
+      : state.last
+        ? (korean ? `앱이 이 PC(${state.last})를 열지 못했어요.` : `The app could not open ${state.last}.`)
+        : (korean ? "앱이 PC를 열지 못했어요." : "The app could not open it.");
+    if (hostedApp) document.getElementById("title").textContent = korean ? "Ovis에 연결할 수 없어요" : "Can't reach Ovis";
+    // what a raw network error (Android's WebView: net::ERR_…) means, in words, never the code itself; the app's and the
+    // system's own sentences as they are
+    const code = /\bnet::(ERR_[A-Z0-9_]+)/.exec(failure)?.[1];
+    const at = address || (korean ? "PC" : "the PC");
+    const words = !code ? [failure, failure]
+      : /^ERR_NAME_(NOT_RESOLVED|RESOLUTION_FAILED)$/.test(code) ? [`${host || at} was not found.`, `이 이름(${host || at})을 찾지 못했어요.`]
+      : code === "ERR_CONNECTION_REFUSED" ? [`${at} refused the connection.`, `이 주소(${at})가 연결을 거부했어요.`]
+      : /^ERR_(CONNECTION_)?TIMED_OUT$/.test(code) ? [`${at} did not answer.`, `이 주소(${at})가 응답하지 않았어요.`]
+      : /^ERR_(ADDRESS_UNREACHABLE|NETWORK_ACCESS_DENIED)$/.test(code) ? [`This phone has no way to ${at} right now.`, `지금 이 휴대폰에서 이 주소(${at})로 가는 길이 없어요.`]
+      : /^ERR_(CONNECTION_(RESET|CLOSED|ABORTED|FAILED)|EMPTY_RESPONSE)$/.test(code) ? [`The connection to ${at} broke off.`, `이 주소(${at})와의 연결이 끊겼어요.`]
+      : /^ERR_(CERT_|SSL_|BAD_SSL)/.test(code) ? [`${at}'s secure connection (its HTTPS certificate) is not one this phone trusts.`, `이 휴대폰이 이 주소(${at})의 보안 연결(HTTPS 인증서)을 믿지 않아요.`]
+      : code === "ERR_NETWORK_CHANGED" ? [`This phone's network changed while it opened ${at}.`, `이 주소(${at})를 여는 동안 휴대폰의 네트워크가 바뀌었어요.`]
+      : [`${at} could not be opened.`, `이 주소(${at})를 열지 못했어요.`];
+    document.getElementById("reason").textContent = words[korean ? 1 : 0];
     // a PC added over SSH opens on this phone's own 127.0.0.n:47317 (Android's SshTunnel) or 127.0.0.1:47320 to 47619
     // (the iPhone's, SshPcs.firstPort), on purpose
     const sshKind = (state.kind ?? "").startsWith("ssh-") ? state.kind.slice(4) : "";
@@ -144,7 +169,6 @@
       document.getElementById("what").textContent = korean ? `앱이 이 PC(${state.name})를 열지 못했어요.` : `The app could not open ${state.name}.`;
     }
     // why it failed, when the app or WebView says: not Ovis, nothing listening, or no answer
-    const failure = state.failure ?? "";
     const notOvis = state.kind === "not-ovis";
     const refused = !relay && !sshPc && /ERR_CONNECTION_REFUSED/.test(failure);
     const unreached = !relay && (state.kind === "timeout" || /ERR_(CONNECTION_TIMED_OUT|TIMED_OUT|ADDRESS_UNREACHABLE)/.test(failure));
@@ -160,9 +184,17 @@
     document.getElementById("network").hidden = !unreached || !home || sshPc;
     document.getElementById("public").hidden = !unreached || home || sshPc;
     document.getElementById("relay").hidden = !relay;
-    document.getElementById("check").hidden = relay || notOvis || refused || unreached || sshKind !== "";
+    // a PC's own checks: not for the hosted app, which is no PC
+    document.getElementById("check").hidden = relay || hostedApp || notOvis || refused || unreached || sshKind !== "";
     const ipv4 = host.match(/^100\.(\d+)\.\d+\.\d+$/);
     document.getElementById("tailscale").hidden = relay || notOvis || refused || /^HTTP \d{3}\b/.test(state.failure ?? "") || !(host.endsWith(".ts.net") || (ipv4 && Number(ipv4[1]) >= 64 && Number(ipv4[1]) <= 127) || host.startsWith("fd7a:115c:a1e0:"));
+    // the phone's own connection, as its platform says (Android's WebView error, the iPhone's kind "offline",
+    // HerdrBridgeViewController): no word about the PC, only that this phone is offline
+    if (state.kind === "offline" || /\bERR_INTERNET_DISCONNECTED\b/.test(failure)) {
+      document.getElementById("title").textContent = korean ? "인터넷에 연결할 수 없어요" : "Can't connect to the internet";
+      for (const id of ["what", "reason", "tailscale", "not-ovis", "refused", "loopback", "network", "public", "relay", "ssh", "check"]) document.getElementById(id).hidden = true;
+      document.getElementById("offline").hidden = false;
+    }
   </script>
 </body>
 </html>

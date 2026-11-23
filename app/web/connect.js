@@ -4,8 +4,8 @@ import { ACCOUNT_SERVICE, ACCOUNT_SIGN_IN, APP_HOME, APP_ORIGIN, barsForScreen, 
 
 /**
  * Which of index.html's layouts this page is. Where the hosted Connect a PC screen is the app's home (a hosted-home
- * build), this page stands in for it when it does not load and takes what only the app can do (an SSH setup, an SSH PC
- * to manage, a pairing link): one column of what works with no internet, the address field, QR, SSH and every PC this
+ * build), this page stands in for it when it does not load and takes what only the app can do (an SSH PC to manage, a
+ * pairing link): one column of what works with no internet, the address field, QR, SSH and every PC this
  * phone saved, with no sign-in, which needs the internet and the hosted page. Where this page is the app's first screen
  * (OVIS_APP_HOME=bundled, or a build without the account), the three tabs of Connect a PC.
  */
@@ -586,7 +586,7 @@ let backTo = "backToCurrent";
  * The way back from this screen, where the app says it leads (getState's `back`, as the phone's Back goes). To a PC
  * ("current"): opened from that PC to choose another way (HerdrShell chooseAnother), or over it for a pairing link from
  * outside the app; it stays current until another is picked. To the hosted Connect a PC screen ("home"): opened by it
- * for what only this page takes (an SSH setup, a pairing link, an SSH PC to manage). An app that names no way says
+ * for what only this page takes (a pairing link, an SSH PC to manage). An app that names no way says
  * `choosing` alone.
  */
 function showBack(state) {
@@ -695,19 +695,3 @@ async function openAppLink() {
 }
 
 void openAppLink();
-
-// SSH asked for on a PC's page (the hosted app's SSH tab, HerdrShell openSshSetup): only the app's own pages add an
-// SSH PC, so it comes here, with the login in the SSH field, and goes to the SSH setup screen as typed here would
-async function openSshSetupAsked() {
-  let asked;
-  try { asked = await shell("takeSshSetup"); }
-  catch { return; }
-  if (!asked?.asked) return;
-  if (COLUMN) showSsh(true);
-  else pick("ssh");
-  input.value = asked.target;
-  if (sshOrAddress(asked.target).ssh) await connectField(asked.target);
-  else input.focus();
-}
-
-void openSshSetupAsked();

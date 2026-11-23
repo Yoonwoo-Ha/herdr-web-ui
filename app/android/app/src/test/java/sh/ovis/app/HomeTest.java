@@ -395,9 +395,6 @@ public class HomeTest {
     public void whatOnlyTheBundledPageTakesIsHeldInMemoryUntilHomeIsAskedForAgain() {
         PCStore.goHome();
         assertFalse(PCStore.bundledAsked());
-        PCStore.sshSetup = "qa@pc";
-        assertTrue(PCStore.bundledAsked());
-        PCStore.sshSetup = null;
         PCStore.link = APP + "/s/" + ID + "/#offer=x";
         assertTrue(PCStore.bundledAsked());
         PCStore.link = null;
@@ -412,7 +409,6 @@ public class HomeTest {
         assertFalse(PCStore.bundledAsked());
         PCStore.fail("127.0.0.2:47317: taken", "ssh-port");
         PCStore.manage = true;
-        PCStore.sshSetup = "qa@pc";
         PCStore.homeFailed = true;
         PCStore.demo = true;
         PCStore.homeStart = "#sign-in=github";

@@ -25,6 +25,31 @@ public class SshLinkTest {
     }
 
     @Test
+    public void readsAPagesSshLoginAsTheSetupScreensFields() {
+        // HerdrShell openSshSetup's target, as the hosted app's SSH tab and the app's own page write it (sshOrAddress)
+        org.junit.Assert.assertArrayEquals(new String[] { "me", "studio.lan", "22" }, SshPcs.login(" me@studio.lan "));
+        org.junit.Assert.assertArrayEquals(new String[] { "pi", "192.168.0.20", "2222" }, SshPcs.login("pi@192.168.0.20:2222"));
+        org.junit.Assert.assertArrayEquals(new String[] { "dev", "nas.tail1e211e.ts.net", "22" }, SshPcs.login("ssh://dev@nas.tail1e211e.ts.net/"));
+        org.junit.Assert.assertArrayEquals(new String[] { "me", "fd7a:115c:a1e0::1", "22" }, SshPcs.login("me@[fd7a:115c:a1e0::1]:22"));
+        // anything else leaves the screen's fields empty
+        for (String text : new String[] { "", "studio.lan", "https://me@studio.lan", "me@host:70000", "me@host/path", "a b@host" }) assertNull(text, SshPcs.login(text));
+        assertNull(SshPcs.login(null));
+    }
+
+    @Test
+    public void writesOvisSshAddsFieldsAsALoginTheSetupScreenReadsBack() {
+        // the hosted front page's OvisSsh.add gives user, host and port apart: an IPv6 host goes in brackets
+        org.junit.Assert.assertArrayEquals(new String[] { "me", "fd7a:115c:a1e0::1", "2222" }, SshPcs.login(SshPcs.target("me", "fd7a:115c:a1e0::1", 2222)));
+        assertEquals("me@[fd7a:115c:a1e0::1]", SshPcs.target("me", "fd7a:115c:a1e0::1", 22));
+        assertEquals("me@[fd7a:115c:a1e0::1]:2222", SshPcs.target("me", "[fd7a:115c:a1e0::1]", 2222));
+        assertEquals("pi@192.168.0.20:2222", SshPcs.target("pi", "192.168.0.20", 2222));
+        assertEquals("me@studio.lan", SshPcs.target("me", "studio.lan", null));
+        // without both, nothing to fill in
+        assertEquals("", SshPcs.target(null, "studio.lan", 22));
+        assertEquals("", SshPcs.target("me", null, 22));
+    }
+
+    @Test
     public void onlyTheAppsOwnPagesAndTheHostedAppOpenTheSshSetup() {
         assertTrue(SshPcs.setupOpener(null, true, STORE));
         assertTrue(SshPcs.setupOpener("https://app.ovis.sh/#pcs", false, STORE));

@@ -130,6 +130,31 @@ final class SshPcsTests: XCTestCase {
         XCTAssertEqual(store.list().count, 1)
     }
 
+    func testReadsAPagesSshLoginAsTheSetupScreensFields() {
+        // HerdrShell openSshSetup's target, as the hosted app's SSH tab and the app's own page write it (sshOrAddress)
+        let read = { (text: String?) in SshPcs.login(text).map { "\($0.user) \($0.host) \($0.port)" } }
+        XCTAssertEqual(read(" me@studio.lan "), "me studio.lan 22")
+        XCTAssertEqual(read("pi@192.168.0.20:2222"), "pi 192.168.0.20 2222")
+        XCTAssertEqual(read("ssh://dev@nas.tail1e211e.ts.net/"), "dev nas.tail1e211e.ts.net 22")
+        XCTAssertEqual(read("me@[fd7a:115c:a1e0::1]:22"), "me fd7a:115c:a1e0::1 22")
+        // anything else leaves the screen's fields empty
+        for text in ["", "studio.lan", "https://me@studio.lan", "me@host:70000", "me@host/path", "a b@host"] { XCTAssertNil(read(text), text) }
+        XCTAssertNil(read(nil))
+    }
+
+    func testWritesOvisSshAddsFieldsAsALoginTheSetupScreenReadsBack() {
+        // the hosted front page's OvisSsh.add gives user, host and port apart: an IPv6 host goes in brackets
+        let back = SshPcs.login(SshPcs.target(user: "me", host: "fd7a:115c:a1e0::1", port: 2222))
+        XCTAssertEqual(back.map { "\($0.user) \($0.host) \($0.port)" }, "me fd7a:115c:a1e0::1 2222")
+        XCTAssertEqual(SshPcs.target(user: "me", host: "fd7a:115c:a1e0::1", port: 22), "me@[fd7a:115c:a1e0::1]")
+        XCTAssertEqual(SshPcs.target(user: "me", host: "[fd7a:115c:a1e0::1]", port: 2222), "me@[fd7a:115c:a1e0::1]:2222")
+        XCTAssertEqual(SshPcs.target(user: "pi", host: "192.168.0.20", port: 2222), "pi@192.168.0.20:2222")
+        XCTAssertEqual(SshPcs.target(user: "me", host: "studio.lan", port: nil), "me@studio.lan")
+        // without both, nothing to fill in
+        XCTAssertEqual(SshPcs.target(user: nil, host: "studio.lan", port: 22), "")
+        XCTAssertEqual(SshPcs.target(user: "me", host: nil, port: 22), "")
+    }
+
     func testOnlyTheAppsOwnPagesAndTheHostedAppOpenTheSshSetup() {
         let store = URL(string: "https://app.ovis.sh")
         XCTAssertTrue(SshPcs.setupOpener(URL(string: "capacitor://localhost/index.html"), appOrigin: store))

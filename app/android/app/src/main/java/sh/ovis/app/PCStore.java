@@ -51,9 +51,6 @@ final class PCStore {
     /** A PC's page on the hosted shell the app was opened with (appLink), until the connect screen takes it. In memory only, as it can hold a pairing offer's code. */
     static volatile String link;
 
-    /** The SSH login a page asked the connect screen to open on its SSH tab with (HerdrShellPlugin.openSshSetup), until it takes it. In memory only. */
-    static volatile String sshSetup;
-
     /**
      * The hosted Connect a PC screen (Home) did not load, so the app's own page stands in for it, until the person
      * tries it again there (Try again) or a PC's page has loaded since: never by itself. In memory only: an app started
@@ -77,11 +74,11 @@ final class PCStore {
     static volatile String homeStart;
 
     /**
-     * Whether something waits that only the app's own Connect a PC page takes: a pairing link, an SSH setup, an SSH PC
-     * whose address another app holds, which that page says, or an SSH PC to manage.
+     * Whether something waits that only the app's own Connect a PC page takes: a pairing link, an SSH PC whose address
+     * another app holds, which that page says, or an SSH PC to manage.
      */
     static boolean bundledAsked() {
-        return link != null || sshSetup != null || manage || "ssh-port".equals(failureKind);
+        return link != null || manage || "ssh-port".equals(failureKind);
     }
 
     /** The hosted screen is to be tried again (Try again on the fallback, the way back from the app's own page): nothing is left that would keep the app's own page up. */
@@ -89,7 +86,6 @@ final class PCStore {
         homeFailed = false;
         demo = false;
         link = null;
-        sshSetup = null;
         manage = false;
         homeStart = null;
         if ("ssh-port".equals(failureKind)) fail(null, null);

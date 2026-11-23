@@ -62,9 +62,6 @@ enum PCStore {
         failureCommand = command
     }
 
-    /// The SSH login a page asked the connect screen to open with (HerdrShell openSshSetup), taken once. In memory only.
-    static var sshSetup: String?
-
     /// Whether the app's first screen is the hosted Connect a PC screen (Home): OvisAppHome in Info.plist, the build's
     /// (hosted-origin.xcconfig), `bundled` in a build made with OVIS_APP_HOME=bundled, which keeps the app's own page.
     static let homeHosted = appOrigin != nil && (Bundle.main.object(forInfoDictionaryKey: "OvisAppHome") as? String) != "bundled"
@@ -92,9 +89,9 @@ enum PCStore {
     /// until that screen comes up or is asked for again.
     static var homeRetried = false
 
-    /// Whether something waits that only the app's own Connect a PC page takes: an SSH setup, an SSH PC whose address
-    /// another app holds, which that page says, or an SSH PC to manage.
-    static var bundledAsked: Bool { sshSetup != nil || manage || failureKind == "ssh-port" }
+    /// Whether something waits that only the app's own Connect a PC page takes: an SSH PC whose address another app
+    /// holds, which that page says, or an SSH PC to manage.
+    static var bundledAsked: Bool { manage || failureKind == "ssh-port" }
 
     /// The hosted screen is to be tried again (Try again on the fallback, the back control of the app's own page):
     /// nothing is left that would keep the app's own page up.
@@ -103,7 +100,6 @@ enum PCStore {
         homeRetried = false
         ownPageTries = 0
         demo = false
-        sshSetup = nil
         manage = false
         homeStart = nil
         if failureKind == "ssh-port" { failure = nil }
@@ -792,8 +788,8 @@ class HerdrBridgeViewController: CAPBridgeViewController {
     override func viewDidLoad() {
         // before super, which starts the first load
         if let webView = webView, opened != nil {
-            let proxy = NavigationFailureProxy(inner: webView.navigationDelegate) { [weak self] webView, reason in
-                self?.showFailure(in: webView, reason: reason)
+            let proxy = NavigationFailureProxy(inner: webView.navigationDelegate) { [weak self] webView, reason, kind in
+                self?.showFailure(in: webView, reason: reason, kind: kind)
             }
             proxy.onAnswer = { [weak self] in self?.watch?.answer(at: ProcessInfo.processInfo.systemUptime) }
             proxy.onLoaded = { [weak self, weak webView] in
@@ -812,12 +808,12 @@ class HerdrBridgeViewController: CAPBridgeViewController {
             // leaves the cover up, which the timeout turns into Try again. Only the PC's answer or a
             // finished page takes the cover away: while a PC's connection hangs, WebKit showed
             // error.html half-loaded, its script not run and its buttons dead.
-            proxy.onPageFailed = { [weak self] webView, reason in
+            proxy.onPageFailed = { [weak self] webView, reason, kind in
                 // the PC's first page only (the cover may be gone once the PC answered), never the
                 // bundled error page, which would load itself again
                 guard let self, !self.firstPageDone, let reason,
                       ["http", "https"].contains(webView.url?.scheme?.lowercased() ?? "") else { return }
-                self.showFailure(in: webView, reason: reason)
+                self.showFailure(in: webView, reason: reason, kind: kind)
             }
             proxy.opened = opened
             // the hosted screen's failures are its own to act on, whenever they come: before the PC's handling
@@ -1105,12 +1101,13 @@ class HerdrBridgeViewController: CAPBridgeViewController {
         applyBars()
     }
 
-    /// `reason` nil keeps the reason an SSH PC's tunnel gave (its 503 says less).
-    private func showFailure(in webView: WKWebView, reason: String?) {
+    /// `reason` nil keeps the reason an SSH PC's tunnel gave (its 503 says less); `kind` "offline" when the system says
+    /// this phone has no internet (Home.failureKind), which error.html says instead of blaming the PC.
+    private func showFailure(in webView: WKWebView, reason: String?, kind: String? = nil) {
         // the hosted screen's failures went to Home first (homeSignal): never the error page of a PC over it
         guard phase == nil || phase == .pc, let local = bridge?.config.localURL else { return }
         // the timeout stays armed: if WebKit does not get the error page up either, the cover says it
-        if let reason { PCStore.fail(reason, kind: nil) }
+        if let reason { PCStore.fail(reason, kind: kind) }
         webView.load(URLRequest(url: local.appendingPathComponent("error.html")))
     }
 
@@ -1205,10 +1202,11 @@ private final class WebViewWithoutFormBar: WKWebView {
 /// A load cancelled on purpose (a link handed to Safari, a new navigation) is not a failure.
 final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
     private weak var inner: WKNavigationDelegate?
-    private let onFailure: (WKWebView, String?) -> Void
+    /// a page's failure: its reason, and its kind where the system tells one (Home.failureKind)
+    private let onFailure: (WKWebView, String?, String?) -> Void
     var onAnswer: (() -> Void)?
     var onLoaded: (() -> Void)?
-    var onPageFailed: ((WKWebView, String?) -> Void)?
+    var onPageFailed: ((WKWebView, String?, String?) -> Void)?
     var onCommitted: ((WKWebView) -> Void)?
     /// The key of what the view controller opened: a PC's, or the hosted app's origin for the hosted Connect a PC screen.
     var opened: String?
@@ -1224,10 +1222,15 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
         return nsError.domain == "WebKitErrorDomain" && (nsError.code == 102 || nsError.code == 204)
     }
 
+    private static func kind(_ error: Error) -> String? {
+        let nsError = error as NSError
+        return Home.failureKind(domain: nsError.domain, code: nsError.code)
+    }
+
     private var provisional = false
     private var pageShown = false
 
-    init(inner: WKNavigationDelegate?, onFailure: @escaping (WKWebView, String?) -> Void) {
+    init(inner: WKNavigationDelegate?, onFailure: @escaping (WKWebView, String?, String?) -> Void) {
         self.inner = inner
         self.onFailure = onFailure
     }
@@ -1256,7 +1259,7 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
         // an SSH PC's tunnel said why itself (OvisSsh), in more words than its 503; the header alone is not enough,
         // as the PC's own servers can send it through the tunnel
         let tunnel = response.value(forHTTPHeaderField: SshTunnel.failureHeader) != nil && PCStore.failureKind?.hasPrefix("ssh-") == true
-        onFailure(webView, tunnel ? nil : "HTTP \(response.statusCode) \(HTTPURLResponse.localizedString(forStatusCode: response.statusCode).capitalized)")
+        onFailure(webView, tunnel ? nil : "HTTP \(response.statusCode) \(HTTPURLResponse.localizedString(forStatusCode: response.statusCode).capitalized)", nil)
     }
 
     /// WebKit has no public mark for a redirect: it comes as a main-frame action, of the type of the
@@ -1301,7 +1304,7 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
             // a web view no longer on screen (the user changed PC meanwhile) decides nothing
             guard let self, let webView, webView.window != nil else { return }
             if let ovis, let insecure = PCStore.insecureHop(from: from, path: probe.path) {
-                self.onFailure(webView, "It redirected over plain http to \(insecure), which the app does not follow on its own. If \(ovis) is your PC, open it itself.")
+                self.onFailure(webView, "It redirected over plain http to \(insecure), which the app does not follow on its own. If \(ovis) is your PC, open it itself.", nil)
             } else if let ovis {
                 PCStore.redirects += 1
                 PCStore.current = ovis
@@ -1311,7 +1314,7 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
             } else {
                 let place = PCStore.origin(of: target) ?? target.absoluteString
                 let reason = tooMany ? "Too many redirects" : "It redirected to \(place), which did not answer as Ovis. If that is your PC, open \(place) itself."
-                self.onFailure(webView, reason)
+                self.onFailure(webView, reason, nil)
             }
         }
     }
@@ -1344,14 +1347,14 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
         provisional = false
         inner?.webView?(webView, didFailProvisionalNavigation: navigation, withError: error)
         if onSignal?(.provisionalFailed(onPurpose: Self.onPurpose(error))) == true { return }
-        if !Self.onPurpose(error) { onFailure(webView, error.localizedDescription) }
+        if !Self.onPurpose(error) { onFailure(webView, error.localizedDescription, Self.kind(error)) }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         inner?.webView?(webView, didFail: navigation, withError: error)
         // the hosted screen's, whenever it comes: a later document of it that broke off is no page to stay on
         if onSignal?(.failed(onPurpose: Self.onPurpose(error))) == true { return }
-        onPageFailed?(webView, Self.onPurpose(error) ? nil : error.localizedDescription)
+        onPageFailed?(webView, Self.onPurpose(error) ? nil : error.localizedDescription, Self.kind(error))
     }
 
     /// Capacitor reloads the page of a web content process that died. The hosted screen starts over instead, with

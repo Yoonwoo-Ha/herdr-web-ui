@@ -191,9 +191,9 @@ public class HerdrShellPlugin extends Plugin {
     }
 
     /**
-     * From any page of the app, a PC's (the hosted app's) included: the app's own connect screen, on Direct with
-     * `target` (an SSH login, user@host[:port], or empty) in its field. Nothing is added here, and no PC page is given
-     * OvisSsh: the connect screen, an app page, takes the login to the SSH setup screen, where the person adds the PC.
+     * From the hosted app (Add a PC's SSH) or the app's own page: the SSH setup screen over that page, with `target` (an
+     * SSH login, user@host[:port], or empty) filled in (MainActivity.openSshSetup). Nothing is added here, and the page
+     * is given no OvisSsh: the person adds the PC on the setup screen, and Back there returns to the page as it was.
      */
     @PluginMethod
     public void openSshSetup(PluginCall call) {
@@ -220,20 +220,6 @@ public class HerdrShellPlugin extends Plugin {
         openings.cancel();
         call.resolve();
         getActivity().runOnUiThread(() -> ((MainActivity) getActivity()).openSshSetup(target));
-    }
-
-    /** The connect screen's alone: the SSH login a page asked it to open with (openSshSetup), taken once. */
-    @PluginMethod
-    public void takeSshSetup(PluginCall call) {
-        String target = null;
-        if (showingConnectScreen()) {
-            target = PCStore.sshSetup;
-            PCStore.sshSetup = null;
-        }
-        JSObject result = new JSObject();
-        result.put("asked", target != null);
-        result.put("target", target == null ? "" : target);
-        call.resolve(result);
     }
 
     /**

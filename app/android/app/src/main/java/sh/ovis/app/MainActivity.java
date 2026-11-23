@@ -450,6 +450,8 @@ public class MainActivity extends BridgeActivity {
                             state.put("failure", PCStore.failure == null ? "" : PCStore.failure);
                             state.put("kind", PCStore.failureKind == null ? "" : PCStore.failureKind);
                             state.put("command", PCStore.failureCommand == null ? "" : PCStore.failureCommand);
+                            // the hosted app's origin: a failure of the hosted app itself is no PC's (error.html)
+                            state.put("app", BuildConfig.APP_ORIGIN);
                             replyProxy.postMessage(state.toString());
                         } else if ("retry".equals(asked)) {
                             retry();
@@ -1191,15 +1193,22 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * The app's own page on SSH with `target` (an SSH login, or empty) in its field, which takes it to the SSH setup
-     * screen (HerdrShell openSshSetup). Asked while choosing another way, the PC it was opened from stays the one to go
-     * back to, as on the app's own page.
+     * The SSH setup screen over the page that asked for it (HerdrShell openSshSetup: the hosted app's Add a PC › SSH, or
+     * the app's own page), with `target` (an SSH login, or empty) filled in. Back or Cancel there returns to that page as
+     * it was, nothing loaded again; a PC added opens (the setup made it the current PC), as one added from the app's own
+     * page does.
      */
     void openSshSetup(String target) {
-        PCStore.sshSetup = target;
-        if (!(PCStore.choosing && PCStore.current(this) != null)) PCStore.setCurrent(this, null);
-        reopen();
+        Intent setup = new Intent(this, SshSetupActivity.class);
+        String[] login = SshPcs.login(target);
+        if (login != null) setup.putExtra(SshSetupActivity.EXTRA_USER, login[0]).putExtra(SshSetupActivity.EXTRA_HOST, login[1]).putExtra(SshSetupActivity.EXTRA_PORT, Integer.parseInt(login[2]));
+        sshSetup.launch(setup);
     }
+
+    private final androidx.activity.result.ActivityResultLauncher<Intent> sshSetup = registerForActivityResult(
+        new androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+        (result) -> { if (result.getResultCode() == RESULT_OK) reopen(); }
+    );
 
     /** The connect screen, the current PC kept until another opens (PCStore.choosing). */
     void chooseAnother() {

@@ -17,8 +17,7 @@ public class HerdrShellPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "retry", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "goHome", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openDemo", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "openSshSetup", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "takeSshSetup", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "openSshSetup", returnType: CAPPluginReturnPromise)
     ]
 
     /// The view controller whose page asks.
@@ -52,7 +51,9 @@ public class HerdrShellPlugin: CAPPlugin, CAPBridgedPlugin {
             "name": PCStore.last.flatMap { PCStore.names[$0] } ?? "",
             "failure": PCStore.failure ?? "",
             "kind": PCStore.failureKind ?? "",
-            "command": PCStore.failureCommand ?? ""
+            "command": PCStore.failureCommand ?? "",
+            // the hosted app's origin: a failure of the hosted app itself is no PC's (error.html)
+            "app": PCStore.appOrigin?.absoluteString ?? ""
         ])
     }
 
@@ -106,9 +107,9 @@ public class HerdrShellPlugin: CAPPlugin, CAPBridgedPlugin {
         call.resolve()
     }
 
-    /// From any page of the app, a PC's (the hosted app's) included: the app's own connect screen, on Direct with
-    /// `target` (an SSH login, user@host[:port], or empty) in its field. Nothing is added here, and no PC page is given
-    /// OvisSsh: the connect screen, an app page, takes the login to the SSH setup screen, where the person adds the PC.
+    /// From the hosted app (Add a PC's SSH) or the app's own page: the SSH setup sheet over that page, with `target` (an
+    /// SSH login, user@host[:port], or empty) filled in (OvisSshPlugin.presentSetup). Nothing is added here, and the page
+    /// is given no OvisSsh: the person adds the PC on the sheet, and its Cancel returns to the page as it was.
     @objc func openSshSetup(_ call: CAPPluginCall) {
         // only the connect screen and the hosted app (Add a PC's SSH): a PC's own page may not drop the person off it
         // to stage a login of its choosing
@@ -122,32 +123,12 @@ public class HerdrShellPlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("That is not an SSH login.")
             return
         }
+        guard OvisSsh.supported else {
+            call.reject("SSH needs iOS 16.4 or later.")
+            return
+        }
         call.resolve()
-        Self.handOverSshSetup(target)
-    }
-
-    /// The app's own page on SSH with `target` (an SSH login, or empty) in its field, which takes it to the SSH setup
-    /// screen. Asked while choosing another way, the PC it was opened from stays the one to go back to, as on the
-    /// app's own page.
-    static func handOverSshSetup(_ target: String) {
-        go {
-            PCStore.sshSetup = target
-            if !(PCStore.choosing && PCStore.current != nil) {
-                PCStore.current = nil
-                PCStore.choosing = false
-            }
-            PCStore.demo = false
-        }
-    }
-
-    /// The connect screen's alone: the SSH login a page asked it to open with (openSshSetup), taken once.
-    @objc func takeSshSetup(_ call: CAPPluginCall) {
-        var target: String?
-        if bridge?.webView?.url?.scheme == "capacitor", PCStore.shown == nil {
-            target = PCStore.sshSetup
-            PCStore.sshSetup = nil
-        }
-        call.resolve(["asked": target != nil, "target": target ?? ""])
+        OvisSshPlugin.presentSetup(target, over: bridge?.viewController)
     }
 
     /// Change PC. In the demo the app opened (openDemo) it leaves the demo alone, and the PC it was opened over stays

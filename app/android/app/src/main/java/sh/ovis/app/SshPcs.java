@@ -344,6 +344,32 @@ final class SshPcs {
         }
     }
 
+    private static final java.util.regex.Pattern LOGIN = java.util.regex.Pattern.compile("^(?:ssh://)?([^\\s@/:]+)@([^\\s@/:\\[\\]]+|\\[[0-9A-Fa-f:.]+\\])(?::(\\d{1,5}))?/?$");
+
+    /**
+     * A page's SSH login (HerdrShell openSshSetup's target: user@host, user@host:port, ssh:// with them, as the hosted
+     * app's SSH tab and app/web/shell.js sshOrAddress read it) as the setup screen's user, host and port, or null for
+     * anything else, which opens the screen empty.
+     */
+    static String[] login(String target) {
+        if (target == null) return null;
+        java.util.regex.Matcher login = LOGIN.matcher(target.trim());
+        if (!login.matches()) return null;
+        int port = login.group(3) == null ? 22 : Integer.parseInt(login.group(3));
+        if (port < 1 || port > 65535) return null;
+        return new String[] { login.group(1), login.group(2).replaceAll("^\\[|\\]$", ""), String.valueOf(port) };
+    }
+
+    /**
+     * OvisSsh add's user, host and port (the hosted front page of a release gives them apart) as the login openSshSetup
+     * takes, which login reads back: an IPv6 host in brackets, port 22 left out; "" without both a user and a host.
+     */
+    static String target(String user, String host, Integer port) {
+        if (user == null || host == null) return "";
+        String shown = host.contains(":") && !host.startsWith("[") ? "[" + host + "]" : host;
+        return user + "@" + shown + (port == null || port == 22 ? "" : ":" + port);
+    }
+
     /**
      * Whether the page loaded at `url` may open the SSH setup (HerdrShell openSshSetup): the app's own pages (the connect
      * screen, which has no server URL, so `null` here) or the hosted app (`appOrigin`), never a PC's page.

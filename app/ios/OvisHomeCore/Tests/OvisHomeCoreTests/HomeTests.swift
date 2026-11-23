@@ -4,6 +4,14 @@ import XCTest
 final class HomeTests: XCTestCase {
     private let hosted = true, bundledBuild = false
 
+    func testTheErrorPageHearsThatThisPhoneIsOfflineOnlyFromTheSystem() {
+        XCTAssertEqual(Home.failureKind(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet), "offline")
+        for code in [NSURLErrorCannotFindHost, NSURLErrorTimedOut, NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost, NSURLErrorSecureConnectionFailed] {
+            XCTAssertNil(Home.failureKind(domain: NSURLErrorDomain, code: code), "\(code)")
+        }
+        XCTAssertNil(Home.failureKind(domain: "WebKitErrorDomain", code: NSURLErrorNotConnectedToInternet))
+    }
+
     func testASavedPcOpensDirectlyWhateverElseHolds() {
         XCTAssertEqual(Home.screen(hosted: hosted, pc: true, demo: false, asked: false, failed: false), .pc)
         XCTAssertEqual(Home.screen(hosted: hosted, pc: true, demo: false, asked: false, failed: true), .pc)

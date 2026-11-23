@@ -163,12 +163,11 @@ describe("standing in for the hosted screen (a hosted-home build)", () => {
     expect(await called("OvisSsh.add", () => page.locator("#address").press("Enter"))).toBe('call:OvisSsh.add {"user":"me","host":"studio.lan","port":2222}');
   });
 
-  test.skipIf(noBrowser)("goes straight to the SSH setup a page asked for, with Back to the hosted screen", async () => {
+  test.skipIf(noBrowser)("takes no SSH setup over from another page: the app opens that setup over the page that asked", async () => {
     await chooser([], { state: { back: "home" }, ssh: [], answers: { takeSshSetup: { asked: true, target: "me@studio.lan" } } });
-    expect(await called("OvisSsh.add")).toBe('call:OvisSsh.add {"user":"me","host":"studio.lan","port":22}');
-    expect(await page.locator("#address").inputValue()).toBe("me@studio.lan");
-    expect(await page.locator("#back-to-pc").textContent()).toBe("‹ Back");
-    expect(await page.locator("#offline").isVisible()).toBe(false);
+    await page.locator("#pcs-section").waitFor({ state: "attached", timeout: 5_000 });
+    expect(await page.evaluate(() => (window as unknown as { calls: string[] }).calls.filter((call) => /takeSshSetup|OvisSsh\.add/.test(call)))).toEqual([]);
+    expect(await page.locator("#ssh-add").isVisible()).toBe(false);
   });
 
   test.skipIf(noBrowser)("asked for to manage an SSH PC, opens that PC's Manage", async () => {
@@ -280,13 +279,20 @@ describe("a build without the account that still opens the hosted screen first",
 });
 
 describe("a bundled-home build's first screen", () => {
+  test.skipIf(noBrowser)("names its sign-ins in the hosted screen's Korean", async () => {
+    await chooser([], { home: "bundled", locale: "ko-KR" });
+    await page.getByRole("button", { name: "Apple로 계속하기", exact: true }).waitFor({ state: "visible", timeout: 5_000 });
+    expect(await page.getByRole("button", { name: "GitHub로 계속하기", exact: true }).isVisible()).toBe(true);
+  });
+
   test.skipIf(noBrowser)("keeps the three tabs, the sign-in buttons and every list", async () => {
     await chooser([], { home: "bundled" });
     expect(await page.locator('[role="tab"]:visible').count()).toBe(3);
     // the sign-ins the account service names, and no other
-    await page.getByRole("button", { name: "Apple", exact: true }).waitFor({ state: "visible", timeout: 5_000 });
-    expect(await page.getByRole("button", { name: "GitHub", exact: true }).isVisible()).toBe(true);
-    expect(await page.getByRole("button", { name: "Google", exact: true }).isVisible()).toBe(false);
+    // in the hosted screen's words (Continue with …)
+    await page.getByRole("button", { name: "Continue with Apple", exact: true }).waitFor({ state: "visible", timeout: 5_000 });
+    expect(await page.getByRole("button", { name: "Continue with GitHub", exact: true }).isVisible()).toBe(true);
+    expect(await page.getByRole("button", { name: "Continue with Google", exact: true }).isVisible()).toBe(false);
     expect(await page.locator("#offline").isVisible()).toBe(false);
     for (const list of ["#relay-pcs", "#tailnet", "#ssh-pcs"]) expect([list, await page.locator(list).count()]).toEqual([list, 1]);
   });
@@ -326,5 +332,77 @@ describe("a bundled-home build's first screen", () => {
     await page.locator("#web-address").fill("demo");
     await page.locator("#web-address").press("Enter");
     await page.waitForURL("https://chooser.test/demo/index.html", { timeout: 5_000 });
+  });
+});
+
+/** error.html as the iPhone app shows it, its state from HerdrShell getState (`state`). */
+async function errorPage(state: Record<string, unknown>, locale = "en-US") {
+  page = await browser.newPage({ locale });
+  page.on("pageerror", (error) => thrown.push(error.message));
+  await page.addInitScript((state) => {
+    Object.assign(window, { Capacitor: { PluginHeaders: [{ name: "HerdrShell", methods: [] }], getPlatform: () => "ios", nativePromise: async (_plugin: string, method: string) => method === "getState" ? state : {} } });
+  }, state);
+  await page.route("**/*", async (route) => {
+    const url = new URL(route.request().url());
+    const file = Bun.file(new URL(`.${url.pathname}`, WEB));
+    if (url.hostname !== "chooser.test" || !(await file.exists())) return route.fulfill({ status: 404 });
+    return route.fulfill({ contentType: file.type, body: await file.text() });
+  });
+  await page.goto("https://chooser.test/error.html");
+  // the page has read its state: it names what did not open, or says the phone is offline
+  await page.waitForFunction(() => !document.getElementById("offline")!.hidden || !/^(The app could not open it\.|앱이 PC를 열지 못했어요\.)$/.test(document.getElementById("what")!.textContent ?? ""), null, { timeout: 5_000 });
+}
+
+/** the words a person reads on the page (hidden elements left out) */
+async function shownText(): Promise<string> {
+  return await page.evaluate(() => document.body.innerText);
+}
+
+describe("the error page", () => {
+  const HOSTED = "https://app.ovis.sh";
+
+  test.skipIf(noBrowser)("says the phone has no internet when its own connection failed, not that the PC is off, and shows no raw error", async () => {
+    await errorPage({ last: HOSTED, current: HOSTED, failure: "net::ERR_INTERNET_DISCONNECTED", kind: "", app: HOSTED });
+    expect(await page.locator("#title").textContent()).toBe("Can't connect to the internet");
+    const text = await shownText();
+    for (const words of ["net::", "this PC", "Check that the PC is on", "Tailscale"]) expect([words, text.includes(words)]).toEqual([words, false]);
+    expect(await page.getByRole("button", { name: "Try again", exact: true }).isVisible()).toBe(true);
+    expect(await page.getByRole("button", { name: "Change PC", exact: true }).isVisible()).toBe(true);
+  });
+
+  test.skipIf(noBrowser)("takes the iPhone's own word that it is offline (kind offline), in Korean too", async () => {
+    await errorPage({ last: "https://desk.tail1234.ts.net", current: "https://desk.tail1234.ts.net", failure: "인터넷 연결이 오프라인 상태입니다.", kind: "offline", app: HOSTED }, "ko-KR");
+    expect(await page.locator("#title").textContent()).toBe("인터넷에 연결할 수 없어요");
+    const text = await shownText();
+    expect(text).toContain("이 휴대폰이 인터넷에 연결되어 있지 않아요");
+    expect(text).not.toContain("오프라인 상태입니다");
+    expect(text).not.toContain("Tailscale");
+  });
+
+  test.skipIf(noBrowser)("says what a raw network error means instead of showing it", async () => {
+    for (const [failure, said] of [
+      ["net::ERR_NAME_NOT_RESOLVED", "desk.example.com was not found."],
+      ["net::ERR_CONNECTION_RESET", "The connection to desk.example.com broke off."],
+      ["net::ERR_CERT_AUTHORITY_INVALID", "desk.example.com's secure connection (its HTTPS certificate) is not one this phone trusts."],
+      ["net::ERR_BLOCKED_BY_RESPONSE", "desk.example.com could not be opened."],
+    ] as const) {
+      await errorPage({ last: "https://desk.example.com", current: "https://desk.example.com", failure, kind: "", app: HOSTED });
+      expect([failure, await page.locator("#reason").textContent()]).toEqual([failure, said]);
+      expect([failure, (await shownText()).includes("net::")]).toEqual([failure, false]);
+      await page.close();
+    }
+  });
+
+  test.skipIf(noBrowser)("does not call the hosted app a PC when it is what did not open", async () => {
+    await errorPage({ last: HOSTED, current: HOSTED, failure: "HTTP 502 Bad Gateway", kind: "", app: HOSTED });
+    expect(await page.locator("#title").textContent()).toBe("Can't reach Ovis");
+    expect(await page.locator("#what").textContent()).toBe("The app could not open Ovis (app.ovis.sh).");
+    expect(await shownText()).not.toContain("Check that the PC is on");
+  });
+
+  test.skipIf(noBrowser)("still names a PC it could not open", async () => {
+    await errorPage({ last: "https://desk.example.com", current: "https://desk.example.com", failure: "HTTP 502 Bad Gateway", kind: "", app: HOSTED });
+    expect(await page.locator("#title").textContent()).toBe("Can't reach your PC");
+    expect(await page.locator("#what").textContent()).toBe("The app could not open https://desk.example.com.");
   });
 });
