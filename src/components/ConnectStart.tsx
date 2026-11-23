@@ -4,11 +4,13 @@ import { ChevronLeft, ChevronRight, Plus, QrCode } from "lucide-react";
 import { useT } from "../lib/i18n.ts";
 import { callNative, hasNativeMethod, hasNativePlugin } from "../lib/nativeApp.ts";
 import { isLoopbackHost, tailnetHost } from "../lib/phone.ts";
+import type { KnownPc } from "../lib/account/knownPcs.ts";
 import type { MyPc } from "../lib/account/myPcs.ts";
 import { serverIdOfPath, serverScopePath } from "../lib/shellMode.ts";
 import { markRemovedPc, removedPcs, type RemovedPcMark } from "../lib/relay/shellState.ts";
 import { StartScreenAccountMenu } from "./AccountHead.tsx";
-import { AddressForm, canScanQr, OpenError, OpenStatus, scanQr, sshHandoff, tailscaleOn, useAddressOpen, Way, type AddressOpen, type SavedPc } from "./RelayAddPc.tsx";
+import { deviceOffline, useOffline } from "../lib/useOffline.ts";
+import { AddressForm, canScanQr, clearOutcome, offlineOpenText, OpenError, OpenStatus, scanQr, sshHandoff, tailscaleOn, useAddressOpen, Way, type AddressOpen, type SavedPc } from "./RelayAddPc.tsx";
 import { codeFailureText, type TypedCodeFailure } from "./codeFailureText.ts";
 import { SheepMascot } from "./SheepMascot.tsx";
 import { StatusDot, type StatusDotState } from "./StatusDot.tsx";
@@ -54,9 +56,10 @@ export interface RelayTabPc { readonly server_id: string; readonly name?: string
  * is off, and any other account PC is on, whether or not this phone is let into it yet (its own page asks for that), as
  * is a pairing of this phone's that the directory lists (one it does not list, it says nothing of). One
  * that turned this phone away as removed (`removed`, shellState removedPcs) says so, never on, until this phone opens it
- * again, and is left out once forgotten from the list.
+ * again, and is left out once forgotten from the list. `known`: with the account unread now (no internet), the account's
+ * PCs it listed last (knownPcs), by name with no state word, each that is not listed already.
  */
-export function relayTabPcs(devices: readonly SavedPc[], account: readonly MyPc[] | null, removed: Readonly<Record<string, RemovedPcMark>> = {}, checked: ReadonlyMap<string, CheckedPc> = new Map()): RelayTabPc[] {
+export function relayTabPcs(devices: readonly SavedPc[], account: readonly MyPc[] | null, removed: Readonly<Record<string, RemovedPcMark>> = {}, checked: ReadonlyMap<string, CheckedPc> = new Map(), known: readonly KnownPc[] = []): RelayTabPc[] {
   const listed = new Map((account ?? []).map((pc) => [pc.server_id, pc]));
   const own = devices.map((device): RelayTabPc => {
     const row = listed.get(device.server_id);
@@ -64,7 +67,10 @@ export function relayTabPcs(devices: readonly SavedPc[], account: readonly MyPc[
   });
   const more = (account ?? []).filter((pc) => !pc.paired && pc.join !== undefined && !own.some((row) => row.server_id === pc.server_id) && removed[pc.server_id] !== "hidden")
     .map((pc): RelayTabPc => ({ server_id: pc.server_id, name: pc.name, status: removed[pc.server_id] === "removed" ? "removed" : pc.state === "needs-update" ? "update" : checked.get(pc.server_id) ?? (pc.state === "offline" ? "off" : "online"), saved: false }));
-  return [...own, ...more];
+  const rows = [...own, ...more];
+  const kept = known.filter((pc) => !rows.some((row) => row.server_id === pc.server_id) && removed[pc.server_id] !== "hidden")
+    .map((pc): RelayTabPc => ({ server_id: pc.server_id, name: pc.name, status: removed[pc.server_id] === "removed" ? "removed" : undefined, saved: false }));
+  return [...rows, ...kept];
 }
 
 /** What a row of My PCs says of its PC after its name: the account's word for it, or that this is the PC in use now. */
@@ -81,6 +87,8 @@ interface PhonePc {
   readonly address?: string | undefined;
   /** a relay PC's own page, or what opening it does */
   readonly href?: string;
+  /** a tap on `href`, which may keep the page from going there */
+  readonly onLink?: (event: { preventDefault(): void }) => void;
   readonly open?: () => void;
   readonly forget?: (() => void) | undefined;
   readonly data?: Readonly<Record<string, string>>;
@@ -112,7 +120,7 @@ function PcRow({ pc, editing = false, asking = false, onAsk, onKeep }: { readonl
   return (
     <li className="my-pc" data-pc-way={pc.way} {...pc.data}>
       {editing ? <div className="relay-add-saved-pc is-editing">{inside}</div>
-        : pc.href !== undefined ? <a className="relay-add-saved-pc" href={pc.href}>{inside}</a>
+        : pc.href !== undefined ? <a className="relay-add-saved-pc" href={pc.href} onClick={pc.onLink}>{inside}</a>
         : <button type="button" className="relay-add-saved-pc" onClick={pc.open}>{inside}</button>}
       {forget && <button type="button" className="btn btn-ghost phone-pc-forget" data-action="forget-pc" aria-label={t("Forget {name}", { name: pc.name })} aria-expanded={pc.word === "in-use" ? asking : undefined} onClick={pc.word === "in-use" ? onAsk : forget}>{t("Forget|this phone's PC")}</button>}
       {forget && asking && (
@@ -243,10 +251,12 @@ function isCurrent(saved: string, current: CurrentPc | null): boolean {
  * chips. `top`: what the screen says above the list (notices, a PC not answering); `empty`: what it says with nothing
  * listed. Add PC (`onAdd`, none beside the panel on a wide screen) stays at the bottom while the list scrolls.
  */
-export function MyPcs({ devices, accountPcs = null, checked, phone, onForget, inUse = null, onBack, onAdd, focusAdd = 0, accountMenu = false, top, empty, wide = false, hidden = false }: {
+export function MyPcs({ devices, accountPcs = null, knownPcs, checked, phone, onForget, inUse = null, onBack, onAdd, focusAdd = 0, accountMenu = false, top, empty, wide = false, hidden = false }: {
   readonly devices: readonly SavedPc[];
   /** signed in, the account's PCs, which the list adds to this phone's own pairings (relayTabPcs) */
   readonly accountPcs?: readonly MyPc[] | null;
+  /** the account unread now: the account's PCs it listed last (relayTabPcs) */
+  readonly knownPcs?: readonly KnownPc[] | undefined;
   /** what this device's own checks settled of the account's PCs (relayTabPcs) */
   readonly checked?: ReadonlyMap<string, CheckedPc>;
   /** counts the times Add a PC's Back, the control with the focus, came back here: each gives Add PC the focus again */
@@ -267,6 +277,14 @@ export function MyPcs({ devices, accountPcs = null, checked, phone, onForget, in
 }) {
   const t = useT();
   const open = useAddressOpen("list");
+  // what a tap said with no network on this device is over once it is back
+  const offline = useOffline();
+  const { setError } = open;
+  const wasOffline = useRef(offline);
+  useEffect(() => {
+    if (wasOffline.current && !offline) { setError(null); clearOutcome(); }
+    wasOffline.current = offline;
+  }, [offline, setError]);
   const [query, setQuery] = useState("");
   const [show, setShow] = useState<PcShow>("all");
   // the PCs that turned this phone away as removed (relayTabPcs), read again once one is forgotten from the list
@@ -286,6 +304,8 @@ export function MyPcs({ devices, accountPcs = null, checked, phone, onForget, in
     ? () => { open.setError(null); callNative(SHELL, "backToCurrent").catch(open.failed); } : undefined;
   // the PC in use is open already: its row goes back to it as Back does, rather than opening it again
   const goBack = onBack ?? backToCurrent;
+  // a relay PC's page opens nothing with no network on this device: the row says so instead of going there
+  const offlineLink = (event: { preventDefault(): void }): void => { if (deviceOffline()) { event.preventDefault(); open.setError(offlineOpenText(t)); } };
   const forgetSaved = (pc: PhoneSavedPc) => () => { open.setError(null); callNative(SHELL, "forget", { url: pc.origin }).then(phone.reread, open.failed); };
   // a saved Tailscale PC asks the app first whether Tailscale is on: off, Open Tailscale takes over (TailscaleOff)
   const fromPhone = (pc: PhoneSavedPc): PhonePc => ({
@@ -295,10 +315,10 @@ export function MyPcs({ devices, accountPcs = null, checked, phone, onForget, in
     forget: pc.way === "ssh" ? undefined : forgetSaved(pc),
   });
   const rows: PhonePc[] = [
-    ...relayTabPcs(devices, accountPcs, removed, checked).map((pc): PhonePc => {
+    ...relayTabPcs(devices, accountPcs, removed, checked, knownPcs).map((pc): PhonePc => {
       const used = pc.server_id === inUse || (current !== null && "serverId" in current && current.serverId === pc.server_id);
       return {
-        key: pc.server_id, name: pc.name ?? t("Unnamed PC"), way: "relay", ...(used && goBack ? { open: goBack } : { href: serverScopePath(pc.server_id) }),
+        key: pc.server_id, name: pc.name ?? t("Unnamed PC"), way: "relay", ...(used && goBack ? { open: goBack } : { href: serverScopePath(pc.server_id), onLink: offlineLink }),
         word: used ? "in-use" : pc.status,
         forget: pc.status === "removed" ? () => { markRemovedPc(pc.server_id, "hidden"); setRemoved(removedPcs()); }
           : pc.saved && onForget ? () => onForget(pc.server_id) : undefined,
@@ -463,6 +483,20 @@ function TailscaleOff() {
       {hasNativeMethod(SHELL, "openTailscale") && <button type="button" className="btn btn-primary" onClick={() => { setError(null); callNative(SHELL, "openTailscale").catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause))); }}>{t("Open Tailscale")}</button>}
       {error !== null && <p className="account-error">{error}</p>}
     </div>
+  );
+}
+
+/**
+ * My PCs with no network on this device (useOffline): one line that says so, naming the phone in the phone app, and Try
+ * again, which reads what the screen shows once more (as the network coming back does by itself).
+ */
+export function OfflineLine({ onRetry }: { readonly onRetry: () => void }) {
+  const t = useT();
+  return (
+    <p className="account-error my-pcs-offline" role="alert" data-offline="">
+      {hasNativePlugin(SHELL) ? t("This phone is not connected to the internet.") : t("This device is not connected to the internet.")}
+      {" "}<button type="button" className="account-link" onClick={onRetry}>{t("Try again")}</button>
+    </p>
   );
 }
 

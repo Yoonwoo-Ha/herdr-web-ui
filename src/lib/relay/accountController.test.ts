@@ -253,6 +253,39 @@ describe("the hosted shell's front page", () => {
     expect(rows()).toBe(3);
   });
 
+  it("keeps the account's PCs it listed last for a page loaded with no internet, and forgets them once signed out", async () => {
+    const pair = generateKeyPair();
+    const mac = { server_id: deriveServerId(pair.publicKey), label: "hasang-uui-MacBookPro", added_at: new Date(Date.now() - 86_400_000).toISOString(), last_seen_at: new Date(Date.now() - 20 * 3_600_000).toISOString(), public_key: Buffer.from(pair.publicKey).toString("hex"), relay: AP };
+    let online = true;
+    const accountFetch = async (input: RequestInfo | URL): Promise<Response> => {
+      if (new URL(String(input)).pathname !== "/v1/pcs") return new Response(null, { status: 404 });
+      if (!online) throw new TypeError("Failed to fetch");
+      return ({ status: 200, ok: true, json: async () => ({ pcs: [mac] }) }) as unknown as Response;
+    };
+    const accountStore = memoryAccountStore();
+    const session = { service: SERVICE, account: "acct-test", provider: "github" as const, access_token: "access", refresh_token: "refresh", expires_at: Date.now() + 3_600_000 };
+    await accountStore.set("session", session);
+    await mountRelayShell(mountFor({ accountService: SERVICE, accountProviders: ["github"], accountStore, accountFetch, store: deviceStore([]) }));
+    await until(() => rendered.length > 0 && account().pcs !== null, "the first read drawn");
+    expect(account().pcs!.map((pc) => pc.name)).toEqual(["hasang-uui-MacBookPro"]);
+
+    // the app opened again with no internet: a new page, whose read gets no answer at all
+    online = false;
+    rendered = [];
+    await mountRelayShell(mountFor({ accountService: SERVICE, accountProviders: ["github"], accountStore, accountFetch, store: deviceStore([]) }));
+    await until(() => rendered.length > 0 && account().error !== null, "the failed read drawn");
+    expect(account().pcs).toEqual([]);
+    expect(account().known).toEqual([{ server_id: mac.server_id, name: "hasang-uui-MacBookPro" }]);
+
+    shellAccountActions()?.signOut();
+    await drain();
+    rendered = [];
+    await accountStore.set("session", session);
+    await mountRelayShell(mountFor({ accountService: SERVICE, accountProviders: ["github"], accountStore, accountFetch, store: deviceStore([]) }));
+    await until(() => rendered.length > 0 && account().error !== null, "the next failed read drawn");
+    expect(account().known ?? []).toEqual([]);
+  });
+
   it("reads nothing again while the first read is still out, so an older answer never lands over a newer one", async () => {
     const desk = keyFor();
     const now = Date.now();

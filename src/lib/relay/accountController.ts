@@ -2,6 +2,7 @@ import { ACCOUNT_FEATURE } from "../../../shared/relay-mux.ts";
 import { importPublicKey } from "../../../shared/relay-e2ee.ts";
 import { newRecordId } from "../../../shared/account-records.ts";
 import type { RelayOffer } from "../../../shared/relay-offer.ts";
+import { dropKnownPcs, keepKnownPcs, knownPcs } from "../account/knownPcs.ts";
 import { myPcs } from "../account/myPcs.ts";
 import { signInKey } from "../account/signInKey.ts";
 import { AccountService, AccountServiceError, AccountServiceUnreachableError, accountProvidersOf, indexedAccountService, offeredProviders, sameSignIn, shellAccountServiceOf, SignedOutError } from "../account/service.ts";
@@ -122,6 +123,8 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
       shownFor = undefined;
       replaced = true;
     };
+    // the sign-in this read is for, once it is known: a read that fails lists the account's PCs it listed last (knownPcs)
+    let readFor: AccountSession | undefined;
     const read = (async () => {
       try {
         const session = await account.session();
@@ -140,6 +143,7 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
           if (!live()) return;
         }
         shownFor = session;
+        readFor = session;
         const listed = await account.forSignIn(session).listPcs();
         const kept = await accountStore.get("signin_key");
         const openKey = kept === undefined || kept.account !== session.account || kept.sign_in_id !== session.sign_in_id ? null
@@ -158,13 +162,14 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
         const projection = { accountKey: key.public_spki, account: session.account, registered: openKey !== null };
         listedFor = { epoch, projection, at, openKey };
         accountView = { kind: "signed-in", provider: session.provider, error: null, pcs: myPcs(listed, devices, { now: at, ...projection, outdated: view.outdated() }) };
+        keepKnownPcs(session.account, accountView.pcs ?? []);
         sendQueuedAdds({ service: account, store: accountStore, account: session.account }).catch((error: unknown) => console.warn("Ovis: kept adds could not be sent", error instanceof Error ? error.name : error));
       } catch (error) {
         if (!live()) return;
         const next = error instanceof SignedOutError ? await account.session().catch(() => undefined) : undefined;
         if (next !== undefined) { if (live()) replacedBy(next); return; }
         if (!live()) return;
-        if (error instanceof SignedOutError) { directory = []; accountView = { kind: "signed-out", error: t("Your sign-in ended. Sign in again to see every PC of your account.") }; }
+        if (error instanceof SignedOutError) { directory = []; dropKnownPcs(); accountView = { kind: "signed-out", error: t("Your sign-in ended. Sign in again to see every PC of your account.") }; }
         else {
           console.warn("Ovis: the account's PCs could not be read", error instanceof Error ? error.name : error);
           const devices = await store.list();
@@ -172,7 +177,8 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
           const kept = current?.kind === "signed-in" && current.pcs !== null && listedFor?.epoch === epoch
             ? myPcs(directory, devices, { now: listedFor.at, ...listedFor.projection, outdated: view.outdated() })
             : current?.kind === "signed-in" && current.pcs !== null ? current.pcs : myPcs([], devices, { now: Date.now(), outdated: view.outdated() });
-          if (accountView?.kind === "signed-in") accountView = { ...accountView, pcs: kept, error: t("The account service could not be reached. The PCs this device is paired with still work.") };
+          const known = readFor === undefined ? [] : knownPcs(readFor.account);
+          if (accountView?.kind === "signed-in") accountView = { ...accountView, pcs: kept, ...(known.length > 0 ? { known } : {}), error: t("The account service could not be reached. The PCs this device is paired with still work.") };
         }
       }
       if (live()) await changed();
@@ -220,7 +226,7 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
     else if (!wanted && refreshTimer !== undefined) { clearInterval(refreshTimer); refreshTimer = undefined; }
   };
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") void refresh(); armRefresh(); });
-  const invalidate = (): void => { deletion = undefined; generation++; directory = []; accountView = { kind: "signed-out", error: null }; armRefresh(); };
+  const invalidate = (): void => { deletion = undefined; generation++; directory = []; dropKnownPcs(); accountView = { kind: "signed-out", error: null }; armRefresh(); };
   const signOut = (): void => {
     // the sign-in the person ended, read before anything waits: one made meanwhile stays (service.ts, forSignIn)
     const ending = account.session();
@@ -246,6 +252,7 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
       const names = new Map((await store.list()).map((device) => [device.server_id, device.name ?? device.server_id.slice(0, 8)]));
       const message = unconfirmed.length === 0 ? null
         : t("This device left the account. These PCs the account does not list still have it, so revoke it on them: {pcs}", { pcs: unconfirmed.map((id) => names.get(id) ?? id.slice(0, 8)).join(", ") });
+      dropKnownPcs();
       if (epoch === generation) { accountView = { kind: "signed-out", error: message }; await changed(); }
       return { left: true, message };
     }, async (error: unknown): Promise<LeaveOutcome> => {
@@ -362,6 +369,7 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
       if (!current()) return;
       for (const serverId of running.values()) cancelEnrollment(serverId);
       directory = [];
+      dropKnownPcs();
       accountView = { kind: "signed-out", error: null, notice: t("Your account was deleted.") };
       armRefresh();
       await changed();
@@ -375,6 +383,7 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
         // answer was lost, then a refused sign-in, looks the same as a sign-in ended some other way), so the device keeps
         // its account key and records: a key kept too long costs nothing, a live account's key wiped costs its identity
         directory = [];
+        dropKnownPcs();
         accountView = { kind: "signed-out", error: t("Your sign-in ended. Sign in again to see every PC of your account.") };
         armRefresh();
         await changed();

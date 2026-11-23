@@ -171,4 +171,8 @@ export const RELAY_KO: Record<string, string> = {
   "This phone has no way to {host} right now: the PC may be off, or this phone's network (mobile data, another Wi-Fi, or a VPN) does not reach it.": "지금 이 휴대폰에서 이 주소({host})로 가는 길이 없어요. PC가 꺼져 있거나, 이 휴대폰의 네트워크(모바일 데이터, 다른 Wi-Fi, VPN)가 닿지 않을 수 있어요.",
   "{host} could not be opened. Check the address, and that Ovis runs on that PC.": "이 주소({host})를 열지 못했어요. 주소와, 그 PC에서 Ovis가 실행 중인지 확인하세요.",
   "This app cannot open a PC by its address. Update the Ovis app.": "이 앱은 주소로 PC를 열 수 없어요. Ovis 앱을 업데이트하세요.",
+  "This phone is not connected to the internet.": "이 휴대폰이 인터넷에 연결되어 있지 않아요.",
+  "This device is not connected to the internet.": "이 기기가 인터넷에 연결되어 있지 않아요.",
+  "Connect this phone to the internet to open the PC.": "PC를 열려면 휴대폰을 인터넷에 연결하세요.",
+  "Connect this device to the internet to open the PC.": "PC를 열려면 기기를 인터넷에 연결하세요.",
 };

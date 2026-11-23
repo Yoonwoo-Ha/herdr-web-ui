@@ -848,6 +848,96 @@ describe("the hosted front page", () => {
       }
     });
 
+    describe("with no internet on the device", () => {
+      const offline = (off: boolean): void => {
+        (navigator as { onLine?: boolean }).onLine = !off;
+        window.dispatchEvent(new Event(off ? "offline" : "online"));
+      };
+      const alerts = () => renderer!.root.findAll((node) => node.props.role === "alert" && shown(node)).map(textOf);
+      const unreached = "The account service could not be reached. The PCs this device is paired with still work.";
+      const offlinePage = (extra: Partial<RelayShellProps> = {}): RelayShellProps => ({
+        ...props({ kind: "empty", account: { kind: "signed-in", provider: "github", pcs: [], error: unreached, known: [{ server_id: ids.mac, name: "hasang-uui-MacBookPro" }] } }), scoped: false, onSignIn: none, ...extra,
+      });
+
+      it("says in one line that the phone is offline, with Try again, never that the account service is down, and lists every PC it knows", async () => {
+        const called: string[] = [];
+        let opened = Promise.withResolvers<unknown>();
+        const capacitor = Object.getOwnPropertyDescriptor(globalThis, "Capacitor");
+        Object.defineProperty(globalThis, "Capacitor", { configurable: true, value: {
+          isNativePlatform: () => true, getPlatform: () => "android",
+          PluginHeaders: [{ name: "HerdrShell", methods: ["getState", "open", "tailscale"].map((name) => ({ name })) }],
+          nativePromise: async (plugin: string, method: string, options: Record<string, unknown> = {}) => {
+            called.push(`${plugin}.${method}${typeof options.url === "string" ? ` ${options.url}` : ""}`);
+            if (method === "getState") return { saved: ["https://macbookpro.tail1e211e.ts.net:17317"], names: {} };
+            if (method === "tailscale") return { on: true };
+            if (method === "open") return await opened.promise;
+            return {};
+          },
+        } });
+        let refreshed = 0, checked = 0;
+        try {
+          offline(true);
+          await mount(offlinePage({ onRefreshAccount: () => { refreshed++; }, onCheckPcs: () => { checked++; } }));
+          expect(alerts()).toEqual(["This phone is not connected to the internet. Try again"]);
+          expect(textOf(renderer!.root)).not.toContain("account service");
+          // the account's PC it listed last stays, by its page, and the PC the app saved by its Tailscale address
+          const relay = renderer!.root.find((node) => node.type === "li" && node.props["data-pc-way"] === "relay").find((node) => node.type === "a");
+          expect(relay.props.href).toBe(`/s/${ids.mac}/`);
+          expect(textOf(relay)).toBe("hasang-uui-MacBookPro" + "Relay");
+          // a tap says the phone is offline: no name that was not found, no Tailscale that may be off
+          let held = 0;
+          await act(async () => { relay.props.onClick({ preventDefault: () => { held++; } }); });
+          expect(held).toBe(1);
+          expect(alerts()).toContain("Connect this phone to the internet to open the PC.");
+          const tailscale = () => renderer!.root.find((node) => node.type === "li" && node.props["data-pc-way"] === "tailscale").find((node) => node.type === "button" && node.props.className === "relay-add-saved-pc");
+          await act(async () => { tailscale().props.onClick(); });
+          expect(called.filter((call) => call.startsWith("HerdrShell.open ") || call === "HerdrShell.tailscale")).toEqual([]);
+          expect(alerts().filter((text) => text.includes("not found") || text.includes("Tailscale may be off"))).toEqual([]);
+          // Try again reads it all again
+          await act(async () => { renderer!.root.find((node) => node.type === "button" && textOf(node) === "Try again" && shown(node)).props.onClick(); });
+          expect([refreshed, checked, called.filter((call) => call === "HerdrShell.getState").length]).toEqual([1, 1, 2]);
+
+          // the network back: the line goes, and the screen reads the account, the app's PCs and the relay's again by itself
+          await act(async () => { offline(false); });
+          expect(alerts().filter((text) => text.includes("internet"))).toEqual([]);
+          expect([refreshed, checked, called.filter((call) => call === "HerdrShell.getState").length]).toEqual([2, 2, 3]);
+          // online, the account's own failure says so again, as before
+          expect(alerts()).toContain(`${unreached} Try again`);
+
+          // an open the network dropped under says the phone went offline, not why the PC did not answer
+          await act(async () => { tailscale().props.onClick(); });
+          await act(async () => { await Promise.resolve(); });
+          expect(called.filter((call) => call.startsWith("HerdrShell.open "))).toEqual(["HerdrShell.open https://macbookpro.tail1e211e.ts.net:17317/"]);
+          (navigator as { onLine?: boolean }).onLine = false;
+          await act(async () => { opened.reject(Object.assign(new Error("unknown-host"), { code: "unknown-host" })); await opened.promise.catch(() => undefined); });
+          expect(alerts()).toContain("Connect this phone to the internet to open the PC.");
+          opened = Promise.withResolvers<unknown>();
+        } finally {
+          (navigator as { onLine?: boolean }).onLine = true;
+          if (capacitor) Object.defineProperty(globalThis, "Capacitor", capacitor);
+          else Reflect.deleteProperty(globalThis, "Capacitor");
+        }
+      });
+
+      it("says this device, in a browser, and opens nothing while it is offline", async () => {
+        offline(true);
+        try {
+          await mount(offlinePage());
+          expect(alerts()).toEqual(["This device is not connected to the internet. Try again"]);
+          let held = 0;
+          await act(async () => { renderer!.root.find((node) => node.type === "li" && node.props["data-pc-way"] === "relay").find((node) => node.type === "a").props.onClick({ preventDefault: () => { held++; } }); });
+          expect(held).toBe(1);
+          expect(alerts()).toContain("Connect this device to the internet to open the PC.");
+          // online, a row opens its page as before
+          await act(async () => { offline(false); });
+          await act(async () => { renderer!.root.find((node) => node.type === "li" && node.props["data-pc-way"] === "relay").find((node) => node.type === "a").props.onClick({ preventDefault: () => { held++; } }); });
+          expect(held).toBe(1);
+        } finally {
+          (navigator as { onLine?: boolean }).onLine = true;
+        }
+      });
+    });
+
     it("goes back to the PC the phone app still has open while the person chooses another, marking it In use now, whatever way it connects", async () => {
       for (const [current, mark, canGoBack] of [["https://desk.tail1e211e.ts.net", "DeskTailscale", true], [`https://app.ovis.sh/s/${ids.home}/`, "Home serverRelay", true], ["https://desk.tail1e211e.ts.net", "DeskTailscale", false]] as const) {
         const called: string[] = [];

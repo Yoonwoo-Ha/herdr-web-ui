@@ -171,4 +171,8 @@ export const RELAY_JA: Record<string, string> = {
   "This phone has no way to {host} right now: the PC may be off, or this phone's network (mobile data, another Wi-Fi, or a VPN) does not reach it.": "いまこのスマホから {host} に届く経路がありません。PC の電源が切れているか、このスマホのネットワーク（モバイルデータ、別の Wi-Fi、または VPN）が届いていない可能性があります。",
   "{host} could not be opened. Check the address, and that Ovis runs on that PC.": "{host} を開けませんでした。アドレスと、その PC で Ovis が動いているかを確認してください。",
   "This app cannot open a PC by its address. Update the Ovis app.": "このアプリではアドレスで PC を開けません。Ovis アプリを更新してください。",
+  "This phone is not connected to the internet.": "このスマホはインターネットに接続されていません。",
+  "This device is not connected to the internet.": "このデバイスはインターネットに接続されていません。",
+  "Connect this phone to the internet to open the PC.": "PC を開くには、スマホをインターネットに接続してください。",
+  "Connect this device to the internet to open the PC.": "PC を開くには、このデバイスをインターネットに接続してください。",
 };

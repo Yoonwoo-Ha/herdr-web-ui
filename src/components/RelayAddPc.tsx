@@ -8,6 +8,7 @@ import { callNative, hasNativeMethod, hasNativePlugin } from "../lib/nativeApp.t
 import { ACCOUNT_PROVIDERS } from "../lib/account/store.ts";
 import { isLoopbackHost, tailnetHost } from "../lib/phone.ts";
 import { serverIdOfPath, serverScopePath } from "../lib/shellMode.ts";
+import { deviceOffline } from "../lib/useOffline.ts";
 
 /** The phone app's QR scanner (@capacitor/barcode-scanner, app/package.json) and its SSH screen (Android's OvisSsh). */
 const SCANNER = "CapacitorBarcodeScanner";
@@ -111,6 +112,11 @@ export function openFailureText(t: Translate, url: URL, code: string | undefined
     // a reason this page does not know, or none: the app's own words are not the person's language, so none of them
     default: return t("{host} could not be opened. Check the address, and that Ovis runs on that PC.", { host }) + tailscale;
   }
+}
+
+/** What opening a PC says while this device has no network (deviceOffline): the phone app's words name the phone. */
+export function offlineOpenText(t: Translate): string {
+  return hasNativePlugin(SHELL) ? t("Connect this phone to the internet to open the PC.") : t("Connect this device to the internet to open the PC.");
 }
 
 /**
@@ -249,12 +255,13 @@ export function useAddressOpen(view = "page") {
     const deadline = setTimeout(() => {
       if (attempt?.id !== id) return;
       stopAttempt();
-      setOutcome({ view, kind: "error", text: openFailureText(t, url, "timeout", "") });
+      setOutcome({ view, kind: "error", text: deviceOffline() ? offlineOpenText(t) : openFailureText(t, url, "timeout", "") });
     }, OPEN_WAIT_MS);
     void callNative(SHELL, "open", { url: url.href, check: true }).then(() => undefined, (cause: unknown) => {
       if (attempt?.id !== id) return;
       const code = typeof (cause as { code?: unknown } | null)?.code === "string" ? (cause as { code: string }).code : undefined;
-      const said = openFailureText(t, url, code, cause instanceof Error ? cause.message : String(cause));
+      // the network went away under the open: that is why, whatever the address answered
+      const said = code === "cancelled" ? "" : deviceOffline() ? offlineOpenText(t) : openFailureText(t, url, code, cause instanceof Error ? cause.message : String(cause));
       if (said !== "") setOutcome({ view, kind: "error", text: said });
     }).finally(() => {
       clearTimeout(deadline);
@@ -267,10 +274,12 @@ export function useAddressOpen(view = "page") {
    * link of another origin is refused; a PC's own address opens (a public http one only after a warning): the phone app
    * checks it is Ovis first (HerdrShell.open, app/web/connect.js), a browser goes there; anything else says so. In the app
    * one opens at a time: while one opens, another tap waits; one still asking about Tailscale gives way to the new one.
-   * `askTailscale`: a saved Tailscale PC, which asks the app first whether Tailscale is on.
+   * `askTailscale`: a saved Tailscale PC, which asks the app first whether Tailscale is on. With no network on this
+   * device nothing opens, and it says so (offlineOpenText), never why the address did not answer.
    */
   const take = (url: URL | null, options: { readonly askTailscale?: boolean } = {}): void => {
     if (url === null) { setError(t("That is not an http or https address.")); return; }
+    if (deviceOffline()) { clearOutcome(); setError(offlineOpenText(t)); return; }
     const offer = url.hash.startsWith("#offer=");
     if (url.origin === window.location.origin) {
       const page = pcPage(url);

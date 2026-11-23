@@ -16,10 +16,11 @@ import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { SHEET_QUERY, useSheetSwipe } from "../lib/sheets.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
+import { useOffline } from "../lib/useOffline.ts";
 import { AccountJoinRequests } from "./AccountJoinRequests.tsx";
 import { AccountSignIn } from "./AccountPcs.tsx";
 import { AddPcSheet } from "./AddPcSheet.tsx";
-import { AccountlessRelayPanel, AccountRelayPanel, AddPcTabs, type CheckedPc, type CodeWays, type ConnectWay, MyPcs, SHELL, SignedOutRelayPanel, usePhoneSaved } from "./ConnectStart.tsx";
+import { AccountlessRelayPanel, AccountRelayPanel, AddPcTabs, type CheckedPc, type CodeWays, type ConnectWay, MyPcs, OfflineLine, SHELL, SignedOutRelayPanel, usePhoneSaved } from "./ConnectStart.tsx";
 import { codeFailureText, type TypedCodeFailure } from "./codeFailureText.ts";
 import { KeyId } from "./KeyId.tsx";
 import { NoPcOnline } from "./NoPcOnline.tsx";
@@ -230,7 +231,17 @@ export function RelayShell(props: RelayShellProps) {
   // nothing saved here, none of the account's PCs is on (Check again is the sign-in's launch once more); the rows say Off
   const checkAgain = frontState === null || (frontState.kind !== "list" && frontState.kind !== "empty") ? undefined
     : frontState.noneOnline === true ? props.onFindPc : frontState.kind === "empty" && frontState.waitPc === true ? props.onWaitAgain : undefined;
-  const noneOnline = checkAgain ? <NoPcOnline onCheck={checkAgain} /> : null;
+  // no network on this device: My PCs says that alone, rather than that no PC or the account service answered, and
+  // reads everything again once the network is back (or on its Try again): the account, the app's PCs and their checks
+  const offline = useOffline();
+  const readAgain = useRef<() => void>(() => {});
+  readAgain.current = () => { void onRefreshAccount?.(); phone.reread(); props.onCheckPcs?.(); };
+  const wasOffline = useRef(offline);
+  useEffect(() => {
+    if (wasOffline.current && !offline) readAgain.current();
+    wasOffline.current = offline;
+  }, [offline]);
+  const noneOnline = offline ? <OfflineLine onRetry={() => readAgain.current()} /> : checkAgain ? <NoPcOnline onCheck={checkAgain} /> : null;
   // a pairing's sign-in reads on the plain page, with nothing around it; its other steps are on the step frame
   const plain = state.kind === "failed" && state.failure === "sign-in-first" && onSignIn !== undefined;
 
@@ -297,7 +308,7 @@ export function RelayShell(props: RelayShellProps) {
   const frontView = (top: ReactNode, accountMenu = false): ReactNode => (
     <div className={desk ? "connect-panes connect-desk" : "connect-panes"}>
       {listed && (
-        <MyPcs key="list" hidden={addOver} devices={savedPcs} accountPcs={account?.kind === "signed-in" ? account.pcs : null} checked={checked} phone={phone} onForget={props.onForgetSaved} wide={desk} focusAdd={listFocus}
+        <MyPcs key="list" hidden={addOver} devices={savedPcs} accountPcs={account?.kind === "signed-in" ? account.pcs : null} knownPcs={account?.kind === "signed-in" ? account.known : undefined} checked={checked} phone={phone} onForget={props.onForgetSaved} wide={desk} focusAdd={listFocus}
           inUse={addOpen && addFrom !== null ? serverIdOfPath(addFrom) : null} onBack={addOpen ? () => { setAddOpen(false); leaveAddEntry(addFrom); } : undefined}
           onAdd={desk ? undefined : () => { setAddView(true); setAddFocus((count) => count + 1); }} accountMenu={accountMenu} top={top}
           empty={account?.kind === "signed-in" && account.pcs !== null ? <p className="relay-shell-copy">{t("Sign in with the same account on the PC where Ovis runs")}</p> : undefined} />
@@ -315,7 +326,7 @@ export function RelayShell(props: RelayShellProps) {
   // yet, the same page, the rows saying Off or the list saying to sign in on a PC); a code typed from Add PC's relay tab
   // goes on in the pairing dialog over it
   if (account?.kind === "signed-in") {
-    const directoryError = account.error !== null && (
+    const directoryError = account.error !== null && !offline && (
       <p className="account-error relay-add-directory-error" role="alert">{account.error}{onRefreshAccount && <> <button type="button" className="account-link" onClick={() => { void onRefreshAccount(); }}>{t("Try again")}</button></>}</p>
     );
     return (

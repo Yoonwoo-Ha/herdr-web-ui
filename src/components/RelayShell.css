@@ -169,7 +169,8 @@
   overflow: hidden;
 }
 
-/* a PC's row (ConnectStart PcRow): its name over the way it connects, its state word and chevron at the end of the link */
+/* a PC's row (ConnectStart PcRow): its name over the way it connects and its state word, the chevron at the end of the
+   link; the name has the whole first line, so a long one is cut only when it does not fit there */
 .my-pc {
   display: grid;
   grid-column: 1 / -1;
@@ -185,7 +186,7 @@
   grid-column: 1;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
-  grid-template-areas: "name state chevron" "meta meta meta";
+  grid-template-areas: "name name chevron" "meta state chevron";
   align-items: center;
   gap: var(--space-1) var(--space-3);
   width: 100%;
@@ -681,5 +682,10 @@
 
   .connect-add-side > .connect-start-head > .connect-start-title {
     font-size: var(--fs-lg);
+  }
+
+  /* beside Add a PC the list is wide enough for the state word on the name's line */
+  .connect-desk .my-pc > .relay-add-saved-pc {
+    grid-template-areas: "name state chevron" "meta meta meta";
   }
 }

@@ -5159,8 +5159,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   it has no account overview page. My PCs is one list of every such PC, each row its name, a small way tag (Relay,
   Tailscale, SSH, Address) and, for a relay PC, On, Off or Update needed (never Needs approval: a PC this device is not
   let into yet asks for that on its own page; a pairing of this phone's is On once its own check or the directory says
-  so), its name on one line ending in an ellipsis, and **Add PC** pinned at the bottom while the list scrolls, as the
-  Claude app keeps New chat in reach over its list. No row carries Forget: the ⋮ menu (there whenever a row can be
+  so), its name alone on the first line, ending in an ellipsis only where it does not fit there (the state word sits on
+  the second line with the way tag, beside the name only on the wide screen), and **Add PC** pinned at the bottom while
+  the list scrolls, as the Claude app keeps New chat in reach over its list. No row carries Forget: the ⋮ menu (there whenever a row can be
   forgotten, signed in or not) has Forget PCs, after which each row this phone can forget shows Forget in its chevron's
   place and no row opens, until Done in Add PC's place; Forget on the PC in use asks once more in the row (This is the
   PC in use now. Forget it?). With no PC on it is the same
@@ -5188,7 +5189,13 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   Tailscale is off shows Open Tailscale instead of trying it; an SSH PC whose address another app on the phone
   took says so above the list; and while the app keeps a PC open as the person chooses another, My PCs marks it In use
   now and its Back goes back to it (backToCurrent), the app's own connect page's ‹ PC; the In use now row goes back too,
-  rather than load that PC again. Add PC (and Connect a PC, the
+  rather than load that PC again. With no network on the device (the browser's online state: only an explicit offline
+  counts), My PCs says so in one line with Try again (this phone in the app, this device in a browser), in place of No
+  PC is online and the account service's failure, as Slack and WhatsApp say it over a list they keep; it still lists
+  every PC this device knows, the account's ones from its last read that answered (kept on the device for that account
+  by id and name, with no state word, and dropped at sign-out); a row tapped then says to connect first instead of
+  trying the PC; and once the network is back the screen reads the account, the app's PCs and their checks again by
+  itself. Add PC (and Connect a PC, the
   same screen as the front page) is the desktop's Add a connection tabs holding only the ways in: the sign-in signed out
   (under Reach your PCs from anywhere with your Ovis account, and over Tailscale and SSH need no sign-in), the PC's QR
   (its code in a browser), a Tailscale address (with Tailscale off on the phone, under Open Tailscale, for an address on

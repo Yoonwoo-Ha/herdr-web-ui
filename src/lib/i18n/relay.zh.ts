@@ -171,4 +171,8 @@ export const RELAY_ZH: Record<string, string> = {
   "This phone has no way to {host} right now: the PC may be off, or this phone's network (mobile data, another Wi-Fi, or a VPN) does not reach it.": "这部手机现在无法到达 {host}：电脑可能已关机，或这部手机的网络（移动数据、其他 Wi-Fi 或 VPN）无法访问它。",
   "{host} could not be opened. Check the address, and that Ovis runs on that PC.": "无法打开 {host}。请检查地址，并确认那台电脑上正在运行 Ovis。",
   "This app cannot open a PC by its address. Update the Ovis app.": "此应用无法通过地址打开电脑。请更新 Ovis 应用。",
+  "This phone is not connected to the internet.": "这部手机未连接到互联网。",
+  "This device is not connected to the internet.": "此设备未连接到互联网。",
+  "Connect this phone to the internet to open the PC.": "请将这部手机连接到互联网后再打开电脑。",
+  "Connect this device to the internet to open the PC.": "请将此设备连接到互联网后再打开电脑。",
 };

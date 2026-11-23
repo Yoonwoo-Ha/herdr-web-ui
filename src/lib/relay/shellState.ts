@@ -14,6 +14,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import type { UpdateStep } from "../../../shared/update.ts";
 import type { RelayOffer } from "../../../shared/relay-offer.ts";
+import type { KnownPc } from "../account/knownPcs.ts";
 import type { MyPc } from "../account/myPcs.ts";
 import { ACCOUNT_PROVIDERS, type AccountProvider, type AccountSession, type SignInKey } from "../account/store.ts";
 import { inNativeApp } from "../nativeApp.ts";
@@ -76,7 +77,8 @@ export type PcUpdate =
 export type AccountView =
   | { kind: "signed-out"; error: string | null; provider?: AccountProvider; notice?: string }
   | { kind: "signing-in"; provider?: AccountProvider }
-  | { kind: "signed-in"; provider: AccountProvider; pcs: MyPc[] | null; error: string | null; deleteError?: string };
+  /** `known`: the read failed, and these are the account's PCs this device listed at its last read that answered (knownPcs) */
+  | { kind: "signed-in"; provider: AccountProvider; pcs: MyPc[] | null; error: string | null; deleteError?: string; known?: readonly KnownPc[] };
 
 export interface EnrollmentCompletion { readonly state: "complete"; readonly admitted?: number }
 

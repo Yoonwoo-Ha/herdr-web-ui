@@ -47,6 +47,13 @@ describe("the relay PCs of My PCs", () => {
     expect(relayTabPcs([{ server_id: id("b"), name: "desk", status: "online" }], [], { [id("b")]: "removed" }).map((row) => row.status)).toEqual(["online"]);
   });
 
+  it("lists the account's PCs it listed last when the account cannot be read now, by name with no state, each once", () => {
+    const known = [{ server_id: id("a"), name: "desk" }, { server_id: id("b"), name: "mac" }, { server_id: id("c"), name: "nuc" }, { server_id: id("d"), name: "lab" }];
+    const rows = relayTabPcs([{ server_id: id("a"), name: "desk" }], [accountPc("b")], { [id("c")]: "hidden", [id("d")]: "removed" }, new Map(), known);
+    // desk is this phone's own pairing and mac is in the account's word read now: neither twice; nuc was forgotten here
+    expect(rows.map((row) => [row.name, row.status ?? "", row.saved])).toEqual([["desk", "", true], ["pc-b", "online", false], ["lab", "removed", false]]);
+  });
+
   it("lists none of the account's PCs signed out, nor one it cannot open", () => {
     expect(relayTabPcs([{ server_id: id("a") }], null).length).toBe(1);
     const unopenable = accountPc("b");
