@@ -33,6 +33,9 @@ scripts/*.tmp.ts
 
 # the iOS app's bundled pages and demo, assembled by app/scripts/build-web.ts
 app/www/
+# the hosted origin it hands the native builds (app/scripts/hosted-origin.ts)
+app/android/app/hosted-origin.properties
+app/ios/hosted-origin.generated.xcconfig
 
 # Play upload keys and their passwords (app/store/android.md), wherever they are put: never committed
 *.jks

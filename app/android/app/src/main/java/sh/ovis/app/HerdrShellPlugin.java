@@ -181,7 +181,7 @@ public class HerdrShellPlugin extends Plugin {
         } catch (Exception unanswered) {
             url = null;
         }
-        if (!SshPcs.setupOpener(url, showingConnectScreen())) {
+        if (!SshPcs.setupOpener(url, showingConnectScreen(), BuildConfig.APP_ORIGIN)) {
             call.reject("Only the app's own pages open the SSH setup.");
             return;
         }

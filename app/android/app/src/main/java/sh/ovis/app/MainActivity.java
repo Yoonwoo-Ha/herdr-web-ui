@@ -866,8 +866,8 @@ public class MainActivity extends BridgeActivity {
      */
     private boolean openAppLink(String link) {
         if (PCStore.pairingLink(link)) {
-            if (PCStore.showsHostedShell(PCStore.current(this))) {
-                PCStore.open(this, PCStore.appScope(link), link);
+            if (PCStore.showsHostedShell(PCStore.current(this), BuildConfig.APP_ORIGIN)) {
+                PCStore.open(this, PCStore.appScope(link, BuildConfig.APP_ORIGIN), link);
                 PCStore.fail(null, null);
                 PCStore.redirects = 0;
                 return true;
@@ -875,7 +875,7 @@ public class MainActivity extends BridgeActivity {
             PCStore.link = link;
             return true;
         }
-        String scope = PCStore.appScope(link);
+        String scope = PCStore.appScope(link, BuildConfig.APP_ORIGIN);
         if (!PCStore.saved(this).contains(scope)) return false;
         PCStore.open(this, scope, link);
         PCStore.fail(null, null);
@@ -892,7 +892,7 @@ public class MainActivity extends BridgeActivity {
     private static String takeAppLink(Intent intent, boolean fresh) {
         if (intent == null) return null;
         Uri data = intent.getData();
-        String link = PCStore.appLink(intent.getAction(), data == null ? null : data.toString());
+        String link = PCStore.appLink(intent.getAction(), data == null ? null : data.toString(), BuildConfig.APP_ORIGIN);
         if (link == null) return null;
         intent.setData(null);
         boolean fromRecents = (intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0;
@@ -945,7 +945,8 @@ public class MainActivity extends BridgeActivity {
             intent.getStringExtra(OvisMessagingService.EXTRA_SERVER_ID),
             intent.getStringExtra(OvisMessagingService.EXTRA_MACHINE),
             intent.getStringExtra(OvisMessagingService.EXTRA_WORKSPACE),
-            intent.getStringExtra(OvisMessagingService.EXTRA_PANE)
+            intent.getStringExtra(OvisMessagingService.EXTRA_PANE),
+            BuildConfig.APP_ORIGIN
         );
         if (alert == null) return false;
         if (alert.selection != null) {

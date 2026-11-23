@@ -22,7 +22,6 @@ import java.util.UUID;
  */
 @CapacitorPlugin(name = "OvisDirect")
 public class OvisDirectPlugin extends Plugin {
-    static final String APP_ORIGIN = "https://app.ovis.sh";
     static final int MAX_SOCKETS = 2;
     static final int MAX_QUEUED_BYTES = 4 * 1024 * 1024;
     static final int MAX_QUEUED_MESSAGES = 16_384;
@@ -89,11 +88,16 @@ public class OvisDirectPlugin extends Plugin {
      * Without a proven listener bridge (listenerBridge) every call is refused.
      */
     private boolean allowed(PluginCall call) {
-        if (!listenerBridge() || !APP_ORIGIN.equals(bridge.getServerUrl())) {
+        if (!listenerBridge() || !BuildConfig.APP_ORIGIN.equals(bridge.getServerUrl())) {
             call.reject("OvisDirect answers only the app's own page", "not_allowed");
             return false;
         }
         return true;
+    }
+
+    /** An https address's port, 443 when it names none. */
+    private static int httpsPort(Uri url) {
+        return url.getPort() == -1 ? 443 : url.getPort();
     }
 
     @PluginMethod
@@ -118,7 +122,8 @@ public class OvisDirectPlugin extends Plugin {
         getActivity().runOnUiThread(() -> {
             String page = bridge.getWebView().getUrl();
             Uri url = page == null ? null : Uri.parse(page);
-            if (url == null || !"https".equals(url.getScheme()) || !"app.ovis.sh".equals(url.getHost()) || (url.getPort() != -1 && url.getPort() != 443)) {
+            Uri app = Uri.parse(BuildConfig.APP_ORIGIN);
+            if (url == null || !"https".equals(url.getScheme()) || !app.getHost().equals(url.getHost()) || httpsPort(url) != httpsPort(app)) {
                 call.reject("OvisDirect answers only the app's own page", "not_allowed");
                 return;
             }

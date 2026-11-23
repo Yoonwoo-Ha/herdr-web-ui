@@ -96,6 +96,7 @@
 		5C0BE9A70000000000000001 /* ScopePath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScopePath.swift; sourceTree = "<group>"; };
 		5C0BE9A70000000000000003 /* OpeningWatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpeningWatch.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		6A0E5C1D0000000000000001 /* hosted-origin.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = hosted-origin.xcconfig; path = ../hosted-origin.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -134,6 +135,7 @@
 			isa = PBXGroup;
 			children = (
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
+				6A0E5C1D0000000000000001 /* hosted-origin.xcconfig */,
 				504EC3061FED79650016851F /* App */,
 				A67F098E31CE4D459B240012 /* OvisNotifications */,
 				504EC3051FED79650016851F /* Products */,
@@ -205,6 +207,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 504EC3161FED79650016851F /* Build configuration list for PBXNativeTarget "App" */;
 			buildPhases = (
+				6A0E5C1D0000000000000002 /* Check the hosted origin */,
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
@@ -290,6 +293,30 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		6A0E5C1D0000000000000002 /* Check the hosted origin */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../check-hosted-origin.sh",
+				"$(SRCROOT)/App/public/shell.js",
+			);
+			name = "Check the hosted origin";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/sh \"$SRCROOT/../check-hosted-origin.sh\" \"$SRCROOT/App/public/shell.js\" \"$OVIS_APP_ORIGIN\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A67F098E31CE4D459B240014 /* Sources */ = {
@@ -514,7 +541,7 @@
 		};
 		504EC3171FED79650016851F /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 958DCC722DB07C7200EA8C5F /* debug.xcconfig */;
+			baseConfigurationReference = 6A0E5C1D0000000000000001 /* hosted-origin.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
@@ -537,6 +564,7 @@
 		};
 		504EC3181FED79650016851F /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6A0E5C1D0000000000000001 /* hosted-origin.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;

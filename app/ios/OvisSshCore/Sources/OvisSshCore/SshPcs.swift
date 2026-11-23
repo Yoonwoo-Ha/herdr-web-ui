@@ -195,11 +195,13 @@ public final class SshPcs {
     }
 
     /// Whether the page loaded at `url` may open the SSH setup (HerdrShell openSshSetup): the app's own bundled pages
-    /// (`capacitor://localhost`) or the hosted app (`https://app.ovis.sh`), never a PC's page.
-    public static func setupOpener(_ url: URL?) -> Bool {
+    /// (`capacitor://localhost`) or the hosted app at `appOrigin` (the build's, https://app.ovis.sh in a store build),
+    /// never a PC's page.
+    public static func setupOpener(_ url: URL?, appOrigin: URL?) -> Bool {
         guard let url, let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased() else { return false }
         if scheme == "capacitor" { return host == "localhost" }
-        return scheme == "https" && host == "app.ovis.sh" && (url.port == nil || url.port == 443)
+        guard let appOrigin, appOrigin.scheme?.lowercased() == "https", let appHost = appOrigin.host?.lowercased() else { return false }
+        return scheme == "https" && host == appHost && (url.port ?? 443) == (appOrigin.port ?? 443)
     }
 
     /// 256 random bits in hex: a tunnel's gate.

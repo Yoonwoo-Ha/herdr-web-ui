@@ -79,7 +79,7 @@ public class HerdrShellPlugin: CAPPlugin, CAPBridgedPlugin {
         // only the connect screen and the hosted app (Add a PC's SSH): a PC's own page may not drop the person off it
         // to stage a login of its choosing
         // the page loaded now, not the one the app last chose: the web view may have gone elsewhere since
-        guard SshPcs.setupOpener(bridge?.webView?.url) else {
+        guard SshPcs.setupOpener(bridge?.webView?.url, appOrigin: PCStore.appOrigin) else {
             call.reject("Only the app's own pages open the SSH setup.")
             return
         }

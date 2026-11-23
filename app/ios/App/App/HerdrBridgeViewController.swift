@@ -8,6 +8,10 @@ import OvisSshCore
 enum PCStore {
     private static let defaults = UserDefaults.standard
 
+    /// The hosted shell's origin: OvisAppOrigin in Info.plist, the build's (hosted-origin.xcconfig), https://app.ovis.sh
+    /// in a store build. Without it nothing is the hosted shell.
+    static let appOrigin = (Bundle.main.object(forInfoDictionaryKey: "OvisAppOrigin") as? String).flatMap { URL(string: $0) }
+
     /// PCs opened before, the latest first, each by its key: the origin of a PC opened at its own
     /// address, or the scope of one opened through the Ovis relay (`https://app.ovis.sh/s/<server_id>/`),
     /// as every relay PC shares the hosted shell's origin.

@@ -1,0 +1,5 @@
+// The hosted shell's origin, OvisAppOrigin in App/Info.plist: the App target's Debug and Release build on this file.
+// `bun run build:web` writes hosted-origin.generated.xcconfig from OVIS_APP_URL, the origin it gives the app's pages
+// (app/scripts/hosted-origin.ts). "/$()/" keeps "//" from starting a comment.
+OVIS_APP_ORIGIN = https:/$()/app.ovis.sh
+#include? "hosted-origin.generated.xcconfig"

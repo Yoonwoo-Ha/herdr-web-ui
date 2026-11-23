@@ -279,12 +279,11 @@ private final class SessionEvents: NSObject, URLSessionWebSocketDelegate {
 
 /// Stands in front of Capacitor's script message handler: every OvisDirect message (its own methods and the
 /// listener methods it inherits, addListener, removeListener and removeAllListeners) goes on only from the main
-/// frame of the app's own origin (the hosted shell, https://app.ovis.sh), never from a PC page opened by its
+/// frame of the app's own origin (the hosted shell, PCStore.appOrigin), never from a PC page opened by its
 /// address or any frame, which Capacitor's iOS bridge would otherwise let call every plugin. The plugin's own
 /// methods act only on calls this approved, so without the gate they answer nothing; only those calls leave an
 /// approval, and each takes its own, so none is kept unused.
 final class DirectCallGate: NSObject, WKScriptMessageHandler {
-    static let appHost = "app.ovis.sh"
     private static let lock = NSLock()
     private static var approved = Set<String>()
     private let inner: WKScriptMessageHandler
@@ -315,7 +314,9 @@ final class DirectCallGate: NSObject, WKScriptMessageHandler {
 
     static func fromApp(_ frame: WKFrameInfo) -> Bool {
         let origin = frame.securityOrigin
-        return frame.isMainFrame && origin.protocol == "https" && origin.host.lowercased() == appHost && (origin.port == 0 || origin.port == 443)
+        guard frame.isMainFrame, let app = PCStore.appOrigin, let appHost = app.host?.lowercased() else { return false }
+        // a WKSecurityOrigin's port is 0 for its scheme's own
+        return origin.protocol == "https" && origin.host.lowercased() == appHost && (origin.port == 0 ? 443 : origin.port) == (app.port ?? 443)
     }
 
     /// The main frame of the app's own bundled pages (the connect screen), the only one OvisSsh answers.

@@ -346,17 +346,11 @@ final class SshPcs {
 
     /**
      * Whether the page loaded at `url` may open the SSH setup (HerdrShell openSshSetup): the app's own pages (the connect
-     * screen, which has no server URL, so `null` here) or the hosted app (`https://app.ovis.sh`), never a PC's page.
+     * screen, which has no server URL, so `null` here) or the hosted app (`appOrigin`), never a PC's page.
      */
-    static boolean setupOpener(String url, boolean connectScreen) {
+    static boolean setupOpener(String url, boolean connectScreen, String appOrigin) {
         if (connectScreen) return true;
-        if (url == null) return false;
-        try {
-            java.net.URI page = new java.net.URI(url);
-            return "https".equalsIgnoreCase(page.getScheme()) && "app.ovis.sh".equalsIgnoreCase(page.getHost()) && (page.getPort() == -1 || page.getPort() == 443);
-        } catch (java.net.URISyntaxException unreadable) {
-            return false;
-        }
+        return PCStore.sameOrigin(url, appOrigin);
     }
 
     static String newGate() {

@@ -1,8 +1,34 @@
 apply plugin: 'com.android.application'
 
+// The hosted shell's origin (BuildConfig.APP_ORIGIN): the one `bun run build:web` gave the app's pages
+// from OVIS_APP_URL, written to hosted-origin.properties (app/scripts/hosted-origin.ts), else app.ovis.sh.
+def hostedOrigin = new Properties()
+def hostedOriginFile = file("hosted-origin.properties")
+if (hostedOriginFile.isFile()) hostedOriginFile.withInputStream { hostedOrigin.load(it) }
+def appOrigin = hostedOrigin.getProperty("appOrigin", "https://app.ovis.sh")
+
+// Packaging fails when the pages copied into the app (`bunx cap sync android`) name another origin: `bun run
+// build:web` for the other platform's build rewrites hosted-origin.properties without copying pages here.
+def checkHostedOrigin = tasks.register("checkHostedOrigin") {
+    def shellJs = file("src/main/assets/public/shell.js")
+    doLast {
+        def declared = java.util.regex.Pattern.compile('(?m)^export const APP_ORIGIN = "([^"]*)";$').matcher(shellJs.isFile() ? shellJs.text : "")
+        def pages = declared.find() ? declared.group(1) : null
+        if (pages != appOrigin) {
+            throw new GradleException("${shellJs} names ${pages ?: 'no hosted origin'} and BuildConfig.APP_ORIGIN is ${appOrigin}: run `bun run build:web` with the OVIS_APP_URL this build is for, then `bunx cap sync android`")
+        }
+    }
+}
+tasks.configureEach { task ->
+    if (task.name ==~ /merge\w*Assets/) task.dependsOn(checkHostedOrigin)
+}
+
 android {
     namespace = "sh.ovis.app"
     compileSdk = rootProject.ext.compileSdkVersion
+    buildFeatures {
+        buildConfig = true
+    }
     defaultConfig {
         applicationId "sh.ovis.app"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -10,6 +36,7 @@ android {
         versionCode 14
         versionName "1.0.6"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField "String", "APP_ORIGIN", "\"${appOrigin}\""
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61

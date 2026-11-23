@@ -131,12 +131,30 @@ final class SshPcsTests: XCTestCase {
     }
 
     func testOnlyTheAppsOwnPagesAndTheHostedAppOpenTheSshSetup() {
-        XCTAssertTrue(SshPcs.setupOpener(URL(string: "capacitor://localhost/index.html")))
-        XCTAssertTrue(SshPcs.setupOpener(URL(string: "https://app.ovis.sh/#pcs")))
+        let store = URL(string: "https://app.ovis.sh")
+        XCTAssertTrue(SshPcs.setupOpener(URL(string: "capacitor://localhost/index.html"), appOrigin: store))
+        XCTAssertTrue(SshPcs.setupOpener(URL(string: "https://app.ovis.sh/#pcs"), appOrigin: store))
+        XCTAssertTrue(SshPcs.setupOpener(URL(string: "https://APP.ovis.sh:443/"), appOrigin: store))
         for page in ["https://app.ovis.sh.evil.example/", "http://app.ovis.sh/", "https://app.ovis.sh:8443/", "http://127.0.0.1:47320/", "https://desk.tail1e211e.ts.net/", "capacitor://other/"] {
-            XCTAssertFalse(SshPcs.setupOpener(URL(string: page)), page)
+            XCTAssertFalse(SshPcs.setupOpener(URL(string: page), appOrigin: store), page)
         }
-        XCTAssertFalse(SshPcs.setupOpener(nil))
+        XCTAssertFalse(SshPcs.setupOpener(nil, appOrigin: store))
+    }
+
+    func testABuildForAnotherHostedOriginLetsThatOriginOpenTheSshSetupAndNotTheStoreOne() {
+        let preview = URL(string: "https://relay-0510.ovis-app.pages.dev")
+        XCTAssertTrue(SshPcs.setupOpener(URL(string: "https://relay-0510.ovis-app.pages.dev/#pcs"), appOrigin: preview))
+        XCTAssertTrue(SshPcs.setupOpener(URL(string: "https://relay-0510.ovis-app.pages.dev:443/"), appOrigin: preview))
+        XCTAssertTrue(SshPcs.setupOpener(URL(string: "capacitor://localhost/index.html"), appOrigin: preview))
+        for page in ["https://app.ovis.sh/#pcs", "http://relay-0510.ovis-app.pages.dev/", "https://relay-0510.ovis-app.pages.dev:8443/"] {
+            XCTAssertFalse(SshPcs.setupOpener(URL(string: page), appOrigin: preview), page)
+        }
+        let local = URL(string: "https://shell.example.ts.net:8443")
+        XCTAssertTrue(SshPcs.setupOpener(URL(string: "https://shell.example.ts.net:8443/"), appOrigin: local))
+        XCTAssertFalse(SshPcs.setupOpener(URL(string: "https://shell.example.ts.net/"), appOrigin: local))
+        // a build with no hosted origin: the app's own pages alone
+        XCTAssertFalse(SshPcs.setupOpener(URL(string: "https://app.ovis.sh/#pcs"), appOrigin: nil))
+        XCTAssertTrue(SshPcs.setupOpener(URL(string: "capacitor://localhost/index.html"), appOrigin: nil))
     }
 
     func testGatesAreLongAndUnguessable() {

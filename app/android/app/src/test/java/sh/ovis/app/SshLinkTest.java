@@ -17,18 +17,34 @@ import org.junit.rules.TemporaryFolder;
 
 /** What SshLink reads from a machine's answers, and the cleanup it runs there (with this machine's sh), without a machine. */
 public class SshLinkTest {
+    /** The store build's hosted origin, whatever this build's BuildConfig.APP_ORIGIN is. */
+    private static final String STORE = "https://app.ovis.sh";
+
     private static String descriptor(int port, String socket, boolean managed) {
         return "D {\"port\":" + port + ",\"pid\":42,\"token\":\"t\",\"socket_path\":\"" + socket + "\"" + (managed ? ",\"managed_remote\":true" : "") + "}";
     }
 
     @Test
     public void onlyTheAppsOwnPagesAndTheHostedAppOpenTheSshSetup() {
-        assertTrue(SshPcs.setupOpener(null, true));
-        assertTrue(SshPcs.setupOpener("https://app.ovis.sh/#pcs", false));
+        assertTrue(SshPcs.setupOpener(null, true, STORE));
+        assertTrue(SshPcs.setupOpener("https://app.ovis.sh/#pcs", false, STORE));
         for (String page : new String[] { "https://app.ovis.sh.evil.example/", "http://app.ovis.sh/", "https://app.ovis.sh:8443/", "http://127.0.0.2:47317/", "https://desk.tail1e211e.ts.net/" }) {
-            assertFalse(page, SshPcs.setupOpener(page, false));
+            assertFalse(page, SshPcs.setupOpener(page, false, STORE));
         }
-        assertFalse(SshPcs.setupOpener(null, false));
+        assertFalse(SshPcs.setupOpener(null, false, STORE));
+    }
+
+    @Test
+    public void aBuildForAnotherHostedOriginLetsThatOriginOpenTheSshSetupAndNotTheStoreOne() {
+        String preview = "https://relay-0510.ovis-app.pages.dev";
+        assertTrue(SshPcs.setupOpener(preview + "/#pcs", false, preview));
+        assertTrue(SshPcs.setupOpener("https://relay-0510.ovis-app.pages.dev:443/", false, preview));
+        assertTrue(SshPcs.setupOpener(null, true, preview));
+        for (String page : new String[] { "https://app.ovis.sh/#pcs", "http://relay-0510.ovis-app.pages.dev/", "https://relay-0510.ovis-app.pages.dev:8443/" }) {
+            assertFalse(page, SshPcs.setupOpener(page, false, preview));
+        }
+        assertTrue(SshPcs.setupOpener("https://shell.example.ts.net:8443/", false, "https://shell.example.ts.net:8443"));
+        assertFalse(SshPcs.setupOpener("https://shell.example.ts.net/", false, "https://shell.example.ts.net:8443"));
     }
 
     @Test

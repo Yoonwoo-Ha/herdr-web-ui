@@ -25,6 +25,8 @@ import org.junit.rules.Timeout;
 
 public class PCStoreTest {
     private static final String OVIS = "{\"ok\":true,\"auth\":{\"required\":true,\"authenticated\":false},\"bridge_protocol\":1}";
+    /** The store build's hosted origin, whatever this build's BuildConfig.APP_ORIGIN is. */
+    private static final String STORE = "https://app.ovis.sh";
 
     @Rule
     public final Timeout timeout = Timeout.seconds(20);
@@ -390,8 +392,8 @@ public class PCStoreTest {
         assertEquals("/s/0123456789abcdef0123456789abcdef/", PCStore.startPath(null, scope));
         // a link with the default port written out keeps its offer: the app saved its PC under the scope without the port
         String explicit = "https://app.ovis.sh:443/s/0123456789abcdef0123456789abcdef/#offer=eyJ2IjoxfQ";
-        assertEquals(scope, PCStore.appScope(explicit));
-        assertEquals("/s/0123456789abcdef0123456789abcdef/#offer=eyJ2IjoxfQ", PCStore.startPath(explicit, PCStore.appScope(explicit)));
+        assertEquals(scope, PCStore.appScope(explicit, STORE));
+        assertEquals("/s/0123456789abcdef0123456789abcdef/#offer=eyJ2IjoxfQ", PCStore.startPath(explicit, PCStore.appScope(explicit, STORE)));
         assertEquals("/s/0123456789abcdef0123456789abcdef/#offer=eyJ2IjoxfQ", PCStore.startPath("https://APP.ovis.sh/s/0123456789abcdef0123456789abcdef/#offer=eyJ2IjoxfQ", scope));
         assertEquals("/s/0123456789abcdef0123456789abcdef/", PCStore.startPath("https://app.ovis.sh:8443/s/0123456789abcdef0123456789abcdef/#offer=eyJ2IjoxfQ", scope));
         assertEquals("/", PCStore.startPath(null, "https://pc.tail1234.ts.net"));
@@ -416,11 +418,11 @@ public class PCStoreTest {
             scope + "#read=%2Fhome%2Fa.md&machine=local",
             scope + "?pane=w1%3Ap1",
         }) {
-            assertEquals(link, PCStore.appLink("android.intent.action.VIEW", link));
-            assertEquals(link, scope, PCStore.appScope(link));
+            assertEquals(link, PCStore.appLink("android.intent.action.VIEW", link, STORE));
+            assertEquals(link, scope, PCStore.appScope(link, STORE));
         }
-        assertNull(PCStore.appLink("android.intent.action.MAIN", offer));
-        assertNull(PCStore.appLink("android.intent.action.VIEW", null));
+        assertNull(PCStore.appLink("android.intent.action.MAIN", offer, STORE));
+        assertNull(PCStore.appLink("android.intent.action.VIEW", null, STORE));
         for (String other : new String[] {
             "http://app.ovis.sh/s/0123456789abcdef0123456789abcdef/",
             "https://app.ovis.sh:8443/s/0123456789abcdef0123456789abcdef/",
@@ -431,7 +433,7 @@ public class PCStoreTest {
             "https://app.ovis.sh/s/0123456789abcdef0123456789abcdef/sw.js",
             "ovis://account/callback?code=1",
             "https://app.ovis.sh/s/ bad",
-        }) assertNull(other, PCStore.appLink("android.intent.action.VIEW", other));
+        }) assertNull(other, PCStore.appLink("android.intent.action.VIEW", other, STORE));
     }
 
     @Test
@@ -441,25 +443,25 @@ public class PCStoreTest {
         String home = "http://desktop.lan:7317";
         java.util.List<String> saved = java.util.Arrays.asList(home, scope, "https://laptop.example.ts.net");
         assertArrayEquals(new String[] { home, home + "/?machine=local&ws=w1&pane=w1%3Ap1&view=chat" },
-            PCStore.alertLink(saved, home, id, null, "w1", "w1:p1"));
+            PCStore.alertLink(saved, home, id, null, "w1", "w1:p1", STORE));
         assertArrayEquals(new String[] { home, home + "/?machine=build%20box&pane=w2%3Ap3&view=chat" },
-            PCStore.alertLink(saved, home, null, "build box", null, "w2:p3"));
+            PCStore.alertLink(saved, home, null, "build box", null, "w2:p3", STORE));
         assertArrayEquals(new String[] { scope, scope + "#machine=local&ws=w1&pane=w1%3Ap1&view=chat" },
-            PCStore.alertLink(saved, "https://app.ovis.sh", id, "local", "w1", "w1:p1"));
+            PCStore.alertLink(saved, "https://app.ovis.sh", id, "local", "w1", "w1:p1", STORE));
         assertArrayEquals(new String[] { scope, scope + "#machine=local&pane=w1%3Ap1&view=chat" },
-            PCStore.alertLink(saved, null, id, null, null, "w1:p1"));
-        assertEquals("https://laptop.example.ts.net", PCStore.alertLink(saved, "https://laptop.example.ts.net", id, null, null, "w1:p1")[0]);
-        assertNull(PCStore.alertLink(saved, home, id, null, null, null));
-        assertNull(PCStore.alertLink(saved, home, id, null, null, ""));
-        assertNull(PCStore.alertLink(saved, "http://forgotten.lan:7317", null, null, null, "w1:p1"));
-        assertNull(PCStore.alertLink(saved, null, "fedcba9876543210fedcba9876543210", null, null, "w1:p1"));
-        assertNull(PCStore.alertLink(saved, null, "../evil", null, null, "w1:p1"));
-        assertNull(PCStore.alertLink(saved, null, null, null, null, "w1:p1"));
+            PCStore.alertLink(saved, null, id, null, null, "w1:p1", STORE));
+        assertEquals("https://laptop.example.ts.net", PCStore.alertLink(saved, "https://laptop.example.ts.net", id, null, null, "w1:p1", STORE)[0]);
+        assertNull(PCStore.alertLink(saved, home, id, null, null, null, STORE));
+        assertNull(PCStore.alertLink(saved, home, id, null, null, "", STORE));
+        assertNull(PCStore.alertLink(saved, "http://forgotten.lan:7317", null, null, null, "w1:p1", STORE));
+        assertNull(PCStore.alertLink(saved, null, "fedcba9876543210fedcba9876543210", null, null, "w1:p1", STORE));
+        assertNull(PCStore.alertLink(saved, null, "../evil", null, null, "w1:p1", STORE));
+        assertNull(PCStore.alertLink(saved, null, null, null, null, "w1:p1", STORE));
         // a relay ID never moves an alert from a saved address to the hosted shell
-        assertNull(PCStore.alertLink(java.util.Collections.singletonList(scope), "http://forgotten.lan:7317", id, null, null, "w1:p1"));
+        assertNull(PCStore.alertLink(java.util.Collections.singletonList(scope), "http://forgotten.lan:7317", id, null, null, "w1:p1", STORE));
         java.util.List<String> withList = java.util.Arrays.asList(home, scope, "https://app.ovis.sh");
         assertArrayEquals(new String[] { scope, scope + "#machine=local&pane=w1%3Ap1&view=chat" },
-            PCStore.alertLink(withList, "https://app.ovis.sh", id, null, null, "w1:p1"));
+            PCStore.alertLink(withList, "https://app.ovis.sh", id, null, null, "w1:p1", STORE));
     }
 
     @Test
@@ -469,7 +471,7 @@ public class PCStoreTest {
         String home = "http://desktop.lan:7317";
         String laptop = "https://laptop.example.ts.net";
         java.util.List<String> saved = java.util.Arrays.asList(home, scope, laptop, "https://app.ovis.sh");
-        PCStore.AlertTap same = PCStore.alertTap(saved, home, home + "/?machine=local&pane=w1%3Ap0", home, id, null, "w1", "w1:p1");
+        PCStore.AlertTap same = PCStore.alertTap(saved, home, home + "/?machine=local&pane=w1%3Ap0", home, id, null, "w1", "w1:p1", STORE);
         assertNull(same.address);
         org.json.JSONObject selection = new org.json.JSONObject(same.selection);
         assertEquals("select-pane", selection.getString("type"));
@@ -479,23 +481,23 @@ public class PCStoreTest {
         assertEquals("w1", selection.getString("workspace_id"));
         // a relay PC's page at its scope too; the values reach the page as they came, whatever they hold
         String odd = "p\"); alert(1); //\u2028</script>";
-        PCStore.AlertTap relay = PCStore.alertTap(saved, scope, scope + "#machine=local", "https://app.ovis.sh", id, "build box", null, odd);
+        PCStore.AlertTap relay = PCStore.alertTap(saved, scope, scope + "#machine=local", "https://app.ovis.sh", id, "build box", null, odd, STORE);
         assertNull(relay.address);
         org.json.JSONObject relaySelection = new org.json.JSONObject(relay.selection);
         assertEquals(odd, relaySelection.getString("pane_id"));
         assertEquals("build box", relaySelection.getString("machine_id"));
         assertFalse(relaySelection.has("workspace_id"));
-        PCStore.AlertTap other = PCStore.alertTap(saved, laptop, laptop + "/", home, id, null, "w1", "w1:p1");
+        PCStore.AlertTap other = PCStore.alertTap(saved, laptop, laptop + "/", home, id, null, "w1", "w1:p1", STORE);
         assertNull(other.selection);
         assertEquals(home, other.pc);
         assertEquals(home + "/?machine=local&ws=w1&pane=w1%3Ap1&view=chat", other.address);
         for (String shown : new String[] { null, "https://sso.example.com/login", scope }) {
-            PCStore.AlertTap opened = PCStore.alertTap(saved, home, shown, home, id, null, null, "w1:p1");
+            PCStore.AlertTap opened = PCStore.alertTap(saved, home, shown, home, id, null, null, "w1:p1", STORE);
             assertNull(shown, opened.selection);
             assertEquals(home + "/?machine=local&pane=w1%3Ap1&view=chat", opened.address);
         }
-        assertNull(PCStore.alertTap(saved, home, home + "/", "http://forgotten.lan:7317", null, null, null, "w1:p1"));
-        assertNull(PCStore.alertTap(saved, home, home + "/", home, id, null, null, null));
+        assertNull(PCStore.alertTap(saved, home, home + "/", "http://forgotten.lan:7317", null, null, null, "w1:p1", STORE));
+        assertNull(PCStore.alertTap(saved, home, home + "/", home, id, null, null, null, STORE));
     }
 
     @Test
@@ -510,23 +512,23 @@ public class PCStoreTest {
             home, home + "/", home + "/index.html", home + "/?machine=local&pane=w1%3Ap0", home + "/?read=", home + "/?read=+%20%C2%A0",
             home + "/#read=notes.md",
         }) {
-            PCStore.AlertTap tap = PCStore.alertTap(saved, home, shown, home, null, null, null, "w1:p1");
+            PCStore.AlertTap tap = PCStore.alertTap(saved, home, shown, home, null, null, null, "w1:p1", STORE);
             assertNotNull(shown, tap.selection);
             assertNull(shown, tap.address);
         }
         for (String shown : new String[] { scope, scope + "#machine=local&pane=w1%3Ap0", scope + "?machine=local#read=notes.md" }) {
-            assertNotNull(shown, PCStore.alertTap(saved, scope, shown, "https://app.ovis.sh", id, null, null, "w1:p1").selection);
+            assertNotNull(shown, PCStore.alertTap(saved, scope, shown, "https://app.ovis.sh", id, null, null, "w1:p1", STORE).selection);
         }
         for (String shown : new String[] {
             home + "/?read=notes.md", home + "/?machine=local&read=docs%2Fa.md", home + "/?%72ead=notes.md",
             home + "/api/file?path=a.html", home + "/ws", home + "/social-preview.png", home + "/notes.md",
         }) {
-            PCStore.AlertTap tap = PCStore.alertTap(saved, home, shown, home, null, null, null, "w1:p1");
+            PCStore.AlertTap tap = PCStore.alertTap(saved, home, shown, home, null, null, null, "w1:p1", STORE);
             assertNull(shown, tap.selection);
             assertEquals(shown, homeAddress, tap.address);
         }
         for (String shown : new String[] { scope + "#read=notes.md", scope + "#machine=local&read=a.md", scope + "?read=notes.md" }) {
-            PCStore.AlertTap tap = PCStore.alertTap(saved, scope, shown, "https://app.ovis.sh", id, null, null, "w1:p1");
+            PCStore.AlertTap tap = PCStore.alertTap(saved, scope, shown, "https://app.ovis.sh", id, null, null, "w1:p1", STORE);
             assertNull(shown, tap.selection);
             assertEquals(shown, scopeAddress, tap.address);
         }
@@ -548,16 +550,59 @@ public class PCStoreTest {
 
     @Test
     public void opensAPairingLinkInPlaceOnlyOverTheHostedShell() {
-        assertTrue(PCStore.showsHostedShell("https://app.ovis.sh"));
-        assertTrue(PCStore.showsHostedShell("https://app.ovis.sh/s/0123456789abcdef0123456789abcdef/"));
-        assertFalse(PCStore.showsHostedShell(null));
-        assertFalse(PCStore.showsHostedShell("http://desktop.lan:7317"));
-        assertFalse(PCStore.showsHostedShell("https://app.ovis.sh.evil.example"));
-        assertFalse(PCStore.showsHostedShell("http://app.ovis.sh"));
-        assertTrue(PCStore.showsHostedShell("https://app.ovis.sh:443"));
-        assertTrue(PCStore.showsHostedShell("https://APP.ovis.sh:443/s/0123456789abcdef0123456789abcdef/"));
-        assertFalse(PCStore.showsHostedShell("https://app.ovis.sh:8443"));
-        assertFalse(PCStore.showsHostedShell("http://app.ovis.sh:443"));
+        assertTrue(PCStore.showsHostedShell("https://app.ovis.sh", STORE));
+        assertTrue(PCStore.showsHostedShell("https://app.ovis.sh/s/0123456789abcdef0123456789abcdef/", STORE));
+        assertFalse(PCStore.showsHostedShell(null, STORE));
+        assertFalse(PCStore.showsHostedShell("http://desktop.lan:7317", STORE));
+        assertFalse(PCStore.showsHostedShell("https://app.ovis.sh.evil.example", STORE));
+        assertFalse(PCStore.showsHostedShell("http://app.ovis.sh", STORE));
+        assertTrue(PCStore.showsHostedShell("https://app.ovis.sh:443", STORE));
+        assertTrue(PCStore.showsHostedShell("https://APP.ovis.sh:443/s/0123456789abcdef0123456789abcdef/", STORE));
+        assertFalse(PCStore.showsHostedShell("https://app.ovis.sh:8443", STORE));
+        assertFalse(PCStore.showsHostedShell("http://app.ovis.sh:443", STORE));
+    }
+
+    @Test
+    public void aBuildForAnotherHostedOriginTakesThatOriginAndNotTheStoreOnes() {
+        String preview = "https://relay-0510.ovis-app.pages.dev";
+        String id = "0123456789abcdef0123456789abcdef";
+        String scope = preview + "/s/" + id + "/";
+        assertTrue(PCStore.showsHostedShell(preview, preview));
+        assertTrue(PCStore.showsHostedShell(scope, preview));
+        assertFalse(PCStore.showsHostedShell(STORE, preview));
+        assertFalse(PCStore.showsHostedShell("http://relay-0510.ovis-app.pages.dev", preview));
+        assertEquals(scope, PCStore.appScope(scope + "#offer=eyJ2IjoxfQ", preview));
+        assertEquals(scope, PCStore.appScope("https://relay-0510.ovis-app.pages.dev:443/s/" + id, preview));
+        assertEquals(scope + "#offer=eyJ2IjoxfQ", PCStore.appLink("android.intent.action.VIEW", scope + "#offer=eyJ2IjoxfQ", preview));
+        assertNull(PCStore.appLink("android.intent.action.VIEW", STORE + "/s/" + id + "/#offer=eyJ2IjoxfQ", preview));
+        assertNull(PCStore.appScope(preview + "/s/not-a-pc", preview));
+        String home = "http://desktop.lan:7317";
+        java.util.List<String> saved = java.util.Arrays.asList(home, scope, preview);
+        assertArrayEquals(new String[] { scope, scope + "#machine=local&pane=w1%3Ap1&view=chat" },
+            PCStore.alertLink(saved, preview, id, null, null, "w1:p1", preview));
+        assertArrayEquals(new String[] { home, home + "/?machine=local&pane=w1%3Ap1&view=chat" },
+            PCStore.alertLink(java.util.Arrays.asList(home, STORE), home, id, null, null, "w1:p1", preview));
+        assertNull(PCStore.alertLink(java.util.Arrays.asList(STORE + "/s/" + id + "/"), null, id, null, null, "w1:p1", preview));
+        assertNull(PCStore.alertTap(java.util.Arrays.asList(STORE + "/s/" + id + "/"), null, null, STORE, id, null, null, "w1:p1", preview));
+        // a hosted origin on a port of its own: that port, and no other
+        String local = "https://shell.example.ts.net:8443";
+        assertEquals(local + "/s/" + id + "/", PCStore.appScope(local + "/s/" + id + "/", local));
+        assertNull(PCStore.appScope("https://shell.example.ts.net/s/" + id + "/", local));
+        assertTrue(PCStore.showsHostedShell(local + "/", local));
+        assertFalse(PCStore.showsHostedShell("https://shell.example.ts.net", local));
+    }
+
+    @Test
+    public void theBuildsHostedOriginIsTheOneBuildWebWroteElseTheStoreOne() throws IOException {
+        // app/scripts/hosted-origin.ts writes it from OVIS_APP_URL; the JVM tests run in app/android/app
+        java.io.File written = new java.io.File("hosted-origin.properties");
+        java.util.Properties build = new java.util.Properties();
+        if (written.isFile()) {
+            try (java.io.FileInputStream in = new java.io.FileInputStream(written)) {
+                build.load(in);
+            }
+        }
+        assertEquals(build.getProperty("appOrigin", STORE), BuildConfig.APP_ORIGIN);
     }
 
     @Test

@@ -57,19 +57,19 @@ final class PCStore {
     private static final Pattern PC_SCOPE = Pattern.compile("/s/([0-9a-f]{32})/?");
 
     /**
-     * `data` when an intent of `action` is a view of a PC on the hosted shell
-     * (`https://app.ovis.sh/s/<server_id>/`, within the manifest's verified link), whatever its
+     * `data` when an intent of `action` is a view of a PC on the hosted shell at `appOrigin`
+     * (`<appOrigin>/s/<server_id>/`; app.ovis.sh is the manifest's verified link), whatever its
      * fragment or query, else null: a link to another page of the hosted shell is not taken, so it
      * does not close the page that is open.
      */
-    static String appLink(String action, String data) {
+    static String appLink(String action, String data, String appOrigin) {
         if (!"android.intent.action.VIEW".equals(action) || data == null) return null;
-        return appScope(data) == null ? null : data;
+        return appScope(data, appOrigin) == null ? null : data;
     }
 
-    /** Whether the page the app shows (`current`, a saved key) is the hosted shell's: its own list, or one of its PCs. */
-    static boolean showsHostedShell(String current) {
-        return sameOrigin(current, "https://app.ovis.sh");
+    /** Whether the page the app shows (`current`, a saved key) is the hosted shell's at `appOrigin`: its own list, or one of its PCs. */
+    static boolean showsHostedShell(String current, String appOrigin) {
+        return sameOrigin(current, appOrigin);
     }
 
     /**
@@ -81,16 +81,15 @@ final class PCStore {
         if (start != null && belongs(start, pc)) pendingStart = null;
     }
 
-    static String appScope(String link) {
+    static String appScope(String link, String appOrigin) {
         URI uri;
         try {
             uri = new URI(link);
         } catch (URISyntaxException notAnAddress) {
             return null;
         }
-        boolean hostedShell = "https".equalsIgnoreCase(uri.getScheme()) && "app.ovis.sh".equalsIgnoreCase(uri.getHost()) && (uri.getPort() == -1 || uri.getPort() == 443);
         Matcher scope = PC_SCOPE.matcher(uri.getRawPath() == null ? "" : uri.getRawPath());
-        return hostedShell && scope.matches() ? "https://app.ovis.sh/s/" + scope.group(1) + "/" : null;
+        return sameOrigin(link, appOrigin) && scope.matches() ? appOrigin + "/s/" + scope.group(1) + "/" : null;
     }
 
     private static final Pattern SERVER_ID = Pattern.compile("[0-9a-f]{32}");
@@ -99,18 +98,18 @@ final class PCStore {
      * The PC is the one the alert's endpoint was made for (`origin`, the push module's key for it) when
      * that origin is a saved PC; a relay PC, which shares the hosted shell's origin with every other, is
      * named by its relay ID (`serverId`) instead. Its pane rides in the scope's fragment there, as the
-     * hosted shell's host never hears it.
+     * hosted shell's host (`appOrigin`) never hears it.
      */
-    static String[] alertLink(List<String> saved, String origin, String serverId, String machine, String workspace, String pane) {
+    static String[] alertLink(List<String> saved, String origin, String serverId, String machine, String workspace, String pane, String appOrigin) {
         if (pane == null || pane.isEmpty()) return null;
         String query = "machine=" + encoded(machine == null || machine.isEmpty() ? "local" : machine)
             + (workspace == null || workspace.isEmpty() ? "" : "&ws=" + encoded(workspace))
             + "&pane=" + encoded(pane) + "&view=chat";
         String key = origin(origin);
         // the hosted shell's own origin is every relay PC's, and "Your PCs" when that is saved: never the PC itself
-        if (key != null && saved.contains(key) && !scoped(key) && !sameOrigin(key, "https://app.ovis.sh")) return new String[] { key, key + "/?" + query };
+        if (key != null && saved.contains(key) && !scoped(key) && !sameOrigin(key, appOrigin)) return new String[] { key, key + "/?" + query };
         if (serverId != null && SERVER_ID.matcher(serverId).matches()) {
-            String scope = "https://app.ovis.sh/s/" + serverId + "/";
+            String scope = appOrigin + "/s/" + serverId + "/";
             if (saved.contains(scope) && (key == null || sameOrigin(key, scope))) return new String[] { scope, scope + "#" + query };
         }
         return null;
@@ -128,8 +127,8 @@ final class PCStore {
         }
     }
 
-    static AlertTap alertTap(List<String> saved, String current, String shown, String origin, String serverId, String machine, String workspace, String pane) {
-        String[] link = alertLink(saved, origin, serverId, machine, workspace, pane);
+    static AlertTap alertTap(List<String> saved, String current, String shown, String origin, String serverId, String machine, String workspace, String pane, String appOrigin) {
+        String[] link = alertLink(saved, origin, serverId, machine, workspace, pane, appOrigin);
         if (link == null) return null;
         if (!link[0].equals(current) || shown == null || !belongs(shown, current) || !appPage(shown, current)) return new AlertTap(link[0], link[1], null);
         try {
