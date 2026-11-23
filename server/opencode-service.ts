@@ -380,18 +380,69 @@ export function subscribeOpenCodeEvents(config: OpenCodeServiceConfig, handlers:
   };
 }
 
-export async function replyOpenCodeForm(
+/** A reply's status: 0 when none came back, so the reply may or may not have landed. */
+async function reply(config: OpenCodeServiceConfig, path: string, payload: unknown, signal?: AbortSignal): Promise<{ ok: boolean; status: number }> {
+  try {
+    const response = await openCodeRequest(config, path, signal, JSON.stringify(payload));
+    const status = response?.status ?? 0;
+    return { ok: status === 200 || status === 204, status };
+  } catch {
+    return { ok: false, status: 0 };
+  }
+}
+
+export function replyOpenCodeForm(
   config: OpenCodeServiceConfig,
   sessionID: string,
   formID: string,
   answers: Record<string, string | string[]>,
   signal?: AbortSignal,
 ): Promise<{ ok: boolean; status: number }> {
-  try {
-    const response = await openCodeRequest(config, `/api/session/${encodeURIComponent(sessionID)}/form/${encodeURIComponent(formID)}/reply`, signal, JSON.stringify({ answer: answers }));
-    const status = response?.status ?? 0;
-    return { ok: status === 200 || status === 204, status };
-  } catch {
-    return { ok: false, status: 0 };
+  return reply(config, `/api/session/${encodeURIComponent(sessionID)}/form/${encodeURIComponent(formID)}/reply`, { answer: answers }, signal);
+}
+
+/** A request OpenCode 2's permission service holds for a session's tool call, waiting on its user (Permission.Request at 2.2.2). */
+export interface OpenCodePermissionRequest {
+  id: string;
+  sessionID: string;
+  /** `shell`, `edit`, `webfetch`, `external_directory`, an MCP tool's `<server>_<tool>`, ... */
+  action: string;
+  /** what it asks for: the command, the file, the URL (`*` for an MCP tool) */
+  resources: string[];
+  /** the patterns Always allow saves for the project; absent or empty, OpenCode offers no Always allow */
+  save?: string[];
+  /** `files[].patch` for an edit, `url` for a webfetch, `input` for an MCP tool */
+  metadata?: Record<string, unknown>;
+}
+
+export type OpenCodePermissionDecision = "once" | "always" | "reject";
+
+/** The permission routes are experimental in OpenCode 2's OpenAPI: only a verified 2.x.y service is asked, or answered. */
+export const openCodePermissionsRead = (version: string): boolean => /^2\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version);
+
+/**
+ * GET /api/session/{id}/permission: the requests the session waits on, oldest first. The route is experimental in
+ * OpenCode's OpenAPI, so a list holding anything of another shape, or of another session, is no answer (null): those
+ * requests stay with the terminal, as before the route was read.
+ */
+export async function listPendingPermissions(config: OpenCodeServiceConfig, sessionID: string, signal?: AbortSignal): Promise<OpenCodePermissionRequest[] | null> {
+  const body = object(await getJson(config, `/api/session/${encodeURIComponent(sessionID)}/permission`, signal));
+  if (!body || !Array.isArray(body.data)) return null;
+  const strings = (value: unknown): value is string[] => Array.isArray(value) && value.length <= 64 && value.every((item) => typeof item === "string");
+  const requests: OpenCodePermissionRequest[] = [];
+  for (const item of body.data) {
+    const row = object(item);
+    if (!row || typeof row.id !== "string" || !row.id.startsWith("per") || row.sessionID !== sessionID || typeof row.action !== "string" || !row.action
+      || !strings(row.resources) || (row.save !== undefined && !strings(row.save)) || (row.metadata !== undefined && !object(row.metadata))) return null;
+    requests.push({
+      id: row.id, sessionID, action: row.action, resources: row.resources,
+      ...(row.save === undefined ? {} : { save: row.save }), ...(row.metadata === undefined ? {} : { metadata: object(row.metadata)! }),
+    });
   }
+  return requests;
+}
+
+/** POST /api/session/{id}/permission/{requestID}/reply: 204 once OpenCode took it, 404 when it no longer holds the request. */
+export function replyOpenCodePermission(config: OpenCodeServiceConfig, sessionID: string, requestID: string, decision: OpenCodePermissionDecision, signal?: AbortSignal): Promise<{ ok: boolean; status: number }> {
+  return reply(config, `/api/session/${encodeURIComponent(sessionID)}/permission/${encodeURIComponent(requestID)}/reply`, { decision }, signal);
 }

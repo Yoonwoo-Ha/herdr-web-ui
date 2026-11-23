@@ -1,5 +1,6 @@
+import type { OpenCodePermissionDecision, OpenCodePermissionRequest } from "../opencode-service.ts";
 import type { DialogReader } from "./registry.ts";
-import { ANSI_RE, type AnswerStep, KEY, editorRowsMatch, finishPrompt, keySteps, own, type ParsedPrompt, type TypedEditorAnswer } from "./shared.ts";
+import { ANSI_RE, type AnswerStep, CARD_BODY_MAX, type CardWords, KEY, editorRowsMatch, finishPrompt, keySteps, own, type ParsedPrompt, type TypedEditorAnswer } from "./shared.ts";
 
 /**
  * OpenCode v2's questions are forms its service holds (GET /api/session/{id}/form), read for the
@@ -15,6 +16,71 @@ export const nativeQuestionReader: DialogReader = {
   reread: "before-commit",
   list: "none",
 };
+
+/**
+ * OpenCode 2's permission requests are held by its service (GET /api/session/{id}/permission) for the session herdr
+ * reports for the pane, answered through POST .../reply (prompt.ts), never from the screen. Its TUI shows the same
+ * request and may answer it first: the request then leaves the list, and the card with it.
+ */
+export const nativePermissionReader: DialogReader = {
+  id: "opencode-permission",
+  agents: ["opencode"],
+  priority: 0,
+  parse: () => null,
+  // the reply re-checks the pane's session, and the request is read again before it
+  reread: "before-commit",
+  list: "none",
+};
+
+/** What the request asks for, as OpenCode's TUI presents it (tui/src/util/permission.ts at 2.2.2): the command, the patch, the URL, the tool's input. */
+function permissionWords({ action, resources, metadata }: OpenCodePermissionRequest): { question: CardWords; body: string | null } | null {
+  const listed = resources.filter((resource) => resource !== "*");
+  if (action === "shell") return { question: own("Run a shell command"), body: listed.map((command) => `$ ${command}`).join("\n") || null };
+  if (action === "edit") {
+    // every file's patch, or no card: a card showing some of an edit would have its user allow the rest unseen
+    const files = Array.isArray(metadata?.files) ? metadata.files as unknown[] : [];
+    const patches = files.flatMap((file) => typeof file === "object" && file !== null && typeof (file as Record<string, unknown>).patch === "string" ? [(file as Record<string, string>).patch!] : []);
+    if (files.length === 0 || patches.length !== files.length) return null;
+    return { question: own("Edit {file}", { file: listed.join(", ") }), body: patches.join("\n") };
+  }
+  if (action === "webfetch") return { question: own("Fetch {url}", { url: typeof metadata?.url === "string" ? metadata.url : listed.join(", ") }), body: null };
+  if (action === "external_directory") return { question: own("Access a folder outside the project"), body: listed.join("\n") || null };
+  // an MCP tool (`<server>_<tool>`) and every other tool: its name, and the input OpenCode sent with it
+  const input = metadata?.input;
+  return { question: own("Use the tool {tool}", { tool: action }), body: input === undefined ? listed.join("\n") || null : JSON.stringify(input, null, 2) };
+}
+
+/**
+ * The card for a pending request, or null for one it cannot show whole (an edit without each file's patch, a command,
+ * patch or input longer than a card shows): the card would have its user allow what they never saw, so the terminal
+ * answers it.
+ */
+export function openCodePermissionPrompt(request: OpenCodePermissionRequest): ParsedPrompt | null {
+  const words = permissionWords(request);
+  if (!words || (words.body !== null && words.body.length > CARD_BODY_MAX)) return null;
+  const { question, body } = words;
+  const save = request.save ?? [];
+  const choices: { label: CardWords; description: CardWords | null; decision: OpenCodePermissionDecision }[] = [
+    { label: own("Allow once"), description: null, decision: "once" },
+    // OpenCode offers Always allow only for a request that names what it would save
+    ...(save.length === 0 ? [] : [{
+      label: own("Always allow"),
+      description: save.length === 1 && save[0] === "*"
+        ? own("Allows every {action} request in this project from now on", { action: request.action })
+        : own("Allows these in this project from now on: {patterns}", { patterns: save.join(", ") }),
+      decision: "always" as const,
+    }]),
+    { label: own("Deny"), description: null, decision: "reject" },
+  ];
+  return finishPrompt("opencode", {
+    kind: "approval", title: own("Permission request"), question, body,
+    options: choices.map(({ label, description }) => ({ label, description })),
+    multi_select: false, custom_option_index: null,
+  }, {
+    responder: "opencode-permission", menuLabels: [], selectedIndex: 0, checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
+    openCodePermission: { requestID: request.id, sessionID: request.sessionID, decisions: choices.map(({ decision }) => decision) },
+  }, { call: `${request.sessionID}:${request.id}` });
+}
 
 /** the TUI's own text for a typed answer's row (routes/session/question.tsx at v1.2.27) */
 const CUSTOM_LABEL = "Type your own answer";
@@ -119,4 +185,4 @@ export const v1QuestionReader: DialogReader = {
   parse: (screen) => parseOpenCodeV1Question(screen),
 };
 
-export const readers: readonly DialogReader[] = [nativeQuestionReader, v1QuestionReader];
+export const readers: readonly DialogReader[] = [nativeQuestionReader, nativePermissionReader, v1QuestionReader];

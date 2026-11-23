@@ -19,7 +19,7 @@ import { answerPiAskUser, bindPiAsk, piAskActivity, piAskUserPrompt } from "./pi
 import { badRequest, errorResponse, jsonResponse, setRequestRoute } from "./http.ts";
 import { claudePlanFile } from "./claude-plan.ts";
 import { heldBody, permissionDecision, type ClaudePermissionHooks } from "./claude-permission-hook.ts";
-import { listPendingQuestionForms, openCodeService, replyOpenCodeForm } from "./opencode-service.ts";
+import { listPendingPermissions, listPendingQuestionForms, openCodePermissionsRead, openCodeService, replyOpenCodeForm, replyOpenCodePermission } from "./opencode-service.ts";
 import { opencodeSessionId } from "./opencode.ts";
 import { agentPickerWaits, registry, SCREEN_READ_AGENTS } from "./dialogs/registry.ts";
 import { ANSI_RE, type AnswerStep, KEY, type OmoAsk, type ParsedPrompt, type PromptDraft, cleanLine, findLastIndex, finishPrompt, isDivider, keySteps, navigationKeys, own, parsedByPublicPrompt, publicPrompt } from "./dialogs/shared.ts";
@@ -30,7 +30,7 @@ import { agyCustomEditorMatches, agySameQuestion, parseAgyQuestion } from "./dia
 import { dshFreeTextRow, dshTypedText } from "./dialogs/dsh.ts";
 import { sameText } from "./dialogs/omo.ts";
 import { OMP_REVIEW_HINT_RE, OMP_TABS_HINT_RE, ompCustomEditorMatches } from "./dialogs/omp.ts";
-import { openCodeV1CustomEditorMatches } from "./dialogs/opencode.ts";
+import { openCodePermissionPrompt, openCodeV1CustomEditorMatches } from "./dialogs/opencode.ts";
 import { INVISIBLE_CHAR_RE } from "./dialogs/claude.ts";
 import { parsePiDialog } from "./dialogs/pi.ts";
 import { pendingPiQuestionnaires } from "./pi-questionnaire.ts";
@@ -620,6 +620,16 @@ const FORM_SETTLE_MS = 3_000;
 
 const defaultOpenCodeState = new OpenCodePromptState();
 
+/** Whether herdr reports the pane running OpenCode on this session now: a card's binding, read again after an awaited lookup. */
+async function openCodePaneOn(paneId: string, sessionID: string, openCodeState: OpenCodePromptState, deadlineAt: number): Promise<boolean> {
+  const before = openCodeState.checkpoint();
+  const snapshot = await openCodeState.snapshot(Math.max(1, deadlineAt - Date.now())).catch(() => null);
+  if (!snapshot) return false;
+  openCodeState.reconcile(snapshot.panes, before);
+  const live = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
+  return !!live && live.agent === "opencode" && opencodeSessionId(live) === sessionID;
+}
+
 /** Each pane's rollout, resolved for its collapsed queue: a poll every 2s would otherwise redo it. */
 const queueRollouts = new Map<string, { path: string | null; at: number }>();
 const QUEUE_ROLLOUT_MS = 15_000;
@@ -904,20 +914,26 @@ async function readKnownPrompt(
   ompBindings = ompLookups,
 ): Promise<{ prompt: InteractivePrompt | null; screen?: string; stale?: boolean; inputUnverified?: true; suppressFallback?: true;
   settled?: InteractivePrompt }> {
-  // no native card (no session herdr reports, no verified v2 service, no pending form): OpenCode
-  // v1's own question prompt is read off the screen below (dialogs/opencode.ts, #1386)
+  // no native card (no session herdr reports, no verified v2 service, no pending permission or form): OpenCode
+  // v1's own question prompt is read off the screen below (dialogs/opencode.ts, #1386), and the fallback card stands
+  // for what no reader knows
   native: if (agent === "opencode") {
     const sessionID = opencodeSessionId(pane);
     if (!sessionID) break native;
     const state = openCodeState.begin(paneId, sessionID);
     // only the process service.json names, as /api/info proves it; never a service started here
-    const config = (await openCodeService(openCodeStateDir, signal, { onWindows: true }))?.config ?? null;
+    const service = await openCodeService(openCodeStateDir, signal, { onWindows: true });
+    const config = service?.config ?? null;
     const revision = state.revision;
     const issued = ++state.issued;
-    const forms = config ? await listPendingQuestionForms(config, sessionID, signal) : null;
+    const [forms, permissions] = config ? await Promise.all([
+      listPendingQuestionForms(config, sessionID, signal),
+      openCodePermissionsRead(service!.version) ? listPendingPermissions(config, sessionID, signal) : null,
+    ]) : [null, null];
     if (signal?.aborted || openCodeState.entries.get(paneId) !== state) return { prompt: null, stale: true };
     if (state.revision === revision && issued >= state.applied) {
       state.applied = issued;
+      state.permissions = permissions;
       state.available = forms !== null;
       if (forms !== null) {
         state.listed = forms[0] ?? null;
@@ -927,6 +943,14 @@ async function readKnownPrompt(
           state.revision++;
         }
       }
+    }
+    // a pending permission is the card before a form, as the latest read listed it; one a card cannot show whole is
+    // left to the fallback card
+    const permission = state.permissions?.[0];
+    if (permission) {
+      const card = openCodePermissionPrompt(permission);
+      if (!card) break native;
+      return { prompt: publicPrompt(card) };
     }
     const form = state.listed;
     if (!form || form.fields.length === 0) break native;
@@ -1396,7 +1420,7 @@ const WAITING_RESPONDERS: ReadonlySet<string> = new Set([
   "claude-approval", "claude-confirm", "claude-plan", "claude-question", "claude-submit", "cmd-question",
   "codex-approval", "codex-question", "codex-async-question", "codex-queued-question", "codex-menu",
   "agy-question", "hermes-approval", "hermes-question", "hermes-input", "omo-question", "omo-review", "omo-pending",
-  "omp-approval", "omp-question", "omp-submit", "opencode-v1-question", "opencode-question",
+  "omp-approval", "omp-question", "omp-submit", "opencode-v1-question", "opencode-question", "opencode-permission",
 ]);
 
 /** What the waiting a card stands for is about, in the words an agent's own report uses (`kind`); null: it does not say. */
@@ -1582,6 +1606,35 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         || body.option_index !== undefined || body.option_indices !== undefined || body.custom_text !== undefined)) {
         return badRequest("invalid_answer", "Next goes to another question and answers none.");
       }
+      if (parsedPrompt?.responder === "opencode-permission" && parsedPrompt.openCodePermission) {
+        const { requestID, sessionID, decisions } = parsedPrompt.openCodePermission;
+        const decision = Number.isInteger(body.option_index) ? decisions[body.option_index!] : undefined;
+        if (decision === undefined || body.option_indices !== undefined || body.custom_text !== undefined || body.step_back !== undefined
+          || body.step_index !== undefined || body.draft !== undefined) return badRequest("invalid_answer", "A valid option index is required.");
+        const asking = askings.get(body.pane_id);
+        if (!(await openCodePaneOn(body.pane_id, sessionID, openCodeState, deadlineAt)) || deadline.aborted) return promptChanged();
+        // the service as it is right before the reply: still the one service.json names, and still a 2.x one
+        const service = await openCodeService(options.openCodeStateDir, deadline, { onWindows: true });
+        const config = service && openCodePermissionsRead(service.version) ? service.config : null;
+        if (!config) return jsonResponse({ error: { code: "service_unavailable", message: "OpenCode service is not available. Your answer has not been sent." } }, 502);
+        const replied = await replyOpenCodePermission(config, sessionID, requestID, decision, deadline);
+        if (replied.ok) {
+          delivered = true;
+          const sent = chatSent.get(body.pane_id)?.commands.at(-1);
+          if (sent?.dialogId === prompt.id) noteCommandEvidence(body.pane_id, sent.id, { kind: "native", at: Date.now() });
+          formsAnswered.set(body.pane_id, Date.now());
+          if (formsAnswered.size > 64) formsAnswered.delete(formsAnswered.keys().next().value!);
+          if (askings.get(body.pane_id) === asking) askingEnded(body.pane_id);
+          // answered: no read listing it from before the reply shows it again
+          const entry = openCodeState.entries.get(body.pane_id);
+          if (entry?.sessionID === sessionID && entry.permissions) entry.permissions = entry.permissions.filter((request) => request.id !== requestID);
+          return jsonResponse({ ok: true });
+        }
+        if (replied.status === 0) return jsonResponse({ error: { code: "reply_unconfirmed", message: "OpenCode may have received your answer, but its reply did not arrive. Check the request before sending again." } }, 504);
+        // answered meanwhile, from its terminal or another client
+        if (replied.status === 404) return promptChanged();
+        return jsonResponse({ error: { code: "reply_failed", message: `Failed to reply to OpenCode's permission request (HTTP ${replied.status}).` } }, 502);
+      }
       if (parsedPrompt?.responder === "opencode-question" && parsedPrompt.openCodeForm) {
         const openCodeForm = parsedPrompt.openCodeForm;
         if (!openCodeForm.available) return jsonResponse({ error: { code: "service_unavailable", message: "OpenCode service is not available. Your answer has not been sent." } }, 502);
@@ -1591,15 +1644,8 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
           && openCodeState.entries.get(body.pane_id) === state && state.revision === openCodeForm.revision
           && askings.get(body.pane_id) === asking && asking?.content === parsedPrompt.id;
         // The lookup above awaited HTTP. Neither its pane nor its form is a live binding now.
-        const stillBound = async (): Promise<boolean> => {
-          if (!current()) return false;
-          const before = openCodeState.checkpoint();
-          const snapshot = await openCodeState.snapshot(Math.max(1, deadlineAt - Date.now())).catch(() => null);
-          if (!snapshot) return false;
-          openCodeState.reconcile(snapshot.panes, before);
-          const live = snapshot.panes.find((candidate) => candidate.pane_id === body.pane_id);
-          return !!live && live.agent === "opencode" && opencodeSessionId(live) === openCodeForm.sessionID && current();
-        };
+        const stillBound = async (): Promise<boolean> =>
+          current() && await openCodePaneOn(body.pane_id, openCodeForm.sessionID, openCodeState, deadlineAt) && current();
         if (!(await stillBound())) return promptChanged();
         const navigating = body.step_back === true || body.step_index !== undefined;
         const supplied = [

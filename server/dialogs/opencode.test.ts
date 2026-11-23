@@ -4,7 +4,8 @@ import { join } from "node:path";
 
 import { commandOutcome, type CommandSend } from "../outcome.ts";
 import { openCodePromptTexts, skillsNotAttached } from "../opencode-native.ts";
-import { nativeQuestionReader, v1QuestionReader } from "./opencode.ts";
+import type { OpenCodePermissionRequest } from "../opencode-service.ts";
+import { nativePermissionReader, nativeQuestionReader, openCodePermissionPrompt, v1QuestionReader } from "./opencode.ts";
 import { answerKeys, parseInteractivePrompt } from "../prompt.ts";
 import { registry } from "./registry.ts";
 
@@ -95,5 +96,44 @@ describe("the prompt text OpenCode 2.0.32 stores for a send", () => {
     expect([...openCodePromptTexts([{ typed: "@effect " }, { pasted: "one\r\ntwo\rthree\n" }])]).toEqual(["@effect one\ntwo\nthree\n", "@effect one\ntwo\nthree "]);
     const long = ` ${"x".repeat(151)} `;
     expect([...openCodePromptTexts([{ pasted: long }])]).toEqual([long, `${"x".repeat(151)} `]);
+  });
+});
+
+describe("OpenCode permission card", () => {
+  const recorded = (JSON.parse(readFileSync(join(import.meta.dir, "..", "fixtures", "opencode-permission-2.2.2.json"), "utf8")) as { events: { type: string; data: OpenCodePermissionRequest }[] })
+    .events.filter((event) => event.type === "permission.asked").map((event) => event.data);
+  const request = (action: string): OpenCodePermissionRequest => recorded.find((asked) => asked.action === action)!;
+  const card = (action: string) => openCodePermissionPrompt(request(action))!;
+
+  it("is the native reader its card names, and reads no screen", () => {
+    expect(registry.readerFor("opencode-permission")).toBe(nativePermissionReader);
+    expect(card("shell").responder).toBe("opencode-permission");
+  });
+
+  it("shows what each recorded request asks for: a command, a file's patch, a URL, an MCP tool's input", () => {
+    expect(card("shell")).toMatchObject({ kind: "approval", body: "$ ls -la ." });
+    expect(card("edit").own_text?.question?.vars).toEqual({ file: "hello.txt" });
+    expect(card("edit").body).toBe((request("edit").metadata!.files as { patch: string }[])[0]!.patch);
+    expect(card("webfetch")).toMatchObject({ body: null, own_text: { question: { vars: { url: "https://example.com" } } } });
+    expect(card("ovisfix_echo")).toMatchObject({ body: JSON.stringify({ word: "hello" }, null, 2), own_text: { question: { vars: { tool: "ovisfix_echo" } } } });
+  });
+
+  it("offers Always allow, with what it saves, only when OpenCode would save something", () => {
+    expect(card("shell").openCodePermission?.decisions).toEqual(["once", "always", "reject"]);
+    expect(card("shell").own_text?.descriptions?.[1]?.vars).toEqual({ patterns: "ls *" });
+    expect(card("edit").own_text?.descriptions?.[1]?.vars).toEqual({ action: "edit" });
+    expect(openCodePermissionPrompt({ ...request("shell"), save: [] })!.openCodePermission?.decisions).toEqual(["once", "reject"]);
+  });
+
+  it("makes no card it cannot show whole: an edit missing a file's patch, a body longer than a card shows", () => {
+    const edit = request("edit");
+    const file = (edit.metadata!.files as Record<string, unknown>[])[0]!;
+    expect(openCodePermissionPrompt({ ...edit, metadata: { files: [file, { ...file, patch: 7 }] } })).toBeNull();
+    expect(openCodePermissionPrompt({ ...edit, metadata: {} })).toBeNull();
+    expect(openCodePermissionPrompt({ ...request("shell"), resources: ["echo " + "x".repeat(12_000)] })).toBeNull();
+  });
+
+  it("is another card for another request of the same words", () => {
+    expect(openCodePermissionPrompt({ ...request("shell"), id: "per_other" })!.id).not.toBe(card("shell").id);
   });
 });

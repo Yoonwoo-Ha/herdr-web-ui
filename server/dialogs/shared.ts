@@ -1,6 +1,6 @@
 import { type CardText, type InteractivePrompt, type InteractivePromptOption, type InteractivePromptStep } from "../../shared/protocol.ts";
 import { type CardTextKey } from "../../shared/card-text.ts";
-import { type OpenCodeFormFieldOption, type OpenCodeFormInfo } from "../opencode-service.ts";
+import { type OpenCodeFormFieldOption, type OpenCodeFormInfo, type OpenCodePermissionDecision, type OpenCodePermissionRequest } from "../opencode-service.ts";
 import { createHash } from "node:crypto";
 import type { ReaderContext } from "./registry.ts";
 import type { InteractionPlan } from "./interaction-plan.ts";
@@ -110,6 +110,7 @@ type Responder =
   | "omp-submit"
   | "omp-handoff"
   | "opencode-question"
+  | "opencode-permission"
   | "opencode-v1-question"
   | "fallback-menu"
   | "fallback-gjc-menu"
@@ -133,6 +134,8 @@ export type ParsedPrompt = InteractivePrompt & {
     revision: number;
     available: boolean;
   };
+  /** the pending request of OpenCode's permission service the card answers, and the decision each option sends */
+  openCodePermission?: { requestID: string; sessionID: string; decisions: OpenCodePermissionDecision[] };
   piAskForm?: { identity: string; index: number };
   claudeTabs?: { identity: string; index: number };
   piAskUser?: PiAskUserForm;
@@ -301,6 +304,9 @@ function ownByIndex(words: readonly (CardWords | null)[]): Record<number, CardTe
   return found.length > 0 ? Object.fromEntries(found) : undefined;
 }
 
+/** The most of a card's body the card shows; finishPrompt cuts a longer one there. */
+export const CARD_BODY_MAX = 12_000;
+
 export function finishPrompt(
   agent: string,
   draft: PromptDraft,
@@ -331,7 +337,7 @@ export function finishPrompt(
     .slice(0, 12);
   // Hash all approval details before applying the display cap. Cursor movement
   // is excluded, but a different command, plan or option description is stale.
-  return { id, agent, ...input, body: input.body?.slice(0, 12_000) ?? null, ...(Object.keys(owned).length > 0 ? { own_text: owned } : {}), ...internal };
+  return { id, agent, ...input, body: input.body?.slice(0, CARD_BODY_MAX) ?? null, ...(Object.keys(owned).length > 0 ? { own_text: owned } : {}), ...internal };
 }
 
 export function publicPrompt(parsed: ParsedPrompt): InteractivePrompt {
@@ -584,6 +590,8 @@ export interface OpenCodePromptEntry {
   form: string | null;
   listed: OpenCodeFormInfo | null;
   available: boolean;
+  /** the permission requests the latest read listed (null: none read), so an older read finishing later shows none it no longer lists */
+  permissions?: OpenCodePermissionRequest[] | null;
   draft?: OpenCodeFormDraft;
   revision: number;
   issued: number;
