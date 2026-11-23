@@ -484,6 +484,20 @@ app's own page (the released front page does), bring the SSH setup up over home 
 SSH](#pcs-over-ssh)): Back or Cancel there is home again as it was, and the current PC is untouched. A pairing link tapped outside the app (Android) still waits for the app's own page, which
 checks it and opens its PC.
 
+`HerdrShell.identify` (both platforms) lets a PC's own page say which PC it is: its relay ID, as its own
+`/api/health` gives it to that page (`web_ui.server_id`, authenticated only; `""` once a health read names none, which
+drops the one kept), and its name (64 characters at most, counted as grapheme clusters on both platforms,
+`Home.capped`). The app keeps them (`ids`, and the name only where it keeps none) for the saved PC it shows, and only
+when the page loaded now is on that PC's own address (`Home.identifiedKey`): never for a relay PC's scope or the
+hosted app, never for another saved PC; iOS reads and writes them on the main thread, as it writes names elsewhere.
+`getState` hands `ids` to the app's own pages alone (the hosted app's origin and the bundled page, `Home.shownIds`),
+so home's My PCs lists a PC saved by the relay and by its Tailscale address, over SSH or at another address as one row.
+That is for the eye alone: a row with a relay way opens by the relay, never by a saved address. A PC's page reads no
+other PC's ID. A saved PC gains its ID the next time its page loads in an app with `identify`; an older entry has none
+until then and stays a row of its own. Any frame of a PC's page can call `identify` (on iOS Capacitor takes posts
+from any frame; on an Android WebView without `WEB_MESSAGE_LISTENER` every frame has the bridge), as it can `open` and
+`forget`: a frame that claims a wrong ID only puts that address on another PC's row, which it cannot open or rename.
+
 Known limits: the bridge's reach is what it is for every PC's page (on iOS by host and into subframes;
 on an Android WebView without `WEB_MESSAGE_LISTENER` every frame), and home adds no new kind of caller. On
 iOS the hosted page has to draw the way back from home while choosing (`backToCurrent`); a hosted page

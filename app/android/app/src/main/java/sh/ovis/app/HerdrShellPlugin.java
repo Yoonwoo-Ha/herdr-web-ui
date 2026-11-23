@@ -38,7 +38,40 @@ public class HerdrShellPlugin extends Plugin {
         state.put("failure", PCStore.failure == null ? "" : PCStore.failure);
         state.put("kind", PCStore.failureKind == null ? "" : PCStore.failureKind);
         state.put("command", PCStore.failureCommand == null ? "" : PCStore.failureCommand);
+        // the relay ID each saved PC's own page said it has, for My PCs to list a PC saved by several ways once: only to
+        // the app's own pages, never to a PC's page, which has this bridge too
+        org.json.JSONObject ids = Home.shownIds(loadedUrl(), showingConnectScreen(), BuildConfig.APP_ORIGIN, PCStore.ids(getContext()));
+        if (ids != null) state.put("ids", ids);
         call.resolve(state);
+    }
+
+    /** The address of the page loaded now, read on the UI thread, or null when it does not answer in time. */
+    private String loadedUrl() {
+        if (getActivity() == null) return null;
+        java.util.concurrent.CompletableFuture<String> loaded = new java.util.concurrent.CompletableFuture<>();
+        getActivity().runOnUiThread(() -> loaded.complete(getBridge().getWebView().getUrl()));
+        try {
+            return loaded.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Exception unanswered) {
+            return null;
+        }
+    }
+
+    /**
+     * A PC's own page says which PC it is: `server_id`, its relay ID as its own /api/health gave it to that page, and
+     * `name`. Kept only for the saved PC the app shows when the page loaded now is on that PC's own address
+     * (Home.identifiedKey), so a page speaks for its own PC alone, never for another saved one; My PCs then lists that PC
+     * once with the relay row of the same ID.
+     */
+    @PluginMethod
+    public void identify(PluginCall call) {
+        String key = Home.identifiedKey(loadedUrl(), PCStore.current(getContext()), BuildConfig.APP_ORIGIN);
+        if (key == null) {
+            call.reject("Only a saved PC's own page says which PC it is.");
+            return;
+        }
+        PCStore.identify(getContext(), key, call.getString("server_id"), call.getString("name"));
+        call.resolve();
     }
 
     /** url: an http or https address, the first page (a pairing link's code or a relay pairing offer's fragment included). */
@@ -111,7 +144,7 @@ public class HerdrShellPlugin extends Plugin {
                     call.reject("Cancelled", "cancelled");
                     return;
                 }
-                if (name != null && !name.isEmpty()) PCStore.setName(getContext(), key, name.length() > 64 ? name.substring(0, 64) : name);
+                if (name != null && !name.isEmpty()) PCStore.setName(getContext(), key, Home.capped(name, 64));
                 PCStore.open(getContext(), key, text);
                 PCStore.fail(null, null);
                 PCStore.redirects = 0;

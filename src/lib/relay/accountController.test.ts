@@ -6,6 +6,7 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { exportPublicKey, generateKeyPair } from "../../../shared/relay-e2ee.ts";
 import { deriveServerId } from "../../../shared/relay-server-proof.ts";
 import { RelayShell, type RelayShellProps } from "../../components/RelayShell.tsx";
+import { keepKnownPcs } from "../account/knownPcs.ts";
 import { indexedAccountStore, memoryAccountStore } from "../account/store.ts";
 import { useHostedSignIn, type HostedSignIn } from "../account/hostedSignIn.ts";
 import type { BlockRecord } from "../../../shared/account-records.ts";
@@ -276,6 +277,12 @@ describe("the hosted shell's front page", () => {
     await until(() => rendered.length > 0 && account().error !== null, "the failed read drawn");
     expect(account().pcs).toEqual([]);
     expect(account().known).toEqual([{ server_id: mac.server_id, name: "hasang-uui-MacBookPro" }]);
+    // another tab's read found none to keep since: this page's next failed read lists none either, not the earlier ones
+    keepKnownPcs("acct-test", []);
+    const drawn = rendered.length;
+    visible("visible");
+    await until(() => rendered.length > drawn && account().error !== null, "the next failed read on this page drawn");
+    expect(account().known).toBeUndefined();
 
     shellAccountActions()?.signOut();
     await drain();

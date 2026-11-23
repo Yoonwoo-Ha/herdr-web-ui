@@ -59,3 +59,16 @@ export async function chooseAnotherPc(): Promise<void> {
   if (hasNativeMethod("HerdrShell", "chooseAnother")) await callNative("HerdrShell", "chooseAnother");
   else await changePc();
 }
+
+/**
+ * Tells the phone app which PC this page is, for the saved PC the app opened it as (HerdrShell identify): its relay ID,
+ * as this PC's own health says it (`web_ui.server_id`), and its name. The app records them for that saved PC alone, so
+ * its My PCs puts a PC saved by several ways (the relay, its Tailscale address, SSH) on one row. `serverId` "": the
+ * health was read and names none, so the app drops one it kept (the address now reaches another Ovis); undefined: not
+ * read yet, nothing said of it. Nothing to an app without identify: on iOS a call to a method the app lacks never settles.
+ */
+export function tellAppWhichPc(pc: { readonly serverId?: string | undefined; readonly name?: string | undefined }): void {
+  const name = pc.name?.replace(/\.local$/i, "").trim();
+  if (!hasNativeMethod("HerdrShell", "identify") || (pc.serverId === undefined && !name)) return;
+  void callNative("HerdrShell", "identify", { ...(pc.serverId === undefined ? {} : { server_id: pc.serverId }), ...(name ? { name } : {}) }).catch(() => undefined);
+}

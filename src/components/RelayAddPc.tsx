@@ -1,6 +1,6 @@
 import "./RelayAddPc.css";
 
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { ChevronRight, type LucideIcon } from "lucide-react";
 
 import { useT, type Translate } from "../lib/i18n.ts";
@@ -179,8 +179,35 @@ export type AddressOpen = ReturnType<typeof useAddressOpen>;
  * going away replaces it, so what an earlier one answers late opens nothing; a tab or a pane giving way does not.
  */
 interface Attempt { readonly id: number; readonly host: string; readonly phase: "asking" | "opening"; readonly view: string }
-/** What the last attempt ended on, shown where the attempt was: why it did not open, or Tailscale off on the phone. */
-export type OpenOutcome = { readonly view: string; readonly kind: "error"; readonly text: string } | { readonly view: string; readonly kind: "tailscale-off" };
+/**
+ * What the last attempt ended on, shown where the attempt was: why it did not open, or Tailscale off on the phone; `other`,
+ * the same PC by another way it is saved by, offered by its host (OtherWayButton).
+ */
+export type OpenOutcome = ({ readonly view: string; readonly kind: "error"; readonly text: string } | { readonly view: string; readonly kind: "tailscale-off" }) & { readonly other?: OtherWay };
+/** Another way the same PC is saved by, which a failed or refused open offers: its way's tag, the host it opens, and what it does. */
+export interface OtherWay { readonly way: string; readonly host: string; readonly run: () => void }
+
+/** An address that may break onto the next line after each of its dots, before it breaks anywhere else. */
+export function atDots(address: string): ReactNode {
+  return address.split(".").map((part, at) => at === 0 ? part : <Fragment key={at}>.<wbr />{part}</Fragment>);
+}
+
+/**
+ * The one button a failed or refused open offers to open the same PC by another way it is saved by: that way's tag, then
+ * the host it opens, whole (on a second line rather than cut), so the person sees what will answer, and the same in its
+ * accessible name. The host is what the app saved; that it is this PC is only what that host's page told the app.
+ */
+export function OtherWayButton({ way, host, onClick }: { readonly way: string; readonly host: string; readonly onClick: () => void }) {
+  const t = useT();
+  const label = t("Open {host}", { host });
+  const at = label.indexOf(host);
+  return (
+    <button type="button" className="btn relay-add-other-way-button" data-action="open-other-way" aria-label={`${label} (${way})`} onClick={onClick}>
+      <span className="phone-pc-tag">{way}</span>
+      <span className="relay-add-other-way-host">{at < 0 ? label : <>{label.slice(0, at)}{atDots(host)}{label.slice(at + host.length)}</>}</span>
+    </button>
+  );
+}
 let attempt: Attempt | null = null;
 let outcome: OpenOutcome | null = null;
 let attempts = 0;
@@ -249,20 +276,21 @@ export function useAddressOpen(view = "page") {
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const failed = (cause: unknown): void => { setError(cause instanceof Error ? cause.message : String(cause)); };
   /** The app's open of `url`, as attempt `id`, where the app has it, until its deadline; what it ends on is said only while `id` is still the screen's. */
-  const openNow = (url: URL, id: number): void => {
+  const openNow = (url: URL, id: number, other: OtherWay | undefined): void => {
+    const more = other === undefined ? {} : { other };
     if (!hasNativeMethod(SHELL, "open")) { setAttempt(null); setOutcome({ view, kind: "error", text: t("This app cannot open a PC by its address. Update the Ovis app.") }); return; }
     // fixed wait: an open the app never answers (no cancelOpen to stop it) holds the screen no longer than the app's own check would
     const deadline = setTimeout(() => {
       if (attempt?.id !== id) return;
       stopAttempt();
-      setOutcome({ view, kind: "error", text: deviceOffline() ? offlineOpenText(t) : openFailureText(t, url, "timeout", "") });
+      setOutcome(deviceOffline() ? { view, kind: "error", text: offlineOpenText(t) } : { view, kind: "error", text: openFailureText(t, url, "timeout", ""), ...more });
     }, OPEN_WAIT_MS);
     void callNative(SHELL, "open", { url: url.href, check: true }).then(() => undefined, (cause: unknown) => {
       if (attempt?.id !== id) return;
       const code = typeof (cause as { code?: unknown } | null)?.code === "string" ? (cause as { code: string }).code : undefined;
       // the network went away under the open: that is why, whatever the address answered
       const said = code === "cancelled" ? "" : deviceOffline() ? offlineOpenText(t) : openFailureText(t, url, code, cause instanceof Error ? cause.message : String(cause));
-      if (said !== "") setOutcome({ view, kind: "error", text: said });
+      if (said !== "") setOutcome({ view, kind: "error", text: said, ...(deviceOffline() ? {} : more) });
     }).finally(() => {
       clearTimeout(deadline);
       if (attempt?.id === id) setAttempt(null);
@@ -275,9 +303,10 @@ export function useAddressOpen(view = "page") {
    * checks it is Ovis first (HerdrShell.open, app/web/connect.js), a browser goes there; anything else says so. In the app
    * one opens at a time: while one opens, another tap waits; one still asking about Tailscale gives way to the new one.
    * `askTailscale`: a saved Tailscale PC, which asks the app first whether Tailscale is on. With no network on this
-   * device nothing opens, and it says so (offlineOpenText), never why the address did not answer.
+   * device nothing opens, and it says so (offlineOpenText), never why the address did not answer. `other`: the same PC by
+   * another way it is saved by, which an open that fails or is refused (Tailscale off) offers by name.
    */
-  const take = (url: URL | null, options: { readonly askTailscale?: boolean } = {}): void => {
+  const take = (url: URL | null, options: { readonly askTailscale?: boolean; readonly other?: OtherWay } = {}): void => {
     if (url === null) { setError(t("That is not an http or https address.")); return; }
     if (deviceOffline()) { clearOutcome(); setError(offlineOpenText(t)); return; }
     const offer = url.hash.startsWith("#offer=");
@@ -300,12 +329,14 @@ export function useAddressOpen(view = "page") {
     const id = ++attempts;
     const ask = options.askTailscale === true && hasNativeMethod(SHELL, "tailscale");
     setAttempt({ id, host: url.host, phase: ask ? "asking" : "opening", view });
-    if (!ask) { openNow(url, id); return; }
+    if (!ask) { openNow(url, id, options.other); return; }
     void tailscaleOn().then((on) => {
       if (attempt?.id !== id) return;
-      if (!on) { setAttempt(null); setOutcome({ view, kind: "tailscale-off" }); return; }
+      if (!on) { setAttempt(null); setOutcome({ view, kind: "tailscale-off", ...(options.other ? { other: options.other } : {}) }); return; }
+      // the network went away while the app was asked: this attempt ends there, opening nothing
+      if (deviceOffline()) { setAttempt(null); setOutcome({ view, kind: "error", text: offlineOpenText(t) }); return; }
       setAttempt({ id, host: url.host, phase: "opening", view });
-      openNow(url, id);
+      openNow(url, id, options.other);
     });
   };
   /** `run` with what a scan (or its failure) answers, only while this opener is still on the page */
@@ -337,7 +368,12 @@ export function OpenStatus({ view, anyView = false, tailscaleOff }: { readonly v
     );
   }
   if (ended === null || !(anyView || ended.view === view)) return null;
-  return ended.kind === "error" ? <p className="account-error" role="alert">{ended.text}</p> : <>{tailscaleOff}</>;
+  const other = ended.other && (
+    <div className="relay-add-other-way">
+      <OtherWayButton way={ended.other.way} host={ended.other.host} onClick={() => { const run = ended.other?.run; clearOutcome(); run?.(); }} />
+    </div>
+  );
+  return <>{ended.kind === "error" ? <p className="account-error" role="alert">{ended.text}</p> : tailscaleOff}{other}</>;
 }
 
 /** An opener's own refusal and the screen's attempt, on a screen of one pane (the plain wait). */

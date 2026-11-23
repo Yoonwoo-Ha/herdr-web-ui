@@ -175,4 +175,7 @@ export const RELAY_KO: Record<string, string> = {
   "This device is not connected to the internet.": "이 기기가 인터넷에 연결되어 있지 않아요.",
   "Connect this phone to the internet to open the PC.": "PC를 열려면 휴대폰을 인터넷에 연결하세요.",
   "Connect this device to the internet to open the PC.": "PC를 열려면 기기를 인터넷에 연결하세요.",
+  "Account PC": "계정의 PC",
+  "SSH PC": "SSH PC",
+  "Open {host}": "{host} 열기",
 };

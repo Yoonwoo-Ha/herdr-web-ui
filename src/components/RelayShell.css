@@ -214,8 +214,9 @@
 .phone-pc-meta {
   display: flex;
   grid-area: meta;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1) var(--space-2);
   max-width: 100%;
   min-width: 0;
 }
@@ -229,13 +230,17 @@
   font-size: var(--fs-xs);
 }
 
+/* an address is never cut: one too long beside the way tag goes under it, and breaks only when longer than the row */
 .my-pc-address {
   min-width: 0;
-  overflow: hidden;
   color: var(--text-dim);
   font-size: var(--fs-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+
+/* a row of several ways: the ways tag says enough on a phone; its address is a line of its own on a wide screen */
+.my-pc-address-more {
+  display: none;
 }
 
 .my-pc-state {
@@ -274,6 +279,28 @@
   flex: 1 1 100%;
   margin: 0;
   text-align: start;
+}
+
+/* Forget PCs on a row of several ways: each way a line of its own under the row, its tag and address, with its own
+   Forget (or why not) in the column Forget takes */
+.my-pc > .my-pc-way {
+  display: flex;
+  grid-column: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-4) var(--space-2);
+}
+
+/* Forget PCs: why a row has no Forget, in its place and as wide, in grey: an account PC, or an SSH PC */
+.my-pc > .my-pc-kept {
+  grid-column: 2;
+  margin-inline-end: var(--space-2);
+  padding-inline: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
 }
 
 .my-pc > .phone-pc-forget {
@@ -687,5 +714,10 @@
   /* beside Add a PC the list is wide enough for the state word on the name's line */
   .connect-desk .my-pc > .relay-add-saved-pc {
     grid-template-areas: "name state chevron" "meta meta meta";
+  }
+
+  .connect-desk .my-pc-address-more {
+    display: block;
+    flex-basis: 100%;
   }
 }

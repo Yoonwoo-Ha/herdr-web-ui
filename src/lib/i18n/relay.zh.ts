@@ -175,4 +175,7 @@ export const RELAY_ZH: Record<string, string> = {
   "This device is not connected to the internet.": "此设备未连接到互联网。",
   "Connect this phone to the internet to open the PC.": "请将这部手机连接到互联网后再打开电脑。",
   "Connect this device to the internet to open the PC.": "请将此设备连接到互联网后再打开电脑。",
+  "Account PC": "账号的电脑",
+  "SSH PC": "SSH 电脑",
+  "Open {host}": "打开 {host}",
 };

@@ -175,4 +175,7 @@ export const RELAY_JA: Record<string, string> = {
   "This device is not connected to the internet.": "このデバイスはインターネットに接続されていません。",
   "Connect this phone to the internet to open the PC.": "PC を開くには、スマホをインターネットに接続してください。",
   "Connect this device to the internet to open the PC.": "PC を開くには、このデバイスをインターネットに接続してください。",
+  "Account PC": "アカウントの PC",
+  "SSH PC": "SSH の PC",
+  "Open {host}": "{host} を開く",
 };

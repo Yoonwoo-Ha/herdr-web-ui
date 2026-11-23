@@ -454,6 +454,61 @@ final class HomeTests: XCTestCase {
         XCTAssertTrue(Home.ownPageStalled(elapsed: 48, loaded: false, tries: 40))
     }
 
+    func testAPageSpeaksOnlyForTheSavedPcItIs() {
+        let app = URL(string: "https://app.ovis.sh"), id = "0123456789abcdef0123456789abcdef"
+        let mac = "https://macbookpro.tail1e211e.ts.net:17317"
+        XCTAssertEqual(Home.identifiedKey(URL(string: mac + "/?pane=w1%3Ap1"), current: mac, appOrigin: app), mac)
+        XCTAssertEqual(Home.identifiedKey(URL(string: "https://MACBOOKPRO.tail1e211e.ts.net:17317/"), current: mac, appOrigin: app), mac)
+        XCTAssertEqual(Home.identifiedKey(URL(string: "http://127.0.0.1:47320/"), current: "http://127.0.0.1:47320", appOrigin: app), "http://127.0.0.1:47320")
+        // a scheme's own port written out or not is one origin; another port is another
+        XCTAssertEqual(Home.identifiedKey(URL(string: "https://pc.example/"), current: "https://pc.example:443", appOrigin: app), "https://pc.example:443")
+        XCTAssertEqual(Home.identifiedKey(URL(string: "https://pc.example:443/"), current: "https://pc.example", appOrigin: app), "https://pc.example")
+        XCTAssertEqual(Home.identifiedKey(URL(string: "http://pc/"), current: "http://pc:80", appOrigin: app), "http://pc:80")
+        XCTAssertNil(Home.identifiedKey(URL(string: "https://pc.example:8443/"), current: "https://pc.example", appOrigin: app))
+        // a page that went to another origin, another PC's, or none shown
+        XCTAssertNil(Home.identifiedKey(URL(string: "https://evil.example/"), current: mac, appOrigin: app))
+        XCTAssertNil(Home.identifiedKey(URL(string: "https://desk.tail1e211e.ts.net/"), current: mac, appOrigin: app))
+        XCTAssertNil(Home.identifiedKey(URL(string: mac + "/"), current: nil, appOrigin: app))
+        XCTAssertNil(Home.identifiedKey(nil, current: mac, appOrigin: app))
+        // the hosted app and a relay PC's scope there: their path names them already
+        XCTAssertNil(Home.identifiedKey(URL(string: "https://app.ovis.sh/"), current: "https://app.ovis.sh", appOrigin: app))
+        XCTAssertNil(Home.identifiedKey(URL(string: "https://app.ovis.sh/s/\(id)/"), current: "https://app.ovis.sh/s/\(id)/", appOrigin: app))
+    }
+
+    func testWhatAPageSaysOfItselfIsKeptForItsOwnPcAlone() {
+        let id = "0123456789abcdef0123456789abcdef", mac = "https://macbookpro.tail1e211e.ts.net:17317", nas = "http://192.168.0.5:7317"
+        var kept = Home.identified(ids: [:], names: [nas: "home-nas"], key: mac, serverId: id, name: "hasang-uui-MacBookPro")
+        kept = Home.identified(ids: kept.ids, names: kept.names, key: nas, serverId: "not-an-id", name: "nas-7")
+        XCTAssertEqual(kept.ids, [mac: id])
+        // a name the person or an open gave stays
+        XCTAssertEqual(kept.names, [mac: "hasang-uui-MacBookPro", nas: "home-nas"])
+        XCTAssertNil(Home.relayId("0123456789ABCDEF0123456789ABCDEF"))
+        XCTAssertNil(Home.relayId(nil))
+        // its health read names no relay ID now: the one kept goes, so the address no longer joins that PC's row
+        kept = Home.identified(ids: kept.ids, names: kept.names, key: mac, serverId: "", name: nil)
+        XCTAssertEqual(kept.ids, [:])
+        XCTAssertEqual(kept.names[mac], "hasang-uui-MacBookPro")
+    }
+
+    func testANameIsCappedByWholeCharacters() {
+        let letters = String(repeating: "a", count: 63)
+        let pair = Home.identified(ids: [:], names: [:], key: "k", serverId: nil, name: letters + "\u{1F4BB}b")
+        XCTAssertEqual(pair.names["k"], letters + "\u{1F4BB}")
+        let combining = Home.identified(ids: [:], names: [:], key: "k", serverId: nil, name: letters + "e\u{0301}b")
+        XCTAssertEqual(combining.names["k"], letters + "e\u{0301}")
+    }
+
+    func testOnlyTheAppsOwnPagesAreToldTheSavedPcsIds() {
+        let app = URL(string: "https://app.ovis.sh"), id = "0123456789abcdef0123456789abcdef"
+        XCTAssertTrue(Home.ownPage(URL(string: "capacitor://localhost/index.html"), appOrigin: app))
+        XCTAssertTrue(Home.ownPage(URL(string: "https://app.ovis.sh/#pcs"), appOrigin: app))
+        XCTAssertTrue(Home.ownPage(URL(string: "https://app.ovis.sh/s/\(id)/#add"), appOrigin: app))
+        XCTAssertFalse(Home.ownPage(URL(string: "https://macbookpro.tail1e211e.ts.net:17317/"), appOrigin: app))
+        XCTAssertFalse(Home.ownPage(nil, appOrigin: app))
+        XCTAssertEqual(Home.shownIds(URL(string: "https://app.ovis.sh/#pcs"), appOrigin: app, ids: ["k": id]), ["k": id])
+        XCTAssertNil(Home.shownIds(URL(string: "https://macbookpro.tail1e211e.ts.net:17317/"), appOrigin: app, ids: ["k": id]))
+    }
+
     func testTheAppsOwnPageNeverLeavesADarkScreenWithNothingOnIt() {
         // normally the page is there before anything could be drawn over it: no cover flashes
         XCTAssertFalse(Home.ownPageCover(elapsed: 0, loaded: false, tries: 0))

@@ -158,6 +158,8 @@ function CopyableCommand({ command }: { readonly command: string }) {
 
 export interface RelayShellCardContentProps {
   readonly props: RelayShellProps;
+  /** a saved PC's failure: the button that opens it by another way the phone app saved it by */
+  readonly other?: ReactNode;
 }
 
 /** What continuing agrees to: Ovis's privacy policy (ovis.sh/privacy, in English and Korean), linked. */
@@ -205,7 +207,7 @@ function PairConfirm({ state, pc, onPair }: { state: Extract<RelayShellProps["st
  * What the card says on every screen but the front page (RelayShell draws My PCs and Add a PC itself): a pairing's steps,
  * a code typed in, a failure, an update, and the list of this device's pairings on a relay with no accounts.
  */
-export function RelayShellCardContent({ props }: RelayShellCardContentProps) {
+export function RelayShellCardContent({ props, other = null }: RelayShellCardContentProps) {
   const { state, pcStatus, onCheckPcs, scoped, iosTab, onPair, onRetry, onCancel, onBack, onForget, onUpdate, onMatch, onCodeStart, onCodeSubmit, onCodeMatch, onOpenPc, onSignIn, accountProviders } = props;
   const t = useT();
   const account = (state.kind === "list" || state.kind === "empty") && onSignIn ? state.account ?? null : null;
@@ -334,7 +336,7 @@ export function RelayShellCardContent({ props }: RelayShellCardContentProps) {
               {state.mismatch && <KeyIds mismatch={state.mismatch} named="paired" />}
               <div className="relay-shell-actions"><button type="button" className="btn btn-danger" onClick={onForget}>{t("Forget this PC")}</button>{back}</div>
             </>
-          ) : (failure.retry || back) && <div className="relay-shell-actions">{failure.retry && retry}{back}</div>}
+          ) : (failure.retry || back || other) && <div className="relay-shell-actions">{failure.retry && retry}{other}{back}</div>}
         </>
       )}
       {state.kind === "outdated" && (

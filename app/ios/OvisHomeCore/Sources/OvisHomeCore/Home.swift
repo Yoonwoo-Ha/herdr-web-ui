@@ -258,6 +258,48 @@ public enum Home {
         return "\(scheme)://\(shownHost)\(appOrigin.port.map { ":\($0)" } ?? "")/s/\(id)/"
     }
 
+    /// The saved PC whose own page `url` is, which may say which PC it is (HerdrShell identify): `current`, the PC the
+    /// app shows, when `url` is on its origin and it is saved by its address (a Tailscale or home network address, or an
+    /// SSH PC's on this phone). Nil for any other page: the hosted app at `appOrigin` and a relay PC's scope there (its
+    /// path names it already), or a page that went to another origin. So a page speaks for its own PC alone.
+    public static func identifiedKey(_ url: URL?, current: String?, appOrigin: URL?) -> String? {
+        // one origin whether or not its scheme's own port is written out (https://pc:443 is https://pc); another port is not
+        guard let current, let saved = URL(string: current), let path = URLComponents(string: current)?.percentEncodedPath,
+              path.isEmpty || path == "/", !sameOrigin(saved, appOrigin), sameOrigin(url, saved) else { return nil }
+        return current
+    }
+
+    /// A relay ID as a page says it, 32 lowercase hex digits, or nil.
+    public static func relayId(_ said: String?) -> String? {
+        guard let said, said.utf8.count == 32,
+              said.utf8.allSatisfy({ (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) || (UInt8(ascii: "a")...UInt8(ascii: "f")).contains($0) }) else { return nil }
+        return said
+    }
+
+    /// Whether the page asking for what the app saved is the app's own: the bundled page (`capacitor:`), or the hosted
+    /// app at `appOrigin`. Only such a page is given the saved PCs' relay IDs (getState `ids`), never a PC's own page.
+    public static func ownPage(_ url: URL?, appOrigin: URL?) -> Bool {
+        url?.scheme?.lowercased() == "capacitor" || sameOrigin(url, appOrigin)
+    }
+
+    /// The saved PCs' relay IDs (`ids`) as getState gives them to the page loaded now at `url`: to the app's own pages
+    /// alone (ownPage), else nil.
+    public static func shownIds(_ url: URL?, appOrigin: URL?, ids: [String: String]) -> [String: String]? {
+        ownPage(url, appOrigin: appOrigin) ? ids : nil
+    }
+
+    /// What the page of the saved PC `key` said of itself (identifiedKey), recorded in the app's maps: its relay ID in
+    /// `ids`, dropped when it says none ("": the address now reaches an Ovis with no relay ID; an unreadable one changes
+    /// nothing), and its name in `names` only where none is kept (one the person or an open gave stays), 64 characters
+    /// at most, counted as a person sees them (grapheme clusters, as Android's Home.capped counts them).
+    public static func identified(ids: [String: String], names: [String: String], key: String, serverId: String?, name: String?) -> (ids: [String: String], names: [String: String]) {
+        var ids = ids, names = names
+        if let id = relayId(serverId) { ids[key] = id } else if serverId == "" { ids[key] = nil }
+        let shown = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !shown.isEmpty, (names[key] ?? "").isEmpty { names[key] = String(shown.prefix(64)) }
+        return (ids, names)
+    }
+
     /// The kind of a page's failure the error page tells apart by its words: "offline" when the system says this phone is
     /// not connected to the internet (NSURLErrorNotConnectedToInternet), so the page says so instead of blaming the PC;
     /// nil for any other, which the error page explains from the address.

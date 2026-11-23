@@ -17,7 +17,8 @@ public class HerdrShellPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "retry", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "goHome", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openDemo", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "openSshSetup", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "openSshSetup", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "identify", returnType: CAPPluginReturnPromise)
     ]
 
     /// The view controller whose page asks.
@@ -34,7 +35,16 @@ public class HerdrShellPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func getState(_ call: CAPPluginCall) {
+        // on the main thread, as the web view's address and what the view controller shows are read there
+        DispatchQueue.main.async { self.answerState(call) }
+    }
+
+    private func answerState(_ call: CAPPluginCall) {
+        // the relay ID each saved PC's own page said it has, for My PCs to list a PC saved by several ways once: only to
+        // the app's own pages, never to a PC's page, which has this bridge too
+        let ids = Home.shownIds(bridge?.webView?.url, appOrigin: PCStore.appOrigin, ids: PCStore.ids) ?? [:]
         call.resolve([
+            "ids": ids,
             "saved": PCStore.saved,
             "names": PCStore.names,
             "current": PCStore.current ?? "",
@@ -94,6 +104,25 @@ public class HerdrShellPlugin: CAPPlugin, CAPBridgedPlugin {
         Self.go {
             if let name { PCStore.names[key] = name }
             PCStore.open(key, start: text)
+        }
+    }
+
+    /// A PC's own page says which PC it is: `server_id`, its relay ID as its own /api/health gave it to that page, and
+    /// `name`. Kept only for the saved PC the app shows when the page loaded now is on that PC's own address
+    /// (Home.identifiedKey), so a page speaks for its own PC alone, never for another saved one; My PCs then lists that
+    /// PC once with the relay row of the same ID.
+    @objc func identify(_ call: CAPPluginCall) {
+        let serverId = call.getString("server_id"), name = call.getString("name")
+        // on the main thread, as open and keepHosted write the names there: no write between this read and this one
+        DispatchQueue.main.async {
+            guard let key = Home.identifiedKey(self.bridge?.webView?.url, current: PCStore.current, appOrigin: PCStore.appOrigin) else {
+                call.reject("Only a saved PC's own page says which PC it is.")
+                return
+            }
+            let kept = Home.identified(ids: PCStore.ids, names: PCStore.names, key: key, serverId: serverId, name: name)
+            PCStore.ids = kept.ids
+            PCStore.names = kept.names
+            call.resolve()
         }
     }
 

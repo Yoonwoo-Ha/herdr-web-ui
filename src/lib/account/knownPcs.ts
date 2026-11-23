@@ -25,7 +25,16 @@ export function knownPcs(account: string): KnownPc[] {
   } catch { return []; }
 }
 
-/** Signed out, or the account left or deleted: its PCs' names stay on this device no longer. */
-export function dropKnownPcs(): void {
-  try { localStorage.removeItem(KEY); } catch { /* nothing was kept */ }
+/**
+ * Signed out, or the account left or deleted: its PCs' names stay on this device no longer. `account`: only when they
+ * are that account's, so a leave that ends after another account signed in leaves that one's list alone.
+ */
+export function dropKnownPcs(account?: string): void {
+  try {
+    if (account !== undefined) {
+      const kept: unknown = JSON.parse(localStorage.getItem(KEY) ?? "null");
+      if (typeof kept !== "object" || kept === null || !("account" in kept) || kept.account !== account) return;
+    }
+    localStorage.removeItem(KEY);
+  } catch { /* nothing was kept, or nothing readable */ }
 }

@@ -26,6 +26,12 @@ enum PCStore {
         set { defaults.set(newValue, forKey: "herdr.names") }
     }
 
+    /// The relay ID each saved PC's own page said it has (HerdrShell identify), by its key.
+    static var ids: [String: String] {
+        get { defaults.dictionary(forKey: "herdr.ids") as? [String: String] ?? [:] }
+        set { defaults.set(newValue, forKey: "herdr.ids") }
+    }
+
     static var current: String? {
         get { defaults.string(forKey: "herdr.current") }
         set { defaults.set(newValue, forKey: "herdr.current") }
@@ -222,6 +228,7 @@ enum PCStore {
     static func forget(_ key: String) {
         saved = saved.filter { $0 != key }
         names[key] = nil
+        ids[key] = nil
         if current == key { current = nil }
         if last == key { last = nil }
     }

@@ -18,6 +18,8 @@ import { setCurrentLanguage, translate } from "../i18n.ts";
 import { ConsentChangedError, createAccountController } from "./accountController.ts";
 import { ACCOUNT_SENDS, NETWORK_RETRY_MS, RETRY_AFTER_MAX_MS } from "./networkRetry.ts";
 import { offerOf } from "./shellState.ts";
+import { keepKnownPcs, knownPcs } from "../account/knownPcs.ts";
+import type { MyPc } from "../account/myPcs.ts";
 import { enrollmentOf, type RelayDevice, type ShellDeviceStore } from "./device.ts";
 import { createShellTestPage } from "./shell.test.tsx";
 import { RelayTransport } from "./transport.ts";
@@ -188,6 +190,14 @@ describe("account enrollment ownership", () => {
     run.accountRelease.resolve();
     await run.viewChanged;
     expect(run.controller.state).toEqual({ kind: "signed-out", error: null });
+  });
+
+  it.each(["account", "another"] as const)("drops the account's PCs kept on this device at a leave only when they are the leaving account's (%s)", async (owner) => {
+    const run = await fixture("unused");
+    keepKnownPcs(owner, [{ server_id: "a".repeat(32), name: "Desk", paired: false, join: { server_public_key: "k", relay: "wss://relay.invalid" } } as unknown as MyPc]);
+    const said = await run.controller.leave();
+    expect(said.left).toBe(true);
+    expect(knownPcs(owner)).toEqual(owner === "account" ? [] : [{ server_id: "a".repeat(32), name: "Desk" }]);
   });
 
   it.each(["renewal", "link answer"] as const)("leaves at once while an enrollment of this tab waits on its %s, and names a PC that may still take the key", async (held) => {

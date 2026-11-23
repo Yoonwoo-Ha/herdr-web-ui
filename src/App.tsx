@@ -58,6 +58,7 @@ import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
 import { headerCrumb, showsChat } from "./lib/headerCrumb.ts";
 import { LOCAL_MACHINE, pairedPc, paneStorageId } from "../shared/machines.ts";
 import { inNativeApp } from "./lib/nativeApp.ts";
+import { useTellAppWhichPc } from "./lib/useTellAppWhichPc.ts";
 import { serverIdOfPath, shellMode } from "./lib/shellMode.ts";
 import { usePairedNotices } from "./lib/usePairedNotices.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
@@ -263,6 +264,7 @@ export function App() {
   // a PC this one only watches there (Machine.view_only) is drawn as a watching device draws every PC
   const viewOnly = (machineId: string): boolean => auth?.role === "watch" || machines.find((machine) => machine.id === machineId)?.view_only === true;
   const { health, localFreshness, shownHealth, readLocalHealth } = useLocalHealth();
+  useTellAppWhichPc(health === null ? undefined : health.web_ui?.server_id ?? "", machines.find((machine) => machine.id === LOCAL_MACHINE)?.name);
   const exposure = health?.lan_exposure ?? health?.direct_exposure;
   const exposureDirect = !health?.lan_exposure || health.lan_exposure.direct === true;
   const noticeScope = serverIdOfPath(window.location.pathname) ?? "";

@@ -335,9 +335,13 @@ final class PCStore {
     }
 
     static List<String> saved(Context context) {
+        return saved(prefs(context));
+    }
+
+    private static List<String> saved(SharedPreferences prefs) {
         List<String> list = new ArrayList<>();
         try {
-            JSONArray array = new JSONArray(prefs(context).getString("saved", "[]"));
+            JSONArray array = new JSONArray(prefs.getString("saved", "[]"));
             for (int i = 0; i < array.length(); i++) list.add(array.getString(i));
         } catch (org.json.JSONException ignored) {
         }
@@ -349,14 +353,19 @@ final class PCStore {
     }
 
     static JSONObject names(Context context) {
+        return names(prefs(context));
+    }
+
+    private static JSONObject names(SharedPreferences prefs) {
         try {
-            return new JSONObject(prefs(context).getString("names", "{}"));
+            return new JSONObject(prefs.getString("names", "{}"));
         } catch (JSONException damaged) {
             return new JSONObject();
         }
     }
 
-    static void setName(Context context, String key, String name) {
+    /** On PCStore's monitor, as identify writes the names there too: neither write is lost to the other. */
+    static synchronized void setName(Context context, String key, String name) {
         JSONObject names = names(context);
         try {
             if (name == null) names.remove(key);
@@ -365,6 +374,26 @@ final class PCStore {
             return;
         }
         prefs(context).edit().putString("names", names.toString()).apply();
+    }
+
+    /** The relay ID each saved PC's own page said it has (HerdrShell identify), by its key. */
+    static JSONObject ids(Context context) {
+        return ids(prefs(context));
+    }
+
+    private static JSONObject ids(SharedPreferences prefs) {
+        try {
+            return new JSONObject(prefs.getString("ids", "{}"));
+        } catch (JSONException damaged) {
+            return new JSONObject();
+        }
+    }
+
+    /** What the page of the saved PC `key` said of itself (Home.identifiedKey): its relay ID, and a name where none is kept. */
+    static synchronized void identify(Context context, String key, String serverId, String name) {
+        JSONObject ids = ids(context), names = names(context);
+        Home.identified(ids, names, key, serverId, name);
+        prefs(context).edit().putString("ids", ids.toString()).putString("names", names.toString()).apply();
     }
 
     static String current(Context context) {
@@ -410,14 +439,23 @@ final class PCStore {
     }
 
     static synchronized void forget(Context context, String key) {
+        forget(prefs(context), key);
+    }
+
+    /** Forgets `key` in `prefs`: off the saved list, with its name and the relay ID its page said, and as current or last. */
+    static synchronized void forget(SharedPreferences prefs, String key) {
         forgottenAt.put(key, ++forgets);
-        List<String> list = saved(context);
+        List<String> list = saved(prefs);
         list.remove(key);
-        setSaved(context, list);
-        setName(context, key, null);
-        SharedPreferences.Editor edit = prefs(context).edit();
-        if (key.equals(current(context))) edit.remove("current");
-        if (key.equals(last(context))) edit.remove("last");
+        JSONObject names = names(prefs), ids = ids(prefs);
+        names.remove(key);
+        ids.remove(key);
+        SharedPreferences.Editor edit = prefs.edit()
+            .putString("saved", new JSONArray(list).toString())
+            .putString("names", names.toString())
+            .putString("ids", ids.toString());
+        if (key.equals(prefs.getString("current", null))) edit.remove("current");
+        if (key.equals(prefs.getString("last", null))) edit.remove("last");
         edit.apply();
     }
 

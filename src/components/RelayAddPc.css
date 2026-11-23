@@ -111,3 +111,25 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* an open that failed or was refused offers the same PC by another way it is saved by: one button, under what it says */
+.relay-add-other-way {
+  display: flex;
+  margin: 0 0 var(--space-4);
+}
+
+/* the way's tag, then the host it opens, whole: a long host goes onto a second line, breaking after a dot first */
+.btn.relay-add-other-way-button {
+  gap: var(--space-2);
+  max-width: 100%;
+  height: auto;
+  min-height: var(--touch-target);
+  padding-block: var(--space-2);
+  white-space: normal;
+  text-align: start;
+}
+
+.relay-add-other-way-host {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

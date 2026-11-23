@@ -5160,11 +5160,15 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   Tailscale, SSH, Address) and, for a relay PC, On, Off or Update needed (never Needs approval: a PC this device is not
   let into yet asks for that on its own page; a pairing of this phone's is On once its own check or the directory says
   so), its name alone on the first line, ending in an ellipsis only where it does not fit there (the state word sits on
-  the second line with the way tag, beside the name only on the wide screen), and **Add PC** pinned at the bottom while
+  the second line with the way tag, beside the name only on the wide screen), an address never cut (it goes under the
+  way tag when it does not fit beside it; a row of several ways shows none on a phone, where its tags say enough, and
+  gives it a line of its own on the wide screen), and **Add PC** pinned at the bottom while
   the list scrolls, as the Claude app keeps New chat in reach over its list. No row carries Forget: the ⋮ menu (there whenever a row can be
   forgotten, signed in or not) has Forget PCs, after which each row this phone can forget shows Forget in its chevron's
   place and no row opens, until Done in Add PC's place; Forget on the PC in use asks once more in the row (This is the
-  PC in use now. Forget it?). With no PC on it is the same
+  PC in use now. Forget it?). A row this screen cannot forget says why in Forget's place, in grey, so the row keeps its
+  height: Account PC (one this device has no pairing for; no way to remove it is added here) or SSH PC (which goes with
+  its keys from the app's own screen only). With no PC on it is the same
   list, the rows Off under No PC is online and Check again; with none in the account yet, the list says to sign in with
   the same account on the PC where Ovis runs, over Add PC (#16 drew both as a page of their own). On a screen 1024 px
   wide or more the two stand side by side: My PCs on the left and Add a PC always open on the right in a panel, each
@@ -5189,11 +5193,26 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   Tailscale is off shows Open Tailscale instead of trying it; an SSH PC whose address another app on the phone
   took says so above the list; and while the app keeps a PC open as the person chooses another, My PCs marks it In use
   now and its Back goes back to it (backToCurrent), the app's own connect page's ‹ PC; the In use now row goes back too,
-  rather than load that PC again. With no network on the device (the browser's online state: only an explicit offline
+  rather than load that PC again. One PC is one row, as Tailscale's machine list draws one row per machine whatever
+  addresses reach it (the owner's own mockup otherwise): in the phone app a PC saved by several ways (the relay, its
+  Tailscale address, SSH, another address) is listed once, with each way's tag (Relay · Tailscale), when the page of
+  each saved way told the app that PC's relay ID (never by name: a way with no ID stays a row of its own). That is for
+  the eye alone: a row with a relay way is the relay's row (its name, or Unnamed PC, its word, In use now only when the
+  relay PC is) and always opens by the relay, whose key is checked and whose connection moves to a direct Tailscale or
+  home network carrier by itself; an address way never names it, states it or opens it, and its address is not shown.
+  A row of saved ways alone opens by the one whose page loaded last in the app, and shows that one's address on the wide
+  screen. When a row's open fails or is refused and the PC has another saved way, the failure offers it, one button
+  naming that way's tag and the host it opens, whole (Tailscale · Open macbookpro.tail1e211e.ts.net:17317, wrapping
+  rather than cut), so the person sees what will answer: on My PCs, and on a relay PC's own failure card (not for a key
+  that is not the PC's). In Forget PCs a row of several lists its ways under it, one to a line, each with its
+  own Forget (the relay's on the PC in use asks once more) or Account PC or SSH PC; a row of one way stays as it was. A
+  browser has only the relay's rows, so nothing there is put together.
+  With no network on the device (the browser's online state: only an explicit offline
   counts), My PCs says so in one line with Try again (this phone in the app, this device in a browser), in place of No
   PC is online and the account service's failure, as Slack and WhatsApp say it over a list they keep; it still lists
   every PC this device knows, the account's ones from its last read that answered (kept on the device for that account
-  by id and name, with no state word, and dropped at sign-out); a row tapped then says to connect first instead of
+  by id and name, with no state word, and dropped at sign-out; while the account cannot be read, offline or not, no row
+  says On or Off by the account's word, only by this device's own check); a row tapped then says to connect first instead of
   trying the PC; and once the network is back the screen reads the account, the app's PCs and their checks again by
   itself. Add PC (and Connect a PC, the
   same screen as the front page) is the desktop's Add a connection tabs holding only the ways in: the sign-in signed out

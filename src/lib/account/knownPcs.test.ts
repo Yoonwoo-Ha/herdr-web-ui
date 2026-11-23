@@ -24,6 +24,14 @@ describe("the account's PCs this device listed last", () => {
     expect([...stored.values()].join("")).not.toContain("wss://");
   });
 
+  it("forgets them only for the account that left: another that signed in meanwhile keeps its own", () => {
+    keepKnownPcs("acct-b", [row("a")]);
+    dropKnownPcs("acct-a");
+    expect(knownPcs("acct-b")).toEqual([{ server_id: id("a"), name: "pc-a" }]);
+    dropKnownPcs("acct-b");
+    expect(knownPcs("acct-b")).toEqual([]);
+  });
+
   it("forgets them once the account is left, and reads nothing it cannot trust as a PC", () => {
     keepKnownPcs("acct-a", [row("a")]);
     dropKnownPcs();

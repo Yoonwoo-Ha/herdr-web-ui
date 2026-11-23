@@ -247,6 +247,72 @@ final class Home {
         return scope.matches() ? appOrigin + "/s/" + scope.group(1) + "/" : null;
     }
 
+    private static final Pattern RELAY_ID = Pattern.compile("[0-9a-f]{32}");
+
+    /**
+     * The saved PC whose own page `url` is, which may say which PC it is (HerdrShell identify): `current`, the PC the
+     * app shows, when `url` is on its origin and it is saved by its address (a Tailscale or home network address, or an
+     * SSH PC's on this phone). Null for any other page: the hosted app at `appOrigin` and a relay PC's scope there (its
+     * path names it already), or a page that went to another origin. So a page speaks for its own PC alone.
+     */
+    static String identifiedKey(String url, String current, String appOrigin) {
+        if (url == null || current == null || PCStore.scoped(current) || (appOrigin != null && PCStore.sameOrigin(current, appOrigin))) return null;
+        // one origin whether or not its scheme's own port is written out (https://pc:443 is https://pc); another port is not
+        return PCStore.sameOrigin(url, current) ? current : null;
+    }
+
+    /** A relay ID as a page says it, 32 lowercase hex digits, or null. */
+    static String relayId(String said) {
+        return said != null && RELAY_ID.matcher(said).matches() ? said : null;
+    }
+
+    /**
+     * Whether the page asking for what the app saved is the app's own: the bundled page, or the hosted app at
+     * `appOrigin`. Only such a page is given the saved PCs' relay IDs (getState `ids`), never a PC's own page.
+     */
+    static boolean ownPage(String url, boolean bundled, String appOrigin) {
+        return bundled || (url != null && appOrigin != null && PCStore.sameOrigin(url, appOrigin));
+    }
+
+    /** The saved PCs' relay IDs (`ids`) as getState gives them to the page loaded now at `url`: to the app's own pages alone (ownPage), else null. */
+    static org.json.JSONObject shownIds(String url, boolean bundled, String appOrigin, org.json.JSONObject ids) {
+        return ownPage(url, bundled, appOrigin) ? ids : null;
+    }
+
+    /**
+     * `text` cut to its first `most` characters as a person sees them (grapheme clusters, as Swift counts a String), so
+     * no emoji or accented letter is split, nor a surrogate pair: the same cap on both platforms.
+     */
+    static String capped(String text, int most) {
+        java.text.BreakIterator characters = java.text.BreakIterator.getCharacterInstance();
+        characters.setText(text);
+        int end = 0;
+        for (int count = 0; count < most; count++) {
+            int next = characters.next();
+            if (next == java.text.BreakIterator.DONE) return text;
+            end = next;
+        }
+        return end >= text.length() ? text : text.substring(0, end);
+    }
+
+    /**
+     * Records what the page of the saved PC `key` said of itself (identifiedKey) in the app's maps: its relay ID in
+     * `ids`, dropped when it says none ("": the address now reaches an Ovis with no relay ID; an unreadable one changes
+     * nothing), and its name in `names` only where none is kept (one the person or an open gave stays), 64 characters
+     * at most (capped).
+     */
+    static void identified(org.json.JSONObject ids, org.json.JSONObject names, String key, String serverId, String name) {
+        try {
+            String id = relayId(serverId);
+            if (id != null) ids.put(key, id);
+            else if ("".equals(serverId)) ids.remove(key);
+            String shown = name == null ? "" : name.trim();
+            if (!shown.isEmpty() && names.optString(key, "").isEmpty()) names.put(key, capped(shown, 64));
+        } catch (org.json.JSONException notStored) {
+            // a key JSON cannot hold: nothing is kept
+        }
+    }
+
     /**
      * Whether `url` is what the word "demo" becomes in the hosted screen's address field (`https://demo/`): the bundled
      * demo, as that word opens it on the bundled page. No PC answers there: a one-word name has no certificate.
