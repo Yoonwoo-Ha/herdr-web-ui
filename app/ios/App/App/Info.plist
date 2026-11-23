@@ -4,6 +4,8 @@
 <dict>
 	<key>OvisAppOrigin</key>
 	<string>$(OVIS_APP_ORIGIN)</string>
+	<key>OvisAppHome</key>
+	<string>$(OVIS_APP_HOME)</string>
 	<key>OvisPushRelay</key>
 	<string>$(OVIS_PUSH_RELAY)</string>
 	<key>OvisPushKeychainGroup</key>

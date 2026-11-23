@@ -13,9 +13,14 @@
        phone, so markup inside a sentence gets its own element. One screen, Connect a PC, with the desktop's Add a
        connection tabs in its order (connect.js pick): the Ovis relay (its sign-in), Tailscale and SSH. No sign-in comes
        first: Tailscale and SSH need none. -->
-  <!-- opened from a PC's Connect a PC (HerdrShell chooseAnother): back to that PC, which stays open until another is picked (connect.js) -->
+  <!-- opened from a PC's Connect a PC (HerdrShell chooseAnother): back to that PC, which stays open until another is picked;
+       opened by the hosted Connect a PC screen for what only this page takes (an SSH setup, a pairing link): back to that
+       screen (connect.js showBack) -->
   <header class="bar"><img src="ovis-sheep.svg" alt="" width="28" height="28"><span>Ovis</span><button type="button" id="back-to-pc" class="bar-back" hidden></button></header>
   <main id="connect-screen" class="first">
+    <!-- the hosted Connect a PC screen did not load, and this page stands in for it (HerdrShell getState `fallback`):
+         Try again asks the app for that screen again (goHome), which nothing else does -->
+    <p id="offline" class="offline" hidden><span data-ko="인터넷에 연결할 수 없어요">Can't connect to the internet</span><button type="button" id="try-home" data-ko="다시 시도">Try again</button></p>
     <h1 class="step" data-ko="PC 연결">Connect a PC</h1>
     <!-- a tab is picked, never stepped to: the phone's Back leaves the app from here (connect.js pick) -->
     <div class="tabs" role="tablist" aria-label="How to connect" data-ko-label="연결 방법">

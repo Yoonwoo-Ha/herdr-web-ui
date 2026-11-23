@@ -14,6 +14,7 @@
 		5E55A0000000000000000004 /* SshSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E55A0000000000000000003 /* SshSetupView.swift */; };
 		5E55A0000000000000000006 /* SshWords.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E55A0000000000000000005 /* SshWords.swift */; };
 		5E55A0000000000000000009 /* OvisSshCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5E55A0000000000000000008 /* OvisSshCore */; };
+		7B0E5C1D0000000000000003 /* OvisHomeCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7B0E5C1D0000000000000002 /* OvisHomeCore */; };
 		A67F098E31CE4D459B240003 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A67F098E31CE4D459B240004 /* NotificationService.swift */; };
 		A67F098E31CE4D459B240005 /* OvisPushCore in Frameworks */ = {isa = PBXBuildFile; productRef = A67F098E31CE4D459B240006 /* OvisPushCore */; };
 		A67F098E31CE4D459B240007 /* OvisPushCore in Frameworks */ = {isa = PBXBuildFile; productRef = A67F098E31CE4D459B240008 /* OvisPushCore */; };
@@ -115,6 +116,7 @@
 				4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */,
 				A67F098E31CE4D459B240005 /* OvisPushCore in Frameworks */,
 				5E55A0000000000000000009 /* OvisSshCore in Frameworks */,
+				7B0E5C1D0000000000000003 /* OvisHomeCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -223,6 +225,7 @@
 				4D22ABE82AF431CB00220026 /* CapApp-SPM */,
 				A67F098E31CE4D459B240006 /* OvisPushCore */,
 				5E55A0000000000000000008 /* OvisSshCore */,
+				7B0E5C1D0000000000000002 /* OvisHomeCore */,
 			);
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
@@ -258,6 +261,7 @@
 				A67F098E31CE4D459B240017 /* XCLocalSwiftPackageReference "OvisPushCore" */,
 				D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */,
 				5E55A0000000000000000007 /* XCLocalSwiftPackageReference "OvisSshCore" */,
+				7B0E5C1D0000000000000001 /* XCLocalSwiftPackageReference "OvisHomeCore" */,
 			);
 			productRefGroup = 504EC3051FED79650016851F /* Products */;
 			projectDirPath = "";
@@ -314,7 +318,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/sh \"$SRCROOT/../check-hosted-origin.sh\" \"$SRCROOT/App/public/shell.js\" \"$OVIS_APP_ORIGIN\"\n";
+			shellScript = "/bin/sh \"$SRCROOT/../check-hosted-origin.sh\" \"$SRCROOT/App/public/shell.js\" \"$OVIS_APP_ORIGIN\" \"$OVIS_APP_HOME\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -629,6 +633,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "../OvisSshCore";
 		};
+		7B0E5C1D0000000000000001 /* XCLocalSwiftPackageReference "OvisHomeCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../OvisHomeCore";
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -651,6 +659,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5E55A0000000000000000007 /* XCLocalSwiftPackageReference "OvisSshCore" */;
 			productName = OvisSshCore;
+		};
+		7B0E5C1D0000000000000002 /* OvisHomeCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7B0E5C1D0000000000000001 /* XCLocalSwiftPackageReference "OvisHomeCore" */;
+			productName = OvisHomeCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

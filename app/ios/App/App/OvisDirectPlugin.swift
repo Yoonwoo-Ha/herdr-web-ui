@@ -325,9 +325,11 @@ final class DirectCallGate: NSObject, WKScriptMessageHandler {
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        // the SSH PCs' keys, host keys and setup: never a PC page's to reach (OvisSshPlugin)
+        // the SSH PCs' keys, host keys and setup: never a PC page's to reach (OvisSshPlugin). One call of the hosted
+        // app's own main frame goes on: `add`, which a released front page makes itself and which there only hands
+        // over to the app's own page (OvisSshPlugin.add), as HerdrShell openSshSetup does
         if let body = message.body as? [String: Any], body["pluginId"] as? String == "OvisSsh" || body["service"] as? String == "OvisSsh",
-           !Self.fromBundle(message.frameInfo) { return }
+           !Self.fromBundle(message.frameInfo), !(Self.fromApp(message.frameInfo) && body["methodName"] as? String == "add") { return }
         if let body = message.body as? [String: Any], body["pluginId"] as? String == "OvisDirect" || body["service"] as? String == "OvisDirect" {
             guard Self.fromApp(message.frameInfo) else { return }
             if body["type"] as? String == "message", let method = body["methodName"] as? String, Self.ownMethods.contains(method),

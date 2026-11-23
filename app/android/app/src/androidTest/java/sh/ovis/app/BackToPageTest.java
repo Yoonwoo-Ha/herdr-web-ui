@@ -68,9 +68,10 @@ public class BackToPageTest {
     public void backOnAddAPcGoesBackToThePageBehindItAndStaysInTheApp() {
         Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
         Context context = instrumentation.getTargetContext();
-        // the app's own first page: no PC chosen, nothing being chosen
+        // the app's own first page: no PC chosen, nothing being chosen, and its own page in place of the hosted screen
         PCStore.choosing = false;
         PCStore.setCurrent(context, null);
+        PCStore.homeFailed = true;
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             String first = awaitUrl(scenario, "its first page, loaded", (address) -> address.startsWith("http") && !address.contains("#add") && loaded(scenario));
             scenario.onActivity((activity) -> activity.getBridge().getWebView().evaluateJavascript("location.assign('/ovis-sheep.svg#add')", null));

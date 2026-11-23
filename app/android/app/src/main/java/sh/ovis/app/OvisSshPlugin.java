@@ -81,7 +81,22 @@ public class OvisSshPlugin extends Plugin {
     /** `user`, `host`, `port`: what the SSH tab's field held (user@host), filled in on the setup screen; each may be left out. */
     @PluginMethod
     public void add(PluginCall call) {
-        if (!fromAppPage(call)) return;
+        // the hosted app's front page of a release before HerdrShell openSshSetup calls this itself: it gets what that
+        // hand-over gives, the app's own page on SSH, where the person adds the PC. Any other PC's page is refused
+        if (getBridge().getServerUrl() != null) {
+            String user = call.getString("user"), host = call.getString("host");
+            Integer asked = call.getInt("port");
+            String target = user == null || host == null ? "" : user + "@" + host + (asked == null || asked == 22 ? "" : ":" + asked);
+            getActivity().runOnUiThread(() -> {
+                if (target.length() > 300 || !SshPcs.setupOpener(getBridge().getWebView().getUrl(), false, BuildConfig.APP_ORIGIN)) {
+                    call.reject("Only the app's own pages manage SSH PCs.");
+                    return;
+                }
+                call.resolve();
+                ((MainActivity) getActivity()).openSshSetup(target);
+            });
+            return;
+        }
         Intent setup = new Intent(getContext(), SshSetupActivity.class)
             .putExtra(SshSetupActivity.EXTRA_USER, call.getString("user"))
             .putExtra(SshSetupActivity.EXTRA_HOST, call.getString("host"));
@@ -315,6 +330,9 @@ public class OvisSshPlugin extends Plugin {
         if (activity == null) return;
         activity.runOnUiThread(() -> {
             if (activity.isFinishing() || activity.isDestroyed()) return;
+            // only over that PC's own page: while the person chooses another way the PC is still current, but what is
+            // on screen is the hosted screen or the app's own page, which this failure is not about
+            if (!((MainActivity) activity).showsPc(pc.origin)) return;
             String errorUrl = getBridge().getErrorUrl();
             String shown = getBridge().getWebView().getUrl();
             if (errorUrl != null && (shown == null || !shown.startsWith(errorUrl))) getBridge().getWebView().loadUrl(errorUrl);

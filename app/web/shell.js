@@ -1,5 +1,12 @@
 export const APP_ORIGIN = "https://app.ovis.sh";
 
+/**
+ * The first screen this build of the pages was made for: `hosted`, the hosted app's Connect a PC screen with this page
+ * standing in when it does not load, or `bundled`, this page (OVIS_APP_HOME, build-web.ts). The native code opens it
+ * from its own copy of the value and tells the page which it is (HerdrShell getState); packaging compares the two.
+ */
+export const APP_HOME = "hosted";
+
 export const ACCOUNT_SIGN_IN = true;
 
 /** The account service, which names the sign-ins it offers (`GET /v1/providers`), and those the app can draw, in its order. */

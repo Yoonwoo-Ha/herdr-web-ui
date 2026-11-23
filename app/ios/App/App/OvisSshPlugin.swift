@@ -213,8 +213,20 @@ public class OvisSshPlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// `user`, `host`, `port`: what Direct's field held (user@host), filled in on the setup screen.
     @objc func add(_ call: CAPPluginCall) {
-        guard fromAppPage(call) else { return }
         let user = call.getString("user"), host = call.getString("host"), port = call.getInt("port")
+        // the hosted app's front page of a release before HerdrShell openSshSetup calls this itself (DirectCallGate
+        // lets that one call through): it gets what that hand-over gives, the app's own page on SSH, where the person
+        // adds the PC. Any other PC's page is refused
+        if bridge?.webView?.url?.scheme != "capacitor" {
+            let target = user.flatMap { user in host.map { "\(user)@\($0)\(port.map { $0 == 22 ? "" : ":\($0)" } ?? "")" } } ?? ""
+            guard target.count <= 300, SshPcs.setupOpener(bridge?.webView?.url, appOrigin: PCStore.appOrigin) else {
+                call.reject("Only the app's own pages manage SSH PCs.")
+                return
+            }
+            call.resolve()
+            HerdrShellPlugin.handOverSshSetup(target)
+            return
+        }
         present(call) { SshSetupModel(editing: nil, user: user, host: host, port: port) }
     }
 

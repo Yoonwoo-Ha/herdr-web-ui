@@ -1,7 +1,7 @@
 // The connect screen: the app's first page until a PC is chosen. Opening a PC goes through the
 // native HerdrShell plugin, which makes the PC's address the WebView's first page: navigating
 // there from this page would cost every launch about 1.5 s (docs/native-app.md, Spike results).
-import { ACCOUNT_SERVICE, ACCOUNT_SIGN_IN, APP_ORIGIN, barsForScreen, followScheme, knownLogins, listedProviders, localize, openFailure, parseAddress, publicHttp, relayLink, shell, savedPcLabel, sshDetails, sshOrAddress, t, tabPcs } from "./shell.js";
+import { ACCOUNT_SERVICE, ACCOUNT_SIGN_IN, APP_HOME, APP_ORIGIN, barsForScreen, followScheme, knownLogins, listedProviders, localize, openFailure, parseAddress, publicHttp, relayLink, shell, savedPcLabel, sshDetails, sshOrAddress, t, tabPcs } from "./shell.js";
 
 localize();
 followScheme();
@@ -67,8 +67,16 @@ const relayErrors = {
 
 async function open(text) {
   stopPending();
-  // the bundled demo (build-web.ts), for a store review without a PC: the address "demo" opens it, with no button for it
-  if (String(text).trim().toLowerCase() === "demo") { location.href = "demo/index.html"; return; }
+  // the bundled demo (build-web.ts), for a store review without a PC: the address "demo" opens it, with no button for it.
+  // Where this page stands in for the hosted screen the app opens it (HerdrShell openDemo), so leaving the demo comes
+  // back here with the PC this was opened from still current; a build whose first screen this is goes there itself
+  if (String(text).trim().toLowerCase() === "demo") {
+    if (APP_HOME !== "hosted") { location.href = "demo/index.html"; return; }
+    error.textContent = "";
+    try { await shell("openDemo"); }
+    catch (err) { error.textContent = String(err?.message ?? err); }
+    return;
+  }
   // an SSH PC whose host key was forgotten on purpose opens only through the setup screen, which shows the key to confirm
   const url = parseAddress(text);
   // looked up by origin, as each is saved, so the address typed with a path or a trailing slash finds it too
@@ -83,7 +91,8 @@ async function open(text) {
   // the hosted app itself, saved once it loaded (a sign-in opens it): picked from this list, it opens on its front page
   // (#pcs, which the hosted app takes as the app's own way there: Add a PC, or its sign-in), not straight into the PC it
   // opened last as a launch does (src/lib/relay/shell.tsx, launchOrder): a new web view starts a new session, so a bare
-  // address would count as a launch and loop back to the PC just left
+  // address would count as a launch and loop back to the PC just left. Where the hosted screen is the app's first
+  // screen, the app takes this as an attempt at it (Home.homeStart): nothing becomes the current PC before it loaded
   if (url.origin === new URL(APP_ORIGIN).origin && url.pathname === "/" && url.hash === "") {
     error.textContent = "";
     try { await shell("open", { url: `${APP_ORIGIN}/#pcs`, name: "Ovis" }); }
@@ -244,7 +253,9 @@ if (ACCOUNT_SIGN_IN) {
   }, () => undefined);
   // the sign-in itself runs on the hosted app, which this opens on that provider's sign-in (#sign-in=, boot.ts). One
   // press at a time, and none after one that went (Android answers before the page is replaced): a second open would
-  // race the first for the page the app keeps
+  // race the first for the page the app keeps. Where the hosted screen is the app's first screen, the app opens it as
+  // that screen (Home.homeStart): the PC this was opened from stays current until a PC is picked there, and a sign-in
+  // page that does not load comes back here
   const buttons = [...account.querySelectorAll("[data-provider]")];
   for (const button of buttons) button.addEventListener("click", async () => {
     error.textContent = "";
@@ -484,19 +495,46 @@ function managePanel(origin, label) {
   return panel;
 }
 
-/** Opened from a PC to choose another way (HerdrShell chooseAnother): that PC stays open until another is picked, and this goes back to it. */
-function showBackToPc(state) {
+/** Where the back control leads: the PC this screen was opened from (backToCurrent), or the hosted screen (goHome). */
+let backTo = "backToCurrent";
+
+/**
+ * The way back from this screen, where the app says it leads (getState's `back`, as the phone's Back goes). To a PC
+ * ("current"): opened from that PC to choose another way (HerdrShell chooseAnother), or over it for a pairing link from
+ * outside the app; it stays current until another is picked. To the hosted Connect a PC screen ("home"): opened by it
+ * for what only this page takes (an SSH setup, a pairing link, an SSH PC to manage). An app that names no way says
+ * `choosing` alone.
+ */
+function showBack(state) {
   const back = document.getElementById("back-to-pc");
-  back.hidden = state.choosing !== true;
+  const to = state.back === "home" || state.back === "current" ? state.back : state.choosing === true ? "current" : "";
+  back.hidden = to === "";
   if (back.hidden) return;
-  const name = savedPcLabel(state.current, state.names ?? {}, sshPcs);
+  const home = to === "home";
+  backTo = home ? "goHome" : "backToCurrent";
+  const name = home ? t("Back", "뒤로") : savedPcLabel(state.current, state.names ?? {}, sshPcs);
   back.textContent = `‹ ${name}`;
-  back.setAttribute("aria-label", t(`Back to ${name}`, `${name} 화면으로 돌아가기`));
+  back.setAttribute("aria-label", home ? t("Back to Connect a PC", "PC 연결로 돌아가기") : t(`Back to ${name}`, `${name} 화면으로 돌아가기`));
 }
 
 document.getElementById("back-to-pc").addEventListener("click", async () => {
   error.textContent = "";
-  try { await shell("backToCurrent"); }
+  try { await shell(backTo); }
+  catch (err) { error.textContent = String(err?.message ?? err); }
+});
+
+/**
+ * This page standing in for the hosted Connect a PC screen, which did not load (getState's `fallback`): one line says
+ * so, and its Try again asks the app for that screen again. Nothing else here goes back to it, so a phone that stays
+ * offline stays on this page, with all of it working.
+ */
+function showFallback(state) {
+  document.getElementById("offline").hidden = state.fallback !== true;
+}
+
+document.getElementById("try-home").addEventListener("click", async () => {
+  error.textContent = "";
+  try { await shell("goHome"); }
   catch (err) { error.textContent = String(err?.message ?? err); }
 });
 
@@ -508,7 +546,10 @@ async function load() {
     try { for (const pc of (await ssh("list")).pcs ?? []) sshPcs[pc.origin] = pc; }
     catch { /* an app without the plugin lists its PCs as before */ }
   }
-  showBackToPc(state);
+  showBack(state);
+  showFallback(state);
+  // Change PC where an SSH PC did not open (getState's `manage`): its Manage is on SSH
+  if (state.manage === true && tab !== "ssh") pick("ssh");
   renderPcs("relay", document.getElementById("relay-pcs"), document.getElementById("relay-section"), state);
   const tailnet = renderPcs("tailscale", document.getElementById("tailnet"), document.getElementById("tailnet-section"), state);
   document.getElementById("tailnet-none").hidden = tailnet > 0;

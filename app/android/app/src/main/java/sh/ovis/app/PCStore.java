@@ -54,6 +54,79 @@ final class PCStore {
     /** The SSH login a page asked the connect screen to open on its SSH tab with (HerdrShellPlugin.openSshSetup), until it takes it. In memory only. */
     static volatile String sshSetup;
 
+    /**
+     * The hosted Connect a PC screen (Home) did not load, so the app's own page stands in for it, until the person
+     * tries it again there (Try again) or a PC's page has loaded since: never by itself. In memory only: an app started
+     * again tries the hosted screen.
+     */
+    static volatile boolean homeFailed;
+
+    /** The bundled demo was asked for (HerdrShell openDemo) and is up until it is left. In memory only. */
+    static volatile boolean demo;
+
+    /**
+     * Change PC was pressed where an SSH PC did not open: the app's own page, whose Manage holds what mends it (Forget
+     * host key, Set up again), which the hosted screen has not. In memory only.
+     */
+    static volatile boolean manage;
+
+    /**
+     * The fragment the next hosted screen starts at instead of `#pcs` (Home.homeStart: a sign-in the app's own page
+     * asked for), taken once by the activity that opens it. In memory only.
+     */
+    static volatile String homeStart;
+
+    /**
+     * Whether something waits that only the app's own Connect a PC page takes: a pairing link, an SSH setup, an SSH PC
+     * whose address another app holds, which that page says, or an SSH PC to manage.
+     */
+    static boolean bundledAsked() {
+        return link != null || sshSetup != null || manage || "ssh-port".equals(failureKind);
+    }
+
+    /** The hosted screen is to be tried again (Try again on the fallback, the way back from the app's own page): nothing is left that would keep the app's own page up. */
+    static void goHome() {
+        homeFailed = false;
+        demo = false;
+        link = null;
+        sshSetup = null;
+        manage = false;
+        homeStart = null;
+        if ("ssh-port".equals(failureKind)) fail(null, null);
+    }
+
+    /**
+     * The PC is left (Change PC): none is current. Where an SSH PC did not open (`unopened`: the cover's Change PC,
+     * error.html's), the app's own page comes for it (`manage`): error.html sends the person to Manage there (Forget
+     * host key, Set up again), and the hosted screen has no such thing.
+     */
+    static void leave(Context context, boolean unopened) {
+        String left = current(context);
+        setCurrent(context, null);
+        manage = unopened && left != null && SshPcs.on(context).get(left) != null;
+    }
+
+    /**
+     * The hosted app's front page asked for by its address (Home.homeStart): an attempt at the hosted screen, starting
+     * at `start`, which makes nothing the current PC. A PC that is current stays the one to go back to.
+     */
+    static void homeAttempt(Context context, String start) {
+        goHome();
+        homeStart = start;
+        if (current(context) != null) choosing = true;
+    }
+
+    /**
+     * A relay PC's page came up in the hosted screen (Home.Event.RELAY_PC), which the app is not asked to open: the
+     * hosted app at `appOrigin` is the current PC from here on, as it is after a sign-in from the app's own page, so
+     * Back and the next start are that PC's.
+     */
+    static void keepHosted(Context context, String appOrigin) {
+        choosing = false;
+        prefs(context).edit().putString("current", appOrigin).putString("last", appOrigin).apply();
+        if (names(context).optString(appOrigin, "").isEmpty()) setName(context, appOrigin, "Ovis");
+    }
+
     private static final Pattern PC_SCOPE = Pattern.compile("/s/([0-9a-f]{32})/?");
 
     /**
@@ -304,6 +377,7 @@ final class PCStore {
 
     static void setCurrent(Context context, String origin) {
         choosing = false;
+        demo = false;
         prefs(context).edit().putString("current", origin).apply();
     }
 
@@ -313,6 +387,9 @@ final class PCStore {
 
     static void open(Context context, String key, String start) {
         choosing = false;
+        demo = false;
+        manage = false;
+        homeStart = null;
         prefs(context).edit().putString("current", key).putString("last", key).apply();
         pendingStart = start;
     }

@@ -90,6 +90,8 @@ public class BackRacesTest {
         Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
         PCStore.choosing = false;
         PCStore.setCurrent(instrumentation.getTargetContext(), null);
+        // the app's own page in place of the hosted screen, whose files these pages are
+        PCStore.homeFailed = true;
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             awaitUrl(scenario, "its first page, loaded", (address) -> address.startsWith("http") && loaded(scenario));
             // the page Add a PC is opened from, with an older page behind it: a second step would land there
