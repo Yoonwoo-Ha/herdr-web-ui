@@ -1089,9 +1089,8 @@ export async function main(groupSeams: GroupSeams & {
     owned.delete(group);
     return left;
   };
-  let activeStep: CheckStep | null = null;
-  let activeStartedAtMs = 0;
-  let activeStepFinished: Promise<void> | null = null;
+  // typecheck runs beside build and the unit tests, so more than one step can be running
+  const activeSteps = new Map<CheckStep, { startedAtMs: number; finished: Promise<void> }>();
   let ending = false;
   let interruptedBy: NodeJS.Signals | null = null;
   let concurrentUnitFinished: Promise<number> | null = null;
@@ -1153,13 +1152,13 @@ export async function main(groupSeams: GroupSeams & {
       interruptedBy = signal;
       report.status = "interrupted";
       report.exitCode = signal === "SIGINT" ? 130 : 143;
-      if (activeStep) {
-        activeStep.status = "interrupted";
-        activeStep.exitCode = null;
-        activeStep.signal = signal;
-        activeStep.endedAt = new Date().toISOString();
-        activeStep.durationMs = Date.now() - activeStartedAtMs;
-        activeStep.reason = `interrupted by ${signal}`;
+      for (const [step, { startedAtMs }] of activeSteps) {
+        step.status = "interrupted";
+        step.exitCode = null;
+        step.signal = signal;
+        step.endedAt = new Date().toISOString();
+        step.durationMs = Date.now() - startedAtMs;
+        step.reason = `interrupted by ${signal}`;
       }
       saveReport();
       void (async () => {
@@ -1174,7 +1173,7 @@ export async function main(groupSeams: GroupSeams & {
             let cancelTimeout: (() => void) | undefined;
             try {
               await Promise.race([
-                Promise.all([activeStepFinished, concurrentUnitFinished]),
+                Promise.all([...[...activeSteps.values()].map(({ finished }) => finished), concurrentUnitFinished]),
                 new Promise<never>((_, reject) => {
                   const expire = () => reject(new Error("interrupted step output did not finish draining"));
                   if (groupSeams.scheduleDrainTimeout) {
@@ -1234,8 +1233,8 @@ export async function main(groupSeams: GroupSeams & {
     const step = getStep(label, command);
     step.cwd = resolve(commandCwd);
     const startedAtMs = Date.now();
-    activeStartedAtMs = startedAtMs;
-    activeStep = step;
+    let resolveStepFinished!: () => void;
+    activeSteps.set(step, { startedAtMs, finished: new Promise<void>((resolve) => { resolveStepFinished = resolve; }) });
     step.startedAt = new Date(startedAtMs).toISOString();
     step.reason = null;
     report.currentStep = label;
@@ -1243,9 +1242,6 @@ export async function main(groupSeams: GroupSeams & {
     console.log(`\n=== ${label}: ${sanitizeCommand(command).join(" ")}`);
     return new Promise((done) => {
       let settled = false;
-      let resolveStepFinished!: () => void;
-      const stepFinished = new Promise<void>((resolve) => { resolveStepFinished = resolve; });
-      activeStepFinished = stepFinished;
       let drainTimer: NodeJS.Timeout | null = null;
       let outputIncomplete = false;
       let leftRunning = false;
@@ -1276,13 +1272,12 @@ export async function main(groupSeams: GroupSeams & {
           else if (logsFailed) step.reason = "could not persist command output logs";
           else if (outputIncomplete) step.reason = "output may be incomplete: a process left running still held the output";
           else if (leftRunning) step.reason = "ended processes the command left running";
-          report.currentStep = null;
+          activeSteps.delete(step);
+          report.currentStep = [...activeSteps.keys()].at(-1)?.name ?? null;
           if (step.status === "failure" && signal) report.errors.push(`${label} terminated by ${signal}`);
           else if (step.status === "failure" && !logsFailed) report.errors.push(`${label} exited with code ${step.exitCode}`);
           if (logsFailed) report.errors.push(`${label} output logs could not be persisted`);
           saveReport();
-          activeStep = null;
-          activeStepFinished = null;
           resolveStepFinished();
           if (!ending) done(logsFailed && code === 0 ? 1 : step.exitCode ?? 1);
         });
@@ -1377,13 +1372,19 @@ export async function main(groupSeams: GroupSeams & {
       for (const [label, command] of [
         ["generated types are fresh", [bun, "run", "generate:types", "--check"]],
         ["generated themes are fresh", [bun, "run", "generate:themes", "--check"]],
-        ["typecheck", [bun, "run", "typecheck"]],
       ] as const) {
         if (code !== 0 || ending) break;
         code = await run(label, [...command], plain);
       }
-      if (code === 0 && !ending) code = await build(plain);
-      if (todo.fast && code === 0 && !ending) code = await run("unit tests", [bun, "run", "test:unit"], plain);
+      if (code === 0 && !ending) {
+        // beside build and the unit tests, which neither read nor write what it checks; a type error
+        // still fails the run, once they have ended
+        const typecheck = run("typecheck", [bun, "run", "typecheck"], plain);
+        code = await build(plain);
+        if (todo.fast && code === 0 && !ending) code = await run("unit tests", [bun, "run", "test:unit"], plain);
+        const typecheckCode = await typecheck;
+        if (code === 0) code = typecheckCode;
+      }
     }
     if (todo.concurrent && code === 0 && !ending) {
       const herdr = process.env["OVIS_HERDR_BIN"] || "herdr";

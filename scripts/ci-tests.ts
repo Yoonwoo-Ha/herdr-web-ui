@@ -5,10 +5,11 @@
  * with it. A unit run with one worker and the integration files share this runner's group.
  */
 import { availableParallelism } from "node:os";
+import { readTestTimings, testFiles, testQueue } from "./ci-test-timings.ts";
 
 const suite = process.argv[2];
 if (suite !== "unit" && suite !== "integration") throw new Error("Usage: bun scripts/ci-tests.ts unit|integration");
-const files = [...new Bun.Glob("{src,shared,server,scripts,telemetry,push-relay,relay,integrations,tui}/**/*.test.{ts,tsx}").scanSync({ cwd: process.cwd() })].sort();
+const files = testFiles(process.cwd());
 // The legacy updater suite mixes Git-only cases with real bridge restart/rollback cases.
 const needsHerdr = (file: string) => file.endsWith(".contract.test.ts") || file === "server/updater.test.ts" || file.startsWith("server/herdr/") || file.startsWith("server/pty/");
 const selected = files.filter((file) => needsHerdr(file) === (suite === "integration"));
@@ -40,7 +41,8 @@ if (suite === "unit") {
   }
 
   console.log(`Running with ${effectiveWorkers} parallel workers`);
-  const queue = [...selected].sort((a, b) => Bun.file(b).size - Bun.file(a).size);
+  // Longest first (scripts/ci-test-timings.json): a long file started last would run on alone.
+  const queue = testQueue(selected, readTestTimings(), (file) => Bun.file(file).size);
   const totals = { pass: 0, fail: 0, skip: 0 };
   const failed: string[] = [];
   const unread: string[] = [];
@@ -107,8 +109,8 @@ const baseSession = process.env["HERDR_TEST_SESSION"] || "ovis-test";
 // Always `<session>-<n>`, also for one worker: the plain session belongs to the browser scripts,
 // which run beside this suite in CI (scripts/ci-lanes.ts) and must never share a herdr with it.
 const sessions = Array.from({ length: shards }, (_, index) => `${baseSession}-${index + 1}`);
-// Largest first: the long files are the large ones, and one started last would run on alone.
-const queue = [...selected].sort((a, b) => Bun.file(b).size - Bun.file(a).size);
+// Longest first (scripts/ci-test-timings.json): a long file started last would run on alone.
+const queue = testQueue(selected, readTestTimings(), (file) => Bun.file(file).size);
 const totals = { pass: 0, fail: 0, skip: 0 };
 const failed: string[] = [];
 const unread: string[] = [];
