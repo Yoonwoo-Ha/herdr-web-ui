@@ -281,6 +281,18 @@ What is there:
   patch of WebKit's private content view: its web view is a `WKWebView` subclass whose
   `inputAccessoryView` is nil, which WebKit asks for since iOS 13. The client has its own key bar,
   and a page cannot remove WebKit's.
+- On iOS the status bar's icons follow the page, as the bars do on Android (see
+  [The Android app](#the-android-app)): a document-start script tells the app the page's
+  `<meta name="theme-color">`, once the document is read and whenever it changes, and
+  `HerdrBridgeViewController` shows dark icons on a light colour and light ones on a dark colour, at
+  the luminance Android draws the line at (`Bars` in `app/ios/OvisHomeCore`, `swift test` there). A
+  page with no readable colour (anything but `#rrggbb`) keeps the app's own light icons, the
+  `SystemBars` style of `capacitor.config.json`. While a native cover is over the page, the cover's
+  own colour decides. A new document starts with nothing said: until it has read its colour, the
+  web view's own background colour decides, which is what shows before a page paints; a load
+  that has not replaced the page yet changes nothing. Before this the icons were light on every PC
+  and on the hosted app whatever the theme, so white on white in a light one; only the app's own
+  pages set them, through `SystemBars`.
 - In the client, `src/lib/nativeApp.ts` notices the app through `window.Capacitor`, as the app
   injects it; the browser build carries no Capacitor code. Inside the app:
   - Settings → Phone & devices has a Change PC row, and so does the pairing screen (a PC that
