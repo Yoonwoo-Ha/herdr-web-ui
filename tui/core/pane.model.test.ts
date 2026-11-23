@@ -2,7 +2,7 @@ import { expect, it } from "bun:test";
 import { FRAME_CLOSE, FRAME_DATA, FRAME_FOCUS, FRAME_RESIZE } from "../../server/herdr-core/connection.ts";
 import { type FakeCoreOptions, type FakeEntry, FakeHcCore, FEATURES_0_1_17, HEADLESS } from "../../server/herdr-core/core.fake.ts";
 import { typedKey } from "../input/decode.ts";
-import { PANE_REOPEN_LIMIT } from "../model/deadlines.ts";
+import { PANE_REOPEN_LIMIT, RESIZE_SETTLE_MS } from "../model/deadlines.ts";
 import { type AttachRecord, type ChannelCall, type EmulatorRecord, type Rival, type Screen, Stage } from "../testing/pane-harness.ts";
 import type { PaneInput } from "./pane.ts";
 
@@ -310,7 +310,7 @@ async function sequence(seed: number, totals: Totals, deep: boolean): Promise<vo
       const { cols, rows } = pane;
       [pane.cols, pane.rows] = pick(RECTANGLES.filter(([otherCols, otherRows]) => otherCols !== cols || otherRows !== rows));
       apply();
-      stage.clock.now += 50;
+      stage.clock.now += RESIZE_SETTLE_MS - 10;
       screen.fire();
       Object.assign(pane, { cols, rows });
       apply();
@@ -320,7 +320,8 @@ async function sequence(seed: number, totals: Totals, deep: boolean): Promise<vo
       if (!pane) return;
       [pane.cols, pane.rows] = pick(RECTANGLES);
       apply();
-      stage.clock.now += 50;
+      // inside the wait: the shortest one, a lone screen's own rectangle
+      stage.clock.now += RESIZE_SETTLE_MS - 10;
       screen.fire();
       input({ ...typedKey("t", {}), at: screen.stamp() });
     }],
@@ -575,7 +576,7 @@ async function sequence(seed: number, totals: Totals, deep: boolean): Promise<vo
       const [nextCols, nextRows] = RECTANGLES.find(([otherCols, otherRows]) => `${otherCols}x${otherRows}` !== wantedOf(pane))!;
       shown.set(pane, { cols: nextCols, rows: nextRows, covered: false });
       apply();
-      stage.clock.now += 50;
+      stage.clock.now += RESIZE_SETTLE_MS - 10;
       screen.fire();
       input({ ...typedKey("s", {}), at: screen.stamp() });
       await stage.settle();
@@ -586,7 +587,7 @@ async function sequence(seed: number, totals: Totals, deep: boolean): Promise<vo
       const [awayCols, awayRows] = RECTANGLES.find(([otherCols, otherRows]) => otherCols !== nextCols || otherRows !== nextRows)!;
       shown.set(pane, { cols: awayCols, rows: awayRows, covered: false });
       apply();
-      stage.clock.now += 50;
+      stage.clock.now += RESIZE_SETTLE_MS - 10;
       screen.fire();
       shown.set(pane, { cols: nextCols, rows: nextRows, covered: false });
       apply();

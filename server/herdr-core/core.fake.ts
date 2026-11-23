@@ -291,6 +291,7 @@ export class FakeHcCore {
   private clock = 0;
   private seq = 0;
   private conflicts = 0;
+  private readonly refusedFolders = new Set<string>();
 
   constructor(options: FakeCoreOptions = {}) {
     this.version = options.version ?? "0.1.18";
@@ -430,6 +431,11 @@ export class FakeHcCore {
   /** The next `count` writes of any document find another writer was first (its version moves on). */
   conflictNext(count: number): void {
     this.conflicts = count;
+  }
+
+  /** `terminal.run` in `folder` fails as hc's does for a folder it cannot start a program in (removed, mode 000): `spawn_failed`. */
+  refuseFolder(folder: string): void {
+    this.refusedFolders.add(folder);
   }
 
   /** A kept terminal's program died by a signal: its streams close, and it waits for `restartTerminal`. */
@@ -694,6 +700,9 @@ export class FakeHcCore {
   }
 
   private run(params: TerminalRunParams): Terminal {
+    if (typeof params.cwd === "string" && this.refusedFolders.has(params.cwd)) {
+      throw new CallError(-32000, "spawn_failed", `cannot start a program in "${params.cwd}"`, "check that the folder exists and can be entered");
+    }
     if (params.on && !this.machines.some((machine) => machine.name === params.on)) {
       throw new CallError(-32000, "machine_unknown", `unknown machine "${params.on}"`, this.machines.length === 0 ? "no machines yet: hc machine add <ssh-target>" : "see `hc machine list`");
     }

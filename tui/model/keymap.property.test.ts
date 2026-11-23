@@ -4,7 +4,7 @@ import { decodeControl, decodeCsi, decodeSs3, type InputEvent, type Mods, typedK
 import { Framer } from "../input/framer.ts";
 import type { Effect } from "./effects.ts";
 import type { World } from "./focus.ts";
-import { helpRows, modeBar } from "./hints.ts";
+import { cleanConfigText, helpRows, modeBar } from "./hints.ts";
 import { buildKeymap, charChords, chordId, type KeyAction, type Keymap, keyChords, type Mode } from "./keymap.ts";
 import { initialState, type ModelState, reduce } from "./reduce.ts";
 
@@ -264,17 +264,16 @@ function checkConfig(keys: Record<string, unknown>): void {
     }
   }
 
-  // the mode bar shows what the help shows for that state
-  const helpKeys = (filter: (mode: Mode, text: string, action: KeyAction) => boolean, strip: boolean) => helpRows(keymap).flatMap((row) => {
-    const keysShown = row.keys.filter((text) => filter(row.mode, text, row.action)).map((text) => strip ? text.replace(/^prefix\+/, "") : text);
-    return keysShown.length === 0 ? [] : [{ action: row.action, keys: keysShown }];
-  });
-  if (at.armed !== null) check(Bun.deepEquals(modeBar(at.armed).hints, helpKeys((mode, text) => mode === "terminal" && text.startsWith("prefix+"), true)), "the armed mode bar differs from the help");
-  for (const mode of ["navigate", "resize", "copy"] as const) check(Bun.deepEquals(modeBar(at[mode]!).hints, helpKeys((m, _key, action) => m === mode && action !== "copy_label", false)), `the ${mode} mode bar differs from the help`);
+  // the mode bar: none in terminal mode; after the prefix the keys the help gives the prefix and the help itself
+  const afterPrefix = (action: KeyAction) => helpRows(keymap).find((row) => row.mode === "terminal" && row.action === action)?.keys.find((text) => text.startsWith("prefix+"))?.replace(/^prefix\+/, "") ?? "unset";
+  if (at.armed !== null) {
+    const bar = modeBar(at.armed);
+    check(bar?.mode === "prefix" && bar.hints[1]!.key === cleanConfigText(keymap.prefixes[0]?.text ?? "unset") && bar.hints[3]!.key === afterPrefix("help"), "the armed mode bar's keys differ from the table's");
+  }
+  for (const mode of ["navigate", "resize", "copy"] as const) check(modeBar(at[mode]!)?.mode === mode, `the ${mode} mode bar does not show its mode`);
   const hintMode = at.copy && reduce(at.copy, { type: "action", action: "copy_hints", at: AT }).state;
-  check(hintMode !== null && Bun.deepEquals(modeBar(hintMode).hints,
-    helpKeys((m, _key, action) => m === "copy" && ["copy_label", "copy_leave", "copy_hints"].includes(action), false)), "the copy hint mode bar differs from the help");
-  check(Bun.deepEquals(modeBar(at.idle!).hints[0]!.keys, keymap.prefixes.map((prefix) => prefix.text)), "the idle mode bar's prefixes differ from the table's");
+  check(hintMode !== null && modeBar(hintMode)?.mode === "copy", "the copy hint mode bar does not show copy mode");
+  check(modeBar(at.idle!) === null, "terminal mode shows a mode bar");
 
   // (b) and (d): the table is the resolver's minus the bindings it drops, and each drop has exactly one note; with no
   // prefix left, the one fallback its note names

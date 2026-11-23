@@ -1,15 +1,13 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { tuiEnv } from "../../scripts/plugin-tui.ts";
 import { HcConnection } from "../../server/herdr-core/connection.ts";
-import type { CoreChange } from "../../server/herdr-core/core-model.ts";
 import { FakeHcCore } from "../../server/herdr-core/core.fake.ts";
 import { OVIS_LAYOUT_DOC } from "../../server/herdr-core/layout-doc.ts";
 import { PANE_NAME_LABEL, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WORKSPACE_NAME_LABEL } from "../../server/herdr-core/snapshot.ts";
-import type { AgentStatus } from "../../shared/herdr-api.generated.ts";
+import { gridText, Screen } from "../testing/herdr-grid.ts";
 import { Run } from "../testing/run.ts";
 import { focused } from "./focus.ts";
-import { NOTICE_SHOW_MS } from "./deadlines.ts";
-import { alertsOf, look, type LookState } from "./look.ts";
+import { look, type LookState } from "./look.ts";
 
 /** the injected clock moves; only the socket's own turns are real */
 const TEST_MS = 120_000;
@@ -42,6 +40,21 @@ function twoAgents(seen: string | null = "0", first = "idle"): FakeHcCore {
   agent(core, "one", first, seen);
   agent(core, "two", "idle", seen);
   return core;
+}
+
+/** The dot of the sidebar's second agent (pane `two`: each agent takes two rows, `● work · tab` then its agent), and its colour. */
+async function secondAgentDot(run: Run): Promise<{ ch: string; fg: unknown }> {
+  await Screen.load();
+  const screen = new Screen(120, 40);
+  try {
+    screen.write(run.host.output());
+    const cells = screen.cells();
+    const rows = gridText(cells).flatMap((text, y) => /^ [●○·] work · tab/.test(text) ? [y] : []);
+    const cell = cells.cells[rows[1]! * cells.cols + 1]!;
+    return { ch: cell.ch, fg: cell.look.fg };
+  } finally {
+    screen.dispose();
+  }
 }
 
 async function started(core: FakeHcCore, live = true): Promise<Run> {
@@ -78,7 +91,6 @@ const select = async (run: Run, id: string) => {
   await run.advance(20);
 };
 
-const alertNotices = (run: Run) => run.loop.model().notices.filter((notice) => notice.code.startsWith("agent_")).map((notice) => [notice.code, notice.data["agent"], notice.calm]);
 
 const shownPane = (run: Run) => focused(run.loop.model().world, run.loop.model().focus).pane?.id;
 
@@ -124,24 +136,6 @@ describe("the look rule", () => {
     ["the link offline", { online: false }, null],
   ];
   for (const [name, change, looked] of table) it(name, () => expect(look({ ...LOOKING, ...change })).toBe(looked));
-});
-
-describe("the alert rule", () => {
-  const status = (terminal: string, shown: AgentStatus): CoreChange => ({ type: "status", terminal, status: null, shown, agent: "claude" });
-  const before = (shown: Record<string, AgentStatus>) => (terminal: string) => shown[terminal];
-  it("into blocked is Needs you, from any event and on the pane looked at too; staying blocked is none", () => {
-    expect(alertsOf("status", [status("t1", "blocked"), status("t2", "blocked")], before({ t1: "working", t2: "blocked" }), "t1")).toEqual([{ terminal: "t1", kind: "blocked" }]);
-  });
-  it("done is Done only on the turn event, never for the pane looked at, never when it was done already", () => {
-    const changes = [status("t1", "done"), status("t2", "done"), status("t3", "done")];
-    const was = before({ t1: "working", t2: "working", t3: "done" });
-    expect(alertsOf("turn", changes, was, "t1")).toEqual([{ terminal: "t2", kind: "done" }]);
-    expect(alertsOf("labels", changes, was, null)).toEqual([]);
-  });
-  it("a terminal told twice in one event is compared with what the first record said", () => {
-    expect(alertsOf("status", [status("t1", "blocked"), status("t1", "blocked")], before({ t1: "idle" }), null)).toEqual([{ terminal: "t1", kind: "blocked" }]);
-    expect(alertsOf("updated", [{ type: "updated", terminal: "t1" }, { type: "layout" }], before({ t1: "idle" }), null)).toEqual([]);
-  });
 });
 
 describe("read state through herdr.seen (UB Q7)", () => {
@@ -279,35 +273,6 @@ describe("read state through herdr.seen (UB Q7)", () => {
     expect(seenWrites(run)).toEqual([{ terminal: "t1", seen: "1" }, { terminal: "t1", seen: "2" }]);
   }, TEST_MS);
 
-  it("mark unread", async () => {
-    const run = await started(twoAgents());
-    await hostFocus(run, FOCUS_IN);
-    await endTurn(run, "t1");
-    await select(run, "t2");
-    await run.keys("ctrl+b,a");
-    const list = run.loop.model().overlays.at(-1)!;
-    expect(list.kind).toBe("agents");
-    const rows = list.kind === "agents" ? list.agents : [];
-    expect([...rows].sort()).toEqual(["t1", "t2"]);
-    // t2 is at turn 0: nothing to mark unread
-    for (let at = 0; at < rows.indexOf("t2"); at++) await run.keys("down");
-    await run.keys("u");
-    await run.advance(20);
-    expect(seenWrites(run)).toEqual([{ terminal: "t1", seen: "1" }]);
-    // t1 at turn 1: herdr.seen 0, which the list's close (a look on t2) leaves standing
-    await run.keys(rows.indexOf("t1") > rows.indexOf("t2") ? "down" : "up");
-    await run.keys("u");
-    await run.advance(20);
-    // once below the turn it is unread already: a second u writes nothing
-    await run.keys("u");
-    await run.advance(20);
-    await run.keys("esc");
-    await run.advance(20);
-    expect(seenWrites(run)).toEqual([{ terminal: "t1", seen: "1" }, { terminal: "t1", seen: "0" }]);
-    expect(run.core.terminal("t1").labels[SEEN]).toBe("0");
-    expect(run.loop.report().actions).toContain("unread");
-  }, TEST_MS);
-
   it("core only", async () => {
     // the launcher hands the screen no Ovis server token or address (scripts/plugin-tui.ts tuiEnv)
     expect(tuiEnv({ TERM: "xterm", OVIS_TOKEN: "exported", OVIS_URL: "http://127.0.0.1:9", HC_SOCKET: "/s/hc.sock" })).toEqual({ TERM: "xterm", HC_SOCKET: "/s/hc.sock" });
@@ -320,83 +285,18 @@ describe("read state through herdr.seen (UB Q7)", () => {
     expect(seenWrites(run)).toEqual([{ terminal: "t1", seen: "1" }]);
   }, TEST_MS);
 
-  it("alerts", async () => {
-    // a first snapshot with a blocked agent alerts nothing
+  it("an agent that finishes or turns blocked gives no notice and no toast, as herdr's default; its mark in the sidebar changes", async () => {
     const run = await started(twoAgents("0", "blocked"));
     await hostFocus(run, FOCUS_IN);
-    expect(alertNotices(run)).toEqual([]);
-    // a finish in a pane not looked at alerts once; none for the pane being looked at
     await endTurn(run, "t2");
-    expect(alertNotices(run)).toEqual([["agent_done", "two", true]]);
-    expect(run.grid().some((row) => row.includes("* Done: two"))).toBe(true);
-    await endTurn(run, "t1");
-    expect(alertNotices(run)).toEqual([["agent_done", "two", true]]);
-    // another client reads t2, then marks it unread once that notice is gone: t2 shows done again, but no turn ended,
-    // so no Done
-    await run.advance(NOTICE_SHOW_MS + 1);
-    const otherClient = new HcConnection(() => run.core.transport());
-    await otherClient.call("terminal.label", { terminal: "t2", labels: { [SEEN]: "1" } });
-    await run.advance(20);
-    expect(run.grid().some((row) => row.includes("- two /"))).toBe(true);
-    await otherClient.call("terminal.label", { terminal: "t2", labels: { [SEEN]: "0" } });
-    otherClient.close();
-    await run.advance(20);
-    expect(run.grid().some((row) => row.includes("* two /"))).toBe(true);
-    expect(alertNotices(run)).toEqual([]);
-    // into blocked
+    // herdr's own colours in the sidebar: done teal, blocked red
+    expect(await secondAgentDot(run)).toEqual({ ch: "●", fg: [148, 226, 213] });
     run.core.reportStatus("t2", { state: "blocked", app: "claude" });
     await run.advance(20);
-    expect(alertNotices(run)).toEqual([["agent_blocked", "two", true]]);
-    expect(run.grid().some((row) => row.includes("! Needs you: two"))).toBe(true);
-    // a reconnect sets the baseline again: what changed while the line was down alerts nothing
-    await run.advance(NOTICE_SHOW_MS + 1);
-    expect(alertNotices(run)).toEqual([]);
-    await run.cutLine();
-    await run.advance(1_000);
-    run.core.reportStatus("t2", { state: "working", app: "claude" });
-    run.core.reportStatus("t2", { state: "idle", app: "claude" });
-    run.core.reportStatus("t1", { state: "blocked", app: "claude" });
-    await run.listen();
-    await run.advance(6_000);
-    await run.live();
-    expect(run.loop.link.state.kind).toBe("Online");
-    expect(alertNotices(run)).toEqual([]);
+    expect(await secondAgentDot(run)).toEqual({ ch: "●", fg: [243, 139, 168] });
+    expect(run.loop.model().notices).toEqual([]);
+    expect(run.loop.report().mode.overlays).toEqual([]);
   }, TEST_MS);
-
-  for (const [cols, rows] of [[120, 40], [45, 10]] as const) {
-    it(`an alert shows over the open agent list at ${cols} columns`, async () => {
-      const run = await Run.start({ core: twoAgents(), cols, rows });
-      runs.push(run);
-      await run.live();
-      await run.advance(1);
-      await run.keys("ctrl+b,a");
-      await run.advance(20);
-      const footer = () => run.grid()[rows - 1]!;
-      const line = (text: string) => `+- ${text} ${"-".repeat(cols - text.length - 5)}+`;
-      const selection = () => run.grid().find((row) => row.startsWith("|>"))?.slice(9, 12);
-      expect(footer()).toBe(`+${"-".repeat(cols - 2)}+`);
-      expect(selection()).toBe("one");
-
-      run.core.reportStatus("t2", { state: "blocked", app: "claude" });
-      await run.advance(20);
-      expect(footer()).toBe(line("! Needs you: two"));
-      const hint = "1-9 or Enter: go to · u: mark unread";
-      expect(run.grid()[1]?.slice(2, 2 + hint.length)).toBe(hint);
-      expect(selection()).toBe("one");
-
-      await endTurn(run, "t2");
-      expect(footer()).toBe(line("* Done: two"));
-      expect(selection()).toBe("one");
-      run.loop.dispatch({ type: "notice", code: "nothing_waiting", calm: true, at: run.clock.current });
-      await run.advance(20);
-      expect(footer()).toBe(line("* Done: two"));
-      await run.advance(NOTICE_SHOW_MS + 1);
-      expect(footer()).toBe(`+${"-".repeat(cols - 2)}+`);
-      expect(run.loop.report().mode.overlays).toEqual(["agents"]);
-      await run.keys("enter");
-      expect(focused(run.loop.model().world, run.loop.model().focus).pane?.id).toBe("t1");
-    }, TEST_MS);
-  }
 
   it("a host's own replies are not a person: on a host that never reports focus they write nothing, a key does", async () => {
     const run = await started(twoAgents());
@@ -453,17 +353,17 @@ describe("read state through herdr.seen (UB Q7)", () => {
     expect([shownPane(shown), seenWrites(shown), shown.core.terminal("t2").labels[SEEN]]).toEqual(["t1", [{ terminal: "t2", seen: "1" }], "1"]);
   }, TEST_MS);
 
-  it("an agent list closed and opened again between two frames uncovered nothing: the turn under it stays unread; a close the host was shown reads it", async () => {
+  it("the help closed and opened again between two frames uncovered nothing: the turn under it stays unread; a close the host was shown reads it", async () => {
     const run = await started(twoAgents());
     await hostFocus(run, FOCUS_IN);
-    await run.keys("ctrl+b,a");
+    await run.keys("ctrl+b,?");
     await endTurn(run, "t1");
     const written = run.host.bytes().length;
-    run.type("q\x02a");
+    run.type("\r\x02?");
     await run.advance(20);
-    // the list is back before any frame: the host was sent nothing, so nothing showed the pane
-    expect([run.loop.report().mode.overlays, run.host.bytes().length - written, seenWrites(run), run.core.terminal("t1").labels[SEEN]]).toEqual([["agents"], 0, [], "0"]);
-    await run.keys("q");
+    // the help is back before any frame: the host was sent nothing, so nothing showed the pane
+    expect([run.loop.report().mode.overlays, run.host.bytes().length - written, seenWrites(run), run.core.terminal("t1").labels[SEEN]]).toEqual([["help"], 0, [], "0"]);
+    await run.keys("enter");
     await run.advance(20);
     expect([run.loop.report().mode.overlays, seenWrites(run)]).toEqual([[], [{ terminal: "t1", seen: "1" }]]);
   }, TEST_MS);
@@ -534,14 +434,14 @@ describe("a turn the screen did not watch end", () => {
     expect(seenWrites(run)).toEqual([{ terminal: "t1", seen: "1" }]);
   }, TEST_MS);
 
-  it("no focus reports: a key read before a turn ended still says who was looking as it ended: no Done notice for that pane, and no read", async () => {
+  it("no focus reports: a key read before a turn ended does not read that turn, and no turn's end gives a notice", async () => {
     const run = await started(twoAgents());
     await run.keys("x");
     await run.advance(20);
     await endTurn(run, "t1");
-    // the other pane's finish is told: nobody was looking at it
+    // nobody was looking at the other pane either
     await endTurn(run, "t2");
-    expect([alertNotices(run), seenWrites(run)]).toEqual([[["agent_done", "two", true]], []]);
+    expect([run.loop.model().notices, seenWrites(run)]).toEqual([[], []]);
   }, TEST_MS);
 });
 

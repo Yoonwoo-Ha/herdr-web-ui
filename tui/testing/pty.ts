@@ -183,7 +183,7 @@ export interface EntryEnd {
   stderr: string;
 }
 
-export type EntrySignal = "SIGTERM" | "SIGINT" | "SIGHUP";
+export type EntrySignal = "SIGTERM" | "SIGINT" | "SIGHUP" | "SIGTSTP" | "SIGCONT";
 
 export interface SupervisedRun extends PtyRun {
   /** the supervisor started the entry */

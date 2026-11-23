@@ -864,8 +864,10 @@ class Pane {
     if (encoded.value.length === 0) return { sent: false, code: "unseen", notice: false };
     if (!press) {
       // a release or a move belongs to a press sent on this attach; it never takes the size, so it never leaves ahead of one
+      // a motion with no button (the program asked for any-motion, 1003) is the pointer passing: herdr sends it from the start
+      const hover = event.type === "mouse" && event.action === "motion" && event.button === undefined;
       const down = event.type === "key" ? attempt.keyDown : attempt.mouseDown;
-      if (!down || !this.advertisesRectangle()) return { sent: false, code: "release", notice: false };
+      if ((!down && !hover) || !this.advertisesRectangle()) return { sent: false, code: "release", notice: false };
       channel.write(encoded.value);
       return { sent: true };
     }

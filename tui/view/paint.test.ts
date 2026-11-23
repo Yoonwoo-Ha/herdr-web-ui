@@ -283,7 +283,7 @@ describe("the frame painter", () => {
   test("replay equals model", async () => {
     const painter = new Painter({ sync: true });
     const [W, H] = [100, 20];
-    const shape = regions(W, H, { sidebar: 18, tabBar: true, modeBar: true });
+    const shape = regions(W, H, { sidebar: 18 });
     const tree: LayoutNode = { split: "right", ratio: 0.5, first: { leaf: "a" }, second: { leaf: "b" } };
     const { panes } = cellsOf(tree, shape.panes);
     const [a, b] = await Promise.all(panes.map((cells) => shownPane(painter, cells.cols, cells.rows, LINES)));
@@ -571,7 +571,7 @@ describe("the frame painter", () => {
     const shown = new Map<string, Shown>();
     for (const id of ["a", "b", "c"]) shown.set(id, await shownPane(painter, 30, 10, LINES));
     const build = (W: number, H: number) => {
-      const shape = regions(W, H, { sidebar: 10, tabBar: true, modeBar: true });
+      const shape = regions(W, H, { sidebar: 10 });
       const { panes } = cellsOf(tree, shape.panes);
       return scene(W, H, { focus: "a", parts: placeholderChrome(shape, panes), panes: panes.map((cells) => paneScene(cells.pane, shown.get(cells.pane)!, cells.inner)) });
     };
@@ -598,7 +598,7 @@ describe("the frame painter", () => {
   test("hit map", async () => {
     const painter = new Painter({ sync: true });
     const [W, H] = [100, 24];
-    const shape = regions(W, H, { sidebar: 20, tabBar: true, modeBar: true });
+    const shape = regions(W, H, { sidebar: 20 });
     const tree: LayoutNode = { split: "right", ratio: 0.6, first: { leaf: "a" }, second: { leaf: "b" } };
     const { panes } = cellsOf(tree, shape.panes);
     const shownPanes = await Promise.all(panes.map((cells) => shownPane(painter, cells.cols, cells.rows, LINES)));
@@ -1076,7 +1076,7 @@ describe("property", () => {
       const host = await hostOf(W, H);
       const ids = Array.from({ length: n(1, 6) }, (_, i) => `p${i}`);
       const tree = randomTree(next, ids);
-      const chrome = { sidebar: n(0, 30), tabBar: next() < 0.7, modeBar: next() < 0.7 };
+      const chrome = { sidebar: n(0, 30) };
       const borders = next() < 0.6;
       const panes = new Map<string, Shown & { view: { col: number; row: number }; scrolled: boolean }>();
       const owned: Emulator[] = [host];

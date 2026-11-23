@@ -174,15 +174,15 @@ describe("core events reach the world through the shared core model", () => {
     expect(names()).toEqual([["w1", [["a", ["t1"]]]]]);
   });
 
-  it("finished: a program that ended by itself keeps its place until the core removes its record; a killed one, or one the core's stop finished, leaves at once", () => {
+  it("finished: a program that ended, by itself, killed or by the core's stop, leaves at once, as herdr closes its pane", () => {
     const terminals = [record("t1", "w1", "a"), record("t2", "w1", "a"), record("t3", "w1", "a")];
     const { tell, names } = linked(terminals);
     const ended = (address: string, reason: string, code: number | null) => record(address, "w1", "a", { state: "finished", reason, exit_code: code, finished_ms: 1794905365902 });
     tell({ type: "finished", terminal: "t1", data: { exit_code: 3, finished_ms: 1794905365902, reason: "exited", signal: null } }, [ended("t1", "exited", 3), terminals[1]!, terminals[2]!]);
-    expect(names()).toEqual([["w1", [["a", ["t1", "t2", "t3"]]]]]);
+    expect(names()).toEqual([["w1", [["a", ["t2", "t3"]]]]]);
     tell({ type: "finished", terminal: "t2", data: { exit_code: null, finished_ms: 1794905386684, reason: "killed", signal: 1 } }, [ended("t1", "exited", 3), ended("t2", "killed", null), terminals[2]!]);
     tell({ type: "finished", terminal: "t3", data: { exit_code: null, finished_ms: 1794905386684, reason: "server_stop", signal: 1 } }, [ended("t1", "exited", 3), ended("t2", "killed", null), ended("t3", "server_stop", null)]);
-    expect(names()).toEqual([["w1", [["a", ["t1"]]]]]);
+    expect(names()).toEqual([]);
     tell({ type: "removed", terminal: "t1", data: {} }, [ended("t2", "killed", null), ended("t3", "server_stop", null)]);
     expect(names()).toEqual([]);
   });

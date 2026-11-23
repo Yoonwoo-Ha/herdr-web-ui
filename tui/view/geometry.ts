@@ -17,8 +17,11 @@ export function intersect(a: Rect, b: Rect): Rect {
 export const holds = (rect: Rect, col: number, row: number): boolean =>
   col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height;
 
-/** What the chrome asks for: the sidebar's width in columns (0 when collapsed), and whether the tab bar and the mode bar show. */
-export interface ChromeShape { sidebar: number; tabBar: boolean; modeBar: boolean }
+/** What the chrome asks for: the sidebar's width in columns, separator included (a collapsed sidebar's rail is narrower). */
+export interface ChromeShape { sidebar: number }
+
+/** The narrow screen's header: two rows over the whole width, in place of the sidebar and the tab bar, as herdr's. */
+export const NARROW_HEADER_ROWS = 2;
 
 /**
  * Where each part of the screen goes. The panes always keep at least one cell while the screen has one: a part of the chrome
@@ -27,12 +30,12 @@ export interface ChromeShape { sidebar: number; tabBar: boolean; modeBar: boolea
 export interface Regions {
   screen: Rect;
   narrow: boolean;
-  /** the left column of workspaces and agents, down to the mode bar */
+  /** the left column of workspaces and agents, the whole height; none on a narrow screen */
   sidebar: Rect;
-  /** one row above the panes, right of the sidebar */
+  /** one row above the panes, right of the sidebar; on a narrow screen the header over the whole width */
   tabBar: Rect;
   panes: Rect;
-  /** the bottom row, the whole width */
+  /** the panes' last row: the mode bar is drawn over it outside terminal mode, and nothing is reserved for it */
   modeBar: Rect;
 }
 
@@ -40,26 +43,35 @@ export function regions(width: number, height: number, chrome: ChromeShape): Reg
   const w = Math.max(0, Math.floor(width));
   const h = Math.max(0, Math.floor(height));
   const narrow = w <= NARROW_COLUMNS;
-  const modeRows = chrome.modeBar && h >= 2 ? 1 : 0;
-  const tabRows = chrome.tabBar && h - modeRows >= 2 ? 1 : 0;
+  const tabRows = narrow ? Math.max(0, Math.min(NARROW_HEADER_ROWS, h - 1)) : h >= 2 ? 1 : 0;
   const side = narrow ? 0 : Math.max(0, Math.min(Math.floor(chrome.sidebar), w - 1));
-  const body = h - modeRows;
+  const panes = w - side > 0 && h - tabRows > 0 ? { x: side, y: tabRows, width: w - side, height: h - tabRows } : NO_CELLS;
   return {
     screen: { x: 0, y: 0, width: w, height: h },
     narrow,
-    sidebar: side > 0 && body > 0 ? { x: 0, y: 0, width: side, height: body } : NO_CELLS,
+    sidebar: side > 0 && h > 0 ? { x: 0, y: 0, width: side, height: h } : NO_CELLS,
     tabBar: tabRows > 0 && w - side > 0 ? { x: side, y: 0, width: w - side, height: tabRows } : NO_CELLS,
-    panes: w - side > 0 && body - tabRows > 0 ? { x: side, y: tabRows, width: w - side, height: body - tabRows } : NO_CELLS,
-    modeBar: modeRows > 0 && w > 0 ? { x: 0, y: h - 1, width: w, height: 1 } : NO_CELLS,
+    panes,
+    modeBar: panes.height > 0 ? { x: panes.x, y: panes.y + panes.height - 1, width: panes.width, height: 1 } : NO_CELLS,
   };
 }
 
 /**
  * One pane's cells: `outer` is its share of the area, `inner` what its terminal shows in (inside the border, or the whole
- * share when it is too small for one). `cols` and `rows` are the size the terminal is asked for: at least 1x1 even when the
- * share has no cell on screen, as an emulator is never smaller.
+ * share when it is too small for one, less the gutter), `gutter` the column kept at the right of the inside for its
+ * scrollbar (none in a pane of four columns or fewer inside, or when the caller asks for none). `cols` and `rows` are the
+ * size the terminal is asked for: at least 1x1 even when the share has no cell on screen, as an emulator is never smaller.
  */
-export interface PaneCells { pane: string; outer: Rect; inner: Rect; cols: number; rows: number }
+export interface PaneCells { pane: string; outer: Rect; inner: Rect; gutter: Rect; cols: number; rows: number }
+
+/** A pane inside of at most this many columns keeps no scrollbar gutter. */
+const GUTTERLESS = 4;
+
+/** `inside` split into the terminal's cells and the gutter column at its right. */
+function withGutter(inside: Rect, gutter: boolean): { inner: Rect; gutter: Rect } {
+  if (!gutter || inside.width <= GUTTERLESS) return { inner: inside, gutter: NO_CELLS };
+  return { inner: { ...inside, width: inside.width - 1 }, gutter: { x: inside.x + inside.width - 1, y: inside.y, width: 1, height: inside.height } };
+}
 /**
  * One split's cells: `rect` is the whole split, `divider` the seam between its two sides: the last line of cells of its
  * first side and the first line of its second, across the split. Where an enclosing split's divider already runs, the
@@ -75,14 +87,15 @@ const BORDERED = 3;
  * extent, at least one cell to every pane while the area has room). A tree with more panes than the area has cells along an
  * axis leaves the last ones without cells on screen.
  */
-export function cellsOf(tree: LayoutNode | null, area: Rect, options: { borders: boolean } = { borders: true }): { panes: PaneCells[]; splits: SplitCells[] } {
+export function cellsOf(tree: LayoutNode | null, area: Rect, options: { borders: boolean; gutter?: (pane: string) => boolean } = { borders: true }): { panes: PaneCells[]; splits: SplitCells[] } {
   if (!tree) return { panes: [], splits: [] };
   const placed = place(tree, area);
   const panes = placed.panes.filter(({ pane_id }) => pane_id !== "").map(({ pane_id, rect }): PaneCells => {
     const outer = intersect(rect, area);
     const bordered = options.borders && outer.width >= BORDERED && outer.height >= BORDERED;
-    const inner = bordered ? { x: outer.x + 1, y: outer.y + 1, width: outer.width - 2, height: outer.height - 2 } : outer;
-    return { pane: pane_id, outer, inner, cols: Math.max(1, inner.width), rows: Math.max(1, inner.height) };
+    const inside = bordered ? { x: outer.x + 1, y: outer.y + 1, width: outer.width - 2, height: outer.height - 2 } : outer;
+    const { inner, gutter } = withGutter(inside, options.gutter?.(pane_id) ?? false);
+    return { pane: pane_id, outer, inner, gutter, cols: Math.max(1, inner.width), rows: Math.max(1, inner.height) };
   });
   const splits: SplitCells[] = [];
   let leaf = 0;

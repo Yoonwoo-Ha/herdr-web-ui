@@ -11,21 +11,25 @@ const heldKeys = (skipped: readonly HeldKey[]): string => skipped.map(({ key, ho
 export const STRINGS = {
   // Sidebar & header
   sessionHeader: (session: string): string => `hc:${session}`,
-  workspacesSection: "Workspaces",
+  /** herdr's lower-case words in the sidebar (C2); the switcher keeps the web's `Agents` */
+  workspacesSection: "spaces",
+  sidebarAgents: "agents",
   agentsSection: "Agents",
   noSpaces: "No workspaces",
   noAgents: "No agents",
-  sidebarToggleCollapse: "<<",
-  worktreeMark: "|-",
-  /** before an agent row that another agent row started */
-  helperMark: "+",
-  /** a section of an agent list: its state word and how many agents stand in it */
-  agentSection: (word: string, count: number): string => `${word} (${count})`,
+  /** at the right of the agents' header: how the list is ordered */
+  agentsSort: "grouped",
+  /** the workspaces' footer: a new workspace at the left, the menu at the right */
+  newWorkspaceButton: " new",
+  sidebarToggleCollapse: "«",
+  sidebarToggleExpand: "»",
 
   // Tab bar
-  zoomMark: "ZOOM",
   tabZoomSuffix: " Z",
-  noTabs: "No tabs",
+  newTabButton: " + ",
+  tabsBefore: " < ",
+  tabsAfter: " > ",
+  tabsCut: "…",
 
   // State words (matching src/lib/inboxRow.ts and DESIGN.md)
   stateBlocked: "Needs you",
@@ -39,6 +43,9 @@ export const STRINGS = {
   glyphWorking: "~",
   glyphIdle: "-",
   glyphUnknown: "·",
+  /** herdr's state dots in the sidebar (S8) */
+  dotFull: "●",
+  dotEmpty: "○",
 
   // Mode bar labels
   modeTerminal: "TERMINAL",
@@ -59,6 +66,7 @@ export const STRINGS = {
   emptyCoreTitle: "No workspaces yet",
   emptyCoreOffer: (folder: string, key: string | null): string => `New workspace in ${folder}${key === null ? "" : ` (${key})`}`,
 
+
   // Pane states & border notices
   endedCode: (code: number | null): string => `ended (${code ?? "none"})`,
   waitingNewShell: "waiting for its new shell",
@@ -71,30 +79,135 @@ export const STRINGS = {
   failedPane: (reason: string): string => `failed: ${reason}`,
   idlePane: "not attached",
 
+  // Mode bar hints (tui/model/hints.ts names them); an action the key table names keeps its word from `actions`
+  modeHints: {
+    cancel: "cancel",
+    sendPrefix: "send prefix",
+    workspaceNav: "navigate",
+    keybinds: "help",
+    escBack: "esc back",
+    workspace: "workspace",
+    pane: "pane",
+    width: "width",
+    height: "height",
+    done: "done",
+    move: "move",
+    search: "search",
+    repeat: "repeat",
+    select: "select",
+    selecting: "selecting",
+    copy: "copy",
+    exit: "exit",
+    clearExit: "clear  q exit",
+    unlock: "unlock",
+  },
+  copySearchFooter: "  enter search  esc cancel",
+
   // Overlays
   helpTitle: "Keyboard Shortcuts",
   helpUnset: "unset",
-  helpCloseLabel: (keys: readonly string[]): string => `close: ${keys.join(" / ")}`,
-  helpParityPrefix: "not built",
+  /** the help's close button at its top right, its filter row and its foot, as herdr's */
+  helpClose: "  esc close  ",
+  /** while the filter is typed: the button that leaves it, and the foot's editing keys */
+  helpBack: "  esc back   ",
+  helpFilterFooter: " edit ←→/home/end · kill ^u/^k · yank ^y · scroll ↑↓ · back esc",
+  helpFilterHint: " / press / to filter by command or shortcut",
+  helpFooter: " search / · scroll j/k/↑↓/pgup/pgdn · close esc/enter",
+  /** the help's section headings, in herdr's words */
+  helpHeadings: { global: "global", navigation: "navigation", workspaces: "workspaces / tabs", panes: "panes" },
+  /** the help's words for each command, herdr's but for its own name (C2: herdr says `keybinds`) */
+  helpWords: {
+    prefix: "prefix mode", help: "help", settings: "settings", detach: "detach", reload_config: "reload config",
+    open_notification_target: "open notification target",
+    navigate_cancel: "back", navigate_workspace_up: "workspace list", navigate_pane_left: "move focus", navigate_cycle_next: "cycle pane",
+    navigate_focus: "open workspace", navigate_index: "switch workspace",
+    workspace_picker: "workspace navigation", goto: "session navigator", new_workspace: "new workspace", new_worktree: "new worktree",
+    open_worktree: "open worktree", remove_worktree: "delete worktree checkout", rename_workspace: "rename workspace",
+    close_workspace: "close workspace", previous_workspace: "previous workspace", next_workspace: "next workspace",
+    switch_workspace: "switch workspace 1-9", previous_agent: "previous agent", next_agent: "next agent", focus_agent: "focus agent 1-9",
+    new_tab: "new tab", rename_tab: "rename tab", previous_tab: "previous tab", next_tab: "next tab", move_tab_previous: "move tab left",
+    move_tab_next: "move tab right", switch_tab: "switch tab 1-9", close_tab: "close tab",
+    split_vertical: "split vertical", split_horizontal: "split horizontal", close_pane: "close pane", rename_pane: "rename pane",
+    edit_scrollback: "edit scrollback", clear_pane: "clear pane", copy_mode: "copy mode", zoom: "zoom pane", resize_mode: "resize mode",
+    resize_pane_left: "resize pane left", resize_pane_down: "resize pane down", resize_pane_up: "resize pane up",
+    resize_pane_right: "resize pane right", toggle_sidebar: "toggle sidebar", focus_pane_left: "focus pane left",
+    focus_pane_down: "focus pane down", focus_pane_up: "focus pane up", focus_pane_right: "focus pane right",
+    cycle_pane_next: "cycle pane next", cycle_pane_previous: "cycle pane previous", last_pane: "last pane",
+  },
+  /** a dialog's buttons, each naming its key */
+  saveButton: " ↵ save ",
+  clearButton: " ^c clear ",
+  cancelButton: " esc cancel ",
+  confirmButton: " ↵ confirm ",
+  /** the copy feedback toast: its mark and its text are the notice's own (noticeText "copied") */
+  toastMark: "●",
   helpRefusalsTitle: "Config Diagnostics",
   helpMoreRefusals: (more: number): string => `+${more} more config diagnostics`,
   textRenameWorkspace: "Rename workspace",
   textRenameTab: "Rename tab",
   textRenamePane: "Rename pane",
   textNewTab: "New tab name",
-  textPromptHint: "Enter to save · Ctrl+U to clear",
-  confirmCloseTitle: "Close workspace",
-  confirmCloseWorkspace: (name: string): string => `Close workspace ${name}? [y/N]`,
+  confirmCloseTitle: "Close workspace?",
+  confirmCloseDetail: (name: string, panes: number): string => `${name} — ${panes} ${panes === 1 ? "pane" : "panes"}`,
   gotoTitle: "Go to",
-  gotoPromptHint: "Type to filter · Enter to jump",
-  pickerNoMatch: "No matches",
-  menuTitle: "Menu",
-  agentListTitle: "Agents",
-  agentListHint: "1-9 or Enter: go to · u: mark unread",
+  /** herdr's picker: its search hint, the count at its right, the mark of the terminal in front, the words of a plain terminal, and its foot */
+  pickerSearchHint: " / search agents and terminals",
+  pickerCount: (count: number): string => `${count} ${count === 1 ? "terminal" : "terminals"}`,
+  pickerFront: "◆",
+  pickerTerminal: "terminal",
+  pickerShell: "shell",
+  /** herdr's foot but its state filters (a/b/w/i/d), which the screen has not */
+  pickerFooter: " ↑↓/j/k rows · ←→ workspace · / search · enter open · esc close",
+  pickerSearchFooter: " edit ←→/home/end · kill ^u/^k · yank ^y · scroll ↑↓ · back esc",
+  menuTitle: "menu",
+  /** herdr's menu entries; the keys' help keeps the screen's word for it (C2: herdr says `keybinds`) */
+  menuEntries: { settings: "settings", help: "help", reload_config: "reload config", detach: "detach" } as const,
+  /** the right-click menus' entries (tui/model/context.ts), as herdr writes them */
+  contextEntries: {
+    rename_pane: "Rename pane",
+    clear_pane_name: "Clear pane name",
+    swap_with_focused: "Swap with focused pane",
+    split_vertical: "Split right",
+    split_horizontal: "Split down",
+    zoom: "Zoom",
+    passthrough_on: "Send right-clicks to pane",
+    passthrough_off: "Use the right-click menu",
+    close_pane: "Close pane",
+    new_tab: "New tab",
+    rename_tab: "Rename",
+    close_tab: "Close",
+    rename_workspace: "Rename",
+    close_workspace: "Close",
+    open_worktree: "Open worktree...",
+    close_group: "Close group",
+    collapse_group: "Collapse",
+    expand_group: "Expand",
+  } as const,
+  /** Open worktree... */
+  worktreesTitle: "open worktree",
+  worktreesFilterHint: " / filter worktrees",
+  worktreesCount: (count: number): string => `${count} ${count === 1 ? "checkout" : "checkouts"}`,
+  worktreesOpen: "open",
+  worktreesOpenButton: "  ↵ open  ",
+  /** a repository's workspace with its worktree workspaces: folded, unfolded */
+  groupCollapsed: "▸",
+  groupExpanded: "▾",
+  confirmCloseGroupTitle: "Close worktree group?",
+  confirmCloseGroupDetail: (name: string, spaces: number, panes: number): string => `${name} — ${spaces} ${spaces === 1 ? "workspace" : "workspaces"}, ${panes} ${panes === 1 ? "pane" : "panes"}`,
   /** at the right of the narrow screen's header, which opens the menu */
-  menuMark: "[menu]",
+  /** herdr's narrow header and switcher */
+  narrowTab: (name: string, of: string | null): string => `tab ${name}${of === null ? "" : ` · ${of}`}`,
+  switchButton: "switch",
+  switcherClose: "close",
+  switcherCloseMark: "×",
+  switcherSpaces: "spaces",
+  switcherTabs: "tabs",
+  switcherMenu: "menu",
+  switcherNewWorkspace: "new workspace",
+  switcherNewTab: "new tab",
+  /** herdr's name for the PC a workspace runs on; the screen reaches this PC's herdr-core alone */
+  switcherHost: "Local",
   /** what kind of place a menu entry goes to */
-  menuPlaces: { workspace: "workspace", tab: "tab", pane: "pane", agent: "agent" } as const,
 
   // Keymap notes in help & mode bar
   notePrefixFallback: (binding: string, fallback: string): string =>
@@ -114,102 +227,6 @@ export const STRINGS = {
   noteBlankBinding: (action: string): string => `blank_binding: ${action} unbound by blank entry`,
   refusalLine: (code: string, action: string, binding: string, holder: string | null): string =>
     `${code}: ${action} = ${binding}${holder === null ? "" : ` (held by ${holder})`}`,
-
-  /** the help's and the mode bar's name for each action of the key table */
-  actions: {
-    prefix: "prefix",
-    help: "help",
-    settings: "settings",
-    new_workspace: "new workspace",
-    new_worktree: "new worktree",
-    open_worktree: "open worktree",
-    remove_worktree: "remove worktree",
-    rename_workspace: "rename workspace",
-    close_workspace: "close workspace",
-    workspace_picker: "navigate",
-    goto: "go to",
-    detach: "detach",
-    reload_config: "reload",
-    open_notification_target: "jump alert",
-    previous_workspace: "prev workspace",
-    next_workspace: "next workspace",
-    previous_agent: "prev agent",
-    next_agent: "next agent",
-    focus_agent: "agent",
-    new_tab: "new tab",
-    rename_tab: "rename tab",
-    previous_tab: "prev tab",
-    next_tab: "next tab",
-    move_tab_previous: "move tab <",
-    move_tab_next: "move tab >",
-    switch_tab: "tab",
-    switch_workspace: "workspace",
-    close_tab: "close tab",
-    rename_pane: "rename pane",
-    edit_scrollback: "edit scrollback",
-    clear_pane: "clear pane",
-    copy_mode: "copy",
-    focus_pane_left: "left",
-    focus_pane_down: "down",
-    focus_pane_up: "up",
-    focus_pane_right: "right",
-    swap_pane_left: "swap <",
-    swap_pane_down: "swap v",
-    swap_pane_up: "swap ^",
-    swap_pane_right: "swap >",
-    last_pane: "last pane",
-    cycle_pane_next: "next pane",
-    cycle_pane_previous: "prev pane",
-    split_vertical: "split |",
-    split_horizontal: "split -",
-    close_pane: "close pane",
-    zoom: "zoom",
-    resize_mode: "resize",
-    resize_pane_left: "grow <",
-    resize_pane_down: "grow v",
-    resize_pane_up: "grow ^",
-    resize_pane_right: "grow >",
-    toggle_sidebar: "sidebar",
-    lock: "lock",
-    menu: "menu",
-    agents: "agents",
-    navigate_workspace_up: "workspace ^",
-    navigate_workspace_down: "workspace v",
-    navigate_pane_left: "pane <",
-    navigate_pane_down: "pane v",
-    navigate_pane_up: "pane ^",
-    navigate_pane_right: "pane >",
-    navigate_focus: "select",
-    navigate_cancel: "cancel",
-    navigate_index: "workspace 1..9",
-    navigate_cycle_next: "next pane",
-    navigate_cycle_previous: "prev pane",
-    navigate_move_up: "move workspace ^",
-    navigate_move_down: "move workspace v",
-    navigate_move_pane: "move pane here",
-    resize_leave: "done",
-    copy_leave: "done",
-    copy_find: "search",
-    copy_hints: "hints",
-    copy_yank: "copy",
-    copy_char: "select",
-    copy_line: "select lines",
-    copy_left: "left",
-    copy_down: "down",
-    copy_up: "up",
-    copy_right: "right",
-    copy_word: "next word",
-    copy_back: "previous word",
-    copy_start: "row start",
-    copy_end: "row end",
-    copy_oldest: "oldest",
-    copy_newest: "newest",
-    copy_half_up: "half page up",
-    copy_half_down: "half page down",
-    copy_older: "older match",
-    copy_newer: "newer match",
-    copy_label: "copy hint",
-  } as Readonly<Record<string, string>>,
 
   // Notice messages by code
   noticeText: (code: string, data: Readonly<Record<string, string | number>>): string => {
@@ -242,14 +259,12 @@ export const STRINGS = {
         return `locked: screen is locked (${data["action"] ?? ""})`;
       case "nothing_focused":
         return `nothing_focused: no target for ${data["action"] ?? "action"}`;
-      case "agent_blocked":
-        return `${STRINGS.stateBlocked}: ${data["agent"] ?? "agent"}`;
-      case "agent_done":
-        return `${STRINGS.stateDone}: ${data["agent"] ?? "agent"}`;
       case "nothing_waiting":
         return "nothing_waiting: no agent needs you";
       case "view_moved":
         return "view_moved: the place this core was left at is gone; showing the nearest one";
+      case "first_folder_unusable":
+        return `first_folder_unusable: ${data["folder"] ?? "the folder"} could not be used; the first workspace opened in the home`;
       case "view_unread":
         return `view_unread: the view kept for this core could not be read (${data["reason"] ?? "unknown"})`;
       case "view_unsaved":

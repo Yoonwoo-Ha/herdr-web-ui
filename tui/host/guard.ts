@@ -4,16 +4,17 @@ import { DISPLAY_QUERY, emptyProbe, PROBE_QUERY, ReplyFilter, withReply } from "
 
 /**
  * What `enter` turns on, in order, after raw mode: the alternate screen, the cursor hidden, focus
- * reports, bracketed paste, mouse 1002 with SGR 1006, and one kitty keyboard entry with flag 1.
+ * reports, bracketed paste, mouse 1002 and 1003 (any motion, as herdr asks: a pointer over a menu chooses its entry) with
+ * SGR 1006, and one kitty keyboard entry with flag 1.
  * LEAVE undoes exactly these in reverse; raw mode goes last.
  */
-const ENTER = "\x1b[?1049h\x1b[?25l\x1b[?1004h\x1b[?2004h\x1b[?1002h\x1b[?1006h\x1b[>1u";
-export const LEAVE = "\x1b[<u\x1b[?1006l\x1b[?1002l\x1b[?2004l\x1b[?1004l\x1b[?25h\x1b[?1049l";
+const ENTER = "\x1b[?1049h\x1b[?25l\x1b[?1004h\x1b[?2004h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[>1u";
+export const LEAVE = "\x1b[<u\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?2004l\x1b[?1004l\x1b[?25h\x1b[?1049l";
 /**
  * Sent again after a resize and a focus-in, as some hosts drop them. The kitty flags are set on the
  * entry already pushed (`=1;1`), so the stack still holds one entry of ours.
  */
-const MODES_AGAIN = "\x1b[?1004h\x1b[?2004h\x1b[?1002h\x1b[?1006h\x1b[=1;1u";
+const MODES_AGAIN = "\x1b[?1004h\x1b[?2004h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[=1;1u";
 const FOCUS_IN = Buffer.from("\x1b[I");
 const SIGNAL_NUMBERS = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 } as const;
 
@@ -24,6 +25,10 @@ export interface HostHooks {
   signal(name: HostSignal): void;
   exit(): void;
   resize(): void;
+  /** a stop from outside (SIGTSTP): the terminal is given back, then the process stops */
+  stop(): void;
+  /** the process goes on after a stop (SIGCONT) */
+  cont(): void;
 }
 
 /** What a host is made of: the real one wires the process (unix.ts), the headless one memory. */
@@ -45,6 +50,8 @@ export interface TerminalPort {
   /** installs the hooks; returns their removal */
   hook(hooks: HostHooks): () => void;
   exit(code: number): void;
+  /** stops this process as the default action of SIGTSTP would (a handler for SIGTSTP replaces that action) */
+  suspend(): void;
 }
 
 /** EIO and EPIPE: the terminal is gone; EAGAIN reaches here only once the port gave up waiting for it. */
@@ -203,6 +210,38 @@ export function guardedHost(port: TerminalPort): Host {
     if (failed) throw failed.error;
   };
 
+  /**
+   * A stop from outside (SIGTSTP, as a shell's job control sends): every mode undone as on leave, raw mode off, then the
+   * process stops, so whatever reads the terminal meanwhile gets no mouse reports; on SIGCONT the modes are entered again
+   * and the resize listeners told, so the screen is repainted whole.
+   */
+  let suspended = false;
+  const stopped = () => {
+    if (state !== "entered" || ending || suspended) return;
+    port.stopReading();
+    if (modesOn) {
+      try { send(encoder.encode(watchingDisplay ? `\x1b[?2031l${LEAVE}` : LEAVE)); } catch { /* the terminal is gone: nothing to restore */ }
+    }
+    modesOn = false;
+    if (rawOn) {
+      rawOn = false;
+      try { port.setRaw(false); } catch { /* the terminal is gone */ }
+    }
+    suspended = true;
+    port.suspend();
+  };
+  const continued = () => {
+    if (!suspended || state !== "entered" || ending) return;
+    suspended = false;
+    port.setRaw(true);
+    rawOn = true;
+    modesOn = true;
+    send(encoder.encode(watchingDisplay ? `${ENTER}\x1b[?2031h` : ENTER));
+    port.startReading(take);
+    const size = port.size();
+    for (const listener of resizes) listener(size);
+  };
+
   const onSignal = (name: HostSignal) => {
     if (entering) { deferred ??= name; return; }
     if (ending) return;
@@ -228,7 +267,7 @@ export function guardedHost(port: TerminalPort): Host {
       if (state === "left" || !port.isTerminal) return false;
       entering = true;
       try {
-        unhook = port.hook({ signal: onSignal, exit: leave, resize: resized });
+        unhook = port.hook({ signal: onSignal, exit: leave, resize: resized, stop: stopped, cont: continued });
         state = "entered";
         port.setRaw(true);
         rawOn = true;

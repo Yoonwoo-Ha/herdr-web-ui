@@ -22,7 +22,8 @@ const HISTORY = Array.from({ length: 32 }, (_, row) => {
 
 async function start(paint = HISTORY, other?: string): Promise<Run> {
   const run = await Run.start({
-    cols: other === undefined ? 60 : 120, rows: 14,
+    // a narrow screen (herdr's two-row header) of one row more: the pane keeps its 11 rows
+    cols: other === undefined ? 59 : 120, rows: other === undefined ? 13 : 12,
     fixture: { build(core) {
       const where = { space: "work", spaceName: "work", tab: "one", tabName: "one" };
       place(core, where, paint);
@@ -65,15 +66,15 @@ it("search finds and scrolls", async () => {
   const run = await start();
   await run.keys("/,NEEDLE,enter");
   await run.advance(10);
-  expect(run.grid().map((row) => row.slice(1, 14))).toContain("Recent needle");
+  expect(run.grid().map((row) => row.slice(0, 13))).toContain("Recent needle");
   await run.keys("n");
   await run.advance(10);
-  expect(run.grid().map((row) => row.slice(1, 14))).toContain("Middle needle");
-  expect(run.grid().map((row) => row.slice(1, 14))).not.toContain("Recent needle");
+  expect(run.grid().map((row) => row.slice(0, 13))).toContain("Middle needle");
+  expect(run.grid().map((row) => row.slice(0, 13))).not.toContain("Recent needle");
   await run.keys("N");
   await run.advance(10);
-  expect(run.grid().map((row) => row.slice(1, 14))).toContain("Recent needle");
-  expect(run.grid().map((row) => row.slice(1, 14))).not.toContain("Middle needle");
+  expect(run.grid().map((row) => row.slice(0, 13))).toContain("Recent needle");
+  expect(run.grid().map((row) => row.slice(0, 13))).not.toContain("Middle needle");
 });
 
 it("copy is one OSC 52 write with the selected text", async () => {
@@ -95,7 +96,7 @@ it("nothing reaches the pane", async () => {
   run.forget();
   await run.keys(Array.from({ length: 30 }, (_, i) => ["h", "j", "x", "ctrl+b", "["][i % 5]).join(","));
   run.type("\x1b[200~paste that never reaches the program\x1b[201~");
-  await run.keys("press@4:4,release@4:4");
+  await run.keys("press@4:5,release@4:5");
   expect(data(run)).toEqual([]);
   // q leaves copy mode; what its read holds after it goes to the program, as it would read apart
   run.type("qafter");
@@ -113,8 +114,8 @@ it.each([
   const run = await start("한 https://example.org/a\r\n./docs/guide.md:12 c0ffee42\r");
   await run.keys("f");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 10)).toBe("한 1ttps:/");
-  expect(run.grid()[3]?.slice(1, 25)).toBe("2/docs/guide.md:12 30ffe");
+  expect(run.grid()[2]?.slice(0, 9)).toBe("한 1ttps:/");
+  expect(run.grid()[3]?.slice(0, 24)).toBe("2/docs/guide.md:12 30ffe");
   await run.keys(digit);
   expect(clips(run)).toEqual([target]);
 });
@@ -124,15 +125,15 @@ it("resize cancels copy and restores the viewport before the replacement attach"
   await run.keys("g,v,l");
   await run.advance(10);
   const current = run.loop.panes.view("t1")?.emulator;
-  run.host.resize(61, 14);
+  run.host.resize(60, 13);
   await run.advance(20);
   expect(run.loop.panes.view("t1")?.emulator).toBe(current);
-  expect(run.grid()[11]?.slice(1, 18)).toBe("alpha beta gambit");
+  expect(run.grid()[12]?.slice(0, 17)).toBe("alpha beta gambit");
   expect(run.loop.model().mode.name).toBe("terminal");
   await run.advance(180);
   await run.live();
   expect(run.loop.panes.view("t1")?.emulator).not.toBe(current);
-  expect(run.grid()[11]?.slice(1, 18)).toBe("alpha beta gambit");
+  expect(run.grid()[12]?.slice(0, 17)).toBe("alpha beta gambit");
   expect(clips(run)).toEqual([]);
 });
 
@@ -140,7 +141,7 @@ it("output invalidates a displayed hint before its label can copy stale text", a
   const run = await start("https://example.org/a\r");
   await run.keys("f");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 6)).toBe("1ttps");
+  expect(run.grid()[2]?.slice(0, 5)).toBe("1ttps");
   run.core.program("t1").output("https://example.org/b\r");
   await run.advance(10);
   await run.keys("1");
@@ -151,17 +152,17 @@ it("Escape leaves the search prompt and restores the original viewport", async (
   const run = await start();
   await run.keys("g,/,que");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 11)).toBe("Old needle");
+  expect(run.grid()[2]?.slice(0, 10)).toBe("Old needle");
   await run.keys("esc");
   await run.advance(160);
-  expect(run.grid()[11]?.slice(1, 18)).toBe("alpha beta gambit");
+  expect(run.grid()[12]?.slice(0, 17)).toBe("alpha beta gambit");
 });
 
 it("Backspace removes the final grapheme before searching", async () => {
   const run = await start();
   await run.keys("g,/,Recent needle😀,backspace,enter");
   await run.advance(10);
-  expect(run.grid().map((row) => row.slice(1, 14))).toContain("Recent needle");
+  expect(run.grid().map((row) => row.slice(0, 13))).toContain("Recent needle");
 });
 
 it("a missing or empty query does not move history", async () => {
@@ -171,7 +172,7 @@ it("a missing or empty query does not move history", async () => {
   expect(run.loop.report().mode.notice).toBe("copy_no_match");
   await run.keys("/,enter,N");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 11)).toBe("Old needle");
+  expect(run.grid()[2]?.slice(0, 10)).toBe("Old needle");
   expect(run.loop.report().mode.notice).toBeUndefined();
 });
 
@@ -179,10 +180,11 @@ it("the search cursor follows the rendered prompt and query", async () => {
   const run = await start();
   await run.keys("/,한abc");
   await run.advance(10);
-  const bar = run.grid()[13];
-  expect(bar).toEndWith("/한abc");
+  const bar = run.grid()[12];
+  expect(bar).toStartWith(" COPY  /한abc");
+  expect(bar).toEndWith("enter search  esc cancel");
   const cursor = [...run.host.output().matchAll(/\x1b\[(\d+);(\d+)H/g)].at(-1);
-  expect(cursor?.slice(1)).toEqual(["14", String(Bun.stringWidth(bar ?? "") + 1)]);
+  expect(cursor?.slice(1)).toEqual(["13", String(Bun.stringWidth(" COPY  /한abc") + 1)]);
 });
 
 it("an alternate screen change restores the main buffer to the bottom on return", async () => {
@@ -191,19 +193,19 @@ it("an alternate screen change restores the main buffer to the bottom on return"
   run.core.program("t1").output("\x1b[?1049h\x1b[HALT\r");
   await run.advance(10);
   expect(run.loop.model().mode.name).toBe("terminal");
-  expect(run.grid()[2]?.slice(1, 4)).toBe("ALT");
+  expect(run.grid()[2]?.slice(0, 3)).toBe("ALT");
   run.core.program("t1").output("\x1b[?1049l");
   await run.advance(10);
-  expect(run.grid()[11]?.slice(1, 18)).toBe("alpha beta gambit");
+  expect(run.grid()[12]?.slice(0, 17)).toBe("alpha beta gambit");
   expect(clips(run)).toEqual([]);
 });
 
 it("an alternate screen round trip restores a nonzero entry offset", async () => {
   const run = await start();
-  await run.keys("q,wheelup@4:4");
+  await run.keys("q,wheelup@4:5");
   await run.advance(10);
-  const first = run.grid()[2]?.slice(1, 7);
-  expect(first).not.toBe("row-22");
+  const first = run.grid()[2]?.slice(0, 6);
+  expect(first).not.toBe("row-21");
   await run.keys("ctrl+b,[,g");
   await run.advance(10);
   const program = run.core.program("t1");
@@ -211,29 +213,29 @@ it("an alternate screen round trip restores a nonzero entry offset", async () =>
   await run.advance(10);
   program.output("\x1b[?1049l");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 7)).toBe(first);
+  expect(run.grid()[2]?.slice(0, 6)).toBe(first);
 });
 
 it("leaving copy on the same buffer restores a nonzero entry offset", async () => {
   const run = await start();
-  await run.keys("q,wheelup@4:4");
+  await run.keys("q,wheelup@4:5");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 7)).toBe("row-19");
+  expect(run.grid()[2]?.slice(0, 6)).toBe("row-18");
   await run.keys("ctrl+b,[,g");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 11)).toBe("Old needle");
+  expect(run.grid()[2]?.slice(0, 10)).toBe("Old needle");
   await run.keys("q");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 7)).toBe("row-19");
+  expect(run.grid()[2]?.slice(0, 6)).toBe("row-18");
 });
 
-it("program exit cancels copy and restores the last picture to the entry offset", async () => {
+it("program exit cancels copy, and the pane leaves with its program as herdr's does", async () => {
   const run = await start();
   await run.keys("g,V");
   run.core.program("t1").exit(0);
   await run.advance(20);
   expect(run.loop.model().mode.name).toBe("terminal");
-  expect(run.grid()[11]?.slice(1, 18)).toBe("alpha beta gambit");
+  expect(run.loop.panes.view("t1")).toBeUndefined();
 });
 
 it("output clears an active selection before yank", async () => {
@@ -267,7 +269,7 @@ it.each(WRAP_CUTS)("a pruned wrapped %s has no hint on the oldest kept row", asy
   await run.advance(20);
   await run.keys("ctrl+b,[,g,f");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 1 + tail.length)).toBe(tail);
+  expect(run.grid()[2]?.slice(0, tail.length)).toBe(tail);
   await run.keys("1");
   expect(clips(run)).toEqual([line.trimStart()]);
   expect(data(run)).toEqual([]);
@@ -280,7 +282,7 @@ it.each(WRAP_CUTS)("a pruned replay of %s has no hint on its oldest tail", async
   const run = await start("one\r\n" + (`${line}\r\n`).repeat(2999) + line + "\r");
   await run.keys("g,f");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 1 + tail.length)).toBe(tail);
+  expect(run.grid()[2]?.slice(0, tail.length)).toBe(tail);
   await run.keys("1");
   expect(clips(run)).toEqual([]);
   expect(data(run)).toEqual([]);
@@ -302,7 +304,7 @@ it.each([
   const run = await start(`${line}\r\n${"padding\r\n".repeat(14)}end\r`);
   await run.keys("g,f");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 1 + drawn.length)).toBe(drawn);
+  expect(run.grid()[2]?.slice(0, drawn.length)).toBe(drawn);
   await run.keys("1");
   expect(clips(run)).toEqual([target]);
 });
@@ -312,7 +314,7 @@ it("an oldest-row scheme reaching the margin does not prove a complete target", 
   const run = await start(`${url}\r\n\r\n${"padding\r\n".repeat(14)}end\r`);
   await run.keys("g,f");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 59)).toBe(url);
+  expect(run.grid()[2]?.slice(0, 58)).toBe(url);
   await run.keys("1");
   expect(clips(run)).toEqual([]);
 });
@@ -321,7 +323,7 @@ it("an intact wrapped URL at the history limit can still be copied", async () =>
   const run = await start((`${WRAPPED_URL}\r\n`).repeat(2999) + WRAPPED_URL + "\r");
   await run.keys("g,f");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 6)).toBe("1ttps");
+  expect(run.grid()[2]?.slice(0, 5)).toBe("1ttps");
   await run.keys("1");
   expect(clips(run)).toEqual([WRAPPED_URL]);
 });
@@ -334,8 +336,8 @@ it.each([
   const run = await start(`${line}\r\nhttps://next.test/a\r`);
   await run.keys("f");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(line.length - line.trimStart().length + 1, line.length - line.trimStart().length + 6)).toBe(label);
-  expect(run.grid()[4]?.slice(1, 6)).toBe("2ttps");
+  expect(run.grid()[2]?.slice(line.length - line.trimStart().length, line.length - line.trimStart().length + 5)).toBe(label);
+  expect(run.grid()[4]?.slice(0, 5)).toBe("2ttps");
   await run.keys("1");
   expect(clips(run)).toEqual([line.trimStart()]);
 });
@@ -344,9 +346,9 @@ it("a wrapped target whose first row is above the viewport has no hint", async (
   const run = await start(`${WRAPPED_URL} https://same.test/a\r\nhttps://next.test/a\r\n${"padding\r\n".repeat(7)}last\r`);
   await run.keys("f");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 9)).toBe("g/seg/se");
-  expect(run.grid()[2]).toContain(" https://same.test/a ");
-  expect(run.grid()[3]?.slice(1, 6)).toBe("1ttps");
+  expect(run.grid()[2]?.slice(0, 8)).toBe("g/seg/se");
+  expect(run.grid()[2]).toEndWith(" https://same.test/a");
+  expect(run.grid()[3]?.slice(0, 5)).toBe("1ttps");
   await run.keys("1");
   expect(clips(run)).toEqual(["https://next.test/a"]);
 });
@@ -356,7 +358,7 @@ it("a target ending at the last terminal column is not offered", async () => {
   const run = await start(`${url}${"a".repeat(58 - url.length)}\r\n\r\nhttps://next.test/a\r`);
   await run.keys("f");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 6)).toBe("https");
+  expect(run.grid()[2]?.slice(0, 5)).toBe("https");
   await run.keys("1");
   expect(clips(run)).toEqual(["https://next.test/a"]);
 });
@@ -366,7 +368,7 @@ it("hard breaks in an attach replay do not turn a wrapped URL fragment into a hi
   const run = await start(`${broken.join("\r\n")} https://next.test/a\r`);
   await run.keys("f");
   await run.advance(10);
-  expect(run.grid()[3]?.slice(1, 9)).toBe("g/seg/se");
+  expect(run.grid()[3]?.slice(0, 8)).toBe("g/seg/se");
   await run.keys("1");
   expect(clips(run)).toEqual(["https://next.test/a"]);
 });
@@ -375,7 +377,7 @@ it("replay fragments starting with a wide letter also get no hint", async () => 
   const run = await start(`./${"directory/".repeat(5)}abcde\r\n한글/파일.ts https://next.test/a\r`);
   await run.keys("f");
   await run.advance(10);
-  expect(run.grid()[3]?.slice(1, 3)).toBe("한글");
+  expect(run.grid()[3]?.slice(0, 2)).toBe("한글");
   await run.keys("1");
   expect(clips(run)).toEqual(["https://next.test/a"]);
 });
@@ -384,10 +386,10 @@ it("a hint scan draws only the first nine of twelve targets", async () => {
   const run = await start(Array.from({ length: 6 }, (_, i) => `https://a.test/${2 * i} https://b.test/${2 * i + 1}`).join("\r\n"));
   await run.keys("f");
   await run.advance(10);
-  const labels = run.grid().slice(2, 8).flatMap((row) => [...row.matchAll(/(\d+)ttps:/g)].map((at) => at[1]));
+  const labels = run.grid().slice(1, 7).flatMap((row) => [...row.matchAll(/(\d+)ttps:/g)].map((at) => at[1]));
   expect(labels).toEqual(["1", "2", "3", "4", "5", "6", "7", "8", "9"]);
-  expect(run.grid()[6]).toContain(" https://b.test/9 ");
-  expect(run.grid()[7]).toContain("|https://a.test/10 https://b.test/11 ");
+  expect(run.grid()[6]).toEndWith(" https://b.test/9");
+  expect(run.grid()[7]).toBe("https://a.test/10 https://b.test/11");
 });
 
 it("a target cut by a narrower viewer has no hint", async () => {
@@ -401,8 +403,8 @@ it("a target cut by a narrower viewer has no hint", async () => {
     expect(run.loop.panes.view("t1")?.actual).toEqual({ cols: 80, rows: 10 });
     await run.keys("ctrl+b,[,f");
     await run.advance(10);
-    expect(run.grid()[2]?.slice(47, 52)).toBe("https");
-    expect(run.grid()[3]?.slice(1, 6)).toBe("1ttps");
+    expect(run.grid()[2]?.slice(46, 51)).toBe("https");
+    expect(run.grid()[3]?.slice(0, 5)).toBe("1ttps");
     await run.keys("1");
     expect(clips(run)).toEqual(["https://next.test/a"]);
   } finally {
@@ -422,8 +424,8 @@ it("a wrapped target cut below a taller viewer's visible clip has no hint", asyn
     expect(run.loop.panes.view("t1")?.actual).toEqual({ cols: 58, rows: 20 });
     await run.keys("ctrl+b,[,g,f");
     await run.advance(10);
-    expect(run.grid()[2]?.slice(1, 6)).toBe("1ttps");
-    expect(run.grid()[11]?.slice(1, 6)).toBe("https");
+    expect(run.grid()[2]?.slice(0, 5)).toBe("1ttps");
+    expect(run.grid()[11]?.slice(0, 5)).toBe("https");
     await run.keys("2");
     expect(clips(run)).toEqual([]);
   } finally {
@@ -445,12 +447,12 @@ it.each([
     await rival.attach("t1", cols, rows);
     await run.advance(300);
     await run.live();
-    expect(run.grid()[2]?.slice(1, 1 + before.length)).toBe(before);
+    expect(run.grid()[2]?.slice(0, before.length)).toBe(before);
     await run.keys(`ctrl+b,[,${move}`);
     await run.advance(10);
-    expect(run.grid()[2]?.slice(1, 6)).toBe(drawn);
+    expect(run.grid()[2]?.slice(0, 5)).toBe(drawn);
     // no frame between the reads: the mouse lands on what the host still shows
-    await run.keys("q,press@1:2,drag@5:2,release@5:2");
+    await run.keys("q,press@0:2,drag@4:2,release@4:2");
     expect(clips(run)).toEqual([drawn]);
   } finally {
     await rival.detach();
@@ -460,11 +462,11 @@ it.each([
 
 it.each([
   ["a press its program got is released there as copy mode takes over, and the release read in copy mode goes nowhere",
-    ["press@4:4", "ctrl+b", "[", "release@4:4", "q", "Z"], "\x1b[<0;4;3M\x1b[<0;4;3mZ"],
+    ["press@3:4", "ctrl+b", "[", "release@3:4", "q", "Z"], "\x1b[<0;4;3M\x1b[<0;4;3mZ"],
   ["a drag its program got is released at the last cell it reached",
-    ["press@4:4", "drag@6:4", "ctrl+b", "[", "release@8:4", "q", "Z"], "\x1b[<0;4;3M\x1b[<32;6;3M\x1b[<0;6;3mZ"],
+    ["press@3:4", "drag@5:4", "ctrl+b", "[", "release@7:4", "q", "Z"], "\x1b[<0;4;3M\x1b[<32;6;3M\x1b[<0;6;3mZ"],
   ["a press that began in copy mode reaches the program neither there nor at its release after copy mode",
-    ["press@4:4", "ctrl+b", "[", "release@4:4", "press@6:4", "q", "release@6:4", "Z"], "\x1b[<0;4;3M\x1b[<0;4;3mZ"],
+    ["press@3:4", "ctrl+b", "[", "release@3:4", "press@5:4", "q", "release@5:4", "Z"], "\x1b[<0;4;3M\x1b[<0;4;3mZ"],
 ] as const)("copy mode entered over a held mouse button: %s", async (_name, keys, wire) => {
   // read whole, a read a key, and a read a key with a frame after each: the program is sent the same bytes
   for (const reads of ["one read", "a read each", "a frame after each"] as const) {
@@ -489,14 +491,14 @@ it("copy mode refused over a held mouse button takes nothing over: the drag and 
   // inside the program's synchronized update copy mode does not start
   run.core.program("t1").output("\x1b[?2026h");
   await run.advance(10);
-  await run.keys("press@4:4,ctrl+b,[,drag@6:4,release@6:4");
+  await run.keys("press@3:4,ctrl+b,[,drag@5:4,release@5:4");
   expect(run.loop.model().mode.name).toBe("terminal");
   expect(data(run).join("")).toBe("\x1b[<0;4;3M\x1b[<32;6;3M\x1b[<0;6;3m");
 });
 
 it("copy consumes a click on the other pane", async () => {
   const run = await start("first\r", "second\r");
-  await run.keys("click@100:4");
+  await run.keys("click@100:5");
   expect(run.loop.model().mode.name).toBe("copy");
   await run.keys("q,Z");
   expect(run.core.program("t1").receivedHex()).toBe("5a");
@@ -510,7 +512,8 @@ it("copy blocks an external menu action", async () => {
   expect(run.loop.model().overlays).toEqual([]);
   await run.keys("q");
   menu();
-  expect(run.loop.model().overlays.at(-1)?.kind).toBe("menu");
+  // on this narrow screen the menu's key opens herdr's switcher, which holds the menu
+  expect(run.loop.model().overlays.at(-1)?.kind).toBe("switcher");
 });
 
 it("an explicit focus move ends copy and sends the next key to the new pane", async () => {
@@ -539,7 +542,7 @@ it("hint labels skip malformed schemes and copy extensionless paths literally", 
   const run = await start("javascript://host/src/a.ts https:// /var/log/messages\r");
   await run.keys("f");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 54)).toBe("javascript://host/src/a.ts https:// 1var/log/messages");
+  expect(run.grid()[2]?.slice(0, 53)).toBe("javascript://host/src/a.ts https:// 1var/log/messages");
   await run.keys("1");
   expect(clips(run)).toEqual(["/var/log/messages"]);
 });
@@ -548,10 +551,10 @@ it("half pages scroll the viewport while the cursor can still be visible", async
   const run = await start();
   await run.keys("ctrl+u");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 7)).toBe("row-17");
+  expect(run.grid()[2]?.slice(0, 6)).toBe("row-17");
   await run.keys("ctrl+d");
   await run.advance(10);
-  expect(run.grid()[2]?.slice(1, 7)).toBe("row-22");
+  expect(run.grid()[2]?.slice(0, 6)).toBe("row-22");
 });
 
 it("repeated cancels and re-entry never reuse the previous selection or query", async () => {

@@ -28,6 +28,8 @@ export interface UnixProcess {
   on(event: string, listener: Listener): unknown;
   off(event: string, listener: Listener): unknown;
   exit(code: number): unknown;
+  kill(pid: number, signal: string): unknown;
+  readonly pid: number;
 }
 
 export interface UnixHostParts {
@@ -108,12 +110,18 @@ export function createUnixHost(parts: Partial<UnixHostParts> = {}): Host {
       for (const [name, listener] of signals) proc.on(name, listener);
       proc.on("exit", hooks.exit);
       stdout.on("resize", hooks.resize);
+      proc.on("SIGTSTP", hooks.stop);
+      proc.on("SIGCONT", hooks.cont);
       return () => {
         for (const [name, listener] of signals) proc.off(name, listener);
         proc.off("exit", hooks.exit);
         stdout.off("resize", hooks.resize);
+        proc.off("SIGTSTP", hooks.stop);
+        proc.off("SIGCONT", hooks.cont);
       };
     },
     exit: (code) => { proc.exit(code); },
+    // this process itself, the one stop no handler can catch
+    suspend: () => { proc.kill(proc.pid, "SIGSTOP"); },
   });
 }

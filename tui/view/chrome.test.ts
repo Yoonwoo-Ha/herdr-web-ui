@@ -5,7 +5,6 @@ import { LAYOUT_DOC, PANE_NAME_LABEL, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WO
 import type { PaneState, PaneView } from "../core/pane.ts";
 import { CoreWorld } from "../core/world.ts";
 import { STYLE_BOLD } from "../emulator/index.ts";
-import { focused } from "../model/focus.ts";
 import { initialState, type ModelEvent, type ModelState, reduce } from "../model/reduce.ts";
 import { agents } from "../testing/fixtures/agents.ts";
 import { demo } from "../testing/fixtures/demo.ts";
@@ -21,13 +20,18 @@ import { layOut, paneScene, type ScreenShape } from "./screen.ts";
 // The dark theme's colours as tui/theme.generated.ts holds them (src/styles.css), written out here.
 const rgb = (r: number, g: number, b: number): [number, number, number] => [r, g, b];
 const ACCENT = rgb(58, 131, 247);
-const TEXT_STRONG = rgb(255, 255, 255);
-const BORDER_STRONG = rgb(64, 64, 64);
+const TEXT_DIM = rgb(163, 163, 163);
+const PRIMARY_TEXT = rgb(24, 24, 24);
 const NOTICE = rgb(217, 178, 106);
-const BLOCKED = rgb(252, 141, 139);
-const DONE = rgb(64, 201, 119);
-const WORKING = rgb(129, 176, 250);
-const BG_ELEVATED = rgb(38, 38, 38);
+const BG_HOVER = rgb(47, 47, 47);
+// herdr's own colours, which its sidebar writes on any host (chrome.ts HERDR_SIDEBAR)
+const H_NAME = rgb(205, 214, 244);
+const H_NAME_DIM = rgb(166, 173, 200);
+const H_LABEL = rgb(108, 112, 134);
+const H_RAISED = rgb(30, 30, 46);
+const H_WORKING = rgb(249, 226, 175);
+const H_BLOCKED = rgb(243, 139, 168);
+const H_DONE = rgb(148, 226, 213);
 
 const ONLINE: ShownLink = { online: true, code: null };
 
@@ -67,6 +71,8 @@ interface Setup {
   link?: ShownLink;
   cwd?: string;
   session?: string;
+  /** the version herdr-core reported (null: no live line) */
+  core?: string | null;
 }
 
 function setup(options: Setup): { state: ModelState; shape: ScreenShape; input: Parameters<typeof buildChrome>[0] } {
@@ -74,11 +80,11 @@ function setup(options: Setup): { state: ModelState; shape: ScreenShape; input: 
   let state = reduce(initialState(options.keys), { type: "world", world: view.world, at: 0 }).state;
   for (const event of options.events ?? []) state = reduce(state, event).state;
   const tab = state.world.workspaces.flatMap((workspace) => workspace.tabs).find((one) => one.id === (state.focus.tabs[state.focus.workspace ?? ""] ?? state.world.workspaces[0]?.tabs[0]?.id));
-  const shape = layOut(options.cols, options.rows, tab ? view.tabs.get(tab.id) ?? null : null, { sidebarCollapsed: state.sidebarCollapsed, pane: focused(state.world, state.focus).pane?.id ?? null });
+  const shape = layOut(options.cols, options.rows, tab ? view.tabs.get(tab.id) ?? null : null, { sidebarCollapsed: state.sidebarCollapsed });
   const panes = new Map(Object.entries(options.panes ?? Object.fromEntries(shape.spots.map((spot) => [spot.pane, pane(spot.pane)]))));
   return {
     state, shape,
-    input: { regions: shape.regions, spots: shape.spots, splits: shape.splits, state, world: view, panes, link: options.link ?? ONLINE, session: options.session ?? "work", cwd: options.cwd ?? "/home/u/my-project", theme: "dark", colors: "truecolor" },
+    input: { regions: shape.regions, spots: shape.spots, splits: shape.splits, state, world: view, panes, link: options.link ?? ONLINE, session: options.session ?? "work", theme: "dark", colors: "truecolor" },
   };
 }
 
@@ -118,78 +124,120 @@ const noColour = ({ painter }: Picture): string => {
 };
 
 describe("chrome frames as rows of cells", () => {
-  it("at 120x40: header and toggle, workspaces with roll-up marks, agents, tabs, bordered panes with titles, and the hint line", () => {
+  it("at 120x40: herdr's sidebar (its words, dots and two-row agents by workspace, no background), tabs, bordered panes with their names, no mode line", () => {
     const shot = draw({ cols: 120, rows: 40 });
-    expect(shot.rows.slice(0, 11)).toEqual([
-      `hc:work              <<| 1:main !  2:logs${" ".repeat(79)}`,
-      "Workspaces             |+- shell ovis [claude] ! Needs you ------------++- files tui [codex] ~ Working ----------------+",
-      ">!1:ovis      Needs you||                                              ||                                              |",
-      " *2:문서           Done||                                              ||                                              |",
-      "Agents                 ||                                              ||                                              |",
-      " Needs you (1)         ||                                              ||                                              |",
-      " ! shell /ovis claude  ||                                              ||                                              |",
-      " Working (1)           ||                                              ||                                              |",
-      " ~ files /tui codex    ||                                              ||                                              |",
-      " Done (1)              ||                                              ||                                              |",
-      " * claude /proj        ||                                              ||                                              |",
+    expect(shot.rows.slice(0, 4)).toEqual([
+      ` spaces                  │  main     logs    +${" ".repeat(74)}`,
+      `                         │┌ shell ${"─".repeat(38)}┐┌ files ${"─".repeat(38)}┐`,
+      ` ● ovis                  ││${" ".repeat(45)}││${" ".repeat(45)}│`,
+      ` ● 문서                  ││${" ".repeat(45)}││${" ".repeat(45)}│`,
     ]);
-    expect(shot.rows[38]).toBe(`                       |+${"-".repeat(46)}++${"-".repeat(46)}+`);
-    expect(shot.rows[39]).toBe(` TERMINAL  ctrl+b prefix prefix+enter menu prefix+? help${" ".repeat(64)}`);
-    expect(cell(shot, 0, 0)).toEqual({ text: "h", fg: TEXT_STRONG, bg: BG_ELEVATED, bold: true });
-    expect(cell(shot, 21, 0)).toMatchObject({ text: "<", fg: ACCENT, bold: true });
-    expect(cell(shot, 0, 2)).toMatchObject({ text: ">", fg: ACCENT, bold: true });
-    expect(cell(shot, 1, 2)).toMatchObject({ text: "!", fg: BLOCKED, bold: true });
-    expect(cell(shot, 1, 3)).toMatchObject({ text: "*", fg: DONE, bold: true });
-    // each section's heading in its state's colour, and each agent's glyph in it
-    expect(cell(shot, 1, 5)).toMatchObject({ text: "N", fg: BLOCKED, bold: true });
-    expect(cell(shot, 1, 6)).toMatchObject({ text: "!", fg: BLOCKED, bold: true });
-    expect(cell(shot, 1, 7)).toMatchObject({ text: "W", fg: WORKING, bold: true });
-    expect(cell(shot, 1, 8)).toMatchObject({ text: "~", fg: WORKING, bold: true });
-    expect(cell(shot, 1, 9)).toMatchObject({ text: "D", fg: DONE, bold: true });
-    expect(cell(shot, 25, 0)).toMatchObject({ text: "1", fg: ACCENT, bg: BG_ELEVATED, bold: true });
-    expect(cell(shot, 24, 1)).toMatchObject({ text: "+", fg: ACCENT, bold: true });
-    expect(cell(shot, 72, 1)).toMatchObject({ text: "+", fg: BORDER_STRONG, bold: false });
-    expect(cell(shot, 1, 39)).toMatchObject({ text: "T", fg: TEXT_STRONG, bg: BG_ELEVATED, bold: true });
+    expect(shot.rows.slice(19, 30).map((row) => row.slice(0, row.indexOf("│") + 1))).toEqual([
+      " new                 menu│",
+      "─────────────────────────│",
+      " agents           grouped│",
+      "                         │",
+      " ● ovis · main           │",
+      "   claude                │",
+      " ● ovis · main           │",
+      "   codex                 │",
+      " ● 문서 · 노트           │",
+      "   claude                │",
+      "                         │",
+    ]);
+    expect(shot.rows[39]).toBe(`                        «│└${"─".repeat(45)}┘└${"─".repeat(45)}┘`);
+    // the sidebar writes no background (the host's shows) and herdr's own colours: only the rows in front are raised
+    expect(cell(shot, 1, 0)).toEqual({ text: "s", fg: H_LABEL, bg: null, bold: true });
+    expect(cell(shot, 25, 1)).toMatchObject({ text: "│", fg: H_RAISED, bg: null });
+    // the workspace in front on the raised row in bold, the other dim; each dot in its state's colour
+    expect(cell(shot, 3, 2)).toEqual({ text: "o", fg: H_NAME, bg: H_RAISED, bold: true });
+    expect(cell(shot, 3, 3)).toEqual({ text: "문", fg: H_NAME_DIM, bg: null, bold: false });
+    expect(cell(shot, 1, 2)).toMatchObject({ text: "●", fg: H_BLOCKED, bold: false });
+    expect(cell(shot, 1, 3)).toMatchObject({ text: "●", fg: H_DONE, bold: false });
+    // an agent in two rows: its dot and workspace (bold), then the agent, dim; the focused pane's agent raised on both
+    expect(cell(shot, 1, 23)).toMatchObject({ text: "●", fg: H_BLOCKED, bg: H_RAISED });
+    expect(cell(shot, 3, 23)).toEqual({ text: "o", fg: H_NAME, bg: H_RAISED, bold: true });
+    expect(cell(shot, 3, 24)).toEqual({ text: "c", fg: H_LABEL, bg: H_RAISED, bold: false });
+    expect(cell(shot, 1, 25)).toMatchObject({ text: "●", fg: H_WORKING, bg: null });
+    expect(cell(shot, 1, 27)).toMatchObject({ text: "●", fg: H_DONE, bg: null });
+    // the tab in front: dark text on the accent, bold for a name given by hand; the other on the raised row colour
+    expect(cell(shot, 28, 0)).toMatchObject({ text: "m", fg: PRIMARY_TEXT, bg: ACCENT, bold: true });
+    expect(cell(shot, 37, 0)).toMatchObject({ text: "l", fg: TEXT_DIM, bg: BG_HOVER, bold: false });
+    // the focused pane's border and title in the accent, the title bold; the other pane's dim
+    expect(cell(shot, 26, 1)).toMatchObject({ text: "┌", fg: ACCENT, bold: false });
+    expect(cell(shot, 28, 1)).toMatchObject({ text: "s", fg: ACCENT, bold: true });
+    expect(cell(shot, 73, 1)).toMatchObject({ text: "┌", fg: TEXT_DIM, bold: false });
+    expect(cell(shot, 24, 39)).toMatchObject({ text: "«", fg: H_LABEL, bold: false });
   });
 
-  it("at 80x24: the same chrome narrower, every label cut with … where it does not fit", () => {
+  it("at 80x24: the same chrome narrower", () => {
     const shot = draw({ cols: 80, rows: 24 });
-    expect(shot.rows.slice(0, 8)).toEqual([
-      `hc:work              <<| 1:main !  2:logs${" ".repeat(39)}`,
-      "Workspaces             |+- shell ovis [claude] ! …-++- files tui [codex] ~ Wo…-+",
-      ">!1:ovis      Needs you||                          ||                          |",
-      " *2:문서           Done||                          ||                          |",
-      "Agents                 ||                          ||                          |",
-      " Needs you (1)         ||                          ||                          |",
-      " ! shell /ovis claude  ||                          ||                          |",
-      " Working (1)           ||                          ||                          |",
+    expect(shot.rows.slice(0, 4)).toEqual([
+      ` spaces                  │  main     logs    +${" ".repeat(34)}`,
+      `                         │┌ shell ${"─".repeat(18)}┐┌ files ${"─".repeat(18)}┐`,
+      ` ● ovis                  ││${" ".repeat(25)}││${" ".repeat(25)}│`,
+      ` ● 문서                  ││${" ".repeat(25)}││${" ".repeat(25)}│`,
     ]);
-    expect(shot.rows[23]).toBe(` TERMINAL  ctrl+b prefix prefix+enter menu prefix+? help${" ".repeat(24)}`);
+    expect(shot.rows[23]).toBe(`                        «│└${"─".repeat(25)}┘└${"─".repeat(25)}┘`);
+  });
+});
+
+describe("the panes' scrollbars and the tab bar's overflow", () => {
+  it("a pane with history draws its scrollbar in the column kept for it: the track, and the thumb where the view is", () => {
+    const { input } = setup({ cols: 120, rows: 40 });
+    const column = (scroll: Map<string, { offset: number; max: number; viewport: number }>, pane = 0) => {
+      const shot = picture(120, 40, buildChrome({ ...input, scroll }).parts);
+      const x = input.spots[pane]!.cells.gutter.x;
+      return Array.from({ length: 37 }, (_, y) => cell(shot, x, 2 + y).text).join("");
+    };
+    // nothing scrolled back: no scrollbar at all, the column stays blank
+    expect(column(new Map())).toBe(" ".repeat(37));
+    // at the bottom of 37 rows of history: a thumb of half the track at its foot, on the focused pane
+    expect(column(new Map([["t1", { offset: 0, max: 37, viewport: 37 }]]))).toBe(`${"▕".repeat(18)}${"▐".repeat(19)}`);
+    // scrolled to the top: the thumb at the head
+    expect(column(new Map([["t1", { offset: 37, max: 37, viewport: 37 }]]))).toBe(`${"▐".repeat(19)}${"▕".repeat(18)}`);
+    // a pane without the focus draws its thumb as the track's own mark, in the thumb's colour
+    expect(column(new Map([["t2", { offset: 0, max: 37, viewport: 37 }]]), 1)).toBe("▕".repeat(37));
+  });
+
+  it("tabs that do not fit: three-column buttons at each end, … where tabs are cut, the tab in front kept in view", () => {
+    const tabs = Array.from({ length: 9 }, (_, n) => term(`t${n}`, "w1", "work", `tab${n}`, `tab-${n}`));
+    const front = draw({ cols: 70, rows: 20, terminals: tabs, events: [{ type: "select", target: { kind: "tab", id: "tab5" }, at: 1 }] });
+    const bar = front.rows[0]!.slice(26);
+    expect(bar.startsWith(" < …")).toBe(true);
+    expect(bar.endsWith("… >  + ")).toBe(true);
+    expect(bar).toContain("  tab-5  ");
+    expect(cell(front, 26, 0)).toMatchObject({ text: " ", bg: BG_HOVER });
+    const first = draw({ cols: 70, rows: 20, terminals: tabs }).rows[0]!.slice(26);
+    expect(first.startsWith(" <   tab-0  ")).toBe(true);
   });
 });
 
 describe("each visible state has its own mark, told apart without colour", () => {
   const TWO = [term("t1", "w1", "work", "tab1", "tab", {}, "one"), term("t2", "w1", "work", "tab1", "tab", {}, "two")];
-  // the first pane's bottom border at 120x40: row 38, its banner from column 26
+  // the first pane's bottom border at 120x40: row 39, its banner from column 28
   const states: [name: string, setup: Partial<Setup>, mark: string, col: number, row: number][] = [
-    ["live", {}, `+${"-".repeat(46)}+`, 24, 38],
-    ["sized by another viewer", { panes: { t1: pane("t1", { kind: "Live" }, { cols: 150, rows: 50 }), t2: pane("t2") } }, " sized by another viewer (150x50) ", 26, 38],
-    ["not attached", { panes: { t1: pane("t1", { kind: "Idle" }), t2: pane("t2") } }, " not attached ", 26, 38],
-    ["opening", { panes: { t1: pane("t1", { kind: "Opening" }), t2: pane("t2") } }, " opening terminal ", 26, 38],
-    ["painting", { panes: { t1: pane("t1", { kind: "Painting" }), t2: pane("t2") } }, " loading screen ", 26, 38],
-    ["closing", { panes: { t1: pane("t1", { kind: "Closing" }), t2: pane("t2") } }, " closing stream ", 26, 38],
-    ["waiting for its new shell", { panes: { t1: pane("t1", { kind: "Waiting", why: "lost" }), t2: pane("t2") } }, " waiting for its new shell ", 26, 38],
-    ["waiting for herdr-core", { panes: { t1: pane("t1", { kind: "Waiting", why: "offline" }), t2: pane("t2") } }, " waiting for herdr-core ", 26, 38],
-    ["stream closed", { panes: { t1: pane("t1", { kind: "Waiting", why: "closed" }), t2: pane("t2") } }, " stream closed ", 26, 38],
-    ["ended (3)", { panes: { t1: pane("t1", { kind: "Ended", reason: "exited", code: 3 }), t2: pane("t2") } }, " ended (3) ", 26, 38],
-    ["ended (none)", { panes: { t1: pane("t1", { kind: "Ended", reason: "killed", code: null }), t2: pane("t2") } }, " ended (none) ", 26, 38],
-    ["failed", { panes: { t1: pane("t1", { kind: "Failed", code: "size", reason: "too big" } as PaneState), t2: pane("t2") } }, " failed: too big ", 26, 38],
-    ["offline", { link: { online: false, code: "closed" } }, " herdr-core is not answering: hc server start (closed) ", 10, 39],
-    ["focus on the second pane", { events: [{ type: "select", target: { kind: "pane", id: "t2" }, at: 1 }] }, "+- two proj", 72, 1],
-    ["zoomed", { docs: { [OVIS_LAYOUT_DOC]: { schema: 1, workspaces: [{ id: "w1", tabs: [{ id: "tab1", root: { split: "right", ratio: 0.5, first: { leaf: "t1" }, second: { leaf: "t2" } }, zoomed: "t1" }] }] } } }, " ZOOM ", 114, 0],
-    ["the Herdr app arranges this core", { docs: { [LAYOUT_DOC]: { spaces: [{ id: "w1", name: "work", tabs: [{ id: "tab1", name: "tab", root: { type: "row", children: [{ content: { terminal: "t1" } }, { content: { terminal: "t2" } }] } }] }] } } }, "the Herdr app arranges…", 0, 1],
-    ["empty core", { terminals: [] }, "New workspace in my-project (prefix+shift+n)", 26, 20],
-    ["empty core, offline", { terminals: [], link: { online: false, code: "no_core" } }, "herdr-core is not answering: hc server start (no_core)", 26, 19],
+    ["live: a plain border, as herdr's", {}, `└${"─".repeat(45)}┘`, 26, 39],
+    ["sized by another viewer", { panes: { t1: pane("t1", { kind: "Live" }, { cols: 150, rows: 50 }), t2: pane("t2") } }, " sized by another viewer (150x50) ", 28, 39],
+    ["not attached", { panes: { t1: pane("t1", { kind: "Idle" }), t2: pane("t2") } }, " not attached ", 28, 39],
+    ["opening", { panes: { t1: pane("t1", { kind: "Opening" }), t2: pane("t2") } }, " opening terminal ", 28, 39],
+    ["painting", { panes: { t1: pane("t1", { kind: "Painting" }), t2: pane("t2") } }, " loading screen ", 28, 39],
+    ["closing", { panes: { t1: pane("t1", { kind: "Closing" }), t2: pane("t2") } }, " closing stream ", 28, 39],
+    ["waiting for its new shell", { panes: { t1: pane("t1", { kind: "Waiting", why: "lost" }), t2: pane("t2") } }, " waiting for its new shell ", 28, 39],
+    ["waiting for herdr-core", { panes: { t1: pane("t1", { kind: "Waiting", why: "offline" }), t2: pane("t2") } }, " waiting for herdr-core ", 28, 39],
+    ["stream closed", { panes: { t1: pane("t1", { kind: "Waiting", why: "closed" }), t2: pane("t2") } }, " stream closed ", 28, 39],
+    ["ended (3)", { panes: { t1: pane("t1", { kind: "Ended", reason: "exited", code: 3 }), t2: pane("t2") } }, " ended (3) ", 28, 39],
+    ["ended (none)", { panes: { t1: pane("t1", { kind: "Ended", reason: "killed", code: null }), t2: pane("t2") } }, " ended (none) ", 28, 39],
+    ["failed", { panes: { t1: pane("t1", { kind: "Failed", code: "size", reason: "too big" } as PaneState), t2: pane("t2") } }, " failed: too big ", 28, 39],
+    // offline: the error badge and its reason on the bar over the panes' last row
+    ["offline", { link: { online: false, code: "closed" } }, " ERROR  herdr-core is not answering: hc server start (closed)", 26, 39],
+    ["focus on the second pane", { events: [{ type: "select", target: { kind: "pane", id: "t2" }, at: 1 }] }, "┌ two ", 73, 1],
+    // a zoomed tab says so in its own label only
+    ["zoomed", { docs: { [OVIS_LAYOUT_DOC]: { schema: 1, workspaces: [{ id: "w1", tabs: [{ id: "tab1", root: { split: "right", ratio: 0.5, first: { leaf: "t1" }, second: { leaf: "t2" } }, zoomed: "t1" }] }] } } }, "  tab Z  ", 26, 0],
+    ["the Herdr app arranges this core", { docs: { [LAYOUT_DOC]: { spaces: [{ id: "w1", name: "work", tabs: [{ id: "tab1", name: "tab", root: { type: "row", children: [{ content: { terminal: "t1" } }, { content: { terminal: "t2" } }] } }] }] } } }, " the Herdr app arranges this core ", 86, 0],
+    // an empty core gets a first workspace from the loop (docs/tui/visual-parity.md E1): until then no tab, the new-tab button alone
+    ["empty core", { terminals: [] }, " + ", 26, 0],
+    ["empty core, offline", { terminals: [], link: { online: false, code: "no_core" } }, "herdr-core is not answering: hc server start (no_core)", 28, 19],
   ];
   const shots = states.map(([name, extra]) => [name, draw({ cols: 120, rows: 40, terminals: TWO, ...extra })] as const);
 
@@ -209,7 +257,7 @@ describe("each visible state has its own mark, told apart without colour", () =>
 
   it("offline: every border in the notice colour, the focused pane no longer bold, no kill offered", () => {
     const shot = shots.find(([name]) => name === "offline")![1];
-    expect(cell(shot, 24, 1)).toMatchObject({ text: "+", fg: NOTICE, bold: false });
+    expect(cell(shot, 26, 1)).toMatchObject({ text: "┌", fg: NOTICE, bold: false });
     expect(shot.rows.join("\n").toLowerCase()).not.toContain("kill");
   });
 });
@@ -220,14 +268,19 @@ describe("every control's cells resolve to it in the hit map, and the cells besi
     return target && "part" in target ? `${target.part}/${target.id}` : target ? `pane/${target.pane}` : null;
   };
   const table: [name: string, setup: Setup, id: string, rect: { x: number; y: number; width: number; height: number }][] = [
-    ["the sidebar's toggle", { cols: 120, rows: 40 }, "sidebar/toggle_sidebar", { x: 21, y: 0, width: 2, height: 1 }],
-    ["a workspace row", { cols: 120, rows: 40 }, "sidebar/workspace:w-docs", { x: 0, y: 3, width: 23, height: 1 }],
-    ["an agent row", { cols: 120, rows: 40 }, "sidebar/agent:t2", { x: 0, y: 8, width: 23, height: 1 }],
-    ["a tab", { cols: 120, rows: 40 }, "tabs/tab:t-logs", { x: 34, y: 0, width: 8, height: 1 }],
-    ["the header that brings a collapsed sidebar back", { cols: 120, rows: 40, events: [{ type: "action", action: "toggle_sidebar", at: 1 }] }, "tabs/toggle_sidebar", { x: 0, y: 0, width: 8, height: 1 }],
-    ["a split's divider", { cols: 120, rows: 40 }, "borders/split_0_root", { x: 71, y: 1, width: 2, height: 38 }],
-    ["the empty core's offer", { cols: 120, rows: 40, terminals: [] }, "borders/new_workspace", { x: 24, y: 1, width: 96, height: 38 }],
-    ["an overlay's close keys", { cols: 120, rows: 40, events: [{ type: "action", action: "help", at: 1 }] }, "overlay:help/close", { x: 93, y: 2, width: 22, height: 1 }],
+    ["the sidebar's collapse mark", { cols: 120, rows: 40 }, "sidebar/toggle_sidebar", { x: 24, y: 39, width: 1, height: 1 }],
+    ["the new-workspace button", { cols: 120, rows: 40 }, "sidebar/new_workspace", { x: 0, y: 19, width: 5, height: 1 }],
+    ["the menu button", { cols: 120, rows: 40 }, "sidebar/menu", { x: 21, y: 19, width: 4, height: 1 }],
+    ["a workspace row", { cols: 120, rows: 40 }, "sidebar/workspace:w-docs", { x: 0, y: 3, width: 25, height: 1 }],
+    ["an agent's two rows", { cols: 120, rows: 40 }, "sidebar/agent:t2", { x: 0, y: 25, width: 25, height: 2 }],
+    ["a tab", { cols: 120, rows: 40 }, "tabs/tab:t-logs", { x: 35, y: 0, width: 8, height: 1 }],
+    ["the new-tab button", { cols: 120, rows: 40 }, "tabs/new_tab", { x: 44, y: 0, width: 3, height: 1 }],
+    ["the rail's mark that brings the sidebar back", { cols: 120, rows: 40, events: [{ type: "action", action: "toggle_sidebar", at: 1 }] }, "sidebar/toggle_sidebar", { x: 1, y: 39, width: 1, height: 1 }],
+    ["a split's divider", { cols: 120, rows: 40 }, "borders/split_0_root", { x: 72, y: 1, width: 2, height: 39 }],
+    ["the help's close button", { cols: 120, rows: 40, events: [{ type: "action", action: "help", at: 1 }] }, "overlay:help/close", { x: 84, y: 10, width: 13, height: 1 }],
+    ["a dialog's save button", { cols: 120, rows: 40, events: [{ type: "action", action: "rename_tab", at: 1 }] }, "overlay:text/accept", { x: 43, y: 20, width: 8, height: 1 }],
+    ["a dialog's clear button", { cols: 120, rows: 40, events: [{ type: "action", action: "rename_tab", at: 1 }] }, "overlay:text/clear", { x: 53, y: 20, width: 10, height: 1 }],
+    ["a dialog's cancel button", { cols: 120, rows: 40, events: [{ type: "action", action: "rename_tab", at: 1 }] }, "overlay:text/close", { x: 65, y: 20, width: 12, height: 1 }],
   ];
   for (const [name, options, id, rect] of table) {
     it(name, () => {
@@ -297,17 +350,18 @@ describe("each part is drawn again exactly when what it shows changed", () => {
   const versions = (options: Setup) => Object.fromEntries(buildChrome(setup(options).input).parts.map((one) => [one.key, one.version]));
   const base: Setup = { cols: 120, rows: 40 };
   const table: [change: string, after: Setup, changed: string[]][] = [
-    ["the shown workspace", { ...base, events: [{ type: "select", target: { kind: "workspace", id: "w-docs" }, at: 1 }] }, ["sidebar", "tabs", "borders"]],
+    ["the shown workspace", { ...base, events: [{ type: "select", target: { kind: "workspace", id: "w-docs" }, at: 1 }] }, ["sidebar", "borders", "tabs"]],
     ["the focused pane", { ...base, events: [{ type: "select", target: { kind: "pane", id: "t2" }, at: 1 }] }, ["sidebar", "borders"]],
-    ["the shown tab", { ...base, events: [{ type: "select", target: { kind: "tab", id: "t-logs" }, at: 1 }] }, ["sidebar", "tabs", "borders"]],
-    ["an agent's state", { ...base, terminals: [{ ...WORK[0]!, status: { state: "idle", app: "claude" } }, ...WORK.slice(1)] }, ["sidebar", "tabs", "borders"]],
+    ["the shown tab", { ...base, events: [{ type: "select", target: { kind: "tab", id: "t-logs" }, at: 1 }] }, ["sidebar", "borders", "tabs"]],
+    // a state shows in the sidebar only: tabs and pane titles carry none
+    ["an agent's state", { ...base, terminals: [{ ...WORK[0]!, status: { state: "idle", app: "claude" } }, ...WORK.slice(1)] }, ["sidebar"]],
     ["a pane's attach state", { ...base, panes: { t1: pane("t1", { kind: "Waiting", why: "lost" }), t2: pane("t2") } }, ["borders"]],
-    ["an armed prefix", { ...base, events: [{ type: "key", key: "B", mods: { ctrl: true, shift: false, alt: false, super: false }, action: "press", at: 1 } as unknown as ModelEvent] }, ["mode"]],
-    ["a notice", { ...base, events: [{ type: "notice", code: "not_built", data: { action: "settings" }, at: 1 }] }, ["mode"]],
-    ["the link going offline", { ...base, link: { online: false, code: "closed" } }, ["borders", "mode"]],
-    ["the key table: the help key moved", { ...base, keys: { help: "prefix+h" } }, ["mode"]],
-    ["the session's name", { ...base, session: "other" }, ["sidebar"]],
-    ["the folder typed in, on a core with workspaces", { ...base, cwd: "/elsewhere" }, []],
+    // the mode bar and the notices are overlays, drawn on every frame: no part changes for them
+    ["an armed prefix", { ...base, events: [{ type: "key", key: "B", mods: { ctrl: true, shift: false, alt: false, super: false }, action: "press", at: 1 } as unknown as ModelEvent] }, []],
+    ["a notice", { ...base, events: [{ type: "notice", code: "not_built", data: { action: "settings" }, at: 1 }] }, []],
+    ["the link going offline", { ...base, link: { online: false, code: "closed" } }, ["borders"]],
+    ["the key table: the help key moved", { ...base, keys: { help: "prefix+h" } }, []],
+    ["the session's name", { ...base, session: "other" }, []],
   ];
   const before = versions(base);
   for (const [change, after, changed] of table) {
@@ -324,16 +378,43 @@ describe("each part is drawn again exactly when what it shows changed", () => {
     });
   }
 
-  it("the empty core's offer follows a reload of the keys (the key it shows is part of what the borders draw)", () => {
+  it("an empty core draws no offer of its own: the loop opens its first workspace, as herdr's server does", () => {
     const empty: Setup = { cols: 120, rows: 40, terminals: [] };
     const reloaded: Setup = { ...empty, events: [{ type: "keys", keys: { new_workspace: "prefix+m" }, at: 1 }] };
-    expect(versions(reloaded)["borders"]).not.toBe(versions(empty)["borders"]);
-    const painter = new Painter({ sync: false });
-    picture(120, 40, buildChrome(setup(empty).input).parts, [], [], null, painter);
-    expect(picture(120, 40, buildChrome(setup(reloaded).input).parts, [], [], null, painter).rows[20]).toBe(`${" ".repeat(23)}|  New workspace in my-project (prefix+m)${" ".repeat(56)}`);
-    expect(draw({ ...empty, keys: { new_workspace: "" } }).rows[20]).toBe(`${" ".repeat(23)}|  New workspace in my-project${" ".repeat(67)}`);
+    expect(versions(reloaded)["borders"]).toBe(versions(empty)["borders"]);
+    expect(draw(empty).rows.some((row) => row.includes("New workspace"))).toBe(false);
+    expect(draw(empty).rows[25]).toBe(`${" ".repeat(25)}│${" ".repeat(94)}`);
   });
 });
+
+describe("the LOCKED badge and the help", () => {
+  const help = (cols: number, rows: number, extra: Partial<Setup> = {}) => draw({ cols, rows, events: [{ type: "action", action: "help", at: 1 }], ...extra });
+
+  it("the LOCKED badge is a tap target that unlocks; no other mode's badge is", () => {
+    // the badge starts the bar over the panes' last row, right of the sidebar
+    const owner = (shot: Picture) => { const hit = shot.frame.hits.at(27, 39); return hit && "part" in hit ? `${hit.part}/${hit.id}` : null; };
+    expect(owner(draw({ cols: 120, rows: 40, events: [{ type: "action", action: "lock", at: 1 }] }))).toBe("mode/lock");
+    expect(owner(draw({ cols: 120, rows: 40 }))).not.toBe("mode/lock");
+  });
+
+  it("the help is herdr's 76x22 dialog: its title and close button, the filter row, the first lines of its sections with a scrollbar, and its keys at the foot", () => {
+    const shot = help(80, 24);
+    expect(shot.rows[1]!.slice(2, 78)).toBe(`┌${"─".repeat(74)}┐`);
+    expect(shot.rows[2]!.slice(2, 78)).toBe(`│Keyboard Shortcuts${" ".repeat(43)}  esc close  │`);
+    expect(shot.rows[3]!.slice(3, 47)).toBe(" / press / to filter by command or shortcut ");
+    expect(shot.rows.slice(5, 9).map((row) => row.slice(3, 77))).toEqual([
+      ` global${" ".repeat(66)}▐`,
+      ` ctrl+b${" ".repeat(23)}prefix mode${" ".repeat(32)}▐`,
+      ` prefix+?${" ".repeat(21)}help${" ".repeat(39)}▐`,
+      ` prefix+s${" ".repeat(21)}settings${" ".repeat(35)}▐`,
+    ]);
+    expect(shot.rows[21]!.slice(3, 56)).toBe(" search / · scroll j/k/↑↓/pgup/pgdn · close esc/enter");
+    // the close button is a tap target that closes the help
+    const hit = shot.frame.hits.at(70, 2);
+    expect(hit && "part" in hit ? hit.id : null).toBe("close");
+  });
+});
+
 
 describe("the help draws every keymap note code", () => {
   const help = (keys: unknown, cols = 120, rows = 40) => draw({ cols, rows, keys, events: [{ type: "action", action: "help", at: 1 }] });
@@ -357,16 +438,17 @@ describe("the help draws every keymap note code", () => {
     it(code, () => {
       for (const [cols, rows] of [[200, 60], [120, 40], [80, 24]] as const) {
         const shot = help(keys, cols, rows);
-        const room = cols - 8 - 4;
+        // the help's text room: 76 columns at most less its frame and a column on each side
+        const room = Math.min(76, cols - 4) - 4;
         const at = shot.rows.findIndex((text) => text.includes(line.slice(0, Math.min(line.length, room - 1))));
         expect({ code, cols, drawn: at > 1 }).toEqual({ code, cols, drawn: true });
       }
     });
   }
 
-  it("an unreachable prefix or detach is also named on the mode bar", () => {
-    expect(draw({ cols: 120, rows: 40, keys: table[8]![1] }).rows[39]).toContain(" [prefix_unreachable] ");
-    expect(draw({ cols: 120, rows: 40, keys: table[10]![1] }).rows[39]).toContain(" [detach_unreachable] ");
+  it("an unreachable prefix or detach is also named on the bar, which shows for it in terminal mode too", () => {
+    expect(draw({ cols: 120, rows: 40, keys: table[8]![1] }).rows[39]).toContain(" ERROR  [prefix_unreachable]");
+    expect(draw({ cols: 120, rows: 40, keys: table[10]![1] }).rows[39]).toContain(" ERROR  [detach_unreachable]");
   });
 });
 
@@ -391,24 +473,25 @@ describe("names cut at a wide character keep every cell whole", () => {
 
   it("at 120x40: the cut Korean names, as cells", () => {
     const shot = draw({ cols: 120, rows: 40, terminals: wideNames });
-    expect(shot.rows.slice(2, 5).map((line) => line.slice(0, line.indexOf("||") + 2))).toEqual([
-      ">·1:x한글이름이아주긴… ||",
-      " ·2:e\u0301a\u0308o\u0302-한가-กำx       ||",
-      " *3:ctl\ufffdname-abcd… Done||",
+    expect(shot.rows.slice(2, 5).map((line) => line.slice(0, line.indexOf("│") + 1))).toEqual([
+      " · x한글이름이아주긴작…  │",
+      " · e\u0301a\u0308o\u0302-한가-กำx          │",
+      " ● ctl\ufffdname-abcdef       │",
     ]);
-    expect(shot.rows[0]!.startsWith("hc:work              <<| 1:🚀로켓😀👨‍👩‍👧‍👦🇰🇷끝까지가는탭이름 ")).toBe(true);
-    expect(shot.rows[1]!.startsWith("Workspaces             |+- 가나다라마바사아자차카타파하가나다라마바사아자차카타파하 proj -")).toBe(true);
-    const narrow = draw({ cols: 80, rows: 24, terminals: wideNames }).rows[1]!;
-    expect(narrow.slice(0, narrow.indexOf("…") + 3)).toBe("Workspaces             |+- 가나다라마바사아자차카타파하가나다라마바사아자차카…-+");
+    expect(shot.rows[0]!.startsWith(" spaces                  │  🚀로켓😀👨‍👩‍👧‍👦🇰🇷끝까지가는탭이름    + ")).toBe(true);
+    // a split tab's pane title, cut with … in its border
+    const split = [wideNames[0]!, term("t9", "w1", "x한글이름이아주긴작업공간입니다", "tab1", "tab", {}, "other")];
+    const titled = draw({ cols: 80, rows: 24, terminals: split }).rows[1]!;
+    expect(titled.slice(0, titled.indexOf("…") + 3)).toBe("                         │┌ 가나다라마바사아자차카… ┐");
   });
 });
 
 describe("whole-screen proofs on the runner", () => {
   it("demo, agents and machines fixtures at 120x40, 80x24 and 200x60", async () => {
     const expected: Record<string, [row: number, text: string][]> = {
-      "120x40": [[0, "hc:default           <<| 1:main  2:logs"], [2, ">·1:ovis               ||$ echo 안녕"], [3, " ·2:문서               ||안녕하세요, 헤르더 세계"]],
-      "80x24": [[0, "hc:default           <<| 1:main  2:logs"], [3, " ·2:문서               ||안녕하세요, 헤르더 세계"]],
-      "200x60": [[0, "hc:default           <<| 1:main  2:logs"], [3, " ·2:문서               ||안녕하세요, 헤르더 세계"]],
+      "120x40": [[0, " spaces                  │  main     logs    +"], [2, " · ovis                  ││$ echo 안녕"], [3, " · 문서                  ││안녕하세요, 헤르더 세계"]],
+      "80x24": [[0, " spaces                  │  main     logs    +"], [3, " · 문서                  ││안녕하세요, 헤르더 세계"]],
+      "200x60": [[0, " spaces                  │  main     logs    +"], [3, " · 문서                  ││안녕하세요, 헤르더 세계"]],
     };
     for (const [cols, rows] of [[120, 40], [80, 24], [200, 60]] as const) {
       const run = await Run.start({ fixture: demo, cols, rows });
@@ -417,7 +500,8 @@ describe("whole-screen proofs on the runner", () => {
         await run.advance(10);
         const grid = run.grid();
         for (const [row, text] of expected[`${cols}x${rows}`]!) expect({ cols, row, text: grid[row]!.slice(0, [...text].length) }).toEqual({ cols, row, text });
-        expect(grid[rows - 1]!.startsWith(" TERMINAL  ctrl+b prefix prefix+enter menu prefix+? help")).toBe(true);
+        // terminal mode shows no mode line: the last row is the panes' bottom border, the sidebar's collapse mark beside it
+        expect(grid[rows - 1]!.startsWith(`${" ".repeat(24)}«│└`)).toBe(true);
       } finally {
         await run.close();
       }
@@ -426,16 +510,18 @@ describe("whole-screen proofs on the runner", () => {
     try {
       await agentRun.live();
       await agentRun.advance(20);
-      expect(agentRun.grid().slice(3, 12).map((line) => line.slice(0, 24))).toEqual([
-        "Agents                 |",
-        " Needs you (1)         |",
-        " ! blocked / claude    |",
-        " Working (1)           |",
-        " ~ working / claude    |",
-        " Done (1)              |",
-        " * done / claude       |",
-        " Ready (1)             |",
-        " - idle / claude       |",
+      expect(agentRun.grid().slice(21, 31).map((line) => line.slice(0, 26))).toEqual([
+        " agents           grouped│",
+        "                         │",
+        // herdr's two rows an agent, in pane order; the states show by the dots' colours (the 120x40 case above)
+        " ● agents · agents       │",
+        "   claude                │",
+        " ● agents · agents       │",
+        "   claude                │",
+        " ● agents · agents       │",
+        "   claude                │",
+        " ○ agents · agents       │",
+        "   claude                │",
       ]);
     } finally {
       await agentRun.close();
@@ -444,7 +530,7 @@ describe("whole-screen proofs on the runner", () => {
     try {
       await machineRun.live();
       await machineRun.advance(20);
-      expect(machineRun.grid()[2]!.slice(0, 24)).toBe(">·1:home               |");
+      expect(machineRun.grid()[2]!.slice(0, 26)).toBe(" · home                  │");
     } finally {
       await machineRun.close();
     }
@@ -452,19 +538,21 @@ describe("whole-screen proofs on the runner", () => {
 
   it("the mode bar in each mode, the help and its close key, a notice, and the offline line after the line is cut", async () => {
     const run = await Run.start({ fixture: demo, cols: 120, rows: 40 });
-    const bar = () => run.grid()[39]!;
+    // the bar lies over the panes' last row, right of the sidebar
+    const bar = () => run.grid()[39]!.slice(26);
     try {
       await run.live();
       await run.advance(1);
       await run.keys("ctrl+b");
       await run.advance(20);
-      expect(bar().startsWith(" PREFIX  ? help s settings")).toBe(true);
+      expect(bar().startsWith(" PREFIX  esc cancel  ctrl+b send prefix  w navigate  ? help")).toBe(true);
       await run.keys("?");
       await run.advance(20);
-      expect(run.grid()[2]!.slice(4, 116)).toBe(`+ Keyboard Shortcuts ${"-".repeat(68)} [close: esc / q / ?] +`);
-      await run.keys("q");
+      expect(run.grid()[9]!.slice(22, 98)).toBe(`┌${"─".repeat(74)}┐`);
+      expect(run.grid()[10]!.slice(23, 41)).toBe("Keyboard Shortcuts");
+      await run.keys("enter");
       await run.advance(200);
-      expect(run.grid()[2]!.slice(0, 24)).toBe(">·1:ovis               |");
+      expect(run.grid()[2]!.slice(0, 26)).toBe(" · ovis                  │");
       for (const [keys, mode] of [["ctrl+b,w", " NAVIGATE "], ["ctrl+b,r", " RESIZE "], ["ctrl+b,[", " COPY "]] as const) {
         await run.keys(keys);
         await run.advance(20);
@@ -474,31 +562,27 @@ describe("whole-screen proofs on the runner", () => {
       }
       await run.keys("ctrl+b,s");
       await run.advance(20);
-      expect(bar().endsWith("ERROR: not_built: settings is not built in this screen")).toBe(true);
       expect(run.grid()[2]!.includes("! not_built: settings is not built in this screen")).toBe(true);
       await run.cutLine();
       await run.advance(1_000);
-      expect(bar().startsWith(" TERMINAL  herdr-core is not answering: hc server start (")).toBe(true);
-      expect(run.grid()[38]!.slice(24, 62)).toBe("+- herdr-core is not answering · hc se");
+      expect(bar().startsWith(" ERROR  herdr-core is not answering: hc server start (")).toBe(true);
+      expect(run.grid()[1]!.slice(26, 28)).toBe("┌ ");
     } finally {
       await run.close();
     }
   }, 120_000);
 
-  it("a pane whose program exits shows ended (code) in its place until the core removes it", async () => {
+  it("a pane whose program exits is gone at once, as herdr closes it: its neighbour takes the room and loses its border", async () => {
     const run = await Run.start({ fixture: demo, cols: 120, rows: 40 });
     try {
       await run.live();
       await run.advance(1);
+      expect(run.grid()[1]!.slice(26, 34)).toBe("┌ shell ");
       run.core.program("t1").exit(3);
       await run.settle();
       await run.advance(20);
-      expect(run.grid()[38]!.slice(24, 40)).toBe("+- ended (3) ---");
-      expect(run.grid()[1]!.slice(24, 34)).toBe("+- shell /");
-      run.core.remove("t1");
-      await run.settle();
-      await run.advance(20);
-      expect(run.grid()[1]!.slice(24, 34)).toBe("+- files /");
+      // t2 alone in its tab now: no border, its first row at the top
+      expect(run.grid()[1]!.slice(26, 37)).toBe("~/ovis $ ls");
       expect(run.grid().some((line) => line.includes("ended ("))).toBe(false);
     } finally {
       await run.close();
@@ -513,13 +597,13 @@ it("names the hc session from its socket path", () => {
 });
 
 describe("calm notices", () => {
-  it("a calm notice is drawn without the error badge and with the plain glyph; another keeps both", () => {
-    const calm = draw({ cols: 120, rows: 40, events: [{ type: "notice", code: "layout_unchanged", data: { action: "zoom", reason: "single_pane" }, calm: true, at: 1 }] });
-    const error = draw({ cols: 120, rows: 40, events: [{ type: "notice", code: "layout_refused", data: { action: "zoom", reason: "pane_not_found" }, at: 1 }] });
-    expect(calm.rows[39]!.endsWith(" layout_unchanged: action=zoom reason=single_pane ")).toBe(true);
-    expect(calm.rows[39]!.includes("ERROR")).toBe(false);
+  it("a calm notice is drawn with the plain glyph, another with the error glyph; the bar repeats neither, as herdr's", () => {
+    // the bar is up for an armed prefix: it shows the mode and its hints only
+    const armed = { type: "key", key: "B", mods: { ctrl: true, shift: false, alt: false, super: false }, action: "press", at: 2 } as unknown as ModelEvent;
+    const calm = draw({ cols: 120, rows: 40, events: [{ type: "notice", code: "layout_unchanged", data: { action: "zoom", reason: "single_pane" }, calm: true, at: 1 }, armed] });
+    const error = draw({ cols: 120, rows: 40, events: [{ type: "notice", code: "layout_refused", data: { action: "zoom", reason: "pane_not_found" }, at: 1 }, armed] });
+    for (const shot of [calm, error]) expect([shot.rows[39]!.slice(26, 34), shot.rows[39]!.includes("layout_")]).toEqual([" PREFIX ", false]);
     expect(calm.rows.some((row) => row.includes("- layout_unchanged: action=zoom reason=single_pane"))).toBe(true);
-    expect(error.rows[39]!.endsWith(" ERROR: layout_refused: action=zoom reason=pane_not_found ")).toBe(true);
     expect(error.rows.some((row) => row.includes("! layout_refused: action=zoom reason=pane_not_found"))).toBe(true);
   });
 });

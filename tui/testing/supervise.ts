@@ -35,7 +35,7 @@ async function stty(): Promise<string | null> {
 // a hang-up of the pty reaches the entry too (the same process group); this process stays to report
 process.on("SIGHUP", () => {});
 
-type Signal = "SIGTERM" | "SIGINT" | "SIGHUP";
+type Signal = "SIGTERM" | "SIGINT" | "SIGHUP" | "SIGTSTP" | "SIGCONT";
 let child: ReturnType<typeof Bun.spawn> | null = null;
 const early: Signal[] = [];
 const deliver = (name: Signal) => {

@@ -8,7 +8,7 @@ export const SOURCE_OVIS = [process.execPath, join(import.meta.dir, "../../scrip
 /** The transcript an entry run keeps by default: past it the run is ended and every wait rejects. */
 export const ENTRY_MAX_OUTPUT_CHARS = 16 * 1024 * 1024;
 export const DETACH = "\x02q";
-export const RESTORE = "\x1b[<u\x1b[?1006l\x1b[?1002l\x1b[?2004l\x1b[?1004l\x1b[?25h\x1b[?1049l";
+export const RESTORE = "\x1b[<u\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?2004l\x1b[?1004l\x1b[?25h\x1b[?1049l";
 export const HOST_ANSWERS = [
   ["\x1b[?2026$p", "\x1b[?2026;2$y"],
   ["\x1b[c", "\x1b[?62;22c"],

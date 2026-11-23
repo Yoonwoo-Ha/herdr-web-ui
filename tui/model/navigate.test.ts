@@ -121,23 +121,23 @@ describe("navigate mode", () => {
     }
   });
 
-  it("works while a pane is zoomed: a focus move onto a covered pane moves the shared zoom there, except on a narrow screen", () => {
+  it("works while a pane is zoomed: a focus move onto a covered pane moves the shared zoom there", () => {
     const zoomed: World = { workspaces: [{ ...WORLD.workspaces[0]!, tabs: [{ ...WORLD.workspaces[0]!.tabs[0]!, zoomed: "p1" }, WORLD.workspaces[0]!.tabs[1]!] }, WORLD.workspaces[1]!] };
     const wide = navigating(undefined, zoomed);
     expect(outcome(wide, [text("l")]).run).toEqual(["zoom_follow:p2"]);
     expect(outcome(wide, [{ type: "select", target: { kind: "pane", id: "p2" }, at: AT }])).toEqual({ mode: "navigate", preview: "w1", shown: "w1/t1/p1", run: ["zoom_follow:p2"] });
     expect(outcome(wide, [key("TAB")]).run).toEqual(["zoom_follow:p2"]);
     expect(outcome(wide, [text("n")]).run).toEqual([]);
-    expect(outcome(navigating(undefined, zoomed, 45), [key("TAB")])).toEqual({ mode: "navigate", preview: "w1", shown: "w1/t1/p2", run: [] });
     // the zoom moved by someone else: the focus follows it, so the pane focused is the pane shown
     const moved: World = { ...zoomed, workspaces: [{ ...zoomed.workspaces[0]!, tabs: [{ ...zoomed.workspaces[0]!.tabs[0]!, zoomed: "p2" }, zoomed.workspaces[0]!.tabs[1]!] }, zoomed.workspaces[1]!] };
     expect(outcome(wide, [{ type: "world", world: moved, at: AT }])).toEqual({ mode: "navigate", preview: "w1", shown: "w1/t1/p2", run: [] });
   });
 
-  it("the zoom follows focus at 65 columns but the 64-column view stays local", () => {
-    for (const [cols, writes] of [[64, []], [65, ["zoom_follow:p2"]]] as const) {
-      expect(outcome(navigating(undefined, withZoom("p1"), cols), [key("TAB")])).toEqual({
-        mode: "navigate", preview: "w1", shown: cols === 64 ? "w1/t1/p2" : "w1/t1/p1", run: [...writes],
+  it("a focus move under a zoom writes the zoom on a narrow screen as on a wide one: both lay the tab's panes out alike", () => {
+    for (const cols of [64, 65]) {
+      const zoomed = after(initialState(undefined), { type: "resize", cols, rows: 40, at: AT }, { type: "world", world: withZoom("p1"), at: AT });
+      expect({ cols, ...outcome(zoomed, [{ type: "action", action: "cycle_pane_next", at: AT }]) }).toEqual({
+        cols, mode: "terminal", preview: null, shown: "w1/t1/p1", run: ["zoom_follow:p2"],
       });
     }
   });
@@ -351,12 +351,6 @@ describe("navigate mode on screen", () => {
     expect(run.core.sentOn("t2", { kinds: [FRAME_DATA] })).toEqual([]);
   }, TEST_MS);
 
-  it("on a narrow screen a focus move in a zoomed tab writes no layout", async () => {
-    const run = await start(twoWorkspaces("t1"), 45);
-    await run.keys("ctrl+b,w,tab,tab");
-    await run.advance(10);
-    expect([run.loop.model().focus.panes["t"], run.core.calls().filter((call) => call.method === "doc.set").length]).toEqual(["t3", 0]);
-  }, TEST_MS);
 });
 
 function sharedZoom(run: Run): readonly (string | null | undefined)[] {

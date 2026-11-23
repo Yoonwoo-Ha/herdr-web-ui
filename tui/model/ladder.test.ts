@@ -124,7 +124,7 @@ describe("the prefix machine", () => {
   const unboundKey = named("F5");
   const rows: Row[] = [
     { row: 1, name: "Idle, a prefix chord: Armed, the mode bar shows the keys after the prefix", from: idle, events: [prefix()], armed: true, pane: [],
-      check: (state) => { expect(modeBar(state).mode).toBe("prefix"); expect(modeBar(state).hints.map((hint) => hint.action)).toContain("new_tab"); } },
+      check: (state) => { expect(modeBar(state)!.mode).toBe("prefix"); expect(modeBar(state)!.hints.map((hint) => hint.label)).toEqual(["cancel", "sendPrefix", "workspaceNav", "keybinds"]); } },
     { row: 1, name: "Idle, a prefix chord: Armed with no deadline, and still Armed however late a deadline event comes", from: idle,
       events: [prefix(), { type: "deadline", name: "prefix", at: AT + 86_400_000 }], armed: true, pane: [],
       check: (state) => expect([...state.deadlines.keys()]).toEqual([]) },
@@ -253,7 +253,9 @@ describe("hangul once", () => {
     const enter = (state: ModelState) => reduce(state, { type: "key", key: "ENTER", mods: {}, action: "press", at: AT });
     const kept = enter(renaming);
     expect([kept.effects, kept.state.overlays]).toEqual([[], []]);
-    const edited = enter(after(renaming, text("x")));
+    // typed where nothing more fits, a character edits nothing; a deletion does
+    expect(enter(after(renaming, text("x"))).effects).toEqual([]);
+    const edited = enter(after(renaming, { type: "key", key: "BACKSPACE", mods: {}, action: "press", at: AT }, text("x")));
     expect(edited.effects).toEqual([{ type: "run", action: "rename_pane", target: { kind: "pane", id: "p1" }, index: null, name: "x" }]);
   });
 
@@ -270,9 +272,9 @@ describe("hangul once", () => {
     expect(rename(long)).toEqual([]);
     expect(rename(long, named("HOME"), named("END"))).toEqual([]);
     expect(rename(long, named("END"), named("DELETE"), text("z"))).toEqual([]); // no deletion and no room
-    expect(rename(long, paste(prefixName))).toEqual(expected);
+    expect(rename(long, paste(prefixName))).toEqual([]); // a paste adds to the name: no room either
     expect(rename(long, named("END"), named("BACKSPACE"), text("x"))).toEqual(expected);
-    expect(rename(prefixName, paste(prefixName))).toEqual([]); // explicitly replaced, but identical to the stored name
+    expect(rename(prefixName, named("END"), named("BACKSPACE"), text("x"))).toEqual([]); // edited, but identical to the stored name
   });
 });
 
@@ -284,18 +286,23 @@ describe("overlay close keys", () => {
       confirm: after(idle, prefix(), key("D")),
       goto: after(idle, prefix(), text("g")),
       menu: after(idle, prefix(), named("ENTER")),
-      agents: after(idle, prefix(), text("a")),
+      switcher: after(reduce(idle, { type: "resize", cols: 45, rows: 30, at: AT } as ModelEvent).state, prefix(), text("w")),
+      context: reduce(idle, { type: "context", target: { kind: "pane", id: focused(idle.world, idle.focus).pane!.id }, cell: { x: 30, y: 4 }, at: AT }).state,
+      worktrees: reduce(idle, { type: "worktrees", target: { kind: "workspace", id: idle.world.workspaces[0]!.id }, checkouts: [], at: AT }).state,
     };
     for (const [kind, entry] of Object.entries(OVERLAYS)) {
       const state = open[kind as keyof typeof OVERLAYS];
       expect(state.overlays.map((overlay): string => overlay.kind)).toEqual([kind]);
       for (const closeKey of entry.closeKeys) {
-        const event = closeKey === "esc" ? named("ESCAPE") : key(closeKey);
+        const event = closeKey === "esc" ? named("ESCAPE") : closeKey === "enter" ? named("ENTER") : key(closeKey);
         expect({ kind, closeKey, open: reduce(state, event).state.overlays.length }).toEqual({ kind, closeKey, open: 0 });
       }
     }
-    // a key that is not declared does not close help
+    // a key that is not declared does not close help; while its filter is typed, Escape and Enter are the filter's
     expect(reduce(open.help, key("x")).state.overlays.length).toBe(1);
+    const filtering = after(open.help, text("/"));
+    expect(reduce(filtering, named("ESCAPE")).state.overlays.length).toBe(1);
+    expect(reduce(filtering, named("ENTER")).state.overlays.length).toBe(1);
   });
 
   it("a click on an overlay's close control closes it as its first close key does; with none open it changes nothing", () => {
@@ -379,7 +386,7 @@ describe("layout actions as data", () => {
     expect(runs(down)).toEqual([{ type: "run", action: "navigate_move_down", target: { kind: "workspace", id: "w2" }, index: null, name: null }]);
     const move = reduce(pointing, text("m"));
     expect([runs(move), move.state.mode.name]).toEqual([[{ type: "run", action: "navigate_move_pane", target: { kind: "pane", id: "p1" }, index: null, name: "a", to: "w2" }], "terminal"]);
-    expect(modeBar(pointing).hints.filter((hint) => hint.action.startsWith("navigate_move")).map((hint) => hint.keys)).toEqual([["shift+up"], ["shift+down"], ["m"]]);
+    expect(modeBar(pointing)).toMatchObject({ mode: "navigate", hints: [{ key: "", label: "escBack" }, { key: "↑/↓", label: "workspace" }, { key: "tab", label: "pane" }, { key: "?", label: "keybinds" }] });
   });
 
   it("a calm notice is marked calm; any other is not", () => {

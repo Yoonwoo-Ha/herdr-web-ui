@@ -190,6 +190,35 @@ export class Painter {
     return this.next;
   }
 
+  /**
+   * The hit map `scene` has, from its parts' and overlays' own drawing, without composing or writing anything: what the
+   * pointer meets once input changed the model after the last frame (a right-click menu just opened, then a click on it),
+   * as it would meet the next frame.
+   */
+  hitMap(scene: Pick<Scene, "width" | "height" | "parts" | "overlays"> & { readonly panes: readonly Pick<PaneScene, "id" | "rect">[] }): HitMap {
+    const screen: Rect = { x: 0, y: 0, width: Math.max(0, Math.floor(scene.width)), height: Math.max(0, Math.floor(scene.height)) };
+    const hits: Hit[] = [];
+    const measure = (part: Part): void => {
+      const clip = intersect(part.rect, screen);
+      hits.push({ rect: clip, target: { part: part.key, id: "" } });
+      part.draw({
+        rect: clip,
+        style: () => 0,
+        put: () => {},
+        print: (col, _row, text) => col + this.host.layout(text.replace(CONTROL, "\ufffd")).end,
+        fill: () => {},
+        hit: (rect, id) => {
+          const inside = intersect(rect, clip);
+          if (inside.width > 0) hits.push({ rect: inside, target: { part: part.key, id } });
+        },
+      });
+    };
+    for (const part of scene.parts) measure(part);
+    for (const pane of scene.panes) hits.push({ rect: intersect(pane.rect, screen), target: { pane: pane.id } });
+    for (const overlay of scene.overlays) measure(overlay);
+    return new HitMap(hits);
+  }
+
   paint(scene: Scene): Frame {
     if (this.pending) this.taken(false);
     const width = Math.max(0, Math.floor(scene.width));

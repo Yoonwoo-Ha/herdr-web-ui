@@ -3,11 +3,12 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeHcCore } from "../../server/herdr-core/core.fake.ts";
-import { OVIS_LAYOUT_DOC } from "../../server/herdr-core/layout-doc.ts";
+import { OVIS_LAYOUT_DOC, OVIS_LAYOUT_SCHEMA } from "../../server/herdr-core/layout-doc.ts";
 import { agents } from "../testing/fixtures/agents.ts";
 import { demo } from "../testing/fixtures/demo.ts";
 import { Run } from "../testing/run.ts";
 import { type ViewFiles, ViewStore } from "../view-store.ts";
+import { FIRST_CLAIM_MS } from "./deadlines.ts";
 import { type Focus, nextFocus, type World } from "./focus.ts";
 import { initialState, type ModelState, reduce } from "./reduce.ts";
 import { readView, restoredFocus, VIEW_FILE_MAX_BYTES, type ViewProblem, viewText } from "./view-file.ts";
@@ -393,7 +394,7 @@ describe("a rerun of the screen on the same core", () => {
     for (const secret of ["typed-secret", "printed-secret", "\"ovis\"", "\"main\"", "\"logs\"", "shell", "files", "문서", "안녕"]) expect({ secret, found: text.includes(secret) }).toEqual({ secret, found: false });
     const again = await first(core, folder, 45, 30);
     expect(again.loop.model().focus.panes["t-main"]).toBe("t2");
-    expect(again.loop.panes.views().map((view) => view.terminal)).toEqual(["t2"]);
+    expect(again.loop.panes.views().map((view) => view.terminal).sort()).toEqual(["t1", "t2"]);
     expect(again.loop.model().notices).toEqual([]);
   }, TEST_MS);
 
@@ -488,12 +489,17 @@ describe("a rerun of the screen on the same core", () => {
     const file = join(folder, "view-coreone.json");
     const kept = readFileSync(file, "utf8");
     expect(JSON.parse(kept).focus.tabs["w-ovis"]).toBe("t-logs");
-    const empty = await Run.start({ core: new FakeHcCore(options("coreone")), views: new ViewStore(folder) });
+    // another screen holds the claim to open the first workspace (tui/core/layout.ts `claimFirst`): this one leaves the core empty
+    const claimed = (core: FakeHcCore) => {
+      core.docs.set(OVIS_LAYOUT_DOC, { value: { schema: OVIS_LAYOUT_SCHEMA, workspaces: [], first_workspace: { opening: true, until: FIRST_CLAIM_MS } }, version: 1 });
+      return core;
+    };
+    const empty = await Run.start({ core: claimed(new FakeHcCore(options("coreone"))), views: new ViewStore(folder) });
     runs.push(empty);
     expect(empty.loop.model().world.workspaces).toEqual([]);
     await empty.cutLine();
     await empty.advance(1_000);
-    const other = id === "coreone" && !initiallyEmpty ? original : new FakeHcCore(options(id));
+    const other = id === "coreone" && !initiallyEmpty ? original : initiallyEmpty ? claimed(new FakeHcCore(options(id))) : new FakeHcCore(options(id));
     if (!initiallyEmpty && other !== original) demo.build(other); // another core can issue the same addresses
     const listener = await other.listen(empty.socket);
     try {
@@ -529,5 +535,6 @@ describe("a rerun of the screen on the same core", () => {
     await again.advance(10);
     expect(again.loop.model().focus.panes["t-main"]).toBe("t1");
     expect(again.loop.model().notices.map((notice) => notice.code)).toEqual(["view_moved"]);
+    expect(again.grid().join("\n")).toContain("view_moved: the place this core was left at is gone");
   }, TEST_MS);
 });

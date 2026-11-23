@@ -28,7 +28,7 @@ export class SeenWrites {
   private readonly turns = new Map<string, number>();
 
   /** `failed` hears a write that did not get through (its line ended): it is not tried again */
-  constructor(private readonly marker: Pick<SeenMarker, "mark" | "unread">, private readonly failed: (error: unknown) => void) {}
+  constructor(private readonly marker: Pick<SeenMarker, "mark">, private readonly failed: (error: unknown) => void) {}
 
   get current(): string | null {
     return this.looked;
@@ -63,11 +63,6 @@ export class SeenWrites {
    */
   snapshot(): void {
     for (const terminal of this.told.keys()) this.hear(terminal);
-  }
-
-  /** "Mark unread" on `terminal`: its last turn shows as done again, on every client. */
-  unread(terminal: string): void {
-    this.marker.unread(terminal).catch(this.failed);
   }
 
   private again(): void {

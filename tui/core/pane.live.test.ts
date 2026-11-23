@@ -6,7 +6,7 @@ import { coreFolder, IsolatedCore, type StopReport, stoppedCleanly } from "../..
 import { AUTOMATIC_INPUT_FEATURE, type Channel, HcConnection } from "../../server/herdr-core/connection.ts";
 import { FakeHcCore } from "../../server/herdr-core/core.fake.ts";
 import { connectCoreSocket } from "../../server/herdr-core/socket-transport.ts";
-import { REATTACH_SETTLE_MS } from "../model/deadlines.ts";
+import { REATTACH_SETTLE_MS, RESIZE_SETTLE_MS } from "../model/deadlines.ts";
 import { picture, type Screen, Stage } from "../testing/pane-harness.ts";
 
 /**
@@ -259,7 +259,7 @@ describe.skipIf(!bin || process.platform === "win32")("the pane machine against 
 
     // a host resize: no RESIZE, one new attach with the new rectangle; alone, the terminal takes it
     screen.show([t, 100, 30]);
-    await stage.advance(REATTACH_SETTLE_MS - 1);
+    await stage.advance(RESIZE_SETTLE_MS - 1);
     expect(screen.attaches.length).toBe(1);
     await stage.advance(1);
     await live(t);

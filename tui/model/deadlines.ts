@@ -104,6 +104,12 @@ export const PAINT_QUIET_MS = 1_000;
  */
 export const REATTACH_SETTLE_MS = 150;
 /**
+ * How long a pane waits after the last change of its own rectangle before it attaches again. A host
+ * sends a dragged window's steps at its frame rate (16 ms at 60 Hz), so two frames still make a drag
+ * one attach; the size rules do not depend on it (another viewer's change still waits REATTACH_SETTLE_MS).
+ */
+export const RESIZE_SETTLE_MS = 32;
+/**
  * How often in a row a pane attaches again by itself after its stream was dropped though its terminal
  * lives, or after its emulator died, before it is Failed and waits for the user's retry. Counted from
  * the last time the pane was live.
@@ -124,6 +130,13 @@ export const QUIT_BOUND_MS = 2_000;
  * refused, never sent to the pane focused before.
  */
 export const LAYOUT_SHOWN_WAIT_MS = 2_000;
+/**
+ * How long a screen's claim to open the first workspace holds once written (tui/core/layout.ts `claimFirst`). The screen
+ * lets it go when it is done or leaves; one that died holding it leaves the claim to this time, after which another
+ * screen takes it. Longer than a call waits for its answer (10 s), so the shell's start a claim covers was answered, or
+ * given up, before another screen starts one.
+ */
+export const FIRST_CLAIM_MS = 15_000;
 /** The most input events that wait behind a layout write; past it nothing more waits until the write is done. */
 export const BEHIND_WRITE_EVENTS = 4_096;
 /** The most bytes of typed and pasted text that wait behind a layout write: one paste at its limit. */

@@ -4,8 +4,8 @@ import { createUnixHost } from "./unix.ts";
 // The real host's wiring over stand-ins for stdin, stdout and the process: never this test's own
 // terminal. tui/host/restore.contract.test.ts runs the same host on a real pseudo-terminal.
 const ESC = "\x1b";
-const ENTER = `${ESC}[?1049h${ESC}[?25l${ESC}[?1004h${ESC}[?2004h${ESC}[?1002h${ESC}[?1006h${ESC}[>1u`;
-const LEAVE = `${ESC}[<u${ESC}[?1006l${ESC}[?1002l${ESC}[?2004l${ESC}[?1004l${ESC}[?25h${ESC}[?1049l`;
+const ENTER = `${ESC}[?1049h${ESC}[?25l${ESC}[?1004h${ESC}[?2004h${ESC}[?1002h${ESC}[?1003h${ESC}[?1006h${ESC}[>1u`;
+const LEAVE = `${ESC}[<u${ESC}[?1006l${ESC}[?1003l${ESC}[?1002l${ESC}[?2004l${ESC}[?1004l${ESC}[?25h${ESC}[?1049l`;
 
 type Listener = (...args: unknown[]) => void;
 
@@ -28,7 +28,7 @@ function standIns(options: { stdinTTY?: boolean; stdoutTTY?: boolean; env?: Reco
     unref: () => { log.push("unref"); },
   });
   const stdout = Object.assign(new Emitter(), { isTTY: options.stdoutTTY ?? true, fd: 1, columns: 120, rows: 40 });
-  const proc = Object.assign(new Emitter(), { exit: (code: number) => { log.push(`exit ${code}`); } });
+  const proc = Object.assign(new Emitter(), { exit: (code: number) => { log.push(`exit ${code}`); }, pid: 4242, kill: (pid: number, signal: string) => { log.push(`kill ${pid} ${signal}`); } });
   const failures: string[] = [];
   const refuse = { always: false, pauses: 0 };
   const writeSync = (fd: number, buffer: Uint8Array, offset: number, length: number) => {
@@ -44,6 +44,23 @@ function standIns(options: { stdinTTY?: boolean; stdoutTTY?: boolean; env?: Reco
 }
 
 describe("the unix host", () => {
+  it("SIGTSTP gives the terminal back (every mode off, raw off) before the process stops itself; SIGCONT enters again and asks for a repaint", () => {
+    const { host, log, proc, written } = standIns();
+    const sizes: unknown[] = [];
+    host.onResize((size: unknown) => sizes.push(size));
+    host.enter();
+    const entered = written();
+    proc.emit("SIGTSTP");
+    const atStop = log.slice();
+    expect(written().slice(entered.length)).toBe(LEAVE);
+    expect(atStop.at(-1)).toBe("kill 4242 SIGSTOP");
+    expect(atStop.filter((entry: string) => entry.startsWith("raw")).at(-1)).toBe("raw off");
+    proc.emit("SIGCONT");
+    expect(written().slice(entered.length + LEAVE.length)).toBe(ENTER);
+    expect(log.filter((entry: string) => entry.startsWith("raw")).at(-1)).toBe("raw on");
+    expect(sizes).toEqual([{ cols: 120, rows: 40 }]);
+  });
+
   it("enters nothing when stdin or stdout is not a terminal", () => {
     for (const ttys of [{ stdinTTY: false }, { stdoutTTY: false }]) {
       const { host, log, proc, stdin, stdout } = standIns(ttys);
@@ -136,7 +153,7 @@ describe("the unix host", () => {
     Object.assign(stdout, { columns: 100, rows: 30 });
     stdout.emit("resize");
     expect(sizes).toEqual([{ cols: 100, rows: 30 }]);
-    expect(written()).toBe(`${ENTER}${ESC}[?1004h${ESC}[?2004h${ESC}[?1002h${ESC}[?1006h${ESC}[=1;1u`);
+    expect(written()).toBe(`${ENTER}${ESC}[?1004h${ESC}[?2004h${ESC}[?1002h${ESC}[?1003h${ESC}[?1006h${ESC}[=1;1u`);
   });
 
   it("takes the colour depth from COLORTERM", () => {

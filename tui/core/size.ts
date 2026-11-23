@@ -31,7 +31,8 @@
  *   repaint left, when the user's input took the terminal, when the terminal has one of those two
  *   sizes again (a later event, or a changed rectangle), and with the attach itself. The new attach
  *   advertises `chosen`, the size the last viewer chose, so it only repaints.
- * Both wait REATTACH_SETTLE_MS after the last such change; when both wait, the first kind is made.
+ * The first waits RESIZE_SETTLE_MS after the last such change, the second REATTACH_SETTLE_MS; when both wait, the first
+ * kind is made, REATTACH_SETTLE_MS after its last change.
  * A wait that outlived its cause would be counted again by a later attach: an attach with the
  * rectangle that nobody asked for, which between two idle screens takes the terminal back.
  *
@@ -77,7 +78,7 @@
  * and that viewer left. It is then drawn clipped at that size until the user types into it.
  */
 
-import { REATTACH_SETTLE_MS } from "../model/deadlines.ts";
+import { REATTACH_SETTLE_MS, RESIZE_SETTLE_MS } from "../model/deadlines.ts";
 
 export interface Size { cols: number; rows: number }
 
@@ -250,7 +251,8 @@ export function refused(size: PaneSize, drawn: Size | null): PaneSize {
 
 /** When the pane must attach again, or null when nothing waits. `attachSize` says what that attach advertises. */
 export function reattachDue(size: PaneSize): number | null {
-  if (size.ownAt !== null) return size.ownAt + REATTACH_SETTLE_MS;
+  // beside another viewer's change still settling, this screen's waits as long as that one: the shorter wait is the lone screen's
+  if (size.ownAt !== null) return size.ownAt + (size.foreignAt === null ? RESIZE_SETTLE_MS : REATTACH_SETTLE_MS);
   if (size.foreignAt !== null) return size.foreignAt + REATTACH_SETTLE_MS;
   return null;
 }

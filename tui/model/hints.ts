@@ -8,8 +8,16 @@ import { CONFIG_TEXT_MAX_CHARS, REFUSALS_SHOWN } from "./deadlines.ts";
 import type { KeyAction, Keymap, KeyRow, Mode } from "./keymap.ts";
 import type { ModelState } from "./reduce.ts";
 
-export interface Hint { readonly action: KeyAction | "prefix"; readonly keys: readonly string[] }
-export interface ModeBar { readonly mode: Mode | "prefix" | "locked"; readonly hints: readonly Hint[] }
+/** One hint of the mode bar: its key (drawn as a key; "" for a hint drawn all as its label) and what it does. */
+export interface Hint { readonly key: string; readonly label: ModeHintId }
+/**
+ * The mode bar outside terminal mode: the mode, what follows its badge before the first hint, and one short fixed set of
+ * hints (herdr's), two spaces apart. Terminal mode has no bar.
+ */
+export interface ModeBar { readonly mode: Exclude<Mode, "terminal"> | "prefix" | "locked"; readonly lead: string; readonly hints: readonly Hint[] }
+
+/** What the copy mode's hints read from the copy session: whether a selection or a search is under way. */
+export interface CopyLook { readonly selecting: boolean; readonly searched: boolean }
 
 // control characters, bidi controls and zero-width characters: they could move or hide what is drawn
 const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g;
@@ -27,37 +35,77 @@ function keysOf(row: KeyRow, prefixed: boolean | null): string[] {
     .map((text) => cleanConfigText(prefixed === true ? text.replace(/^prefix\+/, "") : text));
 }
 
-function hints(rows: readonly KeyRow[], prefixed: boolean | null): Hint[] {
-  return rows.flatMap((row) => {
-    const keys = keysOf(row, prefixed);
-    return keys.length === 0 ? [] : [{ action: row.action, keys }];
-  });
+/** The key an action of terminal mode is typed with after the prefix, as the mode bar shows it; "unset" when it has none. */
+function afterPrefix(rows: readonly KeyRow[], action: KeyAction): string {
+  const row = rows.find((one) => one.mode === "terminal" && one.action === action);
+  return (row ? keysOf(row, true)[0] : undefined) ?? HELP_UNSET;
+}
+
+/** The texts of one row's keys in any mode, every binding as written. */
+function rowKeys(rows: readonly KeyRow[], mode: Mode, action: KeyAction): string[] {
+  const row = rows.find((one) => one.mode === mode && one.action === action);
+  return row ? keysOf(row, null) : [];
 }
 
 /**
- * The keys of the current mode: after the prefix while it is armed, the unlock chord while locked, the mode's own keys
- * otherwise. In Terminal mode: the prefix, the menu (which reaches every action), then the help.
+ * The mode bar: none in Terminal mode (null); otherwise the mode and its own short set of hints. The prefix shows how to
+ * cancel it, send it on, navigate and open the help; navigate and resize their few keys; copy mode its motions, search,
+ * selection, copy and exit (`copy` says whether a selection or a search is under way). Locked shows its unlock chord.
  */
-export function modeBar(state: ModelState): ModeBar {
+export function modeBar(state: ModelState, copy: CopyLook = { selecting: false, searched: false }): ModeBar | null {
   const { rows } = state.keymap;
-  if (state.locked) return { mode: "locked", hints: hints(rows.filter((row) => row.action === "lock"), null) };
-  if (state.armed) return { mode: "prefix", hints: hints(rows.filter((row) => row.mode === "terminal"), true) };
-  if (state.mode.name !== "terminal") {
-    const mode = state.mode.name;
-    const keys = rows.filter((row) => row.mode === mode);
-    return { mode, hints: hints(state.mode.name !== "copy" ? keys : state.mode.phase === "hints"
-      ? keys.filter(({ action }) => action === "copy_label" || action === "copy_leave" || action === "copy_hints")
-      : keys.filter(({ action }) => action !== "copy_label"), null) };
+  if (state.locked) return { mode: "locked", lead: " ", hints: rowKeys(rows, "terminal", "lock").slice(0, 1).map((key) => ({ key, label: "unlock" })) };
+  if (state.armed) {
+    return {
+      mode: "prefix", lead: " ", hints: [
+        { key: "esc", label: "cancel" },
+        { key: cleanConfigText(state.keymap.prefixes[0]?.text ?? HELP_UNSET), label: "sendPrefix" },
+        { key: afterPrefix(rows, "workspace_picker"), label: "workspaceNav" },
+        { key: afterPrefix(rows, "help"), label: "keybinds" },
+      ],
+    };
   }
-  return {
-    mode: "terminal",
-    hints: [
-      { action: "prefix", keys: state.keymap.prefixes.map((prefix) => cleanConfigText(prefix.text)) },
-      ...hints(rows.filter((row) => row.action === "menu"), null),
-      ...hints(rows.filter((row) => row.action === "help"), null),
-    ],
-  };
+  switch (state.mode.name) {
+    case "terminal":
+      return null;
+    case "navigate":
+      return {
+        mode: "navigate", lead: " ", hints: [
+          { key: "", label: "escBack" },
+          { key: "↑/↓", label: "workspace" },
+          { key: "tab", label: "pane" },
+          { key: afterPrefix(rows, "help"), label: "keybinds" },
+        ],
+      };
+    case "resize":
+      return {
+        mode: "resize", lead: "  ", hints: [
+          { key: "h/l", label: "width" },
+          { key: "j/k", label: "height" },
+          { key: "esc", label: "done" },
+        ],
+      };
+    case "copy": {
+      const quiet = !copy.selecting && !copy.searched;
+      return {
+        mode: "copy", lead: " ", hints: [
+          { key: "h/j/k/l w/b/e { }", label: "move" },
+          { key: "/ ?", label: "search" },
+          { key: "n/N", label: "repeat" },
+          { key: "v/space", label: copy.selecting ? "selecting" : "select" },
+          { key: "y/enter", label: "copy" },
+          { key: quiet ? "q/esc" : "esc", label: quiet ? "exit" : "clearExit" },
+        ],
+      };
+    }
+  }
 }
+
+/** The ids of the mode bar's words (tui/strings.ts `modeHints` holds them). */
+export type ModeHintId = "cancel" | "sendPrefix" | "workspaceNav" | "keybinds" | "escBack" | "workspace" | "pane" | "width" | "height" | "done"
+  | "move" | "search" | "repeat" | "select" | "selecting" | "copy" | "exit" | "clearExit" | "unlock";
+
+const HELP_UNSET = "unset";
 
 export interface HelpRow {
   readonly mode: Mode;

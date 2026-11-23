@@ -2,6 +2,7 @@ import type { PaneNotice, Panes, PaneView } from "../core/pane.ts";
 import { clipTop } from "../core/size.ts";
 import type { Emulator, EmulatorResult, EngineHistory, ScreenPoint, ScreenRange } from "../emulator/index.ts";
 import type { Effect } from "../model/effects.ts";
+import type { CopyLook } from "../model/hints.ts";
 import { type CopyHint, visibleCopyHints } from "./copy-hints.ts";
 import { clamp, movedCopyPoint } from "./copy-motion.ts";
 import { holds } from "./geometry.ts";
@@ -195,6 +196,12 @@ export class CopyView {
 
   searchNotice(): Session["searchNotice"] {
     return this.session?.searchNotice ?? null;
+  }
+
+  /** Whether a selection or a search is under way, for the copy mode's hints. */
+  look(): CopyLook {
+    const s = this.session;
+    return { selecting: s?.selection != null, searched: (s?.query ?? "") !== "" };
   }
 
   draw(scene: PaneScene): { pane: PaneScene; hints: readonly CopyHint[]; input: Scene["input"]; searchNotice: Session["searchNotice"] } | null {

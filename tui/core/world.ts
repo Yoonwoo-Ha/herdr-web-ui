@@ -8,12 +8,13 @@
 
 import type { CoreChange } from "../../server/herdr-core/core-model.ts";
 import { type LayoutNode, OVIS_LAYOUT_DOC } from "../../server/herdr-core/layout-doc.ts";
-import { buildSnapshot, coreHost, type FirstTurn, type HcTerminal, isRecord, LAYOUT_DOC } from "../../server/herdr-core/snapshot.ts";
+import { buildSnapshot, coreHost, type FirstTurn, type HcTerminal, isRecord, keptLayout, LAYOUT_DOC } from "../../server/herdr-core/snapshot.ts";
 import { nestHelpers, sidebarAgents } from "../../shared/agent-roster.ts";
 import { type AgentGroup, groupAgentRows, knownStatus, type KnownStatus, rollupStatus } from "../../shared/attention.ts";
 import type { AgentStatus, PaneLayoutSnapshot } from "../../shared/herdr-api.generated.ts";
 import { folderName } from "../../shared/pane-title.ts";
 import { worktreeGroups } from "../../shared/worktree-groups.ts";
+import { branchOf } from "./git-head.ts";
 import type { World } from "../model/focus.ts";
 import type { LinkNotice } from "./link.ts";
 
@@ -48,10 +49,18 @@ interface AgentRowView {
   readonly workspace: string;
 }
 
-interface WorkspaceRowView { readonly id: string; readonly name: string; readonly number: number; readonly status: KnownStatus }
+interface WorkspaceRowView {
+  readonly id: string;
+  readonly name: string;
+  readonly number: number;
+  readonly status: KnownStatus;
+  /** the branch of the git checkout its first pane works in (git-head.ts); null outside one */
+  readonly branch: string | null;
+}
 
 /** A top-level workspace in the sidebar and the linked worktree workspaces grouped under it (shared/worktree-groups.ts). */
-interface WorkspaceGroupView extends WorkspaceRowView { readonly children: readonly WorkspaceRowView[] }
+/** `collapsed`: its worktree workspaces are folded in the sidebar (the layout document's) */
+interface WorkspaceGroupView extends WorkspaceRowView { readonly children: readonly WorkspaceRowView[]; readonly collapsed: boolean }
 
 export interface CoreView {
   readonly world: World;
@@ -80,17 +89,6 @@ export interface CoreRead {
   readonly params: { readonly all: true };
   /** the newest status told before this read was asked for */
   readonly told: number;
-}
-
-/**
- * A terminal whose program ended by itself keeps its place in its tab, its last picture and "ended (code)" drawn there
- * (the pane machine's Ended state), for as long as the core keeps its finished record: until something removes it (hc
- * 0.1.17 and 0.1.18 keep it until `terminal.rm`). A terminal someone killed, or one finished by the core stopping, leaves
- * at once, as in the browser.
- */
-export function keepsPlace<T extends object>(record: T): T {
-  const fields = record as Record<string, unknown>;
-  return fields["state"] === "finished" && fields["reason"] === "exited" ? { ...record, state: "live" } : record;
 }
 
 function byAddress(terminals: readonly unknown[]): Map<string, Record<string, unknown>> {
@@ -183,6 +181,9 @@ export class CoreWorld {
   private reading: CoreRead | null = null;
   private shown: CoreView = EMPTY;
   private stale = false;
+  /** each workspace's first pane's folder and the branch read there when the view was last built */
+  private readonly firstFolders = new Map<string, string>();
+  private readonly branches = new Map<string, string | null>();
   private version = "";
 
   /**
@@ -265,12 +266,28 @@ export class CoreWorld {
     this.version = version;
   }
 
+  /**
+   * Reads each workspace's branch again from git's files (git-head.ts: no process, a fraction of a millisecond each), so
+   * a branch switched in a pane shows at the next key or focus change instead of at the core's next change. True when
+   * one differs: the next `view` is built again.
+   */
+  rereadBranches(): boolean {
+    for (const [workspace, folder] of this.firstFolders) {
+      if (branchOf(folder) !== (this.branches.get(workspace) ?? null)) {
+        this.stale = true;
+        return true;
+      }
+    }
+    return false;
+  }
+
   view(): CoreView {
     if (!this.stale) return this.shown;
     this.stale = false;
     const appDoc = this.docs.get(LAYOUT_DOC) ?? null;
     const ovisDoc = this.docs.get(OVIS_LAYOUT_DOC) ?? null;
-    const snapshot = buildSnapshot([...this.records.values()].map(keepsPlace) as unknown as HcTerminal[], appDoc, this.version, this.model.firstTurn, ovisDoc, undefined, this.model.host);
+    const terminals = [...this.records.values()] as unknown as HcTerminal[];
+    const snapshot = buildSnapshot(terminals, appDoc, this.version, this.model.firstTurn, ovisDoc, undefined, this.model.host);
     const tabs = new Map<string, TabShape>();
     for (const layout of snapshot.layouts) {
       const root = treeOf(layout);
@@ -290,6 +307,18 @@ export class CoreWorld {
       });
     }
     const order = new Map(snapshot.layouts.map((layout) => [layout.tab_id, layout.panes.map((pane) => pane.pane_id)]));
+    /** the branch of the checkout a workspace's first pane (its first tab's first) works in, kept for `rereadBranches` */
+    this.firstFolders.clear();
+    this.branches.clear();
+    const branchOfWorkspace = (workspace: string): string | null => {
+      const tab = snapshot.tabs.find((candidate) => candidate.workspace_id === workspace);
+      const first = snapshot.panes.find((pane) => pane.pane_id === (order.get(tab?.tab_id ?? "") ?? [])[0]);
+      const folder = first ? first.foreground_cwd ?? first.cwd : null;
+      const branch = folder ? branchOf(folder) : null;
+      if (folder) this.firstFolders.set(workspace, folder);
+      this.branches.set(workspace, branch);
+      return branch;
+    };
     const tabStatuses = new Map<string, KnownStatus>();
     for (const tab of snapshot.tabs) tabStatuses.set(tab.tab_id, rollupStatus((order.get(tab.tab_id) ?? []).map((id) => panes.get(id)?.status)));
     const workspaceRow = (workspace: (typeof snapshot.workspaces)[number]): WorkspaceRowView => ({
@@ -297,6 +326,7 @@ export class CoreWorld {
       name: workspace.label,
       number: workspace.number,
       status: rollupStatus(snapshot.panes.filter((pane) => pane.workspace_id === workspace.workspace_id).map((pane) => panes.get(pane.pane_id)?.status)),
+      branch: branchOfWorkspace(workspace.workspace_id),
     });
     for (const address of this.since.keys()) if (!panes.has(address)) this.since.delete(address);
     // what is first seen in this view dates from it: every terminal of the first snapshot alike; one that turns up later
@@ -314,22 +344,35 @@ export class CoreWorld {
     // until the next read: such a pane is no agent row meanwhile
     const agentless = new Set([...this.told].flatMap(([address, told]) => (told.agent === null ? [address] : [])));
     const agents = buildAgents({ ...snapshot, agents: snapshot.agents.filter((agent) => !agentless.has(agent.pane_id)) }, panes, since);
+    // what only the terminal screen keeps in Ovis's layout document (the panes that take right presses, the folded
+    // groups), read as every edit of the document reads it (`keptLayout`): a pane moved to another tab keeps its setting
+    const kept = keptLayout(terminals, ovisDoc);
+    const keptTabs = new Map(kept.workspaces.flatMap((workspace) => workspace.tabs).map((tab) => [tab.id, tab]));
+    const folded = new Set(kept.workspaces.filter((workspace) => workspace.collapsed).map((workspace) => workspace.id));
+    const groups = worktreeGroups(snapshot.workspaces);
+    const parents = new Map(groups.flatMap(({ workspace, children }) => children.map((child) => [child.workspace_id, workspace.workspace_id] as const)));
+    const withChildren = new Set(groups.filter(({ children }) => children.length > 0).map(({ workspace }) => workspace.workspace_id));
+    const rows = new Map(snapshot.workspaces.map((workspace) => [workspace.workspace_id, workspaceRow(workspace)]));
     this.shown = {
       tabs,
       panes,
       tabStatuses,
-      workspaceGroups: worktreeGroups(snapshot.workspaces).map(({ workspace, children }) => ({ ...workspaceRow(workspace), children: children.map(workspaceRow) })),
+      workspaceGroups: groups.map(({ workspace, children }) => ({ ...rows.get(workspace.workspace_id)!, children: children.map((child) => rows.get(child.workspace_id)!), collapsed: folded.has(workspace.workspace_id) })),
       agents,
       ownsLayout: appDoc === null,
       world: {
         workspaces: snapshot.workspaces.map((workspace) => ({
           id: workspace.workspace_id,
           name: workspace.label,
+          ...(rows.get(workspace.workspace_id)!.branch !== null ? { branch: rows.get(workspace.workspace_id)!.branch! } : {}),
+          ...(parents.has(workspace.workspace_id) ? { parent: parents.get(workspace.workspace_id)! } : {}),
+          ...(withChildren.has(workspace.workspace_id) ? { group: { collapsed: folded.has(workspace.workspace_id) } } : {}),
           tabs: snapshot.tabs.filter((tab) => tab.workspace_id === workspace.workspace_id).map((tab) => ({
             id: tab.tab_id,
             name: tab.label,
             root: tabs.get(tab.tab_id)?.root,
             ...zoomOf(tabs.get(tab.tab_id)),
+            ...(keptTabs.get(tab.tab_id)?.passthrough ? { passthrough: keptTabs.get(tab.tab_id)!.passthrough! } : {}),
             panes: (order.get(tab.tab_id) ?? []).map((id) => {
               const created = this.records.get(id)?.["created_ms"];
               const agent = panes.get(id)?.agent ?? null;

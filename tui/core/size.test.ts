@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { FRAME_CLOSE, FRAME_DATA, FRAME_FACTS, FRAME_FOCUS, FRAME_RESIZE } from "../../server/herdr-core/connection.ts";
 import { type FakeCoreOptions, FakeHcCore, FEATURES_0_1_17, HEADLESS } from "../../server/herdr-core/core.fake.ts";
-import { REATTACH_SETTLE_MS } from "../model/deadlines.ts";
+import { REATTACH_SETTLE_MS, RESIZE_SETTLE_MS } from "../model/deadlines.ts";
 import { type Screen, Stage } from "../testing/pane-harness.ts";
 import type { PaneView } from "./pane.ts";
 import { attachSent, attachSize, clipTop, detached, newPaneSize, overtaken, type PaneSize, reattachDue, reattaching, rectangleChanged, replied, sizedBy, sizeHeard, sizeTold, took } from "./size.ts";
@@ -97,7 +97,7 @@ describe("the size rules of a pane", () => {
       await stage.advance(25);
     }
     expect([screen.attaches.length, screen.sent(t), core.size(t)]).toEqual([1, [], "80x24"]);
-    await stage.advance(REATTACH_SETTLE_MS - 26);
+    await stage.advance(RESIZE_SETTLE_MS - 26);
     expect(screen.attaches.length).toBe(1);
     await stage.advance(1);
     await stage.pass();
@@ -347,9 +347,9 @@ describe("the size rules of a pane", () => {
     await driver.attach(t, 120, 40);
     driver.type("x");
     await stage.settle();
-    // the pane's rectangle becomes 120x40, and a key arrives inside the 150 ms, on the channel that still advertises 80x24
+    // the pane's rectangle becomes 120x40, and a key arrives inside the wait, on the channel that still advertises 80x24
     screen.show([t, 120, 40]);
-    await stage.advance(REATTACH_SETTLE_MS - 50);
+    await stage.advance(RESIZE_SETTLE_MS - 10);
     expect([screen.view(t).advertised, screen.panes.deadlines().has("reattach")]).toEqual([{ cols: 80, rows: 24 }, true]);
     expect(screen.type("k")).toEqual([{ sent: true }]);
     await stage.settle();
@@ -479,7 +479,7 @@ describe("a pane forgets what no longer waits", () => {
       const { core, stage, screen, t } = await scene(options);
       await stage.live(screen, [t, 80, 24]);
       screen.show([t, 90, 24]);
-      await stage.advance(50);
+      await stage.advance(RESIZE_SETTLE_MS - 10);
       screen.show([t, 80, 24]);
       await stage.advance(5_000);
       expect(asked(screen, t)).toEqual(["80x24"]);
@@ -500,7 +500,7 @@ describe("a pane forgets what no longer waits", () => {
       second.panes.focus(t);
       await stage.live(first, [t, 80, 24]);
       first.show([t, 81, 24]);
-      await stage.advance(50);
+      await stage.advance(RESIZE_SETTLE_MS - 10);
       first.show([t, 80, 24]);
       await stage.advance(5_000);
       await stage.live(second, [t, 120, 40]);
@@ -518,7 +518,7 @@ describe("a pane forgets what no longer waits", () => {
       const { core, stage, screen, t } = await scene(options);
       await stage.live(screen, [t, 80, 24]);
       screen.show([t, 100, 30]);
-      await stage.advance(50);
+      await stage.advance(RESIZE_SETTLE_MS - 10);
       expect(screen.type("k")).toEqual([{ sent: true }]);
       await stage.advance(5_000);
       expect([asked(screen, t), core.size(t)]).toEqual([["80x24"], "100x30"]);
@@ -1324,7 +1324,7 @@ describe("the size rules as values", () => {
   it("a changed rectangle waits from its last change and attaches with the rectangle", () => {
     const first = rectangleChanged(attached(A), C, 1000);
     const last = rectangleChanged(first, B, 1100);
-    expect([at(first), at(last), attachSize(last)]).toEqual([1150, 1250, B]);
+    expect([at(first), at(last), attachSize(last)]).toEqual([1000 + RESIZE_SETTLE_MS, 1100 + RESIZE_SETTLE_MS, B]);
     // back to what the channel advertises: nothing waits
     expect(at(rectangleChanged(last, A, 1200))).toBeNull();
     expect(rectangleChanged(last, B, 5000)).toBe(last);
@@ -1372,7 +1372,7 @@ describe("the size rules as values", () => {
     const undone = sizeTold(sizeTold(repainted, C, 7000), A, 7050);
     expect([undone.foreignAt, at(undone), at(rectangleChanged(undone, B, 9000))]).toEqual([null, null, null]);
     // a rectangle that becomes the terminal's own size owes no repaint any more
-    expect(at(rectangleChanged(sizeTold(attached(A), B, 1000), B, 1020))).toEqual(1170);
+    expect(at(rectangleChanged(sizeTold(attached(A), B, 1000), B, 1020))).toEqual(1020 + RESIZE_SETTLE_MS);
     expect(rectangleChanged(sizeTold(attached(A), B, 1000), B, 1020).foreignAt).toBeNull();
     // an attach that ended takes its waits with it: the next one starts from the rectangle
     const ended = detached(rectangleChanged(sizeTold(attached(A), B, 1000), C, 1010));

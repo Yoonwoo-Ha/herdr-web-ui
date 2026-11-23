@@ -5,7 +5,9 @@
  * pane the event goes to its program, in its own grid's cells, when the program asked for a mouse mode and shift
  * is not held; otherwise the wheel scrolls the pane's history here and a drag selects, and the release copies.
  * A program gets a drag and its release only if its press went there, it is focused, and the grab is still active.
- * Over an open overlay only its close control and its entries (the menu's) act.
+ * A right press opens herdr's menu on a pane's box, a tab or a workspace's row, unless the pane passes right presses on.
+ * Over an open overlay only its close control, its buttons and its entries act, and a move with no button held chooses
+ * the entry under it; a press outside a right-click menu closes it.
  * The answer is a list of acts for the loop to perform; nothing here writes, sends or draws.
  */
 import { isDeepStrictEqual } from "node:util";
@@ -54,15 +56,24 @@ export interface PointerScene {
   readonly splits: readonly SplitCells[];
   look(pane: string): PaneLook | null;
   painted(pane: string): PanePicture | null;
-  /** The model checks a painted menu identity before a press can cancel another button's gesture. */
-  acceptsMenu?(entry: string): boolean;
+  /** the shown pane whose box (its border and title too) holds the cell */
+  boxAt(col: number, row: number): string | null;
+  /** the pane takes right presses for its program (its passthrough setting) */
+  passthrough(pane: string): boolean;
+  readonly sidebarCollapsed: boolean;
+  /** the kind of the overlay on top, if any */
+  readonly overlay: string | null;
+  /** `hits` shows the overlay the model has on top now: a press or a move over its cells acts on it */
+  readonly overlayShown: boolean;
 }
 
 export type PointerAct =
   | { readonly kind: "select"; readonly target: Target }
-  | { readonly kind: "action"; readonly action: "toggle_sidebar" | "new_workspace" | "menu" }
-  /** the top overlay's entry with this key (the menu's `entryKey`, as painted) was clicked */
-  | { readonly kind: "choose"; readonly entry: string }
+  | { readonly kind: "action"; readonly action: "toggle_sidebar" | "new_workspace" | "menu" | "lock" | "new_tab" | "previous_tab" | "next_tab" }
+  /** a dialog's button: its main one (as Enter) or its clear one (as ctrl+c) */
+  | { readonly kind: "button"; readonly button: "accept" | "clear" }
+  /** the top overlay's entry with this index, as the frame the pointer met painted it, was clicked */
+  | { readonly kind: "choose"; readonly entry: number }
   /** to the focused pane's program, in its grid's cells */
   | { readonly kind: "forward"; readonly pane: string; readonly event: MouseInput }
   /** show the pane's screen this many rows above its newest rows */
@@ -72,8 +83,14 @@ export type PointerAct =
   | { readonly kind: "divider"; readonly grab: number; readonly tab: string; readonly name: DividerName; readonly ratio: number; readonly done: boolean }
   /** the selection changed: the next frame draws it */
   | { readonly kind: "redraw" }
-  /** the top overlay's close control was clicked */
-  | { readonly kind: "close_overlay" };
+  /** the top overlay's close control was clicked, or a press outside a right-click menu closed it */
+  | { readonly kind: "close_overlay" }
+  /** a right press on a pane's box, a tab or a workspace's row: its menu, at the pressed cell */
+  | { readonly kind: "context"; readonly target: Target; readonly cell: { readonly x: number; readonly y: number } }
+  /** the pointer over the open right-click menu's entry */
+  | { readonly kind: "hover"; readonly entry: number; readonly heading?: true }
+  /** a left press on the picker's chosen heading: Enter on it */
+  | { readonly kind: "choose_heading" };
 
 /** A queued report validated and applied to its own gesture at replay time. */
 export type DeferredMouse = (over: "overlay" | "screen", scene: PointerScene) => PointerAct[];
@@ -137,7 +154,8 @@ export class Pointer {
         if (event.action === "press" && !isWheel(event)) {
           const hit = scene.hits?.at(event.col, event.row);
           owner = null;
-          if (hit && "pane" in hit && hit.pane === scene.focus && scene.look(hit.pane)?.programMouse && !event.mods.shift) {
+          // a right press goes to a program only in a pane set to pass it on (`rightPress`); else it opens the pane's menu
+          if (hit && "pane" in hit && hit.pane === scene.focus && scene.look(hit.pane)?.programMouse && !event.mods.shift && (event.button !== "right" || scene.passthrough(hit.pane))) {
             owner = started = { pane: hit.pane, button: event.button, live: null };
           }
         }
@@ -198,6 +216,15 @@ export class Pointer {
     };
   }
 
+  /**
+   * Where a right press at the event's cell goes, read without touching the grab: a program, a menu, or nowhere. A hold
+   * reads it when the press is read: a press that opens a menu is refused then, never performed after the write.
+   */
+  rightPressGoes(event: MouseInput, scene: PointerScene): "program" | "menu" | "nowhere" {
+    const site = rightSite(event, scene, scene.hits?.at(event.col, event.row) ?? null);
+    return site === null ? "nowhere" : site.kind === "forward" ? "program" : "menu";
+  }
+
   /** A stale report must not start or continue a grab. Close out only effects already delivered. */
   cancel(scene: PointerScene, at: number): PointerAct[] {
     const grab = this.grab;
@@ -229,16 +256,30 @@ export class Pointer {
         const look = grab.kind === "forward" ? this.pressedScreen(grab, scene) : null;
         return grab.kind === "forward" && look ? [{ kind: "forward", pane: grab.pane, event: inGrid(event, look) }] : [];
       }
+      if (event.action === "motion" && event.button === undefined) {
+        // herdr's menus, switcher and picker choose the entry under the pointer
+        const hit = scene.overlayShown ? scene.hits?.at(event.col, event.row) : null;
+        const [kind, entry] = hit && "part" in hit && hit.part === `overlay:${scene.overlay}` ? splitId(hit.id) : ["", ""];
+        if (kind !== "menu" || !/^h?\d+$/.test(entry)) return [];
+        return [{ kind: "hover", entry: Number(entry.replace("h", "")), ...(entry.startsWith("h") ? { heading: true } : {}) }];
+      }
       if (event.action !== "press" || event.button !== "left") return [];
       const hit = scene.hits?.at(event.col, event.row);
+      // a left press outside a right-click menu closes it and goes no further
+      if (scene.overlay === "context" && scene.overlayShown && !(hit && "part" in hit && hit.part === "overlay:context")) return [...this.cancel(scene, event.at), { kind: "close_overlay" }];
       if (!hit || !("part" in hit) || !hit.part.startsWith("overlay:")) return [];
       const [kind, entry] = splitId(hit.id);
-      if (hit.id !== "close" && (kind !== "menu" || entry === "")) return [];
-      if (kind === "menu" && scene.acceptsMenu?.(entry) === false) return [{ kind: "choose", entry }];
-      // End any delivered gesture before the choice can change focus or reject a stale entry.
+      const button = hit.id === "accept" || hit.id === "clear" ? hit.id : null;
+      const entered = kind === "menu" && /^h?\d+$/.test(entry);
+      if (hit.id !== "close" && button === null && !entered) return [];
+      // cells of an overlay the model no longer has on top choose nothing, and end no other button's gesture
+      if (hit.id !== "close" && !scene.overlayShown) return [];
+      // End any delivered gesture before the choice can change focus.
       const dropped = this.cancel(scene, event.at);
       if (hit.id === "close") return [...dropped, { kind: "close_overlay" }];
-      return [...dropped, { kind: "choose", entry }];
+      if (button !== null) return [...dropped, { kind: "button", button }];
+      if (entry.startsWith("h")) return [...dropped, { kind: "hover", entry: Number(entry.slice(1)), heading: true }, { kind: "choose_heading" }];
+      return [...dropped, { kind: "choose", entry: Number(entry) }];
     }
     if (isWheel(event)) return this.wheel(event, scene);
     if (event.action === "press") return this.press(event, scene);
@@ -300,6 +341,7 @@ export class Pointer {
     this.grab = NONE;
     this.selection = null;
     const hit = scene.hits?.at(event.col, event.row) ?? null;
+    if (event.button === "right") return [...dropped, ...this.rightPress(event, scene, hit)];
     if (hit === null) return dropped;
     if ("pane" in hit) {
       if (hit.pane !== scene.focus) return [...dropped, { kind: "select", target: { kind: "pane", id: hit.pane } }];
@@ -320,7 +362,9 @@ export class Pointer {
     const [kind, id] = splitId(hit.id);
     if (kind === "tab" || kind === "workspace") return [...dropped, { kind: "select", target: { kind, id } }];
     if (kind === "agent") return [...dropped, { kind: "select", target: { kind: "pane", id } }];
-    if (hit.id === "toggle_sidebar" || hit.id === "new_workspace" || hit.id === "menu") return [...dropped, { kind: "action", action: hit.id }];
+    if (hit.id === "toggle_sidebar" || hit.id === "new_workspace" || hit.id === "menu" || hit.id === "lock" || hit.id === "new_tab") return [...dropped, { kind: "action", action: hit.id }];
+    // the tab bar's scroll buttons step to the tab before or after the one in front, which the bar keeps in its middle
+    if (hit.id === "tabs_before" || hit.id === "tabs_after") return [...dropped, { kind: "action", action: hit.id === "tabs_before" ? "previous_tab" : "next_tab" }];
     const divider = namedSplit(hit.id, scene);
     if (divider && scene.tab) {
       const { split, name } = divider;
@@ -330,6 +374,17 @@ export class Pointer {
       this.grab = { kind: "divider", id: ++this.grabs, tab: scene.tab.id, name, rect: split.rect, direction: split.direction, offset: first - at, moved: null };
     }
     return dropped;
+  }
+
+  /** herdr's right press, performed where `rightSite` says it goes: to the pane's program, which is focused, or as a menu at the pressed cell. */
+  private rightPress(event: MouseInput, scene: PointerScene, hit: ReturnType<HitMap["at"]> | null): PointerAct[] {
+    const site = rightSite(event, scene, hit);
+    if (site === null) return [];
+    if (site.kind === "context") return [{ kind: "context", target: site.target, cell: { x: event.col, y: event.row } }];
+    const { pane, look } = site;
+    const press = inGrid(event, look);
+    this.grab = { kind: "forward", pane, button: event.button, attachment: this.identity(look.emulator), screen: look.screen, last: press };
+    return [...(pane !== scene.focus ? [{ kind: "select", target: { kind: "pane", id: pane } } as const] : []), { kind: "forward", pane, event: press }];
   }
 
   private wheel(event: MouseInput, scene: PointerScene): PointerAct[] {
@@ -375,6 +430,9 @@ export class Pointer {
       if (grab.contentVersion === look.contentVersion || entirelyShown) {
         acts.push({ kind: "copy", pane: grab.pane, range, contentVersion: look.contentVersion });
       }
+      // the release lets the selection go, as herdr's copy on select does: the highlight is gone at once
+      this.selection = null;
+      if (!moved) acts.unshift({ kind: "redraw" });
     }
     return acts;
   }
@@ -388,6 +446,26 @@ export class Pointer {
     grab.moved = ratio;
     return [{ kind: "divider", grab: grab.id, tab: grab.tab, name: grab.name, ratio, done: false }];
   }
+}
+
+/**
+ * Where herdr's right press goes (R1, R8): a menu on a pane's box (any of its cells), a tab or a workspace's row of the
+ * expanded sidebar, with no focus change; nowhere else (null). A pane set to pass right presses on hands one in its text
+ * to a program that asked for the mouse, unless shift is held.
+ */
+function rightSite(event: MouseInput, scene: PointerScene, hit: ReturnType<HitMap["at"]> | null): { readonly kind: "forward"; readonly pane: string; readonly look: PaneLook } | { readonly kind: "context"; readonly target: Target } | null {
+  const inText = hit !== null && "pane" in hit ? hit.pane : null;
+  if (inText !== null && scene.passthrough(inText) && !event.mods.shift) {
+    const look = scene.look(inText);
+    if (look?.programMouse) return { kind: "forward", pane: inText, look };
+  }
+  const pane = inText ?? scene.boxAt(event.col, event.row);
+  if (pane !== null) return { kind: "context", target: { kind: "pane", id: pane } };
+  if (hit === null || "pane" in hit) return null;
+  const [kind, id] = splitId(hit.id);
+  if (kind === "tab") return { kind: "context", target: { kind: "tab", id } };
+  if (kind === "workspace" && !scene.sidebarCollapsed) return { kind: "context", target: { kind: "workspace", id } };
+  return null;
 }
 
 function namedSplit(id: string, scene: PointerScene) {

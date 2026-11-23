@@ -146,6 +146,24 @@ export const zoomEdit = (paneId: string, mode: "toggle" | "on" | "off") => (layo
   return { layout: withTab(layout, tab.id, { zoomed: on ? paneId : null }), reason: null };
 };
 
+/** The pane's right press goes to its program (the terminal screen's passthrough), or opens the screen's menu again. */
+export const passthroughEdit = (paneId: string, on: boolean) => (layout: OvisLayout): Edited => {
+  const tab = tabHolding(layout, paneId);
+  const now = tab.passthrough ?? [];
+  if (now.includes(paneId) === on) return { layout: null, reason: on ? "already_on" : "already_off" };
+  const next = on ? [...now, paneId] : now.filter((pane) => pane !== paneId);
+  return { layout: withTab(layout, tab.id, { passthrough: next.length > 0 ? next : undefined }), reason: null };
+};
+
+/** A repository's workspace folds its worktree workspaces in the terminal screen's sidebar, or unfolds them. */
+export const collapseEdit = (workspaceId: string, on: boolean) => (layout: OvisLayout): Edited => {
+  const workspace = layout.workspaces.find((candidate) => candidate.id === workspaceId);
+  if (!workspace) return { layout: null, reason: "workspace_not_found" };
+  if (Boolean(workspace.collapsed) === on) return { layout: null, reason: on ? "already_collapsed" : "already_expanded" };
+  const { collapsed: _was, ...rest } = workspace;
+  return { layout: { ...layout, workspaces: layout.workspaces.map((candidate) => (candidate === workspace ? (on ? { ...rest, collapsed: true as const } : rest) : candidate)) }, reason: null };
+};
+
 /** A tab moved to herdr's `insertIndex` in `siblings`, its workspace's tabs as shown; a helper's tab follows its parent's and has no place of its own. */
 export const tabOrderEdit = (workspaceId: string, tabId: string, siblings: readonly string[], insertIndex: unknown) => (layout: OvisLayout): Edited => {
   const workspace = layout.workspaces.find((candidate) => candidate.id === workspaceId);
@@ -336,20 +354,25 @@ export class LayoutStore {
     }));
   }
 
-  /**
-   * A shell hc keeps (a lost program comes back as a shell), labeled `labels`, answered as herdr
-   * answers a new one: the workspace, tab and pane it shows as in the snapshot right after.
-   */
-  async startShell(labels: Record<string, string>, { cwd, env }: { cwd?: string; env?: Record<string, string> } = {}) {
+  /** A shell hc keeps (a lost program comes back as a shell), labeled `labels`: its terminal's address, as hc answered the start. */
+  private async runShell(labels: Record<string, string>, { cwd, env }: { cwd?: string; env?: Record<string, string> } = {}): Promise<string> {
     const given = { ...await this.options.terminalEnv?.(), ...env };
     const used = Object.keys(given).length > 0 ? given : undefined;
     // a terminal a client starts has had nothing finish yet (herdr-app docs/labels.md)
-    const record = await this.hc.call("terminal.run", { keep: true, labels: { [SEEN_LABEL]: "0", ...labels }, ...(cwd !== undefined ? { cwd } : {}), ...(used ? { env: used } : {}) });
+    return (await this.hc.call("terminal.run", { keep: true, labels: { [SEEN_LABEL]: "0", ...labels }, ...(cwd !== undefined ? { cwd } : {}), ...(used ? { env: used } : {}) })).address;
+  }
+
+  /**
+   * A shell started (`runShell`), answered as herdr answers a new one: the workspace, tab and pane it shows as in the
+   * snapshot right after.
+   */
+  async startShell(labels: Record<string, string>, start: { cwd?: string; env?: Record<string, string> } = {}) {
+    const address = await this.runShell(labels, start);
     const { shown } = await this.options.snapshot();
-    const root_pane = shown.panes.find((pane) => pane.pane_id === record.address);
+    const root_pane = shown.panes.find((pane) => pane.pane_id === address);
     const tab = root_pane && shown.tabs.find((candidate) => candidate.tab_id === root_pane.tab_id);
     const workspace = root_pane && shown.workspaces.find((candidate) => candidate.workspace_id === root_pane.workspace_id);
-    if (!root_pane || !tab || !workspace) throw new AdapterError("internal", `hc started ${record.address}, but it is not in the snapshot`);
+    if (!root_pane || !tab || !workspace) throw new AdapterError("internal", `hc started ${address}, but it is not in the snapshot`);
     return { workspace, tab, root_pane };
   }
 
@@ -376,6 +399,15 @@ export class LayoutStore {
    */
   async createWorkspace({ name, cwd, env, labels }: NewShell & { name?: string }) {
     return this.startShell({ ...newShellLabels({ kind: "workspace", space: this.options.newId(), tab: this.options.newId(), name }), ...labels }, { cwd, env });
+  }
+
+  /**
+   * A new workspace's shell alone (`createWorkspace` without its snapshot): its terminal's address, as hc answered the
+   * start. For a caller that shows the core by its own reads: what it throws is hc's answer to the start and nothing
+   * else, so a start hc refused is told from a snapshot that could not be read after one it made.
+   */
+  startWorkspace({ name, cwd, env, labels }: NewShell & { name?: string }): Promise<string> {
+    return this.runShell({ ...newShellLabels({ kind: "workspace", space: this.options.newId(), tab: this.options.newId(), name }), ...labels }, { cwd, env });
   }
 
   /**

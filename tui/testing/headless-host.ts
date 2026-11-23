@@ -31,6 +31,8 @@ export class HeadlessHost implements Host {
   private interrupt: (() => void) | null = null;
   /** the code the host ended the process with, or the one a signal with no hook would have */
   exitCode: number | null = null;
+  /** how many times the host stopped the process (a SIGTSTP) */
+  suspends = 0;
 
   constructor(options: HeadlessOptions = {}) {
     this.current = { cols: options.cols ?? 80, rows: options.rows ?? 24 };
@@ -62,6 +64,7 @@ export class HeadlessHost implements Host {
       now: () => this.now,
       hook: (hooks) => { this.hooks = hooks; return () => { this.hooks = null; }; },
       exit: (code) => { this.exitCode ??= code; },
+      suspend: () => { this.suspends += 1; },
     });
   }
 

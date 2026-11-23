@@ -44,6 +44,14 @@ describe("the menu's key", () => {
   });
 });
 
+describe("prefix+i", () => {
+  it("is no key of the screen's, as in herdr: a binding of the config on it is kept with no note", () => {
+    const keymap = buildKeymap({ new_tab: "prefix+i" });
+    expect(keymap.notes).toEqual([]);
+    expect(keymap.rows.find((row) => row.action === "new_tab")!.bindings.map((binding) => binding.text)).toEqual(["prefix+i"]);
+  });
+});
+
 describe("the keymap table", () => {
   it("has one row per herdr action, with the resolver's default and bindings, in Terminal mode", () => {
     for (const keys of [undefined, { prefix: "ctrl+a" }, { new_tab: "alt+t" }, { zoom: "" }]) {
@@ -98,7 +106,7 @@ describe("the keymap table", () => {
     const rearmed = reduce(state, key("a", { ctrl: true })).state;
     expect(rearmed.armed).toBe(true);
     // the mode bar and the help follow the new table
-    expect(modeBar(rearmed).hints.find((hint) => hint.action === "new_tab")!.keys).toEqual(["t"]);
+    expect(modeBar(rearmed)!.hints.find((hint) => hint.label === "sendPrefix")!.key).toBe("ctrl+a");
     expect(helpRows(state.keymap).find((row) => row.action === "new_tab")!.keys).toEqual(["prefix+t"]);
     // a config with refusals answers one notice with their count
     const refused = reduce(state, { type: "keys", keys: { new_tab: "prefix+nonsense+x", zoom: "q", bogus: "x" }, at: AT }).state;
@@ -125,7 +133,7 @@ describe("the keymap table", () => {
     expect(helpRows(keymap).find((row) => row.action === "zoom")!.keys).toEqual([]);
     expect(Object.values(keymap.afterPrefix).some((bound) => bound.action === "zoom")).toBe(false);
     const armed = reduce(reduce(initialState({ help: ["prefix+?", "prefix+esc"] }), { type: "world", world: WORLD, at: 0 }).state, key("b", { ctrl: true })).state;
-    expect(modeBar(armed).hints.find((hint) => hint.action === "help")!.keys).toEqual(["?"]);
+    expect(modeBar(armed)!.hints.find((hint) => hint.label === "keybinds")!.key).toBe("?");
     const escaped = reduce(armed, { type: "key", key: "ESCAPE", mods: {}, action: "press", at: AT }).state;
     expect({ armed: escaped.armed, overlays: escaped.overlays }).toEqual({ armed: false, overlays: [] });
   });
@@ -153,7 +161,7 @@ describe("the keymap table", () => {
     // the verifier's two repros: nothing shown for those keys, and the action has no key
     const repro = buildKeymap({ new_tab: "prefix+\u314a", split_vertical: "prefix+hyper+v" });
     const armed = reduce(reduce(initialState({ new_tab: "prefix+\u314a", split_vertical: "prefix+hyper+v" }), { type: "world", world: WORLD, at: 0 }).state, key("b", { ctrl: true })).state;
-    expect(modeBar(armed).hints.filter((hint) => hint.action === "new_tab" || hint.action === "split_vertical")).toEqual([]);
+    expect(modeBar(armed)!.hints.filter((hint) => hint.key.includes("\u314a") || hint.key.includes("hyper"))).toEqual([]);
     expect(helpRows(repro).filter((help) => help.action === "new_tab" || help.action === "split_vertical").map((help) => help.keys)).toEqual([[], []]);
     const navigate = buildKeymap({ navigate_pane_down: "left", navigate_pane_up: "shift+tab" });
     expect(navigate.notes).toEqual([{ code: "fixed_key", action: "navigate_pane_down", binding: "left" }, { code: "fixed_key", action: "navigate_pane_up", binding: "shift+tab" }]);
@@ -168,8 +176,6 @@ describe("the keymap table", () => {
   it("shows a range that lost a digit as the digits it still holds", () => {
     const keymap = buildKeymap({ copy_mode: "prefix+9" });
     expect(helpRows(keymap).find((row) => row.action === "switch_tab")!.keys).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map((digit) => `prefix+${digit}`));
-    const armed = reduce(start({ copy_mode: "prefix+9" }), key("b", { ctrl: true })).state;
-    expect(modeBar(armed).hints.find((hint) => hint.action === "switch_tab")!.keys).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
   });
 
   it("shifted digit binding by bytes", () => {
@@ -182,7 +188,6 @@ describe("the keymap table", () => {
     }
     expect(noteFor(state, "switch_workspace")).toEqual([]);
     expect(helpRows(state.keymap).find((row) => row.action === "switch_workspace")!.keys).toEqual(["prefix+shift+1..9"]);
-    expect(modeBar(typed(state, "\x02").state).hints.find((hint) => hint.action === "switch_workspace")!.keys).toEqual(["shift+1..9"]);
 
     // one shifted punctuation after the prefix, and alt with a shifted digit as a direct binding
     const single = start({ toggle_sidebar: "prefix+shift+;", zoom: "alt+shift+1" });
@@ -220,7 +225,7 @@ describe("the keymap table", () => {
         expect({ prefix, ctrlB, effects: typed(state, ctrlB, "q").effects }).toEqual({ prefix, ctrlB, effects: [{ type: "quit" }] });
       }
       expect({ prefix, notes: state.keymap.notes }).toEqual({ prefix, notes: [{ code: "prefix_fallback", action: "prefix", binding: prefix, reason, fallback: "ctrl+b", skipped: [] }] });
-      expect(modeBar(state).hints[0]!.keys).toEqual(["ctrl+b"]);
+      expect(modeBar(typed(state, "\x02").state)!.hints.find((hint) => hint.label === "sendPrefix")!.key).toBe("ctrl+b");
     }
     // ctrl+b held by a direct binding of the config: the next free key of the list
     const held = start({ prefix: "hyper+b", zoom: "ctrl+b" });
