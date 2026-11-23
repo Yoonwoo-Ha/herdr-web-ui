@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appHome, appOrigin, writeNativeOrigin } from "../app/scripts/hosted-origin.ts";
+import { pretendardCss } from "../app/scripts/pretendard.ts";
 // @ts-expect-error app/web is plain JavaScript the app carries as is, without types
 import { APP_HOME, APP_ORIGIN, homeHost, knownLogins, listedProviders, loopbackHost, openFailure, parseAddress, relayLink, sshDetails, sshOrAddress, savedPcLabel, tabPcs, tailnetHost } from "../app/web/shell.js";
 import { exportPublicKey, generateKeyPair } from "../shared/relay-e2ee.ts";
@@ -25,8 +26,16 @@ describe("the sign-in buttons", () => {
   });
 });
 
-describe("the connect tabs", () => {
-  const page = readFileSync(join(import.meta.dir, "../app/web/index.html"), "utf8");
+/** one of index.html's two layouts (connect.js takes the one the build's first screen asks for): its template's markup */
+function layout(name: "tabs" | "column"): string {
+  const html = readFileSync(join(import.meta.dir, "../app/web/index.html"), "utf8");
+  const start = html.indexOf(`<template id="${name}">`);
+  expect(start).toBeGreaterThan(-1);
+  return html.slice(start, html.indexOf("</template>", start));
+}
+
+describe("the connect tabs (a bundled-home build)", () => {
+  const page = layout("tabs");
   /** a tab's panel in the markup: from its own id to the next panel, or to what an open says under every tab */
   const panel = (name: string) => {
     const start = page.indexOf(`id="panel-${name}"`);
@@ -66,8 +75,85 @@ describe("the connect tabs", () => {
       expect(shown.split(heading).length - 1).toBe(1);
       expect(shown.indexOf(list)).toBeGreaterThan(shown.lastIndexOf(last));
       // the last list of the tab
-      expect(shown.lastIndexOf('class="card list"')).toBe(shown.indexOf(`${list} class="card list"`) + list.length + 1);
+      expect(shown.lastIndexOf('class="pc-list"')).toBe(shown.indexOf(`${list} class="pc-list"`) + list.length + 1);
     }
+  });
+
+  it("keep the relay tab's sign-in buttons", () => {
+    expect([...panel("relay").matchAll(/data-provider="(\w+)"/g)].map(([, provider]) => provider)).toEqual(["github", "google", "apple"]);
+  });
+});
+
+describe("the one column (a hosted-home build, where the hosted screen did not load)", () => {
+  const page = layout("column");
+  const at = (needle: string) => page.indexOf(needle);
+
+  it("has no tabs, no sign-in and no relay tab: those need the internet and the hosted page", () => {
+    for (const needle of ['role="tab"', "data-provider", "panel-relay", "Ovis relay", "Ovis 릴레이"]) expect([needle, page.includes(needle)]).toEqual([needle, false]);
+  });
+
+  it("puts the line and Try again first, then the address field, QR, SSH, the PCs an SSH PC knows and every PC this phone saved", () => {
+    const order = ['id="offline"', 'id="try-home"', 'id="direct-label"', 'id="web-address"', "data-scan", 'id="ssh-way"', 'id="address"', 'id="known-pcs"', 'id="pcs"'];
+    for (const needle of order) expect([needle, at(needle)]).not.toEqual([needle, -1]);
+    expect(order.map(at)).toEqual([...order.map(at)].sort((a: number, b: number) => a - b));
+    expect(page).toMatch(/id="direct-label"[^>]*data-ko="주소로 직접 연결">Connect by address</);
+    expect(page).toMatch(/id="offline-title"[^>]*data-ko="인터넷에 연결할 수 없어요"[^>]*>Can't connect to the internet</);
+    expect(page.split('class="pc-list"').length - 1).toBe(2);
+  });
+
+  it("keeps the SSH field behind its row, as the SSH tab's Add by address keeps its field", () => {
+    expect(page).toMatch(/<button type="button" class="way" id="ssh-way" aria-expanded="false" aria-controls="ssh-add">/);
+    expect(page).toMatch(/<div id="ssh-add"[^>]*hidden>/);
+  });
+});
+
+describe("the hosted page's typeface on the app's own pages", () => {
+  it("points each chunk of upstream's stylesheet at the file the demo carries, and fails for one it does not", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pretendard-"));
+    try {
+      mkdirSync(join(dir, "demo/assets"), { recursive: true });
+      for (const file of ["PretendardVariable.subset.1-Ab12_x.woff2", "PretendardVariable.subset.10-Zz9.woff2", "index-Q1.js"]) writeFileSync(join(dir, "demo/assets", file), "");
+      const face = (n: number) => `@font-face { src: url(./woff2-dynamic-subset/PretendardVariable.subset.${n}.woff2) format('woff2-variations'); }\n`;
+      writeFileSync(join(dir, "source.css"), face(1) + face(10));
+      expect(pretendardCss(join(dir, "source.css"), join(dir, "demo"))).toBe(
+        "@font-face { src: url(./demo/assets/PretendardVariable.subset.1-Ab12_x.woff2) format('woff2-variations'); }\n" +
+        "@font-face { src: url(./demo/assets/PretendardVariable.subset.10-Zz9.woff2) format('woff2-variations'); }\n");
+      writeFileSync(join(dir, "source.css"), face(2));
+      expect(() => pretendardCss(join(dir, "source.css"), join(dir, "demo"))).toThrow("the demo carries no PretendardVariable.subset.2.woff2");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("is linked by the connect page, which carries the stack's first family", () => {
+    expect(readFileSync(join(import.meta.dir, "../app/web/index.html"), "utf8")).toContain('<link rel="stylesheet" href="pretendard.css">');
+    expect(readFileSync(join(import.meta.dir, "../app/web/shell.css"), "utf8")).toContain('--font-ui: "Pretendard Variable"');
+  });
+});
+
+describe("the app's own words", () => {
+  const app = join(import.meta.dir, "../app");
+  /** every text file under app/ that a person reads or that the stores show, the build's own output left out */
+  const texts = ["web/*.html", "web/*.js", "store/*.md", "ios/App/App/Info.plist", "ios/App/App/*.lproj/*.strings", "android/app/src/main/res/values*/*.xml"]
+    .flatMap((pattern) => [...new Bun.Glob(pattern).scanSync({ cwd: app })]);
+
+  it("name the PC's screen the hosted app names: Settings → Devices and PCs → Add a connection", () => {
+    expect(texts.length).toBeGreaterThan(5);
+    const stale = texts.filter((file) => /Phone (&|&amp;|and) devices|폰 및 기기/.test(readFileSync(join(app, file), "utf8")));
+    expect(stale).toEqual([]);
+    expect(readFileSync(join(app, "ios/App/App/Info.plist"), "utf8")).toContain("Settings → Devices and PCs → Add a connection");
+    expect(readFileSync(join(app, "ios/App/App/ko.lproj/InfoPlist.strings"), "utf8")).toContain("설정 → 기기와 PC → 연결 추가");
+  });
+
+  it("say PC, not machine, in Korean", () => {
+    expect(texts.filter((file) => readFileSync(join(app, file), "utf8").includes("머신"))).toEqual([]);
+  });
+
+  it("keep the pages in one register, 해요체, as the hosted connect screens", () => {
+    // a sentence that ends in 합니다체 (…습니다, …입니다, …합니까) anywhere in the pages' Korean
+    const formal = [...new Bun.Glob("*.{html,js}").scanSync({ cwd: join(app, "web") })].flatMap((file) =>
+      [...readFileSync(join(app, "web", file), "utf8").matchAll(/[가-힣]*(?:니다|니까)(?=[.,:?!)」"'\x60\s]|$)/gm)].map(([match]) => `${file}: ${match}`));
+    expect(formal).toEqual([]);
   });
 });
 
@@ -99,6 +185,8 @@ describe("each connect tab's saved PCs", () => {
   it("names a PC by its saved name, else what its address says: a relay PC by its id, never the app's host", () => {
     expect(savedPcLabel(relayPc, {}, {})).toBe("0123456789ab");
     expect(savedPcLabel("https://nas.tail1e211e.ts.net", {}, {})).toBe("nas");
+    // a Tailscale IP is no name to shorten: its first word would be "100" for every PC
+    expect(savedPcLabel("http://100.101.12.7:7317", {}, {})).toBe("100.101.12.7:7317");
     expect(savedPcLabel("http://192.168.0.10:7317", {}, {})).toBe("192.168.0.10:7317");
     expect(savedPcLabel("http://127.0.0.1:41234", {}, ssh)).toBe("pi@nas");
     expect(savedPcLabel(relayPc, names, {})).toBe("Studio PC");

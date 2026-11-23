@@ -50,18 +50,19 @@ export function barsForScreen() {
 
 const LIGHT = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: light)") : null;
 
+/** The app's own screens' background, light and dark: the hosted page's Codex theme (shell.css --bg). */
+export const SCREEN_LIGHT = "#ffffff";
+export const SCREEN_DARK = "#181818";
+
 /**
- * The system bars' icons for the screen's colours: Android takes them from the page's theme-color (MainActivity,
- * BAR_COLOR_SCRIPT), iOS from Capacitor's SystemBars, set to light icons for the app (capacitor.config.json). Only the
- * app's own screens are ever light (shell.css), so only they ask for dark icons, and every PC opens with light ones.
+ * The system bars for the screen's colours: both apps take them from the page's theme-color (Android's MainActivity,
+ * BAR_COLOR_SCRIPT; iOS's HerdrBridgeViewController, followPageColor), with icons that stand out on it. The app's own
+ * screens follow the phone's light or dark mode (shell.css), so their theme-color does too; every PC opens on the dark
+ * one, and its page then gives its own.
  */
 function barsFor(light) {
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = light ? "#eeeae2" : "#12100e";
-  // on iOS a call to a plugin the app lacks never settles (src/lib/nativeApp.ts, hasNativePlugin): asked only when announced
-  if (window.Capacitor?.getPlatform?.() === "ios" && (window.Capacitor.PluginHeaders ?? []).some((header) => header.name === "SystemBars")) {
-    window.Capacitor.nativePromise("SystemBars", "setStyle", { style: light ? "LIGHT" : "DARK" }).catch(() => undefined);
-  }
+  if (meta) meta.content = light ? SCREEN_LIGHT : SCREEN_DARK;
 }
 
 /** The app's own screens follow the phone's light or dark mode, the system bars with them. */
@@ -80,13 +81,13 @@ export function followScheme() {
 export function sshDetails(pc) {
   const address = `${pc.user}@${pc.host}${pc.port === 22 ? "" : `:${pc.port}`}`;
   const how = pc.auth === "imported"
-    ? t(`Signs in with a pasted ${pc.keyType ? `${pc.keyType} ` : ""}key`, `붙여 넣은 ${pc.keyType ? `${pc.keyType} ` : ""}키로 로그인`)
+    ? t(`Signs in with a pasted ${pc.keyType ? `${pc.keyType} ` : ""}key`, `붙여 넣은 ${pc.keyType ? `${pc.keyType} ` : ""}키로 로그인해요`)
     : pc.auth === "tailscale"
-      ? t("Signs in with Tailscale SSH, no key", "Tailscale SSH로 키 없이 로그인")
-      : t("Signs in with this phone's key", "이 휴대폰의 키로 로그인");
+      ? t("Signs in with Tailscale SSH, no key", "Tailscale SSH로 키 없이 로그인해요")
+      : t("Signs in with this phone's key", "이 휴대폰의 키로 로그인해요");
   const hostKey = pc.fingerprint
     ? t(`Host key ${pc.hostKeyAlgorithm} ${pc.fingerprint}`, `호스트 키 ${pc.hostKeyAlgorithm} ${pc.fingerprint}`)
-    : t("Host key forgotten: Set up again shows the key it has now, to check and confirm.", "호스트 키를 지웠습니다: 다시 설정에서 지금의 키를 보고 확인하세요.");
+    : t("Host key forgotten: Set up again shows the key it has now, to check and confirm.", "호스트 키를 지웠어요. 다시 설정에서 지금의 키를 보고 확인하세요.");
   return { address, how, hostKey, confirmed: Boolean(pc.fingerprint) };
 }
 
@@ -137,15 +138,19 @@ export function homeHost(hostname) {
 
 export const ANSWER_SECONDS = 20;
 
+/**
+ * Why an address did not open, in the hosted page's words for the same failures (src/lib/i18n/relay.ko.ts): where the PC
+ * shows its address is Settings → Devices and PCs → Add a connection there.
+ */
 export function openFailure(url, code, message) {
   const host = url.host;
   const tailscale = tailnetHost(url.hostname) ? " " + t(
     "This is a Tailscale address, and Tailscale may be off on this phone: turn it on in the Tailscale app.",
-    "Tailscale 주소입니다. 이 휴대폰에서 Tailscale이 꺼져 있을 수 있으니 Tailscale 앱에서 연결을 켜세요.",
+    "Tailscale 주소예요. 이 휴대폰에서 Tailscale이 꺼져 있을 수 있으니 Tailscale 앱에서 연결을 켜세요.",
   ) : "";
   const where = t(
-    "Open the address Ovis shows under Settings → Phone & devices on the PC.",
-    "PC의 Ovis에서 설정 → 폰 및 기기에 표시된 주소를 여세요.",
+    "Open the address Ovis shows under Settings → Devices and PCs → Add a connection on the PC.",
+    "PC의 Ovis에서 설정 → 기기와 PC → 연결 추가에 표시된 주소를 여세요.",
   );
   switch (code) {
     case "cancelled": return "";
@@ -153,33 +158,33 @@ export function openFailure(url, code, message) {
       const answer = /^HTTP \d{3}$/.test(message ?? "") ? ` (${message})` : "";
       return t(
         `${host} answered${answer}, but it is not Ovis: another web server, or herdr itself, which the app cannot open. ${where}`,
-        `이 주소(${host})가 응답했지만${answer} Ovis가 아닙니다. 다른 웹 서버이거나, 앱이 열 수 없는 herdr 자체입니다. ${where}`,
+        `이 주소(${host})가 응답했지만${answer} Ovis가 아니에요. 다른 웹 서버이거나, 앱이 열 수 없는 herdr 자체예요. ${where}`,
       );
     }
     case "refused": return refusedHelp(url, host);
     case "timeout": return (homeHost(url.hostname) ? t(
       `${host} did not answer within ${ANSWER_SECONDS} seconds. The PC may be off, or out of this phone's reach: a home network address does not open over mobile data or another Wi-Fi, and a firewall on the PC can block the port.`,
-      `이 주소(${host})가 ${ANSWER_SECONDS}초 안에 응답하지 않았습니다. PC가 꺼져 있거나 이 휴대폰에서 닿지 않을 수 있습니다. 집 네트워크 주소는 모바일 데이터나 다른 Wi-Fi에서 열리지 않고, PC의 방화벽이 포트를 막을 수도 있습니다.`,
+      `이 주소(${host})가 ${ANSWER_SECONDS}초 안에 응답하지 않았어요. PC가 꺼져 있거나 이 휴대폰에서 닿지 않을 수 있어요. 집 네트워크 주소는 모바일 데이터나 다른 Wi-Fi에서 열리지 않고, PC의 방화벽이 포트를 막을 수도 있어요.`,
     ) : t(
       `Nothing came back from ${host} within ${ANSWER_SECONDS} seconds. The server may be down, or this phone's connection (or a VPN on it) may not reach it.`,
-      `${ANSWER_SECONDS}초 동안 ${host}에서 아무 응답도 오지 않았습니다. 서버가 꺼져 있거나, 이 휴대폰의 연결(또는 VPN)이 서버에 닿지 않을 수 있습니다.`,
+      `${ANSWER_SECONDS}초 동안 이 주소(${host})에서 아무 응답도 오지 않았어요. 서버가 꺼져 있거나, 이 휴대폰의 연결(또는 VPN)이 서버에 닿지 않을 수 있어요.`,
     )) + tailscale;
     case "unknown-host": return t(
-      `${url.hostname} was not found. Check the name, or open the address Ovis shows under Settings → Phone & devices on the PC.`,
-      `이 이름(${url.hostname})을 찾지 못했습니다. 이름을 확인하거나, PC의 Ovis에서 설정 → 폰 및 기기에 표시된 주소를 여세요.`,
+      `${url.hostname} was not found. Check the name, or open the address Ovis shows under Settings → Devices and PCs → Add a connection on the PC.`,
+      `이 이름(${url.hostname})을 찾지 못했어요. 이름을 확인하거나, PC의 Ovis에서 설정 → 기기와 PC → 연결 추가에 표시된 주소를 여세요.`,
     ) + tailscale;
-    default: return t(`${host} could not be reached: ${message}`, `${host}에 연결할 수 없습니다: ${message}`) + tailscale;
+    default: return t(`${host} could not be reached: ${message}`, `이 주소(${host})에 연결할 수 없어요: ${message}`) + tailscale;
   }
 }
 
 function refusedHelp(url, host) {
   const text = t(
-    `${host} refused the connection: nothing listens there. Ovis has to run on the PC (herdr alone is not enough), and by default it listens only on the PC itself (127.0.0.1). Open the address Ovis shows under Settings → Phone & devices on the PC.`,
-    `이 주소(${host})가 연결을 거부했습니다. 그 주소에서 기다리는 것이 없습니다. PC에서 Ovis가 실행 중이어야 하고(herdr만으로는 안 됩니다), Ovis는 기본으로 PC 자신(127.0.0.1)에서만 기다립니다. PC의 Ovis에서 설정 → 폰 및 기기에 표시된 주소를 여세요.`,
+    `${host} refused the connection: nothing listens there. Ovis has to run on the PC (herdr alone is not enough), and by default it listens only on the PC itself (127.0.0.1). Open the address Ovis shows under Settings → Devices and PCs → Add a connection on the PC.`,
+    `이 주소(${host})가 연결을 거부했어요. 그 주소에서 기다리는 것이 없어요. PC에서 Ovis가 실행 중이어야 하고(herdr만으로는 안 돼요), Ovis는 기본으로 PC 자신(127.0.0.1)에서만 기다려요. PC의 Ovis에서 설정 → 기기와 PC → 연결 추가에 표시된 주소를 여세요.`,
   );
   return loopbackHost(url.hostname) ? text + " " + t(
     "On a phone, localhost and 127.0.0.1 are the phone itself, not your PC.",
-    "휴대폰에서 localhost와 127.0.0.1은 PC가 아니라 휴대폰 자신입니다.",
+    "휴대폰에서 localhost와 127.0.0.1은 PC가 아니라 휴대폰 자신이에요.",
   ) : text;
 }
 
@@ -246,7 +251,8 @@ export function knownLogins(known, from, saved = []) {
 
 /**
  * A saved PC's name in the lists and on the way back to it: its saved name, else what its address says (a relay PC's
- * id, as its host is the app's; a Tailscale host's first word; an SSH login; the address).
+ * id, as its host is the app's; a MagicDNS name's first word, as the hosted My PCs shortens it; an SSH login; the
+ * address, a Tailscale IP's whole).
  */
 export function savedPcLabel(origin, names, ssh = {}) {
   if (names[origin]) return names[origin];
@@ -255,7 +261,7 @@ export function savedPcLabel(origin, names, ssh = {}) {
   try { url = new URL(origin); } catch { return origin; }
   const scope = /^\/s\/([0-9a-f]{32})\/?$/.exec(url.pathname);
   if (scope) return scope[1].slice(0, 12);
-  return tailnetHost(url.hostname) ? url.hostname.split(".")[0] : url.host;
+  return url.hostname.toLowerCase().endsWith(".ts.net") ? url.hostname.split(".")[0] : url.host;
 }
 
 /**

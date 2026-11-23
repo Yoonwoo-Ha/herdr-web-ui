@@ -17,7 +17,7 @@ Extension, a later build; see [Later builds](#later-builds)).
 | Devices | iPhone and iPad | `TARGETED_DEVICE_FAMILY = "1,2"`, so the listing needs iPad screenshots too |
 | Minimum iOS | 15.0 | `IPHONEOS_DEPLOYMENT_TARGET` |
 | Signing | Automatic, no team yet | the owner picks the team in Xcode (section 3) |
-| Camera text | "Scan the QR code your PC shows under Settings, Phone & devices." | `NSCameraUsageDescription`, `Info.plist` |
+| Camera text | "Scan the QR code your PC shows under Settings → Devices and PCs → Add a connection." (Korean in `ko.lproj/InfoPlist.strings`) | `NSCameraUsageDescription`, `Info.plist` |
 | Microphone text | "Dictate messages and commands to your agents with voice input." | `NSMicrophoneUsageDescription`, `Info.plist` |
 | Speech recognition text | "Turn what you say into text for your agents when no OpenAI key is set." | `NSSpeechRecognitionUsageDescription`, `Info.plist` |
 | Export compliance | no non-exempt encryption (only Apple's HTTPS) | `ITSAppUsesNonExemptEncryption = false`, so uploads skip the question |
@@ -76,8 +76,8 @@ testers need a short beta review.
 >
 > How it works:
 > - Install Ovis on your PC (ovis.sh) and open it there.
-> - In the app, scan the pairing QR code from Settings > Phone & devices on the PC, or type its
->   address.
+> - In the app, scan the pairing QR code from Settings > Devices and PCs > Add a connection on the
+>   PC, or type its address.
 > - The app connects only to your own PC: over Tailscale or your own network, or, once you turn it
 >   on on the PC, through the Ovis relay, end-to-end encrypted.
 >
@@ -100,7 +100,8 @@ A Korean localization can be added later (App Store Connect > the app > App Info
 Localizable Information).
 
 **Screenshots** (in `app/store/ios/`, from the iOS simulator: the connect screen and the
-bundled demo, no real PC):
+bundled demo, no real PC). The connect screens in them predate the hosted Connect a PC screen and its
+look: take them again from a current build before the next upload.
 
 | Display | Files | Size | Simulator |
 |---|---|---|---|
@@ -188,8 +189,10 @@ refuse addresses that are not an Ovis server, which is an app change, not a form
 > Ovis is the phone app for Ovis, an open-source program people run on their own computer to
 > watch and control their coding agents and terminals (https://ovis.sh). The app connects only
 > to the user's own computer, directly or through the end-to-end encrypted Ovis relay that
-> computer turns on. Signing in is optional. To review the whole app without a computer, tap
-> the "Direct" tab, type demo and tap Connect: it runs the full
+> computer turns on. Signing in is optional. To review the whole app without a computer: on the
+> first screen, Connect a PC, tap the SSH tab, then Add by address, type demo and tap Connect. With
+> no internet the app shows its own screen instead ("Can't connect to the internet"): type demo in
+> its address field and tap Connect. Either way it runs the full
 > interface with made-up agents and terminals, entirely on the phone. "Scan QR code" uses the camera only to read the
 > pairing code a computer shows. The app uses the microphone for voice input the user chooses:
 > turning Voice input on in Settings briefly opens it to ask for access; the mic button or the
@@ -207,8 +210,24 @@ refuse addresses that are not an Ovis server, which is an app change, not a form
 - [ ] Review notes and contact filled in
 - [ ] Build selected on the version page > Add for Review > Submit
 
-Apple may ask about guideline 4.2 (an app that is "mostly a website"): the answer is the native
-connect screen, QR pairing, the bundled demo, and push notifications in a coming version.
+Apple may ask about guideline 4.2 (an app that is "mostly a website"). The first screen, Connect a PC,
+is the hosted page at `app.ovis.sh`, the one a browser shows too, so the answer is what the app does
+natively that no website can:
+
+- its own connect screen for when there is no internet, carried in the app: open a PC by its address,
+  scan its QR code, and list, open, forget and manage the PCs this phone saved;
+- an SSH client: it adds a PC over SSH from the phone, checks and pins its host key, and keeps the
+  phone's own SSH key on the device (the setup, Manage and removal screens are the app's);
+- the QR scanner (the camera reads a PC's pairing code);
+- push notifications through the app (`OvisPush`; live once the APNs key and the Notification Service
+  Extension ship, see [Later builds](#later-builds));
+- direct connections to a PC on the same network (`OvisDirect`), which a page cannot open;
+- the bridge the PC's pages use for all of these, and the bundled demo, which runs the whole interface
+  offline.
+
+If Apple still objects to a hosted first screen, the fallback plan is a build made with
+`OVIS_APP_HOME=bundled bun run build:web`: its first screen is the app's own connect screen again, with
+the relay sign-in, Tailscale and SSH tabs, and nothing else changes.
 
 ## Later builds
 

@@ -118,6 +118,9 @@ public class MainActivity extends BridgeActivity {
 
     private Integer barColor;
 
+    /** The page's own theme-color, painted on the bars once no cover is over the page (showOpening, hideOpening). */
+    private Integer pageBarColor;
+
     private View openingView;
 
     /**
@@ -376,7 +379,7 @@ public class MainActivity extends BridgeActivity {
                 // any other origin, another port on the PC's host included, go to the browser
                 // (shouldOverrideUrlLoading below).
                 .setErrorPath("error.html")
-                .setBackgroundColor("#12100e")
+                .setBackgroundColor(pageColor())
                 .setWebContentsDebuggingEnabled(debuggable)
                 // Capacitor's log has "Loading app at" with a pairing link's code, and every plugin
                 // call's arguments; logcat keeps them on the phone (capacitor.config.json turns it
@@ -391,13 +394,18 @@ public class MainActivity extends BridgeActivity {
             // the bundled demo as the first page, with what capacitor.config.json sets for the app's own pages
             config = new CapConfig.Builder(this)
                 .setStartPath("/demo/index.html")
-                .setBackgroundColor("#12100e")
+                .setBackgroundColor(pageColor())
                 .setWebContentsDebuggingEnabled(debuggable)
                 .setLoggingEnabled(false)
                 .setPluginsConfiguration(new JSObject().put("SystemBars", new JSObject().put("style", "DARK")))
                 .create();
         }
         super.onCreate(savedInstanceState);
+        // behind every first page before it paints, the app's own page included (capacitor.config.json has one colour),
+        // and the bars to suit it until the page gives its own theme-color: after SystemBars, which sets its configured
+        // style in a task of its own
+        bridge.getWebView().setBackgroundColor(getColor(R.color.ovis_page));
+        bridge.executeOnMainThread(() -> paintBars(barColor != null ? barColor : getColor(R.color.ovis_page)));
         // CapacitorCookies makes the WebView's cookies the process's CookieHandler, so the native
         // CapacitorHttp would carry them, an SSH PC's tunnel gate among them, for any page with the
         // bridge to any address; nothing in the app uses it, and the WebView keeps its own cookies
@@ -661,6 +669,11 @@ public class MainActivity extends BridgeActivity {
         }, "ovis-check").start();
     }
 
+    /** The app's own page's colour (res/values/colors.xml ovis_page), light or dark as the phone is, as Capacitor takes it. */
+    private String pageColor() {
+        return String.format("#%06X", getColor(R.color.ovis_page) & 0xFFFFFF);
+    }
+
     private static boolean korean() {
         return "ko".equals(Locale.getDefault().getLanguage());
     }
@@ -675,23 +688,23 @@ public class MainActivity extends BridgeActivity {
 
         ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         bar.setMax(1000);
-        bar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#f0a830")));
-        bar.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#f0a830")));
+        bar.setProgressTintList(android.content.res.ColorStateList.valueOf(getColor(R.color.ovis_accent)));
+        bar.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(getColor(R.color.ovis_accent)));
         bar.setVisibility(View.GONE);
         ProgressBar spinner = new ProgressBar(this);
         spinner.setIndeterminate(true);
-        spinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#f0a830")));
+        spinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(getColor(R.color.ovis_accent)));
         TextView text = new TextView(this);
         text.setText(korean() ? label + " 여는 중…" : "Opening " + label + "…");
-        text.setTextColor(Color.parseColor("#d8d0c3"));
+        text.setTextColor(getColor(R.color.ovis_text));
         text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         text.setGravity(Gravity.CENTER);
         text.setPadding(0, pad / 2, 0, pad);
         Button keep = new Button(this);
         keep.setText(korean() ? "계속 기다리기" : "Keep waiting");
         keep.setAllCaps(false);
-        keep.setTextColor(Color.parseColor("#12100e"));
-        keep.setBackgroundColor(Color.parseColor("#f0a830"));
+        keep.setTextColor(getColor(R.color.ovis_primary_text));
+        keep.setBackgroundColor(getColor(R.color.ovis_primary));
         keep.setPadding(pad, pad / 2, pad, pad / 2);
         keep.setVisibility(View.GONE);
         keep.setOnClickListener(v -> {
@@ -701,16 +714,16 @@ public class MainActivity extends BridgeActivity {
         Button retry = new Button(this);
         retry.setText(korean() ? "다시 시도" : "Try again");
         retry.setAllCaps(false);
-        retry.setTextColor(Color.parseColor("#f2ebdf"));
-        retry.setBackgroundColor(Color.parseColor("#181613"));
+        retry.setTextColor(getColor(R.color.ovis_strong));
+        retry.setBackgroundColor(getColor(R.color.ovis_elevated));
         retry.setPadding(pad, pad / 2, pad, pad / 2);
         retry.setVisibility(View.GONE);
         retry.setOnClickListener(v -> retry());
         Button change = new Button(this);
         change.setText(korean() ? "PC 바꾸기" : "Change PC");
         change.setAllCaps(false);
-        change.setTextColor(Color.parseColor("#f2ebdf"));
-        change.setBackgroundColor(Color.parseColor("#181613"));
+        change.setTextColor(getColor(R.color.ovis_strong));
+        change.setBackgroundColor(getColor(R.color.ovis_elevated));
         change.setPadding(pad, pad / 2, pad, pad / 2);
         change.setOnClickListener(v -> changePc());
         if (home) change.setVisibility(View.GONE);
@@ -728,11 +741,14 @@ public class MainActivity extends BridgeActivity {
         stack.addView(retry, gap);
         stack.addView(change);
         FrameLayout cover = new FrameLayout(this);
-        cover.setBackgroundColor(Color.parseColor("#12100e"));
+        // the hosted Connect a PC screen's colours (res/values/colors.xml), light or dark as the phone is
+        cover.setBackgroundColor(getColor(R.color.ovis_page));
         cover.setClickable(true);
         cover.addView(stack, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         addContentView(cover, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         openingView = cover;
+        // the bars take the cover's colour while it is up, whatever the page under it says (pageBarColor)
+        paintBars(getColor(R.color.ovis_page));
         openingSpinner = spinner;
         openingText = text;
         openingKeep = keep;
@@ -875,6 +891,7 @@ public class MainActivity extends BridgeActivity {
         if (openingView == null) return;
         ((ViewGroup) openingView.getParent()).removeView(openingView);
         openingView = null;
+        if (pageBarColor != null) paintBars(pageBarColor);
     }
 
     @Override
@@ -897,7 +914,8 @@ public class MainActivity extends BridgeActivity {
                     if (!isMainFrame || message.getData() == null) return;
                     String color = message.getData().trim();
                     if (!color.matches("#[0-9a-fA-F]{6}")) return;
-                    paintBars(Color.parseColor(color));
+                    pageBarColor = Color.parseColor(color);
+                    if (openingView == null) paintBars(pageBarColor);
                 }
             );
             WebViewCompat.addDocumentStartJavaScript(bridge.getWebView(), BAR_COLOR_SCRIPT, origins);

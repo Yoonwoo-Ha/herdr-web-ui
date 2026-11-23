@@ -80,7 +80,7 @@
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Scan the QR code your PC shows under Settings, Phone &amp; devices.</string>
+	<string>Scan the QR code your PC shows under Settings → Devices and PCs → Add a connection.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect straight to your PC when it is on the same network, instead of through the Ovis relay.</string>
 	<key>NSMicrophoneUsageDescription</key>

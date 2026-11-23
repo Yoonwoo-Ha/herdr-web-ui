@@ -176,25 +176,49 @@ To repeat it:
 
 What is there:
 
-- `app/web`: the app's own pages. `index.html` is Connect a PC, with the desktop's Add a connection
-  tabs in its order, picked without a history entry (the phone's Back leaves the app): Ovis relay
-  (the default; the sign-ins the account service names at `/v1/providers`, a press opens the hosted
-  app on that sign-in, `#sign-in=<provider>`, and Scan the QR on the PC's screen), Tailscale (the PCs this phone opened at a Tailscale
-  address, with Connect, a Tailscale address and Scan a QR code; on Android, while no interface holds
-  a Tailscale address, one line and Open Tailscale alone) and SSH (SSH's `user@host` first, which opens the SSH
-  setup filled in, only in an app that announces the `OvisSsh` plugin; Add by address, a text link to a field
-  for a PC's https address; then the PCs added over SSH, and as Saved addresses those opened before at any other address, each
-  with Connect and Forget, and one saved unreadable with Forget alone). The relay and Tailscale tabs list
-  their own PCs opened before. A build with
-  `OVIS_APP_ACCOUNT=0` has no relay tab and opens on Tailscale. The address `demo` opens the bundled demo, which has no button
-  of its own: the store review notes (app/store) send reviewers there. This page is no longer the app's first screen
-  unless the build says so: see [The first screen](#the-first-screen). `error.html` is shown when a PC cannot be
-  reached or answers with an HTTP error (a 502 from `tailscale serve` while Ovis is stopped), with the
-  reason, Try again and Change PC. Both are in English and Korean: an element's
-  `data-ko` attribute holds its Korean text, put in when the phone's first language is Korean
-  (`localize()` in `shell.js`; `error.html` carries its own copy, as it stands alone on Android).
-  The iOS app lists `ko` in `CFBundleLocalizations`, without which its web view reports English
-  to every page, the client included.
+- `app/web`: the app's own pages, in the hosted Connect a PC screen's look (the Codex theme's colours, light or dark as
+  the phone is, and the hosted page's type, radii, buttons and rows: `shell.css` copies the values from `src/styles.css`
+  and `src/components/RelayShell.css` / `RelayAddPc.css` and names each source; `pretendard.css`, which
+  `build-web.ts` writes, points the hosted typeface at the font files the bundled demo already carries). `index.html`
+  holds two layouts and `connect.js` takes one by the build (`APP_HOME` in `shell.js`):
+  - In a hosted-home build (the default) the page is no first screen: it stands in when home does not load and takes
+    what only the app can do (see [The first screen](#the-first-screen)). It is one column of what works with no
+    internet. As the fallback it says "Can't connect to the internet" with Try again (`goHome`), the sheep dimmed;
+    then Connect by address, one field that takes any PC's address as the Tailscale tab's field and Add by address did
+    (the public-http warning, `demo` for the bundled demo, and on Android, while Tailscale is off and a Tailscale
+    address is typed or listed, one line with Open Tailscale); Scan a QR code (a Tailscale QR or a PC's QR still opens
+    on a home network); Connect over SSH, a row whose field takes `user@host` and opens the SSH setup (only in an app
+    that announces `OvisSsh`); the PCs an SSH PC knows; and every PC this phone saved, relay scopes (by name, else the
+    start of the id), Tailscale, plain addresses and SSH, in one list, each opening as before, with Forget, and Manage
+    on an SSH PC. No sign-in and no relay tab: both need the internet and the hosted page. Opened for an SSH setup it
+    goes to the SSH setup with the login filled in; opened to manage an SSH PC (Change PC where one did not open) it
+    opens that PC's Manage (the one last opened, else the only SSH PC); both with "‹ Back" to home.
+  - In a bundled-home build (`OVIS_APP_HOME=bundled`, or `OVIS_APP_ACCOUNT=0`) it is the first screen, Connect a PC with
+    the desktop's Add a connection tabs in its order, picked without a history entry (the phone's Back leaves the app):
+    Ovis relay (the default; the sign-ins the account service names at `/v1/providers`, a press opens the hosted app
+    on that sign-in, `#sign-in=<provider>`, and Scan the QR on the PC's screen), Tailscale (the PCs this phone opened
+    at a Tailscale address, with Connect, a Tailscale address and Scan a QR code; on Android, while no interface holds
+    a Tailscale address, one line and Open Tailscale alone) and SSH (SSH's `user@host` first, which opens the SSH setup
+    filled in, only in an app that announces the `OvisSsh` plugin; Add by address, a text link to a field for a PC's
+    https address; then the PCs added over SSH, and those opened before at any other address, each with Forget, an SSH
+    PC with Manage, and one saved unreadable with Forget alone). The relay and Tailscale tabs list their own PCs opened
+    before. A build with `OVIS_APP_ACCOUNT=0` has no relay tab and opens on Tailscale.
+
+  In both, the PC a page was opened from to choose another is marked In use now, and "‹ <PC>" goes back to it. The
+  address `demo` opens the bundled demo, which has no button of its own: the store review notes (app/store) send
+  reviewers there. `error.html` is shown when a PC cannot be reached or answers with an HTTP error (a 502 from
+  `tailscale serve` while Ovis is stopped), with the reason, Try again and Change PC, in the same look; it stands alone
+  on Android, so `build-web.ts` puts `shell.css` and the sheep into it. Every page sets its `theme-color` to its own
+  colour, light or dark (`barsFor` in `shell.js`, copied into `error.html`), which both apps' bars follow; a PC still
+  opens on the dark one until its page gives its own. The native parts around them take the same colours, light or dark
+  as the phone is: the covers ("Opening…", Try again, Change PC: `MainActivity.showOpening` with `res/values*/colors.xml`,
+  `HerdrBridgeViewController.showOpening`), the web view before a page paints (Android's window background,
+  iOS's `instanceDescriptor().backgroundColor`), Android 12's launch screen and the SSH setup screen
+  (`SshSetupActivity`, `SshSetupView`). The iOS launch image (`Splash.imageset`) is unchanged. Both are in English and Korean, the Korean in 해요체 and in the
+  hosted page's words for the same things: an element's `data-ko` attribute holds its Korean text, put in when the
+  phone's first language is Korean (`localize()` in `shell.js`; `error.html` carries its own copy, as it stands alone
+  on Android). The iOS app lists `ko` in `CFBundleLocalizations`, without which its web view reports English to every
+  page, the client included.
 - A PC joins the list of PCs only once a page of it has loaded, so an address that never
   answered, or answered with an HTTP error, is not kept.
 - On Android an address typed, scanned or picked from the list is first asked whether it is Ovis
@@ -303,8 +327,9 @@ What is there:
   already named Ovis, so the store listing can say "Ovis for herdr". The project owns `ovis.sh`,
   so the bundle ID and Android application ID are `sh.ovis.app`.
 - The icon is a cream sheep with closed eyes on a navy tile (`#2E3A59`), cut from the Figma
-  logo drafts; `app/assets/ovis-sheep.png` is the sheep alone. The connect screen shows the
-  logo, the sheep beside the word Ovis (`app/web/ovis-logo.png`). The PNGs in `app/assets` are
+  logo drafts; `app/assets/ovis-sheep.png` is the sheep alone. The app's own pages show the
+  sheep (`app/web/ovis-sheep.svg`), as the hosted screens do; `app/web/ovis-logo.png`, the sheep beside the word Ovis,
+  is the Mac app's connect screen's (app/electron). The PNGs in `app/assets` are
   the sources for both platforms' icons and splash screens. After changing them, run
   `npx @capacitor/assets generate --ios --android --iconBackgroundColor '#2E3A59' --splashBackgroundColor '#12100e'`
   in `app/`, and put back `AndroidManifest.xml` if the tool reformatted it.
@@ -413,8 +438,9 @@ while the app is behind another, though its timer may run on there.
 
 Fallback: the flag `homeFailed` is set, in memory only, and the app's own page comes up in a new web
 view (the old one goes, so a load that finishes late cannot take the person off what they type). The page
-reads `fallback` from `HerdrShell.getState` and shows one line, "Can't connect to the internet", with
-Try again, which calls `HerdrShell.goHome`. Nothing else leads back to home by itself, so an offline phone
+reads `fallback` from `HerdrShell.getState` and says "Can't connect to the internet" at its top, with
+Try again, which calls `HerdrShell.goHome` (in a hosted-home build the page is the one column of what works offline,
+[above](#the-app-app)). Nothing else leads back to home by itself, so an offline phone
 stays on that page: the flag is cleared only by Try again, by a sign-in pressed there (below), or once a
 PC's page has loaded, after which the next Connect a PC tries home again. An app started again tries
 home. On iOS, in a hosted-home build, the app's own page is watched too (`Home.ownPageCover`,
@@ -425,14 +451,14 @@ a just-created simulator on a starved Mac: every web view committed its page and
 then ran nothing more, home first and the app's own page after it, with the app's main thread idle.
 
 The hosted app's front page asked for by its address is an attempt at home, not a PC (`Home.homeStart`):
-the sign-in buttons and the saved Ovis row of the app's own page open `<hosted origin>/#sign-in=<provider>`
-and `/#pcs` through `HerdrShell.open`, which in a hosted-home build starts home at that fragment, keeps
+the sign-in buttons of the app's own page (a bundled-home build's tabs; the column has none) open
+`<hosted origin>/#sign-in=<provider>`, and the hosted origin typed or scanned opens `/#pcs`, through `HerdrShell.open`, which in a hosted-home build starts home at that fragment, keeps
 the current PC and falls back like any other attempt. A PC's page there (`/s/<server_id>/…`) still opens
 as a PC.
 
-Change PC where an SSH PC did not open (the cover's, error.html's) leads to the app's own page on its
-SSH tab, not to home: error.html sends the person to Manage there (Forget host key, Set up again), which
-the hosted screen has not. An SSH PC's tunnel failing while the person chooses another way does not put
+Change PC where an SSH PC did not open (the cover's, error.html's) leads to the app's own page with that
+PC's Manage open (on the SSH tab in a bundled-home build), not to home: error.html sends the person to Manage
+there (Forget host key, Set up again), which the hosted screen has not. An SSH PC's tunnel failing while the person chooses another way does not put
 its error page over home or the app's own page: only over that PC's own page (`Home.pcShown`). The same
 rule keeps a page that is not a PC's from the current PC's push subscription on iOS (Android keys it by
 the page's own origin).
@@ -630,8 +656,10 @@ pieces are the Java twins of the iOS ones, in `app/android/app/src/main/java/sh/
 - The status and navigation bars take the page's `theme-color` (the client keeps it at its top
   bar's color), with icons that stand out on it: a document-start script sends it to an
   `OvisBars` listener open to the app's and the PC's origins. Until then, and on a WebView without
-  those features, they sit on the app's dark background (`colors.xml`), as does Android 12's own
-  launch screen (`windowSplashScreenBackground`).
+  those features, they sit on the app's own page's colour (`ovis_page` in `colors.xml`, white, or
+  `#181818` in `values-night`), as do the web view before a page paints, Android 12's own launch
+  screen (`windowSplashScreenBackground`) and the native cover; while the cover is up the bars keep
+  its colour, and the page's `theme-color` takes over once it lifts.
 - With 3-button navigation the page stays clear of the buttons, at the bottom or, on a phone in
   landscape, at the side. On a WebView that gives the page its safe areas itself (140 and later),
   Capacitor's SystemBars lets the page draw under the system bars and leaves the room to the CSS,
@@ -640,7 +668,7 @@ pieces are the Java twins of the iOS ones, in `app/android/app/src/main/java/sh/
   pads its sides for a side bar itself. `MainActivity` keeps the WebView clear of the bars'
   tappable part (`WindowInsetsCompat.Type.tappableElement()`, which a pinned taskbar on a large
   screen has too), and the strip beside it shows the window's background: the page's
-  `theme-color` once the page has sent it, the app's dark background before. A gesture bar has no
+  `theme-color` once the page has sent it, the app's own page's colour before. A gesture bar has no
   tappable part, so the page still draws under it. A docked keyboard covers a bottom bar, and
   SystemBars keeps the page above both. A floating keyboard takes no bottom inset, so on WebView
   144 and later the bar is kept clear under it; before 144 SystemBars passes the page no bottom

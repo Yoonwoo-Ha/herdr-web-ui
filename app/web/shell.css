@@ -1,109 +1,429 @@
-:root { color-scheme: dark; --bg: #12100e; --panel: #181613; --input: #1c1916; --border: #2d2924; --text: #d8d0c3; --dim: #9b9183; --strong: #f2ebdf; --primary: #f0a830; --primary-text: #1b1407; --danger: #ff7b70; }
-/* the app's own screens (index.html) follow the phone's light mode; error.html stays dark */
-:root.screens { color-scheme: light dark; }
-@media (prefers-color-scheme: light) {
-  :root.screens { --bg: #eeeae2; --panel: #faf8f3; --input: #fffdf9; --border: #dcd4c6; --text: #2a251f; --dim: #685e52; --strong: #16120d; --primary: #8c5000; --primary-text: #fffdf9; --danger: #8f1d1d; }
+/*
+ * The app's own pages (index.html, error.html) in the hosted Connect a PC screen's look (app.ovis.sh), so that going
+ * from one to the other shows no seam. These pages cannot import src/, so the values are copied, each block naming its
+ * source: the colours are the Codex theme's (src/styles.css, [data-theme="light"][data-palette="codex"] and its dark
+ * block), light or dark as the phone is; the type, space and radius scale is src/styles.css's :root at a phone's sizes
+ * (a coarse pointer: every control 44 px); the parts are src/components/RelayShell.css and RelayAddPc.css
+ * (ConnectStart.tsx: My PCs and Add a PC). Change them there first, then here.
+ */
+:root {
+  color-scheme: light;
+  /* src/styles.css, [data-theme="light"][data-palette="codex"] */
+  --bg: #ffffff;
+  --bg-panel: #f9f9f9;
+  --bg-elevated: #f3f3f3;
+  --bg-hover: #ebebeb;
+  --bg-input: #ffffff;
+  --border: #e5e5e5;
+  --border-strong: #d0d0d0;
+  /* --border-input there is color-mix(in srgb, var(--text-dim) 78%, var(--border-strong)), mixed here once: iOS 15 has no color-mix */
+  --border-input: #76797e;
+  --text: #1a1c1f;
+  --text-dim: #5d6067;
+  --text-strong: #0d0d0d;
+  --accent: #3a83f7;
+  --accent-tint: rgba(58, 131, 247, 0.1);
+  --primary: #1a1c1f;
+  --primary-hover: #33363b;
+  --primary-text: #ffffff;
+  --danger-text: #b12421;
+  --scrim: rgba(26, 28, 31, 0.35);
+
+  /* src/styles.css :root: type, weight, space, radius, sizes (a coarse pointer's control height) */
+  --font-ui: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Malgun Gothic", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-display: 22px;
+  /* the one size iOS does not zoom a focused field from (src/styles.css --fs-input) */
+  --fs-input: 16px;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --lh-tight: 1.2;
+  --lh-base: 1.5;
+  --tracking-tight: -0.01em;
+  --space-half: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-cta: 10px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --hairline: 1px;
+  --control-h: 34px;
+  --touch-target: 44px;
+  --icon-size: 18px;
+  --ring: 2px solid var(--accent);
+  --ring-offset: 2px;
 }
+
+@media (prefers-color-scheme: dark) {
+  /* src/styles.css, [data-theme="dark"][data-palette="codex"] */
+  :root {
+    color-scheme: dark;
+    --bg: #181818;
+    --bg-panel: #1f1f1f;
+    --bg-elevated: #262626;
+    --bg-hover: #2f2f2f;
+    --bg-input: #212121;
+    --border: #2e2e2e;
+    --border-strong: #404040;
+    --border-input: #8d8d8d;
+    --text: #ececec;
+    --text-dim: #a3a3a3;
+    --text-strong: #ffffff;
+    --accent: #3a83f7;
+    --accent-tint: rgba(58, 131, 247, 0.16);
+    --primary: #ffffff;
+    --primary-hover: #e5e5e5;
+    --primary-text: #181818;
+    --danger-text: #ffd0ce;
+    --scrim: rgba(0, 0, 0, 0.6);
+  }
+}
+
 * { box-sizing: border-box; }
-html, body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.45 -apple-system, system-ui, sans-serif; -webkit-text-size-adjust: 100%; }
-main { max-width: 32rem; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 2.5rem) 1.25rem calc(env(safe-area-inset-bottom) + 2rem); }
-h1 { color: var(--strong); font-size: 1.75rem; margin: 0 0 .25rem; }
-h2 { color: var(--dim); font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; margin: 2rem 0 .5rem; }
-p { margin: 0 0 1rem; color: var(--dim); }
-input { width: 100%; font: inherit; color: var(--strong); background: var(--input); border: 1px solid var(--border); border-radius: .6rem; padding: .75rem .85rem; }
-input:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
-button { font: inherit; border-radius: .6rem; padding: .75rem 1rem; border: 1px solid var(--border); background: var(--panel); color: var(--strong); cursor: pointer; }
-button.primary { background: var(--primary); color: var(--primary-text); border-color: var(--primary); font-weight: 600; }
-/* Add by address on the SSH tab: a text link, its field behind it */
-button.text-link { align-self: flex-start; min-height: 2.75rem; padding: 0; border: 0; background: none; color: var(--dim); font-size: .9rem; text-decoration: underline; text-underline-offset: .15em; }
-.row { display: flex; gap: .6rem; margin-top: .75rem; }
-.row > button { flex: 1; }
-.error { color: var(--danger); margin: .5rem 0 0; }
-.error:empty { display: none; }
-.status { display: flex; align-items: center; gap: .6rem; color: var(--text); }
-.status:has(#status-text:not(:empty)) { margin-top: .5rem; }
-.status [hidden] { display: none; }
-.status #status-text { flex: 1; overflow-wrap: anywhere; }
-.status button { flex: none; padding: .5rem .85rem; }
-.spinner { flex: none; width: 1.1rem; height: 1.1rem; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; }
+[hidden] { display: none !important; }
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: var(--lh-base);
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+p { margin: 0; }
+/* src/styles.css: Korean keeps each word whole (breaks at spaces and punctuation only), code keeps the browser's breaking.
+   localize() (shell.js) sets <html lang="ko"> on a Korean phone */
+html:lang(ko) body { word-break: keep-all; }
+:is(pre, code) { word-break: normal; }
+a { color: var(--accent); }
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: var(--ring); outline-offset: var(--ring-offset); }
+button:focus:not(:focus-visible) { outline: none; }
+::placeholder { color: var(--text-dim); opacity: 1; }
+
+/* the screen: RelayShell.css .relay-shell-screen (its padding and the safe areas) around a column of the hosted width */
+main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: calc(368px + 2 * var(--space-4));
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: calc(var(--space-6) + env(safe-area-inset-top, 0px)) calc(var(--space-4) + env(safe-area-inset-right, 0px))
+    calc(var(--space-6) + env(safe-area-inset-bottom, 0px)) calc(var(--space-4) + env(safe-area-inset-left, 0px));
+}
+
+/* RelayShell.css .my-pcs > .sheep-mascot, .connect-start-head: the sheep, then the title centred, Back at its start */
+.sheep {
+  display: block;
+  align-self: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: calc(var(--space-2) - var(--space-3));
+}
+.head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  margin-bottom: var(--space-1);
+}
+.head > .back { grid-column: 1; justify-self: start; }
+.head > h1 { grid-column: 2; }
+h1, .lede {
+  margin: 0;
+  font-size: var(--fs-display);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--lh-tight);
+  color: var(--text-strong);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+/* the tabs are the app's first screen, as the hosted Connect a PC is with no PC yet: its sheep (RelayShell.tsx, plain: 80 px) */
+main[data-layout="tabs"] .sheep { width: 80px; height: 80px; margin-bottom: calc(var(--space-4) - var(--space-3)); }
+/* the column's title where the hosted screen did not load, and the tabs' relay line: one size down (the approved F6 frame) */
+.lede { font-size: var(--fs-lg); }
+/* dimmed in light mode only: the navy sheep is already quiet on the dark background */
+@media (prefers-color-scheme: light) { main.offline .sheep { opacity: 0.55; } }
+/* the way back: RelayAddPc.css .relay-add-back's ring, wide enough for the PC's name it goes back to */
+.back {
+  max-width: 100%;
+  min-width: var(--touch-target);
+  height: var(--touch-target);
+  padding: 0 var(--space-3);
+  overflow: hidden;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* buttons: src/styles.css .btn, .btn-primary, .btn-ghost at a coarse pointer's height */
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--touch-target);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+button:disabled { opacity: 0.55; cursor: default; }
+button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+button.ghost { background: transparent; border-color: transparent; color: var(--text-dim); }
+/* RelayShell.css .my-pcs-add > .btn: the screen's one action, the column's width */
+button.wide { width: 100%; }
+
+/* a field: src/styles.css .input at the size iOS does not zoom from; in the column, with Connect inside (the approved F6 frame) */
+input {
+  width: 100%;
+  min-height: var(--touch-target);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--border-input);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-strong);
+  font-size: var(--fs-input);
+}
+.field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) 0;
+  border: var(--hairline) solid var(--border-input);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+}
+.field:focus-within { outline: var(--ring); outline-offset: var(--ring-offset); }
+.field input { flex: 1; min-width: 0; min-height: calc(var(--touch-target) - 2 * var(--space-1) - 2 * var(--hairline)); border: 0; background: none; }
+.field input:focus { outline: none; }
+.field button { flex: none; min-height: calc(var(--touch-target) - 2 * var(--space-1) - 2 * var(--hairline)); padding: 0 var(--space-4); font-size: var(--fs-md); font-weight: var(--fw-semibold); }
+/* RelayShell.css .relay-shell-field-label */
+.label { display: block; color: var(--text-strong); font-size: var(--fs-sm); font-weight: var(--fw-medium); }
+/* a section's name over its part of the column (the approved F6 frame) */
+h2 {
+  margin: var(--space-2) 0 calc(var(--space-2) - var(--space-3));
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+/* RelayShell.css .relay-shell-copy, .relay-shell-detail, RelayAddPc.css's quiet text */
+.note { color: var(--text-dim); font-size: var(--fs-md); text-align: center; text-wrap: pretty; }
+.detail { color: var(--text-dim); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.sub { color: var(--text-dim); font-size: var(--fs-md); }
+/* RelayShell.css .connect-address-link: Add by address on the SSH tab, a text link with its field behind it */
+button.text-link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+/* RelayAddPc.css .relay-add-way: one card per way, the same height each, the mark at its start and a chevron at its end */
+button.way {
+  justify-content: flex-start;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: calc(var(--touch-target) * 1.75);
+  padding: var(--space-4);
+  border-radius: var(--radius-cta);
+  background: var(--bg-panel);
+  color: var(--text-strong);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  text-align: start;
+}
+.way-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: calc(var(--space-6) + var(--space-4));
+  height: calc(var(--space-6) + var(--space-4));
+  border-radius: var(--radius-cta);
+  background: var(--bg);
+}
+.way-icon svg { width: var(--space-5); height: var(--space-5); }
+.way-text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.way-title { font-weight: var(--fw-semibold); }
+.chevron { flex: none; width: var(--space-4); height: var(--space-4); color: var(--text-dim); }
+button.way[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+
+/* the tabs: src/styles.css .segmented at a coarse pointer (a 44 px option, its pill drawn inside) and RelayShell.css .connect-start-tabs */
+.tabs {
+  display: flex;
+  gap: var(--space-half);
+  height: var(--control-h);
+  margin-bottom: calc(var(--space-5) - var(--space-3));
+  padding: var(--space-half);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+.tabs [role="tab"] {
+  position: relative;
+  z-index: 0;
+  flex: 1;
+  min-height: 0;
+  height: var(--touch-target);
+  margin-block: calc((var(--control-h) - 6px - var(--touch-target)) / 2);
+  padding: 0 var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+.tabs [role="tab"]::before {
+  content: "";
+  position: absolute;
+  inset: calc((var(--touch-target) - (var(--control-h) - 6px)) / 2) 0;
+  z-index: -1;
+  border-radius: var(--radius-sm);
+}
+.tabs [role="tab"][aria-selected="true"] { color: var(--text-strong); font-weight: var(--fw-semibold); }
+.tabs [role="tab"][aria-selected="true"]::before { background: var(--bg-hover); box-shadow: inset 0 0 0 var(--hairline) var(--border-strong); }
+/* RelayShell.css .connect-start-panel */
+.panel { display: flex; flex-direction: column; gap: var(--space-3); }
+
+/* the sign-ins: RelayShell.css .relay-shell-plain .account-provider, every way in the same weight, its mark at the start */
+.providers { display: flex; flex-direction: column; gap: var(--space-2); }
+button.provider {
+  position: relative;
+  width: 100%;
+  min-height: calc(var(--touch-target) + var(--space-1));
+  border-radius: var(--radius-cta);
+  background: var(--bg-panel);
+  color: var(--text-strong);
+  font-size: var(--fs-md);
+}
+button.provider svg { position: absolute; left: var(--space-4); width: var(--space-5); height: var(--space-5); }
+
+/* Tailscale off on this phone: one line and its app (ConnectStart.tsx TailscalePanel) */
+.off { display: flex; flex-direction: column; gap: var(--space-3); }
+.off .note { text-align: start; }
+
+/* a list of PCs: RelayShell.css .my-pcs-list and .my-pc, one card, rows divided by a hairline, Forget or Manage in a cell of
+   its own beside the row's open button so a tap on the one never lands on the other */
+ul { margin: 0; padding: 0; list-style: none; }
+.pc-list {
+  overflow: hidden;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+}
+.pc-list > li { display: flex; align-items: center; }
+.pc-list > li + li { border-top: var(--hairline) solid var(--border); }
+.pc-list .pc-open {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas: "name state chevron" "meta meta meta";
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text-strong);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  text-align: start;
+}
+.pc-list span.pc-open { cursor: default; }
+.pc-name { grid-area: name; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-open > .chevron { grid-area: chevron; width: var(--icon-size); height: var(--icon-size); }
+.pc-sub { display: flex; grid-area: meta; align-items: center; gap: var(--space-2); min-width: 0; }
+/* RelayShell.css .phone-pc-tag, .my-pc-address */
+.pc-tag { flex: none; padding: 0 var(--space-1); border: var(--hairline) solid var(--border); border-radius: var(--radius-sm); color: var(--text-dim); font-size: var(--fs-xs); }
+.pc-address { min-width: 0; overflow: hidden; color: var(--text-dim); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
+/* RelayShell.css .my-pc-state[data-pc-state="in-use"]: the PC this screen was opened from, on the accent's tint */
+.pc-on { grid-area: state; flex: none; padding: 0 var(--space-2); border-radius: var(--radius-pill); background: var(--accent-tint); color: var(--accent); font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
+/* RelayShell.css .my-pc > .phone-pc-forget */
+.pc-list > li > button.ghost { flex: none; min-width: 4.5em; margin-inline-end: var(--space-2); padding: 0 var(--space-2); }
+/* a PC an SSH PC knows, with Add */
+.pc-list > li > .way-text { padding: var(--space-3) var(--space-4); }
+.pc-list > li > button.primary { flex: none; margin-inline-end: var(--space-3); }
+
+/* Manage under an SSH PC of the list (connect.js managePanel) */
+.pc-list > li.manage-row { display: block; padding: 0 var(--space-4) var(--space-4); border-top: 0; }
+.manage { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); background: var(--bg); }
+.manage p { color: var(--text); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.manage p.key { color: var(--text-dim); font: var(--fs-xs) / var(--lh-base) var(--font-mono); }
+.manage .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.manage .check { display: flex; gap: var(--space-2); align-items: flex-start; color: var(--text); font-size: var(--fs-sm); }
+.manage .check input { width: auto; min-height: 0; margin: var(--space-1) 0 0; }
+/* stays in the page, taking no room: a live region that appears with its text is not announced */
+.manage .said:empty { margin-top: calc(-1 * var(--space-2)); }
+
+/* RelayShell.css .relay-shell-command */
+code.key, pre.command {
+  display: block;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-strong);
+  font: var(--fs-xs) / var(--lh-base) var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+  -webkit-user-select: all;
+}
+
+/* what an open does, and what it said (connect.js showStatus): RelayShell.css's opening line and .account-error */
+.status { display: flex; align-items: center; gap: var(--space-2); color: var(--text-dim); font-size: var(--fs-sm); }
+/* the status and #feedback stay in the page while empty (a live region that appears with its text is not announced),
+   taking no room: their gaps are given back */
+.status:not(:has(#status-text:not(:empty))) { margin-bottom: calc(-1 * var(--space-2)); }
+.status #status-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.status button { flex: none; }
+.spinner { flex: none; width: var(--space-4); height: var(--space-4); border: var(--hairline) solid var(--border-strong); border-top-color: var(--text-strong); border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
-ul { list-style: none; margin: 0; padding: 0; }
-li { display: flex; gap: .5rem; align-items: center; margin-bottom: .5rem; }
-li .open { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-li .forget { flex: none; color: var(--dim); }
-li.manage-row { display: block; }
-.manage { background: var(--panel); border: 1px solid var(--border); border-radius: .6rem; padding: .75rem; }
-.manage p { margin: 0 0 .4rem; color: var(--text); overflow-wrap: anywhere; }
-.manage p.key { font: .8em ui-monospace, monospace; color: var(--dim); }
-.manage .actions { display: flex; flex-wrap: wrap; gap: .4rem; margin: .6rem 0; }
-.manage button { padding: .5rem .75rem; font-size: .9rem; }
-.manage input { margin-bottom: .5rem; }
-.manage .check { display: flex; gap: .5rem; align-items: flex-start; font-weight: 400; color: var(--text); }
-.manage .check input { width: auto; margin: .3rem 0 0; }
-.manage .said:empty { margin: 0; padding: 0; } /* stays in the page: a live region that appears with its text is not announced */
-code.key, pre.command { display: block; white-space: pre-wrap; word-break: break-all; background: var(--input); border: 1px solid var(--border); border-radius: .4rem; padding: .5rem .6rem; margin: 0 0 .5rem; user-select: all; -webkit-user-select: all; }
-pre.command { font: .85em ui-monospace, monospace; color: var(--strong); }
-pre.command[hidden] { display: none; }
-a { color: var(--primary); }
+.error { color: var(--danger-text); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.error:empty { display: none; }
+#feedback { display: flex; flex-direction: column; gap: var(--space-2); }
+#feedback:not(:has(#status-text:not(:empty), #error:not(:empty))) { margin-top: calc(-1 * var(--space-3)); }
 
-/* the app's own screen (index.html): Connect a PC, its tabs one at a time (connect.js pick) */
-.bar-back { margin-left: auto; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: .4rem .75rem; font-size: .9rem; font-weight: 600; }
-.bar { display: flex; align-items: center; gap: .6rem; max-width: 32rem; margin: 0 auto; padding: calc(env(safe-area-inset-top) + .75rem) 1.25rem .75rem; color: var(--strong); font-size: 1.15rem; font-weight: 700; border-bottom: 1px solid var(--border); }
-main.first { display: flex; flex-direction: column; padding-top: 1.5rem; }
-main.first h1.step { margin: 0 0 1rem; font-size: 1.4rem; }
-/* this page standing in for the hosted screen that did not load: one line and Try again (connect.js showFallback) */
-.offline { display: flex; align-items: center; gap: .75rem; margin: 0 0 1rem; padding: .5rem .5rem .5rem .85rem; border: 1px solid var(--border); border-radius: .6rem; background: var(--panel); color: var(--text); font-size: .95rem; }
-.offline span { flex: 1; }
-.offline button { flex: none; padding: .45rem .8rem; font-size: .9rem; font-weight: 600; }
-[hidden] { display: none !important; }
-.tabs { display: flex; gap: .25rem; padding: .25rem; margin-bottom: 1.25rem; border-radius: .75rem; background: var(--input); border: 1px solid var(--border); }
-.tabs [role="tab"] { flex: 1; min-height: 2.75rem; padding: .5rem .25rem; border: 0; border-radius: .55rem; background: none; color: var(--dim); font-size: .95rem; white-space: nowrap; }
-.tabs [role="tab"][aria-selected="true"] { background: var(--panel); color: var(--strong); font-weight: 700; box-shadow: 0 1px 3px rgb(0 0 0 / .15); }
-.panel { display: flex; flex-direction: column; gap: .8rem; }
-.panel > .note { margin: 0; font-size: .9rem; text-align: center; }
-.panel h2 { margin: 0 0 .5rem; color: var(--text); font-size: .95rem; font-weight: 700; text-transform: none; letter-spacing: 0; }
-#tailscale-on { display: flex; flex-direction: column; gap: .8rem; }
-#tailscale-on > .note { margin: 0; font-size: .9rem; }
-.panel .way { width: 100%; }
-.sub { color: var(--dim); font-size: .9rem; }
-.card { display: flex; flex-direction: column; gap: .75rem; padding: 1rem; border: 1px solid var(--border); border-radius: .9rem; background: var(--panel); }
-.card-title { margin: 0; color: var(--strong); font-weight: 700; text-align: center; }
-.card .note { margin: 0; font-size: .9rem; text-align: center; }
-.card.off { align-items: center; padding: 1.75rem 1rem; }
-.card.off .primary { align-self: stretch; }
-.card.list { gap: .5rem; padding: .5rem; }
-.card.list li { gap: .75rem; margin: 0; padding: .6rem .5rem .6rem .75rem; border-radius: .6rem; background: var(--input); }
-.card.list li .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card.list li .primary { flex: none; }
-.card.list li .forget { padding: .5rem .6rem; font-size: .9rem; }
-.card.list li .primary { padding: .6rem .85rem; }
-/* a saved PC's row: its name, the way it connects and Connected for the PC this screen was opened from (connect.js renderPcs) */
-/* a PC row of a tab's list: the whole row opens it (connect.js renderPcs) */
-.card.list li .pc-open { display: flex; flex-direction: column; flex: 1; min-width: 0; padding: 0; border: 0; background: none; text-align: left; color: inherit; }
-.pc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card.list li .pc-sub { display: flex; align-items: center; gap: .35rem; margin-top: .15rem; }
-.pc-address { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pc-tag, .pc-on { flex: none; padding: .05rem .4rem; border-radius: .35rem; font-size: .72rem; font-weight: 600; line-height: 1.4; }
-.pc-tag { border: 1px solid var(--border); color: var(--dim); }
-.pc-on { background: var(--primary); color: var(--primary-text); }
-.label { color: var(--strong); font-weight: 700; }
-.field { display: flex; gap: .5rem; align-items: center; padding: .3rem .3rem .3rem 0; border: 1px solid var(--border); border-radius: .75rem; background: var(--input); }
-.field:focus-within { outline: 2px solid var(--primary); outline-offset: 1px; }
-.field input { flex: 1; min-width: 0; border: 0; background: none; }
-.field input:focus { outline: none; }
-.field .primary { flex: none; padding: .6rem 1rem; }
-.panel .hint { margin: -.3rem 0 .4rem; text-align: left; font-size: .85rem; }
-.providers { display: flex; flex-direction: column; gap: .75rem; }
-.provider { position: relative; display: flex; align-items: center; justify-content: center; min-height: 3rem; border-radius: .75rem; background: var(--input); font-size: 1.05rem; font-weight: 600; }
-.provider[data-provider="github"] { background: var(--strong); border-color: var(--strong); color: var(--bg); }
-.provider svg { position: absolute; left: 1rem; width: 1.25rem; height: 1.25rem; }
-button:focus:not(:focus-visible) { outline: none; }
-.way { display: flex; align-items: center; gap: 1rem; min-height: 4.9rem; padding: 1rem; border-radius: .75rem; text-align: left; }
-.way-icon { display: grid; place-items: center; flex: none; width: 2.5rem; height: 2.5rem; border-radius: .6rem; background: var(--bg); }
-.way-icon svg { width: 1.25rem; height: 1.25rem; }
-.way-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-.way-title { font-weight: 700; }
-.way .sub { color: var(--dim); font-size: .9rem; }
-.way .chevron { flex: none; width: 1.1rem; height: 1.1rem; color: var(--dim); }
-#feedback { margin-top: 1rem; }
+/* the PC's error page (error.html): its title, why, and Try again and Change PC at the end */
+main.trouble h1 { margin-bottom: var(--space-1); }
+main.trouble p { color: var(--text-dim); font-size: var(--fs-md); text-wrap: pretty; }
+/* the title and what did not open, centred as the hosted screens' are; the reasons below read as text */
+main.trouble #what { text-align: center; }
+main.trouble p.error { color: var(--danger-text); font-size: var(--fs-sm); }
+main.trouble .actions { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); }
+main.trouble .actions button { width: 100%; }
+main.trouble #ssh { display: flex; flex-direction: column; gap: var(--space-3); }
+main.trouble #ssh button { width: 100%; }

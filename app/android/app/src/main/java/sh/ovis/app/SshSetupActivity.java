@@ -57,11 +57,46 @@ public class SshSetupActivity extends Activity {
 
     static volatile Steps steps;
 
-    private static final int BACKGROUND = Color.parseColor("#12100e");
-    private static final int TEXT = Color.parseColor("#d8d0c3");
-    private static final int MUTED = Color.parseColor("#9a9184");
-    private static final int ACCENT = Color.parseColor("#f0a830");
-    private static final int FIELD = Color.parseColor("#1d1a16");
+    /**
+     * The hosted Connect a PC screen's colours, which hands over to this screen (the Codex theme of src/styles.css, as
+     * app/web/shell.css copies it), light or dark as the phone was when the screen opened: a change of mode does not
+     * recreate it (its work runs on a thread that waits on its dialogs, AndroidManifest.xml), so it keeps these until
+     * it is opened again.
+     */
+    private int background;
+    private int text;
+    private int strong;
+    private int muted;
+    private int accent;
+    private int input;
+    private int inputBorder;
+    private int elevated;
+    private int border;
+    private int primary;
+    private int primaryText;
+
+    private void lookFor(boolean dark) {
+        background = Color.parseColor(dark ? "#181818" : "#ffffff");
+        text = Color.parseColor(dark ? "#ececec" : "#1a1c1f");
+        strong = Color.parseColor(dark ? "#ffffff" : "#0d0d0d");
+        muted = Color.parseColor(dark ? "#a3a3a3" : "#5d6067");
+        accent = Color.parseColor("#3a83f7");
+        input = Color.parseColor(dark ? "#212121" : "#ffffff");
+        inputBorder = Color.parseColor(dark ? "#8d8d8d" : "#76797e");
+        elevated = Color.parseColor(dark ? "#262626" : "#f3f3f3");
+        border = Color.parseColor(dark ? "#2e2e2e" : "#e5e5e5");
+        primary = Color.parseColor(dark ? "#ffffff" : "#1a1c1f");
+        primaryText = Color.parseColor(dark ? "#181818" : "#ffffff");
+    }
+
+    /** A rounded box of `fill` with a hairline of `edge`, as the hosted page draws a field or a button (radius 8). */
+    private android.graphics.drawable.GradientDrawable box(int fill, int edge) {
+        android.graphics.drawable.GradientDrawable box = new android.graphics.drawable.GradientDrawable();
+        box.setColor(fill);
+        box.setCornerRadius(dp(8));
+        box.setStroke(Math.max(1, dp(1)), edge);
+        return box;
+    }
 
     private EditText host;
     private EditText port;
@@ -100,8 +135,13 @@ public class SshSetupActivity extends Activity {
         super.onCreate(savedInstanceState);
         // a private key, a passphrase or a password may be on this screen: no screenshots, no Recents thumbnail
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
-        getWindow().setStatusBarColor(BACKGROUND);
-        getWindow().setNavigationBarColor(BACKGROUND);
+        boolean dark = (getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+        lookFor(dark);
+        getWindow().setStatusBarColor(background);
+        getWindow().setNavigationBarColor(background);
+        androidx.core.view.WindowInsetsControllerCompat icons = androidx.core.view.WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+        icons.setAppearanceLightStatusBars(!dark);
+        icons.setAppearanceLightNavigationBars(!dark);
         editing = SshPcs.on(this).get(getIntent().getStringExtra(EXTRA_ORIGIN));
         int pad = dp(20);
 
@@ -157,10 +197,10 @@ public class SshSetupActivity extends Activity {
         keyLine = new TextView(this);
         keyLine.setId(R.id.ssh_key_line);
         keyLine.setTypeface(Typeface.MONOSPACE);
-        keyLine.setTextColor(TEXT);
+        keyLine.setTextColor(text);
         keyLine.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         keyLine.setTextIsSelectable(true);
-        keyLine.setBackgroundColor(FIELD);
+        keyLine.setBackground(box(input, border));
         keyLine.setPadding(pad / 2, pad / 2, pad / 2, pad / 2);
         keyPanel.addView(keyLine);
         Button copy = button(getString(R.string.ssh_copy), false);
@@ -212,11 +252,11 @@ public class SshSetupActivity extends Activity {
         LinearLayout statusRow = new LinearLayout(this);
         statusRow.setGravity(Gravity.CENTER_VERTICAL);
         spinner = new ProgressBar(this);
-        spinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+        spinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(accent));
         spinner.setVisibility(View.GONE);
         status = new TextView(this);
         status.setId(R.id.ssh_status);
-        status.setTextColor(TEXT);
+        status.setTextColor(text);
         status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         status.setTextIsSelectable(true);
         status.setPadding(pad / 2, pad / 2, 0, pad / 2);
@@ -243,7 +283,7 @@ public class SshSetupActivity extends Activity {
         cancel.setOnClickListener(v -> finish());
 
         ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(BACKGROUND);
+        scroll.setBackgroundColor(background);
         scroll.setFillViewport(true);
         scroll.addView(form);
         ViewCompat.setOnApplyWindowInsetsListener(scroll, (view, insets) -> {
@@ -334,7 +374,7 @@ public class SshSetupActivity extends Activity {
     private TextView heading(String words) {
         TextView view = new TextView(this);
         view.setText(words);
-        view.setTextColor(Color.parseColor("#f2ebdf"));
+        view.setTextColor(strong);
         view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24);
         view.setTypeface(Typeface.DEFAULT_BOLD);
         return view;
@@ -343,7 +383,7 @@ public class SshSetupActivity extends Activity {
     private TextView note(String words) {
         TextView view = new TextView(this);
         view.setText(words);
-        view.setTextColor(MUTED);
+        view.setTextColor(muted);
         view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         view.setPadding(0, dp(6), 0, dp(6));
         return view;
@@ -352,7 +392,7 @@ public class SshSetupActivity extends Activity {
     private TextView label(String words) {
         TextView view = new TextView(this);
         view.setText(words);
-        view.setTextColor(TEXT);
+        view.setTextColor(text);
         view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         view.setPadding(0, dp(12), 0, dp(4));
         return view;
@@ -366,9 +406,9 @@ public class SshSetupActivity extends Activity {
         input.setId(id);
         input.setInputType(type);
         input.setHint(hint);
-        input.setHintTextColor(Color.parseColor("#5d564d"));
-        input.setTextColor(Color.parseColor("#f2ebdf"));
-        input.setBackgroundColor(FIELD);
+        input.setHintTextColor(muted);
+        input.setTextColor(strong);
+        input.setBackground(box(this.input, inputBorder));
         input.setPadding(dp(12), dp(10), dp(12), dp(10));
         input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         parent.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -379,8 +419,8 @@ public class SshSetupActivity extends Activity {
         RadioButton button = new RadioButton(this);
         button.setId(id);
         button.setText(words);
-        button.setTextColor(TEXT);
-        button.setButtonTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+        button.setTextColor(text);
+        button.setButtonTintList(android.content.res.ColorStateList.valueOf(accent));
         return button;
     }
 
@@ -395,8 +435,10 @@ public class SshSetupActivity extends Activity {
         Button button = new Button(this);
         button.setText(words);
         button.setAllCaps(false);
-        button.setTextColor(primary ? Color.parseColor("#12100e") : Color.parseColor("#f2ebdf"));
-        button.setBackgroundColor(primary ? ACCENT : Color.parseColor("#181613"));
+        button.setTextColor(primary ? primaryText : strong);
+        button.setBackground(primary ? box(this.primary, this.primary) : box(elevated, border));
+        // flat, as the hosted page's buttons are: no raised shadow under the box
+        button.setStateListAnimator(null);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.setMargins(0, dp(8), dp(12), 0);
         button.setLayoutParams(params);

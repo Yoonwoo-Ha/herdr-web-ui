@@ -321,16 +321,28 @@ struct SshSetupView: View {
     let cancel: () -> Void
     let share: (String) -> Void
 
-    private static let background = Color(red: 0x12 / 255, green: 0x10 / 255, blue: 0x0e / 255)
-    private static let text = Color(red: 0xd8 / 255, green: 0xd0 / 255, blue: 0xc3 / 255)
-    private static let muted = Color(red: 0x9a / 255, green: 0x91 / 255, blue: 0x84 / 255)
-    private static let accent = Color(red: 0xf0 / 255, green: 0xa8 / 255, blue: 0x30 / 255)
-    private static let field = Color(red: 0x1d / 255, green: 0x1a / 255, blue: 0x16 / 255)
+    /// The hosted Connect a PC screen's colours, which hands over to this screen (the Codex theme of src/styles.css, as
+    /// app/web/shell.css copies them), light or dark as the phone is.
+    static func look(_ light: UInt32, _ dark: UInt32) -> Color {
+        let rgb = { (value: UInt32) in UIColor(red: CGFloat(value >> 16 & 0xff) / 255, green: CGFloat(value >> 8 & 0xff) / 255, blue: CGFloat(value & 0xff) / 255, alpha: 1) }
+        return Color(UIColor { $0.userInterfaceStyle == .dark ? rgb(dark) : rgb(light) })
+    }
+    static let background = look(0xffffff, 0x181818)
+    static let text = look(0x1a1c1f, 0xececec)
+    static let strong = look(0x0d0d0d, 0xffffff)
+    static let muted = look(0x5d6067, 0xa3a3a3)
+    static let accent = look(0x3a83f7, 0x3a83f7)
+    static let field = look(0xffffff, 0x212121)
+    static let fieldBorder = look(0x76797e, 0x8d8d8d)
+    static let elevated = look(0xf3f3f3, 0x262626)
+    static let border = look(0xe5e5e5, 0x2e2e2e)
+    static let primary = look(0x1a1c1f, 0xffffff)
+    static let primaryText = look(0xffffff, 0x181818)
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                Text(model.title).font(.title.bold()).foregroundColor(Color(red: 0xf2 / 255, green: 0xeb / 255, blue: 0xdf / 255))
+                Text(model.title).font(.title.bold()).foregroundColor(Self.strong)
                 note(SshWords.text("ssh_add_note"))
                 labelled("ssh_host_label") { input($model.host, "my-server.example.com", keyboard: .URL).accessibilityIdentifier("ssh_host") }
                 labelled("ssh_port_label") { input($model.port, "22", keyboard: .numberPad).accessibilityIdentifier("ssh_port") }
@@ -353,7 +365,10 @@ struct SshSetupView: View {
                 case .phoneKey:
                     note(SshWords.text("ssh_phone_key_note"))
                     Text(model.keyLine).font(.system(size: 12, design: .monospaced)).foregroundColor(Self.text).textSelection(.enabled)
-                        .padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Self.field).accessibilityIdentifier("ssh_key_line")
+                        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Self.field))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Self.border, lineWidth: 1))
+                        .accessibilityIdentifier("ssh_key_line")
                     HStack {
                         Button(SshWords.text("ssh_copy")) { UIPasteboard.general.string = model.keyLine }.buttonStyle(Plain())
                         Button(SshWords.text("ssh_share")) { share(model.keyLine) }.buttonStyle(Plain())
@@ -399,7 +414,6 @@ struct SshSetupView: View {
         } message: { question in
             Text(question.message)
         }
-        .preferredColorScheme(.dark)
     }
 
     private func note(_ words: String) -> some View {
@@ -436,8 +450,9 @@ struct SshSetupView: View {
         func makeBody(configuration: Configuration) -> some View {
             configuration.label
                 .padding(.horizontal, 16).padding(.vertical, 10)
-                .foregroundColor(primary ? SshSetupView.background : Color(red: 0xf2 / 255, green: 0xeb / 255, blue: 0xdf / 255))
-                .background(primary ? SshSetupView.accent : Color(red: 0x18 / 255, green: 0x16 / 255, blue: 0x13 / 255))
+                .foregroundColor(primary ? SshSetupView.primaryText : SshSetupView.strong)
+                .background(RoundedRectangle(cornerRadius: 8).fill(primary ? SshSetupView.primary : SshSetupView.elevated))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(primary ? SshSetupView.primary : SshSetupView.border, lineWidth: 1))
                 .opacity(configuration.isPressed ? 0.7 : 1)
         }
     }
@@ -446,8 +461,9 @@ struct SshSetupView: View {
 private extension View {
     func fieldLook() -> some View {
         padding(.horizontal, 12).padding(.vertical, 10)
-            .background(Color(red: 0x1d / 255, green: 0x1a / 255, blue: 0x16 / 255))
-            .foregroundColor(Color(red: 0xf2 / 255, green: 0xeb / 255, blue: 0xdf / 255))
+            .background(RoundedRectangle(cornerRadius: 8).fill(SshSetupView.field))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(SshSetupView.fieldBorder, lineWidth: 1))
+            .foregroundColor(SshSetupView.strong)
     }
 }
 

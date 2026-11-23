@@ -668,6 +668,8 @@ class HerdrBridgeViewController: CAPBridgeViewController {
 
     override func instanceDescriptor() -> InstanceDescriptor {
         let descriptor = super.instanceDescriptor()
+        // behind every first page before it paints, the app's own page included (capacitor.config.json has one colour)
+        descriptor.backgroundColor = Self.pageColor
         if let origin = opened, let host = URL(string: origin)?.host {
             // what server.url sets; the pairing link until a PC page has loaded, the PC's first page
             // after it (a relay PC's scope keeps a pairing offer's `#offer=` fragment through here).
@@ -971,19 +973,32 @@ class HerdrBridgeViewController: CAPBridgeViewController {
 
     private static var korean: Bool { Locale.preferredLanguages.first?.lowercased().hasPrefix("ko") ?? false }
 
+    /// The hosted Connect a PC screen's colours (the Codex theme of src/styles.css, as app/web/shell.css copies them),
+    /// light or dark as the phone is: behind the web view before a page paints, and on the covers.
+    private static func look(_ light: UInt32, _ dark: UInt32) -> UIColor {
+        let rgb = { (value: UInt32) in UIColor(red: CGFloat(value >> 16 & 0xff) / 255, green: CGFloat(value >> 8 & 0xff) / 255, blue: CGFloat(value & 0xff) / 255, alpha: 1) }
+        return UIColor { $0.userInterfaceStyle == .dark ? rgb(dark) : rgb(light) }
+    }
+    static let pageColor = look(0xffffff, 0x181818)
+    private static let textColor = look(0x1a1c1f, 0xececec)
+    private static let dimColor = look(0x5d6067, 0xa3a3a3)
+    private static let strongColor = look(0x0d0d0d, 0xffffff)
+    private static let accentColor = look(0x3a83f7, 0x3a83f7)
+    private static let borderColor = look(0xe5e5e5, 0x2e2e2e)
+
     /// The cover until the first page shows. `home`: over the hosted screen, which is no PC: "Opening Ovis…", and no Change PC.
     private func showOpening(_ origin: String, home: Bool) {
         let host = home ? "Ovis" : PCStore.names[origin] ?? URL(string: origin)?.host ?? origin
         let cover = UIView(frame: view.bounds)
         cover.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        cover.backgroundColor = UIColor(red: 0x12 / 255, green: 0x10 / 255, blue: 0x0e / 255, alpha: 1)
+        cover.backgroundColor = Self.pageColor
 
         let spinner = UIActivityIndicatorView(style: .large)
-        spinner.color = .white
+        spinner.color = Self.dimColor
         spinner.startAnimating()
         let label = UILabel()
         label.text = Self.korean ? "\(host) 여는 중…" : "Opening \(host)…"
-        label.textColor = UIColor(white: 0.85, alpha: 1)
+        label.textColor = Self.textColor
         label.font = .preferredFont(forTextStyle: .body)
         label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 0
@@ -993,19 +1008,19 @@ class HerdrBridgeViewController: CAPBridgeViewController {
             PCStore.leave(unopened: true)
             HerdrBridgeViewController.reopen()
         })
-        change.tintColor = .white
+        change.tintColor = Self.strongColor
         change.titleLabel?.font = .preferredFont(forTextStyle: .body)
         change.isHidden = home
         let retry = UIButton(type: .system, primaryAction: UIAction(title: Self.korean ? "다시 시도" : "Try again") { _ in
             PCStore.failure = nil
             HerdrBridgeViewController.reopen()
         })
-        retry.tintColor = UIColor(red: 0xf0 / 255, green: 0xa8 / 255, blue: 0x30 / 255, alpha: 1)
+        retry.tintColor = Self.accentColor
         retry.titleLabel?.font = .preferredFont(forTextStyle: .headline)
         retry.isHidden = true
         let bar = UIProgressView(progressViewStyle: .default)
         bar.progressTintColor = retry.tintColor
-        bar.trackTintColor = UIColor(white: 1, alpha: 0.12)
+        bar.trackTintColor = Self.borderColor
         bar.isHidden = true
         bar.translatesAutoresizingMaskIntoConstraints = false
 
@@ -1137,7 +1152,7 @@ class HerdrBridgeViewController: CAPBridgeViewController {
         guard OvisSsh.supported, !OvisSsh.store.list().isEmpty else { return HerdrBridgeViewController() }
         let pc = OvisSsh.pc(PCStore.shown)
         let waiting = UIViewController()
-        waiting.view.backgroundColor = UIColor(red: 0x12 / 255, green: 0x10 / 255, blue: 0x0e / 255, alpha: 1)
+        waiting.view.backgroundColor = pageColor
         DispatchQueue.main.async {
             guard let window = waiting.view.window else { return }
             open(pc, in: window)

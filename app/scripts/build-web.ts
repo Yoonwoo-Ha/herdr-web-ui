@@ -12,6 +12,7 @@ import { cpSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:f
 import { join } from "node:path";
 import { buildDemoApp } from "../../scripts/demo-build.ts";
 import { appHome, appOrigin, writeNativeOrigin } from "./hosted-origin.ts";
+import { pretendardCss } from "./pretendard.ts";
 
 const app = join(import.meta.dir, "..");
 const www = join(app, "www");
@@ -23,7 +24,11 @@ const errorPage = join(www, "error.html");
 const link = '<link rel="stylesheet" href="shell.css">';
 const errorHtml = readFileSync(errorPage, "utf8");
 if (!errorHtml.includes(link)) throw new Error("error.html no longer links shell.css the way build-web.ts inlines it");
-writeFileSync(errorPage, errorHtml.replace(link, `<style>${readFileSync(join(www, "shell.css"), "utf8")}</style>`));
+const sheep = 'src="ovis-sheep.svg"';
+if (!errorHtml.includes(sheep)) throw new Error("error.html no longer shows ovis-sheep.svg the way build-web.ts inlines it");
+writeFileSync(errorPage, errorHtml
+  .replace(link, `<style>${readFileSync(join(www, "shell.css"), "utf8")}</style>`)
+  .replace(sheep, `src="data:image/svg+xml;base64,${readFileSync(join(www, "ovis-sheep.svg")).toString("base64")}"`));
 
 if (appUrl) {
   const shellJs = join(www, "shell.js");
@@ -57,6 +62,8 @@ await buildDemoApp(demo);
 for (const file of readdirSync(demo, { recursive: true, encoding: "utf8" })) {
   if (file.endsWith(".gz") || file.endsWith(".br")) rmSync(join(demo, file));
 }
+// the hosted page's typeface for the app's own pages, from the font files the demo carries
+writeFileSync(join(www, "pretendard.css"), pretendardCss(join(app, "../src/fonts/pretendard/pretendardvariable-dynamic-subset.css"), demo));
 const index = join(demo, "index.html");
 const html = readFileSync(index, "utf8");
 if (!html.includes('<script type="module"')) throw new Error("the demo's index.html has no module script to load the transport before");
