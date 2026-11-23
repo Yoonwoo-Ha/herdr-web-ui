@@ -5,8 +5,8 @@
  *   bun tui/testing/run.ts [--fixture demo|agents|machines|scale] [--size COLSxROWS] [--keys <list>] [--dump]
  *     [--cut-line] [--crash]
  *
- * `--keys` types a comma-separated list once every shown pane is live (`enter`, `tab`, `esc`, `space`, `backspace`,
- * `up`, `down`, `left`, `right`, `ctrl+<letter>` are keys; anything else is typed as written). `--dump` prints the final
+ * `--keys` types a comma-separated list once every shown pane is live, one read per item (tui/testing/keys.ts: keys,
+ * mouse reports such as `click@30:5`, anything else typed as written). `--dump` prints the final
  * cell grid as text, one line a row. `--cut-line` ends the fake core's line after the first frame. `--crash` forces an
  * unexpected error after the keys (one write the host refuses with EBADF) and writes the crash record the entry would,
  * into OVIS_TUI_STATE_DIR. Exit code 2 for a wrong call. Nothing here waits for real time but the socket's own turns.
@@ -27,6 +27,7 @@ import type { Fixture } from "./fixtures/fixture.ts";
 import { machines } from "./fixtures/machines.ts";
 import { scale } from "./fixtures/scale.ts";
 import { HeadlessHost } from "./headless-host.ts";
+import { keyBytes } from "./keys.ts";
 
 const FIXTURES: Readonly<Record<string, Fixture>> = { demo, agents, machines, scale };
 
@@ -312,18 +313,6 @@ export class Run {
     if (first) throw first.error;
     return end ?? { kind: "crashed", error: new Error("the screen did not end") };
   }
-}
-
-const KEYS: Record<string, string> = {
-  enter: "\r", tab: "\t", esc: "\x1b", space: " ", backspace: "\x7f", up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D",
-};
-
-function keyBytes(item: string): string {
-  const named = KEYS[item];
-  if (named !== undefined) return named;
-  const ctrl = /^ctrl\+([a-z])$/.exec(item);
-  if (ctrl) return String.fromCharCode(ctrl[1]!.charCodeAt(0) - 96);
-  return item;
 }
 
 /** `COLSxROWS` within what an emulator takes (1x1 to 1000x500), or null. */

@@ -203,7 +203,7 @@ describe("shared/ghostty engine", () => {
       expect(engine.cursorState()).toEqual({ visible: true, x: 1, y: 1, style: "bar", blinking: true, wideTail: true });
       expect(engine.modes()).toEqual({
         altScreen: false, mouse: "button", mouseFormat: "sgr", bracketedPaste: true, kittyFlags: 1, focusReports: false,
-        syncOutput: false, appCursor: false, appKeypad: false, altScroll: true, win32Input: true,
+        syncOutput: false, appCursor: false, appKeypad: false, altScroll: true, win32Input: true, screens: 0,
       });
     } finally {
       engine.dispose();
@@ -363,6 +363,12 @@ describe("shared/ghostty engine", () => {
     const big = "x".repeat(2 << 20);
     tight.engine.write(bytesOf("hello"));
     expect(message(() => tight.engine.write(bytesOf(big)))).toBe(`ghostty-vt: no memory for a write (${2 << 20} bytes)`);
+    const rejected = bytesOf(`\x1b[?47h${big}\x1b[?9001h`);
+    const refusal = message(() => tight.engine.write(rejected));
+    const { altScreen, screens, win32Input } = tight.engine.modes();
+    expect({ refusal, altScreen, screens, win32Input, row: rowText(screenRows(tight.engine).get(0)!) }).toEqual({
+      refusal: `ghostty-vt: no memory for a write (${rejected.length} bytes)`, altScreen: false, screens: 0, win32Input: false, row: "hello",
+    });
     // the input buffer the engine has (64 kB) is still its own
     expect(freed).not.toContain(64 * 1024);
     expect(message(() => tight.engine.encodePaste(big))).toBe(`ghostty-vt: no memory for a paste (${2 << 20} bytes)`);
@@ -370,6 +376,10 @@ describe("shared/ghostty engine", () => {
     tight.engine.write(bytesOf(" ok\x1b[6n"));
     expect(rowText(screenRows(tight.engine).get(0)!)).toBe("hello ok");
     expect(tight.replies).toEqual(["\x1b[1;9R"]);
+    tight.engine.write(bytesOf("\x1b[?90"));
+    expect(message(() => tight.engine.write(bytesOf(big)))).toBe(`ghostty-vt: no memory for a write (${2 << 20} bytes)`);
+    tight.engine.write(bytesOf("01h"));
+    expect(tight.engine.modes().win32Input).toBe(true);
     tight.engine.dispose();
 
     // every other buffer a screen's engine takes is refused the same way
@@ -521,6 +531,90 @@ describe("shared/ghostty engine", () => {
     }
   });
 
+  it("frame identity follows the captured screen across holds and screen round trips", () => {
+    const { engine } = screenEngine(20, 3);
+    try {
+      engine.write(bytesOf("MAIN"));
+      expect(rowText(screenRows(engine).get(0)!)).toBe("MAIN");
+      expect(engine.frameScreen()).toMatchObject({ altScreen: false, screens: 0 });
+      // The hold captures main, while the live terminal enters alternate.
+      engine.write(bytesOf("\x1b[?2026h\x1b[?1049h\x1b[HALT"));
+      expect(engine.modes()).toMatchObject({ altScreen: true, screens: 1 });
+      expect(rowText(screenRows(engine).get(0)!)).toBe("MAIN");
+      expect(engine.frameScreen()).toMatchObject({ altScreen: false, screens: 0 });
+      engine.write(bytesOf("\x1b[?2026l"));
+      expect(rowText(screenRows(engine).get(0)!)).toBe("ALT");
+      expect(engine.frameScreen()).toMatchObject({ altScreen: true, screens: 1 });
+      // A new hold captures a newer screen even when no frame was requested between holds.
+      engine.write(bytesOf("\x1b[?1049l\x1b[?2026h\x1b[?1049h\x1b[HNEW"));
+      expect(rowText(screenRows(engine).get(0)!)).toBe("MAIN");
+      expect(engine.frameScreen()).toMatchObject({ altScreen: false, screens: 2 });
+      engine.releaseHold();
+      expect(rowText(screenRows(engine).get(0)!)).toBe("NEW");
+      expect(engine.frameScreen()).toMatchObject({ altScreen: true, screens: 3 });
+    } finally {
+      engine.dispose();
+    }
+  });
+
+  it("a reply callback failure does not detach a held frame from its captured identity", () => {
+    const { engine } = screenEngine(20, 3, { events: { onReply: () => { throw new Error("reply failed"); } } });
+    try {
+      engine.write(bytesOf("MAIN"));
+      screenRows(engine);
+      expect(() => engine.write(bytesOf("\x1b[?1049h\x1b[HALT\x1b[6n\x1b[?2026h\x1b[?1049l"))).toThrow("reply failed");
+      expect(rowText(screenRows(engine).get(0)!)).toBe("ALT");
+      expect(engine.frameScreen()).toMatchObject({ altScreen: true, screens: 1 });
+      expect(engine.modes()).toMatchObject({ altScreen: false, screens: 2 });
+    } finally {
+      engine.dispose();
+    }
+  });
+
+  for (const [change, current] of [["\r\nBBBB", "AAAA"], ["\rBBBB", "BBBB"]] as const) it(`frame-bound text refuses a held snapshot captured inside a write before ${JSON.stringify(change)}`, () => {
+    const { engine } = screenEngine(20, 3);
+    try {
+      engine.write(bytesOf("one\r\ntwo\r\nAAAA"));
+      engine.write(bytesOf(`\x1b[?2026h${change}`));
+      expect(rowText(screenRows(engine).get(2)!)).toBe("AAAA");
+      const frame = engine.frameScreen();
+      if (!frame) throw new Error("the held frame has no identity");
+      const selected = { start: { x: 0, y: 2 }, end: { x: 3, y: 2 } };
+      expect(engine.textOf(selected, frame.contentVersion)).toBe("");
+      engine.releaseHold();
+      screenRows(engine);
+      const shown = engine.frameScreen();
+      if (!shown) throw new Error("the released frame has no identity");
+      expect(engine.textOf(selected, shown.contentVersion)).toBe(current);
+      if (change.startsWith("\r\n")) expect(engine.textOf({ start: { x: 0, y: 3 }, end: { x: 3, y: 3 } }, shown.contentVersion)).toBe("BBBB");
+    } finally {
+      engine.dispose();
+    }
+  });
+
+  for (const change of ["write", "resize", "mode", "scrollback"] as const) {
+    it(`frame-bound text refuses a snapshot after ${change} can change its contents`, () => {
+      const { engine } = screenEngine(20, 3);
+      try {
+        engine.write(bytesOf("AAAA"));
+        screenRows(engine);
+        const frame = engine.frameScreen();
+        if (!frame) throw new Error("the frame has no identity");
+        const selected = { start: { x: 0, y: 0 }, end: { x: 3, y: 0 } };
+        expect(engine.textOf(selected, frame.contentVersion)).toBe("AAAA");
+        switch (change) {
+          case "write": engine.write(bytesOf("\rBBBB")); break;
+          case "resize": engine.resize(10, 4, 8, 16); break;
+          case "mode": engine.setMode(3, true); break;
+          case "scrollback": engine.setScrollback(0); break;
+        }
+        expect(engine.textOf(selected, frame.contentVersion)).toBe("");
+      } finally {
+        engine.dispose();
+      }
+    });
+  }
+
   it("engine core widths", () => {
     const family = bytesOf("ABC👨‍👩‍👧XYZ");
     const cursorAfter = (widths: EngineOptions["widths"]): number[] => {
@@ -577,6 +671,88 @@ describe("shared/ghostty engine", () => {
     }
   });
 
+  it("a screen's engine counts the screen switches its written bytes make, also two in one write and one split across writes", () => {
+    const { engine } = screenEngine(20, 4);
+    const screens = () => engine.modes().screens;
+    const state = () => [engine.modes().altScreen, screens()];
+    try {
+      expect(screens()).toBe(0);
+      // a switch to the screen already shown changes nothing and counts nothing
+      engine.write(bytesOf("\x1b[?47l\x1b[?1049l"));
+      expect(state()).toEqual([false, 0]);
+      // saved on the main screen, set, then restored: the restore moves back to the main screen and counts
+      engine.write(bytesOf("\x1b[?47s\x1b[?47h"));
+      expect(state()).toEqual([true, 1]);
+      // restored and set again in one write: on the alternate screen before and after it, two switches
+      engine.write(bytesOf("\x1b[?47r\x1b[?47h"));
+      expect(state()).toEqual([true, 3]);
+      engine.write(bytesOf("\x1b[?47r"));
+      expect(state()).toEqual([false, 4]);
+      // set and restored in one write: two switches
+      engine.write(bytesOf("\x1b[?47hY\x1b[?47r"));
+      expect(state()).toEqual([false, 6]);
+      engine.reset();
+      expect(state()).toEqual([false, 7]);
+      // left and entered again in one write: the same alternate screen, two switches
+      engine.write(bytesOf("\x1b[?1049h\x1b[?1049l\x1b[?1049hX"));
+      expect(state()).toEqual([true, 10]);
+      engine.write(bytesOf("\x1b[?10"));
+      engine.write(bytesOf("47l"));
+      expect(state()).toEqual([false, 11]);
+      // a full reset counts on the main screen too; a CSI that is not private switches nothing
+      engine.write(bytesOf("\x1b[?1;47h\x1b[?25l\x1b[47h\x1bc"));
+      expect(state()).toEqual([false, 13]);
+    } finally {
+      engine.dispose();
+    }
+  });
+
+  it("counts both switches in one compound restore at every write boundary", () => {
+    const restore = bytesOf("\x1b[?47;1049r");
+    for (let cut = 0; cut <= restore.length; cut++) {
+      const { engine } = screenEngine(20, 4);
+      try {
+        engine.write(bytesOf("\x1b[?47s\x1b[?1049h\x1b[?1049sOLD"));
+        engine.write(restore.subarray(0, cut));
+        engine.write(restore.subarray(cut));
+        expect(engine.modes()).toMatchObject({ altScreen: true, screens: 3 });
+        expect(rowText(screenRows(engine).get(0)!)).toBe("");
+      } finally {
+        engine.dispose();
+      }
+    }
+  });
+
+  it("counts CSI screen changes across embedded controls, not canceled commands", () => {
+    // Raw bytes, not UTF-8 encodings of C1 code points. NUL preserves CSI entry, C1 CSI
+    // starts a new entry, and CAN, SUB and C1 ST abandon the first command.
+    for (const [control, changes] of [[0, 2], [0x9b, 2], [0x18, 0], [0x1a, 0], [0x9c, 0]] as const) {
+      const { engine } = screenEngine(20, 4);
+      try {
+        engine.write(bytesOf("\x1b[?1049h"));
+        engine.write(Uint8Array.of(0x1b, 0x5b, control, ...bytesOf("?47l\x1b[?47h")));
+        expect({ control, screens: engine.modes().screens }).toEqual({ control, screens: 1 + changes });
+        expect(engine.modes().altScreen).toBe(true);
+      } finally {
+        engine.dispose();
+      }
+    }
+  });
+
+  it("distinguishes a redundant set from re-entering a cleared alternate", () => {
+    const { engine } = screenEngine(20, 4);
+    try {
+      engine.write(bytesOf("\x1b[?1049hOLD\x1b[?47h"));
+      expect(engine.modes().screens).toBe(1);
+      expect(rowText(screenRows(engine).get(0)!)).toBe("OLD");
+      engine.write(bytesOf("\x1b[?1049h"));
+      expect(rowText(screenRows(engine).get(0)!)).toBe("");
+      expect(engine.modes()).toMatchObject({ altScreen: true, screens: 2 });
+    } finally {
+      engine.dispose();
+    }
+  });
+
   it("engine 9001", () => {
     const { engine } = screenEngine(20, 4);
     try {
@@ -603,8 +779,10 @@ describe("shared/ghostty engine", () => {
     }
     const browsers = new GhosttyEngine(shared, 20, 4, { widths: "xterm", images: false });
     try {
-      browsers.write(bytesOf("\x1b[?9001h"));
-      expect(browsers.modes().win32Input).toBe(false);
+      browsers.write(bytesOf("\x1b[?9001h\x1b[?1049h"));
+      expect(browsers.modes()).toMatchObject({ win32Input: false, altScreen: true, screens: 0 });
+      browsers.reset();
+      expect(browsers.modes()).toMatchObject({ altScreen: false, screens: 1 });
     } finally {
       browsers.dispose();
     }

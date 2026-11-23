@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { IsolatedCore, pidAlive } from "../../scripts/test-hc.ts";
+import { coreFolder, corePids, IsolatedCore, pidAlive } from "../../scripts/test-hc.ts";
 import { processesWith } from "./processes.ts";
 
 /**
@@ -62,9 +62,10 @@ interface Run {
   stderr: () => string;
 }
 
-function helper(args: string[], env: Record<string, string>, cwd = mkdtempSync(join(scratch, "command-"))): Run {
+function helper(args: string[], env: Record<string, string>, options: { cwd?: string; preload?: string } = {}): Run {
+  const cwd = options.cwd ?? mkdtempSync(join(scratch, "command-"));
   // A detached system command can keep this directory after with-core exits and removes its root.
-  const child = Bun.spawn([process.execPath, HELPER, ...args], { env: { ...env, TMPDIR: realpathSync(tmpdir()) }, cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([process.execPath, ...(options.preload ? ["--preload", options.preload] : []), HELPER, ...args], { env: { ...env, TMPDIR: realpathSync(tmpdir()) }, cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   let out = "";
   let err = "";
   const waiters = new Set<() => void>();
@@ -111,25 +112,57 @@ function leftovers(run: Run): { pidsAlive: number[]; socket: boolean; root: bool
 }
 const NOTHING_LEFT = { pidsAlive: [], socket: false, root: false, processes: [] };
 
+/** A core CLI stand-in: a socket file records its lifetime; no daemon or unrelated pid is ever stopped. */
+function standInHc(name: string, block?: "start" | "status" | "stop") {
+  const dir = join(scratch, name);
+  mkdirSync(dir);
+  const path = join(dir, "hc");
+  const log = join(dir, "calls");
+  const watchdog = join(dir, "watchdog");
+  writeFileSync(path, [
+    `#!${process.execPath}`,
+    'import { appendFileSync, existsSync, unlinkSync, writeFileSync } from "node:fs";',
+    "const verb = process.argv[3];",
+    `appendFileSync(${JSON.stringify(log)}, verb + "\\n");`,
+    "const socket = process.env.HC_SOCKET;",
+    "const reply = () => {",
+    '  if (verb === "start") writeFileSync(socket, "stand-in core");',
+    '  else if (verb === "status") console.log(JSON.stringify({ pid: process.pid }));',
+    '  else if (verb === "stop" && existsSync(socket)) unlinkSync(socket);',
+    "};",
+    `if (verb === ${JSON.stringify(block)}) {`,
+    '  process.on("SIGTERM", () => {});',
+    // This is the regression's escape hatch, not its synchronization: an unbounded helper must still end safely.
+    `  setTimeout(() => { writeFileSync(${JSON.stringify(watchdog)}, "escaped"); reply(); }, 30_000);`,
+    "} else reply();",
+  ].join("\n"));
+  chmodSync(path, 0o755);
+  return { path, log, watchdog };
+}
+
 /**
  * An hc that waits before `server <verb>` until the test writes to `<gate>` (bounded, so a failed
  * test still lets it through), or does nothing for `server stop` with `noStop`: run by its
  * absolute path, it hands everything else to the real hc.
  */
-function gatedHc(name: string, options: { gate?: "start" | "stop"; noStop?: boolean }): { path: string; open: () => Promise<void> } {
+function gatedHc(name: string, options: { gate?: "start" | "stop"; noStop?: boolean }, target = bin): { path: string; open: () => Promise<void> } {
   const dir = join(scratch, name);
   mkdirSync(dir);
   const fifo = join(dir, "gate");
+  // Resolve before using the restricted tool environment: Homebrew supplies gtimeout, or timeout in gnubin.
+  const lookup = { PATH: process.env["PATH"] ?? "" };
+  const timeout = options.gate ? Bun.which("timeout", lookup) ?? Bun.which("gtimeout", lookup) : null;
   if (options.gate) {
+    if (!timeout) throw new Error("the gate contract needs GNU timeout or gtimeout on PATH");
     const made = Bun.spawnSync(["mkfifo", fifo], { env: TOOL_ENV });
     if (made.exitCode !== 0) throw new Error("mkfifo failed");
   }
   const script = [
     "#!/bin/sh",
     "PATH=/usr/bin:/bin",
-    options.gate ? `if [ "$1 $2" = "server ${options.gate}" ]; then timeout 20 sh -c 'read _ < "$0"' '${fifo}'; fi` : "",
+    options.gate ? `if [ "$1 $2" = "server ${options.gate}" ]; then '${timeout}' 20 sh -c 'read _ < "$0"' '${fifo}'; fi` : "",
     options.noStop ? `if [ "$1 $2" = "server stop" ]; then exit 0; fi` : "",
-    `exec '${resolve(bin!)}' "$@"`,
+    `exec '${resolve(target!)}' "$@"`,
   ].join("\n");
   const path = join(dir, "hc");
   writeFileSync(path, script);
@@ -137,13 +170,43 @@ function gatedHc(name: string, options: { gate?: "start" | "stop"; noStop?: bool
   return {
     path,
     open: async () => {
-      const opened = Bun.spawn(["timeout", "20", "sh", "-c", `echo go > '${fifo}'`], { env: TOOL_ENV });
+      if (!timeout) throw new Error("this hc has no gate");
+      const opened = Bun.spawn([timeout, "20", "sh", "-c", `echo go > '${fifo}'`], { env: TOOL_ENV });
       expect(await opened.exited).toBe(0);
     },
   };
 }
 
 describe("with-core's options", () => {
+  it("runs both gate waits through gtimeout found outside the system PATH", async () => {
+    const timer = Bun.which("timeout") ?? Bun.which("gtimeout");
+    if (!timer) throw new Error("the gate contract needs GNU timeout or gtimeout");
+    const tools = join(scratch, "homebrew-bin");
+    mkdirSync(tools);
+    const log = join(tools, "timer-ran");
+    const gtimeout = join(tools, "gtimeout");
+    writeFileSync(gtimeout, `#!/bin/sh\necho timer >> '${log}'\nexec '${timer}' "$@"\n`);
+    chmodSync(gtimeout, 0o755);
+    const path = process.env["PATH"];
+    let hc: ReturnType<typeof gatedHc>;
+    try {
+      process.env["PATH"] = tools;
+      hc = gatedHc("portable-gate", { gate: "start" }, "/bin/echo");
+    } finally {
+      if (path === undefined) delete process.env["PATH"];
+      else process.env["PATH"] = path;
+    }
+    const child = Bun.spawn([hc.path, "server", "start"], { env: TOOL_ENV, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    try {
+      const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited, hc.open()]);
+      expect({ out, err, code }).toEqual({ out: "server start\n", err: "", code: 0 });
+      expect(existsSync(log) ? readFileSync(log, "utf8") : "").toBe("timer\ntimer\n");
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      await child.exited;
+    }
+  }, TEST_MS);
+
   it("sees a detached system command in its run's working directory after the helper exits", async () => {
     const run = helper(["--no-core", "--", "true"], callerEnv());
     expect(await run.exited).toBe(0);
@@ -201,7 +264,7 @@ describe("with-core's options", () => {
       const file = join(scratch, "linked.env");
       const marker = join(scratch, "ran-linked");
       writeFileSync(file, `HC_SOCKET=${socket}\nHC_SESSION=elsewhere\n`);
-      const run = helper(["--core-env", file, "--", "sh", "-c", `touch '${marker}'`], callerEnv({ HOME: home }), cwd);
+      const run = helper(["--core-env", file, "--", "sh", "-c", `touch '${marker}'`], callerEnv({ HOME: home }), { cwd });
       expect({ socket, exit: await run.exited, ran: existsSync(marker) }).toEqual({ socket, exit: 2, ran: false });
       expect(run.stderr()).not.toContain("root=");
     }
@@ -264,8 +327,141 @@ describe("with-core's options", () => {
   }, TEST_MS);
 });
 
+describe("with-core cleanup with a CLI stand-in", () => {
+  for (const mode of ["start", "status", "status-read"] as const) {
+    it(`cleans up before the test releases inherited hc pipes: ${mode}`, async () => {
+      const dir = mkdtempSync(join(scratch, "pipes-"));
+      const gate = join(dir, "gate");
+      const seen = join(dir, "seen");
+      const python = Bun.which("python3");
+      if (!python) throw new Error("the inherited-pipe contract needs Python 3 for SCM_RIGHTS");
+      // SCM_RIGHTS transfers the real inherited writers to a child whose handle the test owns. This works for
+      // Bun's socketpair-backed pipes too; opening /proc/<pid>/fd cannot duplicate those descriptors.
+      const holder = Bun.spawn([python, "-I", "-c", [
+        "import contextlib, os, socket, sys",
+        "with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:",
+        "    server.bind(sys.argv[1])",
+        "    server.listen(1)",
+        '    print("listening", flush=True)',
+        "    conn, _ = server.accept()",
+        "    with conn:",
+        "        _, fds, _, _ = socket.recv_fds(conn, 1, 2)",
+        "    with contextlib.ExitStack() as stack:",
+        "        for fd in fds:",
+        '            stack.enter_context(os.fdopen(fd, "wb"))',
+        '        print("holding", flush=True)',
+        "        sys.stdin.read()",
+      ].join("\n"), gate], { env: TOOL_ENV, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+      const reader = holder.stdout.getReader();
+      let output = "";
+      let holding = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const until = async (word: string) => {
+        const read = async () => {
+          while (!output.includes(word)) {
+            const part = await reader.read();
+            if (part.done) throw new Error(`pipe holder ended before ${word}: ${output}`);
+            output += new TextDecoder().decode(part.value);
+          }
+        };
+        try {
+          await Promise.race([read(), new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`no pipe holder ${word}`)), WAIT_MS);
+          })]);
+        } finally { clearTimeout(timer); }
+      };
+      const sendFds = [
+        "import socket, sys",
+        "with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:",
+        "    conn.connect(sys.argv[1])",
+        '    socket.send_fds(conn, [b"x"], [1, 2])',
+      ].join("\n");
+      const path = join(dir, "hc");
+      writeFileSync(path, [
+        `#!${process.execPath}`,
+        'import { existsSync, unlinkSync, writeFileSync } from "node:fs";',
+        "const verb = process.argv[3];",
+        'if (verb === "start") writeFileSync(process.env.HC_SOCKET, "stand-in");',
+        'if (verb === "status") console.log(JSON.stringify({ pid: process.pid }));',
+        'if (verb === "stop" && existsSync(process.env.HC_SOCKET)) unlinkSync(process.env.HC_SOCKET);',
+        `if (verb === ${JSON.stringify(mode === "start" ? "start" : "status")} && !existsSync(${JSON.stringify(seen)})) {`,
+        `  writeFileSync(${JSON.stringify(seen)}, "seen");`,
+        '  console.error("stderr prefix");',
+        `  const sender = Bun.spawn([${JSON.stringify(python)}, "-I", "-c", ${JSON.stringify(sendFds)}, ${JSON.stringify(gate)}], { env: process.env, stdin: "ignore", stdout: "inherit", stderr: "inherit" });`,
+        "  if (await sender.exited !== 0) process.exit(1);",
+        "}",
+      ].join("\n"));
+      chmodSync(path, 0o755);
+      const folder = mode === "status-read" ? coreFolder() : null;
+      let run: Run | null = null;
+      let status: Promise<boolean> | null = null;
+      try {
+        await until("listening");
+        run = folder ? null : helper(["--limit", "1", "--", "/bin/true"], callerEnv({ OVIS_TEST_HC_BIN: path }));
+        status = folder ? corePids(path, folder.env).then(() => false, (error: unknown) => error instanceof Error && error.message.includes("exited 124")) : null;
+        await until("holding");
+        holding = true;
+        if (run) {
+          await run.line(/with-core: stopped pids=/);
+          expect(await run.exited).toBe(124);
+          expect(existsSync(run.stderr().match(/root=(\S+)/)![1]!)).toBe(false);
+        } else {
+          const bounded = await Promise.race([status, new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), WAIT_MS); })]);
+          expect(bounded).toBe(true);
+        }
+        expect(holder.exitCode).toBeNull();
+        expect(holder.signalCode).toBeNull();
+      } finally {
+        clearTimeout(timer);
+        holder.stdin.end();
+        if (!holding && holder.exitCode === null && holder.signalCode === null) holder.kill("SIGKILL");
+        await holder.exited;
+        reader.releaseLock();
+        expect(await new Response(holder.stderr).text()).toBe("");
+        if (run) await run.exited;
+        if (status) await status;
+        if (folder) rmSync(folder.root, { recursive: true, force: true });
+      }
+      if (run) expect(leftovers(run)).toEqual(NOTHING_LEFT);
+    }, TEST_MS);
+  }
+
+  for (const verb of ["start", "status", "stop"] as const) {
+    it(`an hc server ${verb} that ignores SIGTERM cannot strand cleanup`, async () => {
+      const hc = standInHc(`blocked-${verb}`, verb);
+      const run = helper(["--limit", "1", "--", "/bin/true"], callerEnv({ OVIS_TEST_HC_BIN: hc.path }));
+      // Once the command ended, with-core clears --limit before normal cleanup; its successful exit still wins.
+      expect(await run.exited).toBe(verb === "stop" ? 0 : 124);
+      expect(readFileSync(hc.log, "utf8")).toContain(`${verb}\n`);
+      expect(existsSync(hc.watchdog)).toBe(false);
+      expect(leftovers(run)).toEqual(NOTHING_LEFT);
+    }, TEST_MS);
+  }
+
+  it("a dump WASM failure stops the started core and removes its folder", async () => {
+    const hc = standInHc("dump-failure");
+    const preload = join(scratch, "fail-dump.js");
+    writeFileSync(preload, 'WebAssembly.Module = new Proxy(WebAssembly.Module, { construct() { throw new Error("forced dump WASM failure"); } });\n');
+    const run = helper(["--pty", "--dump", "--", "/bin/sh", "-c", "printf rendered"], callerEnv({ OVIS_TEST_HC_BIN: hc.path }), { preload });
+    const code = await run.exited;
+    expect({
+      code, renderingFailed: run.stderr().includes("forced dump WASM failure"),
+      calls: readFileSync(hc.log, "utf8").trim().split("\n"), left: leftovers(run),
+    }).toEqual({ code: 125, renderingFailed: true, calls: ["start", "status", "stop"], left: NOTHING_LEFT });
+  }, TEST_MS);
+});
+
 describe("with-core --pty", () => {
   const noHc = () => callerEnv({ OVIS_TEST_HC_BIN: undefined });
+
+  it("--dump preserves the last alternate screen even after the command restores the terminal", async () => {
+    const run = helper(["--no-core", "--pty", "--size", "40x5", "--dump", "--", "sh", "-c",
+      "printf 'original-screen\\033[?1049h\\033[Hlast-frame\\033[?1049ldetached\\r\\n'"], noHc());
+    expect(await run.exited).toBe(0);
+    expect(run.stdout()).toMatch(/^last-frame\n+\s*$/m);
+    expect(run.stdout()).not.toMatch(/original-screen|detached/);
+    expect(leftovers(run)).toEqual(NOTHING_LEFT);
+  }, TEST_MS);
 
   it("runs the command on a pseudo-terminal of the given size, and --dump prints the final cells", async () => {
     const run = helper(["--no-core", "--pty", "--size", "30x4", "--dump", "--", "sh", "-c", "test -t 0 && test -t 1 && stty size && printf hello"], noHc());

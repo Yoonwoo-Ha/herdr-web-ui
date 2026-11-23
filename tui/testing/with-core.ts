@@ -27,8 +27,8 @@
  * at its DA1 reply, so a reply after it would come too late). What it prints goes to stdout as it
  * comes, or, with `--dump`, only the final cell grid as text, one line a row, once the command
  * ended. `--keys` types a comma-separated list after the first frame (the first `ESC[?2026l`), so
- * after the probe's last reply: `enter`, `tab`, `esc`, `space`, `backspace`, `up`,
- * `down`, `left`, `right` and `ctrl+<letter>` are keys, any other item is typed as written.
+ * after the probe's last reply: keys, mouse reports such as `click@30:5` and text, as
+ * tui/testing/keys.ts names them.
  * `--answer y|n` answers the launcher's `[Y/n]` question with that letter and Enter.
  *
  * Exit code: the command's (128 + n when a signal n ended it); 128 + n when the helper got signal
@@ -42,7 +42,8 @@ import { existsSync, lstatSync, readFileSync, realpathSync, rmSync } from "node:
 import { constants } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { coreFolder, IsolatedCore, signalChildGroup, stoppedCleanly } from "../../scripts/test-hc.ts";
-import { gridText, runOnPty, type PtyRun } from "./pty.ts";
+import { keyBytes } from "./keys.ts";
+import { answerQueries, gridText, runOnPty, screenOutput, type PtyRun } from "./pty.ts";
 
 /** the longest delay a timer holds (a signed 32-bit count of ms) */
 const TIMER_MAX_MS = 2 ** 31 - 1;
@@ -51,9 +52,6 @@ const FIRST_FRAME_END = "\x1b[?2026l";
 const QUESTION = "[Y/n]";
 /** what a terminal answers to the queries a screen's start probe ends with */
 const ANSWERS: [query: string, answer: string][] = [["\x1b[c", "\x1b[?62;22c"], ["\x1b[?2026$p", "\x1b[?2026;2$y"]];
-const KEYS: Record<string, string> = {
-  enter: "\r", tab: "\t", esc: "\x1b", space: " ", backspace: "\x7f", up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D",
-};
 const COMMAND_GRACE_MS = 5000;
 const EXIT_USAGE = 2;
 const EXIT_LIMIT = 124;
@@ -63,18 +61,12 @@ class Refused extends Error {}
 
 /** The command on a pseudo-terminal: its output passed on (or kept for the dump), queries answered, keys typed. */
 function startPty(choice: PtyChoice, command: string[], env: Record<string, string>, limitSeconds: number): PtyRun {
-  let tail = "";
+  const answerProbe = answerQueries((answer) => run.type(answer), ANSWERS);
   const run: PtyRun = runOnPty({
     command, env, cols: choice.cols, rows: choice.rows, deadlineMs: limitSeconds * 1000 + COMMAND_GRACE_MS,
     onData: (text) => {
       if (!choice.dump) process.stdout.write(text);
-      const window = tail + text;
-      const asked: [at: number, answer: string][] = [];
-      for (const [query, answer] of ANSWERS) {
-        for (let at = window.indexOf(query); at !== -1; at = window.indexOf(query, at + 1)) if (at + query.length > tail.length) asked.push([at, answer]);
-      }
-      for (const [, answer] of asked.sort((a, b) => a[0] - b[0])) run.type(answer);
-      tail = window.slice(-16);
+      answerProbe(text);
     },
   });
   const keys = choice.keys;
@@ -87,13 +79,6 @@ function startPty(choice: PtyChoice, command: string[], env: Record<string, stri
 interface PtyChoice { cols: number; rows: number; keys: string | null; answer: "y" | "n" | null; dump: boolean }
 
 interface Options { mode: "core" | "no-core" | "core-env"; coreEnv: string | null; limitSeconds: number; pty: PtyChoice | null; command: string[] }
-
-/** One key or text of a `--keys` list, as the bytes a terminal sends for it. */
-function keyBytes(item: string): string {
-  const ctrl = /^ctrl\+([a-z])$/.exec(item);
-  if (ctrl) return String.fromCharCode(ctrl[1]!.charCodeAt(0) - 96);
-  return KEYS[item] ?? item;
-}
 
 /**
  * Options come first; the first `--`, or the first word that is not an option, starts the command,
@@ -303,9 +288,14 @@ async function main(): Promise<number> {
       forced ??= 127;
     }
     if (ptyRun) {
-      const code = await ptyRun.exited;
-      if (options.pty.dump) process.stdout.write(await gridText(ptyRun.output(), options.pty.cols, options.pty.rows));
-      forced ??= code ?? EXIT_FAILED;
+      try {
+        const code = await ptyRun.exited;
+        if (options.pty.dump) process.stdout.write(await gridText(screenOutput(ptyRun.output()), options.pty.cols, options.pty.rows));
+        forced ??= code ?? EXIT_FAILED;
+      } catch (error) {
+        console.error(`with-core: cannot finish pseudo-terminal output: ${error instanceof Error ? error.message : String(error)}`);
+        forced ??= EXIT_FAILED;
+      }
     }
   } else if (!finishing && forced === null) {
     try {

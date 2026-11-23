@@ -49,6 +49,31 @@ export interface PtyRun {
 
 const WASM = join(import.meta.dir, "..", "..", "shared", "ghostty", "ghostty-vt.wasm");
 
+/** Capture the last visible alternate screen, before restoring the caller's original screen. */
+export function screenOutput(output: string): string {
+  const enter = output.lastIndexOf("\x1b[?1049h");
+  if (enter < 0) return output;
+  const leave = output.indexOf("\x1b[?1049l", enter);
+  return output.slice(enter, leave < 0 ? undefined : leave);
+}
+
+/** Answer the host's queries in arrival order, including a query split across reads. */
+export function answerQueries(send: (text: string) => void, answers: ReadonlyArray<readonly [string, string]>): (text: string) => void {
+  let tail = "";
+  const overlap = Math.max(0, ...answers.map(([query]) => query.length - 1));
+  return (text) => {
+    const window = tail + text;
+    const found: [number, string][] = [];
+    for (const [query, answer] of answers) {
+      for (let at = window.indexOf(query); at !== -1; at = window.indexOf(query, at + 1)) {
+        if (at + query.length > tail.length) found.push([at, answer]);
+      }
+    }
+    tail = window.slice(window.length - Math.min(window.length, overlap));
+    for (const [, answer] of found.sort((a, b) => a[0] - b[0])) send(answer);
+  };
+}
+
 /** The cell grid the output leaves on a terminal of this size, one line a row, trailing blanks cut. */
 export async function gridText(output: string, cols: number, rows: number): Promise<string> {
   const module = new GhosttyModule(new WebAssembly.Instance(new WebAssembly.Module(await Bun.file(WASM).arrayBuffer()), {}));

@@ -249,6 +249,23 @@ describe("the loop", () => {
     expect(run.host.log().at(-1)).toBe("raw off");
   }, TEST_MS);
 
+  it("a refused clipboard write ends the screen as gone without recording or drawing a copied notice", async () => {
+    const run = await start({ fixture: demo });
+    await run.live();
+    await run.keys("press@27:2,drag@30:2");
+    await run.advance(FRAME_PASS_MS);
+    const writes = run.host.writeAttempts();
+    const drawn = run.host.output();
+    run.host.failWrites("EIO");
+    await run.keys("release@30:2");
+    await run.advance(QUIT_BOUND_MS);
+
+    expect(await run.loop.done).toEqual({ kind: "gone", why: "write-failed" });
+    expect(run.host.writeAttempts()).toBe(writes + 1);
+    expect(run.host.output()).toBe(drawn);
+    expect(run.loop.model().notices.map(({ code }) => code)).not.toContain("copied");
+  }, TEST_MS);
+
   it("quit detaches when giving the terminal back fails: done settles within the bound, a quit with the write's code", async () => {
     const run = await start({ fixture: demo });
     await run.live();
@@ -633,6 +650,34 @@ const RESTING: [state: string, enter: () => Promise<Resting>][] = [
     await run.live();
     await run.keys("ctrl+b,b");
     expect(run.loop.model().sidebarCollapsed).toBe(true);
+    return { run };
+  }],
+  ["a selection held after its copy", async () => {
+    const run = await start({ fixture: demo });
+    await run.live();
+    await run.advance(1);
+    await run.keys("press@27:2,drag@30:2,release@30:2");
+    expect(run.host.output()).toContain(`\x1b]52;c;${Buffer.from("echo").toString("base64")}\x1b\\`);
+    return { run };
+  }],
+  ["a pane scrolled back with the wheel", async () => {
+    const run = await start({ fixture: demo });
+    await run.live();
+    run.core.program("t1").output(Array.from({ length: 60 }, (_, n) => `row-${n}`).join("\r\n"));
+    await run.advance(20);
+    await run.keys("wheelup@40:20");
+    // t1's grid has 36 rows: its screen shows the rows three above its newest
+    const history = run.loop.panes.view("t1")?.emulator?.history();
+    expect(history?.ok && history.value.total - 36 - history.value.viewportTop).toBe(3);
+    return { run };
+  }],
+  ["a divider drag ended", async () => {
+    const run = await start({ fixture: demo });
+    await run.live();
+    await run.advance(1);
+    await run.keys("press@71:10,drag@60:10,release@60:10");
+    await run.advance(20);
+    expect(run.loop.report().actions).toContain("divider:done");
     return { run };
   }],
 ];
