@@ -3535,7 +3535,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   output, which retries nothing, gets no line: the chip says disconnected. The return sends nothing: a draft stays a draft.
 - In More's header, one quiet mark says how this device reaches Ovis (`.conn-route`,
   `components/ConnectionRouteMark.tsx`, `lib/connectionRoute.ts`): a 14px glyph and one short
-  `--text-dim` word, **relay** (the hosted shell, or a request Portal vouched for, whatever signed it in), **Tailscale** (a tailnet address, or a
+  `--text-dim` word, **relay** (the hosted shell, or a request Portal vouched for, whatever signed it in; once the
+  app's relay channel moves to a direct carrier, **direct** with the Wi-Fi glyph on the PC's private address, or
+  **Tailscale** "Directly over Tailscale, not through the relay" on its Tailscale one, never Wi-Fi for a phone on mobile data), **Tailscale** (a tailnet address, or a
   request the server saw come through serve; a MagicDNS name alone says "Via Tailscale, or Funnel
   from the internet", since the name serves both), **LAN** (a private address or a local-only name), **direct** (any other
   address, a bare machine name and a request the server saw come through Funnel included) or

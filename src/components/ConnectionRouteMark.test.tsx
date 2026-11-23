@@ -45,9 +45,32 @@ it("keeps the server's word on the route through a failed health read, which cle
   expect(routeShown()).toBe("direct");
 });
 
+const inRelayShell = () => Object.defineProperty(globalThis, "document", { configurable: true, writable: true, value: { ...document, querySelector: (selector: string) => selector.includes("ovis-shell") ? { getAttribute: () => "relay" } : null } });
+const markText = () => {
+  const mark = renderer!.root.findByProps({ className: "conn-route" });
+  return { word: mark.findByProps({ className: "conn-route-word" }).children.join(""), title: mark.props.title as string };
+};
+
 it.each([["direct", "relay-direct"], ["relay", "relay"]] as const)("in the hosted shell, says the relay transport's %s route as %s", async (route, shown) => {
-  Object.defineProperty(globalThis, "document", { configurable: true, writable: true, value: { ...document, querySelector: (selector: string) => selector.includes("ovis-shell") ? { getAttribute: () => "relay" } : null } });
+  inRelayShell();
   setTransport({ ...nativeTransport, route } as Transport);
   await act(async () => { renderer = create(draw(null)); });
   expect(routeShown()).toBe(shown);
+});
+
+it("says a direct carrier on the PC's private address is the same network", async () => {
+  inRelayShell();
+  setTransport({ ...nativeTransport, route: "direct", directVia: "lan" } as Transport);
+  await act(async () => { renderer = create(draw(null)); });
+  expect(routeShown()).toBe("relay-direct");
+  expect(markText()).toEqual({ word: "direct", title: "Directly on the same network, not through the relay" });
+});
+
+it("says a direct carrier on the PC's Tailscale address is Tailscale, not the same network", async () => {
+  // Given a phone on mobile data with Tailscale on, whose relay channel moved to the PC's 100.64.0.0/10 carrier
+  inRelayShell();
+  setTransport({ ...nativeTransport, route: "direct", directVia: "tailscale" } as Transport);
+  await act(async () => { renderer = create(draw(null)); });
+  expect(routeShown()).toBe("relay-tailscale");
+  expect(markText()).toEqual({ word: "Tailscale", title: "Directly over Tailscale, not through the relay" });
 });

@@ -114,6 +114,7 @@ describe("direct carriers in the relay transport", () => {
     const transport = await transportFor(pc, store, saved);
     expect(pc.channels[before]!.direct).toBe(store.saved!.direct![0]);
     expect(transport.route).toBe("direct");
+    expect(transport.directVia).toBe("lan");
   });
 
   it("is told the PC's Tailscale carrier only once the app's socket says it opens one", async () => {
@@ -227,6 +228,7 @@ describe("racing the relay at the start", () => {
     const transport = await transportFor(pc, store, saved, { directTailnet: () => true, directSocket: socketFor });
     expect(transport.route).toBe("direct");
     expect(pc.channels.at(-1)!.direct).toBe(tailscale);
+    expect(transport.directVia).toBe("tailscale");
   });
 
   it("keeps a native socket for the PC's Tailscale carrier behind two silent LAN addresses", async () => {

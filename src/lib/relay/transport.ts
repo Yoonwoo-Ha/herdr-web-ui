@@ -520,6 +520,11 @@ export class RelayTransport implements Transport {
 
   get route(): "relay" | "direct" | undefined { return this.channel ? this.channel.direct === undefined ? "relay" : "direct" : undefined; }
 
+  get directVia(): "lan" | "tailscale" | undefined {
+    const direct = this.channel?.direct;
+    return direct === undefined ? undefined : isTailnetCarrier(direct) ? "tailscale" : "lan";
+  }
+
   /**
    * While no carrier is up, what reconnecting has found so far: `pc`, the relay took the socket and has nobody for the
    * PC; `relay`, no relay was reached. Told through onRouteChange.
