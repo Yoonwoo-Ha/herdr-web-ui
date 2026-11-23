@@ -81,7 +81,7 @@ for (const read of [
 /** The ids the matching looks up for what a host sends for `chord`. */
 const matchIds = (chord: HerdrChord) => eventsFor(chord).flatMap((event) => matched(event).map(chordId));
 
-const INDEXED = new Set(["switch_tab", "switch_workspace", "focus_agent", "navigate_index"]);
+const INDEXED = new Set(["switch_tab", "switch_workspace", "focus_agent", "navigate_index", "copy_label"]);
 
 /** The chords a shown key text stands for, each with its index. */
 function chordsOf(text: string, action: string): { chord: HerdrChord; index: number | null; prefixed: boolean }[] {
@@ -179,7 +179,8 @@ function checkConfig(keys: Record<string, unknown>): void {
       for (const { chord, index, prefixed } of chordsOf(text, row.action)) {
         const level = row.mode === "terminal" ? (row.action === "lock" ? "direct" : prefixed ? "after" : "direct") : row.mode;
         for (const id of matchIds(chord)) shown.add(`${level}|${row.action}|${id}`);
-        const state = level === "after" ? at.armed : level === "direct" ? at.idle : at[row.mode as Exclude<Mode, "terminal">];
+        let state = level === "after" ? at.armed : level === "direct" ? at.idle : at[row.mode as Exclude<Mode, "terminal">];
+        if (state !== null && row.action === "copy_label") state = reduce(state, { type: "action", action: "copy_hints", at: AT }).state;
         check(state !== null, `${row.action} "${text}" is shown in a state the screen cannot reach`);
         check(fires(state, row.action, chord, index), `${row.mode} ${row.action} "${text}" is shown but no input event fires it`);
       }
@@ -264,12 +265,15 @@ function checkConfig(keys: Record<string, unknown>): void {
   }
 
   // the mode bar shows what the help shows for that state
-  const helpKeys = (filter: (mode: Mode, text: string) => boolean, strip: boolean) => helpRows(keymap).flatMap((row) => {
-    const keysShown = row.keys.filter((text) => filter(row.mode, text)).map((text) => strip ? text.replace(/^prefix\+/, "") : text);
+  const helpKeys = (filter: (mode: Mode, text: string, action: KeyAction) => boolean, strip: boolean) => helpRows(keymap).flatMap((row) => {
+    const keysShown = row.keys.filter((text) => filter(row.mode, text, row.action)).map((text) => strip ? text.replace(/^prefix\+/, "") : text);
     return keysShown.length === 0 ? [] : [{ action: row.action, keys: keysShown }];
   });
   if (at.armed !== null) check(Bun.deepEquals(modeBar(at.armed).hints, helpKeys((mode, text) => mode === "terminal" && text.startsWith("prefix+"), true)), "the armed mode bar differs from the help");
-  for (const mode of ["navigate", "resize", "copy"] as const) check(Bun.deepEquals(modeBar(at[mode]!).hints, helpKeys((m) => m === mode, false)), `the ${mode} mode bar differs from the help`);
+  for (const mode of ["navigate", "resize", "copy"] as const) check(Bun.deepEquals(modeBar(at[mode]!).hints, helpKeys((m, _key, action) => m === mode && action !== "copy_label", false)), `the ${mode} mode bar differs from the help`);
+  const hintMode = at.copy && reduce(at.copy, { type: "action", action: "copy_hints", at: AT }).state;
+  check(hintMode !== null && Bun.deepEquals(modeBar(hintMode).hints,
+    helpKeys((m, _key, action) => m === "copy" && ["copy_label", "copy_leave", "copy_hints"].includes(action), false)), "the copy hint mode bar differs from the help");
   check(Bun.deepEquals(modeBar(at.idle!).hints[0]!.keys, keymap.prefixes.map((prefix) => prefix.text)), "the idle mode bar's prefixes differ from the table's");
 
   // (b) and (d): the table is the resolver's minus the bindings it drops, and each drop has exactly one note; with no

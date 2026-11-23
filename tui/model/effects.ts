@@ -3,6 +3,7 @@
  */
 import type { HerdrAction } from "../../shared/herdr-keys.ts";
 import type { InputEvent } from "../input/decode.ts";
+import type { CopyCommand } from "./copy.ts";
 import type { Target } from "./focus.ts";
 import type { MoveAction } from "./keymap.ts";
 
@@ -46,6 +47,7 @@ export interface RunEffect {
 export interface UnreadEffect { readonly type: "unread"; readonly pane: string }
 
 export type Effect =
+  | { readonly type: "copy"; readonly pane: string; readonly command: CopyCommand }
   /** level 6: send this input to the pane through its gate (encodeKey, or encodePaste) */
   | { readonly type: "pane"; readonly pane: string; readonly input: PaneInput }
   /** Pane input classified during a hold; its destination is resolved only after the write. */

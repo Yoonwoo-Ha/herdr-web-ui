@@ -7,13 +7,14 @@
  */
 import { type HerdrAction, type HerdrChord, type HerdrKeptBinding, type HerdrKeyRefusal, type HerdrNavigateKey, parseHerdrBinding, resolveAllHerdrKeys } from "../../shared/herdr-keys.ts";
 import { decodeControl, decodeCsi, decodeSs3, type InputEvent, typedKey } from "../input/decode.ts";
+import { type CopyAction, COPY_KEYS } from "./copy-keys.ts";
 
 export type Mode = "terminal" | "navigate" | "resize" | "copy";
 
 /** Actions only the screen's modes and its lock know. */
 /** Navigate mode's moves (herdr has no key for them): the workspace pointed at one place up or down, the focused pane into it. */
 export type MoveAction = "navigate_move_up" | "navigate_move_down" | "navigate_move_pane";
-export type LocalAction = "lock" | "menu" | "agents" | "navigate_focus" | "navigate_cancel" | "navigate_index" | "navigate_cycle_next" | "navigate_cycle_previous" | "resize_leave" | "copy_leave" | MoveAction;
+export type LocalAction = "lock" | "menu" | "agents" | "navigate_focus" | "navigate_cancel" | "navigate_index" | "navigate_cycle_next" | "navigate_cycle_previous" | "resize_leave" | CopyAction | MoveAction;
 export type KeyAction = HerdrAction | HerdrNavigateKey | LocalAction;
 
 export interface KeyRow {
@@ -153,7 +154,6 @@ const FIXED: readonly { readonly action: KeyAction; readonly mode: Exclude<Mode,
   { action: "resize_pane_up", mode: "resize", keys: ["k", "up"] },
   { action: "resize_pane_right", mode: "resize", keys: ["l", "right"] },
   { action: "resize_leave", mode: "resize", keys: ["esc", "enter"] },
-  { action: "copy_leave", mode: "copy", keys: ["esc", "q"] },
 ];
 
 export function chordId(chord: HerdrChord): string {
@@ -361,7 +361,10 @@ export function buildKeymap(keys: unknown): Keymap {
 
   const modeKeys = { navigate: {}, resize: {}, copy: {} } as Record<Exclude<Mode, "terminal">, Record<string, Bound>>;
   const fixedRows = new Map<string, HerdrKeptBinding[]>();
-  for (const { action, mode, keys: texts } of FIXED) {
+  const fixed = [...FIXED, ...Object.keys(COPY_KEYS).map((action) => ({
+    action: action as CopyAction, mode: "copy" as const, keys: COPY_KEYS[action as CopyAction],
+  }))];
+  for (const { action, mode, keys: texts } of fixed) {
     const bindings = texts.flatMap((text) => kept(fixedBinding(text), claim(modeKeys[mode], action)) ?? []);
     fixedRows.set(`${mode}:${action}`, bindings);
   }
@@ -393,7 +396,7 @@ export function buildKeymap(keys: unknown): Keymap {
     const bindings = held.get(action)!.flatMap((binding) => kept({ ...binding, text: unprefixed(binding.text), prefixed: false }, claim(modeKeys.navigate, action)) ?? []);
     rows.push({ action, default: unprefixed(resolved.actions.find((entry) => entry.action === action)!.default), mode: "navigate", source: "herdr", bindings });
   }
-  for (const { action, mode, keys: texts } of FIXED) {
+  for (const { action, mode, keys: texts } of fixed) {
     if (rows.some((row) => row.action === action && row.mode === mode)) continue;
     rows.push({ action, default: texts.join(", "), mode, source: "fixed", bindings: fixedRows.get(`${mode}:${action}`)! });
   }

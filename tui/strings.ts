@@ -46,6 +46,7 @@ export const STRINGS = {
   modeNavigate: "NAVIGATE",
   modeResize: "RESIZE",
   modeCopy: "COPY",
+  copyNoHints: "No hints",
   modeLocked: "LOCKED",
   errorBadge: "ERROR",
 
@@ -188,6 +189,26 @@ export const STRINGS = {
     navigate_move_pane: "move pane here",
     resize_leave: "done",
     copy_leave: "done",
+    copy_find: "search",
+    copy_hints: "hints",
+    copy_yank: "copy",
+    copy_char: "select",
+    copy_line: "select lines",
+    copy_left: "left",
+    copy_down: "down",
+    copy_up: "up",
+    copy_right: "right",
+    copy_word: "next word",
+    copy_back: "previous word",
+    copy_start: "row start",
+    copy_end: "row end",
+    copy_oldest: "oldest",
+    copy_newest: "newest",
+    copy_half_up: "half page up",
+    copy_half_down: "half page down",
+    copy_older: "older match",
+    copy_newer: "newer match",
+    copy_label: "copy hint",
   } as Readonly<Record<string, string>>,
 
   // Notice messages by code
@@ -199,6 +220,14 @@ export const STRINGS = {
         return `not_built: ${data["action"] ?? "action"} is not built in this screen`;
       case "input_refused":
         return `input_refused: pane is ${data["reason"] ?? "not ready"}`;
+      case "copy_unavailable":
+        return "Copy mode needs a live pane";
+      case "copy_no_match":
+        return "No match";
+      case "copied":
+        return "Copied";
+      case "copy_refused":
+        return "Selection exceeds the clipboard limit";
       case "paste_refused":
         return `paste_refused: paste over limit (${data["length"] ?? 0} bytes)`;
       case "keys_unread":

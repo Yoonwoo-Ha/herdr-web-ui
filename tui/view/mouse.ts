@@ -26,6 +26,8 @@ export interface PaneLook {
   readonly rect: Rect;
   /** the grid row drawn at the rectangle's top (a terminal taller than its cells is drawn clipped) */
   readonly top: number;
+  /** the grid column drawn at the rectangle's left (copy mode pans a terminal wider than its cells) */
+  readonly left: number;
   /** the terminal's real grid */
   readonly grid: { readonly cols: number; readonly rows: number };
   /** the program asked for a mouse mode */
@@ -119,7 +121,7 @@ export class Pointer {
         if (from !== null && continuation(event)) {
           const mapping = (now: PointerScene) => {
             const picture = now.painted(from.pane);
-            return [picture?.rect, picture?.top, picture?.grid];
+            return [picture?.rect, picture?.top, picture?.left, picture?.grid];
           };
           const cells = mapping(scene);
           if (event.action === "release") owner = null;
@@ -161,7 +163,7 @@ export class Pointer {
   private paneStamp(pane: string, scene: PointerScene) {
     const p = scene.painted(pane);
     const l = scene.look(pane);
-    return [p && this.identity(p.emulator), p?.contentVersion, p?.screen, p?.altScreen, p?.rect, p?.grid, p?.top, p?.history,
+    return [p && this.identity(p.emulator), p?.contentVersion, p?.screen, p?.altScreen, p?.rect, p?.grid, p?.top, p?.left, p?.history,
       l && this.identity(l.emulator), l?.screen, l?.altScreen, l?.programMouse, l?.grid];
   }
 
@@ -363,9 +365,11 @@ export class Pointer {
       const range = ordered(this.selection);
       const top = look.history.viewportTop + look.top;
       const height = Math.min(look.rect.height, look.grid.rows - look.top);
-      const width = Math.min(look.rect.width, look.grid.cols);
+      const width = Math.min(look.rect.width, look.grid.cols - look.left);
+      const right = look.left + width;
       const entirelyShown = range.start.y >= top && range.end.y < top + height &&
-        range.start.x < width && range.end.x < width && (range.start.y === range.end.y || width === look.grid.cols);
+        range.start.x >= look.left && range.start.x < right && range.end.x >= look.left && range.end.x < right &&
+        (range.start.y === range.end.y || width === look.grid.cols);
       // Wheel-only drags can read unchanged history outside the viewport. After output, unseen rows may have
       // been replaced or pruned: only a range wholly shown in the new frame can authorize a fresh text read.
       if (grab.contentVersion === look.contentVersion || entirelyShown) {
@@ -417,13 +421,13 @@ function pathOf(id: string): boolean[] | null {
   return match[1] === "root" ? [] : [...match[1]!].map((step) => step === "1");
 }
 
-/** The event's cell in the pane's grid: clamped into the pane's rectangle, then through the rows the frame clips. */
-function gridCell(event: MouseInput, look: Pick<PaneLook, "rect" | "top" | "grid">): GridCell {
+/** The event's cell in the pane's grid: clamped into the pane's rectangle, then through the rows and columns the frame clips. */
+function gridCell(event: MouseInput, look: Pick<PaneLook, "rect" | "top" | "left" | "grid">): GridCell {
   const { rect } = look;
   const col = Math.min(Math.max(event.col, rect.x), rect.x + Math.max(0, rect.width - 1));
   const row = Math.min(Math.max(event.row, rect.y), rect.y + Math.max(0, rect.height - 1));
   return {
-    x: Math.min(col - rect.x, Math.max(0, look.grid.cols - 1)),
+    x: Math.min(col - rect.x + look.left, Math.max(0, look.grid.cols - 1)),
     y: Math.min(row - rect.y + look.top, Math.max(0, look.grid.rows - 1)),
   };
 }

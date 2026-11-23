@@ -44,7 +44,10 @@ export function modeBar(state: ModelState): ModeBar {
   if (state.armed) return { mode: "prefix", hints: hints(rows.filter((row) => row.mode === "terminal"), true) };
   if (state.mode.name !== "terminal") {
     const mode = state.mode.name;
-    return { mode, hints: hints(rows.filter((row) => row.mode === mode), null) };
+    const keys = rows.filter((row) => row.mode === mode);
+    return { mode, hints: hints(state.mode.name !== "copy" ? keys : state.mode.phase === "hints"
+      ? keys.filter(({ action }) => action === "copy_label" || action === "copy_leave" || action === "copy_hints")
+      : keys.filter(({ action }) => action !== "copy_label"), null) };
   }
   return {
     mode: "terminal",

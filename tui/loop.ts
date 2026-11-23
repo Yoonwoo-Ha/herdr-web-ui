@@ -20,7 +20,8 @@ import type { ScreenRange } from "./emulator/index.ts";
 import { DividerWrites } from "./core/divider.ts";
 import { type LayoutDone, LayoutWrites } from "./core/layout.ts";
 import { type CoreLink, LINK_DOCS, type LinkNotice, type LinkState, openLink } from "./core/link.ts";
-import { createPanes, type PaneInput, type PaneNotice, type Panes } from "./core/pane.ts";
+import { createPanes, type PaneInput, type PaneNotice, type Panes, type PaneView } from "./core/pane.ts";
+import type { Size } from "./core/size.ts";
 import { CoreWorld } from "./core/world.ts";
 import { errorCode } from "./crash.ts";
 import { effectBytes, osc52 } from "./host/effects.ts";
@@ -36,9 +37,10 @@ import { menuChoice } from "./model/overlays.ts";
 import { exists, focused } from "./model/focus.ts";
 import { type Following, initialState, type ModelEvent, type ModelState, presentedMenu, reduce } from "./model/reduce.ts";
 import { PaneGrid } from "./view/grid.ts";
+import { CopyView } from "./view/copy.ts";
 import { type DeferredMouse, type PaneLook, type PanePicture, Pointer, type PointerAct, type PointerScene, rowsAboveBottom } from "./view/mouse.ts";
 import { type HitMap, Painter, type PaneScene } from "./view/paint.ts";
-import { layOut, paneScene, type ScreenShape } from "./view/screen.ts";
+import { layOut, paneScene, type PaneSpot, type ScreenShape } from "./view/screen.ts";
 import type { ViewStore } from "./view-store.ts";
 
 /** The caller's clock and its one timer: `arm` sets the timer for `at` (on the same clock) and answers its cancel. */
@@ -95,7 +97,7 @@ export interface LoopReport {
   size: { cols: number; rows: number };
   /** the pane grids the frame keeps, each at its size */
   grids: { pane: string; cols: number; rows: number }[];
-  mode: { name: string; locked: boolean; armed: boolean; overlays: string[] };
+  mode: { name: string; locked: boolean; armed: boolean; overlays: string[]; notice?: NonNullable<ReturnType<CopyView["searchNotice"]>> };
   /** the stable code of the error giving the terminal back at quit failed with, or null */
   leaveError: string | null;
   /** the core link's state as data: what the chrome shows (Offline and its code, NoCore, Incompatible) */
@@ -136,6 +138,7 @@ export function startLoop(options: LoopOptions): Loop {
   let grids = new Map<string, { emulator: unknown; grid: PaneGrid }>();
   let shape: ScreenShape | null = null;
   const pointer = new Pointer();
+  const copyView = new CopyView();
   /** Published together only after a frame is taken: the cells and layout the mouse actually sees. */
   let hits: HitMap | null = null;
   let drawn = new Map<string, PanePicture>();
@@ -331,6 +334,7 @@ export function startLoop(options: LoopOptions): Loop {
   }
 
   function onPaneNotice(notice: PaneNotice): void {
+    if (copyView.changed(notice, panes)) dispatch({ type: "copy_closed", pane: notice.terminal });
     if (notice.type === "hold") {
       if (notice.held) holds.set(notice.terminal, clock.now());
       else holds.delete(notice.terminal);
@@ -627,6 +631,20 @@ export function startLoop(options: LoopOptions): Loop {
         if (pane !== null) perform({ type: "pane", pane: pane.id, input: effect.input });
         return;
       }
+      case "copy": {
+        // a copy command reads the pane as it is now, not as the last frame drew it: what one read holds (a scroll, hint
+        // mode, a label) acts as it does read apart, with a frame between each
+        const spot = effect.command.kind === "leave" ? undefined : shape?.spots.find((spot) => spot.pane === effect.pane && !spot.covered);
+        const answer = copyView.run(effect, panes.view(effect.pane), painter && spot ? sceneNow(painter.styles, spot).scene : undefined);
+        // copy mode takes the mouse from here and swallows what it reads of it, a release too: a gesture under way ends now,
+        // where its press went (a program that got the press gets its release, a divider its last ratio)
+        if (effect.command.kind === "enter" && !answer.close) for (const step of pointer.cancel(pointerScene(), clock.now())) performPointer(step);
+        if (answer.text !== undefined) writeCopy(answer.text);
+        if (answer.close) dispatch({ type: "copy_closed", pane: effect.pane });
+        if (answer.unavailable) dispatch({ type: "notice", code: "copy_unavailable", at: clock.now() });
+        owePass();
+        return;
+      }
       case "pane":
         for (const step of pointer.typed(effect.pane, lookOf(effect.pane))) performPointer(step);
         toPane(effect.pane, effect.input);
@@ -735,8 +753,11 @@ export function startLoop(options: LoopOptions): Loop {
   /** The selected text to the host's clipboard as OSC 52, with a notice: `copied`, or `copy_refused` over the size cap. */
   function copy(pane: string, range: ScreenRange, contentVersion: number): void {
     const text = panes.view(pane)?.emulator?.textOf(range, contentVersion);
-    if (!text?.ok) return;
-    const data = new TextEncoder().encode(text.value);
+    if (text?.ok) writeCopy(text.value);
+  }
+
+  function writeCopy(text: string): void {
+    const data = new TextEncoder().encode(text);
     const write = osc52(data);
     if (!write.ok) {
       if (write.code !== "empty") dispatch({ type: "notice", code: "copy_refused", data: { reason: write.code, bytes: data.length }, at: clock.now() });
@@ -748,7 +769,7 @@ export function startLoop(options: LoopOptions): Loop {
       painter?.invalidate();
       return;
     }
-    dispatch({ type: "notice", code: "copied", data: { bytes: data.length }, at: clock.now() });
+    dispatch({ type: "notice", code: "copied", data: { bytes: data.length }, calm: true, at: clock.now() });
   }
 
   /** Live modes and identity for routing and validation, located in the last accepted frame. */
@@ -848,6 +869,26 @@ export function startLoop(options: LoopOptions): Loop {
     if (passOwed && painter && now >= lastPass + FRAME_PASS_MS) pass(now);
   }
 
+  /**
+   * A shown pane as its emulator holds it now: its grid brought up to date (step 1 of a frame pass; the rows it copies stay
+   * owed to the painter) and the scene that draws it. `filled`: the emulator gave its picture. Nothing here is published as
+   * drawn: only a frame the host took is.
+   */
+  function sceneNow(styles: Painter["styles"], spot: PaneSpot, view: PaneView | undefined = panes.view(spot.pane)): { scene: PaneScene; actual: Size; filled: boolean } {
+    // the grid of the picture drawn, never a size a newer attach was told before its first paint: with none, the visible cells
+    const actual = view?.grid ?? { cols: spot.cells.cols, rows: spot.cells.rows };
+    let held = grids.get(spot.pane);
+    const emulator = view?.emulator ?? null;
+    if (!held || held.emulator !== emulator) {
+      held = { emulator, grid: new PaneGrid(styles, actual.cols, actual.rows) };
+      grids.set(spot.pane, held);
+    }
+    held.grid.resize(actual.cols, actual.rows);
+    const filled = emulator !== null && held.grid.copy(emulator, held.grid.allDirty).ok;
+    const live = paneLive(view, shown);
+    return { scene: paneScene(spot, held.grid, actual, { live, hold: holds.has(spot.pane), dim: !live }), actual, filled };
+  }
+
   function pass(now: number): void {
     if (!painter || !shape || ended) return;
     const releaseHeld = behindWrite?.ready === true ? behindWrite : null;
@@ -861,32 +902,27 @@ export function startLoop(options: LoopOptions): Loop {
     // the style table only grows: past its limit the painter and every grid are made anew
     if (painter.styles.get(STYLE_TABLE_LIMIT) !== undefined) rebuildPainter();
     const scenes: PaneScene[] = [];
+    let copying: ReturnType<CopyView["draw"]> = null;
     const copied = new Set<string>();
     const nextDrawn = new Map<string, PanePicture>();
     for (const spot of frameShape.spots) {
       if (spot.covered) continue;
       const view = panes.view(spot.pane);
-      // the grid of the picture drawn, never a size a newer attach was told before its first paint: with none, the visible cells
-      const actual = view?.grid ?? { cols: spot.cells.cols, rows: spot.cells.rows };
-      let held = grids.get(spot.pane);
+      const { scene, actual, filled } = sceneNow(painter.styles, spot, view);
+      if (filled) copied.add(spot.pane);
+      const copy = copyView.draw(scene);
+      if (copy) copying = copy;
+      // copy mode clips the pane round its own cursor: the picture published is the one drawn
+      const painted = copy?.pane ?? scene;
       const emulator = view?.emulator ?? null;
-      if (!held || held.emulator !== emulator) {
-        held = { emulator, grid: new PaneGrid(painter.styles, actual.cols, actual.rows) };
-        grids.set(spot.pane, held);
-      }
-      held.grid.resize(actual.cols, actual.rows);
-      const copy = emulator ? held.grid.copy(emulator, held.grid.allDirty) : null;
-      if (copy?.ok) copied.add(spot.pane);
-      const live = paneLive(view, shown);
-      const scene = paneScene(spot, held.grid, actual, { live, hold: holds.has(spot.pane), dim: !live });
-      const snapshot = copy?.ok && emulator ? emulator.frameScreen() : null;
+      const snapshot = filled && emulator ? emulator.frameScreen() : null;
       const look: PanePicture | null = snapshot?.ok && snapshot.value && emulator ? {
-        rect: scene.rect, top: scene.view?.row ?? 0, grid: actual, emulator,
+        rect: painted.rect, top: painted.view?.row ?? 0, left: painted.view?.col ?? 0, grid: actual, emulator,
         altScreen: snapshot.value.altScreen, screen: snapshot.value.screens, history: snapshot.value.history, contentVersion: snapshot.value.contentVersion,
       } : null;
       if (look) nextDrawn.set(spot.pane, look);
       const selection = pointer.shown(spot.pane, paneFocus, look);
-      scenes.push({ ...scene, scrolledBack: look !== null && rowsAboveBottom(look) > 0, ...(selection ? { selection } : {}) });
+      scenes.push({ ...painted, scrolledBack: look !== null && rowsAboveBottom(look) > 0, ...(!copy && selection ? { selection } : {}) });
     }
     const size = host.size();
     const paneViews = new Map(panes.views().map((v) => [v.terminal, v]));
@@ -906,6 +942,7 @@ export function startLoop(options: LoopOptions): Loop {
       cwd,
       theme,
       colors: host.colorDepth,
+      copying,
     });
     const frame = painter.paint({
       width: size.cols, height: size.rows, parts: chrome.parts,
@@ -1115,6 +1152,7 @@ export function startLoop(options: LoopOptions): Loop {
     report: () => {
       const first = earliest(deadlines());
       const due = first ? [...deadlines()].filter(([, at]) => at === first.at).map(([name]) => name) : [];
+      const notice = copyView.searchNotice();
       return {
         due: timer ? due : [],
         passes,
@@ -1124,7 +1162,7 @@ export function startLoop(options: LoopOptions): Loop {
         hc: hello ? { version: hello.version, features: [...hello.features] } : null,
         size: entered ? host.size() : { cols: 0, rows: 0 },
         grids: [...grids].map(([pane, { grid }]) => ({ pane, cols: grid.grid.cols, rows: grid.grid.rows })),
-        mode: { name: state.mode.name, locked: state.locked, armed: state.armed, overlays: state.overlays.map((overlay) => overlay.kind) },
+        mode: { name: state.mode.name, locked: state.locked, armed: state.armed, overlays: state.overlays.map((overlay) => overlay.kind), ...(notice === null ? {} : { notice }) },
         link: { kind: link.state.kind, code: "code" in link.state ? link.state.code : null },
       };
     },

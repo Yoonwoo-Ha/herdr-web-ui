@@ -112,6 +112,8 @@ async function settled(run: Run): Promise<void> {
   await run.settle();
   await run.advance(1);
 }
+/** what the screen copied to the host's clipboard (OSC 52), in order */
+const clipsOf = (run: Run): string[] => [...run.host.output().matchAll(/\x1b]52;c;([A-Za-z0-9+/=]+)\x1b\\/g)].map((match) => Buffer.from(match[1]!, "base64").toString());
 const framesOf = (run: Run, kind: number, from = 0) => run.sent.slice(from).filter((frame) => frame.kind === kind && frame.channel !== 0);
 const megabyte = (fill: string) => fill.repeat(1024 * 1024 / fill.length);
 
@@ -443,8 +445,10 @@ describe("the loop", () => {
   }, TEST_MS);
 
   it("refusing a dialog or mode opener leaves its plain tail for the survivor", async () => {
-    // No dialog or navigate mode opens during the hold, so y and m remain plain pane input.
-    for (const [keys, tail] of [[["\x02Dy"], "y"], [["\x02D", "y"], "y"], [["\x02wm"], "m"], [["\x02w", "m"], "m"]] as const) {
+    // No dialog, navigate mode or copy mode opens during the hold, so y and m remain plain pane input (in copy mode y
+    // would copy); each opener is refused with the one notice.
+    for (const [keys, tail, refused] of [[["\x02Dy"], "y", "close_workspace"], [["\x02D", "y"], "y", "close_workspace"], [["\x02wm"], "m", "workspace_picker"], [["\x02w", "m"], "m", "workspace_picker"],
+      [["\x02[y"], "y", "copy_mode"], [["\x02[", "y"], "y", "copy_mode"]] as const) {
       for (const answerFirst of [false, true]) {
         const label = { keys, answerFirst };
         const run = await start({ core: oneTab(2) });
@@ -456,7 +460,8 @@ describe("the loop", () => {
         await settled(run);
         run.core.releaseEvents();
         await settled(run);
-        expect([label, run.loop.report().mode.overlays, run.loop.model().mode.name]).toEqual([label, [], "terminal"]);
+        expect([label, run.loop.report().mode.overlays, run.loop.model().mode.name, run.loop.model().notices.filter(({ code }) => code === "layout_busy").map(({ data }) => data["action"])])
+          .toEqual([label, [], "terminal", [refused]]);
         run.type("\r");
         await settled(run);
         expect([label, run.core.calls().filter(({ method }) => method === "terminal.kill").map(({ params }) => params["terminal"]), sentTo(run, "t2")])
@@ -800,8 +805,9 @@ describe("the loop", () => {
     // prefix actions (moves, zoom, close, help, the workspace picker, resize mode, rename, a new tab's name, detach), text
     // with combining marks, a ZWJ emoji, CJK and wide characters, and Enter; with the default prefix (a key of its own)
     // and with a printable one (one text run holds the actions and what follows them)
-    const ACTIONS = ["l", "h", "z", "x", "?", "q", "w", "r", "P", "c"];
-    const TEXT = ["a", "q", "e\u0301", "\u0301", "\u{1F469}\u200D\u{1F4BB}", "한", "中", "\uFF21", "\r"];
+    // copy mode (prefix+[), its search box (/) and its hint labels (f, then a digit: the second pane shows a path) too
+    const ACTIONS = ["l", "h", "z", "x", "?", "q", "w", "r", "P", "c", "["];
+    const TEXT = ["a", "q", "/", "f", "1", "e\u0301", "\u0301", "\u{1F469}\u200D\u{1F4BB}", "한", "中", "\uFF21", "\r"];
     let seed = 0x5eed;
     const random = () => {
       seed = (seed + 0x6d2b79f5) | 0;
@@ -813,6 +819,9 @@ describe("the loop", () => {
     interface Scene { readonly options: () => RunOptions; readonly given?: (run: Run) => Promise<void>; readonly then?: string }
     const DEMO: Scene = { options: () => ({ fixture: demo }) };
     const ZOOMED: Scene = { options: () => ({ core: oneTab(3, true) }) };
+    // one pane with sixty rows, most of them history
+    const history = Array.from({ length: 60 }, (_, n) => `https://example.org/${n}`).join("\r\n") + "\r";
+    const HISTORY: Scene = { options: () => ({ fixture: { build: (core: FakeHcCore) => void place(core, { space: "w", spaceName: "w", tab: "t", tabName: "t" }, history) } }) };
     const outcome = async (prefix: string, reads: Uint8Array[], scene = DEMO, settleBetween = scene === DEMO) => {
       const run = await Run.start(scene.options());
       try {
@@ -848,6 +857,12 @@ describe("the loop", () => {
         }));
         return named({
           ended, busy: model.notices.some((notice) => notice.code === "layout_busy"), focus: model.focus, shown: focused(model.world, model.focus).pane?.id ?? null, mode: model.mode.name, panes: model.world.workspaces.flatMap((workspace) => workspace.tabs.flatMap((tab) => tab.panes.map((pane) => pane.id))).sort(), zoomed: layout?.workspaces.flatMap((workspace) => workspace.tabs.map((tab) => tab.zoomed)) ?? [],
+          clips: clipsOf(run),
+          // where each pane's view rests in its history: copy mode gives back the offset it was entered at
+          tops: Object.fromEntries(run.loop.panes.views().map((view) => {
+            const shown = view.emulator?.history();
+            return [view.terminal, shown?.ok ? shown.value.viewportTop : null];
+          })),
           overlays: model.overlays.map((overlay) => ("field" in overlay ? `${overlay.kind}:${overlay.field.graphemes.join("|")}` : overlay.kind)),
           received: received(run),
           // the read state every Herdr client shares: who looked at what must not depend on the cut either
@@ -899,12 +914,16 @@ describe("the loop", () => {
       ["\x02", ZOOMED, 30, ["\x02w", "\x02l", "\x02h", "\x02z", "\x02x", "l", "h", "a", "Z", "\r"]],
       // moves there and back in navigate mode, the mode left and entered again, the agent list opened, chosen from and closed
       ["\x02", UNREAD, 15, ["l", "h", "l", "h", "\x02a", "q", "\r", "\x02w", "a"]],
+      // copy mode over a pane with history, with a printable prefix: left and entered again in one read, moved, scrolled,
+      // searched, selected and yanked, its hints chosen, and text after it; the view it gives back is compared. Nothing
+      // here writes a layout, so a frame follows every read
+      ["-", HISTORY, 30, ["-[", "q", "g", "k", "j", "f", "1", "v", "y", "/", "e", "\r", "Z"]],
     ];
     for (const [prefix, scene, runs, tokens] of variants) {
       for (let n = 0; n < runs; n++) {
         const picked = Array.from({ length: 3 + Math.floor(random() * 4) }, () => tokens[Math.floor(random() * tokens.length)]!);
         const text = picked.join("");
-        const settleBetween = scene === DEMO && !refusesInHold(picked, prefix);
+        const settleBetween = (scene === DEMO || scene === HISTORY) && !refusesInHold(picked, prefix);
         const bytes = new TextEncoder().encode(text);
         const whole = await outcome(prefix, [bytes], scene);
         if (settleBetween) expect({ text, busy: whole.busy }).toEqual({ text, busy: false });
@@ -923,6 +942,21 @@ describe("the loop", () => {
       const whole = compared(result);
       expect({ pinned, outcome: compared(await outcome("\x02", [...gate].map((byte) => Uint8Array.of(byte)), ZOOMED)) }).toEqual({ pinned, outcome: whole });
       for (let cut = 1; cut < gate.length; cut++) expect({ pinned, cut, outcome: compared(await outcome("\x02", [gate.slice(0, cut), gate.slice(cut)], ZOOMED)) }).toEqual({ pinned, cut, outcome: whole });
+    }
+    // the gate's copy case: with a printable prefix, copy mode entered and moved to the oldest row, then left, entered
+    // again, a hint chosen, and text after it in one read: the first session gives its view back before the second one
+    // starts, as when read apart (the same hint copied, the view back where it was entered)
+    // what copy mode must give back: the view before it was entered, and the hint the first label numbers at that view
+    const rested = await outcome("-", [], HISTORY, true);
+    const atBottom = await outcome("-", [new TextEncoder().encode("-[f1")], HISTORY, true);
+    expect(atBottom.clips).toHaveLength(1);
+    for (const pinned of ["-[gq-[f1", "-[gq-[f1Z", "-[gqZ"]) {
+      const gate = new TextEncoder().encode(pinned);
+      const seen = await outcome("-", [gate], HISTORY, true);
+      expect({ pinned, tops: seen.tops, clips: seen.clips }).toEqual({ pinned, tops: rested.tops, clips: pinned.includes("f1") ? atBottom.clips : [] });
+      const whole = compared(seen, true);
+      expect({ pinned, outcome: compared(await outcome("-", [...gate].map((byte) => Uint8Array.of(byte)), HISTORY, true), true) }).toEqual({ pinned, outcome: whole });
+      for (let cut = 1; cut < gate.length; cut++) expect({ pinned, cut, outcome: compared(await outcome("-", [gate.slice(0, cut), gate.slice(cut)], HISTORY, true), true) }).toEqual({ pinned, cut, outcome: whole });
     }
     // What a person was shown and what the document confirmed are named, not only compared: reads that all agree on a
     // turn nobody saw being read, or on the wrong pane to go back to, fail too. No frame comes between the reads.
@@ -943,6 +977,9 @@ describe("the loop", () => {
       ["a jump onto a pane another tab's zoom covers, then the last pane: back to the pane it left, the zoom where the jump put it",
         { options: () => ({ core: zoomedElsewhere() }), given: async (run) => { run.loop.dispatch({ type: "keys", keys: { last_pane: "prefix+y" }, at: run.clock.current }); await run.advance(1); }, then: "\x02y" },
         "\x02gclaude\r", { shown: "t1", focus: { previous: "t3" }, zoomed: [null, "t3"] }],
+      ["copy mode entered on a pane and a copy made there, between two frames, show that pane to nobody and end no look: its turn stays unread, and so does the turn marked unread on the pane left and come back to",
+        agents(async (run) => { await hostFocus(run, FOCUS_IN); await endTurn(run, "t1"); await markUnread(run, "t1"); await endTurn(run, "t2"); }),
+        "\x02l\x02[gvly\x02h", { shown: "t1", mode: "terminal", clips: ["pa"], seen: { t1: "0", t2: null } }],
     ];
     for (const [name, scene, typed, leaves] of told) {
       const bytes = new TextEncoder().encode(typed);
@@ -952,6 +989,61 @@ describe("the loop", () => {
       for (let cut = 1; cut < bytes.length; cut++) expect({ name, cut, outcome: await outcome("\x02", [bytes.slice(0, cut), bytes.slice(cut)], scene, false) }).toEqual({ name, cut, outcome: whole });
     }
   }, SOAK_MS);
+
+  it("copy mode's search box takes text alike read whole, split at every byte, and a byte at a time, and text after its choice goes on", async () => {
+    const search = async (reads: Uint8Array[]) => {
+      const run = await Run.start({ fixture: demo });
+      try {
+        await run.live();
+        await run.advance(1);
+        for (const [at, read] of reads.entries()) {
+          run.host.feed(read);
+          if ((reads[at + 1]?.[0] ?? 0) >> 6 === 0b10) await run.advance(1);
+          else await settled(run);
+        }
+        const model = run.loop.model();
+        const mode = model.mode;
+        return { mode: mode.name === "copy" ? `copy:${mode.phase}:${"field" in mode ? mode.field.graphemes.join("|") : ""}` : mode.name, received: ["t1", "t2"].map((terminal) => sentTo(run, terminal)) };
+      } finally {
+        await run.close();
+      }
+    };
+    // copy mode, the search box, text with a mark, a ZWJ emoji and CJK; then the search chosen by Enter, and text after it
+    for (const text of ["\x02[/e\u0301\u{1F469}\u200D\u{1F4BB}中", "\x02[/ab\rq"]) {
+      const bytes = new TextEncoder().encode(text);
+      const joined = await search([bytes]);
+      expect({ text, outcome: await search([...bytes].map((byte) => Uint8Array.of(byte))) }).toEqual({ text, outcome: joined });
+      for (let cut = 1; cut < bytes.length; cut++) expect({ text, cut, outcome: await search([bytes.slice(0, cut), bytes.slice(cut)]) }).toEqual({ text, cut, outcome: joined });
+    }
+  }, TEST_MS);
+
+  it("a hint label read with hint mode copies its target as when read apart: f then 1, and after scrolling back", async () => {
+    const urls = Array.from({ length: 30 }, (_, n) => `https://example.org/${n} 한글 e\u0301\r\n`).join("");
+    const hint = async (reads: Uint8Array[]) => {
+      const run = await Run.start({ cols: 60, rows: 14, fixture: { build: (core) => place(core, { space: "w", spaceName: "w", tab: "t", tabName: "t" }, urls) } });
+      try {
+        await run.live();
+        await run.advance(1);
+        for (const read of reads) {
+          run.host.feed(read);
+          await settled(run);
+        }
+        return { mode: run.loop.model().mode, clips: clipsOf(run), received: sentTo(run, "t1") };
+      } finally {
+        await run.close();
+      }
+    };
+    // hint mode and its label; then the same after moving the copy cursor up past the top (the history scrolls back), and
+    // text after the copy closed copy mode
+    for (const text of ["\x02[f1", `\x02[${"k".repeat(16)}f2Z`]) {
+      const bytes = new TextEncoder().encode(text);
+      const joined = await hint([bytes]);
+      expect(joined.clips).toHaveLength(1);
+      expect(joined.mode).toEqual({ name: "terminal" });
+      expect({ text, outcome: await hint([...bytes].map((byte) => Uint8Array.of(byte))) }).toEqual({ text, outcome: joined });
+      for (let cut = 1; cut < bytes.length; cut++) expect({ text, cut, outcome: await hint([bytes.slice(0, cut), bytes.slice(cut)]) }).toEqual({ text, cut, outcome: joined });
+    }
+  }, TEST_MS);
 
   it("a text field keeps whole graphemes however the reads split them: 129 decomposed letters, a mark read apart, a ZWJ emoji", async () => {
     const field = async (reads: (string | Uint8Array)[]) => {
@@ -1454,6 +1546,22 @@ const RESTING: [state: string, enter: () => Promise<Resting>][] = [
     expect(run.loop.model().mode.name).toBe("copy");
     return { run };
   }],
+  ...([
+    ["copy character selection", "v,l"],
+    ["copy line selection", "V"],
+    ["copy search prompt", "/,echo"],
+    ["copy search result", "/,echo,enter"],
+    ["copy search without a match", "/,not-in-the-fixture,enter"],
+    ["copy hints choosing a label", "f"],
+  ] as const).map(([name, keys]): [string, () => Promise<Resting>] => [name, async () => {
+    const run = await start({ fixture: demo });
+    await run.live();
+    run.core.program("t1").output("\r\nhttps://example.org/a\r");
+    await run.advance(16);
+    await run.keys(`ctrl+b,[,${keys}`);
+    expect(run.loop.model().mode.name).toBe("copy");
+    return { run };
+  }]),
   ["the sidebar collapsed", async () => {
     const run = await start({ fixture: demo });
     await run.live();

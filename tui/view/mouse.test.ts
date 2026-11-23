@@ -21,7 +21,7 @@ const TEST_MS = 120_000;
 const EMULATOR = {};
 /** pane a: screen cells x 0-8, y 1-5, drawn from grid row 2 of its 9x8 grid; 20 rows of history above, at the bottom */
 const lookA = (programMouse: boolean, history = { scrollback: 20, total: 28, viewportTop: 20 }): PaneLook & { contentVersion: number } => ({
-  rect: { x: 0, y: 1, width: 9, height: 5 }, top: 2, grid: { cols: 9, rows: 8 }, programMouse, altScreen: false, screen: 0, emulator: EMULATOR, history, contentVersion: 0,
+  rect: { x: 0, y: 1, width: 9, height: 5 }, top: 2, left: 0, grid: { cols: 9, rows: 8 }, programMouse, altScreen: false, screen: 0, emulator: EMULATOR, history, contentVersion: 0,
 });
 const HITS = new HitMap([
   { rect: { x: 0, y: 0, width: 20, height: 1 }, target: { part: "tabs", id: "" } },
@@ -285,6 +285,36 @@ describe("the pointer", () => {
     expect(pointer.shown("a", "a", { ...lookA(false), altScreen: true })).toBeNull();
     pointer = select();
     expect(pointer.shown("a", "a", { ...lookA(false), screen: 1 })).toBeNull();
+  });
+
+  /** pane a with a 20-column grid in its 9 cells, drawn from grid column `left` (copy mode pans a wider terminal) */
+  const pannedA = (programMouse: boolean, left: number) => ({ ...lookA(programMouse), grid: { cols: 20, rows: 8 }, left });
+
+  it("a report queued while a pane is drawn from one column is stale once the pane is drawn from another", () => {
+    const pointer = new Pointer();
+    const panned = sceneOf("a", pannedA(true, 5));
+    const back = sceneOf("a", pannedA(true, 0));
+    expect([pointer.bind(ev(["press", "left", 3, 2]), panned)(panned), pointer.bind(ev(["press", "left", 3, 2]), panned)(back)]).toEqual([true, false]);
+    // the press goes to the cell under it, five columns in; its drag, queued, is not sent on at a cell of the other picture:
+    // the press is released where it was
+    expect(pointer.mouse("screen", ev(["press", "left", 3, 2]), panned)).toEqual([{ kind: "forward", pane: "a", event: ev(["press", "left", 8, 3]) }]);
+    const drag = pointer.defer().bind(ev(["motion", "left", 4, 2]), panned);
+    expect(drag("screen", back)).toEqual([{ kind: "forward", pane: "a", event: ev(["release", "left", 8, 3]) }]);
+  });
+
+  it("after output a release copies only columns the pane still draws", () => {
+    /** the frame taken after output: pane a drawn from `left`, its content another version */
+    const after = (left: number): PointerScene => ({ ...sceneOf("a", pannedA(false, left)), painted: () => ({ ...pannedA(false, left), contentVersion: 1 }) });
+    const selected = () => {
+      const pointer = new Pointer();
+      for (const event of [ev(["press", "left", 1, 1]), ev(["motion", "left", 3, 1])]) pointer.mouse("screen", event, sceneOf("a", pannedA(false, 5)));
+      return pointer;
+    };
+    // columns 6 to 8, drawn from column 5 before and after: all of them are shown
+    expect(selected().mouse("screen", ev(["release", "left", 3, 1]), after(5)))
+      .toEqual([{ kind: "redraw" }, { kind: "copy", pane: "a", range: { start: { x: 6, y: 22 }, end: { x: 8, y: 22 } }, contentVersion: 1 }]);
+    // drawn from column 8 after: columns 6 and 7 are not on the screen any more
+    expect(selected().mouse("screen", ev(["release", "left", 0, 1]), after(8))).toEqual([{ kind: "redraw" }]);
   });
 });
 

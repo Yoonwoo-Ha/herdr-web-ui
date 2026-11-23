@@ -132,7 +132,7 @@ describe("the prefix machine", () => {
     { row: 3, name: "Armed, a text bound after the prefix: its action runs", from: armed, events: [text("c")], armed: false, pane: [],
       check: (state) => expect(state.overlays).toEqual([expect.objectContaining({ kind: "text", purpose: "new_tab", target: { kind: "workspace", id: "w1" } })]) },
     { row: 3, name: "Armed, a key bound after the prefix: its mode is entered", from: armed, events: [key("[")], armed: false, pane: [],
-      check: (state) => expect(state.mode).toEqual({ name: "copy" }) },
+      check: (state) => expect(state.mode.name).toBe("copy") },
     { row: 3, name: "Armed, 2 as text: 1..9 gives the index (tab 2)", from: armed, events: [text("2")], armed: false, pane: [],
       check: (state) => expect(state.focus.tabs["w1"]).toBe("t2") },
     { row: 3, name: "Armed, 2 then 1 as keys: tab 2 then tab 1", from: idle, events: [prefix(), named("DIGIT_2"), prefix(), named("DIGIT_1")], armed: false, pane: [],
