@@ -7,6 +7,8 @@
 import type { AccountAddTarget } from "../../../shared/machines.ts";
 import { importPublicKey } from "../../../shared/relay-e2ee.ts";
 import { apiFetch } from "../api-request-id.ts";
+import { ownWindowHere } from "./addThisPc.ts";
+import type { PcAccountStatus } from "./join.ts";
 import { AccountServiceError, sameSignIn, type AccountService } from "./service.ts";
 
 /**
@@ -22,6 +24,19 @@ export type SshAddOutcome = "added" | "already" | "other-account" | "number" | "
 /** Whether this window may offer it: this PC's own window, signed in to the very account this PC is bound to. */
 export function sshAddOffered(here: { ownWindow: boolean; signedInAccount: string | null; pcAccount: string | null }): boolean {
   return here.ownWindow && here.pcAccount !== null && here.signedInAccount === here.pcAccount;
+}
+
+/**
+ * Whether this window adds a PC to the account over SSH (Add PC's Add it to my account, and the relay tab's list of PCs
+ * to add): sshAddOffered in this PC's own window (ownWindowHere: `local`, or the access token on a loopback address),
+ * on a PC whose account rules are on and readable (`pc_add_from_account: true`).
+ */
+export function sshAddListed(here: {
+  pcAddFromAccount: PcAccountStatus["pcAddFromAccount"]; auth: { readonly via?: string } | null | undefined; hostname?: string;
+  signedInAccount: string | null; pcAccount: string | null;
+}): boolean {
+  const ownWindow = here.hostname === undefined ? ownWindowHere(here.auth) : ownWindowHere(here.auth, here.hostname);
+  return here.pcAddFromAccount === true && sshAddOffered({ ownWindow, signedInAccount: here.signedInAccount, pcAccount: here.pcAccount });
 }
 
 const hex = (key: string): string => Array.from(importPublicKey(key), (byte) => byte.toString(16).padStart(2, "0")).join("");

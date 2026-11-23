@@ -232,6 +232,15 @@
   gap: var(--space-2);
 }
 
+/* the relay tab's other PCs, under its phone part: a hairline, the line of what Add does, the rows, the typed PC */
+.connect-reachable {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: var(--hairline) solid var(--border);
+}
+
 .connect-found-list {
   display: flex;
   flex-direction: column;
@@ -404,6 +413,45 @@
   .connect-found-row > :last-child:not(.connect-found-detail) {
     margin-inline-start: auto;
   }
+}
+
+/*
+ * A PC this PC can reach (the Tailscale tab, the relay tab's list): its name and its control or state on the first line,
+ * then what Add or Connect opens, whole, on a dim second line that breaks after its dots (atDots), never cut. A long
+ * state line wraps on the right of the first line rather than squeezing the second.
+ */
+.connect-reach-list > .connect-found-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "name action" "detail detail";
+  align-items: center;
+  row-gap: var(--space-1);
+  padding-block: var(--space-2);
+}
+
+.connect-reach-list > .connect-found-row > .connect-found-name {
+  grid-area: name;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.connect-reach-list > .connect-found-row > .connect-found-detail {
+  grid-area: detail;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.connect-reach-list > .connect-found-row > :last-child:not(.connect-found-detail) {
+  grid-area: action;
+  justify-self: end;
+  margin-inline-start: 0;
+}
+
+.connect-reach-list > .connect-found-row > .settings-hint {
+  max-width: 16em;
+  text-align: end;
 }
 
 .connect-command {

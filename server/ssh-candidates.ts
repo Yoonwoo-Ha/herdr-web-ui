@@ -23,6 +23,11 @@ export interface SshCandidate {
   source: "ssh_config" | "tailscale";
   /** the MagicDNS name of the PC of this PC's Tailscale login it is, when it is one (a config host may name one) */
   tailnet?: string;
+  /** the User the config sets for it: absent when it sets none (ssh then uses this account's name), null when a Match
+   * condition that cannot be weighed offline may set one */
+  user?: string | null;
+  /** the Port the config sets for it, when it sets one */
+  port?: number;
 }
 
 export interface SshCandidatesOptions {
@@ -85,7 +90,10 @@ async function listCandidates(options: SshCandidatesOptions): Promise<SshCandida
   for (const host of hosts) {
     const { alias, hostname, user } = host;
     const peer = peerOf(host);
-    const claims = peer !== undefined && !claimed.has(peer.dnsName);
+    // only a host that reaches that PC the plain way stands for it: another port is another sshd there (WSL, a
+    // container), and a User a Match may set is not known, so the PC's own row stays for those
+    const plain = (host.port === undefined || host.port === 22) && host.userUnknown !== true;
+    const claims = peer !== undefined && plain && !claimed.has(peer.dnsName);
     if (!claims && fromConfig.length + peers.length - claimed.size >= MAX_HOSTS) continue;
     if (claims) claimed.add(peer.dnsName);
     fromConfig.push({
@@ -94,6 +102,8 @@ async function listCandidates(options: SshCandidatesOptions): Promise<SshCandida
       detail: hostname === null ? (user === null ? null : `${user}@${alias}`) : user === null ? hostname : `${user}@${hostname}`,
       source: "ssh_config",
       ...(peer === undefined ? {} : { tailnet: peer.dnsName }),
+      ...(user !== null ? { user } : host.userUnknown === true ? { user: null } : {}),
+      ...(host.port === undefined ? {} : { port: host.port }),
     });
   }
   const fromTailnet: SshCandidate[] = peers

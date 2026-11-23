@@ -18,6 +18,8 @@ import { openPhoneSettings } from "./relay-panel-regression.ts";
 
 const WINDOW_H = 380;
 const TAILNET_PCS = ["old-desktop", "home-server", "winvm", "nuc", "macbookair", "home-window"];
+const LONG_ALIAS = "old-desktop-through-the-office-network";
+const LONG_USER = "someone-with-a-rather-long-login";
 const PORTAL = { supported: true, version: "1.0.0", min_version: "1.0.0", usable: true, phase: "idle", relay: null, url: null, blocked: null, error: null };
 const SERVED: RemoteAccess = { port: 0, platform: "darwin", tailscale: { state: "running", dns_name: "mac.tail0000.ts.net", serving_url: "https://mac.tail0000.ts.net", serve_command: null, serve_url: null } };
 
@@ -30,7 +32,9 @@ export async function checkConnectDialogScroll(browser: Browser): Promise<void> 
   const stateDir = mkdtempSync(join(tmpdir(), "ovis-connect-scroll-"));
   const sshDir = join(stateDir, "ssh");
   mkdirSync(sshDir);
-  writeFileSync(join(sshDir, "config"), Array.from({ length: 14 }, (_, index) => `Host box${index}\n  HostName box${index}.example.com\n  User me\n`).join(""));
+  // and one long alias with a long user that reaches the first Tailscale PC by its address: its row says both, whole
+  writeFileSync(join(sshDir, "config"), [...Array.from({ length: 14 }, (_, index) => `Host box${index}\n  HostName box${index}.example.com\n  User me\n`),
+    `Host ${LONG_ALIAS}\n  HostName 100.64.0.10\n  User ${LONG_USER}\n`].join(""));
   const status = tailscaleStatus();
   const server = createServer({
     port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, sidecar: false, usage: new UsageService(undefined, []), registerBridge: false,
@@ -81,6 +85,20 @@ export async function checkConnectDialogScroll(browser: Browser): Promise<void> 
     const qr = await tailscaleTab.locator(".connect-phone-scan [role='img']").boundingBox();
     const firstPc = await tailscaleTab.locator(".connect-found-row").first().boundingBox();
     assert.ok(qr !== null && firstPc !== null && qr.y < firstPc.y, "the Tailscale tab's phone QR code comes before its PCs");
+    // what each row opens is whole on its second line, broken after dots, never cut: in the dialog and on a phone
+    const cut = () => tailscaleTab.locator(".connect-reach-list .connect-found-detail").evaluateAll((details) => details.flatMap((detail) => {
+      const style = getComputedStyle(detail);
+      return style.textOverflow === "ellipsis" || detail.scrollWidth > detail.clientWidth + 1 ? [detail.textContent ?? ""] : [];
+    }));
+    const opens = `${LONG_ALIAS} · ${LONG_USER}@old-desktop.tail0000.ts.net`;
+    await tailscaleTab.locator(".connect-found-detail").filter({ hasText: opens }).waitFor();
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.waitForFunction(() => document.querySelector(".connect-phone-dialog")?.getAnimations().length === 0);
+      assert.deepEqual(await cut(), [], `at ${width} px every row's second line is whole`);
+      const [name, detail] = await Promise.all([".connect-found-name", ".connect-found-detail"].map((part) => tailscaleTab.locator(".connect-found-row").first().locator(part).boundingBox()));
+      assert.ok(name && detail && detail.y >= name.y + name.height - 1, `at ${width} px what it opens is the row's second line`);
+    }
     console.log("PASS Add a connection on a short window: header and tabs stay, the body scrolls to each tab's end, Tailscale's QR code before its six PCs");
   } finally {
     await context.close();

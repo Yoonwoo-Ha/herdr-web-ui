@@ -345,4 +345,9 @@ export const DEVICES_ZH: Record<string, string> = {
   "Kept out over Tailscale too: {names}": "通过 Tailscale 也已挡住：{names}",
   "Also keep out a Tailscale device of yours:": "同时挡住你的 Tailscale 设备：",
   "A Tailscale device this PC has not seen yet still gets in by your login. To keep it out of your tailnet too, remove it in Tailscale's admin console.": "此 PC 尚未见过的 Tailscale 设备仍可通过你的登录进入。要把它也挡在你的 tailnet 之外，请在 Tailscale 管理控制台中移除它。",
+  "Other PCs this PC can reach. Add goes in over SSH, installs Ovis there if it is missing, and adds it to your account.": "这台电脑能连到的其他电脑。点“添加”会通过 SSH 登录，没有 Ovis 时先安装，再加入你的账户。",
+  "SSH config": "SSH 配置",
+  "A PC not in the list": "不在列表中的电脑",
+  "user@host or address": "user@host 或地址",
+  "Enter an SSH address, such as user@host.": "请输入 SSH 地址，例如 user@host。",
 };

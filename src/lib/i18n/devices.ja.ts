@@ -345,4 +345,9 @@ export const DEVICES_JA: Record<string, string> = {
   "Kept out over Tailscale too: {names}": "Tailscale でも締め出し: {names}",
   "Also keep out a Tailscale device of yours:": "一緒に締め出す自分の Tailscale デバイス:",
   "A Tailscale device this PC has not seen yet still gets in by your login. To keep it out of your tailnet too, remove it in Tailscale's admin console.": "この PC がまだ見ていない Tailscale デバイスは、あなたのログインで引き続き入れます。tailnet からも締め出すには、Tailscale の管理コンソールでそのデバイスを削除してください。",
+  "Other PCs this PC can reach. Add goes in over SSH, installs Ovis there if it is missing, and adds it to your account.": "この PC から届くほかの PC です。「追加」を押すと SSH で入り、Ovis がなければインストールして、あなたのアカウントに加えます。",
+  "SSH config": "SSH 設定",
+  "A PC not in the list": "一覧にない PC",
+  "user@host or address": "user@host またはアドレス",
+  "Enter an SSH address, such as user@host.": "user@host のような SSH アドレスを入力してください。",
 };

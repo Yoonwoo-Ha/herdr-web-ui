@@ -66,6 +66,7 @@ import { useHostedSignIn } from "../lib/account/hostedSignIn.ts";
 import { AccountPcRows, NoAccountPcHint } from "./AccountPcs.tsx";
 import { removablePc, STATE_WORD } from "./MachineSidebar.tsx";
 import { AccountPcError, pcAccountStatus, type PcAccountStatus } from "../lib/account/join.ts";
+import { sshAddListed } from "../lib/account/sshAdd.ts";
 import { apiFetch } from "../lib/api-request-id.ts";
 import type { MyPc } from "../lib/account/myPcs.ts";
 import { closedBySignIn, ConnectPhoneDialog, relayOffered, relayPending } from "./ConnectPhoneDialog.tsx";
@@ -1283,6 +1284,9 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
     return () => { live = false; };
   }, [account.account, connecting]);
   const joinBySignIn = account.account !== null && pcAccount === account.account && relay.status?.phase === "online";
+  // where Add PC over SSH adds the PC to the account (MachineDialog asks the same), the relay tab lists the PCs to add
+  const addsOverSsh = sshAddListed({ pcAddFromAccount, auth, signedInAccount: account.signedIn ? account.account : null, pcAccount });
+  const accountPcs = useMemo(() => account.pcs?.filter((pc) => pc.listed).map((pc) => pc.server_id) ?? [], [account.pcs]);
   const openAccount = useCallback(() => {
     setConnecting(false);
     const group = document.querySelector<HTMLElement>('.settings-dialog [data-section="account"]');
@@ -1379,7 +1383,7 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
             if (closed !== "nothing") setConnecting(false);
             if (closed === "settings") onHome();
           }, ...(opensAll === undefined ? {} : { opensAll }) } : null}
-          onAddPc={(preset) => { setConnecting(false); openAddPc(preset); }} machines={machines}
+          onAddPc={(preset) => { setConnecting(false); openAddPc(preset); }} machines={machines} addsOverSsh={addsOverSsh} accountPcs={accountPcs}
           onConnectMachine={(machine) => { setConnecting(false); connectPc(machine); }}
           onPairingHeld={holdPairing} onRevokedAll={onRevokedAll} onClose={closeConnect} />
       )}

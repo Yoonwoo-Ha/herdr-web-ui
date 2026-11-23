@@ -2448,7 +2448,7 @@ export class MachineManager {
   }
 
   listTailnet() {
-    return this.tailnet.list(this.relayServerIds());
+    return this.tailnet.list();
   }
 
   /**

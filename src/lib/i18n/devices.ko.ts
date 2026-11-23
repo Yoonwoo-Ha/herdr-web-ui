@@ -345,4 +345,9 @@ export const DEVICES_KO: Record<string, string> = {
   "Kept out over Tailscale too: {names}": "Tailscale로도 막음: {names}",
   "Also keep out a Tailscale device of yours:": "함께 막을 내 Tailscale 기기:",
   "A Tailscale device this PC has not seen yet still gets in by your login. To keep it out of your tailnet too, remove it in Tailscale's admin console.": "이 PC가 아직 보지 못한 Tailscale 기기는 내 로그인으로 계속 들어옵니다. tailnet에서도 막으려면 Tailscale 관리 콘솔에서 그 기기를 제거하세요.",
+  "Other PCs this PC can reach. Add goes in over SSH, installs Ovis there if it is missing, and adds it to your account.": "이 PC에서 닿는 다른 PC예요. 추가를 누르면 SSH로 들어가, Ovis가 없으면 설치하고 내 계정에 넣어요.",
+  "SSH config": "SSH 설정",
+  "A PC not in the list": "목록에 없는 PC",
+  "user@host or address": "user@host 또는 주소",
+  "Enter an SSH address, such as user@host.": "user@host 같은 SSH 주소를 입력하세요.",
 };

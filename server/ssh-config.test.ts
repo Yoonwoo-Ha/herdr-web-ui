@@ -184,3 +184,23 @@ it("groups the blocks of a repeated alias in work linear in the config, not one 
     expect(steps.mock.calls.length).toBeLessThan(100_000);
   } finally { steps.mockRestore(); }
 });
+
+it("reads the Port that applies to each host, and leaves one ssh alone could settle unknown, as a route it cannot tell", async () => {
+  expect(await sshConfigHosts("Host wsl\n  HostName 100.64.0.2\n  Port 2222\nHost plain\n  HostName 100.64.0.2\nHost *\n  Port 22\n")).toEqual([
+    { alias: "wsl", hostname: "100.64.0.2", user: null, port: 2222 },
+    { alias: "plain", hostname: "100.64.0.2", user: null, port: 22 },
+  ]);
+  // a port by service name, or one a condition decided offline cannot weigh: where it connects is not known here
+  expect(await sshConfigHosts("Host named\n  Port ssh\n")).toEqual([{ alias: "named", hostname: null, user: null, undetermined: true }]);
+  expect(await sshConfigHosts("Host box\n  HostName 100.64.0.2\nMatch exec \"true\"\n  Port 2222\n")).toEqual([{ alias: "box", hostname: "100.64.0.2", user: null, undetermined: true }]);
+});
+
+it("marks a User that a condition offline cannot weigh may set, apart from a User nothing sets", async () => {
+  // `bare` takes its User from its own block before the Match is read; `box` may take it from the Match
+  expect(await sshConfigHosts("Host bare\n  HostName 100.64.0.3\n  User rise\nHost box\n  HostName 100.64.0.2\nMatch exec \"true\"\n  User root\nHost none\n")).toEqual([
+    { alias: "bare", hostname: "100.64.0.3", user: "rise" },
+    { alias: "box", hostname: "100.64.0.2", user: null, userUnknown: true },
+    { alias: "none", hostname: null, user: null, userUnknown: true },
+  ]);
+  expect(await sshConfigHosts("Host plain\n  HostName 100.64.0.3\n")).toEqual([{ alias: "plain", hostname: "100.64.0.3", user: null }]);
+});

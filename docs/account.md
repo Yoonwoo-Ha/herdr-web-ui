@@ -1094,7 +1094,8 @@ this way. All other comparison paths still require their original digits.
 From this PC's own window, signed in to the account this PC is in, Add PC over SSH can also add
 the other PC (B) to that account (Linux and macOS on both ends; a Windows B adds itself with its
 number). SSH only says which machine and OS user was reached; the account's one-press admission
-decides which account B may join.
+decides which account B may join. There, Add a connection's Ovis relay tab lists the PCs this PC can
+reach (its Tailscale login's PCs and its ssh config hosts); Add opens Add PC over SSH with that host.
 
 - **SSH.** Public keys only (the user's SSH config, key files and agent): no password or
   keyboard-interactive login, and no reconnect key of this app's is used or enrolled. B's host key

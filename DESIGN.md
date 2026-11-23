@@ -5096,7 +5096,20 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   (**Connect**), the server's ssh config hosts and its Tailscale login's PCs, one row each: the name,
   the address dim and ellipsized (under the name on a phone), a neutral pill for where it was found
   (herdr, ssh config, Tailscale), then **Add** or a quiet **Added** in the done green; **Add** and the
-  typed address close Settings and open the PC setup dialog with the address filled in. **Phones and
+  typed address close Settings and open the PC setup dialog with the address filled in. **Tailscale**
+  lists its login's PCs one row a machine, as Tailscale's own machine list does (the model: one row per
+  machine, by its machine name): the ssh config aliases the server resolved to one of them fold into
+  that row only when they reach it the same way (the same User, ssh's port), under Tailscale's machine
+  name when that PC is reached only one such way. Each row is two lines: the name with its control or
+  state (a long state line wraps on the right), then, dim and whole, what the row opens before the
+  press (the alias when the name is not it, the user and the MagicDNS name), broken after its dots
+  (`atDots`, as My PCs does) and never cut with an ellipsis. **Connect** opens the alias
+  named as the machine, else the first in config order. An alias on another port (an sshd in WSL or
+  a container), as another user, or whose User a Match may set is a row of its own, by its alias,
+  with its port in the dim text, and only the PC's own plain row takes that PC's Tailscale answer
+  (Added, In your account, the update line). Nothing merges by name: two hosts of one HostName stay
+  two (`lib/reachablePcs.ts`). Under the list, **A PC not in the list** takes user@host or another PC's
+  https address and connects it as the SSH tab's field does. **Phones and
   devices** stacks, under a hairline each, the Tailscale address and QR code, the six-digit pairing
   code (`components/CompactPair.tsx`, started when the tab first opens) and Portal where the server
   offers it. **Ovis relay** is the account's, and draws buttons, not sentences, by state: signed
@@ -5110,7 +5123,26 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   fresh sign-in of the same account presses again); a sign-in to the account
   this PC is already in closes the sheet and Settings onto the main screen, and opened by hand with
   this PC in the account and the relay online, the tab is the signed-in line and the phone's QR code,
-  no list of PCs (the sidebar has them). The
+  no list of the account's PCs (the sidebar has them). Where Add PC over SSH adds a PC to the account
+  (this PC's own window, signed in to the account this PC is in, as `sshAddOffered` says), the tab
+  puts its phone part first, laid out as the Tailscale tab's top (owner, 2026-11-23): the QR code that
+  opens this PC's page (below), and beside it Pair with a code's six digits, made only on a press
+  (**Get a pairing code**, then Refresh and Copy), then the signed-in line; no Pair with a code below
+  it. Nothing that admits a device by itself is made as the tab opens: a code drawn at once would let
+  in whoever saw the screen (on macOS and Windows a relay code pairs at once; only Linux has the
+  screen's key approval), and no code kind admits the account's devices at once and others only on a
+  press on a PC already in an account. The phone part is followed, behind a hairline (`.connect-reachable`), by
+  the PCs this PC can reach: one line of
+  what Add does, then the Tailscale tab's rows and the ssh config's other hosts in one list, two lines
+  each as there: the name, then dim its way and what it opens (**Tailscale · mymac · devswha@macbookpro.tail….ts.net**,
+  **SSH config · root@hosthatch**), then **Add**, which opens the PC setup dialog with that host filled in and **Add
+  it to my account** ticked, whose Connect runs the add over SSH (docs/account.md); or in words why
+  not: **In your account** in the done green (its relay ID, as that PC's Tailscale answer or this
+  app's PC at that address gives it, is one of the account's PCs), **Added** (this app has it), or
+  the older Ovis's update line. Last, **A PC not in the list** with a user@host field and **Add**,
+  which takes an SSH address only (another PC's https address gets one line saying so).
+  Signed out, on a PC in no account and on any other device (a phone, a PC through the relay) the tab
+  is as above, with no list. The
   relay's own switch is in More settings, and on this tab only while a PC in the account has its
   relay off. Under either, behind a hairline (none where nothing is
   drawn above it), one part (`.connect-account-qr`) that depends on the PC, not on the sign-in. On a PC in no account it is

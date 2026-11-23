@@ -4,7 +4,7 @@ import type { AccountAddTarget } from "../../../shared/machines.ts";
 import { exportPublicKey, generateKeyPair } from "../../../shared/relay-e2ee.ts";
 import { deriveServerId } from "../../../shared/relay-server-proof.ts";
 import { AccountService } from "./service.ts";
-import { addOverSsh, sshAddOffered } from "./sshAdd.ts";
+import { addOverSsh, sshAddListed, sshAddOffered } from "./sshAdd.ts";
 import { memoryAccountStore } from "./store.ts";
 
 const ACCOUNT = "acct_1";
@@ -89,3 +89,21 @@ describe("adding another PC to the account over SSH, from this PC's own window",
     expect(sshAddOffered({ ownWindow: false, signedInAccount: ACCOUNT, pcAccount: ACCOUNT })).toBe(false);
   });
 });
+
+describe("where Add a connection's relay tab lists the PCs to add over SSH", () => {
+  const mine = { pcAddFromAccount: true as const, signedInAccount: "acct_a", pcAccount: "acct_a" };
+  it("is this PC's own window only, signed in to the account this PC is in, with the account's rules on", () => {
+    expect(sshAddListed({ ...mine, auth: { via: "local" }, hostname: "127.0.0.1" })).toBe(true);
+    expect(sshAddListed({ ...mine, auth: { via: "token" }, hostname: "localhost" })).toBe(true);
+    // a device paired over the LAN, signed in to the same account: not this PC's own window
+    expect(sshAddListed({ ...mine, auth: { via: "token" }, hostname: "192.168.1.5" })).toBe(false);
+    expect(sshAddListed({ ...mine, auth: { via: "relay" }, hostname: "app.ovis.sh" })).toBe(false);
+    expect(sshAddListed({ ...mine, auth: { via: "tailscale" }, hostname: "desk.tail.ts.net" })).toBe(false);
+    expect(sshAddListed({ ...mine, auth: null, hostname: "127.0.0.1" })).toBe(false);
+    expect(sshAddListed({ ...mine, auth: { via: "local" }, hostname: "127.0.0.1", signedInAccount: "acct_b" })).toBe(false);
+    expect(sshAddListed({ ...mine, auth: { via: "local" }, hostname: "127.0.0.1", signedInAccount: null })).toBe(false);
+    expect(sshAddListed({ ...mine, auth: { via: "local" }, hostname: "127.0.0.1", pcAddFromAccount: "unavailable" })).toBe(false);
+    expect(sshAddListed({ ...mine, auth: { via: "local" }, hostname: "127.0.0.1", pcAddFromAccount: undefined })).toBe(false);
+  });
+});
+
