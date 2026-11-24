@@ -4818,7 +4818,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - Rows are grouped as herdr's Goto picker groups them: a `.menu-heading` per PC/workspace (PC
   name when multiple PCs are registered, workspace name, a linked worktree's branch in mono when
   the name does not say it, the row count), Recent (up to
-  three, an unsearched and unfiltered list only) before the workspaces, Actions last. The
+  eight recently visited panes, not counting the selected one, storing nine; an unsearched and
+  unfiltered list only, following VS Code's recently opened list) before the workspaces, Actions last. The
   workspaces stand in PC then roster order (a move in the sidebar moves the section); a search puts
   the best match's workspace first, and finds a tab by the name the strip shows it under ("Tab 2").
   A row's subtitle is "tab · folder" (the tab only in a workspace with several), "workspace · folder"
