@@ -638,6 +638,10 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
     // a command panel taller than the pane: its command is not on the screen whole
     if (scrolled) bashCommand = null;
     else if (/^Bash command\b/.test(panel[0]!)) bashCommand = dashedCommand(lines, ruleIndex, questionIndex);
+    // what a held request of Claude's other tools is bound to (server/approvals/claude.ts): a file's path, the address and
+    // words of a fetch, an MCP tool's arguments
+    else if (/^(?:Create|Edit|Overwrite) file$/.test(panel[0]!)) bashCommand = filePath(lines, ruleIndex, questionIndex);
+    else if (panel[0] === "Fetch" || panel[0] === "Tool use") bashCommand = dashedCommand(lines, ruleIndex, questionIndex);
   }
   return finishPrompt("claude", {
     kind: "approval", title, question: cleanLine(lines[questionIndex]!),
@@ -662,6 +666,16 @@ function dashedCommand(lines: string[], from: number, to: number): string | null
   const dashed = lines.slice(from + 1, to).flatMap((line, index) => /^╌{8,}$/.test(cleanLine(line)) ? [from + 1 + index] : []);
   const command = dashed.length < 2 ? "" : lines.slice(dashed[0]! + 1, dashed.at(-1)!).map(cleanLine).filter(Boolean).join("\n");
   return command === "" ? null : command;
+}
+
+/**
+ * A file panel's path, whole: the lines between its title and its first dashed rule (2.1.330: ` Create file`, then
+ * ` ../outside-dir/out.txt`), or null where it shows none.
+ */
+function filePath(lines: string[], from: number, to: number): string | null {
+  const dashed = lines.findIndex((line, index) => index > from && index < to && /^╌{8,}$/.test(cleanLine(line)));
+  const panel = dashed < 0 ? [] : lines.slice(from + 1, dashed).map(cleanLine).filter((line) => line && !/^Tip:/i.test(line));
+  return panel.length > 1 ? panel.slice(1).join("\n") : null;
 }
 
 /** a tool call Claude drew at the top level, not one quoted inside a boxed preview (`│ ● Bash(…)`) */

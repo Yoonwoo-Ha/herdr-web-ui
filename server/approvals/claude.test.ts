@@ -16,7 +16,8 @@ const VERSION = "2.1.330";
 const launch = (hooks: ApprovalHub, paneId: string, args: string[] | undefined) => hooks.launchArgs("claude", paneId, args, VERSION);
 const ULTRACODE = JSON.stringify({ ultracode: true });
 type CommandHook = { type: string; command: string; args: string[] };
-type HookSettings = { ultracode?: boolean; hooks: { PermissionRequest: { matcher: string; hooks: CommandHook[] }[] } };
+type HookEntry = { matcher?: string; hooks: CommandHook[] };
+type HookSettings = { ultracode?: boolean; hooks: { PermissionRequest: HookEntry[]; UserPromptSubmit: HookEntry[]; Stop: HookEntry[] } };
 
 const roots: string[] = [];
 const started: ApprovalHub[] = [];
@@ -78,7 +79,12 @@ describe.skipIf(!posix)("launchArgs", () => {
     expect(statSync(dir).mode & 0o777).toBe(0o700);
     expect(statSync(join(dir, "hub.sock")).mode & 0o777).toBe(0o600);
     const entry = settings.hooks.PermissionRequest[0]!;
-    expect(entry.matcher).toBe("Bash|Monitor");
+    const matcher = new RegExp(entry.matcher!);
+    for (const tool of ["Bash", "Monitor", "Edit", "Write", "WebFetch", "mcp__echo__shout"]) expect(matcher.test(tool), tool).toBe(true);
+    for (const tool of ["NotebookEdit", "WebSearch", "Read", "Task", "mcp__"]) expect(matcher.test(tool), tool).toBe(false);
+    // the turns, told to the same relay
+    expect(settings.hooks.UserPromptSubmit).toEqual([{ hooks: [entry.hooks[0]!] }]);
+    expect(settings.hooks.Stop).toEqual([{ hooks: [entry.hooks[0]!] }]);
     expect(entry.hooks[0]).toMatchObject({ type: "command", command: process.execPath });
     expect(entry.hooks[0]!.args.slice(0, 3)).toEqual(relayCommand().slice(1));
     expect(entry.hooks[0]!.args).toContain(join(dir, "hub.sock"));
@@ -95,8 +101,11 @@ describe.skipIf(!posix)("launchArgs", () => {
   it("keeps the hooks the dialog's settings already had", () => {
     const { hooks } = hooksIn();
     const theirs = { matcher: "Edit", hooks: [{ type: "command", command: "true" }] };
-    const args = launch(hooks, "p1", [`--settings=${JSON.stringify({ hooks: { PermissionRequest: [theirs] } })}`])!;
-    expect(settingsOf(args).settings.hooks.PermissionRequest.map((entry) => entry.matcher)).toEqual(["Edit", "Bash|Monitor"]);
+    const stop = { hooks: [{ type: "command", command: "notify-send done" }] };
+    const args = launch(hooks, "p1", [`--settings=${JSON.stringify({ hooks: { PermissionRequest: [theirs], Stop: [stop] } })}`])!;
+    const { settings } = settingsOf(args);
+    expect(settings.hooks.PermissionRequest.map((entry) => entry.matcher)).toEqual(["Edit", expect.stringContaining("Edit") as unknown as string]);
+    expect(settings.hooks.Stop as unknown[]).toEqual([stop, { hooks: [ourHook(args)] }]);
   });
 
   it("leaves settings it cannot merge as they are", () => {
@@ -220,10 +229,11 @@ describe("the hook relay", () => {
       const prompt = parseInteractivePrompt("claude", readFileSync(new URL(`../fixtures/claude-diff-panel-${version}-borderless-bash-196.txt`, import.meta.url), "utf8"))!;
       expect(parsedByPublicPrompt.get(prompt)?.approvalCommand, version).toBe("git status --short > status.txt");
     }
+    // a file dialog's subject is its path, never the text it writes
     const write = parseInteractivePrompt("claude", ["● Write(hello.txt)", "─".repeat(40), " Create file", " hello.txt", "╌".repeat(40), "  rm -rf .", "╌".repeat(40),
       " Do you want to create hello.txt?", " ❯ 1. Yes", "   2. No", " Esc to cancel · Tab to amend"].join("\n"))!;
     expect(write).toMatchObject({ kind: "approval", title: "Create file" });
-    expect(parsedByPublicPrompt.get(write)?.approvalCommand).toBeUndefined();
+    expect(parsedByPublicPrompt.get(write)?.approvalCommand).toBe("hello.txt");
   });
 
   // hook-vs-screen (2026-11-23): Claude Code 2.1.330 put this line under the long find command's panel, and no card bound
@@ -480,4 +490,110 @@ describe("the hook relay", () => {
 it("shows the whole command under Claude's words for it", () => {
   expect(heldBody({ command: "touch a", description: "Create a" })).toBe("Create a\ntouch a");
   expect(heldBody({ command: "touch a", description: null })).toBe("touch a");
+});
+
+// Claude Code 2.1.330 as recorded (Haiku, an isolated config): each request its PermissionRequest hook sent, and the dialog
+// its terminal drew for it, 119 columns wide
+const recorded = readFileSync(new URL("../fixtures/claude-hook-events-2.1.330.jsonl", import.meta.url), "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+const requestOf = (tool: string, index = 0) => recorded.filter((event) => event["tool_name"] === tool)[index]!;
+const dialogOf = (name: string) => {
+  const prompt = parseInteractivePrompt("claude", readFileSync(new URL(`../fixtures/claude-${name}-approval-2.1.330-119.txt`, import.meta.url), "utf8"))!;
+  return { prompt, dialog: on(parsedByPublicPrompt.get(prompt)?.approvalCommand ?? null) };
+};
+
+describe("Claude's other tools on a card from the hook's request", () => {
+  const cases: { name: string; tool: string; index?: number; title: string; body: string }[] = [
+    { name: "edit", tool: "Edit", title: "Edit file", body: "notes.txt\n- line two\n+ line 2 (edited)" },
+    { name: "write-outside", tool: "Write", index: 1, title: "Create file", body: "/work/outside-dir/out.txt\nx" },
+    { name: "overwrite", tool: "Write", index: 2, title: "Overwrite file", body: "hello-ovis.txt\nbye" },
+    { name: "webfetch", tool: "WebFetch", title: "Fetch", body: "url: https://example.com/\nprompt: What is the title of this page?" },
+    { name: "mcp", tool: "mcp__echo__shout", title: "Tool use", body: 'mcp__echo__shout\nmessage: "hi 안녕 \\"q\\""\ntimes: 2' },
+  ];
+  // Windows names a path with its own separator, which the recorded dialog of a Linux host does not draw
+  for (const { name, tool, index, title, body } of cases.filter((entry) => posix || entry.name !== "write-outside")) {
+    it(`binds ${name}'s request to its dialog, shows it whole, and answers Yes and No through the hook`, async () => {
+      const { prompt, dialog } = dialogOf(name);
+      expect(prompt).toMatchObject({ kind: "approval", title });
+      expect(dialog.command).not.toBeNull();
+      for (const decision of ["allow", "deny"] as const) {
+        const { hooks, held } = hooksIn();
+        const hook = ourHook(launch(hooks, "p1", undefined)!);
+        const holding = held("p1");
+        const { answer } = ask(hook, requestOf(tool, index));
+        await holding;
+        const card = hooks.shown("p1", dialog)!;
+        expect(heldBody(card)).toBe(body);
+        // its other options (allow edits for the session, don't ask again) go as keys to this very dialog
+        expect(hooks.showsOnly("p1", dialog, card.id)).toBe(true);
+        expect(hooks.answer("p1", dialog, card.id, decision)).toBe(true);
+        expect(await answer()).toMatchObject({ hookSpecificOutput: { decision: { behavior: decision } } });
+      }
+    });
+  }
+
+  it("sends no keys to an MCP dialog two held calls of different tools with the same arguments both match", async () => {
+    const { hooks, held } = hooksIn();
+    const hook = ourHook(launch(hooks, "p1", undefined)!);
+    const { dialog } = dialogOf("mcp");
+    const shout = requestOf("mcp__echo__shout");
+    let holding = held("p1");
+    const first = ask(hook, shout);
+    await holding;
+    holding = held("p1");
+    const second = ask(hook, { ...shout, tool_name: "mcp__echo__delete" });
+    await holding;
+    const card = hooks.shown("p1", dialog)!;
+    expect(card.description).toBe("mcp__echo__delete");
+    expect(hooks.showsOnly("p1", dialog, card.id)).toBe(false);
+    hooks.stop();
+    expect(await Promise.all([first.answer(), second.answer()])).toEqual([{}, {}]);
+  });
+
+  it("releases a file request once the screen shows another file's dialog", async () => {
+    let now = 0;
+    const { hooks, held } = hooksIn({ now: () => now });
+    const hook = ourHook(launch(hooks, "p1", undefined)!);
+    const holding = held("p1");
+    const { answer } = ask(hook, requestOf("Edit"));
+    await holding;
+    now = 5_000;
+    expect(hooks.shown("p1", dialogOf("write-outside").dialog)).toBeNull();
+    expect(await answer()).toEqual({});
+  });
+
+  it("shows an edit of every match, and the lines an edit takes out or puts in alone", () => {
+    const edit = (input: Record<string, unknown>) => claudeApprovals.toCard({ hook_event_name: "PermissionRequest", tool_name: "Edit", cwd: "/repo", tool_input: { file_path: "/repo/a.ts", ...input } });
+    expect(edit({ old_string: "a\nb", new_string: "c", replace_all: true })).toEqual({ command: "- a\n- b\n+ c", description: "a.ts (every match)", subject: "a.ts" });
+    expect(edit({ old_string: "gone", new_string: "" })).toMatchObject({ command: "- gone" });
+    expect(edit({ old_string: "", new_string: "" })).toBeNull();
+    expect(claudeApprovals.toCard({ hook_event_name: "PermissionRequest", tool_name: "mcp__x__ping", tool_input: {} })).toEqual({ command: "{}", description: "mcp__x__ping" });
+    for (const tool of ["NotebookEdit", "Monitor", "Read"]) expect(claudeApprovals.toCard({ hook_event_name: "PermissionRequest", tool_name: tool, tool_input: { command: "x", file_path: "/a" } }), tool).toBeNull();
+  });
+
+  it("leaves a file the card could not show as it is to the terminal at once", async () => {
+    const { hooks, held } = hooksIn();
+    const hook = ourHook(launch(hooks, "p1", undefined)!);
+    for (const content of ["\u001b[31mred", "a".repeat(12_001), "ok\u202etxt.exe"]) {
+      const request = { ...requestOf("Write"), tool_input: { file_path: "/work/proj/x.txt", content } };
+      expect(await Promise.race([ask(hook, request).answer(), held("p1").then(() => "held")])).toEqual({});
+    }
+  });
+
+  it("tells a turn that began or ended, with nothing printed for Claude", async () => {
+    const root = tempRoot();
+    const turns: string[] = [];
+    const told = Promise.withResolvers<void>();
+    const hooks = new ApprovalHub(join(root, "h"), [claudeApprovals], { onTurn: (paneId, kind, { turn, prompt }) => { turns.push(`${paneId} ${kind} ${turn} ${prompt}`); if (turns.length === 2) told.resolve(); } });
+    started.push(hooks);
+    const hook = ourHook(launch(hooks, "p1", undefined)!);
+    const stop = recorded.find((event) => event["hook_event_name"] === "Stop")!;
+    const outputs = await Promise.all([ask(hook, { ...stop, hook_event_name: "UserPromptSubmit", prompt_id: "p-next", prompt: "go" }).answer(), ask(hook, stop).answer()]);
+    await told.promise;
+    expect(outputs).toEqual([null, null]);
+    expect(turns.sort()).toEqual(["p1 claude began p-next", `p1 claude ended ${stop["prompt_id"]}`]);
+    expect(hooks.held("p1")).toEqual([]);
+    // a turn left with background or scheduled work can begin again with no prompt: no rest from its Stop
+    expect(claudeApprovals.turn!({ ...stop, background_tasks: [{ id: "b1" }] })).toBeNull();
+    expect(claudeApprovals.turn!({ ...stop, session_crons: [{ id: "c1" }] })).toBeNull();
+  });
 });

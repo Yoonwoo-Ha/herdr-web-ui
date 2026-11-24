@@ -345,3 +345,137 @@ describe("a Claude pane whose turn ended on an API error", () => {
     expect(h.failures).toEqual([]);
   });
 });
+
+// Claude's Stop hook, told through the approval hub (server/approvals/claude.ts), finishes the turn before herdr reads it
+describe("a Claude pane whose Stop hook told its turn ended", () => {
+  it("is DONE at the hook's word while herdr still reads it at work, and stays DONE when herdr's rest follows", async () => {
+    const h = await claudeHub("");
+    handlers.onStatus(h.pane.pane_id, "working", "claude");
+    h.herdrSays({ ...h.pane, agent_status: "working" });
+    writeFileSync(h.path, `${prompt("go")}${answer("Done")}`);
+    h.status.hookTurn(h.pane.pane_id, "claude", { turn: "ended", prompt: null });
+    expect(h.last().status).toBe("done");
+    expect(h.alerts).toEqual(["working", "done"]);
+    // the queue waits for herdr's own rest: another Stop hook may keep the turn going
+    expect(h.pending.current(h.pane.pane_id)).toBe("working");
+    expect((await h.snapshot()).panes[0]!.agent_status).toBe("done");
+    handlers.onStatus(h.pane.pane_id, "idle", "claude");
+    expect(h.last().status).toBe("done");
+    expect(h.pending.current(h.pane.pane_id)).toBe("done");
+    expect(h.alerts.filter((alert) => alert !== "done")).toEqual(["working"]);
+  });
+
+  it("tells nothing for a Stop after herdr's rest, or for an agent the pane no longer runs", async () => {
+    const h = await claudeHub("");
+    handlers.onStatus(h.pane.pane_id, "working", "claude");
+    writeFileSync(h.path, `${prompt("go")}${answer("Done")}`);
+    handlers.onStatus(h.pane.pane_id, "idle", "claude");
+    const told = h.alerts.length;
+    h.status.hookTurn(h.pane.pane_id, "claude", { turn: "ended", prompt: null });
+    expect(h.alerts).toHaveLength(told);
+    handlers.onStatus(h.pane.pane_id, "working", "codex");
+    h.status.hookTurn(h.pane.pane_id, "claude", { turn: "ended", prompt: null });
+    expect(h.last().status).toBe("working");
+  });
+
+  it("reads herdr's working again once a prompt begins the next turn, or herdr tells working anew", async () => {
+    const h = await claudeHub("");
+    handlers.onStatus(h.pane.pane_id, "working", "claude");
+    h.herdrSays({ ...h.pane, agent_status: "working" });
+    h.status.hookTurn(h.pane.pane_id, "claude", { turn: "ended", prompt: null });
+    expect(h.last().status).toBe("done");
+    h.status.hookTurn(h.pane.pane_id, "claude", { turn: "began", prompt: null });
+    expect(h.last().status).toBe("working");
+    expect((await h.snapshot()).panes[0]!.agent_status).toBe("working");
+    h.status.hookTurn(h.pane.pane_id, "claude", { turn: "ended", prompt: null });
+    expect(h.last().status).toBe("done");
+    handlers.onStatus(h.pane.pane_id, "working", "claude");
+    expect(h.last().status).toBe("working");
+  });
+
+  // live, 2.1.330: a prompt typed under a turn is told as it is queued, before that turn's Stop
+  const turn = (h: { status: { hookTurn: (paneId: string, kind: string, event: { turn: "began" | "ended"; prompt: string | null }) => void }; pane: { pane_id: string } }, kind: "began" | "ended", prompt: string) =>
+    h.status.hookTurn(h.pane.pane_id, "claude", { turn: kind, prompt });
+
+  it("stays at work through the Stop of a turn whose queued prompt was told, and rests at the queued turn's Stop", async () => {
+    const h = await claudeHub("");
+    turn(h, "began", "p1");
+    handlers.onStatus(h.pane.pane_id, "working", "claude");
+    h.herdrSays({ ...h.pane, agent_status: "working" });
+    turn(h, "began", "p2");
+    turn(h, "ended", "p1");
+    expect(h.last().status).toBe("working");
+    expect((await h.snapshot()).panes[0]!.agent_status).toBe("working");
+    turn(h, "ended", "p2");
+    expect(h.last().status).toBe("done");
+  });
+
+  it("rests at the Stop of the latest prompt a turn took in, and not at a Stop for a prompt no longer open", async () => {
+    const h = await claudeHub("");
+    turn(h, "began", "p1");
+    handlers.onStatus(h.pane.pane_id, "working", "claude");
+    turn(h, "began", "p2");
+    turn(h, "ended", "p2");
+    expect(h.last().status).toBe("done");
+    // herdr's rest, the next prompt, and only then the Stop of the one before: late, it ends nothing
+    handlers.onStatus(h.pane.pane_id, "idle", "claude");
+    turn(h, "began", "p3");
+    handlers.onStatus(h.pane.pane_id, "working", "claude");
+    turn(h, "ended", "p1");
+    expect(h.last().status).toBe("working");
+    turn(h, "ended", "p3");
+    expect(h.last().status).toBe("done");
+  });
+
+  it("ends nothing at the late Stop of a prompt herdr's rest dropped, while a turn it did not tell of runs", async () => {
+    const h = await claudeHub("");
+    turn(h, "began", "p1");
+    handlers.onStatus(h.pane.pane_id, "working", "claude");
+    handlers.onStatus(h.pane.pane_id, "idle", "claude");
+    // a turn Claude began by itself (a background task's notice): no prompt told
+    handlers.onStatus(h.pane.pane_id, "working", "claude");
+    turn(h, "ended", "p1");
+    expect(h.last().status).toBe("working");
+  });
+
+  it("keeps a prompt it was told through a snapshot read at rest before herdr reads the turn", async () => {
+    const h = await claudeHub("");
+    turn(h, "began", "p1");
+    handlers.onStatus(h.pane.pane_id, "working", "claude");
+    turn(h, "began", "p2");
+    h.herdrSays({ ...h.pane, agent_status: "idle" });
+    await h.snapshot();
+    handlers.onStatus(h.pane.pane_id, "working", "claude");
+    turn(h, "ended", "p1");
+    expect(h.last().status).toBe("working");
+  });
+
+  // the gate review: another Stop hook (the user's, or a plugin's review gate) may block the stop, and the turn goes on
+  it("takes back the DONE of a Stop once Claude answers again in the turn, before push's wait sends its alert", async () => {
+    jest.useFakeTimers();
+    try {
+      const h = await claudeHub(`${prompt("go")}${answer("first")}`);
+      turn(h, "began", "p1");
+      handlers.onStatus(h.pane.pane_id, "working", "claude");
+      h.herdrSays({ ...h.pane, agent_status: "working" });
+      turn(h, "ended", "p1");
+      expect(h.last().status).toBe("done");
+      // a message queued meanwhile is not typed into the turn that goes on
+      expect(h.pending.current(h.pane.pane_id)).toBe("working");
+      jest.advanceTimersByTime(1000);
+      expect(h.last().status).toBe("done");
+      appendFileSync(h.path, line({ type: "user", isMeta: true, timestamp: new Date().toISOString(), message: { role: "user", content: "Stop hook feedback: review failed" } }));
+      jest.advanceTimersByTime(1000);
+      expect(h.last().status).toBe("done");
+      appendFileSync(h.path, answer("fixing it"));
+      jest.advanceTimersByTime(1000);
+      expect(h.last().status).toBe("working");
+      expect(h.pending.current(h.pane.pane_id)).toBe("working");
+      // its real end: Claude's Stop again, for the same prompt
+      turn(h, "ended", "p1");
+      expect(h.last().status).toBe("done");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});

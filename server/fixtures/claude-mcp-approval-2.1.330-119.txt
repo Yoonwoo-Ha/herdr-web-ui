@@ -1,0 +1,20 @@
+❯ Call the MCP tool shout from the echo server with message 'hi 안녕 "q"' and times 2. Do nothing else.
+
+  Calling echo…
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Tool use
+ echo — Shout Tool: (MCP)
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ message: "hi 안녕 \"q\""
+ times: 2
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ About the echo — Shout Tool:
+ │ Echo a message back in capitals
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for echo — Shout commands in ~/.cache/ovis-tmp/claude-hook-widen/proj
+   3. No
+
+ Esc to cancel · Tab to amend

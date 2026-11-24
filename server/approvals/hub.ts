@@ -15,10 +15,11 @@
  * could not show whole, and any failure of the channel.
  *
  * A held request is kept apart from any screen: `held` lists a pane's requests and `settle` answers one by its id. A
- * card is built from the request alone (`shown`, `holds`, `answer`); the agent's dialog on the screen (Claude's Bash
- * dialog, dialogs/claude.ts; OmO's permission dialog and the one Ovis's pi extension draws like it, dialogs/pi.ts)
- * only says whether the request is still open: one the screen shows no dialog for, or a dialog showing another command
- * whole, was answered in the terminal. The adapters: Claude Code (claude.ts), pi (pi.ts) and OmO (omo.ts).
+ * card is built from the request alone (`shown`, `holds`, `answer`); the agent's dialog on the screen (Claude's
+ * permission dialog, dialogs/claude.ts; OmO's permission dialog and the one Ovis's pi extension draws like it, dialogs/pi.ts)
+ * only says whether the request is still open: one the screen shows no dialog for, or a dialog showing another request's
+ * subject whole, was answered in the terminal. An adapter may also read the turns its agent's hook tells of
+ * (`onTurn`), which ask nothing and get no answer. The adapters: Claude Code (claude.ts), pi (pi.ts) and OmO (omo.ts).
  *
  * Codex asks no hook: Ovis is a client of its own app server (codex.ts), whose requests are held with `hold` and
  * released when Codex says they were answered, never by a read of the screen.
@@ -36,18 +37,29 @@ export type ApprovalDecision = "allow" | "deny";
 export interface ApprovalRequest {
   command: string;
   description: string | null;
+  /**
+   * What the agent's dialog shows of this request, whole, to tell it from another: its command unless set (Claude's
+   * file dialogs show the file's path, not the text the card shows).
+   */
+  subject?: string;
   /** which of the agent's dialogs shows it, where it has several (Codex's command, edit, grant): no other is its */
   dialog?: string;
 }
 
 /**
- * What a read of the screen found of the agent's approval dialog: its command, whole, or null where the screen does not
- * show it whole (a panel taller than the pane).
+ * What a read of the screen found of the agent's approval dialog: the subject of the request it asks (its command),
+ * whole, or null where the screen does not show it whole (a panel taller than the pane).
  */
 export interface ApprovalDialog {
   command: string | null;
   /** which of the agent's dialogs it is, where it has several (ApprovalRequest.dialog) */
   kind?: string;
+}
+
+/** A turn of the agent's that its hook told began (its prompt) or ended, with the prompt's id where the agent gives one. */
+export interface TurnEvent {
+  turn: "began" | "ended";
+  prompt: string | null;
 }
 
 export interface HeldApproval extends ApprovalRequest {
@@ -70,6 +82,8 @@ export interface ApprovalAdapter {
   launchArgs(args: readonly string[] | undefined, hook: { command: string; args: string[] }, dir: string): string[] | null;
   /** The approval an event the hook sent asks, or null for one the hub gives no decision on. */
   toCard(event: unknown): ApprovalRequest | null;
+  /** The turn an event the hook sent tells of, for an agent whose hook tells them (Claude's Stop), else null. */
+  turn?(event: unknown): TurnEvent | null;
   /** The decision a card option is, or null for an option that goes to the dialog as its keys. */
   decision(label: string): ApprovalDecision | null;
   /** What the hook prints for a decision, or for none (null), after which the agent's own dialog stands. */
@@ -142,6 +156,8 @@ const idOf = (entry: Pending): string =>
 
 const publicOf = (entry: Pending): HeldApproval => ({ id: idOf(entry), kind: entry.adapter.kind, command: entry.command, description: entry.description });
 
+const subjectOf = (entry: Pending): string => entry.subject ?? entry.command;
+
 /**
  * Where the hub listens: the socket in its folder, or on Windows, where a socket is not offered here, a named pipe of a
  * name no other hub has. That name is new each run, so a restarted server is never at an earlier run's.
@@ -172,6 +188,8 @@ export class ApprovalHub {
 
   constructor(private readonly dir: string, adapters: readonly ApprovalAdapter[], private readonly options: {
     now?: () => number; heldMs?: number; onHeld?: (paneId: string) => void; onSettled?: (paneId: string) => void; platform?: string;
+    /** a turn of the agent started in `paneId` began or ended, as its hook told */
+    onTurn?: (paneId: string, kind: string, turn: TurnEvent) => void;
     /** what the hook runs, before its own arguments */
     relay?: readonly string[];
   } = {}) {
@@ -288,6 +306,13 @@ export class ApprovalHub {
     };
     let parsed: unknown;
     try { parsed = JSON.parse(event); } catch { return void socket.destroy(); }
+    // told, not asked: the hook prints nothing, so the agent goes on as it would without it
+    const turn = launch.adapter.turn?.(parsed) ?? null;
+    if (turn !== null) {
+      socket.end(`${JSON.stringify({ sealed: seal(launch.key, "answer", nonce, "") })}\n`);
+      this.options.onTurn?.(launch.paneId, launch.adapter.kind, turn);
+      return;
+    }
     const card = launch.adapter.toCard(parsed);
     // an event the adapter does not take, or a command the card could not show whole or as it is, is the terminal's: a
     // Yes allows only what the card showed
@@ -354,7 +379,7 @@ export class ApprovalHub {
   private open(paneId: string, dialog: ApprovalDialog | null): Pending[] {
     if (dialog === null) return [];
     const { command, kind } = dialog;
-    const open = (this.pending.get(paneId) ?? []).filter((entry) => entry.dialog === kind && (command === null || shows(command, entry.command)));
+    const open = (this.pending.get(paneId) ?? []).filter((entry) => entry.dialog === kind && (command === null || shows(command, subjectOf(entry))));
     return command === null && open.length > 1 && open.some((entry) => entry.pinned) ? [] : open;
   }
 
@@ -383,14 +408,17 @@ export class ApprovalHub {
   }
 
   /**
-   * Whether the dialog shows the command of the request a card built on `id` showed, whole, and of no other held
-   * request: only then is that dialog this command's, and the card's options other than a decision go to it as keys.
-   * Runs of white space count as one in `shows`, so two requests that differ only in them are both shown.
+   * Whether the dialog shows the subject of the request a card built on `id` showed, whole, and of no other held
+   * request: only then is that dialog this request's, and the card's options other than a decision go to it as keys.
+   * Runs of white space count as one in `shows`, so two requests that differ only in them are both shown. Nor may another
+   * held request the dialog shows name another tool or file in its words (two MCP tools called with the same arguments
+   * show the same subject).
    */
   showsOnly(paneId: string, dialog: ApprovalDialog, id: string): boolean {
     const open = this.open(paneId, dialog);
     const latest = open.at(-1);
-    return dialog.command !== null && latest !== undefined && idOf(latest) === id && open.every((entry) => entry.command === latest.command);
+    return dialog.command !== null && latest !== undefined && idOf(latest) === id
+      && open.every((entry) => entry.command === latest.command && subjectOf(entry) === subjectOf(latest) && entry.description === latest.description);
   }
 
   /** Answers the request a card built on `id` showed. False when that request is no longer bound to the card. */

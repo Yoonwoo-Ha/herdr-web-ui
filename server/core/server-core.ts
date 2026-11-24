@@ -74,7 +74,7 @@ export function createCore({ options, devices, preferences, usage, usageLogin, b
 
   const { mayType, authorizeSocket, admit, setRole, watchPane, unwatchPane, killWatches, end } = createConnections({ clients, present, pending: { close: closeConnection }, devices, detachClaimed,
     dropClaims: (client) => { dropClaims(client); promptWatch.drop(client); } });
-  const { push, alertWebhook, omo, gjc, letta, claudeAgents, opencodeAgents, plans, clientSnapshot, deliverySnapshot, currentHerdrLifetime, queueHeld, countVisit, machines, broadcastAll, logPushError, collector, waitTimer } = createStatusHub({ options, devices, preferences, clients, present, pending, drainPending, holdPendingPane, usage, usageLogin,
+  const { push, alertWebhook, omo, gjc, letta, claudeAgents, opencodeAgents, plans, clientSnapshot, deliverySnapshot, currentHerdrLifetime, queueHeld, countVisit, machines, broadcastAll, logPushError, collector, waitTimer, hookTurn } = createStatusHub({ options, devices, preferences, clients, present, pending, drainPending, holdPendingPane, usage, usageLogin,
     // the messages first: the old ID's terminal closing holds what it still leases
     paneMoved: (from, to) => { movePendingPane(from, to); paneMoved(from, to); } });
   const socketHandlers = createSocket({
@@ -118,7 +118,7 @@ export function createCore({ options, devices, preferences, usage, usageLogin, b
   let outputTimer: ReturnType<typeof setInterval> | undefined;
 
   return {
-    sidecar, serialize, settleAfterTyping, push, alertWebhook, logPushError, omo, claudeAgents, opencodeAgents, plans, clientSnapshot, machines, broadcastAll, collector, websocket, queueFirstMessage, askFirstMessage,
+    sidecar, serialize, settleAfterTyping, push, alertWebhook, logPushError, omo, claudeAgents, opencodeAgents, plans, clientSnapshot, machines, broadcastAll, collector, websocket, queueFirstMessage, askFirstMessage, hookTurn,
     holdsPending: (paneId: string): boolean => pending.holds(paneId),
     inputEmpty: async (paneId: string, agent: string): Promise<boolean | null> => {
       if (agent !== "claude") return null;
