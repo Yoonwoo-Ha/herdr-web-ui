@@ -218,11 +218,16 @@ describe("AccountPcList", () => {
 
 describe("listedPcStateText", () => {
   const t = (key: string) => key;
-  const pc = (state: MyPc["state"], paired: boolean): MyPc => ({ server_id: "a".repeat(32), name: "Desk", state, last_seen_at: null, added_at: null, listed: true, paired, linked: paired });
+  const pc = (state: MyPc["state"], paired: boolean, joined = true): MyPc => ({ server_id: "a".repeat(32), name: "Desk", state, last_seen_at: null, added_at: null, listed: true, paired, linked: paired, ...(joined ? { joined: true as const } : {}) });
 
   it("says a listed PC is in the account where no pairing can tell whether it waits for an approval", () => {
     expect(listedPcStateText(pc("needs-approval", false), t as never)).toBe("In your account");
     expect(accountPcStateText(pc("needs-approval", false), t as never)).toBe("Needs approval");
+  });
+
+  // r14b: an SSH add refused for an old sign-in left the PC listed, and this list already said it was in the account
+  it("never says in your account for a PC that is only listed or admitted: it has not taken its place there", () => {
+    expect(listedPcStateText(pc("needs-approval", false, false), t as never)).toBe("Waiting to be added");
   });
 
   it("keeps what the directory itself knows", () => {

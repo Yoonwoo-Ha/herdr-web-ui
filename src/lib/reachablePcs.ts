@@ -61,7 +61,9 @@ export function reachablePcs(found: readonly SshCandidate[]): ReachablePc[] {
 /**
  * - `in-account`: its relay ID is one of the account's PCs.
  * - `added`: this app has it already, at one of its addresses as Add would add it, or (with the account's PCs given)
- *   by its relay ID through the relay.
+ *   by its relay ID through the relay. With the account's PCs given, a PC this app has at that address whose relay ID
+ *   is known and not the account's is offered Add again (an add over SSH that stopped short of the account), on that
+ *   same PC (savedAt).
  * - `outdated`: its Ovis is older than 0.5. `waiting`: a Tailscale PC whose Ovis is not known yet.
  */
 export type ReachableState = "in-account" | "added" | "outdated" | "waiting" | "open";
@@ -74,14 +76,19 @@ export interface ReachableFacts {
   readonly accountPcs?: ReadonlySet<string>;
 }
 
+/** This app's PC at one of the row's addresses as Add would add it (port 22, no herdr session named), if any. */
+export function savedAt(row: ReachablePc, machines: readonly Machine[]): Machine | undefined {
+  return machines.find(({ target }) => target !== undefined && (target.port ?? 22) === 22 && target.session === undefined && row.found.some((pc) => pc.destination === target.destination));
+}
+
 export function reachableState(row: ReachablePc, { machines, tailnet, accountPcs }: ReachableFacts): ReachableState {
-  const at = machines.find(({ target }) => target !== undefined && (target.port ?? 22) === 22 && target.session === undefined && row.found.some((pc) => pc.destination === target.destination));
+  const at = savedAt(row, machines);
   // that PC's Ovis on Tailscale answers for the PC reached the plain way, not for another sshd or user there
   const answer = row.machine === true ? tailnet.pcs.get(row.tailnet!) : undefined;
   const ids = [at?.server_id, answer?.server_id].filter((id): id is string => typeof id === "string");
   if (accountPcs !== undefined && ids.some((id) => accountPcs.has(id))) return "in-account";
-  if (at !== undefined) return "added";
-  if (accountPcs !== undefined && ids.some((id) => machines.some((machine) => machine.kind !== "local" && (machine.relay?.server_id ?? machine.server_id) === id))) return "added";
+  if (at !== undefined && (accountPcs === undefined || at.server_id === undefined)) return "added";
+  if (accountPcs !== undefined && ids.some((id) => machines.some((machine) => machine !== at && machine.kind !== "local" && (machine.relay?.server_id ?? machine.server_id) === id))) return "added";
   if (answer?.outdated === true) return "outdated";
   if (row.machine === true && !tailnet.read) return "waiting";
   return "open";

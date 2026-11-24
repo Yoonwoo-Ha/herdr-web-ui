@@ -347,6 +347,26 @@ export interface MachineSettings {
 export interface SetupRequest extends SshTarget { name?: string; machine_id?: string; update_remote?: boolean; start_new_herdr?: boolean; account_add?: boolean }
 /** What a PC's own Ovis told an account add over SSH of itself: its public relay fields, and the account it is in. */
 export interface AccountAddTarget { server_id: string; public_key: string; relay: string; label: string; account: string | null }
+/**
+ * That PC's relay when it answered the take of an account add over SSH: it turns the relay on and waits a while for it to
+ * come online (docs/account.md, "Adding a PC over SSH"). `blocked`: why it may not run there.
+ */
+export interface AccountAddRelay { phase: "off" | "connecting" | "online" | "error"; blocked: "serve_only" | "identity_unreadable" | null }
+/**
+ * POST /api/account/ssh-add's answer: that PC is in `account`; `relay` is null where its Ovis did not say (one from before
+ * this), or where the take's answer was lost and a second inspect found that PC in the account (`unanswered`).
+ */
+export interface AccountAddTaken { account: string; server_id: string; relay: AccountAddRelay | null; unanswered?: true }
+
+const RELAY_PHASES: readonly unknown[] = ["off", "connecting", "online", "error"];
+const RELAY_BLOCKS: readonly unknown[] = ["serve_only", "identity_unreadable", null];
+
+/** A relay word as an account add's take passes it on, or null for anything else. */
+export function accountAddRelay(value: unknown): AccountAddRelay | null {
+  if (value === null || typeof value !== "object") return null;
+  const { phase, blocked } = value as Record<string, unknown>;
+  return RELAY_PHASES.includes(phase) && RELAY_BLOCKS.includes(blocked) ? { phase, blocked } as AccountAddRelay : null;
+}
 export type SetupPhase = "connecting" | "authentication" | "checking" | "approval" | "installing" | "starting" | "connected" | "failed" | "cancelled";
 export interface SetupChallenge { id: string; kind: "host_key" | "secret"; prompt: string }
 export interface SetupJob {

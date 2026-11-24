@@ -1,5 +1,5 @@
 import { MACHINE_DIRECT_CARRIER_ENABLED, MachineCodeForAccountError } from "../machine-profile.ts";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import type { DeviceConnection } from "../../shared/access.ts";
@@ -459,6 +459,11 @@ export class RelayService {
       this.regionalPhase = "connecting";
       regional.start();
     });
+  }
+
+  /** Whether this PC's relay switch was ever set (start or stop saved it): an Ovis installed over SSH never set it. */
+  switchSet(): boolean {
+    return existsSync(join(this.options.stateDir, "relay", "state.json"));
   }
 
   /** Boot never enables a missing or damaged state file and never replaces a damaged identity. */

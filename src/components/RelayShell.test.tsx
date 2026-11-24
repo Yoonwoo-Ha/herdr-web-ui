@@ -183,7 +183,7 @@ describe("the front page's account part", () => {
     expect(text).toContain("homeAnswers · Same Wi-Fi, direct · 9 ms");
     expect(text).toContain("officeAnswers · Seoul relay · 148 ms");
     expect(html).toContain('<span class="connection-slow">148 ms</span>');
-    expect(text).toContain("laptopMachine offlineIt is off, has no network, or Ovis is not running on it.");
+    expect(text).toContain("laptopMachine offlineIts Ovis relay or power is off, it has no network, or Ovis is not running on it.");
     expect(html.indexOf("Check now")).toBeLessThan(html.indexOf("home"));
     expect(text).not.toContain("Connected");
   });

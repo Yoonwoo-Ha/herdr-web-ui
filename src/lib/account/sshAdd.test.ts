@@ -4,7 +4,7 @@ import type { AccountAddTarget } from "../../../shared/machines.ts";
 import { exportPublicKey, generateKeyPair } from "../../../shared/relay-e2ee.ts";
 import { deriveServerId } from "../../../shared/relay-server-proof.ts";
 import { AccountService } from "./service.ts";
-import { addOverSsh, sshAddListed, sshAddOffered } from "./sshAdd.ts";
+import { addOverSsh, sshAddListed, sshAddOffered, type SshTake } from "./sshAdd.ts";
 import { memoryAccountStore } from "./store.ts";
 
 const ACCOUNT = "acct_1";
@@ -15,8 +15,10 @@ function pcFields(account: string | null = null): AccountAddTarget {
   return { server_id: deriveServerId(key), public_key: exportPublicKey(key), relay: "wss://relay.example", label: "nuc", account };
 }
 
-async function window(options: { twoStep: boolean | null; used?: boolean }) {
-  const fake = new FakeAccountService();
+const ONLINE = { relay: { phase: "online", blocked: null } } as const;
+
+async function window(options: { twoStep: boolean | null; used?: boolean; said?: SshTake; clock?: () => number }) {
+  const fake = new FakeAccountService(options.clock);
   fake.opensAll = true;
   // the rule these cases are about: an account service that asks a used account's admit for two-step
   fake.admitAsksTwoStep = true;
@@ -29,7 +31,7 @@ async function window(options: { twoStep: boolean | null; used?: boolean }) {
     await service.putPc(deriveServerId(own), { label: "desk", public_key: Array.from(own, (byte) => byte.toString(16).padStart(2, "0")).join(""), relay: "wss://relay.example" });
   }
   const takes: string[] = [];
-  const take = async (jobId: string, serverId: string) => { takes.push(`${jobId} ${serverId}`); return true; };
+  const take = async (jobId: string, serverId: string): Promise<SshTake> => { takes.push(`${jobId} ${serverId}`); return options.said ?? ONLINE; };
   return { fake, store, service, takes, take };
 }
 
@@ -59,10 +61,73 @@ describe("adding another PC to the account over SSH, from this PC's own window",
   it("a PC already in this account, or in another, is neither listed nor admitted", async () => {
     const { service, take, takes } = await window({ twoStep: true });
     const before = await listedIds(service);
-    expect(await addOverSsh(service, { id: "job-1", account_add: pcFields(ACCOUNT) }, { account: ACCOUNT, running: () => true, take })).toBe("already");
+    const already = pcFields(ACCOUNT);
+    expect(await addOverSsh(service, { id: "job-1", account_add: already }, { account: ACCOUNT, running: () => true, take })).toBe("already");
     expect(await addOverSsh(service, { id: "job-1", account_add: pcFields("acct_other") }, { account: ACCOUNT, running: () => true, take })).toBe("other-account");
     expect(await listedIds(service)).toEqual(before);
+    // the one in this account is still taken, which turns its relay on: one added before that may have it off
+    expect(takes).toEqual([`job-1 ${already.server_id}`]);
+  });
+
+  it("says added only once that PC says its relay is online", async () => {
+    for (const [said, outcome] of [
+      [ONLINE, "added"],
+      [{ relay: { phase: "connecting", blocked: null } }, "not-online"],
+      [{ relay: { phase: "off", blocked: "serve_only" } }, "not-online"],
+      // an Ovis there from before this says nothing of its relay: in the account, never taken for online
+      [{ relay: null }, "added-unchecked"],
+      // the take's answer was lost and a second look found it in the account
+      [{ relay: null, unanswered: true }, "added-unanswered"],
+    ] as const) {
+      const { service, take } = await window({ twoStep: true, said });
+      expect(await addOverSsh(service, { id: "job-1", account_add: pcFields() }, { account: ACCOUNT, running: () => true, take })).toBe(outcome);
+    }
+    for (const [said, outcome] of [
+      [{ relay: { phase: "connecting", blocked: null } }, "not-online"],
+      [{ relay: null }, "already-unchecked"],
+      [{ relay: null, unanswered: true }, "already-unanswered"],
+      // its owner turned its relay off there: said so, not "not online yet"
+      [{ relay: { phase: "off", blocked: null } }, "relay-off"],
+    ] as const) {
+      const { service, take } = await window({ twoStep: true, said });
+      expect(await addOverSsh(service, { id: "job-1", account_add: pcFields(ACCOUNT) }, { account: ACCOUNT, running: () => true, take })).toBe(outcome);
+    }
+  });
+
+  it("a take whose SSH connection ended says so, apart from any other refusal", async () => {
+    for (const [code, outcome] of [["disconnected", "disconnected"], ["job_not_found", "disconnected"], ["no_admission", "refused"], ["take_unanswered", "maybe"]] as const) {
+      const { service, take } = await window({ twoStep: true, said: { refused: code } });
+      expect(await addOverSsh(service, { id: "job-1", account_add: pcFields() }, { account: ACCOUNT, running: () => true, take })).toBe(outcome);
+    }
+  });
+
+  it("a take this PC gave no answer to may have gone out: maybe, never refused", async () => {
+    const { service } = await window({ twoStep: true });
+    const take = async (): Promise<SshTake> => { throw new TypeError("Failed to fetch"); };
+    expect(await addOverSsh(service, { id: "job-1", account_add: pcFields() }, { account: ACCOUNT, running: () => true, take })).toBe("maybe");
+  });
+
+  it("a sign-in too old to admit asks for a fresh one; the fresh one, as it was handed in, then adds it", async () => {
+    let now = Date.now();
+    const { fake, store, service, take, takes } = await window({ twoStep: true, clock: () => now });
+    now += 11 * 60_000;
+    const target = pcFields();
+    expect(await addOverSsh(service, { id: "job-1", account_add: target }, { account: ACCOUNT, running: () => true, take })).toBe("sign-in-again");
     expect(takes).toEqual([]);
+    const fresh = { service: SERVICE, account: ACCOUNT, provider: "google" as const, access_token: fake.issueToken(ACCOUNT, { twoStep: true }), refresh_token: "fresh", expires_at: Date.now() + 3600_000 };
+    await store.set("session", fresh);
+    expect(await addOverSsh(service, { id: "job-1", account_add: target }, { account: ACCOUNT, running: () => true, take, signIn: fresh })).toBe("added");
+    expect(takes).toEqual([`job-1 ${target.server_id}`]);
+  });
+
+  it("a fresh sign-in that is no longer the one stored (another tab signed in meanwhile) writes nothing", async () => {
+    const { fake, store, service, take, takes } = await window({ twoStep: true });
+    const fresh = { service: SERVICE, account: ACCOUNT, provider: "google" as const, access_token: fake.issueToken(ACCOUNT, { twoStep: true }), refresh_token: "fresh", expires_at: Date.now() + 3600_000 };
+    const target = pcFields();
+    expect(await addOverSsh(service, { id: "job-1", account_add: target }, { account: ACCOUNT, running: () => true, take, signIn: fresh })).toBe("refused");
+    expect(await listedIds(service)).not.toContain(target.server_id);
+    expect(takes).toEqual([]);
+    expect((await store.get("session"))?.refresh_token).toBe("r");
   });
 
   it("a window signed in to another account than this PC's writes nothing", async () => {

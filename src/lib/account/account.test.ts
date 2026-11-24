@@ -630,6 +630,22 @@ describe("My PCs", () => {
     expect(listed(other)?.join).toBeUndefined();
   });
 
+  // docs/account.md, "Adding a PC over SSH": a listing or an admission alone never shows as added
+  it("counts a listed PC as in the account only once it completed its add or came by as the account's PC", () => {
+    const row = (fields: { last_seen_at: string | null; completed_at?: string | null; admitted_at?: string | null }) =>
+      myPcs([{ server_id: PC_B, label: "nuc", added_at: recent, new_until: null, admitted_at: null, admitted_before_you: false, public_key: null, relay: null, ...fields }], [], { now })[0]?.joined === true;
+    // listed, and admitted, but the PC never took the admission: not in the account
+    expect(row({ last_seen_at: null, completed_at: null })).toBe(false);
+    expect(row({ last_seen_at: null, completed_at: null, admitted_at: recent })).toBe(false);
+    // an older service that does not say: listed alone is not in the account either
+    expect(row({ last_seen_at: null })).toBe(false);
+    // the PC said it is bound by this listing's add
+    expect(row({ last_seen_at: null, completed_at: recent })).toBe(true);
+    // it pulled the account's mailbox, which only a PC in the account does (one that joined by a device's pairing too)
+    expect(row({ last_seen_at: recent, completed_at: null })).toBe(true);
+    expect(row({ last_seen_at: recent })).toBe(true);
+  });
+
   it("says a PC needs an update when its Ovis has no accounts", () => {
     const rows = myPcs([], [paired(PC_A, "p620")], { now, outdated: new Set([PC_A]) });
     expect(rows[0]?.state).toBe("needs-update");

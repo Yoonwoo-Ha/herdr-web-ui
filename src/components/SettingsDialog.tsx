@@ -1294,7 +1294,8 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
   const joinBySignIn = account.account !== null && pcAccount === account.account && relay.status?.phase === "online";
   // where Add PC over SSH adds the PC to the account (MachineDialog asks the same), the relay tab lists the PCs to add
   const addsOverSsh = sshAddListed({ pcAddFromAccount, auth, signedInAccount: account.signedIn ? account.account : null, pcAccount });
-  const accountPcs = useMemo(() => account.pcs?.filter((pc) => pc.listed).map((pc) => pc.server_id) ?? [], [account.pcs]);
+  // the PCs in the account, which the relay tab's list says so of: one only listed or admitted is still offered Add
+  const accountPcs = useMemo(() => account.pcs?.filter((pc) => pc.listed && pc.joined === true).map((pc) => pc.server_id) ?? [], [account.pcs]);
   const openAccount = useCallback(() => {
     setConnecting(false);
     const group = document.querySelector<HTMLElement>('.settings-dialog [data-section="account"]');

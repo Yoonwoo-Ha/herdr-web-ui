@@ -19,7 +19,7 @@ import { apiFetch } from "../lib/api-request-id.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { useT } from "../lib/i18n.ts";
 import { tailscalePlan, type PhonePlan } from "../lib/phone.ts";
-import { reachablePcs, reachableState, type ReachableFacts, type ReachablePc, type ReachableState } from "../lib/reachablePcs.ts";
+import { reachablePcs, reachableState, savedAt, type ReachableFacts, type ReachablePc, type ReachableState } from "../lib/reachablePcs.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
@@ -342,7 +342,8 @@ export function useFoundPcs(machines: readonly Machine[], enabled = true) {
   const rowState = (row: ReachablePc, accountPcs?: ReadonlySet<string>): ReachableState => reachableState(row, accountPcs === undefined ? facts : { ...facts, accountPcs });
   const stateOf = (pc: SshCandidate): ReachableState => rowState(reachablePcs([pc])[0]!);
   const retry = () => { setFound(null); setReads((count) => count + 1); };
-  return { found, rows, unread, failed, withheld, stateOf, rowState, retry };
+  const saved = (row: ReachablePc): Machine | undefined => savedAt(row, machines);
+  return { found, rows, unread, failed, withheld, stateOf, rowState, saved, retry };
 }
 
 /** The found list's failure with Try again, or where a list this window is refused can be seen. */
@@ -406,7 +407,7 @@ export function TailscaleTab({ found: { rows, unread, failed, withheld, rowState
  * ticked, which reaches that PC's own Ovis over SSH, offers to install it, and adds it to the account
  * (docs/account.md "Adding a PC over SSH"). A PC in the account, here already or with an older Ovis says so instead.
  */
-export function ReachablePcList({ found: { rows, failed, withheld, rowState, retry }, accountPcs, onAddPc }: {
+export function ReachablePcList({ found: { rows, failed, withheld, rowState, saved, retry }, accountPcs, onAddPc }: {
   found: FoundPcs; accountPcs: ReadonlySet<string>; onAddPc: (preset?: AddPcPreset) => void;
 }) {
   const t = useT();
@@ -430,6 +431,8 @@ export function ReachablePcList({ found: { rows, failed, withheld, rowState, ret
           <ul className="connect-found-list connect-reach-list">
             {rows.map((pc) => {
               const state = rowState(pc, accountPcs);
+              // a PC saved here that is not in the account is added on that same PC, never as a second one
+              const here = state === "open" ? saved(pc) : undefined;
               return (
                 <li key={pc.key} className="connect-found-row" data-reachable-state={state}>
                   <span className="connect-found-name">{pc.name}</span>
@@ -437,7 +440,7 @@ export function ReachablePcList({ found: { rows, failed, withheld, rowState, ret
                   {state === "in-account" ? <span className="connect-found-added"><Check aria-hidden="true" />{t("In your account")}</span>
                     : state === "added" ? <span className="connect-found-added"><Check aria-hidden="true" />{t("Added")}</span>
                     : state === "outdated" ? <span className="settings-hint">{t("Update Ovis on that PC to 0.5 first.")}</span>
-                    : <button type="button" className="btn" disabled={state === "waiting"} aria-label={`${t("Add")} ${pc.name}`} onClick={() => onAddPc({ destination: pc.destination, name: pc.name })}>{t("Add")}</button>}
+                    : <button type="button" className="btn" disabled={state === "waiting"} aria-label={`${t("Add")} ${pc.name}`} onClick={() => onAddPc({ destination: pc.destination, name: pc.name, ...(here === undefined ? {} : { machine_id: here.id }) })}>{t("Add")}</button>}
                 </li>
               );
             })}

@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import { startBunRelay } from "../relay/bun.ts";
 import { FakeAccountService } from "../shared/account-service-fake.ts";
 import type { SetupJob, SshTarget } from "../shared/machines.ts";
 import { importPublicKey } from "../shared/relay-e2ee.ts";
@@ -31,7 +32,7 @@ function keygen(path: string): void {
 }
 
 /** "That PC": a HOME of its own with stand-in herdr and systemctl, the test herdr as its default session, and an sshd into it. */
-async function thatPc(root: string, accountService: string): Promise<{ target: SshTarget; home: string; installer: string }> {
+async function thatPc(root: string, accountService: string, relayPort: number): Promise<{ target: SshTarget; home: string; installer: string }> {
   const home = join(root, "remote");
   const bin = join(home, ".local", "bin");
   mkdirSync(bin, { recursive: true });
@@ -60,7 +61,7 @@ async function thatPc(root: string, accountService: string): Promise<{ target: S
     `export HOME=${shellQuote(home)}`,
     "unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS SSH_AUTH_SOCK HERDR_PLUGIN_STATE_DIR",
     `export PATH=${shellQuote(`${bin}:/usr/bin:/bin`)}`,
-    `export HERDR_SOCKET=${shellQuote(herdrSocket)} OVIS_FIXTURE_STATE=${shellQuote(state)} OVIS_FIXTURE_ACCOUNT_SERVICE=${shellQuote(accountService)}`,
+    `export HERDR_SOCKET=${shellQuote(herdrSocket)} OVIS_FIXTURE_STATE=${shellQuote(state)} OVIS_FIXTURE_ACCOUNT_SERVICE=${shellQuote(accountService)} OVIS_FIXTURE_RELAY_PORT=${relayPort}`,
     `export OVIS_FIXTURE_BUN=${shellQuote(process.execPath)} OVIS_FIXTURE_ENTRY=${shellQuote(join(import.meta.dir, "account", "ssh-add-pc.child.fixture.ts"))}`,
     `cd "$HOME"`,
     `exec /bin/sh -c "$SSH_ORIGINAL_COMMAND"`,
@@ -105,7 +106,10 @@ test.skipIf(!available)("Ovis is installed on that PC from a local artifact, the
   fake.completions = true;
   const service = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => fake.fetch(request) });
   cleanups.push(() => service.stop(true));
-  const pc = await thatPc(root, `http://127.0.0.1:${service.port}`);
+  // the relay that PC's Ovis links to once its relay is on, on loopback
+  const relay = startBunRelay({ port: 0 });
+  cleanups.push(() => relay.stop());
+  const pc = await thatPc(root, `http://127.0.0.1:${service.port}`, relay.port);
   const stateDir = join(root, "here");
   mkdirSync(stateDir, { mode: 0o700 });
   const manager = new MachineManager(stateDir, { seed() {} } as unknown as PushService, new CompletionTracker(null), async () => { throw new Error("this PC's own herdr is not this test's"); },
@@ -160,8 +164,9 @@ test.skipIf(!available)("Ovis is installed on that PC from a local artifact, the
   expect((await call(`/v1/pcs/${target.server_id}`, "PUT", { label: target.label, public_key: bytesToHex(importPublicKey(target.public_key)), relay: target.relay })).ok).toBe(true);
   expect((await call(`/v1/pcs/${target.server_id}/admit`, "POST", {})).ok).toBe(true);
 
-  // 5. this PC hands it the account; that PC takes the admission on its own proof, binds, and completes its add
-  expect(await manager.accountTake(added.id, target.server_id, "acct_1")).toEqual({ account: "acct_1" });
+  // 5. this PC hands it the account; that PC takes the admission on its own proof, binds, completes its add, and turns
+  // its relay on: off since the install, it answers once it is online
+  expect(await manager.accountTake(added.id, target.server_id, "acct_1")).toEqual({ account: "acct_1", relay: { phase: "online", blocked: null } });
   const listed = ((await (await call("/v1/pcs", "GET")).json()) as { pcs: { server_id: string; completed_at: string | null }[] }).pcs.find((entry) => entry.server_id === target.server_id);
   expect(listed?.completed_at).toEqual(expect.any(String));
 }, 240_000);

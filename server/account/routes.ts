@@ -1,4 +1,5 @@
 import { ACCOUNT_ENROLL_MAX, ACCOUNT_RECORDS_MAX, isAccountKeyEncoding } from "../../shared/account-records.ts";
+import type { AccountAddRelay, AccountAddTaken } from "../../shared/machines.ts";
 import type { Access } from "../access.ts";
 import type { ServerContext } from "../dispatch.ts";
 import { jsonResponse, readJsonObject, setRequestRoute } from "../http.ts";
@@ -103,7 +104,9 @@ export async function handleAccountRequest(request: Request, pathname: string, c
       if (target === context.services.relay.currentIdentity()?.server_id) return fail("self", "That is this PC.", 409);
       const machines = context.services.core.machines;
       if (!machines) return fail("not_found", "This PC adds no other PCs", 404);
-      let taken: { account: string };
+      // that PC waits up to ADDED_RELAY_ONLINE_MS for its relay after its press: more than the default budget of an API call
+      context.timeout(request, 120);
+      let taken: { account: string; relay: AccountAddRelay | null; unanswered?: true };
       try { taken = await machines.accountTake(jobId, target, account); }
       catch (error) {
         if (!(error instanceof AccountAddError)) throw error;
@@ -111,7 +114,7 @@ export async function handleAccountRequest(request: Request, pathname: string, c
       }
       // this PC left or changed its account while that PC took it: that PC is in the account named then, and says so
       if (devices.account() !== taken.account) return fail("account_changed", "This PC's account changed while the other PC was being added.", 409);
-      return reply({ account: taken.account, server_id: target });
+      return reply({ account: taken.account, server_id: target, relay: taken.relay, ...(taken.unanswered ? { unanswered: true as const } : {}) } satisfies AccountAddTaken);
     }
     case "/api/account/introduce": {
       setRequestRoute(pathname);

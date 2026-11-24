@@ -26,6 +26,8 @@ export function openPcRecovery(options: {
   readonly pairings: KeyProofPairings | undefined;
   readonly relay: RelayService;
   readonly accountMailbox: AccountMailbox;
+  /** how long a take over SSH waits for this PC's relay to come online (one-press.ts ADDED_RELAY_ONLINE_MS) */
+  readonly addedRelayOnlineMs?: number | undefined;
 }) {
   const { stateDir, devices, pcAccount, journal, safetyLog, releases, pending, pairings, relay, accountMailbox } = options;
   // The log's freeze set already includes each standing block once.
@@ -100,7 +102,7 @@ export function openPcRecovery(options: {
     },
     take: async (account, serverId) => {
       if (managed()) return { refused: "This is a bridge another PC started, not this PC's own Ovis", code: "managed" };
-      const taken = await takeForAccount({ devices, relay, accountMailbox }, account, serverId);
+      const taken = await takeForAccount({ devices, relay, accountMailbox }, account, serverId, options.addedRelayOnlineMs);
       return "refused" in taken ? { refused: taken.refused.message, code: taken.refused.code } : taken;
     },
   };

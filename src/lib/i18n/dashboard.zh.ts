@@ -30,6 +30,6 @@ export const DASHBOARD_ZH: Record<string, string> = {
   "This device can open {name}": "此设备可以打开 {name}",
   "The relay turned this device away. Wait a minute, then check again.": "中继拒绝了此设备的连接。请等一分钟后再检查。",
   "Last seen {when}.": "上次在线：{when}。",
-  "It is off, has no network, or Ovis is not running on it.": "它已关机、没有网络，或者其上的 Ovis 没有运行。",
+  "Its Ovis relay or power is off, it has no network, or Ovis is not running on it.": "中继或电源已关闭、没有网络，或者其上的 Ovis 没有运行。",
   "This device could not reach the relay. Check this device's network.": "此设备无法连接中继。请检查此设备的网络。",
 };

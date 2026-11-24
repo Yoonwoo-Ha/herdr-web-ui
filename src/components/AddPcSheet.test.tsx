@@ -316,7 +316,7 @@ describe("the Add-a-PC sheet", () => {
     }
     await update(props("join", expired, { kind: "failed", failure: "pc-offline", name: "desk2", detail: null, server_id: SERVER_ID }));
     expect(all()).toContain("Machine offline");
-    expect(all()).toContain("Start it, or wait for it to come back");
+    expect(all()).toContain("desk2's Ovis relay or power is off");
     for (const pc of [pcOf(), expired]) {
       await update(props("new", pc, LIST));
       expect(text(renderer!.root.findByProps({ className: "add-pc-sub" }))).toBe("Type the number desk2 shows on its own screen, then approve there.");
@@ -343,7 +343,7 @@ describe("the Add-a-PC sheet", () => {
     await mount(props("new", pcOf(), { kind: "failed", failure: "pc-offline", name: "desk2", detail: "The relay closed the connection (0)", server_id: SERVER_ID }));
     expect(renderer!.root.findByProps({ role: "dialog" }).props["data-add-pc-phase"]).toBe("failed");
     expect(all()).toContain("Machine offline");
-    expect(all()).toContain("Start it, or wait for it to come back");
+    expect(all()).toContain("desk2's Ovis relay or power is off");
     expect(all()).not.toContain("The relay closed the connection (0)");
     expect(steps()).toEqual(["done", "failed", "todo", "todo"]);
     await click("Try again");

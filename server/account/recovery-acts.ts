@@ -4,6 +4,7 @@
  * come with the device and log changes they need.
  */
 import { AccountDevicesApiError, parseRecoveryAction, type RecoveryAction, type RecoveryStanding } from "../../shared/account-devices-api.ts";
+import type { AccountAddRelay } from "../../shared/machines.ts";
 import type { DeviceMatch } from "../devices.ts";
 import { AlreadyReleasedError, ReleaseJournalError, releaseRefusal, type RecoveryReleases } from "./recovery.ts";
 
@@ -30,7 +31,8 @@ const UNREADABLE = { error: "This PC cannot read its safety log, so nothing is c
  */
 export interface AccountAddSeams {
   inspect(): { server_id: string; public_key: string; relay: string; label: string; account: string | null } | { refused: string; code: string };
-  take(account: string, serverId: string): Promise<{ account: string } | { refused: string; code: string }>;
+  /** in `account`, with this PC's relay turned on and as it stood when it answered */
+  take(account: string, serverId: string): Promise<{ account: string; relay: AccountAddRelay } | { refused: string; code: string }>;
 }
 
 export function recoveryActs(options: { releases: RecoveryReleases; logReadable(act: RecoveryAction["act"]): boolean; user: string; seams?: RecoverySeams; accountAdd?: AccountAddSeams }): (request: unknown) => Promise<unknown> {

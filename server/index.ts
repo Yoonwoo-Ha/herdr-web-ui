@@ -217,6 +217,8 @@ export function createServer(
     relayPcSocket?: (url: string) => RelaySocket;
     relayPcDirectSocket?: (url: string) => RelaySocket;
     pcUpdateTimings?: { pollMs?: number; startMs?: number; checkMs?: number; offerMs?: number };
+    /** how long this PC, added to an account over SSH, waits for its relay to come online before it answers (30 s) */
+    accountAddRelayMs?: number;
     tailnetPcs?: TailnetPcsOptions;
     sshCandidates?: SshCandidatesOptions;
     /** a bridge this app starts on a PC (server/remote-entry.ts): its token is the credential its connection server holds, and no browser reaches it, so its snapshots go whole (#2160) */
@@ -666,7 +668,7 @@ export function createServer(
   }) : undefined;
   const recoverySocket = recoveryReleases && journal && safetyLog ? openPcRecovery({
     stateDir, devices, pcAccount, journal, safetyLog, releases: recoveryReleases, pending: pendingRedemptions, pairings: keyProofPairings,
-    relay: ovisRelay, accountMailbox,
+    relay: ovisRelay, accountMailbox, addedRelayOnlineMs: options.accountAddRelayMs,
   }) : null;
   // the lock is written only after this PC's screen approves it, then the rows it does not let in end (T46)
   const lockSignal = safetyLog ? new LockSignal() : undefined;

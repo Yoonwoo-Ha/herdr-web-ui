@@ -18,7 +18,7 @@ export function outOfReachWord(state: OutOfReach, t: Translate): string {
 export function outOfReachReason(pc: { readonly displayState: PcReachState; readonly last_seen_at: string | null; readonly check?: PcStatus | null }, t: Translate, now?: number): string | null {
   switch (pc.displayState) {
     case "offline": {
-      const cause = t("It is off, has no network, or Ovis is not running on it.");
+      const cause = t("Its Ovis relay or power is off, it has no network, or Ovis is not running on it.");
       return pc.last_seen_at === null ? cause : `${t("Last seen {when}.", { when: lastSeen(pc.last_seen_at, now) })} ${cause}`;
     }
     case "unreachable": {

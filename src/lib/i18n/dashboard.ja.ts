@@ -30,6 +30,6 @@ export const DASHBOARD_JA: Record<string, string> = {
   "This device can open {name}": "このデバイスから {name} を開けます",
   "The relay turned this device away. Wait a minute, then check again.": "リレーがこのデバイスの接続を断りました。1分ほど待ってから、もう一度確認してください。",
   "Last seen {when}.": "最終確認: {when}。",
-  "It is off, has no network, or Ovis is not running on it.": "電源が切れているか、ネットワークがないか、Ovis が実行されていません。",
+  "Its Ovis relay or power is off, it has no network, or Ovis is not running on it.": "リレーか電源が切れているか、ネットワークがないか、Ovis が実行されていません。",
   "This device could not reach the relay. Check this device's network.": "このデバイスからリレーに接続できませんでした。このデバイスのネットワークを確認してください。",
 };

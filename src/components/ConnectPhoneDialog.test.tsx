@@ -1067,6 +1067,18 @@ describe("Connect a phone on a phone", () => {
     expect(renderer!.root.findAll((node) => node.type === "button" && String(node.props["aria-label"] ?? "").startsWith("Add "))).toHaveLength(0);
   });
 
+  // r14b: an SSH add that stopped at the account (an old sign-in) leaves the PC saved here: Add stays, on that same PC entry
+  it("in the relay tab's list, offers Add again for a PC saved here whose own Ovis is not in the account, on the PC already saved", async () => {
+    tailnetOutdated = false;
+    const added: (AddPcPreset | undefined)[] = [];
+    await mount(<Reachable machines={[ssh("nuc12", { server_id: "srv_nuc" })]} accountPcs={new Set()} onAddPc={(preset) => { added.push(preset); }} />);
+    await flushReads();
+    const rows = renderer!.root.findAll((node) => node.props.className === "connect-found-row");
+    expect(rows[0]!.props["data-reachable-state"]).toBe("open");
+    await act(async () => { renderer!.root.findByProps({ "aria-label": "Add nuc12" }).props.onClick(); });
+    expect(added).toEqual([{ destination: "nuc12", name: "nuc12", machine_id: "nuc12" }]);
+  });
+
   const openByAddress = async () => { await act(async () => { renderer!.root.find((node) => node.type === "button" && text(node) === "Add by address").props.onClick(); }); };
   /** the field and the form of Add by address, once opened: after the SSH field and its form */
   const typeAddress = async (value: string) => { await act(async () => { renderer!.root.findAllByType("input")[1]!.props.onChange({ target: { value } }); }); };

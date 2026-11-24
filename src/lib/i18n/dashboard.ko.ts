@@ -30,6 +30,6 @@ export const DASHBOARD_KO: Record<string, string> = {
   "This device can open {name}": "이 기기에서 {name} 열기 가능",
   "The relay turned this device away. Wait a minute, then check again.": "릴레이가 이 기기의 연결을 거절했습니다. 1분 뒤 다시 확인하세요.",
   "Last seen {when}.": "{when} 마지막으로 확인되었습니다.",
-  "It is off, has no network, or Ovis is not running on it.": "전원이 꺼져 있거나, 네트워크가 없거나, Ovis가 실행되고 있지 않습니다.",
+  "Its Ovis relay or power is off, it has no network, or Ovis is not running on it.": "릴레이나 전원이 꺼져 있거나, 네트워크가 없거나, Ovis가 실행되고 있지 않습니다.",
   "This device could not reach the relay. Check this device's network.": "이 기기에서 릴레이에 연결하지 못했습니다. 이 기기의 네트워크를 확인하세요.",
 };

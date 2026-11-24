@@ -9,6 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import { startBunRelay } from "../relay/bun.ts";
 import { BRIDGE_PROTOCOL, REMOTE_BUNDLE_VERSION, type BridgeIdentity, type SetupJob, type SetupRequest } from "../shared/machines.ts";
 import { importPublicKey } from "../shared/relay-e2ee.ts";
 import type { BridgeDescriptor } from "./bridge.ts";
@@ -26,8 +27,15 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 
 const REMOTE_SOCKET = "/home/fixture/.local/state/ovis/recover/recover.sock";
 
-async function otherPc(): Promise<Pc> {
-  const pc = await pairingPc({ server: { accountOpensAll: true } });
+/** A relay on this machine that a PC's relay comes online on: its port. */
+function localRelay(): number {
+  const relay = startBunRelay({ port: 0 });
+  cleanups.push(() => relay.stop());
+  return relay.port;
+}
+
+async function otherPc(options: Parameters<typeof pairingPc>[0] = {}): Promise<Pc> {
+  const pc = await pairingPc({ ...options, server: { accountOpensAll: true, ...options.server } });
   pc.account.opensAll = true;
   cleanups.push(() => pc.close());
   return pc;
@@ -35,15 +43,43 @@ async function otherPc(): Promise<Pc> {
 
 /**
  * That PC's recovery socket as the forward reaches it, behind a stand-in that records every request it is sent: the
- * socket itself answers every recovery act, so what reaches it is what the adding PC chose to send.
+ * socket itself answers every recovery act, so what reaches it is what the adding PC chose to send. `answer`: what the
+ * stand-in answers in place of that PC's own answer (an older Ovis there).
  */
-function recorded(pc: Pc): { path: string; seen: unknown[] } {
+function recorded(pc: Pc, answer: (request: unknown, said: unknown) => unknown = (_request, said) => said): { path: string; seen: unknown[] } {
   const seen: unknown[] = [];
   const dir = mkdtempSync(join(tmpdir(), "ovis-account-add-proxy-"));
-  const proxy = openRecoverySocket({ stateDir: dir, handle: async (request) => { seen.push(request); return await askRecovery(pc.stateDir, request); } });
+  const proxy = openRecoverySocket({ stateDir: dir, handle: async (request) => { seen.push(request); return answer(request, await askRecovery(pc.stateDir, request)); } });
   if ("refused" in proxy) throw new Error(proxy.refused);
   cleanups.push(() => { proxy.stop(); rmSync(dir, { recursive: true, force: true }); });
   return { path: proxy.path, seen };
+}
+
+/**
+ * That PC's recovery socket behind a forward that drops the take's answer: the take reaches that PC (which binds), then
+ * the connection closes with nothing said, as when SSH drops while that PC waits for its relay. After that, `later`
+ * says whether an inspect is answered or dropped too.
+ */
+function lossy(pc: Pc, later: "answer" | "drop"): { path: string; seen: string[] } {
+  const seen: string[] = [];
+  const dir = mkdtempSync(join(tmpdir(), "ovis-account-add-lossy-"));
+  const path = join(dir, "r.sock");
+  let took = false;
+  const listener = Bun.listen<{ buffered: string }>({ unix: path, socket: {
+    open(socket) { socket.data = { buffered: "" }; },
+    async data(socket, chunk) {
+      socket.data.buffered += new TextDecoder().decode(chunk);
+      const newline = socket.data.buffered.indexOf("\n");
+      if (newline < 0) return;
+      const request = JSON.parse(socket.data.buffered.slice(0, newline)) as { act: string };
+      seen.push(request.act);
+      if (request.act === "account_add_take") { await askRecovery(pc.stateDir, request); took = true; socket.end(); return; }
+      if (took && later === "drop") { socket.end(); return; }
+      socket.write(`${JSON.stringify(await askRecovery(pc.stateDir, request))}\n`);
+    },
+  } });
+  cleanups.push(() => { listener.stop(true); rmSync(dir, { recursive: true, force: true }); });
+  return { path, seen };
 }
 
 /** What the owner's signed-in window does with the fields the job read: lists that PC, then admits it (S1). */
@@ -122,8 +158,9 @@ async function listing(pc: Pc, account: string, serverId: string): Promise<Recor
   return ((await answer.json()) as { pcs: Record<string, unknown>[] }).pcs.find((entry) => entry.server_id === serverId);
 }
 
-test("happy path: host key confirmed, that PC's own Ovis is reached, the window lists and admits it, it takes the admission itself, and its add completes", async () => {
-  const b = await otherPc();
+test("happy path: host key confirmed, that PC's own Ovis is reached, the window lists and admits it, it takes the admission itself, its add completes, and its relay is online", async () => {
+  // installed over SSH, its relay never turned on
+  const b = await otherPc({ relayPort: localRelay(), startRelay: false });
   b.account.completions = true;
   const socket = recorded(b);
   const { manager, forwarded, closed, prompts, settled } = fixture({ descriptor: "own", hostKey: "confirm", socketPath: socket.path });
@@ -140,8 +177,11 @@ test("happy path: host key confirmed, that PC's own Ovis is reached, the window 
   expect(b.devices.account()).toBeNull();
   expect(await listing(b, "acct_1", identity.server_id)).toMatchObject({ completed_at: null });
   expect(closed).toEqual([]);
-  expect(await manager.accountTake(job.id, identity.server_id, "acct_1")).toEqual({ account: "acct_1" });
+  expect(b.app.context.services.relay.status().phase).toBe("off");
+  // added only with its relay online: a PC in the account that nobody can open is not what the person asked for
+  expect(await manager.accountTake(job.id, identity.server_id, "acct_1")).toEqual({ account: "acct_1", relay: { phase: "online", blocked: null } });
   expect(b.devices.account()).toBe("acct_1");
+  expect(b.app.context.services.relay.status().phase).toBe("online");
   // that PC's own receipt of its bind: the directory shows its add completed
   expect((await listing(b, "acct_1", identity.server_id))?.completed_at).toEqual(expect.any(String));
   // the forward carried an inspect and one take, and closed as the take answered
@@ -150,6 +190,56 @@ test("happy path: host key confirmed, that PC's own Ovis is reached, the window 
   // nothing more goes on it: another take needs a new connection (which then finds that PC in the account)
   await expect(manager.accountTake(job.id, identity.server_id, "acct_1")).rejects.toMatchObject({ code: "disconnected" });
   expect(socket.seen).toHaveLength(2);
+});
+
+test("a relay that does not come online within that PC's wait: the take still ends, says where it stands, and that PC stays in the account", async () => {
+  const b = await otherPc({ startRelay: false, server: { accountAddRelayMs: 300 } });
+  const socket = recorded(b);
+  const { manager, settled } = fixture({ descriptor: "own", socketPath: socket.path });
+  const job = await settled({ destination: "fixture-pc", account_add: true });
+  expect((await listAndAdmit(b, "acct_1", job.account_add!)).ok).toBe(true);
+  expect(await manager.accountTake(job.id, job.account_add!.server_id, "acct_1")).toEqual({ account: "acct_1", relay: { phase: "connecting", blocked: null } });
+  expect(b.devices.account()).toBe("acct_1");
+});
+
+test("an Ovis there from before this says nothing of its relay: the take says it does not know, never that it is online", async () => {
+  const b = await otherPc({ server: { accountAddRelayMs: 300 } });
+  const older = recorded(b, (request, said) => (request as { act: string }).act === "account_add_take" && said !== null && typeof said === "object" && "account" in said ? { account: (said as { account: string }).account } : said);
+  const { manager, settled } = fixture({ descriptor: "own", socketPath: older.path });
+  const job = await settled({ destination: "fixture-pc", account_add: true });
+  expect((await listAndAdmit(b, "acct_1", job.account_add!)).ok).toBe(true);
+  expect(await manager.accountTake(job.id, job.account_add!.server_id, "acct_1")).toEqual({ account: "acct_1", relay: null });
+});
+
+test("a relay word that PC's Ovis gives in another shape is not passed on", async () => {
+  const b = await otherPc({ server: { accountAddRelayMs: 300 } });
+  const odd = recorded(b, (request, said) => (request as { act: string }).act === "account_add_take" && said !== null && typeof said === "object" && "account" in said
+    ? { account: (said as { account: string }).account, relay: { phase: "online<script>", blocked: null } } : said);
+  const { manager, settled } = fixture({ descriptor: "own", socketPath: odd.path });
+  const job = await settled({ destination: "fixture-pc", account_add: true });
+  expect((await listAndAdmit(b, "acct_1", job.account_add!)).ok).toBe(true);
+  expect(await manager.accountTake(job.id, job.account_add!.server_id, "acct_1")).toEqual({ account: "acct_1", relay: null });
+});
+
+test("a take whose answer is lost (SSH dropped during that PC's wait) asks that PC once more, and says added when it is in the account", async () => {
+  const b = await otherPc({ server: { accountAddRelayMs: 300 } });
+  const socket = lossy(b, "answer");
+  const { manager, settled } = fixture({ descriptor: "own", socketPath: socket.path });
+  const job = await settled({ destination: "fixture-pc", account_add: true });
+  expect((await listAndAdmit(b, "acct_1", job.account_add!)).ok).toBe(true);
+  expect(await manager.accountTake(job.id, job.account_add!.server_id, "acct_1")).toEqual({ account: "acct_1", relay: null, unanswered: true });
+  expect(b.devices.account()).toBe("acct_1");
+  // still nothing but inspects and the one take
+  expect(socket.seen).toEqual(["account_add_inspect", "account_add_take", "account_add_inspect"]);
+});
+
+test("a take whose answer is lost, and that PC unreachable after it: may have been added, never not added", async () => {
+  const b = await otherPc({ server: { accountAddRelayMs: 300 } });
+  const socket = lossy(b, "drop");
+  const { manager, settled } = fixture({ descriptor: "own", socketPath: socket.path });
+  const job = await settled({ destination: "fixture-pc", account_add: true });
+  expect((await listAndAdmit(b, "acct_1", job.account_add!)).ok).toBe(true);
+  await expect(manager.accountTake(job.id, job.account_add!.server_id, "acct_1")).rejects.toMatchObject({ code: "take_unanswered" });
 });
 
 test("nothing but an account add's inspect and take is ever sent on the forwarded recovery socket", async () => {

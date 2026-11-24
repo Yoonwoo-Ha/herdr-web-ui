@@ -99,7 +99,10 @@ describe("reachableState", () => {
     expect(reachableState(mac!, facts({ tailnet: probed, accountPcs: new Set(["srv_mac"]) }))).toBe("in-account");
     expect(reachableState(mac!, facts({ tailnet: probed, accountPcs: new Set(["srv_other"]) }))).toBe("open");
     expect(reachableState(hosthatch!, facts({ machines: [ssh("hosthatch", { server_id: "srv_hh" })], accountPcs: new Set(["srv_hh"]) }))).toBe("in-account");
-    expect(reachableState(hosthatch!, facts({ machines: [ssh("hosthatch", { server_id: "srv_hh" })], accountPcs: new Set() }))).toBe("added");
+    // here already but not in the account (an add over SSH that stopped there): Add again, on that same PC
+    expect(reachableState(hosthatch!, facts({ machines: [ssh("hosthatch", { server_id: "srv_hh" })], accountPcs: new Set() }))).toBe("open");
+    // here already with no relay ID to tell by: added
+    expect(reachableState(hosthatch!, facts({ machines: [ssh("hosthatch")], accountPcs: new Set() }))).toBe("added");
     // a PC this app already has through the relay is not added a second time over SSH
     expect(reachableState(mac!, facts({ tailnet: probed, machines: [relayPc("srv_mac")], accountPcs: new Set() }))).toBe("added");
     // in the account comes first: an older Ovis there needs no update to be in it

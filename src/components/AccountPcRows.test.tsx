@@ -15,7 +15,8 @@ const { AccountPcRows, NoAccountPcHint, signInOfAccount } = await import("./Acco
 
 const DESK = "a".repeat(32);
 const LAPTOP = "b".repeat(32);
-const pc = (server_id: string, name: string): MyPc => ({ server_id, name, state: "needs-approval", last_seen_at: null, added_at: null, listed: true, paired: false, linked: false });
+// a PC in the account (it took its place there), which this device is not paired with
+const pc = (server_id: string, name: string): MyPc => ({ server_id, name, state: "needs-approval", last_seen_at: null, added_at: null, listed: true, joined: true, paired: false, linked: false });
 
 const NOW = Date.parse("2026-11-11T00:00:00Z");
 const gone = (server_id: string, name: string): MyPc => ({ ...pc(server_id, name), state: "offline", last_seen_at: "2026-11-01T00:00:00Z", added_at: "2026-10-01T00:00:00Z" });

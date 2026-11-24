@@ -55,6 +55,12 @@ export interface MyPc {
   /** added before this device joined, paired here or not (#29: told once in the main area, never tagged in the sidebar) */
   readonly admitted_before_you?: true;
   readonly listed: boolean;
+  /**
+   * The PC took its place in the account: it completed its add (the directory's `completed_at`) or has pulled the
+   * account's mailbox (`last_seen_at`), which only a PC in the account does. A listing or an admission alone is neither
+   * (docs/account.md, "Adding a PC over SSH").
+   */
+  readonly joined?: true;
   /** this device holds an admitted key for it, so it can open; whatever its state says */
   readonly paired: boolean;
   readonly accountOpen?: true;
@@ -74,6 +80,8 @@ export interface MyPc {
 
 const ORDER: Record<MyPcState, number> = { paired: 0, "needs-update": 1, "needs-approval": 2, offline: 3 };
 
+const joinedOf = (pc: DirectoryPc | undefined): { joined?: true } => pc !== undefined && (typeof pc.completed_at === "string" || pc.last_seen_at !== null) ? { joined: true } : {};
+
 export function myPcs(directory: readonly DirectoryPc[], paired: readonly RelayDevice[], options: { now: number; outdated?: ReadonlySet<string>; accountKey?: string; account?: string; registered?: boolean }): MyPc[] {
   const listed = new Map(directory.map((pc) => [pc.server_id, pc]));
   const rows: MyPc[] = [];
@@ -88,11 +96,11 @@ export function myPcs(directory: readonly DirectoryPc[], paired: readonly RelayD
     listed.delete(device.server_id);
     const lastSeen = entry?.last_seen_at ?? null;
     const enrollment = enrollmentOf(device, options.account);
-    rows.push({ server_id: device.server_id, name: device.name ?? device.server_id.slice(0, 8), state: stateOf(device.server_id, true, lastSeen), last_seen_at: lastSeen, added_at: entry?.added_at ?? null, ...(entry === undefined ? {} : { new_until: entry.new_until, ...(entry.new_until_unreadable ? { new_until_unreadable: true as const } : {}), ...(entry.admitted_before_you ? { admitted_before_you: true as const } : {}) }), listed: entry !== undefined, paired: true, linked: enrollment !== "pending" && enrollment !== "failed" && entry !== undefined && device.public_spki === options.accountKey && device.account !== undefined && device.account === (options.account ?? device.account), ...(enrollment ? { enrollment } : {}) });
+    rows.push({ server_id: device.server_id, name: device.name ?? device.server_id.slice(0, 8), state: stateOf(device.server_id, true, lastSeen), last_seen_at: lastSeen, added_at: entry?.added_at ?? null, ...(entry === undefined ? {} : { new_until: entry.new_until, ...(entry.new_until_unreadable ? { new_until_unreadable: true as const } : {}), ...(entry.admitted_before_you ? { admitted_before_you: true as const } : {}) }), listed: entry !== undefined, ...joinedOf(entry), paired: true, linked: enrollment !== "pending" && enrollment !== "failed" && entry !== undefined && device.public_spki === options.accountKey && device.account !== undefined && device.account === (options.account ?? device.account), ...(enrollment ? { enrollment } : {}) });
   }
   for (const pc of listed.values()) {
     const join = joinRoute(pc);
-    rows.push({ server_id: pc.server_id, name: pc.label, state: stateOf(pc.server_id, false, pc.last_seen_at), last_seen_at: pc.last_seen_at, added_at: pc.added_at, ...(pc.invited_at === undefined ? {} : { invited_at: pc.invited_at }), new_until: pc.new_until, ...(pc.new_until_unreadable ? { new_until_unreadable: true as const } : {}), ...(pc.admitted_at == null ? {} : { admitted_at: pc.admitted_at }), ...(pc.admitted_before_you ? { admitted_before_you: true as const } : {}), listed: true, paired: false, linked: false, ...(join ? { join, ...(options.registered ? { accountOpen: true as const } : {}) } : {}) });
+    rows.push({ server_id: pc.server_id, name: pc.label, state: stateOf(pc.server_id, false, pc.last_seen_at), last_seen_at: pc.last_seen_at, added_at: pc.added_at, ...(pc.invited_at === undefined ? {} : { invited_at: pc.invited_at }), new_until: pc.new_until, ...(pc.new_until_unreadable ? { new_until_unreadable: true as const } : {}), ...(pc.admitted_at == null ? {} : { admitted_at: pc.admitted_at }), ...(pc.admitted_before_you ? { admitted_before_you: true as const } : {}), listed: true, ...joinedOf(pc), paired: false, linked: false, ...(join ? { join, ...(options.registered ? { accountOpen: true as const } : {}) } : {}) });
   }
   return rows.sort((a, b) => ORDER[a.state] - ORDER[b.state] || a.name.localeCompare(b.name));
 }
