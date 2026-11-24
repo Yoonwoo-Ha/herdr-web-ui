@@ -635,7 +635,15 @@ export function lockRefusal(code: "locked" | "strict"): string {
  * A first join (`digits`: asked while this PC had no member to approve it, as a PC added in one press has) comes with
  * them, for the own window's card to show; this terminal never shows them, and asks for them typed all the same.
  */
-export interface OwnJoin { readonly id: string; readonly label: string; readonly asked_at?: string; readonly digits?: string }
+/** `list`: the join is let in by the account's signed list, so an approval is only received here: the device is in once its entry is in the list. */
+export interface OwnJoin { readonly id: string; readonly label: string; readonly asked_at?: string; readonly digits?: string; readonly list?: boolean; readonly list_behind?: boolean }
+
+/** What a terminal says once this PC took the approval of `label`: it is let in at once, or, by the account's list, once its entry is there. */
+const approvedWords = (label: string, list: boolean, behind = false): string => behind
+  ? `${label} was not let in: Ovis on this PC is older than what a device wrote into your account's list, and lets nobody new in until it is updated. Update Ovis on this PC (Settings → Updates), then have ${label} ask again; or allow it on another device of your account.\n`
+  : list
+  ? `The approval of ${label} was received. It opens this PC once it is in your account's list, which takes a moment; if it does not, have it ask again.\n`
+  : `${label} is let in; it opens this PC in a moment.\n`;
 
 /** What `POST /api/relay/join` made of the six digits typed: `away` when its answer did not come. */
 export type JoinOutcome = "approved" | "wrong_digits" | "gone" | "locked" | "strict" | "away";
@@ -690,7 +698,8 @@ export async function approveJoins(joins: readonly OwnJoin[], options: JoinOptio
       const outcome = await options.approve(join.id, typed);
       if (outcome === "locked" || outcome === "strict") { out(lockRefusal(outcome)); return 1; }
       if (outcome === "away") { out("Your answer may not have reached the Ovis on this PC. Run this again once it answers.\n"); return 1; }
-      out(outcome === "approved" ? first ? `${label} is let in; it opens this PC in a moment.\n` : `Approved: ${label} joins your account once it confirms.\n`
+      // a join into the account's list is let in by its entry, first join or not: the approval was received, no more
+      out(outcome === "approved" ? first || join.list === true ? approvedWords(label, join.list === true, join.list_behind === true) : `Approved: ${label} joins your account once it confirms.\n`
         : outcome === "wrong_digits" ? first ? `That is not the number ${label} shows, so it was not let in. To try again, have ${label} ask again, then run ${command} again.\n`
           : `That is not the number ${label} shows. It was not let in; it can ask again.\n`
         : `${label} is no longer waiting.\n`);
@@ -1639,7 +1648,7 @@ async function watchFirstJoins(options: LinkOptions, api: Api, watched: { readon
   const stopAt = now() + FIRST_JOIN_MS;
   interface Question { readonly prompt: string; shownAt: number | null }
   const intro: Question = { prompt: `Open ${name} from My PCs on your phone. If the phone shows six digits, type them here (Enter to finish without): `, shownAt: null };
-  let asked: (Question & { readonly id: string; readonly label: string }) | null = null;
+  let asked: (Question & { readonly id: string; readonly label: string; readonly list: boolean; readonly behind: boolean }) | null = null;
   const current = (): Question => asked ?? intro;
   const seen = new Set<string>();
   let onScreen: Question | null = null;
@@ -1683,7 +1692,7 @@ async function watchFirstJoins(options: LinkOptions, api: Api, watched: { readon
         if (!SIX_DIGITS.test(typed)) { say(`That line answered nothing: type all six digits ${label} shows, or press Enter by itself to finish without. Answer again.\n`); continue; }
         try {
           await api("POST", "/api/relay/join", { body: { id, digits: typed } });
-          say(`${label} is let in; it opens this PC in a moment.\n`);
+          say(approvedWords(label, asked.list, asked.behind));
           return true;
         } catch (error) {
           if (signal.aborted || !(error instanceof LocalError || error instanceof AwayError)) throw error;
@@ -1716,7 +1725,7 @@ async function watchFirstJoins(options: LinkOptions, api: Api, watched: { readon
         if (next !== undefined) {
           seen.add(next.id);
           const label = plainLabel(next.label);
-          asked = { id: next.id, label, prompt: `${firstJoinLead(next, account)} Type the six digits ${label} shows (one wrong entry ends this request), or press Enter to finish without: `, shownAt: null };
+          asked = { id: next.id, label, list: next.list === true, behind: next.list_behind === true, prompt: `${firstJoinLead(next, account)} Type the six digits ${label} shows (one wrong entry ends this request), or press Enter to finish without: `, shownAt: null };
         }
         const rows = await throughAccount();
         if (rows !== null && known === null) known = new Map(rows.map((row) => [row.id, usage(row)]));

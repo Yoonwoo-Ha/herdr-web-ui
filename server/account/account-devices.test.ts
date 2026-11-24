@@ -349,3 +349,17 @@ describe("what the record of how long a key has been let in reads of the rows (w
   });
 });
 
+describe("a key a person at this PC has just let in", () => {
+  test("waits no join hold on its row, also while no notice can be made: making that row live takes none", () => {
+    const dir = stateDir();
+    const slots = { free: true };
+    const { ports: p } = ports(dir, { hasNoticeSlot: () => slots.free });
+    const store = new AccountDeviceStore(dir, SERVER, p);
+    store.commitList(list(["k-1", "k-2"]));
+    expect(store.rows().map((row) => row.state)).toEqual(["hold", "hold"]);
+    // every notice is taken: nobody new is admitted, and the row of the key a person let in goes live all the same
+    slots.free = false;
+    expect(store.commitList(list(["k-1", "k-2", "k-3"], [], 2), undefined, (key) => key === keyOf("k-2")).admitted).toEqual([]);
+    expect(store.rows().map((row) => [nameOf(row.key), row.state])).toEqual([["k-1", "hold"], ["k-2", "live"]]);
+  });
+});

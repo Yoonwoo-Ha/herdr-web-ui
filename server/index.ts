@@ -230,6 +230,8 @@ export function createServer(
     pcUpdateTimings?: { pollMs?: number; startMs?: number; checkMs?: number; offerMs?: number };
     /** how long this PC, added to an account over SSH, waits for its relay to come online before it answers (30 s) */
     accountAddRelayMs?: number;
+    /** How long a join a member allowed waits for that member's entry in the account's list (list-follow.ts LIST_MEMBER_WAIT_MS). */
+    accountListMemberWaitMs?: number;
     tailnetPcs?: TailnetPcsOptions;
     sshCandidates?: SshCandidatesOptions;
     /** a bridge this app starts on a PC (server/remote-entry.ts): its token is the credential its connection server holds, and no browser reaches it, so its snapshots go whole (#2160) */
@@ -445,15 +447,16 @@ export function createServer(
     pin: (bindId, list) => pcAccount.pinToList(bindId, list),
     alarm: (bindId) => pcAccount.alarmList(bindId),
     removedFrom: (account, serverId) => pcAccount.removedByList(account, serverId),
-    call: (path, body) => accountMailbox.listRoute(path, body),
+    call: (path, body, ready) => accountMailbox.listRoute(path, body, ready),
     rowKey: (id) => accountRows?.row(id)?.key ?? null,
     now: () => Date.now(),
-    commit: (list, readmission, first) => {
+    commit: (list, readmission, unheld) => {
       const store = accountRows?.store();
       if (!store) return;
-      store.commitList(list, readmission, first);
+      store.commitList(list, readmission, unheld);
       store.expire();
     },
+    mayAdmit: (key) => { const account = devices.account(); return account !== null && devices.admitsFromList(key, account) && !accountMailbox.listHeld(key); },
     // while the rows still stand, so their sessions end as `auth_changed` and each app signs in again by itself
     repinned: () => {
       for (const row of accountRows?.rows() ?? []) devices.closeAccountSessions(row.id);
@@ -468,6 +471,7 @@ export function createServer(
     leave: (serverId) => devices.clearAccountBinding("unlisted", LIST_REMOVED, serverId),
     recheck: () => { devices.recheckListedSessions(); },
     busy: () => devices.sessionsOpen(),
+    ...(options.accountListMemberWaitMs === undefined ? {} : { memberWaitMs: options.accountListMemberWaitMs }),
     denied: (key) => { devices.closeKeySessions(key); },
     // what another Ovis server on this folder wrote to the PC's place in its account since this one read it (a pin, a
     // clear) is taken in at each look at the clock, so this server decides by it within seconds

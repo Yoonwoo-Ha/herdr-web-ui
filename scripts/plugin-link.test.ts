@@ -2043,6 +2043,28 @@ describe("ovis link, on the PC itself", () => {
     const asks = (label: string) => `${label} asks to open this PC (from Ovis account acct_1, asked at ${at}). Type the six digits ${label} shows (one wrong entry ends this request), or press Enter to finish without: `;
     const after = (text: string) => text.slice(text.indexOf(WATCH));
 
+    it("says only that the approval was received where the account's signed list lets the device in", async () => {
+      const run = await pressing({
+        pressAfter: 2,
+        joins: (reads) => reads < 3 ? [] : [{ ...first("f1", "Pixel", "482913"), list: true }],
+        watch: (said, answer) => { if (said.endsWith(asks("Pixel"))) answer("482913"); },
+      });
+      expect(run.code).toBe(0);
+      expect(after(run.text)).toContain(`${asks("Pixel")}The approval of Pixel was received. It opens this PC once it is in your account's list, which takes a moment; if it does not, have it ask again.\n`);
+      expect(after(run.text)).not.toContain("is let in");
+    });
+
+    it("says that Ovis on this PC needs an update where it is behind its account's list, and promises nothing", async () => {
+      const run = await pressing({
+        pressAfter: 2,
+        joins: (reads) => reads < 3 ? [] : [{ ...first("f1", "Pixel", "482913"), list: true, list_behind: true }],
+        watch: (said, answer) => { if (said.endsWith(asks("Pixel"))) answer("482913"); },
+      });
+      expect(run.code).toBe(0);
+      expect(after(run.text)).toContain(`${asks("Pixel")}Pixel was not let in: Ovis on this PC is older than what a device wrote into your account's list`);
+      expect(after(run.text)).not.toContain("was received");
+    });
+
     it("asks about the first join that comes by its device, shows none of its digits, and lets it in with the six typed here", async () => {
       const run = await pressing({
         pressAfter: 2,
@@ -4078,6 +4100,26 @@ describe("ovis approve, a members join typed with all six of its digits (#28)", 
       expect(out.at(-1)).toBe("Pixel is let in; it opens this PC in a moment.\n");
     });
 
+    it("says only that the approval was received for a join the account's signed list lets in: the device is in once its entry is", async () => {
+      const { code, out } = await joining({
+        joins: [{ ...firstOf("f1", "482913"), list: true }], account: "acct_1a2b3c4d5e6f",
+        said: (said, answer) => { if (said === firstPrompt("Pixel")) answer("482913"); },
+      });
+      expect(code).toBe(0);
+      expect(out.at(-1)).toBe("The approval of Pixel was received. It opens this PC once it is in your account's list, which takes a moment; if it does not, have it ask again.\n");
+      expect(out.join("")).not.toContain("is let in");
+    });
+
+    it("says that Ovis on this PC needs an update where it is behind its account's list, and never that the device is let in", async () => {
+      const { code, out } = await joining({
+        joins: [{ ...firstOf("f1", "482913"), list: true, list_behind: true }], account: "acct_1a2b3c4d5e6f",
+        said: (said, answer) => { if (said === firstPrompt("Pixel")) answer("482913"); },
+      });
+      expect(code).toBe(0);
+      expect(out.at(-1)).toBe("Pixel was not let in: Ovis on this PC is older than what a device wrote into your account's list, and lets nobody new in until it is updated. Update Ovis on this PC (Settings → Updates), then have Pixel ask again; or allow it on another device of your account.\n");
+      expect(out.join("")).not.toMatch(/is let in|was received/);
+    });
+
     it("says so when the digits are wrong, which ends that join, and how to try again; Enter by itself skips the next and sends nothing", async () => {
       const { code, out, sent } = await joining({
         joins: [firstOf("f1", "482913"), firstOf("f2", "111222")], account: "acct_1a2b3c4d5e6f",
@@ -4091,6 +4133,16 @@ describe("ovis approve, a members join typed with all six of its digits (#28)", 
       expect(sent).toEqual([{ id: "f1", digits: "000000" }]);
       expect(out).toContain("That is not the number Pixel shows, so it was not let in. To try again, have Pixel ask again, then run ovis approve again.\n");
       expect(out).toContain("Galaxy is left waiting until its time runs out.\n");
+    });
+
+    it("says only that the approval was received for every join into the list, a join that is not a first one too, and that Ovis needs an update where this PC is behind", async () => {
+      const typed = (said: string, answer: (line: string) => void) => { if (prompt(said, "j1")) answer("123456"); };
+      const listed = await joining({ joins: [{ ...joinOf("j1"), list: true }], account: null, said: typed });
+      expect(listed.out.at(-1)).toBe("The approval of Tablet one was received. It opens this PC once it is in your account's list, which takes a moment; if it does not, have it ask again.\n");
+      expect(listed.out.join("")).not.toContain("joins your account");
+      const behind = await joining({ joins: [{ ...joinOf("j1"), list: true, list_behind: true }], account: null, said: typed });
+      expect(behind.out.at(-1)).toContain("Update Ovis on this PC");
+      expect(behind.out.join("")).not.toMatch(/joins your account|was received/);
     });
 
     it("leaves out the account when this PC did not say which, and asks about a members join as before", async () => {

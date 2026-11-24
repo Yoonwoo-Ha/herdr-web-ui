@@ -25,7 +25,8 @@ import { applyAccountRecords, stageMailboxAdds, type AddGates, type RecordOutcom
 
 /** The account service refused a PC route: its status and error code, when it named one. */
 export class AccountServiceRefusal extends Error {
-  constructor(readonly status: number, readonly code: string | null, readonly path: string) {
+  /** `retryAfter`: the seconds the service asks to wait (its `retry-after`), or null when it names none. */
+  constructor(readonly status: number, readonly code: string | null, readonly path: string, readonly retryAfter: number | null = null) {
     super(`The account service answered ${status} to ${path}`);
     this.name = "AccountServiceRefusal";
   }
@@ -497,13 +498,17 @@ export class AccountMailbox {
 
   /**
    * A PC route of the account's signed list (`/v2/pc/list…`): `body` beside this PC's relay key and a fresh, single-use
-   * proof of it, as for its mailbox. Throws AccountServiceRefusal for an answer that is not 2xx.
+   * proof of it, as for its mailbox. Throws AccountServiceRefusal for an answer that is not 2xx. `ready` runs once the
+   * proof is made (a request of its own), right before the route's request goes out: what it throws stops that
+   * request, so what the caller checks there holds at the moment its body leaves this PC.
    */
-  async listRoute(path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  async listRoute(path: string, body: Record<string, unknown>, ready?: () => void): Promise<Record<string, unknown>> {
     const identity = this.options.identity();
     if (!identity) throw new Error("This PC has no relay identity");
     if (this.options.service instanceof Error) throw this.options.service;
-    const answer = await this.call(path, { server_id: identity.server_id, public_key: bytesToHex(importPublicKey(identity.public_key)), ...await this.prove(identity), ...body });
+    const proof = await this.prove(identity);
+    ready?.();
+    const answer = await this.call(path, { server_id: identity.server_id, public_key: bytesToHex(importPublicKey(identity.public_key)), ...proof, ...body });
     if (answer === null || typeof answer !== "object" || Array.isArray(answer)) throw new Error(`The account service sent a malformed answer to ${path}`);
     return answer;
   }
@@ -1032,7 +1037,7 @@ export class AccountMailbox {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(15_000),
     }));
     if (gone && response.status === 410) return null;
-    if (!response.ok) throw new AccountServiceRefusal(response.status, await refusalCode(response), path);
+    if (!response.ok) throw new AccountServiceRefusal(response.status, await refusalCode(response), path, retryAfterSeconds(response.headers.get("retry-after")));
     return await response.json() as Record<string, unknown>;
   }
 

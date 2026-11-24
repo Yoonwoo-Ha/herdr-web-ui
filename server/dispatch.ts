@@ -82,7 +82,7 @@ import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
 import { bridgeIdentity } from "./bridge.ts";
 import { discoverHerdrSessions } from "./herdr-discovery.ts";
 import { ACCOUNT_PC_OWNER_ONLY, accountRoster, handleMachineRequest, nonCanonicalPath, slowMachinePath, type EventStreamBudget } from "./machine-api.ts";
-import { machinePairingEvents } from "./machine-pairing-events.ts";
+import { machinePairingEvents, remotePairingEvents } from "./machine-pairing-events.ts";
 import { handleJoinSeen, JOIN_SEEN_PATH, type JoinNotices, type JoinViewer } from "./join-notices.ts";
 import { handleSessionHistoryRequest, handleSessionResumeRequest, SESSION_HISTORY_PATH, SESSION_RESUME_PATH } from "./session-history-routes.ts";
 import type { PiSessionReader } from "./pi-session-metadata.ts";
@@ -448,6 +448,13 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   const ownLink = relayPeer?.provisional === true && request.method === "POST" && pathname === "/api/account/link";
   if (readOnly && (fileRead || directoryListing || repositoryDiff || pullRequest || sessionHistory || commandRows || paneFiles || pluginRun || worktreeList || pairingDigits || mutating && !ownPreferences && !ownLink)) {
     setRequestRoute("watch-refusal");
+    // A device the account's list holds only to watch, asking for the joins that wait at this pinned PC or deciding one:
+    // it is told, in a code of its own, that it is in the list and may not let a device in (relay/routes.ts says the
+    // same to a device that drives with bound power)
+    if (ctx.peer.kind === "relay" && ctx.peer.key !== "" && (pairingDigits && request.method === "GET" || pathname === "/api/relay/pairing" && request.method === "POST")
+      && ctx.services.accountList?.allowsJoins(ctx.peer.key) === false) {
+      return jsonResponse({ error: { code: "list_cannot_allow", message: "This device is in your account's list, but only a device that can add devices to the list may let one in." } }, 403);
+    }
     return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);
   }
   // a text file is edited (read for it and saved) only by a device that drives this PC, here or through it on another PC (file-edit.ts)
@@ -646,6 +653,8 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     const localRoster = machines && eventsEnabled && listed ? (tell: (rows: Machine[]) => void) => machines.subscribe(event => {
       if (event.type === "machines") tell(accountRoster(herdrSidebar.get(), event.machines));
     }) : undefined;
+    // a device of the account's list hears the joins that wait at this PC over the same socket, when it may let one in
+    const listJoins = localRoster ? remotePairingEvents(ctx) : undefined;
     const presentedKeys = streamKeys(request);
     const issuedKey = useMachineEvents && presentedKeys.length === 0 ? newStreamKey() : null;
     const keys = issuedKey === null ? presentedKeys : [issuedKey];
@@ -655,7 +664,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
       manager: machines, preferences, herdrSidebar, seen,
       pairings: machinePairingEvents(ctx, access, keys, joinViewer),
     } : undefined;
-    const upgraded = ctx.upgrade(request, { headers, data: connectionData({ machineEvents, localRoster, deviceId, ...(ctx.peer.kind === "relay" && ctx.peer.device.id === deviceId && ctx.peer.key ? { provedKey: ctx.peer.key } : {}), readOnly, ...(openAccess && !bridgeAuthorized ? { open: true } : {}), bridge: bridgeAuthorized, ...(surface ? { surface } : {}), ...(ingress === undefined ? {} : { ingress }), ...recheck, ...(untilRefused ? { untilLock: untilRefused } : {}) }) });
+    const upgraded = ctx.upgrade(request, { headers, data: connectionData({ machineEvents, localRoster, listJoins, deviceId, ...(ctx.peer.kind === "relay" && ctx.peer.device.id === deviceId && ctx.peer.key ? { provedKey: ctx.peer.key } : {}), readOnly, ...(openAccess && !bridgeAuthorized ? { open: true } : {}), bridge: bridgeAuthorized, ...(surface ? { surface } : {}), ...(ingress === undefined ? {} : { ingress }), ...recheck, ...(untilRefused ? { untilLock: untilRefused } : {}) }) });
     if (upgraded) return undefined;
     return new Response("websocket upgrade required", { status: 426 });
   }

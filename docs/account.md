@@ -498,6 +498,8 @@ A client offers features in `HELLO`; a PC that supports them selects them in `WE
 | `pair-intent-account` | this comparison adds the device to the account |
 | `pair-intent-pc-vouched` | another PC of the account pairs with this PC only, vouched for by an admission ([Adding a PC of your account](#adding-a-pc-of-your-account)) |
 | `pair-pc-proof` | required with the vouched intent for a member tap; B can journal the join and verify A’s server identity in this SAS session. B selects the vouched intent only when this is offered too, so an older A that offers the intent alone reads B as a PC to update, and its `PAIR_REQUEST` is still refused |
+| `account-list-1` | the PC lets its account's devices in by the account's signed list alone ([How an app signs in to a pinned PC](#how-an-app-signs-in-to-a-pinned-pc)) |
+| `account-list-allow-1` | with `pair-intent-account`: this PC follows the account's signed list, and takes the device's card with its `PAIR_REQUEST` ([A PC allows a device into the list](#a-pc-allows-a-device-into-the-list)) |
 
 A client offering `pair-sas` offers at most one intent; a PC selects an intent only together with
 `pair-sas`, and only the one offered. A `HELLO` with more than one intent ends with `protocol_error`. A
@@ -568,7 +570,7 @@ account after `ovis logout` is so a sign-in on the PC itself.
 alone (403 `owner_only` otherwise); 404 with Step 2 off.
 
 ```json
-{ "account": "acct_1", "list": "<list id>", "pinned": false, "pinned_list": null, "want": null, "standing": "in", "head": { "seq": 12, "hash": "<64 hex>" }, "devices": 3, "pcs": 2, "alarm": null, "last_read_at": "2026-11-24T01:02:03.000Z", "last_verdict": "caught_up", "differences": 0, "keys": "ready", "posted_until": null, "error": null, "reason": null }
+{ "account": "acct_1", "list": "<list id>", "pinned": false, "pinned_list": null, "want": null, "standing": "in", "head": { "seq": 12, "hash": "<64 hex>" }, "devices": 3, "pcs": 2, "alarm": null, "last_read_at": "2026-11-24T01:02:03.000Z", "last_verdict": "caught_up", "differences": 0, "keys": "ready", "posted_until": null, "error": null, "reason": null, "behind": false }
 ```
 
 `list` is `null` while the PC reads none. `pinned` says whether the PC lets its account's devices in
@@ -583,7 +585,9 @@ holds, `none` when the service named no list, or why nothing was taken: `withhel
 `differences` counts what the list would have decided otherwise since this start, credentials and
 devices alike (see `account.list.differs` below). `keys` is `ready`,
 or `unreadable` for a keys file that will not read. `posted_until` is until when the account
-service holds this PC's keys for a member to add it. No answer holds a key.
+service holds this PC's keys for a member to add it. `behind` is true once a member wrote an
+entry this Ovis is too old to read: the PC goes on letting in whoever the list holds and putting
+out whoever it removes, and signs nobody in until Ovis on it is updated. No answer holds a key.
 
 `POST /api/account/list/pin` `{ "list" }`: a person at this PC names the list of its account, by its
 id (64 of `0-9a-f`). This PC's own window and CLI alone (403 `owner_only` otherwise). It answers as
@@ -1286,6 +1290,15 @@ entry for the same PC replaces it, at most 32 PCs and 256 devices). Answers 204.
 (the one account route that needs no drive access, since it reads only the caller's own
 introduction); answers `{ "pcs" }` for its own key, or 404 `introduction_none`.
 
+Where the account keeps a [signed list](#the-accounts-signed-list-on-a-pc) and X does not follow
+it, the member also names the place of the new device's entry: `introduce` takes `"list": { "id",
+"seq", "hash" }` (the list's id, and the place and hash of that entry), X keeps the latest one with
+the introduction, checking its form only (`introduction_invalid` otherwise), and `introduction`
+answers `{ "pcs", "list" }`. The device reads the list up to that place itself; X's word adds
+nothing to it. A PC that follows the list tells the device its place in `AUTH_OK` instead
+([A PC allows a device into the list](#a-pc-allows-a-device-into-the-list)), keeps no `list` and
+answers none: a device learns its place one way, never both.
+
 A PC saved only by an introduction is one this device never chose: the app never opens it by itself
 (at a launch, or as the PC opened last) until the person opens it once, which marks it chosen.
 
@@ -1637,12 +1650,11 @@ again. On a PC that is not pinned the file is only a copy, and one that will not
   account's id for the key. The session it was compared on opens nothing by that row: it ends
   (`account_list_required` to a client that offered `account-list-1`, else `auth_failed`), and the
   device gets in by a sign-in once the list holds that key.
-- **Another PC of the account** that is vouched for is the one join whose session goes on: the
-  list answered for its relay key in the turn that wrote its row, and it only watches. Its row has
-  the account's id for the key it showed, and the list holds no device under that key, so a later
-  sign-in of that PC is refused, and it is not taken again while that row stands here. A pinned
-  PC therefore lets another PC of its account watch for one session only; its row does not record
-  which PC it is, which is what the list would have to answer for.
+- **Another PC of the account** that is vouched for is the list's to answer for by its relay
+  key. Its row records the relay key the join proved (`vouched_pc`), and on a pinned PC it is let
+  in, to watch, while the list holds that relay key as a PC that is in: at its comparison and at
+  every later sign-in. Its session ends when the list removes that PC, and it signs in no more. A
+  row of such a PC from before this was recorded names no PC and opens nothing on a pinned PC.
 - **It says so.** For a pinned PC, `GET /api/account/status` carries `list`: `pinned_list` (the
   list's id; `GET /api/account/list` has it under the same name, also when the PC holds no copy it
   can read), `standing` (where the PC stands in it) and `reason`, one sentence a person can act on when
@@ -1651,6 +1663,108 @@ again. On a PC that is not pinned the file is only a copy, and one that will not
   Ovis on this PC"); reading the list again after its copy was lost; started with a change it had
   acted on and not saved. `GET /api/account/list` carries the same `reason`, and `ovis status
   --json` both (`list`). Null while the PC follows its list as usual.
+
+#### A PC allows a device into the list
+
+A device joins an account that has a list by an entry a member signed. A PC that a person added to
+the list is such a member, so a person at that PC can let a new device in: the PC signs the
+device's entry with its own list key. This is the join by comparing digits
+([Joining through the account](#who-may-admit-a-device)), decided as before in the PC's own window
+or by the digits typed at `ovis approve`; what changes is what the approval writes.
+
+- **The PC says whether it takes a card.** It selects the feature `account-list-allow-1` for a join
+  while it is pinned to its list, is in it, its copy is usable and no alarm stands. A PC that
+  follows no list does not select it, and the join is then the PC's own pairing, as before.
+- **The device sends its card.** With the feature selected, its `PAIR_REQUEST` carries `list_enc`,
+  its encryption key, and `list_card`, its [card](account-list.md#a-card) for the list: its own
+  signature over its key, that encryption key and the list id. `public_key` is the key the list
+  will hold for it. A PC that did not select the feature ignores both, whatever form they have: an
+  app that sends them to a PC with no list pairs there as it always did. A PC that selected it
+  refuses members out of their form (`protocol_error`). `PAIR_CHALLENGE` then names the list the
+  PC follows (`list`), so the device can stop when its card names another.
+- **The person decides as before**: the digits compared in the PC's own window, or typed at
+  `ovis approve`. Nothing is signed before both sides said the digits match. `GET
+  /api/relay/joins` marks such a join `list`, and `ovis approve` then says that the approval was
+  received, not that the device is let in: it is in once its entry is in the list. On a PC whose
+  Ovis is behind the list the join is marked `list_behind` too, and `ovis approve` says that the
+  device was not let in and that Ovis on this PC needs an update.
+- **The PC signs only for a person at this PC**: an approval from its own window or its local
+  command. An approval from another browser that drives the PC, and a member's approval from afar,
+  sign nothing here. A PC that joined by an invite is in the list and signs for nothing either.
+- **The PC signs and places the entry.** A `device` entry with full power and the role `drive`,
+  written through the list's own writer, which signs nothing that would not count: a card that is
+  not that key's for this list is never signed over. It is signed by this PC's own clock as it
+  reads now, never an hour the account service names, and never the hour the PC saved: that one
+  lets in and refuses, and decides nothing that is signed. That clock is held against the list's
+  own time alone: an entry is never dated before the one it follows. The device's name is sealed
+  under the list's key, and that key
+  is wrapped to the device, when the PC holds it; without it the device is let in all the same and
+  reads no names yet. The PC sends the entry to the account service (`POST /v2/pc/list/entries`,
+  with its proof), which places it only while a sign-in of the account has claimed that key: a PC
+  alone, or whoever drives it, lets in no device the account's owner did not sign in on. What this
+  PC itself holds against the key, its own place in the account, and whether its copy as it stands
+  then still lets it sign (no alarm, nothing it is too old to read) are asked again before each
+  submission, and once more when the PC's proof to the service is made (a request of its own),
+  right before the entry leaves this PC.
+- **The device is in when the log shows the entry**, never on the service's answer. Its row on
+  this PC waits for no join hold, also when a read made that row a moment before. Its `AUTH_OK`
+  names the list and the place of that entry (`list`: `id`, `seq`, `hash`), over the session whose
+  digits were compared: the device takes the list id from there and reads the list up to that
+  place. That session serves nothing else (403 `sign_in_required` for every call), whichever row
+  this PC holds for that id and whatever role that row carries (the list answered for the key; a
+  row of this PC's own under the account's id gives it nothing, here as at a sign-in): the key was
+  sent with the comparison and never signed with, and the device signs in with it. A key this PC already holds by a pairing under an id of its own gets
+  its receipt the same way, over that pairing's row, and then signs in with its list key over that
+  row; the answer names the account's id for the key.
+- **When the entry does not go in**, the join ends as any join that was not let in (`auth_failed`),
+  and nothing is written in its place: no pairing of this PC's own stands in for the list. The
+  refusal's `message` says which cause it was: `list_not_claimed` (no sign-in of the account
+  claimed the key), `list_service_away` or `list_head_lost` (it could not be placed in time),
+  `list_not_in` (a member allowed it and no entry reached this PC), `list_pc_behind` (Ovis on this
+  PC is older than what a member wrote into the list, so the PC signs nobody in until it is
+  updated; a device of the account can still allow the newcomer), else `list_refused`. One entry
+  is signed for one place: the same signed entry is sent again while this PC's copy shows the same
+  head (a lost answer, a 5xx answer that says nothing of the entry, a read that failed, a service
+  that asks to try again or is reading the list again, after the time its `retry-after` names),
+  and another is signed only once the copy shows a new head. An answer that does not say whether
+  the entry was placed is no refusal: the log is read before the device is answered. Four tries in
+  all. The signed request is kept beside the copy (`account-list-allow.json`, mode 0600) until the
+  copy is past the head it was signed on: another Allow at that head, of the same device or of
+  another, and one after a restart send those very bytes first and sign nothing else there. An
+  entry that cannot be kept is not sent. Any other refusal ends it at once, and the kept request
+  with it, since the service itself said that it placed nothing: a budget, a service that changes
+  the list for nobody (`list_stopped`), a key this PC itself keeps out.
+- **A join a member device allows** is let in only when an entry of the list lets the device in:
+  the PC signs nothing on a member's approval. The member signs only after the new device
+  confirmed its digits, so a device that gives up before that is nobody's member: a waiting join
+  says `confirmed: true` in `GET /api/relay/pairings` (and the `remote-pairings` event is sent
+  again) once the new device's person said the digits match. Only a join marked `list` has that
+  member and that second event: a pairing of the PC's own is told and answered as it always was.
+  An approval from afar that comes before it is refused, 409 `not_confirmed`, and the join waits as
+  it did. The member then approves, signs the entry, places it and may hand it to the PC. From the
+  moment the approval and the confirm are both in, the PC waits 30 seconds for the entry to be in
+  its copy: it asks the account service every 3 seconds, takes a page a device hands over at once,
+  and at the end asks the service once more, with a read begun when the 30 seconds are over (one
+  that was out before then is let end first), and then answers as above. That wait holds back no
+  read and no page.
+- **Which device may allow.** A device signed in to this PC with the key the list holds for it
+  sees the joins into the list that wait here (`GET /api/relay/pairings`, each marked `list`, and
+  the `remote-pairings` event, which its own socket carries beside this PC's roster once it turned
+  machine events on) and decides one (`POST /api/relay/pairing`, with the digits the new
+  device shows) only when the list holds it **to drive, with full power**: what may add a device
+  to the list may approve its join. A device the list holds to watch, or with bound power, gets 403
+  `list_cannot_allow` from both. The right is read from this PC's copy of the list at each call, so
+  a device the list removed a moment ago has none. On a PC that follows no list a device the
+  account let in reads no waiting joins and hears none, as before (403 `account_route_denied`).
+  The event stream asks again at every telling, and when the list changes what it lets in,
+  for a member of this PC's own devices too: a device that subscribed while it had the right
+  (before this PC pinned its list, say) and has it no more is told once that nothing waits, and
+  nothing after. Such a device sees and decides a first join
+  too, and never a join that brought no card (that is this PC's own pairing, which only this PC
+  and a member of its own devices decide) nor one asked under this PC's own add-me screen.
+- A join that brings no card is the PC's own pairing, as before. On a pinned PC its row has the
+  account's id for the key, so it opens the PC only once the list holds that key: a new device of
+  an account that keeps a list joins a pinned PC with its card.
 
 #### How an app signs in to a pinned PC
 
@@ -2130,6 +2244,8 @@ Seoul, South Korea", leaving out what is unknown ([Adding a PC](#adding-a-pc), "
 | `account_unavailable` | 503 | the tombstone file cannot be read; no account record applies |
 | `enrolling` | — | the PC waits for its first member's enrollment; an add waits too (a record outcome) |
 | `removal_pending` | — | the key is held: a waiting remove or an enrollment named it, or the waiting queue cannot be trusted (a record outcome) |
+| `list_cannot_allow` | 403 | this device is in the account's list, but the list holds it to watch or with bound power: only a device that may add devices to the list lets one in |
+| `not_confirmed` | 409 | `POST /api/relay/pairing`: the join brings a card for the account's list and its device has not confirmed its digits yet; the join waits as it did, and is approved once `confirmed` shows |
 | `list_followed` | 409 | this PC lets its account's devices in by the account's signed list alone: a `link` makes no member, and an `add` adds nobody (also a record outcome) |
 | `list_removed` | 409 | the account's signed list removed this PC: it joins that account again only as a new PC, after **Reset relay identity** |
 | `in_account` | 409 | `POST /api/relay/offer` with `x-ovis-no-account-only`: this PC is in an account, so it makes no QR code that would put it in one |

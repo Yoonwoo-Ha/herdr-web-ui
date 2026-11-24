@@ -4,7 +4,7 @@ import type { Access } from "../access.ts";
 import type { ServerContext } from "../dispatch.ts";
 import { jsonResponse, readJsonObject, setRequestRoute } from "../http.ts";
 import { sameOrigin } from "../machine-security.ts";
-import { parseIntroducedPcs } from "./introductions.ts";
+import { parseIntroducedList, parseIntroducedPcs } from "./introductions.ts";
 import { ACCOUNT_HELD_MAX } from "./holds.ts";
 import { AccountAddError } from "../machines.ts";
 import { notePressAsk, pressOnce, waitingForAdd } from "./one-press.ts";
@@ -33,7 +33,10 @@ export async function handleAccountRequest(request: Request, pathname: string, c
   if (pathname === "/api/account/introduction" && request.method === "GET") {
     setRequestRoute(pathname);
     const pcs = peer.kind === "relay" ? context.services.accountIntroductions.get(peer.key) : null;
-    return pcs ? reply({ pcs }) : fail("introduction_none", "No introduction waits for this device", 404);
+    // on a PC that follows no list, the member that allowed this device names its place in the account's list here;
+    // one that follows the list says it in AUTH_OK instead, and names none here: never both
+    const list = peer.kind === "relay" && !devices.listFollowed() ? context.services.accountIntroductions.list(peer.key) : null;
+    return pcs ? reply({ pcs, ...(list ? { list } : {}) }) : fail("introduction_none", "No introduction waits for this device", 404);
   }
   if (waiting !== null && pathname === "/api/account/status" && request.method === "GET") {
     setRequestRoute(pathname);
@@ -158,7 +161,11 @@ export async function handleAccountRequest(request: Request, pathname: string, c
       if (typeof body.key !== "string" || !devices.wasAddedByMember(body.key)) return fail("introduction_unknown_key", "No account member added that device here", 404);
       const pcs = parseIntroducedPcs(body.pcs);
       if (!pcs) return fail("introduction_invalid", "List at most 32 PCs, each with a server_id its key derives", 400);
-      context.services.accountIntroductions.set(body.key, pcs);
+      // `list`: the device's place in the account's signed list, as the member that signed it in names it. Carried for
+      // the device, form checked only; a PC that follows the list itself tells the device its place, and keeps none
+      const list = body.list === undefined ? undefined : parseIntroducedList(body.list);
+      if (list === null) return fail("introduction_invalid", "Name the list by its id and the place of the device's entry", 400);
+      context.services.accountIntroductions.set(body.key, pcs, devices.listFollowed() ? undefined : list);
       return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
     }
     case "/api/account/link": {
