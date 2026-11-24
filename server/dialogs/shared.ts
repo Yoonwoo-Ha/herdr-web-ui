@@ -152,9 +152,15 @@ export type ParsedPrompt = InteractivePrompt & {
   /**
    * the shell command of an approval dialog the approval hub binds a held request to (server/approvals/hub.ts): Claude's
    * Bash approval, as its panel shows it between its dashed rules, and OmO's permission dialog for a shell command and
-   * the one Ovis's pi extension draws like it (dialogs/pi.ts); null for a dialog the screen does not show whole
+   * the one Ovis's pi extension draws like it (dialogs/pi.ts), and omp's bash approval (dialogs/omp.ts); null for a dialog
+   * the screen does not show whole
    */
   approvalCommand?: string | null;
+  /**
+   * a card only while the approval hub holds a request for it, which then shows that request's command whole: an omp
+   * bash approval whose command omp cut, which two calls could draw the same
+   */
+  approvalHeldOnly?: true;
   lettaSearch?: string;
   lettaTab?: string;
   lettaTabs?: string[];

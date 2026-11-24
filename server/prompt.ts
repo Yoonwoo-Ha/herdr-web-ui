@@ -410,6 +410,13 @@ async function commandOutcomes(paneId: string, pane: HerdrPane, prompt: Interact
 }
 
 /** What the chat sent a pane that Claude Code may be holding, for the readers that ask whether it waits. */
+let approvalHeld: (paneId: string) => boolean = () => false;
+
+/** Whether the approval hub holds a request of a pane, for a dialog that is a card only then (ParsedPrompt.approvalHeldOnly). */
+export function readHeldApprovals(hub: ApprovalHub | null): void {
+  approvalHeld = hub === null ? () => false : (paneId) => hub.held(paneId).length > 0;
+}
+
 export function heldCandidate(paneId: string): string | null {
   const entry = heldCandidates.get(paneId);
   if (!entry) return null;
@@ -1151,7 +1158,10 @@ async function readKnownPrompt(
       const again = piNativeAgain(drawn);
       return again ? publicPrompt(again) : null;
     }
-    return parseInteractivePrompt(agent, drawn, omoAsks[0] ?? null, omoTrusted, omoAsks, held, pane.agent_status === "working");
+    const parsed = parseInteractivePrompt(agent, drawn, omoAsks[0] ?? null, omoTrusted, omoAsks, held, pane.agent_status === "working");
+    // a dialog the screen cannot show whole is a card of its own only while the hub holds its request; else it is left
+    // to the fallback card, as an agent Ovis did not start
+    return heldOnly(parsed) && !approvalHeld(paneId) ? null : parsed;
   };
   let prompt = piNative ? publicPrompt(piNative) : parseDrawn(screen);
   if ((agent === "letta" || agent === "agy") && prompt && !parsedByPublicPrompt.get(prompt)?.responder.startsWith(`${agent}-`)) prompt = null;
@@ -1367,10 +1377,14 @@ const approvalDialog = (prompt: InteractivePrompt | null): ApprovalDialog | null
  * pi to herdr).
  */
 function withHeldPermission(paneId: string, prompt: InteractivePrompt | null, approvals: ApprovalHub | undefined): InteractivePrompt | null {
-  if (approvals === undefined) return prompt;
-  const held = approvals.shown(paneId, approvalDialog(prompt));
-  return held === null || prompt === null ? prompt : { ...prompt, id: `${prompt.id}.${held.id}`, body: heldBody(held) };
+  const held = approvals?.shown(paneId, approvalDialog(prompt)) ?? null;
+  if (held === null || prompt === null) return heldOnly(prompt) ? null : prompt;
+  return { ...prompt, id: `${prompt.id}.${held.id}`, body: heldBody(held) };
 }
+
+/** A dialog that is a card only while the hub holds a request for it (ParsedPrompt.approvalHeldOnly): never from the screen alone. */
+const heldOnly = (prompt: InteractivePrompt | null): boolean =>
+  prompt !== null && parsedByPublicPrompt.get(prompt)?.approvalHeldOnly === true;
 
 /** The held request an answer's card was built on (withHeldPermission), or null for a card built on the screen alone. */
 function heldRequestOf(prompt: InteractivePrompt, promptId: string, approvals: ApprovalHub | undefined): string | null {
@@ -1398,7 +1412,7 @@ async function withPlanFile(prompt: InteractivePrompt | null, transcript: string
  */
 export async function currentPrompt(paneId: string, options: { codexHome?: string; openCodeStateDir?: string; openCodeState?: OpenCodePromptState; signal?: AbortSignal }): Promise<{ prompt: InteractivePrompt; screen?: string } | null> {
   const read = await readPrompt(paneId, options.codexHome, options.openCodeStateDir, options.openCodeState ?? defaultOpenCodeState, options.signal);
-  if (read.stale || read.inputUnverified || !read.prompt) return null;
+  if (read.stale || read.inputUnverified || !read.prompt || heldOnly(read.prompt)) return null;
   return { prompt: read.prompt, ...(read.screen === undefined ? {} : { screen: read.screen }) };
 }
 
@@ -1562,6 +1576,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
       // a plan card's id carries its plan file's revision: the file as it is now must match too. A command approval's
       // can carry the held hook request it showed: that request must still be held, and still the one on the screen
       const heldId = heldRequestOf(prompt, body.prompt_id, options.approvals);
+      if (heldId === null && heldOnly(prompt)) return promptChanged();
       if (heldId !== null ? !options.approvals!.holds(body.pane_id, approvalDialog(prompt)!, heldId)
         : (await withPlanFile(prompt, options.claudeTranscript?.(body.pane_id)))!.id !== body.prompt_id) return promptChanged();
       log.matched = true;

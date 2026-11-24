@@ -26,6 +26,7 @@ import { readBrowserToolSetting, useApprovalHub } from "./agent-launch.ts";
 import { ApprovalHub } from "./approvals/hub.ts";
 import { claudeApprovals } from "./approvals/claude.ts";
 import { omoApprovals } from "./approvals/omo.ts";
+import { ompApprovals } from "./approvals/omp.ts";
 import { piApprovals } from "./approvals/pi.ts";
 import { SeenStore } from "./seen.ts";
 import type { SeenFinish } from "../shared/seen.ts";
@@ -53,7 +54,7 @@ import { mergeSiblingState, recordedLegacyCredential, siblingStateDir } from "./
 import { mergeTailnetNodes, TailnetNodes } from "./tailnet-nodes.ts";
 import { moveLegacyStateDir } from "./update-state.ts";
 import { sweepSshDirs } from "./ssh.ts";
-import { OpenCodePromptState } from "./prompt.ts";
+import { OpenCodePromptState, readHeldApprovals } from "./prompt.ts";
 import { connectUpdater, type UpdateService } from "./update-api.ts";
 import { HerdrUpdater } from "./herdr-update.ts";
 import { PortalService } from "./portal.ts";
@@ -418,7 +419,7 @@ export function createServer(
   const preferences = new PreferenceStore(stateDir);
   readOmpHeldFilesSetting(() => preferences.get().settings.ompHeldFiles === true);
   readBrowserToolSetting(() => preferences.get().settings.agentBrowserTools, join(stateDir, "browser tools"));
-  const approvals = new ApprovalHub(join(stateDir, "approval hooks"), [claudeApprovals, piApprovals, omoApprovals]);
+  const approvals = new ApprovalHub(join(stateDir, "approval hooks"), [claudeApprovals, piApprovals, omoApprovals, ompApprovals]);
   // on herdr-core an agent pinned here is pinned in the Herdr app and its other clients too
   const stopPinBridge = capabilities().pins ? bridgePins(coreConnection(), preferences, LOCAL_MACHINE, stateDir) : null;
   try {
@@ -486,6 +487,7 @@ export function createServer(
   const agentDetector = options.agentDetector ?? new AgentDetector({ locate: catalogLocator({ probe: null }) });
   const catalogPlatformHere = catalogPlatform(process.platform);
   // the agent's version as the catalog reads it (its version flag, kept per executable): none read is none supported
+  readHeldApprovals(approvals);
   useApprovalHub(approvals, async (kind) => {
     const entry = AGENT_CATALOG.find((candidate) => candidate.id === kind);
     return entry === undefined ? null : (await agentDetector.state(entry, catalogPlatformHere)).version;

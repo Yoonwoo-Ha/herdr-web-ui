@@ -1,0 +1,60 @@
+
+                                                                                    ████████████
+                                                                                       ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                                                                       ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                                                                       ▒▒  ██                  █
+                                                                                           ██       v18.14.0
+
+                                                                            Tip: Try task isolation to create CoW worktrees
+
+
+ Use the bash tool exactly once to run this command verbatim, byte for byte, as a single bash call, and do nothing else:\n\ntouch qa-short-a1.flag
+
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ $ touch qa-short-a1.flag                                                                                                                                                                             │
+├─── Output ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ (no output)                                                                                                                                                                                          │
+╰─── Wall: 0.09s · Timeout: 300s ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ Created qa-short-a1.flag.
+
+
+ Use the bash tool exactly once to run this command verbatim, byte for byte, as a single bash call, and do nothing else:\n\nprintf '%s\n' "ovis approval card long command check a2" > qa-long-a2.txt
+ && ls -la /usr /usr/bin /etc /var >> qa-long-a2.txt && wc -l qa-long-a2.txt && echo "finished the long single line command for a2 without wrapping it"
+
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ $ printf '%s\n' "ovis approval card long command check a2" > qa-long-a2.txt && ls -la /usr /usr/bin /etc /var >> qa-long-a2.txt && wc -l qa-long-a2.txt && echo "finished the long single line       │
+│ command for a2 without wrapping it"                                                                                                                                                                  │
+├─── Output ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 1860 qa-long-a2.txt                                                                                                                                                                                  │
+│ finished the long single line command for a2 without wrapping it                                                                                                                                     │
+╰─── Wall: 0.04s · Timeout: 300s ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ Ran. qa-long-a2.txt has 1860 lines; command completed normally.
+
+
+ Use the bash tool exactly once to run this command verbatim, byte for byte, as a single bash call, and do nothing else:\n\ncat <<'EOF' > qa-multi-a3.txt\nfirst line\nsecond line with  two
+ spaces\n\tthird line after a tab\nEOF\nwc -l qa-multi-a3.txt
+
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ $ cat <<'EOF' > qa-multi-a3.txt                                                                                                                                                                      │
+│ first line                                                                                                                                                                                           │
+│ second line with  two spaces                                                                                                                                                                         │
+│    third line after a tab                                                                                                                                                                            │
+│ EOF                                                                                                                                                                                                  │
+│ wc -l qa-multi-a3.txt                                                                                                                                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+  ⎋ Writing heredoc file                                                                                                                                           🚩 FLAG: Create qa-short-a1 flag file
+╭─ Allow tool: bash ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Command: cat <<'EOF' > qa-multi-a3.txt …                                                                                                                                                             │
+│ ❯ Approve                                                                                                                                                                                            │
+│   Deny                                                                                                                                                                                               │
+├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ choose · ⏎ select · Ctrl+⏎/Ctrl+Q approve · ⎋ deny · Ctrl+O details · type to deny and steer                                                                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ⠏ 12s > ⦸ deepseek-v4.1-flash > 📁 …fixture/approval-home/xxxxxxxxxxxxx/cwd > $0.01 ▶────────7%───────────────────────────────────────────────────────────────────────╎───────────┃───────────────128K─
+╰─

@@ -349,7 +349,8 @@ function parseOmpQuestion(screen: string): ParsedPrompt | null {
  * omp cuts a detail at the panel's edge or past its length (`[…120ch elided…]`) and summarizes a multi-line one
  * (`… +2 lines in the tool call`, or 18.13's one row ending ` …`): two calls could then draw the same panel, and
  * a card read for one would answer the other. So is ast_edit's `+N more ops` (its first rewrite only): none of
- * them is a card. Not the screen above it either: omp keeps redrawing the transcript there (a running tool's
+ * them is a card, but for a shell command the approval hub holds (server/approvals/omp.ts), whose card shows the held
+ * request's command whole (`approvalHeldOnly`). Not the screen above it either: omp keeps redrawing the transcript there (a running tool's
  * elapsed time) while it waits.
  * Known limit: some tools never show their whole call (edit names only the files, lsp and debug the action and
  * target), so two calls to them draw the same panel. A card read for the first answers the second only when
@@ -433,6 +434,21 @@ export function ompComposerPromptRow(lines: string[], raw: string[]): number | n
   return ompEmptyComposer(lines, raw)?.prompt ?? null;
 }
 const OMP_CHOICE_RE = /^(?:([❯\uf054>])|  )\s?(\S.*)$/u;
+
+const OMP_BASH_TITLE = "Allow tool: bash";
+const OMP_COMMAND_PREFIX = "Command: ";
+
+/**
+ * The shell command a bash approval's details show, for the approval hub to bind a held request to (server/approvals/
+ * omp.ts): its `Command: ` row and every row under it (the expanded details wrap a long command and keep a multi-line
+ * one's lines), after the prompt's `Reason:` row when it has one. Null where omp cut it (`cut`: the compact summary of
+ * a long or multi-line command, or details that scroll); undefined for details with no command row.
+ */
+function ompBashCommand(details: string[], cut: boolean): string | null | undefined {
+  const at = details.findIndex((row) => row.startsWith(OMP_COMMAND_PREFIX));
+  if (at < 0) return undefined;
+  return cut ? null : [details[at]!.slice(OMP_COMMAND_PREFIX.length), ...details.slice(at + 1)].join("\n");
+}
 const OMP_REMEMBER_RE = /^(?:[☐☑\uf096\uf14a]|\[[ x]\]) Remember across sessions$/u;
 /** the toggle ticked: the grants under it are kept across sessions */
 const OMP_REMEMBERED_RE = /^(?:[☑\uf14a]|\[x\]) /u;
@@ -544,10 +560,13 @@ function parseOmpApprovalPanel(screen: string): ParsedPrompt | null {
   const { choices, first, approve } = menu;
   // a grant taken while the toggle is ticked outlives the session: the terminal answers that, where the box shows
   if (choices.some((choice) => choice.toggle && OMP_REMEMBERED_RE.test(choice.label))) return null;
-  if ((clipped && first >= OMP_APPROVAL_DETAIL_ROWS) || rows.slice(0, first).some((row) => OMP_DETAIL_CUT_RE.test(row))) return null;
+  const cut = (clipped !== null && first >= OMP_APPROVAL_DETAIL_ROWS) || rows.slice(0, first).some((row) => OMP_DETAIL_CUT_RE.test(row));
+  const command = title[1] === OMP_BASH_TITLE ? ompBashCommand(rows.slice(0, first), cut) : undefined;
+  if (cut && command === undefined) return null;
   const cursor = choices.findIndex((choice) => choice.cursor);
-  // the toggle answers nothing: it changes which grants the rows under it record
-  const offered = choices.flatMap((choice, row) => choice.toggle ? [] : [{ ...choice, row }]);
+  // the toggle answers nothing: it changes which grants the rows under it record. A held-only card answers through the
+  // hub alone, which takes Approve and Deny: a row it would send as keys could land on another call's dialog
+  const offered = choices.flatMap((choice, row) => choice.toggle || (cut && row !== approve && row !== choices.length - 1) ? [] : [{ ...choice, row }]);
   return finishPrompt("omp", {
     ...card, body: rows.slice(0, first).join("\n").trim() || null,
     options: offered.map((choice) => ({ label: choice.label, description: null })),
@@ -556,6 +575,8 @@ function parseOmpApprovalPanel(screen: string): ParsedPrompt | null {
     optionSteps: offered.map((choice) => choice.row === approve && plainKey ? keySteps([plainKey])
       : directDeny && choice.row === choices.length - 1 ? keySteps([directDeny])
       : keySteps([...navigationKeys(choice.row - cursor), selectKey])),
+    ...(command === undefined ? {} : { approvalCommand: command }),
+    ...(cut ? { approvalHeldOnly: true as const } : {}),
   });
 }
 

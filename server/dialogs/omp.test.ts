@@ -176,7 +176,10 @@ describe("omp tool approval (#2059)", () => {
     }
     const command = shown.split("\n").find((line) => line.includes("Command: ls -la"))!;
     const tall = shown.replace(command, Array.from({ length: 8 }, () => command).join("\n"));
-    expect(parseInteractivePrompt("omp", tall)).toBeNull();
+    // scrolling details: a card only for the request the approval hub holds, never read off the screen
+    expect(parsedByPublicPrompt.get(parseInteractivePrompt("omp", tall)!)).toMatchObject({ approvalCommand: null, approvalHeldOnly: true });
+    // and offers only what the hub answers: the session row would go as keys to a dialog it cannot tell from another
+    expect(labels(parseInteractivePrompt("omp", tall))).toEqual(["Approve", "Deny"]);
     expect(parseInteractivePrompt("omp", shown.replace(command, Array.from({ length: 7 }, () => command).join("\n")))).not.toBeNull();
   });
 
@@ -266,7 +269,10 @@ describe("omp tool approval (#2059)", () => {
         // ast_edit names its first rewrite only: 18.13's one row, and 18.10's row of its own
         "Pattern: foo() \u00b7 Replacement: bar() \u00b7 +1 more op \u00b7 Paths: src/app.ts", "+2 more ops",
       ]) {
-        expect(parseInteractivePrompt("omp", redraw(shown, "\u2502 Command: ls -la ", detail)), `${name} ${detail}`).toBeNull();
+        const parsed = parseInteractivePrompt("omp", redraw(shown, "\u2502 Command: ls -la ", detail));
+        // a bash command cut: a card only for the request the approval hub holds, which shows it whole
+        if (name.startsWith("18.13") && detail.startsWith("Command: ")) expect(parsedByPublicPrompt.get(parsed!), `${name} ${detail}`).toMatchObject({ approvalCommand: null, approvalHeldOnly: true });
+        else expect(parsed, `${name} ${detail}`).toBeNull();
       }
       const other = parseInteractivePrompt("omp", redraw(shown, "\u2502 Command: ls -la ", "Command: rm -r notes"));
       expect(other?.body, name).toBe("Command: rm -r notes");
