@@ -255,10 +255,13 @@ export function runSupervised(options: Omit<PtyOptions, "command"> & { entry: st
       else waiter?.reject(new Error("stty could not read the pty"));
     } else if (message.t === "ended") {
       reported = true;
-      settleEnded.resolve({
+      const end = {
         code: message.code!, signal: message.signal ?? null, before: parseStty(message.before ?? ""),
         after: message.after ? parseStty(message.after) : null, stderr: message.stderr ?? "",
-      });
+      };
+      // this report comes over the supervisor's socket and can overtake the entry's last output on the pty: the end is
+      // told once the pty has ended too, which is once its output was all read
+      void run.exited.then(() => settleEnded.resolve(end));
     }
   };
 
