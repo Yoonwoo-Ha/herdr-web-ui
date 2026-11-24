@@ -262,3 +262,25 @@ export async function resolveGrokStore(pane: HerdrPane, configuredHome?: string,
     return reportedSessionPath(home, session.value, grokHeldSessions(owner.pid, home));
   } catch { return null; }
 }
+
+/**
+ * The pane's Grok session file when herdr names none (no Grok hook installed): the one session whose events.jsonl
+ * the pane's Grok process holds open, on Linux. Only the waiting call is read from it (record-cards.ts), and only
+ * while the dialog on the screen shows that call's whole command; the chat never binds this way, as a held file
+ * alone does not choose which conversation to show (resolveGrokStore).
+ */
+export async function grokHeldTranscript(pane: HerdrPane, configuredHome?: string, platform: string = process.platform): Promise<string | null> {
+  if (pane.agent !== "grok" || platform !== "linux") return null;
+  try {
+    const processes = grokPaneProcesses((await paneProcessInfo(pane.pane_id)) ?? {});
+    if (processes.length !== 1) return null;
+    const owner = processes[0]!;
+    if (!isGrokExecutable(readlinkSync(`/proc/${owner.pid}/exe`))) return null;
+    const home = configuredHome ?? grokHomeFromEnvironment(readFileSync(`/proc/${owner.pid}/environ`, "utf8"));
+    const held = home ? grokHeldSessions(owner.pid, home) : null;
+    if (!home || held === null || held.size !== 1) return null;
+    const [dir] = held.keys();
+    const path = grokTranscriptPath(home, basename(dir!));
+    return path !== null && dirname(path) === dir ? path : null;
+  } catch { return null; }
+}

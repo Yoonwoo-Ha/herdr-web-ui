@@ -6,6 +6,7 @@ import type { ReaderContext } from "./registry.ts";
 import type { InteractionPlan } from "./interaction-plan.ts";
 import type { PiAskUserForm } from "../pi-ask-bridge.ts";
 import type { NativeSteps } from "./step-navigate.ts";
+import type { RecordRequest } from "./record.ts";
 
 export function onePerPass<T>(parse: (screen: string, ctx: ReaderContext) => T): (screen: string, ctx: ReaderContext) => T {
   let last: { screen: string; ctx: ReaderContext; value: T } | null = null;
@@ -164,6 +165,8 @@ export type ParsedPrompt = InteractivePrompt & {
    * bash approval whose command omp cut, which two calls could draw the same
    */
   approvalHeldOnly?: true;
+  /** the pending request in the agent's own record whose command the card shows (dialogs/record.ts), checked again before each key */
+  record?: RecordRequest;
   lettaSearch?: string;
   lettaTab?: string;
   lettaTabs?: string[];

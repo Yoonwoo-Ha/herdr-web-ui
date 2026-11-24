@@ -1,0 +1,99 @@
+import type { InteractivePrompt } from "../shared/protocol.ts";
+import { paneTranscript, type NativeTranscript } from "./conversation.ts";
+import { ConversationUnavailable } from "./conversation-shared.ts";
+import { lettaMessagesPath } from "./letta-store.ts";
+import { grokHeldTranscript } from "./grok-store.ts";
+import { sessionSnapshot } from "./herdr/client.ts";
+import { FileBusyError, fileTask } from "./file-pool.ts";
+import { type AgentRecord, type RecordRequest, commandCut, withRecord } from "./dialogs/record.ts";
+import { parsedByPublicPrompt, publicPrompt } from "./dialogs/shared.ts";
+import { gjcRecord } from "./dialogs/gjc-record.ts";
+import { lettaRecord } from "./dialogs/letta-record.ts";
+import { grokRecord } from "./dialogs/grok-record.ts";
+import { copilotRecord } from "./dialogs/copilot-record.ts";
+import { museRecord } from "./dialogs/muse-record.ts";
+
+/**
+ * Where an agent's record of a pane's session says which command waits (`read`), and the dialog that shows it.
+ */
+interface RecordSource {
+  readonly record: Omit<AgentRecord, "pending">;
+  read(paneId: string): Promise<RecordRequest | null>;
+}
+
+/** A request named by the record it is read from too, so the same call id in another session is another request. */
+function within(record: string, request: RecordRequest | null): RecordRequest | null {
+  return request === null ? null : { ...request, id: `${record}\0${request.id}` };
+}
+
+/** A record kept in a session file the agent appends to, found as the pane's conversation is: its last lines are read. */
+function sessionFile(record: AgentRecord, file: (transcript: NativeTranscript) => string | null): RecordSource {
+  return { record, read: async (paneId) => { const path = file(await paneTranscript(paneId)); return path === null ? null : within(path, record.pending(await tail(path))); } };
+}
+
+/** Grok's session as herdr names it, or else the one its process holds (grok-store.ts `grokHeldTranscript`). */
+async function grokSessionFile(paneId: string): Promise<string | null> {
+  try {
+    const found = await paneTranscript(paneId);
+    if (found.source === "grok-transcript") return found.path;
+  } catch (error) {
+    if (!(error instanceof ConversationUnavailable)) throw error;
+  }
+  const pane = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === paneId);
+  return pane === undefined ? null : await grokHeldTranscript(pane);
+}
+
+/** The agents that answer their approvals in their own dialog only (no hook Ovis can hold them with). */
+const RECORDS: Readonly<Record<string, RecordSource>> = {
+  gjc: sessionFile(gjcRecord, (found) => found.source === "gjc-transcript" ? found.path : null),
+  muse: sessionFile(museRecord, (found) => found.source === "muse-transcript" ? found.path : null),
+  copilot: sessionFile(copilotRecord, (found) => found.source === "copilot-transcript" ? found.path : null),
+  // the local backend's messages, which Letta appends to as the turn goes; its transcript waits for the turn's end
+  letta: sessionFile(lettaRecord, (found) => found.source === "letta-transcript" && found.letta ? lettaMessagesPath(found.letta.store, found.letta.agent, found.letta.conversation) : null),
+  grok: { record: grokRecord, read: async (paneId) => { const path = await grokSessionFile(paneId); return path === null ? null : within(path, grokRecord.pending(await tail(path))); } },
+};
+
+export function recordFor(agent: string): Omit<AgentRecord, "pending"> | undefined {
+  return RECORDS[agent]?.record;
+}
+
+/** A session file's last lines (record-tail.ts), read on a file thread. */
+async function tail(path: string): Promise<string> {
+  return await fileTask<string>({ op: "record-tail", path });
+}
+
+/**
+ * The request the pane's agent's record holds open, or null when nothing proves one: no record for this agent, no
+ * session found for the pane, or a record that cannot be read as expected (logged once per agent and error). The
+ * card then stays the screen's own, and a key for a card read from the record is refused.
+ */
+const unreadable = new Set<string>();
+
+export async function recordRequest(paneId: string, agent: string): Promise<RecordRequest | null> {
+  const source = RECORDS[agent];
+  if (source === undefined) return null;
+  try {
+    return await source.read(paneId);
+  } catch (error) {
+    if (error instanceof ConversationUnavailable || error instanceof FileBusyError || (error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    const kind = `${agent}\0${error instanceof Error ? error.name : typeof error}`;
+    if (!unreadable.has(kind)) {
+      unreadable.add(kind);
+      console.warn(`prompt: ${agent}'s record could not be read for pane ${paneId}; its card stays the screen's (${error instanceof Error ? error.message : String(error)})`);
+    }
+    return null;
+  }
+}
+
+/**
+ * A generic card for the pane, with the command its agent's record holds when the dialog on the screen shows it whole;
+ * none for a dialog that says it cut its command (`cut`), which the terminal answers.
+ */
+export async function withAgentRecord(paneId: string, agent: string, card: InteractivePrompt, screen: string): Promise<InteractivePrompt | null> {
+  const source = RECORDS[agent];
+  const parsed = parsedByPublicPrompt.get(card);
+  if (source === undefined || parsed === undefined || !parsed.responder.startsWith("fallback")) return card;
+  if (commandCut(screen, source.record)) return null;
+  const shown = withRecord(parsed, await recordRequest(paneId, agent), screen, source.record);
+  return shown === parsed ? card : publicPrompt(shown);
+}

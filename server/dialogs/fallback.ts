@@ -99,7 +99,12 @@ const WAITING_LINES: Readonly<Record<string, readonly WaitingLine[]>> = {
   // "○ Asking user Waiting for response      36s"
   copilot: [{ pattern: /^(○ \S(?:.*\S)?) {2,}(?:\d+h )?(?:\d+m )?\d+s$/u, steady: "$1 <time>" }],
   // "◆ Waiting on answers for Option A or option B?      7.4s ⇣21.5k [stop]"
-  grok: [{ pattern: /^(◆ Waiting on answers for \S(?:.*\S)?) {2,}(?:\d+m )?\d+(?:\.\d+)?s [⇣↓][\d.]+[kKmM]? \[stop\]$/u, steady: "$1 <time> <tokens> [stop]" }],
+  grok: [
+    { pattern: /^(◆ Waiting on answers for \S(?:.*\S)?) {2,}(?:\d+m )?\d+(?:\.\d+)?s [⇣↓][\d.]+[kKmM]? \[stop\]$/u, steady: "$1 <time> <tokens> [stop]" },
+    // the tool call its permission panel asks about, with the call's time and the turn's (one only on a narrow pane):
+    // "◆ Run the file's contents as one shell cal… 0.0s      15s ⇣12.1k [↓][stop]" (Grok 1.0.92)
+    { pattern: /^(◆ \S.*?)(?: \d+(?:\.\d+)?s)? {2,}(?:\d+m )?\d+(?:\.\d+)?s [⇣↓][\d.]+[kKmM]? \[↓\]\[stop\]$/u, steady: "$1 <time> <tokens> [↓][stop]" },
+  ],
   hermes: [
     // the question with its timer, padded to six characters: "❓ Which color?  ( 57.9s · ↓ 34 tok)", "(01m05s · ↓ 34 tok)",
     // and so "(  5.2s · ↓ 34 tok)" in its first ten seconds
@@ -112,7 +117,11 @@ const WAITING_LINES: Readonly<Record<string, readonly WaitingLine[]>> = {
     { pattern: new RegExp(`^☤ ([^│\\s][^│]*?) │ (?:.* │ )?⏱ ${ELAPSED}(?: {2,}(\\S.*))?$`, "u"), steady: (_all, model, echo) => `☤ ${model} <status>${echo ? ` ${echo}` : ""}` },
   ],
   // "◈ Request user input Color — running (59s)", its glyph turning ◆/◈/◇
-  muse: [{ pattern: new RegExp(`^[◆◈◇] (\\S(?:.*\\S)?) — running \\(${ELAPSED}\\)$`, "u"), steady: "◈ $1 — running (<time>)" }],
+  muse: [
+    { pattern: new RegExp(`^[◆◈◇] (\\S(?:.*\\S)?) — running \\(${ELAPSED}\\)$`, "u"), steady: "◈ $1 — running (<time>)" },
+    // over its approval dialog, while the call waits (Muse 1.4.25): "◇ Calling tools (21s · esc to interrupt)"
+    { pattern: new RegExp(`^[◆◈◇] (\\S(?:.*\\S)?) \\(${ELAPSED} · esc to interrupt\\)$`, "u"), steady: "◈ $1 (<time> · esc to interrupt)" },
+  ],
   // "⠏ bash> List directory contents    16:34:03" and "⠇ [BUILD]../lab-maki  anthropic/… $0.001"
   maki: [{ pattern: new RegExp(`^${BRAILLE_SPINNER} (\\S.*)$`, "u"), steady: "<spinner> $1", each: true }],
   // "⠋ Using Shell (ls -la)"

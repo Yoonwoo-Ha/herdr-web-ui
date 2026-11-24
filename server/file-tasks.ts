@@ -4,6 +4,7 @@ import { sep } from "node:path";
 import type { MarkdownDocument } from "../shared/files.ts";
 import type { FileInfo, OmoTask, SlashCommand } from "../shared/protocol.ts";
 import { agyCatalog } from "./agy.ts";
+import { recordTail } from "./record-tail.ts";
 import type { HistoryEvidence } from "./claude-command-history.ts";
 import { wholeClaudeSubagents } from "./claude-subagents.ts";
 import { paneCommands } from "./commands.ts";
@@ -38,6 +39,7 @@ export type FileTask =
   | { op: "walk"; cwd: string }
   | { op: "documents"; cwd: string; paths: string[] | null; budgetMs?: number }
   | { op: "agy-catalog"; path: string }
+  | { op: "record-tail"; path: string }
   /**
    * The whole output of the call `ref` names in a Letta transcript (`lettaToolOutputOffThread`), read
    * only from the file `file` names at `path` and cut to `max` characters before it is answered;
@@ -93,6 +95,7 @@ export function runFileTask(task: FileTask): FileTaskResult {
     case "walk": return walkFiles(task.cwd);
     case "documents": return readMarkdownDocuments(task.cwd, task.paths, task.budgetMs);
     case "agy-catalog": return [...agyCatalog(task.path)];
+    case "record-tail": return recordTail(task.path);
     case "letta-output": return lettaToolOutputIn(task.path, task.ref, task.file, task.max, task.budgetMs ?? LETTA_OUTPUT_READ_MS);
     case "claude-tasks": return wholeClaudeSubagents(task.path, task.live, Date.now(), task.since, Date.now() + CLAUDE_TASKS_READ_MS, Date.now, task.history ?? null);
     case "commands": return paneCommands(task.agent, task.cwd, task.home, task.roots, task.version, task.serverEnv);

@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { ConversationReadPending, forgetTranscriptState, HistoryChanged, transcriptPage, transcriptToolOutput } from "./conversation.ts";
 import { grokImage, grokToolOutput, grokProjection, GrokUnavailable, parseGrokTranscript } from "./grok.ts";
 import { darwinProcess } from "./claude-store.ts";
-import { grokHeldSessionsFromLsof, grokHomeFromEnvironment, grokLsofEvidence, grokPaneProcesses, grokTranscriptPath, isGrokExecutable, resolveGrokStore } from "./grok-store.ts";
+import { grokHeldSessionsFromLsof, grokHeldTranscript, grokHomeFromEnvironment, grokLsofEvidence, grokPaneProcesses, grokTranscriptPath, isGrokExecutable, resolveGrokStore } from "./grok-store.ts";
 import * as herdr from "./herdr/client.ts";
 import type { ConversationPart, HerdrPane } from "../shared/protocol.ts";
 
@@ -468,6 +468,40 @@ describe("exact store lookup", () => {
       }
     });
   }
+  // the waiting call's record (record-cards.ts) with no session named by herdr: the one events file Grok holds
+  test.skipIf(process.platform !== "linux" || !existsSync("/proc/self/fd")).each([[1, true], [2, false]] as const)(
+    "reads the waiting call from the session Grok holds when it holds %i", async (sessions, binds) => {
+      const home = realpathSync(root);
+      const transcript = join(home, "sessions", "%2Ffiction", session, "updates.jsonl");
+      const held = [join(dirname(transcript), "events.jsonl"), join(home, "sessions", "group", "other-session", "events.jsonl")].slice(0, sessions);
+      for (const file of held) { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, ""); }
+      writeFileSync(transcript, user(0));
+      const executable = join(home, "grok");
+      copyFileSync(process.execPath, executable);
+      const fds = held.map((file) => openSync(file, "r"));
+      const child = spawn(executable, ["-e", "process.stdout.write('running\\n'); process.stdin.resume()"], {
+        stdio: ["pipe", "pipe", "ignore", ...fds], env: { ...process.env, HOME: "/bridge-home", GROK_HOME: home },
+      });
+      const running = once(child.stdout!, "data", { signal: AbortSignal.timeout(10_000) });
+      const pane: HerdrPane = {
+        pane_id: "grok-fixture", agent: "grok", agent_status: "blocked", focused: false,
+        revision: 0, tab_id: "tab-fixture", terminal_id: "terminal-fixture", workspace_id: "workspace-fixture",
+      };
+      const info = spyOn(herdr, "paneProcessInfo").mockResolvedValue({
+        pane_id: pane.pane_id, foreground_processes: [{ pid: child.pid!, name: "grok", argv: [executable] }],
+      });
+      try {
+        await running;
+        expect(await resolveGrokStore(pane)).toBeNull();
+        expect(await grokHeldTranscript(pane, undefined, "linux")).toBe(binds ? transcript : null);
+      } finally {
+        info.mockRestore();
+        const exited = once(child, "exit", { signal: AbortSignal.timeout(2000) });
+        child.kill();
+        await exited;
+        for (const fd of fds) closeSync(fd);
+      }
+    });
   test("discovery checks a script only behind bun or node, never arbitrary arguments", () => {
     const processes = [
       { pid: 11, argv: ["/usr/bin/node", "/opt/grok/grok.js"] },
