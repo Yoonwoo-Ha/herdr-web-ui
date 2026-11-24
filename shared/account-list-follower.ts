@@ -20,7 +20,8 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, concatBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import { ListEntryError, entryFromText, entryHash, isListHash, isListKeyEncoding, readBody, verifySignature, type Entry, type EntryBody, type ListRefusalCode } from "./account-list-entry.ts";
-import { signerPower, type ListPlace } from "./account-list-signers.ts";
+import { standsFor } from "./account-list-migrate.ts";
+import { type ListPlace } from "./account-list-signers.ts";
 import {
   LIST_LEVEL, admitsDevice, isListKey, listClock, listView, replayList, shownList,
   type DeviceView, type ListCopy, type ListRole, type ListState, type PcView, type TakenListEntry,
@@ -73,10 +74,11 @@ export interface FollowerSelf {
  *   with itself names the same list id (compareHeads), or at once where the account has no PC to ask.
  * - `added`: a PC that a person's `pc` or an invite's `join` adds. The list must show its relay key with its
  *   own signing key.
- * - `migrated`: a PC that was in the account before it had a list. `admitted` is the device keys it let in on
- *   that account then, by its own state: entry 0's signer must be one of them, and so must every device that
- *   was carried in, all or none. A carried key is a signer of power `full`, so one the PC never let in could
- *   add whom it likes: a list that carries one in is not a list this PC follows.
+ * - `migrated`: a PC that was in the account before it had a list. `admitted` is the device keys its caller
+ *   has checked for it before the pin (shared/account-list-migrate.ts): entry 0's signer and every key the
+ *   list carries in, once it carries in no more. Entry 0's signer must be one of them, and so must every device
+ *   that was carried in, all or none. A carried key is a signer of power `full`, so one that is not among them
+ *   could add whom it likes: a list that carries one in is not a list this PC follows.
  */
 export type ListPin =
   | { readonly how: "genesis" }
@@ -375,14 +377,20 @@ function pinMet(copy: FollowerCopy): boolean {
   }
 }
 
-/** Where the member stands in the list it follows (Standing). A member that stopped is `stopped` whether or not the list shows yet what its pin asks for: it reads no further until an update. */
+/**
+ * Where the member stands in the list it follows (Standing). A member that stopped is `stopped` whether or not
+ * the list shows yet what its pin asks for: it reads no further until an update. What the pin asks for is read
+ * at the member's own key (`me.key`), the key it came in by; whether a device is in is read at the key that
+ * stands in its place now (standsFor): itself, or the last key it handed its place on to.
+ */
 export function standing(copy: FollowerCopy): Standing {
   const { state, me, pin } = copy;
   // A member that holds no entry stopped where it keeps entry 0's text: one that only a later level reads.
   if (state === null) return copy.stop === null ? "waiting" : "stopped";
   if (state.needs_replay !== undefined) return "stopped";
   if (!pinMet(copy)) return "waiting";
-  if (me.endpoint === null) return signerPower(state, me.key) === null ? "out" : "in";
+  // A device may have handed its place on to another key of its own (a `device` entry that ends its signer): it is in while the key that stands in its place is.
+  if (me.endpoint === null) return standsFor(state, me.key) === null ? "out" : "in";
   const row = rowOf(state.pcs, me.endpoint);
   // A PC that was in the account before the list follows it whether the list names it or not, until an entry puts it out.
   if (pin.how === "migrated") return row !== null && row.removed !== null ? "out" : "in";

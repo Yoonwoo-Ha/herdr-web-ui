@@ -10,7 +10,7 @@ import {
   type FollowRead, type FollowVerdict, type FollowerCopy, type FollowerSelf, type ListChanges, type ListHint, type ListPage, type ListPin, type PageResult,
 } from "./account-list-follower.ts";
 import { signingPlace, type ListPlace } from "./account-list-signers.ts";
-import { kindBody, replayList, signCard, type EntryPlace, type ListKind, type ListRole, type ListState } from "./account-list.ts";
+import { kindBody, replayList, signCard, signGenesis, signListEntry, type EntryPlace, type ListKind, type ListRole, type ListSigner, type ListState, type WrittenEntry } from "./account-list.ts";
 import { toBase64Url } from "./relay-pair-sas.ts";
 
 const P256 = { name: "ECDSA", namedCurve: "P-256" } as const;
@@ -1209,6 +1209,53 @@ describe("from the second read of the follower", () => {
     const on = await readSave(withStop(writeSave(readable), at(BASE.texts, 0)));
     expect(on).toMatchObject({ read: true, rebuilt: true, copy: { entries: [at(BASE.texts, 0)], stop: null } });
     expect(on.read && standing(on.copy)).toBe("in");
+  });
+});
+
+describe("a device that handed its place on to another key of its own", () => {
+  const signerOf = (key: Key): ListSigner => ({ key: key.key, privateKey: key.pair.privateKey });
+  /** A member that follows what the entries give: its copy after one page of them all. */
+  async function follows(key: Key, pin: ListPin, list: string, written: readonly WrittenEntry[]): Promise<FollowerCopy> {
+    const copy = pinned({ list }, DEVICE(key), pin);
+    const taken = await takePage(copy, startRead(copy, "service"), { list, after: null, entries: written.map((entry) => entry.text), head: at(written, written.length - 1).state.footing }, NOW);
+    expect(taken.verdict).toBe("caught_up");
+    return taken.copy;
+  }
+
+  test("is in by the key that stands in its place, and out once an entry ends that key, whichever key it came in by", async () => {
+    // The list of an account that was in use: entry 0 by the phone's first key, the tablet's first key carried in.
+    const [phoneFirst, phoneNow, tabletFirst, tabletNow] = [owner, phone, tablet, browser];
+    const genesis = await signGenesis({ kind: "genesis", account: ACCOUNT, enc: phoneFirst.enc, opens: "0a".repeat(32), sealed: null }, signerOf(phoneFirst), T0);
+    const list = genesis.state.list;
+    const carried = await signListEntry(genesis.state, { kind: "carried", key: tabletFirst.key, role: "drive", sealed: null }, signerOf(phoneFirst), T0);
+    // Each hands its place to its other key with one entry that adds that key and ends its own signer.
+    const handOver = async (state: ListState, first: Key, now: Key, when: number) => signListEntry(state, {
+      kind: "device", key: now.key, power: "full", role: "drive", until: null, enc: now.enc, sealed: null, rotates: true,
+      card: await signCard({ key: now.key, enc: now.enc, list, endpoint: null, invite: null }, now.pair.privateKey),
+    }, signerOf(first), when);
+    const phoneOver = await handOver(carried.state, phoneFirst, phoneNow, T0 + 60);
+    const tabletOver = await handOver(phoneOver.state, tabletFirst, tabletNow, T0 + 120);
+
+    const before = [genesis, carried];
+    expect([standing(await follows(phoneFirst, { how: "genesis" }, list, before)), standing(await follows(tabletFirst, { how: "carried" }, list, before))]).toEqual(["in", "in"]);
+    // After it each is in, by the key it handed its place to: its pin still names the key it came in by.
+    const after = [genesis, carried, phoneOver, tabletOver];
+    const mine = await follows(phoneFirst, { how: "genesis" }, list, after);
+    const theirs = await follows(tabletFirst, { how: "carried" }, list, after);
+    expect([standing(mine), standing(theirs), mine.me.key, shownDevices(mine).map((row) => who(row.key))]).toEqual(["in", "in", phoneFirst.key, ["phone", "browser"]]);
+    // Whoever follows the list lets the keys that stand now in, not the ones that were handed on.
+    expect([opens(mine, phoneNow), opens(mine, phoneFirst), opens(mine, tabletNow), opens(mine, tabletFirst)]).toEqual(["drive", "removed", "drive", "removed"]);
+    // Its save reads, and it is in after a restart as before it.
+    expect(standing(await saved(theirs))).toBe("in");
+    // A device removed after its hand-over is out, and so is one that signed itself out by the key it holds now.
+    const removed = await signListEntry(tabletOver.state, { kind: "remove", ends: tabletNow.key }, signerOf(phoneNow), T0 + 180);
+    expect(standing(await follows(tabletFirst, { how: "carried" }, list, [...after, removed]))).toBe("out");
+    const left = await signListEntry(removed.state, { kind: "remove", ends: phoneNow.key }, signerOf(phoneNow), T0 + 240);
+    const gone = await follows(phoneFirst, { how: "genesis" }, list, [...after, removed, left]);
+    expect([standing(gone), shownPcs(gone), followStep(gone, NOW, { event: "tick", asked_at: null, busy: true })]).toEqual(["out", [], { do: "wait", until: null }]);
+    // A key that was only removed handed its place to nobody: the device that came in by it is out.
+    const plain = await signListEntry(carried.state, { kind: "remove", ends: tabletFirst.key }, signerOf(phoneFirst), T0 + 60);
+    expect(standing(await follows(tabletFirst, { how: "carried" }, list, [genesis, carried, plain]))).toBe("out");
   });
 });
 

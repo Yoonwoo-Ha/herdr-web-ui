@@ -614,7 +614,7 @@ before the member acts on it:
 | `allowed` | a device | the member that allowed it, with that member's head (`seq`, `hash`) | the log reaches that very entry, and its key is a device |
 | `carried` | a device | an account in use before it had a list; a PC the device had paired with names the same id | its key was carried in |
 | `added` | a PC | what a person compared, scanned or sent at that PC, or a join line | its relay key is in the list with its own signing key |
-| `migrated` | a PC | an account in use before it had a list; `admitted` is the device keys the PC let in then | entry 0's signer and every device that was carried in are among `admitted` |
+| `migrated` | a PC | an account in use before it had a list; `admitted` is the keys checked for it before the pin: entry 0's signer and every key the list carries in | entry 0's signer and every device that was carried in are among `admitted` |
 
 - **A pin is one-way.** A member that has saved a copy is pinned: no page, no hint and no second
   pin changes its list id. Only a person's reset at the member, which deletes its save, takes the
@@ -631,9 +631,13 @@ before the member acts on it:
   pin (`stop`), so that the build that reads it goes on from it.
 - A device that was allowed takes, at the place of the head it was handed, no other entry: a log
   with another entry there is not the list it was let into.
-- A PC that was `migrated` never widens, all or nothing. A list whose first signer it never let in
-  is `not_my_list`. A list that carries in a device the PC never let in is one it follows none of:
-  a carried key is a `full` signer, so it could add whom it likes. Such a PC lets nobody in.
+- A PC that was `migrated` never widens, all or nothing. A list whose first signer is not among
+  `admitted` is `not_my_list`. A list that carries in a device that is not among them is one it
+  follows none of: a carried key is a `full` signer, so it could add whom it likes. Such a PC lets
+  nobody in.
+- What a pin asks for is read at the key the member came in by. Whether a device is in is read at
+  the key that stands in its place now: a device that handed its place on to another key of its own
+  (a `device` entry that ends its signer) is in while that key is, and out once an entry ends it.
 
 ### A page
 
