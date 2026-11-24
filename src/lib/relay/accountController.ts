@@ -852,6 +852,8 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
    * (shell.tsx): none without an account service, or when the store cannot be read.
    */
   const stored = async (): Promise<AccountSession | undefined> => accountService === null ? undefined : await account.session().catch(() => undefined);
+  /** The account of the sign-in stored now, read only: unlike `stored`, it names no sign-in and writes nothing. */
+  const storedAccount = async (): Promise<string | undefined> => accountService === null ? undefined : (await accountStore.get("session").catch(() => undefined))?.account;
   /** The providers the account service offers now (`GET /v1/providers`), read once; the build's list when it does not answer. */
   let answer: Promise<{ readonly providers: readonly AccountProvider[]; readonly listed: readonly AccountProvider[] }> | undefined;
   const answered = () => answer ??= accountService === null ? Promise.resolve({ providers, listed: providers })
@@ -861,5 +863,5 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
   const listedNow = (): Promise<readonly AccountProvider[]> => answered().then((said) => said.listed);
   return { get state() { return accountView; }, get directory() { return directory; },
     get openKey() { return accountView?.kind === "signed-in" && listedFor?.epoch === generation ? listedFor.openKey : null; },
-    get signedInAs() { return accountView?.kind === "signed-in" ? shownFor : undefined; }, enabled: accountService !== null, providers, offered: offeredNow, listed: listedNow, load, refresh, refreshNow, reread, stored, signIn, signOut, leave, deleteAccount, signOutEverywhere, freshSignIn, prepare, enroll, cancelEnrollment, armRefresh };
+    get signedInAs() { return accountView?.kind === "signed-in" ? shownFor : undefined; }, enabled: accountService !== null, providers, offered: offeredNow, listed: listedNow, load, refresh, refreshNow, reread, stored, storedAccount, signIn, signOut, leave, deleteAccount, signOutEverywhere, freshSignIn, prepare, enroll, cancelEnrollment, armRefresh };
 }

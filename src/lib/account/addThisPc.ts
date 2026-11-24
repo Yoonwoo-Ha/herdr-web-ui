@@ -13,6 +13,7 @@ import { deviceOs, isLoopbackHost } from "../phone.ts";
 import { serverIdOfPath } from "../shellMode.ts";
 import { pcAccountStatus, within } from "./join.ts";
 import { NEW_PC_MS } from "./myPcs.ts";
+import { noteAct } from "./seenPcs.ts";
 import { ownPcProof } from "./pcProof.ts";
 import { AccountServiceError, sameSignIn, type AccountService } from "./service.ts";
 import type { AccountSession } from "./store.ts";
@@ -256,6 +257,16 @@ export async function listThisPc(service: AccountService, options: { relistMs: n
     const proof = await ownPcProof(offer.server_id, postToThisPc);
     running();
     await directory.putPc(offer.server_id, { label: name, public_key: publicKey, relay: offer.relay, ...listingOs(), ...proof }, undefined, undefined, { prove: true });
+  }
+  // The person adds this PC from its own window (the page is on the PC's own address): kept in this device's own
+  // record of its PCs, by the relay key of the PC's own pairing link. From any other page the add is one press with
+  // no number compared, which proves nothing about whose PC it is, and nothing is kept of it.
+  // It only records: a link whose key does not read, or storage that is not there, changes nothing of the add.
+  if (session) {
+    try {
+      const own = typeof location !== "undefined" && isLoopbackHost(location.hostname);
+      if (own) void noteAct(session.account, Array.from(importPublicKey(offer.server_public_key), (byte) => byte.toString(16).padStart(2, "0")).join(""), "window").catch(() => undefined);
+    } catch { /* nothing is kept of this add */ }
   }
   // the account this PC now asks its relay pass under (docs/relay.md, "Relay pass"); an older PC has no such route
   // (not for a wait or an attempt that ended while the entry was written: nobody waits for this PC under it)

@@ -1899,6 +1899,32 @@ Seoul, South Korea", leaving out what is unknown ([Adding a PC](#adding-a-pc), "
   a join is still compared digit by digit on a device already linked. The page asks to enter a
   code only if this page showed it, and GitHub's page names the app (Ovis).
 
+## What a device remembers of its PCs
+
+The app keeps, on the device and for each account it was signed in to, a record of the PCs it has
+held sessions with. It only records: nothing in the app decides by it yet. It is written now so
+that it has a history by the time something does.
+
+- **A row per PC, by the PC's relay key** (64 hex), the key the end-to-end channel is bound to.
+  Never by what the account service's directory says: a PC whose relay identity was reset is
+  another row.
+- **`since` and `last`**: when the PC first let this device in, and when it last did, in seconds
+  by the device's clock. `since` is written once and never moved. A session the PC refused, or
+  one that only reached the relay, writes nothing.
+- **`how`**: what this device did itself for that PC that the account service could not have
+  faked. `paired`: it paired with it at the PC (a QR, a code, the digits). `added`: the person
+  pressed Add for it where a number was compared on both screens or the PC's QR code was scanned
+  (nothing writes this yet). `ssh`: this device added it over SSH. `window`: the page is that
+  PC's own window. `none`: everything else, also one press of **Add** on the card of a PC that
+  asked, where no number is compared: the service could have listed a PC of its own at that
+  moment. It moves from `none` to one of the others, never back and never between them.
+- It is kept in the browser's storage under `ovis:seen-pcs:<account>`, the newest 256 PCs for an
+  account. Signing out keeps it: it is the device's memory, not the account's. Removing a PC from
+  the account on this device forgets its row. Cleared site data loses the record, which only
+  shortens the history.
+
+The code is [`src/lib/account/seenPcs.ts`](../src/lib/account/seenPcs.ts).
+
 ## Code
 
 - [`shared/account-records.ts`](../shared/account-records.ts): record types, parsing, signing bytes,

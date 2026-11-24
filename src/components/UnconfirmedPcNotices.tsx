@@ -221,6 +221,8 @@ function UnconfirmedPcNotice({ pc, session, service, now, retry, onSignInAgain, 
       return;
     }
     window.dispatchEvent(new Event(ACCOUNT_PCS_CHANGED_EVENT));
+    // Nothing of this press goes into the device's own record of its PCs (seenPcs.ts): no number was compared and no
+    // QR code scanned, so the press proves nothing about whose PC the account service listed.
     // the new-PC card's dismissal is kept under the admission's time (newPcNoticeKey): the service's own, as its directory
     // row gives it, never this device's clock, so a card closed here stays closed when the row is read again
     const at = admitted.admitted_at ?? (await directory.listPcs().catch(() => [])).find((each) => each.server_id === pc.server_id)?.admitted_at ?? null;

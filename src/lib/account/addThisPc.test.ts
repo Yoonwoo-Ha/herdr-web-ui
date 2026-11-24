@@ -6,10 +6,46 @@ import { importPublicKey } from "../../../shared/relay-e2ee.ts";
 import { nativeTransport, setTransport } from "../transport.ts";
 import { AddPcWaitOver, addInOnePress, ownWindowHere, keepAddPcWaiting, listOfferedPc, listThisPc, onAddPcWaiting, pagePc, pcAnswers, reopenAddWindow } from "./addThisPc.ts";
 import { FakeAccountService } from "../../../shared/account-service-fake.ts";
+import { readSeenPcs } from "./seenPcs.ts";
 import { AccountService, AccountServiceError } from "./service.ts";
 import { memoryAccountStore, memoryLock } from "./store.ts";
 
 afterEach(() => setTransport(nativeTransport));
+
+test("Add this PC is kept in the device's record of its PCs only from the PC's own window: one press from any other page proves nothing", async () => {
+  const savedLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+  const savedStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    for (const [hostname, kept] of [["127.0.0.1", { how: "window" }], ["desk.tailnet.ts.net", undefined]] as const) {
+      const keys = generateKeyPair();
+      const publicKey = exportPublicKey(keys.publicKey);
+      const serverId = deriveServerId(importPublicKey(publicKey));
+      const stored = new Map<string, string>();
+      Object.defineProperty(globalThis, "localStorage", { configurable: true, writable: true, value: { getItem: (name: string) => stored.get(name) ?? null, setItem: (name: string, value: string) => { stored.set(name, value); }, removeItem: (name: string) => { stored.delete(name); } } });
+      Object.defineProperty(globalThis, "location", { configurable: true, writable: true, value: { hostname, pathname: "/", origin: `http://${hostname}`, href: `http://${hostname}/`, search: "", hash: "" } });
+      const answer = async (input: RequestInfo | URL): Promise<Response> => {
+        const path = new URL(String(input), "http://localhost").pathname;
+        if (path === "/api/account/status") return Response.json({ account: null });
+        if (path === "/api/relay/link") return Response.json({ url: encodeOffer({ v: 1, server_id: serverId, server_public_key: publicKey, relay: "wss://relay.ovis.sh", name: "desk" }, "https://app.ovis.sh") });
+        return Response.json({});
+      };
+      setTransport({ ...nativeTransport, fetch: answer });
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(answer as typeof fetch);
+      const service = { listPcs: async () => [], putPc: async () => {}, deletePc: async () => {}, session: async () => ({ account: "acct_1" }), forSignIn() { return this; } } as unknown as AccountService;
+      try {
+        await listThisPc(service, { relistMs: 540_000 });
+        // the record is written behind the add, in turns of this thread: fifty of them pass before it is read
+        for (let turn = 0; turn < 50; turn += 1) await Promise.resolve();
+        expect(readSeenPcs("acct_1").pcs[Buffer.from(keys.publicKey).toString("hex")]).toEqual(kept as never);
+      } finally { fetchSpy.mockRestore(); }
+    }
+  } finally {
+    warn.mockRestore();
+    if (savedLocation) Object.defineProperty(globalThis, "location", savedLocation); else Reflect.deleteProperty(globalThis, "location");
+    if (savedStorage) Object.defineProperty(globalThis, "localStorage", savedStorage); else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});
 
 test("a failure of the relay pass setup never keeps Add this PC from its pairing wait", async () => {
   const keys = generateKeyPair();

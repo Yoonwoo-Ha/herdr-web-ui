@@ -17,6 +17,7 @@ import { accountOpenPeer, accountOpenRefusalFrame } from "./accountOpenPeer.fixt
 import type { ShellDeviceStore } from "./device.ts";
 import { createShellTestPage } from "./shell.test.tsx";
 import { AccountOpenUnsupportedError } from "../../../shared/relay-channel.ts";
+import { readSeenPcs } from "../account/seenPcs.ts";
 import { mountRelayShell, type RelayShellMount } from "./shell.tsx";
 import { markRemovedPc, removedPcs } from "./shellState.ts";
 import { openRelayTransport, RelayTransport } from "./transport.ts";
@@ -416,6 +417,28 @@ it("T34, P18: a normal sign-in opens a listed unpaired PC as its registered acco
     admissions: key ? [{ feature: true, row: accountDeviceId(run.serverId, key.key.public_spki), key: key.key.public_spki }] : [],
     apps: 1, navigations: [],
   });
+});
+
+it("writes a session the PC let this device into in the device's own record of its PCs, by the PC's relay key, and nothing for one it refused", async () => {
+  class Admitted extends RelayTransport {
+    override get server() { return { version: "1.0.0", relayProtocol: RELAY_PROTOCOL }; }
+  }
+  let endpoint = "";
+  const before = Math.floor(Date.now() / 1000);
+  const run = await accountPc({ open: async (offer, _options, identity) => { endpoint = Buffer.from(identity.publicKey).toString("hex"); return new Admitted(offer); } });
+  await run.openPage();
+  await run.settled(() => Object.keys(readSeenPcs("acct_1").pcs).length > 0);
+  const kept = readSeenPcs("acct_1");
+  expect(Object.keys(kept.pcs)).toEqual([endpoint]);
+  // a PC the directory named and the account key opened: nothing this device did itself
+  expect(kept.pcs[endpoint]).toMatchObject({ how: "none" });
+  expect(kept.pcs[endpoint]!.since).toBeGreaterThanOrEqual(before);
+  expect(kept.pcs[endpoint]!.last).toBe(kept.pcs[endpoint]!.since!);
+  // a PC that refused the sign-in leaves no row
+  const refused = await accountPc({ open: async () => { throw new MuxProtocolError("auth_failed", ""); } });
+  await refused.openPage();
+  await refused.settled(() => refused.navigations.length > 0 || refused.current().state.kind === "failed");
+  expect(Object.keys(readSeenPcs("acct_1").pcs)).toEqual([endpoint]);
 });
 
 it("T34: a sign-in on the hosted page registers its key under this device's name, which the PC's notice and lists then show", async () => {

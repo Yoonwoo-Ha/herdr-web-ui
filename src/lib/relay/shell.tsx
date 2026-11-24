@@ -8,6 +8,8 @@ import { RelayShell } from "../../components/RelayShell.tsx";
 import { accountDevice, withAccountDevice } from "../account/accountDevice.ts";
 import { nextOpenStep, openRefusalOf } from "../account/openPc.ts";
 import { isNewAccountPc, newPcs, type MyPc } from "../account/myPcs.ts";
+import { noteSession } from "../account/seenPcs.ts";
+import { importPublicKey } from "../../../shared/relay-e2ee.ts";
 import { sameSignIn, SignedOutError } from "../account/service.ts";
 import type { AccountProvider, AccountSession, PendingPairing } from "../account/store.ts";
 import { SIGN_IN_MS, signInReturn } from "../account/signin.ts";
@@ -681,6 +683,25 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     const open = pc !== undefined && isNewAccountPc(pc, Date.now()) ? accountOpenOf(pc) : null;
     return open === null ? null : { ...open, pressed: true };
   };
+  /**
+   * This device's own record of the PCs it held sessions with (account/seenPcs.ts): the PC just let it in, on a
+   * channel bound to that PC's relay key, while signed in. It only records; nothing waits for it or decides by it.
+   */
+  const noteAdmitted = async (attempt: Attempt): Promise<void> => {
+    try {
+      // the account of the sign-in stored now, read and nothing more: a page that opened a saved PC before it read
+      // the account's PCs is signed in all the same
+      const signedIn = await account.storedAccount();
+      if (signedIn === undefined) return;
+      const endpoint = Array.from(importPublicKey(attempt.offer.server_public_key), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      // what this device did itself here: a pairing it just made at the PC, by the PC's own code for the account, or
+      // otherwise (the digits, a code for this device alone); nothing, where it opened a PC it held or was shown
+      const made = !attempt.paired || attempt.fresh === true;
+      await noteSession(signedIn, endpoint, !made ? "none" : attempt.code && attempt.accountEnrollment === true && !attempt.accountless ? "added" : "paired");
+    } catch (error) {
+      console.warn("Ovis: this session was not written to the device's record of its PCs", error instanceof Error ? error.name : error);
+    }
+  };
   const failed = async (error: unknown, attempt: Attempt): Promise<void> => {
     if (last !== attempt) return;
     comparison = null;
@@ -871,6 +892,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     // the row the PC admitted this session as, which its channel saved: only it may be replaced by an older record, or
     // forgotten. Not read from the store again, where another tab may have saved a newer pairing of this PC since
     attempt.row = opened.deviceId ?? null;
+    void noteAdmitted(attempt);
     opening = null;
     comparison = null;
     markRemovedPc(attempt.offer.server_id, null);

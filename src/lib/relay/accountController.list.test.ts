@@ -165,6 +165,17 @@ describe("the hosted shell and the account's signed list", () => {
     expect(asked).toEqual(sent);
   });
 
+  it("says which account is signed in before it read the account's PCs, and writes nothing to the stored sign-in for it", async () => {
+    // a sign-in stored by an older build, with no id of its own: reading whose it is must not name it
+    const { sign_in_id: _unnamed, ...legacy } = session("acct-one");
+    await accountStore.set("session", legacy);
+    const account = controller(null);
+    expect(account.signedInAs).toBeUndefined();
+    expect(await account.storedAccount()).toBe("acct-one");
+    expect(await accountStore.get("session")).toEqual(legacy);
+    expect(asked).toEqual([]);
+  });
+
   it("follows no list where a test gives its own account store or fetch and no list", async () => {
     await signIn("acct-one");
     const account = controller();
