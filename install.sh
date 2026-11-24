@@ -635,6 +635,12 @@ closing_lines() {
 
 # kills a process and everything it started (ps -A -o pid= -o ppid= reads the same on Linux and macOS)
 kill_tree() {
+  # stopped before its children are listed, so it starts none between that list and its own kill. A fork already under
+  # way when the stop comes ends first, so its child is in the list once the process shows as stopped (or gone); where
+  # ps cannot say, the list is taken at once
+  kill -STOP "$1" 2>/dev/null || true
+  kill_tries=0
+  while [ "$kill_tries" -lt 50 ] && ps -o stat= -p "$1" 2>/dev/null | grep -q '^ *[^T ]'; do kill_tries=$((kill_tries + 1)); done
   for kill_child in $(ps -A -o pid= -o ppid= 2>/dev/null | awk -v parent="$1" '$2 == parent { print $1 }'); do
     kill_tree "$kill_child"
   done

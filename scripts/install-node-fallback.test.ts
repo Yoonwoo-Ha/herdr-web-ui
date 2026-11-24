@@ -80,6 +80,36 @@ describe("rust_host_runs", () => {
     expect(Bun.spawnSync(["pgrep", "-f", tag]).stdout.toString().trim()).toBe("");
   });
 
+  it("kills what a hung host starts while its tree is being listed", () => {
+    const tag = `ovis-probe-late-${crypto.randomUUID()}`;
+    const files = mkdtempSync(join(dir, "late-"));
+    const [go, up, hostPid, done] = ["go", "up", "host-pid", "done"].map((name) => join(files, name));
+    for (const fifo of [go, up]) expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0);
+    const realPs = Bun.which("ps")!;
+    // the child says it runs, and stays (no exec: its path, with the tag, stays visible to pgrep)
+    const child = script(tag, `echo up > '${up}'\nsleep 60`);
+    // the host starts its child only when told to
+    const host = script("late", `${USAGE}\necho $$ > '${hostPid}'\nread _ < '${go}'\n${child} & wait`);
+    // a ps whose first listing (kill_tree's `ps -A`) is taken before the host, if it still runs, is told to start its
+    // child, and is handed over once that child runs (or 5 s passed): a host that can still start one at that moment
+    // would leave it out of the list
+    const tools = join(files, "tools");
+    mkdirSync(tools);
+    writeFileSync(join(tools, "ps"), `#!/bin/sh
+listing=$(${realPs} "$@")
+if [ "$1" = -A ] && [ ! -e '${done}' ] && [ -s '${hostPid}' ]; then
+  : > '${done}'
+  case $(${realPs} -o stat= -p "$(cat '${hostPid}')") in T*) ;; *) echo go > '${go}'; timeout 5 sh -c 'read _ < "$0"' '${up}' ;; esac
+fi
+printf '%s\\n' "$listing"
+`, { mode: 0o755 });
+    const hung = sh(`if rust_host_runs ${host}; then echo RUNS; else echo REFUSED; fi`, { PATH: `${tools}:${process.env["PATH"]}` });
+    expect(hung.out).toContain("REFUSED");
+    // the listing came while the host had written its pid: the gap was reached, not passed over by a slow setup
+    expect(existsSync(done)).toBe(true);
+    expect(Bun.spawnSync(["pgrep", "-f", tag]).stdout.toString().trim()).toBe("");
+  });
+
   it("refuses another program and a missing file", () => {
     expect(sh(`rust_host_runs ${script("other", "exit 0")} || echo REFUSED`).out).toContain("REFUSED");
     expect(sh(`rust_host_runs ${join(dir, "absent")} || echo REFUSED`).out).toContain("REFUSED");
