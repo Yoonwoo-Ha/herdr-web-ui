@@ -104,7 +104,8 @@ the same backoff as an SSH PC's and signs in with the saved key; nothing typed i
 
 The connection takes the best route it can, as the phone apps do ([Direct on the same
 network](relay.md#direct-on-the-same-network)): that PC's direct carriers first (addresses on its own
-network before Tailscale ones), then the relay. The carriers come from that PC inside the encrypted
+network before Tailscale ones), then the relay. That PC names direct carriers only while its owner has
+turned its **Direct connection** on (off by default); with none named, the relay carries it. The carriers come from that PC inside the encrypted
 channel on each sign-in (this server always offers `direct-tailnet`, so a Tailscale address is named
 too) and are kept with the key, so they follow it to another network. This server dials only those on
 a private network or Tailscale's, on the direct listener's port 7319: never link-local or another port,

@@ -179,4 +179,5 @@ export const RELAY_KO: Record<string, string> = {
   "Account PC": "계정의 PC",
   "SSH PC": "SSH PC",
   "Open {host}": "{host} 열기",
+  "More ways to open {name}": "{name} 다른 방법으로 열기",
 };

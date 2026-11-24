@@ -9,7 +9,6 @@ import { t, useT } from "../lib/i18n.ts";
 import { callNative, hasNativePlugin } from "../lib/nativeApp.ts";
 import { announcePairingCode, PAIRING_CODE_EVENT, QR_CODE_ENDED_CHANNEL, tellOtherWindowsQrCodeEnded, type AnnouncedCode, type RelayState } from "../lib/useRelay.ts";
 import type { RelayStatus } from "../../shared/protocol.ts";
-import { isTailnetCarrier } from "../../shared/relay-mux.ts";
 import { decodeOffer } from "../../shared/relay-offer.ts";
 import { QrReveal, ShareLink } from "./PhonePanel.tsx";
 import { KeyId } from "./KeyId.tsx";
@@ -61,10 +60,11 @@ export async function openOwnOffer(url: string): Promise<void> {
 }
 
 /**
- * Settings → Devices and PCs → My devices, in sight while the relay is on: whether this PC takes the relay's
- * channel straight on its home network (docs/relay.md, "Direct on the same network"), on by default. Said
- * plainly because it is a listener on the network; who can sign in there is said with it. The switch only
- * where the relay can be changed from (a direct connection by someone who drives this PC).
+ * Settings → Devices and PCs → More settings → Devices and access, in sight while the relay is on: whether a device on
+ * the relay moves to a direct carrier, on this PC's home network or Tailscale address (docs/relay.md, "Direct on the
+ * same network"); off unless turned on, so a relay connection stays on the relay. Its line says on is a listener on
+ * those addresses; it is found by the networks' names whichever line shows. The switch only where the relay can be
+ * changed from (a direct connection by someone who drives this PC).
  */
 export function RelayDirectRow({ relay, readOnly }: { relay: RelayState; readOnly: boolean }) {
   const t = useT();
@@ -76,15 +76,12 @@ export function RelayDirectRow({ relay, readOnly }: { relay: RelayState; readOnl
     relay.request({ direct: on }).catch((reason: unknown) => setFailure(failureText(reason)));
   };
   return (
-    <SettingsRow label={direct.on ? t("Same Wi-Fi direct connection on") : t("Same Wi-Fi direct connection off")} description={<>
-      {!direct.on ? t("Phones paired through the relay always go through the relay.")
-        : direct.carriers.length > 0 ? (!direct.carriers.some(isTailnetCarrier) ? t("This PC takes connections on your home network. Only devices paired through the relay can sign in there; nothing new pairs.")
-          : direct.carriers.every(isTailnetCarrier) ? t("This PC takes connections on Tailscale. Only devices paired through the relay can sign in there; nothing new pairs.")
-          : t("This PC takes connections on your home network and on Tailscale. Only devices paired through the relay can sign in there; nothing new pairs."))
-        : t("On, but this PC has no home network address to listen on right now.")}
+    <SettingsRow label={t("Direct connection")} keywords={`Wi-Fi Tailscale LAN ${t("Same Wi-Fi, home network, local network")}`} description={<>
+      {direct.on ? t("The Ovis app on a phone that reaches this PC on the same Wi-Fi or over Tailscale moves to a direct connection: faster, and this PC listens for it on those addresses.")
+        : t("Relay connections stay on the relay.")}
       {failure !== null && <span className="settings-hint relay-error" role="alert">{failure}</span>}
     </>}>
-      {!readOnly && <Toggle label={t("Same Wi-Fi direct connection")} checked={direct.on} disabled={relay.pending} onChange={change} />}
+      {!readOnly && <Toggle label={t("Direct connection")} checked={direct.on} disabled={relay.pending} onChange={change} />}
     </SettingsRow>
   );
 }

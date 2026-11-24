@@ -1441,6 +1441,9 @@ it("machine profile reuses its key, saved state and paired device across a resta
 it("machine profile opens no direct listener even when the relay service is given one", async () => {
   let bound = 0;
   const f = await machineFixture({ token: "owner-token" }, { direct: { addresses: () => { bound++; return ["127.0.0.1"]; }, peerAllowed: () => true, preferredPort: 0 } });
+  // turned on, as an ordinary PC's owner could: the profile, not the default, keeps the listener closed
+  mkdirSync(join(f.stateDir, "relay"), { recursive: true });
+  writeFileSync(join(f.stateDir, "relay", "direct.json"), '{"on":true}');
   f.service.start();
   expect(f.service.directAvailable).toBe(false);
   expect(bound).toBe(0);

@@ -179,4 +179,5 @@ export const RELAY_JA: Record<string, string> = {
   "Account PC": "アカウントの PC",
   "SSH PC": "SSH の PC",
   "Open {host}": "{host} を開く",
+  "More ways to open {name}": "{name}を別の方法で開く",
 };

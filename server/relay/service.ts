@@ -75,8 +75,8 @@ export interface RelayServiceOptions {
    */
   readonly pairCodeRelay?: string;
   /**
-   * Direct connections on this PC's networks while the relay is on (server/relay/direct.ts), unless
-   * turned off: the real entrypoint passes `{}`; without it (tests) nothing listens on the network.
+   * Direct connections on this PC's networks while the relay is on (server/relay/direct.ts), once
+   * turned on: the real entrypoint passes `{}`; without it (tests) nothing listens on the network.
    */
   readonly direct?: Pick<DirectCarrierOptions, "addresses" | "peerAllowed" | "preferredPort" | "refreshMs" | "advertise" | "tailnetIp" | "tailnetAddresses">;
   /** The account service a relay pass comes from (server/relay/pass.ts), or why none can be used; none is asked without it. */
@@ -174,7 +174,7 @@ export class RelayService {
   private directStarting: Promise<void> = Promise.resolve();
   /** signed-in sessions over the relay links and the direct carriers alike, against one set of limits */
   private readonly signedIn = new SignedInSessions();
-  /** whether direct connections are on, read once from `relay/direct.json`: on unless turned off */
+  /** whether direct connections are on, read once from `relay/direct.json`: off unless turned on */
   private directOn: boolean | undefined;
 
   constructor(private readonly options: RelayServiceOptions) {
@@ -377,11 +377,13 @@ export class RelayService {
 
   private directEnabled(): boolean {
     if (this.directOn === undefined) {
-      // on unless turned off; a choice that cannot be read is taken as off, so a damaged file never opens the network
+      // only a person's choice is ever written (setDirect), so no file is no choice: off, for a new install and for one
+      // that only had the old default (on). A choice that cannot be read is taken as off, so a damaged file never opens
+      // the network
       let text: string | undefined;
       try { text = readFileSync(this.directPath(), "utf8"); }
       catch (error) { if (!(isJsonObject(error) && error.code === "ENOENT")) text = ""; }
-      if (text === undefined) this.directOn = true;
+      if (text === undefined) this.directOn = false;
       else {
         let saved: unknown;
         try { saved = JSON.parse(text); } catch { saved = null; }

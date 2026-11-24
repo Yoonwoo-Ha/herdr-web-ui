@@ -179,4 +179,5 @@ export const RELAY_ZH: Record<string, string> = {
   "Account PC": "账号的电脑",
   "SSH PC": "SSH 电脑",
   "Open {host}": "打开 {host}",
+  "More ways to open {name}": "用其他方式打开 {name}",
 };

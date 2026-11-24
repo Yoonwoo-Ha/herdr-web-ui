@@ -208,7 +208,7 @@ export type { DevicePairedEvent, DevicePairedSeenEvent, DeviceRemovedEvent, Pair
  *         waiting with the same digits (`relay-pairings` on /api/machines/events); 400 invalid_relay_pairing,
  *         404 relay_pairing_gone once it left, was decided or ran out of time
  *  POST   /api/relay/direct              -> RelayStatus; JSON { on: boolean }: direct connections on this PC's
- *         networks while the relay is on (on unless turned off; off ends every direct session); 400 invalid_relay_direct, 409 direct_unavailable on a server without them
+ *         networks while the relay is on (off unless turned on; off ends every direct session); 400 invalid_relay_direct, 409 direct_unavailable on a server without them
  *  POST   /api/relay/reset-identity      -> RelayStatus; revokes relay devices and reconnects if enabled
  *         Relay mutations require drive role, same origin and X-Herdr-Update: 1, and a direct connection
  *         (403 local_required over the relay); a Portal visitor gets 403 owner_only (see Access).

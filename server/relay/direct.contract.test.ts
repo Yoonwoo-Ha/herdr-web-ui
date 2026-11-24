@@ -277,16 +277,47 @@ describe("direct carriers in AUTH_OK", () => {
 });
 
 describe("direct connections setting", () => {
-  it("is on by default and kept off once turned off", async () => {
+  const choice = (stateDir: string): string => join(stateDir, "relay", "direct.json");
+  const choose = (stateDir: string, text: string): void => {
+    mkdirSync(join(stateDir, "relay"), { recursive: true });
+    writeFileSync(choice(stateDir), text);
+  };
+
+  it("is off on a new install, and kept on once turned on", async () => {
     const fixture = relayFixture();
     cleanup.push(() => fixture.close());
     const service = new RelayService({ stateDir: fixture.stateDir, direct: { addresses: () => [] } });
-    expect(service.status().direct).toEqual({ on: true, carriers: [] });
-    // When it is turned off
-    await service.setDirect(false);
+    expect(service.status().direct).toEqual({ on: false, carriers: [] });
+    // reading the default records no choice
+    expect(existsSync(choice(fixture.stateDir))).toBe(false);
+    // When it is turned on
+    await service.setDirect(true);
     // Then it says so, and a new start reads it back
-    expect(JSON.parse(readFileSync(join(fixture.stateDir, "relay", "direct.json"), "utf8"))).toEqual({ on: false });
+    expect(JSON.parse(readFileSync(choice(fixture.stateDir), "utf8"))).toEqual({ on: true });
+    expect(new RelayService({ stateDir: fixture.stateDir, direct: {} }).status().direct?.on).toBe(true);
+    await service.setDirect(false);
+    expect(JSON.parse(readFileSync(choice(fixture.stateDir), "utf8"))).toEqual({ on: false });
     expect(new RelayService({ stateDir: fixture.stateDir, direct: {} }).status().direct?.on).toBe(false);
+  });
+
+  it("keeps a choice saved before the default changed: turned on stays on, turned off stays off", () => {
+    const fixture = relayFixture();
+    cleanup.push(() => fixture.close());
+    loadRelayIdentity(fixture.stateDir);
+    choose(fixture.stateDir, '{"on":true}');
+    expect(new RelayService({ stateDir: fixture.stateDir, direct: {} }).status().direct?.on).toBe(true);
+    choose(fixture.stateDir, '{"on":false}');
+    expect(new RelayService({ stateDir: fixture.stateDir, direct: {} }).status().direct?.on).toBe(false);
+  });
+
+  it("is off on an install that only ever had the old default, which saved no choice", () => {
+    const fixture = relayFixture();
+    cleanup.push(() => fixture.close());
+    // an install that ran the relay before (its identity and relay state on disk) and never touched the switch
+    loadRelayIdentity(fixture.stateDir);
+    writeFileSync(join(fixture.stateDir, "relay", "state.json"), '{"enabled":true}');
+    expect(new RelayService({ stateDir: fixture.stateDir, direct: {} }).status().direct?.on).toBe(false);
+    expect(existsSync(choice(fixture.stateDir))).toBe(false);
   });
 
   it("is absent where the server offers no direct connections", () => {
@@ -493,7 +524,7 @@ describe("direct connections setting, read back", () => {
 });
 
 describe("direct connections with the relay", () => {
-  async function liveFixture(advertise: (port: number) => readonly string[] = (port) => [`ws://10.0.0.7:${port}`]) {
+  async function liveFixture(advertise: (port: number) => readonly string[] = (port) => [`ws://10.0.0.7:${port}`], { turnOn = true, preferredPort = 0 }: { turnOn?: boolean; preferredPort?: number } = {}) {
     const relay = startBunRelay({ port: 0 });
     const holder = relayFixture();
     holder.close();
@@ -506,18 +537,46 @@ describe("direct connections with the relay", () => {
         socket.addEventListener("message", (event) => { if (typeof event.data === "string" && JSON.parse(event.data).type === "sync") synced.resolve(); });
         return socket;
       },
-      direct: { addresses: () => ["127.0.0.1"], peerAllowed: () => true, preferredPort: 0, advertise },
+      direct: { addresses: () => ["127.0.0.1"], peerAllowed: () => true, preferredPort, advertise },
     });
     const fixture = relayFixture(false, { stateDir: holder.stateDir, relay: service });
     cleanup.push(() => relay.stop(), () => fixture.close(), () => service.shutdown());
     service.start();
     await bounded(synced.promise);
-    await service.setDirect(true);
+    if (turnOn) await service.setDirect(true);
     const identity = loadRelayIdentity(holder.stateDir);
     const offer: RelayOffer = { v: 1, server_id: identity.server_id, server_public_key: identity.public_key, relay: "wss://relay.test" };
     const port = (): string => service.status().direct!.carriers[0]!.split(":").at(-1)!;
     return { fixture, service, offer, port, relay };
   }
+
+  it("bind no listener on a PC that never turned them on: the relay alone carries its devices", async () => {
+    const free = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const preferredPort = free.port;
+    free.stop(true);
+    const { fixture, service, offer, relay } = await liveFixture(undefined, { turnOn: false, preferredPort });
+    const device = await relayDevice(fixture);
+    const listening = async (): Promise<boolean> => {
+      const socket = new WebSocket(`ws://127.0.0.1:${preferredPort}/v1/ws?v=1`);
+      try { await opened(socket); return true; } catch { return false; } finally { socket.close(); }
+    };
+    // Then nothing listens on the direct port, /api/health names no listener, and a phone that offers to take
+    // direct carriers is told none
+    expect(service.status().direct).toEqual({ on: false, carriers: [] });
+    expect(await listening()).toBe(false);
+    const health = await (await fetch(`http://127.0.0.1:${fixture.app.port}/api/health`)).json() as { direct_exposure?: unknown };
+    expect(health.direct_exposure).toBeUndefined();
+    const channel = await bounded(openRelayChannel(offer, { store: savedStore(device, offer), offerDirect: true, offerTailnet: true, socket: (url) => {
+      const target = new URL(url);
+      return new WebSocket(`ws://127.0.0.1:${relay.port}${target.pathname}${target.search}`);
+    } }));
+    cleanup.push(() => channel.close());
+    expect(channel.directCarriers).toEqual([]);
+    // When the owner turns them on, the same PC listens there
+    await service.setDirect(true);
+    expect(service.status().direct?.carriers).toEqual([`ws://10.0.0.7:${preferredPort}`]);
+    expect(await listening()).toBe(true);
+  });
 
   it("let a direct carrier signed in but never used close none of its device's sessions, until it opens a stream", async () => {
     const { fixture, offer, port } = await liveFixture();

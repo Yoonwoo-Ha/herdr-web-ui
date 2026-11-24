@@ -3536,7 +3536,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - In More's header, one quiet mark says how this device reaches Ovis (`.conn-route`,
   `components/ConnectionRouteMark.tsx`, `lib/connectionRoute.ts`): a 14px glyph and one short
   `--text-dim` word, **relay** (the hosted shell, or a request Portal vouched for, whatever signed it in; once the
-  app's relay channel moves to a direct carrier, **direct** with the Wi-Fi glyph on the PC's private address, or
+  app's relay channel moves to a direct carrier, which it does only on a PC whose Direct connection is on,
+  **direct** with the Wi-Fi glyph on the PC's private address, or
   **Tailscale** "Directly over Tailscale, not through the relay" on its Tailscale one, never Wi-Fi for a phone on mobile data), **Tailscale** (a tailnet address, or a
   request the server saw come through serve; a MagicDNS name alone says "Via Tailscale, or Funnel
   from the internet", since the name serves both), **LAN** (a private address or a local-only name), **direct** (any other
@@ -5083,6 +5084,15 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   because to the person they are one thing: something connected to this PC. Rows are as short as
   the page allows; what pairing means is one folded sentence, and what few people change is in
   More settings. Old links to the Phone, Remote PCs and Portal groups land on My devices.
+- While the relay is on, Devices and PCs has one **Direct connection** row in More settings, under Devices and access
+  (`RelayDirectRow` in `components/RelayPanel.tsx`; not in My devices, which lists what is connected),
+  its label the same whether on or off and its switch named the same, with one line under it: off, "Relay connections
+  stay on the relay."; on, "The Ovis app on a phone that reaches this PC on the same Wi-Fi or over Tailscale moves to a
+  direct connection: faster, and this PC listens for it on those addresses." (the app, since a browser always stays on
+  the relay). It is off by default: one switch for the home network and the Tailscale carrier, since both are a
+  listener on this PC, and a person who wants the faster path turns it on; the relay never moves a connection off
+  itself unasked. Settings search finds it by Wi-Fi, Tailscale, LAN, same Wi-Fi or home network (`keywords`, in each
+  language), whichever line it shows.
 - My devices (`MyPcRows` in SettingsDialog.tsx, then `components/DevicesPanel.tsx`): this PC
   first (its name and a **This PC** pill in the accent; no ID line), then
   the PCs this app shows (a neutral **PC** pill and their state; one that is not connected is
@@ -5234,10 +5244,20 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   Tailscale address, SSH, another address) is listed once, with each way's tag (Relay · Tailscale), when the page of
   each saved way told the app that PC's relay ID (never by name: a way with no ID stays a row of its own). That is for
   the eye alone: a row with a relay way is the relay's row (its name, or Unnamed PC, its word, In use now only when the
-  relay PC is) and always opens by the relay, whose key is checked and whose connection moves to a direct Tailscale or
-  home network carrier by itself; an address way never names it, states it or opens it, and its address is not shown.
-  A row of saved ways alone opens by the one whose page loaded last in the app, and shows that one's address on the wide
-  screen. When a row's open fails or is refused and the PC has another saved way, the failure offers it, one button
+  relay PC is) and a tap on it always opens by the relay, whose key is checked and whose connection stays on the relay
+  unless that PC's Direct connection is on (off by default); an address way never names it or states it, and its
+  address is not shown on the row. A row of saved ways alone opens by the one whose page loaded last in the app, and
+  shows that one's address on the wide screen; while the app keeps one of its ways open, the row shows that one and
+  goes back to it. Since the relay no longer moves to a faster way by itself, a row of
+  several ways has **More ways** beside its link (a round outlined chevron in the column Forget takes, named "More ways
+  to open {name}", `aria-expanded`, closed at first, its glyph turned up when open; a row of one way has none): open, it
+  lists under the row, one to a line, each saved way the row's tap does not open as the failure's other-way button
+  draws it (`OtherWayButton`: its way tag, then Open and its host, whole, wrapping after a dot rather than cut), and a
+  line opens that way with the checks its own row would make (Tailscale off on the phone gives the Tailscale-off card;
+  the way the app keeps open goes back to it). Choosing one is always that explicit tap on a line that shows its host;
+  it never renames, re-states or redirects the relay row. Phone width and the wide screen alike. It follows the
+  Tailscale app, which lists every address that reaches a machine under that machine, each whole, rather than picking
+  one for the person; it differs in folding them under the row in place, so My PCs stays one screen. When a row's open fails or is refused and the PC has another saved way, the failure offers it, one button
   naming that way's tag and the host it opens, whole (Tailscale · Open macbookpro.tail1e211e.ts.net:17317, wrapping
   rather than cut), so the person sees what will answer: on My PCs, and on a relay PC's own failure card (not for a key
   that is not the PC's). In Forget PCs a row of several lists its ways under it, one to a line, each with its

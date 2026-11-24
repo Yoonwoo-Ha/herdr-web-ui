@@ -59,6 +59,8 @@ async function pcFixture(extraCarriers: readonly string[] = []) {
   const base = `http://127.0.0.1:${app.port}`;
   await fetch(`${base}/api/relay/start`, { method: "POST", headers: { origin: base, "x-herdr-update": "1" } });
   await bounded(synced.promise);
+  // direct connections are off until the PC's owner turns them on
+  expect((await fetch(`${base}/api/relay/direct`, { method: "POST", headers: { origin: base, "x-herdr-update": "1", "content-type": "application/json" }, body: '{"on":true}' })).status).toBe(200);
   const offer = decodeOffer(((await (await fetch(`${base}/api/relay/offer`, { method: "POST", headers: { origin: base, "x-herdr-update": "1" } })).json()) as { url: string }).url)!;
   const direct: string[] = [];
   const directSocket = (url: string): WebSocket => {

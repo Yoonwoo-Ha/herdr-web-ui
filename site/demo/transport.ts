@@ -1067,7 +1067,7 @@ let demoRelayOnline = DEMO_RELAY_PARAM === "on" || DEMO_RELAY_PASS !== null;
 let demoRelayStartError: string | null = null;
 let demoRelayIdentities = 1;
 const demoRelayServerId = (): string => `${demoRelayIdentities.toString(16).padStart(4, "0")}5e1f1d0ff3ab1e0ff3ab1e5e1f1d`;
-let demoRelayDirect = true;
+let demoRelayDirect = false;
 function demoRelayPass(): RelayStatus["pass"] | undefined {
   switch (DEMO_RELAY_PASS) {
     case "grace": return { state: "no_account", relay: "missing", enforce_at: new Date(Date.now() + 30 * 86_400_000).toISOString(), refused: false };

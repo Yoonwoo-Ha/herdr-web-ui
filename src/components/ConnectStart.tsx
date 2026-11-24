@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Plus, QrCode } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Plus, QrCode } from "lucide-react";
 
 import { useT, type Translate } from "../lib/i18n.ts";
 import { callNative, hasNativeMethod, hasNativePlugin } from "../lib/nativeApp.ts";
@@ -10,7 +10,7 @@ import { serverIdOfPath, serverScopePath } from "../lib/shellMode.ts";
 import { markRemovedPc, removedPcs, type RemovedPcMark } from "../lib/relay/shellState.ts";
 import { StartScreenAccountMenu } from "./AccountHead.tsx";
 import { deviceOffline, useOffline } from "../lib/useOffline.ts";
-import { AddressForm, atDots, canScanQr, clearOutcome, offlineOpenText, OpenError, OpenStatus, scanQr, sshHandoff, TailscaleOff, tailscaleOn, useAddressOpen, Way, type AddressOpen, type SavedPc } from "./RelayAddPc.tsx";
+import { AddressForm, atDots, canScanQr, clearOutcome, offlineOpenText, OpenError, OpenStatus, OtherWayButton, scanQr, sshHandoff, TailscaleOff, tailscaleOn, useAddressOpen, Way, type AddressOpen, type SavedPc } from "./RelayAddPc.tsx";
 import { codeFailureText, type TypedCodeFailure } from "./codeFailureText.ts";
 import { SheepMascot } from "./SheepMascot.tsx";
 import { StatusDot, type StatusDotState } from "./StatusDot.tsx";
@@ -71,10 +71,10 @@ export function onePcRows(relay: readonly RelayTabPc[], phones: readonly PhoneSa
 
 /**
  * The way a row of several opens by. One with a relay row always opens by the relay, whose key is checked (and whose
- * connection moves to a direct Tailscale or home network carrier by itself): the ways the app saved by an address only
- * put themselves on its row, they never decide how it opens (null: the relay). One with none opens by the saved way whose
- * page loaded in the app last (`recent`, the app's saved list, newest first: it moves an entry to the front each time its
- * page loads), else the first.
+ * connection stays on the relay unless its PC turned Direct connection on): the ways the app saved by an address only
+ * put themselves on its row and its More ways, they never decide how its tap opens (null: the relay). One with none
+ * opens by the saved way whose page loaded in the app last (`recent`, the app's saved list, newest first: it moves an
+ * entry to the front each time its page loads), else the first.
  */
 export function openWay(group: PcGroup, recent: readonly string[]): PhoneSavedPc | null {
   if (group.relay !== undefined) return null;
@@ -138,6 +138,8 @@ interface PhonePc {
   readonly way: PcWay;
   /** a PC saved by several ways: each, the first `way`, which Forget PCs lists one to a line, each with its own Forget */
   readonly ways?: readonly WayLine[];
+  /** a PC saved by several ways: the saved ways its tap does not open, which its More ways lists */
+  readonly others?: readonly OtherLine[];
   readonly word?: PcWord | undefined;
   readonly address?: string | undefined;
   /** a relay PC's own page, or what opening it does */
@@ -164,15 +166,27 @@ interface WayLine {
   readonly inUse?: boolean;
 }
 
+/** A saved way a row's tap does not open, a line of its More ways: its tag, the host it opens and what opening it does. */
+interface OtherLine {
+  readonly key: string;
+  readonly way: string;
+  readonly host: string;
+  readonly open: () => void;
+}
 
 /**
- * One row of My PCs: it opens its PC, the whole row; `editing`, the list's Forget PCs: it opens nothing, and a row this
- * phone can forget has Forget in its chevron's place, one that it cannot the reason there instead, and a row of several
- * ways lists them under it, one to a line, each with its own Forget or reason. Forget on the PC in use asks once more,
- * in the row, first (`asking`, the key of the row or the line asked about).
+ * One row of My PCs: it opens its PC, the whole row; a row with `others` has More ways beside it, closed at first, which
+ * lists them one to a line, each naming its way and its whole host and opening that way (OtherWayButton). `editing`, the
+ * list's Forget PCs: it opens nothing and has no More ways, a row this phone can forget has Forget in its chevron's
+ * place, one that it cannot the reason there instead, and a row of several ways lists them under it, one to a line, each
+ * with its own Forget or reason. Forget on the PC in use asks once more, in the row, first (`asking`, the key of the row
+ * or the line asked about).
  */
 function PcRow({ pc, editing = false, asking, onAsk, onKeep }: { readonly pc: PhonePc; readonly editing?: boolean; readonly asking: string | null; readonly onAsk: (key: string) => void; readonly onKeep: () => void }) {
   const t = useT();
+  const othersId = useId();
+  const [more, setMore] = useState(false);
+  const others = editing ? [] : pc.others ?? [];
   const tagOf = (way: PcWay): string => ({ relay: t("Relay"), tailscale: "Tailscale", ssh: "SSH", address: t("Address") }[way]);
   const tag = [...new Set((pc.ways ?? [{ way: pc.way }]).map((line) => line.way))].map(tagOf).join(" · ");
   const word = pc.word === undefined ? null : { online: t("On|pc state"), off: t("Off|pc state"), update: t("Update needed|pc state"), removed: t("Removed|pc state"), "in-use": t("In use now|pc state") }[pc.word];
@@ -210,6 +224,17 @@ function PcRow({ pc, editing = false, asking, onAsk, onKeep }: { readonly pc: Ph
       {editing ? <div className="relay-add-saved-pc is-editing">{inside}</div>
         : pc.href !== undefined ? <a className="relay-add-saved-pc" href={pc.href} onClick={pc.onLink}>{inside}</a>
         : <button type="button" className="relay-add-saved-pc" onClick={pc.open}>{inside}</button>}
+      {others.length > 0 && (
+        <button type="button" className="icon-button is-outlined my-pc-more" data-action="more-ways" aria-expanded={more} aria-controls={othersId}
+          aria-label={t("More ways to open {name}", { name: pc.name })} title={t("More ways to open {name}", { name: pc.name })} onClick={() => setMore(!more)}>
+          <ChevronDown aria-hidden="true" />
+        </button>
+      )}
+      {others.length > 0 && (
+        <div className="my-pc-others" id={othersId} role="group" aria-label={t("More ways to open {name}", { name: pc.name })} hidden={!more}>
+          {more && others.map((line) => <OtherWayButton key={line.key} way={line.way} host={line.host} onClick={line.open} />)}
+        </div>
+      )}
       {editing && lines === undefined && (pc.forget ? forgetting(pc.key, pc.name, pc.forget, pc.word === "in-use") : pc.kept !== undefined && <span className="my-pc-kept" data-kept={pc.kept}>{keptText(pc.kept)}</span>)}
       {lines?.map((line) => (
         <Fragment key={line.key}>
@@ -407,10 +432,13 @@ export function MyPcs({ devices, accountPcs = null, knownPcs, accountUnread = fa
     askTailscale: pc.way === "tailscale",
     ...(other === null ? {} : { other: { way: savedWayTag(t, other), host: other.host, run: () => openSaved(other) } }),
   });
+  // a saved way, as its own row opens it: the PC the app keeps open goes back to it, any other opens with its checks
+  const openOf = (pc: PhoneSavedPc): (() => void) => isCurrent(pc.origin, current) && goBack ? goBack : () => openSaved(pc);
+  const otherLine = (pc: PhoneSavedPc): OtherLine => ({ key: pc.origin, way: savedWayTag(t, pc), host: pc.host, open: openOf(pc) });
   const fromPhone = (pc: PhoneSavedPc): PhonePc => ({
     key: pc.origin, name: pc.name, way: pc.way, address: pc.host, ...(pc.way === "tailscale" ? { data: { "data-tailnet-pc": pc.origin } } : {}),
     ...(isCurrent(pc.origin, current) ? { word: "in-use" as const } : {}),
-    open: isCurrent(pc.origin, current) && goBack ? goBack : () => openSaved(pc),
+    open: openOf(pc),
     forget: pc.way === "ssh" ? undefined : forgetSaved(pc),
     ...(pc.way === "ssh" ? { kept: "ssh" as const } : {}),
   });
@@ -428,9 +456,10 @@ export function MyPcs({ devices, accountPcs = null, knownPcs, accountUnread = fa
   };
   const phoneLine = (pc: PhoneSavedPc): WayLine => ({ key: pc.origin, way: pc.way, address: pc.host, forget: pc.way === "ssh" ? undefined : forgetSaved(pc), kept: pc.way === "ssh" ? "ssh" : undefined, inUse: isCurrent(pc.origin, current) });
   // one PC saved by several ways (onePcRows), on one row with every way's tag. With a relay row it is that row: its name,
-  // its word, opened by the relay; the ways saved by an address only show themselves there, never name it, state it or
-  // open it. With none, the saved way that loaded last opens it, offering another when that fails, and gives its name
-  // and address. Forget PCs lists the ways, one to a line, each forgotten on its own
+  // its word, its tap opened by the relay; the ways saved by an address show themselves there, never name it or state
+  // it, and open only from its More ways, a line each that shows the host it opens. With none, the saved way that loaded
+  // last opens it, offering another when that fails, and gives its name and address; More ways lists the others. Forget
+  // PCs lists the ways, one to a line, each forgotten on its own
   const together = (group: PcGroup): PhonePc => {
     const { relay, phones } = group;
     const by = openWay(group, phone.recent);
@@ -442,12 +471,14 @@ export function MyPcs({ devices, accountPcs = null, knownPcs, accountUnread = fa
     const data = { "data-pc-ways": [...new Set(lines.map((line) => line.way))].join(" "), ...(tailnet ? { "data-tailnet-pc": tailnet.origin } : {}) };
     if (relay !== undefined) {
       const used = relayUsed(relay);
-      return { key: relay.server_id, name: relay.name ?? t("Unnamed PC"), way: "relay", ways: lines, word: used ? "in-use" : relay.status, ...(used && goBack ? { open: goBack } : { href: serverScopePath(relay.server_id), onLink: offlineLink }), data };
+      return { key: relay.server_id, name: relay.name ?? t("Unnamed PC"), way: "relay", ways: lines, others: phones.map(otherLine), word: used ? "in-use" : relay.status, ...(used && goBack ? { open: goBack } : { href: serverScopePath(relay.server_id), onLink: offlineLink }), data };
     }
-    const shown = by ?? phones[0]!;
-    const used = phones.some((pc) => isCurrent(pc.origin, current));
+    // the way the app keeps open, where one is: the row's tap goes back to it, so the row shows it and More ways the rest
+    const kept = phones.find((pc) => isCurrent(pc.origin, current));
+    const shown = kept ?? by ?? phones[0]!;
+    const used = kept !== undefined;
     return {
-      key: shown.serverId ?? shown.origin, name: shown.name, way: shown.way, ways: lines, address: shown.host, ...(used ? { word: "in-use" as const } : {}),
+      key: shown.serverId ?? shown.origin, name: shown.name, way: shown.way, ways: lines, others: phones.filter((pc) => pc !== shown).map(otherLine), address: shown.host, ...(used ? { word: "in-use" as const } : {}),
       open: used && goBack ? goBack : () => openSaved(shown, otherWay(group, shown)), data,
     };
   };
