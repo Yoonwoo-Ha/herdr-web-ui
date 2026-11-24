@@ -9,6 +9,9 @@ import {
   type AccountRecord, type BlockRecord, type DeviceLiftRecord, type PcAddPurpose, type SafetyRecord,
 } from "./account-records.ts";
 import { ACCOUNT_SNAPSHOT_V, SNAPSHOT_GONE, type AccountSnapshotPage, type SnapshotFreezeLine } from "./account-snapshot.ts";
+import { ListEntryError, canonicalBase64Url, entryFromText, entryHash, entryHolds, entryToText, firstState, isListHash, readBody, verifySignature, type Entry, type EntryBody, type HeldEntry } from "./account-list-entry.ts";
+import { CARD_SIGNATURE_CHARS, ListKindError, cardHolds, firstListState, holdsPc, isListKey, readKind, sealEpoch, takeEntry, wrapKeys, type ListState } from "./account-list.ts";
+import { signerPower, type ListPlace } from "./account-list-signers.ts";
 import { accountOsOf, type AccountOs, type AccountPlace } from "./account-asker.ts";
 import { isWssOrigin } from "./relay-offer.ts";
 import { fromBase64Url, toBase64Url } from "./relay-pair-sas.ts";
@@ -145,6 +148,136 @@ interface Registry {
 
 type SnapshotState = Omit<AccountSnapshotPage, "page" | "last" | "v">;
 
+/**
+ * The limits of the signed list's routes (/v2, docs/development.md "The account service's list routes"), as the
+ * service has them. Each instance copies them into `listLimits`, where a test may lower one.
+ */
+export const LIST_LIMITS = {
+  /** From this `seq` on, only `remove` and `epoch` are placed (409 `list_full`). */
+  removalsOnlyFrom: 16384,
+  /** From this `seq` on, nothing is placed. */
+  closedFrom: 20480,
+  /** Past this many characters of the service's own state of the list as JSON after an entry, only `remove` and `epoch` are placed. */
+  stateChars: 1024 * 1024,
+  /** Past this many, only `remove`, which adds no row to the state. */
+  stateHardChars: 1536 * 1024,
+  /** Additions (`device`, `pc`, `invite`, `join`) one list takes in any ten minutes (429 `entry_budget`). */
+  additionsPerWindow: 60,
+  /** And in any 24 hours: the long-run bound, since a list's state only grows. */
+  additionsPerDay: 96,
+  /** Removals by one signer of the list in ten minutes (`remove` entries, at most one `epoch` last, at the head, from a caller that may write): they spend this, not the account's requests. */
+  removalsPerWindow: 120,
+  /** Attempts of the number comparison an adder opens on one PC's post in ten minutes (429 `attempts_spent`); a reveal is not counted. */
+  attemptsPerWindow: 6,
+  /** Calls of the list routes one proven PC makes in a minute (the service's MACHINE_LIMITER). */
+  pcCallsPerMinute: 30,
+};
+/** How long a device's claim (POST /v2/lists/{list}/claims) and a PC's post of its keys (POST /v2/pc/list/keys) last. */
+export const LIST_CLAIM_MS = 10 * 60_000;
+/** Entries one log page holds at most, and about how much text. */
+export const LIST_PAGE_MAX = 256;
+export const LIST_PAGE_CHARS = 1024 * 1024;
+/** Entries and wraps one placement carries at most. */
+export const LIST_BATCH_MAX = 16;
+export const LIST_WRAPS_MAX = 1024;
+/** How far an entry's `issued_at` may lie ahead of the service's clock, in seconds, the genesis's too: the list's own time is the latest one a full signer wrote. */
+export const LIST_ISSUED_AHEAD_S = 600;
+/** Body limits of the list routes, in bytes. */
+const LIST_BODY = { genesis: 32 * 1024, entries: 512 * 1024, small: 8 * 1024 } as const;
+/** A wrap as text: 151 base64url characters, the 113 bytes of Part C's wrap. */
+const WRAP_TEXT = 151;
+const WRAP_BYTES = 113;
+
+/**
+ * Whom a tamper rule lies to: a device by the sign-in of its token (a refresh keeps it), a PC by its server_id.
+ * A rule without one lies to every reader.
+ */
+export type ListReader = { readonly token: string } | { readonly server_id: string };
+
+/** A wrap as the list routes carry it. */
+export interface ListWrap { readonly epoch: number; readonly member: string; readonly wrap: string }
+
+/**
+ * The lies a test makes the fake's list routes tell, for one list (`tamperList`). Nothing is on by default, and a
+ * lie changes only what is served or refused: the log the service holds stays as placed. Each field names what a
+ * member must survive.
+ */
+export interface ListTamper {
+  /** Lie to this reader only; to every reader when left out. For `headMoved` and `dropWraps` it is the placer. */
+  readonly reader?: ListReader;
+  /** These texts are served after the log as if placed, the head moved to the last: an entry of a key that is no member is passed over (loose), never let in. */
+  readonly inject?: readonly string[];
+  /** These wraps are served in place of the stored ones for their member and epoch: a wrap to a key of the service's own does not match the chain's `epoch_opens` (`other_key`). */
+  readonly wraps?: readonly ListWrap[];
+  /** The log ends at this seq for the reader, its head with it: a removal after it never arrives, which only head gossip or a direct push can tell. */
+  readonly withholdAfter?: number;
+  /** Every answer reports this head (the log, which list, the mailbox): one the log does not reach shows the tail withheld; an old one is a hint that changes nothing. */
+  readonly head?: ListPlace;
+  /** The log is served with these texts in place of its own from the first one's seq on: two readers given two forks each hold a valid member-signed history, which only head gossip parts. */
+  readonly fork?: readonly string[];
+  /** Pages end after these seqs, `more` true: a reader that asks again `after` its last seq joins the same log whatever the cuts. */
+  readonly pages?: readonly number[];
+  /** This other list (another account's) is answered for this one, under this one's id: its entry 0 does not hash to the id the member pinned. */
+  readonly answerList?: string;
+  /** This id is reported as the account's list (GET /v2/lists/mine, POST /v2/pc/list, the mailbox's with_list), the log unchanged: the id is a hint, pinned only from a member. */
+  readonly listId?: string;
+  /** One byte of the body of the entry at this seq is flipped as served: it no longer holds (`signature_invalid`, or `entry_malformed`). */
+  readonly flipEntry?: { readonly seq: number; readonly byte?: number };
+  /** One byte of this member's wrap of this epoch is flipped as served: it does not open (`refused`), which is no evidence. */
+  readonly flipWrap?: { readonly member: string; readonly epoch: number; readonly byte?: number };
+  /** Every placement is refused 409 `head_moved` with the true head, forever: a writer stops after its own bound and says so. */
+  readonly headMoved?: boolean;
+  /** A placed batch's entries are stored and its wraps dropped: the new member sees no names, and is let in all the same. */
+  readonly dropWraps?: boolean;
+  /** Placements, and a PC's reads whose only right is its row in the list, answer 503 `list_rebuilding` (retry-after 1): the client sends the same request again. */
+  readonly rebuilding?: boolean;
+  /** The same calls answer 503 `list_stopped`: the client shows that the service cannot change the list. */
+  readonly stopped?: boolean;
+}
+
+/** What accountList shows: the list's id, every entry as its text, the head, the service's own state, every stored wrap, and the claims and posts that still lock. */
+export interface FakeListView {
+  readonly id: string;
+  readonly entries: readonly string[];
+  readonly head: ListPlace;
+  readonly state: ListState;
+  readonly wraps: readonly ListWrap[];
+  readonly claims: readonly { readonly key: string; readonly enc: string; readonly card: string; readonly until: number }[];
+  readonly posts: readonly { readonly endpoint: string; readonly server_id: string; readonly key: string; readonly enc: string; readonly card: string; readonly until: number; readonly attempt: ListAttempt | null }[];
+}
+
+/** A device's claim of its member key, by the sign-in (family) that took it at `at`. */
+interface ListClaim { readonly family: string; readonly enc: string; readonly card: string; readonly at: number }
+/**
+ * The comparison of numbers a post carries (the formats' B7), which the service only carries: the adder's key and
+ * commitment, then the PC's nonce, then the adder's reveal.
+ */
+export interface ListAttempt { readonly adder: string; readonly commitment: string; readonly nonce: string | null; readonly reveal: string | null }
+/** A PC's post of its keys, taken at `at`, with the attempt open on it. */
+interface ListPost { readonly server_id: string; readonly key: string; readonly enc: string; readonly card: string; readonly at: number; attempt: ListAttempt | null }
+
+/** A list as the service holds it: every entry as the text it was sent, its own state of the list (never served), wraps, claims and posts. */
+interface FakeList {
+  readonly id: string;
+  readonly account: string;
+  readonly texts: string[];
+  readonly hashes: string[];
+  last: HeldEntry;
+  state: ListState;
+  /** by member, then epoch: one wrap each, written once */
+  readonly wraps: Map<string, Map<number, string>>;
+  /** by the claimed key: one per key, and one per sign-in */
+  readonly claims: Map<string, ListClaim>;
+  /** by endpoint */
+  readonly posts: Map<string, ListPost>;
+  /** when each addition was placed, for the entry budget */
+  readonly additions: number[];
+  readonly tamper: { readonly rule: ListTamper; readonly family: string | null; readonly server_id: string | null }[];
+}
+
+/** Who reads or places: a device's sign-in, or a PC by its server_id and endpoint (its relay key). */
+type ListCaller = { readonly family: string; readonly server_id?: undefined; readonly endpoint?: undefined } | { readonly family?: undefined; readonly server_id: string; readonly endpoint: string };
+
 export class FakeAccountService {
   private readonly tokens = new Map<string, Session>();
   /** `link`: the sign-in (account and refresh family) a linking sign-in adds this identity to, once that sign-in redeems the code */
@@ -237,6 +370,19 @@ export class FakeAccountService {
   private readonly inviteCards = new Map<string, { until: number; listing: string }>();
   private seq = 0;
   readonly requests: string[] = [];
+  /**
+   * OVIS_LIST_ACCOUNTS at the service: account ids separated by commas, or the one entry `*` for every account. For an
+   * account it does not name, every /v2 route answers as an unknown one and the mailbox's `with_list` says `list: null`;
+   * its list is kept. Empty, as the service ships: no account.
+   */
+  listAccounts = "";
+  /** LIST_LIMITS, for this instance: a test lowers one to reach it. */
+  readonly listLimits = { ...LIST_LIMITS };
+  private readonly lists = new Map<string, FakeList>();
+  /** by account: its one list's id */
+  private readonly accountLists = new Map<string, string>();
+  /** by block id: when the service kept it, for frozenSignIn */
+  private readonly blocksKeptAt = new Map<string, number>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -437,6 +583,10 @@ export class FakeAccountService {
     for (const key of [...this.counters.keys()]) if (key.endsWith(`:${account}`)) this.counters.delete(key);
     for (const list of [this.admissionList, this.quietList]) for (let index = list.length - 1; index >= 0; index--) if (list[index]?.account === account) list.splice(index, 1);
     this.identityList.delete(account);
+    // the account's deletion is the only thing that deletes its list
+    const list = this.accountLists.get(account);
+    if (list !== undefined) this.lists.delete(list);
+    this.accountLists.delete(account);
     this.directories.delete(account);
     this.accountLimits.delete(account);
     this.deletedAccounts.add(account);
@@ -587,6 +737,7 @@ export class FakeAccountService {
     const url = new URL(request.url);
     this.requests.push(`${request.method} ${url.pathname}`);
     try {
+      if (url.pathname.startsWith("/v2/")) return await this.v2(request, url);
       if (url.pathname.startsWith("/v1/pc/")) return await this.pc(request, url.pathname);
       const leaving = /^\/v1\/pcs\/([0-9a-f]{32})\/leave$/.exec(url.pathname)?.[1];
       if (leaving !== undefined && request.method === "POST") return await this.leave(request, leaving);
@@ -808,11 +959,14 @@ export class FakeAccountService {
       // confirm, and where Step 2 is on a PUT that lists a PC the account does not list yet. Upkeep of a listed PC and a device
       // code's listing ask nothing of the sign-in, and read no proof. The service before ignores `key_proof`
       if (this.pcAddProofs && body.key_proof !== undefined && keyProofOf(body.key_proof) === null) return problem(400, "invalid_request", "Send key_proof as { challenge_id, signature }");
-      if (this.pcAddProofs && own && (confirm || (this.opensAll && !directory.has(pc)))) {
+      // an account that has a signed list lists a new PC only by a sign-in that may add one, whatever Step 2 and the list
+      // rule's switch say: its listing is what the list's `pc` lock counts
+      const hasList = this.listOfAccount(account) !== undefined;
+      if (this.pcAddProofs && own && (confirm || ((this.opensAll || hasList) && !directory.has(pc)))) {
         const listing = named ? body.listing_id as string : directory.get(pc)?.listing_id ?? "";
         const proved = await this.provedKey(session, body.key_proof, confirm ? "confirm" : "list", pc, listing);
         if (proved instanceof Response) return proved;
-        const enforced = confirm || this.listProofRequired || body.key_proof !== undefined;
+        const enforced = confirm || this.listProofRequired || hasList || body.key_proof !== undefined;
         if (!recent && proved === null && enforced) return problem(403, "session_not_fresh", "Sign in again on this device first");
       }
       // PCL-4: a confirm asks what the one-press admit asks of the sign-in: fresh (or proved, above), and two-step set unless the
@@ -1176,7 +1330,9 @@ export class FakeAccountService {
       const taken = this.pcAdmissions.get(key);
       const listing = this.completions && body.with_listing_id === true
         ? { listing_id: named, ...(this.saysListingAdmitted ? { listing_admitted: named !== null && entry?.admitted_at != null && taken?.taken === true && taken.listing === named } : {}) } : {};
-      return json({ ...listing, records: rest.slice(0, MAILBOX_PAGE).map(({ seq, record }) => ({ seq, record })), more: rest.length > MAILBOX_PAGE, admissions, quiet_admissions: quiet });
+      // the signed list's id and head, read with the pull, for a PC the account lists confirmed; without the member, unchanged
+      const list = body.with_list === true ? { list: this.mailboxList(challenge.server_id, body.account, entry) } : {};
+      return json({ ...listing, ...list, records: rest.slice(0, MAILBOX_PAGE).map(({ seq, record }) => ({ seq, record })), more: rest.length > MAILBOX_PAGE, admissions, quiet_admissions: quiet });
     }
     return problem(404, "not_found", "Unknown request");
   }
@@ -1247,6 +1403,7 @@ export class FakeAccountService {
         if (target.removed) return problem(409, "target_removed", "The target is already removed");
         target.removed = true;
         registry.blocks.push(record);
+        this.blocksKeptAt.set(record.id, this.now());
         registry.freezes.push({ block: record.id, target: record.target, after: record.target_no });
         registry.version += 1;
       }
@@ -1263,6 +1420,699 @@ export class FakeAccountService {
       registry.version += 1;
     }
     return json({ id: record.id });
+  }
+
+  /** An account's signed list as the service holds it, for a test to look at (no lie applies here); null for an account that has none. */
+  accountList(account: string): FakeListView | null {
+    const list = this.listOfAccount(account);
+    if (list === undefined) return null;
+    return {
+      id: list.id, entries: [...list.texts], head: headOf(list), state: list.state,
+      wraps: [...list.wraps].flatMap(([member, epochs]) => [...epochs].map(([epoch, wrap]) => ({ epoch, member, wrap }))),
+      claims: this.liveClaims(list).map(({ key, enc, card, at }) => ({ key, enc, card, until: untilOf(at) })),
+      posts: this.livePosts(list).map(([endpoint, { server_id, key, enc, card, at, attempt }]) => ({ endpoint, server_id, key, enc, card, until: untilOf(at), attempt })),
+    };
+  }
+
+  /** Adds one lie (ListTamper) to what the list routes tell of `list`; rules stack in the order added, a later field over an earlier, until untamperList. */
+  tamperList(list: string, rule: ListTamper): void {
+    const held = this.lists.get(list);
+    if (held === undefined) throw new Error("No such list");
+    const forkAt = rule.fork?.[0] === undefined ? null : seqOfText(rule.fork[0]);
+    if (rule.fork !== undefined && forkAt === null) throw new Error("A fork starts with an entry");
+    if (rule.answerList !== undefined && !this.lists.has(rule.answerList)) throw new Error("No such list to answer with");
+    const reader = rule.reader;
+    const session = reader !== undefined && "token" in reader ? this.tokens.get(reader.token) : undefined;
+    if (reader !== undefined && "token" in reader && session === undefined) throw new Error("No such token");
+    held.tamper.push({ rule, family: session?.family ?? null, server_id: reader !== undefined && "server_id" in reader ? reader.server_id : null });
+  }
+
+  untamperList(list: string): void { this.lists.get(list)?.tamper.splice(0); }
+
+  /** OVIS_LIST_ACCOUNTS as the service reads it: `all` once an entry is `*`, else the account ids it names. */
+  private listNamed(): "all" | string[] {
+    const named: string[] = [];
+    for (const entry of this.listAccounts.split(",")) {
+      const account = entry.trim();
+      if (account === "*") return "all";
+      if (ACCOUNT_ID.test(account)) named.push(account);
+    }
+    return named;
+  }
+
+  private listsOn(account: string): boolean {
+    const named = this.listNamed();
+    return named === "all" || named.includes(account);
+  }
+
+  /** No account may have a list: every /v2 route is an unknown one before anything is read or counted. */
+  private listsOff(): boolean {
+    const named = this.listNamed();
+    return named !== "all" && named.length === 0;
+  }
+
+  private listOfAccount(account: string): FakeList | undefined {
+    const id = this.accountLists.get(account);
+    return id === undefined ? undefined : this.lists.get(id);
+  }
+
+  /** The caller's account's list `id`, or undefined: another account's list is not told apart from none. */
+  private ownList(account: string, id: string): FakeList | undefined {
+    const list = this.lists.get(id);
+    return list?.account === account ? list : undefined;
+  }
+
+  /** A listing the account's devices take as the account's: what the mailbox calls confirmed. */
+  private confirmed(row: FakePc): boolean {
+    return !(this.opensAll && row.listed_by_device === true);
+  }
+
+  private bearerSession(request: Request): Session | undefined {
+    const bearer = /^Bearer (\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
+    const session = bearer === undefined ? undefined : this.tokens.get(bearer);
+    return session === undefined || this.now() >= session.expires || this.revokedFamilies.has(session.family) ? undefined : session;
+  }
+
+  /**
+   * frozenSignIn, as the service's PC invites and list writes ask it: a block that no lift names stands below the key this
+   * sign-in registered, or was kept before the sign-in was made. The second covers a sign-in with no key: any key it
+   * registered would be numbered after the blocked one. A key-less sign-in made before the block is not frozen by it.
+   */
+  private frozenSignIn(account: string, family: string): boolean {
+    const registry = this.registries.get(account);
+    if (registry === undefined) return false;
+    const nos = [...this.keyFamily].filter(([, of]) => of === family).map(([key]) => registry.devices.get(key)?.no).filter((no) => no !== undefined);
+    const madeAt = this.signedInAt.get(family) ?? Number.NEGATIVE_INFINITY;
+    return registry.freezes.some((line) => nos.some((no) => line.after < no) || (this.blocksKeptAt.get(line.block) ?? Number.POSITIVE_INFINITY) < madeAt);
+  }
+
+  /** A device writes only from an app's own sign-in (a device code can be typed for someone else's screen) that no standing block freezes. Null when it may. */
+  private writeRefusal(account: string, family: string): Response | null {
+    if (this.deviceFamilies.has(family)) return this.v2Problem(403, "own_sign_in_required", "Sign in on this device first");
+    if (this.frozenSignIn(account, family)) return this.v2Problem(403, "frozen", "A sign-in a block freezes places nothing");
+    return null;
+  }
+
+  /** The sign-in behind a claim still locks: still there, an app's own, not frozen. */
+  private signInStands(account: string, family: string): boolean {
+    return !this.revokedFamilies.has(family) && this.writeRefusal(account, family) === null;
+  }
+
+  private v2Json(body: Record<string, unknown>, status = 200, retryAfter?: number): Response {
+    const answer = new Response(JSON.stringify({ ...body, now: Math.floor(this.now() / 1000) }), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+    if (retryAfter !== undefined) answer.headers.set("retry-after", String(Math.max(1, retryAfter)));
+    return answer;
+  }
+
+  private v2Problem(status: number, code: string, message: string, details: Record<string, unknown> = {}, retryAfter?: number): Response {
+    return this.v2Json({ error: { ...details, code, message } }, status, retryAfter);
+  }
+
+  private v2Unknown(): Response { return this.v2Problem(404, "not_found", "Unknown request"); }
+
+  private v2Invalid(): Response { return this.v2Problem(400, "invalid_request", "The body or the query is not in its form"); }
+
+  private async v2Body(request: Request, max: number): Promise<Record<string, unknown> | Response> {
+    const text = await request.text();
+    if (new TextEncoder().encode(text).length > max) return this.v2Problem(413, "too_large", "The body is too large");
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      return this.v2Problem(400, "invalid_json", "The body is not JSON");
+    }
+    return isRecord(value) ? value : this.v2Invalid();
+  }
+
+  /** A fixed window of `window` ms, as withinRateLimit's, answering 429 `code` with retry-after past `max`. */
+  private listLimited(key: string, max: number, window: number, code = "rate_limited"): Response | null {
+    const now = this.now();
+    const counter = this.counters.get(key);
+    const fresh = counter === undefined || now - counter.start >= window;
+    const held = fresh ? { start: now, count: 1 } : { start: counter.start, count: counter.count + 1 };
+    this.counters.set(key, held);
+    return held.count <= max ? null : this.v2Problem(429, code, "Too many requests; try again later", {}, Math.ceil((held.start + window - now) / 1000));
+  }
+
+  /** What the service tells `caller` of the list's log, with every lie a test turned on for it. */
+  private servedLog(list: FakeList, caller: ListCaller): { readonly id: string; readonly texts: readonly string[]; readonly head: ListPlace; readonly cuts: readonly number[] } {
+    const lie = this.tamperFor(list, caller);
+    const base = (lie.answerList === undefined ? undefined : this.lists.get(lie.answerList)) ?? list;
+    let texts = [...base.texts];
+    const forkAt = lie.fork?.[0] === undefined ? null : seqOfText(lie.fork[0]);
+    if (lie.fork !== undefined && forkAt !== null) texts = [...texts.slice(0, forkAt), ...lie.fork];
+    if (lie.withholdAfter !== undefined) texts = texts.slice(0, Math.max(0, lie.withholdAfter) + 1);
+    if (lie.inject !== undefined) texts = [...texts, ...lie.inject];
+    const flip = lie.flipEntry;
+    const flipped = flip === undefined ? undefined : texts[flip.seq];
+    if (flip !== undefined && flipped !== undefined) texts[flip.seq] = flipEntryText(flipped, flip.byte);
+    const last = texts.length - 1;
+    const head = lie.head ?? { seq: last, hash: hashOfText(texts[last] ?? "") ?? base.hashes[last] ?? "0".repeat(64) };
+    return { id: lie.listId ?? base.id, texts, head, cuts: lie.pages ?? [] };
+  }
+
+  /** The wraps the service tells `caller` that `member` has: the latest LIST_WRAPS_READ epochs, ascending. */
+  private servedWraps(list: FakeList, caller: ListCaller, member: string): { epoch: number; wrap: string }[] {
+    const lie = this.tamperFor(list, caller);
+    const base = (lie.answerList === undefined ? undefined : this.lists.get(lie.answerList)) ?? list;
+    const wraps = new Map(base.wraps.get(member) ?? []);
+    for (const wrap of lie.wraps ?? []) if (wrap.member === member) wraps.set(wrap.epoch, wrap.wrap);
+    const flip = lie.flipWrap;
+    const flipped = flip?.member === member ? wraps.get(flip.epoch) : undefined;
+    if (flip !== undefined && flipped !== undefined) wraps.set(flip.epoch, flipText(flipped, flip.byte));
+    return [...wraps].sort(([a], [b]) => a - b).slice(-LIST_WRAPS_READ).map(([epoch, wrap]) => ({ epoch, wrap }));
+  }
+
+  private tamperFor(list: FakeList, caller: ListCaller): ListTamper {
+    let lie: ListTamper = {};
+    for (const { rule, family, server_id } of list.tamper) {
+      if ((family !== null && caller.family !== family) || (server_id !== null && caller.server_id !== server_id)) continue;
+      lie = { ...lie, ...rule };
+    }
+    return lie;
+  }
+
+  /** One page of the log after `after` (from entry 0 for null), as served to `caller`. */
+  private logPage(list: FakeList, caller: ListCaller, after: number | null, limit: number): Response {
+    const served = this.servedLog(list, caller);
+    const from = after === null ? 0 : after + 1;
+    const cut = Math.min(Number.POSITIVE_INFINITY, ...served.cuts.filter((seq) => seq >= from));
+    const entries: string[] = [];
+    let chars = 0;
+    for (let seq = from; seq < served.texts.length && seq <= cut && entries.length < limit; seq++) {
+      const text = served.texts[seq]!;
+      // about 1 MiB of text a page, and never an empty page while entries follow
+      if (entries.length > 0 && chars + text.length > LIST_PAGE_CHARS) break;
+      entries.push(text);
+      chars += text.length;
+    }
+    return this.v2Json({ list: list.id, after, entries, head: served.head, more: from + entries.length < served.texts.length });
+  }
+
+  /** The mailbox pull's `with_list`: the list's id and head for a PC the account lists confirmed, else null. */
+  private mailboxList(serverId: string, account: string, row: FakePc | undefined): { id: string; head: ListPlace } | null {
+    const list = this.listsOn(account) ? this.listOfAccount(account) : undefined;
+    if (list === undefined || row === undefined || !this.confirmed(row)) return null;
+    const served = this.servedLog(list, { server_id: serverId, endpoint: row.public_key });
+    return { id: served.id, head: served.head };
+  }
+
+  /**
+   * The signed list's routes (Part D of the account service, as the service builds them; docs/account-list.md, "The list
+   * routes in tests"). Every answer, a refusal included, carries the service's clock as `now`, in seconds.
+   */
+  private async v2(request: Request, url: URL): Promise<Response> {
+    if (this.listsOff()) return this.v2Unknown();
+    const path = url.pathname;
+    if (path.startsWith("/v2/pc/")) return request.method === "POST" ? await this.v2Pc(request, path) : this.v2Unknown();
+    const named = /^\/v2\/lists\/([^/]+)\/(log|wraps|entries|claims|posts)$/.exec(path);
+    const attempted = /^\/v2\/lists\/([^/]+)\/posts\/([^/]+)\/attempt$/.exec(path);
+    const route = path === "/v2/lists" ? `${request.method} genesis` : path === "/v2/lists/mine" ? `${request.method} mine`
+      : attempted !== null ? `${request.method} attempt` : named === null ? null : `${request.method} ${named[2]}`;
+    if (route === null || !LIST_ROUTES.includes(route)) return this.v2Unknown();
+    const session = this.bearerSession(request);
+    // with only some accounts named, a missing sign-in is not told apart from an account that is not named
+    if (session === undefined) return this.listNamed() === "all" ? this.v2Problem(401, "unauthorized", "Sign in again") : this.v2Unknown();
+    const account = session.account;
+    if (!this.listsOn(account)) return this.v2Unknown();
+    const id = named?.[1] ?? attempted?.[1] ?? "";
+    // a device's batch is counted once its body is read: removals alone by a signer of the list spend that signer's own counter
+    if (route === "POST entries") return await this.deviceBatch(request, session, id);
+    const limited = this.listLimited(`requests:${account}`, ACCOUNT_REQUESTS_PER_WINDOW, LIMIT_WINDOW_MS);
+    if (limited !== null) return limited;
+    const caller = { family: session.family };
+    switch (route) {
+      case "POST genesis": return await this.genesis(request, session);
+      case "GET mine": {
+        const list = this.listOfAccount(account);
+        if (list === undefined) return this.v2Json({ list: null });
+        const served = this.servedLog(list, caller);
+        return this.v2Json({ list: served.id, head: served.head });
+      }
+      case "GET log": {
+        const query = Object.fromEntries(url.searchParams);
+        const after = query.after === undefined ? null : listNumber(query.after);
+        const limit = query.limit === undefined ? LIST_PAGE_MAX : /^[1-9][0-9]{0,2}$/.test(query.limit) ? Number(query.limit) : 0;
+        if (!Object.keys(query).every((name) => name === "after" || name === "limit") || (query.after !== undefined && after === null) || limit < 1 || limit > LIST_PAGE_MAX) return this.v2Invalid();
+        const list = this.ownList(account, id);
+        return list === undefined ? this.v2Unknown() : this.logPage(list, caller, after, limit);
+      }
+      case "GET wraps": {
+        const list = this.ownList(account, id);
+        if (list === undefined) return this.v2Unknown();
+        const member = url.searchParams.get("member");
+        if (member === null || !isListKeyEncoding(member)) return this.v2Invalid();
+        return this.v2Json({ wraps: this.servedWraps(list, caller, member) });
+      }
+      case "POST claims": return await this.claim(request, session, id);
+      case "POST attempt": return await this.attempt(request, session, id, attempted![2]!);
+      case "GET claims": {
+        const list = this.ownList(account, id);
+        if (list === undefined) return this.v2Unknown();
+        return this.v2Json({ claims: this.liveClaims(list).map(({ key, enc, card, at }) => ({ key, enc, card, until: untilOf(at) })) });
+      }
+      default: {
+        const list = this.ownList(account, id);
+        if (list === undefined) return this.v2Unknown();
+        return this.v2Json({ posts: this.livePosts(list).map(([endpoint, { server_id, key, enc, card, at, attempt }]) => ({ endpoint, server_id, key, enc, card, until: untilOf(at), attempt })) });
+      }
+    }
+  }
+
+  /** POST /v2/lists: entry 0 of the account's one list, from an app's own sign-in, not frozen, fresh or proving its key. */
+  private async genesis(request: Request, session: Session): Promise<Response> {
+    const body = await this.v2Body(request, LIST_BODY.genesis);
+    if (body instanceof Response) return body;
+    const wraps = wrapsOf(body.wraps);
+    if (!hasOnly(body, ["entry"], ["wraps", "key_proof"]) || typeof body.entry !== "string" || wraps === null || (body.key_proof !== undefined && keyProofOf(body.key_proof) === null)) return this.v2Invalid();
+    const refused = this.writeRefusal(session.account, session.family);
+    if (refused !== null) return refused;
+    let first: HeldEntry;
+    try {
+      first = (await firstState(entryFromText(body.entry))).first;
+    } catch (error) {
+      if (error instanceof ListEntryError) return this.v2Problem(400, error.code, error.message, { index: 0 });
+      throw error;
+    }
+    let state: ListState;
+    try {
+      state = firstListState(first, LIST_SERVICE_LEVEL);
+    } catch (error) {
+      if (error instanceof ListKindError) return this.v2Problem(400, "entry_refused", "Entry 0 is no genesis this service can read", { index: 0, outcome: "no_effect", reason: "entry_invalid" });
+      throw error;
+    }
+    if (first.body.issued_at > Math.floor(this.now() / 1000) + LIST_ISSUED_AHEAD_S) return this.refusedAt(0, "service", "issued_at_ahead", "An entry's issued_at is not ahead of the service's clock");
+    const kind = readKind(first.body);
+    if (kind?.kind !== "genesis" || kind.account !== session.account) return this.v2Problem(403, "account_mismatch", "The genesis names another account");
+    const exists = (): Response | null => {
+      const held = this.listOfAccount(session.account);
+      return held === undefined ? null : this.v2Problem(409, "list_exists", "This account has a list", { list: held.id, head: headOf(held) });
+    };
+    const before = exists();
+    if (before !== null) return before;
+    const wrapAt = wrapRefusal(wraps, state, Math.floor(this.now() / 1000));
+    if (wrapAt !== null) return this.wrapInvalid(wrapAt);
+    const fresh = await this.freshOrProved(session, body.key_proof, "list-genesis", first.hash, "");
+    if (fresh !== null) return fresh;
+    // judged again in the write: another genesis of the account may have come, or the sign-in gone, while this one was checked
+    const raced = exists();
+    if (raced !== null) return raced;
+    if (this.revokedFamilies.has(session.family)) return this.v2Problem(401, "unauthorized", "Sign in again");
+    const fell = this.writeRefusal(session.account, session.family);
+    if (fell !== null) return fell;
+    const list: FakeList = { id: first.hash, account: session.account, texts: [body.entry], hashes: [first.hash], last: first, state, wraps: new Map(), claims: new Map(), posts: new Map(), additions: [], tamper: [] };
+    for (const wrap of wraps) storeWrap(list, wrap);
+    this.lists.set(list.id, list);
+    this.accountLists.set(session.account, list.id);
+    return this.v2Json({ list: list.id, head: headOf(list) }, 201);
+  }
+
+  /**
+   * The second lock's age rule for a device (`mayAddPc`): an own sign-in made in the last ten minutes, or older with a
+   * proof (provedKey) by the key registered for that very sign-in, over the purpose, the list id (or "" for an invite) in
+   * the place of the server_id and `slot` (or the invite's key) in the place of the listing. A proof that is sent is judged, its challenge spent, whatever the
+   * sign-in's age. Null when it passes.
+   */
+  private async freshOrProved(session: Session, proof: unknown, purpose: PcAddPurpose | "invite" | "invite-auto", list: string, slot: string): Promise<Response | null> {
+    const recent = this.now() - (this.signedInAt.get(session.family) ?? Number.NEGATIVE_INFINITY) <= REAUTH_MS;
+    // `invite` and `invite-auto` are the make proof's purposes (inviteMakeBytes): the same bytes as pcAddSigningBytes
+    const proved = await this.provedKey(session, proof, purpose as PcAddPurpose, list, slot);
+    if (proved instanceof Response) {
+      const { error } = await proved.json() as { error: { code: string; message: string } };
+      return this.v2Problem(proved.status, error.code, error.message);
+    }
+    return proved !== null || recent ? null : this.v2Problem(403, "session_not_fresh", "Sign in again on this device first");
+  }
+
+  /** POST /v2/lists/{list}/claims: a device claims its member key with the card its `device` entry will carry. */
+  private async claim(request: Request, session: Session, id: string): Promise<Response> {
+    const body = await this.v2Body(request, LIST_BODY.small);
+    if (body instanceof Response) return body;
+    const { key, enc, card } = body;
+    if (!hasOnly(body, ["key", "enc", "card"], ["key_proof"]) || typeof key !== "string" || typeof enc !== "string" || typeof card !== "string" || card.length !== CARD_SIGNATURE_CHARS
+      || (body.key_proof !== undefined && keyProofOf(body.key_proof) === null)) return this.v2Invalid();
+    const refused = this.writeRefusal(session.account, session.family);
+    if (refused !== null) return refused;
+    const list = this.ownList(session.account, id);
+    if (list === undefined) return this.v2Unknown();
+    if (!isListKey(key) || !isListKey(enc)) return this.v2Invalid();
+    if (!await cardHolds({ key, enc, list: list.id, endpoint: null, invite: null }, card)) return this.v2Problem(400, "card_invalid", "The card is not that key's for this list");
+    const fresh = await this.freshOrProved(session, body.key_proof, "list-claim", list.id, key);
+    if (fresh !== null) return fresh;
+    // judged again in the write: the sign-in still stands and the list is still the account's, or another's claim stays
+    if (this.revokedFamilies.has(session.family)) return this.v2Problem(401, "unauthorized", "Sign in again");
+    const fell = this.writeRefusal(session.account, session.family);
+    if (fell !== null) return fell;
+    if (this.ownList(session.account, id) !== list) return this.v2Unknown();
+    // one claim per sign-in and list, and one per key and list: a later claim of a key takes it over
+    for (const [claimed, held] of list.claims) if (held.family === session.family && claimed !== key) list.claims.delete(claimed);
+    const at = this.now();
+    list.claims.set(key, { family: session.family, enc, card, at });
+    return this.v2Json({ key, until: untilOf(at) });
+  }
+
+  /** The claims that still lock, oldest first: at most ten minutes old, by a sign-in still there, an app's own of the account, not frozen. */
+  private liveClaims(list: FakeList): (ListClaim & { readonly key: string })[] {
+    return [...list.claims].filter(([, claim]) => this.now() - claim.at <= LIST_CLAIM_MS && this.signInStands(list.account, claim.family))
+      .map(([key, claim]) => ({ key, ...claim })).sort((a, b) => a.at - b.at || (a.key < b.key ? -1 : 1));
+  }
+
+  /** The posts that stand (shown, and carrying the comparison), by endpoint, oldest first: at most ten minutes old, of a PC the account lists in any state. */
+  private livePosts(list: FakeList): [string, ListPost][] {
+    return [...list.posts].filter(([, post]) => this.now() - post.at <= LIST_CLAIM_MS && this.directories.get(list.account)?.has(post.server_id) === true)
+      .sort(([a, x], [b, y]) => x.at - y.at || (a < b ? -1 : 1));
+  }
+
+  /**
+   * POST /v2/lists/{list}/entries. Read, and asked whether the sign-in may write, before it is counted: a removal (`remove`
+   * entries, at most one `epoch` last, at the list's head) from a caller that may write, whose first entry verifies under a
+   * signer of the list, spends that signer's own counter; anything else, a body out of form included, spends the
+   * account's requests. So nothing else the account's sign-ins send stands in a removal's way, and a replayed one spends
+   * nothing of its signer's. The answers keep their order: 429, `entry_malformed`, 404, `own_sign_in_required` / `frozen`.
+   */
+  private async deviceBatch(request: Request, session: Session, id: string): Promise<Response> {
+    const account = session.account;
+    const body = await this.v2Body(request, LIST_BODY.entries);
+    const texts = body instanceof Response ? null : entriesOf(body.entries);
+    const wraps = body instanceof Response ? null : wrapsOf(body.wraps);
+    if (body instanceof Response || !hasOnly(body, ["entries"], ["wraps", "key_proof"]) || texts === null || wraps === null || (body.key_proof !== undefined && keyProofOf(body.key_proof) === null)) {
+      return this.listLimited(`requests:${account}`, ACCOUNT_REQUESTS_PER_WINDOW, LIMIT_WINDOW_MS) ?? (body instanceof Response ? body : this.v2Invalid());
+    }
+    const list = this.ownList(account, id);
+    if (list !== undefined) {
+      const halted = this.halted(list, { family: session.family });
+      if (halted !== null) return halted;
+    }
+    const batch = parseTexts(texts);
+    const refused = list === undefined ? null : this.writeRefusal(account, session.family);
+    const first = Array.isArray(batch) ? batch[0] : undefined;
+    // the head and the signer are read again after the signature check, right before the counter is chosen: a copy of a
+    // removal placed meanwhile is a replay, on the account's requests
+    const removal = list !== undefined && refused === null && Array.isArray(batch) && first !== undefined && isRemoval(list, batch)
+      && await verifySignature(first.entry.body, first.entry.signature, first.body.signer) && isRemoval(list, batch) && signerPower(list.state, first.body.signer) !== null;
+    const limited = removal
+      ? this.listLimited(`removals:${first!.body.signer}:${account}`, this.listLimits.removalsPerWindow, LIMIT_WINDOW_MS)
+      : this.listLimited(`requests:${account}`, ACCOUNT_REQUESTS_PER_WINDOW, LIMIT_WINDOW_MS);
+    if (limited !== null) return limited;
+    if (!Array.isArray(batch)) return this.v2Problem(400, batch.code, batch.message, { index: batch.index });
+    if (list === undefined) return this.v2Unknown();
+    if (refused !== null) return refused;
+    return await this.place(list, batch, wraps, { family: session.family }, { session, proof: body.key_proof });
+  }
+
+  /** The 503 a test turned on for this list (ListTamper `rebuilding`, `stopped`), or null. */
+  private halted(list: FakeList, caller: ListCaller): Response | null {
+    const lie = this.tamperFor(list, caller);
+    if (lie.stopped === true) return this.v2Problem(503, "list_stopped", "This list takes no entries until the service's maintainer has looked at it");
+    if (lie.rebuilding === true) return this.v2Problem(503, "list_rebuilding", "The service is reading this list again; try again in a moment", {}, 1);
+    return null;
+  }
+
+  /** The PC routes of the list: the relay-key proof in the body, one challenge spent per call. */
+  private async v2Pc(request: Request, path: string): Promise<Response> {
+    const shape = Object.hasOwn(PC_SHAPES, path) ? PC_SHAPES[path] : undefined;
+    if (shape === undefined) return this.v2Unknown();
+    const body = await this.v2Body(request, shape.size);
+    if (body instanceof Response) return body;
+    if (!hasOnly(body, [...PC_PROOF, ...shape.members], shape.optional ?? []) || !pcBodyFormed(path, body)) return this.v2Invalid();
+    if (typeof body.server_id !== "string" || !/^[0-9a-f]{32}$/.test(body.server_id)) return this.v2Invalid();
+    const key = proofKey(body.public_key);
+    if (!key || deriveServerId(key) !== body.server_id) return this.v2Problem(400, "server_key_mismatch", "That key does not give that server_id");
+    if (!this.takeProof({ server_id: body.server_id, challenge_id: body.challenge_id, proof: body.proof })) return this.v2Problem(401, "proof_invalid", "Ask for a new challenge and answer it");
+    const serverId = body.server_id;
+    const endpoint = body.public_key as string;
+    const limited = this.listLimited(`list-pc:${serverId}`, this.listLimits.pcCallsPerMinute, 60_000);
+    if (limited !== null) return limited;
+    const caller = { server_id: serverId, endpoint };
+    if (path === "/v2/pc/list") {
+      const account = body.account as string;
+      if (!this.listsOn(account)) return this.v2Unknown();
+      const list = this.listOfAccount(account);
+      const listed = this.directories.get(account)?.has(serverId) === true;
+      // a listing in any state (the PC needs the id for its card), or a row in the list (a PC removed from the directory)
+      if (list === undefined) return listed ? this.v2Json({ list: null }) : this.v2Unknown();
+      if (!listed && rowOf(list.state.pcs, endpoint) === null) return this.v2Unknown();
+      const halted = listed ? null : this.halted(list, caller);
+      if (halted !== null) return halted;
+      const served = this.servedLog(list, caller);
+      return this.v2Json({ list: served.id, head: served.head });
+    }
+    const list = this.lists.get(body.list as string);
+    if (list === undefined || !this.listsOn(list.account)) return this.v2Unknown();
+    const listing = this.directories.get(list.account)?.get(serverId);
+    if (path === "/v2/pc/list/log" || path === "/v2/pc/list/wraps") {
+      // a listing the account confirmed, or a row in the list, removed or not: a removed PC reads its removal
+      const confirmed = listing !== undefined && this.confirmed(listing);
+      if (!confirmed && rowOf(list.state.pcs, endpoint) === null) return this.v2Unknown();
+      const halted = confirmed ? null : this.halted(list, caller);
+      if (halted !== null) return halted;
+      if (path === "/v2/pc/list/log") return this.logPage(list, caller, body.after === undefined ? null : body.after as number, body.limit === undefined ? LIST_PAGE_MAX : body.limit as number);
+      if (!isListKeyEncoding(body.member as string)) return this.v2Invalid();
+      return this.v2Json({ wraps: this.servedWraps(list, caller, body.member as string) });
+    }
+    if (path === "/v2/pc/list/entries") {
+      // a machine neither in the list nor listed by its account learns nothing here, not even where the head stands: the
+      // unknown route before its batch is looked at
+      if (listing === undefined && rowOf(list.state.pcs, endpoint) === null) return this.v2Unknown();
+      const halted = this.halted(list, caller);
+      if (halted !== null) return halted;
+      // a PC that is not in the list places nothing but a join of its own: any other batch of its is the unknown route too
+      const inside = holdsPc(list.state, endpoint);
+      const batch = parseTexts(body.entries as string[]);
+      if (!Array.isArray(batch)) return inside ? this.v2Problem(400, batch.code, batch.message, { index: batch.index }) : this.v2Unknown();
+      // a PC in the list, or one whose every entry is a join naming it (the proof is the join's second lock)
+      if (!inside && !batch.every(({ body: entry }) => namesEndpoint(entry, endpoint))) return this.v2Unknown();
+      return await this.place(list, batch, wrapsOf(body.wraps)!, caller);
+    }
+    // the keys route and the attempt route: only while the account lists this PC, so that the proof locks something
+    if (listing === undefined) return this.v2Unknown();
+    if (path === "/v2/pc/list/attempt") return this.pcAttempt(list, endpoint, body.commitment as string | undefined, body.nonce as string | undefined);
+    const posted = { key: body.key as string, enc: body.enc as string, card: body.card as string };
+    if (!isListKey(posted.key) || !isListKey(posted.enc)) return this.v2Invalid();
+    if (!await cardHolds({ ...posted, list: list.id, endpoint, invite: null }, posted.card)) return this.v2Problem(400, "card_invalid", "The card is not that key's for this list and this PC");
+    // posting the same keys again renews the post and keeps an open comparison; other keys are another card, and its comparison goes
+    const before = list.posts.get(endpoint);
+    const attempt = before !== undefined && before.key === posted.key && before.enc === posted.enc ? before.attempt : null;
+    const at = this.now();
+    list.posts.set(endpoint, { ...posted, server_id: serverId, at, attempt });
+    return this.v2Json({ endpoint, key: posted.key, until: untilOf(at) });
+  }
+
+  /**
+   * Places a batch at the head, whole or not at all, as the service judges it: the first entry at the head (the
+   * compare-and-swap); then entry by entry, each holds after the one before it and counts for the library on the service's
+   * state, and what only the service judges (no `carried` yet, an invite from a sign-in and by its clock, a join by the
+   * PC it names, the list's size); then the second lock, the wraps, and the head again with the writer and the budget, at
+   * the write. From the second lock to the write nothing waits, so of two writers at one head exactly one is placed.
+   */
+  private async place(list: FakeList, batch: readonly ParsedEntry[], wraps: readonly ListWrap[], caller: ListCaller, device?: { readonly session: Session; readonly proof: unknown }): Promise<Response> {
+    const lie = this.tamperFor(list, caller);
+    if (lie.headMoved === true) return this.headMoved(list);
+    const head = headOf(list);
+    const first = batch[0]!;
+    if (first.body.list !== list.id) return this.v2Problem(400, "chain_broken", "list is not this list's id", { index: 0 });
+    if (first.body.seq !== head.seq + 1 || first.body.prev !== head.hash) return this.notAtHead(list, batch);
+    const judged = list.last;
+    let last = judged;
+    let state = list.state;
+    const nowS = Math.floor(this.now() / 1000);
+    const held: HeldEntry[] = [];
+    const claims: { index: number; key: string }[] = [];
+    const posts: { index: number; key: string; endpoint: string }[] = [];
+    const joins: { index: number; server_id: string; endpoint: string; invite: string }[] = [];
+    let invited: { readonly index: number; readonly key: string; readonly auto: boolean } | null = null;
+    const limits = this.listLimits;
+    for (const [index, { entry }] of batch.entries()) {
+      const previous = last;
+      try {
+        last = await entryHolds(entry, last);
+      } catch (error) {
+        if (error instanceof ListEntryError) return this.v2Problem(400, error.code, error.message, { index });
+        throw error;
+      }
+      const kind = readKind(last.body);
+      const invite = kind?.kind === "join" ? rowOf(state.invites, last.body.signer) : null;
+      const taken = await takeEntry(state, last);
+      if (taken.outcome.outcome !== "counts" || kind === null) {
+        const reason = "code" in taken.outcome ? taken.outcome.code : null;
+        return this.refusedAt(index, taken.outcome.outcome === "counts" ? "no_effect" : taken.outcome.outcome, reason, "A member would not count this entry");
+      }
+      // from here on, what only the service judges: a member counts each of these entries. The list's own time is the latest
+      // issued_at a full signer wrote, so one dated far ahead would end every invite and every borrowed browser at once
+      if (last.body.issued_at > nowS + LIST_ISSUED_AHEAD_S) return this.refusedAt(index, "service", "issued_at_ahead", "An entry's issued_at is not ahead of the service's clock");
+      // carrying members in from before the list has no second lock yet, so the service places none
+      if (kind.kind === "carried") return this.refusedAt(index, "service", "carried_not_open", "Carrying members in from before the list is not open yet");
+      if (kind.kind === "invite") {
+        // an invite lets a PC in with nobody else awake: a PC's key alone opens no way in for a machine; and what the sign-in
+        // that places it must be is asked for one invite, so a batch holds one
+        if (caller.family === undefined) return this.v2Problem(403, "sign_in_required", "An invite is placed by a sign-in of the account", { index });
+        if (invited !== null) return this.refusedAt(index, "service", "invite_alone", "A batch holds at most one invite");
+        invited = { index, key: kind.key, auto: kind.auto };
+      }
+      if (kind.kind === "join") {
+        if (invite !== null && nowS > invite.exp) return this.v2Problem(409, "invite_expired", "That invite has expired", { index });
+        if (caller.endpoint !== kind.endpoint) return this.v2Problem(403, "pc_proof_required", "A join is placed by the PC it names, with its own proof", { index });
+        joins.push({ index, server_id: caller.server_id!, endpoint: kind.endpoint, invite: last.body.signer });
+      }
+      if (kind.kind === "epoch") {
+        // an epoch is opened because a key went out, never at will: the state only grows, and one full signer opening epochs
+        // as fast as it can send them would fill the list for good
+        if (sealEpoch(state, nowS) !== null) return this.refusedAt(index, "service", "epoch_not_needed", "Nobody went out since the current epoch was opened");
+        if (previous.body.kind !== "remove" && sealEpoch(taken.state, nowS) === null) {
+          return this.refusedAt(index, "service", "epoch_no_use", "An invite or a device past its time is still in: put it out first, then open the epoch");
+        }
+      }
+      // the writers' rule (the library's sealEpoch, at the service's clock): names are sealed only under an epoch opened after
+      // the last entry that put a member out, and while nobody in is over its time; else whoever is out still reads them
+      if ("sealed" in kind && kind.sealed !== null && sealEpoch(state, nowS) === null) {
+        return this.refusedAt(index, "service", "epoch_stale", "Names are sealed only under an epoch opened after the last removal: open the next epoch, or write this entry without names");
+      }
+      if (kind.kind === "device") claims.push({ index, key: kind.key });
+      if (kind.kind === "pc") posts.push({ index, key: kind.key, endpoint: kind.endpoint });
+      const tail = kind.kind === "remove" || kind.kind === "epoch";
+      const size = JSON.stringify(taken.state).length;
+      if (last.body.seq >= limits.closedFrom || (!tail && (last.body.seq >= limits.removalsOnlyFrom || size > limits.stateChars)) || (kind.kind !== "remove" && size > limits.stateHardChars)) {
+        return this.v2Problem(409, "list_full", last.body.seq >= limits.closedFrom ? "This list takes no more entries" : "This list takes only removals now");
+      }
+      state = taken.state;
+      held.push(last);
+    }
+    const lock = this.lockRefusal(list, claims, posts, joins);
+    if (lock !== null) return lock;
+    const wrapAt = wrapRefusal(wraps, state, nowS);
+    if (wrapAt !== null) return this.wrapInvalid(wrapAt);
+    // an invite is placed as one is made: by a sign-in made in the last ten minutes, or proving its registered key for this
+    // very invite (purpose `invite` or `invite-auto`, no server_id, the invite's key as the listing); a proof with no invite
+    // to prove is the caller's mistake
+    if (device?.proof !== undefined && invited === null) return this.v2Problem(400, "invalid_request", "A key proof goes with an invite");
+    if (invited !== null && device !== undefined) {
+      const fresh = await this.freshOrProved(device.session, device.proof, invited.auto ? "invite-auto" : "invite", "", invited.key);
+      if (fresh !== null) return fresh;
+    }
+    // the write, judged again as one: the list still stands (an account's deletion takes it), the head it was judged on,
+    // the writer, the locks; nothing waits from here on
+    if (this.lists.get(list.id) !== list) return this.v2Unknown();
+    if (list.last !== judged) return this.notAtHead(list, batch);
+    if (caller.family !== undefined) {
+      if (this.revokedFamilies.has(caller.family)) return this.v2Problem(401, "unauthorized", "Sign in again");
+      const fell = this.writeRefusal(list.account, caller.family);
+      if (fell !== null) return fell;
+    }
+    const fallen = this.lockRefusal(list, claims, posts, joins);
+    if (fallen !== null) return fallen;
+    const now = this.now();
+    const additions = held.filter(({ body }) => LIST_ADDITIONS.includes(body.kind)).length;
+    const day = list.additions.filter((at) => at > now - LIST_ADDITIONS_DAY_MS);
+    const waits = [
+      budgetWait(day.filter((at) => at > now - LIMIT_WINDOW_MS), additions, limits.additionsPerWindow, LIMIT_WINDOW_MS, now),
+      budgetWait(day, additions, limits.additionsPerDay, LIST_ADDITIONS_DAY_MS, now),
+    ];
+    if (additions > 0 && waits.some((wait) => wait !== null)) {
+      return this.v2Problem(429, "entry_budget", "Too many devices, PCs and invites added to this list; try again later", {}, Math.max(...waits.map((wait) => wait ?? 1)));
+    }
+    list.texts.push(...batch.map(({ text }) => text));
+    list.hashes.push(...held.map(({ hash }) => hash));
+    list.last = held.at(-1)!;
+    list.state = state;
+    // a lock is used up by the entry it let in
+    for (const { key } of claims) list.claims.delete(key);
+    for (const { endpoint } of posts) list.posts.delete(endpoint);
+    if (lie.dropWraps !== true) for (const wrap of wraps) storeWrap(list, wrap);
+    list.additions.splice(0, list.additions.length, ...day, ...Array<number>(additions).fill(now));
+    // the doorbell rings the account's other devices from a budget of its own, never the one admissions ring from
+    if (this.withinRateLimit(`list_rings:${list.account}`, LIST_RINGS_PER_WINDOW)) this.ring(list.account, caller.family ?? "");
+    return this.v2Json({ list: list.id, head: headOf(list), placed: held.length });
+  }
+
+  /** The first entry of the batch whose second lock does not hold now, as its refusal; null when every one holds. */
+  private lockRefusal(list: FakeList, claims: readonly { index: number; key: string }[], posts: readonly { index: number; key: string; endpoint: string }[],
+    joins: readonly { index: number; server_id: string; endpoint: string; invite: string }[]): Response | null {
+    const claimed = this.liveClaims(list);
+    const directory = this.directories.get(list.account);
+    // a listing an own sign-in made or let in (an own sign-in's listing, a confirm, the one-press admit, an auto invite's
+    // redeem): one a device code wrote and nobody confirmed locks nothing, since any PC of the account holds such a sign-in
+    const ownListed = (serverId: string): boolean => { const row = directory?.get(serverId); return row !== undefined && row.listed_by_device !== true; };
+    const posted = this.livePosts(list).filter(([, post]) => ownListed(post.server_id));
+    // that very PC redeemed that very auto invite of the account (POST /v1/pc-invites/redeem): the join passes what a redeem asks
+    const redeemed = ({ server_id, endpoint, invite }: { server_id: string; endpoint: string; invite: string }): boolean =>
+      [...this.invites.values()].some((held) => held.account === list.account && held.key === invite && held.auto && held.used?.server_id === server_id && held.used.public_key === endpoint);
+    const missing = [
+      ...claims.filter(({ key }) => !claimed.some((claim) => claim.key === key)).map(({ index }) => ({ index, lock: "claim" })),
+      ...posts.filter(({ key, endpoint }) => !posted.some(([at, post]) => at === endpoint && post.key === key)).map(({ index }) => ({ index, lock: "post" })),
+      ...joins.filter((join) => !redeemed(join)).map(({ index }) => ({ index, lock: "redeem" })),
+      ...joins.filter((join) => redeemed(join) && !ownListed(join.server_id)).map(({ index }) => ({ index, lock: "join" })),
+    ].sort((a, b) => a.index - b.index)[0];
+    if (missing === undefined) return null;
+    if (missing.lock === "claim") return this.v2Problem(403, "not_claimed", "That device's key has no live claim by a sign-in of this account", { index: missing.index });
+    if (missing.lock === "post") return this.v2Problem(403, "not_posted", "That PC has not posted that key with its own proof, or no own sign-in of the account listed or let it in", { index: missing.index });
+    if (missing.lock === "redeem") return this.v2Problem(403, "not_redeemed", "That PC has not redeemed that invite with the account service", { index: missing.index });
+    return this.v2Problem(403, "not_listed", "No own sign-in of the account listed or let in the PC that joins", { index: missing.index });
+  }
+
+  /**
+   * POST /v2/lists/{list}/posts/{endpoint}/attempt: the adder's two messages of the comparison of numbers with a PC that
+   * posted (the formats' B7), which the service only carries. Without `reveal`, its key and commitment open an attempt in
+   * place of any before it (counted per PC); with `reveal`, the nonce it committed to, taken only for that very attempt
+   * once the PC's nonce is there. `key` is the PC's key of the post the adder saw: a post of other keys since is another card.
+   */
+  private async attempt(request: Request, session: Session, id: string, endpoint: string): Promise<Response> {
+    const body = await this.v2Body(request, LIST_BODY.small);
+    if (body instanceof Response) return body;
+    const { key, adder, commitment, reveal } = body;
+    if (!hasOnly(body, ["key", "adder", "commitment"], ["reveal"]) || typeof key !== "string" || typeof adder !== "string" || !isNonce(commitment) || (reveal !== undefined && !isNonce(reveal))) return this.v2Invalid();
+    const refused = this.writeRefusal(session.account, session.family);
+    if (refused !== null) return refused;
+    const list = this.ownList(session.account, id);
+    if (list === undefined) return this.v2Unknown();
+    if (!/^[0-9a-f]{64}$/.test(endpoint) || !isListKeyEncoding(key) || !isListKeyEncoding(adder)) return this.v2Invalid();
+    const post = this.livePosts(list).find(([at, held]) => at === endpoint && held.key === key)?.[1];
+    if (post === undefined) return this.v2Problem(409, "post_changed", "That PC has no live post of that key; read the posts again");
+    if (reveal === undefined) {
+      // opening an attempt is counted per PC, and only a call that opens one: calls that open nothing spend nothing
+      const spent = this.listLimited(`list_attempts:${endpoint}:${list.account}`, this.listLimits.attemptsPerWindow, LIMIT_WINDOW_MS, "attempts_spent");
+      if (spent !== null) return spent;
+      post.attempt = { adder, commitment, nonce: null, reveal: null };
+    } else if (post.attempt !== null && post.attempt.adder === adder && post.attempt.commitment === commitment && post.attempt.nonce !== null
+      && (post.attempt.reveal === null || post.attempt.reveal === reveal)) {
+      // taken once: the same reveal again is the same answer, another is not this attempt's
+      post.attempt = { ...post.attempt, reveal };
+    } else return this.v2Problem(409, "attempt_changed", "That is not the open attempt, or the PC has not answered it yet");
+    return this.v2Json({ endpoint, key, attempt: post.attempt });
+  }
+
+  /**
+   * POST /v2/pc/list/attempt: the PC's side of the comparison, for the post it made. It reads the attempt the adder opened;
+   * with `commitment` and `nonce` it answers that very attempt with its nonce, once: a second nonce for one commitment is
+   * refused, the same one again is not.
+   */
+  private pcAttempt(list: FakeList, endpoint: string, commitment: string | undefined, nonce: string | undefined): Response {
+    if ((commitment === undefined) !== (nonce === undefined)) return this.v2Problem(400, "invalid_request", "Answer a commitment with a nonce, or send neither");
+    const post = this.livePosts(list).find(([at]) => at === endpoint)?.[1];
+    if (nonce === undefined) return this.v2Json({ attempt: post?.attempt ?? null });
+    const open = post?.attempt;
+    if (post === undefined || open === null || open === undefined || open.commitment !== commitment || (open.nonce !== null && open.nonce !== nonce)) {
+      return this.v2Problem(409, "attempt_changed", "That is not the open attempt, or it has its nonce already");
+    }
+    post.attempt = { ...open, nonce };
+    return this.v2Json({ attempt: post.attempt });
+  }
+
+  /** `200` with `placed: 0` when the batch stands in the log already, text for text, at the places it names; else `409 head_moved` with the head now. */
+  private notAtHead(list: FakeList, batch: readonly ParsedEntry[]): Response {
+    const from = batch[0]?.body.seq ?? 0;
+    return batch.every(({ text }, at) => list.texts[from + at] === text) ? this.v2Json({ list: list.id, head: headOf(list), placed: 0 }) : this.headMoved(list);
+  }
+
+  private headMoved(list: FakeList): Response {
+    return this.v2Problem(409, "head_moved", "The list's head is not where this batch starts; read the log and sign again", { head: headOf(list) });
+  }
+
+  private refusedAt(index: number, outcome: string, reason: string | null, message: string): Response {
+    return this.v2Problem(400, "entry_refused", message, { index, outcome, reason });
+  }
+
+  private wrapInvalid(index: number): Response {
+    return this.v2Problem(400, "wrap_invalid", "A wrap is 151 characters for the list's current epoch and one of its members' encryption keys", { index });
   }
 
   private expire(): void {
@@ -1312,4 +2162,162 @@ function limited(code: "rate_limited" | "pc_add_cap", seconds: number): Response
 
 function randomHex(bytes: number): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** The level the service reads lists at: a kind at a higher `v` is `cannot_read` there, and so never placed. */
+const LIST_SERVICE_LEVEL = 1;
+const LIST_ADDITIONS: readonly string[] = ["device", "invite", "pc", "join"];
+/** The day of the additions budget. */
+const LIST_ADDITIONS_DAY_MS = 24 * 60 * 60 * 1000;
+/** Rings of a list's placements per account in ten minutes, counted apart from the rings of admissions. */
+const LIST_RINGS_PER_WINDOW = 10;
+/** The latest wraps one read gives of a member. */
+const LIST_WRAPS_READ = 256;
+const NUMBER_MAX = 999_999_999_999_999;
+const ACCOUNT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const LIST_NUMBER = /^(?:0|[1-9][0-9]{0,14})$/;
+const LIST_ROUTES: readonly string[] = ["POST genesis", "GET mine", "GET log", "GET wraps", "POST entries", "POST claims", "GET claims", "GET posts", "POST attempt"];
+const PC_PROOF: readonly string[] = ["server_id", "public_key", "challenge_id", "proof"];
+const PC_SHAPES: Readonly<Record<string, { readonly size: number; readonly members: readonly string[]; readonly optional?: readonly string[] }>> = {
+  "/v2/pc/list": { size: LIST_BODY.small, members: ["account"] },
+  "/v2/pc/list/log": { size: LIST_BODY.small, members: ["list"], optional: ["after", "limit"] },
+  "/v2/pc/list/wraps": { size: LIST_BODY.small, members: ["list", "member"] },
+  "/v2/pc/list/entries": { size: LIST_BODY.entries, members: ["list", "entries"], optional: ["wraps"] },
+  "/v2/pc/list/keys": { size: LIST_BODY.small, members: ["list", "key", "enc", "card"] },
+  "/v2/pc/list/attempt": { size: LIST_BODY.small, members: ["list"], optional: ["commitment", "nonce"] },
+};
+
+/** A 32-byte value of the comparison on the wire: 43 base64url characters in their one spelling. */
+const isNonce = (value: unknown): value is string => typeof value === "string" && value.length === 43 && canonicalBase64Url(value)?.length === 32;
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+const isPlace = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= NUMBER_MAX;
+const untilOf = (at: number): number => Math.floor((at + LIST_CLAIM_MS) / 1000);
+
+/** A PC route's own members in their forms, as the service's schema reads them (the proof's members are judged by the proof). */
+function pcBodyFormed(path: string, body: Record<string, unknown>): boolean {
+  if (path === "/v2/pc/list") return typeof body.account === "string" && ACCOUNT_ID.test(body.account);
+  if (typeof body.list !== "string" || !isListHash(body.list)) return false;
+  switch (path) {
+    case "/v2/pc/list/log": return (body.after === undefined || isPlace(body.after)) && (body.limit === undefined || (isPlace(body.limit) && body.limit >= 1 && body.limit <= LIST_PAGE_MAX));
+    case "/v2/pc/list/wraps": return typeof body.member === "string";
+    case "/v2/pc/list/entries": return entriesOf(body.entries) !== null && wrapsOf(body.wraps) !== null;
+    case "/v2/pc/list/attempt": return (body.commitment === undefined || isNonce(body.commitment)) && (body.nonce === undefined || isNonce(body.nonce));
+    default: return typeof body.key === "string" && typeof body.enc === "string" && typeof body.card === "string" && body.card.length === CARD_SIGNATURE_CHARS;
+  }
+}
+
+/** The seconds until a batch of `additions` fits a budget of `max` in `window`, given when the list's additions in it were placed (ascending); null when it fits now. */
+function budgetWait(placed: readonly number[], additions: number, max: number, window: number, now: number): number | null {
+  const leaving = placed.length + additions - max;
+  if (leaving < 1) return null;
+  return Math.max(1, Math.ceil(((placed[leaving - 1] ?? now) + window - now) / 1000));
+}
+
+/** A removal for the counting: `remove` entries with at most one `epoch` last, standing at the list's head (a replay never does). */
+function isRemoval(list: FakeList, batch: readonly ParsedEntry[]): boolean {
+  const first = batch[0];
+  const head = headOf(list);
+  if (first === undefined || first.body.kind !== "remove" || first.body.list !== list.id || first.body.seq !== head.seq + 1 || first.body.prev !== head.hash) return false;
+  return batch.every(({ body }, index) => body.kind === "remove" || (body.kind === "epoch" && index === batch.length - 1));
+}
+
+function headOf(list: FakeList): ListPlace {
+  return { seq: list.texts.length - 1, hash: list.last.hash };
+}
+
+function rowOf<Row>(rows: { readonly [name: string]: Row }, name: string): Row | null {
+  return Object.hasOwn(rows, name) ? (rows[name] ?? null) : null;
+}
+
+/** A body read strictly: every required member, and no member but these. */
+function hasOnly(body: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []): boolean {
+  return required.every((name) => Object.hasOwn(body, name)) && Object.keys(body).every((name) => required.includes(name) || optional.includes(name));
+}
+
+function listNumber(text: string): number | null {
+  return LIST_NUMBER.test(text) ? Number(text) : null;
+}
+
+/** A placement's `entries`: 1 to 16 texts. */
+function entriesOf(value: unknown): string[] | null {
+  return Array.isArray(value) && value.length >= 1 && value.length <= LIST_BATCH_MAX && value.every((text) => typeof text === "string") ? value as string[] : null;
+}
+
+/** `wraps` in its JSON form (absent: none): up to 1024 objects of exactly `epoch`, `member` and `wrap`. Their values are judged by wrapRefusal. */
+function wrapsOf(value: unknown): ListWrap[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > LIST_WRAPS_MAX) return null;
+  return value.every((wrap) => isRecord(wrap) && hasOnly(wrap, ["epoch", "member", "wrap"]) && isPlace(wrap.epoch) && typeof wrap.member === "string" && typeof wrap.wrap === "string")
+    ? value as ListWrap[] : null;
+}
+
+/**
+ * The index of the first wrap the service does not store, or null: not 151 characters of base64url in one spelling, or
+ * not for the epoch current in the state after the batch and one of its wrapKeys at `now` (seconds, the service's clock:
+ * no invite past its `exp`, no device past its `until`). A wrap is not signed: the service checks its length and spelling only.
+ */
+function wrapRefusal(wraps: readonly ListWrap[], state: ListState, now: number): number | null {
+  const members = new Set(wrapKeys(state, now));
+  const index = wraps.findIndex((wrap) => wrap.wrap.length !== WRAP_TEXT || canonicalBase64Url(wrap.wrap)?.length !== WRAP_BYTES || wrap.epoch !== state.epoch || !members.has(wrap.member));
+  return index < 0 ? null : index;
+}
+
+/** A wrap is written once: one already stored for its epoch and member stays, and the later one is dropped. */
+function storeWrap(list: FakeList, wrap: ListWrap): void {
+  const member = list.wraps.get(wrap.member) ?? new Map<number, string>();
+  if (!member.has(wrap.epoch)) member.set(wrap.epoch, wrap.wrap);
+  list.wraps.set(wrap.member, member);
+}
+
+/** An entry of a batch as sent: its text, the entry and its body in their forms. */
+interface ParsedEntry { readonly text: string; readonly entry: Entry; readonly body: EntryBody }
+
+/** Each text as an entry and its body, or the first that is not in its form, with its index. */
+function parseTexts(texts: readonly string[]): ParsedEntry[] | { readonly index: number; readonly code: string; readonly message: string } {
+  const parsed: ParsedEntry[] = [];
+  for (const [index, text] of texts.entries()) {
+    try {
+      const entry = entryFromText(text);
+      parsed.push({ text, entry, body: readBody(entry.body) });
+    } catch (error) {
+      if (error instanceof ListEntryError) return { index, code: error.code, message: error.message };
+      throw error;
+    }
+  }
+  return parsed;
+}
+
+/** Whether a body is a `join` whose `endpoint` field is this relay key: read as sent, before anything is judged. */
+function namesEndpoint(body: EntryBody, endpoint: string): boolean {
+  return body.kind === "join" && body.own.some(({ name, value }) => name === "endpoint" && new TextDecoder().decode(value) === endpoint);
+}
+
+function seqOfText(text: string): number | null {
+  const parsed = parseTexts([text]);
+  return Array.isArray(parsed) ? parsed[0]?.body.seq ?? null : null;
+}
+
+function hashOfText(text: string): string | null {
+  try {
+    return entryHash(entryFromText(text).body);
+  } catch (error) {
+    if (error instanceof ListEntryError) return null;
+    throw error;
+  }
+}
+
+/** The text with one byte of its body flipped (the middle one unless said), written again in its one spelling. */
+function flipEntryText(text: string, byte?: number): string {
+  const entry = entryFromText(text);
+  const body = new Uint8Array(entry.body);
+  const at = byte ?? Math.floor(body.length / 2);
+  body[at] = (body[at] ?? 0) ^ 0x01;
+  return entryToText({ body, signature: entry.signature });
+}
+
+function flipText(text: string, byte?: number): string {
+  const bytes = new Uint8Array(fromBase64Url(text));
+  const at = byte ?? Math.floor(bytes.length / 2);
+  bytes[at] = (bytes[at] ?? 0) ^ 0x01;
+  return toBase64Url(bytes);
 }

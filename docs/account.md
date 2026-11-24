@@ -1825,7 +1825,8 @@ Seoul, South Korea", leaving out what is unknown ([Adding a PC](#adding-a-pc), "
 - [`shared/account-records.ts`](../shared/account-records.ts): record types, parsing, signing bytes,
   signing and verification.
 - [`shared/account-service-fake.ts`](../shared/account-service-fake.ts): the account service API in
-  memory, for tests.
+  memory, for tests, the signed list's routes included
+  ([account-list.md](account-list.md#the-list-routes-in-tests)).
 - [`shared/account-list-entry.ts`](../shared/account-list-entry.ts): the entry format of a signed
   list ([account-list.md](account-list.md)). No released part of Ovis reads or writes it yet, and
   nothing on this page uses it.

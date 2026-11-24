@@ -182,8 +182,13 @@ export function registerSigningBytes(account: string, key: string, challengeId: 
 }
 
 export const PC_ADD_PREFIX = "ovis-pc-add/1";
-/** What a key proof adds a PC by: the one-press admit, a confirm (`PUT` with `confirm: true`), or a `PUT` listing a PC the account does not list yet. */
-export type PcAddPurpose = "admit" | "confirm" | "list";
+/**
+ * What a key proof is for. Adding a PC: the one-press admit, a confirm (`PUT` with `confirm: true`), or a `PUT` listing a
+ * PC the account does not list yet. The account's signed list (docs/account-list.md, "On a device"): `list-genesis` for
+ * starting it and `list-claim` for a device's claim of its own key, each with the list id in the place of the server_id;
+ * a genesis names no listing, and a claim names the claimed key there.
+ */
+export type PcAddPurpose = "admit" | "confirm" | "list" | "list-genesis" | "list-claim";
 
 /**
  * What a sign-in's registered key signs to add a PC once that sign-in is older than ten minutes (docs/account.md, "In
