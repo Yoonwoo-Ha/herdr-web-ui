@@ -1,0 +1,20 @@
+{
+  "name": "os-unknown",
+  "fields": [
+    {
+      "name": "label",
+      "value": "RGVzaw"
+    },
+    {
+      "name": "os",
+      "value": "YmVvcw"
+    }
+  ],
+  "expect": {
+    "names": {
+      "label": "Desk",
+      "os": null
+    },
+    "written": false
+  }
+}

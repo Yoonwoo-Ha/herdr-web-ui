@@ -1,0 +1,13 @@
+{
+  "name": "label-control",
+  "fields": [
+    {
+      "name": "label",
+      "value": "RGVzawc"
+    }
+  ],
+  "expect": {
+    "names": null,
+    "written": false
+  }
+}

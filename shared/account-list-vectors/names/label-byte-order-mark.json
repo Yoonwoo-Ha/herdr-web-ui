@@ -1,0 +1,13 @@
+{
+  "name": "label-byte-order-mark",
+  "fields": [
+    {
+      "name": "label",
+      "value": "77u_YQ"
+    }
+  ],
+  "expect": {
+    "names": null,
+    "written": false
+  }
+}

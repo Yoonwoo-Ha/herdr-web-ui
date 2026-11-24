@@ -1,0 +1,13 @@
+{
+  "name": "label-two-spaces",
+  "fields": [
+    {
+      "name": "label",
+      "value": "TXkgIGRlc2s"
+    }
+  ],
+  "expect": {
+    "names": null,
+    "written": false
+  }
+}

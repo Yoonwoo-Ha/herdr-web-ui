@@ -1,0 +1,13 @@
+{
+  "name": "label-nbsp",
+  "fields": [
+    {
+      "name": "label",
+      "value": "TXnCoGRlc2s"
+    }
+  ],
+  "expect": {
+    "names": null,
+    "written": false
+  }
+}

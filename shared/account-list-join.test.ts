@@ -342,7 +342,7 @@ describe("what the reader's caller may act on", () => {
 
   test("what a line gives back holds no key that signs what a caller hands it", async () => {
     const read = await readJoinLine(good.line, READER);
-    expect(Object.keys(read).sort()).toEqual(["account", "encryptionKey", "key", "list", "service", "signRedeem"]);
+    expect(Object.keys(read).sort()).toEqual(["account", "encryptionKey", "key", "list", "service", "signJoin", "signRead", "signRedeem"]);
     expect(Object.isFrozen(read)).toBe(true);
     // The one key it shows agrees on a secret and signs nothing; it cannot be exported.
     expect([read.encryptionKey.type, read.encryptionKey.algorithm.name, read.encryptionKey.extractable, read.encryptionKey.usages]).toEqual(["private", "ECDH", false, ["deriveBits"]]);

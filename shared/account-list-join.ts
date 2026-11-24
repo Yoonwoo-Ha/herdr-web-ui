@@ -5,11 +5,12 @@
  * form, and the reader proves it by writing the line again from what it read. The reader is told which
  * account service its caller uses and whether its caller follows lists, and refuses any other line
  * itself, so no caller acts on a line it should not. What it gives back holds no private key: it signs
- * the one message a machine redeems an invite with, and no other bytes. No refusal of this file puts
- * any part of a line into its message or its fields. No I/O; WebCrypto only.
+ * the message a machine redeems an invite with, the `join` entry of its own key and the proof by which
+ * its holder reads the log, and no other bytes. No refusal of this file puts any part of a line into
+ * its message or its fields. No I/O; WebCrypto only.
  */
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import { canonicalBase64Url, isListHash, verifySignature } from "./account-list-entry.ts";
+import { ListEntryError, canonicalBase64Url, isListHash, readBody, readFieldsUnder, verifySignature, writeBody, type Entry, type EntryBody } from "./account-list-entry.ts";
 import { inviteRedeemBytes, isAccountId, type InviteRedeem } from "./account-list-invite.ts";
 import { toBase64Url } from "./relay-pair-sas.ts";
 
@@ -31,6 +32,15 @@ export const JOIN_LINE_MAX_CHARS = 1024;
  */
 export type JoinLineReason = "prefix" | "length" | "base64url" | "json" | "members" | "version" | "service" | "account" | "list" | "secret" | "scalar"
   | "not_one_form" | "not_extractable" | "other_service" | "needs_lists";
+
+/** What a line that was read will not sign: anything but its own redeem message, its own `join` and its own read proof. */
+export class JoinLineSignError extends Error {
+  readonly code = "not_signed";
+  constructor(message: string) {
+    super(message);
+    this.name = "JoinLineSignError";
+  }
+}
 
 export class JoinLineError extends Error {
   readonly code = "line_malformed";
@@ -85,6 +95,18 @@ export interface JoinLine {
    */
   readonly signRedeem: (redeem: JoinLineRedeem) => Promise<string>;
   /**
+   * The entry of this body, signed with the invite's key, when the body is a `join` of this line's own key on
+   * this line's list that adds no key and ends none; refuses `not_signed` for any other body, and for a line that
+   * names no list. So whatever a caller is handed, the invite's key makes nobody a signer and signs for no other
+   * list. A PC builds that body from its own keys (shared/account-list.ts, joinEntry), never from what it was sent.
+   */
+  readonly signJoin: (body: EntryBody) => Promise<Entry>;
+  /**
+   * The signature over a proof for reading (`ovis-list-read/1`) that names this line's key and this line's list;
+   * refuses `not_signed` for any other bytes.
+   */
+  readonly signRead: (proof: Uint8Array) => Promise<Uint8Array>;
+  /**
    * The line's secret as a key agreement key (ECDH P-256, `deriveBits` only, not extractable): what opens a value
    * that was wrapped to the invite's key. It signs nothing.
    */
@@ -112,6 +134,9 @@ const SECRET_CHARS = 184;
 /** n, the order of P-256's group: a private value is from 1 to n-1 (account-list-entry.ts holds the same n for signatures). */
 const P256_ORDER = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
 const PROBE = utf8ToBytes("ovis-join-secret-check/1");
+/** A proof for reading starts with these bytes (shared/account-list.ts, LIST_READ_PREFIX). */
+const READ_PREFIX = "ovis-list-read/1";
+const notSigned = (message: string): never => { throw new JoinLineSignError(message); };
 const MEMBERS = ["v", "service", "account", "list", "secret"] as const;
 
 /** An `https` origin in its one serialization: `https://host[:port]`, lower case, no default port, no path. */
@@ -277,7 +302,41 @@ export async function readJoinLine(line: string, reader: JoinLineReader): Promis
     const bytes = inviteRedeemBytes({ account, server_id, public_key, challenge_id });
     return toBase64Url(new Uint8Array(await webCrypto().sign(SIGN, privateKey, bytes)));
   };
-  return Object.freeze({ service, account, list: list === "" ? null : list, key, signRedeem, encryptionKey });
+  const sign = async (bytes: Uint8Array): Promise<Uint8Array> => new Uint8Array(await webCrypto().sign(SIGN, privateKey, new Uint8Array(bytes)));
+  const signJoin = async (body: EntryBody): Promise<Entry> => {
+    if (list === "") notSigned("This invite names no list, so there is no list to join by an entry");
+    let bytes: Uint8Array;
+    let written: EntryBody;
+    try {
+      bytes = writeBody(body);
+      written = readBody(bytes);
+    } catch (error) {
+      if (error instanceof ListEntryError) notSigned("That is no body of an entry");
+      throw error;
+    }
+    // Judged on the bytes that are signed, not on what the caller's object says.
+    if (written.kind !== "join" || written.signer !== key || written.list !== list || written.adds !== undefined || written.ends !== undefined) {
+      notSigned("An invite signs only the join of its own key on its own list, which adds no key and ends none");
+    }
+    return { body: bytes, signature: await sign(bytes) };
+  };
+  const signRead = async (proof: Uint8Array): Promise<Uint8Array> => {
+    const bytes = new Uint8Array(proof);
+    let fields: readonly { readonly name: string; readonly value: Uint8Array }[];
+    try {
+      fields = readFieldsUnder(READ_PREFIX, bytes);
+    } catch (error) {
+      if (error instanceof ListEntryError) notSigned("That is no proof for reading");
+      throw error;
+    }
+    const text = (name: string): string | null => {
+      const field = fields.find((item) => item.name === name);
+      return field === undefined ? null : new TextDecoder().decode(field.value);
+    };
+    if (list === "" || text("key") !== key || text("list") !== list) notSigned("An invite signs only the proof for reading its own list with its own key");
+    return await sign(bytes);
+  };
+  return Object.freeze({ service, account, list: list === "" ? null : list, key, signRedeem, signJoin, signRead, encryptionKey });
 }
 
 /**

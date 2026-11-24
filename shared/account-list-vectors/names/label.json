@@ -1,0 +1,16 @@
+{
+  "name": "label",
+  "fields": [
+    {
+      "name": "label",
+      "value": "SG9tZSBsYXB0b3A"
+    }
+  ],
+  "expect": {
+    "names": {
+      "label": "Home laptop",
+      "os": null
+    },
+    "written": true
+  }
+}

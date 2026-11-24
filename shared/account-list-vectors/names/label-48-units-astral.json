@@ -1,0 +1,16 @@
+{
+  "name": "label-48-units-astral",
+  "fields": [
+    {
+      "name": "label",
+      "value": "8J-YgPCfmIDwn5iA8J-YgPCfmIDwn5iA8J-YgPCfmIDwn5iA8J-YgPCfmIDwn5iA8J-YgPCfmIDwn5iA8J-YgPCfmIDwn5iA8J-YgPCfmIDwn5iA8J-YgPCfmIDwn5iA"
+    }
+  ],
+  "expect": {
+    "names": {
+      "label": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "os": null
+    },
+    "written": true
+  }
+}

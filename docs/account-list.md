@@ -9,6 +9,8 @@ members accept. This page says how one entry is written, signed, hashed and chai
 member checks it. Who may sign an entry (the signers) is checked on top of this and is not part of
 this page. The code is [`shared/account-list-entry.ts`](../shared/account-list-entry.ts); the
 vectors are in [`shared/account-list-vectors/envelope/`](../shared/account-list-vectors/envelope).
+What each kind of entry means, and the state the entries build, is under [The kinds](#the-kinds);
+the code for that is [`shared/account-list.ts`](../shared/account-list.ts).
 The page ends with the [join line](#the-join-line), the one line a machine is given to join an
 account, and with how [an invite is a key](#an-invite-is-a-key).
 
@@ -105,9 +107,282 @@ not hold stops the member with the code of the first check that fails:
 ## Levels
 
 A level is a number from 1; a build of level L reads every form of levels 1 to L. Each kind writes
-in `v` the level that first defined it in that form. Level 1 is five kinds, each written with `v`
-1: `genesis`, `device`, `invite`, `join` and `remove`. What each kind carries and means is not part
-of this page.
+in `v` the level that first defined it in that form. Level 1 is nine kinds, each written with `v`
+1: `genesis`, `device`, `pc`, `invite`, `join`, `remove`, `carried`, `card` and `epoch`.
+
+## The kinds
+
+The members of a list are **devices** (a phone, a desktop app, a browser) and **PCs**. Every member
+has a signing key; a PC is also known by its relay key, the key a device already holds it to when
+it connects. An **invite** is a key too. Who may sign an entry is the signers' rule, from `adds`,
+`power` and `ends` alone: a signer of power `full` adds and ends any key, one of power `bound` ends
+only itself, and a key that was ever a signer is never added again. The kind says what the entry
+means on top of that.
+
+| kind | signed by | carries | it means |
+|---|---|---|---|
+| `genesis` | the first device, as entry 0 | `account`, `enc`, `epoch_opens`; names | the list starts for that account; its signer is the first device, `full`, with role `drive`; epoch 0 is open |
+| `device` | a `full` signer | `adds` and `power`; `card`, `enc`, `role`, and `until` or not; names | the key in `adds` is a device with that power and role. With power `full` its role is `drive` and it has no `until` |
+| `pc` | a `full` signer | `adds` with power `full`; `card`, `enc`, `endpoint`; names | a person added the PC at that relay key; the key in `adds` is its signing key |
+| `invite` | a `full` signer | `adds` with power `bound`; `auto`, `exp`, `uses`; names | the key in `adds` is an invite |
+| `join` | an invite's key | `card`, `enc`, `endpoint`, `pc`; names | the PC at that relay key joins by itself; `pc` is its signing key, which is no signer |
+| `remove` | see below | `ends`, or `endpoint` | the key, or the PC at that relay key, is out |
+| `carried` | the first signer, right after entry 0 | `adds` with power `full`, `role` `drive`; or `endpoint`; names | a device, or a PC, that was in the account before it had a list |
+| `card` | a device with no encryption key yet | `enc` | the device names its encryption key |
+| `epoch` | a `full` signer | `epoch`, `epoch_link`, `epoch_opens` | the epoch after the current one is open |
+
+"names" is the two fields `sealed` and `epoch`, which come together or not at all: an entry whose
+writer holds no key to seal its names with carries neither, and counts all the same.
+
+| field | value |
+|---|---|
+| `account` | the account's id: 1 to 64 of `A-Z a-z 0-9 _ -` |
+| `auto` | `1` for an invite a PC joins with by itself, `0` for one that needs a person to add the PC |
+| `card` | a [card](#a-card)'s signature: 86 characters of base64url, `r \|\| s` |
+| `enc` | an encryption key: [a key](#the-form) whose point is on the curve |
+| `endpoint` | a PC's relay key: 64 of `0-9a-f` |
+| `epoch` | a number: the epoch whose key sealed this entry's names; in an `epoch` entry, the epoch that is current where it stands |
+| `epoch_link` | 61 bytes: the key of the current epoch, under the key of the epoch the entry opens |
+| `epoch_opens` | a hash: the commitment to the key of the epoch the entry opens (epoch 0 in a `genesis`) |
+| `exp` | a number, at most `issued_at` + 604800 (7 days after the entry was signed): the invite lets no PC in once a `full` signer has signed an entry at a later time. The account service also judges it against its own clock |
+| `pc` | a PC's signing key: a key whose point is on the curve |
+| `role` | `drive` (types into terminals) or `watch` (only reads them) |
+| `sealed` | the entry's [names](#what-is-sealed), sealed: at least 47 bytes |
+| `until` | a number, only with power `bound`: a PC lets the device in only before this second, by the PC's own clock |
+| `uses` | a number from 1 to 256: how many PCs may join with the invite |
+
+An entry is of its kind only with exactly those fields, each in its form, and with `adds` and `ends`
+only where the table has them. One exception: a `device` may carry `ends` when it names the entry's
+own signer, which so hands its place to the key in `adds` in one entry. Anything else is not of its
+kind and has no effect of it (`entry_invalid`); its `adds` and `ends` have applied all the same, so
+the key it adds is a signer with no name: it may sign what its power allows, and it opens nothing
+and is no device and no PC.
+
+What the kinds add to the signers' rule:
+
+- **A PC that a person added is a signer of power `full`**, so a person at that PC can allow a
+  device, add a PC and remove a member. It is in while its key is a signer: the entry that ends the
+  key puts the PC out, whatever its kind. Its relay key alone does not put it out (`ends_needed`),
+  since that would leave its key a signer.
+- **Only a `bound` device watches or has an `until`.** A device of power `full` adds whom it likes,
+  so a role or an hour would hold it to nothing: a `device` with power `full` and role `watch`, or
+  with an `until`, is not of its kind.
+- **A PC that joined by an invite is no signer.** A `join` counts only when its signer is an open
+  invite with `auto` `1`. Such a PC lets devices in and can allow nobody. An invite with `auto` `0`
+  lets no PC in by itself (`invite_not_auto`): the PC asks with its line, and a member's `pc` adds
+  it.
+- **An invite is open** while its key is a signer, whoever placed it is one, fewer PCs joined with
+  it than `uses`, and its time is not over. Otherwise its join takes the first name that applies:
+  `invite_unknown`, `invite_revoked`, `invite_void`, `invite_spent`, `invite_expired`.
+- **An invite's time is over by the list's own time, and by no reader's clock.** The list's time is
+  the latest `issued_at` among the entries that a `full` signer signed and that were not passed
+  over. Once it lies after an invite's `exp`, a `join` by that invite has no effect
+  (`invite_expired`), whoever places it and whenever. A `join`'s own `issued_at` says nothing: its
+  signer is the invite. So whoever finds an old line cannot join with it once any member has
+  signed anything since, even where the service places what it is given. A `full` signer that is
+  awake past an unused invite's `exp` puts it out (`remove` with `ends`): until one does, the
+  holder of the line still reads the names sealed before.
+- **A relay key comes in once** (`endpoint_reused`), also after its PC was put out. One row waits
+  for more: a carried PC that is still in gets its keys from a person's `pc` at its relay key, and
+  never from an invite's `join`. **A PC's key comes in once**, at one relay key: a key that any PC
+  ever had here names no other PC, device or invite (`key_reused`). A person's `pc` makes its
+  fresh key a `full` signer in that same entry; the `pc` key of an invite's `join` is never one,
+  and a key that is or was a signer cannot stand there (`key_reused`).
+- **`remove` with `endpoint`** puts out a PC whose key is no signer (one that joined or was
+  carried), and only a `full` signer's does (`signer_not_allowed`, then `already_out`). Where the
+  key of a PC that joined was made a signer afterwards, the PC goes with its key like one a person
+  added: `ends_needed` for its relay key, and the `ends` of the key puts the PC out.
+- **`carried`** counts only from the first signer (`signer_not_allowed` from anyone else) and only
+  right after entry 0: once a signer has signed anything that is no `carried` that counted, nobody
+  is carried in (`carried_late`). It has no card and gives power `full`, so it is how the device
+  that starts a list for an account that was in use names who was in it, and no way in afterwards,
+  for the first signer or for whoever holds the service. A carried device has no encryption key
+  until its own `card` names one, once (`enc_set` after that). A PC that was in the account
+  follows such a list only when every device it carries in is one that PC already lets in, all of
+  them or none.
+- **Names are sealed under the current epoch.** An entry whose `epoch` is another has no effect
+  (`epoch_other`): under an earlier key a member that was put out could read the names, and under a
+  later one nobody can. Only an `epoch` entry of a `full` signer opens the next epoch, and only when
+  it names the current one, so of two members that open it at once one does. A removal opens none
+  by itself: whoever puts a member out places an `epoch` entry after the `remove`, and a member
+  that signs itself out leaves that to one that stays.
+- **A writer seals nothing under an epoch that somebody who is out can read.** It seals under the
+  current epoch only when the entry that opened it stands after the last entry that put out a
+  device, a PC, or an invite with `auto` `1`, and after the `join` that took such an invite's last
+  use (the holder of that line held the key too); and only while no device that is in is past its
+  `until` and no such invite that still has a use is past its `exp`, by the writer's clock. One of
+  those is first put out and the next epoch opened. Otherwise the writer writes its entry with no
+  names. This is the writer's rule (`sealEpoch`), which no writer works out for itself; an entry
+  that breaks it still counts.
+- **A member judges an entry by no clock of its own but for one thing.** A device with `until` is
+  let in only before that second by each PC's own clock, which never reads before the list's own
+  time or the time that PC last saved (`listClock`); it stays a signer of its power after it, and
+  so can still end itself.
+
+How a member writes follows from this. An entry names the entry before it, so a member knows what
+becomes of its own entry on its footing before anybody else sees it. It signs an entry only when
+that entry counts on its own state (`signListEntry`): it builds the entry, takes it as every member
+will, and signs nothing that would be passed over or have no effect. So no member's own entry
+leaves a signer with no name.
+
+Two more rules are for writers alone. The account service holds every writer to them, and a member
+counts an entry that breaks one all the same:
+
+- **Nobody opens an epoch at will.** A member writes an `epoch` only where names can no longer be
+  sealed under the current one: somebody who may hold its key is out or over its time (`sealEpoch`
+  says so). After a removal that is the very next entry, in one batch: the `remove`, or several,
+  then one `epoch`. Where a device past its `until` or an invite past its `exp` is still in, it is
+  put out first. So an entry that did not get its place, an add say, is signed again on the new
+  head and sealed under the same epoch as before: the service kept nothing of the request that did
+  not place, the key wrapped for the newcomer included. Should an add be given up for good, a wrap
+  for that key exists only at a service that lied about keeping nothing, and it opens names, never
+  a way in.
+- **An invite a PC joins with by itself is made for one PC**, with `uses` `1`, for as long as the
+  account service keeps invites of its own beside the list: a PC first redeems the invite with the
+  service, which takes each invite once, so a second PC under one invite is refused there (`403
+  not_redeemed`) whatever `uses` says.
+
+What stays true all the same, and what to do about it:
+
+- **A signer with no name can exist**, where an entry by a `full` signer added a key and had no
+  effect of its kind: the signers' rule applies `adds` whatever the kind. It opens nothing and is
+  no device and no PC, and it signs what its power allows. Every member lists such signers
+  (`listView`), so that a person sees one and ends it.
+- **A key that lets nobody in any more can still sign.** An invite that is spent, void or over its
+  time, and a `bound` device past its `until`, stay signers of power `bound` until they are ended:
+  an entry of theirs has no effect and still takes the next place in the list. The account service
+  counts what such a key places and stops it.
+- **A device that hands its place to a new key** is out with its old key, and the invites it
+  placed are void with it: it places them again.
+- **Nothing proves an encryption key.** A card says that the holder of a signing key named this
+  `enc`; nobody checks that anybody holds its private half. A wrong one costs that member the
+  names, and nothing else.
+- **The holder of an `auto` line can name a relay key that is not its own in a `join`**, and a
+  service that is not honest places it. It gives no way into that PC: a device holds a PC to its
+  relay key, which the holder cannot answer for. It costs the PC that relay key in this list (a
+  relay key comes in once) and shows the holder the names. The PC comes back as a new PC, with a
+  new relay identity and a new add.
+- **A level above 1 must give a `bound` key's entry of a higher `v` no effect that lets anybody
+  in.** A member of a lower level applies its `ends`, does nothing of its kind, and is not behind
+  for it: only a `full` signer's entry that it cannot read makes it so.
+
+A member that reads an entry whose `v` is above its level applies `adds` and `ends` and nothing of
+the kind, and from an entry of a `full` signer that it cannot read it is behind: it lets nobody new
+in, and still applies every removal. Besides removals, the one thing it takes in is the keys that
+a person's `pc` gives a carried PC that is in, and only where that `pc` passes every check it
+passes for a member that reads everything. The reason is a sequence: a carried PC is in; the member
+falls behind; a `pc` gives that PC its keys; the key is ended. Without the keys the member could
+not tell which PC that end means, and would hold a PC that every other member had put out. Nobody
+new comes in by this, and no PC moves to another relay key.
+
+One thing a member that is behind cannot follow: which keys PCs that joined after it fell behind
+have. A `pc` that names such a key for a carried PC has no effect for a member that reads
+everything (`key_reused`), and the member that is behind takes it. No member that signs only what
+counts writes such an entry; one that does can leave a member that is behind holding that carried
+PC after the others put it out by its relay key, until that member is updated and replays.
+
+### A card
+
+A newcomer has no say in the list before it is in it. So it states what nobody else may choose for
+it under its own signature, and the entry that lets it in carries that signature in `card`:
+
+```
+bytes = "ovis-list-card/1" and the fields enc, key and list, for a PC endpoint, and for a PC that joins by an invite invite, in the form of a body's fields
+```
+
+- `key` is the newcomer's signing key (the `adds` of a `device` or `pc`, the `pc` of a `join`),
+  `enc` its encryption key, `list` the list id, `endpoint` the PC's relay key, and `invite` the key
+  of the invite that signs the `join`.
+- The signature is `key`'s, ECDSA P-256 with SHA-256 over those bytes, checked as an entry's is.
+- A `device`, `pc` or `join` whose card is not that of its key, for its `enc`, this list, its
+  `endpoint` and its invite, has no effect (`card_invalid`). So nobody can name a key that never
+  asked to join, give a member an encryption key that is not its own, move a card to another list,
+  or take the card a PC made for a person to add it and join that PC by an invite instead.
+- A device that was carried in was not there to sign a card: its `card` entry, signed with its own
+  key, says the same.
+- When a person adds a PC by comparing a number on two screens, the number is bound to the card:
+  its binding is SHA-256 over the card's bytes, and the digits come from that binding and a nonce
+  from each end, each fixed before it sees the other's, as pairing by comparing digits does
+  ([Relay](relay.md)). Digits of the hash alone
+  would prove nothing: whoever carries the card between the two could try keys until one fits.
+
+### What is sealed
+
+A member's name and OS word are not needed to decide who is in, so they are not in the clear: the
+entry carries them in `sealed`, encrypted under the key of an epoch, which the members share and
+the account service never has. How they are sealed and how members share the keys is under
+[Names the service cannot read](#names-the-service-cannot-read). No rule above reads `sealed` beyond its length, or needs a key: so a member that was
+given no key to the names, or a wrong one, lets in and puts out exactly whom every other member
+does, and so does the account service.
+
+What is sealed is fields in the form of a body's fields: `label`, and `os` when the OS is known.
+`label` is a name: 1 to 48 UTF-16 units, no control character, no unpaired surrogate, and of white
+space only single spaces inside it. `os` is one of `ios`, `android`, `macos`, `windows`, `linux`,
+`chromeos`. A reader takes an OS word it does not know as none and passes by a field it does not
+know, so a later build may say more; a field named `pad`, which fills a sealed text up to a fixed
+size, is such a field and no name.
+
+An **epoch** is the time one such key is in use. Entry 0 opens epoch 0, and each `epoch` entry
+opens the next. What opens an epoch says two things of it in the clear: `epoch_opens`, a commitment
+to its key, so that a member takes a key for that epoch from nobody unless it gives this
+commitment; and `epoch_link`, the key before under the new one, so that a member given the current
+key reads the names of every earlier epoch.
+
+In the clear are the keys, the relay key of each PC, each role and `until`, each invite's `exp`,
+`uses` and `auto`, and the epochs' numbers: the account service sees how many devices and PCs an
+account has and when each came and went, and not what they are called.
+
+### The state
+
+A member's state is plain data that JSON holds: the signers' state, and beside it
+
+| part | named by | holds |
+|---|---|---|
+| `account` | | the account the list is of, as entry 0 names it |
+| `full_at` | | the list's own time: the latest `issued_at` of an entry a `full` signer signed that was not passed over |
+| `carrying` | | whether a `carried` still counts |
+| `signers` | key | each signer's row, with `as`: `device`, `pc`, `invite`, or none |
+| `devices` | key | `role`, `until`, `enc` (none for a carried device that has not named it), `carried` |
+| `pcs` | relay key | `how` (`added`, `joined` or `carried`), `key`, `enc`, `seq`, `invite`, `removed` |
+| `pc_keys` | key | the relay key of the PC that has or had this key |
+| `invites` | key | `exp`, `uses`, `joins`, `auto` |
+| `epoch`, `epochs` | number | the current epoch's number; for each epoch `opens`, `link` (none for epoch 0) and `seq`, the place of the entry that opened it |
+
+Nothing is ever deleted. A device or an invite is in while its key is a signer, and a PC while its
+`removed` is empty. A PC lets a device in while the device is in and, when it has an `until`, before
+that second, as what its `role` says. The key of an epoch is wrapped to the encryption key of each
+device and PC that is in, and to the own key of each open invite with `auto` `1`, so that a PC
+which joins with nobody else awake can read the names and seal its own. Whoever wraps leaves out a
+device past its `until` and an invite past its `exp`, by its own clock, so that an old line or a
+borrowed browser is given no later key; that clock chooses only whom a key is wrapped to, and lets
+nobody in and puts nobody out. A member that stopped for a replay answers for nobody until it has
+replayed: it lets no device in, holds no PC, lists nothing, takes no invite for open and wraps to
+nobody.
+
+A saved state is trusted exactly as far as the member's own storage is. Reading it back checks
+that it has its form and agrees with itself, which catches a state that was damaged, not one that
+somebody who can write the store wrote with care. A member that starts replays the entries it
+kept and holds what the replay gives.
+
+Every entry that holds comes to one of these, the same for every member of one level and for the
+account service:
+
+| outcome | when |
+|---|---|
+| `passed_over` | the signers' rule passes it over: nothing in it applies (`signer_unknown`, `signer_not_allowed`, `key_reused`, `already_out`; a `join` takes its invite's name) |
+| `stops` | a member that is behind cannot place it, and takes nothing until it replays (`needs_replay`) |
+| `cannot_read` | its `v` is above the member's level: `adds` and `ends` have applied, the kind does nothing |
+| `no_effect` | `adds` and `ends` have applied, and the kind does nothing, by the first of: `entry_invalid`; `epoch_other`; what the list holds (`invite_unknown`, `invite_revoked`, `invite_void`, `invite_spent`, `invite_expired`, `invite_not_auto`, `signer_not_allowed`, `already_out`, `ends_needed`, `endpoint_reused`, `key_reused`, `enc_set`, `carried_late`); `card_invalid` |
+| `counts` | the kind's rule counts it |
+
+### Reading the log with an invite
+
+A machine that holds a join line is no member yet and still has to read the log. It proves that it
+holds the invite: `ovis-list-read/1` and the fields `after` (the place its page follows, or empty
+for the start), `at` (when it was made), `key` (the invite's key) and `list`, in the form of a
+body's fields, signed with the invite's key and written as one text like an entry. The account
+service checks the form (`proof_malformed`), then the signature (`signature_invalid`), then what
+the list holds of that invite, and judges `at` and the invite's `exp` by its own clock.
 
 ## Names the service cannot read
 
@@ -321,11 +596,13 @@ json = {"v":1,"service":S,"account":A,"list":L,"secret":K}
   list id says the account has a signed list, and joining it on the service's word alone would undo
   what the list is for.
 - A line that reads gives the service, the account, the list id (or none) and the invite's public
-  key as [a key](#the-form). It gives no private key: it signs the one message a machine redeems
-  an invite with ([An invite is a key](#an-invite-is-a-key)), for the line's own account and
-  nothing a caller composes, and it holds the secret once more as a key that only agrees on a
-  shared secret (ECDH), which opens what was encrypted to the invite's key. Neither can be
-  exported.
+  key as [a key](#the-form). It gives no private key. It signs three things and nothing a caller
+  composes: the message a machine redeems an invite with ([An invite is a key](#an-invite-is-a-key)),
+  for the line's own account; a `join` entry of its own key on its own list that adds no key and
+  ends none, which a PC builds from its own keys and never from what it was sent; and the proof by
+  which its holder reads its own list ([Reading the log with an invite](#reading-the-log-with-an-invite)).
+  And it holds the secret once more as a key that only agrees on a shared secret (ECDH), which
+  opens what was encrypted to the invite's key. Neither can be exported.
 - No released build wrote a line before the account was in it, so there is one form and one
   version. A line without `account` is refused (`members`).
 
@@ -409,6 +686,18 @@ files that change it, which name that one as `key_of_line`), the `redeem` values
 and `expect.verifies`; every file whose values are in form (all but `redeem-server-id-uppercase`)
 has their `bytes` (base64url) and `bytes_hex`. Each `make-proof` file has the `make` values, their
 `bytes`, the device's key as `device_key`, and a `signature` by it.
+
+Each file of [`shared/account-list-vectors/kinds/`](../shared/account-list-vectors/kinds) is a list
+from entry 0: `name`, `level` (the member's), `keys`, `entries` as above (`sealed` is shown as
+base64url), and `expect`: either `outcomes` (what became of each entry after entry 0, as
+`counts`, `cannot_read`, or the outcome and its name) with the whole `state` after the last entry,
+or `stops`. A list that no member follows has `stops` alone; a member that stopped after entries
+it took (at one that does not hold, or at one it cannot place) has `stops` with the `outcomes` and
+the `state` of what it kept. [`card/`](../shared/account-list-vectors/card) holds cards (`card`,
+its `bytes` where it is in form, a `signature`, `expect.holds`) and [`names/`](../shared/account-list-vectors/names)
+holds names (`fields`, each a name and its value as base64url, and `expect.names`, which is `null`
+for fields that give none; `written` says that a writer writes exactly those fields for those
+names).
 
 ### The vectors of seal/
 

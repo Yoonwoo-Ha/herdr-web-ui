@@ -1,0 +1,16 @@
+{
+  "name": "label-single-spaces",
+  "fields": [
+    {
+      "name": "label",
+      "value": "TXkgb3duIGRlc2s"
+    }
+  ],
+  "expect": {
+    "names": {
+      "label": "My own desk",
+      "os": null
+    },
+    "written": true
+  }
+}
