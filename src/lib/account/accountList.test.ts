@@ -3,7 +3,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import { LIST_LEVEL, kindBody, listView, namesFields, replayList, sealEpoch, signCard, signListEntry, type ListKind } from "../../../shared/account-list.ts";
 import { entryFromText, entryHash, entryToText, readBody, signEntry } from "../../../shared/account-list-entry.ts";
-import { LIST_SAVE_PREFIX } from "../../../shared/account-list-follower.ts";
+import { ATTEMPT_ENTRIES_MAX, LIST_SAVE_PREFIX } from "../../../shared/account-list-follower.ts";
 import { openWrap, sealFields, wrapEpochKey, wrapFromText, wrapToText, type EpochKey } from "../../../shared/account-list-seal.ts";
 import { pcAddSigningBytes } from "../../../shared/account-records.ts";
 import { FakeAccountService, WEB_REDIRECT, type ListTamper } from "../../../shared/account-service-fake.ts";
@@ -138,6 +138,21 @@ async function signed(by: DeviceListKeys | { key: string; signs: CryptoKey }, ki
   const place = { list: at.id, seq: at.head.seq + 1 };
   const body = kindBody({ issued_at: Math.floor(now / 1000), list: at.id, prev: at.head.hash, seq: place.seq, signer: by.key }, await kind(place));
   return entryToText(await signEntry(body, by.signs));
+}
+
+/**
+ * Another history from entry 1 that a member signed, which is no post the member left behind: `first`, then more entries by the same
+ * signer than one post holds. A single entry there by a member that went on is no fork (the follower refuses it and nothing changes).
+ */
+async function otherHistory(by: DeviceListKeys | { key: string; signs: CryptoKey }, first: () => ListKind, list = held()): Promise<string[]> {
+  const texts: string[] = [];
+  let head = { seq: 0, hash: list.id };
+  for (let index = 0; index <= ATTEMPT_ENTRIES_MAX; index += 1) {
+    const text = await signed(by, index === 0 ? first : () => ({ kind: "carried", endpoint: newPc().endpoint, sealed: null }), { ...list, head });
+    texts.push(text);
+    head = { seq: head.seq + 1, hash: entryHash(entryFromText(text).body) };
+  }
+  return texts;
 }
 
 async function post(from: Device, entries: readonly string[], wraps: readonly { epoch: number; member: string; wrap: string }[] = []): Promise<Response> {
@@ -950,7 +965,7 @@ describe("two pages of a browser with no Web Locks", () => {
     await phone.list.sync();
     const keys = await phone.keys();
     const list = held();
-    const fork = await signed(keys, () => ({ kind: "carried", endpoint: newPc().endpoint, sealed: null }), { ...list, head: { seq: 0, hash: list.id } });
+    const fork = await otherHistory(keys, () => ({ kind: "carried", endpoint: newPc().endpoint, sealed: null }), list);
     // each page has a lock of its own, as where the browser has none
     const a = reloaded(phone);
     const b = reloaded(phone);
@@ -963,7 +978,7 @@ describe("two pages of a browser with no Web Locks", () => {
     const later = b.list.sync();
     await waiting.promise;
     // page A is shown a fork that a member signed, and saves the alarm with its copy
-    tamper({ fork: [fork] });
+    tamper({ fork });
     expect(following(await a.list.sync()).trouble).toBe("fork");
     // the service shows page B the honest log, one entry on: B does not write the copy it loaded before A's save
     fake.untamperList(held().id);
@@ -1079,10 +1094,10 @@ describe("an account service that lies", () => {
     const keys = await phone.keys();
     const other = newPc();
     const list = held();
-    // the same member signed another entry 1 (a stolen key, or a device made to), and the service shows that one now
-    const fork = await signed(keys, () => ({ kind: "carried", endpoint: other.endpoint, sealed: null }), { ...list, head: { seq: 0, hash: list.id } });
+    // the same member signed another history from entry 1 (a stolen key, or a device made to), and the service shows that one now
+    const fork = await otherHistory(keys, () => ({ kind: "carried", endpoint: other.endpoint, sealed: null }), list);
     const onward = await addPc(phone, "Laptop");
-    tamper({ fork: [fork] });
+    tamper({ fork });
     now += 30_000;
     const shown = await phone.list.sync();
     expect(members(shown)).toEqual(members(view));
@@ -1110,8 +1125,8 @@ describe("an account service that lies", () => {
     const { phone } = await follower();
     const keys = await phone.keys();
     const list = held();
-    const fork = await signed(keys, () => ({ kind: "carried", endpoint: newPc().endpoint, sealed: null }), { ...list, head: { seq: 0, hash: list.id } });
-    tamper({ fork: [fork] });
+    const fork = await otherHistory(keys, () => ({ kind: "carried", endpoint: newPc().endpoint, sealed: null }), list);
+    tamper({ fork });
     now += 30_000;
     expect(following(await phone.list.sync()).trouble).toBe("fork");
     const again = reloaded(phone);

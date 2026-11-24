@@ -589,7 +589,7 @@ export function accountList(options: AccountListOptions): AccountList {
     }
 
     // a device that follows a list starts no other over it, whatever the account service names
-    const heard = heardHead(copy, hint === null ? null : { list: hint.list, place: hint.head }, seconds());
+    const heard = heardHead(copy, hint === null ? null : { list: hint.list, head: hint.head }, seconds());
     ({ copy } = heard);
     let verdict: FollowVerdict = heard.verdict === "same" ? "caught_up" : "older";
     // The account service names another list, which the device says, or none, which is no hint at all (the follower's

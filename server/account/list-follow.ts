@@ -375,7 +375,7 @@ export class ListFollow {
     }
     // the binding or the identity went while the keys were read: what was heard was for the PC it was
     if (!this.live(scope)) return;
-    const heard = heardHead(copy, { list: named.id, place: named.head }, this.seconds());
+    const heard = heardHead(copy, { list: named.id, head: named.head }, this.seconds());
     this.lastVerdict = heard.verdict;
     this.keep(heard.copy, scope, false);
     if (heard.verdict === "read") await this.read(scope);

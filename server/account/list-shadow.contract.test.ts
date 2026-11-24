@@ -7,6 +7,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import { entryFromText, entryHash } from "../../shared/account-list-entry.ts";
 import { accountDeviceId } from "../../shared/account-records.ts";
 import { importPublicKey } from "../../shared/relay-e2ee.ts";
 import { handleRequest } from "../dispatch.ts";
@@ -312,7 +313,15 @@ describe("what the account service shows wrongly changes the copy's verdict and 
     // the first device signs a second continuation from entry 0: a history of its own that differs from the PC's
     const forked = await account.sign({ kind: "device", key: other.key, power: "full", role: "drive", until: null, enc: other.enc,
       card: await memberCard(other, account.id), sealed: null, rotates: false }, account.first, { seq: 0, hash: account.id });
+    // That one entry alone is what a member signed and left behind when another got its place: the first device went on in the list the PC
+    // holds, and nobody else signed on this one. It is refused, and no alarm rises.
     pc.service.tamperList(account.id, { reader, fork: [forked] });
+    await pc.pull();
+    expect(pc.list.status()).toMatchObject({ alarm: null, last_verdict: "refused chain_broken", head: before.status.head, devices: before.status.devices });
+    unchanged();
+    // Another member signed on it: somebody lives on that history
+    const lived = await account.sign({ kind: "remove", ends: other.key }, other, { seq: 1, hash: entryHash(entryFromText(forked).body) });
+    pc.service.tamperList(account.id, { reader, fork: [forked, lived] });
     await pc.pull();
     expect(pc.list.status()).toMatchObject({ alarm: "fork", head: before.status.head, devices: before.status.devices });
     unchanged();
