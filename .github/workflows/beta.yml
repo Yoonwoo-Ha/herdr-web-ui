@@ -35,6 +35,7 @@ jobs:
       new: ${{ steps.version.outputs.new }}
       host: ${{ steps.host.outputs.host }}
       tree: ${{ steps.host.outputs.tree }}
+      keeper_tree: ${{ steps.host.outputs.keeper_tree }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -92,12 +93,17 @@ jobs:
           SHA: ${{ steps.version.outputs.sha }}
         run: |
           tree=$(git rev-parse "$SHA:crates/pty-sidecar")
+          keeper_tree=$(git rev-parse "$SHA:crates/acp-keeper")
           version=$(git show "$SHA:package.json" | jq -r .version)
+          tag="pty-sidecar-$tree-$keeper_tree"
           released=$(gh release download "v$version" --pattern ovis-pty-sidecar.json --output - 2>/dev/null | jq -r '.crate // empty' || true)
-          built=$(gh release download "pty-sidecar-$tree" --pattern ovis-pty-sidecar.json --output - 2>/dev/null | jq -r '.crate // empty' || true)
-          if [ "$released" = "$tree" ] || [ "$built" = "$tree" ]; then host=ready; else host=build; fi
+          released_keeper=$(gh release download "v$version" --pattern ovis-acp-keeper.json --output - 2>/dev/null | jq -r '.crate // empty' || true)
+          built=$(gh release download "$tag" --pattern ovis-pty-sidecar.json --output - 2>/dev/null | jq -r '.crate // empty' || true)
+          keeper=$(gh release download "$tag" --pattern ovis-acp-keeper.json --output - 2>/dev/null | jq -r '.crate // empty' || true)
+          if { [ "$released" = "$tree" ] && [ "$released_keeper" = "$keeper_tree" ]; } ||
+             { [ "$built" = "$tree" ] && [ "$keeper" = "$keeper_tree" ]; }; then host=ready; else host=build; fi
           echo "Rust PTY host for crate tree $tree: $host."
-          { echo "host=$host"; echo "tree=$tree"; } >> "$GITHUB_OUTPUT"
+          { echo "host=$host"; echo "tree=$tree"; echo "keeper_tree=$keeper_tree"; } >> "$GITHUB_OUTPUT"
   host-build:
     needs: pick
     if: needs.pick.outputs.host == 'build'
@@ -121,22 +127,25 @@ jobs:
         with:
           name: ovis-pty-sidecar
           path: ${{ runner.temp }}/pty-sidecar
-      - name: Attach the host to its crate tree's prerelease
+      - name: Attach both binaries to their crate trees' prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TREE: ${{ needs.pick.outputs.tree }}
+          KEEPER_TREE: ${{ needs.pick.outputs.keeper_tree }}
           SHA: ${{ needs.pick.outputs.sha }}
         run: |
           cd "$RUNNER_TEMP/pty-sidecar"
           test "$(jq -r .crate ovis-pty-sidecar.json)" = "$TREE" || { echo "::error::The manifest is not for crate tree $TREE." >&2; exit 1; }
-          if ! gh release view "pty-sidecar-$TREE" >/dev/null 2>&1; then
-            gh release create "pty-sidecar-$TREE" --prerelease --latest=false --target "$SHA" --title "Rust PTY host $TREE" \
-              --notes "The Rust PTY host built from crates/pty-sidecar tree $TREE, for beta builds whose crate no release was built from."
+          test "$(jq -r .crate ovis-acp-keeper.json)" = "$KEEPER_TREE" || { echo "::error::The keeper manifest is not for crate tree $KEEPER_TREE." >&2; exit 1; }
+          tag="pty-sidecar-$TREE-$KEEPER_TREE"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --prerelease --latest=false --target "$SHA" --title "Rust PTY host and ACP keeper" \
+              --notes "Built from crates/pty-sidecar tree $TREE and crates/acp-keeper tree $KEEPER_TREE."
           fi
-          # the manifest last: install never reads one whose files are missing
-          find . -maxdepth 1 -type f ! -name ovis-pty-sidecar.json -print0 | xargs -0 gh release upload "pty-sidecar-$TREE" --clobber
-          gh release upload "pty-sidecar-$TREE" ovis-pty-sidecar.json --clobber
+          # the manifests last: install never reads one whose files are missing
+          find . -maxdepth 1 -type f ! -name '*.json' -print0 | xargs -0 gh release upload "$tag" --clobber
+          gh release upload "$tag" ovis-acp-keeper.json ovis-pty-sidecar.json --clobber
   # the tag comes once its host is there: the updater's install of the beta fetches it
   tag:
     needs: [pick, host-publish]

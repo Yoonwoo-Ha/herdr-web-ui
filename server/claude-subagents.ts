@@ -324,6 +324,15 @@ interface Parent {
   loopAt: number | null;
   loopTime: number | null;
   echo: { command: string | null; restAt: number | null; promptAt: number | null; turnOpen: boolean; starts: Start[] } | null;
+  /** the session's last entry of its own is the answer that ended its turn (endsTurn), with no request or prompt after it */
+  answered: boolean;
+  /** that answer is the last of its turn but its Stop hooks' feedback: a summary of hooks that stopped the turn ends it there */
+  stopping: boolean;
+  /**
+   * The last turn of the session to end ran Stop hooks: it wrote their summary after its answer. Its next answer is
+   * then no rest until their summary too. One that ended with none (a /goal's hook gone with its goal) ends that.
+   */
+  hooked: boolean;
 }
 interface Start { end: number; at: number | null; turn: boolean }
 
@@ -341,7 +350,7 @@ function scanParent(path: string): Parent | null {
   let parent = parents.get(path);
   if (!parent || parent.id !== stat.id || parent.offset > stat.size || !sameHistory(parent.version, stat)) {
     const from = Math.max(0, stat.size - PARENT_WINDOW);
-    parent = { version: stat, historyLimit: from > 0 ? stat.size : 0, id: stat.id, offset: from, skipping: from > 0, windowed: from > 0, firstAt: null, behind: false, notes: new Map(), calls: new Set(), results: new Map(), commands: noCommands(), stopCalls: new Map(), stops: new Map(), promptAt: null, restAt: null, whole: false, starts: [], turnOpen: false, loopAt: null, loopTime: null, echo: null };
+    parent = { version: stat, historyLimit: from > 0 ? stat.size : 0, id: stat.id, offset: from, skipping: from > 0, windowed: from > 0, firstAt: null, behind: false, notes: new Map(), calls: new Set(), results: new Map(), commands: noCommands(), stopCalls: new Map(), stops: new Map(), promptAt: null, restAt: null, whole: false, starts: [], turnOpen: false, loopAt: null, loopTime: null, echo: null, answered: false, stopping: false, hooked: false };
   }
   parent.version = stat;
   remember(parents, path, parent, 256);
@@ -358,7 +367,7 @@ function scanParent(path: string): Parent | null {
     state.skipping = read.skipping;
     state.behind = read.more;
     state.whole = read.offset >= stat.size && !read.skipping;
-    if (read.skipping) { state.restAt = null; state.echo = null; openTurn(state, read.offset, null); }
+    if (read.skipping) { state.restAt = null; state.echo = null; state.answered = false; state.stopping = false; openTurn(state, read.offset, null); }
     left -= consumed;
     if (consumed === 0) break;
   }
@@ -458,6 +467,27 @@ function selfResumed(parent: Parent, line: string, end: number): void {
   } catch {}
 }
 
+/**
+ * The session's own answer that ends its turn: Claude Code writes the model's last message of a turn with stop reason
+ * `end_turn`, one entry per block. An answer that calls a tool goes on, and an API error's (claudeTurnEnd) or a Code
+ * Mode script's (`isVirtual`) is none.
+ */
+function endsTurn(line: string): boolean {
+  if (!line.includes('"stop_reason":"end_turn"')) return false;
+  try {
+    const entry = row(JSON.parse(line));
+    const message = row(entry?.["message"]);
+    const content = message?.["content"];
+    return entry?.["type"] === "assistant" && entry["isSidechain"] !== true && entry["isApiErrorMessage"] !== true && entry["isVirtual"] !== true
+      && message?.["stop_reason"] === "end_turn" && !(Array.isArray(content) && content.some((block) => row(block)?.["type"] === "tool_use"));
+  } catch { return false; }
+}
+
+function rests(parent: Parent, written: number | null, end: number): void {
+  parent.restAt = written === null ? null : end;
+  if (parent.restAt !== null) { parent.turnOpen = false; parent.loopAt = null; }
+}
+
 function scanParentLine(parent: Parent, line: string, end: number): void {
   const user = line.includes('"type":"user"');
   // Claude writes a local command's caveat and output with neither `origin` nor a permission mode, as a
@@ -465,6 +495,9 @@ function scanParentLine(parent: Parent, line: string, end: number): void {
   const own = !line.includes('"origin":') && !line.includes('"permissionMode":');
   const local = !line.includes('"isSidechain":true') && ((user && own && (LOCAL_OUTPUT_RE.test(line) || BASH_RE.test(line) || (LOCAL_CAVEAT_RE.test(line) && line.includes('"isMeta":true')))) || line.includes('"subtype":"local_command"'));
   // Claude closes the session's turn with a `turn_duration` entry; a next turn writes its request, prompt or answer first.
+  // Claude Code 2.1.326 writes none while an in-process teammate runs (an idle one too) or a detached tool call awaits
+  // its result, until that work is over, and reports itself working meanwhile: the turn then ends at its answer
+  // (endsTurn), and in a session that runs Stop hooks at their summary, written once they ran.
   // A `progress` entry carries a subagent's message inside it: the subagent's, not the session's
   if (local) {
     if (line.includes('"content":"<bash-input>')) addStart(parent, { end, at: stamp(line.match(/"timestamp":"([^"]+)"/)?.[1]), turn: false });
@@ -481,8 +514,25 @@ function scanParentLine(parent: Parent, line: string, end: number): void {
     try {
       const entry = row(JSON.parse(line));
       if (entry?.["type"] === "system" && entry["isSidechain"] !== true) {
-        parent.restAt = stamp(entry["timestamp"]) === null ? null : end;
-        if (parent.restAt !== null) { parent.turnOpen = false; parent.loopAt = null; }
+        if (parent.answered) parent.hooked = false;
+        parent.answered = false;
+        parent.stopping = false;
+        rests(parent, stamp(entry["timestamp"]), end);
+      }
+    } catch {}
+  } else if (line.includes('"subtype":"stop_hook_summary"')) {
+    // a hook that blocked the stop wrote its feedback as a prompt before this summary, which took the answer back, and
+    // one that gave the model context has the turn go on with it, unless a hook stopped it outright
+    try {
+      const entry = row(JSON.parse(line));
+      if (entry?.["type"] === "system" && entry["isSidechain"] !== true) {
+        const context = entry["hookAdditionalContext"];
+        const stopped = entry["preventedContinuation"] === true;
+        parent.hooked = true;
+        if (!stopped && Array.isArray(context) && context.length > 0) parent.restAt = null;
+        else if (parent.answered || (stopped && parent.stopping)) rests(parent, stamp(entry["timestamp"]), end);
+        parent.answered = false;
+        parent.stopping = false;
       }
     } catch {}
   } else if (line.includes('"subtype":"scheduled_task_fire"') && !line.includes('"isSidechain":true')) {
@@ -491,7 +541,7 @@ function scanParentLine(parent: Parent, line: string, end: number): void {
       const entry = row(JSON.parse(line));
       if (entry?.["type"] === "system") {
         const written = stamp(entry["timestamp"]);
-        if (entry["isSidechain"] !== true) { parent.loopAt = end; parent.loopTime = written; }
+        if (entry["isSidechain"] !== true) { parent.loopAt = end; parent.loopTime = written; parent.answered = false; parent.stopping = false; }
         if (entry["taskKind"] === "loop") {
           parent.echo = null;
           parent.restAt = null;
@@ -510,14 +560,26 @@ function scanParentLine(parent: Parent, line: string, end: number): void {
     parent.echo = !echo ? null : parent.echo !== null && parent.echo.command === command ? parent.echo
       : { command, restAt: parent.restAt, promptAt: parent.promptAt, turnOpen: parent.turnOpen, starts: parent.starts.map((start) => ({ ...start })) };
     parent.restAt = null;
-    openTurn(parent, end, stamp(line.match(/"timestamp":"([^"]+)"/)?.[1]));
+    const written = stamp(line.match(/"timestamp":"([^"]+)"/)?.[1]);
+    openTurn(parent, end, written);
     if (user && SELF_RESUMED_RE.test(line)) selfResumed(parent, line, end);
+    // a request or a prompt after an answer with no summary between them: that turn ran no Stop hook. A hook's
+    // feedback is a meta prompt written before its summary
+    if (parent.answered && (line.includes('"type":"api-request"') || (user && !line.includes('"isMeta":true')))) parent.hooked = false;
+    parent.answered = endsTurn(line);
+    parent.stopping = parent.answered || (parent.stopping && user && line.includes('"isMeta":true') && !SELF_RESUMED_RE.test(line));
+    if (parent.answered && !parent.hooked) rests(parent, written, end);
   } else if (line.includes('"queued_command"') && !line.includes('"isSidechain":true')) {
     try {
       const entry = row(JSON.parse(line));
-      if (entry?.["type"] === "attachment" && row(entry["attachment"])?.["type"] === "queued_command") {
+      const attachment = row(entry?.["attachment"]);
+      if (entry?.["type"] === "attachment" && attachment?.["type"] === "queued_command") {
         addStart(parent, { end, at: stamp(entry["timestamp"]), turn: false });
         parent.echo = null;
+        parent.answered = false;
+        parent.stopping = false;
+        // a prompt taken into the turn after its answer: that turn goes on with it (claudeTurnEnd)
+        if (attachment["commandMode"] === "prompt") parent.restAt = null;
       }
     } catch {}
   }
@@ -1449,6 +1511,18 @@ export class ClaudeSubagentStatus {
     return this.panes.get(paneId)?.looping ?? false;
   }
 
+  /**
+   * restsOn, with the session's transcript read again first: a turn begun since the last poll (a teammate's message,
+   * a prompt typed in the terminal) ends the rest the queue goes by before its keys go.
+   */
+  restsOnNow(paneId: string): boolean {
+    const tracked = this.panes.get(paneId);
+    const turns = !this.stopped && tracked?.path != null && tracked.live && tracked.turns?.path === tracked.path ? tracked.turns : undefined;
+    const parent = turns ? scanParent(turns.path) : null;
+    if (tracked?.resting && parent && (parent.id !== turns!.id || parent.restAt === null)) this.poll(paneId);
+    return this.restsOn(paneId);
+  }
+
   loopHoldsNow(paneId: string): boolean {
     const tracked = this.panes.get(paneId);
     const turns = !this.stopped && tracked?.path != null && tracked.live && tracked.turns?.path === tracked.path ? tracked.turns : undefined;
@@ -1462,7 +1536,8 @@ export class ClaudeSubagentStatus {
 
   /**
    * The session's own turn ended while subagents or commands still run: Claude keeps its busy
-   * title up while a background subagent works, and herdr reads that as `working` (#2069). The
+   * title up while a background subagent works, and herdr reads that as `working` (#2069), as
+   * Claude Code 2.1.326's own report is while a teammate works (scanParentLine). The
    * last of that work ending keeps the rest until a turn begins: herdr's working may be from before.
    */
   restsOn(paneId: string): boolean {

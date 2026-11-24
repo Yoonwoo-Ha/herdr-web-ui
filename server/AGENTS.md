@@ -11,3 +11,6 @@
 - The user's API keys go upstream only; no response or error message carries one.
 - Only Vite's fingerprinted `/assets/` may be cached long; `sw.js`, the manifest and the app shell
   must revalidate, or an installed PWA is pinned to an old build.
+- The phone apps carry their own copy of the client: a PC keeps working with every app build at or above
+  `MIN_SUPPORTED_CLIENT_VERSION` (`server/relay/client-floor.ts`), so HTTP/WS changes here and in `shared/` are
+  additive, and the floor rises only as [docs/development.md](../docs/development.md#the-phone-apps-client) says.

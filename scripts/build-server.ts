@@ -11,10 +11,11 @@
  */
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { keeperManifestText } from "./release-assets.ts";
 import { DIST_ARCHIVE, generateKeyPair, KEY_FILE, publicKeyOf, RELEASE_PUBLIC_KEY, releaseFile, SERVER_PLATFORMS, type ServerPlatform, SIGNING_KEY_VARIABLE, signManifest, sourceTrees, verifyRelease, writeManifest } from "./server-manifest.ts";
 
 const root = resolve(import.meta.dir, "..");
-const USAGE = `usage: bun scripts/build-server.ts <${SERVER_PLATFORMS.join("|")}> <dir> | release <dir> | manifest <dir> | sign <dir> [--public-key <base64>] | verify <dir> [--public-key <base64>] [--expect-version <X.Y.Z>] | keygen <dir>`;
+const USAGE = `usage: bun scripts/build-server.ts <${SERVER_PLATFORMS.join("|")}> <dir> | release <dir> | manifest <dir> | keeper-manifest <assets-dir> <ovis-server.json> <version> | sign <dir> [--public-key <base64>] | verify <dir> [--public-key <base64>] [--expect-version <X.Y.Z>] | keygen <dir>`;
 const isPlatform = (value: string | undefined): value is ServerPlatform => (SERVER_PLATFORMS as readonly string[]).includes(value ?? "");
 const fail = (message: string, code = 1): never => {
   console.error(message);
@@ -65,6 +66,10 @@ async function main(args: string[]): Promise<void> {
     if ("error" in sources) fail(sources.error);
     const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string };
     console.log(JSON.stringify(writeManifest(out, { version, sources: sources as { server: string; shared: string } }), null, 2));
+  } else if (verb === "keeper-manifest" && rest.length === 2) {
+    const [serverManifest, version] = rest;
+    if (!serverManifest || !version) return fail(USAGE, 2);
+    process.stdout.write(keeperManifestText(out, version, readFileSync(serverManifest)));
   } else if (verb === "sign") {
     const expected = flags(rest, ["--public-key"]).get("--public-key") ?? RELEASE_PUBLIC_KEY;
     const key = process.env[SIGNING_KEY_VARIABLE]?.trim();

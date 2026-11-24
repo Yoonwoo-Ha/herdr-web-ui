@@ -10,6 +10,7 @@
  */
 import { createElement, type AnchorHTMLAttributes, type MouseEvent, type ReactElement, type Ref } from "react";
 
+import { isWebLink } from "../../shared/terminal-links.ts";
 import { inMacApp, inNativeApp } from "./nativeApp.ts";
 
 export type ExternalLinkKind = "link" | "sign-in" | "ovis";
@@ -52,9 +53,7 @@ export function canReuseExternalLinkTab(): boolean {
  * PaneTerminal answer to it, so a line crafted to look like a link cannot hand the browser a
  * scheme of its own choosing (`javascript:`, `data:`, an OS handler).
  */
-export function isWebLink(uri: string): boolean {
-  return /^https?:\/\//i.test(uri);
-}
+export { isWebLink };
 
 /**
  * Makes an http(s) link opener. Each instance owns at most one reusable tab. A browser lets a page

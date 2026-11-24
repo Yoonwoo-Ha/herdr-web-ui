@@ -1,0 +1,31 @@
+{
+  "request": {
+    "id": "permission-2",
+    "sessionID": "01a208e6-c07d-7f31-bfbf-d9e212a8a207",
+    "permission": "bash",
+    "patterns": [
+      "cat",
+      "wc"
+    ],
+    "always": [
+      "cat",
+      "cat *",
+      "wc",
+      "wc *"
+    ],
+    "metadata": {
+      "toolName": "bash",
+      "command": "cat <<'EOF' > am-multi-omo-hook-multi-a1-mwtdzpu6.txt\nfirst line\nsecond line with  two spaces\n\tthird line after a tab\nEOF\nwc -l am-multi-omo-hook-multi-a1-mwtdzpu6.txt"
+    },
+    "tool": {
+      "callID": "call_c7526a3524ec46abb2acc4fe"
+    }
+  },
+  "title": "Permission required: bash\n\nCommand: $ cat <<'EOF' > am-multi-omo-hook-multi-a1-mwtdzpu6.txt\nfirst line\nsecond line with  two spaces\n\tthird line after a tab\nEOF\nwc -l am-multi-omo-hook-multi-a1-mwtdzpu6.txt\n\nPatterns:\n  - cat\n  - wc",
+  "options": [
+    "Allow once",
+    "Allow always",
+    "Deny",
+    "Deny with feedback"
+  ]
+}

@@ -4,6 +4,7 @@ import { ApiError, fetchInstalledNotes, fetchUpdateNotes, fetchUpdateStatus, req
 import { installedUpdate, notesOffer, notesRetryDelay, notesUnboundDelay, offeredNotes, reloadReason } from "./updateNotes.ts";
 import { usePageVisible } from "./visibility.ts";
 import { lazyChunkFailed, onLazyChunkFailure } from "./lazyChunk.ts";
+import { appShell } from "./appShell.ts";
 
 declare const __APP_REVISION__: string | null;
 
@@ -128,7 +129,7 @@ export function useUpdates(enabled: boolean) {
   }, []);
   const failure = updateFailure(errorCode, status);
   const busy = pending || status?.phase === "checking" || status?.phase === "building" || status?.phase === "restarting";
-  const reload = reloadReason(typeof __APP_REVISION__ === "string" ? __APP_REVISION__ : null, status, busy, chunkFailed);
+  const reload = reloadReason(typeof __APP_REVISION__ === "string" ? __APP_REVISION__ : null, status, busy, chunkFailed, appShell() !== null);
   const needsReload = reload !== null;
   return { status, error, busy, needsReload, reload, notes, installed, request, failure, offered: offeredRevision(status) };
 }

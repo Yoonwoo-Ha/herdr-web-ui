@@ -3,7 +3,8 @@ import type { ZoomMode } from "./layoutMap.ts";
 import type { Machine } from "../../shared/machines.ts";
 import type { TelemetryAction, TelemetryActionSource, TelemetryViewSource } from "../../shared/telemetry.ts";
 
-export interface AddPcPreset { destination: string; name?: string }
+/** `machine_id`: the PC saved here at that address, which the add reaches again rather than saving a second one */
+export interface AddPcPreset { destination: string; name?: string; machine_id?: string }
 
 export type PaneView = "chat" | "terminal";
 

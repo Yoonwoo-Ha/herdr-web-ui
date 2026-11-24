@@ -7,6 +7,7 @@
  * itself admits nobody, and no account membership comes from it.
  */
 import { HTTPS_PORTS, tailscaleBinary } from "./tailscale.ts";
+import { SERVER_ID_PATTERN } from "../shared/relay-id.ts";
 import { TargetAccountPcError } from "../shared/relay-channel.ts";
 
 const PROBE_MS = 2500;
@@ -30,6 +31,8 @@ export interface TailnetPc {
   relay: string | null;
   /** that PC's Ovis predates typed codes (before 0.5): it is updated before one tap can add it */
   outdated: boolean;
+  /** the relay ID that PC's own health names, so the page can tell a PC it already has or that is in its account; for display only, as that PC alone says it */
+  server_id: string | null;
 }
 
 interface PeerJson { DNSName?: string; UserID?: string; Online?: boolean; OS?: string; Tags?: string[]; TailscaleIPs?: string[] }
@@ -90,7 +93,7 @@ interface Health { web_ui?: { server_id?: string }; auth?: { authenticated?: boo
 
 export class TailnetPcs {
   private found = new Map<string, { name: string; dnsName: string; at: number }>();
-  private listing: Promise<(TailnetPc & { server_id: string | null })[]> | null = null;
+  private listing: Promise<TailnetPc[]> | null = null;
   private readonly readStatus: () => Promise<string | null>;
   private readonly ports: readonly number[];
   private readonly origin: (dnsName: string, port: number) => string;
@@ -104,6 +107,12 @@ export class TailnetPcs {
   /** this PC's login drives that Ovis as its owner: what `tailscale serve` says, never an open LAN window; herdr there may be stopped */
   private static drivable(health: Health): boolean {
     return health.auth?.authenticated === true && health.auth.via === "tailscale" && health.auth.role === "drive";
+  }
+
+  /** the relay ID that PC names, only when it is shaped as one: its health is that PC's word, whatever it sends */
+  private static relayId(health: Health): string | null {
+    const id: unknown = health.web_ui?.server_id;
+    return typeof id === "string" && SERVER_ID_PATTERN.test(id) ? id : null;
   }
 
   /**
@@ -123,19 +132,19 @@ export class TailnetPcs {
     } catch { return null; }
   }
 
-  async list(added: ReadonlySet<string>): Promise<TailnetPc[]> {
+  async list(): Promise<TailnetPc[]> {
     this.listing ??= this.discover().finally(() => { this.listing = null; });
-    return (await this.listing).filter((pc) => pc.server_id === null || !added.has(pc.server_id)).map(({ name, url, relay, outdated }) => ({ name, url, relay, outdated }));
+    return await this.listing;
   }
 
-  private async discover(): Promise<(TailnetPc & { server_id: string | null })[]> {
+  private async discover(): Promise<TailnetPc[]> {
     const peers = tailnetPeers(await this.readStatus());
-    const pcs = await Promise.all(peers.map(async ({ name, dnsName }): Promise<(TailnetPc & { dnsName: string; server_id: string | null }) | null> => {
+    const pcs = await Promise.all(peers.map(async ({ name, dnsName }): Promise<(TailnetPc & { dnsName: string }) | null> => {
       const answers = await Promise.all(this.ports.map(async (port) => {
         const url = this.origin(dnsName, port);
         const health = await this.probe(url);
         return health !== null && TailnetPcs.drivable(health)
-          ? { name, dnsName, url, relay: health.relay?.phase ?? null, outdated: TailnetPcs.outdated(health), server_id: health.web_ui?.server_id ?? null } : null;
+          ? { name, dnsName, url, relay: health.relay?.phase ?? null, outdated: TailnetPcs.outdated(health), server_id: TailnetPcs.relayId(health) } : null;
       }));
       const found = answers.filter((answer) => answer !== null);
       return found.find((answer) => answer.server_id !== null && answer.relay === "online") ?? found.find((answer) => answer.server_id !== null)

@@ -21,7 +21,9 @@ beforeAll(async () => {
   const host = join(root, "ovis-pty-sidecar");
   writeFileSync(host, "rust host");
   writeFileSync(`${host}.json`, JSON.stringify({ crate: "c".repeat(40), sha256: "stale", version: "0.0.1" }));
-  await stageServerArtifact({ platform, dir, nodePty: true, dist, ptySidecar: { binary: host, record: `${host}.json` }, build: async (_platform, outfile) => writeFileSync(outfile, "binary") });
+  const keeper = join(root, "ovis-acp-keeper");
+  writeFileSync(keeper, "acp keeper");
+  await stageServerArtifact({ platform, dir, nodePty: true, dist, ptySidecar: { binary: host, record: `${host}.json` }, acpKeeper: { binary: keeper }, build: async (_platform, outfile) => writeFileSync(outfile, "binary") });
 }, 60_000);
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -41,6 +43,12 @@ describe("the folder that runs the compiled server", () => {
   it("vouches for the Rust PTY host with the version compiled into the binary, and its bytes", () => {
     const record = JSON.parse(readFileSync(join(dir, "bin", "ovis-pty-sidecar.json"), "utf8")) as Record<string, unknown>;
     expect(record).toEqual({ crate: "c".repeat(40), sha256: createHash("sha256").update("rust host").digest("hex"), version });
+  });
+
+  it("carries the ACP keeper beside the host, vouched for the same way", () => {
+    expect(readFileSync(join(dir, "bin", "ovis-acp-keeper"), "utf8")).toBe("acp keeper");
+    const record = JSON.parse(readFileSync(join(dir, "bin", "ovis-acp-keeper.json"), "utf8")) as Record<string, unknown>;
+    expect(record).toEqual({ crate: null, sha256: createHash("sha256").update("acp keeper").digest("hex"), version });
   });
 
   it("installs an agent integration from what it carries, with no source to build it from", () => {

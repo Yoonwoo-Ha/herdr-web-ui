@@ -3,7 +3,7 @@ import type { HoldState } from "../../../shared/account-devices-api.ts";
 import { generateKeyPair, openDaemonSecureChannel, type Transport } from "../../../shared/relay-e2ee.ts";
 import { decodeFrame, encodeFrame, FrameType, LIMITS_V1, MuxProtocolError, RELAY_PROTOCOL, type MuxFrame } from "../../../shared/relay-mux.ts";
 
-export function accountOpenRefusalFrame(code: "held" | "not_listed" | "admission" | "auth_revoked", message: string, hold?: HoldState): Uint8Array {
+export function accountOpenRefusalFrame(code: "held" | "not_listed" | "admission" | "auth_revoked" | "account_unreachable" | "account_readd_required", message: string, hold?: HoldState): Uint8Array {
   const payload = { code, message, ...(hold === undefined ? {} : { hold }) };
   const frame = { type: FrameType.SESSION_ERROR, stream_id: 0, flags: 0, payload: { code: "auth_revoked" as const, message } } as const;
   try {

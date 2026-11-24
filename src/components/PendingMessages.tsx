@@ -17,7 +17,7 @@ interface Props {
   isBusy: (id: string) => boolean;
   onSendNow: (id: string) => Promise<void>;
   onEdit: (id: string) => Promise<void>;
-  onDiscard: (id: string) => Promise<void>;
+  onDiscard: (id: string, displayOnly: boolean) => Promise<void>;
 }
 
 /**
@@ -88,10 +88,10 @@ export function PendingMessages({ messages, active = true, connected, agent, blo
               void copyText(message.text, text).then((ok) => { if (ok) setCopied(message.id); });
             }}><Copy aria-hidden="true" /></button>}
           {(!sent || message.error?.code !== "pi_transcript_pending") && <button type="button" className="icon-button pending-message-action" aria-label={uncertain || sent ? t("Discard saved copy") : t("Discard")}
-            title={uncertain || sent ? t("Discard saved copy") : t("Discard")} disabled={busy || message.serverOwned && !connected}
+            title={uncertain || sent ? t("Discard saved copy") : t("Discard")} disabled={busy || !uncertain && message.serverOwned && !connected}
             onClick={(event) => {
               const target = event.currentTarget, keyboard = event.detail === 0, stack = target.closest(".terminal-stack"), owner = stack?.getAttribute("data-pane-owner") ?? null;
-              void onDiscard(message.id).finally(() => restoreFocus(keyboard, target, stack, owner));
+              void onDiscard(message.id, uncertain).finally(() => restoreFocus(keyboard, target, stack, owner));
             }}><X aria-hidden="true" /></button>}
         </div>
         {message.error && !uncertain && !sent && <p className="pending-message-note" role="status">{message.error.code === "still_open" ? message.error.message

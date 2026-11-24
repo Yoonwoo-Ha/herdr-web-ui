@@ -174,14 +174,15 @@ test.skipIf(!available).each([ACCOUNT, "acct_other"] as const)("PC browser signs
     expect(await press.json()).toMatchObject({ error: { code: "in_account" } });
     expect(await app.context.services.accountMailbox.readSnapshot()).toMatchObject({ committed: true });
     expect(await pcAccount(app.port)).toBe(ACCOUNT);
-    expect(PcAccountState.open(pc.folders.a).binding()).toEqual(binding);
+    // the same binding, now with the listing its account rows are let in under
+    expect(PcAccountState.open(pc.folders.a).binding()).toMatchObject({ ...binding });
     for (const cookie of pc.cookies) expect(await credentialStatus(app.port, cookie)).toBe(200);
   } finally { await app.stop(); }
   pc.offline();
   const restarted = pc.start();
   try {
     expect(await pcAccount(restarted.port)).toBe(ACCOUNT);
-    expect(PcAccountState.open(pc.folders.a).binding()).toEqual(binding);
+    expect(PcAccountState.open(pc.folders.a).binding()).toMatchObject({ ...binding });
     expect(await memberStatus(pc, restarted, pc.identity.server_id)).toBe(200);
     for (const cookie of pc.cookies) expect(await credentialStatus(restarted.port, cookie)).toBe(200);
   } finally { await restarted.stop(); }

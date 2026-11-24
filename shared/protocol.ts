@@ -66,6 +66,10 @@ export type PaneContext = { used: number; window: number | null };
 export type HerdrPane = PaneInfo & {
   background_tasks?: number; background_wait?: true; plan?: PlanSummary; context?: PaneContext;
   parent_pane_id?: string;
+  /** Stop on this pane cancels a keeper session rather than interrupting a TUI. */
+  acp_child?: true;
+  /** A person stopped this ACP child: the agent that started it gets no new turn until a person hands it back (POST /api/pane/turn/release with these). */
+  acp_hold?: AcpHold;
   own_tab?: true;
   agent_kind?: string;
   agent_message?: string;
@@ -102,7 +106,7 @@ export type SessionSnapshot = Omit<HerdrSnapshot, "panes"> & {
 };
 export type { WorkspaceMoved } from "./workspace-lifecycle.ts";
 
-export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairingRequest, RelayPairingsEvent, RemotePairingRequest, RemotePairingsEvent, PendingKey, PendingRedemptionsEvent, Machine, MachineEvent, MachineRoster, PaneTarget, SetupJob, SetupRequest, SetupAction, BridgeIdentity, BridgeHealth } from "./machines.ts";
+export type { DevicePairedEvent, DevicePairedSeenEvent, DeviceRemovedEvent, PairingIntent, RelayPairingRequest, RelayPairingsEvent, RemotePairingRequest, RemotePairingsEvent, PendingKey, PendingRedemptionsEvent, Machine, MachineEvent, MachineRoster, PaneTarget, SetupJob, SetupRequest, SetupAction, BridgeIdentity, BridgeHealth } from "./machines.ts";
 
 /** Machine API (same token gate; mutations require X-Herdr-Machine: 1 + same origin)
  * GET /api/health?scope=bridge -> BridgeHealth, never waits for herdr (a driving owner is told herdr_runtime too)
@@ -156,6 +160,14 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
  *         [keys] prefix bindings, for local and remote panes alike), no-store
  *  GET    /api/access                    -> RemoteAccess (how a phone can reach this server: what
  *         Tailscale on this PC already serves, or the command to run), no-store
+ *  POST   /api/access/tailscale/serve    -> RemoteAccess once Tailscale serves this server (runs `tailscale serve --bg
+ *         --https=<first free allowed port> http://127.0.0.1:<port>` unless it serves it already), no-store; this PC's own
+ *         window only (403 local_required before anything runs), x-herdr-machine: 1. 409 tailscale_owner_unknown (this
+ *         PC's Tailscale login is not known: nothing runs) / tailscale_missing /
+ *         tailscale_not_running / tailscale_no_port / tailscale_serve_refused (operator: true on Linux when the refusal
+ *         is for want of operator rights); the CLI's words go to the server log only
+ *  POST   /api/access/tailscale/open     -> 204 once the Tailscale app is opened on this PC (macOS, Windows); this PC's own
+ *         window only (403 local_required), x-herdr-machine: 1. 409 tailscale_app_unavailable (Linux, or no app)
  *  GET    /api/portal                    -> PortalStatus (an optional public HTTPS address through
  *         Portal, server/portal.ts), no-store
  *  POST   /api/portal/start              -> 202 { accepted: true }; body { relay, auth? } (PortalAuth: who may
@@ -200,7 +212,7 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
  *         waiting with the same digits (`relay-pairings` on /api/machines/events); 400 invalid_relay_pairing,
  *         404 relay_pairing_gone once it left, was decided or ran out of time
  *  POST   /api/relay/direct              -> RelayStatus; JSON { on: boolean }: direct connections on this PC's
- *         networks while the relay is on (on unless turned off; off ends every direct session); 400 invalid_relay_direct, 409 direct_unavailable on a server without them
+ *         networks while the relay is on (off unless turned on; off ends every direct session); 400 invalid_relay_direct, 409 direct_unavailable on a server without them
  *  POST   /api/relay/reset-identity      -> RelayStatus; revokes relay devices and reconnects if enabled
  *         Relay mutations require drive role, same origin and X-Herdr-Update: 1, and a direct connection
  *         (403 local_required over the relay); a Portal visitor gets 403 owner_only (see Access).
@@ -496,7 +508,8 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
  *         dirty_worktree_requires_force)
  *  POST   /api/auth        { token }     -> 204 + Set-Cookie ovis_token (401 invalid_token on mismatch)
  *  DELETE /api/auth                      -> 204, clears the token and the device cookies
- *  GET    /api/devices                   -> { devices: PairedDevice[] } (the paired devices; `current` marks the caller's,
+ *  GET    /api/devices                   -> { devices: PairedDevice[] } (the paired devices, then the account-joined ones
+ *         that may sign in here, marked `through_account`; `current` marks the caller's,
  *         `connection` how one with an encrypted session up reaches the PC; `?check=1` measures their round trips first, within 3 s)
  *  POST   /api/devices/pair/start        -> PairingCode: a six-digit code good for ten minutes, replacing any pending one
  *         (X-Herdr-Machine: 1 + same origin, from a client with full access)
@@ -619,6 +632,10 @@ export interface RelayStatus {
    * with `x-ovis-no-account-only`). Absent from an older server.
    */
   readonly account_named?: boolean;
+  /** This PC's relay ID (null before it has one), to this PC's own window and CLI only; absent elsewhere and from an older server. */
+  readonly server_id?: string | null;
+  /** The account named for this PC (`account_named`), to its own window and CLI only, as `server_id`. */
+  readonly relay_account?: string | null;
   /**
    * Direct connections on this PC's networks (docs/relay.md): whether they are on, and the carriers
    * listened on now (none while the relay is off). Absent from a server without them.
@@ -712,6 +729,8 @@ export type ConversationPart =
     kind: "tool"; name: string; summary: string; input: string; output: string; error?: boolean;
     /** Hermes could not load a tool-call list whose arguments exceeded its page limit. */
     arguments_omitted?: true;
+    /** File changes reported by ACP, separate from the call arguments and text output. */
+    edits?: { path: string; before: string; after: string }[];
     skill?: SkillActivity;
     /** set when `output` was cut: an opaque ref for GET /api/pane/conversation/tool-output, and the whole output's length */
     output_ref?: string; output_size?: number;
@@ -829,6 +848,9 @@ export interface OmpBtwHistory {
 }
 
 /** How far a pane's plan has got, for the sidebar: `current` names the step in progress. */
+/** The keeper's hold a person's Stop set on an ACP child, as the release route takes it back. */
+export interface AcpHold { child_id: string; generation: number }
+
 export interface PlanSummary {
   done: number;
   total: number;
@@ -850,7 +872,7 @@ export interface ConversationResponse {
    * fallback and from older bridges. A 200 and a 304 also carry it as the `x-server-time` header.
    */
   server_time?: string;
-  source: "dsh-transcript" | "kiro-transcript" | "copilot-transcript" | "grok-transcript" | "agy-transcript" | "muse-transcript" | "letta-transcript" | "kimi-transcript" | "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "cmd-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "hermes-transcript" | "scrollback";
+  source: "acp" | "dsh-transcript" | "kiro-transcript" | "copilot-transcript" | "grok-transcript" | "agy-transcript" | "muse-transcript" | "letta-transcript" | "kimi-transcript" | "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "cmd-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "hermes-transcript" | "scrollback";
   turns: ConversationTurn[];
   metadata?: ConversationMetadata;
   /**

@@ -4,14 +4,17 @@
  * pairing window whose comparisons only this PC approves. A device already in the account then
  * adds it with one approval: it types the number this PC shows, and the owner approves here.
  */
+import type { AccountOs } from "../../../shared/account-asker.ts";
 import { importPublicKey } from "../../../shared/relay-e2ee.ts";
 import { decodeOffer, type RelayOffer } from "../../../shared/relay-offer.ts";
 import { closeRelayLink, fetchHealth, requestRelayLink } from "../api.ts";
 import { apiFetch } from "../api-request-id.ts";
-import { isLoopbackHost } from "../phone.ts";
+import { deviceOs, isLoopbackHost } from "../phone.ts";
 import { serverIdOfPath } from "../shellMode.ts";
 import { pcAccountStatus, within } from "./join.ts";
 import { NEW_PC_MS } from "./myPcs.ts";
+import { noteAct } from "./seenPcs.ts";
+import { ownPcProof } from "./pcProof.ts";
 import { AccountServiceError, sameSignIn, type AccountService } from "./service.ts";
 import type { AccountSession } from "./store.ts";
 
@@ -71,6 +74,22 @@ async function openAddWindow(): Promise<{ readonly url: string; readonly windowI
   for (let seen: Promise<unknown> | null = null; seen !== closing;) { seen = closing; await seen; }
   const { url, window_id } = await requestRelayLink({ localOnly: true });
   return { url, windowId: typeof window_id === "string" && /^[0-9a-f]{32}$/.test(window_id) ? window_id : undefined };
+}
+
+/**
+ * The system this browser runs, sent with a listing this page makes: where the listing asks to join (a sign-in code's), the
+ * account's devices show it on its card, as the link page shows the one its sign-in named. On the PC's own window, the PC's.
+ */
+function listingOs(): { readonly os?: AccountOs } {
+  const os = typeof navigator === "undefined" ? null : deviceOs(navigator.userAgent ?? "", navigator.maxTouchPoints ?? 0);
+  return os === null ? {} : { os };
+}
+
+/** A POST of `{}` to this PC's own API, as ownPcProof asks it: the answer's JSON, or a rejection naming the refusal. */
+async function postToThisPc(path: string): Promise<unknown> {
+  const answer = await apiFetch(path, { method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: "{}" });
+  if (!answer.ok) throw new Error(`${path} answered ${answer.status}`);
+  return await answer.json();
 }
 
 const WAITING_KEY = "ovis-add-pc-waiting";
@@ -213,7 +232,9 @@ export async function listThisPc(service: AccountService, options: { relistMs: n
   // only an old service omits the ID; a row with an unusable one is a malformed answer, whatever its age: nothing is written for it
   if (listed?.listing_id === null) throw new AccountServiceError(502, "invalid_answer", "The account service sent an unusable listing ID");
   let refreshed = false;
-  if (listed !== undefined && Date.now() - Date.parse(listed.invited_at ?? listed.added_at) >= NEW_PC_MS - options.relistMs) {
+  // an add the account already holds as complete is no invitation to renew: a PC out of that account is added again by a new press
+  const completed = typeof listed?.completed_at === "string";
+  if (listed !== undefined && !completed && Date.now() - Date.parse(listed.invited_at ?? listed.added_at) >= NEW_PC_MS - options.relistMs) {
     running();
     const outcome = await directory.refreshPc(offer.server_id, listed.listing_id);
     // A new service preserves an admission even if the PC binds after the first status read. Read again
@@ -232,8 +253,20 @@ export async function listThisPc(service: AccountService, options: { relistMs: n
   }
   if (!refreshed) {
     const publicKey = Array.from(importPublicKey(offer.server_public_key), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    // this PC's own proof, which alone lists it again after `ovis logout` left the account
+    const proof = await ownPcProof(offer.server_id, postToThisPc);
     running();
-    await directory.putPc(offer.server_id, { label: name, public_key: publicKey, relay: offer.relay });
+    await directory.putPc(offer.server_id, { label: name, public_key: publicKey, relay: offer.relay, ...listingOs(), ...proof }, undefined, undefined, { prove: true });
+  }
+  // The person adds this PC from its own window (the page is on the PC's own address): kept in this device's own
+  // record of its PCs, by the relay key of the PC's own pairing link. From any other page the add is one press with
+  // no number compared, which proves nothing about whose PC it is, and nothing is kept of it.
+  // It only records: a link whose key does not read, or storage that is not there, changes nothing of the add.
+  if (session) {
+    try {
+      const own = typeof location !== "undefined" && isLoopbackHost(location.hostname);
+      if (own) void noteAct(session.account, Array.from(importPublicKey(offer.server_public_key), (byte) => byte.toString(16).padStart(2, "0")).join(""), "window").catch(() => undefined);
+    } catch { /* nothing is kept of this add */ }
   }
   // the account this PC now asks its relay pass under (docs/relay.md, "Relay pass"); an older PC has no such route
   // (not for a wait or an attempt that ended while the entry was written: nobody waits for this PC under it)
@@ -254,8 +287,8 @@ export async function listThisPc(service: AccountService, options: { relistMs: n
  * the PC then takes the service's word for that account. The account is the stored sign-in's, never the one the PC
  * was named for: the PC is named it again first, and refuses a press for any other. "refused" on every refusal, an
  * older service or PC included, and once `running` says the attempt is over: the caller keeps today's digit wait.
- * "sign-in-again" when the service refused the sign-in itself (not two-step, not fresh, or made with a code): a fresh
- * sign-in of this device's own may then add the PC in one press. `signIn`: that sign-in alone presses (such a fresh one):
+ * "sign-in-again" when the service refused the sign-in itself (not fresh, or made with a code): a fresh
+ * sign-in of this device's own may then add the PC in one press. "no-two-step" when the sign-in has no two-step. `signIn`: that sign-in alone presses (such a fresh one):
  * with another stored in its place since, nothing is asked.
  * `opensAll`: this PC lists account-opens-all/1 (its step-2 switch is on); without it the service is not asked at all,
  * so a PC that would refuse the press spends none of the account's daily adds and rings nobody.
@@ -267,7 +300,8 @@ export async function addInOnePress(service: AccountService, serverId: string, a
   const session = signIn ?? stored;
   try { await service.forSignIn(session).admitPc(serverId); } catch (error) {
     console.warn("Ovis: the account service did not add this PC in one press", error instanceof Error ? error.name : error);
-    return error instanceof AccountServiceError && SIGN_IN_REFUSALS.includes(error.code) ? "sign-in-again" : "refused";
+    if (!(error instanceof AccountServiceError)) return "refused";
+    return error.code === "two_step_required" ? "no-two-step" : SIGN_IN_REFUSALS.includes(error.code) ? "sign-in-again" : "refused";
   }
   // another tab signed in to another account while the service answered: this PC is named for nobody
   const still = await service.session();
@@ -285,10 +319,28 @@ export async function addInOnePress(service: AccountService, serverId: string, a
   }
 }
 
-export type OnePress = "added" | "sign-in-again" | "refused";
+export type OnePress = "added" | "sign-in-again" | "no-two-step" | "refused";
 
-/** the admit refusals that are about the sign-in alone (docs/account.md, "One press"): a fresh own sign-in may pass them */
-const SIGN_IN_REFUSALS: readonly string[] = ["two_step_required", "session_not_fresh", "own_sign_in_required"];
+/**
+ * Whether the account still lists `serverId`, read as the stored sign-in of `account`: false once a device of the
+ * account denied the PC's request (Deny on its join request removes the listing); null when it could not be read, or
+ * another sign-in is stored.
+ */
+export async function listedInAccount(service: AccountService, serverId: string, account: string): Promise<boolean | null> {
+  const session = await service.session();
+  if (session?.account !== account) return null;
+  try { return (await service.forSignIn(session).listPcs()).some((pc) => pc.server_id === serverId); }
+  catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return null;
+  }
+}
+
+/**
+ * the admit refusals a fresh own sign-in may pass (docs/account.md, "One press"). A sign-in without two-step is not
+ * one: the same sign-in again is refused again, so it is told what works instead (`no-two-step`)
+ */
+const SIGN_IN_REFUSALS: readonly string[] = ["session_not_fresh", "own_sign_in_required"];
 
 /**
  * Lists the PC a QR code's offer names in `account`, beside the code: the code is drawn first and the listing never
@@ -303,5 +355,5 @@ export async function listOfferedPc(service: AccountService, offer: RelayOffer, 
   const directory = service.forSignIn(session);
   if ((await directory.listPcs()).some((pc) => pc.server_id === offer.server_id)) return;
   const publicKey = Array.from(importPublicKey(offer.server_public_key), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  await directory.putPc(offer.server_id, { label: (offer.name ?? offer.server_id.slice(0, 8)).slice(0, 48), public_key: publicKey, relay: offer.relay });
+  await directory.putPc(offer.server_id, { label: (offer.name ?? offer.server_id.slice(0, 8)).slice(0, 48), public_key: publicKey, relay: offer.relay, ...listingOs() }, undefined, undefined, { prove: true });
 }

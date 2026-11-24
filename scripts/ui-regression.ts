@@ -30,6 +30,7 @@ import { checkFolderFilter, checkNewFolder } from "./folder-filter-regression.ts
 import { checkPaletteKeys } from "./palette-keys-regression.ts";
 import { checkFollowHerdrFocus } from "./follow-focus-regression.ts";
 import { checkRelayPanel } from "./relay-panel-regression.ts";
+import { checkConnectDialogScroll } from "./connect-dialog-scroll-regression.ts";
 import { systemUsageContext, UsageService } from "../server/usage.ts";
 import { openSettingsFolds, openSettingsPage } from "./settings-page.ts";
 import { assertCspClean, watchCsp } from "./csp-violations.ts";
@@ -140,8 +141,8 @@ try {
   if (part === "main") {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     await context.addInitScript((ids) => {
-      // The pending-input cases exercise automatic queue delivery, which is opt-in.
-      if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", autoSendQueued: true }));
+      // The pending-input cases exercise automatic queue delivery, and the dictation cases the mic, both opt-in.
+      if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", autoSendQueued: true, voiceInput: "auto" }));
       for (const id of ids) localStorage.setItem(`ovis:view:${id}`, "chat");
     }, panes);
     await context.addInitScript(rewriteMachinesFrames);
@@ -215,7 +216,7 @@ try {
     const composer = page.getByRole("textbox", { name: "Message", exact: true });
     await composer.waitFor();
     await page.locator(".composer .voice-mic").waitFor();
-    console.log("PASS a desktop's chat offers the mic before Settings is asked");
+    console.log("PASS a desktop's chat on Auto offers the mic before Settings is asked");
     assert.equal(await workspaceHeader(workspaces[0]!).locator(".workspace-name").textContent(), "ovis-test-browser-a",
       "Spaces names the workspace rather than its current pane");
     assert.equal(await workspaceGroup(workspaces[0]!).locator(".pane-select").count(), 1, "a workspace has one representative selector");
@@ -768,10 +769,10 @@ try {
     await openSettingsPage(page, "Devices and PCs");
     await page.getByRole("dialog", { name: "Settings" }).getByRole("button", { name: "Add a connection", exact: true }).click();
     const connectSheet = page.getByRole("dialog", { name: "Add a connection", exact: true });
-    await connectSheet.locator('.connect-tabs [data-tab="direct"]').click();
+    await connectSheet.locator('.connect-tabs [data-tab="ssh"]').click();
     const sshAdd = connectSheet.locator(".connect-ssh-form").getByRole("button", { name: "Connect", exact: true });
     assert.equal(await sshAdd.isDisabled(), true, "Connect waits for an address");
-    await connectSheet.getByLabel("Address or SSH", { exact: true }).fill("qa@pc.invalid");
+    await connectSheet.getByLabel("Add another PC from this one", { exact: true }).fill("qa@pc.invalid");
     await sshAdd.click();
     await page.getByRole("dialog", { name: "Add PC", exact: true }).waitFor();
     assert.equal(await page.getByRole("dialog", { name: "Add PC", exact: true }).getByLabel("SSH alias or user@address", { exact: true }).inputValue(), "qa@pc.invalid", "Add PC opens with the typed address");
@@ -2466,6 +2467,7 @@ try {
     console.log("PASS Settings sign out: cancel preserves access, failure permits retry, token and paired-device sign out return to the access gate");
 
     await checkRelayPanel(browser);
+    await checkConnectDialogScroll(browser);
   }
 } catch (error) {
   for (const evidence of evidenceSessions) {

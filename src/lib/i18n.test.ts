@@ -86,7 +86,6 @@ describe.each(Object.entries(DICTIONARIES))("%s state words", (_name, dictionary
   it.each([
     ["Ready", "Ready · not in the account yet"],
     ["Offline", "Offline · {when}"],
-    ["Not checked", "Paired · not checked"],
   ])("reuses the %p word inside %p", (word, composed) => {
     expect(dictionary[composed]).toBeString();
     expect(dictionary[composed]).toContain(dictionary[word]!);
@@ -95,12 +94,13 @@ describe.each(Object.entries(DICTIONARIES))("%s state words", (_name, dictionary
 
 describe.each([["Korean", KO, ["업데이트", "갱신"]], ["Japanese", JA, ["アップデート", "更新"]], ["Chinese", ZH, ["更新", "升级"]]] as const)("%s update journey", (_name, dictionary, synonyms) => {
   it("names the update with one word", () => {
-    const term = synonyms.find((word) => dictionary["Needs update"]?.includes(word));
+    const term = synonyms.find((word) => dictionary["Update needed"]?.includes(word));
     expect(term).toBeString();
     const journey = [
-      "Updating",
       "Update needed",
       "Update Ovis on {name}",
+      "Update the app",
+      "{name} needs a newer version of this app.",
       "Update it from here: the PC installs the latest release and restarts Ovis, then this app reconnects.",
       "Update now",
       "Its Ovis does not update itself. On the PC, run the installer:",
@@ -138,31 +138,31 @@ describe.each(Object.entries(DICTIONARIES))("%s dictionary", (_name, dictionary)
 
   it("is not just the English repeated", () => {
     const themeNames = ["Codex", "Catppuccin", "Catppuccin Latte", "Tokyo Night", "Tokyo Night Day", "Gruvbox", "Gruvbox Light", "One Dark", "One Light", "Solarized", "Solarized Light", "Kanagawa", "Kanagawa Lotus", "Rosé Pine", "Rosé Pine Dawn", "Dracula", "Nord", "Vesper"];
-    const sameOnPurpose = new Set(["PC {name}", "CPU", "CPU {value}", "Control C", "Control D", "Control Z", "Shift Tab", "Enter", "Shell", "Agent", "Ultracode", ...themeNames]);
+    const sameOnPurpose = new Set(["PC {name}", "SSH PC", "CPU", "CPU {value}", "Control C", "Control D", "Control Z", "Shift Tab", "Enter", "Shell", "Agent", "Ultracode", ...themeNames]);
     const same = Object.entries(dictionary).filter(([en, text]) => en === text && /[a-z]{3}/i.test(en) && !sameOnPurpose.has(en));
     expect(same.map(([en]) => en)).toEqual([]);
   });
 });
 
 const PART_FILES: Record<string, string[]> = {
-  settings: ["components/SettingsDialog.tsx", "lib/herdrWindow.ts", "components/SignOutRow.tsx", "components/KeyBarSettings.tsx", "lib/paletteSettings.ts", "components/TelemetryControls.tsx", "components/SettingsControls.tsx", "components/AlertWebhookGroup.tsx", "components/ThemeFiles.tsx", "components/LinkBrowserRow.tsx"],
+  settings: ["components/SettingsDialog.tsx", "lib/herdrWindow.ts", "components/SignOutRow.tsx", "components/KeyBarSettings.tsx", "lib/paletteSettings.ts", "components/TelemetryControls.tsx", "components/SettingsControls.tsx", "components/AlertWebhookGroup.tsx", "components/ThemeFiles.tsx", "components/LinkBrowserRow.tsx", "components/TerminalCommandRow.tsx"],
   terminal: ["components/PaneTerminal.tsx", "lib/useTerminalMount.ts", "lib/useComposerSends.ts", "lib/usePeekReturn.ts", "lib/useTypedKeys.ts", "components/PaneCanvas.tsx", "components/KeyBar.tsx", "components/FindBar.tsx", "components/TerminalViewportTools.tsx", "components/SplitDropPreview.tsx", "components/TabStrip.tsx", "lib/terminalLabel.ts", "lib/tabName.ts"],
   composer: ["components/Composer.tsx", "components/ReplyComments.tsx", "components/ComposerNotices.tsx", "components/VoiceInput.tsx", "components/SecretInput.tsx", "components/TerminalInput.tsx", "components/PendingMessages.tsx", "lib/compose.ts", "components/PromptCard.tsx", "lib/promptAnswer.ts", "../shared/card-text.ts"],
   chat: ["components/ChatView.tsx", "lib/chatImages.ts", "components/SentWaiting.tsx", "components/Markdown.tsx", "components/MermaidLightbox.tsx", "components/ChatMinimap.tsx", "components/ImageLightbox.tsx", "components/BackgroundTasks.tsx", "components/BackgroundAgentDetail.tsx", "components/Artifacts.tsx", "components/OmpBtw.tsx", "components/MarkdownLinkMenu.tsx", "lib/workBlocks.ts", "lib/toolVerbs.ts", "lib/outcomeChip.ts", "lib/chatTimestamp.ts", "lib/chatReadDeadline.ts", "components/ConversationSearch.tsx"],
   sidebar: ["components/Sidebar.tsx", "components/AgentSidebar.tsx", "components/SidebarResizer.tsx", "components/SidebarSplit.tsx", "components/FoldHelpersRow.tsx", "components/InboxList.tsx", "lib/inboxRow.ts"],
-  machines: ["components/MachineSidebar.tsx", "components/MachineDialog.tsx", "components/FoundHerdrChoices.tsx", "lib/bridgeProgress.ts", "components/MachineStats.tsx", "lib/systemReport.ts"],
+  machines: ["components/MachineSidebar.tsx", "components/MachineHeader.tsx", "components/MachineDialog.tsx", "components/FoundHerdrChoices.tsx", "lib/bridgeProgress.ts", "components/MachineStats.tsx", "lib/systemReport.ts"],
   workspace: ["components/NewSessionDialog.tsx", "components/WorktreeDialog.tsx", "components/DirectoryBrowser.tsx", "components/RecentFolderChips.tsx", "components/SessionHistory.tsx", "lib/sessionHistory.ts", "lib/useAgentSkills.ts"],
   files: ["lib/fileFailure.ts", "components/Visualization.tsx", "components/FileViewer.tsx", "components/RelayRenderedPage.tsx", "components/FilesDialog.tsx", "components/FileReader.tsx", "components/TextFileView.tsx", "components/TextFileEditor.tsx", "components/FilePathLink.tsx", "components/FilePanelResizer.tsx", "components/HighlightedCode.tsx", "components/RepoDiffViewer.tsx", "components/RepoChanges.tsx", "components/RepoDiff.tsx", "lib/repoDiff.ts", "lib/diffLineNotes.ts", "components/WebPanel.tsx", "components/PullRequestPanel.tsx", "lib/pullRequest.ts", "components/FileTextSizeRow.tsx", "components/FilesPanelRow.tsx", "components/MarkdownDocuments.tsx", "components/MarkdownOutline.tsx", "components/BrowserSidePanel.tsx"],
-  devices: ["components/DevicesPanel.tsx", "components/ConnectPhoneDialog.tsx", "components/RelayAccountPcs.tsx", "components/SidebarAccountPcs.tsx", "components/RelaySignIn.tsx", "components/CompactPair.tsx", "components/PhonePanel.tsx", "components/PortalPanel.tsx", "components/RelayPanel.tsx", "components/RelayNotice.tsx", "components/PortalAuth.tsx", "components/PortalInvite.tsx", "components/PushTestControls.tsx", "components/AccessGate.tsx", "components/LanExposureNotice.tsx", "components/DevicePairedNotice.tsx", "components/StrictModePanel.tsx", "components/PendingKeys.tsx", "components/JoinWait.tsx", "components/BlockOutcomes.tsx", "components/InstallHint.tsx", "lib/install.ts", "lib/installHint.ts", "lib/portalAuth.ts", "../shared/portal.ts"],
+  devices: ["components/DevicesPanel.tsx", "components/AccountManage.tsx", "components/ConnectPhoneDialog.tsx", "lib/account/useAccountPcs.ts", "components/SidebarAccountPcs.tsx", "components/RelaySignIn.tsx", "components/CompactPair.tsx", "components/PhonePanel.tsx", "components/PortalPanel.tsx", "components/RelayPanel.tsx", "components/RelayNotice.tsx", "components/PortalAuth.tsx", "components/PortalInvite.tsx", "components/PushTestControls.tsx", "components/AccessGate.tsx", "components/LanExposureNotice.tsx", "components/DevicePairedNotice.tsx", "components/StrictModePanel.tsx", "components/PendingKeys.tsx", "components/JoinWait.tsx", "components/BlockOutcomes.tsx", "components/InstallHint.tsx", "lib/install.ts", "lib/installHint.ts", "lib/portalAuth.ts", "../shared/portal.ts"],
   usage: ["components/UsageAccountDialog.tsx", "components/UsageSignInDialog.tsx", "components/UsageLocalLogin.tsx", "components/UsageHubConnect.tsx", "components/CLIProxyLogin.tsx", "components/UsageMeters.tsx", "components/UsageRemoveAccount.tsx", "lib/usage.ts"],
   updates: ["components/UpdateControls.tsx", "lib/updateProgress.ts"],
   palette: ["components/CommandPalette.tsx"],
-  setup: ["components/AgentSetupCard.tsx", "components/AddAgentPanel.tsx", "components/AgentTile.tsx", "components/AgentsSettings.tsx"],
-  relay: ["components/RelayShell.tsx", "components/RelayShellScreens.tsx", "components/RelayAddPc.tsx", "components/AccountPcs.tsx", "lib/relay/shell.tsx", "lib/relay/accountController.ts", "components/relayFailureText.ts"],
+  setup: ["components/AgentSetupCard.tsx", "components/AddAgentPanel.tsx", "components/AgentTile.tsx", "components/AgentsSettings.tsx", "components/AgentCallsRows.tsx"],
+  relay: ["components/RelayShell.tsx", "components/RelayShellScreens.tsx", "components/NoPcOnline.tsx", "components/RelayAddPc.tsx", "components/ConnectStart.tsx", "components/AccountPcs.tsx", "lib/relay/shell.tsx", "lib/relay/accountController.ts", "components/relayFailureText.ts"],
   guide: ["components/SetupGuide.tsx", "components/RelayOnlyWarning.tsx"],
-  dashboard: ["components/AddPcSheet.tsx", "components/RelayDashboard.tsx", "components/RelayMap.tsx", "components/RelayPcTable.tsx", "components/RelayPcDetails.tsx", "components/RelayOverview.tsx", "components/relayMapLayout.ts", "components/relayPcState.tsx"],
-  "my-machines": ["components/MyMachines.tsx", "components/MyMachinesParts.tsx", "components/MyMachinesList.tsx", "components/MyMachineDetails.tsx", "components/AddMachineSheet.tsx", "components/myMachinesWords.ts"],
+  dashboard: ["components/AddPcSheet.tsx", "components/relayPcState.tsx"],
   "runtime-move": ["components/RuntimeMove.tsx", "components/RuntimeMoveViews.tsx", "lib/runtimeMove.ts"],
+  memory: ["components/MemorySettings.tsx"],
 };
 
 const PARTS = { Korean: [KO, KO_PARTS], Japanese: [JA, JA_PARTS], Chinese: [ZH, ZH_PARTS] } as const;
@@ -197,12 +197,19 @@ describe("dictionary parts", () => {
   });
 
   it("writes Korean particles per word, never as a dual-particle template", () => {
-    const relayFiles = [...(PART_FILES.relay ?? []), ...(PART_FILES.dashboard ?? []), ...(PART_FILES["my-machines"] ?? []), "components/RelayPairingPrompt.tsx", "components/AccountApprovalPrompt.tsx"];
+    const relayFiles = [...(PART_FILES.relay ?? []), ...(PART_FILES.dashboard ?? []), "components/RelayPairingPrompt.tsx", "components/AccountApprovalPrompt.tsx"];
     const templated = [...keysInCode()]
       .filter(([, files]) => files.every((file) => relayFiles.includes(file)))
       .map(([key]) => key)
       .filter((key) => /\((?:를|을|가|이|와|과|은|는)\)/.test(KO[key] ?? ""))
       .sort();
+    expect(templated).toEqual([]);
+  });
+
+  it("writes the phone app's own Korean (app/web, its text inline) with no dual-particle template either", () => {
+    const web = join(root, "..", "app", "web");
+    const templated = [...new Bun.Glob("*.{js,html}").scanSync({ cwd: web })].sort()
+      .flatMap((file) => [...readFileSync(join(web, file), "utf8").matchAll(/\S{0,30}\((?:를|을|가|이|와|과|은|는)\)/g)].map(([match]) => `${file}: ${match}`));
     expect(templated).toEqual([]);
   });
 
@@ -227,6 +234,16 @@ describe("translate", () => {
     expect(translate("ja", "Settings")).toBe(JA["Settings"]!);
     expect(translate("zh", "Settings")).toBe(ZH["Settings"]!);
     expect(translate("en", "{a} and {b}", { a: 1 })).toBe("1 and {b}");
+  });
+
+  // a device's name (Android · Chrome, the Ovis app on iPhone) can end in any letter: its banner's Korean takes no
+  // 을(를)/이(가) after it, and says the connection was cut
+  it("the device-removed banners read in Korean without a doubled particle after the name", () => {
+    for (const key of ["{name} was removed from this PC at {time}.", "{name} was revoked on this PC at {time}.", "{name} was removed from this PC at {time}, by {by}."]) {
+      const line = translate("ko", key, { name: "Android · Chrome", time: "오전 05:58", by: "Desk" });
+      expect(line).not.toMatch(/\(를\)|\(을\)|\(가\)|\(이\)/);
+      expect(line).toContain("Android · Chrome의 연결");
+    }
   });
 
   it("looks a key with a |context up as it is, and shows English or a missing entry as the part before the |", () => {

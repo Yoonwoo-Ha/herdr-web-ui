@@ -11,6 +11,7 @@ import { lastViewedPane } from "./lastViewedPane.ts";
 import type { PaneView } from "./actions.ts";
 import type { Translate } from "./i18n.ts";
 import { storedSelection, storeSelection } from "./useSplitView.ts";
+import { pcHeld, usePcNewness } from "./relay/newPcHere.ts";
 
 type SelectionHint = { machine: string; pane: string; workspace: string } | null;
 /** `keepNote`: a selection the user did not make (a link, a tapped notification, a pane moved, the selection restored on load) leaves the header's note to the landings (the service worker names a tapped pane twice, before and after focus, and the second must not take the first's note away) */
@@ -36,6 +37,8 @@ export function useSelectionState({ initialLink }: { initialLink: AppLink | null
     if (initialLink && (initialLink.workspace || fileFromLink(initialLink))) return null;
     const stored = storedSelection();
     if (initialLink?.create && stored?.machine_id !== initialLink.machine) return null;
+    // C3 pin 1 (#16): no session of a PC new in the account is restored here
+    if ((stored?.machine_id ?? "local") === "local" && pcHeld()) return null;
     return stored?.pane_id ?? null;
   });
   const [notificationViewTarget, setNotificationViewTarget] = useState<NotificationTarget | null>(
@@ -153,13 +156,15 @@ export function useSelectTarget({ selectedMachineId, setConnected, setConnectedB
     selectionSince.current = rosterSeq.current;
   }, []);
   const selectTargetRef = useRef(selectTarget); selectTargetRef.current = selectTarget;
+  const { held } = usePcNewness();
   const lastSeen = useRef<{ machine: string; pane: string; roster: NonNullable<typeof snapshot>; previous: string | null } | null>(null);
   useEffect(() => {
     // An offline PC's cached roster cannot invalidate a selection.
     if (!snapshot || selectedMachine?.state !== "connected") return;
     const seen = lastSeen.current?.machine === selectedMachineId && lastSeen.current.pane === selectedPaneId ? lastSeen.current : null;
-    const fallback = (current: typeof snapshot) => (seen && paneAfterClose(seen.roster, current, seen.pane, seen.previous, (scope, id) => lastViewedPane(scope, selectedMachineId, id)))
-      ?? current.panes.find((pane) => pane.pane_id === current.focused_pane_id)?.pane_id ?? current.panes[0]?.pane_id ?? null;
+    // C3 pin 1 (#16): nothing of a PC new in the account is selected by itself, the selection's fallback included
+    const fallback = (current: typeof snapshot) => selectedMachineId === "local" && held ? null : ((seen && paneAfterClose(seen.roster, current, seen.pane, seen.previous, (scope, id) => lastViewedPane(scope, selectedMachineId, id)))
+      ?? current.panes.find((pane) => pane.pane_id === current.focused_pane_id)?.pane_id ?? current.panes[0]?.pane_id ?? null);
     if (selectedPaneId !== null && snapshot.panes.some((pane) => pane.pane_id === selectedPaneId)) {
       const last = lastSeen.current?.machine === selectedMachineId ? lastSeen.current : null;
       const previous = last && last.pane !== selectedPaneId ? last.pane : (last?.previous ?? null);
@@ -230,7 +235,7 @@ export function useSelectTarget({ selectedMachineId, setConnected, setConnectedB
       setAutoSelected(true);
     }).catch(() => { /* a failed read is not evidence that the pane disappeared */ });
     return () => { cancelled = true; };
-  }, [snapshot, selectedPaneId, selectedMachineId, selectedMachine?.state, linkTick]);
+  }, [snapshot, selectedPaneId, selectedMachineId, selectedMachine?.state, linkTick, held]);
   useEffect(() => {
     storeSelection(selectedMachineId, selectedPaneId);
   }, [selectedMachineId, selectedPaneId]);

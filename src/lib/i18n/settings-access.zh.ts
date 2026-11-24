@@ -23,7 +23,6 @@ export const SETTINGS_ACCESS_ZH: Record<string, string> = {
   "The device list cannot be read, so no new device can pair. This PC, the token and Tailscale sign-in still work.": "无法读取设备列表，因此新设备无法配对。此电脑、令牌和 Tailscale 登录仍然可用。",
   "Listens on": "监听地址",
   "Loopback": "环回地址",
-  "Tailscale address": "Tailscale 地址",
   "Other address": "其他地址",
   "A network address, every interface or a host name: other devices on that network may reach it.": "网络地址、所有网络接口或主机名：该网络上的其他设备可能可以访问。",
   "The address the server listens on. A proxy on this PC can still forward other traffic to it.": "服务器监听的地址。此电脑上的代理仍可能转发其他流量。",

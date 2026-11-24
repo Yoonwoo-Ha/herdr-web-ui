@@ -49,7 +49,19 @@ export type Pc = Awaited<ReturnType<typeof pairingPc>>;
 /** Establish standing for a bound member before it signs in or signs a record. */
 export async function firstPairingRead(pc: Pc): Promise<void> {
   pc.account.opensAll = true;
-  await registerSnapshotPc(pc.account, pc, pc.app.context.services.relay.currentIdentity());
+  const binding = pc.devices.serviceBinding();
+  // a PC bound by the service stands on the listing it was admitted in, as after one press: admitted, and that listing pinned
+  if (binding !== null) pc.account.completions = true;
+  const serverId = await registerSnapshotPc(pc.account, pc, pc.app.context.services.relay.currentIdentity());
+  if (binding !== null) {
+    const account = pc.devices.account() ?? "";
+    const admitted = await pc.account.fetch(new Request(`https://account.test/v1/pcs/${serverId}/admit`, { method: "POST",
+      headers: { authorization: `Bearer ${pc.account.issueToken(account, { twoStep: true })}` }, body: "{}" }));
+    if (!admitted.ok) throw new Error(`The member fixture's PC was not admitted: ${admitted.status}`);
+    const listing = (await pc.app.context.services.accountMailbox.admission(account))?.listing_id;
+    if (listing === undefined) throw new Error("The member fixture's admission named no listing");
+    pc.devices.pinServiceListing(binding, listing);
+  }
   const read = await pc.app.context.services.accountMailbox.readSnapshot();
   if (!read?.committed) throw new Error("The member fixture did not commit its first whole read");
 }
@@ -75,16 +87,19 @@ export async function memberRow(account: string) {
 /**
  * `accountFetch`: what the PC's calls to the account service reach, given the test account service; that service
  * itself by default. `accountService`: OVIS_ACCOUNT_SERVICE_URL's value (`off` turns it off). `server`: further options
- * of createServer.
+ * of createServer. `relayPort`: a relay the test runs on this machine (relay/bun.ts), which its relay links to and comes
+ * online on, over plain ws at its `wss://` name, in place of a socket that never opens.
  */
-export async function pairingPc(options: { rows?: readonly { created_at: string }[]; accountFetch?: (request: Request, service: FakeAccountService) => Promise<Response>; accountService?: string; server?: Partial<Parameters<typeof createServer>[0]>; prepare?: (stateDir: string) => void; startRelay?: boolean } = {}) {
+export async function pairingPc(options: { rows?: readonly { created_at: string }[]; accountFetch?: (request: Request, service: FakeAccountService) => Promise<Response>; accountService?: string; server?: Partial<Parameters<typeof createServer>[0]>; prepare?: (stateDir: string) => void; startRelay?: boolean; relayPort?: number } = {}) {
   const stateDir = mkdtempSync(join(tmpdir(), "ovis-pairing-"));
   const first = options.rows?.[0];
   if (first) writeFileSync(join(stateDir, "devices.json"), JSON.stringify({ gate_closed_at: first.created_at, devices: options.rows }), { mode: 0o600 });
   options.prepare?.(stateDir);
   const account = new FakeAccountService();
   const accountFetch = options.accountFetch;
-  const service = new RelayService({ stateDir, relay: "wss://relay.test", connect: () => idleSocket() });
+  const port = options.relayPort;
+  const service = port === undefined ? new RelayService({ stateDir, relay: "wss://relay.test", connect: () => idleSocket() })
+    : new RelayService({ stateDir, relay: `wss://127.0.0.1:${port}`, connect: (url) => { const target = new URL(url); return new WebSocket(`ws://127.0.0.1:${port}${target.pathname}${target.search}`); } });
   const app = createServer({ ...options.server, port: 0, hostname: "127.0.0.1", stateDir, token: options.server?.token ?? "", tailscaleOwner: null, sidecar: false, relay: service,
     accountService: { url: options.accountService ?? "https://account.test", fetch: accountFetch ? (request) => accountFetch(request, account) : account.fetch } });
   const base = `http://127.0.0.1:${app.port}`;

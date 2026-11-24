@@ -59,11 +59,11 @@ describe("S2-27 a devices.json row not paired at this PC waits for the first who
     expect((await ask(link, "/api/account/status")).status).toBe(200);
   });
 
-  test("T41: a remotely admitted Step 2 row is held before a whole read; an old app gets auth_failed", async () => {
+  test("T41: a remotely admitted Step 2 row is held before a whole read; an old app gets internal_error, which forgets no key", async () => {
     const pc = await startedPc();
     expect(pc.fixture.app.context.services.devices.originOf(pc.member.id)?.from).toBe("remote");
     expect(await signIn(pc, [ACCOUNT_OPENS_ALL_FEATURE])).toEqual({ code: "held", message: "This PC waits for the account's list before letting this device in", hold: { reason: "catching_up" } });
-    expect(await signIn(pc, [])).toEqual({ code: "auth_failed", message: "auth_failed" });
+    expect(await signIn(pc, [])).toEqual({ code: "internal_error", message: "internal_error" });
     expect(pc.fixture.app.context.services.devices.sessionRow(pc.member.id)).toBeNull();
   });
 

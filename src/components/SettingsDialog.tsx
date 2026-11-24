@@ -1,11 +1,12 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { ALargeSmall, AppWindow, ArrowDownUp, ArrowLeftRight, ArrowLeft, AudioLines, Ban, Bell, Bot, Box, Brain, ChevronLeft, ChevronRight, CircleDot, ClipboardCopy, ClipboardPaste, Command, CornerDownLeft, ExternalLink as ExternalLinkIcon, FileClock, FilePen, Filter, FlaskConical, Gauge, Globe, Image as ImageIcon, Inbox, Info, Keyboard, Languages, Layers, ListCollapse, ListTree, Lock, MessageSquare, MessageSquareReply, MessagesSquare, Mic, Monitor, Mouse, MousePointer2, MoveHorizontal, Palette, PanelLeft, PanelRight, Plus, Puzzle, Rows3, Search, Send, Server, Shapes, Smartphone, Sparkles, SquareTerminal, Star, SunMoon, Tag, Tags, TextCursorInput, Trash2, Type, Volume2, WandSparkles, WrapText, X, type LucideIcon } from "lucide-react";
+import { ALargeSmall, AppWindow, ArrowDownUp, ArrowLeft, AudioLines, Ban, Bell, Bot, Box, Brain, NotebookPen, ChevronLeft, ChevronRight, CircleDot, ClipboardCopy, ClipboardPaste, Command, CornerDownLeft, ExternalLink as ExternalLinkIcon, FileClock, FilePen, Filter, FlaskConical, Gauge, Globe, Image as ImageIcon, Inbox, Info, Keyboard, Languages, Layers, ListCollapse, ListTree, Lock, MessageSquare, MessageSquareReply, MessagesSquare, Mic, Monitor, Mouse, MousePointer2, MoveHorizontal, Palette, PanelLeft, PanelRight, Plus, Puzzle, Rows3, Search, Send, Server, Shapes, Smartphone, Sparkles, SquareTerminal, Star, SunMoon, Tag, Tags, TextCursorInput, Trash2, Type, Volume2, WandSparkles, WrapText, X, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
 
 import type { AddPcPreset, AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { changePc, inNativeApp } from "../lib/nativeApp.ts";
+import { demoBuild } from "../lib/demo.ts";
 import { loadRelayShell } from "../lib/relay.ts";
 import { inRelayShell, useRelay, type RelayState } from "../lib/useRelay.ts";
 import { serverIdOfPath, shellMode } from "../lib/shellMode.ts";
@@ -30,6 +31,7 @@ import { FileTextSizeRow } from "./FileTextSizeRow.tsx";
 import { FoldHelpersRow } from "./FoldHelpersRow.tsx";
 import { FilesPanelRow } from "./FilesPanelRow.tsx";
 import { LinkBrowserRow } from "./LinkBrowserRow.tsx";
+import { TerminalCommandRow } from "./TerminalCommandRow.tsx";
 import { onSettingsHistory, recordSettings, settingsEntry, settingsLevels, type SettingsLevel } from "../lib/settingsHistory.ts";
 import { ThemeFiles, themeLabel } from "./ThemeFiles.tsx";
 import { THEME_NAMES, ThemeCard } from "./ThemeCard.tsx";
@@ -44,8 +46,8 @@ import { LOCAL_MACHINE, pairedPc, pcAlertKey, type HerdrCoreFacts, type HerdrRun
 import { canHideMachine, isMachineShown, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
 import { alertFiltersChanged, updateAlertFilters, useAlertFilters } from "../lib/alertFilters.ts";
 import { alertMeWhenChips } from "./AlertChips.tsx";
-import { fetchMachines, fetchRemoteAccess, requestRelayOffer, fetchVoiceStatus, machineRequest, saveVoiceConfig, switchRuntime, fetchBridgeHealth } from "../lib/api.ts";
-import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
+import { fetchMachines, fetchMemory, fetchRemoteAccess, requestRelayOffer, fetchVoiceStatus, machineRequest, saveVoiceConfig, switchRuntime, fetchBridgeHealth } from "../lib/api.ts";
+import { isLoopbackHost, labelDevice, phonePlan, tailnetHost, tailscalePlan } from "../lib/phone.ts";
 import type { PushActionResult } from "../lib/pushHealth.ts";
 import type { HealthAuth, PluginActions, RemoteAccess } from "../../shared/protocol.ts";
 import type { SecurityFacts } from "../lib/useAccess.ts";
@@ -59,25 +61,28 @@ import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { RuntimeMove } from "./RuntimeMove.tsx";
 import { SignOutRow } from "./SignOutRow.tsx";
 import { failureText, openOwnOffer, RelayDirectRow, statusText } from "./RelayPanel.tsx";
-import { AccountSection, accountServiceHere, type AccountState } from "./AccountSection.tsx";
+import { AccountSection, type AccountState } from "./AccountSection.tsx";
 import { HostedAccountGroup } from "./AccountHead.tsx";
 import { useHostedSignIn } from "../lib/account/hostedSignIn.ts";
-import { shellAccountServiceOf } from "../lib/account/service.ts";
-import { AccountPcRows, NoAccountPcHint, removePcFromAccount } from "./AccountPcs.tsx";
-import { DRAWER_QUERY, leavePcList, pcListExit, removablePc, STATE_WORD } from "./MachineSidebar.tsx";
+import { AccountPcRows, NoAccountPcHint } from "./AccountPcs.tsx";
+import { removablePc, STATE_WORD } from "./MachineSidebar.tsx";
 import { AccountPcError, pcAccountStatus, type PcAccountStatus } from "../lib/account/join.ts";
-import { AccountService } from "../lib/account/service.ts";
-import { indexedAccountStore } from "../lib/account/store.ts";
+import { accountServiceHere } from "../lib/account/ownWindow.ts";
+import { sshAddListed } from "../lib/account/sshAdd.ts";
 import { apiFetch } from "../lib/api-request-id.ts";
 import type { MyPc } from "../lib/account/myPcs.ts";
-import { ConnectPhoneDialog, relayOffered, relayPending } from "./ConnectPhoneDialog.tsx";
+import { closedBySignIn, ConnectPhoneDialog, relayOffered, relayPending } from "./ConnectPhoneDialog.tsx";
 import { ACCOUNT_QR_WATCH_EVENT, accountQrNoticeWaiting } from "../lib/accountQrWatch.ts";
+import { ADD_CONNECTION_EVENT, takeAddConnection, type AddConnectionTab } from "../lib/addConnectionRequest.ts";
 import { PushTestControls } from "./PushTestControls.tsx";
 import { AlertWebhookGroup } from "./AlertWebhookGroup.tsx";
 import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
 import { HerdrUpdateControls, UpdateControls } from "./UpdateControls.tsx";
 import { TelemetryControls } from "./TelemetryControls.tsx";
 import { AgentsSettings } from "./AgentsSettings.tsx";
+import { MemorySettings } from "./MemorySettings.tsx";
+import type { MemoryView } from "../../shared/memory.ts";
+import { waitingNotes } from "../lib/memory.ts";
 import { AgentGroupNames } from "./AgentGroupNames.tsx";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
@@ -124,6 +129,8 @@ export interface SettingsDialogProps {
   onRetrySave: () => void;
   overPreview?: boolean;
   machines?: readonly Machine[];
+  /** the selected pane's folder on this PC: Settings → Memory opens on its project */
+  projectFolder?: string | null;
 }
 
 /**
@@ -278,6 +285,7 @@ export const PAGES: readonly { id: SettingsPage; icon: LucideIcon }[] = [
   { id: "terminal", icon: SquareTerminal },
   { id: "alerts", icon: Bell },
   { id: "agents", icon: Bot },
+  { id: "memory", icon: NotebookPen },
   { id: "shortcuts", icon: Keyboard },
   { id: "devices", icon: Smartphone },
   { id: "experimental", icon: FlaskConical },
@@ -292,6 +300,7 @@ function pageNote(t: Translate, page: SettingsPage): string | null {
     case "terminal": return t("How terminal panes look and take input.");
     case "alerts": return t("When this device alerts you, and where else alerts go.");
     case "agents": return t("Coding agents on this PC, their accounts and plan limits.");
+    case "memory": return t("Notes kept for your agents. Agents do not get them yet; later they get only notes you confirmed.");
     case "shortcuts": return t("Keyboard shortcuts, and herdr's prefix keys.");
     case "experimental": return t("Features still being shaped; they may change.");
     default: return null;
@@ -1198,14 +1207,21 @@ function AccessFacts({ facts }: { facts: SecurityFacts }) {
 const MOVED_GROUPS: Readonly<Record<string, string>> = { phone: "devices", remote: "devices", portal: "devices", "chat-more": "conversation" };
 
 function deviceKind(label: string, t: ReturnType<typeof useT>): string | null {
-  const named = /^(iPhone|iPad|Android|Mac|Windows|Chromebook|Linux|Device)( · (Edge|Firefox|Chrome|Safari))?$/.exec(label);
-  if (named === null) return null;
-  if (named[1] === "iPhone" || named[1] === "Android") return t("Phone");
-  if (named[1] === "iPad") return t("Tablet");
+  const device = labelDevice(label);
+  if (device === null) return null;
+  if (device === "iPhone" || device === "Android") return t("Phone");
+  if (device === "iPad") return t("Tablet");
   return t("Browser");
 }
 
-function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSettings, pcSettingsError, onPcSettings, openAddPc, connectPc, opensAll, withdrawn }: {
+/** What the app's Change PC row says of this page: the demo only where the demo build marked it (lib/demo.ts) */
+export function changePcDescription(t: Translate, demo: boolean, host: string): string {
+  return demo ? t("This is the demo. Go back to the app's list of PCs to open yours.") : t("This app shows {address}. Go back to its list of PCs to open another.", { address: host });
+}
+
+function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSettings, pcSettingsError, onPcSettings, openAddPc, connectPc, onHome, opensAll, withdrawn }: {
+  /** closes Settings onto the main screen, after a sign-in in the sheet the setup checklist opened (closedBySignIn) */
+  onHome: () => void;
   opensAll?: (() => boolean) | undefined;
   withdrawn?: (() => boolean) | undefined;
   auth: HealthAuth | null; security: SecurityFacts; onSignOut: (() => Promise<void>) | null; onRevokedAll: () => void;
@@ -1226,12 +1242,28 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
   useEffect(() => { loadAccess(); }, [loadAccess]);
   const plan = phonePlan({ protocol: window.location.protocol, hostname: window.location.hostname, origin: window.location.origin, secure: window.isSecureContext, shell: inRelayShell() }, access ?? null);
   const pairUrl = plan.kind === "here" || plan.kind === "served" ? plan.url : isLoopbackHost(window.location.hostname) ? null : window.location.origin;
+  // the Tailscale tab's own address: this page's where it is open at one, else what Tailscale serves, never a proxy's
+  const tailscale = plan.kind === "here" && tailnetHost(window.location.hostname) ? plan : tailscalePlan(access ?? null);
   const wakeLockProblem = !window.isSecureContext ? t("Needs HTTPS or localhost.") : !("wakeLock" in navigator) ? t("This browser can't keep the screen on.") : null;
   const relay = useRelay();
   const relayReadOnly = auth?.role === "watch" || auth?.via === "portal";
   const closesGate = security.state === "known" && security.summary.pairing_gate === "open" && !security.summary.token_configured;
   const [connecting, setConnecting] = useState(false);
+  const [connectAsked, setConnectAsked] = useState<AddConnectionTab | null>(null);
   const [accountChecks, setAccountChecks] = useState(0);
+  // the setup checklist's Connect your phone: Add a connection, on the tab it asked for, as soon as this page is up
+  useEffect(() => {
+    const open = (): void => {
+      const tab = takeAddConnection();
+      if (tab === null) return;
+      setConnectAsked(tab);
+      setConnecting(true);
+      setAccountChecks((count) => count + 1);
+    };
+    open();
+    window.addEventListener(ADD_CONNECTION_EVENT, open);
+    return () => window.removeEventListener(ADD_CONNECTION_EVENT, open);
+  }, []);
   const searching = useContext(SettingsQuery).length > 0;
   const [devicesMore, setDevicesMore] = useState<HTMLDivElement | null>(null);
   const [devicesCheck, setDevicesCheck] = useState<HTMLDivElement | null>(null);
@@ -1266,6 +1298,10 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
     return () => { live = false; };
   }, [account.account, connecting]);
   const joinBySignIn = account.account !== null && pcAccount === account.account && relay.status?.phase === "online";
+  // where Add PC over SSH adds the PC to the account (MachineDialog asks the same), the relay tab lists the PCs to add
+  const addsOverSsh = sshAddListed({ pcAddFromAccount, auth, signedInAccount: account.signedIn ? account.account : null, pcAccount });
+  // the PCs in the account, which the relay tab's list says so of: one only listed or admitted is still offered Add
+  const accountPcs = useMemo(() => account.pcs?.filter((pc) => pc.listed && pc.joined === true).map((pc) => pc.server_id) ?? [], [account.pcs]);
   const openAccount = useCallback(() => {
     setConnecting(false);
     const group = document.querySelector<HTMLElement>('.settings-dialog [data-section="account"]');
@@ -1278,9 +1314,9 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
   return (
     <>
       {/* the account first: the sign-in the relay depends on is not left in More settings */}
-      {/* a PC page the hosted app opened has no PC sign-in of its own: the hosted one, with the overview's Sign out */}
-      {accountService === null && <HostedAccountGroup signIn={hostedSignIn} />}
-      <AccountSection onAccount={setAccount} recheck={accountChecks} signInElsewhere={(relayOffered(relay) || relayPending(relay)) && !relayReadOnly} {...(opensAll === undefined ? {} : { opensAll })} {...(withdrawn === undefined ? {} : { withdrawn })} />
+      {/* a PC page the hosted app opened has no PC sign-in of its own: the hosted one, with its Sign out and Manage account */}
+      {accountService === null && <HostedAccountGroup signIn={hostedSignIn} watching={auth?.role === "watch"} />}
+      <AccountSection watching={auth?.role === "watch"} onAccount={setAccount} recheck={accountChecks} signInElsewhere={(relayOffered(relay) || relayPending(relay)) && !relayReadOnly} {...(opensAll === undefined ? {} : { opensAll })} {...(withdrawn === undefined ? {} : { withdrawn })} />
 
       {/* what is connected to this PC: its name atop one list of the other PCs, phones and browsers, the one in use first */}
       <SettingsGroup section="devices">
@@ -1294,11 +1330,11 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
         {/* how anything else gets connected: one button, its sheet picks the way; a search finds it as a row by every way it holds */}
         {searching ? (
           <SettingsRow label={t("Add a connection")} keywords={t("phone browser PC pair pairing code QR relay Tailscale Wi-Fi SSH Portal add PC remote PCs")}>
-            <button type="button" className="btn btn-primary" onClick={() => { setConnecting(true); setAccountChecks((count) => count + 1); }}><Plus aria-hidden="true" />{t("Add a connection")}</button>
+            <button type="button" className="btn btn-primary" onClick={() => { setConnectAsked(null); setConnecting(true); setAccountChecks((count) => count + 1); }}><Plus aria-hidden="true" />{t("Add a connection")}</button>
           </SettingsRow>
         ) : (
           <div className="settings-item devices-add">
-            <button type="button" className="btn btn-primary" onClick={() => { setConnecting(true); setAccountChecks((count) => count + 1); }}><Plus aria-hidden="true" />{t("Add a connection")}</button>
+            <button type="button" className="btn btn-primary" onClick={() => { setConnectAsked(null); setConnecting(true); setAccountChecks((count) => count + 1); }}><Plus aria-hidden="true" />{t("Add a connection")}</button>
           </div>
         )}
         <DamagedPcFiles pcSettings={pcSettings} />
@@ -1308,19 +1344,12 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
         {(nativeApp || relayPc !== null) && (
           <SettingsGroup title={t("This app")} section="this-app">
             {nativeApp && (
-              <SettingsRow label={t("Change PC")} description={window.location.protocol === "capacitor:" ? t("This is the demo. Go back to the app's list of PCs to open yours.") : t("This app shows {address}. Go back to its list of PCs to open another.", { address: window.location.host })}>
+              <SettingsRow label={t("Change PC")} description={changePcDescription(t, demoBuild(), window.location.host)}>
                 <button type="button" className="btn" onClick={() => void changePc()}>{t("Change PC")}</button>
               </SettingsRow>
             )}
             {relayPc !== null && (
               <>
-                <SettingsRow label={t("Change PC")} description={t("This page shows one PC. The front page lists every PC this phone is paired with.")}>
-                  <button type="button" className="btn" onClick={() => window.location.assign("/")}>{t("Change PC")}</button>
-                </SettingsRow>
-                {/* the dashboard of the account's PCs, opened only on purpose: no launch or sign-in lands on it */}
-                {shellAccountServiceOf(document, window.location.origin, nativeApp) !== null && <SettingsRow label={t("Relayed connections")} description={t("Opens the page of every PC this device reaches through the relay, to check, join or forget them.")}>
-                  <button type="button" className="btn" data-action="manage-relayed" onClick={() => window.location.assign("/#overview")}>{t("Manage|relayed connections")}</button>
-                </SettingsRow>}
                 <SettingsRow label={t("Forget this PC")} description={t("Deletes this phone's key for this PC. Pairing again takes a new QR code from the PC.")}>
                   <button type="button" className="btn" onClick={() => setConfirmForget(true)}>{t("Forget this PC")}</button>
                 </SettingsRow>
@@ -1359,12 +1388,17 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
       </SettingsFold>
 
       {connecting && (
-        <ConnectPhoneDialog plan={plan} pairUrl={pairUrl}
+        <ConnectPhoneDialog asked={connectAsked} plan={plan} tailscale={tailscale} platform={access?.platform} pairUrl={pairUrl}
           relay={relay} readOnly={relayReadOnly} closesGate={closesGate} canPair={auth?.via !== "portal"}
-          signedIn={account.signedIn} accountId={account.account} joinBySignIn={joinBySignIn}
+          signedIn={account.signedIn} accountId={account.account} provider={account.provider} joinBySignIn={joinBySignIn}
           pcAddFromAccount={pcAddFromAccount} onAccountSetup={openAccount}
-          account={accountService !== null && account.reachable ? { service: accountService, onOpen: openAccount, onSignedIn: readAccountAgain, ...(opensAll === undefined ? {} : { opensAll }) } : null}
-          onAddPc={(preset) => { setConnecting(false); openAddPc(preset); }} machines={machines}
+          account={accountService !== null && account.reachable ? { service: accountService, onOpen: openAccount, onSignedIn: (home) => {
+            readAccountAgain();
+            const closed = closedBySignIn(home, connectAsked);
+            if (closed !== "nothing") setConnecting(false);
+            if (closed === "settings") onHome();
+          }, ...(opensAll === undefined ? {} : { opensAll }) } : null}
+          onAddPc={(preset) => { setConnecting(false); openAddPc(preset); }} machines={machines} addsOverSsh={addsOverSsh} accountPcs={accountPcs}
           onConnectMachine={(machine) => { setConnecting(false); connectPc(machine); }}
           onPairingHeld={holdPairing} onRevokedAll={onRevokedAll} onClose={closeConnect} />
       )}
@@ -1475,8 +1509,7 @@ function MyPcRows({ machines, account, accountPcs, onAccountChanged, relayKey, w
           )}
         </li>
       ))}
-      {account !== null && <AccountPcRows pcs={fromAccount} watching={watching} onRemoved={onAccountChanged}
-        remove={(serverId) => removePcFromAccount(new AccountService({ store: indexedAccountStore }), account, serverId)} />}
+      {account !== null && <AccountPcRows pcs={fromAccount} onChanged={onAccountChanged} />}
     </ul>
     {removing !== null && <ConfirmDialog title={t("Remove PC {name}?", { name: removing.name })} body={t(pairedPc(removing) ? "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC." : "Removes this registration. Remote sessions keep running.")} confirmLabel={t("Remove PC")}
       onConfirm={async () => { await machineRequest(`/${encodeURIComponent(removing.id)}`, "DELETE"); setRemoving(null); }} onClose={() => setRemoving(null)} />}
@@ -1659,6 +1692,7 @@ function AboutPage({ updates, herdrVersion, herdrRuntime, herdrCore, herdrRuntim
       {/* herdr's own version and update: on herdr-core there is no herdr TUI here, and Terminals names the core */}
       {herdrRuntime !== "herdr-core" && <HerdrUpdateControls enabled herdrVersion={herdrVersion} showVersion={(herdrRuntimeFacts?.serving ?? herdrRuntime) === null} />}
       <PluginsGroup />
+      <TerminalCommandRow />
       <TelemetryControls />
       </div>
       <SettingsGroup title={t("About")} className="settings-about" section="about">
@@ -1731,11 +1765,9 @@ function matchedGroups(result: Element | null, words: readonly string[]): string
   return [...groups.filter(holdsAll), ...groups.filter((group) => !holdsAll(group))].map((group) => group.dataset["section"]).filter((name): name is string => name !== undefined);
 }
 
-function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, onUsageLogin, onOpenPane, actions, updates, auth, herdrVersion, herdrRuntime = null, herdrCore = null, herdrRuntimeFacts = null, picturesByDefault = false, bootId = null, onServerRestarted, security, onEnableNotifications, saveError, savePaused, saveRetrying, onRetrySave, overPreview = false, machines = [], opensAll, withdrawn }: SettingsDialogProps) {
+function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, onUsageLogin, onOpenPane, actions, updates, auth, herdrVersion, herdrRuntime = null, herdrCore = null, herdrRuntimeFacts = null, picturesByDefault = false, bootId = null, onServerRestarted, security, onEnableNotifications, saveError, savePaused, saveRetrying, onRetrySave, overPreview = false, machines = [], opensAll, withdrawn, projectFolder = null }: SettingsDialogProps) {
   const t = useT();
   const narrow = useNarrow();
-  const pcExit = useMemo(() => pcListExit({ nativeApp: inNativeApp(), relayShell: shellMode() === "relay", pathname: window.location.pathname }), []);
-  const drawerWidth = useMediaQuery(DRAWER_QUERY);
   const [restored] = useState(() => shownBy(settingsEntry(window.history.state)));
   const linked = PAGES.find((candidate) => candidate.id === currentSettingsPage(linkPage))?.id ?? null;
   // the request is read, not taken, so a remount in development finds it again
@@ -1762,7 +1794,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
   const shown = useRef<{ page: SettingsPage | null; keyBar: boolean } | null>(null);
   const following = useRef<{ group: HTMLElement; page: SettingsPage | null } | null>(null);
   const awaited = useRef<{ named: string; page: SettingsPage | null } | null>(null);
-  const label = (id: SettingsPage): string => t(id === "appearance" ? "Appearance" : id === "chat" ? "Chat" : id === "terminal" ? "Terminal" : id === "alerts" ? "Alerts" : id === "agents" ? "Agents" : id === "shortcuts" ? "Shortcuts" : id === "devices" ? "Devices and PCs" : id === "experimental" ? "Experimental" : "About");
+  const label = (id: SettingsPage): string => t(id === "appearance" ? "Appearance" : id === "chat" ? "Chat" : id === "terminal" ? "Terminal" : id === "alerts" ? "Alerts" : id === "agents" ? "Agents" : id === "memory" ? "Memory|notes" : id === "shortcuts" ? "Shortcuts" : id === "devices" ? "Devices and PCs" : id === "experimental" ? "Experimental" : "About");
   const openPage = (id: SettingsPage): void => { setKeyBarOpen(false); setChosen(id); };
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
@@ -1864,6 +1896,16 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
     for (const move of moves) body?.addEventListener(move, stop, { passive: true });
     return unsubscribe;
   }, [page, keyBarOpen, narrow, section, searching]);
+  const [memory, setMemory] = useState<{ view: MemoryView | null; error: string | null }>({ view: null, error: null });
+  const memoryReads = useRef(0);
+  const loadMemory = useCallback(async () => {
+    // an answer to an older read that comes in after a newer one is dropped
+    const read = ++memoryReads.current;
+    try { const view = await fetchMemory(projectFolder); if (read === memoryReads.current) setMemory({ view, error: null }); }
+    catch (error) { if (read === memoryReads.current) setMemory((now) => ({ view: now.view, error: error instanceof Error ? error.message : String(error) })); }
+  }, [projectFolder]);
+  useEffect(() => { void loadMemory(); }, [loadMemory]);
+  const memoryWaiting = waitingNotes(memory.view).length;
   const [pcSettings, setPcSettings] = useState<MachineSettings | null>(null);
   const [pcSettingsError, setPcSettingsError] = useState<string | null>(null);
   useEffect(() => {
@@ -1909,10 +1951,11 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
       case "chat": return <ChatPage />;
       case "terminal": return <TerminalPage keyBarButtonRef={keyBarButtonRef} onEditKeyBar={openKeyBar} picturesByDefault={picturesByDefault} />;
       case "alerts": return <AlertsPage onEnableNotifications={onEnableNotifications} machines={machines} />;
-      case "agents": return <AgentsSettings watching={auth?.role === "watch"} onLocalLogin={onUsageLogin} onOpenPane={onOpenPane} onOpenGuide={onClose} />;
+      case "agents": return <AgentsSettings watching={auth?.role === "watch"} agentCalls={herdrRuntime === "herdr-core"} onLocalLogin={onUsageLogin} onOpenPane={onOpenPane} onOpenGuide={onClose} />;
+      case "memory": return <MemorySettings view={memory.view} loadError={memory.error} reload={loadMemory} watching={auth?.role === "watch"} />;
       case "shortcuts": return <ShortcutsPage />;
       // after every device went, its own pairing included, a browser asks the server where it stands: the roster answers, or the gate does
-      case "devices": return <DevicesPage opensAll={opensAll} withdrawn={withdrawn} auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh} openAddPc={actions.openAddPc} connectPc={actions.connectPc}
+      case "devices": return <DevicesPage opensAll={opensAll} withdrawn={withdrawn} auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh} openAddPc={actions.openAddPc} connectPc={actions.connectPc} onHome={onClose}
         machines={machines} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={(patch) => void updatePcSettings(patch)} />;
       case "experimental": return <ExperimentalPage />;
       case "about": return <AboutPage updates={updates} herdrVersion={herdrVersion} herdrRuntime={herdrRuntime} herdrCore={herdrCore} herdrRuntimeFacts={herdrRuntimeFacts} bootId={bootId} onServerRestarted={onServerRestarted} onOpenPane={onOpenPane} bridgesFollow={pcSettings?.auto_update_bridges === true} />;
@@ -1954,16 +1997,11 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
                 <button key={id} type="button" role="tab" className="settings-tab" data-settings-page={id} aria-selected={!searching && page === id} aria-controls={!searching && page === id ? "settings-panel" : undefined} tabIndex={focusable === id ? 0 : -1} onClick={() => openFromSearch(id)} onKeyDown={(event) => onTabKey(event, index)}>
                   <Icon aria-hidden="true" />
                   <span>{label(id)}</span>
+                  {id === "memory" && memoryWaiting > 0 && <span className="settings-tab-count" aria-label={t("{count} waiting for you", { count: memoryWaiting })}>{memoryWaiting}</span>}
                   <ChevronRight className="settings-tab-chevron" aria-hidden="true" />
                 </button>
               ))}
             </div>
-            {drawerWidth && pcExit !== null && !searching && (
-              <button type="button" className="settings-tab settings-change-pc" onClick={() => leavePcList(pcExit)}>
-                <ArrowLeftRight aria-hidden="true" />
-                <span>{t("Change PC")}</span>
-              </button>
-            )}
           </nav>
         )}
         {searching ? (

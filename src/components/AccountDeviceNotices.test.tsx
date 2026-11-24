@@ -282,6 +282,21 @@ async function setupItsMe({
   return { desk, lab, session, store, view, admission, select, actions, button, refusal, answers };
 }
 
+it("a device is never shown the notice of its own admission: one about this sign-in's key stays off, another key's shows", async () => {
+  const { desk, store, view } = await setupItsMe({ seed: false });
+  const own = await store.get("signin_key");
+  if (own === undefined) throw new TypeError("Missing sign-in key");
+  const other = (await newKey()).public_spki;
+  const shown = () => view.root.findAllByProps({ "data-testid": "device-notice" });
+  await act(async () => {
+    desk.snapshot();
+    desk.read({ type: "device-notice", notice: deviceNotice({ row: "phone-joined-row", key: own.key.public_spki }) });
+  });
+  expect(shown()).toHaveLength(0);
+  await act(async () => { desk.read({ type: "device-notice", notice: deviceNotice({ id: "b".repeat(32), seq: 2, row: "tablet", key: other }) }); });
+  expect(shown()).toHaveLength(1);
+});
+
 it("T53, T57: It's me uses only the admission PC's socket and retries only until that PC confirms", async () => {
   const fetched = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () => new Response(null, { status: 500 }), { preconnect: fetch.preconnect }));
   const { desk, lab, view, admission, select, actions, answers } = await setupItsMe({ seed: false });

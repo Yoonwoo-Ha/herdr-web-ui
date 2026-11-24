@@ -1,8 +1,10 @@
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { mergeFeeds } from "./feed.ts";
+import { installedHelpers, releaseHelpers } from "./native.ts";
 import { stageServerArtifact } from "../../../scripts/server-artifact.ts";
 import { BUN, BUN_LICENSE, BUN_VERSION, download, HC, HC_VERSION, hostTarget, sha256, type Pinned } from "./runtimes.ts";
+import { writeStagingMarker } from "../src/stagingProfile.ts";
 
 const here = resolve(import.meta.dir, "..");
 const repo = resolve(here, "..", "..");
@@ -78,18 +80,18 @@ async function stageAll(): Promise<void> {
   if (bun !== BUN_VERSION) throw new Error(`The staged Bun says ${bun}, not ${BUN_VERSION}`);
 
   await sh(["bun", "run", "build"], repo);
-  // The release's Rust PTY host (checked against the release manifest) goes in
-  // with its record, which a sign-in the server follows in a terminal of its own needs on a PC without Node; without
-  // it the build goes on
-  await sh(["bun", "scripts/pty-sidecar.ts", "install"], repo);
-  const host = join(repo, "bin", "ovis-pty-sidecar");
-  if (!existsSync(host)) console.log("no Rust PTY host for this version: the app's server falls back to Node, where the PC has it");
+  const tag = process.env["OVIS_RELEASE_TAG"]?.trim();
+  const version: string = JSON.parse(readFileSync(join(repo, "package.json"), "utf8")).version;
+  if (tag && tag !== "v" + version) throw new Error("Release tag does not match package version");
+  if (!tag && !windows) await sh(["bun", "scripts/pty-sidecar.ts", "install"], repo);
+  const helpers = windows ? {} : tag ? await releaseHelpers(cache, target, { version, at: "https://github.com/devswha/ovis/releases/download/" + tag }) : installedHelpers(join(repo, "bin"));
+  if (!helpers.ptySidecar) console.log("no Rust PTY host for this version: the app's server falls back to Node, where the PC has it");
   await stageServerArtifact({
     platform: windows ? "windows-x64" : target,
     dir: join(stage, "server"),
     nodePty: true,
     downloads: join(cache, "server-downloads"),
-    ...(existsSync(host) ? { ptySidecar: { binary: host, ...(existsSync(`${host}.json`) ? { record: `${host}.json` } : {}) } } : {}),
+    ...helpers,
   });
   for (const file of ["LICENSE", "THIRD_PARTY_NOTICES.md"]) cpSync(join(repo, file), join(stage, file));
   writeFileSync(join(stage, "versions.json"), JSON.stringify({ hc: HC_VERSION, bun: BUN_VERSION }));
@@ -179,6 +181,7 @@ async function dist(): Promise<void> {
     if (new URL(feed).protocol !== "https:") throw new Error("OVIS_UPDATE_FEED must be an https address");
     args.push("-c.publish.provider=generic", `-c.publish.url=${feed}`);
   }
+  writeStagingMarker(stage, platform === "mac" && process.env["OVIS_BUILD_STAGING"] === "1");
   const child = Bun.spawn(args, { cwd: here, stdout: "inherit", stderr: "inherit" });
   if (await child.exited !== 0) throw new Error("electron-builder failed");
 }

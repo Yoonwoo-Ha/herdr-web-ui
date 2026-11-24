@@ -2037,4 +2037,44 @@ describe("check CLI", () => {
     expect(said).toContain("check: source changed during the check; verification was invalidated");
     expect(said).toContain(`check: report ${reportPath}`);
   }, 60_000);
+
+  it.skipIf(process.platform !== "linux" || process.arch !== "x64")("runs typecheck beside build and the unit tests, and still fails the run on its error", () => {
+    const cwd = scratch();
+    git(cwd, "init", "-q");
+    git(cwd, "config", "user.name", "check test");
+    git(cwd, "config", "user.email", "check@example.invalid");
+    writeFileSync(join(cwd, ".gitignore"), "node_modules/\n.check/\ndist/\n");
+    const noOp = 'node -e "process.exit(0)" --';
+    // typecheck reads what the unit tests write into a pipe: it ends only when both run at once
+    mkdirSync(join(cwd, "node_modules"));
+    expect(spawnSync("mkfifo", [join(cwd, "node_modules", "handshake")]).status).toBe(0);
+    writeFileSync(join(cwd, "package.json"), JSON.stringify({
+      name: "check-cli-fixture",
+      scripts: {
+        "generate:types": noOp,
+        "generate:themes": noOp,
+        typecheck: 'node -e "require(\'node:fs\').readFileSync(\'node_modules/handshake\');process.exit(2)"',
+        build: 'node -e "const fs=require(\'node:fs\');fs.mkdirSync(\'dist\',{recursive:true});fs.writeFileSync(\'dist/index.html\',\'fixture\')"',
+        "test:unit": 'node -e "require(\'node:fs\').writeFileSync(\'node_modules/handshake\',\'unit tests started\')"',
+      },
+    }));
+    git(cwd, "add", ".gitignore", "package.json");
+    git(cwd, "commit", "-qm", "fixture");
+    const actionlintDirectory = join(cwd, "node_modules", ".cache", "actionlint-1.7.12");
+    mkdirSync(actionlintDirectory, { recursive: true });
+    writeFileSync(join(actionlintDirectory, "actionlint"), "#!/bin/sh\nexit 0\n");
+    chmodSync(join(actionlintDirectory, "actionlint"), 0o755);
+    const env: Record<string, string | undefined> = { ...process.env, CHECK_DIR: ".check" };
+    for (const name of ["CHECK_REPORT", "GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH"]) delete env[name];
+
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL("./check.ts", import.meta.url)), "fast"], { cwd, env, encoding: "utf8", timeout: 30_000 });
+
+    expect(result.status).toBe(2);
+    const report = JSON.parse(readFileSync(join(cwd, ".check", "report.json"), "utf8")) as { steps: { name: string; status: string; exitCode: number | null }[]; errors: string[] };
+    const step = (name: string) => report.steps.find((candidate) => candidate.name === name);
+    expect(step("typecheck")).toMatchObject({ status: "failure", exitCode: 2 });
+    expect(step("build")).toMatchObject({ status: "success" });
+    expect(step("unit tests")).toMatchObject({ status: "success" });
+    expect(report.errors).toEqual(["typecheck exited with code 2"]);
+  }, 60_000);
 });

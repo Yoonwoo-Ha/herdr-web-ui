@@ -36,9 +36,13 @@ function fakeWindow() {
     forward() { traverse(1); },
     go(by: number) { traverse(by); },
   };
+  /** the pages the window was sent to (location.assign or location.replace): from which entry, and whether a traversal was still on its way */
+  const loads: Array<{ url: string; how: "assign" | "replace"; at: number; pending: boolean }> = [];
   const window = {
     history,
-    get location() { return { href: entries[index]!.href }; },
+    get location() {
+      return { href: entries[index]!.href, assign: (url: string) => { loads.push({ url, how: "assign", at: index, pending }); }, replace: (url: string) => { loads.push({ url, how: "replace", at: index, pending }); } };
+    },
     addEventListener(type: string, listener: (event: { state: unknown }) => void) { if (type === "popstate") listeners.push(listener); },
   };
   /** the browser's key for each entry, as the Navigation API tells it: a test hands it to the window */
@@ -46,7 +50,7 @@ function fakeWindow() {
     get currentEntry() { return { key: entries[index]!.key, index }; },
     entries() { return entries.map((entry, at) => ({ key: entry.key, index: at })); },
   };
-  return { window, entries, navigation, at: () => index, defer: (on: boolean) => { deferred = on; },
+  return { window, entries, navigation, loads, at: () => index, defer: (on: boolean) => { deferred = on; },
     hold: () => { holding = true; }, release: () => { holding = false; for (const go of held.splice(0)) go(); }, pending: () => pending, marks: () => entries.map((entry) => typeof (entry.state as Record<string, unknown> | null)?.["ovis:sheet"] === "string") };
 }
 const fake = fakeWindow();
@@ -111,6 +115,58 @@ describe("a phone's sheet in the history", () => {
     expect(fake.window.location.href).toBe("/?pane=a");
     h.forward(); await settled();
     expect(fake.window.location.href).toBe("/?pane=b");
+  });
+
+  it("sends the page an item leaves for only once its closing sheet's step off its entry has landed, from the entry under it", async () => {
+    const start = fake.at();
+    const leave = hooks.enter(() => {});
+    expect(fake.at()).toBe(start + 1);
+    // RowMenu closes the sheet, then runs the item; the sheet goes with the commit after
+    sheetHistory.leavePageFromSheet("/#add");
+    fake.defer(true);
+    leave();
+    expect(fake.loads).toEqual([]);
+    jest.advanceTimersByTime(0);
+    expect(fake.pending()).toBe(true);
+    expect(fake.loads).toEqual([]);
+    await settled();
+    fake.defer(false);
+    expect(fake.loads.splice(0)).toEqual([{ url: "/#add", how: "assign", at: start, pending: false }]);
+    expect(fake.marks()[start]).toBe(false);
+  });
+
+  it("sends it at once with no sheet's entry here, and as the sheet goes when the sheet takes no step", async () => {
+    const start = fake.at();
+    sheetHistory.leavePageFromSheet("/#add");
+    expect(fake.loads.splice(0)).toEqual([{ url: "/#add", how: "assign", at: start, pending: false }]);
+    const leave = hooks.enter(() => {});
+    sheetHistory.leavePageFromSheet("/#add");
+    h.replaceState(h.state, "", "/?pane=b&new=tab");
+    leave();
+    expect(fake.loads).toEqual([]);
+    jest.advanceTimersByTime(0);
+    expect(fake.loads.splice(0)).toEqual([{ url: "/#add", how: "assign", at: start + 1, pending: false }]);
+    h.back(); await settled();
+    expect(fake.at()).toBe(start);
+  });
+
+  it("sends it in place of the entry of a sheet that stays up under the closing one (a terminal peek), so no entry of that sheet is left under the new page", async () => {
+    const start = fake.at();
+    const leavePeek = hooks.enter(() => {}, true);
+    try {
+      expect(fake.at()).toBe(start + 1);
+      const leaveMore = hooks.enter(() => {});
+      expect(fake.at()).toBe(start + 1);
+      sheetHistory.leavePageFromSheet("/#add");
+      leaveMore();
+      jest.advanceTimersByTime(0);
+      await settled();
+      expect(fake.loads.splice(0)).toEqual([{ url: "/#add", how: "replace", at: start + 1, pending: false }]);
+    } finally {
+      fake.loads.length = 0;
+      leavePeek(); await settled();
+    }
+    expect(fake.at()).toBe(start);
   });
 
   it("keeps its entry for an item that changed the address on it, instead of stepping back", async () => {
@@ -345,49 +401,11 @@ describe("a phone's sheet in the history", () => {
     jest.advanceTimersByTime(0);
     expect(fake.pending()).toBe(true);
     expect(sheetStep.lands({} as Event)).toBe(true);
-    // with no Navigation API it names no entry its step lands on
-    expect(sheetHistory.sheetBackOnto()).toBeNull();
     await settled();
     fake.defer(false);
     hooks.enter(() => {});
     h.back(); await settled();
     expect(answers).toEqual([true, false]);
-  });
-
-  it("names the entry its step lands on and tells that landing from any other traversal, also when a sheet opened and closed meanwhile (#4221)", async () => {
-    const browser = fake.window as { navigation?: unknown };
-    browser.navigation = fake.navigation;
-    try {
-      const landed: boolean[] = [];
-      fake.window.addEventListener("popstate", (event) => { landed.push(sheetHistory.sheetBackLanded(event as unknown as Event)); });
-      const start = fake.at();
-      const under = fake.entries[start]!.key;
-      const leaveFirst = hooks.enter(() => {});
-      fake.hold();
-      leaveFirst();
-      jest.advanceTimersByTime(0);
-      expect(fake.pending()).toBe(true);
-      expect(sheetHistory.sheetBackOnto()).toBe(under);
-      // a sheet opens over the entry the step leaves, and closes, before the step lands: it takes no step of its own
-      const leaveSecond = hooks.enter(() => {});
-      expect(fake.at()).toBe(start + 2);
-      leaveSecond();
-      jest.advanceTimersByTime(0);
-      expect(sheetHistory.sheetBackOnto()).toBe(under);
-      fake.release();
-      await settled();
-      expect(fake.at()).toBe(start);
-      expect(landed).toEqual([true]);
-      expect(sheetHistory.sheetBackOnto()).toBeNull();
-      // a Back of the user's own is no landing of the step
-      const leaveThird = hooks.enter(() => {});
-      h.back(); await settled();
-      leaveThird();
-      expect(fake.at()).toBe(start);
-      expect(landed).toEqual([true, false]);
-    } finally {
-      Reflect.deleteProperty(browser, "navigation");
-    }
   });
 
   it("keeps Settings opened as the palette closes over a peek that stays up: the palette's entry is the peek's again, with no step left to land under Settings (#2000)", async () => {

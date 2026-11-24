@@ -2,7 +2,7 @@
  * A yes-or-no question before something that cannot be undone. Cancel takes the focus, so Enter
  * answers no; Escape and the scrim answer no as well, and Tab stays between the two buttons.
  */
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import "./ConfirmDialog.css";
@@ -20,9 +20,11 @@ interface Props {
   onConfirm: () => Promise<void>;
   escalation?: { label: string; code: string; run: () => Promise<void> };
   onClose: () => void;
+  /** what the question also covers, below its body (DevicesPanel: the Tailscale devices a removal keeps out) */
+  children?: ReactNode;
 }
 
-export function ConfirmDialog({ title, body, confirmLabel, onConfirm, escalation, onClose }: Props) {
+export function ConfirmDialog({ title, body, confirmLabel, onConfirm, escalation, onClose, children }: Props) {
   const t = useT();
   const id = useId();
   const cancel = useRef<HTMLButtonElement>(null);
@@ -68,6 +70,7 @@ export function ConfirmDialog({ title, body, confirmLabel, onConfirm, escalation
         <header className="modal-header"><h2 className="modal-title" id={`${id}-title`}>{title}</h2></header>
         <div className="modal-body">
           <p className="confirm-body" id={`${id}-body`}>{body}</p>
+          {children}
           {error && <p className="confirm-error" role="alert">{error}</p>}
         </div>
         <footer className="modal-footer">

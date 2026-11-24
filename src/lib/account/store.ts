@@ -8,6 +8,7 @@
 import { exportAccountKey } from "../../../shared/account-records.ts";
 import type { UnsentBlocks } from "./unsentBlocks.ts";
 import type { AddRecord, RemoveRecord } from "../../../shared/account-records.ts";
+import type { MemberEncryptionKey } from "../../../shared/account-list-seal.ts";
 import type { RelayOffer } from "../../../shared/relay-offer.ts";
 
 export interface AccountKey {
@@ -29,6 +30,8 @@ export interface AccountSession {
   readonly expires_at: number;
   /** which sign-in this is, kept by every refresh: random for one made by this build (sessionOf), a digest of the saved refresh token for one saved before sign-ins had an id (service.ts, session) */
   readonly sign_in_id?: string;
+  /** when this sign-in was made, in ms by this device's clock (sessionOf), kept by every refresh; absent from one saved before it was kept */
+  readonly signed_in_at?: number;
 }
 
 /** A sign-in sent to the provider's pages: what its return must match (OAuth `state`) and prove (PKCE verifier). */
@@ -41,6 +44,13 @@ export interface PendingSignIn {
   readonly started_at: number;
   /** the marked pairing this sign-in was started for (relay/shell.tsx): it goes with the sign-in, whatever its end */
   readonly pairing?: PendingPairing;
+  /**
+   * the PC whose own page started this sign-in (its relay ID; relay/shell.tsx): a browser's sign-in comes back on the
+   * front page alone, which goes on to that page once this very sign-in succeeded
+   */
+  readonly pc?: string;
+  /** the account whose sign-out of every device asked for this sign-in again: its return signs them out, for that account only */
+  readonly sign_out_everywhere?: string;
 }
 
 /** A scanned offer waiting on a sign-in; `at`: when the code was scanned, which bounds how long it is tried. */
@@ -51,6 +61,12 @@ export interface PendingPairing {
 
 interface Records {
   key: AccountKey;
+  /**
+   * The key this device opens its lists' epoch keys with (account/listKeys.ts): made on first need and kept as the
+   * CryptoKey it is, which cannot be exported. Beside `key`, so that it is forgotten with it: a device with a new
+   * account key is a new member, which names a key of its own.
+   */
+  enc_key: MemberEncryptionKey;
   session: AccountSession;
   /** by `state`, so a return consumes only its own sign-in and two tabs can each have one */
   pending: Readonly<Record<string, PendingSignIn>>;

@@ -205,6 +205,39 @@
   gap: var(--space-2);
 }
 
+.account-manage-h {
+  margin: 0 0 var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.account-manage-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.account-manage-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--pointer-target);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.account-manage-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-manage-dim {
+  color: var(--text-dim);
+}
+
 .account-add-pc-button.btn {
   width: 100%;
   min-height: calc(var(--pointer-target) + var(--space-3));

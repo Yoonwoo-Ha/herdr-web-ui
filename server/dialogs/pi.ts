@@ -57,7 +57,7 @@ const PI_MODEL_DEFAULT_RE = /\s*\u00b7\s*default$/;
  */
 const PI_WRAPPED_REST_RE = /^ (?![\u2192\u276f\u279c])\S/;
 
-function piDialogRows(lines: string[], hintIndex: number): { rows: { line: string; cursor: boolean }[]; title: string[] } {
+function piDialogRows(lines: string[], hintIndex: number): { rows: { line: string; cursor: boolean }[]; title: string[]; top: number } {
   const rows: { line: string; cursor: boolean }[] = [];
   let index = hintIndex - 1;
   while (index >= 0 && !cleanLine(lines[index]!)) index -= 1;
@@ -74,6 +74,7 @@ function piDialogRows(lines: string[], hintIndex: number): { rows: { line: strin
   // first line, for one): they stand as rows without the cursor, which a first read refuses; a
   // `moved` read keeps them as options, and the answer route then finds the card's id changed
   rows.unshift(...rest.map((line) => ({ line, cursor: false })));
+  const top = index + 1;
   const title: string[] = [];
   for (; index >= 0 && title.length < 8; index -= 1) {
     if (isDivider(lines[index]!)) break;
@@ -84,7 +85,38 @@ function piDialogRows(lines: string[], hintIndex: number): { rows: { line: strin
     }
     title.unshift(line);
   }
-  return { rows, title };
+  return { rows, title, top };
+}
+
+const PERMISSION_HEADER = "Permission required: bash";
+const PERMISSION_COMMAND_RE = /^\s*Command: \$ /;
+
+/**
+ * The shell command of OmO's permission dialog (its permission system's prompt), and of the one Ovis's pi extension
+ * draws like it (server/approvals/pi.ts), for the approval hub to bind a held request to: `Permission required: bash`,
+ * a blank line, OmO's `Description:` line, `Command: $ ` and the command over as many lines as it takes (the pane
+ * wraps a long one), then OmO's blank line, `Patterns:` and its list, over the blank line above the rows. Undefined for
+ * any other dialog; null for one whose top is above the pane: its rows are a permission's, but its command is not on
+ * the screen whole.
+ */
+function permissionCommand(lines: string[], top: number, labels: string[]): string | null | undefined {
+  let end = top;
+  while (end > 0 && !cleanLine(lines[end - 1]!)) end -= 1;
+  let start = end;
+  while (start > 0 && !isDivider(cleanLine(lines[start - 1]!))) start -= 1;
+  const block = lines.slice(start, end);
+  const header = findLastIndex(block, (line) => cleanLine(line) === PERMISSION_HEADER);
+  if (header < 0) return start === 0 && labels[0] === "Allow once" && labels.includes("Deny") ? null : undefined;
+  const first = block.findIndex((line, index) => index > header && PERMISSION_COMMAND_RE.test(line));
+  if (first < 0) return undefined;
+  // OmO's patterns, in OmO's dialog only (its options go past Allow once and Deny; pi's extension draws none): the last
+  // `Patterns:` line after a blank one with only list items under it. In pi's, such lines are the command's own
+  let last = block.length;
+  const patterns = labels.includes("Allow always") ? findLastIndex(block, (line) => cleanLine(line) === "Patterns:") : -1;
+  if (patterns > first + 1 && !cleanLine(block[patterns - 1]!) && block.slice(patterns + 1).every((line) => /^\s*- \S/.test(line))) last = patterns - 1;
+  const command = [block[first]!.replace(PERMISSION_COMMAND_RE, ""), ...block.slice(first + 1, last)];
+  while (command.length > 1 && !cleanLine(command.at(-1)!)) command.pop();
+  return command.join("\n");
 }
 
 function parsePiModel(screen: string): ParsedPrompt | null {
@@ -180,13 +212,17 @@ export function parsePiDialog(screen: string, moved = false): ParsedPrompt | nul
   if (moved ? cursor < 0 : cursor !== 0) return null;
   const labels = rows.map((row) => row[2]!.trim());
   const confirming = labels.length === 2 && /^yes\b/i.test(labels[0]!) && /^no\b/i.test(labels[1]!);
+  const approvalCommand = confirming ? undefined : permissionCommand(lines, block.top, labels);
+  // a permission dialog asks what its header says, about the command it shows, which is the card's body and in its id:
+  // a card read for one command is never another's. The lines over its rows are only the end of its command or patterns
+  const permission = typeof approvalCommand === "string";
   const text = (words: string[]) => confirming
     ? { title: ownLine(words), question: restOf(words) ?? ownLine(words) }
-    : { title: "", question: words.join(" ") };
+    : permission ? { title: "", question: PERMISSION_HEADER, body: approvalCommand } : { title: "", question: words.join(" ") };
   return finishPrompt("pi", {
     kind: confirming ? "approval" : "question",
-    ...text(block.title),
     body: null,
+    ...text(block.title),
     options: labels.map((label) => ({ label, description: null })),
     multi_select: false,
     custom_option_index: null,
@@ -197,10 +233,14 @@ export function parsePiDialog(screen: string, moved = false): ParsedPrompt | nul
     // "No" is pressed, not cancelled: pi's own Yes/No answers the question false, which is
     // what a confirmation means, where Escape would leave it unanswered
     rejectWithEscapeIndex: null,
+    ...(approvalCommand === undefined ? {} : { approvalCommand }),
   }, text(uncounted(block.title)));
 }
 
 const dialogRead = onePerPass((screen) => parsePiDialog(screen));
+
+/** herdr names an OmO pane pi while it waits on its user; herdr-core names it omo all along. */
+const DIALOG_AGENTS = ["pi", "omo"];
 
 export const readers: readonly DialogReader[] = [
   {
@@ -223,7 +263,7 @@ export const readers: readonly DialogReader[] = [
     },
   },
   {
-    id: "pi-question", agents: ["pi"], priority: 90,
+    id: "pi-question", agents: DIALOG_AGENTS, priority: 90,
     reread: "none", list: "none",
     parse: (screen, ctx) => {
       const parsed = dialogRead(screen, ctx);
@@ -231,7 +271,7 @@ export const readers: readonly DialogReader[] = [
     },
   },
   {
-    id: "pi-confirm", agents: ["pi"], priority: 90,
+    id: "pi-confirm", agents: DIALOG_AGENTS, priority: 90,
     reread: "none", list: "none",
     parse: (screen, ctx) => {
       const parsed = dialogRead(screen, ctx);
@@ -239,7 +279,7 @@ export const readers: readonly DialogReader[] = [
     },
   },
   {
-    id: "pi-input", agents: ["pi"], priority: 90,
+    id: "pi-input", agents: DIALOG_AGENTS, priority: 90,
     reread: "none", list: "none",
     parse: (screen, ctx) => {
       const parsed = dialogRead(screen, ctx);

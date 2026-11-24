@@ -5,7 +5,13 @@
  * - `link` (also `add` and `login`, scripts/plugin-runtime.ts COMMAND_ALIASES): sign in to the account with a device code (as a PC's own page does,
  *   src/lib/account/deviceSignIn.ts): the Ovis link page's where the service has it, else, or with
  *   `--github` / `--google`, the provider's own device flow. Then list this PC in the account (src/lib/account/addThisPc.ts),
- *   then show one QR code: a device signed in to that account that scans it puts this PC in the account, with nothing
+ *   once the person here confirmed the account that signed in (typed yes at its name, or named it with `--account`, the
+ *   only way without a terminal: whoever signs in with the code picks the account), and wait until a device signed in to
+ *   it presses Add on this PC's card: that is the account's one-press admission, which this PC takes with its own key's
+ *   proof (`addByPress`). At a terminal it then lets in the first device that opens this PC, which nobody else may,
+ *   once the six digits that device shows are typed (`watchFirstJoins`).
+ * - `link --qr` (or `--print`), and `link` on a PC that takes no such admission: the same sign-in, then
+ *   one QR code: a device signed in to that account that scans it puts this PC in the account, with nothing
  *   to type and nothing to approve here (docs/account.md, "Who may admit a device": a code admits whoever holds it).
  *   So the code is shown only on a terminal (or with `--print`), on a screen of its own that goes when it ends, for
  *   30 minutes at most (under the fleet preview, server/preview.ts: only on a terminal, `--print` too, and only once
@@ -21,21 +27,22 @@
  * It talks only to a server on this machine (a loopback address): approving a device is an act of
  * the PC itself (docs/account.md, "Who may admit a device"), and the sign-in lives in this process.
  */
-import { dlopen, FFIType } from "bun:ffi";
 import { hostname } from "node:os";
 
 import qrcode from "qrcode-generator";
 
 import { isLoopbackHost } from "../server/access.ts";
 import { fleetPreview } from "../server/preview.ts";
-import { accountOsOfPlatform } from "../shared/account-asker.ts";
+import { accountOsOfPlatform, type AccountOs } from "../shared/account-asker.ts";
 import { decodeOffer } from "../shared/relay-offer.ts";
 import { DEFAULT_ACCOUNT_SERVICE } from "../shared/web-policy.ts";
 import { importPublicKey } from "../shared/relay-e2ee.ts";
 import { startDeviceSignIn, startLinkPageSignIn } from "../src/lib/account/deviceSignIn.ts";
 import { NEW_PC_MS } from "../src/lib/account/myPcs.ts";
-import { AccountService, AccountServiceError, DEVICE_PROVIDERS, offeredProviders, type DeviceProvider } from "../src/lib/account/service.ts";
+import { ownPcProof } from "../src/lib/account/pcProof.ts";
+import { AccountService, AccountServiceError, DEVICE_PROVIDERS, offeredProviders, type DeviceProvider, type DirectoryPc } from "../src/lib/account/service.ts";
 import { memoryAccountStore, memoryLock, type AccountProvider } from "../src/lib/account/store.ts";
+import { shortAccount } from "./plugin-cli.ts";
 
 type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -54,6 +61,7 @@ export interface LinkOptions {
    * its lines come: nobody compared the digits a line of `yes | ovis add` arrives under. Unset counts as not one.
    */
   readonly terminal?: boolean;
+  /** discards what the terminal holds unread (`AnswerInput.discard`); the command passes `discardTyped` (scripts/libc.ts) */
   readonly discard?: () => boolean;
   /**
    * `out` is a terminal: the only place the QR code that adds this PC is drawn without `--print`, since whoever reads
@@ -61,6 +69,8 @@ export interface LinkOptions {
    */
   readonly isTty?: boolean;
   readonly size?: () => { readonly rows: number; readonly columns: number } | null;
+  /** opens the sign-in page in this desktop's browser and says whether it could; unset where there is none (`--no-browser`, SSH) */
+  readonly openBrowser?: (url: string) => boolean;
   readonly signal: AbortSignal;
   readonly fetch?: Fetch;
   readonly serviceFetch?: Fetch;
@@ -120,6 +130,18 @@ const CLEAR_ROUNDS = 4;
  */
 const CLEAR_READS = 3;
 const CLEAR_RETRY_MS = 500;
+/**
+ * How long `add` waits for Add: a device of the account offers it for ten minutes from when the PC was listed
+ * (src/components/UnconfirmedPcNotices.tsx ADD_WINDOW_MS), and the account's admission lasts as long.
+ */
+const PRESS_MS = 10 * 60_000;
+/**
+ * How often `add` asks this PC whether the account admitted it. Each ask has this PC prove itself to the account
+ * service, which takes only so many such proofs a minute from one PC, and the PC's own calls need some of them.
+ */
+const PRESS_POLL_MS = 6_000;
+/** How long `add` waits after the account service did not answer this PC, before it asks again. */
+const PRESS_BACKOFF_MS = 15_000;
 /** The terminal's other screen: what is drawn there is gone, scrollback and all, once it is left. */
 const SCREEN_ON = "\x1b[?1049h";
 const SCREEN_OFF = "\x1b[?1049l";
@@ -142,12 +164,12 @@ function qr(text: string): string {
   return code.createASCII(1, 1);
 }
 
-class LocalError extends Error {
+export class LocalError extends Error {
   /** `reason`: what is shown to a person, without the route `message` starts with (localApi) */
   constructor(message: string, readonly status = 0, readonly code = "", readonly reason = message) { super(message); }
 }
 
-class AwayError extends Error {}
+export class AwayError extends Error {}
 
 /**
  * What `add` reads of a code it asked for for the account that signed in (`x-ovis-expect-account`; docs/account.md,
@@ -186,7 +208,7 @@ const mineOf = (code: string | undefined, id: string | undefined): Mine | null =
 /** What a machine profile answers a code with: it takes devices through its account (`machine_profile`), not by a code. */
 const onMachine = (error: unknown): boolean => error instanceof LocalError && error.code === "machine_profile";
 
-function localApi(options: LinkOptions) {
+export function localApi(options: LinkOptions) {
   const fetchImpl = options.fetch ?? fetch;
   const control = { "content-type": "application/json", "x-herdr-machine": "1", "x-herdr-update": "1", origin: options.origin };
   return async <T>(method: "GET" | "POST" | "DELETE", path: string, extra: { body?: unknown; headers?: Record<string, string>; signal?: AbortSignal } = {}): Promise<T> => {
@@ -216,7 +238,7 @@ function localApi(options: LinkOptions) {
   };
 }
 
-type Api = ReturnType<typeof localApi>;
+export type Api = ReturnType<typeof localApi>;
 
 const ONLINE_MS = 30_000;
 
@@ -237,7 +259,7 @@ async function relayOnline(options: LinkOptions, api: Api): Promise<void> {
 }
 
 /** The relay turned on (not yet online): an Ovis relay that asks for a pass comes online only once this PC names its account. */
-async function relayOn(options: LinkOptions, api: Api): Promise<{ phase: string; blocked: string | null }> {
+export async function relayOn(options: LinkOptions, api: Api): Promise<{ phase: string; blocked: string | null }> {
   let status = await api<{ phase: string; blocked: string | null }>("GET", "/api/relay");
   if (status.blocked) throw new LocalError(`The Ovis relay cannot run here (${status.blocked}).`);
   if (status.phase === "off") {
@@ -359,31 +381,6 @@ export interface AnswerInput {
   readonly now?: () => number;
 }
 
-let flush: (() => boolean) | null = null;
-
-/**
- * Discards what the terminal on stdin holds unread, with the system's own tcflush: a line typed and not sent sits in
- * the terminal, not in this process, so nothing here can see or drop it otherwise. False where that cannot be done
- * (Windows, a system whose C library is not found, an input that is no terminal).
- */
-export function discardTyped(): boolean {
-  try {
-    if (flush === null) {
-      // TCIFLUSH, the input queue: 0 on Linux, 1 on macOS
-      const [queue, libraries] = process.platform === "linux" ? [0, ["libc.so.6", `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1`]]
-        : process.platform === "darwin" ? [1, ["libSystem.B.dylib"]] : [0, []];
-      flush = () => false;
-      for (const library of libraries) {
-        try {
-          const { symbols } = dlopen(library, { tcflush: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 } });
-          flush = () => symbols.tcflush(0, queue) === 0;
-          break;
-        } catch {}
-      }
-    }
-    return flush();
-  } catch { return false; }
-}
 
 /**
  * The one who asks about requests at a terminal, one at a time, and tells which line answers which: `ovis add` and
@@ -553,6 +550,9 @@ function asking(input: AnswerInput) {
   };
 }
 
+/** What `ovis approve` says when its input is no terminal: it answers nothing, and declines nothing either. */
+const NOT_A_TERMINAL = "This is not run in a terminal, so no request can be answered here. Nothing was declined: the requests keep waiting. Run this in a terminal to answer them (over ssh, run ssh -t).\n";
+
 export interface ApproveOptions extends AnswerInput {
   readonly decide: (id: string, decision: "approve" | "decline") => Promise<"taken" | "gone" | "away">;
   /**
@@ -574,7 +574,7 @@ export async function approveWaiting(pairings: readonly WaitingDevice[], options
   // own phone among them, for a run at a terminal or the app. (A decline ends a request for good; `ovis add --approve`,
   // whose run opened the window those requests came through, declines them as they show.)
   if (options.terminal !== true) {
-    out("This is not run in a terminal, so no request can be answered here. Nothing was declined: the requests keep waiting. Run this in a terminal to answer them (over ssh, run ssh -t).\n");
+    out(NOT_A_TERMINAL);
     return 1;
   }
   const desk = asking(options);
@@ -623,6 +623,92 @@ export async function approveWaiting(pairings: readonly WaitingDevice[], options
   return 0;
 }
 
+/** What a locked or strict PC says to its terminal (server/lock-boundary.ts): nothing is approved here then. */
+export function lockRefusal(code: "locked" | "strict"): string {
+  return code === "locked"
+    ? "This PC is locked, so no device can be approved from its terminal. Unlock it on its own screen, then run this again.\n"
+    : "This PC cannot read its safety log, so no device can be approved from its terminal. Open it on its own screen, or run ovis recover there, then run this again.\n";
+}
+
+/**
+ * An account join waiting on this PC's own window (`GET /api/relay/joins`). A members join comes without its digits.
+ * A first join (`digits`: asked while this PC had no member to approve it, as a PC added in one press has) comes with
+ * them, for the own window's card to show; this terminal never shows them, and asks for them typed all the same.
+ */
+/** `list`: the join is let in by the account's signed list, so an approval is only received here: the device is in once its entry is in the list. */
+export interface OwnJoin { readonly id: string; readonly label: string; readonly asked_at?: string; readonly digits?: string; readonly list?: boolean; readonly list_behind?: boolean }
+
+/** What a terminal says once this PC took the approval of `label`: it is let in at once, or, by the account's list, once its entry is there. */
+const approvedWords = (label: string, list: boolean, behind = false): string => behind
+  ? `${label} was not let in: Ovis on this PC is older than what a device wrote into your account's list, and lets nobody new in until it is updated. Update Ovis on this PC (Settings → Updates), then have ${label} ask again; or allow it on another device of your account.\n`
+  : list
+  ? `The approval of ${label} was received. It opens this PC once it is in your account's list, which takes a moment; if it does not, have it ask again.\n`
+  : `${label} is let in; it opens this PC in a moment.\n`;
+
+/** What `POST /api/relay/join` made of the six digits typed: `away` when its answer did not come. */
+export type JoinOutcome = "approved" | "wrong_digits" | "gone" | "locked" | "strict" | "away";
+
+export interface JoinOptions extends AnswerInput {
+  readonly approve: (id: string, digits: string) => Promise<JoinOutcome>;
+  /** this PC's account, which a first join's admission came from (GET /api/account/status); null or unset when not known */
+  readonly account?: string | null;
+  /** how this command is typed here, for a run at a terminal */
+  readonly command?: string;
+}
+
+const clockTime = (at: number): string => new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+/** How a first join is named at this terminal: its device, the account its admission came from, and when it asked. */
+function firstJoinLead(join: OwnJoin, account: string | null | undefined): string {
+  const asked = join.asked_at === undefined ? Number.NaN : Date.parse(join.asked_at);
+  const about = [...typeof account === "string" ? [`from Ovis account ${shortAccount(account)}`] : [], ...Number.isFinite(asked) ? [`asked at ${clockTime(asked)}`] : []];
+  return `${plainLabel(join.label)} asks to open this PC${about.length === 0 ? "" : ` (${about.join(", ")})`}.`;
+}
+
+/**
+ * `ovis approve` for the account joins this PC's own window lists: the PC's terminal is the PC itself, so it asks as
+ * that window does (src/components/OwnJoins.tsx OwnJoinCard). A join a member could also approve (#28) and a first
+ * join, which nobody but this PC may let in (docs/account.md, "Who may admit a device"), are both let in only by all six
+ * digits the new device shows, typed here: none are shown, three are not enough. The PC compares them
+ * (pairing-approvals.ts decideTyped), and one wrong entry ends that join; the device may ask again. Enter by itself
+ * leaves it waiting until its own deadline. A locked or strict PC refuses, and nothing more is asked. What is not a
+ * terminal answers nothing, and names each first join with the way to let it in. The exit code.
+ */
+export async function approveJoins(joins: readonly OwnJoin[], options: JoinOptions): Promise<number> {
+  const { out } = options;
+  const command = options.command ?? "ovis approve";
+  if (options.terminal !== true) {
+    for (const join of joins) {
+      if (join.digits !== undefined) out(`${firstJoinLead(join, options.account)} Run ${command} in a terminal on this PC and type the six digits ${plainLabel(join.label)} shows.\n`);
+    }
+    out(NOT_A_TERMINAL);
+    return 1;
+  }
+  for (const join of joins) {
+    const label = plainLabel(join.label);
+    const first = join.digits !== undefined;
+    const prompt = first ? `${firstJoinLead(join, options.account)} Type the six digits ${label} shows (one wrong entry ends this request), or press Enter to skip: `
+      : `${label} asks to join your account. Type all six digits its screen shows to let it in (one wrong entry ends this request), or press Enter by itself to leave it waiting: `;
+    for (;;) {
+      const line = await askLine(options, prompt);
+      if (line === null) { out("The terminal's input ended: nothing more is approved here.\n"); return 1; }
+      const typed = line.normalize("NFKC").replace(/\s/g, "");
+      if (typed === "") { out(`${label} is left waiting until its time runs out.\n`); break; }
+      if (!SIX_DIGITS.test(typed)) { out(`That line answered nothing: only all six digits ${label} shows let it in. Answer again.\n`); continue; }
+      const outcome = await options.approve(join.id, typed);
+      if (outcome === "locked" || outcome === "strict") { out(lockRefusal(outcome)); return 1; }
+      if (outcome === "away") { out("Your answer may not have reached the Ovis on this PC. Run this again once it answers.\n"); return 1; }
+      // a join into the account's list is let in by its entry, first join or not: the approval was received, no more
+      out(outcome === "approved" ? first || join.list === true ? approvedWords(label, join.list === true, join.list_behind === true) : `Approved: ${label} joins your account once it confirms.\n`
+        : outcome === "wrong_digits" ? first ? `That is not the number ${label} shows, so it was not let in. To try again, have ${label} ask again, then run ${command} again.\n`
+          : `That is not the number ${label} shows. It was not let in; it can ask again.\n`
+        : `${label} is no longer waiting.\n`);
+      break;
+    }
+  }
+  return 0;
+}
+
 const groups = (id: string): string => id.match(/.{1,4}/g)?.join(" ") ?? id;
 
 export function linkSettings(env: Readonly<Record<string, string | undefined>>): Pick<LinkOptions, "preview" | "cliName" | "app"> {
@@ -631,7 +717,7 @@ export function linkSettings(env: Readonly<Record<string, string | undefined>>):
   return { preview: fleetPreview(env), ...cliName ? { cliName } : {}, ...app ? { app } : {} };
 }
 
-function cli(options: LinkOptions): string {
+export function cli(options: LinkOptions): string {
   return (options.preview === true && options.cliName) || "ovis";
 }
 
@@ -641,7 +727,7 @@ function cli(options: LinkOptions): string {
  * typed ahead where the input cannot be discarded, or a key pressed twice) answers nothing, and the prompt is shown
  * again. For a run that reads nothing else meanwhile: it reads one line at a time, and leaves no read open.
  */
-async function askLine(options: LinkOptions, prompt: string): Promise<string | null> {
+export async function askLine(options: AnswerInput, prompt: string): Promise<string | null> {
   const now = options.now ?? Date.now;
   // Where the terminal's input cannot be emptied (Windows, no C library found), a line begun before the prompt comes
   // with the first Enter pressed at it, however late: that first line answers nothing, as `asking` does for a request
@@ -764,7 +850,8 @@ async function endCode(api: Api, mine: Mine): Promise<"both" | "gone" | "typed" 
   }
 }
 
-interface Listing { readonly serverId: string; readonly entry: { label: string; public_key: string; relay: string } }
+/** `os`: the system this PC runs, which the card of a listing that asks to join shows the account's devices */
+export interface Listing { readonly serverId: string; readonly entry: { label: string; public_key: string; relay: string; os?: AccountOs } }
 
 /**
  * Lists this PC in the account with its relay key, which opens the approve-here window (addThisPc.ts
@@ -772,30 +859,36 @@ interface Listing { readonly serverId: string; readonly entry: { label: string; 
  * over a PUT, so only a DELETE then a PUT shows the card again. The entry is `unlisted.listing` from
  * before that DELETE (whose answer can be lost after the service applied it) until the PUT lands: the
  * caller lists it again until it is back, so a renewal never leaves the PC unlisted.
+ * A device code's sign-in may end only a pending listing it wrote itself (account#63), and a refresh takes only a
+ * confirmed PC: a listing an earlier run wrote is kept as it is, by a PUT, and `unlisted.kept` says so from then on.
  */
-async function listThisPc(api: Api, service: AccountService, now: () => number, unlisted: { listing: Listing | null }): Promise<Listing> {
-  const listing = await openedListing(api);
+async function listThisPc(api: Api, service: AccountService, now: () => number, unlisted: { listing: Listing | null; kept: boolean }, opened?: Listing): Promise<Listing> {
+  const listing = opened ?? await openedListing(api);
   const listed = (await service.listPcs()).find((pc) => pc.server_id === listing.serverId);
-  if (listed === undefined || now() - Date.parse(listed.added_at) < NEW_PC_MS - RELIST_MS) {
-    await service.putPc(listing.serverId, listing.entry);
+  if (listed === undefined || unlisted.kept || now() - Date.parse(listed.added_at) < NEW_PC_MS - RELIST_MS) {
+    await service.putPc(listing.serverId, { ...listing.entry, ...await ownPcProof(listing.serverId, (path) => api("POST", path)) });
     unlisted.listing = null;
     await nameRelayAccount(api, service);
     return listing;
   }
   unlisted.listing = listing;
-  await service.deletePc(listing.serverId);
-  if (await putListing(service, listing)) unlisted.listing = null;
+  try { await service.deletePc(listing.serverId); } catch (error) {
+    if (!(error instanceof AccountServiceError && error.status === 403 && error.code === "own_sign_in_required")) throw error;
+    unlisted.kept = true;
+  }
+  if (await putListing(api, service, listing)) unlisted.listing = null;
   await nameRelayAccount(api, service);
   return listing;
 }
 
-async function openedListing(api: Api): Promise<Listing> {
+export async function openedListing(api: Api): Promise<Listing> {
   const { url } = await api<{ url: string }>("POST", "/api/relay/link", { headers: { "x-ovis-local-only": "1" } });
   const offer = decodeOffer(url);
   if (offer === null) throw new LocalError("This PC's pairing link did not parse.");
   const label = (offer.name ?? offer.server_id.slice(0, 8)).slice(0, 48);
   const publicKey = Array.from(importPublicKey(offer.server_public_key), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return { serverId: offer.server_id, entry: { label, public_key: publicKey, relay: offer.relay } };
+  const os = accountOsOfPlatform(process.platform);
+  return { serverId: offer.server_id, entry: { label, public_key: publicKey, relay: offer.relay, ...(os === null ? {} : { os }) } };
 }
 
 /**
@@ -807,16 +900,22 @@ async function nameRelayAccount(api: Api, service: AccountService): Promise<void
   if (session) await api("POST", "/api/account/relay-account", { body: { account: session.account } }).catch(() => undefined);
 }
 
-async function putListing(service: AccountService, listing: Listing): Promise<boolean> {
-  try { await service.putPc(listing.serverId, listing.entry); return true; } catch { return false; }
+/** Lists this PC with its own proof (ownPcProof), which alone lists it again after `ovis logout` left the account. */
+async function putListing(api: Api, service: AccountService, listing: Listing): Promise<boolean> {
+  try { await service.putPc(listing.serverId, { ...listing.entry, ...await ownPcProof(listing.serverId, (path) => api("POST", path)) }); return true; } catch { return false; }
 }
 
-const shortId = (account: string): string => plainLabel(account).slice(0, 12);
 
 interface Device {
   readonly id: string; readonly label: string; readonly created_at: string; readonly via_relay?: true; readonly account?: string;
   /** on a member another member brought in: that member's id. A member without it linked itself */
   readonly added_by?: string;
+  /** let in by the list of the account this PC is in, never by a code: that account vouches for it */
+  readonly through_account?: true;
+  /** on a row `through_account`: the day it last signed in here (null before its first sign-in) */
+  readonly last_seen_at?: string | null;
+  /** to this PC's own window: while one of its sessions is up, and since when */
+  readonly connection?: { readonly since: string };
 }
 
 /**
@@ -891,7 +990,9 @@ async function addByQr(options: LinkOptions, api: Api, joining: Joining): Promis
   const { out, signal } = options;
   const now = options.now ?? Date.now;
   const wait = options.wait ?? waitFor;
-  const devices = async (within?: AbortSignal): Promise<Device[]> => (await api<{ devices: Device[] }>("GET", "/api/devices", within === undefined ? {} : { signal: within })).devices;
+  // the devices a code may have let in: one the account's own list let in came by no code, and that account vouches for it
+  const devices = async (within?: AbortSignal): Promise<Device[]> => (await api<{ devices: Device[] }>("GET", "/api/devices", within === undefined ? {} : { signal: within })).devices
+    .filter((device) => !device.through_account);
   const startedAt = now();
   const stopAt = startedAt + WAITING_MS;
   // the window the listing opened is for approving here, which this way does not do: nothing is taken through it.
@@ -931,11 +1032,12 @@ async function addByQr(options: LinkOptions, api: Api, joining: Joining): Promis
     const left = remaining(Math.max(0, card.until - now()));
     const code = qr(card.url).replace(/\n+$/, "").split("\n");
     const width = Math.max(...code.map((row) => row.length));
-    const head = ["Scan this QR code with a device that is signed in to this Ovis account. It adds this PC to the account; there is no number to type.", ...!tied && !joining.plain ? [OLDER_PC] : [], ""];
+    const head = ["2/2  Let this PC in", "", "Scan this QR code with a device that is signed in to this Ovis account. It adds this PC to the account; there is no number to type.", ...!tied && !joining.plain ? [OLDER_PC] : [], ""];
     const tail = [
       ...card.typed !== null
         ? [`Code to type: ${card.typed}   (works once, expires in ${left})`, `Or, on that device, open ${appHost(options, card.url)}, choose Pair with a code and type it.`]
         : [`No code to type this time (${card.refused}). The QR code expires in ${left}.`],
+      `No device in the account yet? Open ${appHost(options, card.url)} on your phone, sign in, then scan.`,
       `That device then shows an ID: pair only if it matches this PC's ID, every group: ${groups(card.serverId)}`,
       "Anyone who can read this screen can pair with this PC while the code is shown.",
       `${minted < MAX_CODES ? "A new one comes when this one runs out. " : ""}Press Ctrl+C to stop.`,
@@ -977,7 +1079,7 @@ async function addByQr(options: LinkOptions, api: Api, joining: Joining): Promis
   const refusal = (error: LocalError): LocalError => error.code === "pairing_gone"
     ? new LocalError(`Another pairing code was made on this PC (in Settings, by ${cli(options)} pair, or by another run) after this run's: it is left as it is, and no QR code is shown. Run ${cli(options)} add again.`, error.status, error.code)
     : error.code !== "invalid_account" ? error
-    : new LocalError(`The Ovis on this PC did not take the id of the account you signed in to (${shortId(joining.signedIn)}) for its code (${error.message})`, error.status, error.code);
+    : new LocalError(`The Ovis on this PC did not take the id of the account you signed in to (${shortAccount(joining.signedIn)}) for its code (${error.message})`, error.status, error.code);
   const mint = async (): Promise<void> => {
     minted++;
     pinned = null;
@@ -1016,7 +1118,7 @@ async function addByQr(options: LinkOptions, api: Api, joining: Joining): Promis
     tied = offer.expect_account !== undefined;
     for (const answer of [offer, typed]) {
       if (answer?.expect_account !== undefined && answer.expect_account !== joining.signedIn) {
-        throw new LocalError(`The Ovis on this PC made its code for another Ovis account (${shortId(answer.expect_account)}) than the one you signed in to (${shortId(joining.signedIn)}). Run ${cli(options)} add again.`);
+        throw new LocalError(`The Ovis on this PC made its code for another Ovis account (${shortAccount(answer.expect_account)}) than the one you signed in to (${shortAccount(joining.signedIn)}). Run ${cli(options)} add again.`);
       }
     }
     pinned = offer.pairing?.id ?? null;
@@ -1210,7 +1312,7 @@ async function addByQr(options: LinkOptions, api: Api, joining: Joining): Promis
           // device paired before to do it. Whoever came since the first code goes, with no question: nobody here
           // vouches for that account, and this PC is out of it again once its members here are gone
           const { outcomes, open } = await clear(list);
-          const said = `This PC joined another Ovis account (${shortId(account)})${label === null ? "" : `, added by ${label}`}, not the one you signed in to (${shortId(joining.signedIn)}).${removals(outcomes, false)}`;
+          const said = `This PC joined another Ovis account (${shortAccount(account)})${label === null ? "" : `, added by ${label}`}, not the one you signed in to (${shortAccount(joining.signedIn)}).${removals(outcomes, false)}`;
           // where that leaves this PC. When its devices or its account cannot be read, more of that account's devices
           // may be paired than were removed: that is said, with the way to end them, rather than left to the next run
           let unread = open !== null && open !== "more" ? open.unread : null;
@@ -1340,7 +1442,7 @@ async function addByQr(options: LinkOptions, api: Api, joining: Joining): Promis
           }
         }
         if (added && joined.enrolling !== true && strays.length === 0) {
-          say(`This PC is in your account (${shortId(joining.signedIn)})${label === null ? "" : `, added by ${label}`}: every device of your account can use it.\n`);
+          say(`This PC is in your account (${shortAccount(joining.signedIn)})${label === null ? "" : `, added by ${label}`}: every device of your account can use it.\n${loginClosing(options)}`);
           return unremoved ? 1 : 0;
         }
       } catch (error) {
@@ -1415,7 +1517,466 @@ async function addByQr(options: LinkOptions, api: Api, joining: Joining): Promis
   }
 }
 
-async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvider | undefined, mode: { readonly approve: boolean; readonly print: boolean }): Promise<number> {
+/**
+ * Whether this PC takes the account's admission from this terminal (POST /api/account/one-press): asked with no
+ * account, which it refuses as `invalid_account` before it asks the account service anything. `not-own`: it does not
+ * count this terminal as the PC itself (`owner_only`: a forwarded port, say). `off`: anything else (its Step 2 off, an
+ * Ovis from before the route).
+ */
+export async function takesPress(api: Api): Promise<"press" | "off" | "not-own"> {
+  try {
+    await api("POST", "/api/account/one-press", { body: {} });
+    return "off";
+  } catch (error) {
+    if (!(error instanceof LocalError)) throw error;
+    return error.status === 400 && error.code === "invalid_account" ? "press" : error.code === "owner_only" ? "not-own" : "off";
+  }
+}
+
+/**
+ * What became of this PC's listing as a run without its add ends: taken off by this run; `gone`, a device of the
+ * account removed it (No); `kept`, still listed, as this sign-in may remove only a listing it made and nobody admitted
+ * (a device pressed Add just now, or an earlier run listed it); `failed`, not known.
+ */
+export type Unlisted = "removed" | "gone" | "kept" | "failed";
+
+export interface Pressing {
+  readonly signedIn: string;
+  readonly name: string;
+  /** when an earlier run listed this PC, which the account's devices offer Add for from then on; null for this run's listing */
+  readonly listedAt: number | null;
+  /** the account listed this PC as its own before this run (a device pressed Add before): no device offers Add for it any more */
+  readonly confirmed: boolean;
+  readonly unlist: () => Promise<Unlisted>;
+  /** names the account that signed in as the one this PC's relay pass is asked under, which asks for the pass again */
+  readonly named: () => Promise<void>;
+  /** ends the sign-in, which nothing needs once this PC is added, after a listing a renewal took away went back */
+  readonly signOut: () => Promise<void>;
+  /** how the run names itself and what led to it: `ovis add`'s sign-in when unset (`ovis join` has an invite instead) */
+  readonly words?: PressWords;
+  /** told how the run ended, before it returns (`ovis join --json`) */
+  readonly report?: (end: PressEnd) => void;
+  /** when the account's devices stop offering Add for this PC, by the account service's own word (`ovis join`'s card_until) */
+  readonly until?: number;
+  /** with `confirmed`: how many asks find no admission before the run gives up (1 when unset) */
+  readonly noneTries?: number;
+  /** at the end of the wait, asks for the admission once more before the listing is taken off: an Add pressed in its last seconds */
+  readonly askBeforeUnlist?: true;
+  /**
+   * Stopped (Ctrl+C), the listing is taken off first, within the ten seconds a stopped run has (plugin.ts stopOnSignals):
+   * this PC's account is read with a short bound first, so a PC that just took its admission is not taken off
+   */
+  readonly stopFast?: true;
+}
+
+export interface PressWords {
+  /** the command that is run again to finish, as typed */
+  readonly command: string;
+  /** what to do to start over once nothing is left of this run */
+  readonly anew: string;
+  /** the account this PC was to join, after "the one" and "the account": "you signed in to" */
+  readonly chosen: string;
+  /** the lines said as the wait for Add begins, with the time it lasts */
+  readonly waiting: (name: string, lasts: string) => string;
+  /** the last lines once this PC is added */
+  readonly closing: string;
+  /** said when no Add is offered for this PC and no admission waits for it */
+  readonly noneWaiting: string;
+}
+
+/**
+ * How a press ended: added (relay online or not); in another account; or not added, with whether the account still
+ * lists this PC (null: not known). `late`: the listing was past its ten minutes before the wait began; `none_waiting`: no
+ * Add is offered for it and none waited.
+ */
+export type PressEnd =
+  | { readonly kind: "added"; readonly online: boolean }
+  | { readonly kind: "elsewhere"; readonly account: string }
+  | { readonly kind: "not_added"; readonly why: "late" | "none_waiting" | "timeout" | "stopped" | "failed"; readonly listed: boolean | null };
+
+const listedAfter = (off: Unlisted): boolean | null => off === "kept" ? true : off === "failed" ? null : false;
+
+/** How long `add` waits, once this PC is added, for the first device that opens it to ask for its six digits. */
+const FIRST_JOIN_MS = 10 * 60_000;
+
+/**
+ * The end of `add` at a terminal, once this PC is in the account. A PC added in one press has no member yet, so the
+ * first device that opens it sends a first join, which nobody but this PC may let in (docs/account.md, "Who may admit
+ * a device"), and a PC with no screen has no window to do that in: its terminal stands in, as `ovis approve` does.
+ * For up to ten minutes it reads this PC's waiting joins (GET /api/relay/joins), asks about each first join by its
+ * device, the account and when it asked, and lets it in once the six digits that device shows are typed here (POST
+ * /api/relay/join, which compares them and ends that join at one wrong entry; the device may ask again). It never shows
+ * the digits. A line answers only the question it was typed under, and only once that was on the screen long enough to
+ * read (DWELL_MS); what the terminal held as a question first showed is discarded, as `asking` does. Enter by itself,
+ * the input ending, Ctrl+C and the ten minutes end it, as does a device that got in through the account meanwhile (a
+ * member or a row of the account's list that GET /api/devices did not show before, or such a row it showed that signs
+ * in during the wait); each end says how to let a device in later. False, with nothing shown, where
+ * this PC lists no joins to its terminal (an Ovis from before the route), or the run stopped before the first question.
+ */
+async function watchFirstJoins(options: LinkOptions, api: Api, watched: { readonly name: string; readonly account: string; readonly hint: string }): Promise<boolean> {
+  const { out, signal } = options;
+  const now = options.now ?? Date.now;
+  const wait = options.wait ?? waitFor;
+  const { name, account, hint } = watched;
+  const joins = async (): Promise<OwnJoin[]> => (await api<{ joins: OwnJoin[] }>("GET", "/api/relay/joins")).joins;
+  // the devices that open this PC through its account; null when that could not be read just now
+  const throughAccount = async (): Promise<Device[] | null> => {
+    try { return (await api<{ devices: Device[] }>("GET", "/api/devices")).devices.filter((device) => device.account !== undefined || device.through_account === true); }
+    catch (error) { if (signal.aborted) throw error; return null; }
+  };
+  try {
+    await joins();
+  } catch (error) {
+    if (signal.aborted || error instanceof LocalError && (error.status === 404 || error.status === 405)) return false;
+    if (!(error instanceof LocalError || error instanceof AwayError)) throw error;
+  }
+  // The devices that could open it already, and how far each was used: one that comes after them got in by itself, and
+  // so did a row of the account's list that signs in after them. One press reads the account's list before it answers,
+  // so the phone that pressed Add is usually such a row already, and it signs in with no join. GET /api/devices tells
+  // that by the day it last signed in (`last_seen_at`, null before its first) and, to this PC's own window, by a session
+  // that is up (`connection.since`). Taken at the next look when this read was not answered
+  interface Usage { readonly seen: string | null; readonly since: string | null }
+  const usage = (device: Device): Usage => ({ seen: device.last_seen_at ?? null, since: device.connection?.since ?? null });
+  // a session that ended, or a day that went back, is no sign-in
+  const signedIn = (before: Usage, device: Device): boolean => device.through_account === true
+    && ((device.last_seen_at ?? null) !== null && device.last_seen_at !== before.seen || (device.connection?.since ?? null) !== null && device.connection?.since !== before.since);
+  let known: ReadonlyMap<string, Usage> | null;
+  try {
+    const rows = await throughAccount();
+    known = rows === null ? null : new Map(rows.map((device) => [device.id, usage(device)]));
+  } catch { return false; }
+  const stopAt = now() + FIRST_JOIN_MS;
+  interface Question { readonly prompt: string; shownAt: number | null }
+  const intro: Question = { prompt: `Open ${name} from My PCs on your phone. If the phone shows six digits, type them here (Enter to finish without): `, shownAt: null };
+  let asked: (Question & { readonly id: string; readonly label: string; readonly list: boolean; readonly behind: boolean }) | null = null;
+  const current = (): Question => asked ?? intro;
+  const seen = new Set<string>();
+  let onScreen: Question | null = null;
+  let atPrompt = false;
+  // why the next line handed over answers nothing, whatever it says: it may have been begun under a question that is gone
+  let held: string | null = null;
+  let away = false;
+  const say = (text: string): void => { out(atPrompt ? `\n${text}` : text); atPrompt = false; };
+  const show = (): void => {
+    const question = current();
+    if (atPrompt && onScreen === question) return;
+    if (question.shownAt === null) {
+      // what was typed before this question and not sent would come with the Enter pressed at it
+      let emptied = false;
+      try { emptied = options.discard?.() === true; } catch {}
+      if (!emptied) held ??= "this terminal's input could not be emptied as the question showed, so it may have been typed before it.";
+      question.shownAt = now();
+    }
+    say(question.prompt);
+    atPrompt = true;
+    onScreen = question;
+  };
+  show();
+  const keys = typing(options.lines, signal, current, now);
+  try {
+    for (;;) {
+      for (const line of keys.take()) {
+        atPrompt = false;
+        const question = current();
+        if (held !== null) { say(`That line answered nothing: ${held} Answer again.\n`); held = null; continue; }
+        if (line.under !== question) { say("That line answered nothing: it was typed before the question shown now. Answer again.\n"); continue; }
+        if (question.shownAt === null || line.at - question.shownAt < DWELL_MS) {
+          say("That line answered nothing: it came before the question could be read. Answer again.\n");
+          question.shownAt = now();
+          continue;
+        }
+        const typed = line.text.normalize("NFKC").replace(/\s/g, "");
+        if (typed === "") { say(`Finished without letting a device in. ${hint}`); return true; }
+        if (asked === null) { say(`That line answered nothing: no device is asking to open this PC yet. Open ${name} from My PCs on your phone; what it asks shows here.\n`); continue; }
+        const { id, label } = asked;
+        if (!SIX_DIGITS.test(typed)) { say(`That line answered nothing: type all six digits ${label} shows, or press Enter by itself to finish without. Answer again.\n`); continue; }
+        try {
+          await api("POST", "/api/relay/join", { body: { id, digits: typed } });
+          say(approvedWords(label, asked.list, asked.behind));
+          return true;
+        } catch (error) {
+          if (signal.aborted || !(error instanceof LocalError || error instanceof AwayError)) throw error;
+          asked = null;
+          if (error instanceof AwayError) {
+            // asked about again while it still waits, never answered by itself, nor by a line typed meanwhile
+            seen.delete(id);
+            held = "the answer before it may not have reached the Ovis on this PC, and it may have been typed meanwhile.";
+            say(`Your answer may not have reached the Ovis on this PC. ${label} is asked about again if it is still waiting.\n`);
+          } else if (error.code === "locked" || error.code === "strict") {
+            say(`${lockRefusal(error.code)}${hint}`);
+            return true;
+          } else {
+            say(error.code === "wrong_digits" ? `That is not the number ${label} shows, so it was not let in. Have ${label} ask again: its request shows here.\n`
+              : error.code === "relay_pairing_gone" ? `${label} is no longer waiting.\n` : `Could not let ${label} in: ${error.reason}\n`);
+          }
+        }
+      }
+      if (signal.aborted) break;
+      if (keys.ended) { say(`The terminal's input ended. ${hint}`); return true; }
+      try {
+        const waiting = (await joins()).filter((join) => join.digits !== undefined);
+        if (away) { away = false; say("The Ovis on this PC answers again.\n"); }
+        if (asked !== null && !waiting.some((join) => join.id === asked!.id)) {
+          say(`${asked.label} is no longer waiting.\n`);
+          if (asked.shownAt !== null) held = "a request went away while it may have been typed.";
+          asked = null;
+        }
+        const next: OwnJoin | undefined = asked === null ? waiting.find((join) => !seen.has(join.id)) : undefined;
+        if (next !== undefined) {
+          seen.add(next.id);
+          const label = plainLabel(next.label);
+          asked = { id: next.id, label, list: next.list === true, behind: next.list_behind === true, prompt: `${firstJoinLead(next, account)} Type the six digits ${label} shows (one wrong entry ends this request), or press Enter to finish without: `, shownAt: null };
+        }
+        const rows = await throughAccount();
+        if (rows !== null && known === null) known = new Map(rows.map((row) => [row.id, usage(row)]));
+        // the device named may not be the phone in hand: the way to let that one in is said too
+        const came = rows?.find((row) => { const before = known!.get(row.id); return before === undefined || signedIn(before, row); });
+        if (came !== undefined) { say(`${plainLabel(came.label)} can open this PC now: it got in through your account. ${hint}`); return true; }
+      } catch (error) {
+        if (signal.aborted) break;
+        if (error instanceof AwayError) {
+          if (!away) say("The Ovis on this PC is not answering (is it restarting?). Waiting for it…\n");
+          away = true;
+        } else if (error instanceof LocalError) {
+          say(`${error.code === "locked" || error.code === "strict" ? lockRefusal(error.code) : `Could not read which devices ask to open this PC: ${error.reason}\n`}${hint}`);
+          return true;
+        } else throw error;
+      }
+      if (now() >= stopAt) { say(`Stopped watching after 10 minutes. ${hint}`); return true; }
+      show();
+      const early = new AbortController();
+      const pause = wait(Math.min(POLL_MS, Math.max(0, stopAt - now())), AbortSignal.any([signal, early.signal]));
+      const first = await Promise.race([pause.then(() => "waited" as const), keys.arrived().then(() => "typed" as const)]);
+      if (first === "typed") { pause.catch(() => undefined); early.abort(); }
+    }
+  } catch (error) {
+    // the PC is added whatever went wrong here: that is not to be told as a failed add
+    if (!signal.aborted) { say(`Stopped waiting for a device: ${error instanceof Error ? error.message : String(error)}. ${hint}`); return true; }
+  }
+  say(`Stopped. ${hint}`);
+  return true;
+}
+
+/**
+ * The end of `add`, once the person at this PC confirmed the account that signed in (or named it with --account): a
+ * device signed in to that account presses Add on this PC's card ("Add this PC to your account?",
+ * src/components/UnconfirmedPcNotices.tsx), which is the account's one-press admission of it. This PC takes that
+ * admission with its own key's proof (POST /api/account/one-press, server/account/one-press.ts), asked every few seconds
+ * until it has it, for as long as the card offers Add. Then its relay comes online. A run that ends otherwise (Ctrl+C,
+ * the ten minutes, an error) first reads which account this PC is in: one in the account that signed in is said to be,
+ * one in another account is reported, and for one in none the command tries to take its listing off that account's
+ * list, which this sign-in may do only for a listing it made and nobody admitted, and says what is left.
+ */
+export async function addByPress(options: LinkOptions, api: Api, press: Pressing): Promise<number> {
+  const { out, signal } = options;
+  const now = options.now ?? Date.now;
+  const wait = options.wait ?? waitFor;
+  const name = plainLabel(press.name);
+  const words = press.words ?? addWords(options);
+  const { command, anew, chosen } = words;
+  const ended = (end: PressEnd, code: number): number => { press.report?.(end); return code; };
+  const mine = shortAccount(press.signedIn);
+  const startedAt = now();
+  const stopAt = press.until ?? Math.min(startedAt + PRESS_MS, press.listedAt === null ? Infinity : press.listedAt + PRESS_MS);
+  if (stopAt <= startedAt) {
+    out(`An earlier ${command} listed this PC in your account at ${clockTime(press.listedAt!)}, more than 10 minutes ago, so your devices no longer offer Add for it. On a device of your account, choose No or Remove from my account on its card, then run ${command} again.\n`);
+    return ended({ kind: "not_added", why: "late", listed: true }, 1);
+  }
+  // a terminal that went away takes no write: what is owed to this PC (its listing) comes first, then a word that may fail
+  const tell = (text: string): void => { try { out(text); } catch {} };
+  // `none`: this PC said it is in no account; otherwise that was not known
+  const left = (off: Unlisted, finish: string, none: boolean): string => {
+    const where = none ? "; it is in no account" : "";
+    const said = {
+      removed: `This PC was taken off your account's list${where}. ${anew}`,
+      gone: `Your account no longer lists this PC (a device chose No)${where}. ${anew}`,
+      kept: `${none ? "This PC is in no account yet, but your account still lists it." : "Your account still lists this PC."} ${finish}`,
+      failed: `This PC${none ? " is in no account, but it" : ""} could not be taken off your account's list just now: choose No on its card on a device of your account, or run ${command} again.`,
+    }[off];
+    return none ? said : `${said} The Ovis on this PC did not say whether it is in an account: ${cli(options)} status says.`;
+  };
+  // the account this PC is in, read on a signal of its own (Ctrl+C aborted the run's): null for none, undefined when it did not answer
+  const where = async (ms = 5_000): Promise<string | null | undefined> => {
+    try { return (await api<{ account: string | null }>("GET", "/api/account/status", { signal: AbortSignal.timeout(ms) })).account; }
+    catch { return undefined; }
+  };
+  // this PC took the admission: from here on it is in the account, whatever stops the run
+  let bound = false;
+  const added = async (): Promise<number> => {
+    // in the account, which lists it now: its relay pass is asked for again (it was refused while unlisted), and the relay comes online
+    await press.named();
+    let online = true;
+    try { await relayOnline(options, api); } catch (error) {
+      if (signal.aborted || !(error instanceof LocalError || error instanceof AwayError)) throw error;
+      online = false;
+    }
+    // what follows reads this PC only: the sign-in ends here, not with the run up to ten minutes later
+    await press.signOut();
+    // the first device that opens this PC asks for six digits only this PC may let in (a first join): here, at a
+    // terminal, they are typed in the same run; elsewhere it is said where to type them
+    const hint = `If your phone asks for six digits when you open ${name}, run ${cli(options)} approve on this PC and type them.\n`;
+    if (!online) {
+      out(`Added: this PC is in your account (${mine}), but its Ovis relay did not come online within 30 seconds. Your devices can open ${name} from My PCs once it does (${cli(options)} status says when).\n${hint}${words.closing}`);
+      return ended({ kind: "added", online: false }, 0);
+    }
+    out("Added. ");
+    const watched = options.terminal === true && options.isTty === true && await watchFirstJoins(options, api, { name, account: press.signedIn, hint });
+    out(`${watched ? "" : `Open ${name} from My PCs.\n${hint}`}${words.closing}`);
+    return ended({ kind: "added", online: true }, 0);
+  };
+  // in another account than the one this PC was to join: taken off that one's list, and both named
+  const elsewhere = async (account: string): Promise<number> => {
+    const off = await press.unlist();
+    tell(`This PC joined another Ovis account (${shortAccount(account)}), not the one ${chosen} (${mine}). ${off === "removed" || off === "gone" ? `It is not on the list of the account ${chosen}.` : `It could not be taken off the list of the account ${chosen}; remove it there.`} If that was not you, open Settings → Devices and PCs on this PC and choose Revoke all.\n`);
+    return ended({ kind: "elsewhere", account }, 1);
+  };
+  // one ask: `added` once this PC took the admission, `none` while there is none, `slow` when the account service did
+  // not answer this PC, `away` when this PC did not answer, `joined` when this PC is in an account by now
+  const take = async (): Promise<"added" | "none" | "slow" | "away" | "joined"> => {
+    try {
+      await api("POST", "/api/account/one-press", { body: { account: press.signedIn } });
+      bound = true;
+      return "added";
+    } catch (error) {
+      if (signal.aborted) throw error;
+      if (error instanceof AwayError) return "away";
+      if (!(error instanceof LocalError)) throw error;
+      if (error.code === "no_admission") return "none";
+      if (error.code === "account_unavailable") return "slow";
+      if (error.code === "in_account") return "joined";
+      throw error;
+    }
+  };
+  // in an account by now: the one this PC was to join (an answer of an earlier ask was lost, or a device paired meanwhile), or another
+  const joined = async (): Promise<number | null> => {
+    const account = await where();
+    if (account === null || account === undefined) return null;
+    return account === press.signedIn ? await added() : await elsewhere(account);
+  };
+  let away = false;
+  let slow = false;
+  let nones = 0;
+  // from here on this PC is listed, so a run stopped anywhere below (this first request included) tries to unlist it
+  try {
+    // the window the listing opened takes digits approved here, which this way does not ask for
+    await api("POST", "/api/relay/link/close").catch((error: unknown) => { if (signal.aborted || !(error instanceof LocalError || error instanceof AwayError)) throw error; });
+    out(words.waiting(name, remaining(stopAt - startedAt)));
+    for (;;) {
+      const got = await take();
+      if (got === "added") return await added();
+      // an Add pressed before this run is taken at once, within its ten minutes; after them nothing offers Add again
+      if (got === "none" && press.confirmed && ++nones >= (press.noneTries ?? 1)) {
+        out(words.noneWaiting);
+        return ended({ kind: "not_added", why: "none_waiting", listed: true }, 1);
+      }
+      if (got === "joined") {
+        const end = await joined();
+        if (end !== null) return end;
+      }
+      if (got === "away" && !away) out("The Ovis on this PC is not answering (is it restarting?). Waiting for it…\n");
+      if (got !== "away" && away) out("The Ovis on this PC answers again.\n");
+      away = got === "away";
+      if (got === "slow" && !slow) out("The account service did not answer this PC just now. Still waiting…\n");
+      slow = got === "slow";
+      if (now() >= stopAt) break;
+      await wait(Math.min(slow ? PRESS_BACKOFF_MS : PRESS_POLL_MS, stopAt - now()), signal);
+    }
+    // the time is up. A bind whose answer was lost is found first; then an Add that landed as it ran out keeps the
+    // listing from being taken off, and is taken by one more ask
+    const account = await where();
+    if (account === press.signedIn) return await added();
+    if (account !== null && account !== undefined) return await elsewhere(account);
+    if (press.askBeforeUnlist) {
+      const got = await take();
+      if (got === "added") return await added();
+      if (got === "joined") {
+        const end = await joined();
+        if (end !== null) return end;
+      }
+    }
+    const off = await press.unlist();
+    if (off === "kept") {
+      const got = await take();
+      if (got === "added") return await added();
+      if (got === "joined") {
+        const end = await joined();
+        if (end !== null) return end;
+      }
+    }
+    tell(`Nobody pressed Add for ${name} within 10 minutes of its listing. ${left(off, `On a device of your account, choose No or Remove from my account on its card, then run ${command} again.`, account === null)}\n`);
+    return ended({ kind: "not_added", why: "timeout", listed: listedAfter(off) }, 1);
+  } catch (error) {
+    if (!signal.aborted && !(error instanceof LocalError || error instanceof AwayError)) throw error;
+    if (signal.aborted && press.stopFast) {
+      const account = bound ? press.signedIn : await where(1_000);
+      if (account === press.signedIn) {
+        tell(`Stopped. This PC is in Ovis account ${mine} all the same: your devices can open ${name} from My PCs once its relay is online. If that is not your account, run ${cli(options)} logout now.\n`);
+        return ended({ kind: "added", online: false }, 0);
+      }
+      if (account !== null && account !== undefined) return await elsewhere(account);
+      const off = await press.unlist();
+      tell(`Stopped. ${left(off, `A device may have pressed Add just now. Run ${command} again to finish adding it.`, account === null)}\n`);
+      return ended({ kind: "not_added", why: "stopped", listed: listedAfter(off) }, 1);
+    }
+    const reason = error instanceof LocalError ? error.reason : error instanceof Error ? error.message : String(error);
+    const lead = signal.aborted ? "Stopped." : `Could not add this PC: ${reason.replace(/[.\s]*$/, ".")}`;
+    // this PC may have taken the admission meanwhile (a Ctrl+C as an ask answered, or during the relay's wait)
+    const account = await where();
+    if (account === press.signedIn) {
+      tell(`${lead} This PC is in Ovis account ${mine} all the same: your devices can open ${name} from My PCs once its relay is online. If that is not your account, run ${cli(options)} logout now.\n`);
+      return ended({ kind: "added", online: false }, 0);
+    }
+    if (account !== null && account !== undefined) return await elsewhere(account);
+    const off = await press.unlist();
+    const finish = `Run ${command} again to finish adding it.`;
+    tell(`${lead} ${left(off, signal.aborted ? `A device may have pressed Add just now. ${finish}` : finish, account === null)}\n`);
+    return ended({ kind: "not_added", why: signal.aborted ? "stopped" : "failed", listed: listedAfter(off) }, 1);
+  }
+}
+
+/** `ovis add`'s words for the press: a sign-in on this PC chose the account. */
+function addWords(options: LinkOptions): PressWords {
+  const command = `${cli(options)} add`;
+  return {
+    command, anew: `Run ${command} to try again.`, chosen: "you signed in to", closing: loginClosing(options),
+    waiting: (name, lasts) => [
+      ...step([`This PC is listed in your account as ${name}.`]),
+      "",
+      "2/2  Press Add on a device of your account",
+      ...step([`Open Ovis on your phone or another PC and press Add for ${name}.`, `Waiting… (up to ${lasts}, Ctrl+C to stop)`]),
+      "",
+    ].join("\n"),
+    noneWaiting: `Your account lists this PC already, so your devices offer no Add for it, and no Add pressed in the last 10 minutes waits for it. Run ${command} --approve, then choose Add on this PC in Ovis on a device of your account and compare its number here.\n`,
+  };
+}
+
+/**
+ * What `add --account` and `join` say of a PC in another account than the one they were given: it is never moved, and
+ * that account is named by its start only, as `ovis status` names it.
+ */
+export const inAnotherAccount = (options: LinkOptions, account: string, command: string): string =>
+  `This PC is in another Ovis account (${shortAccount(account)}). Run ${cli(options)} logout to take it out of that one first, then run ${command} again.`;
+
+/** `--account`'s id names `account`: all of it, or its start as `ovis status` shows it (12 characters at least). */
+export const pins = (pinned: string, account: string): boolean => pinned === account || (pinned.length >= 12 && account.startsWith(pinned));
+
+/**
+ * The account that signed in, as the person at this PC is asked to confirm it. Its id leads, with where to compare it:
+ * whoever signed in with the code chose that account, and the names of its PCs are its own word (a decoy account can
+ * carry the owner's PC names), so they follow as what it lists, never as proof.
+ */
+function accountQuestion(options: LinkOptions, provider: AccountProvider, account: string, pcs: readonly DirectoryPc[]): string[] {
+  const listed = pcs.slice(0, 6).map((pc) => `  - ${plainLabel(pc.label)}${Number.isFinite(Date.parse(pc.added_at)) ? ` (added ${pc.added_at.slice(0, 10)})` : ""}`);
+  return [
+    `Ovis account ${shortAccount(account)} (signed in with ${PROVIDER_NAMES[provider]}).`,
+    "Compare this ID with Settings → Manage account → Account ID in your",
+    `Ovis app, or with ${cli(options)} status on a PC you already use.`,
+    ...pcs.length === 0 ? ["That account lists no PCs yet."]
+      : ["That account lists:", ...listed, ...pcs.length > listed.length ? [`  and ${pcs.length - listed.length} more`] : []],
+  ];
+}
+
+async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvider | undefined, mode: { readonly approve: boolean; readonly print: boolean; readonly qr: boolean; readonly account?: string }): Promise<number> {
   const { out, signal } = options;
   const now = options.now ?? Date.now;
   const wait = options.wait ?? waitFor;
@@ -1427,11 +1988,16 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
     return 1;
   }
   if (first.account !== null) {
+    // a script's --account names the account it means: another one is never reported as done, nor switched to
+    if (mode.account !== undefined && !pins(mode.account, first.account)) {
+      out(`${inAnotherAccount(options, first.account, `${cli(options)} add`)}\n`);
+      return 1;
+    }
     if (first.enrolling !== true) {
-      out(`This PC is already in an Ovis account (${shortId(first.account)}).\n`);
+      out(`This PC is already in an Ovis account (${shortAccount(first.account)}).\n`);
       return 0;
     }
-    out(`This PC is already in an Ovis account (${shortId(first.account)}), but its account's other devices are not in yet. Open the Ovis app on the phone that added it. Waiting for them; press Ctrl+C to stop.\n`);
+    out(`This PC is already in an Ovis account (${shortAccount(first.account)}), but its account's other devices are not in yet. Open the Ovis app on the phone that added it. Waiting for them; press Ctrl+C to stop.\n`);
     const stopAt = now() + WAITING_MS;
     for (;;) {
       await wait(POLL_MS, signal);
@@ -1444,7 +2010,7 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
         return 1;
       }
       if (again !== null && again.enrolling !== true) {
-        out(`This PC is in an Ovis account (${shortId(again.account ?? first.account)}): every device of that account can use it.\n`);
+        out(`This PC is in an Ovis account (${shortAccount(again.account ?? first.account)}): every device of that account can use it.\n`);
         return 0;
       }
       if (now() >= stopAt) {
@@ -1457,16 +2023,38 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
     out("The account service is off on this PC (OVIS_ACCOUNT_SERVICE_URL=off). Link it with a code instead: run this again with --code.\n");
     return 1;
   }
+  // Without --qr (or --print, which is about the QR code), a device of the account adds this PC by pressing Add, and
+  // this PC takes that admission itself. One that takes none from here (its Step 2 off, or older) shows the QR code
+  const takes = !mode.approve && !mode.qr ? await takesPress(api) : null;
+  const press = takes === "press";
+  const byQr = !mode.approve && !press;
+  const preview = options.preview === true;
+  // Whoever signs in with the code this command shows names the account this PC joins, and a code can leak (a
+  // scrollback, a shared screen, a transcript). So the person at this PC confirms the account before anything is
+  // listed: at a terminal by typing yes, elsewhere only by naming it in advance (--account). Said before the sign-in
+  const interactive = options.terminal === true && options.isTty === true;
+  if (press && preview && !interactive) {
+    out(`Adding this PC needs a terminal: there it asks whether the account that signed in is yours. Run ${cli(options)} add in a terminal (over ssh, run ssh -t).\n`);
+    return 1;
+  }
+  if (press && !interactive && mode.account === undefined) {
+    out(`Not run in a terminal, so nobody here can confirm the account that signs in. Run ${cli(options)} add --account <your account id> (${cli(options)} status on a PC already in your account shows the id, and so does Manage account in Settings), or run ${cli(options)} add in a terminal.\n`);
+    return 1;
+  }
   // said before the sign-in, not after it: the QR code admits whoever reads it, so it goes to a terminal only
   // (under the fleet preview with --print too, and only once Enter was pressed there under the account's name)
-  const preview = options.preview === true;
-  if (preview && !mode.approve && (options.isTty !== true || options.terminal !== true)) {
+  if (preview && byQr && (options.isTty !== true || options.terminal !== true)) {
     out(`Adding this PC needs a terminal: the QR code and the code to type are a key to this PC, so they are never written to a pipe, a file or a log. Run ${cli(options)} add in a terminal (over ssh, run ssh -t).\n`);
     return 1;
   }
-  if (!preview && !mode.approve && !mode.print && options.isTty !== true) {
+  if (!preview && byQr && !mode.print && options.isTty !== true) {
     out("The QR code is a key to this PC. Run this in a terminal, or pass --print to write it anyway.\n");
     return 1;
+  }
+  if (byQr && takes !== null) {
+    out(takes === "not-own"
+      ? "The Ovis on this PC does not count this terminal as the PC itself, so it cannot take an Add pressed on your phone from here: a device of your account adds it by scanning a QR code.\n"
+      : "The Ovis on this PC cannot take an Add pressed on your phone (its Step 2 is off, or it is older), so a device of your account adds it by scanning a QR code.\n");
   }
   await relayOn(options, api);
   const store = memoryAccountStore();
@@ -1476,33 +2064,42 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
   const requester = { label: hostname(), os: accountOsOfPlatform(process.platform) };
   const startOptions = { service: options.accountService, store, lock, fetch: serviceFetch, now, wait, requester };
   const signIn = offer !== null && offer.page.length > 0 ? await startLinkPageSignIn(startOptions, offer.device[0] ?? "github") : await startDeviceSignIn({ ...startOptions, provider: forced ?? offer?.device[0] ?? "github" });
-  const provider = signIn.provider;
-  out((provider === "ovis"
-    ? [
-      "",
-      "Sign in to your Ovis account:",
-      `open ${signIn.verificationUri} on any device and enter the code: ${signIn.userCode}`,
-      ...(signIn.verificationUriComplete === null ? [] : ["or scan this QR code with the phone's camera:", qr(signIn.verificationUriComplete)]),
-      // a test copy of the service may ask for another sign-in there
-      options.accountService === DEFAULT_ACCOUNT_SERVICE ? "Then continue with GitHub or Google there. Waiting for the sign-in…" : "Then sign in there. Waiting for the sign-in…",
-      "",
-    ]
-    : [
-      "",
-      `Sign in to your Ovis account with ${provider === "github" ? "GitHub" : "Google"}:`,
-      `open ${signIn.verificationUri} on any device and enter the code: ${signIn.userCode}`,
-      "Waiting for the sign-in…",
-      "",
-    ]).join("\n"));
+  out(signInSteps(signIn, { ...options, label: requester.label, expiresIn: remaining(Math.max(0, signIn.expiresAt - now())) }));
   await signIn.finish(signal);
   const service = new AccountService({ store, lock, fetch: serviceFetch, now });
   const session = await service.session();
   const signedIn = session?.account ?? null;
-  const pending: { listing: Listing | null } = { listing: null };
+  const pending: { listing: Listing | null; kept: boolean } = { listing: null, kept: false };
   const unlisted = "This PC could not be listed in your account again just now; it is tried again until it is.\n";
+  let ended = false;
+  // the sign-in was only for this: it ends with it, and nothing of it stays on the PC. A listing a renewal took away goes back first
+  const signOut = async (): Promise<void> => {
+    if (ended) return;
+    ended = true;
+    if (pending.listing !== null && !await putListing(api, service, pending.listing)) out("This PC dropped out of your account's list; run link again to list it.\n");
+    await service.signOut().catch(() => out("The sign-in could not be ended at the account service; it ends by itself when it runs out.\n"));
+  };
+  const kept = "This PC stays listed, but an earlier run listed it, so your other devices may no longer show it as new.\n";
   try {
     if (session === undefined || signedIn === null) throw new LocalError("The sign-in did not last. Run this again.");
-    if (preview && !mode.approve) {
+    if (mode.account !== undefined && !pins(mode.account, signedIn)) {
+      out(`Signed in to Ovis account ${shortAccount(signedIn)}, not the one --account names (${shortAccount(mode.account)}), so this PC was not listed in it. Run ${cli(options)} add again and sign in with that account.\n`);
+      return 1;
+    }
+    // the account's own PCs and the ones it waits to add, read before anything is listed: named in the question, and
+    // telling whether an earlier run listed this PC
+    const lists = press ? await Promise.all([service.listUnconfirmedPcs(), service.listPcs()]) : null;
+    if (lists !== null) {
+      if (mode.account === undefined || preview) {
+        const asked = step([...accountQuestion(options, session.provider, signedIn, lists[1]), "Is this your account? Type yes to add this PC to it: "]).join("\n");
+        const line = await askLine(options, asked);
+        if (line === null || line.normalize("NFKC").trim().toLowerCase() !== "yes") {
+          out(`This PC was not listed in that account. Run ${cli(options)} add again and sign in with your own account.\n`);
+          return 1;
+        }
+      } else out(`${STEP_INDENT}Ovis account ${shortAccount(signedIn)} (signed in with ${PROVIDER_NAMES[session.provider]}) is the one --account names.\n`);
+    }
+    if (preview && byQr) {
       // The account as the service's token answer names it: its id and the provider it signed in with (the service
       // keeps no login or email to name it by). It is named before this PC is listed in it or any QR code is shown,
       // and the QR code waits for Enter under that name
@@ -1512,22 +2109,42 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
         return 1;
       }
     }
-    const first = await listThisPc(api, service, now, pending);
+    const opened = press ? await openedListing(api) : undefined;
+    const first = await listThisPc(api, service, now, pending, opened);
+    if (pending.kept) out(kept);
     if (pending.listing !== null) out(unlisted);
     // a renewal's listing not put back yet goes back first: an account that does not list the PC gives it no pass
-    if (pending.listing !== null && await putListing(service, pending.listing)) { pending.listing = null; await nameRelayAccount(api, service); }
+    if (pending.listing !== null && await putListing(api, service, pending.listing)) { pending.listing = null; await nameRelayAccount(api, service); }
+    if (lists !== null) {
+      // the listing an earlier run left: the account's devices offer Add for ten minutes from its own listing, and none
+      // once the account lists the PC as its own (an Add pressed then)
+      const at = Date.parse(lists[0].find((pc) => pc.server_id === first.serverId)?.added_at ?? "");
+      return await addByPress(options, api, {
+        signedIn, name: first.entry.label, listedAt: Number.isFinite(at) ? at : null,
+        confirmed: lists[1].some((pc) => pc.server_id === first.serverId),
+        named: () => nameRelayAccount(api, service),
+        signOut,
+        unlist: async () => {
+          try { await service.deletePc(first.serverId); return "removed"; } catch (error) {
+            if (!(error instanceof AccountServiceError && error.status === 403 && error.code === "own_sign_in_required")) return "failed";
+          }
+          try { return [...await service.listUnconfirmedPcs(), ...await service.listPcs()].some((pc) => pc.server_id === first.serverId) ? "kept" : "gone"; }
+          catch { return "failed"; }
+        },
+      });
+    }
     try { await relayOnline(options, api); } catch (error) {
       if (!(error instanceof LocalError)) throw error;
       throw new LocalError(`This PC stays listed in your account, but its Ovis relay is not online yet (${error.message}) Run this again once it is.`);
     }
     const name = first.entry.label;
     if (!mode.approve) {
-      out(preview ? `This PC is listed in that account as ${name}.\n` : `Signed in. This PC is listed in your account as ${name}.\n`);
+      out(`${STEP_INDENT}${preview ? `This PC is listed in that account as ${name}.` : `Signed in. This PC is listed in your account as ${name}.`}\n`);
       return await addByQr(options, api, {
         signedIn, status, plain: mode.print || options.isTty !== true,
         unlist: () => { pending.listing = null; return service.deletePc(first.serverId).then(() => true, () => false); },
         name: () => nameRelayAccount(api, service),
-        tend: async () => { if (pending.listing !== null && await putListing(service, pending.listing)) pending.listing = null; },
+        tend: async () => { if (pending.listing !== null && await putListing(api, service, pending.listing)) pending.listing = null; },
       });
     }
     let listedAt = now();
@@ -1539,7 +2156,9 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
     let added = false;
     let away = false;
     out([
-      `Signed in. This PC is listed in your account as ${name}.`,
+      `${STEP_INDENT}Signed in. This PC is listed in your account as ${name}.`,
+      "",
+      "2/2  Approve the device that adds this PC",
       `On a device already signed in to this account (the Ovis app or ${appHost(options, options.app ?? "https://app.ovis.sh")}), choose Add on ${name}.`,
       "If it shows Join there instead, choose Join, then Ask to join or Type the number.",
       "Its request shows here to approve. Press Ctrl+C to stop.",
@@ -1554,7 +2173,7 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
       pending.listing = null;
       const unlistedThere = await service.deletePc(first.serverId).then(() => true, () => false);
       await api("POST", "/api/account/relay-account", { body: { account } }).catch(() => undefined);
-      say(`This PC joined another Ovis account (${shortId(account)}), not the one you signed in to (${shortId(signedIn)}). ${unlistedThere ? "It was taken off the list of the account you signed in to." : "It could not be taken off the list of the account you signed in to; remove it there."} If that was not you, open Settings → Devices and PCs on this PC and choose Revoke all.\n`);
+      say(`This PC joined another Ovis account (${shortAccount(account)}), not the one you signed in to (${shortAccount(signedIn)}). ${unlistedThere ? "It was taken off the list of the account you signed in to." : "It could not be taken off the list of the account you signed in to; remove it there."} If that was not you, open Settings → Devices and PCs on this PC and choose Revoke all.\n`);
       return 1;
     };
     let lastListed = false;
@@ -1617,7 +2236,7 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
         const joined = await status();
         if (joined.account !== null && joined.account !== signedIn) return await elsewhere(joined.account);
         if (joined.account !== null && joined.enrolling !== true) {
-          say(`This PC is in your account (${shortId(joined.account)}): every device of your account can use it.\n`);
+          say(`This PC is in your account (${shortAccount(joined.account)}): every device of your account can use it.\n${loginClosing(options)}`);
           return 0;
         }
         added = joined.account !== null;
@@ -1626,16 +2245,18 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
           say("Added. Bringing in your account's other devices…\n");
         }
         // a listing a renewal took away goes back, also once this PC is in the account: unlisted, it gets no relay pass
-        if (pending.listing !== null && now() < stopAt && await putListing(service, pending.listing)) pending.listing = null;
+        if (pending.listing !== null && now() < stopAt && await putListing(api, service, pending.listing)) pending.listing = null;
         if (!added && now() < stopAt) {
           const last = lastLooks();
           let opened = false;
           if ((now() - listedAt >= RELIST_MS || (last && !lastListed)) && mayOpen()) {
             // a renewal that failed after its DELETE went out keeps waiting: the listing is put back above, as after a failed PUT.
             // None in the last ten minutes: it would show the PC as new for ten more, past the window's end
+            const keptBefore = pending.kept;
             try { await listThisPc(api, service, now, pending); } catch (error) {
               if (pending.listing === null) throw error;
             }
+            if (pending.kept && !keptBefore) say(kept);
             if (pending.listing !== null) say(unlisted);
             listedAt = now();
             openedAt = listedAt;
@@ -1681,10 +2302,60 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
       }
     }
   } finally {
-    if (pending.listing !== null && !await putListing(service, pending.listing)) out("This PC dropped out of your account's list; run link again to list it.\n");
-    // the sign-in was only for this: it ends with it, and nothing of it stays on the PC
-    await service.signOut().catch(() => out("The sign-in could not be ended at the account service; it ends by itself when it runs out.\n"));
+    await signOut();
   }
+}
+
+export const STEP_INDENT = "     ";
+export const step = (lines: readonly string[]): string[] => lines.map((line) => line === "" ? "" : STEP_INDENT + line);
+
+/**
+ * Step 1 of `ovis login`, laid out as `codex login` is: on a desktop the sign-in page opens by itself, with the code
+ * filled in where the service gives one, and the address stays on screen for another device; anywhere else (SSH,
+ * --no-browser, no desktop) the address and the code to type are the screen, with a QR code of the filled-in page.
+ */
+function signInSteps(
+  signIn: { readonly provider: string; readonly verificationUri: string; readonly verificationUriComplete: string | null; readonly userCode: string },
+  options: LinkOptions & { readonly label: string; readonly expiresIn: string },
+): string {
+  const page = signIn.verificationUriComplete ?? signIn.verificationUri;
+  // a test copy of the service may ask for another sign-in there
+  const there = signIn.provider !== "ovis" ? `Sign in with ${signIn.provider === "github" ? "GitHub" : "Google"} there.`
+    : options.accountService === DEFAULT_ACCOUNT_SERVICE ? "Then continue with GitHub or Google there." : "Then sign in there.";
+  const opened = options.openBrowser?.(page) === true;
+  // the QR code keeps the left edge: a scanner needs its quiet zone, not an indent
+  const body = opened
+    ? step([
+      "Opening your browser at:",
+      `  ${page}`,
+      `Check that the page shows the code ${signIn.userCode}, then continue there.`,
+      `No browser here? Open ${signIn.verificationUri} on any device and enter that code.`,
+      "",
+      `Waiting for the sign-in… (expires in ${options.expiresIn}, Ctrl+C to cancel)`,
+    ])
+    : [
+      ...step([`1. On any device, open: ${signIn.verificationUri}`, `2. Enter this code: ${signIn.userCode}   (expires in ${options.expiresIn})`]),
+      ...signIn.verificationUriComplete === null ? [] : [...step(["Or scan this to open the page with the code filled in:"]), qr(signIn.verificationUriComplete).replace(/\n+$/, "")],
+      ...step([there, "", `Enter the code only if you started ${cli(options)} login yourself.`, "Waiting for the sign-in… (Ctrl+C to cancel)"]),
+    ];
+  return ["", `Add this PC (${options.label}) to your Ovis account`, "", "1/2  Sign in", ...body, ""].join("\n");
+}
+
+/** What `ovis login` ends with once this PC is in the account. */
+export function loginClosing(options: LinkOptions): string {
+  return `The sign-in was only for this and ends with it; nothing of it is kept on this PC.\nCheck: ${cli(options)} status      Undo: ${cli(options)} logout\n`;
+}
+
+const ACCOUNT_SHAPE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** The value of `name` in `args` (`--account <id>` or `--account=<id>`): "" when it has none, undefined without the flag. */
+function flagValue(args: readonly string[], name: string): string | undefined {
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]!;
+    if (arg === name) return args[index + 1] ?? "";
+    if (arg.startsWith(`${name}=`)) return arg.slice(name.length + 1);
+  }
+  return undefined;
 }
 
 export async function link(args: readonly string[], options: LinkOptions): Promise<number> {
@@ -1697,12 +2368,22 @@ export async function link(args: readonly string[], options: LinkOptions): Promi
   const provider = DEVICE_PROVIDERS.find((name) => args.includes(`--${name}`));
   const api = localApi(options);
   try {
-    return args.includes("--code") ? await linkWithCode(options, api) : await linkToAccount(options, api, provider, { approve: args.includes("--approve"), print: args.includes("--print") });
+    const pinned = flagValue(args, "--account");
+    if (pinned !== undefined && !ACCOUNT_SHAPE.test(pinned)) {
+      options.out(`--account takes your Ovis account's id, or its start as ${cli(options)} status shows it.\n`);
+      return 1;
+    }
+    return args.includes("--code") ? await linkWithCode(options, api)
+      : await linkToAccount(options, api, provider, { approve: args.includes("--approve"), print: args.includes("--print"), qr: args.includes("--qr") || args.includes("--print"), ...pinned === undefined ? {} : { account: pinned } });
   } catch (error) {
     if (options.signal.aborted) { options.out("Stopped.\n"); return 1; }
     // the account's list refused this PC for want of room (409 directory_full): its code alone says nothing to a person
     const full = error instanceof AccountServiceError && error.code === "directory_full";
-    options.out(`Could not link this PC: ${full ? `Your account holds as many PCs as it can. Remove one in the Ovis app, then run ${cli(options)} add again.` : error instanceof Error ? error.message : String(error)}\n`);
+    // 409 pc_left: this PC left that account with ovis logout, and its own proof did not come with the listing
+    const left = error instanceof AccountServiceError && error.code === "pc_left";
+    options.out(`Could not link this PC: ${full ? `Your account holds as many PCs as it can. Remove one in the Ovis app, then run ${cli(options)} add again.`
+      : left ? `This PC left that account (${cli(options)} logout), and the Ovis running on it did not prove it is this PC, which listing it again takes. Update Ovis on this PC (Settings → Updates), then run ${cli(options)} login again.`
+      : error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
 }

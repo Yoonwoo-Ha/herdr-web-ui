@@ -6,6 +6,7 @@
  * move made elsewhere (herdr's TUI), are not seen here.
  */
 import { paneStorageId } from "../../shared/machines.ts";
+import { moveCardText } from "./cardText.ts";
 import { moveChatPosition } from "./chatScrollMemory.ts";
 import { pendingMessages } from "./pendingMessages.ts";
 import { currentSidebarPins, movedSidebarPins, setSidebarPins } from "./sidebarPins.ts";
@@ -53,6 +54,7 @@ export function carryPaneState(machineId: string, from: string, to: string, draf
       storage().removeItem(prefix + before);
     } catch {}
   }
+  moveCardText(before, after, to, storage);
 }
 
 /**

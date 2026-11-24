@@ -5,6 +5,7 @@
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const WORKSPACE_JA: Record<string, string> = {
+  "Open": "開く",
   "Use folder {path}": "フォルダー {path} を使用",
   "{n} more recent folders": "最近のフォルダーをあと {n} 件",
   "New worktree · {name}": "新しいワークツリー · {name}",

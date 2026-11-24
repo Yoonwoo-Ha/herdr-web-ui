@@ -1,0 +1,13 @@
+{
+  "name": "label-not-utf8",
+  "fields": [
+    {
+      "name": "label",
+      "value": "__4"
+    }
+  ],
+  "expect": {
+    "names": null,
+    "written": false
+  }
+}

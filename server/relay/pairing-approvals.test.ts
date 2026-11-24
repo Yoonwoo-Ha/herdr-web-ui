@@ -403,7 +403,8 @@ describe("an account join on this PC's own window", () => {
     const approvals = f.open();
     const right = join(approvals, f.clock.at);
     expect(approvals.decideTyped(approvals.ownJoins()[0]!.id, "654321")).toBe("decided");
-    expect(await right.decision).toEqual({ approved: true });
+    // decided in this PC's own window, which the decision keeps
+    expect(await right.decision).toEqual({ approved: true, own: true });
     const wrong = join(approvals, f.clock.at);
     const id = approvals.ownJoins()[0]!.id;
     expect(approvals.decideTyped(id, "123456")).toBe("wrong_digits");
@@ -418,6 +419,123 @@ describe("an account join on this PC's own window", () => {
     approvals.ask("Phone", "111111", f.clock.at + 90_000, { intent: "pc", key: "k", deviceId: "d" });
     expect(approvals.decideTyped(approvals.list()[0]!.id, "111111")).toBe("gone");
     expect(approvals.list()).toHaveLength(1);
+  });
+});
+
+describe("the joins into the account's list, as a device of that list sees them", () => {
+  const member = { id: "aaaaaaaaaaaaaaaa", label: "Phone", role: "drive" } as const;
+
+  it("are the joins that brought a card, a first join too, and never a pairing of this PC's own or one asked under its add-me screen", () => {
+    const f = fixture();
+    const approvals = f.open();
+    approvals.ask("First", "111111", f.clock.at + 90_000, { intent: "account", key: "k1", deviceId: "d1", membersOnly: true, firstJoin: true, list: true });
+    approvals.ask("Later", "222222", f.clock.at + 90_000, { intent: "account", key: "k2", deviceId: "d2", membersOnly: true, list: true });
+    approvals.ask("No card", "333333", f.clock.at + 90_000, { intent: "account", key: "k3", deviceId: "d3", membersOnly: true });
+    const seen = approvals.listJoins();
+    expect(seen.map((join) => [join.label, join.key, join.list])).toEqual([["First", "k1", true], ["Later", "k2", true]]);
+    // three numbers to choose from, never the digits by themselves
+    for (const join of seen) expect(join.choices).toHaveLength(3);
+    // a member of this PC's own devices still sees no first join
+    expect(approvals.remoteList().map((join) => join.label)).toEqual(["Later", "No card"]);
+  });
+
+  it("are never the ones asked under this PC's own add-me screen: those stay this PC's to decide, a join taken for account members too", () => {
+    const f = fixture();
+    const approvals = f.open();
+    expect(approvals.ask("Own screen", "444444", f.clock.at + 90_000, { intent: "account", key: "k4", deviceId: "d4", localOnly: true, list: true })).not.toBeNull();
+    // taken by the account's admission while the add-me screen was still up (its window had ended by the clock)
+    expect(approvals.ask("Own screen, admitted", "555555", f.clock.at + 90_000, { intent: "account", key: "k5", deviceId: "d5", localOnly: true, membersOnly: true, firstJoin: true, list: true })).not.toBeNull();
+    expect(approvals.listJoins()).toEqual([]);
+    const ids = [...approvals.list().map((join) => join.id), ...approvals.ownJoins().map((join) => join.id)];
+    expect(new Set(ids).size).toBe(2);
+    for (const [at, id] of ids.entries()) expect(approvals.decideForList(id, true, at === 0 ? "444444" : "555555", member)).toEqual({ outcome: "gone" });
+    // both wait as they did
+    expect([approvals.list().length, approvals.ownJoins().length]).toEqual([1, 1]);
+  });
+
+  it("are decided by it with the new device's digits, and no other waiting request is", async () => {
+    const f = fixture();
+    const approvals = f.open();
+    const first = approvals.ask("First", "111111", f.clock.at + 90_000, { intent: "account", key: "k1", deviceId: "d1", membersOnly: true, firstJoin: true, list: true })!;
+    const plain = approvals.ask("No card", "333333", f.clock.at + 90_000, { intent: "account", key: "k3", deviceId: "d3", membersOnly: true })!;
+    const { id } = approvals.listJoins()[0]!;
+    const [other] = approvals.remoteList().filter((join) => join.label === "No card");
+    expect(approvals.decideForList(other!.id, true, "333333", member)).toEqual({ outcome: "gone" });
+    first.confirm();
+    expect(approvals.decideForList(id, true, "111111", member)).toEqual({ outcome: "decided", device_id: "d1" });
+    expect(await first.decision).toMatchObject({ approved: true, by: member });
+    expect(approvals.decideForList(id, true, "111111", member)).toEqual({ outcome: "gone" });
+    // a wrong number ends the join for good, as from any approver
+    const again = approvals.ask("Again", "555555", f.clock.at + 90_000, { intent: "account", key: "k5", deviceId: "d5", membersOnly: true, list: true })!;
+    const waiting = approvals.listJoins().find((join) => join.label === "Again")!;
+    again.confirm();
+    expect(approvals.decideForList(waiting.id, true, "000000", member)).toEqual({ outcome: "wrong_digits" });
+    expect(await again.decision).toEqual({ approved: false });
+    plain.withdraw();
+  });
+
+  it("a request that is no join into the list is told and answered as it always was: its confirmation is said to nobody", () => {
+    const f = fixture();
+    const approvals = f.open();
+    const asked = approvals.ask("Tablet", "654321", f.clock.at + 90_000, { intent: "account", key: "k2", deviceId: "d2", membersOnly: true })!;
+    const told: unknown[] = [];
+    const stop = approvals.subscribeRemote((list) => told.push(list));
+    const before = JSON.stringify(approvals.remoteList());
+    asked.confirm();
+    // no event, and not one byte more in the answer: the members of a waiting request are the ones main sends
+    expect(told).toHaveLength(1);
+    expect(JSON.stringify(approvals.remoteList())).toBe(before);
+    expect(Object.keys(approvals.remoteList()[0]!).sort()).toEqual(["choices", "expires_at", "id", "intent", "key", "label"]);
+    stop();
+  });
+
+  it("an approval from afar of a join into the list that has not confirmed yet is refused, and the join waits as it did", async () => {
+    const f = fixture();
+    const approvals = f.open();
+    const asked = approvals.ask("Later", "222222", f.clock.at + 90_000, { intent: "account", key: "k2", deviceId: "d2", membersOnly: true, list: true })!;
+    const { id } = approvals.listJoins()[0]!;
+    expect(approvals.decideForList(id, true, "222222", member)).toEqual({ outcome: "not_confirmed" });
+    expect(approvals.decideRemote(id, true, "222222", member)).toEqual({ outcome: "not_confirmed" });
+    expect(approvals.listJoins().map((join) => join.id)).toEqual([id]);
+    // a No needs no confirmation, and neither does this PC's own window
+    asked.confirm();
+    expect(approvals.decideForList(id, true, "222222", member)).toEqual({ outcome: "decided", device_id: "d2" });
+    expect(await asked.decision).toMatchObject({ approved: true });
+    const other = approvals.ask("Other", "333333", f.clock.at + 90_000, { intent: "account", key: "k3", deviceId: "d3", membersOnly: true, list: true })!;
+    expect(approvals.decideForList(approvals.listJoins()[0]!.id, false, "", member)).toEqual({ outcome: "decided", device_id: "d3" });
+    expect(await other.decision).toEqual({ approved: false });
+  });
+
+  it("say once the new device confirmed its digits, and tell whoever may approve", () => {
+    const f = fixture();
+    const approvals = f.open();
+    const asked = approvals.ask("Later", "222222", f.clock.at + 90_000, { intent: "account", key: "k2", deviceId: "d2", membersOnly: true, list: true })!;
+    const told: (boolean | undefined)[] = [];
+    const stop = approvals.subscribeList((joins) => told.push(joins[0]?.confirmed));
+    expect(approvals.listJoins()[0]!.confirmed).toBeUndefined();
+    asked.confirm();
+    asked.confirm();
+    expect(approvals.listJoins()[0]!.confirmed).toBe(true);
+    expect(approvals.remoteList()[0]!.confirmed).toBe(true);
+    // told once at the confirm, and not again for a second one
+    expect(told).toEqual([undefined, true]);
+    stop();
+    // a join that was decided is confirmed by nothing
+    asked.withdraw();
+    asked.confirm();
+    expect(approvals.listJoins()).toEqual([]);
+  });
+
+  it("are told to it as they come and go", () => {
+    const f = fixture();
+    const approvals = f.open();
+    const told: string[][] = [];
+    const stop = approvals.subscribeList((joins) => told.push(joins.map((join) => join.label)));
+    const asked = approvals.ask("Later", "222222", f.clock.at + 90_000, { intent: "account", key: "k2", deviceId: "d2", membersOnly: true, list: true })!;
+    asked.withdraw();
+    stop();
+    approvals.ask("After", "222222", f.clock.at + 90_000, { intent: "account", key: "k6", deviceId: "d6", membersOnly: true, list: true });
+    expect(told).toEqual([[], ["Later"], []]);
   });
 });
 

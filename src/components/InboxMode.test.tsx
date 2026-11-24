@@ -8,7 +8,7 @@ import machinesFixture from "../../site/demo/fixtures/machines.json";
 import type { HeaderConnection } from "../lib/headerConnection.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import type { SidebarActivity } from "../lib/sidebarActivity.tsx";
-import { InboxConnecting, InboxFootEntry, InboxUnchosen, ThreadTitle, ThreadTop, type ThreadProps } from "./InboxMode.tsx";
+import { InboxConnecting, InboxUnchosen, ThreadTitle, ThreadTop, type ThreadProps } from "./InboxMode.tsx";
 
 const fixture: Machine[] = JSON.parse(JSON.stringify(machinesFixture.machines));
 const statusOf = (moved: Record<string, AgentStatus> = {}): SidebarActivity => ({
@@ -136,14 +136,3 @@ describe("the mode's shell before the app has connected", () => {
   });
 });
 
-describe("the way into the mode at the sidebar's foot", () => {
-  it("is one row of the footer's own that says Open agent inbox", () => {
-    const markup = draw(createElement(InboxFootEntry, { onOpen: () => {} }));
-    expect(markup.match(/<button/g)).toHaveLength(1);
-    expect(markup).toContain('class="btn btn-ghost sidebar-footer-action sidebar-footer-pc inbox-foot-entry"');
-    expect(markup).toContain('<span class="sidebar-footer-pc-name">Open agent inbox</span>');
-    expect(markup.match(/<svg/g)).toHaveLength(1);
-    expect(markup).toMatch(/<svg[^>]*lucide-inbox[^>]*>.*<\/svg><span class="sidebar-footer-pc-name">/s);
-    expect(markup).toMatch(/Open agent inbox<\/span><\/button>$/);
-  });
-});

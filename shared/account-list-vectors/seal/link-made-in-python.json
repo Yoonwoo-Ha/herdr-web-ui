@@ -1,0 +1,16 @@
+{
+  "name": "link-made-in-python",
+  "note": "Made by a Python script that shares no code with the module or the list's readers (hashlib and the `cryptography` library): docs/account-list.md, \"The vectors of seal/\".",
+  "link": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "from": {
+      "epoch": 5,
+      "key": "cb6f0f20bce5290c3db40add97a5491d8687a173892463eb94e4d654863a4cc3"
+    },
+    "commitment": "012d4515669ff38923e8317dc58eb946d0486c79ba1f8a0d7d38c5b81eefd7fe",
+    "bytes": "AbFEQ-2VuI_TPQq4ig79SSthbjiz1Kctt6J5MbZKZs5l7afOsFfM7-CTldUWoh5O6ktRgOP79u8LACz08g"
+  },
+  "expect": {
+    "key": "1920d3b6dec066eadf862d3371fd9db54d2f3131003e2414144772d86a887491"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "id": 0,
+  "method": "item/commandExecution/requestApproval",
+  "params": {
+    "kind": "command",
+    "threadId": "01a20a92-8d53-72b2-9feb-3765eccc475a",
+    "turnId": "01a20a92-a3ae-7573-9cc0-cb5178c690cc",
+    "itemId": "exec-99a3148d-0170-4dc2-ba36-a35ca4d2f212",
+    "startedAtMs": 1795473714893,
+    "environmentId": "local",
+    "reason": "Do you approve running ls -la in the workspace with escalated permissions?",
+    "command": "/bin/bash -lc 'ls -la'",
+    "cwd": "/home/user/work",
+    "commandActions": [
+      {
+        "type": "listFiles",
+        "command": "ls -la",
+        "path": null
+      }
+    ],
+    "proposedExecpolicyAmendment": [
+      "ls",
+      "-la"
+    ],
+    "availableDecisions": [
+      "accept",
+      {
+        "acceptWithExecpolicyAmendment": {
+          "execpolicy_amendment": [
+            "ls",
+            "-la"
+          ]
+        }
+      },
+      "cancel"
+    ]
+  }
+}

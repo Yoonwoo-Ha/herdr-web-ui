@@ -67,6 +67,8 @@ async function twoPcs(options: { direct?: { reachable: (dial: number, host: stri
   const started = await fetch(`${bBase}/api/relay/start`, { method: "POST", headers: { origin: bBase, "x-herdr-update": "1" } });
   expect(started.status).toBe(200);
   await bounded(synced.promise);
+  // direct connections are off until the PC's owner turns them on
+  if (options.direct) expect((await fetch(`${bBase}/api/relay/direct`, { method: "POST", headers: { origin: bBase, "x-herdr-update": "1", "content-type": "application/json" }, body: '{"on":true}' })).status).toBe(200);
   const offered = await fetch(`${bBase}/api/relay/offer`, { method: "POST", headers: { origin: bBase, "x-herdr-update": "1" } });
   expect(offered.status).toBe(200);
   const approvals = b.context.services.relay.approvals;

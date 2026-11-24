@@ -35,14 +35,22 @@ export interface RuntimeCapabilities {
    * socket; `core`, the core hc reports (the socket is this server's own adapter).
    */
   readonly spawner: "server" | "core";
+  /** whether an agent driven over ACP can run under its keeper in one of the runtime's terminals, labelled and under its parent (server/acp/children.ts) */
+  readonly acpChildren: boolean;
+  /**
+   * Whether an agent start can run a launcher Ovis wrote in place of the agent's own command (`agent.start`'s
+   * `program`, which the herdr-core adapter types into the pane's shell): how a Codex starts on its own app server
+   * (server/approvals/codex.ts). herdr starts only an agent's own command.
+   */
+  readonly launcher: boolean;
 }
 
 export const HERDR: RuntimeCapabilities = {
-  runtime: "herdr", attach: "pty-cli", agents: "detected", foreground: "job", seen: null, pins: false, machines: false, spawner: "server",
+  runtime: "herdr", attach: "pty-cli", agents: "detected", foreground: "job", seen: null, pins: false, machines: false, spawner: "server", launcher: false, acpChildren: false,
 };
 
 export const HERDR_CORE: RuntimeCapabilities = {
-  runtime: "herdr-core", attach: "hc", agents: "reported", foreground: "leader", seen: "label", pins: true, machines: true, spawner: "core",
+  runtime: "herdr-core", attach: "hc", agents: "reported", foreground: "leader", seen: "label", pins: true, machines: true, spawner: "core", launcher: true, acpChildren: true,
 };
 
 let served: RuntimeCapabilities | null = null;

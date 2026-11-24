@@ -13,6 +13,15 @@ contextBridge.exposeInMainWorld("ovisUpdate", {
   /** Restart to Update; settles only when Ovis keeps running after it (a .deb's password prompt cancelled) */
   install: (): Promise<void> => ipcRenderer.invoke("ovis:update-install"),
   close: (version: string): void => ipcRenderer.send("ovis:update-close", version),
+  // Settings → About: the app's version and its own check (main.ts appUpdate, updates.ts AppUpdateState)
+  state: (): Promise<unknown> => ipcRenderer.invoke("ovis:update-state"),
+  onState: (listener: (state: unknown) => void): (() => void) => {
+    const heard = (_event: unknown, state: unknown) => listener(state);
+    ipcRenderer.on("ovis:update-state", heard);
+    return () => { ipcRenderer.removeListener("ovis:update-state", heard); };
+  },
+  /** checks now, and downloads what it finds: what follows comes through onState */
+  check: (): Promise<void> => ipcRenderer.invoke("ovis:update-check"),
 });
 
 // only the app's own connection screen gets the bridge, never a page the server serves
@@ -40,6 +49,11 @@ if (isConnectionScreen) {
     list: (): Promise<unknown> => ipcRenderer.invoke("ovis:browsers"),
     choose: (id: string | null): Promise<void> => ipcRenderer.invoke("ovis:browser-choose", id),
     open: (url: string): void => ipcRenderer.send("ovis:browser-open", url),
+  });
+  // Settings → About → Terminal command (main.ts, terminalCommand.ts): where the `ovis` command is, and adding it
+  contextBridge.exposeInMainWorld("ovisCommand", {
+    state: (): Promise<unknown> => ipcRenderer.invoke("ovis:command"),
+    install: (): Promise<unknown> => ipcRenderer.invoke("ovis:command-install"),
   });
   // the built-in browser's tabs (main.ts, browserTabs.ts): main answers only its own server's page, and
   // null while the setting is off. The page keeps the place a tab is drawn in and steers its own tabs

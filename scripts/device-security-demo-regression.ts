@@ -246,10 +246,15 @@ try {
           const press = async (target: Locator): Promise<void> => { if (phone) await target.tap(); else await target.click(); };
           const startCode = async (page: Page): Promise<void> => {
             await press(page.locator('.settings-dialog [data-section="devices"]').getByRole("button", { name: label("Add a connection"), exact: true }));
-            await press(page.locator('.connect-phone-dialog .connect-ways [data-tab="devices"]'));
-            await press(page.locator('.connect-phone-dialog .connect-devices-ways [data-way="local"]'));
+            // Pair with a code is under the relay tab, or under SSH where the PC has no relay tab
+            const relayTab = page.locator('.connect-phone-dialog .connect-tabs [data-tab="relay"]');
+            await press((await relayTab.count()) > 0 ? relayTab : page.locator('.connect-phone-dialog .connect-tabs [data-tab="ssh"]'));
+            const pairByCode = page.locator('.connect-phone-dialog .connect-tab:not([hidden]) [data-testid="pair-with-code"]');
+            const getCode = pairByCode.getByRole("button", { name: label("Get a pairing code"), exact: true });
+            await pairByCode.locator(".compact-pair-code").or(getCode).first().waitFor();
+            if (await getCode.count() > 0) await press(getCode);
           };
-          const shownCode = (page: Page): Locator => page.locator('.connect-phone-dialog [data-tab-panel="devices"] .compact-pair-code');
+          const shownCode = (page: Page): Locator => page.locator('.connect-phone-dialog .connect-tab:not([hidden]) [data-testid="pair-with-code"] .compact-pair-code');
           const closeSettings = async (page: Page): Promise<void> => {
             await page.locator(".connect-phone-dialog").waitFor({ state: "detached", timeout: PAIRS_WITHIN_MS });
             await page.keyboard.press("Escape");
@@ -267,7 +272,7 @@ try {
             assert.equal(await page.locator(ROW).count(), 3, "the demo lists its three devices");
             assert.equal(await row.locator(".settings-label").innerText(), label("Revoke every device"));
             const words = await row.locator(".settings-description").innerText();
-            assert.equal(words, label("Every paired device, this one included, loses its pairing access at once. The access token, this PC and its Tailscale login are not affected."), "the row warns the caller that their own pairing goes, and names what stays");
+            assert.equal(words, label("Every paired device, this one included, loses its pairing access at once, and every Tailscale device this PC has seen is kept out until you allow it here. The access token and this PC are not affected."), "the row warns the caller that their own pairing goes, and names what stays");
             assert.equal(await rowButton.isEnabled(), true);
             // three places on one short page, each its own frame: the row at rest just come into view at the bottom
             // edge, the long label at that edge, and the true end (a target past the end would clamp them all into one)
@@ -353,7 +358,7 @@ try {
             }
             const dialog = page.getByRole("alertdialog", { name: label("Revoke every paired device?"), exact: true });
             await dialog.waitFor();
-            assert.equal(await dialog.locator(".confirm-body").innerText(), label("Every paired device loses its pairing access, this one included, and needs a new code to get back in. The access token, this PC and its Tailscale login still get in."));
+            assert.equal(await dialog.locator(".confirm-body").innerText(), label("Every paired device loses its pairing access, this one included, and needs a new code to get back in. Every Tailscale device this PC has seen is kept out too, until you allow it on this PC. The access token and this PC still get in."));
             assert.equal(await page.evaluate(() => document.activeElement?.textContent), label("Cancel"), "Cancel takes the focus, so Enter answers no");
             await capture(page, `${prefix}-confirm`, about("confirm"));
             measurements[prefix]!.confirmBody = await contrast(page, ".confirm-dialog .confirm-body");
@@ -376,7 +381,7 @@ try {
             await dialog.waitFor();
             await press(dialog.getByRole("button", { name: label("Revoke all"), exact: true }));
             await dialog.waitFor({ state: "detached" });
-            const revoked = page.getByText(label("Every paired device was revoked. The access token, this PC and its Tailscale login get in as before."), { exact: true });
+            const revoked = page.getByText(label("Every paired device was revoked, and the Tailscale devices this PC has seen are kept out. The access token and this PC get in as before."), { exact: true });
             await revoked.waitFor();
             assert.equal(await page.locator(ROW).count(), 0, "every device went");
             assert.equal(await row.count(), 0, "with nothing paired there is nothing to revoke");
@@ -653,6 +658,34 @@ try {
           }
 
           {
+            // no device paired here, two the PC's account let in, this one among them (site/demo/transport.ts `demo_devices=account`)
+            const { page, errors } = await open(context, server.port, "&demo_devices=account");
+            errorsOf.push(errors);
+            const joined = page.locator(ROW, { hasText: "Galaxy S25" });
+            await joined.waitFor();
+            assert.equal(await joined.locator(".devices-kind", { hasText: label("Through your account") }).count(), 1, "the row says the account let it in");
+            assert.equal(await page.getByText(label("No devices paired yet."), { exact: true }).count(), 0, "a list of such devices alone is not empty");
+            assert.equal(await page.locator(".devices-revoke-all").count(), 0, "such devices alone offer no Revoke all");
+            assert.equal(await joined.getByRole("button", { name: label("Revoke {name}").replace("{name}", "Galaxy S25"), exact: true }).count(), 1, "the row has its own Revoke");
+            // this device's row wears three pills: its kind, the account, and this device; each whole, in the name, clear of the buttons
+            const self = page.locator(ROW, { hasText: "iPhone · Safari" });
+            const pills = await self.evaluate((row) => {
+              const name = row.querySelector(".devices-name")!.getBoundingClientRect();
+              const actions = row.querySelector(".devices-actions")?.getBoundingClientRect();
+              return [...row.querySelectorAll<HTMLElement>(".devices-kind, .devices-current")].map((pill) => {
+                const box = pill.getBoundingClientRect();
+                return { text: pill.textContent, inName: box.left >= name.left - 0.5 && box.right <= name.right + 0.5, clearOfButtons: actions === undefined || box.right <= actions.left + 0.5, whole: pill.scrollWidth <= pill.clientWidth + 0.5 };
+              });
+            });
+            assert.deepEqual(pills.map((pill) => pill.text), [label("Phone"), label("Through your account"), label("This device now")], "this device's row has its three pills");
+            for (const pill of pills) assert.deepEqual({ inName: pill.inName, clearOfButtons: pill.clearOfButtons, whole: pill.whole }, { inName: true, clearOfButtons: true, whole: true }, `the pill ${pill.text} fits at ${width}`);
+            assert.deepEqual(await overflow(page), [], "the pills fit the rows");
+            await reveal(joined);
+            await capture(page, `${prefix}-account`, about("account"));
+            await page.close();
+          }
+
+          {
             const { page, errors } = await open(context, server.port, "&demo_devices=slow");
             errorsOf.push(errors);
             const loading = page.locator(".devices-panel [role='status']", { hasText: label("Loading…") });
@@ -735,7 +768,7 @@ try {
           }
 
           for (const errors of errorsOf) assert.deepEqual(errors, [], "the page raised no error");
-          console.log(`PASS ${width}px ${theme} ${language}: caller warning, confirmation, refused write, watch, empty, loading, revocation, Check now in this PC's row and the pairing notice`);
+          console.log(`PASS ${width}px ${theme} ${language}: caller warning, confirmation, refused write, watch, empty, a device through the account, loading, revocation, Check now in this PC's row and the pairing notice`);
         } finally {
           await context.close();
         }

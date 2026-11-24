@@ -1,61 +1,179 @@
 <!doctype html>
-<html lang="en" class="screens">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Ovis</title>
-  <!-- one theme-color, which Android reads for the system bars' icons: connect.js (followScheme) sets it to the screen's colour -->
-  <meta name="theme-color" content="#12100e">
+  <!-- one theme-color, which Android reads for the system bars' icons: shell.js (followScheme) sets it to the screen's colour -->
+  <meta name="theme-color" content="#ffffff">
+  <!-- the hosted page's typeface, from the files the bundled demo carries (app/scripts/build-web.ts writes it) -->
+  <link rel="stylesheet" href="pretendard.css">
   <link rel="stylesheet" href="shell.css">
 </head>
 <body>
-  <!-- data-ko: the Korean text of the element, put in as text by localize() (shell.js) on a Korean
-       phone, so markup inside a sentence gets its own element. Three screens, one shown at a time
-       (connect.js show): the sign-in, Add a PC (also "Start without signing in"), and an address. -->
-  <main id="sign-in" class="first">
-    <img class="sheep" src="ovis-sheep.svg" alt="Ovis" width="76" height="76">
-    <h1><span data-ko="PC를 어디서나.">Your PCs, anywhere.</span> <span class="quiet" data-ko="Ovis 계정에 로그인">Sign in to your Ovis account</span></h1>
-    <!-- the sign-ins the account service names (connect.js showProviders); GitHub alone until it answers -->
-    <div id="account" class="providers">
-      <button type="button" class="provider" data-provider="github"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg><span>GitHub</span></button>
-      <button type="button" class="provider" data-provider="google" hidden><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg><span>Google</span></button>
-      <button type="button" class="provider" data-provider="apple" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg><span>Apple</span></button>
+  <!-- data-ko: the Korean text of the element, put in as text by localize() (shell.js) on a Korean phone, so markup inside
+       a sentence gets its own element. connect.js puts in one of the two layouts below: the column where this page stands
+       in for the hosted Connect a PC screen (a hosted-home build), the tabs where it is the app's first screen. -->
+  <main id="connect-screen"></main>
+
+  <!-- The hosted screen did not load (getState `fallback`), or it handed over what only this page takes (an SSH PC to
+       manage, a pairing link): what works with no internet, in one column. No sign-in and no relay tab, which
+       need the internet and the hosted page. -->
+  <template id="column">
+    <img class="sheep" src="ovis-sheep.svg" alt="" width="56" height="56">
+    <div class="head">
+      <!-- back to the PC this was opened from (choosing), or to the hosted screen that handed over (connect.js showBack) -->
+      <button type="button" id="back-to-pc" class="back" hidden></button>
+      <h1 id="title" data-ko="PC 연결">Connect a PC</h1>
+      <h1 id="offline-title" class="lede" data-ko="인터넷에 연결할 수 없어요" hidden>Can't connect to the internet</h1>
     </div>
-    <p class="note" data-ko="처음이면 계정이 바로 만들어져요">First time? Your account is made right away.</p>
-    <button type="button" class="link" id="no-account" data-ko="로그인 없이 시작">Start without signing in</button>
-  </main>
-  <main id="add" class="first" hidden>
-    <button type="button" class="back" data-back aria-label="Back" data-ko-label="뒤로"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-    <span class="badge"><img src="ovis-sheep.svg" alt="" width="56" height="56"></span>
-    <h1 class="step" data-ko="PC 추가">Add a PC</h1>
-    <div class="ways">
-      <button type="button" class="way" id="scan"><span class="way-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 20h2M20 14v2" stroke-linecap="round"/></g></svg></span><span class="way-text"><span class="way-title" data-ko="QR 찍기">Scan a QR code</span><span class="sub" data-ko="PC 화면의 QR">The QR on the PC&#39;s screen</span></span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-      <button type="button" class="way" id="address-way"><span class="way-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z" stroke-linejoin="round"/></g></svg></span><span class="way-text"><span class="way-title" data-ko="주소 입력">Enter an address</span><span class="sub">Tailscale · Wi-Fi</span></span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-      <button type="button" class="way" id="ssh-way"><span class="way-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7l5 5-5 5M12 18h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="way-text"><span class="way-title" data-ko="SSH">SSH</span><span class="sub">user@host</span></span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <!-- Try again asks the app for the hosted screen again (goHome), which nothing else here does (connect.js showFallback) -->
+    <div id="offline" hidden>
+      <button type="button" class="primary wide" id="try-home" data-ko="다시 시도">Try again</button>
     </div>
-    <section id="saved-section" hidden>
-      <h2 data-ko="내 PC">Your PCs</h2>
-      <ul id="saved"></ul>
-    </section>
-  </main>
-  <main id="address-screen" class="first" hidden>
-    <button type="button" class="back" data-back aria-label="Back" data-ko-label="뒤로"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-    <h1 class="step" data-ko="주소 입력">Enter an address</h1>
-    <form id="connect" novalidate>
-      <input id="address" name="address" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://my-pc.tailnet.ts.net" autocomplete="url" aria-label="PC address" data-ko-label="PC 주소">
-      <button type="submit" class="primary" id="open" data-ko="열기">Open</button>
+    <!-- any PC's address, as the Tailscale tab's field and Add by address take it; the word demo opens the bundled demo -->
+    <h2 id="direct-label" data-ko="주소로 직접 연결">Connect by address</h2>
+    <form id="address-connect" class="field" novalidate>
+      <input id="web-address" name="address" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="my-pc.tailnet.ts.net" autocomplete="url" aria-labelledby="direct-label">
+      <button type="submit" class="primary" data-ko="연결">Connect</button>
     </form>
-  </main>
-  <!-- what an open does, on whichever screen is up (connect.js show moves it): the status text stays in the page,
-       empty until an open starts, since a live region that appears with its text is not announced (connect.js showStatus) -->
-  <div id="feedback">
-    <div class="status">
-      <span class="spinner" id="spinner" aria-hidden="true" hidden></span>
-      <span id="status-text" role="status"></span>
-      <button type="button" id="cancel" data-ko="취소" hidden>Cancel</button>
+    <!-- Tailscale off on this phone (Android's HerdrShell tailscale) while a Tailscale address is in play (connect.js showTailscaleOff) -->
+    <div id="tailscale-off" class="off" hidden>
+      <p class="detail" data-ko="이 폰에서 Tailscale이 꺼져 있어요. Tailscale 주소는 Tailscale을 켜야 열려요.">Tailscale is off on this phone. A Tailscale address opens only once it is on.</p>
+      <button type="button" id="open-tailscale" data-ko="Tailscale 열기">Open Tailscale</button>
     </div>
-    <p class="error" id="error" role="alert"></p>
-  </div>
+    <!-- what an open does, under the control that started it (connect.js showStatus, feedbackAt) -->
+    <div id="feedback">
+      <div class="status">
+        <span class="spinner" id="spinner" aria-hidden="true" hidden></span>
+        <span id="status-text" role="status"></span>
+        <button type="button" class="ghost" id="cancel" data-ko="취소" hidden>Cancel</button>
+      </div>
+      <p class="error" id="error" role="alert"></p>
+    </div>
+    <!-- a Tailscale QR or a PC's QR still opens on a home network with no internet -->
+    <button type="button" class="way" data-scan><span class="way-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3M21 21v.01M12 7v3a2 2 0 0 1-2 2H7M3 12h.01M12 3h.01M12 16v.01M16 12h1M21 12v.01M12 21v-1"/></g></svg></span><span class="way-text"><span class="way-title" data-ko="QR 찍기">Scan a QR code</span><span class="sub" data-ko="PC 화면의 QR">The QR on the PC's screen</span></span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <!-- SSH's user@host behind its row, only where the app has OvisSsh (connect.js sshOffered): it opens the SSH setup filled in -->
+    <button type="button" class="way" id="ssh-way" aria-expanded="false" aria-controls="ssh-add"><span class="way-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19h8m-16-2 6-6-6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="way-text"><span class="way-title" data-ko="SSH로 연결">Connect over SSH</span><span class="sub">user@host</span></span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <div id="ssh-add" class="panel" hidden>
+      <label class="label" for="address">SSH</label>
+      <form id="connect" class="field" novalidate>
+        <input id="address" name="address" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="user@host" autocomplete="off">
+        <button type="submit" class="primary" id="open" data-ko="연결">Connect</button>
+      </form>
+    </div>
+    <!-- the PCs an SSH PC on this phone knows: suggestions to add, before the PCs this phone is on (connect.js showKnown) -->
+    <section id="known-section" class="panel" hidden>
+      <h2 id="known-title"></h2>
+      <ul id="known-pcs" class="pc-list"></ul>
+    </section>
+    <!-- every PC this phone saved, whichever way it connects, each opening as it does from the tabs (connect.js renderPcs) -->
+    <section id="pcs-section" class="panel" hidden>
+      <h2 data-ko="이 폰이 연결한 PC">PCs this phone is on</h2>
+      <ul id="pcs" class="pc-list"></ul>
+    </section>
+  </template>
+
+  <!-- The app's first screen (OVIS_APP_HOME=bundled, or a build without the account): Connect a PC with the desktop's Add a
+       connection tabs in its order (connect.js pick), the Ovis relay (its sign-in), Tailscale and SSH. No sign-in comes
+       first: Tailscale and SSH need none. -->
+  <template id="tabs">
+    <img class="sheep" src="ovis-sheep.svg" alt="" width="56" height="56">
+    <div class="head">
+      <!-- opened from a PC's Connect a PC (HerdrShell chooseAnother): back to that PC, which stays open until another is
+           picked (connect.js showBack) -->
+      <button type="button" id="back-to-pc" class="back" hidden></button>
+      <h1 id="title" data-ko="PC 연결">Connect a PC</h1>
+    </div>
+    <!-- a build with no account that still opens the hosted screen first (OVIS_APP_HOME=hosted): this page standing in for
+         it says so, and Try again asks for it again (goHome) -->
+    <div id="offline" class="panel" hidden>
+      <p id="offline-title" class="note" data-ko="인터넷에 연결할 수 없어요">Can't connect to the internet</p>
+      <button type="button" class="primary wide" id="try-home" data-ko="다시 시도">Try again</button>
+    </div>
+    <!-- a tab is picked, never stepped to: the phone's Back leaves the app from here (connect.js pick) -->
+    <div class="tabs" role="tablist" aria-label="How to connect" data-ko-label="연결 방법">
+      <button type="button" role="tab" id="tab-relay" data-tab="relay" aria-controls="panel-relay" data-ko="Ovis 릴레이">Ovis relay</button>
+      <button type="button" role="tab" id="tab-tailscale" data-tab="tailscale" aria-controls="panel-tailscale">Tailscale</button>
+      <button type="button" role="tab" id="tab-ssh" data-tab="ssh" aria-controls="panel-ssh">SSH</button>
+    </div>
+    <section id="panel-relay" class="panel" role="tabpanel" aria-labelledby="tab-relay">
+      <p class="lede" data-ko="Ovis 계정으로 어디서나 내 PC에 접속해요">Reach your PCs from anywhere with your Ovis account</p>
+      <!-- the sign-ins the account service names (connect.js showProviders); GitHub alone until it answers -->
+      <div id="account" class="providers">
+        <button type="button" class="provider" data-provider="github"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg><span data-ko="GitHub로 계속하기">Continue with GitHub</span></button>
+        <button type="button" class="provider" data-provider="google" hidden><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg><span data-ko="Google로 계속하기">Continue with Google</span></button>
+        <button type="button" class="provider" data-provider="apple" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg><span data-ko="Apple로 계속하기">Continue with Apple</span></button>
+      </div>
+      <p class="note" data-ko="처음이면 계정이 바로 만들어져요">First time? Your account is made right away.</p>
+      <!-- the QR code a PC shows (its relay pairing, or its address): here, not under Tailscale, which hides its part while Tailscale is off -->
+      <button type="button" class="way" data-scan><span class="way-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3M21 21v.01M12 7v3a2 2 0 0 1-2 2H7M3 12h.01M12 3h.01M12 16v.01M16 12h1M21 12v.01M12 21v-1"/></g></svg></span><span class="way-text"><span class="way-title" data-ko="PC 화면의 QR 찍기">Scan the QR on the PC's screen</span></span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <p class="note" data-ko="Tailscale · SSH는 로그인 없이 돼요">Tailscale and SSH need no sign-in.</p>
+      <!-- the PCs this phone paired over the relay (a pairing link, ovis pair --relay), under the sign-in; never the account's
+           PCs, which come with its sign-in (connect.js renderPcs) -->
+      <section id="relay-section" class="panel" hidden>
+        <h2 data-ko="이 폰이 연결한 PC">PCs this phone is on</h2>
+        <ul id="relay-pcs" class="pc-list"></ul>
+      </section>
+    </section>
+    <section id="panel-tailscale" class="panel" role="tabpanel" aria-labelledby="tab-tailscale" hidden>
+      <!-- Tailscale off on this phone (Android's HerdrShell tailscale): nothing else here would open, so one line and its app -->
+      <div class="off" id="tailscale-off" hidden>
+        <p class="note" data-ko="Tailscale을 켜야 연결할 수 있어요">Turn on Tailscale to connect</p>
+        <button type="button" class="primary wide" id="open-tailscale" data-ko="Tailscale 열기">Open Tailscale</button>
+      </div>
+      <div id="tailscale-on" class="panel">
+        <p class="note" id="tailnet-none" data-ko="이 폰이 연 Tailscale PC가 아직 없어요. PC의 Tailscale 주소를 넣거나 QR을 찍으세요.">No PC on Tailscale was opened on this phone yet. Type the PC's Tailscale address or scan its QR code.</p>
+        <form id="tailnet-connect" class="field" novalidate>
+          <input id="tailnet-address" name="address" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="my-pc.tailnet.ts.net" autocomplete="url" aria-label="Tailscale address" data-ko-label="Tailscale 주소">
+          <button type="submit" class="primary" data-ko="연결">Connect</button>
+        </form>
+        <button type="button" class="way" data-scan><span class="way-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3M21 21v.01M12 7v3a2 2 0 0 1-2 2H7M3 12h.01M12 3h.01M12 16v.01M16 12h1M21 12v.01M12 21v-1"/></g></svg></span><span class="way-text"><span class="way-title" data-ko="QR 찍기">Scan a QR code</span><span class="sub" data-ko="PC의 Tailscale QR">The PC&#39;s Tailscale QR</span></span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <!-- the PCs this phone opened on the tailnet, under the tab's controls (connect.js renderPcs) -->
+        <section id="tailnet-section" class="panel" hidden>
+          <h2 data-ko="이 폰이 연결한 PC">PCs this phone is on</h2>
+          <ul id="tailnet" class="pc-list"></ul>
+        </section>
+      </div>
+    </section>
+    <section id="panel-ssh" class="panel" role="tabpanel" aria-labelledby="tab-ssh" hidden>
+      <!-- SSH's user@host first (shell.js sshOrAddress), only where the app has OvisSsh (connect.js sshOffered) -->
+      <div id="ssh-add" class="panel">
+        <label class="label" for="address" id="address-label">SSH</label>
+        <form id="connect" class="field" novalidate>
+          <input id="address" name="address" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="user@host" autocomplete="off">
+          <button type="submit" class="primary" id="open" data-ko="연결">Connect</button>
+        </form>
+      </div>
+      <!-- a PC's https address, behind a text link -->
+      <button type="button" class="text-link" id="by-address" aria-expanded="false" aria-controls="address-connect" data-ko="주소로 추가">Add by address</button>
+      <form id="address-connect" class="field" novalidate hidden>
+        <input id="web-address" name="address" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://my-pc.example.com" autocomplete="url" aria-label="PC address" data-ko-label="PC 주소">
+        <button type="submit" class="primary" data-ko="연결">Connect</button>
+      </form>
+      <!-- the PCs an SSH PC on this phone knows (its ssh config, its Tailscale login, the PCs it added): suggestions to add,
+           so with the tab's controls, before the PCs this phone is on (connect.js showKnown) -->
+      <section id="known-section" class="panel" hidden>
+        <h2 id="known-title"></h2>
+        <ul id="known-pcs" class="pc-list"></ul>
+      </section>
+      <!-- the PCs this phone added over SSH (each with Manage) or opened at any other address, one list (connect.js renderPcs) -->
+      <section id="ssh-section" class="panel" hidden>
+        <h2 data-ko="이 폰이 연결한 PC">PCs this phone is on</h2>
+        <ul id="ssh-pcs" class="pc-list"></ul>
+      </section>
+    </section>
+    <!-- what an open does, under whichever tab is up: the status text stays in the page, empty until an open starts,
+         since a live region that appears with its text is not announced (connect.js showStatus) -->
+    <div id="feedback">
+      <div class="status">
+        <span class="spinner" id="spinner" aria-hidden="true" hidden></span>
+        <span id="status-text" role="status"></span>
+        <button type="button" class="ghost" id="cancel" data-ko="취소" hidden>Cancel</button>
+      </div>
+      <p class="error" id="error" role="alert"></p>
+    </div>
+  </template>
   <script type="module" src="connect.js"></script>
 </body>
 </html>

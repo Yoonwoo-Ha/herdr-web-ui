@@ -254,8 +254,19 @@ jobs:
       - name: Rust unit tests
         if: needs.changes.outputs.draft != 'true'
         run: cargo test --locked --manifest-path crates/pty-sidecar/Cargo.toml
+      - name: ACP keeper unit tests
+        if: needs.changes.outputs.draft != 'true'
+        run: cargo test --locked --manifest-path crates/acp-keeper/Cargo.toml
       - run: bun install --frozen-lockfile
         if: needs.changes.outputs.draft != 'true'
+      - name: Build the ACP keeper and test agent
+        if: needs.changes.outputs.draft != 'true'
+        run: cargo build --release --locked --manifest-path crates/acp-keeper/Cargo.toml --examples --bins
+      - name: ACP keeper integration tests
+        if: needs.changes.outputs.draft != 'true'
+        env:
+          OVIS_REQUIRE_ACP_KEEPER: '1'
+        run: bun test server/acp server/agent-tools/turns.test.ts server/agent-tools/claude-child.contract.test.ts server/approvals/acp.test.ts server/core/acp-composer.test.ts
       - name: PtySession on both hosts
         if: needs.changes.outputs.draft != 'true'
         run: bun test ./server/pty/host.test.ts
@@ -329,7 +340,19 @@ jobs:
           set -euo pipefail
           # one file per line: a new live test file is added by adding its line
           files=(
+            ./server/acp/children.live.test.ts
             ./server/herdr-core/live.test.ts
+            ./server/herdr-core/socket-transport.live.test.ts
+            ./server/herdr-core/core.fake.live.test.ts
+            ./tui/testing/with-core.contract.test.ts
+            ./tui/core/link.live.test.ts
+            ./tui/core/pane.live.test.ts
+            ./tui/core/layout.live.test.ts
+            ./tui/display.live.test.ts
+            ./tui/loop.live.test.ts
+            ./tui/fidelity.live.test.ts
+            ./tui/coexist.live.test.ts
+            ./tui/view/mouse.live.test.ts
           )
           while read -r version sha256; do
             [ -n "$version" ] || continue
@@ -375,7 +398,7 @@ jobs:
       - id: upgrade-fixtures
         name: Fetch the pinned upgrade fixtures
         run: |
-          git fetch --no-tags --depth=1 origin refs/tags/v0.5.6:refs/tags/v0.5.6 refs/tags/v0.5.7:refs/tags/v0.5.7
+          git fetch --no-tags --depth=1 origin refs/tags/v0.5.6:refs/tags/v0.5.6 refs/tags/v0.5.7:refs/tags/v0.5.7 refs/tags/v0.5.4:refs/tags/v0.5.4 refs/tags/v0.5.9:refs/tags/v0.5.9
           git cat-file -e 'c482ad601132ebb80c0013f9d9063d474eac96c1^{commit}'
           git cat-file -e 'acab7685663bebc0ce2e93c75b4e3c4048d9f0bb^{commit}'
       - run: bun run check fast

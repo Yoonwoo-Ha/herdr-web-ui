@@ -74,4 +74,15 @@ export const expect = async ({ page, width, box, menu, scenario, clear, rowLabel
     assert.ok(geometry.inside && geometry.onScreen && !geometry.overlapping && !geometry.overflowing, JSON.stringify(geometry));
     await capture();
   });
+
+  await scenario(`F: a hidden command names a command under its own trigger only (${width}px)`, null, async () => {
+    const unmatched = page.locator(".chat-inline-state", { hasText: "No command matches" });
+    await clear();
+    // Codex's menu hides /apps, which still runs when typed; $apps names no skill (#3458)
+    await box.fill("$apps");
+    await unmatched.waitFor();
+    await box.fill("/apps");
+    await unmatched.waitFor({ state: "detached" });
+    await clear();
+  });
 };

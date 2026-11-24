@@ -3,16 +3,18 @@ import { Globe, Monitor, Network, RadioTower, Wifi, type LucideIcon } from "luci
 
 import type { ObservedIngress } from "../../shared/protocol.ts";
 import { connectionRoute } from "../lib/connectionRoute.ts";
+import { demoBuild } from "../lib/demo.ts";
 import { useT } from "../lib/i18n.ts";
+import { inNativeApp } from "../lib/nativeApp.ts";
 import { getTransport } from "../lib/transport.ts";
 import { inRelayShell } from "../lib/useRelay.ts";
 
 const noRoute = (): (() => void) => () => {};
 
-function useDirectCarrier(relay: boolean): boolean {
-  const transport = relay ? getTransport() as { route?: unknown; onRouteChange?: (listener: () => void) => () => void } : null;
+function useDirectCarrier(relay: boolean): "lan" | "tailscale" | null {
+  const transport = relay ? getTransport() : null;
   const subscribe = useCallback((listener: () => void) => transport?.onRouteChange ? transport.onRouteChange(listener) : noRoute(), [transport]);
-  return useSyncExternalStore(subscribe, () => transport?.route === "direct");
+  return useSyncExternalStore(subscribe, () => transport?.route === "direct" ? transport.directVia ?? "lan" : null);
 }
 
 export function ConnectionRouteMark({ portal, ingress }: { portal: boolean; ingress: ObservedIngress | null }) {
@@ -21,11 +23,12 @@ export function ConnectionRouteMark({ portal, ingress }: { portal: boolean; ingr
   if (ingress !== null) known.current = ingress;
   const relay = inRelayShell();
   const directCarrier = useDirectCarrier(relay);
-  const route = connectionRoute({ relay, portal, ingress: known.current, protocol: window.location.protocol, hostname: window.location.hostname });
+  const route = connectionRoute({ relay, portal, ingress: known.current, demo: demoBuild() && inNativeApp(), hostname: window.location.hostname });
   if (route === null) return null;
-  const shown = route === "relay" && directCarrier ? "relay-direct" : route;
+  const shown = route !== "relay" || directCarrier === null ? route : directCarrier === "tailscale" ? "relay-tailscale" : "relay-direct";
   const [Icon, word, title]: [LucideIcon, string, string] =
     shown === "relay-direct" ? [Wifi, t("direct"), t("Directly on the same network, not through the relay")]
+    : shown === "relay-tailscale" ? [Network, "Tailscale", t("Directly over Tailscale, not through the relay")]
     : route === "relay" ? [RadioTower, t("relay"), t("Via the Ovis relay")]
     : route === "portal" ? [RadioTower, t("relay"), t("Via the Portal relay")]
     : route === "tailscale" ? [Network, "Tailscale", t("Via Tailscale")]

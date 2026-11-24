@@ -1,6 +1,6 @@
 import type { Translate } from "./i18n.ts";
 
-export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "agents" | "shortcuts" | "devices" | "experimental" | "about";
+export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "agents" | "memory" | "shortcuts" | "devices" | "experimental" | "about";
 
 export interface SettingsPageEntry {
   id: SettingsPageId;
@@ -21,6 +21,7 @@ export function settingsPageEntries(t: Translate): SettingsPageEntry[] {
     { id: "terminal", label: t("Terminal"), aliases: t("terminal key bar keyboard clipboard") },
     { id: "alerts", label: t("Alerts"), aliases: t("notifications sound push bell needs input finished") },
     { id: "agents", label: t("Agents"), aliases: [t("agents hooks claude codex install"), t("plan limits quota meters"), t("Subscription usage"), t("Agent integrations"), t("Permission mode"), t("Sandbox and approvals"), t("Browser tool")].join(" ") },
+    { id: "memory", label: t("Memory|notes"), aliases: t("notes remember agents confirm") },
     { id: "shortcuts", label: t("Shortcuts"), aliases: t("keyboard keys bindings hotkeys") },
     { id: "devices", label: t("Devices and PCs"), aliases: t("phone install keep screen on app") },
     { id: "experimental", label: t("Experimental"), aliases: `${t("Start a replaced server again")} ${t("Named agent groups")} ${t("Lock pinned agents")} ${t("Codex panes: let Codex select and scroll")} ${t("OMP: side conversations chip")}` },

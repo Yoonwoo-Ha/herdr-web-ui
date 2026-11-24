@@ -126,7 +126,15 @@ const INCOMPLETE_CSI = /^\x1b(\[[\x30-\x3f]*[\x20-\x2f]*)?$/;
  * request is passed on the same way, once: without it the joiner sends Ctrl+Enter as Enter.
  */
 export class ReplayBuffer {
-  private tail = "";
+  /**
+   * The tail as UTF-8 at `bytes[start, end)`: an append encodes only its own output and a cut
+   * decodes only what falls out: re-encoding a whole string tail on every append was the server's
+   * largest CPU cost under busy agents. The output arrives from a streaming TextDecoder, so the
+   * round trip loses nothing.
+   */
+  private bytes = Buffer.alloc(0);
+  private start = 0;
+  private end = 0;
   /** order matters: 1016l after 1006h leaves xterm's mouse encoding at the default */
   private readonly modes = new Map<string, "h" | "l">();
   private modifyOtherKeys = 0;
@@ -139,18 +147,21 @@ export class ReplayBuffer {
   constructor(private readonly limit: number) {}
 
   append(data: string): void {
-    const bytes = Buffer.from(this.tail + data);
-    let start = Math.max(0, bytes.length - this.limit);
-    while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start++;
-    // never cut a control sequence in two: its switch would be lost to both halves
-    const escape = start > 0 ? bytes.lastIndexOf(0x1b, start - 1) : -1;
-    if (escape >= 0 && INCOMPLETE_CSI.test(bytes.subarray(escape, start).toString("latin1"))) start = escape;
-    if (start === 0) {
-      this.tail += data;
-      return;
+    const size = Buffer.byteLength(data);
+    if (this.end + size > this.bytes.length) {
+      // twice what is held: the next copy comes only after about as much output again
+      this.move(2 * (this.end - this.start + size));
     }
+    this.end += this.bytes.write(data, this.end);
+    const bytes = this.bytes;
+    let start = Math.max(this.start, this.end - this.limit);
+    while (start < this.end && (bytes[start]! & 0xc0) === 0x80) start++;
+    // never cut a control sequence in two: its switch would be lost to both halves
+    const escape = start > this.start ? bytes.subarray(this.start, start).lastIndexOf(0x1b) : -1;
+    if (escape >= 0 && INCOMPLETE_CSI.test(bytes.toString("latin1", this.start + escape, start))) start = this.start + escape;
+    if (start === this.start) return;
     this.truncated = true;
-    const cut = bytes.subarray(0, start).toString("utf8");
+    const cut = bytes.toString("utf8", this.start, start);
     for (const [, params, state] of cut.matchAll(PRIVATE_MODES)) {
       for (const mode of params!.split(";").filter(Boolean)) {
         this.modes.delete(mode);
@@ -158,13 +169,23 @@ export class ReplayBuffer {
       }
     }
     for (const [, resource, level, final] of cut.matchAll(MODIFY_OTHER_KEYS)) this.modifyOtherKeys = resource && final === "m" ? Number(level || 0) : 0;
-    this.tail = bytes.subarray(start).toString("utf8");
+    this.start = start;
+    // a burst far past the limit grew the buffer for itself: keep only room for what is left
+    const kept = Math.max(this.limit, this.end - this.start);
+    if (this.bytes.length > 4 * kept) this.move(2 * kept);
+  }
+
+  private move(capacity: number): void {
+    const next = Buffer.allocUnsafe(capacity);
+    this.end = this.bytes.copy(next, 0, this.start, this.end);
+    this.start = 0;
+    this.bytes = next;
   }
 
   text(): string {
-    if (!this.tail) return "";
+    if (this.start === this.end) return "";
     const keys = this.modifyOtherKeys > 0 ? `\x1b[>4;${this.modifyOtherKeys}m` : "";
-    return [...this.modes].map(([mode, state]) => `\x1b[?${mode}${state}`).join("") + keys + this.tail;
+    return [...this.modes].map(([mode, state]) => `\x1b[?${mode}${state}`).join("") + keys + this.recent;
   }
 
   get alternateScreen(): boolean {
@@ -172,6 +193,6 @@ export class ReplayBuffer {
   }
 
   get recent(): string {
-    return this.tail;
+    return this.bytes.toString("utf8", this.start, this.end);
   }
 }

@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { loginEnvProbe, loginShell } from "../shell-agent.ts";
 import type { HcConnection } from "./connection.ts";
 import { SERVER_ENV } from "./hc-connect.ts";
+import { TERMINAL_COLOUR } from "./layout-ops.ts";
 
 type Env = Record<string, string>;
 type SourceEnv = Record<string, string | undefined>;
@@ -30,7 +31,8 @@ const SESSION_BOUND = /^(?:SSH_AUTH_SOCK|SSH_AGENT_PID|SSH_TTY|SSH_CONNECTION|SS
 
 const CORE_PLACE = /^(?:HOME|HC_.*|XDG_.*)$/;
 
-const COLOUR: Env = { TERM: "xterm-256color", COLORTERM: "truecolor" };
+/** Ovis's terminal view draws 24-bit colour (the screen gives its terminals the same). */
+const COLOUR: Env = TERMINAL_COLOUR;
 
 /**
  * hc hands every terminal the environment of the process that started the core (herdr-core#86).

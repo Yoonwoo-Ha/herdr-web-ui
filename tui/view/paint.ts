@@ -1,3 +1,4 @@
+import type { ColorDepth } from "../host/index.ts";
 import { STYLE_BOLD, STYLE_FAINT, STYLE_INVERSE, STYLE_INVISIBLE, STYLE_ITALIC, STYLE_STRIKE, STYLE_UNDERLINE_MASK, type EngineCursor, type WrittenColor } from "../emulator/index.ts";
 import { holds, intersect, type Rect } from "./geometry.ts";
 import { Grid, STYLE_BLINK, STYLE_OVERLINE, Styles, type PaneGrid, type Style } from "./grid.ts";
@@ -54,7 +55,17 @@ export interface PaneScene {
   hold: boolean;
   /** showing history above the screen */
   scrolledBack: boolean;
+  /** dimmed last picture while the pane or the core link is not live */
+  dim?: boolean;
+  /**
+   * cells of its grid drawn selected: from `start` to `end` (either order) row by row, both included; in `colors` when
+   * given (a mouse selection), else inverted (copy mode's)
+   */
+  selection?: { start: GridCell; end: GridCell; colors?: { fg: WrittenColor; bg: WrittenColor } };
 }
+
+/** A cell of a pane's terminal grid: x the column, y the row, both from 0. */
+export interface GridCell { x: number; y: number }
 
 export interface Scene {
   width: number;
@@ -64,6 +75,8 @@ export interface Scene {
   panes: readonly PaneScene[];
   /** drawn last, on top of everything */
   overlays: readonly Part[];
+  /** every cell under the overlays is drawn dim (a dialog that holds the user's attention) */
+  dim?: boolean;
   /** the pane the user drives */
   focus: string | null;
   /** who owns typing besides the focused pane: an overlay's text field at a cell, an overlay without one, or nobody */
@@ -88,9 +101,6 @@ export interface PainterOptions {
   /** what the host shows (tui/host `colorDepth`): on a 256-colour host an RGB colour is written as its nearest palette index */
   colors?: ColorDepth;
 }
-
-/** the colours a host shows: RGB as written, or the 256 of its palette */
-export type ColorDepth = "truecolor" | "256";
 
 const ESC = "\x1b";
 const CAN = "\x18";
@@ -163,6 +173,8 @@ export class Painter {
   private layout: string | null = null;
   private readonly versions = new Map<string, string | number>();
   private readonly partHits = new Map<string, Hit[]>();
+  /** each pane's selection as last drawn: a pane whose selection changed is drawn again whole */
+  private readonly selections = new Map<string, string>();
   private written: HostCursor | null = null;
   private shape: string | null = null;
   private cut = false;
@@ -176,6 +188,35 @@ export class Painter {
 
   get screen(): Grid {
     return this.next;
+  }
+
+  /**
+   * The hit map `scene` has, from its parts' and overlays' own drawing, without composing or writing anything: what the
+   * pointer meets once input changed the model after the last frame (a right-click menu just opened, then a click on it),
+   * as it would meet the next frame.
+   */
+  hitMap(scene: Pick<Scene, "width" | "height" | "parts" | "overlays"> & { readonly panes: readonly Pick<PaneScene, "id" | "rect">[] }): HitMap {
+    const screen: Rect = { x: 0, y: 0, width: Math.max(0, Math.floor(scene.width)), height: Math.max(0, Math.floor(scene.height)) };
+    const hits: Hit[] = [];
+    const measure = (part: Part): void => {
+      const clip = intersect(part.rect, screen);
+      hits.push({ rect: clip, target: { part: part.key, id: "" } });
+      part.draw({
+        rect: clip,
+        style: () => 0,
+        put: () => {},
+        print: (col, _row, text) => col + this.host.layout(text.replace(CONTROL, "\ufffd")).end,
+        fill: () => {},
+        hit: (rect, id) => {
+          const inside = intersect(rect, clip);
+          if (inside.width > 0) hits.push({ rect: inside, target: { part: part.key, id } });
+        },
+      });
+    };
+    for (const part of scene.parts) measure(part);
+    for (const pane of scene.panes) hits.push({ rect: intersect(pane.rect, screen), target: { pane: pane.id } });
+    for (const overlay of scene.overlays) measure(overlay);
+    return new HitMap(hits);
   }
 
   paint(scene: Scene): Frame {
@@ -198,6 +239,7 @@ export class Painter {
       this.touched.fill(1);
       this.versions.clear();
       this.partHits.clear();
+      this.selections.clear();
     }
 
     const screen: Rect = { x: 0, y: 0, width, height };
@@ -211,6 +253,7 @@ export class Painter {
       if (redraw && !full && clip.width > 0) redrawn.push(clip);
     }
     for (const pane of scene.panes) this.drawPane(pane, screen, hits, full, redrawn);
+    if (scene.dim) this.dimAll();
     for (const overlay of scene.overlays) this.drawPart(overlay, intersect(overlay.rect, screen), hits, true);
     this.fitHost();
 
@@ -273,6 +316,17 @@ export class Painter {
     this.touched[row] = 1;
   }
 
+  /** Every cell of the composed screen gets the dim attribute; a cell already dim stays as it is. */
+  private dimAll(): void {
+    const grid = this.composed;
+    for (let i = 0; i < grid.style.length; i++) {
+      const style = this.styles.get(grid.style[i]!);
+      if (style.flags & STYLE_FAINT) continue;
+      grid.style[i] = this.styles.id(style.fg, style.bg, style.flags | STYLE_FAINT);
+    }
+    this.touched.fill(1);
+  }
+
   private blankAt(grid: Grid, i: number): void {
     grid.text[i] = " ";
     grid.width[i] = 1;
@@ -329,8 +383,11 @@ export class Painter {
     hits.push({ rect: clip, target: { pane: pane.id } });
     const source = pane.grid;
     const view = pane.view ?? { col: 0, row: 0 };
+    const selection = pane.selection ? JSON.stringify([ordered(pane.selection), pane.selection.colors ?? null]) : "";
+    const reselected = (this.selections.get(pane.id) ?? "") !== selection;
+    this.selections.set(pane.id, selection);
     if (clip.width > 0) {
-      const rows = new Set(full || source.allDirty ? range(clip.y, clip.y + clip.height) : [...source.dirty].map((gy) => pane.rect.y + gy - view.row));
+      const rows = new Set(full || source.allDirty || reselected ? range(clip.y, clip.y + clip.height) : [...source.dirty].map((gy) => pane.rect.y + gy - view.row));
       for (const rect of redrawn) {
         const under = intersect(rect, clip);
         for (let row = under.y; row < under.y + under.height; row++) rows.add(row);
@@ -345,6 +402,7 @@ export class Painter {
     const grid = pane.grid.grid;
     const gy = row - pane.rect.y + view.row;
     const right = clip.x + clip.width;
+    const selection = pane.selection ? ordered(pane.selection) : null;
     for (let col = clip.x; col < right; col++) {
       const gx = col - pane.rect.x + view.col;
       if (gy < 0 || gy >= grid.rows || gx < 0 || gx >= grid.cols) {
@@ -353,7 +411,13 @@ export class Painter {
       }
       const i = gy * grid.cols + gx;
       const width = grid.width[i]!;
-      const style = grid.style[i]!;
+      const rawStyle = grid.style[i]!;
+      const baseStyle = this.styles.get(rawStyle);
+      // a wide cell is selected when either of its columns is, as the copy takes it whole
+      const selected = selection !== null && (inside(selection, width === 0 ? gx - 1 : gx, gy) || inside(selection, width === 2 ? gx + 1 : gx, gy));
+      const colors = selected ? pane.selection?.colors : undefined;
+      const flags = (pane.dim ? baseStyle.flags | STYLE_FAINT : baseStyle.flags) ^ (selected && !colors ? STYLE_INVERSE : 0);
+      const style = colors ? this.styles.id(colors.fg, colors.bg, flags & ~STYLE_INVERSE) : flags === baseStyle.flags ? rawStyle : this.styles.id(baseStyle.fg, baseStyle.bg, flags);
       if (width === 0) {
         // the covered column of a wide cell whose first column lies left of the clip
         if (col === clip.x) this.put(col, row, " ", 1, this.styles.blank(style));
@@ -486,6 +550,17 @@ export class Painter {
   }
 }
 
+/** a selection with its first cell first, row by row */
+export function ordered<P extends { readonly x: number; readonly y: number }>({ start, end }: { readonly start: P; readonly end: P }): { start: P; end: P } {
+  return start.y < end.y || (start.y === end.y && start.x <= end.x) ? { start, end } : { start: end, end: start };
+}
+
+/** whether cell (x, y) lies in an ordered selection */
+function inside({ start, end }: { start: GridCell; end: GridCell }, x: number, y: number): boolean {
+  if (y < start.y || y > end.y) return false;
+  return (y > start.y || x >= start.x) && (y < end.y || x <= end.x);
+}
+
 function sameCell(a: Grid, b: Grid, i: number): boolean {
   return a.text[i] === b.text[i] && a.width[i] === b.width[i] && a.style[i] === b.style[i];
 }
@@ -500,9 +575,9 @@ function range(from: number, to: number): number[] {
 function layoutKey(scene: Scene): string {
   const rect = (r: Rect): string => `${r.x},${r.y},${r.width},${r.height}`;
   return [
-    `${scene.width}x${scene.height}`,
+    `${scene.width}x${scene.height}${scene.dim ? " dim" : ""}`,
     ...scene.parts.map((part) => `p ${part.key} ${rect(part.rect)}`),
-    ...scene.panes.map((pane) => `t ${pane.id} ${rect(pane.rect)} ${pane.view?.col ?? 0},${pane.view?.row ?? 0} ${pane.grid.grid.cols}x${pane.grid.grid.rows}`),
+    ...scene.panes.map((pane) => `t ${pane.id} ${rect(pane.rect)} ${pane.view?.col ?? 0},${pane.view?.row ?? 0} ${pane.grid.grid.cols}x${pane.grid.grid.rows} ${pane.dim ? 1 : 0}`),
     ...scene.overlays.map((overlay) => `o ${overlay.key} ${rect(overlay.rect)}`),
   ].join("\n");
 }

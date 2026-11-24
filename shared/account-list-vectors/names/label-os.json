@@ -1,0 +1,20 @@
+{
+  "name": "label-os",
+  "fields": [
+    {
+      "name": "label",
+      "value": "SG9tZSBsYXB0b3A"
+    },
+    {
+      "name": "os",
+      "value": "bWFjb3M"
+    }
+  ],
+  "expect": {
+    "names": {
+      "label": "Home laptop",
+      "os": "macos"
+    },
+    "written": true
+  }
+}

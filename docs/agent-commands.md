@@ -19,8 +19,10 @@ Everything here rests on three rules. A change that breaks one of them is a bug,
    was checked against the running version), `shadows` and a stable `id`.
 2. **The terminal is the only way a command is sent.** Chat types into the pane exactly as the
    user would, through the same submit path as any message. No command goes through an agent's
-   API. The one native write the bridge keeps is answering a pending OpenCode v2 form, which is an
-   answer, not a command.
+   API. The native writes the bridge keeps are answers, not commands: a pending OpenCode v2 form,
+   and the approvals of a Codex Ovis started on its own app server
+   ([`server/approvals/codex.ts`](../server/approvals/codex.ts)), which subscribes to its threads
+   for them (`thread/resume`, no overrides) and starts no turn.
 3. **An outcome changes only on evidence tied to that send.** Sending a command records
    `accepted` and nothing more. A later state needs evidence that belongs to this send, listed
    under [Outcome states](#outcome-states-and-their-evidence). A screen that changed, an idle agent

@@ -658,6 +658,19 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   box-shadow: inset 0 calc(-2 * var(--hairline)) 0 var(--accent);
 }
 
+.workspace-group.is-tab-drop > .workspace-header,
+.workspace-group.is-tab-drop.has-selected-agent > .workspace-header {
+  background: var(--accent-tint);
+  box-shadow: inset 0 0 0 calc(2 * var(--hairline)) var(--accent);
+}
+
+@media (forced-colors: active) {
+  .workspace-group.is-tab-drop > .workspace-header {
+    outline: calc(2 * var(--hairline)) solid Highlight;
+    outline-offset: calc(-2 * var(--hairline));
+  }
+}
+
 .workspace-rename-input,
 .pane-rename-input {
   flex: 1 1 auto;
@@ -925,13 +938,6 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   white-space: nowrap;
 }
 
-.sidebar-footer-pc-action {
-  flex: 0 0 auto;
-  margin-inline-start: var(--space-2);
-  color: var(--text-dim);
-  font-size: var(--fs-sm);
-}
-
 .sidebar-footer-row {
   display: flex;
   align-items: center;
@@ -939,13 +945,15 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   min-width: 0;
 }
 
-.sidebar-footer-row > .sidebar-footer-settings {
+.sidebar-footer-row > :is(.sidebar-footer-settings, .sidebar-footer-inbox) {
   flex: 0 0 auto;
   width: var(--side-box);
   padding: 0;
 }
 
-.sidebar-footer-settings svg { margin-inline: auto; }
+:is(.sidebar-footer-settings, .sidebar-footer-inbox) svg { margin-inline: auto; }
+
+.sidebar-footer-row > .sidebar-footer-inbox { position: relative; }
 
 @media (pointer: coarse) {
   .sidebar-shell {
@@ -975,6 +983,17 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
     position: absolute;
     inset-block: min(0px, calc((100% - var(--touch-target)) / 2));
     inset-inline: min(0px, calc(100% - var(--touch-target))) 0;
+  }
+
+  /* the gear's target grows to its start, so the inbox's grows to both sides, with room kept beside it for that */
+  .sidebar-footer-row > .sidebar-footer-inbox {
+    margin-inline: max(0px, calc((var(--touch-target) - var(--side-box)) / 2));
+  }
+
+  .sidebar-footer-row > .sidebar-footer-inbox::before {
+    content: "";
+    position: absolute;
+    inset: min(0px, calc((100% - var(--touch-target)) / 2));
   }
 
   .workspace-actions {

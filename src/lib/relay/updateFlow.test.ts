@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { MuxProtocolError, RELAY_PROTOCOL } from "../../../shared/relay-mux.ts";
 import { RelayTransport } from "./transport.ts";
 import { createUpdateFlow, loadObservedVersions, observedVersions } from "./updateFlow.ts";
@@ -165,6 +165,45 @@ it.each([["pc-outdated", "0.0.1"], ["server-newer", "2.0.0"]] as const)("drops a
     expect(effects).toEqual([]);
     expect(getTransport()).toBe(nativeTransport);
   } finally { flow.cancel(); opened.close(); }
+});
+
+describe("the app's own copy of the client", () => {
+  const android = { platform: "android" as const, appVersion: "1.1.0", build: 15 };
+  async function admitWith(server: { version: string; minSupportedClient?: string }, app: typeof android | null) {
+    webStorage();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: globalThis });
+    const offer = { v: 1 as const, server_id: "12".repeat(16), server_public_key: "unused", relay: "wss://relay.ovis.sh", name: "Desk" };
+    const effects: string[] = [];
+    const states: RelayShellState[] = [];
+    class Admitted extends RelayTransport {
+      override get server() { return { ...server, relayProtocol: RELAY_PROTOCOL }; }
+      override async fetch() { return Response.json({ managed: false }); }
+      override close() { effects.push("closed"); super.close(); }
+    }
+    const opened = new Admitted(offer);
+    const flow = createUpdateFlow("1.0.0", {
+      show: (state) => { effects.push(state.kind); states.push(state); }, accepted: () => effects.push("accepted"),
+      reload: async () => { effects.push("reload"); }, failed: async (error) => { throw error; },
+    }, memoryStore(new Map()), app);
+    try { await flow.admit(opened, { offer, code: false, paired: true }); } finally { flow.cancel(); }
+    opened.close();
+    return { effects: effects.slice(0, -1), states };
+  }
+
+  it("opens a newer PC in this copy rather than reloading for one", async () => {
+    expect((await admitWith({ version: "2.0.0", minSupportedClient: "0.4.20" }, android)).effects).toEqual(["accepted"]);
+  });
+
+  it("puts up Update the app for a PC that no longer supports it, and keeps no connection to it", async () => {
+    const { effects, states } = await admitWith({ version: "2.0.0", minSupportedClient: "1.5.0" }, android);
+    expect(effects).toEqual(["closed", "app-outdated"]);
+    expect(states).toEqual([{ kind: "app-outdated", name: "Desk", platform: "android" }]);
+    expect(observedVersions().get("12".repeat(16))).toEqual({ version: "2.0.0", outdated: false });
+  });
+
+  it("leaves a hosted page below the PC's floor to today's one reload onto the newer hosted copy", async () => {
+    expect((await admitWith({ version: "2.0.0", minSupportedClient: "1.5.0" }, null)).effects).toEqual(["closed", "reload"]);
+  });
 });
 
 function shellFixture() {

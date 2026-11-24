@@ -68,7 +68,7 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(origin);
     const strip = page.locator(".usage-strip");
-    const settingsButton = page.locator(".sidebar-footer-row .sidebar-footer-action");
+    const settingsButton = page.locator(".sidebar-footer-settings");
     const limits = page.locator('.segmented[aria-label="Plan limits"]');
 
     // off until chosen: nothing is shown and no sign-in is sent anywhere
@@ -91,7 +91,7 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     assert.deepEqual((await page.locator(".usage-chip-value").allTextContents()).slice(0, 4), ["58%", "88%", "70%", "80%"]);
     assert.equal(await page.locator(".usage-chip.is-high").count(), 0, "no session is near its end");
     assert.equal(await strip.evaluate((el) => el.scrollWidth <= el.clientWidth), true, "the chips fit beside Settings");
-    const [settings, meters] = await Promise.all([page.locator(".sidebar-footer-row .sidebar-footer-action").boundingBox(), strip.boundingBox()]);
+    const [settings, meters] = await Promise.all([page.locator(".sidebar-footer-settings").boundingBox(), strip.boundingBox()]);
     assert.ok(settings && meters && settings.x + settings.width <= meters.x, "Settings and the meters do not overlap");
 
     await strip.click();
@@ -202,7 +202,7 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     if (process.env.UI_EVIDENCE_DIR) await page.locator(".sidebar-shell").screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-popover-phone.png") });
 
     await page.keyboard.press("Escape");
-    await page.locator(".sidebar-footer-row .sidebar-footer-action").click();
+    await page.locator(".sidebar-footer-settings").click();
     await openSettingsPage(page, "Agents");
     const accounts = page.locator(".usage-accounts");
     await accounts.first().scrollIntoViewIfNeeded();
@@ -319,7 +319,7 @@ async function checkRecordedAccounts(browser: Browser, origin: string): Promise<
     if (process.env.UI_EVIDENCE_DIR) await page.locator(".sidebar-shell").screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-recorded-popover.png") });
 
     await page.keyboard.press("Escape");
-    await page.locator(".sidebar-footer-row .sidebar-footer-action").click();
+    await page.locator(".sidebar-footer-settings").click();
     await openSettingsPage(page, "Agents");
     const row = page.locator('.agents-item[data-agent="claude"]');
     await row.getByRole("button", { name: "Sign in to Claude Code", exact: true }).waitFor();
@@ -364,7 +364,7 @@ async function checkRecordedAccounts(browser: Browser, origin: string): Promise<
     if (process.env.UI_EVIDENCE_DIR) await page.locator(".sidebar-shell").screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-recorded-signed-in-popover.png") });
 
     await page.keyboard.press("Escape");
-    await page.locator(".sidebar-footer-row .sidebar-footer-action").click();
+    await page.locator(".sidebar-footer-settings").click();
     await openSettingsPage(page, "Agents");
     const row = page.locator('.agents-item[data-agent="claude"]');
     await row.getByRole("button", { name: "Sign in again to Claude · me@team.example", exact: true }).waitFor();
@@ -423,7 +423,7 @@ async function checkRecordedAccounts(browser: Browser, origin: string): Promise<
     assert.deepEqual(await lineCounts(popover.locator(".usage-recorded > span")), [1, 1, 1]);
     if (process.env.UI_EVIDENCE_DIR) await page.locator(".sidebar-shell").screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-recorded-popover-phone.png") });
     await page.keyboard.press("Escape");
-    await page.locator(".sidebar-footer-row .sidebar-footer-action").click();
+    await page.locator(".sidebar-footer-settings").click();
     await openSettingsPage(page, "Agents");
     const row = page.locator('.agents-item[data-agent="claude"]');
     await row.locator(".agents-toggle").click();
@@ -465,7 +465,7 @@ async function checkStatuslineSwitch(browser: Browser, origin: string): Promise<
     assert.deepEqual(posted, [{ enabled: true }]);
 
     await page.keyboard.press("Escape");
-    await page.locator(".sidebar-footer-row .sidebar-footer-action").click();
+    await page.locator(".sidebar-footer-settings").click();
     await openSettingsPage(page, "Agents");
     const statusline = page.getByRole("switch", { name: "Read Claude's limits from its status line", exact: true });
     await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="Read Claude\'s limits from its status line"]')?.getAttribute("aria-checked") === "true");
@@ -570,7 +570,7 @@ export async function checkUsageSignInAgain(browser: Browser, origin: string): P
       await following.waitFor({ state: "detached" });
 
       await openDrawer();
-      await page.locator(".sidebar-footer-row .sidebar-footer-action").click();
+      await page.locator(".sidebar-footer-settings").click();
       await openSettingsPage(page, "Agents");
       const rows = page.locator(".usage-accounts-row");
       await rows.nth(3).waitFor();
@@ -616,7 +616,7 @@ export async function checkUsageSignInAgain(browser: Browser, origin: string): P
     assert.equal(await popover.getByRole("button", { name: /^Sign in again/ }).count(), 0, "no Sign in again in a watching device's popover");
     assert.equal(await popover.locator(".usage-note.is-problem").first().textContent(), "Sign-in expired. Open Claude to renew it.");
     await page.keyboard.press("Escape");
-    await page.locator(".sidebar-footer-row .sidebar-footer-action").click();
+    await page.locator(".sidebar-footer-settings").click();
     await openSettingsPage(page, "Agents");
     await page.locator(".usage-accounts-row").nth(3).waitFor();
     assert.equal(await page.locator(".usage-accounts-row").count(), 4);

@@ -127,4 +127,6 @@ export const TERMINAL_KO: Record<string, string> = {
   "Codex selected this: Shift+drag copies or quotes it here": "Codex가 선택했습니다. 여기서 복사하거나 인용하려면 Shift+끌기",
   "Codex selected this: Option+drag copies or quotes it here": "Codex가 선택했습니다. 여기서 복사하거나 인용하려면 Option+끌기",
   "Pane {index} of {count}": "창 {count}개 중 {index}번째",
+  "Hand back": "다시 맡기기",
+  "Not handed back: Ovis could not reach this agent. Try again.": "다시 맡기지 못했습니다: Ovis가 이 에이전트에 닿지 못했습니다. 다시 시도하세요.",
 };

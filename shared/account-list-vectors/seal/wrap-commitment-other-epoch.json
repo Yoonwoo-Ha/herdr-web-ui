@@ -1,0 +1,24 @@
+{
+  "name": "wrap-commitment-other-epoch",
+  "note": "The right key, and a commitment made for another epoch.",
+  "keys": {
+    "TEST-ONLY-member": {
+      "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgAN0JX9l4zwCbjepGn4shha948D2Il_TkDWbjJorjyDyhRANCAASkz7AKDJQTy4cxb89uOT0MXeB7PCcXN6Y8NXypxIezR1MX3lo9XDGfkLHNZgs-N90100YGOgH4lJ-Hht3-eKl6",
+      "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEpM-wCgyUE8uHMW_Pbjk9DF3gezwnFzemPDV8qcSHs0dTF95aPVwxn5CxzWYLPjfdNdNGBjoB-JSfh4bd_nipeg"
+    },
+    "TEST-ONLY-other-member": {
+      "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgTfYQD6ej2Mci8Yl1Y0nbiy6M7uMD1t9anTiqSjjUS-ChRANCAAQtoJXDy870eNFxTtAuhybNVQNwP2pZssd21Ouq1N6T3YHUQ6ApXGGzr4kEY7Cr-Jyw4Bsov-prKMYXXgV-bxlU",
+      "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELaCVw8vO9HjRcU7QLocmzVUDcD9qWbLHdtTrqtTek92B1EOgKVxhs6-JBGOwq_icsOAbKL_qayjGF14Ffm8ZVA"
+    }
+  },
+  "wrap": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "epoch": 3,
+    "commitment": "2236d3a3c768f798c96228914fa51b64013f4a052fd916dc8ea2481d97f09294",
+    "member": "TEST-ONLY-member",
+    "text": "AYlPIbb_MSEXvuyY4NxG4tBtonOMF0n8fXnD8-wVLXx0z3StpCwL8yxRZF6lUjRYZgYpQRzu_qViKcgDy3D-CRwJgIYHbBla9kEBRqSofxfiZ4KLpHgXsRPpGqiuCkYaARyExHTy_u1-1slSS3X8rWA"
+  },
+  "expect": {
+    "why": "other_key"
+  }
+}

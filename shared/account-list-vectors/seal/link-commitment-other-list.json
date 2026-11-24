@@ -1,0 +1,16 @@
+{
+  "name": "link-commitment-other-list",
+  "note": "The right key, and a commitment made for another list.",
+  "link": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "from": {
+      "epoch": 3,
+      "key": "46aba7fe34f5c5d000d0bb9effd5d83c914cf131e830c345e2d98552109d746a"
+    },
+    "commitment": "b31ce2a9b0ab9680ac700f13e79a8118066f42803bc9335c833e8df38e8691ed",
+    "bytes": "AaUTbD7PdXFrhyaI3XunY9Q6RIYCtzyRuH3RmY-CvNKrfYo_xKnD5itcjKVGWtRI_YTwC4yw_7M0zPPjgQ"
+  },
+  "expect": {
+    "why": "other_key"
+  }
+}

@@ -1,5 +1,6 @@
 import Capacitor
 import Foundation
+import OvisHomeCore
 import WebKit
 
 /// The PC's direct carriers for the hosted shell (src/lib/relay/directSocket.ts; docs/relay.md, "Direct on
@@ -277,16 +278,19 @@ private final class SessionEvents: NSObject, URLSessionWebSocketDelegate {
     }
 }
 
-/// Stands in front of Capacitor's script message handler: every OvisDirect message (its own methods and the
-/// listener methods it inherits, addListener, removeListener and removeAllListeners) goes on only from the main
-/// frame of the app's own origin (the hosted shell, https://app.ovis.sh), never from a PC page opened by its
-/// address or any frame, which Capacitor's iOS bridge would otherwise let call every plugin. The plugin's own
-/// methods act only on calls this approved, so without the gate they answer nothing; only those calls leave an
-/// approval, and each takes its own, so none is kept unused.
+/// Stands in front of Capacitor's script message handler and lets a page's message on only by what a page cannot
+/// choose: the frame it came from and that frame's origin (BridgeGate.decide, where each rule is). No message from a
+/// frame inside a page goes on, in any build, which Capacitor's iOS bridge would otherwise let call every plugin;
+/// OvisDirect answers only the main frame of the shell's origin (PCStore.shellOrigin: the hosted app, or its copy
+/// inside the app in a build that serves it itself), OvisSsh only the app's own pages.
+/// OvisDirect's own methods act only on calls this approved, so without the gate they answer nothing; only those
+/// calls leave an approval, and each takes its own, so none is kept unused. For the calls whose plugin decides by the
+/// page asking (HerdrShell's and OvisSsh's), the sender's origin is kept the same way: a plugin reads the page that
+/// asked, not the web view's address, which during a load is already the next page's.
 final class DirectCallGate: NSObject, WKScriptMessageHandler {
-    static let appHost = "app.ovis.sh"
     private static let lock = NSLock()
     private static var approved = Set<String>()
+    private static var senders: [String: URL] = [:]
     private let inner: WKScriptMessageHandler
 
     private init(inner: WKScriptMessageHandler) { self.inner = inner }
@@ -297,13 +301,11 @@ final class DirectCallGate: NSObject, WKScriptMessageHandler {
         handler.contentController.add(DirectCallGate(inner: handler), name: "bridge")
     }
 
-    /// The plugin's own methods, each of which takes its approval (OvisDirectPlugin.allowed).
-    static let ownMethods: Set<String> = ["open", "send", "close", "ack", "features"]
-
-    /// A new page: approvals left by the old one are dropped.
+    /// A new page: approvals and senders left by the old one are dropped.
     static func clear() {
         lock.lock()
         approved.removeAll()
+        senders.removeAll()
         lock.unlock()
     }
 
@@ -313,20 +315,28 @@ final class DirectCallGate: NSObject, WKScriptMessageHandler {
         return approved.remove(callbackId) != nil
     }
 
-    static func fromApp(_ frame: WKFrameInfo) -> Bool {
-        let origin = frame.securityOrigin
-        return frame.isMainFrame && origin.protocol == "https" && origin.host.lowercased() == appHost && (origin.port == 0 || origin.port == 443)
+    /// The origin of the main frame that made the call `callbackId` (`scheme://host[:port]`), once; nil for a call
+    /// the gate kept none for, which the plugins that ask take as no page of the app's.
+    static func sender(_ callbackId: String?) -> URL? {
+        guard let callbackId else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+        return senders.removeValue(forKey: callbackId)
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        if let body = message.body as? [String: Any], body["pluginId"] as? String == "OvisDirect" || body["service"] as? String == "OvisDirect" {
-            guard Self.fromApp(message.frameInfo) else { return }
-            if body["type"] as? String == "message", let method = body["methodName"] as? String, Self.ownMethods.contains(method),
-               let callbackId = body["callbackId"] as? String {
-                Self.lock.lock()
-                Self.approved.insert(callbackId)
-                Self.lock.unlock()
-            }
+        let body = message.body as? [String: Any], origin = message.frameInfo.securityOrigin
+        let plugins = Set([body?["pluginId"] as? String, body?["service"] as? String].compactMap { $0 })
+        let callbackId = body?["callbackId"] as? String
+        // a WKSecurityOrigin's port is 0 for its scheme's own
+        let decision = BridgeGate.decide(mainFrame: message.frameInfo.isMainFrame, scheme: origin.protocol, host: origin.host, port: origin.port, plugins: plugins,
+                                         type: body?["type"] as? String, method: body?["methodName"] as? String, callback: callbackId != nil, shell: PCStore.shellOrigin)
+        guard decision.pass else { return }
+        if let callbackId, decision.approve || decision.record {
+            Self.lock.lock()
+            if decision.approve { Self.approved.insert(callbackId) }
+            if decision.record { Self.senders[callbackId] = BridgeGate.sender(scheme: origin.protocol, host: origin.host, port: origin.port) }
+            Self.lock.unlock()
         }
         inner.userContentController(controller, didReceive: message)
     }

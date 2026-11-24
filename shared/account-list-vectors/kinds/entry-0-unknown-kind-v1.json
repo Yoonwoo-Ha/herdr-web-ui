@@ -1,0 +1,33 @@
+{
+  "name": "entry-0-unknown-kind-v1",
+  "level": 1,
+  "keys": {
+    "TEST-ONLY-owner": {
+      "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgfUSjQT7Q24UF4XeItKne53kIeJWbgy1ZabW78WwGLHChRANCAARYbyYtRYQjTTKOiBNpQOYbRxCGuBk9Jnm0PwHPfNQMZ_-1yQuhGyDm_lKRHLWW6PjLfihiBJ3oq4lnWbUbYpV_",
+      "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEWG8mLUWEI00yjogTaUDmG0cQhrgZPSZ5tD8Bz3zUDGf_tckLoRsg5v5SkRy1luj4y34oYgSd6KuJZ1m1G2KVfw"
+    }
+  },
+  "entries": [
+    {
+      "fields": {
+        "issued_at": "1767225600",
+        "kind": "later_kind",
+        "list": "",
+        "prev": "",
+        "seq": "0",
+        "signer": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEWG8mLUWEI00yjogTaUDmG0cQhrgZPSZ5tD8Bz3zUDGf_tckLoRsg5v5SkRy1luj4y34oYgSd6KuJZ1m1G2KVfw",
+        "v": "1"
+      },
+      "body": "b3Zpcy1saXN0LzEAAAAJaXNzdWVkX2F0AAAACjE3NjcyMjU2MDAAAAAEa2luZAAAAApsYXRlcl9raW5kAAAABGxpc3QAAAAAAAAABHByZXYAAAAAAAAAA3NlcQAAAAEwAAAABnNpZ25lcgAAAHpNRmt3RXdZSEtvWkl6ajBDQVFZSUtvWkl6ajBEQVFjRFFnQUVXRzhtTFVXRUkwMHlqb2dUYVVEbUcwY1FocmdaUFNaNXREOEJ6M3pVREdmX3Rja0xvUnNnNXY1U2tSeTFsdWo0eTM0b1lnU2Q2S3VKWjFtMUcyS1ZmdwAAAAF2AAAAATE",
+      "signature": "DWTUvLPlRlIjcZxzvgdGv5BP4UoLxG7GE-37leSp_k5miyNH685TMOGrtGll18FI_N9hdRtGhOTMtK3dkAyMkA",
+      "text": "b3Zpcy1saXN0LzEAAAAJaXNzdWVkX2F0AAAACjE3NjcyMjU2MDAAAAAEa2luZAAAAApsYXRlcl9raW5kAAAABGxpc3QAAAAAAAAABHByZXYAAAAAAAAAA3NlcQAAAAEwAAAABnNpZ25lcgAAAHpNRmt3RXdZSEtvWkl6ajBDQVFZSUtvWkl6ajBEQVFjRFFnQUVXRzhtTFVXRUkwMHlqb2dUYVVEbUcwY1FocmdaUFNaNXREOEJ6M3pVREdmX3Rja0xvUnNnNXY1U2tSeTFsdWo0eTM0b1lnU2Q2S3VKWjFtMUcyS1ZmdwAAAAF2AAAAATE.DWTUvLPlRlIjcZxzvgdGv5BP4UoLxG7GE-37leSp_k5miyNH685TMOGrtGll18FI_N9hdRtGhOTMtK3dkAyMkA",
+      "hash": "e88baf19129567262c7b28fafb29f455638fc45e67b0372c9be774705cd89ebc"
+    }
+  ],
+  "expect": {
+    "stops": {
+      "seq": 0,
+      "code": "entry_invalid"
+    }
+  }
+}

@@ -38,6 +38,9 @@ import { chromePath } from "./chrome-path.ts";
 import { servePagesSite } from "./pages-static.ts";
 import { openSettingsPage } from "./settings-page.ts";
 
+/** What the signed-in page reads of its account by itself, whatever is pressed: the directory, and which signed list the account has. */
+const OWN_READS: ReadonlySet<string> = new Set(["GET /v1/pcs", "GET /v2/lists/mine"]);
+
 const APP = "https://app.ovis.sh";
 const ACCOUNT_SERVICE = "https://account.ovis.sh";
 const ACCOUNT = "acct_first_link";
@@ -145,7 +148,7 @@ async function shellAt(browser: Browser, site: string, size: (typeof WIDTHS)[num
   // a marked code of a PC the account does not list: the press of Add and pair lists it, then the admission is taken,
   // and only then the relay
   const unlisted = await add(true, "marked-unlisted");
-  const unlistedCalls = log.filter((line) => line !== "GET /v1/pcs");
+  const unlistedCalls = log.filter((line) => !OWN_READS.has(line));
   assert.deepEqual(unlistedCalls.slice(0, 2), [`PUT /v1/pcs/${unlisted}`, "POST /v1/admissions"], `${size.width}: Add and pair lists the PC, then posts the admission (${unlistedCalls.join(", ")})`);
   assert.ok(fake.pcs(ACCOUNT).some((pc) => pc.server_id === unlisted), `${size.width}: the account lists the PC`);
   assert.ok(sockets.length > 0, `${size.width}: that pairing went on to the relay`);
@@ -153,7 +156,7 @@ async function shellAt(browser: Browser, site: string, size: (typeof WIDTHS)[num
   // a marked code of a PC its owner listed: the admission taken, and only then the relay
   const before2 = admissionsHeld();
   await add(true, "marked", true);
-  const calls = log.filter((line) => line !== "GET /v1/pcs");
+  const calls = log.filter((line) => !OWN_READS.has(line));
   assert.deepEqual(calls.slice(0, 1), ["POST /v1/admissions"], `${size.width}: a marked code posts the admission first, and lists nothing (${calls.join(", ")})`);
   assert.ok(sockets.length > 0, `${size.width}: the marked code's pairing went on to the relay`);
   assert.equal(sockets[0], before2 + 1, `${size.width}: the admission was taken before the first relay connection opened`);

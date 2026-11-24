@@ -4,29 +4,30 @@ import { Check, Pencil, Trash2, X } from "lucide-react";
 
 import "./DevicesPanel.css";
 
-import { ApiError, fetchDevices, renameDevice, revokeAllDevices, revokeDevice } from "../lib/api.ts";
+import { ApiError, blockTailnetNodes, fetchDevices, renameDevice, revokeAllDevices, revokeDevice } from "../lib/api.ts";
+import { useTailnetNodes } from "../lib/useTailnetNodes.ts";
+import { ownWindowHere } from "../lib/account/addThisPc.ts";
 import { methodName } from "../lib/portalAuth.ts";
 import { DEVICES_CHANGED_EVENT, PAIRING_CODE_EVENT } from "../lib/useRelay.ts";
 import type { HealthAuth, PairedDevice, PairingCode } from "../../shared/protocol.ts";
+import type { TailnetNodeView } from "../../shared/tailnet-nodes.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { ConnectionLine } from "./ConnectionLine.tsx";
 import { SettingsRow } from "./SettingsControls.tsx";
-import { useT } from "../lib/i18n.ts";
+import { currentLocale, useT } from "../lib/i18n.ts";
 import { lastSeen } from "../lib/lastSeen.ts";
-import { removeFromAccount } from "../lib/account/leave.ts";
-import { AccountService } from "../lib/account/service.ts";
-import { indexedAccountStore } from "../lib/account/store.ts";
-import { indexedDeviceStore } from "../lib/relay/device.ts";
-import { serverIdOfPath } from "../lib/shellMode.ts";
-import { useAccountSignedIn } from "../lib/account/useAccountSignedIn.ts";
-import { getTransport } from "../lib/transport.ts";
 import { pairThisBrowser, UnconfirmedPairing } from "../lib/pairing.ts";
 
 const POLL_MS = 3000;
 /** a device seen this recently is not called offline, whatever its sessions: it may be in by its cookie */
 const SEEN_LATELY_MS = 2 * 60_000;
-const seenLately = (at: string | null): boolean => at !== null && Date.now() - Date.parse(at) < SEEN_LATELY_MS;
+const seenLately = (d: PairedDevice): boolean => !d.through_account && d.last_seen_at !== null && Date.now() - Date.parse(d.last_seen_at) < SEEN_LATELY_MS;
+/** a row the account let in is last seen by the day (its UTC day, as the PC keeps it), never as a time of day */
+const seenWhen = (d: PairedDevice): string => d.through_account && d.last_seen_at !== null
+  ? new Date(d.last_seen_at).toLocaleDateString(currentLocale(), { timeZone: "UTC" }) : lastSeen(d.last_seen_at);
 const REFRESH_MS = 30_000;
+/** a Tailscale device of the owner's login seen this recently is offered in the removal dialog */
+const TAILNET_RECENT_MS = 30 * 24 * 60 * 60_000;
 
 export interface DevicesPanelProps {
   onDevicePaired?: () => void;
@@ -49,17 +50,6 @@ export const VIA: Record<NonNullable<HealthAuth["via"]>, string> = {
   open: "This browser is in only because nothing is paired yet: from anywhere that can reach this address, so would anyone.",
 };
 
-/**
- * Whether `row` can be disconnected from every PC from here: another device of the account, and a
- * `remove` signed with this client's account key would be applied, as the PC takes one only from a
- * drive member of the account (server/account/records.ts). A browser signed in on the PC's own address,
- * paired by cookie, holds a key no row has, and every PC would refuse it (`signer_not_member`).
- */
-export function offersAccountRemove(devices: readonly PairedDevice[], row: PairedDevice, account: string, key: string | null): boolean {
-  return key !== null && !row.current && row.account === account && row.account_key !== undefined && row.account_key !== key
-    && devices.some((d) => d.account === account && d.account_key === key && d.role === "drive");
-}
-
 export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kindOf, currentAction = null, more = null, checkSlot = null }: DevicesPanelProps) {
   const t = useT();
   const [devices, setDevices] = useState<PairedDevice[] | null>(null);
@@ -71,6 +61,12 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
   const [revokedAll, setRevokedAll] = useState(false);
   const [justPaired, setJustPaired] = useState<string | null>(null);
   const [pairingSelf, setPairingSelf] = useState(false);
+  // the Tailscale devices a removal keeps out, read and blocked from this PC's own window only (server/tailnet-nodes.ts)
+  const [tailnetAgain, setTailnetAgain] = useState(0);
+  const tailnet = useTailnetNodes(ownWindowHere(auth) && auth?.role !== "watch", tailnetAgain);
+  const [removing, setRemoving] = useState<{ id: string | null; label: string } | null>(null);
+  const [alsoBlock, setAlsoBlock] = useState<ReadonlySet<string>>(new Set());
+  const offered = (tailnet?.nodes ?? []).filter((node) => !node.blocked && (node.rows.length > 0 || (node.seen_at !== null && Date.now() - Date.parse(node.seen_at) < TAILNET_RECENT_MS)));
   const known = useRef(new Set<string>());
   const loaded = useRef(false);
   const generation = useRef(0);
@@ -89,7 +85,8 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
       reads.current.landed = read;
       setDevices(list);
       if (!quiet) setError(null);
-      const fresh = list.filter((d) => !known.current.has(d.id));
+      // a device the account's list let in spent no code here: the PC's own banner tells of it, and a code shown stays
+      const fresh = list.filter((d) => !d.through_account && !known.current.has(d.id));
       if (loaded.current && fresh.length > 0) {
         for (const d of fresh) { setJustPaired(d.label); setCode(null); setRevokedAll(false); }
         onDevicePaired?.();
@@ -171,43 +168,24 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
     if (!renaming) return;
     try { await renameDevice(renaming.id, renaming.label); setRenaming(null); await load(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
-  const signedIn = useAccountSignedIn();
-  /** this client's account key, read only once it is signed in (reading it makes one) */
-  const [accountKey, setAccountKey] = useState<string | null>(null);
-  useEffect(() => {
-    if (signedIn === null) return;
-    let live = true;
-    indexedAccountStore.key().then((key) => { if (live) setAccountKey(key.public_spki); }, () => undefined);
-    return () => { live = false; };
-  }, [signedIn]);
-  const [disconnecting, setDisconnecting] = useState<string | null>(null);
-  /** A device of the account, gone from every PC of it: at once here, from the mailbox on the others. */
-  const disconnect = async (id: string, key: string, account: string) => {
-    // fixed wait: the second tap must come within 4 seconds, as Revoke's does
-    if (disconnecting !== id) { setDisconnecting(id); window.setTimeout(() => setDisconnecting((c) => (c === id ? null : c)), 4000); return; }
-    setDisconnecting(null);
-    const transport = getTransport();
-    try {
-      const service = new AccountService({ store: indexedAccountStore });
-      const { unconfirmed, queued = [] } = await removeFromAccount({ service, accountStore: indexedAccountStore, relayStore: indexedDeviceStore, key, account,
-        here: (path, init) => transport.fetch(path, init), ...(serverIdOfPath(window.location.pathname) ? { hereId: serverIdOfPath(window.location.pathname)! } : {}) });
-      await load();
-      if (unconfirmed.length > 0 || queued.length > 0) {
-        // only this PC answered: the others are named, rather than claimed (one may have revoked this device and refuse it)
-        const names = new Map((await service.listPcs()).map((pc) => [pc.server_id, pc.label]));
-        const named = (ids: readonly string[]) => ids.map((id) => names.get(id) ?? id.slice(0, 8)).join(", ");
-        setError([
-          unconfirmed.length > 0 ? t("Not removed yet on: {pcs}. Disconnect it from a device that is in the account there.", { pcs: named(unconfirmed) }) : "",
-          queued.length > 0 ? t("Sent to {pcs}: each removes it when it next comes online. If it still shows there, disconnect it from another device in the account.", { pcs: named(queued) }) : "",
-        ].filter(Boolean).join(" "));
-      }
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  };
   const revoke = async (id: string) => {
+    // this PC's own window asks in a dialog that lists the Tailscale devices the removal keeps out
+    if (offered.length > 0) { setAlsoBlock(new Set()); setRemoving({ id, label: devices?.find((d) => d.id === id)?.label ?? "" }); return; }
     if (confirming !== id) { setConfirming(id); window.setTimeout(() => setConfirming((c) => (c === id ? null : c)), 4000); return; }
     setConfirming(null);
     setRevokedAll(false);
     try { await revokeDevice(id); await load(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
+  const confirmRemoval = async (): Promise<void> => {
+    if (removing === null) return;
+    const chosen = [...alsoBlock];
+    if (removing.id === null && chosen.length === 0) throw new Error(t("Choose a device to keep out."));
+    if (removing.id !== null) await revokeDevice(removing.id);
+    if (chosen.length > 0) await blockTailnetNodes(chosen);
+    setRemoving(null);
+    setRevokedAll(false);
+    setTailnetAgain((count) => count + 1);
+    await load();
   };
   /**
    * One request ends every pairing, this browser's included (the server clears its device cookie).
@@ -254,12 +232,18 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
         <summary>{t("A paired device gets in on its own until you revoke it here.")}<span className="settings-details-toggle">{t("Details")}</span></summary>
         <p className="settings-hint">{t("It gets in from anywhere it can reach this server. A code comes from this screen on the PC or on a device already paired, or from the pair command in the PC's terminal.")}</p>
       </details>
-      {revokedAll && <p className="settings-hint" role="status">{t("Every paired device was revoked. The access token, this PC and its Tailscale login get in as before.")}</p>}
-      {devices !== null && devices.length > 0 && !guest && (
+      {revokedAll && <p className="settings-hint" role="status">{t("Every paired device was revoked, and the Tailscale devices this PC has seen are kept out. The access token and this PC get in as before.")}</p>}
+      {offered.length > 0 && !guest && !watching && (
+        <SettingsRow label={t("Keep a Tailscale device out")} description={t("For a device of yours that gets in by your Tailscale login and has no pairing here to revoke.")}>
+          <button type="button" className="btn" onClick={() => { setAlsoBlock(new Set()); setRemoving({ id: null, label: "" }); }}>{t("Choose…")}</button>
+        </SettingsRow>
+      )}
+      {/* the account's own devices alone are no reason for Revoke all: each has its own Revoke */}
+      {devices !== null && devices.some((d) => !d.through_account) && !guest && (
         <div className="devices-revoke-all">
           <SettingsRow label={t("Revoke every device")} description={t(watching
             ? "Every paired device, this one included, would lose its pairing access at once. A device that only watches cannot do it: use the PC or a device that can drive."
-            : "Every paired device, this one included, loses its pairing access at once. The access token, this PC and its Tailscale login are not affected.")}>
+            : "Every paired device, this one included, loses its pairing access at once, and every Tailscale device this PC has seen is kept out until you allow it here. The access token and this PC are not affected.")}>
             {!watching && <button type="button" className="btn" onClick={() => setConfirmingAll(true)}>{t("Revoke all")}</button>}
           </SettingsRow>
         </div>
@@ -278,7 +262,7 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
         {check !== null && (checkSlot !== null ? createPortal(check, checkSlot) : <div className="devices-check">{check}</div>)}
         <ul className="devices-list">
           {[...devices].sort((a, b) => Number(b.current) - Number(a.current)).map((d) => (
-            <li key={d.id} className={!d.connection && d.via_relay && !watching && !guest && !seenLately(d.last_seen_at) ? "devices-row is-away" : "devices-row"}>
+            <li key={d.id} className={!d.connection && d.via_relay && !watching && !guest && !seenLately(d) ? "devices-row is-away" : "devices-row"}>
               {renaming?.id === d.id ? (
                 <form className="devices-rename" onSubmit={(e) => { e.preventDefault(); void rename(); }}>
                   <input className="input" value={renaming.label} maxLength={48} autoFocus aria-label={t("Device name")} onChange={(e) => setRenaming({ id: d.id, label: e.target.value })} />
@@ -288,26 +272,21 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
               ) : (
                 <>
                   <div className="devices-name">
-                    <span className="settings-label">{d.label}{kindOf?.(d.label) != null && <span className="devices-kind">{kindOf(d.label)}</span>}{d.current && <span className="devices-current">{t("This device now")}</span>}</span>
+                    <span className="settings-label">{d.label}{kindOf?.(d.label) != null && <span className="devices-kind">{kindOf(d.label)}</span>}{d.through_account && <span className="devices-kind">{t("Through your account")}</span>}{d.current && <span className="devices-current">{t("This device now")}</span>}</span>
                     {d.connection
                       ? <ConnectionLine state={{ kind: "connected", route: d.connection.route, ...(d.connection.relay === undefined ? {} : { relay: d.connection.relay }), rttMs: d.connection.rtt_ms }} />
                       // a device with a relay key connects through an encrypted session, which the PC sees come and go; a browser's cookie does not
                       // a device that watches, or a Portal visitor, is not told how the others are connected: for them no row says offline
                       // nor one seen in the last minutes, which may be reaching this PC another way (its browser cookie)
-                      : d.via_relay && !watching && !guest && !seenLately(d.last_seen_at)
-                        ? <ConnectionLine state={{ kind: "offline", text: t("Offline · last seen {when}", { when: lastSeen(d.last_seen_at) }) }} reason={t("The app is closed, or its network is off.")} />
-                        : <span className="settings-description">{t("Last seen {when}", { when: lastSeen(d.last_seen_at) })}</span>}
+                      : d.via_relay && !watching && !guest && !seenLately(d)
+                        ? <ConnectionLine state={{ kind: "offline", text: t("Offline · last seen {when}", { when: seenWhen(d) }) }} reason={t("The app is closed, or its network is off.")} />
+                        : <span className="settings-description">{t("Last seen {when}", { when: seenWhen(d) })}</span>}
                     {d.not_me_waiting && <span className="settings-description" role="status">{t("Not me is waiting. Revoke this device to stop its access now.")}</span>}
                   </div>
                   {d.current && currentAction}
                   {!guest && (
                     <div className="devices-actions">
                       <button type="button" className="icon-button" aria-label={t("Rename {name}", { name: d.label })} onClick={() => setRenaming({ id: d.id, label: d.label })}><Pencil /></button>
-                      {signedIn !== null && offersAccountRemove(devices, d, signedIn, accountKey) && (
-                        <button type="button" className={disconnecting === d.id ? "btn btn-danger" : "btn"} onClick={() => void disconnect(d.id, d.account_key!, signedIn!)}>
-                          {disconnecting === d.id ? t("Disconnect everywhere?") : t("Disconnect from all PCs")}
-                        </button>
-                      )}
                       <button type="button" className={confirming === d.id ? "btn btn-danger" : "icon-button"} aria-label={confirming === d.id ? undefined : t("Revoke {name}", { name: d.label })} onClick={() => void revoke(d.id)}>
                         <Trash2 aria-hidden="true" />{confirming === d.id && t("Revoke?")}
                       </button>
@@ -335,10 +314,47 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
       {more !== null ? createPortal(elsewhere, more) : elsewhere}
       {confirmingAll && (
         <ConfirmDialog title={t("Revoke every paired device?")}
-          body={t("Every paired device loses its pairing access, this one included, and needs a new code to get back in. The access token, this PC and its Tailscale login still get in.")}
+          body={t("Every paired device loses its pairing access, this one included, and needs a new code to get back in. Every Tailscale device this PC has seen is kept out too, until you allow it on this PC. The access token and this PC still get in.")}
           confirmLabel={t("Revoke all")} onClose={() => setConfirmingAll(false)} onConfirm={revokeAll} />
       )}
+      {removing !== null && (
+        <ConfirmDialog title={removing.id === null ? t("Keep Tailscale devices out?") : t("Revoke {name}?", { name: removing.label })}
+          body={removing.id === null ? t("The devices you choose get nothing by your Tailscale login until you allow them again on this PC.") : t("It loses its pairing access, and the Tailscale devices it came from are kept out too.")}
+          confirmLabel={removing.id === null ? t("Keep out") : t("Revoke")} onClose={() => setRemoving(null)} onConfirm={confirmRemoval}>
+          <TailnetChoices nodes={offered} row={removing.id} chosen={alsoBlock}
+            onToggle={(id) => setAlsoBlock((chosen) => { const next = new Set(chosen); if (!next.delete(id)) next.add(id); return next; })} />
+        </ConfirmDialog>
+      )}
       {error !== null && <p className="settings-hint" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * The Tailscale devices a removal keeps out: the ones the row's own credential came from, always, and any other device of
+ * the owner's login seen lately, when ticked (a phone that only ever came in by the login has no row to remove). A device
+ * this PC has never seen still gets in by the login: the tailnet's admin console is where that one is removed.
+ */
+function TailnetChoices({ nodes, row, chosen, onToggle }: { nodes: readonly TailnetNodeView[]; row: string | null; chosen: ReadonlySet<string>; onToggle: (id: string) => void }) {
+  const t = useT();
+  const own = row === null ? [] : nodes.filter((node) => node.rows.includes(row));
+  const others = nodes.filter((node) => !own.includes(node));
+  return (
+    <div className="devices-tailnet" data-testid="devices-tailnet">
+      {own.length > 0 && <p className="settings-description">{t("Kept out over Tailscale too: {names}", { names: own.map((node) => node.hostname).join(", ") })}</p>}
+      {others.length > 0 && (
+        <fieldset className="devices-tailnet-others">
+          <legend className="settings-description">{t("Also keep out a Tailscale device of yours:")}</legend>
+          {others.map((node) => (
+            <label key={node.id} className="devices-tailnet-node">
+              <input type="checkbox" checked={chosen.has(node.id)} onChange={() => onToggle(node.id)} />
+              <span className="settings-label">{node.hostname}</span>
+              <span className="settings-description">{[node.login, node.seen_at === null ? null : t("Last seen {when}", { when: lastSeen(node.seen_at) })].filter((part) => part !== null).join(" · ")}</span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+      <p className="settings-hint">{t("A Tailscale device this PC has not seen yet still gets in by your login. To keep it out of your tailnet too, remove it in Tailscale's admin console.")}</p>
     </div>
   );
 }

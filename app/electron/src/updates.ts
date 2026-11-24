@@ -133,27 +133,61 @@ export function downloadsUpdate(check: { found: string; held: HeldUpdate | null;
   return check.failed || stillHeld(check.held, check.exists)?.version !== check.found;
 }
 
+/** How a check ended: nothing newer, a version not downloaded (held already, or the app quitting), downloaded, or failed. */
+export type CheckOutcome = { is: "latest" } | { is: "skipped" } | { is: "downloaded" } | { is: "failed"; error: string };
+
 /**
  * The updater's error event already reports a failed download (a cancelled one is no error): the
  * promise of that download is only caught, where left alone it was logged a second time as an
  * unhandled rejection (#2831). A download that fails before it begins (a feed that names a version
  * with no file for this app) throws instead, with no event, and is logged here.
  */
-export async function checkForUpdates(updater: Pick<AppUpdater, "checkForUpdates" | "downloadUpdate">, log: (line: string) => void, wanted: (version: string) => boolean = () => true): Promise<void> {
+export async function checkForUpdates(updater: Pick<AppUpdater, "checkForUpdates" | "downloadUpdate">, log: (line: string) => void, wanted: (version: string) => boolean = () => true): Promise<CheckOutcome> {
   const told = (error: unknown) => error instanceof Error ? error.message : String(error);
+  let failure: string | null = null;
   const result = await updater.checkForUpdates().catch((error: unknown) => {
-    log(`Update check failed: ${told(error)}`);
+    failure = told(error);
+    log(`Update check failed: ${failure}`);
     return null;
   });
-  if (!result?.isUpdateAvailable || !wanted(result.updateInfo.version)) return;
+  if (failure !== null) return { is: "failed", error: failure };
+  if (!result?.isUpdateAvailable) return { is: "latest" };
+  if (!wanted(result.updateInfo.version)) return { is: "skipped" };
   let download: Promise<unknown>;
   try {
     download = updater.downloadUpdate(result.cancellationToken);
   } catch (error) {
     log(`Update download failed: ${told(error)}`);
-    return;
+    return { is: "failed", error: told(error) };
   }
-  await download.catch(() => {});
+  return download.then(() => ({ is: "downloaded" as const }), (error: unknown) => ({ is: "failed" as const, error: told(error) }));
+}
+
+/** Where the app's own check stands, as main keeps it between checks */
+export type AppCheck = { is: "idle" } | { is: "checking" } | { is: "latest" } | { is: "downloading"; version: string; percent: number | null } | { is: "failed"; error: string };
+
+/**
+ * What Settings → About shows of the app's own update (preload `ovisUpdate.state`): the running
+ * version and one phase. A check or a download under way comes first; then an update the app holds
+ * (a Mac's still staging in Squirrel counts as downloading); then how the last check ended.
+ */
+export interface AppUpdateState {
+  version: string;
+  phase: "off" | "idle" | "checking" | "latest" | "downloading" | "ready" | "failed";
+  update: string | null;
+  percent: number | null;
+  error: string | null;
+}
+
+export function appUpdateState(version: string, enabled: boolean, check: AppCheck, offer: UpdateOffer): AppUpdateState {
+  const state = { version, update: null, percent: null, error: null };
+  if (!enabled) return { ...state, phase: "off" };
+  if (check.is === "checking") return { ...state, phase: "checking" };
+  if (check.is === "downloading") return { ...state, phase: "downloading", update: check.version, percent: check.percent };
+  if (offer.staging) return { ...state, phase: "downloading", update: offer.staging.version };
+  if (offer.ready) return { ...state, phase: "ready", update: offer.ready.version };
+  if (check.is === "failed") return { ...state, phase: "failed", error: check.error };
+  return { ...state, phase: check.is };
 }
 
 export interface UpdateNotices {

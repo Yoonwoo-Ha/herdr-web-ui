@@ -495,7 +495,8 @@
   white-space: nowrap;
 }
 
-.header-tabs-connection.is-reconnecting { color: var(--status-reconnecting); }
+.header-tabs-connection.is-reconnecting,
+.header-tabs-connection.is-failed { color: var(--text-dim); }
 .header-tabs-connection.is-connected { color: var(--status-done); }
 
 .header-tabs .tab-strip-notice {

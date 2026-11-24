@@ -40,11 +40,17 @@ export function UnsentTextDialog({ machines, target, canRecover, onRecover, onCl
   const items = useSyncExternalStore(paneLifetimes.subscribe, paneLifetimes.unsent);
   const undoable = useSyncExternalStore(paneLifetimes.subscribe, paneLifetimes.undoable);
   const [copied, setCopied] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const liveIds = new Set(items.map((item) => item.id));
   const pendingDiscards = undoable.filter((item) => !liveIds.has(item.id));
   const discardedIds = new Set(pendingDiscards.map((item) => item.id));
   const allItems = [...items, ...pendingDiscards].sort((a, b) => b.at - a.at);
   const firstActiveId = items[0]?.id ?? null;
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -65,7 +71,7 @@ export function UnsentTextDialog({ machines, target, canRecover, onRecover, onCl
   const dialogTitle = t("Unsent text · {destination}", { destination });
   const exactWhen = (at: number): string => new Date(at).toLocaleString(resolvedLanguage, { dateStyle: "medium", timeStyle: "short" });
   const relativeWhen = (at: number): string => {
-    const diffSec = Math.round((at - Date.now()) / 1000);
+    const diffSec = Math.round((at - now) / 1000);
     const absSec = Math.abs(diffSec);
     try {
       const rtf = new Intl.RelativeTimeFormat(resolvedLanguage, { numeric: "auto" });

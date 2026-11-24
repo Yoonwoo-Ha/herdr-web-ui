@@ -5,6 +5,7 @@ import type { AgentCatalogEntry, AgentCatalogRow } from "../../shared/agent-cata
 import type { HealthAuth, PairingCode, RemoteAccess } from "../../shared/protocol.ts";
 import type { SecurityFacts } from "../lib/useAccess.ts";
 import { ApiError, createWorkspace, fetchAgentCatalog, fetchDevices, fetchRemoteAccess, fetchUsage, startPairing } from "../lib/api.ts";
+import { STORE_PAGES } from "../lib/appShell.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
 import { createRequest, newSessionLaunch } from "../lib/newSession.ts";
@@ -18,7 +19,7 @@ import { pageNotifications, showTestNotification, type NotificationState } from 
 import { refreshPushHealth, usePushHealth, type PushActionResult } from "../lib/pushHealth.ts";
 import { pickTheme, rowFor, THEME_IDS, type Mode, type ThemeId } from "../lib/themes.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
-import { agentRows, checkList, foundAgents, installedHere, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, openInFolder, preferredAgent, relayOnlyPc, relayStep, settleDelay, setupView, signedInAgents, turnsUsageOn, type CheckStatus, type GuideEvent, type GuideState, type PcCheck, type PhoneBoxOpening } from "../lib/setupGuideFlow.ts";
+import { agentRows, checkList, foundAgents, installedHere, pairedSince, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, openInFolder, preferredAgent, relayOnlyPc, relayStep, settleDelay, setupView, signedInAgents, turnsUsageOn, type CheckStatus, type GuideEvent, type GuideState, type PcCheck, type PhoneBoxOpening } from "../lib/setupGuideFlow.ts";
 import { focusInOtherModal, nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { inRelayShell, useRelay, type RelayState } from "../lib/useRelay.ts";
@@ -864,7 +865,7 @@ function RelayQr({ onPhonePaired }: { onPhonePaired: (name: string) => void }) {
       void fetchDevices().then((devices) => {
         if (!live) return;
         if (known === null) { known = new Set(devices.map((device) => device.id)); return; }
-        const fresh = devices.find((device) => !known!.has(device.id));
+        const fresh = pairedSince(devices, known);
         if (fresh !== undefined) { setPaired(fresh.label); onPhonePaired(fresh.label); }
       }, () => { /* asked again on the next turn */ }).finally(() => { asked = false; });
     };
@@ -919,7 +920,7 @@ function PhoneQr({ auth, onOpenSettings, onPaired, onPhonePaired, given, large =
     dropped.current = false;
     let live = true;
     fetchDevices().then((devices) => {
-      const fresh = devices.find((device) => !(before.current?.has(device.id) ?? true));
+      const fresh = pairedSince(devices, before.current);
       if (live && fresh !== undefined) { setPaired(fresh.label); onPhonePaired(fresh.label); }
     }, () => { /* unknown: New code stays offered */ });
     return () => { live = false; };
@@ -960,7 +961,7 @@ function PhoneQr({ auth, onOpenSettings, onPaired, onPhonePaired, given, large =
       asked = true;
       void fetchDevices().then((devices) => {
         if (!live) return;
-        const fresh = devices.find((device) => !(before.current?.has(device.id) ?? true));
+        const fresh = pairedSince(devices, before.current);
         if (fresh !== undefined) { setPaired(fresh.label); setCode(null); onPhonePaired(fresh.label); }
       }, () => { /* asked again on the next turn */ }).finally(() => { asked = false; });
     };
@@ -1012,8 +1013,8 @@ export function SetupGuideResume({ onResume }: { onResume: () => void }) {
 
 
 const STORES = {
-  "app-store": { url: "https://apps.apple.com/app/id6824664162", badge: `${import.meta.env.BASE_URL}store-badges/app-store-en.svg`, width: 120, height: 40 },
-  "google-play": { url: "https://play.google.com/store/apps/details?id=sh.ovis.app", badge: "google-play", width: 135, height: 52 },
+  "app-store": { url: STORE_PAGES.ios, badge: `${import.meta.env.BASE_URL}store-badges/app-store-en.svg`, width: 120, height: 40 },
+  "google-play": { url: STORE_PAGES.android, badge: "google-play", width: 135, height: 52 },
 } as const;
 type Store = keyof typeof STORES;
 type PhoneMethod = "relay" | "wifi" | "tailscale";

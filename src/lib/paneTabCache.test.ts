@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { cachedPaneCells, visitPaneTab } from "./paneTabCache.ts";
+import { cachedPaneCells, orderedPaneCells, visitPaneTab } from "./paneTabCache.ts";
 
 describe("pane tab cache", () => {
   const liveTabs = new Set(["a", "b", "c", "d", "e"]);
@@ -27,5 +27,46 @@ describe("pane tab cache", () => {
     const second = visitPaneTab([], "c", liveTabs);
     expect(first).toEqual(["a", "b"]);
     expect(second).toEqual(["c"]);
+  });
+  it("keeps a mounted pane's place on a tab switch, and follows the layout among the drawn frames", () => {
+    const cell = (paneId: string) => ({ paneId });
+    const ids = (cells: { paneId: string }[]) => cells.map((item) => item.paneId);
+    // t2 presented after t1: t2 is drawn and t1 is cached, so t2 goes last instead of moving t1
+    expect(ids(orderedPaneCells(["t1"], [cell("t2"), cell("t1")], new Set(["t2"])))).toEqual(["t1", "t2"]);
+    // coming back: t1 is drawn in its own place and the cached t2 stays where it was
+    expect(ids(orderedPaneCells(["t1", "t2"], [cell("t1"), cell("t2")], new Set(["t1"])))).toEqual(["t1", "t2"]);
+    // a first render keeps the mount list's own order
+    expect(ids(orderedPaneCells([], [cell("t2"), cell("t1")], new Set(["t2", "t1"])))).toEqual(["t2", "t1"]);
+    // a split adds its pane last, moving nothing that is already mounted
+    expect(ids(orderedPaneCells(["t1"], [cell("t1"), cell("t4")], new Set(["t1", "t4"])))).toEqual(["t1", "t4"]);
+    // a split beside the first of two panes inserts the new frame between them, and moves neither
+    expect(ids(orderedPaneCells(["t1", "t2"], [cell("t1"), cell("t4"), cell("t2")], new Set(["t1", "t4", "t2"])))).toEqual(["t1", "t4", "t2"]);
+    // a swap exchanges the two drawn frames, so the Tab order follows the new left-to-right order
+    expect(ids(orderedPaneCells(["t1", "t2"], [cell("t2"), cell("t1")], new Set(["t1", "t2"])))).toEqual(["t2", "t1"]);
+  });
+  it("moves no frame of another tab when the tab on the screen reorders its own", () => {
+    const cell = (paneId: string) => ({ paneId });
+    // React's rule for a keyed list (placeChild): a child is moved when one placed before it came later before
+    const moved = (previous: readonly string[], next: readonly string[]): string[] => {
+      const old = new Map(previous.map((id, index) => [id, index]));
+      let last = 0;
+      return next.filter((id) => {
+        const at = old.get(id);
+        if (at === undefined) return false;
+        if (at < last) return true;
+        last = at;
+        return false;
+      });
+    };
+    const order = (previous: string[], layout: string[], cached: string[]) =>
+      orderedPaneCells(previous, [...layout, ...cached].map(cell), new Set(layout)).map((item) => item.paneId);
+    // a swap of a and s while tab b's frame sits between them
+    const swapped = order(["a", "b", "s"], ["s", "a"], ["b"]);
+    expect(swapped.filter((id) => id !== "b")).toEqual(["s", "a"]);
+    expect(moved(["a", "b", "s"], swapped)).not.toContain("b");
+    // a layout edit that turns three drawn frames around, with a cached frame among them
+    const turned = order(["a", "b", "c", "d"], ["d", "a", "c"], ["b"]);
+    expect(turned.filter((id) => id !== "b")).toEqual(["d", "a", "c"]);
+    expect(moved(["a", "b", "c", "d"], turned)).not.toContain("b");
   });
 });

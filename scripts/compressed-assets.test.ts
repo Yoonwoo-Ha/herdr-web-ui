@@ -4,13 +4,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { brotliCompressSync, brotliDecompressSync, constants, gunzipSync } from "node:zlib";
 import { build } from "vite";
+import { compressedAssets } from "./compressed-assets.ts";
+import { serviceWorkerBuild } from "./service-worker-build.ts";
 
 test("a production build produces exact compressed JS/CSS sidecars and leaves the shell alone", async () => {
   const output = mkdtempSync(join(tmpdir(), "herdr-compressed-build-"));
   try {
-    await build({ root: join(import.meta.dir, ".."), logLevel: "silent", build: { outDir: output, emptyOutDir: true,
-      rollupOptions: { output: { entryFileNames: "assets/nested/[name]-[hash].js", chunkFileNames: "assets/nested/[name]-[hash].js", assetFileNames: "assets/nested/[name]-[hash][extname]" } },
-    } });
+    await build({
+      root: join(import.meta.dir, "fixtures", "compressed-assets"),
+      configFile: false,
+      logLevel: "silent",
+      plugins: [compressedAssets(), serviceWorkerBuild()],
+      build: { outDir: output, emptyOutDir: true,
+        rolldownOptions: { output: { entryFileNames: "assets/nested/[name]-[hash].js", chunkFileNames: "assets/nested/[name]-[hash].js", assetFileNames: "assets/nested/[name]-[hash][extname]" } },
+      },
+    });
     const assets = join(output, "assets");
     const names = readdirSync(assets, { recursive: true }).filter((name) => /\.(?:js|css)$/.test(name));
     expect(names.some((name) => name.endsWith(".js"))).toBe(true);
@@ -23,12 +31,15 @@ test("a production build produces exact compressed JS/CSS sidecars and leaves th
       expect(gunzipSync(readFileSync(`${path}.gz`))).toEqual(readFileSync(path));
     }
     const html = readFileSync(join(output, "index.html"), "utf8");
-    const startup = new Set([...html.matchAll(/<(?:script|link)\b[^>]*\b(?:src|href)="[^"]*?(assets\/[^"]+)"/g)].map((match) => match[1]!.slice("assets/".length)));
+    const startup = new Set([...html.matchAll(/<(?:script|link)\b[^>]*\b(?:src|href)="[^"]*?assets\/([^"]+)"/g)].flatMap((match) => match[1] === undefined ? [] : [match[1]]));
     expect([...startup].some((name) => name.endsWith(".js")) && [...startup].some((name) => name.endsWith(".css"))).toBe(true);
     const at = (quality: number, name: string) => brotliCompressSync(readFileSync(join(assets, name)), { params: { [constants.BROTLI_PARAM_QUALITY]: quality } });
     for (const name of names) {
       const best = startup.has(name);
-      expect(readFileSync(join(assets, `${name}.br`)).equals(at(best ? 11 : 5, name)), `${name} at quality ${best ? 11 : 5}`).toBe(true);
+      const quality = best ? 11 : 5;
+      const actual = readFileSync(join(assets, `${name}.br`));
+      expect(actual, `${name} at quality ${quality}`).toEqual(at(quality, name));
+      expect(actual, `${name} must distinguish startup and lazy compression`).not.toEqual(at(best ? 5 : 11, name));
     }
     expect(names.some((name) => !startup.has(name) && name.endsWith(".js"))).toBe(true);
     expect(existsSync(join(output, "index.html.br"))).toBe(false);
@@ -38,5 +49,4 @@ test("a production build produces exact compressed JS/CSS sidecars and leaves th
   } finally {
     rmSync(output, { recursive: true, force: true });
   }
-// a whole production build, beside the other unit files CI runs four at a time: it took 23 s there
-}, 120_000);
+});

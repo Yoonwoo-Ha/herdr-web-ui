@@ -8,7 +8,7 @@ import { hostname, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { ConversationMonitor } from "./conversation-monitor.ts";
 import { FakeAccountService } from "../shared/account-service-fake.ts";
-import { ACCOUNT, registerSnapshotPc } from "./account/listed-pc.test-helpers.ts";
+import { pressInto, registerSnapshotPc } from "./account/listed-pc.test-helpers.ts";
 import { createServer } from "./index.ts";
 import { AgentDetector, catalogLocator } from "./agent-catalog-detect.ts";
 import * as appModule from "./index.ts";
@@ -28,6 +28,7 @@ import { HerdrSocket } from "../src/lib/ws.ts";
 import { HerdrError, herdrRpc, paneRead, paneSplit, ping, sessionSnapshot, subscribeEvents, tabCreate, workspaceCreate, workspaceClose } from "./herdr/client.ts";
 import { startFakePushService, type FakePushService } from "./push.fake.ts";
 import { descriptorPath, type BridgeDescriptor } from "./bridge.ts";
+import { ownProcesses } from "../scripts/own-processes.ts";
 import { handleMachineRequest } from "./machine-api.ts";
 import type { MachineManager } from "./machines.ts";
 import { TailnetIdentitySource } from "./tailscale.ts";
@@ -3686,8 +3687,7 @@ describe("WebSocket client leaving mid-attach", () => {
   }
 
   function attachProcessCount(terminalId: string): number {
-    const found = Bun.spawnSync(["pgrep", "-f", `terminal attach ${terminalId}`]);
-    return found.stdout.toString().split("\n").filter(Boolean).length;
+    return ownProcesses(new RegExp(`terminal attach ${terminalId}`)).length;
   }
 
   async function waitForAttachGone(terminalId: string, ms: number): Promise<void> {
@@ -4306,7 +4306,7 @@ describe("pairing and identity", () => {
       const phone = await pair("Phone");
       const tablet = await pair("Tablet");
       if (bound) {
-        server.context.services.devices.bindByService(ACCOUNT);
+        await pressInto(service, server.context.services);
         expect(await server.context.services.accountMailbox.readSnapshot()).toMatchObject({ committed: true });
       }
       const asDevice = await fetch(`${base()}/api/devices/revoke-all`, { method: "DELETE", headers: guard });

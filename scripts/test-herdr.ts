@@ -28,6 +28,9 @@ process.env["OVIS_TEST_USER_XDG_CONFIG_HOME"] ??= process.env["XDG_CONFIG_HOME"]
 if (process.env["NODE_ENV"] === "test") {
   const { literalAddress, sshAddresses } = await import("../server/ssh-address.ts");
   sshAddresses.resolve = async (target) => literalAddress(target);
+  // nor the real `tailscale whois`: a source with no WhoIs reader of its own names no node (server/tailscale.ts)
+  const { tailscaleWhois } = await import("../server/tailscale.ts");
+  tailscaleWhois.read = async () => null;
 }
 
 export const TEST_SESSION = process.env["HERDR_TEST_SESSION"] || "ovis-test";

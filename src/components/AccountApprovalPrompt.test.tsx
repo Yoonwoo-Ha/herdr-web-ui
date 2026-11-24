@@ -42,7 +42,7 @@ describe("approving a device that asks to join the account", () => {
   const request: RemotePairingRequest = { id: "r1", label: "Hako's iPhone", intent: "account", choices: ["111111", "222222", "333333"], expires_at: "", key: "k" };
 
   type Decision = [decision: "approve" | "decline", digits?: string];
-  async function onCard<T>(asker: Asker | undefined, decided: Decision[], walk: (root: ReturnType<typeof create>["root"]) => Promise<T>): Promise<T> {
+  async function onCard<T>(asker: Asker | undefined, decided: Decision[], walk: (root: ReturnType<typeof create>["root"]) => Promise<T>, pc?: { name?: string }): Promise<T> {
     const keys = ["window", "document", "navigator", "getComputedStyle", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"];
     const saved = new Map(keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
     const events = new EventTarget();
@@ -62,7 +62,7 @@ describe("approving a device that asks to join the account", () => {
     let renderer: ReturnType<typeof create> | undefined;
     try {
       await act(async () => {
-        renderer = create(createElement(SettingsProvider, null, createElement(AccountApprovalCard, { request, pcName: "p620", pcCount: 2, asker, onDecide: async (...decision: Decision) => { decided.push(decision); } })),
+        renderer = create(createElement(SettingsProvider, null, createElement(AccountApprovalCard, { request: pc ? { ...request, intent: "pc", vouched: true } : request, vouchedName: pc?.name, pcName: "p620", pcCount: 2, asker, onDecide: async (...decision: Decision) => { decided.push(decision); } })),
           { createNodeMock: () => ({ focus() {}, contains: () => true, querySelectorAll: () => [] }) });
       });
       return await walk(renderer!.root);
@@ -81,6 +81,20 @@ describe("approving a device that asks to join the account", () => {
   const approveButton = (asker: Asker | undefined) => onCard(asker, [], async (root) => {
     await act(async () => { radios(root)[0]!.props.onClick(); });
     return { disabled: approveOf(root).props.disabled === true, numbersDisabled: radios(root).every((node) => node.props.disabled === true) };
+  });
+
+  it.each([false, true])("a vouched card offers no digit pick and allows only a verified name: %s", async verified => {
+    const decided: Decision[] = [];
+    await onCard(undefined, decided, async root => {
+      expect(radios(root)).toHaveLength(0);
+      const buttons = root.findAllByType("button");
+      expect(buttons.map(button => button.children.join(""))).toEqual(verified ? ["Deny", "Allow"] : ["Deny"]);
+      const lead = root.findByProps({ className: "account-approval-ask" }).children.join("");
+      if (verified) expect(lead).toBe("Trusted listing");
+      expect(lead).not.toContain(request.label);
+      await act(async () => { buttons[verified ? 1 : 0]!.props.onClick(); });
+    }, verified ? { name: "Trusted listing" } : {});
+    expect(decided).toEqual([[verified ? "approve" : "decline", undefined]]);
   });
 
   it("keeps the number pick: three numbers, none picked, Approve held until one is, and the picked one sent", async () => {

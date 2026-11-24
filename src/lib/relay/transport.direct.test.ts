@@ -59,6 +59,8 @@ async function pcFixture(extraCarriers: readonly string[] = []) {
   const base = `http://127.0.0.1:${app.port}`;
   await fetch(`${base}/api/relay/start`, { method: "POST", headers: { origin: base, "x-herdr-update": "1" } });
   await bounded(synced.promise);
+  // direct connections are off until the PC's owner turns them on
+  expect((await fetch(`${base}/api/relay/direct`, { method: "POST", headers: { origin: base, "x-herdr-update": "1", "content-type": "application/json" }, body: '{"on":true}' })).status).toBe(200);
   const offer = decodeOffer(((await (await fetch(`${base}/api/relay/offer`, { method: "POST", headers: { origin: base, "x-herdr-update": "1" } })).json()) as { url: string }).url)!;
   const direct: string[] = [];
   const directSocket = (url: string): WebSocket => {
@@ -114,6 +116,7 @@ describe("direct carriers in the relay transport", () => {
     const transport = await transportFor(pc, store, saved);
     expect(pc.channels[before]!.direct).toBe(store.saved!.direct![0]);
     expect(transport.route).toBe("direct");
+    expect(transport.directVia).toBe("lan");
   });
 
   it("is told the PC's Tailscale carrier only once the app's socket says it opens one", async () => {
@@ -227,6 +230,7 @@ describe("racing the relay at the start", () => {
     const transport = await transportFor(pc, store, saved, { directTailnet: () => true, directSocket: socketFor });
     expect(transport.route).toBe("direct");
     expect(pc.channels.at(-1)!.direct).toBe(tailscale);
+    expect(transport.directVia).toBe("tailscale");
   });
 
   it("keeps a native socket for the PC's Tailscale carrier behind two silent LAN addresses", async () => {

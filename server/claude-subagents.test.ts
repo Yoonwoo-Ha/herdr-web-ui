@@ -1088,7 +1088,14 @@ describe("ClaudeSubagentStatus", () => {
 
   describe("a /loop wakeup's fire (#3494)", () => {
     type Session = ReturnType<typeof session>;
-    const rest = (s: Session, minute: number) => s.parent({ type: "system", subtype: "turn_duration", isSidechain: false, timestamp: at(minute) });
+    /**
+     * A turn's rest as Claude Code writes it in the sessions of this PC, which run a Stop hook: the hooks' summary,
+     * then turn_duration. An answer alone leaves such a session's turn open while its hooks run.
+     */
+    const rest = (s: Session, minute: number) => {
+      s.parent({ type: "system", subtype: "stop_hook_summary", isSidechain: false, hookCount: 1, hookErrors: [], preventedContinuation: false, timestamp: at(minute) });
+      s.parent({ type: "system", subtype: "turn_duration", isSidechain: false, timestamp: at(minute) });
+    };
     const fire = (s: Session, minute: number) => s.parent({ type: "system", subtype: "scheduled_task_fire", timestamp: at(minute), taskKind: "loop", taskId: "591b6f5a" });
     const firedAt = (s: Session, ms: number | null) => s.parent({ type: "system", subtype: "scheduled_task_fire", ...(ms === null ? {} : { timestamp: new Date(ms).toISOString() }), taskKind: "loop", taskId: "591b6f5a" });
     const answer = (s: Session, minute: number) => s.parent({ type: "assistant", timestamp: at(minute), message: { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: "checked" }] } });
@@ -3371,5 +3378,284 @@ describe("claudeSubagents, a long-lived session's old history (#2510)", () => {
     status.poll("p1");
     status.poll("p2");
     expect([status.countOf("p1"), status.countOf("p2")]).toEqual([2, 2]);
+  });
+});
+
+/**
+ * Claude Code 2.1.326 writes no `turn_duration` at the end of a turn while an in-process teammate runs (an idle one
+ * too) or a detached tool call awaits its result: it writes it once that work is over, if no turn began meanwhile. Its
+ * own report says `working` the whole time (a teammate at work makes it busy), so the pane's rest is the turn's end
+ * it did write: the answer, and after it the summary of the Stop hooks when the session runs any. The record types and
+ * keys are those of the transcripts of this PC; the words are made up.
+ */
+describe("ClaudeSubagentStatus, a turn Claude Code ends with no turn_duration while a teammate works", () => {
+  const pane: HerdrPane = { pane_id: "p1", agent: "claude", agent_session: { agent: "claude", kind: "id", source: "hook", value: "s1" }, cwd: "/work", agent_status: "working", focused: false, revision: 1 } as HerdrPane;
+  const teammate = (s: ReturnType<typeof session>) => {
+    const dir = join(s.path, "..", "11111111-1111-4111-8111-111111111111", "subagents");
+    writeFileSync(join(dir, "agent-asleeper-1.meta.json"), JSON.stringify({ agentType: "sleeper", name: "sleeper", description: "Sleep teammate", spawnDepth: 0, requestShape: "background", taskKind: "in_process_teammate", teamName: "session-11111111" }));
+    const file = join(dir, "agent-asleeper-1.jsonl");
+    writeFileSync(file, json({ isSidechain: true, sessionId: "11111111-1111-4111-8111-111111111111", agentId: "asleeper-1", type: "user", timestamp: at(1), message: { role: "user", content: "sleep" } }));
+    appendFileSync(file, json({ isSidechain: true, sessionId: "11111111-1111-4111-8111-111111111111", agentId: "asleeper-1", type: "assistant", timestamp: at(1), message: { id: "m1", role: "assistant", stop_reason: "tool_use", content: [{ type: "tool_use", id: "toolu_sleep", name: "Bash", input: { command: "sleep 100" } }] } }));
+  };
+  const answer = (s: ReturnType<typeof session>, minute: number, content: unknown[] = [{ type: "text", text: "started" }], extra: object = {}) =>
+    s.parent({ type: "assistant", isSidechain: false, timestamp: at(minute), message: { role: "assistant", stop_reason: content.some((block) => (block as { type?: string }).type === "tool_use") ? "tool_use" : "end_turn", content }, ...extra });
+  const hooksRan = (s: ReturnType<typeof session>, minute: number, extra: object = {}) =>
+    s.parent({ type: "system", subtype: "stop_hook_summary", isSidechain: false, hookCount: 1, hookInfos: [{ command: "node stop-hook.mjs", durationMs: 86 }], hookErrors: [], preventedContinuation: false, stopReason: "", hasOutput: false, level: "suggestion", timestamp: at(minute), ...extra });
+  /** a Stop hook that blocked the stop: Claude Code writes its feedback as a meta prompt before the summary, and the turn goes on */
+  const blocked = (s: ReturnType<typeof session>, minute: number) => {
+    s.parent({ type: "user", isSidechain: false, isMeta: true, timestamp: at(minute), message: { role: "user", content: "Stop hook feedback:\n[node stop-hook.mjs]: keep going" } });
+    hooksRan(s, minute, { hookErrors: ["keep going"] });
+  };
+  const tracked = async (s: ReturnType<typeof session>) => {
+    const status = new ClaudeSubagentStatus({ resolve: async () => ({ path: s.path, startedAt: null }), onChange: () => {}, now: () => NOW });
+    await status.refresh([pane]);
+    return status;
+  };
+
+  it("rests on the session's answer and its Stop hooks' summary while the teammate works", async () => {
+    const s = session();
+    s.prompt(1);
+    teammate(s);
+    const status = await tracked(s);
+    try {
+      expect(status.countOf("p1")).toBe(1);
+      expect(status.restsOn("p1")).toBe(false);
+      answer(s, 2);
+      hooksRan(s, 2);
+      status.poll();
+      expect(status.restsOn("p1")).toBe(true);
+      s.prompt(3);
+      status.poll();
+      expect(status.restsOn("p1")).toBe(false);
+    } finally { status.stop(); }
+  });
+
+  it("rests on the answer alone in a session that has run no Stop hook", async () => {
+    const s = session();
+    s.prompt(1);
+    teammate(s);
+    const status = await tracked(s);
+    try {
+      answer(s, 2);
+      status.poll();
+      expect(status.restsOn("p1")).toBe(true);
+    } finally { status.stop(); }
+  });
+
+  it("waits for the summary in a session that runs Stop hooks: they still run after the answer", async () => {
+    const s = session();
+    s.prompt(1);
+    answer(s, 1);
+    hooksRan(s, 1);
+    s.parent({ type: "system", subtype: "turn_duration", isSidechain: false, timestamp: at(1) });
+    s.prompt(2);
+    teammate(s);
+    const status = await tracked(s);
+    try {
+      answer(s, 3);
+      status.poll();
+      expect(status.restsOn("p1")).toBe(false);
+      hooksRan(s, 3);
+      status.poll();
+      expect(status.restsOn("p1")).toBe(true);
+    } finally { status.stop(); }
+  });
+
+  it("takes no summary as the rest after a hook that blocked the stop or gave the model context, and rests at the end of the turn that went on", async () => {
+    const goOn: [string, (s: ReturnType<typeof session>, minute: number) => void][] = [
+      ["blocked", blocked],
+      ["gave context", (s, minute) => hooksRan(s, minute, { hookAdditionalContext: ["the review found two issues"] })],
+    ];
+    for (const [how, hook] of goOn) {
+      for (const first of [true, false]) {
+        const s = session();
+        if (!first) { s.prompt(0); answer(s, 0); hooksRan(s, 0); }
+        s.prompt(1);
+        teammate(s);
+        const status = await tracked(s);
+        try {
+          answer(s, 2);
+          hook(s, 2);
+          status.poll();
+          expect([how, first, status.restsOn("p1")]).toEqual([how, first, false]);
+          s.parent({ type: "api-request", timestamp: at(3) });
+          answer(s, 3);
+          status.poll();
+          expect([how, first, status.restsOn("p1")]).toEqual([how, first, false]);
+          hooksRan(s, 3);
+          status.poll();
+          expect([how, first, status.restsOn("p1")]).toEqual([how, first, true]);
+        } finally { status.stop(); }
+      }
+    }
+  });
+
+  it("rests at the summary of a hook that stopped the turn outright, though another one's feedback came before it", async () => {
+    const s = session();
+    s.prompt(1);
+    teammate(s);
+    const status = await tracked(s);
+    try {
+      answer(s, 2);
+      s.parent({ type: "user", isSidechain: false, isMeta: true, timestamp: at(2), message: { role: "user", content: "Stop hook feedback:\n[node stop-hook.mjs]: keep going" } });
+      hooksRan(s, 2, { hookErrors: ["keep going"], preventedContinuation: true, stopReason: "stopped by the other hook" });
+      status.poll();
+      expect(status.restsOn("p1")).toBe(true);
+    } finally { status.stop(); }
+  });
+
+  it("takes no summary written after a /loop fire as the rest: the fire's turn begins", async () => {
+    const s = session();
+    s.prompt(1);
+    teammate(s);
+    answer(s, 1);
+    hooksRan(s, 1);
+    s.prompt(2);
+    const status = await tracked(s);
+    try {
+      answer(s, 3);
+      s.parent({ type: "system", subtype: "scheduled_task_fire", timestamp: at(3), taskKind: "loop", taskId: "591b6f5a" });
+      hooksRan(s, 3);
+      status.poll();
+      expect([status.restsOn("p1"), status.loopHolds("p1")]).toEqual([false, true]);
+    } finally { status.stop(); }
+  });
+
+  it("keeps a fire's hold through a summary of hooks that stopped the turn before it outright", async () => {
+    for (const loop of [true, false]) {
+      const s = session();
+      s.prompt(1);
+      teammate(s);
+      answer(s, 1);
+      hooksRan(s, 1);
+      s.prompt(2);
+      const status = await tracked(s);
+      try {
+        answer(s, 3);
+        s.parent({ type: "system", subtype: "scheduled_task_fire", timestamp: at(3), ...(loop ? { taskKind: "loop" } : {}), taskId: "591b6f5a" });
+        hooksRan(s, 3, { preventedContinuation: true, stopReason: "stopped by the hook" });
+        status.poll();
+        expect([loop, status.loopHolds("p1"), status.restsOn("p1")]).toEqual([loop, true, false]);
+      } finally { status.stop(); }
+    }
+  });
+
+  it("is at work again once a prompt sent during the turn is taken into it after its answer", async () => {
+    const s = session();
+    s.prompt(1);
+    teammate(s);
+    const status = await tracked(s);
+    try {
+      answer(s, 2);
+      s.parent({ type: "attachment", isSidechain: false, timestamp: at(2), attachment: { type: "queued_command", commandMode: "prompt", prompt: "and the tests" } });
+      status.poll();
+      expect(status.restsOn("p1")).toBe(false);
+    } finally { status.stop(); }
+  });
+
+  it("takes an answer as the rest again once a turn of a session that ran Stop hooks ended with no summary (a /goal's hook is gone)", async () => {
+    const s = session();
+    s.prompt(1);
+    answer(s, 1);
+    hooksRan(s, 1);
+    s.prompt(2);
+    teammate(s);
+    const status = await tracked(s);
+    try {
+      answer(s, 3);
+      status.poll();
+      expect(status.restsOn("p1")).toBe(false);
+      s.parent({ type: "user", isSidechain: false, turnPosition: { promptIndex: 2, turnIndex: 4 }, timestamp: at(4), message: { role: "user", content: "Another Claude session sent a message: done" } });
+      s.parent({ type: "api-request", timestamp: at(4) });
+      answer(s, 4);
+      status.poll();
+      expect(status.restsOn("p1")).toBe(true);
+    } finally { status.stop(); }
+  });
+
+  it("ends a /loop turn's hold on the queue at its answer in a session that runs no Stop hook", async () => {
+    const s = session();
+    s.prompt(1);
+    teammate(s);
+    answer(s, 1);
+    const status = await tracked(s);
+    try {
+      s.parent({ type: "system", subtype: "scheduled_task_fire", timestamp: at(2), taskKind: "loop", taskId: "591b6f5a" });
+      s.parent({ type: "user", isMeta: true, isSidechain: false, permissionMode: "auto", turnOrigin: "scheduled", wakeupSource: "loop_wakeup", timestamp: at(2), message: { role: "user", content: "check the deploy" } });
+      status.poll();
+      expect([status.loopHolds("p1"), status.restsOn("p1")]).toEqual([true, false]);
+      answer(s, 3);
+      status.poll();
+      expect([status.loopHolds("p1"), status.restsOn("p1")]).toEqual([false, true]);
+    } finally { status.stop(); }
+  });
+
+  it("reads a turn begun since the last poll when a send asks whether the pane still rests", async () => {
+    const s = session();
+    s.prompt(1);
+    teammate(s);
+    answer(s, 1);
+    hooksRan(s, 1);
+    const status = await tracked(s);
+    try {
+      expect([status.restsOn("p1"), status.restsOnNow("p1")]).toEqual([true, true]);
+      s.parent({ type: "user", isSidechain: false, turnPosition: { promptIndex: 1, turnIndex: 2 }, timestamp: at(2), message: { role: "user", content: "Another Claude session sent a message: done" } });
+      expect(status.restsOn("p1")).toBe(true);
+      expect(status.restsOnNow("p1")).toBe(false);
+      expect(status.restsOn("p1")).toBe(false);
+    } finally { status.stop(); }
+  });
+
+  it("rests at the summary of hooks one of which stopped the turn outright, whatever context another gave", async () => {
+    const s = session();
+    s.prompt(1);
+    teammate(s);
+    const status = await tracked(s);
+    try {
+      answer(s, 2);
+      hooksRan(s, 2, { hookAdditionalContext: ["noted"], preventedContinuation: true, stopReason: "stopped by the hook" });
+      status.poll();
+      expect(status.restsOn("p1")).toBe(true);
+    } finally { status.stop(); }
+  });
+
+  it("takes no answer that calls a tool, no API error and no subagent's answer for the session's rest", async () => {
+    const s = session();
+    s.prompt(1);
+    teammate(s);
+    const status = await tracked(s);
+    try {
+      answer(s, 2, [{ type: "text", text: "looking" }, { type: "tool_use", id: "toolu_read", name: "Read", input: {} }]);
+      status.poll();
+      expect(status.restsOn("p1")).toBe(false);
+      answer(s, 2, [{ type: "text", text: "API Error: 529 overloaded" }], { isApiErrorMessage: true });
+      status.poll();
+      expect(status.restsOn("p1")).toBe(false);
+      answer(s, 2, [{ type: "text", text: "done" }], { isSidechain: true });
+      status.poll();
+      expect(status.restsOn("p1")).toBe(false);
+    } finally { status.stop(); }
+  });
+
+  it("ends a notice's turn's hold on the queue at that turn's answer, and its summary in a session that runs Stop hooks", async () => {
+    for (const hooked of [true, false]) {
+      const s = session();
+      s.prompt(1);
+      teammate(s);
+      answer(s, 1);
+      if (hooked) hooksRan(s, 1);
+      const status = await tracked(s);
+      try {
+        s.parent({ type: "user", isSidechain: false, origin: { kind: "task-notification" }, permissionMode: "auto", turnOrigin: "task_notification", timestamp: at(2), message: { role: "user", content: "<task-notification>\n<task-id>bq1</task-id>\n<status>completed</status>\n</task-notification>" } });
+        status.poll();
+        expect([hooked, status.loopHolds("p1"), status.restsOn("p1")]).toEqual([hooked, true, false]);
+        answer(s, 2);
+        status.poll();
+        expect([hooked, status.loopHolds("p1"), status.restsOn("p1")]).toEqual([hooked, hooked, !hooked]);
+        if (hooked) hooksRan(s, 2);
+        status.poll();
+        expect([hooked, status.loopHolds("p1"), status.restsOn("p1")]).toEqual([hooked, false, true]);
+      } finally { status.stop(); }
+    }
   });
 });

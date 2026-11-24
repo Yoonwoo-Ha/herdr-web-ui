@@ -2,10 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { importPublicKey } from "../../shared/relay-e2ee.ts";
 import { listThisPc } from "../../src/lib/account/addThisPc.ts";
-import { myPcs } from "../../src/lib/account/myPcs.ts";
 import { AccountService } from "../../src/lib/account/service.ts";
 import { memoryAccountStore } from "../../src/lib/account/store.ts";
-import { dashboardModel } from "../../src/lib/relay/dashboard.ts";
 import { nativeTransport, setTransport } from "../../src/lib/transport.ts";
 import { pairingPc, setUpFor } from "./pairing.test-helpers.ts";
 
@@ -26,7 +24,7 @@ afterEach(async () => {
  * `unusable`: the directory sends `listing` for the row, and the refresh route answers a structured 404 as an old service would.
  * `age`: how long ago the row was listed (stale by default, so the invitation is due for its refresh).
  */
-async function fixture(mode: "bind" | "complete" | "pending" | "refusal" | "unusable", listing: unknown = LISTING, age = 2 * INVITATION_MS) {
+async function fixture(mode: "bind" | "complete" | "completed" | "pending" | "refusal" | "unusable", listing: unknown = LISTING, age = 2 * INVITATION_MS) {
   const pc = await pairingPc({ server: { accountOpensAll: true } });
   let passSetup: Promise<Response> | undefined;
   closes.push(async () => { try { await passSetup; } finally { await pc.close(); } });
@@ -67,7 +65,7 @@ async function fixture(mode: "bind" | "complete" | "pending" | "refusal" | "unus
       const pcs: readonly unknown[] = body.pcs;
       return Response.json({ pcs: pcs.map((entry) =>
         typeof entry === "object" && entry !== null && "server_id" in entry && entry.server_id === serverId
-          ? { ...entry, added_at: added, listing_id: listing, invited_at: invitedAt }
+          ? { ...entry, added_at: added, listing_id: listing, invited_at: invitedAt, ...(mode === "completed" ? { completed_at: added } : {}) }
           : entry,
       ) });
     }
@@ -78,7 +76,7 @@ async function fixture(mode: "bind" | "complete" | "pending" | "refusal" | "unus
       if (pathname === `${path}/refresh`) {
         if (mode === "unusable") return Response.json({ error: { code: "not_found" } }, { status: 404 });
         expect(await request.json()).toEqual({ listing_id: LISTING });
-        if (mode === "refusal" || mode === "complete") return Response.json({ error: { code: "listing_changed" } }, { status: 409 });
+        if (mode === "refusal" || mode === "complete" || mode === "completed") return Response.json({ error: { code: "listing_changed" } }, { status: 409 });
         invitedAt = new Date(now).toISOString();
         return Response.json({ invited_at: invitedAt });
       }
@@ -110,20 +108,15 @@ test.each(["bind", "complete"] as const)("refresh races a real one-press %s with
   expect(listed).toMatchObject({ membership: { account: ACCOUNT, enrolling: false } });
 });
 
-test("refreshing a pending invitation keeps its listing age and renews its dashboard countdown", async () => {
-  const f = await fixture("pending");
-  const dashboard = async () => {
-    const rows = myPcs(await f.directory.listPcs(), [], { now: f.now }).map((pc) => ({ ...pc, relay: pc.join?.relay ?? null }));
-    return dashboardModel(rows, { label: "Phone", now: f.now }, RELAY);
-  };
-  expect((await dashboard()).attention[0]?.expiresAt).toBeNull();
+test("a PC out of the account whose old add the account holds as complete is listed in place and added by a new press", async () => {
+  const f = await fixture("completed");
 
-  await listThisPc(f.directory, { relistMs: RELIST_MS });
+  const listed = await listThisPc(f.directory, { relistMs: RELIST_MS });
 
-  expect(f.changes).toEqual([f.refresh]);
-  const row = (await dashboard()).attention[0];
-  expect(row).toMatchObject({ server_id: f.serverId, expiresAt: f.now + INVITATION_MS });
-  expect((await f.directory.listPcs())[0]?.added_at).toBe(f.added);
+  expect(listed.membership).toBeUndefined();
+  expect(f.changes).toEqual([`PUT /v1/pcs/${f.serverId}`]);
+  await f.bind();
+  expect(f.pc.devices.account()).toBe(ACCOUNT);
 });
 
 test("a changed-listing response never triggers legacy removal or recreates the row", async () => {

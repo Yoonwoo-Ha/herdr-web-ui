@@ -125,7 +125,11 @@ export function openRecoverySocket(options: {
 
 /** One request to the recovery socket of `stateDir`, as `ovis recover` sends it. */
 export function askRecovery(stateDir: string, request: unknown): Promise<unknown> {
-  const path = join(stateDir, RECOVER_DIR, RECOVER_SOCKET);
+  return askRecoverySocket(join(stateDir, RECOVER_DIR, RECOVER_SOCKET), request);
+}
+
+/** One request to a recovery socket at `path`: this PC's own, or another PC's forwarded over SSH (server/machines.ts). */
+export function askRecoverySocket(path: string, request: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
     let buffered = "";

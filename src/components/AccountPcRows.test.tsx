@@ -11,15 +11,15 @@ import { SettingsProvider } from "../lib/settings.ts";
 
 // the confirmation is a portal into document.body: drawn in place here, so the test renderer holds it
 await mock.module("react-dom", () => ({ ...ReactDom, createPortal: (node: ReactNode) => node }));
-const { AccountPcRows, NoAccountPcHint, removePcFromAccount, unusedPc } = await import("./AccountPcs.tsx");
+const { AccountPcRows, NoAccountPcHint, signInOfAccount } = await import("./AccountPcs.tsx");
 
 const DESK = "a".repeat(32);
 const LAPTOP = "b".repeat(32);
-const pc = (server_id: string, name: string): MyPc => ({ server_id, name, state: "needs-approval", last_seen_at: null, added_at: null, listed: true, paired: false, linked: false });
+// a PC in the account (it took its place there), which this device is not paired with
+const pc = (server_id: string, name: string): MyPc => ({ server_id, name, state: "needs-approval", last_seen_at: null, added_at: null, listed: true, joined: true, paired: false, linked: false });
 
 const NOW = Date.parse("2026-11-11T00:00:00Z");
 const gone = (server_id: string, name: string): MyPc => ({ ...pc(server_id, name), state: "offline", last_seen_at: "2026-11-01T00:00:00Z", added_at: "2026-10-01T00:00:00Z" });
-const click = (group: { focus: () => void } = { focus() {} }) => ({ currentTarget: { closest: () => group } });
 
 const textOf = (node: ReactTestInstance): string =>
   node.children.map((child) => (typeof child === "string" ? child : textOf(child))).join("");
@@ -83,110 +83,19 @@ describe("the account's PCs in a PC's own Settings", () => {
     if (!renderer) throw new Error("not mounted");
     return renderer.root;
   };
-  const dialogs = (root: ReactTestInstance) => root.findAll((node) => node.props.role === "alertdialog");
 
-  it("gives the rows no action of their own, and no sentence or link under them", async () => {
-    const root = await mount(createElement(AccountPcRows, { pcs: [pc(DESK, "Desk"), pc(LAPTOP, "Laptop")], watching: false, now: NOW, remove: async () => {}, onRemoved: () => {} }));
+  it("gives the rows no action of their own (an offline one is removed in Manage account), and no sentence or link under them", async () => {
+    const root = await mount(createElement(AccountPcRows, { pcs: [pc(DESK, "Desk"), gone(LAPTOP, "Laptop")], now: NOW, onChanged: () => {} }));
     expect(root.findAll((node) => node.type === "a")).toHaveLength(0);
-    expect(root.findAll((node) => node.type === "li").map(textOf)).toEqual(["DeskPCIn your account", "LaptopPCIn your account"]);
+    const [desk, laptop] = root.findAll((node) => node.type === "li").map(textOf);
+    expect(desk).toBe("DeskPCIn your account");
+    expect(laptop).toStartWith("LaptopPCOffline · ");
     expect(root.findAll((node) => node.type === "button")).toHaveLength(0);
   });
 
   it("draws nothing when the account lists no other PC", async () => {
-    const root = await mount(createElement(AccountPcRows, { pcs: [], watching: false, now: NOW, remove: async () => {}, onRemoved: () => {} }));
+    const root = await mount(createElement(AccountPcRows, { pcs: [], now: NOW, onChanged: () => {} }));
     expect(root.findAll((node) => node.type === "a" || node.type === "li")).toHaveLength(0);
-  });
-
-  it("offers Remove only on a PC the account has not heard from for two days", async () => {
-    const ago = (ms: number): string => new Date(NOW - ms).toISOString();
-    const HOUR = 3_600_000;
-    const root = await mount(createElement(AccountPcRows, { watching: false, now: NOW, remove: async () => {}, onRemoved: () => {}, pcs: [
-      { ...pc(DESK, "Live"), last_seen_at: ago(60_000), added_at: ago(900 * HOUR) },
-      { ...pc("c".repeat(32), "Overnight"), state: "offline", last_seen_at: ago(20 * HOUR), added_at: ago(900 * HOUR) },
-      { ...pc("d".repeat(32), "Fresh"), last_seen_at: null, added_at: ago(HOUR) },
-      { ...pc("e".repeat(32), "Unknown"), last_seen_at: null, added_at: null },
-      { ...pc(LAPTOP, "Gone"), state: "offline", last_seen_at: ago(49 * HOUR), added_at: ago(900 * HOUR) },
-      { ...pc("f".repeat(32), "Abandoned"), last_seen_at: null, added_at: ago(49 * HOUR) },
-    ] }));
-    expect(root.findAll((node) => node.type === "button").map((button) => button.props["aria-label"])).toEqual(["Remove Gone from the list", "Remove Abandoned from the list"]);
-    expect(unusedPc({ last_seen_at: ago(48 * HOUR - 1000), added_at: ago(900 * HOUR) }, NOW)).toBe(false);
-    expect(unusedPc({ last_seen_at: ago(48 * HOUR + 1000), added_at: ago(900 * HOUR) }, NOW)).toBe(true);
-    expect(unusedPc({ last_seen_at: "soon", added_at: null }, NOW)).toBe(false);
-  });
-
-  it("removes a PC from the list only after a confirm that says what it does not do, once, then asks for the list again", async () => {
-    const calls: string[] = [];
-    const root = await mount(createElement(AccountPcRows, {
-      pcs: [pc(DESK, "Desk"), gone(LAPTOP, "Laptop")], watching: false, now: NOW,
-      remove: async (id: string) => { calls.push(`remove ${id}`); }, onRemoved: () => { calls.push("recheck"); },
-    }));
-    const removeButton = root.find((node) => node.type === "button" && node.props["aria-label"] === "Remove Laptop from the list");
-    expect(removeButton.props.title).toBe("Remove Laptop from the list");
-
-    await act(async () => { removeButton.props.onClick(click()); });
-    const dialog = dialogs(root)[0]!;
-    const words = textOf(dialog);
-    expect(words).toContain("Remove Laptop from the list?");
-    expect(words).toContain("Takes Laptop off your account's list of PCs on every device.");
-    // it ends no access, now or later
-    expect(words).toContain("It revokes nothing: devices paired with Laptop keep their access, and a device you later remove from your account is not removed from it.");
-    expect(words).toContain("If Laptop is used again, it comes back on the list when a device of your account opens it.");
-    expect(words).toContain("Until then it cannot use the Ovis relay where the relay needs an account.");
-    expect(words).not.toContain("within two days");
-
-    await act(async () => { dialog.find((node) => node.type === "button" && textOf(node) === "Cancel").props.onClick(); });
-    expect(dialogs(root)).toHaveLength(0);
-    expect(calls).toEqual([]);
-
-    await act(async () => { removeButton.props.onClick(click()); });
-    await act(async () => { await dialogs(root)[0]!.find((node) => node.type === "button" && textOf(node) === "Remove from list").props.onClick(); });
-    expect(calls).toEqual([`remove ${LAPTOP}`, "recheck"]);
-    expect(dialogs(root)).toHaveLength(0);
-  });
-
-  it("moves the focus to the list's group once the removed row is gone", async () => {
-    let focused = 0;
-    const group = { focus: () => { focused += 1; } };
-    const root = await mount(createElement(AccountPcRows, { pcs: [gone(LAPTOP, "Laptop")], watching: false, now: NOW, remove: async () => {}, onRemoved: () => {} }));
-    await act(async () => { root.find((node) => node.type === "button" && node.props["aria-label"] === "Remove Laptop from the list").props.onClick(click(group)); });
-    await act(async () => { dialogs(root)[0]!.find((node) => node.type === "button" && textOf(node) === "Cancel").props.onClick(); });
-    expect(focused).toBe(0);
-    await act(async () => { root.find((node) => node.type === "button" && node.props["aria-label"] === "Remove Laptop from the list").props.onClick(click(group)); });
-    await act(async () => { await dialogs(root)[0]!.find((node) => node.type === "button" && textOf(node) === "Remove from list").props.onClick(); });
-    expect(focused).toBe(1);
-  });
-
-  it("keeps the confirm up with a retry line when the removal fails, and asks for no recheck", async () => {
-    let rechecks = 0;
-    const root = await mount(createElement(AccountPcRows, {
-      pcs: [gone(DESK, "Desk")], watching: false, now: NOW,
-      remove: async () => { throw new Error("502 bad gateway from the service"); }, onRemoved: () => { rechecks += 1; },
-    }));
-    await act(async () => { root.find((node) => node.type === "button" && node.props["aria-label"] === "Remove Desk from the list").props.onClick(click()); });
-    await act(async () => { await dialogs(root)[0]!.find((node) => node.type === "button" && textOf(node) === "Remove from list").props.onClick(); });
-    const alert = dialogs(root)[0]!.find((node) => node.props.role === "alert");
-    expect(textOf(alert)).toBe("Desk could not be removed. Try again.");
-    expect(rechecks).toBe(0);
-  });
-
-  it("closes the confirm and asks for the account again when the sign-in ended, with no retry line", async () => {
-    let rechecks = 0;
-    let attempts = 0;
-    const root = await mount(createElement(AccountPcRows, {
-      pcs: [gone(DESK, "Desk")], watching: false, now: NOW,
-      remove: async () => { attempts += 1; throw new SignedOutError(); }, onRemoved: () => { rechecks += 1; },
-    }));
-    await act(async () => { root.find((node) => node.type === "button" && node.props["aria-label"] === "Remove Desk from the list").props.onClick(click()); });
-    await act(async () => { await dialogs(root)[0]!.find((node) => node.type === "button" && textOf(node) === "Remove from list").props.onClick(); });
-    expect(dialogs(root)).toHaveLength(0);
-    expect(textOf(root)).not.toContain("Try again");
-    expect([attempts, rechecks]).toEqual([1, 1]);
-  });
-
-  it("offers a watching device no removal", async () => {
-    const root = await mount(createElement(AccountPcRows, { pcs: [gone(DESK, "Desk")], watching: true, now: NOW, remove: async () => {}, onRemoved: () => {} }));
-    expect(root.findAll((node) => node.type === "button")).toHaveLength(0);
-    expect(root.findAll((node) => node.type === "li").map(textOf)[0]).toStartWith("DeskPCOffline");
   });
 
   it("says an account with no PC has none, in words that hold for every way of signing in", async () => {
@@ -195,24 +104,17 @@ describe("the account's PCs in a PC's own Settings", () => {
   });
 });
 
-describe("removePcFromAccount", () => {
+describe("signInOfAccount", () => {
   const session = (account: string): AccountSession => ({ service: "https://account.example", account, provider: "github", access_token: "a", refresh_token: "r", expires_at: 0, sign_in_id: `id-${account}` });
-  const serviceWith = (stored: AccountSession | undefined, deleted: string[]): Pick<AccountService, "session" | "forSignIn"> => ({
-    session: async () => stored,
-    forSignIn: (signIn: AccountSession) => ({ deletePc: async (id: string) => { deleted.push(`${signIn.account} ${id}`); } }) as unknown as AccountService,
+  const serviceWith = (stored: AccountSession | undefined): Pick<AccountService, "session"> => ({ session: async () => stored });
+
+  it("is the sign-in whose list is shown", async () => {
+    expect(await signInOfAccount(serviceWith(session("acct-1")), "acct-1")).toEqual(session("acct-1"));
   });
 
-  it("removes the PC as the sign-in whose list is shown", async () => {
-    const deleted: string[] = [];
-    await removePcFromAccount(serviceWith(session("acct-1"), deleted), "acct-1", DESK);
-    expect(deleted).toEqual([`acct-1 ${DESK}`]);
-  });
-
-  it("removes nothing once another sign-in, or none, is stored", async () => {
-    const deleted: string[] = [];
-    await expect(removePcFromAccount(serviceWith(session("acct-2"), deleted), "acct-1", DESK)).rejects.toBeInstanceOf(SignedOutError);
-    await expect(removePcFromAccount(serviceWith(undefined, deleted), "acct-1", DESK)).rejects.toBeInstanceOf(SignedOutError);
-    expect(deleted).toEqual([]);
+  it("is none once another sign-in, or none, is stored", async () => {
+    await expect(signInOfAccount(serviceWith(session("acct-2")), "acct-1")).rejects.toBeInstanceOf(SignedOutError);
+    await expect(signInOfAccount(serviceWith(undefined), "acct-1")).rejects.toBeInstanceOf(SignedOutError);
   });
 });
 
@@ -227,5 +129,15 @@ describe("Settings → Devices and PCs", () => {
     expect(account).toBeLessThan(page.indexOf('<SettingsGroup section="devices">'));
     expect(account).toBeLessThan(fold);
     expect(page.slice(page.indexOf("const openAccount"), page.indexOf("const accountService"))).not.toContain("details");
+  });
+
+  it("closes Settings after a sign-in on Add a connection only where closedBySignIn says so", () => {
+    const source = readFileSync(new URL("./SettingsDialog.tsx", import.meta.url), "utf8");
+    const page = source.slice(source.indexOf("function DevicesPage("), source.indexOf("function UseRelayHere("));
+    const start = page.indexOf("onSignedIn:");
+    const signedIn = page.slice(start, page.indexOf("...(opensAll", start));
+    expect(signedIn).toContain("closedBySignIn(home, connectAsked)");
+    expect(page.match(/onHome\(\)/g)).toHaveLength(1);
+    expect(signedIn).toMatch(/=== "settings"\) onHome\(\)/);
   });
 });

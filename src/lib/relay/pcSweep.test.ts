@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, expect, it, jest } from "bun:test";
 import { createPcSweep } from "./pcSweep.ts";
 import type { RelayDevice, RelayDeviceStore } from "./device.ts";
-import type { PcFinding as Found } from "./pcStatus.ts";
-import { dashboardModel } from "./dashboard.ts";
+import type { PcFinding as Found, ProbeTarget } from "./pcStatus.ts";
 import { OFFLINE_AFTER_MS } from "../account/myPcs.ts";
 import { exportPublicKey, generateKeyPair } from "../../../shared/relay-e2ee.ts";
 import { deriveServerId } from "../../../shared/relay-server-proof.ts";
@@ -45,7 +44,7 @@ function heldProbe() {
     waiting.set(count, gate);
     return gate.promise;
   };
-  const probe = async (device: RelayDevice): Promise<Found> => {
+  const probe = async (device: ProbeTarget): Promise<Found> => {
     checked.push(device.server_id);
     const result = Promise.withResolvers<Found>();
     pending.push(result);
@@ -194,37 +193,6 @@ it("checks the list again every minute by itself, the PCs a relay refused first,
   expect(checked.slice(16)).toEqual([...ids.slice(8, 20), ...ids.slice(0, 4)]);
   // three minutes after the cold open, every one of the 20 rows has its check's answer
   expect(ids.filter((id) => sweep.status.get(id)?.kind === "answered")).toHaveLength(20);
-});
-
-it("keeps what the last finished check found while the minute's re-check runs: an off PC stays Machine offline, in Needs you and under Offline, never Ready", async () => {
-  jest.useFakeTimers();
-  const { devices, store } = await savedPcs(1);
-  const id = devices[0]?.server_id ?? "";
-  const { pending, arrived, probe } = heldProbe();
-  // a re-check started by the minute's timer has no promise of its own: its end is the redraw after its result
-  let drawn: (() => void) | undefined;
-  const redrawn = (): Promise<void> => new Promise((resolve) => { drawn = resolve; });
-  const sweep = createPcSweep(store, { active: () => true, redraw() { drawn?.(); } }, { probe });
-  // the account heard from it lately, so its own word is Ready; this device's check found nobody at the relay
-  const row = { server_id: id, name: "Desk PC", state: "paired", last_seen_at: null, added_at: null, listed: true, paired: true, linked: false, relay: null } as const;
-  const shown = () => {
-    const m = dashboardModel([row], { label: "Me", status: sweep.status }, "wss://relay.ovis.sh");
-    return { state: m.rows[0]?.displayState, ready: m.filters.ready, needs: m.filters.needs, offline: m.filters.offline };
-  };
-  const first = sweep.check();
-  await arrived(1);
-  pending[0]?.resolve({ kind: "offline", reason: "pc" });
-  await first;
-  const off: ReturnType<typeof shown> = { state: "offline", ready: [], needs: [id], offline: [id] };
-  expect(shown()).toEqual(off);
-  jest.advanceTimersByTime(60_000);
-  await arrived(2);
-  expect(sweep.status.get(id)?.kind).toBe("checking");
-  expect(shown()).toEqual(off);
-  const settled = redrawn();
-  pending[1]?.resolve({ kind: "answered", route: "relay", rttMs: 20 });
-  await settled;
-  expect(shown()).toEqual({ state: "paired", ready: [id], needs: [], offline: [] });
 });
 
 it("lets an answer lapse during a re-check the relay then refuses: the row neither keeps it meanwhile nor gets it back", async () => {

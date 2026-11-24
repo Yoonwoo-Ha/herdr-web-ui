@@ -98,7 +98,7 @@ it("keeps a row for the first 32 Tailscale PCs only, as the tailnet list asks no
 
 it("keeps the Tailscale row of a PC whose many config hosts a skipped Include leaves undetermined", async () => {
   const boxes = Array.from({ length: 200 }, (_, index) => `Host box${index}\n  HostName 100.64.0.1`);
-  const lab = ["Host lab", "  HostName 100.64.0.2", "  AddressFamily inet", "  ProxyCommand none", "  ProxyJump none", "  CanonicalizeHostname no"];
+  const lab = ["Host lab", "  HostName 100.64.0.2", "  AddressFamily inet", "  ProxyCommand none", "  ProxyJump none", "  Port 22", "  User rise", "  CanonicalizeHostname no"];
   const dir = sshDir({ config: [...lab, "Host *", "  Include %d/hosts", ...boxes].join("\n") });
   const candidates = await sshCandidates({ sshDir: dir, home: dir, readStatus: async () => twoPeers, resolve: async () => [] });
   expect(candidates.map((candidate) => [candidate.name, candidate.tailnet])).toEqual([
@@ -217,4 +217,31 @@ it("lists only the other source when one is missing", async () => {
   const empty = sshDir({});
   expect(await sshCandidates({ sshDir: empty, readStatus: async () => null })).toEqual([]);
   expect((await sshCandidates({ sshDir: empty, readStatus: async () => status(["box"]) })).map((candidate) => candidate.destination)).toEqual(["box.tail.ts.net"]);
+});
+
+it("lists no git forge as a PC: github.com, gitlab.com, bitbucket.org, codeberg.org and their hosts, by alias or HostName", async () => {
+  const dir = sshDir({ config: [
+    "Host github.com", "Host gitlab.com", "Host bitbucket.org", "Host codeberg.org", "Host ssh.github.com", "Host altssh.gitlab.com",
+    "Host gh-work\n  HostName github.com\n  User git", "Host forge\n  HostName ssh.github.com\n  Port 443",
+    "Host nuc12\n  HostName 192.168.0.12\n  User git", "Host desk\n  User me", "Host notgithub.com",
+  ].join("\n") + "\n" });
+  const candidates = await sshCandidates({ sshDir: dir, readStatus: async () => null });
+  // a PC that happens to log in as git stays: only a forge's own host goes
+  expect(candidates.map((candidate) => candidate.name)).toEqual(["nuc12", "desk", "notgithub.com"]);
+});
+
+it("lets only a host that reaches a Tailscale PC the plain way (ssh's port, a User it is sure of) claim it, and says each host's User and Port", async () => {
+  const dir = sshDir({ config: [
+    "Host winvm-wsl\n  HostName winvm.tail.ts.net\n  Port 2222\n  User rise",
+    "Host mac-root\n  HostName lab-pc.tail.ts.net\n  User root",
+    "Host mymac\n  HostName lab-pc.tail.ts.net\n  User rise\n  Port 22",
+  ].join("\n") });
+  const candidates = await sshCandidates({ sshDir: dir, readStatus: async () => status(["lab-pc", "winvm"]), resolve: magicDns(["lab-pc", "winvm"]) });
+  expect(candidates).toEqual([
+    // another port is another sshd on that PC (WSL, a container): it names the PC but leaves its own row in place
+    { name: "winvm-wsl", destination: "winvm-wsl", detail: "rise@winvm.tail.ts.net", source: "ssh_config", tailnet: "winvm.tail.ts.net", user: "rise", port: 2222 },
+    { name: "mac-root", destination: "mac-root", detail: "root@lab-pc.tail.ts.net", source: "ssh_config", tailnet: "lab-pc.tail.ts.net", user: "root" },
+    { name: "mymac", destination: "mymac", detail: "rise@lab-pc.tail.ts.net", source: "ssh_config", tailnet: "lab-pc.tail.ts.net", user: "rise", port: 22 },
+    { name: "winvm", destination: "winvm.tail.ts.net", detail: "winvm.tail.ts.net", source: "tailscale", tailnet: "winvm.tail.ts.net" },
+  ]);
 });

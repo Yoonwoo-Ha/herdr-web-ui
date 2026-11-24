@@ -130,7 +130,7 @@ try {
           assert.equal(await checkout.getAttribute("aria-expanded"), "false");
           assert.equal((await group(page, "workstation").locator('.workspace-group[data-workspace="w1C"] .workspace-fold-count').textContent())?.trim(), "+3", "the row counts what it put away: its two agents and the worktree not selected, one fold for both");
           assert.equal(await page.evaluate(() => sessionStorage.getItem("ovis:selection")), where, "folding opened nothing");
-          if (phone) assert.equal(await page.locator('button[aria-controls="workspace-drawer"]').getAttribute("aria-expanded"), "true", "the drawer stays open");
+          if (phone) assert.equal(await page.locator('#drawer-toggle').getAttribute("aria-expanded"), "true", "the drawer stays open");
           if (evidence) await page.locator(".sidebar-shell").screenshot({ path: join(evidence, `agent-tree-folded-${phone ? "390" : "1280"}-${theme}.png`) });
           await open();
           assert.deepEqual((await tree(page, "workstation"))[0], ["w1C"], "the fold is kept on this device");

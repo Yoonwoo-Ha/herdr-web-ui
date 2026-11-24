@@ -9,14 +9,16 @@ import { handleIntegrationsRequest } from "./integrations-routes.ts";
 import type { OrderSequence } from "./order-sequence.ts";
 import type { HealthAuth, ObservedIngress, SecuritySummary, SessionSnapshot } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
-import { LOCAL_MACHINE, type Machine } from "../shared/machines.ts";
+import type { Machine } from "../shared/machines.ts";
 import { authClient, deviceAuthorizationValue, deviceCookieValue, bearerMatches, handleAuthRequest, isAuthenticated, isSecureRequest, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { bindScope, cameThroughProxy, decideAccess, decideMachineAccess, forwardingHeaders, inTailnet, isLoopbackAddress, isServeOwnerRequest, lanExposed, machineForwardingHeaders, observedIngress, ownerAccess } from "./access.ts";
 import { type DeviceStore, handleDeviceRequest, newStreamKey, streamCookie, streamKeys, type DeviceMatch } from "./devices.ts";
 import { handlePreferencesRequest, type PreferenceStore } from "./preferences.ts";
 import { handleSeenRequest, type SeenStore } from "./seen.ts";
-import { remoteAccess } from "./tailscale.ts";
-import { badRequest, errorResponse, jsonResponse, setRequestRoute, wordedHeaders, wordHerdrFailures } from "./http.ts";
+import { openTailscaleApp, remoteAccess, serveTailscale, tailscaleBinary, type TailnetNode } from "./tailscale.ts";
+import { handleTailnetNodeRequest, tailnetNodeGate, type TailnetNodes } from "./tailnet-nodes.ts";
+import { TAILSCALE_CONTROLS } from "./dispatch-routes.ts";
+import { badRequest, errorResponse, jsonResponse, readJsonObject, setRequestRoute, wordedHeaders, wordHerdrFailures } from "./http.ts";
 import { requestOrigin, serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
 import { handleTasksRequest } from "./tasks-routes.ts";
@@ -41,6 +43,8 @@ import type { StopRefusal } from "./runtime-move-service.ts";
 import type { MoveService } from "./runtime-move-service.ts";
 import { handlePushRequest } from "./push.ts";
 import { handlePromptRequest, type OpenCodePromptState } from "./prompt.ts";
+import type { ApprovalHub } from "./approvals/hub.ts";
+import type { AcpChildren } from "./acp/children.ts";
 import { attachableIdentity } from "./pty/sidecar.ts";
 import { runtime } from "./herdr-core/runtime.ts";
 import { handleUpdateRequest, updateRequestAllowed } from "./update-api.ts";
@@ -60,6 +64,8 @@ import type { AccountHolds } from "./account/holds.ts";
 import type { SafetyLog } from "./account/safety-log.ts";
 import type { CatchUpGate } from "./account/catch-up-gate.ts";
 import type { accountRowsFor } from "./account/account-devices.ts";
+import type { ListFollow } from "./account/list-follow.ts";
+import type { AccountWitness } from "./account/witness.ts";
 import { accountDispatchRefusal } from "./account/dispatch-rights.ts";
 import type { AccountIntroductions } from "./account/introductions.ts";
 import type { RelayService } from "./relay/service.ts";
@@ -71,14 +77,16 @@ import { handleUserFontsRequest } from "./user-fonts.ts";
 import { USER_FONTS_PATH } from "../shared/user-fonts.ts";
 import type { UsageAccountList } from "./usage-account-list.ts";
 import { handleVoiceRequest } from "./voice.ts";
+import { handleMemoryRequest } from "./memory/routes.ts";
 import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
 import { bridgeIdentity } from "./bridge.ts";
 import { discoverHerdrSessions } from "./herdr-discovery.ts";
-import { handleMachineRequest, nonCanonicalPath, slowMachinePath, type EventStreamBudget } from "./machine-api.ts";
-import { machinePairingEvents } from "./machine-pairing-events.ts";
+import { ACCOUNT_PC_OWNER_ONLY, accountRoster, handleMachineRequest, nonCanonicalPath, slowMachinePath, type EventStreamBudget } from "./machine-api.ts";
+import { machinePairingEvents, remotePairingEvents } from "./machine-pairing-events.ts";
+import { handleJoinSeen, JOIN_SEEN_PATH, type JoinNotices, type JoinViewer } from "./join-notices.ts";
 import { handleSessionHistoryRequest, handleSessionResumeRequest, SESSION_HISTORY_PATH, SESSION_RESUME_PATH } from "./session-history-routes.ts";
 import type { PiSessionReader } from "./pi-session-metadata.ts";
-import { withoutHiddenTokens, type HerdrSidebarConfig } from "./herdr-sidebar.ts";
+import type { HerdrSidebarConfig } from "./herdr-sidebar.ts";
 import { readHerdrUi } from "./herdr-ui.ts";
 import { MachineRelay, type RelayReceiptIds } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
@@ -89,6 +97,7 @@ import type { CLIProxyRoutes } from "./cliproxy-routes.ts";
 import type { UsageLoginService } from "./usage-login.ts";
 import type { UsageService } from "./usage.ts";
 import type { VoiceService } from "./voice.ts";
+import type { MemoryStore } from "./memory/store.ts";
 
 type PortalStartup = { ok: true } | { ok: false; error: unknown };
 
@@ -102,6 +111,8 @@ export interface RequestServices {
   readonly bridgeToken: string;
   readonly bootId: string;
   readonly devices: DeviceStore;
+  /** the joins no window of this PC has seen yet (server/join-notices.ts) */
+  readonly joins: JoinNotices;
   readonly accountMailbox: AccountMailbox;
   readonly accountIntroductions: AccountIntroductions;
   readonly accountHolds: AccountHolds;
@@ -112,17 +123,29 @@ export interface RequestServices {
   checkAccountFreshness(): void;
   /** Step 2 (S2-25): the account-joined rows of this PC's relay identity; null with the release flag off. */
   readonly accountRows: ReturnType<typeof accountRowsFor> | null;
+  /** This PC following its account's signed list (server/account/list-follow.ts); null with the release flag off. */
+  readonly accountList: ListFollow | null;
+  /** For how long this PC has let each key of its account in (server/account/witness.ts); null with the release flag off. */
+  readonly accountWitness: AccountWitness | null;
+  /** On a server that follows no list (Step 2 off): looks whether another Ovis on this folder pinned the PC, and then closes this server's account part. Null on a server that follows its list itself. */
+  readonly pinWatch: (() => void) | null;
   readonly preferences: PreferenceStore;
   readonly herdrSidebar: HerdrSidebarConfig;
   /** `loginPath`: the request states a Tailscale login, so the PC's own login must be known, not merely cached as unknown */
   readonly identityOf: (grantPath: boolean, host: string | null, loginPath?: boolean) => Promise<TailnetIdentity>;
   readonly serveOnly: boolean;
+  /** the tailnet nodes this PC keeps out (server/tailnet-nodes.ts), and the WhoIs read that names a request's node */
+  readonly tailnetNodes: TailnetNodes;
+  readonly whoisNode: (address: string) => Promise<TailnetNode | null>;
   readonly portalGuards: () => { tokenSet: boolean; serveOnly: boolean };
   readonly shellAgents: ShellAgentLocator;
   readonly agentDetector: AgentDetector;
   readonly agentOffered: (kind: string) => Promise<boolean>;
   readonly agentInstaller: AgentInstaller;
   readonly openCodeState: OpenCodePromptState;
+  readonly approvals: ApprovalHub;
+  /** the agents this server drives over ACP (server/acp/children.ts); null off this PC's herdr-core */
+  readonly acp: AcpChildren | null;
   readonly cliProxyRoutes: CLIProxyRoutes;
   readonly usageLogin: UsageLoginService;
   readonly usage: UsageService;
@@ -131,6 +154,8 @@ export interface RequestServices {
   /** the state folder's fonts/, served to every device that may read this PC (server/user-fonts.ts) */
   readonly fontsDir: string;
   readonly voice: VoiceService;
+  /** Settings → Memory's notes for agents (server/memory/store.ts) */
+  readonly memory: MemoryStore;
   readonly browserSnapshot: <S extends SessionSnapshot>(snapshot: S) => S;
   readonly core: ReturnType<typeof createCore>;
   readonly seen: SeenStore;
@@ -146,6 +171,13 @@ export interface RequestServices {
   readonly pendingRedemptions?: PendingRedemptions;
   /** pairings that prove their key and wait for this PC's screen (server/account/key-proof.ts); Linux with the flag only */
   readonly keyProofPairings?: KeyProofPairings;
+  /**
+   * Opens this PC's local confirm page in a browser on its own desktop, as `ovis confirm` does, so its port stays in no
+   * answer (R8). False when no page listens or there is no desktop to open it on.
+   */
+  readonly openConfirmPage?: () => Promise<boolean>;
+  /** the tailscale CLI /api/access reads and POST /api/access/tailscale/serve runs; unset, the one this PC has */
+  readonly tailscaleBinary?: string | null | undefined;
   /** puts a waiting key on this PC's screen */
   readonly askScreenForKey?: (entry: PendingRedemption) => void;
   /** /api/account/lock and /unlock (server/account/lock-routes.ts); only with the release flag */
@@ -178,10 +210,13 @@ export interface ServerContext {
   readonly lanHttps?: boolean;
 }
 
+/** the tailscale CLI this server reads and, for its own window, runs: the one it was handed (tests), else this PC's */
+const tailscaleCli = (ctx: ServerContext): string | null => ctx.services.tailscaleBinary !== undefined ? ctx.services.tailscaleBinary : tailscaleBinary();
+
 const OTHER_MACHINE_FILES = /^\/api\/(?:fs\/|pane\/(?:files|docs|image)$|workspace\/(?:diff\/|git\/|directories$|pr(?:$|\/)))/;
 
 export async function handleRequest(request: Request, ctx: ServerContext): Promise<Response | undefined> {
-  const { options, hostname, token, bridgeToken, bootId, devices, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, cliProxyRoutes, usageLogin, usage, voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartupResult, portalStartup } = ctx.services;
+  const { options, hostname, token, bridgeToken, bootId, devices, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, approvals, acp, cliProxyRoutes, usageLogin, usage, voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartupResult, portalStartup } = ctx.services;
   const { sidecar, serialize, push, alertWebhook, logPushError, omo, claudeAgents, opencodeAgents, plans, clientSnapshot, machines, broadcastAll, collector, queueFirstMessage, askFirstMessage } = core;
   return requestLog.handle(request, async (headers) => {
   if (options.profile === "machine") wordHerdrFailures(machineFailure, machineLayoutReason);
@@ -276,15 +311,46 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
       role: portalProven ? options.portal?.roleFor(request.headers.get("x-portal-user"), request.headers.get("x-portal-auth")) ?? "watch" : "watch",
     },
   });
+  // a node the owner removed gets no Tailscale grant, and a device's own credential over the tailnet names its node on
+  // its row (server/tailnet-nodes.ts). Through Serve (loopback) only the address the local tailscaled wrote counts:
+  // one source. A direct connection to a tailnet bind is named by its socket's peer, never by a header it sent
+  let tailnetNode: string | null = null;
+  if (options.profile !== "machine" && relayPeer === undefined) {
+    const peer = ip?.address.replace(/^::ffff:/i, "") ?? null;
+    ({ access, node: tailnetNode } = await tailnetNodeGate(access, {
+      address: loopback ? (forwarded && !funnel && inTailnet(forwardedFor) ? forwardedFor : null) : inTailnet(peer) ? peer : null,
+      owner: identity.owner, nodes: ctx.services.tailnetNodes, rows: devices, whois: ctx.services.whoisNode,
+    }));
+  }
   // the lock and a log that cannot be read decide here, once, for every way in (server/lock-boundary.ts)
   const safety = ctx.services.safetyLog;
   // this PC's own window may still read the lock and ask for an unlock: both only ask the screen, which grants
   // (on a PC with an access token, that window comes in with the token: the same window, loopback and not forwarded)
   const ownWindow = access.level === "full" && (access.via === "local" || (access.via === "token" && loopback && !forwarded));
+  // who is told of a join that waits to be seen, and may mark it seen (server/join-notices.ts shownTo)
+  const joinViewer: JoinViewer = { ownWindow, since: access.level === "full" && access.device ? devices.addedAt(access.device.id) : undefined };
   // a lock or unlock is asked only from this PC's own window: any other is told so, before any other refusal (S36-1)
   if (!ownWindow && request.method === "POST" && (pathname === "/api/account/lock" || pathname === "/api/account/unlock") && ctx.services.lockRoutes !== undefined) {
     setRequestRoute(pathname);
     return jsonResponse({ error: { code: "local_required", message: "Turn the lock on or off on this PC's own screen." } }, 403, { "cache-control": "no-store" });
+  }
+  // a key that waits for this PC's screen: its own window may have the confirm page opened, which decides it with its
+  // own same-user check; any other window is told so (the page's port is never sent, R8)
+  if (pathname === "/api/account/confirm-page" && ctx.services.openConfirmPage !== undefined) {
+    setRequestRoute(pathname);
+    const refuse = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status, { "cache-control": "no-store" });
+    if (request.method !== "POST") return refuse("method_not_allowed", "use POST", 405);
+    if (!ownWindow) return refuse("local_required", "Open the confirm page on this PC's own screen.", 403);
+    if (!sameOrigin(request) || request.headers.get("x-herdr-machine") !== "1") return refuse("invalid_origin", "Open it from this app", 403);
+    return await ctx.services.openConfirmPage() ? new Response(null, { status: 204, headers: { "cache-control": "no-store" } })
+      : refuse("confirm_page_unavailable", "The confirm page could not be opened here. Run ovis confirm on this PC.", 409);
+  }
+  // a Tailscale change (serve Ovis on the tailnet, open the app) is asked only from this PC's own window: any other
+  // caller, a relayed or account-joined one included, is told so before anything is read or run
+  const tailscaleControl = pathname === TAILSCALE_CONTROLS.serve || pathname === TAILSCALE_CONTROLS.open;
+  if (tailscaleControl && !ownWindow) {
+    setRequestRoute(pathname);
+    return jsonResponse({ error: { code: "local_required", message: "Set up Tailscale on this PC's own screen." } }, 403, { "cache-control": "no-store" });
   }
   const askingTheScreen = ownWindow
     && ((pathname === "/api/account/lock" && request.method === "GET") || (pathname === "/api/account/unlock" && request.method === "POST"));
@@ -303,7 +369,13 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   const lockSignal = ctx.services.lockSignal;
   const survivesLock = access.level === "full" && (bridgeAuthorized || (access.device !== undefined && access.via !== "local")
     || lockBoundary(access, { locked: true, strict: false }, { localProof: false, ownProgram: ctx.ownerSocket === true, originOf: (rowId) => devices.originOf(rowId) }).level === "full");
-  const untilLock = lockSignal !== undefined && !survivesLock ? untilLockFrom(lockSignal) : undefined;
+  const untilLocked = lockSignal !== undefined && !survivesLock ? untilLockFrom(lockSignal) : undefined;
+  // and one that came from a tailnet node ends when that node is blocked, as a row's end with its Revoke (tailnet-nodes.ts)
+  const node = tailnetNode;
+  const untilRefused = node === null ? untilLocked : (close: () => void) => {
+    const stops = [untilLocked?.(close), ctx.services.tailnetNodes.onBlocked(node, close)];
+    return () => { for (const stop of stops) stop?.(); };
+  };
 
   // on the owner's socket a request naming another host or showing a proxy gets nothing, its health included
   if (options.profile === "machine" && access.level !== "full") return machineUnauthorized(pathname);
@@ -312,7 +384,9 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     setRequestRoute("auth-refusal");
     // a script's Bearer guess is told to wait; a browser's cookie gets the usual 401 and its sign-in form
     if (presented === "held" && pathname !== "/ws" && request.headers.has("authorization")) return presentedTokenHeld(client);
-    return pathname === "/ws" ? new Response("unauthorized", { status: 401 }) : unauthorizedJson(access.level === "none" ? access.reason : "token_required");
+    // this PC's own window is told what it cannot read (the file, the folder), where any other caller hears the general words
+    return pathname === "/ws" ? new Response("unauthorized", { status: 401 })
+      : unauthorizedJson(access.level === "none" ? access.reason : "token_required", ownWindow ? devices.accountError : null);
   }
 
   if (options.profile === "machine" && machineRouteRestricted(pathname, request.method)) {
@@ -374,6 +448,13 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   const ownLink = relayPeer?.provisional === true && request.method === "POST" && pathname === "/api/account/link";
   if (readOnly && (fileRead || directoryListing || repositoryDiff || pullRequest || sessionHistory || commandRows || paneFiles || pluginRun || worktreeList || pairingDigits || mutating && !ownPreferences && !ownLink)) {
     setRequestRoute("watch-refusal");
+    // A device the account's list holds only to watch, asking for the joins that wait at this pinned PC or deciding one:
+    // it is told, in a code of its own, that it is in the list and may not let a device in (relay/routes.ts says the
+    // same to a device that drives with bound power)
+    if (ctx.peer.kind === "relay" && ctx.peer.key !== "" && (pairingDigits && request.method === "GET" || pathname === "/api/relay/pairing" && request.method === "POST")
+      && ctx.services.accountList?.allowsJoins(ctx.peer.key) === false) {
+      return jsonResponse({ error: { code: "list_cannot_allow", message: "This device is in your account's list, but only a device that can add devices to the list may let one in." } }, 403);
+    }
     return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);
   }
   // a text file is edited (read for it and saved) only by a device that drives this PC, here or through it on another PC (file-edit.ts)
@@ -407,9 +488,21 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   }
   // one press binds this PC to an account: only this PC's own window may ask it (security-triage), never another
   // device on the LAN, through the relay or with the access token from elsewhere
-  if (pathname === "/api/account/one-press" && !ownWindow) {
+  // so does vouching for another PC with this PC's account over SSH (docs/account.md, "Adding a PC over SSH")
+  if (pathname === "/api/account/ssh-add" && !ownWindow) {
+    setRequestRoute("owner-refusal");
+    return jsonResponse({ error: { code: "owner_only", message: "Add another PC to your account from this PC itself." } }, 403);
+  }
+  // so does this PC's own proof for its listing, which lists it again after `ovis logout` left the account
+  if ((pathname === "/api/account/one-press" || pathname === "/api/account/pc-proof") && !ownWindow) {
     setRequestRoute("owner-refusal");
     return jsonResponse({ error: { code: "owner_only", message: "Add this PC to your account on this PC itself." } }, 403);
+  }
+  // how this PC follows its account's signed list is for this PC's own window and CLI to read, and only a person at
+  // this PC names the list it pins
+  if ((pathname === "/api/account/list" || pathname === "/api/account/list/pin") && !ownWindow) {
+    setRequestRoute("owner-refusal");
+    return jsonResponse({ error: { code: "owner_only", message: "Read this on this PC itself." } }, 403);
   }
   // the list of waiting pairings shows their digits, so it goes only where the approval may come from
   if (access.level === "full" && (access.via === "open" || access.via === "portal") && pathname === "/api/relay/pairings") {
@@ -427,12 +520,15 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     setRequestRoute("owner-refusal");
     return jsonResponse({ error: { code: "owner_only", message: "Add PCs from your Tailscale on this PC itself, or from a device paired with it directly." } }, 403);
   }
-  // Another PC of the account is paired with this PC's server by a window direct to this PC that drives it (docs/account.md,
-  // "Adding a PC of your account"): a device on the relay, a Portal visitor or an open LAN window must not have this PC
-  // pair itself with whatever PC they name; a watching device is refused in machine-api.ts (read_only)
-  if (pathname.startsWith("/api/machines/relay/account/") && access.level === "full" && (access.via === "open" || access.via === "portal" || access.via === "relay")) {
+  // Another PC of the account is paired with this PC's server by a device that drives this PC (docs/account.md, "Adding a
+  // PC of your account"): a window direct to it, or a device paired with it over the relay, which is how the hosted shell
+  // and the phone reach this PC at all. Their account sign-in posts the admission that vouches for this PC, and a member
+  // still picks the digits on the other PC. An open LAN window or a Portal visitor has no such sign-in and must not have
+  // this PC pair itself with whatever PC they name; a watching device is refused above and in machine-api.ts (read_only).
+  // The same routes of another PC asked through this one are the owner's too (machine-api.ts ACCOUNT_PC_PATH).
+  if (pathname.startsWith("/api/machines/relay/account/") && access.level === "full" && (access.via === "open" || access.via === "portal")) {
     setRequestRoute("owner-refusal");
-    return jsonResponse({ error: { code: "owner_only", message: "Add PCs of your account on this PC itself, or from a device paired with it directly." } }, 403);
+    return jsonResponse({ error: { code: "owner_only", message: ACCOUNT_PC_OWNER_ONLY } }, 403);
   }
   // so is another PC's Ovis added by its address: this PC would keep a device token that drives it
   if (pathname === "/api/machines/address" && access.level === "full" && (access.via === "open" || access.via === "portal" || access.via === "relay")) {
@@ -500,21 +596,22 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     } else {
       // a worktree made with an agent waits on git and then agent.start, up to 150 s on the PC, and a
       // resume on agent.start and then its store check (machine-api.ts slowMachinePath)
-      // a move's install there is waited for 200 s (machine-api.ts): this connection is held a little longer still
+      // a move's install there is waited for 200 s (machine-api.ts), and so is that PC's comparison with another PC of
+      // the account (it holds it 180 s): this connection is held a little longer still
       const machinePathAsked = pathname.split("/").slice(4).join("/");
-      ctx.timeout(request, pathname === "/api/machines/events" ? 0 : machinePathAsked === "runtime/move/install" ? 210 : slowMachinePath(machinePathAsked) || pathname === "/api/machines/relay/account/pair" ? 180 : 80);
+      ctx.timeout(request, pathname === "/api/machines/events" ? 0 : machinePathAsked === "runtime/move/install" || machinePathAsked === "machines/relay/account/pair" ? 210 : slowMachinePath(machinePathAsked) || pathname === "/api/machines/relay/account/pair" ? 180 : 80);
       const deviceId = access.level === "full" ? access.device?.id : undefined;
       // Tabs opening at once each get a cookie of their own name; a later pairing carries all of them.
       const presentedKeys = streamKeys(request);
       const issuedKey = presentedKeys.length === 0 && pathname === "/api/machines/events" ? newStreamKey() : null;
       const keys = issuedKey === null ? presentedKeys : [issuedKey];
       const openAccess = access.level === "full" && access.via === "open";
-      const pairings = machinePairingEvents(ctx, access, keys);
+      const pairings = machinePairingEvents(ctx, access, keys, joinViewer);
       // a stream ends with what let it in: a device's revoke, the gate closing on one the open LAN let in, Portal's recheck
       const endsWith = deviceId ? (close: () => void) => devices.onRevoke(deviceId, close) : openAccess ? (close: () => void) => devices.endWithGate(close) : portalRecheckMs !== undefined ? (close: () => void) => { const timer = setTimeout(close, portalRecheckMs); return () => clearTimeout(timer); } : undefined;
-      // and with a lock, when what let it in is a grant the lock refuses
-      const ends = untilLock === undefined ? endsWith : (close: () => void) => { const stops = [untilLock(close), endsWith?.(close)]; return () => { for (const stop of stops) stop?.(); }; };
-      const response = await handleMachineRequest(request, machines, ends, preferences, readOnly, herdrSidebar, seen, pairings, ctx.relayBodyBudget, ownerAccess(access), ctx.services.safetyLog !== null, devices);
+      // and with a lock, when what let it in is a grant the lock refuses, or with a block of the tailnet node it came from
+      const ends = untilRefused === undefined ? endsWith : (close: () => void) => { const stops = [untilRefused(close), endsWith?.(close)]; return () => { for (const stop of stops) stop?.(); }; };
+      const response = await handleMachineRequest(request, machines, ends, preferences, readOnly, herdrSidebar, seen, pairings, ctx.relayBodyBudget, ownerAccess(access), ctx.services.safetyLog !== null, devices, relayPeer !== undefined && devices.isAccountRow(relayPeer.id));
       response.headers.set("cache-control", "no-store");
       if (issuedKey !== null && response.ok) response.headers.append("set-cookie", streamCookie(issuedKey, isSecureRequest(request)));
       return response;
@@ -538,7 +635,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
         relay = new MachineRelay(machines, machineId, readOnly, browserSnapshot,
           (browser) => ctx.services.relayReceiptIds.scope(machineId, principal, browser));
         await relay.ready;
-        const upgraded = ctx.upgrade(request, { headers, data: connectionData({ relay, deviceId, readOnly, ...(access.level === "full" && access.via === "open" ? { open: true } : {}), ...recheck, ...(untilLock ? { untilLock } : {}) }) });
+        const upgraded = ctx.upgrade(request, { headers, data: connectionData({ relay, deviceId, readOnly, ...(access.level === "full" && access.via === "open" ? { open: true } : {}), ...recheck, ...(untilRefused ? { untilLock: untilRefused } : {}) }) });
         if (upgraded) return undefined;
         relay.close();
       } catch { relay?.close(); return new Response("remote websocket unavailable", { status: 502 }); }
@@ -554,8 +651,10 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     const eventsEnabled = !bridgeAuthorized && process.env["OVIS_MACHINE_EVENTS_WS"] !== "0";
     const useMachineEvents = machines && eventsEnabled && !listed;
     const localRoster = machines && eventsEnabled && listed ? (tell: (rows: Machine[]) => void) => machines.subscribe(event => {
-      if (event.type === "machines") tell(withoutHiddenTokens(herdrSidebar.get(), event.machines.filter(machine => machine.id === LOCAL_MACHINE)));
+      if (event.type === "machines") tell(accountRoster(herdrSidebar.get(), event.machines));
     }) : undefined;
+    // a device of the account's list hears the joins that wait at this PC over the same socket, when it may let one in
+    const listJoins = localRoster ? remotePairingEvents(ctx) : undefined;
     const presentedKeys = streamKeys(request);
     const issuedKey = useMachineEvents && presentedKeys.length === 0 ? newStreamKey() : null;
     const keys = issuedKey === null ? presentedKeys : [issuedKey];
@@ -563,9 +662,9 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     const openAccess = access.level === "full" && access.via === "open";
     const machineEvents = useMachineEvents ? {
       manager: machines, preferences, herdrSidebar, seen,
-      pairings: machinePairingEvents(ctx, access, keys),
+      pairings: machinePairingEvents(ctx, access, keys, joinViewer),
     } : undefined;
-    const upgraded = ctx.upgrade(request, { headers, data: connectionData({ machineEvents, localRoster, deviceId, ...(ctx.peer.kind === "relay" && ctx.peer.device.id === deviceId && ctx.peer.key ? { provedKey: ctx.peer.key } : {}), readOnly, ...(openAccess && !bridgeAuthorized ? { open: true } : {}), bridge: bridgeAuthorized, ...(surface ? { surface } : {}), ...(ingress === undefined ? {} : { ingress }), ...recheck, ...(untilLock ? { untilLock } : {}) }) });
+    const upgraded = ctx.upgrade(request, { headers, data: connectionData({ machineEvents, localRoster, listJoins, deviceId, ...(ctx.peer.kind === "relay" && ctx.peer.device.id === deviceId && ctx.peer.key ? { provedKey: ctx.peer.key } : {}), readOnly, ...(openAccess && !bridgeAuthorized ? { open: true } : {}), bridge: bridgeAuthorized, ...(surface ? { surface } : {}), ...(ingress === undefined ? {} : { ingress }), ...recheck, ...(untilRefused ? { untilLock: untilRefused } : {}) }) });
     if (upgraded) return undefined;
     return new Response("websocket upgrade required", { status: 426 });
   }
@@ -585,6 +684,14 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if (pathname === "/api/devices/pending" || pathname.startsWith("/api/devices/pending/")) {
     const pendingRedemptions = ctx.services.pendingRedemptions;
     if (pendingRedemptions !== undefined) return handlePendingRequest(request, pathname, pendingRedemptions, access);
+  }
+  if (pathname === JOIN_SEEN_PATH) return handleJoinSeen(request, ctx.services.joins, access, joinViewer);
+  if (pathname === "/api/devices/tailnet-nodes" || pathname.startsWith("/api/devices/tailnet-nodes/")) {
+    try {
+      return await handleTailnetNodeRequest(request, pathname, {
+        nodes: ctx.services.tailnetNodes, rows: devices, ownWindow: ownWindow && !funnel, locked: safety?.state().locked === true,
+      });
+    } catch (error) { return errorResponse(error); }
   }
   if (pathname === "/api/devices" || pathname.startsWith("/api/devices/")) {
     try {
@@ -611,7 +718,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     // the bridge token cannot read /api/access: where this server answers comes with its update status (#2191)
     const where = bridgeAuthorized ? async () => {
       const port = ctx.port ?? DEFAULT_PORT;
-      const serving = await remoteAccess(port).then((access) => access.tailscale.serving_url, () => null);
+      const serving = await remoteAccess(port, undefined, tailscaleCli(ctx)).then((access) => access.tailscale.serving_url, () => null);
       return { port, serving_url: serving };
     } : undefined;
     return handleUpdateRequest(request, pathname, options.updates, where);
@@ -648,6 +755,11 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if (pathname === "/api/cliproxy" || pathname.startsWith("/api/cliproxy/")) { ctx.timeout(request, 60); return cliProxyRoutes.handle(request); }
   // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
   if (pathname === "/api/voice" || pathname.startsWith("/api/voice/")) { ctx.timeout(request, 120); return handleVoiceRequest(request, pathname, voice); }
+  // Settings → Memory: every change is a person's on a screen; the bridge token never reaches it (not a bridge path)
+  if (pathname === "/api/memory" || pathname.startsWith("/api/memory/")) {
+    const by = access.level !== "full" ? "unknown" : access.device ? `device:${access.device.id}` : access.via;
+    return handleMemoryRequest(request, url, ctx.services.memory, { readOnly, by });
+  }
 
   // Settings → Alerts → Also send to: one destination this PC also posts its alerts to (a watching device: none, above)
   if (pathname === "/api/alerts/webhook" || pathname === "/api/alerts/webhook/test") {
@@ -862,10 +974,32 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     return jsonResponse(readHerdrUi(options.herdrConfigPath), 200, { "cache-control": "no-store" });
   }
 
+  if (tailscaleControl) {
+    setRequestRoute(pathname);
+    const refuse = (code: string, message: string, status: number, extra: Record<string, unknown> = {}) =>
+      jsonResponse({ error: { code, message, ...extra } }, status, { "cache-control": "no-store" });
+    if (request.method !== "POST") return refuse("method_not_allowed", "use POST", 405);
+    if (request.headers.get("x-herdr-machine") !== "1") return refuse("invalid_origin", "Use controls from this app", 403);
+    if (pathname === TAILSCALE_CONTROLS.open) {
+      const opened = openTailscaleApp();
+      if (opened.ok) return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
+      if (opened.detail !== undefined) console.warn(`Tailscale app did not open: ${opened.detail}`);
+      return refuse(opened.code, "This PC has no Tailscale app to open.", 409);
+    }
+    // a tailnet request gets in as this PC's owner only by that login (server/access.ts decideAccess): with no owner
+    // known, a serve could open Ovis to another login's tailnet request, so nothing is run
+    if ((await identityOf(false, requestHost, true)).owner === null) return refuse("tailscale_owner_unknown", "This PC's Tailscale login is not known: Ovis is not served.", 409);
+    const served = await serveTailscale(ctx.port ?? DEFAULT_PORT, undefined, tailscaleCli(ctx));
+    if (served.ok) return jsonResponse({ ...served.access, relay: ctx.services.relay.status() }, 200, { "cache-control": "no-store" });
+    // the CLI's own words go to this PC's log only, never to the page
+    if (served.detail !== undefined) console.warn(`tailscale serve refused: ${served.detail}`);
+    return refuse(served.code, "Tailscale did not serve Ovis here.", 409, served.operator === true ? { operator: true } : {});
+  }
+
   if (pathname === "/api/access") {
     setRequestRoute(pathname);
     if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
-    return jsonResponse({ ...await remoteAccess(ctx.port ?? DEFAULT_PORT), relay: ctx.services.relay.status() }, 200, { "cache-control": "no-store" });
+    return jsonResponse({ ...await remoteAccess(ctx.port ?? DEFAULT_PORT, undefined, tailscaleCli(ctx)), relay: ctx.services.relay.status() }, 200, { "cache-control": "no-store" });
   }
 
   if (pathname === "/api/session") {
@@ -940,9 +1074,42 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     return handleSessionResumeRequest(request, { readOnly, stores: { codexHome: options.codexHome, opencodeDb: options.opencodeDb, hermesHome: options.hermesHome }, holdOpen: (seconds) => ctx.timeout(request, seconds) });
   }
 
+  if (acp && (pathname === "/api/pane/turn/cancel" || pathname === "/api/pane/turn/release" || pathname === "/api/pane/turn/cancel-children")) {
+    setRequestRoute(pathname);
+    if (request.method !== "POST") return badRequest("method_not_allowed", "Use POST.");
+    const body = await readJsonObject(request);
+    if (body instanceof Response) return body;
+    if (typeof body.pane_id !== "string") return badRequest("missing_pane_id", "pane_id is required.");
+    if (pathname.endsWith("/cancel-children")) {
+      // every ACP child the pane started gets the same hold as its own Stop; one a person holds already keeps its hold
+      // (a new one would cancel the turn that person started), and one that cannot take it is named
+      let children;
+      try { children = await acp.childrenOf(body.pane_id); } catch (error) { return errorResponse(error); }
+      const tried = await Promise.allSettled(children.map(async child => {
+        if (!child.client.connected || !child.client.session) throw new Error("not connected");
+        if (child.client.holdGeneration !== null) return { pane_id: child.terminal, child_id: child.id, generation: child.client.holdGeneration };
+        return { pane_id: child.terminal, child_id: child.id, generation: await child.client.hold(child.client.session) };
+      }));
+      return jsonResponse({
+        ok: true,
+        held: tried.flatMap(outcome => outcome.status === "fulfilled" ? [outcome.value] : []),
+        failed: children.filter((_, index) => tried[index]?.status === "rejected").map(child => child.terminal),
+      });
+    }
+    const child = acp.forPane(body.pane_id);
+    if (!child?.client.connected || !child.client.session) return badRequest("unavailable", "No connected ACP child.");
+    const cancel = pathname.endsWith("/cancel");
+    if (!cancel && (body.child_id !== child.id || !Number.isSafeInteger(body.generation))) return badRequest("hold_changed", "The child and hold generation are required.");
+    try {
+      if (cancel) return jsonResponse({ ok: true, child_id: child.id, generation: await child.client.hold(child.client.session) });
+      const receipt = await child.client.request("_keeper/release", { sessionId: child.client.session, generation: body.generation });
+      if (!receipt || typeof receipt !== "object" || !("released" in receipt && receipt.released === true)) return badRequest("unavailable", "No keeper receipt.");
+      return jsonResponse({ ok: true, child_id: child.id, ...receipt });
+    } catch { return badRequest("hold_changed", "The keeper could not confirm that operation."); }
+  }
   if (pathname.startsWith("/api/pane/prompt")) {
     try {
-      const response = await handlePromptRequest(request, url, { serialize, codexHome: options.codexHome, claudeTranscript: (paneId) => claudeAgents.sessionOf(paneId)?.path ?? null, readOnly, openCodeStateDir: options.openCodeStateDir, openCodeState, onAnswered: () => options.telemetry?.tally("prompt_answers") });
+      const response = await handlePromptRequest(request, url, { serialize, codexHome: options.codexHome, claudeTranscript: (paneId) => claudeAgents.sessionOf(paneId)?.path ?? null, readOnly, openCodeStateDir: options.openCodeStateDir, openCodeState, approvals, ...(acp ? { acp } : {}), onAnswered: () => options.telemetry?.tally("prompt_answers") });
       if (response) return response;
     } catch (error) {
       return errorResponse(error);

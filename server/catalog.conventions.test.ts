@@ -61,6 +61,12 @@ function forbiddenDeclarations(source: string, fileName?: string): string[] {
   return violations;
 }
 
+/**
+ * The Codex approval adapter subscribes to its threads to receive their approvals (`thread/resume` with no overrides)
+ * and reads when a turn starts (`turn/started`): those two names only, there; it sends no turn and no command.
+ */
+const CODEX_APPROVALS = { file: "server/approvals/codex.ts", names: new Set(["thread/resume", "turn/started"]) };
+
 function forbiddenBoundaryLiterals(source: string, fileName?: string): string[] {
   const violations: string[] = [];
   const visit = (node: ts.Node): void => {
@@ -69,7 +75,7 @@ function forbiddenBoundaryLiterals(source: string, fileName?: string): string[] 
       : ts.isTemplateExpression(node)
         ? node.head.text + node.templateSpans.map((span) => "${}" + span.literal.text).join("")
         : undefined;
-    if (text !== undefined) {
+    if (text !== undefined && !(fileName === CODEX_APPROVALS.file && CODEX_APPROVALS.names.has(text))) {
       if (
         text.includes("/tui/") ||
         ["service.ensure", "turn/start", "thread/resume", "skill.invoke"].some((method) => text.includes(method)) ||

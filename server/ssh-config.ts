@@ -11,8 +11,9 @@ const MAX_INCLUDE_DEPTH = 4;
 export const MAX_HOSTS = 200;
 const MAX_WEIGHED = 2 * MAX_HOSTS;
 /** the options ssh takes from the first block that applies to a host, whichever block sets them */
-const EFFECTIVE_KEYS = ["hostname", "addressfamily", "proxycommand", "proxyjump", "user", "canonicalizehostname"] as const;
-const ROUTE_KEYS = ["hostname", "addressfamily", "proxycommand", "proxyjump"] as const;
+const EFFECTIVE_KEYS = ["hostname", "addressfamily", "proxycommand", "proxyjump", "port", "user", "canonicalizehostname"] as const;
+/** the options that decide where ssh connects: one left unknown leaves the host undetermined (a Port too: another port is another sshd) */
+const ROUTE_KEYS = ["hostname", "addressfamily", "proxycommand", "proxyjump", "port"] as const;
 /** the Match conditions weighed here, with `final` and `canonical` (true on the final pass, which a Match line naming
  * `final` unnegated asks for); any other (`exec`, `localnetwork`...) is unknown offline */
 const WEIGHED = ["host", "originalhost", "user", "localuser"] as const;
@@ -21,6 +22,10 @@ export interface ConfigHost {
   alias: string;
   hostname: string | null;
   user: string | null;
+  /** set when a Match condition that cannot be weighed offline may set the User, so `user` null is not "none set" */
+  userUnknown?: true;
+  /** the Port the config sets for it, when it sets one */
+  port?: number;
   addressFamily?: "inet" | "inet6";
   /** set when ssh goes through a ProxyCommand or ProxyJump, so the name is resolved at the far end, not here */
   proxied?: true;
@@ -223,9 +228,14 @@ function describe(alias: string, effective: Map<string, string | null>, named: b
   const proxied = ["proxycommand", "proxyjump"].some((key) => (effective.get(key) ?? "none") !== "none");
   // a canonical name only DNS gives (CanonicalDomains) may lead elsewhere, even with every route option set
   const canonical = effective.get("canonicalizehostname");
-  const undetermined = !named || ROUTE_KEYS.some((key) => effective.get(key) === null) || (canonical !== undefined && canonical?.toLowerCase() !== "no");
+  const portWord = effective.get("port");
+  // a port by service name is looked up by ssh itself: as unknown here as one a condition may set
+  const port = portWord == null || !/^\d{1,5}$/.test(portWord) || Number(portWord) < 1 || Number(portWord) > 65535 ? null : Number(portWord);
+  const undetermined = !named || ROUTE_KEYS.some((key) => effective.get(key) === null) || (portWord != null && port === null)
+    || (canonical !== undefined && canonical?.toLowerCase() !== "no");
   return {
     alias, hostname: hostname == null ? null : expandHost(hostname, alias), user: user ?? null,
+    ...(user === null && !undetermined ? { userUnknown: true as const } : {}), ...(port === null || undetermined ? {} : { port }),
     ...(family === "inet" || family === "inet6" ? { addressFamily: family } : {}), ...(proxied ? { proxied: true as const } : {}),
     ...(undetermined ? { undetermined: true as const } : {}),
   };

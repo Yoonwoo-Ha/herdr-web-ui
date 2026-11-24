@@ -1,0 +1,120 @@
+
+ ▀▀█  v1.4.0
+ █▀ █ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
+ Press ctrl+o to show full startup help and loaded resources.
+
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.
+
+[Extensions]
+  52556aa33040f17740a255f071f88a509e308f69ca9efb5e4a4b94b184d605d4.js
+
+
+ Warning: fd not found. Offline mode enabled, skipping download.
+ Warning: ripgrep not found. Offline mode enabled, skipping download.
+
+ This project is not trusted. Project .pi resources and packages are ignored. Use /trust to save a trust decision, then restart pi.
+
+
+ Use your bash tool exactly once to run this exact command and nothing else: touch qa-allow-1.flag . If it is denied, stop and do nothing else.
+
+
+
+ $ touch qa-allow-1.flag
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Permission required: bash
+
+ Command: $ touch qa-allow-1.flag
+
+ → Allow once
+   Deny
+
+ ↑↓ navigate  enter select  escape/ctrl+c cancel
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/home/user/project
+↑1.9k ↓79 1.0%/200k (auto)                                                                                                                                            deepseek-v4.1-flash • thinking off

@@ -3,15 +3,47 @@ import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { Terminal } from "@xterm/xterm";
 import type { LayoutNode } from "../../server/herdr-core/layout-doc.ts";
 import { createEmulator } from "../emulator/ghostty.ts";
-import type { Emulator, EngineEvents, WrittenColor } from "../emulator/index.ts";
-import { placeholderChrome } from "./chrome.ts";
-import { cellsOf, holds, intersect, regions, type Rect } from "./geometry.ts";
+import { type Emulator, type EngineEvents, STYLE_INVERSE, type WrittenColor } from "../emulator/index.ts";
+import { cellsOf, holds, intersect, type PaneCells, regions, type Rect, type Regions } from "./geometry.ts";
 import { PaneGrid } from "./grid.ts";
 import { hostLayout } from "./host-layout.ts";
 import { Painter, type Frame, type HitTarget, type Part, type PaneScene, type Scene } from "./paint.ts";
 
 // The painter's writes are replayed into a second emulator standing in for the host terminal: after a frame whose write was
 // taken whole, the host's screen must equal the painter's model cell for cell, and its cursor must be where the rule says.
+
+/** Stand-in chrome for the painter's tests: each part fills its rectangle with a mark and a colour of its own, and names its whole rectangle in the hit map. */
+function placeholderChrome(regions: Regions, panes: readonly PaneCells[]): Part[] {
+  const filled = (key: string, rect: Part["rect"], mark: string, color: number): Part => ({
+    key, rect, version: 0,
+    draw: (canvas) => {
+      canvas.fill(canvas.style({ fg: color }), mark);
+      canvas.hit(rect, key);
+    },
+  });
+  const borders = panes.filter(({ outer, inner }) => outer.width !== inner.width).map(({ pane, outer }): Part => ({
+    key: `border ${pane}`, rect: outer, version: 0,
+    draw: (canvas) => {
+      const style = canvas.style({ fg: 8 });
+      const right = outer.x + outer.width - 1;
+      const bottom = outer.y + outer.height - 1;
+      for (let col = outer.x; col <= right; col++) {
+        canvas.put(col, outer.y, col === outer.x || col === right ? "+" : "-", 1, style);
+        canvas.put(col, bottom, col === outer.x || col === right ? "+" : "-", 1, style);
+      }
+      for (let row = outer.y + 1; row < bottom; row++) {
+        canvas.put(outer.x, row, "|", 1, style);
+        canvas.put(right, row, "|", 1, style);
+      }
+    },
+  }));
+  return [
+    filled("sidebar", regions.sidebar, ".", 4),
+    filled("tabs", regions.tabBar, "-", 6),
+    filled("mode", regions.modeBar, "=", 3),
+    ...borders,
+  ];
+}
 
 const encoder = new TextEncoder();
 /** `inner` lies inside `outer` (an empty rectangle lies anywhere) */
@@ -251,7 +283,7 @@ describe("the frame painter", () => {
   test("replay equals model", async () => {
     const painter = new Painter({ sync: true });
     const [W, H] = [100, 20];
-    const shape = regions(W, H, { sidebar: 18, tabBar: true, modeBar: true });
+    const shape = regions(W, H, { sidebar: 18 });
     const tree: LayoutNode = { split: "right", ratio: 0.5, first: { leaf: "a" }, second: { leaf: "b" } };
     const { panes } = cellsOf(tree, shape.panes);
     const [a, b] = await Promise.all(panes.map((cells) => shownPane(painter, cells.cols, cells.rows, LINES)));
@@ -539,7 +571,7 @@ describe("the frame painter", () => {
     const shown = new Map<string, Shown>();
     for (const id of ["a", "b", "c"]) shown.set(id, await shownPane(painter, 30, 10, LINES));
     const build = (W: number, H: number) => {
-      const shape = regions(W, H, { sidebar: 10, tabBar: true, modeBar: true });
+      const shape = regions(W, H, { sidebar: 10 });
       const { panes } = cellsOf(tree, shape.panes);
       return scene(W, H, { focus: "a", parts: placeholderChrome(shape, panes), panes: panes.map((cells) => paneScene(cells.pane, shown.get(cells.pane)!, cells.inner)) });
     };
@@ -566,7 +598,7 @@ describe("the frame painter", () => {
   test("hit map", async () => {
     const painter = new Painter({ sync: true });
     const [W, H] = [100, 24];
-    const shape = regions(W, H, { sidebar: 20, tabBar: true, modeBar: true });
+    const shape = regions(W, H, { sidebar: 20 });
     const tree: LayoutNode = { split: "right", ratio: 0.6, first: { leaf: "a" }, second: { leaf: "b" } };
     const { panes } = cellsOf(tree, shape.panes);
     const shownPanes = await Promise.all(panes.map((cells) => shownPane(painter, cells.cols, cells.rows, LINES)));
@@ -862,6 +894,81 @@ describe("a neighbour's change", () => {
   }, 60_000);
 });
 
+describe("selection", () => {
+  test("a pane's selection is drawn inverted from its first cell to its last, row by row, and drawn away when it ends", async () => {
+    const painter = new Painter({ sync: false });
+    const [W, H] = [8, 4];
+    const host = await hostOf(W, H);
+    const shown = await shownPane(painter, 6, 3, "abcdef\r\nghijkl\r\nmnopqr");
+    const rect = { x: 1, y: 1, width: 6, height: 3 };
+    step(painter, host, scene(W, H, { focus: "p", panes: [paneScene("p", shown, rect)] }));
+    const inverted = () => {
+      const out: string[] = [];
+      for (let row = 0; row < H; row++) for (let col = 0; col < W; col++) {
+        const at = row * W + col;
+        if (painter.styles.get(painter.screen.style[at]!).flags & STYLE_INVERSE) out.push(painter.screen.text[at]!);
+      }
+      return out.join("");
+    };
+    expect(inverted()).toBe("");
+    // grid cells (4,0) to (1,1): "ef" of the first row and "gh" of the second
+    let frame = step(painter, host, scene(W, H, { focus: "p", panes: [paneScene("p", shown, rect, { selection: { start: { x: 4, y: 0 }, end: { x: 1, y: 1 } } })] }));
+    expect(inverted()).toBe("efgh");
+    expect(mismatch(host, painter)).toBeNull();
+    expect(frame.bytes.length).toBeGreaterThan(0);
+    // a range given end first is the same range: "l" of the second row and "mn" of the third
+    frame = step(painter, host, scene(W, H, { focus: "p", panes: [paneScene("p", shown, rect, { selection: { start: { x: 1, y: 2 }, end: { x: 5, y: 1 } } })] }));
+    expect(inverted()).toBe("lmn");
+    expect(mismatch(host, painter)).toBeNull();
+    frame = step(painter, host, scene(W, H, { focus: "p", panes: [paneScene("p", shown, rect)] }));
+    expect(inverted()).toBe("");
+    expect(mismatch(host, painter)).toBeNull();
+    expect(frame.bytes.length).toBeGreaterThan(0);
+  });
+
+  test("selecting a cell that is already inverse flips it back on the host", async () => {
+    const painter = new Painter({ sync: false });
+    const host = await hostOf(3, 1);
+    const shown = await shownPane(painter, 3, 1, "a\x1b[7mbc\x1b[0m");
+    const rect = { x: 0, y: 0, width: 3, height: 1 };
+    const drawn = () => hostCells(host, 3, 1).map(({ text, flags }) => [text, Boolean(flags & STYLE_INVERSE)]);
+
+    step(painter, host, scene(3, 1, { focus: "p", panes: [paneScene("p", shown, rect)] }));
+    expect(drawn()).toEqual([["a", false], ["b", true], ["c", true]]);
+    const selection = { start: { x: 0, y: 0 }, end: { x: 1, y: 0 } };
+    step(painter, host, scene(3, 1, { focus: "p", panes: [paneScene("p", shown, rect, { selection })] }));
+    expect(drawn()).toEqual([["a", true], ["b", false], ["c", true]]);
+  });
+
+  test("a wide cell is drawn selected when either of its columns is in the selection", async () => {
+    const painter = new Painter({ sync: false });
+    const [W, H] = [12, 3];
+    const host = await hostOf(W, H);
+    // grid columns 0-1 hold 안, 2-3 녕, 4-5 하
+    const shown = await shownPane(painter, 10, 1, "안녕하세요");
+    const rect = { x: 1, y: 1, width: 10, height: 1 };
+    const inverted = () => {
+      const out: string[] = [];
+      for (let col = 0; col < W; col++) {
+        const at = W + col;
+        if (painter.screen.width[at] !== 0 && painter.styles.get(painter.screen.style[at]!).flags & STYLE_INVERSE) out.push(painter.screen.text[at]!);
+      }
+      return out.join("");
+    };
+    const cases: [start: number, end: number, drawn: string][] = [[1, 3, "안녕"], [3, 1, "안녕"], [1, 2, "안녕"], [2, 2, "녕"], [3, 3, "녕"], [0, 0, "안"], [4, 5, "하"]];
+    for (const [start, end, drawn] of cases) {
+      step(painter, host, scene(W, H, { focus: "p", panes: [paneScene("p", shown, rect, { selection: { start: { x: start, y: 0 }, end: { x: end, y: 0 } } })] }));
+      expect({ start, end, drawn: inverted() }).toEqual({ start, end, drawn });
+      expect(mismatch(host, painter)).toBeNull();
+    }
+    // drawn from the grid's column 1: 안's second column is the first cell, a blank, selected with 안
+    const view = { col: 1, row: 0 };
+    step(painter, host, scene(W, H, { focus: "p", panes: [paneScene("p", shown, { x: 1, y: 1, width: 9, height: 1 }, { view, selection: { start: { x: 0, y: 0 }, end: { x: 0, y: 0 } } })] }));
+    expect(inverted()).toBe(" ");
+    expect(mismatch(host, painter)).toBeNull();
+  });
+});
+
 describe("edges", () => {
   test("a 1x1 pane, no panes, a wide cell in the last column, a long cluster, and a pane removed between frames", async () => {
     const painter = new Painter({ sync: true });
@@ -969,7 +1076,7 @@ describe("property", () => {
       const host = await hostOf(W, H);
       const ids = Array.from({ length: n(1, 6) }, (_, i) => `p${i}`);
       const tree = randomTree(next, ids);
-      const chrome = { sidebar: n(0, 30), tabBar: next() < 0.7, modeBar: next() < 0.7 };
+      const chrome = { sidebar: n(0, 30) };
       const borders = next() < 0.6;
       const panes = new Map<string, Shown & { view: { col: number; row: number }; scrolled: boolean }>();
       const owned: Emulator[] = [host];

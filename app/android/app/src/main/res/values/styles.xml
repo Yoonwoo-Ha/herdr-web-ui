@@ -13,9 +13,9 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
-        <!-- behind the system bars until the page gives its theme-color (MainActivity), not the
-             light theme's white -->
-        <item name="android:windowBackground">@color/ovis_background</item>
+        <!-- behind the system bars until the page gives its theme-color (MainActivity), and behind the web view
+             before a page paints: the app's own page's colour, light or dark as the phone is -->
+        <item name="android:windowBackground">@color/ovis_page</item>
     </style>
 
 

@@ -11,11 +11,15 @@ export const RELAY_CONTROLS = {
   direct: "/api/relay/direct", pairing: "/api/relay/pairing", join: "/api/relay/join",
 } as const;
 
+/** The Tailscale changes this PC's own window alone may ask for (dispatch.ts ownWindow): serve Ovis on the tailnet, open the app. */
+export const TAILSCALE_CONTROLS = { serve: "/api/access/tailscale/serve", open: "/api/access/tailscale/open" } as const;
+
 // P5: driving the terminal on this PC, not administering its relay or other PCs.
 export const LOCAL_DRIVE_POSTS: readonly string[] = [
   "pane/input", "pane/keys", "pane/find", "pane/scroll", "pane/rename", "pane/close", "pane/image",
   "pane/split", "pane/zoom", "pane/swap", "pane/move", "pane/resize", "pane/clear", "pane/focus",
   "pane/prompt/answer", "layout/ratio", "workspace/create", "workspace/rename", "workspace/close",
+  "pane/turn/cancel", "pane/turn/release", "pane/turn/cancel-children",
   "workspace/move", "workspace/directories", "workspace/pr/merge", "worktree/create", "worktree/open",
   "worktree/remove", "tab/create", "tab/rename", "tab/close", "tab/move", "tab/move-to-workspace",
   "agent/rename", "sessions/resume", "plugin/action", "seen", "connection-diagnostics",
@@ -23,17 +27,23 @@ export const LOCAL_DRIVE_POSTS: readonly string[] = [
   "usage/login/cancel", "usage/accounts", "cliproxy/login", "cliproxy/callback", "voice/transcribe", "telemetry",
 ].map(path => `/api/${path}`);
 
+/** Settings → Memory's changes (server/memory/routes.ts): a person driving this PC makes them, an account's phone too. */
+export const MEMORY_POSTS: readonly string[] = ["add", "edit", "confirm", "remove", "discard", "discard-run"].map(action => `/api/memory/${action}`);
+
 export const DISPATCH_MUTATIONS = {
   POST: [
     ...Object.values(RELAY_CONTROLS), ...LOCAL_DRIVE_POSTS,
-    "/api/devices/pair", "/api/devices/pair/start", "/api/devices/pair/cancel", "/api/devices/revoke-all",
+    "/api/devices/pair", "/api/devices/pair/start", "/api/devices/pair/cancel", "/api/devices/revoke-all", "/api/devices/joins/seen",
+    "/api/devices/tailnet-nodes/block", "/api/devices/tailnet-nodes/answer",
     "/api/account/link", "/api/account/enroll", "/api/account/introduce", "/api/account/records",
-    "/api/account/relay-account", "/api/account/one-press", "/api/alerts/webhook", "/api/alerts/webhook/test",
+    "/api/account/relay-account", "/api/account/one-press", "/api/account/pc-proof", "/api/account/ssh-add", "/api/alerts/webhook", "/api/alerts/webhook/test",
     "/api/push/subscribe", "/api/push/status", "/api/push/test", "/api/runtime",
     "/api/runtime/move", "/api/runtime/move/install", "/api/runtime/move/stop", "/api/runtime/move/stop-all",
     "/api/updates/install", "/api/updates/check", "/api/updates/cancel", "/api/herdr/update",
-    "/api/account/lock", "/api/account/unlock", "/api/account/forget", "/api/account/confirm", "/api/account/leave",
+    "/api/account/lock", "/api/account/unlock", "/api/account/forget", "/api/account/confirm", "/api/account/confirm-page", "/api/account/leave",
     "/api/auth", "/api/portal/start", "/api/portal/stop", "/api/portal/invite",
+    ...Object.values(TAILSCALE_CONTROLS),
+    ...MEMORY_POSTS,
   ],
   PUT: ["/api/alerts/webhook", "/api/fs/text", "/api/preferences", "/api/cliproxy", "/api/voice/config"],
   PATCH: ["/api/devices/:id"],
@@ -47,10 +57,10 @@ export function dispatchMutationRegistered(method: string, pathname: string): bo
 }
 
 export const DISPATCH_READS: ReadonlySet<string> = new Set([
-  "preferences", "seen", "session", "sessions/history", "health", "system", "herdr-ui", "devices", "access",
+  "machines", "preferences", "seen", "session", "sessions/history", "health", "system", "herdr-ui", "devices", "access",
   "account/introduction", "account/status", "push", "relay", "updates", "updates/notes", "updates/installed", "runtime/move",
   "usage", "usage/statusline", "usage/login", "usage/login/prompt", "voice", "fonts", "cliproxy", "cliproxy/login", "telemetry",
-  "agents", "agent-catalog", "integrations", "plugins/actions", "plugin/action", "agent/commands",
+  "agents", "agent-catalog", "integrations", "memory", "plugins/actions", "plugin/action", "agent/commands",
   "pane/read", "pane/scroll", "pane/selection", "pane/commands", "pane/files", "pane/docs",
   "pane/conversation", "pane/conversation/search", "pane/conversation/image", "pane/conversation/tool-output",
   "pane/summary", "pane/omo-tasks", "pane/background-agent", "pane/plan", "pane/artifacts", "pane/btw", "pane/prompt",

@@ -1,19 +1,17 @@
 /**
  * Machine offline and Could not reach this machine, where they belong (measurement nc0, step S2: every PC off, the phone's
- * list still read "pc-a · Open · Ready"). Two real PCs the account heard from a minute ago, so the account alone calls
- * both Ready:
+ * list still read "pc-a · Open · Ready"). Two real PCs the account heard from five minutes ago, so the account alone calls
+ * both Ready, both paired on this device:
  *
- * - pc-a is stopped while the page is open. This device's own check of it then finds nobody at the relay: its row, its
- *   details and the Needs you card say Machine offline, when the account last heard from it and why, and the row offers
- *   Details, not Open. Open anyway ends on a screen with the same heading and Try again.
- * - the relay goes out of this device's reach (every socket to it closes before the relay assigns it). m1-box's row, its
- *   details and the Needs you card then say Could not reach this machine and why, and the row offers Check again; Open
- *   ends on a screen with the same heading. Once the relay is back, the row's Check again finds m1-box Ready.
+ * - pc-a is stopped while the page is open. This device's own check of it then finds nobody at the relay: its row on Add
+ *   a PC (the front page) is noted Off, and opening it ends on a screen headed Machine offline, with Try again.
+ * - the relay goes out of this device's reach (every socket to it closes before the relay assigns it). Opening m1-box
+ *   ends on a screen headed Could not reach this machine, with Try again; once the relay is back, Try again reaches m1-box.
  *
- * Every state is read by its markup (data-pc-state, data-pc-action, data-relay-state) and its heading in the page's
- * language. Each check is one PC's own (Check now in its details, or the row's Check again), so no sweep's timing
- * decides a row. Walked side by side at 390 px (a phone profile) light and dark, 1280 px light and dark, and in Korean
- * at 390 px light; pc-a is stopped once every page has seen it answer.
+ * Every state is read by its markup (data-relay-state) and its words in the page's language. The front page's own check
+ * of its PCs runs as it loads, so each load is awaited by the check's socket, not by time. Walked side by side at 390 px
+ * (a phone profile) light and dark, 1280 px light and dark, and in Korean at 390 px light; pc-a is stopped once every
+ * page has seen it listed.
  *
  * The shell is dist-shell/ (`bun run build:shell`), or the folder given as the first argument, served as Cloudflare Pages
  * serves it on https://app.ovis.sh (routed here); the account service is the in-memory fake with the directory answered
@@ -37,6 +35,7 @@ import { FakeAccountService } from "../shared/account-service-fake.ts";
 import { importPublicKey } from "../shared/relay-e2ee.ts";
 import { decodeOffer, type RelayOffer } from "../shared/relay-offer.ts";
 import { translate, type Language } from "../src/lib/i18n.ts";
+import { CHECK_GAP_MS } from "../src/lib/relay/pcSweep.ts";
 import { chromePath } from "./chrome-path.ts";
 import { loadPagesSite, pagesResponse, type PagesSite } from "./pages-static.ts";
 import { relayBrowserSocket } from "./relay-browser-bridge.ts";
@@ -45,7 +44,7 @@ import { closeMarked, whileOpen } from "./relay-qa-teardown.ts";
 const APP = "https://app.ovis.sh";
 const RELAY = "wss://relay.test";
 const LOAD_MS = 45_000;
-/** every page's clock stands still here (timers still run), and the account last heard from both PCs five minutes before */
+/** every page's clock stands still here (timers still run; each front page load moves it a minute), and the account last heard from both PCs five minutes before */
 const PAGE_NOW = Date.now();
 const SEEN_AT = new Date(PAGE_NOW - 5 * 60_000).toISOString();
 /** the shell gives a PC the relay has nobody for 15 s (PC_ANSWER_MS) before it calls it offline */
@@ -239,163 +238,88 @@ async function walkOne(browser: Browser, site: PagesSite, run: Run, arriveHere: 
   page.on("pageerror", (error) => errors.push(error.message));
   const shot = async (name: string, fullPage = false): Promise<void> => { if (evidence) await page.screenshot({ path: join(evidence, `${name}-${tag}.png`), fullPage }); };
 
+  const link = (entry: Entry) => page.locator('main.relay-add-screen[data-account-state="signed-in"] a.relay-add-saved-pc').filter({ hasText: entry.name });
   /**
-   * A fresh load of the PCs view, which reads the saved pairings again. Always a navigation of its own (a query, which boot.ts
-   * moves into the fragment), never a script in the page: a sign-in's return may still be loading it, and goto wins over that.
+   * A fresh load of the front page, which reads the saved pairings again and checks each PC as it loads: once `entry`'s
+   * check opened its socket. Always a navigation of its own, never a script in the page: a sign-in's return may still be
+   * loading it, and goto wins over that. The tab's launch is past, so the front page stays My PCs. The front page
+   * checks its PCs at most once a minute (pcSweep.ts CHECK_GAP_MS), so each load is a minute after the one before on
+   * the page's standing clock.
    */
-  const toPcs = async (): Promise<void> => {
-    await page.goto(`${APP}/?pcs`);
-    assert.equal(new URL(page.url()).hash, "#pcs", "the PCs view's address");
-    await page.locator('.relay-dash[data-dashboard-view="pcs"]').waitFor({ timeout: LOAD_MS });
-    for (const entry of entries) await page.locator(`[data-pc-id="${entry.server_id}"]:visible`).first().waitFor({ timeout: LOAD_MS });
+  let pageNow = PAGE_NOW;
+  const toFront = async (entry: Entry): Promise<void> => {
+    pageNow += CHECK_GAP_MS;
+    await page.clock.setFixedTime(pageNow);
+    const checked = nextSocket(entry.server_id);
+    await page.goto(`${APP}/`);
+    for (const each of entries) await link(each).waitFor({ timeout: LOAD_MS });
+    await bounded(checked, 20_000);
   };
-  /** Waits until the PC's row carries `state` with no check of it running, then reads it as drawn. */
-  const rowIn = (entry: Entry, state: string) => page.waitForFunction(({ id, state }) => {
-    const row = [...document.querySelectorAll<HTMLElement>(`[data-pc-id="${id}"]`)].find((element) => element.offsetParent !== null);
-    if (!row || row.getAttribute("data-pc-state") !== state || row.querySelector('.status-dot[data-state="checking"]')) return null;
-    const word = row.querySelector<HTMLElement>(".relay-pc-state-word");
-    return { state, word: word?.textContent ?? null, title: word?.title ?? null, line: row.querySelector(".relay-pc-probe-line")?.textContent ?? null,
-      action: row.querySelector("[data-pc-action]")?.getAttribute("data-pc-action") ?? null,
-      whole: word === null || (word.scrollWidth <= word.clientWidth + 1 && word.scrollHeight <= word.clientHeight + 1) };
-  }, { id: entry.server_id, state }).then((handle) => handle.jsonValue()).then((row) => { if (row === null) throw new Error(`no row of ${entry.name} in ${state}`); return row; });
-  const details = (entry: Entry) => page.locator(`[data-pc-details="${entry.server_id}"]`);
-  const openDetails = async (entry: Entry): Promise<void> => {
-    await page.locator(`[data-pc-id="${entry.server_id}"]:visible .relay-pc-name-btn`).first().click();
-    await details(entry).waitFor();
-  };
-  const closeDetails = async (entry: Entry): Promise<void> => {
-    await page.keyboard.press("Escape");
-    await details(entry).waitFor({ state: "detached" });
-  };
-  /** Checks this PC from its details and waits for a check of it that began after the press to finish. */
-  const checkOnce = async (entry: Entry): Promise<void> => {
-    const settled = () => page.waitForFunction((id) => document.querySelector(`[data-pc-details="${id}"] .relay-pc-details-location .status-dot[data-state="checking"]`) === null, entry.server_id);
-    // a check of it already running (the list's minute) would take the press without a socket of its own
-    await settled();
-    const opened = nextSocket(entry.server_id);
-    await details(entry).locator('[data-action="check-pc"]').click();
-    await bounded(opened, 20_000);
-    await settled();
-  };
-  /**
-   * This PC's own check, from its details (no sweep's timing), until their glyph says `state` (relayPcState.tsx pcDotState;
-   * below 1100 px the details stand in place of the list): what their State row then says. Only a check made here counts,
-   * so a glyph already showing `state` before it proves nothing.
-   */
-  const checkFromDetails = async (entry: Entry, state: "paired" | "offline" | "unreachable") => {
-    await openDetails(entry);
-    const glyph = { paired: "ready", offline: "offline", unreachable: "failed" }[state];
-    const dot = details(entry).locator(`.relay-pc-details-location .status-dot[data-state="${glyph}"]`);
-    await checkOnce(entry);
-    // a relay this device cannot reach is believed on the second such check in a row (pcSweep.ts)
-    if (state === "unreachable" && await dot.count() === 0) await checkOnce(entry);
-    // the list's own sweep may begin another check of it right after this one: its glyph is read once that one is done too
-    const found = await page.waitForFunction((id) => {
-      const state = document.querySelector(`[data-pc-details="${id}"] .relay-pc-details-location .status-dot`)?.getAttribute("data-state");
-      return state === "checking" ? null : state ?? "none";
-    }, entry.server_id).then((handle) => handle.jsonValue());
-    assert.equal(found, glyph, `${entry.name}'s check found it ${state}`);
-    const value = details(entry).locator(".relay-pc-details-row").first();
-    return { state: await value.locator(".relay-pc-details-value").innerText(), why: await value.locator(".relay-pc-details-sub").allInnerTexts() };
-  };
-  const attentionOf = async (entry: Entry) => {
-    await page.goto(`${APP}/#overview`);
-    const item = page.locator("li.relay-overview-attention-row").filter({ has: page.locator(".relay-overview-attention-name", { hasText: entry.name }) });
-    await item.waitFor({ timeout: LOAD_MS });
-    // a reason every row on show shares is said once, above them (RelayOverview's caption)
-    const caption = page.locator(".relay-overview-attention-caption");
-    const why = await caption.count() > 0 ? await caption.innerText() : await item.locator(".relay-overview-attention-why").innerText();
-    return { state: await item.getAttribute("data-pc-state"), why, action: await item.locator("[data-attention-action]").getAttribute("data-attention-action") };
-  };
-  /** Open from the PC's details, as a person does: the shell's screen once the connection ended. */
-  const openFromDetails = async (entry: Entry, failure: string, timeout: number) => {
-    await toPcs();
-    await openDetails(entry);
-    await details(entry).locator(`a.btn[href$="/s/${entry.server_id}/"]`).click();
+  /** Open from its row on the front page, as a person does: the shell's screen once the connection ended. */
+  const openFromFront = async (entry: Entry, failure: string, timeout: number) => {
+    await link(entry).click();
     const screen = page.locator(`main[data-relay-state="${failure}"]`);
     await screen.waitFor({ timeout });
     return { title: await screen.locator("h1").innerText(), retry: await screen.getByRole("button", { name: t("Try again"), exact: true }).count() };
   };
   const scroll = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 
-  // ---- precondition: signed in, both PCs listed, pc-a answers this device ----
+  // ---- precondition: signed in, both PCs saved and listed ----
   doing = "precondition: sign in";
   await page.goto(`${APP}/`);
   await page.locator(".account-provider").first().click({ timeout: LOAD_MS });
-  // a sign-in lands on Add a PC, never the dashboard: that opens only by its own address
-  await page.locator('main.relay-add-screen[data-account-state="signed-in"] .relay-add, [data-add-pc-mode]').first().waitFor({ timeout: LOAD_MS });
-  await page.goto(`${APP}/#overview`);
-  await page.locator('.relay-dash[data-dashboard-mode="account"]').waitFor({ timeout: LOAD_MS });
+  // a sign-in lands on My PCs, or on the join an account PC its launch picked asks by itself (#16)
+  await page.locator('main.relay-add-screen[data-account-state="signed-in"] [data-view="my-pcs"], [data-add-pc-mode], [data-approval-wait]').first().waitFor({ timeout: LOAD_MS });
+  // the person goes to the front page (as Cancel or Back would): it stays My PCs, launching nothing (#16)
+  await page.evaluate(() => sessionStorage.setItem("ovis-front-chosen", "1"));
+  await page.goto(`${APP}/`);
+  await page.locator('main.relay-add-screen[data-account-state="signed-in"] [data-view="my-pcs"]').waitFor({ timeout: LOAD_MS });
   await seed(page);
-  await step("precondition: both rows", toPcs);
-  await step("precondition: pc-a answers its check", () => checkFromDetails(a, "paired"));
-  await closeDetails(a);
-  const before = await rowIn(a, "paired");
-  assert.equal(before.action, "open", `${tag}: precondition, pc-a answers and opens`);
+  await step("precondition: both rows", () => toFront(a));
   arriveHere();
 
   // ---- pc-a stopped while the page is open ----
   await stopped;
-  const cause = t("It is off, has no network, or Ovis is not running on it.");
-  const offlineWhy = `${t("Last seen {when}.", { when: t("{n} min ago", { n: "5" }) })} ${cause}`;
-  const offlineDetails = await step("stopped pc-a: its check", () => waitOnA(() => checkFromDetails(a, "offline")));
-  await shot("offline-details");
-  await closeDetails(a);
-  const offlineRow = await rowIn(a, "offline");
-  await shot("offline-row");
+  const off = t("Off|pc state");
+  await step("stopped pc-a: its row", () => waitOnA(async () => {
+    await toFront(a);
+    await link(a).locator(".relay-add-saved-note", { hasText: off }).waitFor({ timeout: LOAD_MS });
+  }));
+  const offlineNote = await link(a).locator(".relay-add-saved-note").innerText();
+  await shot("offline-front");
   const offlineScroll = await scroll();
-  const offlineCard = await step("stopped pc-a: Needs you", () => attentionOf(a));
-  await shot("offline-overview");
-  const offlineOpen = await step("stopped pc-a: Open", () => waitOnA(() => openFromDetails(a, "pc-offline", OPEN_OFFLINE_MS)));
+  const offlineOpen = await step("stopped pc-a: Open", () => waitOnA(() => openFromFront(a, "pc-offline", OPEN_OFFLINE_MS)));
   await shot("offline-open", true);
 
   // ---- the relay out of this device's reach ----
   relayReachable = false;
-  const unreachableWhy = t("This device could not reach the relay. Check this device's network.");
-  await step("relay out of reach: rows", toPcs);
-  const unreachableDetails = await step("relay out of reach: m1-box's check", () => checkFromDetails(box, "unreachable"));
-  await shot("unreachable-details");
-  await closeDetails(box);
-  await checkFromDetails(a, "unreachable");
-  await closeDetails(a);
-  const unreachableRow = await rowIn(box, "unreachable");
-  await shot("unreachable-row");
+  await step("relay out of reach: rows", () => toFront(box));
   const unreachableScroll = await scroll();
-  const unreachableCard = await step("relay out of reach: Needs you", () => attentionOf(box));
-  await shot("unreachable-overview");
-  const unreachableOpen = await step("relay out of reach: Open", () => openFromDetails(box, "relay-unreachable", LOAD_MS));
+  const unreachableOpen = await step("relay out of reach: Open", () => openFromFront(box, "relay-unreachable", LOAD_MS));
   await shot("unreachable-open", true);
 
-  // ---- back in reach: the row's Check again finds m1-box ----
-  await toPcs();
-  await checkFromDetails(box, "unreachable");
-  await closeDetails(box);
-  await rowIn(box, "unreachable");
+  // ---- back in reach: Try again reaches m1-box ----
+  // the pairings here are seeded, never admitted by the PC, so what follows is the PC's own answer, not the relay's
   relayReachable = true;
-  doing = "relay back: Check again";
-  const checkedAgain = nextSocket(box.server_id);
-  await page.locator(`[data-pc-id="${box.server_id}"]:visible [data-pc-action="check"]`).first().click();
-  await bounded(checkedAgain, 20_000);
-  const back = await rowIn(box, "paired");
+  const reached = await step("relay back: Try again", async () => {
+    await page.getByRole("button", { name: t("Try again"), exact: true }).click();
+    return page.waitForFunction(() => {
+      if (document.querySelector(".app")) return "app";
+      const state = document.querySelector("main[data-relay-state]")?.getAttribute("data-relay-state");
+      return state && state !== "relay-unreachable" && state !== "connecting" ? state : null;
+    }, null, { timeout: LOAD_MS }).then((handle) => handle.jsonValue());
+  });
   doing = "asserting";
-  await shot("back-row");
+  await shot("back-reached");
 
-  const stateWhy = (row: { title: string | null; line: string | null; word: string | null }): string | null => phone ? row.line : row.title?.slice(`${row.word} · `.length) ?? null;
-  assert.deepEqual({ ...offlineRow, why: stateWhy(offlineRow) }, { ...offlineRow, word: t("Machine offline"), action: "details", whole: true, why: offlineWhy },
-    `${tag}: stopped pc-a's row says Machine offline with when and why, and offers Details, not Open`);
-  assert.deepEqual(offlineDetails, { state: t("Machine offline"), why: [offlineWhy] }, `${tag}: its details say the same`);
-  assert.deepEqual(offlineCard, { state: "offline", why: `${t("Machine offline")} · ${offlineWhy}`, action: "details" }, `${tag}: the Needs you card says the same, with Details`);
+  assert.equal(offlineNote, off, `${tag}: stopped pc-a's row on My PCs is noted Off`);
   assert.deepEqual(offlineOpen, { title: t("Machine offline"), retry: 1 }, `${tag}: Open anyway ends on Machine offline with Try again`);
-  assert.deepEqual({ ...unreachableRow, why: stateWhy(unreachableRow) }, { ...unreachableRow, word: t("Could not reach this machine"), action: "check", whole: true, why: unreachableWhy },
-    `${tag}: with the relay out of reach, m1-box's row says Could not reach this machine and why, and offers Check again`);
-  assert.deepEqual(unreachableDetails, { state: t("Could not reach this machine"), why: [unreachableWhy] }, `${tag}: its details say the same`);
-  assert.deepEqual(unreachableCard, { state: "unreachable", why: `${t("Could not reach this machine")} · ${unreachableWhy}`, action: "check" }, `${tag}: the Needs you card says the same, with Check again`);
-  assert.deepEqual(unreachableOpen, { title: t("Could not reach this machine"), retry: 1 }, `${tag}: Open ends on Could not reach this machine with Try again`);
-  assert.equal(back.action, "open", `${tag}: once the relay is back, Check again finds m1-box Ready and it opens`);
-  assert.ok(offlineScroll <= 0 && unreachableScroll <= 0, `${tag}: the list does not scroll sideways (${offlineScroll}, ${unreachableScroll} px)`);
+  assert.deepEqual(unreachableOpen, { title: t("Could not reach this machine"), retry: 1 }, `${tag}: with the relay out of reach, Open ends on Could not reach this machine with Try again`);
+  assert.ok(reached !== "pc-offline", `${tag}: once the relay is back, Try again reaches m1-box (${reached})`);
+  assert.ok(offlineScroll <= 0 && unreachableScroll <= 0, `${tag}: the front page does not scroll sideways (${offlineScroll}, ${unreachableScroll} px)`);
   assert.deepEqual(errors, [], `${tag}: no page error`);
   await closeMarked(context);
-  return `PASS ${tag}: stopped pc-a reads Machine offline with when and why in its row, details and the Needs you card, offers Details, and Open ends on Machine offline; with the relay out of reach m1-box reads Could not reach this machine there, offers Check again, Open ends on the same heading, and Check again finds it Ready once the relay is back`;
+  return `PASS ${tag}: stopped pc-a is noted Off on My PCs and Open ends on Machine offline with Try again; with the relay out of reach Open on m1-box ends on Could not reach this machine, and Try again reaches it once the relay is back (${reached})`;
   }
 }
 

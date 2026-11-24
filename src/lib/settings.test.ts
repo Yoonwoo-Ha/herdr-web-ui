@@ -71,6 +71,24 @@ describe("saved theme migration", () => {
     expect(readOld().palette).toBe("amber");
   });
 
+  it("turns the mic off only where no choice of it was saved", () => {
+    expect(loadSettings().voiceInput).toBe("off");
+    putOld({ terminalFontSize: 18 });
+    expect(loadSettings().voiceInput).toBe("off");
+    for (const voiceInput of ["auto", "on", "off"] as const) {
+      putOld({ voiceInput });
+      expect(loadSettings().voiceInput).toBe(voiceInput);
+    }
+    putOld({ voiceInput: false });
+    expect(loadSettings().voiceInput).toBe("auto");
+    putOld({ voiceInput: true });
+    expect(loadSettings().voiceInput).toBe("on");
+    // an earlier version saved its whole record, its default Auto included, on any change
+    records.clear();
+    oldSaveSettings({ ...oldSanitizeSettings({}), terminalFontSize: 18 });
+    expect(loadSettings().voiceInput).toBe("auto");
+  });
+
   it("survives an old sanitizer and whole-record unrelated save (f)", () => {
     saveSettings(sanitizeSettings({ darkTheme: "tokyo-night" }));
     const old = readOld();
@@ -1122,13 +1140,13 @@ describe("quick replies", () => {
 });
 
 describe("microphone button", () => {
-  it("is automatic until chosen, and reads a record from before it had three places", () => {
-    expect(DEFAULT_SETTINGS.voiceInput).toBe("auto");
-    expect(sanitizeSettings({}).voiceInput).toBe("auto");
+  it("is off until chosen, and reads a record from before it had three places", () => {
+    expect(DEFAULT_SETTINGS.voiceInput).toBe("off");
+    expect(sanitizeSettings({}).voiceInput).toBe("off");
     for (const voiceInput of VOICE_BUTTONS) expect(sanitizeSettings({ voiceInput }).voiceInput).toBe(voiceInput);
     expect(sanitizeSettings({ voiceInput: true }).voiceInput).toBe("on");
     expect(sanitizeSettings({ voiceInput: false }).voiceInput).toBe("auto");
-    for (const voiceInput of [null, 1, "yes", "ON"]) expect(sanitizeSettings({ voiceInput }).voiceInput).toBe("auto");
+    for (const voiceInput of [null, 1, "yes", "ON"]) expect(sanitizeSettings({ voiceInput }).voiceInput).toBe("off");
   });
 
   it("listens for the browser's language until another is chosen from the list", () => {
@@ -1146,6 +1164,9 @@ describe("microphone button", () => {
   });
 
   it("is asked for in the chat off a phone on auto, everywhere when on and nowhere when off", () => {
+    for (const mode of ["chat", "terminal"] as const) for (const phone of [false, true]) expect(wantsVoiceInput(sanitizeSettings({}).voiceInput, mode, phone)).toBe(false);
+    expect(wantsVoiceInput(sanitizeSettings({ voiceInput: "auto" }).voiceInput, "chat", false)).toBe(true);
+    expect(wantsVoiceInput(sanitizeSettings({ voiceInput: false }).voiceInput, "chat", false)).toBe(true);
     expect(wantsVoiceInput("auto", "chat", false)).toBe(true);
     expect(wantsVoiceInput("auto", "chat", true)).toBe(false);
     expect(wantsVoiceInput("auto", "terminal", false)).toBe(false);

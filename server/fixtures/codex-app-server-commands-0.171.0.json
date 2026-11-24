@@ -1,0 +1,176 @@
+[
+ {
+  "shape": "short",
+  "request": {
+   "id": 0,
+   "method": "item/commandExecution/requestApproval",
+   "params": {
+    "kind": "command",
+    "threadId": "01a20aa4-cceb-7811-aaec-b494b6ee884d",
+    "turnId": "01a20aa4-ddca-78b1-85c8-ff90f4863e93",
+    "itemId": "exec-a9d1182d-0eee-4073-9ab9-15a7e938a224",
+    "startedAtMs": 1795474915457,
+    "environmentId": "local",
+    "reason": "May I run the file’s exact command with escalated permissions to touch am-short-cst-short-99408.flag in the current directory?",
+    "command": "/bin/bash -lc 'touch am-short-cst-short-99408.flag'",
+    "cwd": "/home/user/work",
+    "commandActions": [
+     {
+      "type": "unknown",
+      "command": "touch am-short-cst-short-99408.flag"
+     }
+    ],
+    "proposedExecpolicyAmendment": [
+     "touch",
+     "am-short-cst-short-99408.flag"
+    ],
+    "availableDecisions": [
+     "accept",
+     {
+      "acceptWithExecpolicyAmendment": {
+       "execpolicy_amendment": [
+        "touch",
+        "am-short-cst-short-99408.flag"
+       ]
+      }
+     },
+     "cancel"
+    ]
+   }
+  },
+  "executed": "touch am-short-cst-short-99408.flag",
+  "screen": "  Would you like to run the following command?\n\n  Environment: local\n\n  Reason: May I run the file’s exact command with escalated permissions to touch am-short-cst-short-99408.flag in the current directory?\n\n  $ touch am-short-cst-short-99408.flag\n\n\n› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for commands that start with `touch am-short-cst-short-99408.flag` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n"
+ },
+ {
+  "shape": "long",
+  "request": {
+   "id": 0,
+   "method": "item/commandExecution/requestApproval",
+   "params": {
+    "kind": "command",
+    "threadId": "01a20aa5-1e11-73a2-a19c-7c7e5a35ae6f",
+    "turnId": "01a20aa5-2f4a-72e3-9c17-238364170bda",
+    "itemId": "exec-bc3597af-ded0-4135-b5b3-c242f3c0e991",
+    "startedAtMs": 1795474943146,
+    "environmentId": "local",
+    "reason": "Do you approve running the contents of cmds/cst-long-20976.txt in one Bash call with permission to write its output file?",
+    "command": "/bin/bash -lc \"printf '%s %s %s\\\\n' alpha beta gamma > am-long-cst-long-20976.txt && ls -la /usr/share/doc/bash /usr/share/doc/coreutils /etc/hostname /etc/os-release >> am-long-cst-long-20976.txt && wc -l am-long-cst-long-20976.txt\"",
+    "cwd": "/home/user/work",
+    "commandActions": [
+     {
+      "type": "unknown",
+      "command": "printf '%s %s %s\\n' alpha beta gamma > am-long-cst-long-20976.txt && ls -la /usr/share/doc/bash /usr/share/doc/coreutils /etc/hostname /etc/os-release >> am-long-cst-long-20976.txt && wc -l am-long-cst-long-20976.txt"
+     }
+    ],
+    "proposedExecpolicyAmendment": [
+     "/bin/bash",
+     "-lc",
+     "printf '%s %s %s\\n' alpha beta gamma > am-long-cst-long-20976.txt && ls -la /usr/share/doc/bash /usr/share/doc/coreutils /etc/hostname /etc/os-release >> am-long-cst-long-20976.txt && wc -l am-long-cst-long-20976.txt"
+    ],
+    "availableDecisions": [
+     "accept",
+     {
+      "acceptWithExecpolicyAmendment": {
+       "execpolicy_amendment": [
+        "/bin/bash",
+        "-lc",
+        "printf '%s %s %s\\n' alpha beta gamma > am-long-cst-long-20976.txt && ls -la /usr/share/doc/bash /usr/share/doc/coreutils /etc/hostname /etc/os-release >> am-long-cst-long-20976.txt && wc -l am-long-cst-long-20976.txt"
+       ]
+      }
+     },
+     "cancel"
+    ]
+   }
+  },
+  "executed": "printf '%s %s %s\\n' alpha beta gamma > am-long-cst-long-20976.txt && ls -la /usr/share/doc/bash /usr/share/doc/coreutils /etc/hostname /etc/os-release >> am-long-cst-long-20976.txt && wc -l am-long-cst-long-20976.txt",
+  "screen": "  Would you like to run the following command?\n\n  Environment: local\n\n  Reason: Do you approve running the contents of cmds/cst-long-20976.txt in one Bash call with permission to write its output file?\n\n  $ printf '%s %s %s\\n' alpha beta gamma > am-long-cst-long-20976.txt && ls -la /usr/share/doc/bash /usr/share/doc/coreutils /etc/hostname /etc/os-release >> am-long-cst-long-20976.txt && wc -l\n  am-long-cst-long-20976.txt\n\n\n› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for commands that start with `printf '%s %s %s\\n' alpha beta gamma > am-long-cst-long-20976.txt && ls -la /usr/share/doc/bash /usr/share/doc/coreutils /etc/hostname /etc/\n     os-release >> am-long-cst-long-20976.txt && wc -l am-long-cst-long-20976.txt` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n"
+ },
+ {
+  "shape": "multi",
+  "request": {
+   "id": 0,
+   "method": "item/commandExecution/requestApproval",
+   "params": {
+    "kind": "command",
+    "threadId": "01a20aa5-8481-7832-ac93-9fce3dfe2776",
+    "turnId": "01a20aa5-96c1-70b0-9a82-aa696d1b4e28",
+    "itemId": "exec-be5be123-6b17-4561-9235-f5a5f2b6344d",
+    "startedAtMs": 1795474965317,
+    "environmentId": "local",
+    "reason": "May I run the command file as written to create am-multi-cst-multi-47691.txt and count its lines?",
+    "command": "/bin/bash -c \"cat <<'EOF' > am-multi-cst-multi-47691.txt\nfirst line\nsecond line with  two spaces\n\tthird line after a tab\nEOF\nwc -l am-multi-cst-multi-47691.txt\"",
+    "cwd": "/home/user/work",
+    "commandActions": [
+     {
+      "type": "unknown",
+      "command": "cat <<'EOF' > am-multi-cst-multi-47691.txt\nfirst line\nsecond line with  two spaces\n\tthird line after a tab\nEOF\nwc -l am-multi-cst-multi-47691.txt"
+     }
+    ],
+    "proposedExecpolicyAmendment": [
+     "/bin/bash",
+     "-c",
+     "cat <<'EOF' > am-multi-cst-multi-47691.txt\nfirst line\nsecond line with  two spaces\n\tthird line after a tab\nEOF\nwc -l am-multi-cst-multi-47691.txt"
+    ],
+    "availableDecisions": [
+     "accept",
+     {
+      "acceptWithExecpolicyAmendment": {
+       "execpolicy_amendment": [
+        "/bin/bash",
+        "-c",
+        "cat <<'EOF' > am-multi-cst-multi-47691.txt\nfirst line\nsecond line with  two spaces\n\tthird line after a tab\nEOF\nwc -l am-multi-cst-multi-47691.txt"
+       ]
+      }
+     },
+     "cancel"
+    ]
+   }
+  },
+  "executed": "cat <<'EOF' > am-multi-cst-multi-47691.txt\nfirst line\nsecond line with  two spaces\n\tthird line after a tab\nEOF\nwc -l am-multi-cst-multi-47691.txt",
+  "screen": "  Would you like to run the following command?\n\n  Environment: local\n\n  Reason: May I run the command file as written to create am-multi-cst-multi-47691.txt and count its lines?\n\n  $ cat <<'EOF' > am-multi-cst-multi-47691.txt\n  first line\n  second line with  two spaces\n  third line after a tab\n  EOF\n  wc -l am-multi-cst-multi-47691.txt\n\n\n› 1. Yes, proceed (y)\n  2. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n"
+ },
+ {
+  "shape": "quote",
+  "request": {
+   "id": 0,
+   "method": "item/commandExecution/requestApproval",
+   "params": {
+    "kind": "command",
+    "threadId": "01a20aa5-db8c-7551-8171-2ae1d9cb7308",
+    "turnId": "01a20aa5-edc8-7792-8e00-b20339612939",
+    "itemId": "exec-2f8d2e60-6e31-4a5f-82cb-e9588968c1f1",
+    "startedAtMs": 1795474990905,
+    "environmentId": "local",
+    "reason": "Do you approve running the file’s command to write and display am-quote-cst-quote-70112.txt?",
+    "command": "/bin/bash -c \"echo \\\"안녕하세요, 'Ovis' \\\\\\\"훅\\\\\\\" 시험: \\\\\"'$HOME & <tag> | {a,b} [x] ~ 100% ; 끝 cst-quote-70112\" > am-quote-cst-quote-70112.txt && cat am-quote-cst-quote-70112.txt'",
+    "cwd": "/home/user/work",
+    "commandActions": [
+     {
+      "type": "unknown",
+      "command": "echo \"안녕하세요, 'Ovis' \\\"훅\\\" 시험: \\$HOME & <tag> | {a,b} [x] ~ 100% ; 끝 cst-quote-70112\" > am-quote-cst-quote-70112.txt && cat am-quote-cst-quote-70112.txt"
+     }
+    ],
+    "proposedExecpolicyAmendment": [
+     "/bin/bash",
+     "-c",
+     "echo \"안녕하세요, 'Ovis' \\\"훅\\\" 시험: \\$HOME & <tag> | {a,b} [x] ~ 100% ; 끝 cst-quote-70112\" > am-quote-cst-quote-70112.txt && cat am-quote-cst-quote-70112.txt"
+    ],
+    "availableDecisions": [
+     "accept",
+     {
+      "acceptWithExecpolicyAmendment": {
+       "execpolicy_amendment": [
+        "/bin/bash",
+        "-c",
+        "echo \"안녕하세요, 'Ovis' \\\"훅\\\" 시험: \\$HOME & <tag> | {a,b} [x] ~ 100% ; 끝 cst-quote-70112\" > am-quote-cst-quote-70112.txt && cat am-quote-cst-quote-70112.txt"
+       ]
+      }
+     },
+     "cancel"
+    ]
+   }
+  },
+  "executed": "echo \"안녕하세요, 'Ovis' \\\"훅\\\" 시험: \\$HOME & <tag> | {a,b} [x] ~ 100% ; 끝 cst-quote-70112\" > am-quote-cst-quote-70112.txt && cat am-quote-cst-quote-70112.txt",
+  "screen": "  Would you like to run the following command?\n\n  Environment: local\n\n  Reason: Do you approve running the file’s command to write and display am-quote-cst-quote-70112.txt?\n\n  $ echo \"안녕하세요, 'Ovis' \\\"훅\\\" 시험: \\$HOME & <tag> | {a,b} [x] ~ 100% ; 끝 cst-quote-70112\" > am-quote-cst-quote-70112.txt && cat am-quote-cst-quote-70112.txt\n\n\n› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for commands that start with `echo \"안녕하세요, 'Ovis' \\\"훅\\\" 시험: \\$HOME & <tag> | {a,b} [x] ~ 100% ; 끝 cst-quote-70112\" > am-quote-cst-quote-70112.txt && cat am-\n     quote-cst-quote-70112.txt` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n"
+ }
+]

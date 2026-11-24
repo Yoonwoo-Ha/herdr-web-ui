@@ -1,0 +1,16 @@
+{
+  "name": "link-same-key",
+  "note": "The link opens, and to the key the list commits to for epoch 2, which is the very key of epoch 3 it was opened with. No epoch has the key of the epoch before: a reader takes no key from it.",
+  "link": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "from": {
+      "epoch": 3,
+      "key": "fbaa07cf86f0e913df81ede649b0d8ec6d4e3bc12e1fa989f3beaff313eab2ae"
+    },
+    "commitment": "742ed963201d0e86a1b5812baba42e537a2c4c6335ff2f517c157a9f3c80c6a2",
+    "bytes": "ASsl-hQP1o5iJaP4N65HIA0-A60NSejd8Tkqu3spDP_CvzNkWtW7eeE1f9O3OZjh-1bcU4tsaNeJoUTk8A"
+  },
+  "expect": {
+    "why": "other_key"
+  }
+}

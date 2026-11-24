@@ -1,3 +1,11 @@
+import type { PlanSummary } from "./protocol.ts";
+
+export function planSummary(steps: readonly PlanStep[] | null): PlanSummary | null {
+  if (steps === null || steps.length === 0) return null;
+  const current = steps.find((step) => step.status === "in_progress");
+  return { done: steps.filter((step) => step.status === "completed").length, total: steps.length, current: current ? current.active ?? current.label : null };
+}
+
 /**
  * One step of the plan an agent keeps for its session (GET /api/pane/plan): a task of Claude
  * Code's task list (`TaskCreate`/`TaskUpdate`), Codex's `update_plan` checklist, or OmO's `todo` list.

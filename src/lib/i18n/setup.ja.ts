@@ -87,4 +87,8 @@ export const SETUP_JA: Record<string, string> = {
   "Install another agent ({count})": "別のエージェントをインストール ({count})",
   "None": "なし",
   "A browser the agent can drive: Ovis adds an MCP server at a fixed version when it starts this agent. That browser uses a profile of its own, without your sign-ins, and Ovis does not watch or limit it. Applies from the next start; an agent started from a terminal is not changed.": "エージェントが操作できるブラウザです。Ovis がこのエージェントを起動するときに、バージョンを固定した MCP サーバーを追加します。そのブラウザは専用のプロフィールを使うため、あなたのログインは使われません。Ovis はそのブラウザを監視も制限もしません。次の起動から適用され、ターミナルから直接起動したエージェントは変わりません。",
+  "Let agents call other agents": "ほかのエージェントを呼び出す",
+  "On this PC only. You still answer every permission request.": "この PC のみ。許可のリクエストには常にあなたが答えます。",
+  "Agents they may call": "呼び出せるエージェント",
+  "Not saved: this PC did not answer. Try again.": "保存できませんでした: この PC が応答しませんでした。もう一度お試しください。",
 };

@@ -3,12 +3,12 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from "rea
 
 import { SettingsProvider } from "../lib/settings.ts";
 import { nativeTransport, setTransport } from "../lib/transport.ts";
-import { OwnJoins } from "./OwnJoins.tsx";
+import { OwnJoinCard, OwnJoins } from "./OwnJoins.tsx";
 
 describe("account joins on the PC's own window", () => {
   const descriptors = new Map<string, PropertyDescriptor | undefined>();
   let renderer: ReactTestRenderer | undefined;
-  let joins: { id: string; label: string; asked_at: string; left_ms: number }[];
+  let joins: { id: string; label: string; asked_at: string; left_ms: number; digits?: string }[];
   let listAnswer: number;
   let lists: number;
   let typed: string[];
@@ -87,6 +87,12 @@ describe("account joins on the PC's own window", () => {
     expect(renderer!.root.findAll((node) => node.props.role === "alert")).toHaveLength(0);
   });
 
+  it("leaves the first phone's join, which this PC's window asks to allow beside its digits, out of the typed list", async () => {
+    joins = [{ id: "j0", label: "Android · Chrome", asked_at: new Date().toISOString(), left_ms: 60_000, digits: "482913" }];
+    await mount();
+    expect(renderer!.root.findAll((node) => node.props["data-testid"] === "own-joins")).toHaveLength(0);
+  });
+
   it("sends nothing for a number of another length, and keeps the field open", async () => {
     await mount();
     await press("Type the number");
@@ -136,6 +142,49 @@ describe("account joins on the PC's own window", () => {
     await press("Type the number");
     await submit("111111");
     expect(text(renderer!.root.findByProps({ role: "alert" }))).toBe("That is not the number Galaxy S25 shows. It was not let in; it can ask again.");
+  });
+
+  describe("#16: the card a members join pops on the PC's own window", () => {
+    let decided = 0;
+    const card = async (list = joins): Promise<void> => {
+      decided = 0;
+      await act(async () => { renderer = create(<SettingsProvider><OwnJoinCard joins={list} onDecided={() => { decided++; }} /></SettingsProvider>); });
+    };
+    const cards = () => renderer!.root.findAll((node) => node.props["data-testid"] === "own-join-card" && typeof node.type === "string");
+
+    it("pops by itself with the device's name and a field that never takes the focus", async () => {
+      await card();
+      expect(cards()).toHaveLength(1);
+      expect(text(renderer!.root)).toContain("\"Galaxy S25\" asks to join your account");
+      const field = renderer!.root.findByType("input");
+      expect(field.props.autoFocus).toBeUndefined();
+      await submit("482913");
+      expect(typed).toEqual(["482913"]);
+      expect(decided).toBe(1);
+    });
+
+    it("one wrong number ends that join and says so", async () => {
+      await card();
+      await submit("111111");
+      expect(typed).toEqual(["111111"]);
+      expect(text(renderer!.root.findByProps({ role: "alert" }))).toBe("That is not the number Galaxy S25 shows. It was not let in; it can ask again.");
+      // the PC ended it (joins = []): the card no longer asks for a number
+      await card([]);
+      expect(cards()).toHaveLength(0);
+    });
+
+    it("asks for one join at a time, leaves a first join to the tap prompt, and Not now only hides it here", async () => {
+      const both = [{ id: "j0", label: "Android", asked_at: new Date().toISOString(), left_ms: 60_000, digits: "123456" }, ...joins, { id: "j2", label: "iPad", asked_at: new Date().toISOString(), left_ms: 60_000 }];
+      await card(both);
+      expect(renderer!.root.findAllByType("form")).toHaveLength(1);
+      expect(text(renderer!.root)).toContain("Galaxy S25");
+      expect(text(renderer!.root)).not.toContain("iPad");
+      await press("Not now");
+      expect(text(renderer!.root)).toContain("iPad");
+      expect(typed).toEqual([]);
+      await press("Not now");
+      expect(cards()).toHaveLength(0);
+    });
   });
 
   it.each([403, 404, 405])("shows nothing and takes %i from a PC without the route as final, with no warning", async (status) => {

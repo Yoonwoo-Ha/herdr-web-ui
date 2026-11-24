@@ -84,6 +84,30 @@ describe("CLIProxyAPI v8", () => {
     ]);
   });
 
+  it("lists no account turned off in the Hub, hidden or not, until it is turned on again", async () => {
+    await configure();
+    const keys = async () => (await service.report()).map((entry) => entry.key);
+    const reads = () => fake.calls.filter((entry) => entry.path === "/requests/api-call").map((entry) => (entry.body as { auth_index: string }).auth_index);
+    expect(await keys()).toEqual(["claude:cliproxy:claude-a.json", "codex:cliproxy:codex-b.json"]);
+    // hidden, its last row is kept; turned off, not even that is listed
+    const hidden = new Set(["claude:cliproxy:claude-a.json"]);
+    service.skipAccounts(() => hidden);
+    service.hiddenChanged();
+    service.invalidate();
+    expect(await keys()).toEqual(["claude:cliproxy:claude-a.json", "codex:cliproxy:codex-b.json"]);
+    fake.files[0]!.disabled = true;
+    service.invalidate();
+    expect(await keys()).toEqual(["codex:cliproxy:codex-b.json"]);
+    hidden.clear();
+    service.hiddenChanged();
+    service.invalidate();
+    expect(await keys()).toEqual(["codex:cliproxy:codex-b.json"]);
+    fake.files[0]!.disabled = false;
+    service.invalidate();
+    expect(await keys()).toEqual(["claude:cliproxy:claude-a.json", "codex:cliproxy:codex-b.json"]);
+    expect(reads()).toEqual(["a", "b", "b", "b", "b", "a", "b"]);
+  });
+
   it("asks the hub nothing for hidden accounts and keeps their last rows, until one is shown again", async () => {
     await configure();
     const ctx: UsageContext = { home: dir, env: {}, platform: "linux", fetch, now: Date.now, keychain: async () => ({ status: "missing" }), run: async () => null, has: () => true };

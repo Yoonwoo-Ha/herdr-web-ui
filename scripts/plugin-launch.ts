@@ -196,7 +196,7 @@ export async function main(args: string[], { home = join(root, ".ovis", "server"
     const result = await installServer({
       // the release's binary is installed only for the sources it was built from (one installed already that still
       // verifies runs as it is): a branch or main between releases builds its own
-      home, version, fetchFile, sources,
+      home, version, fetchFile, sources, repairKeeper: command === "install",
       // the Rust PTY host comes with it, the one the signed manifest names (scripts/server-install.ts)
     });
     if (result.installed || command === "install") console.error(`Ovis: ${result.message}`);

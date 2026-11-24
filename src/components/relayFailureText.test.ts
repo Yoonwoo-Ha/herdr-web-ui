@@ -12,10 +12,11 @@ describe.each(["en", "ko", "ja", "zh"] as const)("a PC that could not be opened 
     expect(said).toEqual([[t("Machine offline"), true], [t("Could not reach this machine"), true], [t("Could not reach this machine"), true]]);
   });
 
+  // the relay says only that the PC is not there: its relay turned off looks the same as the PC turned off, so both are named
   it("explains each cause by its own sentence: only a relay this device could not reach sends the person to its network", () => {
     const copy = (failure: "pc-offline" | "pc-unresponsive" | "relay-unreachable" | "relay-refused") => relayFailureText(t, failure, "pc-a");
     expect((["pc-offline", "pc-unresponsive", "relay-unreachable", "relay-refused"] as const).map((failure) => [copy(failure).title, copy(failure).copy])).toEqual([
-      [t("Machine offline"), t("{name} is off, has no network, or Ovis is not running on it. Start it, or wait for it to come back, then try again.", { name: "pc-a" })],
+      [t("Machine offline"), t("{name}'s Ovis relay or power is off, it has no network, or Ovis is not running on it. Turn it on, or wait for it to come back, then try again.", { name: "pc-a" })],
       [t("Could not reach this machine"), t("{name} answered but did not finish connecting in time. It may be busy or restarting. Try again; if it keeps happening, restart Ovis on {name}.", { name: "pc-a" })],
       [t("Could not reach this machine"), t("This device could not reach the relay. Check this device's network, then try again.")],
       [t("Could not reach this machine"), t("The relay turned this device away. Wait a minute, then try again.")],

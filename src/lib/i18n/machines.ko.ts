@@ -1,12 +1,11 @@
 /**
  * Korean for the keys only the machines files use:
- * components/MachineSidebar.tsx (with STATE_WORD), components/MachineDialog.tsx,
+ * components/MachineSidebar.tsx (with STATE_WORD), components/MachineHeader.tsx, components/MachineDialog.tsx,
  * lib/bridgeProgress.ts (with STAGES), components/MachineStats.tsx, lib/systemReport.ts.
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const MACHINES_KO: Record<string, string> = {
-  "1 agent": "에이전트 1개",
-  "{n} agents": "에이전트 {n}개",
+  "Inbox": "인박스",
   "{where} refused the SSH connection: the PC may be off, or nothing answers on that port.": "{where}이(가) SSH 연결을 거부했습니다. PC가 꺼져 있거나 그 포트에서 응답하는 것이 없을 수 있습니다.",
   "{where} is not a name this web server can look up: check the address.": "{where}은(는) 이 웹 서버가 찾을 수 없는 이름입니다. 주소를 확인하세요.",
   "{where} did not answer in time: check that the PC is on and reachable.": "{where}이(가) 제때 응답하지 않았습니다. PC가 켜져 있고 연결 가능한지 확인하세요.",
@@ -32,7 +31,6 @@ export const MACHINES_KO: Record<string, string> = {
   "Review startup options": "시작 옵션 검토",
   "{name} is waiting for Windows sign-in{others}.": "{name}에서 Windows 로그인을 기다리고 있습니다{others}.",
   "Start without Windows sign-in": "Windows 로그인 없이 시작",
-  "Starting without Windows sign-in…": "Windows 로그인 없이 시작 중…",
   "Signing out of Windows ends herdr and its panes; lock the PC instead.": "Windows에서 로그아웃하면 herdr와 모든 패인이 종료됩니다. 대신 PC를 잠그세요.",
   "Starting without Windows sign-in can break Codex sandbox commands, and desktop-control tools may be unavailable. This choice applies to one start.": "Windows 로그인 없이 시작하면 Codex 샌드박스 명령이 실패할 수 있고 데스크톱 제어 도구를 사용하지 못할 수 있습니다. 이 선택은 한 번의 시작에만 적용됩니다.",
   "Expand {name}": "{name} 펼치기",
@@ -46,7 +44,6 @@ export const MACHINES_KO: Record<string, string> = {
   "Manage PC": "PC 관리",
   "PC name": "PC 이름",
   "Rename…": "이름 바꾸기…",
-  "Disconnect": "연결 끊기",
   "Bridge connection conflict": "브리지 연결 충돌",
   "Update the apps connected to this PC to the same version, or disconnect the other app, then reconnect here. Sessions keep running.": "이 PC에 연결된 앱들을 같은 버전으로 업데이트하거나 다른 앱의 연결을 해제한 뒤 여기서 다시 연결하세요. 세션은 계속 실행됩니다.",
   "{name} has a bridge connection conflict{others}.": "{name}의 브리지 연결이 충돌합니다{others}.",
@@ -133,6 +130,7 @@ export const MACHINES_KO: Record<string, string> = {
   "{name}'s own Ovis needs an update on that PC{others}.": "{name}{others}의 Ovis는 그 PC에서 업데이트해야 합니다.",
   "Updating {name}'s own Ovis failed{others}.": "{name}{others}의 Ovis 업데이트에 실패했습니다.",
   "Update this PC's Ovis and connect": "이 PC의 Ovis를 업데이트하고 연결",
+  "Update this PC's Ovis to the preview and connect": "이 PC의 Ovis를 미리보기 버전으로 업데이트하고 연결",
   "Updating {name}'s own Ovis": "{name}의 Ovis 업데이트 중",
   "That PC's own updater installs it there. Existing herdr sessions keep running.": "그 PC의 자체 업데이터가 그곳에 설치합니다. 기존 herdr 세션은 계속 돕니다.",
   "CPU": "CPU",
@@ -154,4 +152,21 @@ export const MACHINES_KO: Record<string, string> = {
   "Disk {value}": "디스크 {value}",
   "PC load in the status bar": "상태 표시줄에 PC 부하 표시",
   "The selected PC's CPU, memory and fullest disk in the status bar, on this device only.": "선택한 PC의 CPU, 메모리, 가장 찬 디스크를 상태 표시줄에 보여 줍니다. 이 기기에서만 적용됩니다.",
+  "Add it to my account": "내 계정에 추가",
+  "Adding it to your account…": "계정에 추가하는 중…",
+  "Added to your account.": "계정에 추가했습니다.",
+  "It is already in your account.": "이미 계정에 있습니다.",
+  "Update Ovis on that PC to check its relay.": "그 PC의 Ovis를 업데이트해야 릴레이 상태를 알 수 있습니다.",
+  "Connect again to check its relay.": "릴레이 상태는 다시 연결해 확인하세요.",
+  "Its relay is turned off on that PC.": "그 PC에서 릴레이가 꺼져 있습니다.",
+  "It may have been added. Connect again to check.": "추가됐을 수 있습니다. 다시 연결해 확인하세요.",
+  "That address now reaches another PC. Nothing was added.": "그 주소가 이제 다른 PC로 연결됩니다. 아무것도 추가하지 않았습니다.",
+  "It is in your account, but its relay is not online yet, so your devices cannot open it. Run ovis status on that PC to see why.": "계정에는 들어 있지만 릴레이가 아직 연결되지 않아 기기에서 열 수 없습니다. 그 PC에서 ovis status로 이유를 확인하세요.",
+  "That PC is in another account.": "그 PC는 다른 계정에 있습니다.",
+  "Add it with the number on the server's Ovis page.": "서버의 Ovis 페이지에 표시된 번호로 추가하세요.",
+  "Sign in again on this PC, then add it again.": "이 PC에서 다시 로그인한 뒤 다시 추가하세요.",
+  "It was not added to your account. Try again.": "계정에 추가하지 못했습니다. 다시 시도하세요.",
+  "Ovis was not installed on that PC": "그 PC에 Ovis를 설치하지 못했습니다",
+  "Installing Ovis on that PC…": "그 PC에 Ovis를 설치하는 중…",
+  "Install Ovis there": "그 PC에 Ovis 설치",
 };

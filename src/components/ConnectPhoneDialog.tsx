@@ -1,29 +1,31 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type Dispatch, type FormEvent, type ReactNode, type SetStateAction } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type FormEvent, type MutableRefObject, type ReactNode, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
-import { Check, RefreshCw, X } from "lucide-react";
+import { Check, RefreshCw, Smartphone, X } from "lucide-react";
 
 import "./ConnectPhoneDialog.css";
 import "./DevicesPanel.css";
 
 import { ADDRESS_PC_FAILURES, type AddressPcFailure, type Machine } from "../../shared/machines.ts";
 import type { AddPcPreset } from "../lib/actions.ts";
-import { indexedAccountStore, type AccountSession } from "../lib/account/store.ts";
+import { indexedAccountStore, type AccountProvider, type AccountSession } from "../lib/account/store.ts";
 import { pcAccountStatus, type PcAccountStatus } from "../lib/account/join.ts";
 import { listOfferedPc } from "../lib/account/addThisPc.ts";
 import { decodeOffer } from "../../shared/relay-offer.ts";
 import { AccountService } from "../lib/account/service.ts";
+import type { AddConnectionTab } from "../lib/addConnectionRequest.ts";
 import { ACCOUNT_QR_ALONE_MS, ACCOUNT_QR_POLL_MS, ACCOUNT_QR_WATCH_EVENT, accountQrFindings, accountQrNoticeWaiting, accountQrPending, addedBy, holdAccountQrNotice, resetAccountQrWatch, stopAccountQrWatch, takeAccountQrNotice, watchEndedAccountQr, type AccountQrBaseline, type AccountQrStray } from "../lib/accountQrWatch.ts";
-import { addAddressPc, ApiError, endPairing, fetchDevices, findSshCandidates, findTailnetPcs, requestRelayOffer, revokeAllDevices, revokeDevice, startPairing, type RelayOffer, type SshCandidate } from "../lib/api.ts";
+import { addAddressPc, ApiError, endPairing, fetchDevices, fetchRemoteAccess, findSshCandidates, findTailnetPcs, openTailscaleApp, requestRelayOffer, revokeAllDevices, revokeDevice, serveOnTailscale, startPairing, type RelayOffer, type SshCandidate } from "../lib/api.ts";
 import { apiFetch } from "../lib/api-request-id.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { useT } from "../lib/i18n.ts";
-import type { PhonePlan } from "../lib/phone.ts";
+import { tailscalePlan, type PhonePlan } from "../lib/phone.ts";
+import { reachablePcs, reachableState, savedAt, type ReachableFacts, type ReachablePc, type ReachableState } from "../lib/reachablePcs.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { announcePairingCode, announceQrCodeEnded, DEVICES_CHANGED_EVENT, inRelayShell, PAIRING_CODE_EVENT, tellOtherWindowsQrCodeEnded, type AnnouncedCode, type RelayState } from "../lib/useRelay.ts";
-import type { PairedDevice, PairingCode, PortalStatus } from "../../shared/protocol.ts";
+import type { PairedDevice, PairingCode, PortalStatus, RemoteAccess } from "../../shared/protocol.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { PROVIDER_NAMES } from "./AccountPcs.tsx";
 import { AddThisPc, useSignInAgainHere, type SignedInHere } from "./AccountSection.tsx";
@@ -31,28 +33,28 @@ import { PhonePanel, QrReveal, ShareLink } from "./PhonePanel.tsx";
 import { QrCode } from "./QrCode.tsx";
 import { failureText, openOwnOffer, RelayPairing, statusText } from "./RelayPanel.tsx";
 import { RelaySignIn } from "./RelaySignIn.tsx";
-import { RelayAccountPcs } from "./RelayAccountPcs.tsx";
+import { atDots } from "./RelayAddPc.tsx";
 import { SettingsQuery, Toggle } from "./SettingsControls.tsx";
 import { PortalPanel } from "./PortalPanel.tsx";
 import { usePortal } from "../lib/portal.ts";
 import { CompactPair } from "./CompactPair.tsx";
 import { ExternalLink } from "../lib/externalLink.ts";
 
-/** The ways to add a PC are the tabs (the relay, Tailscale, a typed address); pairing a phone sits apart, after them. */
-export type ConnectTab = "relay" | "tailscale" | "direct" | "devices";
-
 /**
- * Phones and devices pairs a device one of two ways: the Ovis relay (from anywhere, through the account), or without
- * signing in, at an address the phone can open itself (the same Wi-Fi, Tailscale, Portal).
+ * The ways to connect are the tabs (the relay, Tailscale, a typed address): each adds a PC its own way, and under that
+ * shows the QR code a phone scans to connect that same way (PhoneScan).
  */
-export type DevicesWay = "relay" | "local";
+export type ConnectTab = AddConnectionTab;
 
 const TAILSCALE_DOWNLOAD = "https://tailscale.com/download";
+/** Tailscale's download page for the platform this PC's server reports (RemoteAccess.platform) */
+const TAILSCALE_DOWNLOADS: Readonly<Record<string, string>> = { darwin: `${TAILSCALE_DOWNLOAD}/mac`, win32: `${TAILSCALE_DOWNLOAD}/windows`, linux: `${TAILSCALE_DOWNLOAD}/linux` };
+/** how often an open Tailscale step reads this PC's Tailscale again, so it moves on by itself once Tailscale is on */
+export const TAILSCALE_POLL_MS = 3000;
+/** the command that lets this Linux user run `tailscale serve` without root, shown only after Tailscale refused it for want of it */
+const TAILSCALE_OPERATOR = "sudo tailscale set --operator=$USER";
 
-/** the guide's way to open a PC from outside: Portal, Cloudflare Tunnel or a reverse proxy */
-const OUTSIDE_HELP = "https://github.com/devswha/ovis/blob/main/docs/guide.md#behind-a-reverse-proxy";
-
-/** an address the direct tab takes for another PC's Ovis rather than SSH: any http(s) scheme, as a browser reads `https:host` too */
+/** an address the SSH tab takes for another PC's Ovis rather than SSH: any http(s) scheme, as a browser reads `https:host` too */
 const OVIS_ADDRESS = /^https?:/i;
 
 const PHONE_QUERY = "(pointer: coarse), (max-width: 768px)";
@@ -74,39 +76,68 @@ export const relayOffered = (relay: RelayState): boolean => !relay.unsupported &
  */
 export const relayPending = (relay: RelayState): boolean => !relay.unsupported && relay.status === null && !relay.readFailed && !inRelayShell();
 
+/**
+ * The QR code of a PC in an account: this PC's page in the hosted app (the Ovis app opens it), which signs in with
+ * `provider` (this page's own sign-in, when it is that account's) and then joins the PC as a device of the account.
+ * No code, key or token: whoever scans it still needs that account, and the PC's approval.
+ */
+export function signInLink(app: string, serverId: string, provider: AccountProvider | null): string {
+  return `${new URL(app).origin}/s/${serverId}/${provider === null ? "" : `#sign-in=${provider}`}`;
+}
+
 const relayOn = (relay: RelayState): boolean => relay.status !== null && relay.status.blocked === null && relay.status.phase !== "off";
 
 /**
- * The relay's tab is the owner's on a direct page of a PC that has the relay; Tailscale and a typed address go over
- * SSH, the owner's on a page of this PC (not the hosted shell, not a device that only watches).
+ * The relay's tab is the owner's on a direct page of a PC that has the relay; Tailscale and SSH (an SSH login, or another
+ * PC's Ovis by its https address) add a PC from here, the owner's on a page of this PC (not the hosted shell, not a
+ * device that only watches).
  */
 export function connectTabs({ sshOffered, relay, readOnly }: { sshOffered: boolean; relay: RelayState; readOnly: boolean }): ConnectTab[] {
-  return [...(relayOffered(relay) && !readOnly ? ["relay" as const] : []), ...(sshOffered ? ["tailscale" as const, "direct" as const] : []), "devices"];
+  return [...(relayOffered(relay) && !readOnly ? ["relay" as const] : []), ...(sshOffered ? ["tailscale" as const, "ssh" as const] : [])];
 }
 
 /**
- * The tab the dialog shows until one is picked: a phone mostly pairs itself (Phones and devices, which opens on the relay
- * where the window has it); a PC's window the relay, but only where the page has the Ovis account. Without it the relay
- * tab is the relay's own pairing, so the window opens on the first way that adds a PC instead.
+ * The tab the dialog shows until one is picked: the relay, but only where the page has the Ovis account. Without it the
+ * relay tab is the relay's own pairing, so the window opens on the first way that adds a PC instead. Null with no tab:
+ * the window then shows what a phone scans alone (a phone's page, the hosted shell, a device that only watches).
  */
-export function openingTab({ tabs, phone, noticeWaiting, hasAccount }: { tabs: readonly ConnectTab[]; phone: boolean; noticeWaiting: boolean; hasAccount: boolean }): ConnectTab {
+export function openingTab({ tabs, noticeWaiting, hasAccount, asked = null }: { tabs: readonly ConnectTab[]; noticeWaiting: boolean; hasAccount: boolean; asked?: ConnectTab | null }): ConnectTab | null {
+  // the setup checklist's Connect your phone asks for the relay, which needs no Tailscale
+  if (asked !== null && tabs.includes(asked)) return asked;
   if (noticeWaiting && hasAccount && tabs.includes("relay")) return "relay";
-  if (phone && tabs.includes("devices")) return "devices";
-  return tabs.find((way) => way !== "relay" || hasAccount) ?? tabs[0]!;
+  return tabs.find((way) => way !== "relay" || hasAccount) ?? tabs[0] ?? null;
 }
 
 export interface RelayAccount {
   service: string;
   onOpen: () => void;
-  onSignedIn: () => void;
+  /** `home`: the sign-in is to the account this PC is already in, with its relay on, so nothing is left to do here
+   * (closedBySignIn); with the relay off the tab stays, with the relay's switch */
+  onSignedIn: (home: boolean) => void;
   /** this PC's step-2 switch, as Settings reads it: only then does Add this PC try the one press */
   opensAll?: () => boolean;
 }
 
+/**
+ * What a sign-in on the relay tab closes. One with nothing left to do here (`home`) closes the sheet, and Settings stays
+ * open on the page that now shows the account and its PCs; a sheet the setup checklist's Connect your phone opened
+ * (`asked`) goes on to the main screen, where that step began.
+ */
+export function closedBySignIn(home: boolean, asked: ConnectTab | null): "nothing" | "sheet" | "settings" {
+  if (!home) return "nothing";
+  return asked === null ? "sheet" : "settings";
+}
+
 export interface ConnectPhoneDialogProps {
+  /** the tab it was asked to open on (the setup checklist's Connect your phone: the relay), until another is picked */
+  asked?: ConnectTab | null;
   pcAddFromAccount?: PcAccountStatus["pcAddFromAccount"];
   onAccountSetup?: () => void;
   plan: PhonePlan;
+  /** what Tailscale alone offers a phone (tailscalePlan), for the Tailscale tab; `plan` when omitted */
+  tailscale?: PhonePlan;
+  /** the platform this PC's server reports (RemoteAccess.platform): which Tailscale download and app this PC takes */
+  platform?: string | undefined;
   pairUrl: string | null;
   relay: RelayState;
   /** a watching device or a Portal visitor: it reads, and starts nothing */
@@ -117,6 +148,8 @@ export interface ConnectPhoneDialogProps {
   canPair: boolean;
   signedIn: boolean;
   accountId?: string | null;
+  /** how this page is signed in: the relay tab's QR code for a PC in this account opens that sign-in on the phone */
+  provider?: AccountProvider | null;
   /**
    * Signed in, with this PC in that account and its relay on: a new device joins by signing in to the
    * same account, and a device already in it approves it once by picking the matching number
@@ -128,6 +161,13 @@ export interface ConnectPhoneDialogProps {
   machines: readonly Machine[];
   onConnectMachine: (machine: Machine) => void;
   /**
+   * Add PC over SSH adds a PC to the account here (this PC's own window, signed in to the account this PC is in:
+   * sshAddOffered): the relay tab then lists the PCs this PC can reach, each with Add (ReachablePcList)
+   */
+  addsOverSsh?: boolean;
+  /** the relay IDs of the account's PCs, so the relay tab's list says which are in it already */
+  accountPcs?: readonly string[];
+  /**
    * The relay tab's QR code may put this PC in an account, and the dialog then says which and by which device, and asks
    * about a device nobody vouched for: while that can still come, or is on screen, a device that pairs does not close
    * the dialog (`held`).
@@ -137,7 +177,7 @@ export interface ConnectPhoneDialogProps {
   onClose: () => void;
 }
 
-export function ConnectPhoneDialog({ plan, pairUrl, relay, readOnly, closesGate, canPair, signedIn, accountId = null, joinBySignIn, account, onAddPc, machines, onConnectMachine, pcAddFromAccount, onAccountSetup, onPairingHeld, onRevokedAll, onClose }: ConnectPhoneDialogProps) {
+export function ConnectPhoneDialog({ asked = null, plan: givenPlan, tailscale: givenTailscale = givenPlan, platform: givenPlatform, pairUrl, relay, readOnly, closesGate, canPair, signedIn, accountId = null, provider = null, joinBySignIn, account, onAddPc, machines, onConnectMachine, addsOverSsh = false, accountPcs, pcAddFromAccount, onAccountSetup, onPairingHeld, onRevokedAll, onClose }: ConnectPhoneDialogProps) {
   const t = useT();
   const id = useId();
   const surface = useFocusTrap<HTMLDivElement>(true);
@@ -157,32 +197,42 @@ export function ConnectPhoneDialog({ plan, pairUrl, relay, readOnly, closesGate,
   }, [onClose, surface]);
 
   const phone = useMediaQuery(PHONE_QUERY);
+  // what this PC's Tailscale says now, read again while a Tailscale step is up (useTailscaleWatch) or after a serve
+  const [fresh, setFresh] = useState<RemoteAccess | null>(null);
+  const plan = fresh !== null && tailscaleStepKind(givenPlan) ? tailscalePlan(fresh) : givenPlan;
+  const tailscale = fresh !== null && tailscaleStepKind(givenTailscale) ? tailscalePlan(fresh) : givenTailscale;
+  const platform = fresh?.platform ?? givenPlatform;
   const tabs = connectTabs({ sshOffered: onAddPc !== null && !readOnly && !inRelayShell(), relay, readOnly });
   const hasAccount = account !== null;
   // until a tab is picked, the opening one follows the tabs as they arrive (the relay's state comes a moment later)
-  const [chosen, setChosen] = useState<ConnectTab | null>(() => accountQrNoticeWaiting() && hasAccount ? "relay" : null);
+  const [chosen, setChosen] = useState<ConnectTab | null>(() => asked ?? (accountQrNoticeWaiting() && hasAccount ? "relay" : null));
   const found = useFoundPcs(machines, tabs.includes("tailscale"));
+  const inAccount = useMemo(() => new Set(accountPcs), [accountPcs]);
   useEffect(() => {
     if (!hasAccount) return;
     const onWatch = (event: Event) => { if ((event as CustomEvent<{ notice: boolean }>).detail.notice) setChosen("relay"); };
     window.addEventListener(ACCOUNT_QR_WATCH_EVENT, onWatch);
     return () => window.removeEventListener(ACCOUNT_QR_WATCH_EVENT, onWatch);
   }, [hasAccount]);
-  const tab = chosen !== null && tabs.includes(chosen) ? chosen : openingTab({ tabs, phone, noticeWaiting: false, hasAccount });
+  const tab = chosen !== null && tabs.includes(chosen) ? chosen : openingTab({ tabs, noticeWaiting: false, hasAccount, asked });
+  // until the relay's state comes, which tab opens is not known: nothing is mounted, so no pairing code is made unasked
+  const waiting = !readOnly && relayPending(relay);
   const opened = useRef(new Set<ConnectTab>());
-  opened.current.add(tab);
-  const label: Record<ConnectTab, string> = { relay: t("Ovis relay"), tailscale: "Tailscale", direct: t("Direct"), devices: t("Phones and devices") };
-  const ways = tabs.filter((way) => way !== "devices");
+  if (tab !== null && !waiting) opened.current.add(tab);
+  const label: Record<ConnectTab, string> = { relay: t("Ovis relay"), tailscale: "Tailscale", ssh: "SSH" };
   const { status: portal } = usePortal();
   const local = localWays({ plan, readOnly, canPair, portal });
-  const relayWay = tabs.includes("relay");
-  // until the relay's state comes, which way opens is not known: nothing starts, so no pairing code is made unasked
-  const relayPending = !readOnly && !inRelayShell() && !relay.unsupported && relay.status === null;
-  const [devicesChosen, setDevicesChosen] = useState<DevicesWay | null>(null);
-  const devicesWay = devicesWayOf({ relay: relayWay, local: local.any, chosen: devicesChosen });
-  // one relay panel serves both the relay's tab and Phones and devices' relay way, so it never runs twice
-  const relayShown = tab === "relay" || (tab === "devices" && devicesWay === "relay");
-  if (relayShown) opened.current.add("relay");
+  const tailnet = localWays({ plan: tailscale, readOnly, canPair, portal: null });
+  // one pairing code for both tabs that show one: the PC keeps one pending code, so a second would end the first
+  const sharedCode = useRef<SharedCode>({ code: null, asking: false, waiting: new Set(), wanted: false, views: new Set() });
+  // the six-digit code a device types where it opens this PC's Ovis: under the relay tab, else under SSH. Where the
+  // relay tab's top offers it beside the account QR code (AccountQr `pairHere`: online, this PC's relay ID known), that
+  // is its one place
+  const codeTab: ConnectTab = tabs.includes("relay") ? "relay" : "ssh";
+  const codeOnTop = addsOverSsh && tabs.includes("tailscale") && relay.status?.phase === "online" && relay.status.blocked === null
+    && machines.some((machine) => machine.kind === "local" && machine.server_id !== undefined);
+  const pairByCode = local.code && <PairByCode shared={sharedCode} phone={phone} />;
+  useTailscaleWatch(!waiting && ((tab === "tailscale" && tailnet.tailscaleStep !== null) || (tab === null && local.tailscaleStep !== null)), setFresh);
 
   return createPortal(
     <SettingsQuery.Provider value={[]}>
@@ -192,36 +242,43 @@ export function ConnectPhoneDialog({ plan, pairUrl, relay, readOnly, closesGate,
           <h1 className="modal-title" id={`${id}-title`} tabIndex={-1}>{t("Add a connection")}</h1>
           <button type="button" className="icon-button" aria-label={t("Close")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
-        <div className="modal-body connect-phone-body">
-          {ways.length > 0 && (
-            <div className="connect-ways">
-              <div className="segmented connect-tabs" role="group" aria-label={t("How to connect")}>
-                {ways.map((way) => <button key={way} type="button" aria-pressed={tab === way} data-tab={way} onClick={() => setChosen(way)}>{label[way]}</button>)}
-              </div>
-              <button type="button" className="btn btn-ghost connect-phone-way" aria-pressed={tab === "devices"} data-tab="devices" onClick={() => setChosen("devices")}>{label.devices}</button>
+        {/* the tabs stay put above the body, which scrolls: a long tab (many PCs) never hides its phone part below the window */}
+        {tabs.length > 0 && (
+          <div className="connect-tabs-bar">
+            <div className="segmented connect-tabs" role="group" aria-label={t("How to connect")}>
+              {tabs.map((way) => <button key={way} type="button" aria-pressed={tab === way} data-tab={way} onClick={() => setChosen(way)}>{label[way]}</button>)}
             </div>
-          )}
+          </div>
+        )}
+        <div className="modal-body connect-phone-body">
+          {waiting && <p className="settings-hint" role="status" data-testid="connect-pending">{t("Loading…")}</p>}
+          {tab === null && !waiting && <LocalWay plan={plan} pairUrl={pairUrl} readOnly={readOnly} local={local} phone={phone} platform={platform} onAccess={setFresh} />}
           {opened.current.has("tailscale") && tabs.includes("tailscale") && (
             <div className="connect-tab" data-tab-panel="tailscale" hidden={tab !== "tailscale"}>
-              <TailscaleTab found={found} onAddPc={onAddPc!} />
+              {/* the phone's QR code and code first: the list of tailnet PCs can be long */}
+              <PhoneScan>
+                {tailnet.address !== null ? (
+                  tailnet.code ? <CodeRoute pairUrl={tailnet.address} startAtOnce={tab === "tailscale"} shared={sharedCode} phone={phone} compact /> : <PhonePanel url={tailnet.address} phone={phone} />
+                ) : tailnet.tailscaleStep !== null ? <TailscaleStep step={tailnet.tailscaleStep} platform={platform} onAccess={setFresh} /> : null}
+                {(tailscale.kind === "served" || tailnet.tailscaleStep !== null) && <p className="settings-hint">{t("The phone needs the Tailscale app turned on too.")}</p>}
+              </PhoneScan>
+              <TailscaleTab found={found} onAddPc={onAddPc!} onConnectMachine={onConnectMachine} />
             </div>
           )}
-          {opened.current.has("direct") && tabs.includes("direct") && (
-            <div className="connect-tab" data-tab-panel="direct" hidden={tab !== "direct"}>
-              <DirectTab found={found} machines={machines} onAddPc={onAddPc!} onConnectMachine={onConnectMachine} />
-            </div>
-          )}
-          {tab === "devices" && relayPending && <p className="settings-hint" role="status" data-testid="connect-devices-pending">{t("Loading…")}</p>}
-          {opened.current.has("devices") && !relayPending && (
-            <div className="connect-tab" data-tab-panel="devices" hidden={tab !== "devices"}>
-              <DevicesTab plan={plan} pairUrl={pairUrl} readOnly={readOnly} local={local} relay={relayWay} way={devicesWay} onWay={setDevicesChosen} phone={phone} shown={tab === "devices"} />
+          {opened.current.has("ssh") && tabs.includes("ssh") && (
+            <div className="connect-tab" data-tab-panel="ssh" hidden={tab !== "ssh"}>
+              <SshTab found={found} machines={machines} onAddPc={onAddPc!} onConnectMachine={onConnectMachine} />
+              {codeTab === "ssh" && pairByCode}
+              {portal?.supported === true && <PortalRow readOnly={readOnly} status={portal} />}
             </div>
           )}
           {opened.current.has("relay") && tabs.includes("relay") && (
-            <div className="connect-tab" data-tab-panel="relay" hidden={!relayShown}>
-              <RelayTab relay={relay} closesGate={closesGate} signedIn={signedIn} accountId={accountId} joinBySignIn={joinBySignIn} account={account} phone={phone}
+            <div className="connect-tab" data-tab-panel="relay" hidden={tab !== "relay"}>
+              <RelayTab relay={relay} closesGate={closesGate} signedIn={signedIn} accountId={accountId} provider={provider} joinBySignIn={joinBySignIn} account={account} phone={phone}
                 pcAddFromAccount={pcAddFromAccount} onAccountSetup={onAccountSetup}
-                active={relayShown} onPairingHeld={onPairingHeld} onRevokedAll={onRevokedAll} machines={machines} onConnectMachine={onConnectMachine} />
+                active={tab === "relay"} onPairingHeld={onPairingHeld} onRevokedAll={onRevokedAll} machines={machines} onConnectMachine={onConnectMachine} addsOverSsh={addsOverSsh && tabs.includes("tailscale")} pairShared={sharedCode} />
+              {codeTab === "relay" && !codeOnTop && pairByCode}
+              {addsOverSsh && tabs.includes("tailscale") && <ReachablePcList found={found} accountPcs={inAccount} onAddPc={onAddPc!} />}
             </div>
           )}
         </div>
@@ -232,11 +289,8 @@ export function ConnectPhoneDialog({ plan, pairUrl, relay, readOnly, closesGate,
   );
 }
 
-/** What the PCs this PC could reach over SSH say for one of them: added already, its Ovis too old, still being asked, or open to add. */
-type FoundPcState = "added" | "outdated" | "waiting" | "open";
-
 /**
- * The PCs this PC's server could reach over SSH (its ssh config, its Tailscale login), for the Tailscale and direct
+ * The PCs this PC's server could reach over SSH (its ssh config, its Tailscale login), for the Tailscale and SSH
  * tabs. A window the server will not tell (owner_only, read_only) gets an empty list that says nothing of the PC
  * (`unread`); one refused as owner_only is told where the list can be seen, so an empty tab is not taken for a PC that
  * knows none.
@@ -252,14 +306,15 @@ export function useFoundPcs(machines: readonly Machine[], enabled = true) {
   // the server keeps its list from this window (owner_only): one line above the field says where it can be seen
   const [withheld, setWithheld] = useState(false);
   const [reads, setReads] = useState(0);
-  const [outdated, setOutdated] = useState<ReadonlySet<string>>(new Set());
+  // what each PC of the Tailscale login says of itself, by its MagicDNS name: its Ovis's age and its relay ID
+  const [tailnet, setTailnet] = useState<ReachableFacts["tailnet"]["pcs"]>(new Map());
   const [tailnetRead, setTailnetRead] = useState(false);
   useEffect(() => {
     if (!enabled) return;
     let live = true;
     setTailnetRead(false);
     findTailnetPcs().then(({ pcs }) => {
-      if (live) setOutdated(new Set(pcs.filter(pc => pc.outdated).map(pc => new URL(pc.url).hostname.toLowerCase())));
+      if (live) setTailnet(new Map(pcs.map((pc) => [new URL(pc.url).hostname.toLowerCase(), { outdated: pc.outdated, server_id: pc.server_id ?? null }])));
     }, () => undefined).finally(() => { if (live) setTailnetRead(true); });
     return () => { live = false; };
   }, [reads, enabled]);
@@ -281,15 +336,14 @@ export function useFoundPcs(machines: readonly Machine[], enabled = true) {
     });
     return () => { live = false; };
   }, [reads, enabled]);
-  // a found PC is Added only as Add would add it: its own address, on ssh's default port and herdr's default session
-  const stateOf = (pc: SshCandidate): FoundPcState =>
-    machines.some(({ target }) => target?.destination === pc.destination && (target.port ?? 22) === 22 && target.session === undefined) ? "added"
-    : pc.tailnet !== undefined && outdated.has(pc.tailnet.toLowerCase()) ? "outdated"
-    // until the Tailscale PCs' Ovis is known (it asks each PC, a few seconds), one of them waits, so an older one is not added
-    : pc.tailnet !== undefined && !tailnetRead ? "waiting"
-    : "open";
+  const rows = useMemo(() => found === null ? null : reachablePcs(found), [found]);
+  // until the Tailscale PCs' Ovis is known (it asks each PC, a few seconds), one of them waits, so an older one is not added
+  const facts = { machines, tailnet: { read: tailnetRead, pcs: tailnet } };
+  const rowState = (row: ReachablePc, accountPcs?: ReadonlySet<string>): ReachableState => reachableState(row, accountPcs === undefined ? facts : { ...facts, accountPcs });
+  const stateOf = (pc: SshCandidate): ReachableState => rowState(reachablePcs([pc])[0]!);
   const retry = () => { setFound(null); setReads((count) => count + 1); };
-  return { found, unread, failed, withheld, stateOf, retry };
+  const saved = (row: ReachablePc): Machine | undefined => savedAt(row, machines);
+  return { found, rows, unread, failed, withheld, stateOf, rowState, saved, retry };
 }
 
 /** The found list's failure with Try again, or where a list this window is refused can be seen. */
@@ -308,24 +362,29 @@ function FoundPcsTrouble({ failed, withheld, retry }: { failed: boolean; withhel
   );
 }
 
-export function TailscaleTab({ found: { found, unread, failed, withheld, stateOf, retry }, onAddPc }: {
-  found: FoundPcs; onAddPc: (preset?: AddPcPreset) => void;
+/**
+ * Tailscale: the PCs of this PC's Tailscale login, one row a machine as Tailscale's own machine list has them (the ssh
+ * config aliases that reach one are that row, reachablePcs), then a field for a PC not in the list, connected as the
+ * SSH tab connects a typed one.
+ */
+export function TailscaleTab({ found: { rows, unread, failed, withheld, rowState, retry }, onAddPc, onConnectMachine }: {
+  found: FoundPcs; onAddPc: (preset?: AddPcPreset) => void; onConnectMachine: (machine: Machine) => void;
 }) {
   const t = useT();
-  const pcs = found?.filter((pc) => pc.source === "tailscale" || pc.tailnet !== undefined) ?? null;
+  const pcs = rows?.filter((pc) => pc.way === "tailscale") ?? null;
   return (
     <>
       <p className="settings-description">{t("The PCs of this Tailscale login. Connect goes over SSH, with nothing to install there.")}</p>
       {pcs === null ? <p className="settings-hint" role="status">{t("Looking for PCs…")}</p>
         : pcs.length > 0 ? (
           <div className="connect-found">
-            <ul className="connect-found-list">
+            <ul className="connect-found-list connect-reach-list">
               {pcs.map((pc) => {
-                const state = stateOf(pc);
+                const state = rowState(pc);
                 return (
-                  <li key={`${pc.source}:${pc.destination}`} className="connect-found-row">
+                  <li key={pc.key} className="connect-found-row">
                     <span className="connect-found-name">{pc.name}</span>
-                    <span className="connect-found-detail">{pc.tailnet ?? pc.detail ?? pc.destination}</span>
+                    <span className="connect-found-detail">{atDots(pc.address)}</span>
                     {state === "added" ? <span className="connect-found-added"><Check aria-hidden="true" />{t("Added")}</span>
                       : state === "outdated" ? <span className="settings-hint">{t("Update Ovis on that PC to 0.5 first.")}</span>
                       : <button type="button" className="btn" disabled={state === "waiting"} aria-label={`${t("Connect")} ${pc.name}`} onClick={() => onAddPc({ destination: pc.destination, name: pc.name })}>{t("Connect")}</button>}
@@ -336,7 +395,67 @@ export function TailscaleTab({ found: { found, unread, failed, withheld, stateOf
           </div>
         ) : !unread && <p className="settings-hint" role="status">{t("No other PC of this Tailscale login was found.")}</p>}
       <FoundPcsTrouble failed={failed} withheld={withheld} retry={retry} />
+      <TypedPcForm label={t("A PC not in the list")} placeholder={t("user@host or address")} onAddPc={onAddPc} onConnectMachine={onConnectMachine} />
     </>
+  );
+}
+
+/**
+ * The relay tab's other PCs, where Add PC over SSH adds a PC to the account (this PC's own window, signed in to the
+ * account this PC is in): the Tailscale login's PCs and the ssh config's hosts in one list, the Tailscale tab's rows
+ * with their way. Add, and a PC typed at the foot, open Add PC with that host filled in and Add it to my account
+ * ticked, which reaches that PC's own Ovis over SSH, offers to install it, and adds it to the account
+ * (docs/account.md "Adding a PC over SSH"). A PC in the account, here already or with an older Ovis says so instead.
+ */
+export function ReachablePcList({ found: { rows, failed, withheld, rowState, saved, retry }, accountPcs, onAddPc }: {
+  found: FoundPcs; accountPcs: ReadonlySet<string>; onAddPc: (preset?: AddPcPreset) => void;
+}) {
+  const t = useT();
+  const id = useId();
+  const [typed, setTyped] = useState("");
+  // another PC's https address is no SSH address: the add over SSH cannot take it (the SSH tab's Add by address can)
+  const [notSsh, setNotSsh] = useState(false);
+  const host = typed.trim();
+  const way: Record<ReachablePc["way"], string> = { tailscale: "Tailscale", ssh_config: t("SSH config") };
+  const add = (event: FormEvent) => {
+    event.preventDefault();
+    if (host === "") return;
+    if (OVIS_ADDRESS.test(host)) { setNotSsh(true); return; }
+    onAddPc({ destination: host });
+  };
+  return (
+    <section className="connect-reachable">
+      <p className="settings-description">{t("Other PCs this PC can reach. Add goes in over SSH, installs Ovis there if it is missing, and adds it to your account.")}</p>
+      {rows === null ? <p className="settings-hint" role="status">{t("Looking for PCs…")}</p>
+        : rows.length > 0 && (
+          <ul className="connect-found-list connect-reach-list">
+            {rows.map((pc) => {
+              const state = rowState(pc, accountPcs);
+              // a PC saved here that is not in the account is added on that same PC, never as a second one
+              const here = state === "open" ? saved(pc) : undefined;
+              return (
+                <li key={pc.key} className="connect-found-row" data-reachable-state={state}>
+                  <span className="connect-found-name">{pc.name}</span>
+                  <span className="connect-found-detail">{way[pc.way]} · {atDots(pc.address)}</span>
+                  {state === "in-account" ? <span className="connect-found-added"><Check aria-hidden="true" />{t("In your account")}</span>
+                    : state === "added" ? <span className="connect-found-added"><Check aria-hidden="true" />{t("Added")}</span>
+                    : state === "outdated" ? <span className="settings-hint">{t("Update Ovis on that PC to 0.5 first.")}</span>
+                    : <button type="button" className="btn" disabled={state === "waiting"} aria-label={`${t("Add")} ${pc.name}`} onClick={() => onAddPc({ destination: pc.destination, name: pc.name, ...(here === undefined ? {} : { machine_id: here.id }) })}>{t("Add")}</button>}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      <FoundPcsTrouble failed={failed} withheld={withheld} retry={retry} />
+      <form className="connect-ssh-form" onSubmit={add}>
+        <label className="settings-label" htmlFor={`${id}-host`}>{t("A PC not in the list")}</label>
+        <div className="connect-ssh-field">
+          <input id={`${id}-host`} className="input" type="text" value={typed} placeholder="user@host" autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" aria-invalid={notSsh || undefined} aria-describedby={notSsh ? `${id}-not-ssh` : undefined} onChange={(event) => { setNotSsh(false); setTyped(event.target.value); }} />
+          <button type="submit" className="btn" disabled={host === ""}>{t("Add")}</button>
+        </div>
+        {notSsh && <p className="settings-hint" id={`${id}-not-ssh`} role="alert">{t("Enter an SSH address, such as user@host.")}</p>}
+      </form>
+    </section>
   );
 }
 
@@ -358,73 +477,53 @@ function addressFailureText(t: ReturnType<typeof useT>, error: unknown): string 
 }
 
 /**
- * Direct: one field for an address. An SSH alias, user@host or a tailnet name opens Add PC with it (the host's
- * fingerprint first); an https:// address, another PC's Ovis, takes the six-digit code that PC shows and opens it in this
- * window once this PC's server paired with it (server/address-pc.ts); the code stays in its input alone. Under it
- * the hosts of this PC's ssh config and the PCs saved in herdr, one press each, and the guide's way to open a PC from
- * outside.
+ * A PC typed in, the SSH and Tailscale tabs' one connect for it: an SSH alias, user@host or a tailnet name opens Add PC
+ * with it (the host's fingerprint first); another PC's https address opens AddressPcForm with it, where the code that PC
+ * shows is typed. `byAddressLink`: Add by address, a text link under the field, opens that form empty.
  */
-export function DirectTab({ found: { found, failed, withheld, stateOf, retry }, machines, onAddPc, onConnectMachine }: { found: FoundPcs; machines: readonly Machine[]; onAddPc: (preset?: AddPcPreset) => void; onConnectMachine: (machine: Machine) => void }) {
+function TypedPcForm({ label, placeholder, byAddressLink = false, onAddPc, onConnectMachine }: {
+  label: string; placeholder: string; byAddressLink?: boolean; onAddPc: (preset?: AddPcPreset) => void; onConnectMachine: (machine: Machine) => void;
+}) {
   const t = useT();
   const id = useId();
   const [typed, setTyped] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
-  const codeRef = useRef<HTMLInputElement>(null);
-  // a second press before the first one's render would spend the same code twice
-  const pairing = useRef(false);
-  // what the pairing in flight was asked for: its answer is dropped once the address changes or the tab closes
-  const asked = useRef<string | null>(null);
-  useEffect(() => () => { asked.current = null; }, []);
-  // the code admits whoever holds it: it is typed only where it cannot cross the network in clear (as an SSH password)
-  const secretAllowed = window.isSecureContext;
+  // the address form, once opened: with the address it opens on (an https address typed in the field moves there)
+  const [byAddress, setByAddress] = useState<string | null>(null);
   const address = typed.trim();
-  const ovis = OVIS_ADDRESS.test(address);
-  const saved = machines.filter((machine) => machine.herdr_profile_id !== undefined && machine.action_required === "connect");
-  const hosts = (found?.filter((pc) => pc.source === "ssh_config") ?? []).map((pc) => ({ pc, state: stateOf(pc) }));
-  const outdated = hosts.filter(({ state }) => state === "outdated").map(({ pc }) => pc.name);
   const add = (event: FormEvent) => {
     event.preventDefault();
     if (address === "") return;
-    if (!ovis) { onAddPc({ destination: address }); return; }
-    const code = codeRef.current;
-    if (code === null || pairing.current || !secretAllowed) return;
-    pairing.current = true;
-    asked.current = address;
-    setAdding(true);
-    setFailure(null);
-    const current = () => asked.current === address;
-    void addAddressPc(address, code.value.replace(/\s/g, "")).then(({ machine }) => {
-      if (!current()) return;
-      code.value = "";
-      if (machine && typeof machine.id === "string") onConnectMachine(machine); else setFailure(t("That PC could not be added. Try again."));
-    }, (error: unknown) => { if (current()) setFailure(addressFailureText(t, error)); })
-      .finally(() => { pairing.current = false; setAdding(false); });
+    if (OVIS_ADDRESS.test(address)) { setByAddress(address); setTyped(""); return; }
+    onAddPc({ destination: address });
   };
   return (
     <>
       <form className="connect-ssh-form" onSubmit={add}>
-        <label className="settings-label" htmlFor={`${id}-address`}>{t("Address or SSH")}</label>
+        <label className="settings-label" htmlFor={`${id}-address`}>{label}</label>
         <div className="connect-ssh-field">
-          <input id={`${id}-address`} className="input" type="text" value={typed} placeholder="user@host, desk.tailnet.ts.net, https://…" autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" aria-describedby={address === "" ? undefined : `${id}-kind`} onChange={(event) => {
-            // a code typed for one PC is never sent to another
-            if (codeRef.current) codeRef.current.value = "";
-            asked.current = null;
-            setFailure(null);
-            setTyped(event.target.value);
-          }} />
-          <button type="submit" className="btn" disabled={address === "" || adding || (ovis && !secretAllowed)}>{t("Connect")}</button>
+          <input id={`${id}-address`} className="input" type="text" value={typed} placeholder={placeholder} autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" aria-describedby={address === "" ? undefined : `${id}-kind`} onChange={(event) => setTyped(event.target.value)} />
+          <button type="submit" className="btn" disabled={address === ""}>{t("Connect")}</button>
         </div>
-        {address !== "" && <p className="settings-hint" id={`${id}-kind`} role="status" data-address-kind={ovis ? "ovis" : "ssh"}>{ovis
-          ? t("Opens that PC's Ovis here. On that PC, open Settings → Devices and PCs → Add a connection → Phones and devices, and type the six-digit pairing code it shows. This PC can then drive that PC.")
-          : t("An SSH address: Connect checks that PC's fingerprint first.")}</p>}
-        {ovis && <>
-          <label className="settings-label" htmlFor={`${id}-code`}>{t("Pairing code")}</label>
-          <input ref={codeRef} id={`${id}-code`} className="input connect-address-code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={7} placeholder="000000" required pattern="\d{3} ?\d{3}" spellCheck={false} disabled={adding || !secretAllowed} />
-          {!secretAllowed && <p className="settings-hint">{t("Needs HTTPS or localhost.")}</p>}
-        </>}
-        {failure !== null && <p className="settings-hint" role="alert">{failure}</p>}
+        {address !== "" && !OVIS_ADDRESS.test(address) && <p className="settings-hint" id={`${id}-kind`} role="status" data-address-kind="ssh">{t("An SSH address: Connect checks that PC's fingerprint first.")}</p>}
       </form>
+      {byAddressLink && <button type="button" className="connect-address-link" aria-expanded={byAddress !== null} aria-controls={`${id}-by-address`} onClick={() => setByAddress((open) => open === null ? "" : null)}>{t("Add by address")}</button>}
+      {byAddress !== null && <AddressPcForm key={byAddress} id={`${id}-by-address`} initial={byAddress} onConnectMachine={onConnectMachine} />}
+    </>
+  );
+}
+
+/**
+ * SSH: its one field (TypedPcForm) takes an SSH alias, user@host or a tailnet name, or another PC's Ovis by its https
+ * address and the code that PC shows. Under it the hosts of this PC's ssh config and the PCs saved in herdr, one press each.
+ */
+export function SshTab({ found: { found, failed, withheld, stateOf, retry }, machines, onAddPc, onConnectMachine }: { found: FoundPcs; machines: readonly Machine[]; onAddPc: (preset?: AddPcPreset) => void; onConnectMachine: (machine: Machine) => void }) {
+  const t = useT();
+  const saved = machines.filter((machine) => machine.herdr_profile_id !== undefined && machine.action_required === "connect");
+  const hosts = (found?.filter((pc) => pc.source === "ssh_config") ?? []).map((pc) => ({ pc, state: stateOf(pc) }));
+  const outdated = hosts.filter(({ state }) => state === "outdated").map(({ pc }) => pc.name);
+  return (
+    <>
+      <TypedPcForm label={t("Add another PC from this one")} placeholder="user@host" byAddressLink onAddPc={onAddPc} onConnectMachine={onConnectMachine} />
       {(saved.length > 0 || hosts.length > 0) && (
         <section className="connect-picks" aria-label="ssh config">
           <p className="settings-label">ssh config</p>
@@ -440,8 +539,63 @@ export function DirectTab({ found: { found, failed, withheld, stateOf, retry }, 
       )}
       {found === null && <p className="settings-hint" role="status">{t("Looking for PCs…")}</p>}
       <FoundPcsTrouble failed={failed} withheld={withheld} retry={retry} />
-      <ExternalLink kind="link" className="settings-hint connect-outside-help" href={OUTSIDE_HELP}>{t("Open a PC from outside with Portal or Cloudflare (guide)")}</ExternalLink>
     </>
+  );
+}
+
+/**
+ * Add by address: another PC's Ovis by its https address takes the six-digit code that PC shows and opens it in this
+ * window once this PC's server paired with it (server/address-pc.ts); the code stays in its input alone.
+ */
+function AddressPcForm({ id, initial, onConnectMachine }: { id: string; initial: string; onConnectMachine: (machine: Machine) => void }) {
+  const t = useT();
+  const [typed, setTyped] = useState(initial);
+  const [adding, setAdding] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const codeRef = useRef<HTMLInputElement>(null);
+  // a second press before the first one's render would spend the same code twice
+  const pairing = useRef(false);
+  // what the pairing in flight was asked for: its answer is dropped once the address changes or the tab closes
+  const asked = useRef<string | null>(null);
+  useEffect(() => () => { asked.current = null; }, []);
+  // the code admits whoever holds it: it is typed only where it cannot cross the network in clear (as an SSH password)
+  const secretAllowed = window.isSecureContext;
+  const address = typed.trim();
+  const add = (event: FormEvent) => {
+    event.preventDefault();
+    const code = codeRef.current;
+    if (address === "" || code === null || pairing.current || !secretAllowed) return;
+    pairing.current = true;
+    asked.current = address;
+    setAdding(true);
+    setFailure(null);
+    const current = () => asked.current === address;
+    void addAddressPc(address, code.value.replace(/\s/g, "")).then(({ machine }) => {
+      if (!current()) return;
+      code.value = "";
+      if (machine && typeof machine.id === "string") onConnectMachine(machine); else setFailure(t("That PC could not be added. Try again."));
+    }, (error: unknown) => { if (current()) setFailure(addressFailureText(t, error)); })
+      .finally(() => { pairing.current = false; setAdding(false); });
+  };
+  return (
+    <form id={id} className="connect-ssh-form connect-address-form" onSubmit={add}>
+      <label className="settings-label" htmlFor={`${id}-input`}>{t("PC address")}</label>
+      <input id={`${id}-input`} className="input" type="url" inputMode="url" value={typed} placeholder="https://my-pc.example.com" autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" autoFocus onChange={(event) => {
+        // a code typed for one PC is never sent to another
+        if (codeRef.current) codeRef.current.value = "";
+        asked.current = null;
+        setFailure(null);
+        setTyped(event.target.value);
+      }} />
+      <label className="settings-label" htmlFor={`${id}-code`}>{t("Pairing code")}</label>
+      <div className="connect-ssh-field">
+        <input ref={codeRef} id={`${id}-code`} className="input connect-address-code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={7} placeholder="000000" required pattern="\d{3} ?\d{3}" spellCheck={false} disabled={adding || !secretAllowed} />
+        <button type="submit" className="btn" disabled={address === "" || adding || !secretAllowed}>{t("Connect")}</button>
+      </div>
+      <p className="settings-hint" data-address-kind="ovis">{t("The code is on that PC under Pair with a code.")}</p>
+      {!secretAllowed && <p className="settings-hint">{t("Needs HTTPS or localhost.")}</p>}
+      {failure !== null && <p className="settings-hint" role="alert">{failure}</p>}
+    </form>
   );
 }
 
@@ -473,37 +627,73 @@ export function localWays({ plan, readOnly, canPair, portal }: { plan: PhonePlan
   return { address, tailscaleStep, code, portal: portalShown, any: address !== null || tailscaleStep !== null || code || portalShown };
 }
 
-/** the relay first, where the relay is this window's to show; the other way only when it offers something */
-export function devicesWayOf({ relay, local, chosen }: { relay: boolean; local: boolean; chosen: DevicesWay | null }): DevicesWay | null {
-  if (relay && (!local || chosen !== "local")) return "relay";
-  return local ? "local" : null;
-}
-
-function DevicesTab({ plan, pairUrl, readOnly, local, relay, way, onWay, phone, shown }: {
-  plan: PhonePlan; pairUrl: string | null; readOnly: boolean; local: LocalWays; relay: boolean; way: DevicesWay | null; onWay: (way: DevicesWay) => void; phone: boolean;
-  /** the panel is on screen: a code is made only for a way someone is looking at */
-  shown: boolean;
-}) {
+/** What a phone scans on each way's tab, under that way's own part: the QR code and the code it carries, or the step that gives this PC an address a phone opens. */
+function PhoneScan({ children }: { children: ReactNode }) {
   const t = useT();
-  // kept once opened, as the tabs are: its pairing code stays the same when the relay way is looked at in between
-  const localOpened = useRef(false);
-  if (way === "local") localOpened.current = true;
-  if (way === null) return <p className="settings-description">{t("Open Ovis on the PC itself to add a connection.")}</p>;
-  const names: Record<DevicesWay, string> = { relay: t("Ovis relay"), local: t("Without signing in (same Wi-Fi · Tailscale)") };
   return (
-    <>
-      {relay && local.any ? (
-        <div className="segmented connect-devices-ways" role="group" aria-label={t("How to connect a device")}>
-          {(["relay", "local"] as const).map((each) => <button key={each} type="button" aria-pressed={way === each} data-way={each} onClick={() => onWay(each)}>{names[each]}</button>)}
-        </div>
-      ) : <p className="settings-label" data-way={way}>{names[way]}</p>}
-      {localOpened.current && <div className="connect-devices-local" hidden={way !== "local"}><LocalWay plan={plan} pairUrl={pairUrl} readOnly={readOnly} local={local} phone={phone} shown={shown && way === "local"} /></div>}
-    </>
+    <section className="connect-phone-scan" aria-label={t("Phone")} data-testid="connect-phone-scan">
+      <p className="settings-label connect-phone-scan-title"><Smartphone aria-hidden="true" />{t("Scan it with the Ovis app on your phone")}</p>
+      {children}
+    </section>
   );
 }
 
-function LocalWay({ plan, pairUrl, readOnly, local, phone, shown }: { plan: PhonePlan; pairUrl: string | null; readOnly: boolean; local: LocalWays; phone: boolean; shown: boolean }) {
+/**
+ * Pair with a code: the six-digit code a device types where it opens this PC's Ovis (Portal, a proxy, another PC adding
+ * this one by its https address). Made on a press, as the relay tab opens by itself; one the Tailscale tab made shows here.
+ */
+function PairByCode({ shared, phone }: { shared: MutableRefObject<SharedCode>; phone: boolean }) {
   const t = useT();
+  return (
+    <section className="connect-section" aria-label={t("Pair with a code")} data-testid="pair-with-code">
+      <p className="settings-label">{t("Pair with a code")}</p>
+      <CodeRoute pairUrl={null} startAtOnce={false} shared={shared} phone={phone} compact />
+    </section>
+  );
+}
+
+/** where the guide says how to install Portal and run it with a token (docs/guide.md) */
+const PORTAL_HELP = "https://github.com/devswha/ovis/blob/main/docs/guide.md#behind-a-reverse-proxy";
+
+/**
+ * Portal at the foot of the SSH tab, always: one row. Where it can run, its controls (PortalPanel) behind Settings; where it
+ * cannot (not installed, too old, or no token here), one line why and the guide's way to it, and nothing to press.
+ */
+function PortalRow({ readOnly, status }: { readOnly: boolean; status: PortalStatus }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const ready = status.phase !== "idle" || (status.usable && status.blocked === null);
+  if (!ready) {
+    const [line, link] = !status.usable
+      ? [status.version === null ? t("Portal is not installed on this PC.") : t("Update Portal on this PC to {version} or later.", { version: status.min_version }), t("How to install")]
+      : [status.blocked === "serve_only" ? t("Portal is off while only tailscale serve may reach this PC.") : t("Portal needs an access token on this PC."), t("How to set up")];
+    return (
+      <section className="connect-section connect-portal" aria-label="Portal" data-testid="portal-row">
+        <div className="connect-portal-row">
+          <span className="settings-label">Portal</span>
+          <span className="settings-hint connect-portal-state">{line}</span>
+          <ExternalLink kind="link" className="settings-link connect-portal-help" href={PORTAL_HELP}>{link}</ExternalLink>
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section className="connect-section connect-portal" aria-label="Portal" data-testid="portal-row">
+      <div className="connect-portal-row">
+        <span className="settings-label">Portal</span>
+        <span className="settings-hint connect-portal-state">{status.url ?? (status.phase === "idle" ? t("Not running") : t("Starting…"))}</span>
+        <button type="button" className="btn" aria-expanded={open} aria-controls={id} onClick={() => setOpen((shown) => !shown)}>{t("Settings")}</button>
+      </div>
+      {open && <div id={id}><PortalPanel readOnly={readOnly} /></div>}
+    </section>
+  );
+}
+
+/** With no way to add a PC on this page (a phone's page, the hosted shell, a device that only watches), what pairs a device without signing in. */
+function LocalWay({ plan, pairUrl, readOnly, local, phone, platform, onAccess }: { plan: PhonePlan; pairUrl: string | null; readOnly: boolean; local: LocalWays; phone: boolean; platform: string | undefined; onAccess: (access: RemoteAccess) => void }) {
+  const t = useT();
+  if (!local.any) return <p className="settings-description">{t("Open Ovis on the PC itself to add a connection.")}</p>;
   const needsTailscale = <p className="settings-hint">{t("The phone needs the Tailscale app turned on too.")}</p>;
   // the hosted shell's page is no address of this PC: its code is typed, as before
   const codeUrl = inRelayShell() ? null : pairUrl;
@@ -519,7 +709,7 @@ function LocalWay({ plan, pairUrl, readOnly, local, phone, shown }: { plan: Phon
       {local.tailscaleStep !== null && (
         <section className="connect-section" aria-label="Tailscale" data-tailscale={local.tailscaleStep.kind}>
           <p className="settings-label">Tailscale</p>
-          <TailscaleStep step={local.tailscaleStep} />
+          <TailscaleStep step={local.tailscaleStep} platform={platform} onAccess={onAccess} />
           {needsTailscale}
         </section>
       )}
@@ -528,7 +718,7 @@ function LocalWay({ plan, pairUrl, readOnly, local, phone, shown }: { plan: Phon
           <p className="settings-label">{t("Pairing code")}</p>
           {codeUrl === null && <p className="settings-description">{t("Type it on the other device where it opens this PC's Ovis: at its Portal address, through a proxy, or from another PC adding this one by its address.")}</p>}
           {/* the hosted shell makes its code on a press: opening the sheet there asks the PC for nothing */}
-          <CodeRoute pairUrl={codeUrl} startAtOnce={shown && !inRelayShell()} phone={phone} compact />
+          <CodeRoute pairUrl={codeUrl} startAtOnce={!inRelayShell()} phone={phone} compact />
         </section>
       )}
       {local.portal && (
@@ -541,30 +731,82 @@ function LocalWay({ plan, pairUrl, readOnly, local, phone, shown }: { plan: Phon
   );
 }
 
+const tailscaleStepKind = (plan: PhonePlan): boolean => plan.kind === "missing" || plan.kind === "stopped" || plan.kind === "command";
+
 /**
- * The one Tailscale step that would give a phone an address, behind a press: install it, sign in, or serve Ovis on the
- * tailnet with the command this PC's server worked out (`serve_command`, the setup guide's own).
+ * While `active` (a Tailscale step is on screen), reads this PC's Tailscale again every TAILSCALE_POLL_MS and whenever
+ * the window comes back to the front, so turning Tailscale on or signing in moves the step on with nothing else to do.
+ * It stops when the step is gone or the dialog closes.
  */
-function TailscaleStep({ step }: { step: NonNullable<LocalWays["tailscaleStep"]> }) {
+function useTailscaleWatch(active: boolean, onAccess: (access: RemoteAccess) => void) {
+  useEffect(() => {
+    if (!active) return;
+    let live = true;
+    const read = () => { fetchRemoteAccess().then((access) => { if (live) onAccess(access); }, () => undefined); };
+    const timer = window.setInterval(read, TAILSCALE_POLL_MS);
+    window.addEventListener("focus", read);
+    return () => { live = false; window.clearInterval(timer); window.removeEventListener("focus", read); };
+  }, [active, onAccess]);
+}
+
+/**
+ * The one Tailscale step that would give a phone an address, each one press with no terminal: get Tailscale (its
+ * download for this PC's platform), open the Tailscale app to turn it on and sign in (macOS and Windows; Linux has no
+ * app, so one line says so), or have this PC's server serve Ovis on the tailnet. Only a serve Tailscale refused shows
+ * the command, as the way left.
+ */
+function TailscaleStep({ step, platform, onAccess }: { step: NonNullable<LocalWays["tailscaleStep"]>; platform: string | undefined; onAccess: (access: RemoteAccess) => void }) {
   const t = useT();
-  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState<{ operator: boolean; ownerUnknown: boolean } | null>(null);
+  const [noApp, setNoApp] = useState(false);
   if (step.kind === "missing") return (
     <>
       <p className="settings-description">{t("Tailscale isn't installed.")}</p>
-      <div className="phone-actions"><ExternalLink kind="link" className="btn" href={TAILSCALE_DOWNLOAD}>{t("Install Tailscale")}</ExternalLink></div>
+      <div className="phone-actions"><ExternalLink kind="link" className="btn" href={TAILSCALE_DOWNLOADS[platform ?? ""] ?? TAILSCALE_DOWNLOAD}>{t("Get Tailscale")}</ExternalLink></div>
     </>
   );
-  const signIn = step.kind === "stopped";
+  if (step.kind === "stopped") {
+    if (noApp || (platform !== "darwin" && platform !== "win32")) return <p className="settings-description">{t("Turn on Tailscale and sign in.")}</p>;
+    const open = () => {
+      setBusy(true);
+      void openTailscaleApp().catch(() => false).then((opened) => { setBusy(false); if (!opened) setNoApp(true); });
+    };
+    return (
+      <>
+        <p className="settings-description">{t("Tailscale on this PC is off or not signed in.")}</p>
+        <div className="phone-actions"><button type="button" className="btn" disabled={busy} onClick={open}>{t("Open Tailscale")}</button></div>
+      </>
+    );
+  }
+  const serve = () => {
+    setBusy(true);
+    setRefused(null);
+    void serveOnTailscale().catch(() => ({ ok: false as const, code: null, operator: false })).then((answer) => {
+      setBusy(false);
+      if (answer.ok) onAccess(answer.access);
+      else setRefused({ operator: answer.operator, ownerUnknown: answer.code === "tailscale_owner_unknown" });
+    });
+  };
   return (
     <>
-      <p className="settings-description">{signIn ? t("Tailscale on this PC is off or not signed in.") : t("Tailscale is on, but Ovis is not open at a Tailscale address yet.")}</p>
-      {open ? (
-        <>
-          <p className="settings-description">{signIn ? t("Sign in from the Tailscale app on this PC, or run this:") : t("Run this once on this PC.")}</p>
-          <CommandToCopy command={signIn ? "tailscale up" : step.command} />
-        </>
-      ) : (
-        <div className="phone-actions"><button type="button" className="btn" onClick={() => setOpen(true)}>{signIn ? t("Sign in to Tailscale") : t("Open with Tailscale")}</button></div>
+      <p className="settings-description">{t("Tailscale is on, but Ovis is not open at a Tailscale address yet.")}</p>
+      <div className="phone-actions">
+        <button type="button" className="btn" disabled={busy} aria-busy={busy} onClick={serve}>{busy ? t("Opening…") : t("Open with Tailscale")}</button>
+      </div>
+      {/* this PC's Tailscale login is not known: no serve, and no command that would serve it anyway */}
+      {refused?.ownerUnknown === true && <p className="settings-description" role="status" data-testid="tailscale-owner-unknown">{t("This PC's Tailscale login can't be confirmed, so it can't be opened. Check the sign-in in the Tailscale app.")}</p>}
+      {refused !== null && !refused.ownerUnknown && (
+        <div data-testid="tailscale-serve-refused">
+          <p className="settings-description" role="status">{t("Tailscale didn't allow it. Run this once on this PC:")}</p>
+          <CommandToCopy command={step.command} />
+          {refused.operator && (
+            <>
+              <p className="settings-hint">{t("Or allow it once, then press Open with Tailscale again:")}</p>
+              <CommandToCopy command={TAILSCALE_OPERATOR} />
+            </>
+          )}
+        </div>
       )}
     </>
   );
@@ -588,39 +830,36 @@ function CommandToCopy({ command }: { command: string }) {
 
 /**
  * The Ovis relay, the owner's on a direct page. With an account, either state ends in AccountQr: the relay's QR code
- * behind a press for a PC in no account, and for a PC that is in one how a device is added instead, with no QR code.
+ * behind a press for a PC in no account, and for a PC that is in one a QR code that opens this PC's page in the Ovis
+ * app, which signs in to that account and joins it there (no code, key or token in it).
  */
-export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBySignIn, account, phone, active = true, onPairingHeld, onRevokedAll, machines = [], onConnectMachine, pcAddFromAccount, onAccountSetup }: {
+export function RelayTab({ relay, closesGate, signedIn, accountId = null, provider = null, joinBySignIn, account, phone, active = true, onPairingHeld, onRevokedAll, machines = [], onConnectMachine, pcAddFromAccount, onAccountSetup, addsOverSsh = false, pairShared }: {
   pcAddFromAccount?: PcAccountStatus["pcAddFromAccount"]; onAccountSetup?: (() => void) | undefined;
+  /** this PC's own window, signed in to the account this PC is in (ConnectPhoneDialog `addsOverSsh`): the top is laid out as the Tailscale tab's (AccountQr `pairHere`) */
+  addsOverSsh?: boolean;
+  /** the dialog's one pending six-digit code, which that top's Pair with a code shares */
+  pairShared?: MutableRefObject<SharedCode>;
   relay: RelayState; closesGate: boolean; signedIn: boolean; joinBySignIn: boolean; account: RelayAccount | null; phone: boolean;
   accountId?: string | null;
+  provider?: AccountProvider | null;
   active?: boolean;
   onPairingHeld?: (held: boolean) => void;
   onRevokedAll?: () => void;
   machines?: readonly Machine[]; onConnectMachine?: (machine: Machine) => void;
 }) {
   const t = useT();
-  const [showAccountPcs, setShowAccountPcs] = useState(false);
-  // signed in to the PC's own account, the account's PCs are listed at once (below); the prompt is for anyone else
+  // signed in to the PC's own account, the tab is the signed-in line and the phone's QR code (the account's PCs are in
+  // the sidebar); signed in to another, the prompt opens the account. A window signed out of a PC in an account gets the sign-in alone (below), not this prompt beside it
   const accountAdd = pcAddFromAccount === true && onConnectMachine && !(signedIn && joinBySignIn) ? (
       <div className="connect-found" data-testid="pc-add-source-bound">
         <p className="settings-hint">{t("This PC is in an account. Add PCs from your account.")}</p>
-        <button type="button" className="btn btn-secondary" onClick={() => {
-          if (!signedIn && account !== null) {
-            setShowAccountPcs(true);
-            return;
-          }
-          (onAccountSetup ?? account?.onOpen)?.();
-        }}>{t("Add from account")}</button>
+        <button type="button" className="btn btn-secondary" onClick={() => { (onAccountSetup ?? account?.onOpen)?.(); }}>{t("Add from account")}</button>
       </div>
   ) : null;
   const [switchError, setSwitchError] = useState<string | null>(null);
   const [signedInProvider, setSignedInProvider] = useState<AccountSession["provider"] | null>(null);
   const [pcAccount, setPcAccount] = useState<string | null | undefined>(undefined);
   const signInView = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    if (showAccountPcs && !signedIn) signInView.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-  }, [showAccountPcs, signedIn]);
   /** the sign-in that just finished on this tab, handed once to Add this PC below, which offers its one press at once */
   const signedInHere = useRef<SignedInHere | null>(null);
   const takeSignedInHere = useCallback((): SignedInHere | null => { const fresh = signedInHere.current; signedInHere.current = null; return fresh; }, []);
@@ -671,32 +910,33 @@ export function RelayTab({ relay, closesGate, signedIn, accountId = null, joinBy
     </>
   );
   const startFailure = switchError === null && startError !== null && <p className="settings-hint relay-error" role="alert">{t("The relay did not start: {message}", { message: startError })}</p>;
+  const pcIn = pcAccount !== undefined ? pcAccount : joinBySignIn ? (signedIn ? accountId : null) : null;
+  // a sign-in to another account than the one this PC is in (a way in that account does not have makes a new account)
+  // is no sign-in to this PC: the tab stays its sign-in buttons, so the right one can be picked (owner #25)
+  const inThisAccount = signedIn && !(accountId !== null && pcIn !== null && accountId !== pcIn);
   const mine = signedIn ? accountId : null;
-  const pcIn = pcAccount !== undefined ? pcAccount : joinBySignIn ? mine : null;
-  const bare = signedIn && pcIn !== null && relay.status?.phase === "online";
-  const pcsAbove = signedIn && joinBySignIn && onConnectMachine !== undefined;
+  const bare = inThisAccount && pcIn !== null && relay.status?.phase === "online";
   const qr = (ownSwitch: boolean) => (
-    <AccountQr relay={relay} phone={phone} active={active} signedIn={signedIn} accountId={mine} pcAccount={pcIn} onPcAccount={setPcAccount} onPairingHeld={onPairingHeld} onRevokedAll={onRevokedAll}
-      first={bare} pcsAbove={pcsAbove} relayControls={ownSwitch ? <>{relaySwitch}{switchFailure}{startFailure}</> : null} />
+    <AccountQr relay={relay} phone={phone} active={active} signedIn={signedIn} accountId={mine} provider={provider} serverId={machines.find((machine) => machine.kind === "local")?.server_id ?? null}
+      pcAccount={pcIn} onPcAccount={setPcAccount} onPairingHeld={onPairingHeld} onRevokedAll={onRevokedAll}
+      first={bare} pairHere={addsOverSsh} {...(pairShared === undefined ? {} : { pairShared })} relayControls={ownSwitch ? <>{relaySwitch}{switchFailure}{startFailure}</> : null} />
   );
-  // signed out the tab is its sign-in buttons: the relay's own switch stays in More settings
-  if (!signedIn) return (
+  // signed out the tab is its sign-in buttons: the relay's own switch stays in More settings. Keyed by the account, so
+  // a sign-in that ended in another account shows the buttons again
+  if (!inThisAccount) return (
     <>
       <div ref={signInView} className="connect-signin" data-testid="connect-signin">
         {signInStatus}
-        {!showAccountPcs && accountAdd}
-        <RelaySignIn service={account.service} boundPc={pcAddFromAccount === true || pcIn !== null} onSignedIn={(session) => { signedInHere.current = { account: session.account, adds: false }; setSignedInProvider(session.provider); account.onSignedIn(); }} />
+        <RelaySignIn key={accountId ?? ""} service={account.service} onSignedIn={(session) => { signedInHere.current = { account: session.account, adds: false }; setSignedInProvider(session.provider); account.onSignedIn(on && pcIn !== null && session.account === pcIn); }} />
       </div>
       {qr(false)}
     </>
   );
-  const thisPc = machines.find((machine) => machine.kind === "local")?.name ?? null;
   return (
     <>
       <div ref={signInView} className="connect-signin" data-testid="connect-signin" data-bare={bare || undefined}>
         {signInStatus}
         {accountAdd}
-        {pcsAbove && <RelayAccountPcs machines={machines} onConnectMachine={onConnectMachine} self={thisPc} />}
         {pcIn !== null ? (
           !bare && <>{relaySwitch}{switchFailure}{startFailure}</>
         ) : (
@@ -780,12 +1020,21 @@ const names = (strays: readonly AccountQrStray[]): string => strays.map((stray) 
  * A press made while the page's relay state said otherwise (it is read every 15 seconds) is refused by the PC: the QR
  * code comes down with no failure to read, and the relay's state is read again, which brings that sentence.
  */
-export function AccountQr({ relay, phone, active, signedIn, accountId = null, pcAccount, onPcAccount, first = false, pcsAbove = false, relayControls, onPairingHeld, onRevokedAll }: {
+export function AccountQr({ relay, phone, active, signedIn, accountId = null, provider = null, serverId = null, pcAccount, onPcAccount, first = false, pairHere = false, pairShared, relayControls, onPairingHeld, onRevokedAll }: {
   relay: RelayState; phone: boolean; active: boolean; signedIn: boolean;
   first?: boolean;
-  /** the tab lists the account's PCs above, this PC first: nothing here says again that it is in the account */
-  pcsAbove?: boolean;
+  /**
+   * In this PC's own window, signed in to the account this PC is in: the phone part is laid out as the Tailscale tab's
+   * top, the QR code that opens this PC's page beside the six digits of Pair with a code (CodeRoute), which only a press
+   * here makes, sharing the dialog's one pending code (`pairShared`); this account's line goes under it. Nothing that
+   * admits a device by itself is made as the tab opens: the QR code asks for the account's own approval
+   */
+  pairHere?: boolean;
+  pairShared?: MutableRefObject<SharedCode>;
   accountId?: string | null;
+  /** how this page is signed in, and this PC's relay ID: the QR code of a PC in an account (signInLink) */
+  provider?: AccountProvider | null;
+  serverId?: string | null;
   pcAccount: string | null;
   onPcAccount: Dispatch<SetStateAction<string | null | undefined>>;
   relayControls: ReactNode;
@@ -1114,7 +1363,7 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
     resetAccountQrWatch();
     setConfirming(false);
     onPcAccount(null);
-    setNote(t("Every paired device was revoked. The access token, this PC and its Tailscale login get in as before."));
+    setNote(t("Every paired device was revoked, and the Tailscale devices this PC has seen are kept out. The access token and this PC get in as before."));
     dismiss();
     onRevokedAll?.();
   };
@@ -1142,16 +1391,29 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
   const checkingLine = checking.length > 0 && <p className="settings-description" data-testid="connect-account-checking">{t("Checking a device that just paired: {devices}.", { devices: names(checking) })}</p>;
   const revokeEvery = <button type="button" className="btn btn-danger" onClick={() => setConfirming(true)}>{t("Not me: revoke every device")}</button>;
   const relayState = relay.status !== null && !(connecting && relayControls !== null) && <p className="settings-hint" role="status">{statusText(t, relay.status)}</p>;
-  const standingLabel = standing && signedIn && !(here === "mine" && pcsAbove);
+  // standing in another account than this page's, nothing is said: the tab above is its sign-in buttons (owner #25)
+  const standingLabel = standing && signedIn && here !== "other";
+  const phoneLink = standing && online && serverId !== null && relay.status !== null ? signInLink(relay.status.app, serverId, here === "mine" ? provider : null) : null;
   const labelled = standing ? standingLabel : told || shown;
   return (
     <section className="connect-account-qr" aria-labelledby={labelled ? id : undefined} data-testid="connect-account-qr" data-account={here ?? undefined} data-first={first || undefined}>
-      {standing ? (
+      {standing && pairHere && here === "mine" && phoneLink !== null ? (
+        <>
+          <PhoneScan>
+            <div className="compact-pair">
+              <QrCode value={phoneLink} label={t("QR code that opens this PC in the Ovis app")} size={132} />
+              <CodeRoute pairUrl={null} startAtOnce={false} {...(pairShared === undefined ? {} : { shared: pairShared })} phone={phone} compact />
+            </div>
+          </PhoneScan>
+          <p ref={heading} className="settings-label" id={id} tabIndex={-1}>{t("This PC is in your account.")}</p>
+          {enrolling && <p className="settings-description connect-account-qr-warning" role="status">{t("Not finished yet: the device that added this PC is still setting it up. If it stopped, open this PC on that device and choose Try again.")}</p>}
+        </>
+      ) : standing ? (
         <>
           {standingLabel && <p ref={heading} className="settings-label" id={id} tabIndex={-1}>{here === "mine" ? t("This PC is in your account.") : t("Sign in to this PC's account.")}</p>}
           {here === "mine" && enrolling && <p className="settings-description connect-account-qr-warning" role="status">{t("Not finished yet: the device that added this PC is still setting it up. If it stopped, open this PC on that device and choose Try again.")}</p>}
-          {here === "other" && <p className="settings-description connect-account-qr-warning">{t("If that account is not yours, revoke every device (More settings → Devices and access): this PC then leaves it.")}</p>}
           {!online && <>{relayControls}{relayState}</>}
+          {phoneLink !== null && <PhoneScan><QrCode value={phoneLink} label={t("QR code that opens this PC in the Ovis app")} size={132} /></PhoneScan>}
         </>
       ) : labelled && <p className="settings-label" id={id}>{t("Add with a QR code")}</p>}
       {standing ? null : view.kind === "joined" ? (
@@ -1198,7 +1460,7 @@ export function AccountQr({ relay, phone, active, signedIn, accountId = null, pc
       {error !== null && <p className="settings-hint relay-error" role="alert">{error}</p>}
       {confirming && (
         <ConfirmDialog title={t("Revoke every paired device?")}
-          body={t("Every paired device loses its access to this PC, and this PC leaves that account. The access token, this PC and its Tailscale login still get in.")}
+          body={t("Every paired device loses its access to this PC, and this PC leaves that account. The Tailscale devices this PC has seen are kept out too. The access token and this PC still get in.")}
           confirmLabel={t("Revoke all")} onClose={() => setConfirming(false)} onConfirm={revokeAll} />
       )}
     </section>
@@ -1272,12 +1534,44 @@ export function RelayRoute({ relay, readOnly, phone = false, pairHere = false, s
   );
 }
 
+/**
+ * the code views of one dialog share (CodeRoute `shared`): the last one made or announced, whether one is being asked
+ * for, the views waiting on that ask, told when it ends with no code so one of them asks itself, and whether a view of
+ * this dialog has asked for one (`wanted`: a press, or a tab that shows one as it opens). Until then no view shows digits
+ * another place of the page made (the setup guide's relay QR code, Settings' Devices group)
+ */
+interface SharedCode { code: PairingCode | null; asking: boolean; readonly waiting: Set<() => void>; wanted: boolean; readonly views: Set<(code: PairingCode) => void> }
+
+/**
+ * The ask in `shared` ended: with `code`, its announcement reaches the waiting views; with none, the first waiting view
+ * asks itself, and the others wait on that ask (two asks would end each other's code).
+ */
+function askEnded(shared: MutableRefObject<SharedCode>, code: PairingCode | null): void {
+  shared.current = { ...shared.current, ...(code === null ? {} : { code }), asking: false };
+  if (code !== null) { shared.current.waiting.clear(); return; }
+  const [first] = shared.current.waiting;
+  if (first === undefined) return;
+  shared.current.waiting.delete(first);
+  first();
+}
+
 /** the newest code request of any opening: the server keeps one pending code, so an older answer is a dead code */
 let latestPairRequest = 0;
 
-export function CodeRoute({ pairUrl, startAtOnce, phone = false, compact = false }: { pairUrl: string | null; startAtOnce: boolean; phone?: boolean; compact?: boolean }) {
+/**
+ * `shared`: the code another view of this dialog shows already. A view that starts takes it while it is good instead of
+ * asking for another, which would end it (the PC keeps one pending code) after it was copied or scanned there.
+ */
+export function CodeRoute({ pairUrl, startAtOnce, shared, phone = false, compact = false }: { pairUrl: string | null; startAtOnce: boolean; shared?: MutableRefObject<SharedCode>; phone?: boolean; compact?: boolean }) {
   const t = useT();
-  const [code, setCode] = useState<PairingCode | null>(null);
+  /** this view asked for a code: its press, or its tab opening with one (`startAtOnce`) */
+  const wanted = useRef(false);
+  const want = (): void => { wanted.current = true; if (shared) shared.current = { ...shared.current, wanted: true }; };
+  // a view made on a press shows the code another view of the dialog shows already, while it is good
+  const [code, setCode] = useState<PairingCode | null>(() => {
+    const held = shared?.current.code;
+    return !startAtOnce && shared?.current.wanted === true && held && Date.parse(held.expires_at) > Date.now() ? held : null;
+  });
   const [left, setLeft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -1286,13 +1580,25 @@ export function CodeRoute({ pairUrl, startAtOnce, phone = false, compact = false
   const linkRef = useRef<HTMLAnchorElement>(null);
   const announcing = useRef(false);
 
+  // the dialog's other views, told when one of them takes the PC's pending code as its tab opens: that code is wanted now
+  useEffect(() => {
+    if (!shared) return;
+    const views = shared.current.views;
+    views.add(setCode);
+    return () => { views.delete(setCode); };
+  }, [shared]);
+
   useEffect(() => {
     const onCode = (event: Event) => {
       if (announcing.current) return;
       const detail = (event as CustomEvent<AnnouncedCode>).detail;
       // a QR code shown alone (the relay tab's) is never shown here as digits; the PC's one pending code is now that
       // one, so the code this showed is gone
-      setCode(detail.qrOnly === true ? null : detail);
+      const next = detail.qrOnly === true ? null : detail;
+      // read before the shared code is written: digits this dialog never asked for stay off it, whoever made them
+      const asked = wanted.current || shared?.current.wanted === true;
+      if (shared) { shared.current.waiting.clear(); shared.current = { ...shared.current, code: next, asking: false }; }
+      setCode(asked ? next : null);
     };
     window.addEventListener(PAIRING_CODE_EVENT, onCode);
     return () => window.removeEventListener(PAIRING_CODE_EVENT, onCode);
@@ -1312,18 +1618,25 @@ export function CodeRoute({ pairUrl, startAtOnce, phone = false, compact = false
 
   const pair = async () => {
     if (requesting.current) return;
+    want();
     requesting.current = true;
     setBusy(true);
     setError(null);
     const request = ++latestPairRequest;
+    if (shared) shared.current = { ...shared.current, asking: true };
     try {
       const fresh = await startPairing();
       // a dialog closed and opened again asked after this one: its answer is the code that pairs, not this one
       if (request !== latestPairRequest) return;
+      if (shared) askEnded(shared, fresh);
       setCode(fresh);
       announcing.current = true;
       try { announcePairingCode(fresh); } finally { announcing.current = false; }
-    } catch (reason) { setError(failureText(reason)); }
+    } catch (reason) {
+      setError(failureText(reason));
+      // the views waiting on this ask get no announcement: told, one of them asks for its own code
+      if (shared) askEnded(shared, null);
+    }
     finally {
       requesting.current = false;
       setBusy(false);
@@ -1334,8 +1647,24 @@ export function CodeRoute({ pairUrl, startAtOnce, phone = false, compact = false
   useEffect(() => {
     if (!startAtOnce || started.current) return;
     started.current = true;
+    const held = shared?.current;
+    // another view's code is good, or on its way (its announcement brings it here): no second code ends it. If that ask
+    // fails, this view asks itself
+    if (held?.asking) {
+      const ask = (): void => { void pair(); };
+      held.waiting.add(ask);
+      // a view that goes before the ask ends asks nothing; one whose effect runs again waits again
+      return () => { held.waiting.delete(ask); started.current = false; };
+    }
+    if (held?.code && Date.parse(held.code.expires_at) > Date.now()) {
+      want();
+      setCode(held.code);
+      // no announcement: no code was made, and the relay QR codes on the page already show this one
+      for (const show of held.views) show(held.code);
+      return;
+    }
     void pair();
-  }, [startAtOnce]);
+  }, [startAtOnce, shared]);
 
   const spaced = code ? `${code.code.slice(0, 3)} ${code.code.slice(3)}` : "";
   const qrValue = code && pairUrl ? `${pairUrl.replace(/\/$/, "")}/?pair=${code.code}` : null;

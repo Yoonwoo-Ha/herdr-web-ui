@@ -1118,6 +1118,30 @@ function introducedPc(name = "nuc") {
   return { server_id: deriveServerId(keys.publicKey), server_public_key: exportPublicKey(keys.publicKey), relay: "wss://relay.ovis.sh", name };
 }
 
+test("an introduction carries the place the member names for the device in the account's signed list, form checked, and the latest one stays", async () => {
+  const f = fixture();
+  const { key, link } = await member(f);
+  const joining = await accountKey();
+  await post(link, "/api/account/records", { records: [await add(key, joining.spki)] });
+  const pcs = [introducedPc()];
+  const list = { id: "ab".repeat(32), seq: 4, hash: "cd".repeat(32) };
+  expect((await post(link, "/api/account/introduce", { key: joining.spki, pcs, list })).status).toBe(204);
+  const joined = await relayConnection(f);
+  await joined.auth({ keys: joining.keys, publicKey: joining.spki, id: accountDeviceId(SERVER_ID, joining.spki) });
+  expect(await (await joined.open("/api/account/introduction").response).json()).toEqual({ pcs, list });
+  // an introduction that names none keeps the one before; a later one replaces it
+  expect((await post(link, "/api/account/introduce", { key: joining.spki, pcs })).status).toBe(204);
+  expect(await (await joined.open("/api/account/introduction").response).json()).toEqual({ pcs, list });
+  const later = { ...list, seq: 9 };
+  expect((await post(link, "/api/account/introduce", { key: joining.spki, pcs, list: later })).status).toBe(204);
+  expect(await (await joined.open("/api/account/introduction").response).json()).toEqual({ pcs, list: later });
+  // out of form: nothing is kept of that call
+  for (const bad of [{ id: "AB".repeat(32), seq: 1, hash: list.hash }, { id: list.id, seq: -1, hash: list.hash }, { id: list.id, seq: 1 }, { ...list, extra: 1 }, "x"]) {
+    expect((await post(link, "/api/account/introduce", { key: joining.spki, pcs, list: bad })).body.error?.code).toBe("introduction_invalid");
+  }
+  expect(await (await joined.open("/api/account/introduction").response).json()).toEqual({ pcs, list: later });
+});
+
 test("a member introduces the account's PCs to a device it added, which reads them over its own session only", async () => {
   const f = fixture();
   const { key, link } = await member(f);
@@ -1361,7 +1385,9 @@ test("a driving device hears of a device an account remove took, and of one revo
   expect(removed).toContain(`"device_id":"${accountDeviceId(SERVER_ID, gone.spki)}","label":"Mac app"`);
   expect(removed).toContain(`"by":{"device_id":"${device.id}","label":"Relay test"}`);
   f.app.context.services.devices.revoke(revoked.id);
-  expect(await events.until(`"device_id":"${revoked.id}"`)).toContain('"by":"pc"');
+  // the stream opened on the join of that device too, which nobody has seen yet: the removal is the one by the PC
+  const text = await events.until('"by":"pc"');
+  expect(text.slice(text.lastIndexOf('"type":"device-removed"'))).toContain(`"device_id":"${revoked.id}"`);
   await events.close();
 });
 

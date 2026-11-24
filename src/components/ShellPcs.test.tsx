@@ -4,7 +4,8 @@ import { act, create, type ReactTestInstance } from "react-test-renderer";
 
 import { SettingsProvider } from "../lib/settings.ts";
 import type { PcStatus } from "../lib/relay/pcStatus.ts";
-import { shellPcRows, ShellPcs, useShellPcs, type ShellPcsDeps } from "./ShellPcs.tsx";
+import type { Machine } from "../../shared/machines.ts";
+import { shellPcRows, ShellPcs, unlistedShellPcs, useShellPcs, type ShellPcsDeps } from "./ShellPcs.tsx";
 
 const textOf = (node: ReactTestInstance): string => node.children.map((child) => typeof child === "string" ? child : textOf(child)).join("");
 
@@ -141,5 +142,20 @@ describe("the sidebar's list as the page uses it", () => {
     expect(seen!.pcs.map((pc) => pc.name)).toEqual(["C"]);
     await act(async () => { seen!.recheck("c".repeat(32)); await settle(); });
     expect(calls.filter((call) => call.startsWith("checkOne"))).toEqual(["checkOne c"]);
+  });
+});
+
+describe("the hosted app's other PCs beside the PCs its PC lists", () => {
+  it("leaves out a PC the page's PC already lists, by its relay ID or its own, or lists as an account row, so no PC shows twice", () => {
+    const work = { server_id: "b".repeat(32), name: "Work PC" }, nas = { server_id: "c".repeat(32), name: "NAS" }, lab = { server_id: "d".repeat(32), name: "Lab" };
+    const listed: Pick<Machine, "server_id" | "relay">[] = [{ server_id: "a".repeat(32) }, { relay: { server_id: work.server_id, relay: "wss://relay.ovis.sh" } }, { server_id: lab.server_id }];
+    expect(unlistedShellPcs([work, nas, lab], listed)).toEqual([nas]);
+    const none = [nas];
+    expect(unlistedShellPcs(none, listed)).toBe(none);
+    // one of the account's PCs the sidebar is adding (or that is off) is that row, not a link too
+    expect(unlistedShellPcs([work, nas, lab], listed, [nas.server_id])).toEqual([]);
+    // a PC the page's PC only watches (a vouched join, view_only): this device keeps its own link, where it drives
+    const watched: Pick<Machine, "server_id" | "relay" | "view_only">[] = [{ relay: { server_id: work.server_id, relay: "wss://relay.ovis.sh" }, view_only: true }];
+    expect(unlistedShellPcs([work, nas], watched)).toEqual([work, nas]);
   });
 });

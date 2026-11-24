@@ -2,7 +2,7 @@ import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, us
 import { fontSettled } from "../lib/fontFamily.ts";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { ArrowLeft, ArrowUp, ChevronRight, ClipboardCheck, Clock, Eye, Quote, SendHorizontal, SquareTerminal, Trash2, TriangleAlert, Unplug, X } from "lucide-react";
+import { ArrowLeft, ArrowUp, ChevronRight, ClipboardCheck, Clock, Eye, Pause, Quote, SendHorizontal, SquareTerminal, Trash2, TriangleAlert, Unplug, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import "./PaneTerminal.css";
 
@@ -33,7 +33,6 @@ import { answerHint } from "../lib/promptAnswer.ts";
 import { composerDrafts } from "../lib/composerDraft.ts";
 import { appendQuote, formatTerminalQuote } from "../lib/terminalQuote.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
-import { fetchBridgeHealth } from "../lib/api.ts";
 import { useSessionHistoryOffered } from "../lib/useSessionHistoryOffered.ts";
 import { paneStorageId } from "../../shared/machines.ts";
 import { labelledAgent } from "../../shared/supported-agents.ts";
@@ -47,7 +46,8 @@ import { RenderBoundary } from "./RenderBoundary.tsx";
 import { Composer } from "./Composer.tsx";
 import { ComposerNotices, type ComposerNoticeRow } from "./ComposerNotices.tsx";
 import { PendingMessages } from "./PendingMessages.tsx";
-import type { AgentStatus, ClientRole, PlanSummary, ServerMessage } from "../../shared/protocol.ts";
+import type { AcpHold, AgentStatus, ClientRole, PlanSummary, ServerMessage } from "../../shared/protocol.ts";
+import { holdAcpChild, releaseAcpChild } from "../lib/api.ts";
 import type { PaneControls, PaneView } from "../lib/actions.ts";
 import { usePaneLane } from "../lib/chatLane.ts";
 import { useSettings } from "../lib/settings.ts";
@@ -99,6 +99,9 @@ export interface PaneTerminalProps {
   agent?: string | null;
   agentStatus?: AgentStatus;
   agentSession?: string | null;
+  acpChild?: boolean;
+  /** a person stopped this ACP child (HerdrPane `acp_hold`) */
+  acpHold?: AcpHold;
   backgroundTasks?: number;
   plan?: PlanSummary | null;
   backgroundWait?: boolean;
@@ -158,6 +161,8 @@ export function PaneTerminal({
   title = null,
   agentStatus,
   agentSession = null,
+  acpChild = false,
+  acpHold,
   backgroundTasks = 0,
   plan = null,
   backgroundWait = false,
@@ -364,16 +369,7 @@ export function PaneTerminal({
   const endedRef = useRef(false);
   const modifyOtherKeysRef = useRef(0);
   const [observing, setObserving] = useState(role === "observe");
-  const [authWatching, setAuthWatching] = useState(() => role === "observe" || isDemoWatch());
-  useEffect(() => {
-    if (role === "observe" || isDemoWatch()) { setAuthWatching(true); return; }
-    let live = true;
-    fetchBridgeHealth().then((health) => {
-      if (live && health?.auth?.role === "watch") setAuthWatching(true);
-    }, () => {});
-    return () => { live = false; };
-  }, [role]);
-  const viewOnly = observing || role === "observe" || authWatching;
+  const viewOnly = observing || role === "observe" || deviceWatching || isDemoWatch();
   // `unchecked`: the PC types the answer without reading its screen first (useTerminalMount showSecret)
   const [secret, setSecret] = useState<{ pane: string; prompt: string; unchecked: boolean } | null>(null);
   const secretRef = useRef<string | null>(null);
@@ -440,6 +436,9 @@ export function PaneTerminal({
     return () => { for (const action of actions) window.removeEventListener(action, acted, true); };
   }, [waitingOnGrace]);
   const onPeekRef = useRef(onPeek); onPeekRef.current = onPeek;
+  // App hands a new function on each of its renders, and it renders on every pane's event: read through
+  // a ref, the chat's callback keeps its identity, so the conversation is not drawn again for another pane
+  const onOpenTerminalRef = useRef(onOpenTerminal); onOpenTerminalRef.current = onOpenTerminal;
   const onEndPeekRef = useRef(onEndPeek); onEndPeekRef.current = onEndPeek;
   const knownOutcomesRef = useRef<{ pane: string; ids: readonly string[] } | null>(null);
   const onChatOutcomes = useCallback((pane: string, ids: readonly string[]) => { knownOutcomesRef.current = { pane, ids }; }, []);
@@ -481,9 +480,9 @@ export function PaneTerminal({
   }, []);
   const peekOutcome = useCallback((text: string) => {
     const open = onPeekRef.current;
-    if (open === undefined || heldRef.current || unsupportedRef.current || text === "") { onOpenTerminal?.(); return; }
+    if (open === undefined || heldRef.current || unsupportedRef.current || text === "") { onOpenTerminalRef.current?.(); return; }
     open({ command: outcomeCommand(text), text: null, knownOutcomeIds: null, auto: false, watch: null, inputRowSeen: inputRowNow() === "ready" });
-  }, [onOpenTerminal, inputRowNow]);
+  }, [inputRowNow]);
   const setDraft = useCallback((value: InputDraft | ((previous: InputDraft) => InputDraft)) => {
     const owner = paneRef.current ? paneStorageId(machineId, paneRef.current) : null;
     setDraftState((previous) => ({ owner, value: typeof value === "function" ? value(previous.owner === owner ? previous.value : EMPTY_DRAFT) : value }));
@@ -674,7 +673,14 @@ export function PaneTerminal({
 
   const { sendDraft, discardDraft, submitComposerMessage, sendComposerText, sendTerminalLine, insertTerminalText, reassertGrid, pressEnter, toggleDirect } = useTerminalSends({ activeRef, agent, cancelTouchRef, chatView, coarse, composingRef, directTyping, draft, draftHeldForRef, heldRef, hostRef, inputLine, inputRowNow, keyboardHeld, keyboardOwnerRef, keyboardToggleFocusRef, lineFocus: lineRef, knownOutcomes, lineComposingRef, machineId, modifiersRef, consumeModifiers, onChatSuggestion, paneId, paneRef, pendingEpochRef, pendingSubmissionsRef, reassertIfStaleRef, redrawGreeting, releaseRef, secretRef, sessionRef, setChatRefresh, setChatSent, setChatUnsent, setDraft, showSentCommand, socketRef, stillOpenNote, stillOpenRef, submitRetention, tRef, termRef, updateSettings });
 
-  const { pressKey, toggleModifier, abortTurn } = useTypedKeys({ agent, agentStatus, barKeyRef, coarseRef, commitPendingText, compositionCommitPendingRef, composingRef, inputLineRef, modifiersRef, lockedRef, setLatch, consumeModifiers, paneId, reassertIfStaleRef, setInputError, socketRef, stopKeyRef, tRef, termRef });
+  const { pressKey, toggleModifier, abortTurn: abortTyped } = useTypedKeys({ agent, agentStatus, barKeyRef, coarseRef, commitPendingText, compositionCommitPendingRef, composingRef, inputLineRef, modifiersRef, lockedRef, setLatch, consumeModifiers, paneId, reassertIfStaleRef, setInputError, socketRef, stopKeyRef, tRef, termRef });
+  // an ACP child's Stop is a person's hold (server/dispatch.ts): its turn is cancelled and the agent that called it gets no new turn
+  // a PC whose Ovis has no hold yet, or a child whose real TUI has the conversation, takes the Stop key instead
+  const [acpError, setAcpError] = useState<string | null>(null);
+  useEffect(() => { setAcpError(null); }, [paneId, acpHold?.child_id, acpHold?.generation]);
+  const abortTurn = acpChild && paneId !== null
+    ? () => { setAcpError(null); void holdAcpChild(paneId, machineId).catch(() => abortTyped()); }
+    : abortTyped;
 
   // what a paste into the line is for: this PC's pane on this connection, while it can type there.
   // Read at the tap and once the clipboard answers (TerminalInput.tsx): any difference drops the paste
@@ -832,6 +838,12 @@ export function PaneTerminal({
   if (paneId !== null) {
     const owner = paneStorageId(machineId, paneId);
     const takeOver = !observing && socketRef.current?.canTakeOver() === true;
+    // one notice per hold: a hold set again elsewhere draws a new button, so a press never hands back a hold it did not see
+    if (acpHold) noticeItems.push({
+      id: `${owner}:acp-hold:${acpHold.child_id}:${acpHold.generation}`, priority: "activity", revision: "", warning: acpError !== null, mark: <Pause />,
+      text: acpError ?? t("Stopped by you. The agent that called it cannot give it new work."),
+      actions: <button type="button" className="composer-notice-action" disabled={viewOnly} onClick={() => { setAcpError(null); void releaseAcpChild(paneId, acpHold, machineId).catch(() => setAcpError(t("Not handed back: Ovis could not reach this agent. Try again."))); }}>{t("Hand back")}</button>,
+    });
     if (held) noticeItems.push({
       id: `${owner}:held`, priority: "urgent", revision: takeOver ? "open-here" : "", warning: true, mark: <Unplug />,
       text: t("Another app has this pane open. It connects here as soon as that app lets go."),
@@ -1255,7 +1267,7 @@ export function PaneTerminal({
         isBusy={(id) => pendingMessages.isBusy(queueOwner, id)}
         onSendNow={(id) => actOnPending(id, "steer")}
         onEdit={(id) => actOnPending(id, "edit")}
-        onDiscard={(id) => actOnPending(id, "discard")}
+        onDiscard={(id, displayOnly) => actOnPending(id, displayOnly ? "dismiss" : "discard")}
       />}
       {presented && paneId !== null && chatMounted && <div className="prompt-dock" ref={setPromptDock} aria-live="polite" inert={peek !== null || undefined} />}
       {presented && paneId !== null && chatMounted && !secretActive && !observing && !ended && (

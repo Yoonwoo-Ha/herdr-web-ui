@@ -82,6 +82,39 @@ describe("pane state per herdr lifetime", () => {
     expect(lifetimes.unsent()).toEqual([]);
   });
 
+  it("keeps display-dismissed IDs on the same herdr without recovering their text, then retires only that lifetime's marks", () => {
+    const storage = new MemoryStorage(), lifetimes = page(storage);
+    lifetimes.observe([pc("local", "dismiss-herdr-a")], title);
+    const store = new PendingMessageStore(() => lifetimes.paneStorage, lifetimes);
+    lifetimes.onRetire(machine => store.forget(machine));
+    const copy = { id: "dismissed-id", request_id: 1, text: "already sent", state: "uncertain" as const, created_at: "2026-11-17T00:00:00Z" };
+    lifetimes.paneStorage.setItem(DRAFT, "keep this draft");
+    store.accept("w1:p1", copy, "scope");
+    expect(store.dismissCopy("w1:p1", copy.id)).toBe(true);
+    const reloaded = page(storage); reloaded.observe([pc("local", "dismiss-herdr-a")], title);
+    const restored = new PendingMessageStore(() => reloaded.paneStorage, reloaded);
+    restored.accept("w1:p1", copy, null);
+    expect(restored.read("w1:p1")).toEqual([]);
+    expect(reloaded.paneStorage.getItem(DRAFT)).toBe("keep this draft");
+    lifetimes.observe([pc("local", "dismiss-herdr-b")], title);
+    expect(lifetimes.unsent().map(item => item.text)).toEqual(["keep this draft"]);
+    // The recycled pane ID in another herdr does not inherit display tombstones.
+    store.accept("w1:p1", copy, null);
+    expect(store.read("w1:p1")).toMatchObject([{ id: copy.id }]);
+  });
+  it("never offers a dismissed ID's text for recovery, also once a connection listed that row again", () => {
+    const storage = new MemoryStorage(), lifetimes = page(storage);
+    lifetimes.observe([pc("local", "dismiss-live-a")], title);
+    const store = new PendingMessageStore(() => lifetimes.paneStorage, lifetimes);
+    lifetimes.onRetire(machine => store.forget(machine));
+    const copy = { id: "dismissed-live", request_id: 1, text: "dismissed once", state: "uncertain" as const, created_at: "2026-11-17T00:00:00Z" };
+    store.accept("w1:p1", copy, "scope");
+    expect(store.dismissCopy("w1:p1", copy.id)).toBe(true);
+    store.publish("w1:p1", [copy, { ...copy, id: "still-queued", text: "never dismissed", state: "queued" }], [], "scope");
+    expect(store.read("w1:p1").map(row => row.id)).toEqual([copy.id, "still-queued"]);
+    lifetimes.observe([pc("local", "dismiss-live-b")], title);
+    expect(lifetimes.unsent().map(item => item.text)).toEqual(["never dismissed"]);
+  });
   it("keeps a pane's state across server restarts on one herdr, and leaves a replaced herdr's text to recovery", () => {
     const storage = new MemoryStorage();
     const first = page(storage);
@@ -176,6 +209,19 @@ describe("pane state per herdr lifetime", () => {
     expect(again.unsent()).toHaveLength(3);
   });
 
+  it("says whether a replaced page's pane state reached storage: nothing to hand over is done, and a refused write leaves it with this page", () => {
+    const storage = new MemoryStorage();
+    storage.refuse = "ovis:pane-carried:";
+    const leaving = page(storage);
+    expect(leaving.carry()).toBe(true);
+    leaving.observe([pc("local", undefined)], title);
+    leaving.paneStorage.setItem(DRAFT, "typed under an older bridge");
+    expect(leaving.carry()).toBe(false);
+    expect(leaving.paneStorage.getItem(DRAFT)).toBe("typed under an older bridge");
+    storage.refuse = null;
+    expect(leaving.carry()).toBe(true);
+  });
+
   it("never puts a carried draft into the pane that reuses its ID after herdr was replaced under a PC naming no herdr", () => {
     const storage = new MemoryStorage();
     const leaving = page(storage);
@@ -219,6 +265,36 @@ describe("pane state per herdr lifetime", () => {
     back.observe([pc("local", undefined)], title);
     expect(after.read("w1:p1")).toEqual([]);
     expect(back.unsent().map(({ kind, text }) => `${kind}:${text}`)).toEqual(["pending:yes", "pending:yes"]);
+  });
+
+  it("keeps two held messages with the same text, stored before any herdr was named, as two recovery items once one is (#3990)", () => {
+    const storage = new MemoryStorage();
+    const lifetimes = page(storage);
+    // rows an earlier release stored with no lifetime record: the first herdr named retires them (settle, retireStored)
+    lifetimes.observe([pc("local", undefined)], title);
+    storage.setItem("ovis:pending:w1:p1", JSON.stringify({ version: 1, messages: [{ id: "one", text: "yes" }, { id: "two", text: "yes" }] }));
+    storage.setItem("ovis:queue:w1:p1", "carry this too");
+    // The next herdr takes over: both pending rows are archived in one pass.
+    lifetimes.observe([pc("local", "herdr-a")], title);
+
+    // Both rows come back, one recovery record per message, not one for the shared text.
+    expect(storage.getItem("ovis:pending:w1:p1")).toBeNull();
+    expect(lifetimes.unsent().filter((item) => item.kind === "pending" && item.text === "yes")).toHaveLength(2);
+  });
+
+  it("keeps the record an unconfirmed row already has, and makes one more for a second row with the same text (#3990)", () => {
+    const storage = new MemoryStorage();
+    const lifetimes = page(storage);
+    const pending = new PendingMessageStore(() => lifetimes.paneStorage, lifetimes);
+    lifetimes.onRetire((machineId) => pending.forget(machineId));
+    lifetimes.observe([pc("local", undefined)], title);
+    pending.keepUnconfirmed("w1:p1", "yes");
+    const [kept] = lifetimes.unsent();
+    pending.accept("w1:p1", { id: "two", request_id: 1, text: "yes", state: "queued", created_at: "2026-10-06T00:00:00Z" }, null);
+    lifetimes.observe([pc("local", "herdr-a")], title);
+    expect(pending.read("w1:p1")).toEqual([]);
+    expect(lifetimes.unsent().map(({ kind, text }) => `${kind}:${text}`)).toEqual(["pending:yes", "pending:yes"]);
+    expect(lifetimes.unsent().map(({ id }) => id)).toContain(kept!.id);
   });
 
   it("keeps no held input past its age in the carry, when the page leaves or when the next one takes it", () => {

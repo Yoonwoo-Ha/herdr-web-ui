@@ -1,31 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { join, posix } from "node:path";
-import { fail, files, lineOf, read, repo, stripComments } from "../scripts/source-scan.ts";
+import { fail, files, importClosure, lineOf, read, relativeImports, repo, stripComments } from "../scripts/source-scan.ts";
 
 // Rules for the terminal screen under tui/. Each failure says what to change; repo-wide rules are
 // in scripts/conventions.test.ts, and the UI wording scan of src/conventions.test.ts reads tui/ too.
 
 /** The screen's shipped code: not tests, and not the test tooling under tui/testing/. */
 const productCode = (): string[] => files("tui/**/*.{ts,tsx,mjs,js}").filter((file) => !file.startsWith("tui/testing/") && !/\.test\.tsx?$/.test(file));
-
-/**
- * Module specifiers of static imports and re-exports, side-effect imports and `import("…")` with a literal (as in
- * scripts/conventions.test.ts). A declaration never runs on into the next `import`: one that no semicolon ends would
- * otherwise take the import after it for its own `from` and hide what that import names.
- */
-const SPECIFIER = /(?:^|[\s;])(?:import|export)\s(?:(?!\bimport\b)[^;])*?\sfrom\s*["']([^"']+)["']|(?:^|[\s;])import\s*["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/gm;
-
-/** Each relative import of `code` (comments removed), as the repository path it names and its line. */
-function relativeImports(file: string, code: string): { target: string; line: number; specifier: string }[] {
-  return [...code.matchAll(SPECIFIER)].flatMap((match) => {
-    const specifier = match[1] ?? match[2] ?? match[3]!;
-    if (!specifier.startsWith(".")) return [];
-    // the match may start with the newline before the import
-    const at = match.index + match[0].search(/\S/);
-    return [{ target: posix.normalize(posix.join(posix.dirname(file), specifier.replace(/\?.*$/, ""))), line: lineOf(code, at), specifier }];
-  });
-}
 
 /** Every match of `pattern` in each file's code (comments removed), as `file:line: text`. */
 function matches(fileList: string[], pattern: RegExp): string[] {
@@ -43,38 +25,31 @@ describe("import closure of tui/main.ts", () => {
   // shared/ and these server files, which carry no server state of their own.
   const OUTSIDE_ALLOWED = new Set([
     ...["connection.ts", "socket-transport.ts", "core-socket.ts", "core-model.ts", "event-stream.ts", "layout-ops.ts", "layout-doc.ts", "snapshot.ts", "seen-label.ts", "worktrees.ts", "errors.ts", "hc-api.generated.ts"].map((name) => `server/herdr-core/${name}`),
-    "server/agent-identity.ts", "server/herdr-sidebar.ts", "server/user-home.ts", "server/herdr/line-reader.ts", "server/herdr/test-session.ts",
+    "server/agent-identity.ts", "server/herdr-sidebar.ts", "server/user-home.ts", "server/herdr/line-reader.ts", "server/herdr/test-session.ts", "server/herdr/worktree-info.ts",
     "package.json",
   ]);
   const allowed = (path: string) => path.startsWith("tui/") || path.startsWith("shared/") || OUTSIDE_ALLOWED.has(path);
 
-  /**
-   * The repository files `entry` reaches through relative imports, followed transitively through
-   * every allowed code file, and each import that leaves the allowed set. A file that does not
-   * exist is not read: a listed file its row has not written yet is simply not reached.
-   */
-  function closure(entry: string, source: (path: string) => string | undefined): { reached: string[]; offenders: string[] } {
-    const reached = new Set([entry]);
-    const offenders: string[] = [];
-    for (const queue = [entry]; queue.length;) {
-      const file = queue.shift()!;
-      const text = /\.(?:ts|tsx|mjs|js)$/.test(file) ? source(file) : undefined;
-      if (text === undefined) continue;
-      for (const { target, line, specifier } of relativeImports(file, stripComments(text))) {
-        if (!allowed(target)) offenders.push(`${file}:${line}: ${specifier} (${target})`);
-        else if (!reached.has(target)) {
-          reached.add(target);
-          queue.push(target);
-        }
-      }
-    }
-    return { reached: [...reached], offenders };
-  }
+  const closure = (entry: string, source: (path: string) => string | undefined) =>
+    importClosure(entry, source, allowed, (from, to) => from === "server/herdr-core/snapshot.ts" && to === "server/foreground-job.ts");
 
   it("stays inside tui/, shared/ and the listed server files", () => {
     const { reached, offenders } = closure("tui/main.ts", (path) => existsSync(join(repo, path)) ? read(path) : undefined);
     expect(reached).toContain("package.json");
     fail(offenders, "tui/main.ts reaches these files outside tui/, shared/ and OUTSIDE_ALLOWED (tui/conventions.test.ts): move what the screen needs into shared/ or a listed server/herdr-core/ file that carries no server state, and import it from there. Do not add a file to OUTSIDE_ALLOWED unless the plan names it.");
+  });
+
+  it("refuses a reachable import that TypeScript cannot parse", () => {
+    const graph: Record<string, string> = {
+      "tui/main.ts": 'import "./sneak62.mjs";',
+      "tui/sneak62.mjs": [
+        "import",
+        "--> type",
+        '{ conversationDir } from "../server/conversation.ts";',
+        "export const probe62 = typeof conversationDir;",
+      ].join("\n"),
+    };
+    expect(() => closure("tui/main.ts", (path) => graph[path])).toThrow(/^tui\/sneak62\.mjs:\d+: /);
   });
 
   it("follows listed server files and reports what they reach", () => {
@@ -105,11 +80,66 @@ describe("import closure of tui/main.ts", () => {
       "tui/model/b.ts:2: ../../server/main.ts (server/main.ts)",
     ]);
   });
+
+  const snapshot = "server/herdr-core/snapshot.ts";
+  const scanSnapshot = (source: string) => closure("tui/main.ts", (path) =>
+    path === "tui/main.ts" ? 'import "../server/herdr-core/snapshot.ts";' : path === snapshot ? source : undefined);
+
+  it("allows snapshot's foreground-job type without allowing a runtime import", () => {
+    const types = scanSnapshot('import type { JobProcess } from "../foreground-job.ts";');
+    expect(types.reached).toContain(snapshot);
+    expect(types.reached).not.toContain("server/foreground-job.ts");
+    expect(types.offenders).toEqual([]);
+    expect(scanSnapshot('import { jobProcessesBelow } from "../foreground-job.ts";').offenders).toEqual([
+      "server/herdr-core/snapshot.ts:1: ../foreground-job.ts (server/foreground-job.ts)",
+    ]);
+  });
+
+  it("rejects a value re-export from foreground-job", () => {
+    expect(scanSnapshot('export { jobProcessesBelow } from "../foreground-job.ts";').offenders).toEqual([
+      "server/herdr-core/snapshot.ts:1: ../foreground-job.ts (server/foreground-job.ts)",
+    ]);
+  });
+
+  it("rejects a dynamic import from foreground-job", () => {
+    expect(scanSnapshot('const job = () => import("../foreground-job.ts");').offenders).toEqual([
+      "server/herdr-core/snapshot.ts:1: ../foreground-job.ts (server/foreground-job.ts)",
+    ]);
+  });
+
+  it("rejects an import type expression naming foreground-job", () => {
+    expect(scanSnapshot('type Job = import("../foreground-job.ts").JobProcess;').offenders).toEqual([
+      "server/herdr-core/snapshot.ts:1: ../foreground-job.ts (server/foreground-job.ts)",
+    ]);
+  });
+
+  it("rejects a value import after a type export without a semicolon", () => {
+    const { offenders } = scanSnapshot([
+      "type Probe62 = number",
+      "export type { Probe62 }",
+      'import { jobProcessesBelow } from "../foreground-job.ts";',
+    ].join("\n"));
+    expect(offenders).toEqual([
+      "server/herdr-core/snapshot.ts:3: ../foreground-job.ts (server/foreground-job.ts)",
+    ]);
+  });
+
+  it("rejects foreground-job type imports outside snapshot and other server types inside it", () => {
+    const graph: Record<string, string> = {
+      "tui/main.ts": 'import "../server/herdr-core/snapshot.ts";\nimport "../server/herdr-core/core-model.ts";',
+      [snapshot]: 'import type { Conversation } from "../conversation.ts";',
+      "server/herdr-core/core-model.ts": 'import type { JobProcess } from "../foreground-job.ts";',
+    };
+    expect(closure("tui/main.ts", (path) => graph[path]).offenders).toEqual([
+      "server/herdr-core/snapshot.ts:1: ../conversation.ts (server/conversation.ts)",
+      "server/herdr-core/core-model.ts:1: ../foreground-job.ts (server/foreground-job.ts)",
+    ]);
+  });
 });
 
 describe("the screen's product code", () => {
   it("starts no process and never imports tui/testing/", () => {
-    const testing = productCode().flatMap((file) => relativeImports(file, stripComments(read(file)))
+    const testing = productCode().flatMap((file) => relativeImports(file, read(file))
       .filter(({ target }) => target.startsWith("tui/testing/")).map(({ line, specifier }) => `${file}:${line}: ${specifier}`));
     fail([...matches(productCode(), /\bBun\s*\.\s*(?:spawnSync|spawn|\$)|["'](?:node:)?child_process["']/), ...testing],
       "The screen starts no process (no Bun.spawn, Bun.spawnSync, Bun.$ or node:child_process) and never imports tui/testing/: the launcher starts the core, and only test files and the tooling under tui/testing/ start processes.");
@@ -128,9 +158,16 @@ describe("the screen's product code", () => {
       "tui/input/ and tui/model/ read no clock and arm no timer: take the time as an argument from the caller, and name every wait or limit in tui/model/deadlines.ts.");
   });
 
-  it("never reaches the Ovis server", () => {
-    fail(matches(productCode(), /\bfetch\s*\(|\/api\//),
-      "The screen talks to herdr-core only, never to the Ovis server: no fetch( and no /api/ route under tui/. Use the core connection (server/herdr-core/ files on the closure list) instead.");
+  it("reaches the Ovis server only through tui/core/ovis-server.ts, and only its worktree routes", () => {
+    // herdr's New worktree and Delete worktree checkout... run git, which only the Ovis server does (row 83): that one
+    // file may call it, on the two checked worktree routes and nothing else
+    const door = "tui/core/ovis-server.ts";
+    const routes = [...read(door).matchAll(/\/api\/[^`"'\s)]*/g)].map((match) => match[0]);
+    fail([
+      ...matches(productCode().filter((file) => file !== door), /\bfetch\s*\(|\/api\//),
+      ...routes.filter((route) => route !== "/api/worktree/${route}-checked").map((route) => `${door}: ${route}`),
+    ], "The screen talks to herdr-core, and to the Ovis server only in tui/core/ovis-server.ts for the checked worktree calls.");
+    expect(routes).toEqual(["/api/worktree/${route}-checked"]);
   });
 
   it("never names the Ovis server's settings", () => {

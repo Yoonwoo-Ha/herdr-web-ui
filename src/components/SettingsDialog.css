@@ -155,12 +155,22 @@
   white-space: nowrap;
 }
 
-.settings-change-pc {
-  margin-top: var(--space-2);
-}
-
 .settings-tab-chevron {
   display: none;
+}
+
+.settings-tab > .settings-tab-count {
+  flex: 0 0 auto;
+  min-width: var(--chip-h);
+  height: var(--chip-h);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--notice-tint);
+  color: var(--text-strong);
+  font-size: var(--fs-meta);
+  font-variant-numeric: var(--font-numeric);
+  line-height: var(--chip-h);
+  text-align: center;
 }
 
 @media (hover: hover) {

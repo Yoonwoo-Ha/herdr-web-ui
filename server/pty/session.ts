@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { COMPILED, ROOT } from "../entries.ts";
-import { disableRustHost, rustSidecar, spawnErrorReason } from "./host.ts";
+import { spawnErrorReason } from "../native-binary.ts";
+import { disableRustHost, rustSidecar } from "./host.ts";
 import { nodeSidecarAvailable, realNode } from "./sidecar.ts";
 
 // a file Node runs, never compiled in: beside the binary, or beside this one from source

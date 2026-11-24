@@ -1,0 +1,13 @@
+{
+  "name": "label-space-at-start",
+  "fields": [
+    {
+      "name": "label",
+      "value": "IERlc2s"
+    }
+  ],
+  "expect": {
+    "names": null,
+    "written": false
+  }
+}

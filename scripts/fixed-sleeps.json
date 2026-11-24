@@ -23,7 +23,6 @@
   "server/mirror.test.ts": 4,
   "server/output.contract.test.ts": 6,
   "server/pending-input.contract.test.ts": 2,
-  "server/prompt.contract.test.ts": 3,
   "server/prompt.ts": 1,
   "server/pty/session.test.ts": 4,
   "server/reattach.contract.test.ts": 1,

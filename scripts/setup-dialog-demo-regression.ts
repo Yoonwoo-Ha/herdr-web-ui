@@ -554,7 +554,10 @@ try {
     const sent = await page.evaluate(() => (window as unknown as { sent: string[] }).sent);
     assert.deepEqual(sent.filter((request) => request === "GET /api/usage" || request.startsWith("PUT /api/preferences") || request.startsWith("POST /api/preferences")), [], `opening the guide and Set up later read no usage and write no shared setting: ${sent.join(", ")}`);
     assert.equal(await page.evaluate(() => localStorage.getItem("ovis:settings")), settingsBefore, "Set up later leaves this browser's settings byte for byte as they were");
-    await page.locator(".setup-row .setup-row-open").click();
+    // the guide comes back from Settings → Agents: the sidebar's setup row is a checklist now
+    await page.keyboard.press("Control+Shift+Comma");
+    await openSettingsPage(page, "Agents");
+    await page.locator(".settings-dialog").getByRole("button", { name: "Open setup guide", exact: true }).click();
     await dialog.waitFor();
     await settled(page);
     assert.equal((await page.evaluate(() => (window as unknown as { sent: string[] }).sent)).includes("GET /api/usage"), false, "a guide reopened without Continue reads no usage");

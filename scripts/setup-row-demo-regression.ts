@@ -100,13 +100,27 @@ try {
         await row.waitFor();
         assert.equal((await row.innerText()).trim(), "Setup: 2 left", `the row counts what is left ${at}`);
         await shot("3-setup-row");
+        // the row is a checklist of the parts, each left one opening its own setting: never the whole guide again
         await row.click();
-        const dialog = page.getByRole("dialog", { name: DIALOG, exact: true });
-        await dialog.getByRole("heading", { name: "Stay in touch", exact: true }).waitFor();
+        const checklist = page.getByRole("menu", { name: "Setup: 2 left", exact: true });
+        await checklist.waitFor();
+        assert.deepEqual(await checklist.locator("[data-item]").evaluateAll((items) => items.map((item) => [item.getAttribute("data-item"), item.getAttribute("aria-checked"), item.getAttribute("aria-disabled")])),
+          [["workspace", "true", "true"], ["theme", "true", "true"], ["phone", "false", null], ["alerts", "false", null]], `the checklist ticks the done parts and leaves them inert ${at}`);
         await settled(page);
-        await shot("4-reopened-at-phone");
+        await shot("4-checklist");
+        assert.equal(await page.getByRole("dialog", { name: DIALOG, exact: true }).count(), 0, `the checklist opens no guide ${at}`);
+        await checklist.getByRole("menuitemcheckbox", { name: "Connect your phone", exact: true }).click();
+        const connect = page.getByRole("dialog", { name: "Add a connection", exact: true });
+        await connect.waitFor();
+        assert.equal(await page.getByRole("dialog", { name: DIALOG, exact: true }).count(), 0, `Connect your phone opens Add a connection, not the guide ${at}`);
+        const relayTab = connect.locator('.connect-tabs [data-tab="relay"]');
+        if (await relayTab.count() > 0) assert.equal(await relayTab.getAttribute("aria-pressed"), "true", `Add a connection opens on Ovis relay ${at}`);
+        await settled(page);
+        await shot("5-connect-your-phone");
         await page.keyboard.press("Escape");
-        await dialog.waitFor({ state: "detached" });
+        await connect.waitFor({ state: "detached" });
+        await page.keyboard.press("Escape");
+        await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor({ state: "detached" });
         await page.getByRole("button", { name: "Hide setup reminder", exact: true }).click();
         await row.waitFor({ state: "detached" });
         await page.reload();
@@ -126,7 +140,7 @@ try {
             await listed.close();
           }
         }
-        console.log(`PASS the hints show one at a time by their anchors and close for good, and Setup: N left counts what is left and reopens the guide there (${at})`);
+        console.log(`PASS the hints show one at a time by their anchors and close for good, and Setup: N left counts what is left and opens a checklist whose Connect your phone opens Add a connection (${at})`);
         assert.deepEqual(errors, [], `no page errors ${at}`);
       } finally {
         await context.close();

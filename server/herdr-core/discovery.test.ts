@@ -317,6 +317,18 @@ it.skipIf(!unix)("runs a candidate with only the PATH folders that pass the same
   } finally { chmodSync(join(root, "open"), 0o755); }
 });
 
+it.skipIf(!unix)("asks --version in the environment given for it, and takes only which hc and where from the other", async () => {
+  const { root, log } = scratch();
+  const seen = join(root, "version-env");
+  const named = script(join(root, "named"), "my-hc", `env > '${seen}'\necho 'hc 0.1.20'`, log);
+  expect(await findHc({
+    env: { OVIS_HC_BIN: named, PATH: "/usr/bin:/bin", OVIS_TOKEN: "secret" }, versionEnv: { PATH: "/usr/bin:/bin", KEPT: "yes" },
+    home: root, loginShellPath: async () => null, usualDirs: [],
+  })).toEqual({ bin: named, version: "0.1.20" });
+  const names = readFileSync(seen, "utf8").split("\n").map((line) => line.split("=")[0]);
+  expect(["OVIS_TOKEN", "OVIS_HC_BIN", "KEPT"].filter((name) => names.includes(name))).toEqual(["KEPT"]);
+});
+
 it.skipIf(!unix)("takes herdr-core before hc in the same folder, as the app does", async () => {
   const { root, log } = scratch();
   fake(join(root, "bin"), "hc", "hc 0.1.17", log);

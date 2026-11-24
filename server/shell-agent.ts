@@ -433,7 +433,7 @@ const processInfo = (paneId: string) => herdrRpc<ProcessInfo>("pane.process_info
  * `locator` `/api/agents` asked, so the offer and the start agree whatever the pane shell's
  * PATH says.
  */
-export async function startShellAgent(kind: string, paneId: string, args: string[] = [], options: { command?: string; timeoutMs?: number; locator?: ShellAgentLocator } = {}): Promise<number | null> {
+export async function startShellAgent(kind: string, paneId: string, args: string[] = [], options: { command?: string; timeoutMs?: number; locator?: ShellAgentLocator; env?: Record<string, string> } = {}): Promise<number | null> {
   const isProcess = SHELL_AGENTS[kind];
   if (!isProcess) throw new Error(`${kind} is not a shell-started agent`);
   const windows = process.platform === "win32";
@@ -444,7 +444,9 @@ export async function startShellAgent(kind: string, paneId: string, args: string
       if (!executable) throw new Error(`${kind} is not on this server's PATH or its login shell's`);
       command = shellCommandLine("posix", executable, []);
     }
-    await herdrRpc("pane.send_text", { pane_id: paneId, text: `${[command, ...args.map(quote)].join(" ")}\n` });
+    // through env(1), as the herdr-core adapter does: the shell's own `NAME=value` syntax differs between shells
+    const env = options.env ? [shellCommandLine("posix", "/usr/bin/env", Object.entries(options.env).map(([name, value]) => `${name}=${value}`))] : [];
+    await herdrRpc("pane.send_text", { pane_id: paneId, text: `${[...env, command, ...args.map(quote)].join(" ")}\n` });
   } else {
     const executable = await (options.locator ?? servicePathOnly).executable(kind);
     if (!executable) throw new Error(`${kind} is not on this server's PATH`);

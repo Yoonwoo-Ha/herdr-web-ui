@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
 import { OWN_UPDATE_OFFER, type Machine, type RemoteOvis } from "../../shared/machines.ts";
-import { ADD_PC_FROM_KEY, addPcExit, collapsedKey, machineAway, openAddPc, manageActions, ownOvisAction, ownUpdateFailure, pcListExit, removablePc } from "./MachineSidebar.tsx";
+import { setCurrentLanguage } from "../lib/i18n.ts";
+import { collapsedKey } from "./MachineHeader.tsx";
+import { ADD_PC_FROM_KEY, addPcExit, addPcMoreItem, machineAway, openAddPc, manageActions, ownOvisAction, ownUpdateFailure, pcListExit, removablePc } from "./MachineSidebar.tsx";
 
 const offer = (updatable: boolean): RemoteOvis => ({ version: "0.4.16", latest_version: updatable ? "0.4.18" : null, updatable, reason: updatable ? null : "it cannot", address: "pc.invalid:4000", url: null });
 const pc = (patch: Partial<Pick<Machine, "remote_ovis" | "action_required" | "error">>) => ({ remote_ovis: null, action_required: null, error: null, ...patch });
@@ -22,13 +24,43 @@ describe("where a phone's More → Add a PC leads", () => {
     const store = new Map<string, string>();
     const went: string[] = [];
     Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); } } });
-    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { pathname: pcPage, assign: (url: string) => { went.push(url); } } } });
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { history: { state: null }, location: { pathname: pcPage, assign: (url: string) => { went.push(url); } } } });
     try {
       openAddPc("shell");
       expect(went).toEqual(["/#add"]);
       expect(store.get(ADD_PC_FROM_KEY)).toBe(pcPage);
     } finally {
       for (const [key, descriptor] of saved) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+    }
+  });
+
+  it("is Connect a PC on a phone, in every language, and no More item on a desktop, which adds a PC from Settings", () => {
+    expect(addPcMoreItem("app", true)?.label).toBe("Connect a PC");
+    expect(addPcMoreItem("shell", true)?.label).toBe("Connect a PC");
+    expect(addPcMoreItem("app", false)).toBeNull();
+    expect(addPcMoreItem(null, true)).toBeNull();
+    for (const [language, label] of [["ko", "PC 연결"], ["ja", "PC を接続"], ["zh", "连接电脑"]] as const) {
+      setCurrentLanguage(language);
+      try { expect(addPcMoreItem("app", true)?.label).toBe(label); } finally { setCurrentLanguage("en"); }
+    }
+  });
+
+  it("opens the phone app's connect tabs keeping the PC open until another is picked, and an older app's the way it can", async () => {
+    const saved = Object.getOwnPropertyDescriptor(globalThis, "Capacitor");
+    const calls: string[] = [];
+    const app = (methods: string[]) => Object.defineProperty(globalThis, "Capacitor", { configurable: true, value: {
+      isNativePlatform: () => true,
+      PluginHeaders: [{ name: "HerdrShell", methods: methods.map((name) => ({ name })) }],
+      nativePromise: async (plugin: string, method: string) => { calls.push(`${plugin}.${method}`); },
+    } });
+    try {
+      app(["disconnect", "chooseAnother"]);
+      await openAddPc("app");
+      app(["disconnect"]);
+      await openAddPc("app");
+      expect(calls).toEqual(["HerdrShell.chooseAnother", "HerdrShell.disconnect"]);
+    } finally {
+      if (saved) Object.defineProperty(globalThis, "Capacitor", saved); else Reflect.deleteProperty(globalThis, "Capacitor");
     }
   });
 });

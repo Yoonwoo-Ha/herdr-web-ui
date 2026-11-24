@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>OvisAppOrigin</key>
+	<string>$(OVIS_APP_ORIGIN)</string>
+	<key>OvisAppHome</key>
+	<string>$(OVIS_APP_HOME)</string>
+	<key>OvisAppShell</key>
+	<string>$(OVIS_APP_SHELL)</string>
 	<key>OvisPushRelay</key>
 	<string>$(OVIS_PUSH_RELAY)</string>
 	<key>OvisPushKeychainGroup</key>
@@ -76,7 +82,7 @@
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Scan the QR code your PC shows under Settings, Phone &amp; devices.</string>
+	<string>Scan the QR code your PC shows under Settings → Devices and PCs → Add a connection.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect straight to your PC when it is on the same network, instead of through the Ovis relay.</string>
 	<key>NSMicrophoneUsageDescription</key>

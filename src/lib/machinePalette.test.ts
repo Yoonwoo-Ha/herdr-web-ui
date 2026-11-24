@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { Machine } from "../../shared/machines.ts";
 import type { HerdrPane, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import { translate } from "./i18n.ts";
-import { availableTarget, groupMachinePanes, loadRecentTargets, rankMachinePanes, recentTargets, rememberTarget, targetKey, RECENT_KEY } from "./machinePalette.ts";
+import { availableTarget, groupMachinePanes, loadRecentTargets, rankMachinePanes, recentTargets, rememberTarget, targetKey, RECENT_KEY, RECENT_SHOWN } from "./machinePalette.ts";
 
 const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
 const pane = (label: string, status = "idle"): HerdrPane => ({ pane_id: "p1", workspace_id: "w1", tab_id: "t1", terminal_id: "term1", revision: 1, focused: false, label, agent_status: status });
@@ -57,5 +57,28 @@ describe("all-PC palette", () => {
     storage.set(RECENT_KEY, '[]'); expect(loadRecentTargets(read, ["local", "remote"])).toEqual([]);
     storage.set(RECENT_KEY, '{'); expect(loadRecentTargets(read, ["local", "remote"])).toEqual([]);
     expect(loadRecentTargets(() => { throw new Error("disabled"); }, ["local"])).toEqual([]);
+  });
+  it("remembers enough targets so excluding the selected pane still shows up to RECENT_SHOWN entries (#4035)", () => {
+    expect(RECENT_SHOWN).toBe(8);
+    const localMachine: Machine = {
+      id: "local", name: "Laptop", kind: "local", enabled: true, state: "connected", error: null,
+      snapshot: {
+        panes: Array.from({ length: 10 }, (_, idx) => ({ ...pane(`Pane ${idx}`, "idle"), pane_id: `p${idx}` })),
+        workspaces: [workspace("project")],
+        tabs: [{ tab_id: "t1", workspace_id: "w1", label: "logs", focused: false, number: 1, pane_count: 10, agent_status: "idle" }],
+        agents: [], layouts: [],
+      } as unknown as SessionSnapshot,
+    };
+    let recent: { machineId: string; paneId: string }[] = [];
+    for (let idx = 0; idx < 10; idx += 1) recent = rememberTarget({ machineId: "local", paneId: `p${idx}` }, recent);
+    expect(recent).toHaveLength(RECENT_SHOWN + 1);
+    expect(recent.map((item) => item.paneId)).toEqual(["p9", "p8", "p7", "p6", "p5", "p4", "p3", "p2", "p1"]);
+    const loaded = loadRecentTargets(() => JSON.stringify(Array.from({ length: 10 }, (_, idx) => ({ machineId: "local", paneId: `p${9 - idx}` }))), ["local"]);
+    expect(loaded).toHaveLength(RECENT_SHOWN + 1);
+    const shown = recentTargets(rankMachinePanes("", [localMachine], "all", new Map(), t), recent, { machineId: "local", paneId: "p9" }, RECENT_SHOWN);
+    expect(shown.map((item) => item.paneId)).toEqual(["p8", "p7", "p6", "p5", "p4", "p3", "p2", "p1"]);
+    // Nine eligible targets and none selected: only the eight newest are shown.
+    const capped = recentTargets(rankMachinePanes("", [localMachine], "all", new Map(), t), recent, { machineId: "local", paneId: "p0" }, RECENT_SHOWN);
+    expect(capped.map((item) => item.paneId)).toEqual(["p9", "p8", "p7", "p6", "p5", "p4", "p3", "p2"]);
   });
 });

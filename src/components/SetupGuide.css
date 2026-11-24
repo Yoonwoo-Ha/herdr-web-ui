@@ -331,9 +331,9 @@
   align-self: flex-end;
   max-width: 88%;
   padding: var(--space-1-5) var(--space-2-5);
-  border: var(--hairline) solid var(--bubble-border);
+  border: var(--hairline) solid var(--bubble-edge);
   border-radius: var(--radius-lg);
-  background: var(--bg-elevated);
+  background: var(--bubble-bg);
 }
 
 .setup-preview-code,

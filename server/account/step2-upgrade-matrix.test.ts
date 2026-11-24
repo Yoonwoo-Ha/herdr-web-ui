@@ -512,7 +512,8 @@ test.skipIf(!available).each(bindingCells)("PC binding history=%s snapshot=%s", 
   }
   const newcomerId = accountDeviceId(serverId, newer.spki);
   const previous = binding === "member-bound" || binding === "service-bound" ? ACCOUNT : null;
-  const expected = binding === "service-bound" && refusal === "not-listed-403" ? null : previous;
+  // a PC stands in its account on the account's listing of it, however it was bound
+  const expected = previous !== null && refusal === "not-listed-403" ? null : previous;
   const app = start();
   try {
     const { devices, accountMailbox } = app.context.services;

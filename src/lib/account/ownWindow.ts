@@ -15,11 +15,19 @@ import type { BridgeHealth } from "../../../shared/machines.ts";
 import { fetchBridgeHealth } from "../api.ts";
 import { reserveTab } from "../externalLink.ts";
 import { inMacApp, inNativeApp } from "../nativeApp.ts";
-import { desktopSignIn, type DesktopAccountBridge } from "./desktop.ts";
+import { desktopAccount, desktopSignIn, type DesktopAccountBridge } from "./desktop.ts";
+import { pcAccountServiceOf } from "./service.ts";
 import type { AccountProvider, AccountSession, AccountStore } from "./store.ts";
 
 export const CALLBACK_PATH = "/callback";
 const CHANNEL = "ovis-account-sign-in";
+
+/** the phone and Mac apps sign in their own way, never with a code from a PC's page */
+// read while rendering (usePcRemoval in the join requests), so also where a page is drawn with no document
+export const pcServiceHere = (): string | null => desktopAccount() === null && !inNativeApp() && !inMacApp() && typeof document !== "undefined" ? pcAccountServiceOf(document, window.isSecureContext) : null;
+
+/** The account service this PC's own page signs in with: the desktop app's, else the PC's own meta. Never the hosted shell's (accountServiceOf). */
+export const accountServiceHere = (): string | null => desktopAccount()?.service ?? pcServiceHere();
 
 type Message = { readonly kind: "return"; readonly params: string } | { readonly kind: "taken"; readonly state: string };
 

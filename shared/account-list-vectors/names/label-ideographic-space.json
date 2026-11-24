@@ -1,0 +1,13 @@
+{
+  "name": "label-ideographic-space",
+  "fields": [
+    {
+      "name": "label",
+      "value": "TXnjgIBkZXNr"
+    }
+  ],
+  "expect": {
+    "names": null,
+    "written": false
+  }
+}

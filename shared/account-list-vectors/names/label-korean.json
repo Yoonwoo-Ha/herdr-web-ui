@@ -1,0 +1,20 @@
+{
+  "name": "label-korean",
+  "fields": [
+    {
+      "name": "label",
+      "value": "7KeRIOuFuO2KuOu2gQ"
+    },
+    {
+      "name": "os",
+      "value": "d2luZG93cw"
+    }
+  ],
+  "expect": {
+    "names": {
+      "label": "집 노트북",
+      "os": "windows"
+    },
+    "written": true
+  }
+}

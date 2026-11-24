@@ -41,9 +41,8 @@ import { browseEntries, folderQuery, folderQueryFor, homeRelative, matchFolders,
 import { currentSidebarPins, subscribeSidebarPins } from "../lib/sidebarPins.ts";
 import { recentDirectories } from "../lib/recent-directories.ts";
 
-import { availableTarget, groupMachinePanes, loadRecentTargets, rankMachinePanes, recentTargets, rememberTarget, targetKey, RECENT_KEY, type MachineBranches, type MachinePane, type RecentPane } from "../lib/machinePalette.ts";
+import { availableTarget, groupMachinePanes, loadRecentTargets, rankMachinePanes, recentTargets, rememberTarget, targetKey, RECENT_KEY, RECENT_SHOWN, type MachineBranches, type MachinePane, type RecentPane } from "../lib/machinePalette.ts";
 import { worktreeWorkspaceSignature, type WorkspaceBranch } from "../lib/worktreeBranches.ts";
-const RECENT_SHOWN = 3;
 const FOLDERS_SHOWN = 5;
 
 interface CommandPaletteProps {

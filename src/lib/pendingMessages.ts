@@ -55,6 +55,8 @@ const proofNow = (): number => {
 const freshReceipt = (until: number | undefined): until is number => until !== undefined && proofNow() < until;
 const piReceipt = (message: PendingMessage): boolean => message.id.startsWith("pi:")
   && (message.error?.code === "pi_transcript_pending" || message.error?.code === "transcript_unconfirmed");
+export const MAX_DISMISSED_PENDING_IDS = 1024;
+const MAX_DISMISSED_ID_LENGTH = 256;
 
 export const UNCONFIRMED_SEND = { code: "submit_unconfirmed", message: "This PC sent no receipt, so nothing confirmed the pane took this message" };
 
@@ -69,6 +71,14 @@ export class PendingMessageStore {
   /** ids this page discarded: a later resumed held ID never offers them for an explicit send again */
   private discarded = new Map<string, Set<string>>();
   private receiptOrder: Array<{ owner: string; id: string; scope: string }> = [];
+  /**
+   * Display-only tombstones in the pane lifetime record; never delivery or withdrawal proof. They hide saved copies
+   * only: a row a live connection here holds (another tab's dismissal included) stays until the bridge settles it.
+   */
+  private dismissed = new Map<string, Set<string>>();
+  private hidden(owner: string, message: PendingMessageView): boolean {
+    return !message.serverOwned && this.dismissed.get(owner)?.has(message.id) === true;
+  }
   private saved = new Map<string, string | null>();
   private unsaved = new Set<string>();
   private busy = new Set<string>();
@@ -159,12 +169,28 @@ export class PendingMessageStore {
     const { sending_at: _, ...rest } = message;
     return { ...rest, state: "held", heldUntil: at, heldBy: receipt.scope };
   }
+  private rememberDismissed(owner: string, raw: string | null): boolean {
+    const refused = (): false => { this.unsaved.add(owner); return false; };
+    try {
+      const data: unknown = JSON.parse(raw ?? "null");
+      if (!data || typeof data !== "object" || !("dismissed" in data)) return true;
+      if (!Array.isArray(data.dismissed) || data.dismissed.length > MAX_DISMISSED_PENDING_IDS
+        || data.dismissed.some((id) => typeof id !== "string" || !id || id.length > MAX_DISMISSED_ID_LENGTH)) return refused();
+      const ids = this.dismissed.get(owner) ?? new Set<string>();
+      const added = new Set<string>((data.dismissed as string[]).filter((id) => !ids.has(id)));
+      if (ids.size + added.size > MAX_DISMISSED_PENDING_IDS) return refused();
+      for (const id of added) ids.add(id);
+      if (ids.size) this.dismissed.set(owner, ids);
+      return true;
+    } catch { return refused(); }
+  }
   read(owner: string): PendingMessageView[] {
     const cached = this.rows.get(owner);
     if (cached) return this.dropExpired(owner, cached);
     let raw: string | null = null;
     try { raw = this.storage().getItem(PREFIX + owner); } catch {}
-    const restored = this.restored(raw);
+    this.rememberDismissed(owner, raw);
+    const restored = this.restored(raw).filter((message) => !this.hidden(owner, message));
     const messages = restored.map((message) => this.applyHeldResumed(owner, message));
     this.saved.set(owner, raw);
     this.rows.set(owner, messages);
@@ -175,7 +201,8 @@ export class PendingMessageStore {
     try {
       const raw = this.storage().getItem(PREFIX + owner);
       if (this.saved.get(owner) === raw) return;
-      const loaded = this.restored(raw).filter((message) => !this.settledResumed.get(owner)?.has(message.id))
+      this.rememberDismissed(owner, raw);
+      const loaded = this.restored(raw).filter((message) => !this.settledResumed.get(owner)?.has(message.id) && !this.hidden(owner, message))
         .map((message) => message.state === "held" && this.discarded.get(owner)?.has(message.id) ? { ...message, state: "uncertain" as const } : message);
       const savedStates = new Map<string, unknown>();
       try {
@@ -201,7 +228,7 @@ export class PendingMessageStore {
       });
       const heldAgain = next.some((message, at) => message !== loaded[at]);
       // Another tab cannot alter or discard a live connection's authoritative rows.
-      for (const own of this.read(owner).filter((message) => this.unsaved.has(owner) || message.serverOwned || this.isBusy(owner, message.id))) {
+      for (const own of this.read(owner).filter((message) => !this.hidden(owner, message) && (this.unsaved.has(owner) || message.serverOwned || this.isBusy(owner, message.id)))) {
         const at = next.findIndex((message) => message.id === own.id);
         if (at < 0) next.push(own);
         else if ((next[at]!.resendGeneration ?? 0) > (own.resendGeneration ?? 0)) {
@@ -218,10 +245,13 @@ export class PendingMessageStore {
       this.notify();
     } catch {}
   }
-  private write(owner: string, messages: PendingMessageView[]): void {
+  private write(owner: string, messages: PendingMessageView[]): boolean {
+    let saved = false;
+    messages = messages.filter((message) => !this.hidden(owner, message));
     this.rows.set(owner, messages);
     try {
-      const raw = messages.length ? JSON.stringify({ version: 1, messages: messages.map(({ serverOwned: _, heldUntil, heldBy: _by, ...message }) =>
+      const dismissed = [...(this.dismissed.get(owner) ?? [])];
+      const raw = messages.length || dismissed.length ? JSON.stringify({ version: 1, ...(dismissed.length ? { dismissed } : {}), messages: messages.map(({ serverOwned: _, heldUntil, heldBy: _by, ...message }) =>
         this.unconfirmed.has(`${owner}\0${message.id}`) || message.resendInFlight
           ? { ...message, state: "uncertain", resendInFlight: true }
           : heldUntil !== undefined && message.state === "held" ? { ...message, state: "uncertain" } : message) }) : null;
@@ -229,8 +259,10 @@ export class PendingMessageStore {
       this.saved.set(owner, raw);
       this.unsaved.delete(owner);
       this.settleRecovery(owner, messages);
+      saved = true;
     } catch { this.unsaved.add(owner); }
     this.notify();
+    return saved;
   }
   /**
    * Rows this page alone held (keepUnconfirmed), now saved where a reload reads them: their
@@ -249,6 +281,10 @@ export class PendingMessageStore {
     }
   }
   accept(owner: string, message: PendingMessage, scope: string | null): void {
+    this.refresh(owner);
+    this.read(owner);
+    // a dismissed ID comes back only from a connection that holds it now: that row is the bridge's to settle
+    if (scope === null && this.dismissed.get(owner)?.has(message.id)) return;
     if (this.movedAway.get(owner)?.has(message.id)) return;
     const seen = this.removed.get(owner)?.get(message.id);
     if (this.settledResumed.get(owner)?.has(message.id) || (scope === null ? (seen?.size ?? 0) > 0 : seen?.has(scope))) return;
@@ -398,6 +434,7 @@ export class PendingMessageStore {
       }
       if (kept.length > 0) this.rows.set(owner, kept); else this.rows.delete(owner);
       this.saved.delete(owner);
+      this.dismissed.delete(owner);
       this.unsaved.delete(owner);
       this.heldResumed.delete(owner);
       this.discarded.delete(owner);
@@ -413,6 +450,17 @@ export class PendingMessageStore {
     if (from === to) return;
     this.refresh(from);
     this.refresh(to);
+    const hidden = this.dismissed.get(from);
+    if (hidden) {
+      const target = this.dismissed.get(to) ?? new Set<string>();
+      let changed = false;
+      const added = [...hidden].filter((id) => (only === undefined || id === only) && !target.has(id));
+      // a full journal there keeps its own marks, and the rows move all the same: none is left at the old ID
+      if (target.size + added.length > MAX_DISMISSED_PENDING_IDS) { this.unsaved.add(to); this.notify(); } else {
+        for (const id of added) { target.add(id); changed = true; }
+        if (changed) { this.dismissed.set(to, target); this.write(to, this.read(to)); }
+      }
+    }
     const rows = this.read(from).filter((message) => only === undefined || message.id === only);
     for (const [key, next] of this.afterSend) if (next === from) this.afterSend.set(key, to);
     for (const message of rows) if (this.isBusy(from, message.id)) this.afterSend.set(`${from}\0${message.id}`, to);
@@ -482,15 +530,17 @@ export class PendingMessageStore {
     if (!this.unsaved.has(owner)) return true;
     try { return !this.restored(this.storage().getItem(PREFIX + owner), true).some((message) => message.id === id && message.state === "held"); } catch { return false; }
   }
-  end(owner: string, id: string): void {
+  /** @returns the owner the row is under now: a pane moved while it was busy takes it along here */
+  end(owner: string, id: string): string {
     this.unconfirmed.delete(`${owner}\0${id}`);
     this.busy.delete(`${owner}\0${id}`);
     this.rows.set(owner, [...this.read(owner)]);
     this.notify();
     const to = this.afterSend.get(`${owner}\0${id}`);
-    if (to === undefined) return;
+    if (to === undefined) return owner;
     this.afterSend.delete(`${owner}\0${id}`);
     this.move(owner, to, id);
+    return to;
   }
   fail(owner: string, id: string, error: { code: string; message: string }, uncertain: boolean, attemptedGeneration?: number): void {
     this.unconfirmed.delete(`${owner}\0${id}`);
@@ -530,6 +580,27 @@ export class PendingMessageStore {
     const kept = this.lifetimes.keep(pane.machineId, pane.paneId, "pending", text, true);
     if (kept !== null) this.recovery.set(`${owner}\0${id}`, kept);
   }
+  /** Hide only an uncertain display copy. Its exact ID cannot reappear or become a retry. */
+  dismissCopy(owner: string, id: string): boolean {
+    this.refresh(owner);
+    const message = this.read(owner).find((item) => item.id === id);
+    if (!message || message.state !== "uncertain" || this.isBusy(owner, id)) return false;
+    try {
+      if (!this.rememberDismissed(owner, this.storage().getItem(PREFIX + owner))) { this.notify(); return false; }
+    } catch { this.unsaved.add(owner); this.notify(); return false; }
+    const ids = this.dismissed.get(owner) ?? new Set<string>();
+    if (id.length > MAX_DISMISSED_ID_LENGTH || ids.size >= MAX_DISMISSED_PENDING_IDS) { this.unsaved.add(owner); this.notify(); return false; }
+    const previous = this.read(owner);
+    ids.add(id); this.dismissed.set(owner, ids);
+    if (!this.write(owner, previous.filter((item) => item.id !== id))) {
+      ids.delete(id);
+      this.rows.set(owner, previous);
+      this.notify();
+      return false;
+    }
+    this.discardRecovery(owner, id);
+    return true;
+  }
   removeCopy(owner: string, id: string): void {
     if (this.read(owner).some((message) => message.id === id && message.serverOwned)) return;
     this.scopes.get(owner)?.delete(id);
@@ -541,6 +612,10 @@ export class PendingMessageStore {
     this.unconfirmed.delete(`${owner}\0${id}`);
     this.refresh(owner);
     this.write(owner, this.read(owner).filter((message) => message.id !== id));
+    this.discardRecovery(owner, id);
+  }
+  private discardRecovery(owner: string, id: string): void {
+    // its exact recovery copy goes with it, never another row with the same text
     const kept = this.recovery.get(`${owner}\0${id}`);
     if (kept === undefined) return;
     this.recovery.delete(`${owner}\0${id}`);

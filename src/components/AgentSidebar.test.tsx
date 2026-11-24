@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, jest, setSystemTime } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, jest, setSystemTime, spyOn } from "bun:test";
 import { act, useLayoutEffect, useState } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 
@@ -241,6 +241,40 @@ describe("AgentSidebar phone sheet live row", () => {
     await act(async () => { (mounted.root.findByType(RowMenu).props.items as RowMenuItem[]).find((item) => item.id === "group:Agents")!.run(); });
     expect(mounted.root.findByProps({ "data-named-group": "Agents" }).findByType("button").props["aria-expanded"]).toBe(true);
     expect(row().props.hidden).toBeUndefined();
+  });
+
+  it("stops the agents a row called from its menu, counting those still taking its work, and marks a stopped one", async () => {
+    const sent: { url: string; body: unknown }[] = [];
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async (url: string | URL | Request, init?: RequestInit) => {
+      sent.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      return Response.json({ ok: true, held: [], failed: [] });
+    }, { preconnect: globalThis.fetch.preconnect }));
+    const called = roster().map((machine) => {
+      const parent = machine.snapshot?.panes.find((pane) => pane.pane_id === paneId);
+      if (!machine.snapshot || !parent) return machine;
+      const child = (id: string, held: boolean) => ({ ...parent, pane_id: id, terminal_id: id, agent: "opencode", label: "OpenCode", tokens: {}, acp_child: true as const, parent_pane_id: paneId,
+        ...(held ? { acp_hold: { child_id: "aaaaaaaaaaaa", generation: 2 } } : {}) });
+      return { ...machine, snapshot: { ...machine.snapshot, panes: [...machine.snapshot.panes, child("w1C:c1", false), child("w1C:c2", true)] } };
+    });
+    try {
+      await act(async () => { renderer = create(view(called), { createNodeMock: () => anchor }); });
+      const mounted = renderer!;
+      const held = (id: string) => mounted.root.findByProps({ "data-machine": "local", "data-pane": id }).findAllByProps({ className: "agent-held" }).length;
+      expect([held("w1C:c1"), held("w1C:c2")]).toEqual([0, 1]);
+      await act(async () => { mounted.root.findByProps({ "data-machine": "local", "data-pane": paneId }).findByProps({ className: "sidebar-row-action row-menu-toggle" }).props.onClick({ currentTarget: anchor }); });
+      const stop = (mounted.root.findByType(RowMenu).props.items as RowMenuItem[]).find((item) => item.id === "stop-called");
+      expect(stop?.label).toBe("Stop agents it called (1)");
+      await act(async () => { stop!.run(); });
+      expect(sent).toEqual([{ url: "/api/pane/turn/cancel-children", body: { pane_id: paneId } }]);
+      expect(mounted.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("offers no stop for a row that called no agent", async () => {
+    const { mounted } = await open();
+    expect((mounted.root.findByType(RowMenu).props.items as RowMenuItem[]).map((item) => item.id)).not.toContain("stop-called");
   });
 
   it("updates the open sheet when a plugin value changes", async () => {

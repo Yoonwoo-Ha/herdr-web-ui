@@ -1,0 +1,13 @@
+{
+  "name": "label-space-at-end",
+  "fields": [
+    {
+      "name": "label",
+      "value": "RGVzayA"
+    }
+  ],
+  "expect": {
+    "names": null,
+    "written": false
+  }
+}

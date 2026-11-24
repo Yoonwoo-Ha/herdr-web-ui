@@ -81,9 +81,9 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
     hc?.close();
     // a core started with anything but the isolated env could be the user's: only this test's is stopped,
     // its holder included (read again: there was none right after the start)
-    const { stopped, killed, unproven } = bin && env ? await stopTestCores(bin, [{ env, pids }], WAIT_MS) : { stopped: [], killed: [], unproven: [] };
+    const { stopped, killed, unproven, socketsLeft } = bin && env ? await stopTestCores(bin, [{ env, pids }], WAIT_MS) : { stopped: [], killed: [], unproven: [], socketsLeft: [] };
     if (dir) rmSync(dir, { recursive: true, force: true });
-    expect({ stopped, killed, unproven }).toEqual({ stopped: bin && env ? [0] : [], killed: [], unproven: [] });
+    expect({ stopped, killed, unproven, socketsLeft }).toEqual({ stopped: bin && env ? [0] : [], killed: [], unproven: [], socketsLeft: [] });
   }, TEST_MS);
 
   it("publishes the schema hc-api.generated.ts was made from, or what the types rely on in an older hc", async () => {
@@ -379,9 +379,9 @@ describe.skipIf(!bin)("another machine of a real hc's core", () => {
     // only this test's cores, each by its own isolated env, holders included. `here` goes first: while it
     // runs it keeps dialing `lab` through the --via command, and an `hc connect` there starts a core again
     // once `lab` is stopped (and, with `dir` deleted, from the hc on the PATH rather than this one)
-    const { stopped, killed, unproven } = await stopTestCores(bin!, envs.map((env, at) => ({ env, pids: pids[at] ?? [] })), WAIT_MS);
+    const { stopped, killed, unproven, socketsLeft } = await stopTestCores(bin!, envs.map((env, at) => ({ env, pids: pids[at] ?? [] })), WAIT_MS);
     if (dir) rmSync(dir, { recursive: true, force: true });
-    expect({ stopped, killed, unproven }).toEqual({ stopped: envs.map(() => 0), killed: [], unproven: [] });
+    expect({ stopped, killed, unproven, socketsLeft }).toEqual({ stopped: envs.map(() => 0), killed: [], unproven: [], socketsLeft: [] });
   }, TEST_MS);
 
   it("lists the machine, then starts, types into and reads a terminal there by its own address", async () => {

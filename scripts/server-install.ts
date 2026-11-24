@@ -4,16 +4,17 @@
  * it names have been checked; then one rename makes the new release the one that runs:
  *
  *   <home>/bin -> releases/<version>-<id>   the release that runs: ovis-server(.exe), dist/, the manifest and its
- *                                           signature as they were checked, and bin/ovis-pty-sidecar(.json): the
- *                                           Rust PTY host the signed manifest names, when it runs here
+ *                                           signature as checked, and the optional native binaries and records in bin/
  *   <home>/releases/.stage-<id>             a download in progress; one an interrupted run left is removed first
  */
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { runsHere } from "./pty-sidecar.ts";
-import { binaryName, checkManifest, DIST_ARCHIVE, MANIFEST, oldShapeRelease, ptyAssetFor, RELEASE_PUBLIC_KEY, type ReleaseAsset, releaseFile, SERVER_PLATFORMS, type ServerPlatform, SIGNATURE } from "./server-manifest.ts";
+import { checked, download, unpack } from "./server-release-files.ts";
+import { installKeeper } from "./install-keeper.ts";
+export { download } from "./server-release-files.ts";
+import { PTY_HOST, runsHere } from "./pty-sidecar.ts";
+import { binaryName, checkManifest, DIST_ARCHIVE, MANIFEST, oldShapeRelease, ptyAssetFor, RELEASE_PUBLIC_KEY, releaseFile, SERVER_PLATFORMS, type ServerPlatform, SIGNATURE } from "./server-manifest.ts";
 
 export const DEFAULT_RELEASES = "https://github.com/devswha/ovis/releases/download";
 const MANIFEST_LIMIT = 64 * 1024;
@@ -39,98 +40,6 @@ const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes)
  * lets a caller fall back to building from source.
  */
 export class NoBinaryRelease extends Error {}
-
-/**
- * The bytes at `url`, refused once they pass `limit` (a file larger than its manifest says is never read whole), or
- * null where there is no such file (HTTP 404). Redirects are followed by hand: one to anything but https is refused
- * before a request is made to it.
- */
-export async function download(url: string, limit: number, name: string, fetchFile: typeof fetch = fetch): Promise<Uint8Array | null> {
-  const tooLarge = () => new Error(`${name} is larger than the ${limit} bytes ${MANIFEST} names; nothing was changed`);
-  if (url.startsWith("file://")) {
-    const path = fileURLToPath(url);
-    if (!existsSync(path)) return null;
-    if (statSync(path).size > limit) throw tooLarge();
-    return readFileSync(path);
-  }
-  let response: Response;
-  let at = url;
-  for (let hops = 0; ; hops++) {
-    response = await fetchFile(at, { redirect: "manual", signal: AbortSignal.timeout(600_000) });
-    if (response.status < 300 || response.status > 399) break;
-    const next = new URL(response.headers.get("location") ?? "", at).href;
-    if (!next.startsWith("https://")) throw new Error(`${url} redirected to ${next}, which is not https; nothing was changed`);
-    if (hops >= 10) throw new Error(`${url} redirected more than 10 times; nothing was changed`);
-    at = next;
-  }
-  if (response.status === 404) return null;
-  if (!response.ok || !response.body) throw new Error(`${url}: HTTP ${response.status}; nothing was changed`);
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for await (const chunk of response.body) {
-    total += chunk.length;
-    if (total > limit) throw tooLarge();
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
-}
-
-/**
- * The Rust PTY host the signed manifest names for `platform`, into `bin` with the record server/pty/host.ts checks, and
- * only after its size and SHA-256 match the manifest and it runs here: no other file's word for a host is taken. Any
- * failure leaves no host, and terminals mirrored; it never fails the install.
- */
-async function ptyHost(at: string, hosts: Record<string, ReleaseAsset>, platform: ServerPlatform, version: string, bin: string, options: InstallServerOptions): Promise<string> {
-  const build = ptyAssetFor(platform);
-  if (!build) return "no Rust PTY host on this platform";
-  let bytes: Uint8Array;
-  try { bytes = await checked(at, hosts[build]!, options.fetchFile); }
-  catch (error) { return `the Rust PTY host was not taken (${(error as Error).message}), so terminals are mirrored`; }
-  mkdirSync(bin, { recursive: true });
-  const target = join(bin, "ovis-pty-sidecar");
-  writeFileSync(target, bytes, { mode: 0o755 });
-  chmodSync(target, 0o755);
-  if (!(options.ptyRuns ?? runsHere)(target)) {
-    rmSync(bin, { recursive: true, force: true });
-    return "the Rust PTY host does not run on this PC, so terminals are mirrored";
-  }
-  writeFileSync(`${target}.json`, `${JSON.stringify({ sha256: hosts[build]!.sha256, version })}\n`);
-  return "the Rust PTY host checked against ovis-server.json";
-}
-
-/** `asset` from the release at `at`, only when its size and SHA-256 are what the checked manifest names. */
-async function checked(at: string, asset: ReleaseAsset, fetchFile?: typeof fetch): Promise<Uint8Array> {
-  const bytes = await download(`${at}/${asset.file}`, asset.size, asset.file, fetchFile);
-  if (!bytes) throw new Error(`${at}/${asset.file} does not exist; nothing was changed`);
-  if (bytes.length !== asset.size) throw new Error(`${asset.file} is ${bytes.length} bytes, not the ${asset.size} ${MANIFEST} names; nothing was changed`);
-  const digest = sha256(bytes);
-  if (digest !== asset.sha256) throw new Error(`${asset.file} does not match its SHA-256 in ${MANIFEST} (got ${digest}); nothing was changed`);
-  return bytes;
-}
-
-/**
- * Unpacks the client archive into `into`, after its listing shows only plain files and folders inside it: no absolute
- * path, no `..`, no link, so a crafted archive cannot write outside the release folder.
- */
-function unpack(archive: string, into: string): void {
-  const tar = (...args: string[]) => {
-    const result = Bun.spawnSync(["tar", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 120_000 });
-    if (result.exitCode !== 0) throw new Error(`tar ${args[0]} ${DIST_ARCHIVE} failed: ${result.stderr.toString().trim() || `exit ${result.exitCode}`}; nothing was changed`);
-    return result.stdout.toString();
-  };
-  for (const name of tar("-tzf", archive).split("\n").filter(Boolean)) {
-    if (/^([/\\]|[A-Za-z]:)/.test(name) || name.split(/[/\\]/).includes("..")) throw new Error(`${DIST_ARCHIVE} holds ${name}, a path outside its folder; nothing was changed`);
-  }
-  for (const line of tar("-tzvf", archive).split("\n").filter(Boolean)) {
-    if (!/^[-d]/.test(line)) throw new Error(`${DIST_ARCHIVE} holds something other than files and folders (${line.trim()}); nothing was changed`);
-  }
-  mkdirSync(into, { recursive: true });
-  tar("-xzf", archive, "-C", into, "--no-same-owner");
-  for (const entry of readdirSync(into, { recursive: true, withFileTypes: true })) {
-    if (!entry.isFile() && !entry.isDirectory()) throw new Error(`${DIST_ARCHIVE} unpacked something other than files and folders; nothing was changed`);
-  }
-  if (!existsSync(join(into, "index.html"))) throw new Error(`${DIST_ARCHIVE} holds no index.html; nothing was changed`);
-}
 
 /** Windows: a run cut off between its two renames left no bin; the release it moved aside is put back. */
 function recover(home: string): void {
@@ -285,6 +194,7 @@ export interface InstallServerOptions {
   releases?: string;
   /** a test's own key; the launcher passes none, so only RELEASE_PUBLIC_KEY is trusted */
   publicKey?: string;
+  repairKeeper?: boolean;
   ptyRuns?: (path: string) => boolean;
   inWindow?: () => Promise<void>;
   /** the git trees of the checkout that asks (scripts/plugin-launch.ts): its binary only when the manifest names them */
@@ -302,7 +212,7 @@ export async function installServer(options: InstallServerOptions): Promise<{ in
   const publicKey = options.publicKey ?? RELEASE_PUBLIC_KEY;
   const current = join(home, "bin");
   const binary = join(current, binaryName(platform));
-  if (verifiedInstall(home, version, platform, publicKey)) return { installed: false, message: `Ovis ${version} is installed already in ${current}; nothing to do`, binary };
+  if ((options.repairKeeper === false || (options.sources && "error" in options.sources)) && verifiedInstall(home, version, platform, publicKey)) return { installed: false, message: `Ovis ${version} is installed already in ${current}; nothing to do`, binary };
   return await withInstallLock(home, () => installLocked(options, platform, base, publicKey), options.lockWaitMs, options.onLockWait);
 }
 
@@ -314,7 +224,11 @@ async function installLocked(options: InstallServerOptions, platform: ServerPlat
   for (const leftover of readdirSync(releases).filter((name) => name.startsWith(".stage-"))) rmSync(join(releases, leftover), { recursive: true, force: true });
   const current = join(home, "bin");
   const binary = join(current, binaryName(platform));
-  if (verifiedInstall(home, version, platform, publicKey)) return { installed: false, message: `Ovis ${version} is installed already in ${current}; nothing to do`, binary };
+  if (verifiedInstall(home, version, platform, publicKey)) {
+    const build = ptyAssetFor(platform);
+    const note = build && options.repairKeeper !== false && !(options.sources && "error" in options.sources) ? await installKeeper(join(current, "bin"), build, { releases, at: base + "/v" + version, version, publicKey, serverBytes: readFileSync(join(current, MANIFEST)), fetchFile: options.fetchFile }) : "";
+    return { installed: false, message: "Ovis " + version + " is installed already; nothing to do for the server" + (note ? "; " + note : ""), binary };
+  }
   // sources nothing ties to a release (no git, no checkout, changes not committed) take no binary whatever the release
   // holds: it is not asked, so one out of reach does not stop them
   const sources = options.sources;
@@ -338,7 +252,7 @@ async function installLocked(options: InstallServerOptions, platform: ServerPlat
 
   const stage = mkdtempSync(join(releases, ".stage-"));
   const name = `${version}-${randomBytes(4).toString("hex")}`;
-  let host = "";
+  const native: string[] = [];
   let previous: string | null = null;
   try {
     writeFileSync(join(stage, binaryName(platform)), await checked(at, manifest.assets[platform], options.fetchFile), { mode: 0o755 });
@@ -348,7 +262,26 @@ async function installLocked(options: InstallServerOptions, platform: ServerPlat
     rmSync(join(stage, DIST_ARCHIVE));
     writeFileSync(join(stage, MANIFEST), manifestBytes);
     writeFileSync(join(stage, SIGNATURE), signature);
-    host = `; ${await ptyHost(at, manifest.pty, platform, version, join(stage, "bin"), options)}`;
+    const build = ptyAssetFor(platform);
+    if (build) {
+      const asset = manifest.pty[build];
+      const bin = join(stage, "bin");
+      const target = join(bin, PTY_HOST.name);
+      try {
+        const bytes = await checked(at, asset, options.fetchFile);
+        mkdirSync(bin, { recursive: true });
+        writeFileSync(target, bytes, { mode: 0o755 });
+        chmodSync(target, 0o755);
+        if (!(options.ptyRuns ?? runsHere)(target)) throw new Error("not a runnable Rust PTY host");
+        writeFileSync(target + ".json", JSON.stringify({ sha256: asset.sha256, version }) + "\n");
+        native.push("the Rust PTY host checked against " + MANIFEST);
+      } catch (error) {
+        rmSync(target, { force: true });
+        rmSync(target + ".json", { force: true });
+        native.push("the Rust PTY host was not taken (" + (error instanceof Error ? error.message : String(error)) + "); terminals are mirrored");
+      }
+      native.push(await installKeeper(bin, build, { releases, at, version, publicKey, serverBytes: manifestBytes, fetchFile: options.fetchFile }));
+    } else native.push("no native helpers on this platform");
     await options.inWindow?.();
     // the release bin names now: a server started from it may still run, so it stays until the next install
     try { previous = WINDOWS ? null : realpathSync(join(home, "bin")).split(/[/\\]/).at(-1)!; } catch { previous = null; }
@@ -368,5 +301,5 @@ async function installLocked(options: InstallServerOptions, platform: ServerPlat
   for (const old of readdirSync(releases).filter((entry) => entry !== name && entry !== previous && !entry.startsWith("."))) {
     try { rmSync(join(releases, old), { recursive: true, force: true }); } catch {}
   }
-  return { installed: true, message: `installed Ovis ${version} (${releaseFile(platform)}, sha256 ${manifest.assets[platform].sha256}) in ${current}${host}`, binary };
+  return { installed: true, message: `installed Ovis ${version} (${releaseFile(platform)}, sha256 ${manifest.assets[platform].sha256}) in ${current}; ${native.join("; ")}`, binary };
 }

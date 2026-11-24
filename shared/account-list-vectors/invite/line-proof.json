@@ -1,0 +1,25 @@
+{
+  "name": "line-proof",
+  "note": "TEST-ONLY keys. What an invite's line signs to say that the PC with this card joins this list with it: a message of its own, which no challenge of the account service's can stand in for.",
+  "keys": {
+    "TEST-ONLY-invite": {
+      "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgeRwuEagSSoEllZhMQ6qfMg7xFsOo7iKhf_xUtNpxf6KhRANCAAS_rfLIN9bZe6excNyH0wf3v4q4JCqi-qNkFKy30Fkyaa7mfoS5zLy9IL774zea1gWL36XN-_GgS0L01tLvXOlw",
+      "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEv63yyDfW2XunsXDch9MH97-KuCQqovqjZBSst9BZMmmu5n6Eucy8vSC---M3mtYFi9-lzfvxoEtC9NbS71zpcA"
+    }
+  },
+  "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEv63yyDfW2XunsXDch9MH97-KuCQqovqjZBSst9BZMmmu5n6Eucy8vSC---M3mtYFi9-lzfvxoEtC9NbS71zpcA",
+  "account": "TEST-ONLY-account",
+  "server_id": "0123456789abcdef0123456789abcdef",
+  "list": "1e02680cc5e01ec2c5c7ebaf0a37a1007dd79352492b040879f664cfc142d54c",
+  "card": {
+    "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5lhuexKpDRsxAK4WTOjTQTjBurzk0iGngvCpNGetUiwtppuB-SgVWvMwkHCQe6FNPoAzLJZntcFyjzv0sk82Bg",
+    "enc": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEVMfhqT7llP9gRR8DB4RLbsL-kQmlkQnKxvJUV6DKvpBKDyennnEbD6f1HOM687iSzBnjcltJ9OLFSM_Tcbr2rw",
+    "endpoint": "abababababababababababababababababababababababababababababababab"
+  },
+  "challenge": "ef60ad8e971e3991fcbcc7b586c5fc8a",
+  "bytes_hex": "6f7669732d6c6973742d6c696e652f3100000011544553542d4f4e4c592d6163636f756e740000002030313233343536373839616263646566303132333435363738396162636465660000004061626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162000000206566363061643865393731653339393166636263633762353836633566633861",
+  "signature": "gchsGjRDgc-72kqzJiPcrQ-sR8JKG89_O2VL3oeWQkJdTlepCom5lh8Gpz4xLapCL62Ahe0D57ITrNWM-8HJ7w",
+  "expect": {
+    "verifies": true
+  }
+}

@@ -6,7 +6,7 @@ import { pagePolicy } from "../server/file-view.ts";
 import { shellContentSecurityPolicy } from "../server/static.ts";
 import { REGIONAL_APPS } from "../shared/relay-regions.ts";
 import { applyHeaders, loadPagesSite, pagesResponse, parseHeaders, parseRedirects, pathPattern, redirectFor } from "./pages-static.ts";
-import { shellFiles, shellHeaders, shellRedirects } from "./shell-build.ts";
+import { RENDER_DOCUMENT, RENDER_PATH, shellFiles, shellHeaders, shellRedirects } from "./shell-build.ts";
 
 const ID = "ab".repeat(16);
 
@@ -24,12 +24,14 @@ describe("the shell's Pages files, as Pages reads them", () => {
   const redirects = parseRedirects(shellRedirects());
   const headers = parseHeaders(shellHeaders());
 
-  it("rewrite a PC's scope to the shell, its manifest, its worker and the render host, and send a slashless scope to its slash", () => {
-    expect(redirectFor(redirects, `/s/${ID}/`)).toEqual({ to: "/index.html", status: 200 });
-    expect(redirectFor(redirects, `/s/${ID}/anything/else`)).toEqual({ to: "/index.html", status: 200 });
+  it("rewrite a PC's manifest, its worker and the render host, and send a slashless scope to its slash", () => {
+    // Pages ignores the scope's catch-all, a splat rewritten to /index.html, which its html handling would loop on:
+    // its single-page-app fallback answers those paths with index.html instead (the loopback server's tests below)
+    expect(redirectFor(redirects, `/s/${ID}/`)).toBeNull();
+    expect(redirectFor(redirects, `/s/${ID}/anything/else`)).toBeNull();
     expect(redirectFor(redirects, `/s/${ID}/manifest.webmanifest`)).toEqual({ to: "/manifest.webmanifest", status: 200 });
     expect(redirectFor(redirects, `/s/${ID}/sw.js`)).toEqual({ to: "/sw.js", status: 200 });
-    expect(redirectFor(redirects, `/s/${ID}/~render`)).toEqual({ to: "/render.html", status: 200 });
+    expect(redirectFor(redirects, `/s/${ID}/~render`)).toEqual({ to: "/render", status: 200 });
     expect(redirectFor(redirects, `/s/${ID}`)).toEqual({ to: `/s/${ID}/`, status: 301 });
     expect(redirectFor(redirects, "/")).toBeNull();
     expect(redirectFor(redirects, "/assets/index-abc.js")).toBeNull();
@@ -84,6 +86,59 @@ describe("the loopback Pages server", () => {
     expect((await get("/assets/a.js")).headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
     const fallback = await get("/assets/missing.js");
     expect([fallback.status, fallback.headers.get("content-type")]).toEqual([200, "text/html; charset=utf-8"]);
+  });
+
+  /** The built shell's own Pages files, with `index.html` standing in for the client's page. */
+  function shellSite(files: Record<string, string> = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "pages-static-"));
+    dirs.push(dir);
+    const manifest = readFileSync(join(import.meta.dir, "..", "public", "manifest.webmanifest"), "utf8");
+    for (const [name, content] of Object.entries({ ...shellFiles(manifest), "index.html": "<!doctype html><title>shell</title>", ...files })) {
+      mkdirSync(join(dir, name, ".."), { recursive: true });
+      writeFileSync(join(dir, name), content);
+    }
+    const site = loadPagesSite(dir);
+    return (path: string) => pagesResponse(site, new Request(`https://app.ovis.sh${path}`));
+  }
+
+  it("answers a PC's render host with render.html at that address and the page policy alone", async () => {
+    const get = shellSite();
+    const render = await get(`/s/${ID}/~render`);
+    expect(render.status).toBe(200);
+    expect(await render.text()).toContain('type: "ovis-render-ready"');
+    expect(render.headers.get("content-security-policy")).toBe(pagePolicy(null));
+    // render.html at its own address never runs under the shell's policy either
+    expect((await get("/render")).headers.get("content-security-policy")).toBe(pagePolicy(null));
+  });
+
+  it("answers a rewrite to an .html file as Pages does, with its 308 to the address without .html: the render host's old rule", async () => {
+    const ownBlock = `${RENDER_DOCUMENT}\n  ! Content-Security-Policy\n  Content-Security-Policy: ${pagePolicy(null)}\n\n`;
+    expect(shellHeaders()).toContain(ownBlock);
+    const get = shellSite({
+      _redirects: shellRedirects().replace(`${RENDER_PATH} ${RENDER_DOCUMENT} 200`, `${RENDER_PATH} /render.html 200`),
+      _headers: shellHeaders().replace(ownBlock, ""),
+    });
+    const render = await get(`/s/${ID}/~render`);
+    expect([render.status, render.headers.get("location")]).toEqual([308, "/render"]);
+    // what app.ovis.sh served from 2026-11-01: the page under the shell's policy, which refuses its inline script
+    const followed = await get("/render");
+    expect([followed.status, followed.headers.get("content-security-policy")]).toEqual([200, shellContentSecurityPolicy(Object.values(REGIONAL_APPS))]);
+  });
+
+  it("follows Pages' html handling for the shell's own files", async () => {
+    const get = shellSite();
+    // a path that decodes to leading slashes never leads off the site: Pages strips them from its own redirects
+    const redirected: [string, string][] = [
+      ["/index.html", "/"], ["/render.html", "/render"], ["/render.html?x=1", "/render?x=1"],
+      ["/%2Frender.html", "/render"], ["/%2Frender.html?x=1", "/render?x=1"], ["/%2F%2Frender.html", "/render"],
+    ];
+    for (const [path, location] of redirected) {
+      const answer = await get(path);
+      expect([answer.status, answer.headers.get("location")]).toEqual([308, location]);
+    }
+    const scope = await get(`/s/${ID}/deep/path`);
+    expect([scope.status, await scope.text()]).toEqual([200, "<!doctype html><title>shell</title>"]);
+    expect((await get("/")).status).toBe(200);
   });
 
   it("answers a hashed file the shell's deployment lacks with a 404 no browser keeps, never the page under the assets' caching", async () => {

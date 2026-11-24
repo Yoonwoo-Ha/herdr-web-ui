@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { loadKatex, ParsedMarkdown } from "../components/Markdown.tsx";
@@ -71,7 +70,17 @@ describe("previewElements", () => {
 
   it("puts a file of the load limit's short list items past what a Preview draws", () => {
     expect(previewElements(parseMarkdown("- a\n".repeat(TEXT_PREVIEW_BYTES / 4)))).toBeGreaterThan(PREVIEW_ELEMENT_LIMIT);
-    const changelog = readFileSync(new URL("../../CHANGELOG.md", import.meta.url), "utf8").slice(0, TEXT_PREVIEW_BYTES);
-    expect(previewElements(parseMarkdown(changelog, 0, true))).toBeLessThan(PREVIEW_ELEMENT_LIMIT * 0.75);
+    // a changelog of the same size: release headings and wrapped list items with code and links
+    const release = (no: number) => [
+      `## [0.${no}.0] - 2026-11-21`, "", "### Added",
+      "- The desktop app opens a file beside the pane, in a profile of its own, and an agent's tabs keep",
+      "  cookies of their own and take input only once you take control (on Linux under X11).",
+      `  ([#${no}](https://github.com/devswha/ovis/pull/${no}))`, "", "### Fixed",
+      "- A `code span` in Settings → Devices and PCs no longer wraps; see [the guide](docs/guide.md#install).",
+      `  ([#${no + 1}](https://github.com/devswha/ovis/pull/${no + 1}))`, "", "",
+    ].join("\n");
+    let changelog = "# Changelog\n\n";
+    for (let no = 1; changelog.length < TEXT_PREVIEW_BYTES; no += 2) changelog += release(no);
+    expect(previewElements(parseMarkdown(changelog.slice(0, TEXT_PREVIEW_BYTES), 0, true))).toBeLessThan(PREVIEW_ELEMENT_LIMIT * 0.75);
   });
 });

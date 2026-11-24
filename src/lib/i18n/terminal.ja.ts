@@ -127,4 +127,6 @@ export const TERMINAL_JA: Record<string, string> = {
   "Codex selected this: Shift+drag copies or quotes it here": "Codex が選択しました。ここでコピーや引用をするには Shift+ドラッグ",
   "Codex selected this: Option+drag copies or quotes it here": "Codex が選択しました。ここでコピーや引用をするには Option+ドラッグ",
   "Pane {index} of {count}": "ペイン {index}/{count}",
+  "Hand back": "再び任せる",
+  "Not handed back: Ovis could not reach this agent. Try again.": "任せ直せませんでした: Ovis がこのエージェントに届きませんでした。もう一度お試しください。",
 };

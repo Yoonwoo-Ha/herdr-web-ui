@@ -215,6 +215,7 @@ class GhosttyEmulator implements Emulator {
   frame: Emulator["frame"] = (draw) => this.call((engine) => engine.frame(this.live(draw), "written"));
   frameAll: Emulator["frameAll"] = (draw) => this.call((engine) => engine.frameAll(this.live(draw), "written"));
   cursorState: Emulator["cursorState"] = () => this.call((engine) => engine.cursorState());
+  frameScreen: Emulator["frameScreen"] = () => this.call((engine) => engine.frameScreen());
   modes: Emulator["modes"] = () => this.call((engine) => engine.modes());
   setMode: Emulator["setMode"] = (mode, on) => this.call((engine) => engine.setMode(mode, on));
   releaseHold: Emulator["releaseHold"] = () => this.call((engine) => engine.releaseHold());
@@ -226,7 +227,7 @@ class GhosttyEmulator implements Emulator {
   scrollFromBottom: Emulator["scrollFromBottom"] = (rows) => this.call((engine) => engine.scrollFromBottom(rows));
   history: Emulator["history"] = () => this.call((engine) => engine.history());
   rowContinues: Emulator["rowContinues"] = (y) => this.call((engine) => engine.rowContinues(y));
-  textOf: Emulator["textOf"] = (range) => this.call((engine) => engine.textOf(range));
+  textOf: Emulator["textOf"] = (range, contentVersion) => this.call((engine) => engine.textOf(range, contentVersion));
   wordAt: Emulator["wordAt"] = (point) => this.call((engine) => engine.wordAt(point));
   lineAt: Emulator["lineAt"] = (point) => this.call((engine) => engine.lineAt(point));
   search: Emulator["search"] = (needle) => this.call((engine) => engine.search(needle));

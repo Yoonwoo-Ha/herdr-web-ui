@@ -1,0 +1,60 @@
+diff --git a/src/terminal/Terminal.zig b/src/terminal/Terminal.zig
+--- a/src/terminal/Terminal.zig
++++ b/src/terminal/Terminal.zig
+@@ -48,2 +48,4 @@
++/// Changes when a selection can no longer refer to the same screen.
++screen_generation: u64 = 0,
+ /// The set of screens behind this terminal (e.g. primary vs alternate).
+ screens: ScreenSet,
+@@ -5013,2 +5015,3 @@
+         const charset = alt.charset;
++        self.screen_generation +%= 1;
+         self.screens.switchTo(.primary);
+@@ -5045,2 +5048,3 @@
+         replacement.charset = charset;
++        self.screen_generation +%= 1;
+         self.screens.switchTo(.alternate);
+@@ -5543,2 +5547,3 @@
+     try testing.expectEqual(.G1, alternate.charset.gl);
++    try testing.expectEqual(@as(u64, 3), t.screen_generation);
+     try testing.expectEqual(generation +% 1, t.screens.generation(.alternate));
+@@ -5563,2 +5568,3 @@
+     try testing.expectEqual(.primary, t.screens.active_key);
++    try testing.expectEqual(@as(u64, 2), t.screen_generation);
+     try testing.expectEqual(primary, t.screens.active);
+@@ -5743,2 +5745,3 @@
+     // Finalize the switch
++    self.screen_generation +%= 1;
+     self.screens.switchTo(key);
+@@ -5806,2 +5809,4 @@
+             assert(self.screens.active_key == .alternate);
++            // Re-entering 1049 also clears the alternate screen without a switch.
++            if (old_ == null) self.screen_generation +%= 1;
+             self.eraseDisplay(.complete, false);
+@@ -5868,2 +5873,3 @@
+ pub fn fullReset(self: *Terminal) void {
++    self.screen_generation +%= 1;
+     // Ensure we're back on primary screen
+diff --git a/src/terminal/c/terminal.zig b/src/terminal/c/terminal.zig
+--- a/src/terminal/c/terminal.zig
++++ b/src/terminal/c/terminal.zig
+@@ -1982,2 +1982,3 @@
+     mouse_shape = 41,
++    screen_generation = 43,
+     memory_usage = 42,
+@@ -2001,2 +2002,3 @@
+             .active_screen => TerminalScreen,
++            .screen_generation => u64,
+             .kitty_keyboard_flags => u8,
+@@ -2089,2 +2091,3 @@
+         .active_screen => out.* = t.screens.active_key,
++        .screen_generation => out.* = t.screen_generation,
+         .cursor_visible => out.* = t.modes.get(.cursor_visible),
+diff --git a/include/ghostty/vt/terminal.h b/include/ghostty/vt/terminal.h
+--- a/include/ghostty/vt/terminal.h
++++ b/include/ghostty/vt/terminal.h
+@@ -3270,2 +3270,4 @@
+   GHOSTTY_TERMINAL_DATA_MEMORY_USAGE = 42,
++  /** Ovis: screen switches, full resets and re-entry into a cleared alternate. Output type: uint64_t *. */
++  GHOSTTY_TERMINAL_DATA_SCREEN_GENERATION = 43,
+   GHOSTTY_TERMINAL_DATA_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,

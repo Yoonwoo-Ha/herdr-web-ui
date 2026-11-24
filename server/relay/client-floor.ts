@@ -1,0 +1,1 @@
+export const MIN_SUPPORTED_CLIENT_VERSION = "0.4.20";

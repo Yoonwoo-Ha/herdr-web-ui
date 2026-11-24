@@ -89,7 +89,7 @@ final class SshPcs {
         String user;
         String hostKeyAlgorithm = "";
         String hostKey = "";
-        /** "phone-key" or "imported" */
+        /** "phone-key", "imported" or "tailscale" (Tailscale SSH, no key) */
         String auth = "phone-key";
         /** sealed, "" unless auth is "imported" */
         String importedKey = "";
@@ -328,6 +328,55 @@ final class SshPcs {
         int left = 5 - parts.length;
         if (last >= (1L << (8 * left))) return -1;
         return (address << (8 * left)) + last;
+    }
+
+    /** A MagicDNS name or a Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48). */
+    static boolean tailnet(String host) {
+        String name = host.trim().toLowerCase(Locale.ROOT);
+        if (name.endsWith(".ts.net") || name.startsWith("fd7a:115c:a1e0:")) return true;
+        String[] parts = name.split("\\.");
+        if (parts.length != 4) return false;
+        try {
+            int b = Integer.parseInt(parts[1]);
+            return Integer.parseInt(parts[0]) == 100 && b >= 64 && b <= 127;
+        } catch (NumberFormatException notIp) {
+            return false;
+        }
+    }
+
+    private static final java.util.regex.Pattern LOGIN = java.util.regex.Pattern.compile("^(?:ssh://)?([^\\s@/:]+)@([^\\s@/:\\[\\]]+|\\[[0-9A-Fa-f:.]+\\])(?::(\\d{1,5}))?/?$");
+
+    /**
+     * A page's SSH login (HerdrShell openSshSetup's target: user@host, user@host:port, ssh:// with them, as the hosted
+     * app's SSH tab and app/web/shell.js sshOrAddress read it) as the setup screen's user, host and port, or null for
+     * anything else, which opens the screen empty.
+     */
+    static String[] login(String target) {
+        if (target == null) return null;
+        java.util.regex.Matcher login = LOGIN.matcher(target.trim());
+        if (!login.matches()) return null;
+        int port = login.group(3) == null ? 22 : Integer.parseInt(login.group(3));
+        if (port < 1 || port > 65535) return null;
+        return new String[] { login.group(1), login.group(2).replaceAll("^\\[|\\]$", ""), String.valueOf(port) };
+    }
+
+    /**
+     * OvisSsh add's user, host and port (the hosted front page of a release gives them apart) as the login openSshSetup
+     * takes, which login reads back: an IPv6 host in brackets, port 22 left out; "" without both a user and a host.
+     */
+    static String target(String user, String host, Integer port) {
+        if (user == null || host == null) return "";
+        String shown = host.contains(":") && !host.startsWith("[") ? "[" + host + "]" : host;
+        return user + "@" + shown + (port == null || port == 22 ? "" : ":" + port);
+    }
+
+    /**
+     * Whether the page loaded at `url` may open the SSH setup (HerdrShell openSshSetup): the app's own pages (the connect
+     * screen, which has no server URL, so `null` here) or the hosted app (`appOrigin`), never a PC's page.
+     */
+    static boolean setupOpener(String url, boolean connectScreen, String appOrigin) {
+        if (connectScreen) return true;
+        return PCStore.sameOrigin(url, appOrigin);
     }
 
     static String newGate() {

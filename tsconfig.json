@@ -38,6 +38,7 @@
     "telemetry",
     "push-relay",
     "relay",
-    "vite.config.ts"
+    "vite.config.ts",
+    "tui/emulator/wasm.d.ts"
   ]
 }

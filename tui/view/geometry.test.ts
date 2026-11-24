@@ -7,42 +7,53 @@ const area = (rect: Rect): number => rect.width * rect.height;
 const inside = (outer: Rect, inner: Rect): boolean => area(inner) === 0 || JSON.stringify(intersect(outer, inner)) === JSON.stringify(inner);
 
 describe("regions", () => {
-  test("a wide screen: sidebar left, tab bar over the panes, mode bar along the bottom, every cell in exactly one region", () => {
-    const shape = regions(120, 40, { sidebar: 26, tabBar: true, modeBar: true });
+  test("a wide screen: the sidebar the whole height, the tab bar over the panes, nothing kept for the mode bar", () => {
+    const shape = regions(120, 40, { sidebar: 26 });
     expect(shape.narrow).toBe(false);
-    expect(shape.sidebar).toEqual({ x: 0, y: 0, width: 26, height: 39 });
+    expect(shape.sidebar).toEqual({ x: 0, y: 0, width: 26, height: 40 });
     expect(shape.tabBar).toEqual({ x: 26, y: 0, width: 94, height: 1 });
-    expect(shape.panes).toEqual({ x: 26, y: 1, width: 94, height: 38 });
-    expect(shape.modeBar).toEqual({ x: 0, y: 39, width: 120, height: 1 });
-    const parts = [shape.sidebar, shape.tabBar, shape.panes, shape.modeBar];
+    expect(shape.panes).toEqual({ x: 26, y: 1, width: 94, height: 39 });
+    // the mode bar lies over the panes' last row, right of the sidebar
+    expect(shape.modeBar).toEqual({ x: 26, y: 39, width: 94, height: 1 });
+    const parts = [shape.sidebar, shape.tabBar, shape.panes];
     expect(parts.reduce((sum, rect) => sum + area(rect), 0)).toBe(120 * 40);
     for (const [i, a] of parts.entries()) for (const b of parts.slice(i + 1)) expect(intersect(a, b)).toEqual(NO_CELLS);
   });
 
-  test("a narrow screen has no sidebar, and hidden bars give their rows to the panes", () => {
-    const shape = regions(64, 20, { sidebar: 26, tabBar: false, modeBar: false });
+  test("a narrow screen has no sidebar: herdr's two header rows over the whole width, the panes under them", () => {
+    const shape = regions(64, 20, { sidebar: 26 });
     expect(shape.narrow).toBe(true);
     expect(shape.sidebar).toEqual(NO_CELLS);
-    expect(shape.panes).toEqual({ x: 0, y: 0, width: 64, height: 20 });
+    expect(shape.tabBar).toEqual({ x: 0, y: 0, width: 64, height: 2 });
+    expect(shape.panes).toEqual({ x: 0, y: 2, width: 64, height: 18 });
+    expect(shape.modeBar).toEqual({ x: 0, y: 19, width: 64, height: 1 });
   });
 
   test("a screen smaller than its chrome keeps a cell for the panes, and an empty screen has none", () => {
-    expect(regions(80, 1, { sidebar: 30, tabBar: true, modeBar: true }).panes).toEqual({ x: 30, y: 0, width: 50, height: 1 });
-    expect(regions(70, 2, { sidebar: 200, tabBar: true, modeBar: true })).toMatchObject({ sidebar: { width: 69, height: 1 }, tabBar: NO_CELLS, panes: { x: 69, y: 0, width: 1, height: 1 } });
-    const none = regions(0, 0, { sidebar: 26, tabBar: true, modeBar: true });
+    expect(regions(80, 1, { sidebar: 30 }).panes).toEqual({ x: 30, y: 0, width: 50, height: 1 });
+    expect(regions(70, 2, { sidebar: 200 })).toMatchObject({ sidebar: { width: 69, height: 2 }, tabBar: { x: 69, width: 1, height: 1 }, panes: { x: 69, y: 1, width: 1, height: 1 } });
+    const none = regions(0, 0, { sidebar: 26 });
     expect([none.sidebar, none.tabBar, none.panes, none.modeBar]).toEqual([NO_CELLS, NO_CELLS, NO_CELLS, NO_CELLS]);
   });
 });
 
 describe("cellsOf", () => {
+  test("a pane keeps its last inner column for its scrollbar, unless its inside is four columns or fewer", () => {
+    const pane = (width: number) => cellsOf({ leaf: "a" }, { x: 0, y: 0, width, height: 6 }, { borders: true, gutter: () => true }).panes[0]!;
+    expect(pane(40)).toMatchObject({ inner: { x: 1, y: 1, width: 37, height: 4 }, gutter: { x: 38, y: 1, width: 1, height: 4 }, cols: 37 });
+    expect(pane(7)).toMatchObject({ inner: { x: 1, width: 4 }, gutter: { x: 5, y: 1, width: 1, height: 4 }, cols: 4 });
+    expect(pane(6)).toMatchObject({ inner: { x: 1, width: 4 }, gutter: NO_CELLS, cols: 4 });
+    expect(cellsOf({ leaf: "a" }, { x: 0, y: 0, width: 40, height: 6 }, { borders: false, gutter: (id) => id !== "a" }).panes[0]!.gutter).toEqual(NO_CELLS);
+  });
+
   const tree: LayoutNode = { split: "right", ratio: 0.5, first: { leaf: "a" }, second: { split: "down", ratio: 0.25, first: { leaf: "b" }, second: { leaf: "c" } } };
 
   test("the layout document's place() cut into cells, with a border inside each share", () => {
     const { panes, splits } = cellsOf(tree, { x: 10, y: 2, width: 80, height: 20 });
     expect(panes).toEqual([
-      { pane: "a", outer: { x: 10, y: 2, width: 40, height: 20 }, inner: { x: 11, y: 3, width: 38, height: 18 }, cols: 38, rows: 18 },
-      { pane: "b", outer: { x: 50, y: 2, width: 40, height: 5 }, inner: { x: 51, y: 3, width: 38, height: 3 }, cols: 38, rows: 3 },
-      { pane: "c", outer: { x: 50, y: 7, width: 40, height: 15 }, inner: { x: 51, y: 8, width: 38, height: 13 }, cols: 38, rows: 13 },
+      { pane: "a", outer: { x: 10, y: 2, width: 40, height: 20 }, inner: { x: 11, y: 3, width: 38, height: 18 }, gutter: NO_CELLS, cols: 38, rows: 18 },
+      { pane: "b", outer: { x: 50, y: 2, width: 40, height: 5 }, inner: { x: 51, y: 3, width: 38, height: 3 }, gutter: NO_CELLS, cols: 38, rows: 3 },
+      { pane: "c", outer: { x: 50, y: 7, width: 40, height: 15 }, inner: { x: 51, y: 8, width: 38, height: 13 }, gutter: NO_CELLS, cols: 38, rows: 13 },
     ]);
     expect(splits.map(({ id, direction }) => [id, direction])).toEqual([["split_0_root", "right"], ["split_1_1", "down"]]);
     expect(cellsOf(tree, { x: 0, y: 0, width: 80, height: 20 }, { borders: false }).panes[0]!.inner).toEqual({ x: 0, y: 0, width: 40, height: 20 });
@@ -65,5 +76,61 @@ describe("cellsOf", () => {
     const { panes } = cellsOf({ split: "right", ratio: 0.5, first: { leaf: "a" }, second: { leaf: "b" } }, { x: 0, y: 0, width: 10, height: 2 });
     expect(panes.map(({ inner }) => inner)).toEqual([{ x: 0, y: 0, width: 5, height: 2 }, { x: 5, y: 0, width: 5, height: 2 }]);
     expect(cellsOf(null, { x: 0, y: 0, width: 10, height: 2 })).toEqual({ panes: [], splits: [] });
+  });
+});
+
+describe("a split's divider", () => {
+  const leafOf = (id: string): LayoutNode => ({ leaf: id });
+  const split = (split: "right" | "down", ratio: number, first: LayoutNode, second: LayoutNode): LayoutNode => ({ split, ratio, first, second });
+  // the panes' region at 120x40 with the sidebar shown (the verifier's measurements were taken there)
+  const AREA = { x: 24, y: 1, width: 96, height: 38 };
+
+  test("is the first side's last line and the second side's first, where the borders are drawn", () => {
+    const table: [direction: "right" | "down", ratio: number, divider: Rect][] = [
+      ["right", 0.25, { x: 47, y: 1, width: 2, height: 38 }],
+      ["right", 0.5, { x: 71, y: 1, width: 2, height: 38 }],
+      ["right", 0.75, { x: 95, y: 1, width: 2, height: 38 }],
+      ["down", 0.25, { x: 24, y: 10, width: 96, height: 2 }],
+      ["down", 0.5, { x: 24, y: 19, width: 96, height: 2 }],
+    ];
+    for (const [direction, ratio, divider] of table) {
+      expect({ direction, ratio, divider: cellsOf(split(direction, ratio, leafOf("a"), leafOf("b")), AREA).splits[0]!.divider }).toEqual({ direction, ratio, divider });
+    }
+  });
+
+  test("meets both sides' outer cells at every ratio from 0.1 to 0.9, in both directions", () => {
+    for (const direction of ["right", "down"] as const) {
+      for (let tenth = 1; tenth <= 9; tenth++) {
+        const { panes, splits } = cellsOf(split(direction, tenth / 10, leafOf("a"), leafOf("b")), AREA);
+        const [a, b] = [panes[0]!.outer, panes[1]!.outer];
+        const expected = direction === "right"
+          ? { x: a.x + a.width - 1, y: AREA.y, width: 2, height: AREA.height }
+          : { x: AREA.x, y: a.y + a.height - 1, width: AREA.width, height: 2 };
+        expect({ direction, tenth, divider: splits[0]!.divider, next: direction === "right" ? b.x : b.y }).toEqual({ direction, tenth, divider: expected, next: direction === "right" ? expected.x + 1 : expected.y + 1 });
+      }
+    }
+  });
+
+  test("nested three deep: each divider runs inside its own split only, and no cell is in two", () => {
+    const tree = split("right", 0.5, leafOf("a"), split("down", 0.5, leafOf("b"), split("right", 0.3, leafOf("c"), leafOf("d"))));
+    const { splits } = cellsOf(tree, AREA);
+    expect(splits.map(({ id, divider }) => [id, divider])).toEqual([
+      ["split_0_root", { x: 71, y: 1, width: 2, height: 38 }],
+      ["split_1_1", { x: 73, y: 19, width: 47, height: 2 }],
+      ["split_2_11", { x: 85, y: 21, width: 2, height: 18 }],
+    ]);
+  });
+
+  test("down to the smallest areas: inside the split, never on another divider, empty where the sides have no seam", () => {
+    const tree = split("right", 0.5, leafOf("a"), split("down", 0.5, leafOf("b"), split("right", 0.5, leafOf("c"), leafOf("d"))));
+    for (const [width, height] of [[1, 1], [2, 1], [1, 2], [2, 2], [3, 3], [4, 3], [5, 5], [8, 6]] as const) {
+      const box = { x: 2, y: 1, width, height };
+      const { splits } = cellsOf(tree, box);
+      for (const [i, one] of splits.entries()) {
+        expect({ width, height, id: one.id, inside: inside(one.rect, one.divider) && inside(box, one.divider) }).toEqual({ width, height, id: one.id, inside: true });
+        for (const other of splits.slice(i + 1)) expect({ width, height, pair: [one.id, other.id], shared: intersect(one.divider, other.divider) }).toEqual({ width, height, pair: [one.id, other.id], shared: NO_CELLS });
+      }
+    }
+    expect(cellsOf(split("right", 0.5, leafOf("a"), leafOf("b")), { x: 0, y: 0, width: 1, height: 4 }).splits[0]!.divider).toEqual(NO_CELLS);
   });
 });

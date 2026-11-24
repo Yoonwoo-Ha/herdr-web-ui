@@ -43,6 +43,8 @@ export interface Machine {
    * through the relay. Absent while it is not connected, and for other kinds of PC.
    */
   route?: "relay" | "direct";
+  /** a relay PC that admitted this server only to watch (another PC of the account joined through it): reads pass, writes are refused there */
+  view_only?: true;
   /**
    * The PC's relay ID (server/relay/identity.ts) as its own server has it: the local PC's own, an SSH PC's
    * from its /api/health. Absent where that server has none, or is older. What a device turns its alerts off by.
@@ -215,6 +217,14 @@ export interface RemoteOvis {
   url: string | null;
 }
 export const OWN_UPDATE_OFFER = "This PC runs its own Ovis";
+/** A setup failure the app words in its own language from a code and its parameters (versions without the v). */
+export type SetupErrorCode = { code: "own_ovis_older"; version: string | null; target: string | null };
+/** A setup step the app words in its own language from a code and its parameters (versions without the v; stage as that PC's Ovis names it). */
+export type SetupStepCode =
+  | { code: "connecting" | "fingerprint" | "authentication" | "checking" | "review" | "installing" | "install_herdr" | "register_key" | "restart_bridge" | "start_bridge" | "own_update_connect" | "headless" | "connected" | "failed" | "timed_out" | "cancelled" }
+  | { code: "install_bundle"; platform: string }
+  | { code: "own_update_ask"; target: string | null }
+  | { code: "own_update_running"; target: string | null; stage: string };
 export function pcAlertKey(machine: Pick<Machine, "name" | "relay" | "server_id">): string {
   return machine.relay?.server_id ?? machine.server_id ?? machine.name;
 }
@@ -302,7 +312,8 @@ export interface HerdrCoreFacts {
 }
 export interface FoundHerdrSession { socket_path: string; session?: string; label: string }
 export interface FoundOvis { socket_path: string; runtime: "herdr-core" }
-export type MachineAction = "connect" | "update_bridge" | "setup" | "bridge_conflict" | "windows_login" | "windows_start_failed" | "choose_herdr";
+/** `install_ovis`: an account add over SSH found no Ovis of that PC's own there; installing Ovis there (PcInstallJob) is the way on */
+export type MachineAction = "connect" | "update_bridge" | "setup" | "bridge_conflict" | "windows_login" | "windows_start_failed" | "choose_herdr" | "install_ovis";
 /** `ovis`: the PC's own Ovis updates itself (Machine.remote_ovis); absent for a bridge this app installs */
 export interface MachineUpdate {
   /** what cancels it: DELETE /api/machines/:id/update (any update), or a setup job's cancel; empty while `queued` */
@@ -329,7 +340,33 @@ export interface MachineSettings {
    */
   set_aside?: string[];
 }
-export interface SetupRequest extends SshTarget { name?: string; machine_id?: string; update_remote?: boolean; start_new_herdr?: boolean }
+/**
+ * `account_add`: the setup also adds that PC to this PC's account (docs/account.md, "Adding a PC over SSH"): public-key SSH
+ * only, a host key known or confirmed here, and that PC's own Ovis only, never a bridge this app starts.
+ */
+export interface SetupRequest extends SshTarget { name?: string; machine_id?: string; update_remote?: boolean; start_new_herdr?: boolean; account_add?: boolean }
+/** What a PC's own Ovis told an account add over SSH of itself: its public relay fields, and the account it is in. */
+export interface AccountAddTarget { server_id: string; public_key: string; relay: string; label: string; account: string | null }
+/**
+ * That PC's relay when it answered the take of an account add over SSH: it turns the relay on and waits a while for it to
+ * come online (docs/account.md, "Adding a PC over SSH"). `blocked`: why it may not run there.
+ */
+export interface AccountAddRelay { phase: "off" | "connecting" | "online" | "error"; blocked: "serve_only" | "identity_unreadable" | null }
+/**
+ * POST /api/account/ssh-add's answer: that PC is in `account`; `relay` is null where its Ovis did not say (one from before
+ * this), or where the take's answer was lost and a second inspect found that PC in the account (`unanswered`).
+ */
+export interface AccountAddTaken { account: string; server_id: string; relay: AccountAddRelay | null; unanswered?: true }
+
+const RELAY_PHASES: readonly unknown[] = ["off", "connecting", "online", "error"];
+const RELAY_BLOCKS: readonly unknown[] = ["serve_only", "identity_unreadable", null];
+
+/** A relay word as an account add's take passes it on, or null for anything else. */
+export function accountAddRelay(value: unknown): AccountAddRelay | null {
+  if (value === null || typeof value !== "object") return null;
+  const { phase, blocked } = value as Record<string, unknown>;
+  return RELAY_PHASES.includes(phase) && RELAY_BLOCKS.includes(blocked) ? { phase, blocked } as AccountAddRelay : null;
+}
 export type SetupPhase = "connecting" | "authentication" | "checking" | "approval" | "installing" | "starting" | "connected" | "failed" | "cancelled";
 export interface SetupChallenge { id: string; kind: "host_key" | "secret"; prompt: string }
 export interface SetupJob {
@@ -340,9 +377,13 @@ export interface SetupJob {
   machine_id: string;
   phase: SetupPhase;
   step: string;
+  /** step's code and parameters where the app words it itself; step keeps the server's English. Null for a PC's own notice */
+  step_code?: SetupStepCode | null;
   challenge: SetupChallenge | null;
   installations: string[];
   error: string | null;
+  /** error's code and parameters where the app words it itself; error keeps the server's English */
+  error_code?: SetupErrorCode | null;
   /** An unsaved Windows destination may wait for login; its setup must stay in the current dialog. */
   windows_startup?: boolean;
   /**
@@ -360,6 +401,8 @@ export interface SetupJob {
   progress?: SetupProgress | null;
   /** the PC's own Ovis, when it is older than this app (Machine.remote_ovis): a first connect has no PC to carry it */
   remote_ovis?: RemoteOvis | null;
+  /** an account add's connected job: the PC it reached, for the window to list and admit (POST /api/account/ssh-add next) */
+  account_add?: AccountAddTarget;
 }
 export type SetupAction = { action: "answer"; challenge_id: string; answer: string } | { action: "approve" } | { action: "cancel" } | { action: "start_headless" };
 /**
@@ -390,17 +433,29 @@ export interface DevicePairedEvent {
   /** the account member that approved it from another device (docs/account.md, "Who may admit a device"); absent when approved on this PC or by a code */
   approved_by?: { device_id: string; label: string };
 }
+/**
+ * A join is told to every window of this PC that opens until one window marks it seen (POST /api/devices/joins/seen):
+ * then every window drops it.
+ */
+export interface DevicePairedSeenEvent {
+  type: "device-paired-seen";
+  event_id: string;
+}
 /** What a comparison asks for (docs/account.md, "Negotiation"): pairing this PC only, or joining the account. */
 export type PairingIntent = "pc" | "account";
 /**
  * An account join taken outside the pairing window, as this PC's own window lists it (GET /api/relay/joins): never its
- * digits, which the owner types from the new device's screen (POST /api/relay/join).
+ * digits, which the owner types from the new device's screen (POST /api/relay/join). `digits`: a first join, asked while
+ * the PC had no member to approve it, which the owner compares and allows or declines by a tap there.
  */
 export interface OwnJoinRequest {
   id: string;
   label: string;
   asked_at: string;
   left_ms: number;
+  digits?: string;
+  /** The join is let in by the account's signed list: an approval here is received at once, and the device is in only once its entry is in the list. */
+  list?: true;
 }
 /**
  * A phone asking to pair through the relay by comparing digits (docs/relay.md): the six digits its
@@ -435,7 +490,7 @@ export interface RemotePairingRequest {
   id: string;
   label: string;
   intent: PairingIntent;
-  choices: [string, string, string];
+  choices: [] | [string, string, string];
   expires_at: string;
   /** the new device's key (P-256 SPKI, base64url) from PAIR_REQUEST, bound by its commitment and the digits: what the approver signs an `add` for */
   key: string;
@@ -445,6 +500,19 @@ export interface RemotePairingRequest {
    * the admission as for an account join. Absent from an older server, or when false.
    */
   vouched?: true;
+  /** Derived by the receiving PC only after the joining server answered its channel-bound challenge. */
+  proven_server_id?: string;
+  /**
+   * The join brought the new device's card for the account's signed list: the PC lets it in by an entry of the list,
+   * which its approver signs and places, never by the approval alone. Absent from an older server, or when false.
+   */
+  list?: true;
+  /**
+   * The new device's person said the digits match (its PAIR_CONFIRM reached the PC). For a join into the list the
+   * approver signs the device's entry only once this is true, so a device that gives up before it is nobody's
+   * member. Absent from an older server, or while it has not confirmed.
+   */
+  confirmed?: true;
 }
 
 export type MachineEvent = { type: "machines"; machines: Machine[] } | { type: "machine-message"; machine_id: string; message: ServerMessage }
@@ -455,6 +523,7 @@ export type MachineEvent = { type: "machines"; machines: Machine[] } | { type: "
   /** finishes a browser of this server presented (shared/seen.ts): every record when the stream opens, then each change */
   | { type: "seen"; finishes: SeenFinish[] }
   | DevicePairedEvent
+  | DevicePairedSeenEvent
   | DeviceRemovedEvent
   | RelayPairingsEvent
   | RemotePairingsEvent

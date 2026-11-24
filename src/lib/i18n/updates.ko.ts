@@ -65,4 +65,10 @@ export const UPDATES_KO: Record<string, string> = {
   "This server runs from an installed update's folder, not from its source checkout. Restart Ovis from its source checkout (the herdr plugin's Stop, then Start, or bun run start there) to update.": "이 서버는 설치된 업데이트 폴더에서 실행 중이에요. 소스 체크아웃에서 Ovis를 다시 시작한 뒤(허더 플러그인의 Stop 후 Start, 또는 bun run start) 업데이트하세요.",
   "The running version is not part of the release history; automatic downgrade is disabled.": "실행 중인 버전이 릴리즈 기록에 없어요. 이전 버전으로는 자동 전환하지 않습니다.",
   "The version of Ovis running on this PC. Update and restart installs the release shown and then restarts Ovis.": "이 PC에서 실행 중인 Ovis 버전입니다. '업데이트하고 다시 시작'은 표시된 버전을 설치한 뒤 Ovis를 다시 시작합니다.",
+  "The version of the Ovis app on this PC. The app downloads updates by itself, and Restart to Update installs one.": "이 PC에 설치된 Ovis 앱 버전입니다. 업데이트는 앱이 알아서 내려받고, '다시 시작해서 업데이트'로 설치합니다.",
+  "This build of the app does not update itself.": "이 앱 빌드는 스스로 업데이트하지 않습니다.",
+  "Downloading Ovis {version}…": "Ovis {version} 받는 중…",
+  "Downloading Ovis {version}… {percent}%": "Ovis {version} 받는 중… {percent}%",
+  "The update did not go through: {error}": "업데이트하지 못했습니다: {error}",
+  "Update": "업데이트",
 };

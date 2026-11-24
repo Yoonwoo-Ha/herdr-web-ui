@@ -105,7 +105,12 @@ it.each([
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-it.each(["wal", "shm", null] as const)("reads a WAL catalog with %s missing without changing side files", async (missing) => {
+it.each([
+  ["the WAL missing", "wal", false],
+  ["the SHM missing", "shm", false],
+  ["both side files present", null, false],
+  ["a symlinked temp root (#2030)", null, true],
+] as const)("reads a WAL catalog with %s without changing side files", async (_case, missing, symlinkedTemp) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "agy-wal-pair-")));
   try {
     const transcript = join(dir, "brain", "session", ".system_generated", "logs", "transcript_full.jsonl");
@@ -116,10 +121,16 @@ it.each(["wal", "shm", null] as const)("reads a WAL catalog with %s missing with
     const before = [existsSync(`${dbPath}-wal`), existsSync(`${dbPath}-shm`)];
     expect(before).toEqual([missing !== "wal", missing !== "shm"]);
 
+    const scratch = join(dir, "scratch");
+    const alias = join(dir, "tmp-link");
+    if (symlinkedTemp) {
+      mkdirSync(scratch);
+      fs.symlinkSync(scratch, alias, "junction");
+    }
     const reader = Bun.spawn([process.execPath, "-e", `
       import { agyCatalog } from ${JSON.stringify(new URL("./agy.ts", import.meta.url).href)};
       console.log(JSON.stringify([...agyCatalog(${JSON.stringify(transcript)})]));
-    `], { stdout: "pipe", stderr: "pipe" });
+    `], { env: symlinkedTemp ? { ...process.env, TMPDIR: alias, TEMP: alias, TMP: alias } : process.env, stdout: "pipe", stderr: "pipe" });
     const [exitCode, stdout, stderr] = await Promise.all([
       reader.exited, new Response(reader.stdout).text(), new Response(reader.stderr).text(),
     ]);

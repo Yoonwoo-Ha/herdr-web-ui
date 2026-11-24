@@ -6,7 +6,6 @@ export const GUIDE_ZH: Record<string, string> = {
   "Look again": "重新检查",
   "Use Tailscale or Wi-Fi instead": "改用 Tailscale 或 Wi-Fi",
   "Set up Ovis": "设置 Ovis",
-  "Connect your phone": "连接手机",
   "Looking": "查找中",
   "Installed · v{version}": "已安装 · v{version}",
   "Can't tell": "无法判断",
@@ -26,7 +25,6 @@ export const GUIDE_ZH: Record<string, string> = {
   "Nice. Now add a metric for replayed requests.": "很好。现在为重放的请求加一个指标。",
   "Adding a counter next to the existing request metrics.": "在现有的请求指标旁边添加一个计数器。",
   "Phone and alerts": "手机和提醒",
-  "Turn on alerts": "开启提醒",
   "Test alert": "测试提醒",
   "Not yet": "尚未",
   "Later": "稍后",
@@ -100,4 +98,5 @@ export const GUIDE_ZH: Record<string, string> = {
   "Reach this PC from anywhere.": "随处连接这台电脑。",
   "Set up later": "稍后设置",
   "Keep SSH or a screen working on this PC: reached only through the relay, one stolen older device could lock you out of it.": "请在这台 PC 上保留 SSH 或屏幕访问：如果只能通过中继访问，一台较早的设备被盗就可能让你无法进入。",
+  "Run this once on this PC.": "在这台电脑上运行一次。",
 };

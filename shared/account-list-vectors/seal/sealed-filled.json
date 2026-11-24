@@ -1,0 +1,25 @@
+{
+  "name": "sealed-filled",
+  "note": "As a writer seals: the plaintext holds a field `pad` of zero bytes that fills it to 256 bytes; the reader gives the other fields.",
+  "sealed": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "seq": 7,
+    "epoch": {
+      "epoch": 2,
+      "key": "2fa00c28d4ee2a5999e129d3cf60c3f4c8f5af081d6da74f92a4cc6c67e66bb0"
+    },
+    "bytes": "Ae1WkmwNdYIrMjfwVn0Qh35u0CWUGo6qOqzulfbbNsKBHyxkHaMz3PwUI_jtXTS795nPeLrngoR2GzMa8SwBSTAyOjIMu1N2bAkODaOy653XISQAyAy8LAGjULWTEtRsoTMcXnSX1rI_rQnNhSeR1zLXIo5gPs_OlJzZL9qmivtCbRzh0P1_lG7DqRBkawZKQYXgcbJc-JREuQs51r8XGWpB65rVn0m_5LVnC-aggsEy9usvdBEqW0CoY1vk_bkDPOZGSkgh5Y2diPTl7hAo9_sR7hqwepUU0FBhH5EMoZHu3e7VgUxvly31qkDXLO3Lfi7mDrn-DbpVI1ED-E2lwnjDwitXxLleJwhuNxv9MemJDVfLEMAF_vABAkBH"
+  },
+  "expect": {
+    "fields": [
+      [
+        "label",
+        "Home laptop"
+      ],
+      [
+        "os",
+        "linux"
+      ]
+    ]
+  }
+}

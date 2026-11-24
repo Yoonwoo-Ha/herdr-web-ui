@@ -50,3 +50,15 @@ describe("Traefik secure WebSocket origin", () => {
     expect(canSendSecret(upgrade({}, "/api/pane/secret", "POST"))).toBe(false);
   });
 });
+
+describe("the phone app's own origins", () => {
+  // The hosted shell (https://app.ovis.sh) and the iOS app's own copy (capacitor://app.ovis.sh) reach a PC through the
+  // relay or its direct carrier, never this server's own HTTP or WebSocket: neither is accepted here, nor any other app origin.
+  it("refuses each of them on a PC's own WebSocket and its controls, as any other site", () => {
+    for (const origin of ["https://app.ovis.sh", "https://app-ap.ovis.sh", "capacitor://app.ovis.sh", "capacitor://localhost", "capacitor://public.example"]) {
+      const headers = { origin, "x-forwarded-proto": "", "sec-fetch-site": "" };
+      expect(sameOrigin(upgrade(headers))).toBe(false);
+      expect(sameOrigin(upgrade(headers, "/api/pane/close", "POST"))).toBe(false);
+    }
+  });
+});

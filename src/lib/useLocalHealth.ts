@@ -4,6 +4,7 @@ import { paneLifetimes } from "./paneLifetime.ts";
 import { fetchHealth, type HealthInfo } from "./api.ts";
 import { applyHealthRead, healthFreshness, machineHealth, type HealthBook } from "./healthPresentation.ts";
 import { sameData } from "./useMachineRoster.ts";
+import { CarrierDownError } from "./transport.ts";
 
 export function useLocalHealth() {
   const healthBook = useRef<HealthBook<HealthInfo>>(new Map());
@@ -15,7 +16,9 @@ export function useLocalHealth() {
 
   const readLocalHealth = useCallback(async () => {
     const read = ++healthReads.current;
-    const answer = await fetchHealth().then((value) => ({ ok: true, value }) as const, () => ({ ok: false }) as const);
+    // a read the reconnecting relay carrier never sent is no answer from the PC: the header says Reconnecting
+    const answer = await fetchHealth().then((value) => ({ ok: true, value }) as const, (error: unknown) => error instanceof CarrierDownError ? null : ({ ok: false }) as const);
+    if (answer === null) return;
     const book = applyHealthRead(healthBook.current, "local", read, answer);
     if (book === healthBook.current) return;
     healthBook.current = book;

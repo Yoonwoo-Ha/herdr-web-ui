@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { act, create as createRenderer, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 
 import { SettingsProvider } from "../lib/settings.ts";
 import {
@@ -10,10 +10,20 @@ import {
   RelayShellCardContent,
   TypedDigits,
 } from "./RelayShellScreens.tsx";
-import { CodeEntry, type RelayShellProps } from "./RelayShell.tsx";
+import { CodeEntry, RelayShell, type RelayShellProps } from "./RelayShell.tsx";
 import { PROVIDER_NAMES } from "./AccountPcs.tsx";
 import { relayFailureText } from "./relayFailureText.ts";
 import { translate, type Vars } from "../lib/i18n.ts";
+
+/** every tree a test draws, still mounted: the test's end unmounts each one, not only the ones it unmounted itself */
+const drawn = new Set<ReactTestRenderer>();
+const create = (...args: Parameters<typeof createRenderer>): ReactTestRenderer => {
+  const tree = createRenderer(...args);
+  const unmount = tree.unmount.bind(tree);
+  tree.unmount = () => { drawn.delete(tree); unmount(); };
+  drawn.add(tree);
+  return tree;
+};
 
 const none = () => {};
 const baseProps = (state: RelayShellProps["state"]): RelayShellProps => ({
@@ -103,7 +113,11 @@ describe("RelayShellScreens", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // every tree goes, then what its unmount left to run on a timer (a sheet leaving its history entry) runs while
+    // this window is still here
+    await act(async () => { for (const tree of [...drawn]) tree.unmount(); });
+    await act(async () => { for (let turn = 0; turn < 3; turn++) await new Promise((resolve) => setTimeout(resolve, 0)); });
     for (const [key, descriptor] of descriptors) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
       else Reflect.deleteProperty(globalThis, key);
@@ -209,6 +223,40 @@ describe("RelayShellScreens", () => {
     }
   });
 
+  it("puts up Update the app with the store page of the app's platform, and no way into the PC", () => {
+    for (const [platform, page] of [["android", "https://play.google.com/store/apps/details?id=sh.ovis.app"], ["ios", "https://apps.apple.com/app/id6824664162"]] as const) {
+      const html = render(createElement(RelayShell, baseProps({ kind: "app-outdated", name: "Desk PC", platform })));
+      expect(html).toContain('data-relay-state="app-outdated"');
+      expect(html).toContain(">Update the app</h1>");
+      expect(html).toContain("Desk PC needs a newer version of this app.");
+      expect(html).toContain(`href="${page}"`);
+      expect(html).toContain(">Open the store</a>");
+      expect(html).toContain(">Back</button>");
+      expect(html).not.toContain("Try again");
+    }
+    const unknown = render(createElement(RelayShell, baseProps({ kind: "app-outdated", name: "Desk PC", platform: null })));
+    expect(unknown).not.toContain("Open the store");
+    expect(unknown).toContain(">Back</button>");
+  });
+
+  it("leaves Update the app for the front page by Cancel where no PC's page is open", async () => {
+    const cancelled: string[] = [];
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(createElement(SettingsProvider, { children: createElement(RelayShellCardContent, {
+          props: { ...baseProps({ kind: "app-outdated", name: "Desk PC", platform: null }), scoped: false, onCancel: () => cancelled.push("cancel"), onBack: () => cancelled.push("back") },
+        }) }));
+      });
+      const back = renderer!.root.findAll((node) => node.type === "button" && textOf(node).trim() === "Back");
+      expect(back).toHaveLength(1);
+      await act(async () => { back[0]!.props.onClick(); });
+      expect(cancelled).toEqual(["cancel"]);
+    } finally {
+      await act(async () => { renderer?.unmount(); });
+    }
+  });
+
   it("renders Copy buttons for both manual update command blocks and updates to Copied on click", async () => {
     let renderer: ReactTestRenderer | undefined;
     try {
@@ -224,11 +272,6 @@ describe("RelayShellScreens", () => {
           createElement(SettingsProvider, {
             children: createElement(RelayShellCardContent, {
               props: shown,
-              view: null,
-              signInFirst: false,
-              addingPc: false,
-              setSignedOutView: none,
-              setAddingPc: none,
             }),
           }),
         );
@@ -256,30 +299,32 @@ describe("RelayShellScreens", () => {
 
   it("keeps the sign-in column mounted during signing-in with the busy provider marked, and the way past it held too", () => {
     const html = render(
-      createElement(RelayShellCardContent, {
-        props: {
-          ...baseProps({ kind: "empty", account: { kind: "signing-in", provider: "google" } }),
-          scoped: false,
-          onSignIn: none,
-          accountProviders: ["github", "google", "apple"],
-        },
-        view: "sign-in",
-        signInFirst: true,
-        addingPc: false,
-        setSignedOutView: none,
-        setAddingPc: none,
+      createElement(RelayShell, {
+        ...baseProps({ kind: "empty", account: { kind: "signing-in", provider: "google" } }),
+        scoped: false,
+        onSignIn: none,
+        accountProviders: ["github", "google", "apple"],
       }),
     );
-    expect(html).toContain("Sign in to your Ovis account");
+    expect(html).toContain('data-tab-panel="relay"');
     expect(html).toContain('data-provider="google" aria-busy="true" disabled=""');
-    expect(html).toContain('data-action="no-account" disabled=""');
+    expect(html).toMatch(/data-action="add-code" disabled=""/);
+    // where the phone app can scan, the QR way is held as well: a scan, or the code a failed one falls back to, waits
+    const capacitor = Object.getOwnPropertyDescriptor(globalThis, "Capacitor");
+    Object.defineProperty(globalThis, "Capacitor", { configurable: true, value: { isNativePlatform: () => true, PluginHeaders: [{ name: "CapacitorBarcodeScanner" }], nativePromise: async () => ({}) } });
+    try {
+      const scanning = render(createElement(RelayShell, { ...baseProps({ kind: "empty", account: { kind: "signing-in", provider: "google" } }), scoped: false, onSignIn: none }));
+      expect(scanning).toMatch(/data-action="scan-qr" disabled=""/);
+    } finally {
+      if (capacitor) Object.defineProperty(globalThis, "Capacitor", capacitor);
+      else Reflect.deleteProperty(globalThis, "Capacitor");
+    }
   });
 
   describe("the confirm before a link's PC is paired with", () => {
     const offer = { v: 1 as const, server_id: "0123456789abcdef0123456789abcdef", server_public_key: "key", relay: "wss://relay.ovis.sh", name: "Desk PC" };
     const confirm = (account?: "checking" | "unlisted" | "listed", pressed?: "unlisted" | "listed" | "own"): string => render(createElement(RelayShellCardContent, {
       props: baseProps({ kind: "confirm", offer, ...(account ? { account } : {}), ...(pressed ? { pressed } : {}) }),
-      view: null, signInFirst: false, addingPc: false, setSignedOutView: none, setAddingPc: none,
     }));
     const pcId = '<span class="key-id" role="group" aria-label="ID of the PC this link names"><span class="key-id-group">0123</span>';
 
@@ -389,7 +434,7 @@ describe("RelayShellScreens", () => {
       let renderer: ReactTestRenderer | undefined;
       await act(async () => {
         renderer = create(createElement(SettingsProvider, { children: createElement(RelayShellCardContent, {
-          props: { ...baseProps(state), ...extra }, view: null, signInFirst: false, addingPc: false, setSignedOutView: none, setAddingPc: none,
+          props: { ...baseProps(state), ...extra },
         }) }));
       });
       return renderer!;
@@ -427,7 +472,7 @@ describe("RelayShellScreens", () => {
     it("keeps the PC's ID of an Add and pair confirm folded under Details, with the account on the PC's card", () => {
       const offer = { v: 1 as const, server_id: "a3f9c2e17b4d5a6c8e9f0b1d2c3a4e5f", server_public_key: "key", relay: "wss://relay.example", name: "Desk", code: "123456" };
       const confirm = (account: "unlisted" | "listed") => render(createElement(RelayShellCardContent, {
-        props: baseProps({ kind: "confirm", offer, account }), view: null, signInFirst: false, addingPc: false, setSignedOutView: none, setAddingPc: none,
+        props: baseProps({ kind: "confirm", offer, account }),
       }));
       const adding = confirm("unlisted");
       expect(adding).toContain('<span class="relay-step-card-name">Desk</span><span class="relay-step-card-detail">Your Ovis account</span>');

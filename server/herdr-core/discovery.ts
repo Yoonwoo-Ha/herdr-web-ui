@@ -28,6 +28,11 @@ export interface FoundHc {
 
 export interface FindHcOptions {
   env?: Env;
+  /**
+   * what a candidate's `--version` runs in, when that is not `env`: `env` then only says which hc is looked for and
+   * where (OVIS_HC_BIN, the PATH), and nothing else of it reaches the candidate
+   */
+  versionEnv?: Env;
   home?: string;
   platform?: NodeJS.Platform;
   /** the PATH the user's login shell sets up, or null; the default asks `$SHELL -lc` */
@@ -86,8 +91,9 @@ export async function findHc(options: FindHcOptions = {}): Promise<FoundHc | nul
   // starts hands that environment to every pane (connection.ts)
   let probeEnv: Env | undefined;
   const checkedDirs = (dirs: string[]) => dirs.map((dir) => resolve(dir)).filter((dir) => ownedByUser(dir, harmless!, true, acl));
-  const probing = () => probeEnv ??= harmless === null ? env : {
-    ...env,
+  const versionEnv = options.versionEnv ?? env;
+  const probing = () => probeEnv ??= harmless === null ? versionEnv : {
+    ...versionEnv,
     PATH: [...new Set(checkedDirs(dirsOn(env["PATH"])))].join(delimiter) || checkedDirs(SYSTEM_PATH).join(delimiter) || "/nonexistent",
   };
   // Windows' trust boundary: the profile as the OS gives it, never a HOME the environment sets

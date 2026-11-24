@@ -1,0 +1,174 @@
+{
+  "opencode": "2.2.2",
+  "recorded": "GET /api/event of an isolated `opencode serve` (model dsapi/deepseek-v4.1-flash), session permissions [{action:\"*\",resource:\"*\",effect:\"ask\"}]; directory replaced",
+  "events": [
+    {
+      "id": "evt_208958d0f002rHsveB5c3pPtpa",
+      "created": 1795440348431,
+      "type": "permission.asked",
+      "location": {
+        "directory": "/home/user/project"
+      },
+      "data": {
+        "id": "per_208958d0f001A7efXwZwGqFCSB",
+        "sessionID": "ses_df76aa653ffePm0MsI5370PC7Q",
+        "action": "shell",
+        "resources": [
+          "ls -la ."
+        ],
+        "save": [
+          "ls *"
+        ],
+        "source": {
+          "type": "tool",
+          "messageID": "msg_2089571b6001VEIPKOQBZNkHRd",
+          "id": "call_40a2ae3553ca434581e4c132"
+        }
+      }
+    },
+    {
+      "id": "evt_20895ac1f001EuzsjMSSIl5kGL",
+      "created": 1795440356383,
+      "type": "permission.replied",
+      "location": {
+        "directory": "/home/user/project"
+      },
+      "data": {
+        "sessionID": "ses_df76aa653ffePm0MsI5370PC7Q",
+        "requestID": "per_208958d0f001A7efXwZwGqFCSB",
+        "reply": "reject"
+      }
+    },
+    {
+      "id": "evt_20895c262002Yk2lInilpDtj88",
+      "created": 1795440362082,
+      "type": "permission.asked",
+      "location": {
+        "directory": "/home/user/project"
+      },
+      "data": {
+        "id": "per_20895c262001QkLqA8az5BbQx6",
+        "sessionID": "ses_df76aa653ffePm0MsI5370PC7Q",
+        "action": "edit",
+        "resources": [
+          "hello.txt"
+        ],
+        "save": [
+          "*"
+        ],
+        "metadata": {
+          "files": [
+            {
+              "file": "hello.txt",
+              "patch": "Index: hello.txt\n===================================================================\n--- hello.txt\n+++ hello.txt\n@@ -0,0 +1,1 @@\n+hello from ovis\n",
+              "status": "added",
+              "additions": 1,
+              "deletions": 0
+            }
+          ]
+        },
+        "source": {
+          "type": "tool",
+          "messageID": "msg_20895ad31001KTRZexsNzh0RTB",
+          "id": "call_fc7fdf84fd424df98dc985f8"
+        }
+      }
+    },
+    {
+      "id": "evt_20895da87001Nf4UpnyR54tyYU",
+      "created": 1795440368264,
+      "type": "permission.replied",
+      "location": {
+        "directory": "/home/user/project"
+      },
+      "data": {
+        "sessionID": "ses_df76aa653ffePm0MsI5370PC7Q",
+        "requestID": "per_20895c262001QkLqA8az5BbQx6",
+        "reply": "once"
+      }
+    },
+    {
+      "id": "evt_208960097002McJJRuzKFpb9gl",
+      "created": 1795440378007,
+      "type": "permission.asked",
+      "location": {
+        "directory": "/home/user/project"
+      },
+      "data": {
+        "id": "per_208960097001hiQBVGCDRll4Cs",
+        "sessionID": "ses_df76aa653ffePm0MsI5370PC7Q",
+        "action": "webfetch",
+        "resources": [
+          "https://example.com"
+        ],
+        "save": [
+          "*"
+        ],
+        "metadata": {
+          "url": "https://example.com",
+          "format": "html"
+        },
+        "source": {
+          "type": "tool",
+          "messageID": "msg_20895ecf80010NH8BLeBsiZNj4",
+          "id": "call_201095c5e0474bf092a3fb78"
+        }
+      }
+    },
+    {
+      "id": "evt_20896215e001ELimTaqQ7uxpjy",
+      "created": 1795440386398,
+      "type": "permission.replied",
+      "location": {
+        "directory": "/home/user/project"
+      },
+      "data": {
+        "sessionID": "ses_df76aa653ffePm0MsI5370PC7Q",
+        "requestID": "per_208960097001hiQBVGCDRll4Cs",
+        "reply": "reject"
+      }
+    },
+    {
+      "id": "evt_2089769e0002xEmPpcmUsjvlm2",
+      "created": 1795440470496,
+      "type": "permission.asked",
+      "location": {
+        "directory": "/home/user/project"
+      },
+      "data": {
+        "id": "per_2089769e0001z93zACF4FohDDy",
+        "sessionID": "ses_df768af71ffeKDYNsHP1HB2AK3",
+        "action": "ovisfix_echo",
+        "resources": [
+          "*"
+        ],
+        "save": [
+          "*"
+        ],
+        "metadata": {
+          "input": {
+            "word": "hello"
+          }
+        },
+        "source": {
+          "type": "tool",
+          "messageID": "msg_2089750c5001LVVNzuZxhs2hJX",
+          "id": "call_04cf950e0ff84bfdab8e3c87"
+        }
+      }
+    },
+    {
+      "id": "evt_208976a6c001nde5i9rJC2TGyF",
+      "created": 1795440470636,
+      "type": "permission.replied",
+      "location": {
+        "directory": "/home/user/project"
+      },
+      "data": {
+        "sessionID": "ses_df768af71ffeKDYNsHP1HB2AK3",
+        "requestID": "per_2089769e0001z93zACF4FohDDy",
+        "reply": "once"
+      }
+    }
+  ]
+}

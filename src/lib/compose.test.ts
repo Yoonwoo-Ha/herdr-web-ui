@@ -676,10 +676,13 @@ describe("claudeMainAtRest", () => {
 it("takes a word naming a command the menu hides for a command, never for one no command matches", () => {
   const commands: SlashCommand[] = [
     { name: "heapdump", description: "Write a heap snapshot", source: "builtin", visibility: "agent-hidden" },
+    { name: "apps", description: "Apps", source: "builtin", visibility: "agent-hidden" },
     { name: "help", description: "Show help", source: "builtin" },
   ];
   expect(namesHiddenCommand(commands, "heapdump")).toBe(true);
   expect(namesHiddenCommand(commands, "Heap")).toBe(true);
+  expect(namesHiddenCommand(commands, "apps", "/")).toBe(true);
+  expect(namesHiddenCommand(commands, "apps", "$")).toBe(false);
   expect(namesHiddenCommand(commands, "help")).toBe(false);
   expect(namesHiddenCommand(commands, "deploy")).toBe(false);
   expect(namesHiddenCommand(commands, "")).toBe(false);

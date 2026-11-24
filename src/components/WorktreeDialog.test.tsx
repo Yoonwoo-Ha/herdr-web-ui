@@ -50,6 +50,38 @@ describe("the palette's worktree dialog", () => {
   </SettingsProvider>;
   const branchField = (): ReactTestInstance => renderer!.root.findAll((node) => node.type === "input" && String(node.props.className).includes("worktree-code-input"))[0]!;
 
+  it("focuses the Branch field and selects the suggested branch in create mode (#1222)", async () => {
+    const frames: FrameRequestCallback[] = [];
+    spyOn(window, "requestAnimationFrame").mockImplementation((callback) => frames.push(callback));
+    class Input {
+      selectionStart = 0;
+      selectionEnd = 0;
+      constructor(readonly value: string) {}
+      focus() { Object.assign(document, { activeElement: this }); }
+      select() { this.selectionStart = 0; this.selectionEnd = this.value.length; }
+    }
+    const inputs = new Map<boolean, Input>();
+    await act(async () => {
+      renderer = create(dialog(repository("focus-fixture")), {
+        createNodeMock: ({ type, props }) => {
+          if (type === "form") return { querySelector: () => null };
+          if (type !== "input" || typeof props !== "object" || props === null || !("value" in props) || typeof props.value !== "string") return null;
+          const required = "required" in props && props.required === true;
+          const input = inputs.get(required) ?? new Input(props.value);
+          inputs.set(required, input);
+          return input;
+        },
+      });
+    });
+    for (const frame of frames) frame(0);
+
+    const branch = branchField().instance;
+    if (!(branch instanceof Input)) throw new Error("Branch input did not mount");
+    expect<unknown>(document.activeElement).toBe(branch);
+    expect(branch.value).not.toBe("");
+    expect([branch.selectionStart, branch.selectionEnd]).toEqual([0, branch.value.length]);
+  });
+
   it("starts another repository from that repository's own draft, never the branch typed for the first", async () => {
     await act(async () => { renderer = create(dialog(repository("api"))); });
     await act(async () => { branchField().props.onChange({ target: { value: "feat/for-api" } }); });

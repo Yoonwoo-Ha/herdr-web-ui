@@ -4,6 +4,8 @@
     <item name="ssh_host" type="id" />
     <item name="ssh_port" type="id" />
     <item name="ssh_user" type="id" />
+    <item name="ssh_method_tailscale" type="id" />
+    <item name="ssh_open_link" type="id" />
     <item name="ssh_method_phone" type="id" />
     <item name="ssh_method_password" type="id" />
     <item name="ssh_method_paste" type="id" />

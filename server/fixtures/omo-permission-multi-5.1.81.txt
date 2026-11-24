@@ -1,0 +1,73 @@
+omo (omo-ai 5.1.81)
+
+Optimized system prompt applied: deepseek-v4-1-flash
+
+ Tip: Shift+Tab changes the reasoning level
+ Tip: Use /efforts <level> to set the reasoning effort for the current model; /efforts alone lists the levels it supports.
+ ↳ Want the full story on any tip? Ask about it: the give-me-tips skill has the tour.
+
+[Skills]
+  computer-use
+
+[Extensions]
+  omo-hook.ts
+
+
+ fd not found. Downloading...
+ ripgrep not found. Downloading...
+ fd installed to /home/user/path
+ ripgrep installed to /home/user/path
+
+ OmO Native sends anonymous usage telemetry (no prompts, code, file paths, or account data) to PostHog in the United States to improve the product. Turn it off with DO_NOT_TRACK=1, or set
+ "telemetry": { "enabled": false } in ~/.omo/omo.jsonc. Details: https://github.com/code-yeongyu/oh-my-openagent/blob/dev/docs/legal/privacy-policy.md
+
+
+ Read the file cmds/omo-hook-multi-a0-mwtdzpu6.txt. Then run its entire contents, byte for byte, as exactly ONE call to your shell/bash tool, in the current directory. Do not change, split, re-quote
+ or reformat it, and do not run any other command. If that call is denied, stop immediately and do nothing else.
+
+
+ I read this as a read-then-execute request - read the file, then pass its exact bytes to one bash call. I'll stop when the call returns (or is denied).
+
+• Explored
+  └ Read omo-hook-multi-a0-mwtdzpu6.txt
+
+
+ $ cat <<'EOF' > am-multi-omo-hook-multi-a0-mwtdzpu6.txt
+ first line
+ second line with  two spaces
+    third line after a tab
+ EOF
+ wc -l am-multi-omo-hook-multi-a0-mwtdzpu6.txt
+
+
+ Tip: Use /thinking <level> to set the thinking level, /thinking to pick one, or shift+tab to cycle through them.
+ ↳ Want the full story on any tip? Ask about it: the give-me-tips skill has the tour.
+ Running PreToolUse hook: matching project rules (0s)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Permission required: bash
+
+ Description: Run the command file contents as one call
+ Command: $ cat <<'EOF' > am-multi-omo-hook-multi-a0-mwtdzpu6.txt
+ first line
+ second line with  two spaces
+    third line after a tab
+ EOF
+ wc -l am-multi-omo-hook-multi-a0-mwtdzpu6.txt
+
+ Patterns:
+   - cat
+   - wc
+
+ → Allow once
+   Allow always
+   Deny
+   Deny with feedback
+
+ ↑↓ navigate  enter select  esc/ctrl+c cancel
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/home/user/project • CH85.1% • 7.7K/200K (3.8%) (auto)                                                          deepseek-v4.1-flash • effort medium (shift+tab)
+(😺 OmO Native by Q Kim) waiting_human · question
+

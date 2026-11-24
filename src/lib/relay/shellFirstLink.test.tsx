@@ -527,6 +527,16 @@ describe("the admission before a first link", () => {
     expect((await run.store.get(run.offer.server_id))?.device_id).toBe(OLDER_ID);
   });
 
+  it("keeps the older record of a saved pairing that paired again from a marked code when the PC ends the new row after a refusal with no words of its own, and opens the PC with it", async () => {
+    const run = await pairing({ mark: true, saved: true, listed: true, links: [() => Response.json({ error: { code: "key_in_use" } }, { status: 409 })] });
+    run.admissionGate.resolve();
+    await until(() => run.sent.length === 1);
+    run.endRow();
+    await until(() => run.apps() === 1);
+    expect((await run.store.get(run.offer.server_id))?.device_id).toBe(OLDER_ID);
+    expect(run.failure()).toBeNull();
+  });
+
   // the mark comes with the QR code, which nothing signs: it only chooses the confirm. The person's press of Add and pair
   // on that confirm, which names the PC and the account, lists a PC the account does not list yet; then the admission
   // goes, then the PAIR

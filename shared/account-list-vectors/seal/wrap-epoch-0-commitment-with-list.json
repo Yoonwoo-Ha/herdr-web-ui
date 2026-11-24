@@ -1,0 +1,24 @@
+{
+  "name": "wrap-epoch-0-commitment-with-list",
+  "note": "A commitment to epoch 0 made with the list id is not the one entry 0 carries.",
+  "keys": {
+    "TEST-ONLY-member": {
+      "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgAN0JX9l4zwCbjepGn4shha948D2Il_TkDWbjJorjyDyhRANCAASkz7AKDJQTy4cxb89uOT0MXeB7PCcXN6Y8NXypxIezR1MX3lo9XDGfkLHNZgs-N90100YGOgH4lJ-Hht3-eKl6",
+      "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEpM-wCgyUE8uHMW_Pbjk9DF3gezwnFzemPDV8qcSHs0dTF95aPVwxn5CxzWYLPjfdNdNGBjoB-JSfh4bd_nipeg"
+    },
+    "TEST-ONLY-other-member": {
+      "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgTfYQD6ej2Mci8Yl1Y0nbiy6M7uMD1t9anTiqSjjUS-ChRANCAAQtoJXDy870eNFxTtAuhybNVQNwP2pZssd21Ouq1N6T3YHUQ6ApXGGzr4kEY7Cr-Jyw4Bsov-prKMYXXgV-bxlU",
+      "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELaCVw8vO9HjRcU7QLocmzVUDcD9qWbLHdtTrqtTek92B1EOgKVxhs6-JBGOwq_icsOAbKL_qayjGF14Ffm8ZVA"
+    }
+  },
+  "wrap": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "epoch": 0,
+    "commitment": "c852d80c96d7251dfd3eee885b2b2092bdcb53f6614fc9ec5907bad5dd07129e",
+    "member": "TEST-ONLY-member",
+    "text": "AUtfyDK9EVr6yDkQxAssJ7CdE8JoOhV79K6rWFQXLyG8oSQiiQqiBDZlyWwQ5-kAgqQdE86bH2IaYKQldnNoh6bzh4lTlzey-q-wLeP16Zq4drr9B2c_6hpQboMruryRBQ-nHD6Rcg9G8vkPmREMguo"
+  },
+  "expect": {
+    "why": "other_key"
+  }
+}

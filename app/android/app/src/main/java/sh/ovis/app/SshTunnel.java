@@ -159,6 +159,13 @@ final class SshTunnel {
         pipes.shutdownNow();
     }
 
+    /** Try again on the error page: a Tailscale check the person has now approved is tried again; every other stop stays. */
+    synchronized void resume() {
+        if (stopped == null || !"tailscale-check".equals(stopped.kind)) return;
+        stopped = null;
+        lastFailure = null;
+    }
+
     /** Ends the SSH connection (a network change): the next request makes a new one. */
     void drop() {
         Link was;
@@ -296,6 +303,77 @@ final class SshTunnel {
             }
             throw failed;
         }
+    }
+
+    /**
+     * The body of the PC's own Ovis's answer to `GET path` over this tunnel's SSH connection (made if need be), as from
+     * its own loopback, which it lets in as its own PC's: for the app itself, never a page. At most 256 KiB, within
+     * 20 seconds; an answer other than 200 is `internal`.
+     */
+    String get(String path) throws SshFailure {
+        Channel stream = channel();
+        java.util.concurrent.Future<byte[]> reading = pipes.submit(() -> {
+            OutputStream out = stream.output();
+            out.write(("GET " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: application/json\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            InputStream in = stream.input();
+            ByteArrayOutputStream body = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                body.write(buffer, 0, read);
+                if (body.size() > 256 * 1024) throw new IOException("The answer is too long");
+            }
+            return body.toByteArray();
+        });
+        byte[] response;
+        try {
+            response = reading.get(20, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException late) {
+            throw new SshFailure("timeout", "The PC's Ovis did not answer in time");
+        } catch (ExecutionException failed) {
+            throw new SshFailure("unreachable", SshFailure.rootMessage(failed));
+        } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+            throw new SshFailure("cancelled", "Cancelled");
+        } finally {
+            reading.cancel(true);
+            stream.close();
+        }
+        int split = -1;
+        for (int i = 0; i + 3 < response.length && split < 0; i++) {
+            if (response[i] == '\r' && response[i + 1] == '\n' && response[i + 2] == '\r' && response[i + 3] == '\n') split = i;
+        }
+        if (split < 0) throw new SshFailure("internal", "No answer");
+        String head = new String(response, 0, split, StandardCharsets.ISO_8859_1).toLowerCase(Locale.ROOT);
+        if (!head.startsWith("http/1.1 200") && !head.startsWith("http/1.0 200")) throw new SshFailure("internal", head.split("\r\n")[0]);
+        byte[] body = java.util.Arrays.copyOfRange(response, split + 4, response.length);
+        return new String(head.contains("transfer-encoding: chunked") ? unchunkBytes(body) : body, StandardCharsets.UTF_8);
+    }
+
+    /** An HTTP/1.1 chunked body joined as bytes, so a character that spans two chunks stays whole. */
+    static byte[] unchunkBytes(byte[] chunked) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        int at = 0;
+        while (at < chunked.length) {
+            int line = -1;
+            for (int i = at; i + 1 < chunked.length; i++) {
+                if (chunked[i] == '\r' && chunked[i + 1] == '\n') { line = i; break; }
+            }
+            if (line < 0) break;
+            int size;
+            try {
+                size = Integer.parseInt(new String(chunked, at, line - at, StandardCharsets.ISO_8859_1).split(";")[0].trim(), 16);
+            } catch (NumberFormatException damaged) {
+                break;
+            }
+            if (size == 0) break;
+            int from = line + 2;
+            int to = Math.min(chunked.length, from + size);
+            out.write(chunked, from, to - from);
+            at = to + 2;
+        }
+        return out.toByteArray();
     }
 
     private void serve(Socket client) {

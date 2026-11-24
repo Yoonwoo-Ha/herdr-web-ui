@@ -91,7 +91,7 @@ try {
             assert.equal(box.x, 0, "from the window's left edge");
             assert.ok(Math.abs(box.y - (header.y + header.height)) <= 1, "right under the header");
             assert.ok(box.width >= 240 && box.width <= 640, `at its open width (${box.width}px)`);
-            assert.equal((await sidebar(page).locator(".inbox-foot-entry").textContent())?.trim(), "Open agent inbox", "the peek's foot holds Open agent inbox");
+            assert.equal(await sidebar(page).locator(".sidebar-footer-row > .sidebar-footer-settings + .sidebar-footer-inbox").getAttribute("title"), "Inbox", "the peek's foot holds Inbox beside the gear");
             if (evidence) await page.screenshot({ path: join(evidence, `sidebar-peek-1280-${theme}.png`) });
 
             await page.goto(url("&sidebar=hidden"));

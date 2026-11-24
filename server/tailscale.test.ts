@@ -1,6 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { decideAccess, type AccessInput } from "./access.ts";
-import { HTTPS_PORTS, httpsPorts, parseSoleTailnetLogin, parseTailscale, parseTailscaleIp, TailnetIdentitySource, type TailnetIdentity } from "./tailscale.ts";
+import { HTTPS_PORTS, httpsPorts, parseSoleTailnetLogin, parseTailscale, parseTailscaleIp, TailnetIdentitySource, tailscaleWhois, type TailnetIdentity } from "./tailscale.ts";
 
 const status = (state = "Running", dns = "pc.example.ts.net.") => JSON.stringify({ BackendState: state, Self: { DNSName: dns } });
 /** a `tailscale serve status --json` document: listeners by port, and one "/" proxy per host:port */
@@ -309,5 +309,31 @@ describe("httpsPorts", () => {
     expect(httpsPorts(" 9443 ")).toEqual([9443]);
     expect(httpsPorts("65535")).toEqual([65535]);
     for (const value of ["0", "65536", "abc", "94.43", "-443", "443x"]) expect(httpsPorts(value)).toEqual([]);
+  });
+});
+
+describe("tailscale whois", () => {
+  it("is never the real CLI under bun test: a source with only a status reader spawns nothing for a node", async () => {
+    const spawn = spyOn(Bun, "spawn");
+    try {
+      expect(await tailscaleWhois.read("100.64.0.9")).toBeNull();
+      expect(await new TailnetIdentitySource(async () => null).node("100.64.0.9")).toBeNull();
+      expect(spawn).not.toHaveBeenCalled();
+    } finally { spawn.mockRestore(); }
+  });
+
+  it("asks a WhoIs that named nothing again only after five seconds", async () => {
+    let reads = 0;
+    const source = new TailnetIdentitySource(async () => null, async () => { reads++; return null; });
+    const start = Date.now();
+    const clock = spyOn(Date, "now").mockImplementation(() => start);
+    try {
+      await source.node("100.64.0.9");
+      await source.node("100.64.0.9");
+      expect(reads).toBe(1);
+      clock.mockImplementation(() => start + 5_000);
+      await source.node("100.64.0.9");
+      expect(reads).toBe(2);
+    } finally { clock.mockRestore(); }
   });
 });

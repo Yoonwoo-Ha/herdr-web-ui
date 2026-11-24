@@ -7,6 +7,9 @@ import { readFile, stat } from "node:fs/promises";
 import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane } from "../shared/protocol.ts";
 import { herdrRpc } from "./herdr/client.ts";
 import { answerVersion, ConversationNotStarted, ConversationUnavailable, type ConversationPage, HistoryChanged, type RecognizedConversation, TRANSCRIPT_WINDOW_BYTES } from "./conversation-shared.ts";
+import type { HermesMessage } from "./dialogs/hermes-record.ts";
+import { readSqliteSnapshot, SnapshotUnavailable } from "./sqlite-snapshot.ts";
+import { FileBusyError, fileTask } from "./file-pool.ts";
 import { toolSummary } from "./transcript-records.ts";
 import { TOOL_OUTPUT_CHARS, trimOutput } from "./tool-output.ts";
 import { darwinTerminal } from "./darwin-process.ts";
@@ -501,6 +504,29 @@ function hermesMetadata(session: { model?: string | null; model_config?: string 
     } catch {}
   }
   return { model: session?.model ?? null, reasoning_effort: reasoningEffort };
+}
+
+/** How many of a session's last rows say which call waits: one turn's calls and the prompt that started it. */
+const HERMES_PENDING_ROWS = 64;
+
+/** The most of state.db (with its WAL) copied to read the call that waits; a bigger one leaves the screen's card. */
+export const HERMES_PENDING_BYTES = 64 * 1024 * 1024;
+
+/**
+ * A session's last rows, oldest first, for the call that waits on the user (dialogs/hermes-record.ts), read from a
+ * private copy of state.db (sqlite-snapshot.ts): Hermes writes it as it runs, and an open of the live file could write
+ * beside it. Each row's `tool_calls` as long as it is: a cut one would read as no call.
+ */
+export function hermesPendingMessages(dbPath: string, sessionId: string): HermesMessage[] {
+  return readSqliteSnapshot(dbPath, (db) => db.query<HermesMessage, [string, number]>(
+    "SELECT role, tool_calls, tool_call_id FROM messages WHERE session_id = ? AND (active = 1 OR compacted = 1) ORDER BY id DESC LIMIT ?",
+  ).all(sessionId, HERMES_PENDING_ROWS).reverse(), null, HERMES_PENDING_BYTES, undefined, "always");
+}
+
+/** `hermesPendingMessages` on a file thread: copying state.db must not hold the server's thread. */
+export async function hermesPendingMessagesOffThread(dbPath: string, sessionId: string): Promise<HermesMessage[]> {
+  try { return await fileTask<HermesMessage[]>({ op: "hermes-pending", path: dbPath, session: sessionId }); }
+  catch (error) { throw error instanceof FileBusyError ? error : new SnapshotUnavailable(); }
 }
 
 /** Page contents name the cache version so WAL edits invalidate unchanged row counts. */

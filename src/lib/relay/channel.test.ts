@@ -222,7 +222,7 @@ for (const pairing of [false, true]) {
     expect(channel.device.device_id).toBe((await f.store.get(f.offer.server_id))?.device_id ?? null);
     expect(channel.connectionId).toBe("ef".repeat(16));
     expect(channel.mux.limits.max_streams).toBe(2);
-    expect(channel.server).toEqual({ version: "test", relayProtocol: 1, features: [] });
+    expect(channel.server).toEqual({ version: "test", relayProtocol: 1, features: [], minSupportedClient: "0.0.0" });
     expect(f.trace.slice(0, 4)).toEqual(["client:HELLO", "server:WELCOME", `client:${pairing ? "PAIR" : "AUTH"}`, "server:AUTH_OK"]);
     console.log(`ORDER: ${f.trace.slice(0, 4).join(" -> ")}; no other client frame before AUTH_OK`);
     channel.mux.openHttp({ method: "GET", target: "/api/test", headers: [], body: "none" });
@@ -237,7 +237,7 @@ for (const pairing of [false, true]) {
     expect(f.trace.filter((entry) => entry.startsWith("client:"))).toEqual(["client:HELLO", `client:${pairing ? "PAIR" : "AUTH"}`]);
     f.allowAuth.resolve();
     const channel = await f.opening;
-    expect(channel.server).toEqual({ version: "test", relayProtocol: 1, features: [] });
+    expect(channel.server).toEqual({ version: "test", relayProtocol: 1, features: [], minSupportedClient: "0.0.0" });
     channel.mux.openHttp({ method: "GET", target: "/api/test", headers: [], body: "none" });
     expect(await f.httpSeen.promise).toBe("/api/test");
     channel.close();
@@ -647,6 +647,44 @@ it("saves no key when the PC declines, and lands on the not-approved screen", as
   await cleared;
 });
 
+it("tells the comparison which PC approves it on its own screen, any PC it cannot name being a PC", async () => {
+  for (const [sent, told] of [["mac", "mac"], ["windows", "windows"], ["linux", "linux"], ["toaster", "pc"], [undefined, undefined]] as const) {
+    const keys = generateKeyPair();
+    let socket: FakeSocket;
+    const daemon: Transport = {
+      onmessage: null, onclose: null, onerror: null,
+      send: (data) => socket.deliver(data),
+      close: (code, reason) => { setImmediate(() => socket.close(code, reason)); },
+    };
+    socket = new FakeSocket(daemon);
+    const ready = Promise.withResolvers<SecureChannel>();
+    // a PC endpoint that sends its challenge as JSON of its own, so a value this phone does not know can be sent
+    const send = (frame: MuxFrame, extra: Record<string, unknown> = {}) => ready.promise.then((channel) => {
+      const bytes = encodeFrame(frame);
+      if (Object.keys(extra).length === 0) return channel.send(bytes.slice().buffer);
+      const json = new TextDecoder().decode(bytes.subarray(8));
+      const patched = new TextEncoder().encode(JSON.stringify({ ...JSON.parse(json) as object, ...extra }));
+      const out = new Uint8Array(8 + patched.length);
+      out.set(bytes.subarray(0, 8));
+      out.set(patched, 8);
+      return channel.send(out.buffer);
+    });
+    void openDaemonSecureChannel(daemon, { daemonKeyPair: keys, events: { onmessage: (data) => {
+      const frame = decodeFrame(new Uint8Array(data as ArrayBuffer));
+      if (frame.type === FrameType.HELLO) void send({ type: FrameType.WELCOME, flags: 0, stream_id: 0, payload: { protocol: "ovis-mux", version: 1,
+        features: ["pair-sas"], limits: LIMITS_V1, nonce: base64url(new Uint8Array(32)), server_version: "0.4.21", relay_protocol: 1, min_supported_client: "0.4.20" } });
+      if (frame.type === FrameType.PAIR_REQUEST) void send({ type: FrameType.PAIR_CHALLENGE, flags: 0, stream_id: 0, payload: { nonce: base64url(new Uint8Array(32).fill(7)) } }, sent === undefined ? {} : { approve_on: sent });
+    } } }).then((channel) => ready.resolve(channel), () => {});
+    const offer = { v: 1 as const, server_id: "12".repeat(16), server_public_key: exportPublicKey(keys.publicKey), relay: "wss://relay.example" };
+    const shown = Promise.withResolvers<unknown>();
+    const opening = openRelayChannel(offer, { store: new MemoryDeviceStore(), compare: (_digits, approveOn) => { shown.resolve(approveOn); return new Promise(() => {}); },
+      socket: () => { queueMicrotask(() => socket.deliver(JSON.stringify({ type: "assigned", connection_id: "ab".repeat(16) }))); return socket; } });
+    void opening.catch(() => {});
+    expect(await bounded(shown.promise)).toBe(told);
+    socket.close();
+  }
+});
+
 it("does not take AUTH_OK from a PC before this phone said the digits match", async () => {
   const keys = generateKeyPair();
   let socket: FakeSocket;
@@ -768,4 +806,15 @@ it("T72: a second challenge in the same pairing is never signed, and the attempt
   const error = await f.opening.catch((caught: unknown) => caught);
   expect(error).toMatchObject({ code: "protocol_error" });
   expect(f.keyProof.proofs).toBe(1);
+});
+
+it("stops waiting for the device store once the attempt is aborted, before any socket opens", async () => {
+  const controller = new AbortController();
+  const store: RelayDeviceStore = { get: () => new Promise<never>(() => {}), update: async (_id, change) => change(undefined), list: async () => [], remove: async () => {} };
+  let sockets = 0;
+  const opening = openRelayChannel({ v: 1, server_id: "a".repeat(32), server_public_key: "key", code: "123456", relay: "wss://relay.example" },
+    { store, signal: controller.signal, socket: () => { sockets++; throw new Error("No socket before the device is read"); } });
+  controller.abort();
+  expect(await bounded(opening.then(() => null, (error: unknown) => error), 2_000)).toMatchObject({ name: "AbortError" });
+  expect(sockets).toBe(0);
 });

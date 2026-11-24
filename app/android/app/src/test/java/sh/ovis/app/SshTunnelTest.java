@@ -271,6 +271,34 @@ public class SshTunnelTest {
     }
 
     @Test
+    public void aTailscaleCheckStopsUntilTryAgainAndOtherStopsStay() throws Exception {
+        dialsWill(new SshFailure("tailscale-check", "approve", "https://login.tailscale.com/a/x"));
+        assertTrue(gated().contains("X-Ovis-Ssh: tailscale-check"));
+        now.addAndGet(TimeUnit.DAYS.toMillis(1));
+        assertTrue(gated().contains("X-Ovis-Ssh: tailscale-check"));
+        assertEquals("not dialled again before Try again", 1, links.size());
+        tunnel.resume();
+        assertTrue(gated().endsWith("ok"));
+        assertEquals(2, links.size());
+    }
+
+    @Test
+    public void aChunkBoundaryInsideACharacterKeepsTheCharacter() {
+        byte[] name = "{\"name\":\"집\"}".getBytes(StandardCharsets.UTF_8);
+        int cut = 10;
+        java.io.ByteArrayOutputStream chunked = new java.io.ByteArrayOutputStream();
+        byte[] first = (Integer.toHexString(cut) + "\r\n").getBytes(StandardCharsets.US_ASCII);
+        chunked.write(first, 0, first.length);
+        chunked.write(name, 0, cut);
+        byte[] second = ("\r\n" + Integer.toHexString(name.length - cut) + "\r\n").getBytes(StandardCharsets.US_ASCII);
+        chunked.write(second, 0, second.length);
+        chunked.write(name, cut, name.length - cut);
+        byte[] end = "\r\n0\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
+        chunked.write(end, 0, end.length);
+        assertEquals("{\"name\":\"집\"}", new String(SshTunnel.unchunkBytes(chunked.toByteArray()), StandardCharsets.UTF_8));
+    }
+
+    @Test
     public void aStopIsNeverTriedAgain() throws Exception {
         for (String kind : new String[] { "auth", "host-key-changed" }) {
             stop();

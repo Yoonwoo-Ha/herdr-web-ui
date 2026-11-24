@@ -14,7 +14,8 @@ import { createHash, createPublicKey, randomBytes, randomInt, timingSafeEqual } 
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { admissionPosition, compareAdmission, compareAdmissionPositions, isRowOrigin, legacyOrigin, type AdmissionPosition, type RowOrigin } from "./account/admission-order.ts";
-import { type ClearReason, PcAccountState } from "./account/pc-binding.ts";
+import { type ClearReason, LIST_REMOVED, PcAccountState } from "./account/pc-binding.ts";
+import type { ListAuthority } from "./account/list-follow.ts";
 import type { BlockAsOf, LiftCause, SafetyGot, SafetyLog } from "./account/safety-log.ts";
 import type { RemovalEvidence } from "./account/removal-evidence.ts";
 import { rowDrop } from "./account/row-drop-evidence.ts";
@@ -26,11 +27,12 @@ import { HandedLifts } from "./account/handed-lift.ts";
 import type { AccessAnswer, AccountRow, AccountRowSource } from "./account/account-devices.ts";
 import type { CatchUpGate } from "./account/catch-up-gate.ts";
 import { accountOpensAll, type DeviceNotice, type NoticeReplay } from "../shared/account-devices-api.ts";
-import { AccountRecordError, isDeviceSafetyRecord, isIsoTime, parseAccountRecord, parseSafetyRecord, verifySafetyRecord, type AddRecord, type BlockRecord, type DeviceLiftRecord, type RemoveRecord, type SafetyRecord } from "../shared/account-records.ts";
+import { accountDeviceId, AccountRecordError, isDeviceSafetyRecord, isIsoTime, parseAccountRecord, parseSafetyRecord, verifySafetyRecord, type AddRecord, type BlockRecord, type DeviceLiftRecord, type RemoveRecord, type SafetyRecord } from "../shared/account-records.ts";
 import { PromotedHolds } from "./account/promoted-holds.ts";
 import { mayEndHold, type Sayer } from "./account/join-hold.ts";
 import type { BlockReceipt } from "../shared/account-devices-api.ts";
 import { verifyRelayProof } from "./relay/auth-proof.ts";
+import { logAccess } from "./connection-diagnostics.ts";
 import { type AccountPairing, type AccountPairingEnd, type AccountPairingState, type AccountPairingTurnedAway, type DevicePairedEvent, type DeviceRemovedEvent, type DevicePairToken, type DeviceRole, type DevicesRevokedAll, type PairedDevice, type DeviceConnection, STREAM_COOKIE_PREFIX } from "../shared/protocol.ts";
 import type { MuxClock } from "../shared/relay-mux-engine.ts";
 import { ownerAccess, type Access } from "./access.ts";
@@ -38,6 +40,8 @@ import { CLEAR_LEGACY_DEVICE_COOKIE, COOKIE_MAX_AGE_SECONDS, DEVICE_COOKIE_CLEAR
 import { badRequest, isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
 import { sameOrigin } from "./machine-security.ts";
 import { privateStateRefusal, writePrivateState } from "./private-state.ts";
+import { STABLE_NODE_ID } from "./tailscale.ts";
+import type { TailnetNodes } from "./tailnet-nodes.ts";
 
 /** How long a pairing code pairs new devices. */
 export const CODE_TTL_MS = 10 * 60_000;
@@ -192,6 +196,13 @@ export interface StoredDevice {
    */
   member_approved_in?: string;
   /**
+   * On the row of another PC of the account that was taken in to watch (a vouched join): the relay key that join
+   * proved, as 64 hex. It says which PC the row is, so that on a PC pinned to its account's list the list answers
+   * for it: the row opens a session only while the list holds that relay key as a PC that is in. Absent on every
+   * other row, and on such a row made before this was recorded.
+   */
+  vouched_pc?: string;
+  /**
    * how a `link` made the row a member (docs/account.md, "How a device joined"): set once, by the link that took it from
    * no account into one, and kept by every later link. Absent on a row that became a member before this was recorded,
    * and on one an account member's signature (`add`) or approval (`member_approved_in`, for that account) stands behind. A value this PC does
@@ -215,6 +226,8 @@ export interface StoredDevice {
   carried_notice?: string;
   /** the account removals of its key that its pairing on this PC knew, and stands over (P13) */
   paired_over?: string[];
+  /** the Tailscale StableNodeIDs its own credential arrived from, oldest first: removing the row keeps them out (tailnet-nodes.ts) */
+  tailnet_nodes?: string[];
 }
 
 /**
@@ -352,6 +365,7 @@ export function readDeviceRegistry(path: string, opensAll = accountOpensAll()): 
       && (d.last_seen_at === null || typeof d.last_seen_at === "string")
       && (d.account === undefined || typeof d.account === "string")
       && (d.added_by === undefined || typeof d.added_by === "string")
+      && (d.vouched_pc === undefined || (typeof d.vouched_pc === "string" && /^[0-9a-f]{64}$/.test(d.vouched_pc)))
       && (d.linked_at === undefined || typeof d.linked_at === "string")
       && (d.link_moved_key === undefined || typeof d.link_moved_key === "boolean")
       && (d.imported === undefined || d.imported === true)
@@ -363,6 +377,7 @@ export function readDeviceRegistry(path: string, opensAll = accountOpensAll()): 
       && (!opensAll || (d.held === undefined || (typeof d.held === "string" && /^[0-9a-f]{32}$/.test(d.held)))
         && (d.carried_notice === undefined || (typeof d.carried_notice === "string" && /^[0-9a-f]{32}$/.test(d.carried_notice))))
       && (d.paired_over === undefined || (Array.isArray(d.paired_over) && d.paired_over.every((id) => typeof id === "string")))
+      && (d.tailnet_nodes === undefined || (Array.isArray(d.tailnet_nodes) && d.tailnet_nodes.every((id) => typeof id === "string" && STABLE_NODE_ID.test(id))))
       )) return { kind: "bad" };
   // an origin that cannot be read is no age (P22): the row stays, without it
   const devices = (parsed.devices as StoredDevice[]).map((d) => d.origin === undefined || isRowOrigin(d.origin) ? d
@@ -484,6 +499,21 @@ function pairedHere(device: StoredDevice): boolean {
   return device.added_by === undefined && device.link_moved_key !== true;
 }
 
+/**
+ * A row a first-link code of this PC paired, whose link kept the key that code admitted: it was numbered as it linked
+ * (`link`), by no member, and its key never moved. The credential is this PC's own; its membership is the account's.
+ */
+function keptFirstLinkKey(row: StoredDevice): boolean {
+  const origin = row.origin;
+  return origin?.from === "remote" && origin.how === "link" && origin.by === null && row.link_moved_key === false;
+}
+
+function keepsPairingOnUnlist(row: StoredDevice): boolean {
+  const origin = row.origin;
+  return !row.imported && !row.invalid_origin && (origin?.from === "pc" || (pairedHere(row) && row.account_add === undefined &&
+    (origin?.from === "legacy" || (origin?.from === "remote" && (origin.how === "code" || origin.how === "digits") && origin.by === null) || keptFirstLinkKey(row))));
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** What a thrown value says, for a log line; a value that cannot be told says so. */
@@ -492,6 +522,7 @@ function describe(error: unknown): string {
 }
 /** How many keys may hold a reservation of one code at once (T71). */
 export const PENDING_PER_CODE = 5;
+const tailnetNodesOf = (rows: readonly StoredDevice[]): string[] => [...new Set(rows.flatMap((d) => d.tailnet_nodes ?? []))];
 
 export class DeviceStore {
   private devices: StoredDevice[] = [];
@@ -511,7 +542,7 @@ export class DeviceStore {
    * `expires`: the wall-clock end of its ten minutes, which its `expires_at` shows; `deadline`: the same end on the
    * store's clock, which only moves forward; `over`: set the first time either says its ten minutes are over (codeOver)
    */
-  private pending: { code: string; id: string; expires: number; deadline: number; over?: true; attempts: number; lanAttempts?: number; remote: boolean; startedBy: string | null; approvedIn?: string; memberRequired: boolean; ownPc?: boolean; open?: boolean; noAccountOnly?: boolean; holders: Set<string>; waiting?: WaitingRows; named?: { readonly account: string }; issuedUnder?: string; reserved?: Map<string, { readonly key: string; readonly how: "code" | "qr" }>; cancelExpiry?: () => void } | null = null;
+  private pending: { code: string; id: string; expires: number; deadline: number; over?: true; attempts: number; lanAttempts?: number; remote: boolean; startedBy: string | null; approvedIn?: string; memberRequired: boolean; ownPc?: boolean; open?: boolean; noAccountOnly?: boolean; atPc?: true; holders: Set<string>; waiting?: WaitingRows; named?: { readonly account: string }; issuedUnder?: string; reserved?: Map<string, { readonly key: string; readonly how: "code" | "qr" }>; cancelExpiry?: () => void } | null = null;
   private readonly pairingEndedListeners = new Set<(codeId: string) => void>();
   /** How the latest codes made for an account ended, newest last: ENDED_ACCOUNT_CODES at most, in memory only. */
   private endedAccountCodes: Extract<AccountPairingState, { state: "ended" }>[] = [];
@@ -571,6 +602,8 @@ export class DeviceStore {
   private readonly carried: readonly AccountTombstone[];
   private readonly journal: DeviceJournal | null;
   private readonly noticeListeners = new Set<(entry: JournalEntry) => void>();
+  private readonly listAdmissions = new Set<(rows: readonly AccountRow[]) => void>();
+  private readonly listedChanges = new Set<() => void>();
   private readonly keyRemovedListeners = new Set<(key: string, cause: KeyRemovedCause) => void>();
   /** A deny that could not reach the disk (P8 step 1): only this PC itself gets in until one is written. */
   private denyProblem: string | null = null;
@@ -584,6 +617,8 @@ export class DeviceStore {
     this.safety = account.safety ?? null;
     this.handedLifts = new HandedLifts(stateDir);
     this.pc = account.pc ?? null;
+    // a clear from before the add-at-the-PC rule is dated now, before anything this run admits
+    this.pc?.addAtPcSince();
     this.stateDirPath = stateDir;
     this.revokeAllPath = join(stateDir, "revoke-all.json");
     this.evidence = account.removals ?? null;
@@ -697,7 +732,10 @@ export class DeviceStore {
   pendingLockRemovals(): string[] { return [...this.lockHeld]; }
   private readonly lockHeld = new Set<string>();
 
-  /** Whether the last journal entry naming row `id` removed it (P24): read once, at open, from the journal on disk. */
+  /**
+   * Whether the last journal entry naming row `id` removed it (P24): read at open from the journal on disk, and
+   * followed from there, so a row admitted again since (journalAdmission) is no longer one.
+   */
   private journalEnded(id: string): boolean {
     if (this.journalEndedRows === null) {
       const last = new Map<string, string>();
@@ -846,6 +884,11 @@ export class DeviceStore {
     // while a lock stands only a row confirmed on this PC's screen gets in, whether or not its teardown ran (P11, T46)
     // a row whose last journal entry removed it is out, whether or not the start could finish that removal (P24)
     if (this.failedRows.has(device.id) || (device.relay_public_key !== undefined && this.failedDenies.has(device.relay_public_key))) return true;
+    // a removal by the account's list that this PC acted on and has only in its mark so far (list-follow.ts) keeps
+    // every row of the key out, as the removal's record will once it is on disk
+    if (device.relay_public_key !== undefined && this.signedList?.owesRemoval(device.relay_public_key) === true) return true;
+    // this server follows no list and found the PC pinned to one (closeAccountPart): no row under an account's id
+    if (this.pinClosed !== null && device.relay_public_key !== undefined && accountDeviceId(this.pinClosed.serverId, device.relay_public_key) === device.id) return true;
     // main's own rule stays the floor under the evidence: a tombstone of this PC keeps its key out, whatever path took
     // the evidence in or skipped it (P13, rule 1)
     const tombstoned = device.relay_public_key !== undefined
@@ -855,7 +898,25 @@ export class DeviceStore {
   }
 
   get accountError(): string | null {
-    return this.accountIntegrityError;
+    return this.accountIntegrityError ?? this.pinClosed?.reason ?? null;
+  }
+
+  /**
+   * This server follows no list (it was started with Step 2 turned off) and found the PC pinned to its account's list
+   * by another Ovis on this folder. It cannot ask the list, so it closes its account part: no session and no sign-in
+   * under an account's id for a key, no account record, and `accountError` says why. A pairing this PC made itself
+   * under an id of its own goes on. It stays so until this server is started again, which then follows the list.
+   */
+  closeAccountPart(reason: string, serverId: string): void {
+    if (this.pinClosed !== null) return;
+    this.pinClosed = { reason, serverId };
+    this.closeListGovernedSessions(serverId);
+  }
+  private pinClosed: { readonly reason: string; readonly serverId: string } | null = null;
+
+  /** The sessions of every row of this PC's own devices that holds `key` end, as for a row that changed under them. */
+  closeKeySessions(key: string): void {
+    for (const row of [...this.devices]) if (row.relay_public_key === key) this.closeAccountSessions(row.id);
   }
 
   /** A local denial does not need the listed registry; it still needs the rest of the PC's safety state. */
@@ -1210,7 +1271,7 @@ export class DeviceStore {
       const appended = safety.append({ record, got, asof });
       if (appended.outcome !== "applied") throw new Error(`Block log append did not apply: ${appended.outcome}`);
       receipt = appended;
-      evidence.addRemoval(record.target, record.account, { id: record.id, at: new Date().toISOString(), records: [record], drop: rowDrop(this.joinedRows?.rowsByKey(record.target)[0], "block") });
+      evidence.addRemoval(record.target, record.account, { id: record.id, at: new Date().toISOString(), records: [record], drop: rowDrop(this.joinedRows?.rowsByKey(record.target)[0], "block"), tailnetNodes: tailnetNodesOf(targets) });
       this.refreshTombstones();
     }, { genFirst: true });
     if (denied !== null) {
@@ -1231,6 +1292,7 @@ export class DeviceStore {
     }
     this.dropWaiting([record.target], "block");
     safety.unwait(record.id);
+    this.keepOutNodesOfRecordDrop(targets);
     try { this.drop(targets, "pc"); }
     catch (error) { console.error(`[devices] the registry write of a block failed after its deny; the next start finishes it: ${error instanceof Error ? error.message : String(error)}`); }
     return receipt;
@@ -1415,44 +1477,150 @@ export class DeviceStore {
    * One press (docs/account.md): binds this PC, in no account, to `account` on the account service's word for it. Only
    * with the release flag on; a PC already in an account is refused here as at the route.
    */
-  bindByService(account: string): void {
+  bindByService(account: string, listingId?: string): void {
     this.assertWritable();
     if (this.pc === null) throw new Error("One press needs OVIS_ACCOUNT_OPENS_ALL");
     if (this.account() !== null) throw new Error("This PC is already in an account");
-    this.pc.bindByService(account);
+    this.pc.bindByService(account, listingId);
   }
 
   /** The id of this PC's binding when it stands on the account service's word alone (bindByService), else null. */
   serviceBinding(): string | null { const binding = this.pc?.binding(); return binding?.service === true ? binding.bind_id : null; }
 
+  serviceListing(): string | undefined { return this.pc?.binding()?.listing_id; }
+  pinServiceListing(binding: string, listing: string): void { this.pc?.pinListing(binding, listing); }
+  /** PcAccountState.awaitsFirstListing. */
+  awaitsFirstListing(): boolean { return this.pc?.awaitsFirstListing() === true; }
+  /** The id of this PC's binding when a device's link (or the rows it was upgraded from) made it, else null. */
+  linkBinding(): string | null { const binding = this.pc?.binding(); return binding && binding.service !== true && binding.pending !== true ? binding.bind_id : null; }
+
+  /**
+   * PcAccountState.addAtPcSince: a link joins this PC to an account only under a code it issued itself (issuedAtPc), or
+   * from a device whose digits this PC's own screen approved since it left (approvedHereSince).
+   */
+  addAtPcRequired(): boolean { return this.pc?.addAtPcSince() != null; }
+
+  /** Whether the row `id` was let in by digits approved on this PC's own screen, by no member, after its account stopped listing it. */
+  approvedAtPcSinceClear(id: string): boolean {
+    const since = this.pc?.addAtPcSince();
+    const origin = this.devices.find(row => row.id === id)?.origin;
+    return since != null && origin !== undefined && origin.admit_no >= since && origin.by === null && (origin.from === "pc" || (origin.from === "remote" && origin.how === "digits"));
+  }
+
+  /** Whether the code `pinned` (pinnedCode) was started at this PC itself, by its own window or command, and is still the code pending. */
+  issuedAtPc(pinned: object): boolean { return this.pending === pinned && this.pending.atPc === true; }
+
+  /** Whether a device of the account this PC left is told to add it again (relay/session.ts): while the add at the PC is owed. */
+  readdRequired(): boolean { return this.addAtPcRequired(); }
+
+  /** Whether `proof` is by a key this PC knew as the account's when it left: the one peer told why it left (relay/session.ts). */
+  async provedFormerAccountKey(deviceId: string, proof: { nonce: Uint8Array; signature: string; serverId: string }): Promise<boolean> {
+    if (proof.nonce.byteLength !== 32 || !/^[A-Za-z0-9_-]{86}$/.test(proof.signature)) return false;
+    const key = this.formerAccountKey(proof.serverId, deviceId);
+    return key !== undefined && await verifyRelayProof(key, proof);
+  }
+
+  /**
+   * The key the row `deviceId` held for the account this PC left: a key a whole read numbered, for the row the
+   * account's list would have made of it, or the key of a devices.json row that left with the account (its journal
+   * entry, the last of that row). Never a key removed here or by the account.
+   */
+  private formerAccountKey(serverId: string, deviceId: string): string | undefined {
+    const listed = this.accountOrder?.relayKey(serverId, deviceId);
+    const last = this.journal?.strict === null ? this.journal.entries().filter(entry => entry.row === deviceId).at(-1) : undefined;
+    const key = listed !== undefined && this.accountOrder?.no(listed) != null ? listed
+      : last?.kind === "remove" && last.how === "unlisted" ? last.key ?? undefined : undefined;
+    return key !== undefined && !this.isTombstoned(key) && !this.removedByAccount(key) ? key : undefined;
+  }
+
+  /**
+   * T56 for devices.json: the last whole read is an hour old, so until the next one every row that stands on the
+   * account alone (accountOnly) waits, its sessions closed, as the account's listed rows do, and so does one made
+   * meanwhile. One of them that paired its key here keeps its access; what it may do for the account waits.
+   */
+  staleAccountMembers(): void {
+    this.catchUp?.staleRead();
+    for (const row of [...this.devices]) if (this.catchingUp(row.id)) this.closeAccountSessions(row.id);
+  }
+
+  /** On a PC pinned to its signed list, whether that list lets this row's key in now: such a row waits for no read of the account service. */
+  private listAdmits(device: StoredDevice): boolean {
+    return device.relay_public_key !== undefined && this.signedList?.role(device.relay_public_key) != null;
+  }
+
+  private waitsOnStaleRead(device: StoredDevice, credential: boolean): boolean {
+    if (this.catchUp?.readStale() !== true || (device.account === undefined && device.member_approved_in === undefined)) return false;
+    if (this.listAdmits(device)) return false;
+    // admitted here by `ovis recover`, with a key its link kept: the credential is this PC's own, as a first-link key is
+    const recovered = device.origin?.from === "recover" && pairedHere(device) && device.account_add === undefined && !device.imported && !device.invalid_origin;
+    if (!keepsPairingOnUnlist(device) && !recovered) return true;
+    // the credential is this PC's own and stays; the membership its link gave it is the account's and waits
+    return (keptFirstLinkKey(device) || recovered) && !credential;
+  }
+
+  /** The account's listed rows whose keys a whole snapshot names as removed go, their sessions closed: what a read that widens nothing still does. */
+  dropListedRemoved(keys: readonly string[]): void {
+    const ids = keys.flatMap(key => this.joinedRows?.rowsByKey(key) ?? []).map(row => row.id);
+    if (ids.length) this.joinedRows?.removeRows(ids, "remove", id => this.closeAccountSessions(id));
+  }
+
+  /** Whether the row `id` only waits for a whole read: its sign-in is put off, never refused as a removed device's. */
+  waitsForRead(id: string): boolean {
+    if (this.devices.some(row => row.id === id)) return this.catchingUp(id);
+    const row = this.joinedRows?.row(id) ?? null;
+    const access = row && this.listedAccess(row);
+    return access !== null && !("ok" in access) && access.refused === "catching_up";
+  }
+
+  accountOnly(id: string): boolean {
+    const member = this.devices.find(row => row.id === id);
+    return member ? (member.account !== undefined || member.member_approved_in !== undefined) && !keepsPairingOnUnlist(member) : this.isAccountRow(id);
+  }
+
+  deviceNumber(id: string): number | null {
+    return this.joinedRows?.row(id)?.no ?? this.originOf(id)?.admit_no ?? null;
+  }
+
+  private unbindingSessions: number | null = null;
+  noteRelayRevoked(): void {
+    if (this.unbindingSessions !== null) this.unbindingSessions++;
+  }
+
   /** The PC leaves its account, for one of the named reasons (P12); nothing else clears the binding. */
-  clearAccountBinding(reason: ClearReason, by: string): boolean {
-    if (reason !== "revoke_all") this.resumeRevokeAll();
+  /** `removedAs`: with `by` LIST_REMOVED, the relay identity the list removed (PcAccountState.clear). */
+  clearAccountBinding(reason: ClearReason, by: string, removedAs?: string): boolean {
+    // a PC pinned to its account's signed list leaves on that list's word (LIST_REMOVED) or by an act at the PC, never
+    // because the account service stopped listing it: that only costs it the service
+    if (reason === "unlisted" && by !== LIST_REMOVED && this.listFollowed()) return false;
     const pc = this.pc ?? (existsSync(join(this.stateDirPath, "account-pc.json")) ? PcAccountState.open(this.stateDirPath) : null);
+    // also where another Ovis server on this folder pinned the binding after this one read it: asked of the file,
+    // before a row is ended for a clear that will not be written
+    pc?.refresh();
+    if (reason === "unlisted" && by !== LIST_REMOVED && pc?.binding()?.list !== undefined) return false;
+    if (reason !== "revoke_all") this.resumeRevokeAll();
     const binding = pc?.binding();
     if (!pc || !binding || pc.strict !== null) return false;
     try {
       // The binding clear is the commit point: after it reaches disk no row can still name the old account.
       this.assertWritable();
+      this.unbindingSessions = 0;
       this.endAccountRows(reason);
       this.settleMemberRows(binding.account, reason);
-      return pc.clear(reason, by);
+      return pc.clear(reason, by, by === LIST_REMOVED ? removedAs : undefined);
     } catch (error) {
       pc.unwritten(error, "This PC could not finish clearing its account");
       throw error;
+    } finally {
+      if (this.unbindingSessions !== null) logAccess({ event: "account.sessions.closed", count: this.unbindingSessions });
+      this.unbindingSessions = null;
     }
   }
 
   private settleMemberRows(account: string, reason: ClearReason): void {
     const members = this.devices.filter(row => row.account === account || row.member_approved_in === account);
     if (!members.length) return;
-    const gone = members.filter(row => {
-      const origin = row.origin;
-      const local = origin?.from === "pc" || (pairedHere(row) && row.account_add === undefined &&
-        (origin?.from === "legacy" || (origin?.from === "remote" && (origin.how === "code" || origin.how === "digits") && origin.by === null)));
-      // A removal that covered the member must not stop covering it just because its account field is gone.
-      return !local || row.imported || row.invalid_origin || this.coveredByEvidence(row);
-    });
+    // A removal that covered the member must not stop covering it just because its account field is gone.
+    const gone = members.filter(row => !keepsPairingOnUnlist(row) || this.coveredByEvidence(row));
     if (gone.length) this.drop(gone, "pc", reason);
     if (gone.length === members.length) return;
     const next = this.devices.map(row => {
@@ -1637,6 +1805,63 @@ export class DeviceStore {
   }
 
   /**
+   * The account-joined rows GET /api/devices shows after `list`, which stays devices.json alone for its other callers.
+   * A row is shown while it stands as admitted here (AccountRowSource.standing), in its hold or the wait after a start
+   * too. One that can no longer sign in here is left out: expired (by its state or the clock), refused by the admission
+   * guard as its hold ended, or stale (accountRowStale: removal evidence, a tombstone, a freeze, the lock, a failed
+   * deny, unreadable account state). A key devices.json holds is listed once, as its row there. Reading it changes no
+   * row: no hold ends, nothing expires.
+   */
+  listAccountJoined(currentId: string | null): PairedDevice[] {
+    return (this.joinedRows?.rows() ?? []).filter((row) => this.listsJoined(row)).map((row) => this.joinedAsPaired(row, currentId));
+  }
+
+  /** Whether GET /api/devices lists the account row `id` (listAccountJoined). */
+  listsAccountRow(id: string): boolean {
+    const row = this.joinedRows?.row(id) ?? null;
+    return row !== null && this.listsJoined(row);
+  }
+
+  private listsJoined(row: AccountRow): boolean {
+    return this.joinedRows?.standing(row.id) === true && !this.accountRowStale(row)
+      && !this.devices.some((d) => d.id === row.id || d.relay_public_key === row.key);
+  }
+
+  /** An account-joined row as GET /api/devices and PATCH /api/devices/:id answer it: last seen by the day this PC keeps. */
+  private joinedAsPaired(row: AccountRow, currentId: string | null): PairedDevice {
+    return { id: row.id, label: row.label, role: this.joinedRole(row), created_at: row.confirmed_at,
+      last_seen_at: row.last_signin_day === null ? null : `${row.last_signin_day}T00:00:00.000Z`,
+      current: row.id === currentId, via_relay: true, through_account: true };
+  }
+
+  /**
+   * The rows one whole read let in (AccountRowPorts.admitted). Not announced as a pairing is (onPaired): every older
+   * device hears of each by its journal notice, so only this PC's own window is told (server/join-notices.ts).
+   */
+  announceListAdmissions(rows: readonly AccountRow[]): void {
+    for (const listener of [...this.listAdmissions]) {
+      try { listener(rows); } catch (error) { console.warn(`[devices] a list admission listener failed: ${describe(error)}`); }
+    }
+  }
+
+  onListAdmissions(listener: (rows: readonly AccountRow[]) => void): () => void {
+    this.listAdmissions.add(listener);
+    return () => { this.listAdmissions.delete(listener); };
+  }
+
+  /** Hears that an account row may have stopped being listed: after a write of either file, a refusal, a safety change. */
+  onListedChange(listener: () => void): () => void {
+    this.listedChanges.add(listener);
+    return () => { this.listedChanges.delete(listener); };
+  }
+
+  private listedChanged(): void {
+    for (const listener of [...this.listedChanges]) {
+      try { listener(); } catch (error) { console.warn(`[devices] a listed-row listener failed: ${describe(error)}`); }
+    }
+  }
+
+  /**
    * Hears of every new six-digit code, which replaces the one pending, and of a code ended (endPairing):
    * either way a typed relay code bound to the old one goes (server/relay/pair-code.ts).
    */
@@ -1680,6 +1905,8 @@ export class DeviceStore {
       ...(how.startedBy !== null && this.approverAccount(how.startedBy) !== null ? { approvedIn: this.approverAccount(how.startedBy)! } : {}),
       holders: new Set([by, how.startedBy].filter((id): id is string => id !== null)),
       ...(how.noAccountOnly === true ? { waiting: { usesLeft: PAIRING_USES, rows: new Map<string, ProvisionalRow>(), turnedAway: [] } } : {}),
+      // no paired device asked for it: a person at this PC did (addAtPcRequired)
+      ...(how.noAccountOnly === true && by === null ? { atPc: true as const } : {}),
       ...(how.noAccountOnly === true && account !== undefined ? { named: { account } } : {}),
       ...(how.noAccountOnly === true && issuedUnder !== undefined ? { issuedUnder } : {}),
     };
@@ -1718,6 +1945,7 @@ export class DeviceStore {
     const carried = pending?.noAccountOnly === true && pending.named === undefined && pending.issuedUnder === issuedUnder;
     if (active !== null && carried) {
       if (by !== null) pending.holders.add(by);
+      else pending.atPc = true;
       return active;
     }
     // past its ten minutes, the code stays while a device that paired with it in time may still link (expirePending)
@@ -1751,6 +1979,7 @@ export class DeviceStore {
     const pending = this.pending;
     if (active !== null && pending?.named?.account === account && (want === undefined || want === pending.id)) {
       if (by !== null) pending.holders.add(by);
+      else pending.atPc = true;
       return { ...active, expect_account: account, pairing: { id: pending.id } };
     }
     // a PC in an account says so first (startAccountPairing)
@@ -2025,7 +2254,7 @@ export class DeviceStore {
     if (!row || !access || !("ok" in access)) return null;
     // every request of its session is use this PC sees (P9, T54); the store writes the day at most once
     this.joinedRows!.seen(id);
-    return { role: "drive", key: row.key, provisional: false };
+    return { role: this.joinedRole(row), key: row.key, provisional: false };
   }
 
   /**
@@ -2035,15 +2264,39 @@ export class DeviceStore {
    */
   attachAccountRows(source: AccountRowSource | null): void { this.joinedRows = source; }
 
+  /**
+   * The account's signed list as this PC follows it (server/account/list-follow.ts). Once the PC is pinned to a list,
+   * its account rows are the list's, with the role the list gives each, and the account service's word takes the PC
+   * out of its account no more.
+   */
+  attachList(list: ListAuthority | null): void { this.signedList = list; }
+  private signedList: ListAuthority | null = null;
+
+  /** Whether this PC lets its account's devices in by its signed list alone. */
+  listFollowed(): boolean { return this.signedList?.pinned() === true; }
+
+  /** Whether this PC's relay identity was removed from `account` by that account's list: it joins it again on no path. */
+  listRemovedFrom(account: string): boolean { return this.signedList?.removedFrom(account) === true; }
+
+  /** What an account row may do: on a pinned PC what the list says of its key, and to watch for a key the list no longer lets in. */
+  private joinedRole(row: AccountRow): DeviceRole {
+    const role = this.signedList?.role(row.key);
+    return role === undefined ? "drive" : role ?? "watch";
+  }
+
+  /** Whether any device holds a session here: the PC then reads its list more often. */
+  sessionsOpen(): boolean { return this.revocations.size > 0; }
+
   /** An account row as the order, evidence and freeze checks see a row: its key, this PC's account, its admission order. */
   private joinedAsStored(row: AccountRow): StoredDevice {
-    return { id: row.id, label: row.label, role: "drive", token_hash: "", relay_public_key: row.key, created_at: row.confirmed_at, last_seen_at: null, account: this.account() ?? undefined, origin: row.origin };
+    return { id: row.id, label: row.label, role: this.joinedRole(row), token_hash: "", relay_public_key: row.key, created_at: row.confirmed_at, last_seen_at: null, account: this.account() ?? undefined, origin: row.origin };
   }
 
   private accountRowStale(row: AccountRow): boolean {
     const stored = this.joinedAsStored(row);
     const state = this.safety?.inForce;
-    return this.accountError !== null || state?.locked === true || this.failedRows.has(row.id) || this.failedDenies.has(row.key)
+    // on a pinned PC a row stands only while the list lets its key in: a time that passed, an alarm, a removal
+    return this.accountError !== null || state?.locked === true || this.signedList?.role(row.key) === null || this.failedRows.has(row.id) || this.failedDenies.has(row.key)
       || this.isTombstoned(row.key) || this.coveredByEvidence(stored) || this.frozen(stored)
       || (state?.freezes.some(({ record }) => record.target === row.key || (record.kind === "freeze" &&
         (this.accountOrder?.late(row.key) !== false || (this.accountOrder.no(row.key) ?? row.no) > record.after))) ?? false);
@@ -2059,6 +2312,7 @@ export class DeviceStore {
     for (const row of this.joinedRows?.rows() ?? []) {
       if (this.accountRowStale(row)) this.closeAccountSessions(row.id);
     }
+    this.listedChanged();
   }
 
   /** A row of either store by id, an account row as the order checks see it. */
@@ -2094,11 +2348,82 @@ export class DeviceStore {
     if (!answer) return null;
     if ("ok" in answer) {
       this.joinedRows.seen(deviceId);
-      return { match: { id: current.id, label: current.label, role: "drive" } };
+      return { match: { id: current.id, label: current.label, role: this.joinedRole(current) } };
     }
     return { refused: answer, holdUntil: this.joinedRows.row(deviceId)?.hold_until ?? null, readmission: this.joinedRows.readmission(deviceId) };
   }
 
+
+  /**
+   * On a PC pinned to its signed list: a sign-in under the account id of a key (`accountDeviceId(serverId, key)`)
+   * that the list lets in, where this PC holds that key only by a pairing of its own, whose row has an id of its own.
+   * An app that opens the PC through its account knows the key by that account id alone, and the list holds the key,
+   * so it is let in: as the role the list gives the key, whatever role the pairing has. The session is that row's, so
+   * a Revoke of the pairing ends it; the caller ends it when the list lets the key in no more (listRoleOf). Null for
+   * any other id, a signature that is not the key's, and on a PC that follows no list.
+   */
+  async matchListKey(deviceId: string, nonce: Uint8Array, signature: string, serverId: string, now = Date.now()): Promise<{ match: DeviceMatch; key: string } | null> {
+    if (!this.listFollowed() || this.failsClosed || nonce.byteLength !== 32 || !/^[A-Za-z0-9_-]{86}$/.test(signature)) return null;
+    const row = this.devices.find((d) => d.relay_public_key !== undefined && d.id !== deviceId && accountDeviceId(serverId, d.relay_public_key) === deviceId);
+    const key = row?.relay_public_key;
+    if (row === undefined || key === undefined || this.stale(row)) return null;
+    const verified = await verifyRelayProof(key, { nonce, signature, serverId });
+    // whatever changed while the proof was checked is read again now (T66)
+    const current = this.devices.find((d) => d.id === row.id);
+    const role = this.listRoleOf(key);
+    if (!verified || this.failsClosed || current === undefined || current.relay_public_key !== key || this.stale(current) || !this.memberAdmitted(current, now) || role === null) return null;
+    return { match: { id: current.id, label: current.label, role }, key };
+  }
+
+  /**
+   * On a PC that follows a list, the pairing of this PC's own that holds `key` under an id that is not the account's
+   * for it (what matchListKey signs such a key in over), or null. The list answers for the key; the row only carries
+   * its session, and a Revoke of the pairing ends that.
+   */
+  listPairing(key: string, serverId: string, now = Date.now()): { readonly id: string; readonly label: string } | null {
+    if (!this.listFollowed() || this.failsClosed) return null;
+    const row = this.devices.find((d) => d.relay_public_key === key && d.id !== accountDeviceId(serverId, key));
+    return row === undefined || this.stale(row) || !this.memberAdmitted(row, now) ? null : { id: row.id, label: row.label };
+  }
+
+  /**
+   * On a PC pinned to its list, the key of row `id` when that id is the account's own for the key
+   * (accountDeviceId): the id an app opens the PC through its account by. The list alone answers for such an id,
+   * whoever wrote the row and whenever (a member's v1 add before the pin, a join approved by digits): the row gives
+   * it no role, no time and no way in. Null for a pairing under an id of its own, and on a PC that follows no list.
+   */
+  listGoverned(id: string, serverId: string): string | null {
+    if (!this.listFollowed()) return null;
+    const key = this.devices.find((d) => d.id === id)?.relay_public_key;
+    return key !== undefined && accountDeviceId(serverId, key) === id ? key : null;
+  }
+
+  /**
+   * On a PC pinned to its list, what the list says of the row `id` when that row is another PC of the account (it
+   * records the relay key its join proved, `vouched_pc`): the row's own role, to watch, while the list holds that
+   * relay key as a PC that is in; null when it does not. Undefined for any other row, and on a PC that follows no list.
+   */
+  vouchedPcRole(id: string): DeviceRole | null | undefined {
+    if (!this.listFollowed()) return undefined;
+    const row = this.devices.find((d) => d.id === id);
+    if (row === undefined || row.vouched_pc === undefined) return undefined;
+    return this.signedList?.holdsPc(row.vouched_pc) === true ? row.role : null;
+  }
+
+  /**
+   * The PC pinned its list: every session open under the account's id for a key (listGoverned) ends as one whose row
+   * changed under it (`auth_changed`), whoever wrote the row, so its next sign-in gets the list's answer.
+   */
+  closeListGovernedSessions(serverId: string): void {
+    for (const row of [...this.devices]) {
+      if (row.relay_public_key !== undefined && accountDeviceId(serverId, row.relay_public_key) === row.id) this.closeAccountSessions(row.id);
+    }
+  }
+
+  /** The role the list this PC is pinned to gives `key` now; null when it lets the key in as nothing, and on a PC that follows no list. */
+  listRoleOf(key: string): DeviceRole | null {
+    return this.listFollowed() ? this.signedList?.role(key) ?? null : null;
+  }
 
   /**
    * "It's me" (T53) from the row `sayerId` for the admission notice `noticeId`: the held account row it names ends its
@@ -2174,12 +2499,19 @@ export class DeviceStore {
   catchingUp(id: string, credential = true): boolean {
     const device = this.devices.find((d) => d.id === id);
     if (device === undefined) return false;
+    if (this.waitsOnStaleRead(device, credential)) return true;
     // A Step-1 writer may have added a credential during rollback. It gets no admission order.
     const offPair = device.off_pair_binding !== undefined && !device.imported && device.relay_public_key === undefined
       && this.pc?.binding()?.bind_id === device.off_pair_binding && this.pc.serviceStep2Off();
     return this.catchUp?.waits({ id, origin: device.origin }, credential && (this.isLegacyCredential(device) || offPair)
-      ? () => this.admissionAllowed(device.relay_public_key, "legacy_credential", { retainedRow: device }) : undefined) ?? false;
+      ? () => this.admissionAllowed(device.relay_public_key, "legacy_credential", { retainedRow: device }) : undefined,
+      // the pairing a PC keeps when it leaves its account is its own; what the row may do for the account waits on
+      credential ? () => keepsPairingOnUnlist(device) && this.admits(device.relay_public_key, undefined, { retainId: device.id }) : undefined,
+      () => this.listAdmits(device) && this.admits(device.relay_public_key, undefined, { retainId: device.id })) ?? false;
   }
+
+  /** CatchUpGate.narrowedRead, for a whole snapshot read that could widen nothing. */
+  narrowedRead(): void { this.catchUp?.narrowedRead(); }
 
   /** Whether `id` is an account-joined row (S2-26): its every route goes through accountRowMay. */
   isAccountRow(id: string): boolean { return !this.devices.some((d) => d.id === id) && (this.joinedRows?.row(id) ?? null) !== null; }
@@ -2239,6 +2571,8 @@ export class DeviceStore {
     const waiting = this.pending?.waiting;
     if (!row || !waiting || row.key !== link.oldKey || this.account() !== null || this.removedByAccount(link.key)) return null;
     if (waiting.confirmedId !== undefined && waiting.confirmedId !== row.id) return null;
+    const renewed = link.key === link.oldKey ? this.pairingsRenewedBy(link.key) : [];
+    if (renewed === null) return null;
     // Only a same-key screen confirmation, or this PC's screen confirm of a moved key as its replacement, carries a
     // confirm proof (T72, P22)
     const kept = link.key === row.key ? row.confirmed : undefined;
@@ -2277,7 +2611,7 @@ export class DeviceStore {
         device.origin = this.pc.admit(confirm.proof.source === "screen" ? "pc" : "recover", confirm.how, null, now);
         if (confirm.proof.recoveredOver) device.recovered_over = confirm.proof.recoveredOver;
       }
-      enrolled = this.bindingWith(link.account, link.key, () => this.enroll(device, now, [], false, path));
+      enrolled = this.bindingWith(link.account, link.key, () => this.enroll(device, now, [], false, { ...path, renews: renewed }));
     } catch (error) {
       waiting.rows.set(row.id, row);
       delete waiting.joined;
@@ -2285,12 +2619,38 @@ export class DeviceStore {
     }
     row.cancel();
     if (!enrolled) return null;
+    this.retireRenewed(renewed);
     for (const listener of [...this.relinks.get(id) ?? []]) listener(sessionId);
     if (link.key === link.oldKey) {
       try { this.clearTombstone(link.key); }
       catch (error) { console.error(`[devices] the tombstone of a key that paired again could not be cleared; the next start clears it: ${error instanceof Error ? error.message : String(error)}`); }
     }
     return this.list(null).find((d) => d.id === id) ?? null;
+  }
+
+  /**
+   * The rows of `key` that the link of a row waiting with that same key takes the place of (promote): the pairings this
+   * PC already has of a device that paired again with a code made for a PC in no account. The link is signed with the
+   * key, so its sender is the device those rows are for, and a device new to this PC would be taken with the same code.
+   * Null when one of them is no pairing a new one may stand in for: it only watches, is in an account, or is kept out.
+   */
+  pairingsRenewedBy(key: string): readonly StoredDevice[] | null {
+    const rows = this.devices.filter(row => row.relay_public_key === key);
+    return rows.every(row => row.role === "drive" && row.account === undefined && !this.stale(row) && !this.replacements.has(row.id)) ? rows : null;
+  }
+
+  /**
+   * The rows a new pairing of their key took the place of are out of devices.json already (enroll). Their sessions
+   * end as a row's do when its link changes it, so a page still open with one signs in again with the record its
+   * device holds now, and no removal is announced: nobody removed the device.
+   */
+  private retireRenewed(rows: readonly StoredDevice[]): void {
+    for (const row of rows) {
+      for (const listener of [...this.relinks.get(row.id) ?? []]) listener("");
+      this.closeAccountSessions(row.id);
+      try { this.journalRemoval(row, "pc", "renewed"); }
+      catch (error) { console.error(`[devices] the end of a pairing that was renewed could not be journalled: ${describe(error)}`); }
+    }
   }
 
   pair(code: string, label: string, role: DeviceRole, now = Date.now(), origin: readonly string[] = [], localCodeOnly = false): { token: string; device: DeviceMatch } | null {
@@ -2351,7 +2711,7 @@ export class DeviceStore {
   }
 
   /** One authorization write precedes every state change and enrollment announcement. */
-  private enroll(admitting: StoredDevice, now: number, origin: readonly string[], codeSpent = true, path: { startedBy?: string | null; digits?: boolean; confirm?: ConfirmProof; by?: string; pairingHere?: boolean; replaces?: StoredDevice } = {}, signerKey?: string): boolean {
+  private enroll(admitting: StoredDevice, now: number, origin: readonly string[], codeSpent = true, path: { startedBy?: string | null; digits?: boolean; confirm?: ConfirmProof; by?: string; pairingHere?: boolean; replaces?: StoredDevice; renews?: readonly StoredDevice[] } = {}, signerKey?: string): boolean {
     // the final guard, in the commit turn: nothing waits between it and the write
     if (!this.admits(admitting.relay_public_key, path.confirm, path)) throw new AdmissionRefusedError();
     const initial = this.knowingRemovals(this.admitted(admitting, now, path));
@@ -2372,7 +2732,7 @@ export class DeviceStore {
     let entry: JournalEntry | null = null;
     const standing = this.admitListedRows(() => {
       entry = this.journalAdmission(device, joined, notice, path.by);
-      const next = path.replaces ? this.devices.map(row => row === path.replaces ? device : row) : [...this.devices, device];
+      const next = path.replaces ? this.devices.map(row => row === path.replaces ? device : row) : [...this.devices.filter(row => !path.renews?.includes(row)), device];
       const gate = path.replaces && !this.opensAll() ? this.gateClosedAt : this.gateClosedAt ?? device.created_at;
       this.save(next, gate);
       this.devices = next;
@@ -2497,7 +2857,7 @@ export class DeviceStore {
    * account member `addedBy` through the relay. No code is spent. `admit` as in pairRelay: asked last and only for
    * a key new to this PC, false makes no device and counts no failure.
    */
-  pairRelayApproved(label: string, publicKey: string, approval: { path: PairingPath; addedBy?: string; id?: string }, now = Date.now(), admit?: () => boolean): { device: DeviceMatch } | null {
+  pairRelayApproved(label: string, publicKey: string, approval: { path: PairingPath; addedBy?: string; id?: string; vouchedPc?: string }, now = Date.now(), admit?: () => boolean): { device: DeviceMatch } | null {
     const pairingHere = approval.addedBy === undefined;
     if (!this.admits(publicKey, undefined, { pairingHere })) return null;
     this.assertRelayPairing(approval.path, now);
@@ -2520,12 +2880,19 @@ export class DeviceStore {
       this.noteRelayFailure(approval.path, now);
       return null;
     }
+    // approved on this PC for a key whose row here already stands (its phone never heard the first answer): that row
+    // is let in, as its own sign-in would be, and nothing is written
+    const standing = pairingHere && id !== undefined ? this.devices.find(d => d.id === id && d.relay_public_key === publicKey) : undefined;
+    if (standing !== undefined && !this.stale(standing) && !this.catchingUp(standing.id)) return { device: { id: standing.id, label: standing.label, role: standing.role } };
     const collision = listed
       ? id !== listed.id || !this.canAddAt(listed.id, publicKey) || this.keyHeldByOther(publicKey, listed.id)
       : id !== undefined && this.has(id);
     if (collision) { this.noteRelayFailure(approval.path, now); return null; }
     if (admit && this.isNewKey(publicKey) && !admit()) return null;
-    const paired = this.enrollRelay(label, publicKey, now, false, { addedBy: approval.addedBy, approvedIn: approval.addedBy === undefined ? undefined : this.approverAccount(approval.addedBy) ?? undefined, digits: true, pairingHere }, id);
+    // another PC of the account's server only watches here (docs/account.md, "Adding a PC of your account"): it is one row for
+    // every device of that PC, and a Revoke or block of one of them here cannot reach it through that PC
+    const role = approval.path === "vouched" ? "watch" : "drive";
+    const paired = this.enrollRelay(label, publicKey, now, false, { addedBy: approval.addedBy, approvedIn: approval.addedBy === undefined ? undefined : this.approverAccount(approval.addedBy) ?? undefined, digits: true, pairingHere, role, ...(approval.path === "vouched" && approval.vouchedPc !== undefined ? { vouchedPc: approval.vouchedPc } : {}) }, id);
     if (paired === null) return null;
     // written after the row, so a stop between the two leaves a row newer than its tombstone: the next start ends that
     // Revoke (finishInterruptedWrites, or with the flag on RemovalEvidence.takeIn)
@@ -2567,7 +2934,11 @@ export class DeviceStore {
   /** A drive account member: the only device that may approve a pairing or start a code through the relay (docs/account.md). */
   isAccountApprover(id: string): boolean {
     const device = this.devices.find((d) => d.id === id);
-    return device !== undefined && device.role === "drive" && device.account !== undefined && device.relay_public_key !== undefined && !this.stale(device) && this.canSpeak(id);
+    if (device === undefined || device.role !== "drive" || device.account === undefined || device.relay_public_key === undefined || this.stale(device) || !this.canSpeak(id)) return false;
+    // On a PC pinned to its account's list, what may add a device to the list may approve a join, and nothing else:
+    // a member of this PC's own devices counts only while the list holds its key to drive with full power, read from
+    // the PC's copy now. A row the list does not hold (a v1 add from before the pin, say) approves nobody
+    return !this.listFollowed() || this.signedList?.allowsJoins(device.relay_public_key) === true;
   }
 
   /** The account `id` may approve a pairing for (isAccountApprover), or null. */
@@ -2575,15 +2946,16 @@ export class DeviceStore {
     return this.isAccountApprover(id) ? this.devices.find((d) => d.id === id)?.account ?? null : null;
   }
 
-  private enrollRelay(label: string, publicKey: string, now: number, codeSpent: boolean, { addedBy, approvedIn, digits, pairingHere }: { addedBy?: string | undefined; approvedIn?: string | undefined; digits?: boolean; pairingHere: boolean }, id = randomBytes(8).toString("hex")): { device: DeviceMatch } | null {
+  private enrollRelay(label: string, publicKey: string, now: number, codeSpent: boolean, { addedBy, approvedIn, digits, pairingHere, role = "drive", vouchedPc }: { addedBy?: string | undefined; approvedIn?: string | undefined; digits?: boolean; pairingHere: boolean; role?: DeviceRole; vouchedPc?: string | undefined }, id = randomBytes(8).toString("hex")): { device: DeviceMatch } | null {
     const device: StoredDevice = {
-      id, label: normalizeLabel(label, "Device"), role: "drive",
+      id, label: normalizeLabel(label, "Device"), role,
       token_hash: hash(randomBytes(32).toString("hex")), relay_public_key: publicKey,
       // PAIR authenticates this relay session too, so the device is seen as it pairs.
       created_at: new Date(now).toISOString(), last_seen_at: new Date(now).toISOString(),
       ...(addedBy === undefined ? {} : { added_by: addedBy }),
       // what a later link reads to tell a member's approval from a code a device outside the account started
       ...(addedBy !== undefined && approvedIn !== undefined ? { member_approved_in: approvedIn } : {}),
+      ...(vouchedPc === undefined ? {} : { vouched_pc: vouchedPc }),
     };
     const enrolled = !codeSpent && addedBy !== undefined && approvedIn !== undefined
       ? this.enrollApproved(device, this.relayKeyOf(addedBy), now)
@@ -2681,7 +3053,7 @@ export class DeviceStore {
     if (!device) {
       if (patch.label === undefined || patch.role !== undefined) return null;
       const row = this.joinedRows?.rename(id, patch.label);
-      return row ? { id, label: row.label, role: "drive", created_at: row.confirmed_at, last_seen_at: null, current: false, via_relay: true } : null;
+      return row ? this.joinedAsPaired(row, null) : null;
     }
     const updated = { ...device, ...(patch.label === undefined ? {} : { label: patch.label }), ...(patch.role === undefined ? {} : { role: patch.role }) };
     const next = this.devices.map((d) => d === device ? updated : d);
@@ -2717,8 +3089,11 @@ export class DeviceStore {
     if (this.journal === null) return null;
     const recovered = device.origin?.from === "recover";
     const promotion = joined !== undefined;
-    return this.journal.append({ kind: promotion ? "promote" : "admit", ...(promotion ? { awaitingListCheck: true } : {}),
+    const entry = this.journal.append({ kind: promotion ? "promote" : "admit", ...(promotion ? { awaitingListCheck: true } : {}),
       how: recovered ? "recover" : device.origin?.how ?? "code", key: device.relay_public_key ?? null, no: device.origin?.admit_no ?? null, row: device.id, label: device.label, by: recovered ? by ?? null : promotion ? device.origin?.by ?? null : device.added_by ?? null, account: device.account ?? notice?.account ?? null });
+    // the row's last journal entry is this admission from here on, not the removal that open read (journalEnded)
+    this.journalEndedRows?.delete(device.id);
+    return entry;
   }
 
   /** A removal's journal entry, after its deny (P8 step 4). A journal that cannot be written stops no removal. */
@@ -2740,10 +3115,13 @@ export class DeviceStore {
     return () => { this.noticeListeners.delete(listener); };
   }
 
-  /** Whether the row `id` is told of `entry`: entries about rows that joined this PC after it (T57); a row with no age hears none. */
+  /**
+   * Whether the row `id` is told of `entry`: entries about rows that joined this PC after it (T57); a row with no age hears
+   * none, and a row never hears of its own key's admission (a listed row and the row its approval made are one device).
+   */
   private tells(id: string, entry: JournalEntry): boolean {
     const row = this.anyRow(id);
-    if (row?.origin === undefined || entry.row === id) return false;
+    if (row?.origin === undefined || entry.row === id || (entry.key !== null && entry.key === row.relay_public_key)) return false;
     if (row.origin.from === "legacy") return true;
     return entry.no !== null && row.origin.admit_no < entry.no;
   }
@@ -2767,13 +3145,15 @@ export class DeviceStore {
 
   /** Reconcile only against known registries, after a write or on recovery. A transfer may keep the original notice. */
   settleListNotices(rows: readonly AccountRow[], members = this.devices): void {
-    if (this.error !== null || this.journal?.strict !== null) return;
-    this.journal.settleList(n => {
-      const member = members.find(m => m.relay_public_key === n.key);
-      if (member) return member.held === n.id || member.carried_notice === n.id;
-      return rows.some(r => r.id === n.row && r.key === n.key && (r.state === "hold" || r.state === "live")
-        && (r.origin.admit_no === n.no || r.no === n.no));
-    });
+    try {
+      if (this.error !== null || this.journal?.strict !== null) return;
+      this.journal.settleList(n => {
+        const member = members.find(m => m.relay_public_key === n.key);
+        if (member) return member.held === n.id || member.carried_notice === n.id;
+        return rows.some(r => r.id === n.row && r.key === n.key && (r.state === "hold" || r.state === "live")
+          && (r.origin.admit_no === n.no || r.no === n.no));
+      });
+    } finally { this.listedChanged(); }
   }
 
   mayAnswerNotice(caller: string | undefined, id: string): boolean {
@@ -2797,11 +3177,81 @@ export class DeviceStore {
     this.journal?.decide(id);
   }
 
+  /** The nodes the owner's tailnet requests are checked against (tailnet-nodes.ts); none on a store that has none. */
+  attachTailnetNodes(nodes: TailnetNodes): void {
+    this.tailnet = nodes;
+    // the nodes a durable denial names stay out across a restart, whether or not their own block landed
+    if (this.evidence !== null && this.evidence.strict === null) nodes.takeDenials(this.evidence.tailnetDenials());
+  }
+  private tailnet: TailnetNodes | null = null;
+
+  /** A row's credential arrived from the tailnet node `nodeId`: kept on the row, at its first use and each change. */
+  noteTailnetNode(rowId: string, nodeId: string): void {
+    const device = this.devices.find((d) => d.id === rowId);
+    if (this.error !== null || device === undefined || device.tailnet_nodes?.includes(nodeId)) return;
+    // every node is kept, none trimmed: each is one its removal must keep out (a phone's node changes only when set up again)
+    const updated = { ...device, tailnet_nodes: [...device.tailnet_nodes ?? [], nodeId] };
+    const next = this.devices.map((d) => d === device ? updated : d);
+    try {
+      this.save(next);
+      this.devices = next;
+    } catch (error) { console.warn(`[devices] the tailnet node of ${rowId} was not saved: ${describe(error)}`); }
+  }
+
+  tailnetRowsOf(nodeId: string): string[] {
+    return this.devices.filter((d) => d.tailnet_nodes?.includes(nodeId)).map((d) => d.id);
+  }
+
+  /**
+   * Blocks tailnet nodes, each journalled first (P24): an entry or a block that cannot be written throws, and the
+   * removal it belongs to does not happen. `row`: the row whose removal blocks them, for the journal.
+   */
+  keepOutTailnetNodes(nodes: readonly { readonly id: string; readonly hostname?: string }[], row: string | null = null): string[] {
+    const tailnet = this.tailnet;
+    if (tailnet === null) return [];
+    // only a saved block lets the removal go on: the fail-closed state after a failed write ends with this run
+    const fresh = nodes.filter((node) => !tailnet.holds(node.id));
+    if (nodes.length === 0) return [];
+    try {
+      // the nodes already blocked are blocked again with this removal's time (TailnetNodes.block); only new ones are journalled
+      for (const node of fresh) this.journalEvent({ kind: "tailnet", how: "block", key: null, no: null, row, label: `${node.hostname ?? tailnet.hostnameOf(node.id)} · ${node.id}`, by: null, account: null });
+      return tailnet.block(nodes);
+    } catch (error) {
+      // a block that did not land keeps every node out for this run: the removal it belongs to may already stand
+      tailnet.failClosed(`A Tailscale device could not be kept out (${describe(error)}): no Tailscale login is let in until this PC restarts.`);
+      throw error;
+    }
+  }
+
+  /** Allow on this PC's own window: the node is let in by its login again, journalled first. */
+  allowTailnetNode(id: string): void {
+    const tailnet = this.tailnet;
+    if (tailnet === null) throw new Error("This PC keeps no Tailscale devices out.");
+    this.journalEvent({ kind: "tailnet", how: "allow", key: null, no: null, row: null, label: `${tailnet.hostnameOf(id)} · ${id}`, by: null, account: null });
+    tailnet.allow(id);
+  }
+
+  private keepOutNodesOf(rows: readonly StoredDevice[]): void {
+    this.keepOutTailnetNodes(tailnetNodesOf(rows).map((id) => ({ id })), rows[0]?.id ?? null);
+  }
+
+  /**
+   * An account record's drop (a block, Not me included, or a member's remove) keeps the dropped rows' nodes out with it.
+   * Its deny already carries those nodes (removal evidence, `tailnet_nodes`), so a node block that fails here leaves the
+   * list closed for this run, and the next start blocks them from the deny (attachTailnetNodes).
+   */
+  private keepOutNodesOfRecordDrop(rows: readonly StoredDevice[]): void {
+    try { this.keepOutNodesOf(rows); }
+    catch (error) { console.error(`[devices] the Tailscale devices of a dropped row could not be kept out: ${describe(error)}`); }
+  }
+
   revoke(id: string, by: DeviceRemovedEvent["by"] = "pc"): boolean {
     this.assertWritable();
     this.resumeRevokeAll();
     const target = this.anyRow(id);
     if (!target) return false;
+    // the nodes its credential came from are kept out before the row goes: a block not written removes nothing
+    this.keepOutNodesOf(this.devices.filter((d) => d.id === id || (target.relay_public_key !== undefined && d.relay_public_key === target.relay_public_key)));
     if (this.evidence !== null) {
       const key = target.relay_public_key;
       const rows = this.devices.filter((d) => d === target || (key !== undefined && d.relay_public_key === key));
@@ -2836,6 +3286,7 @@ export class DeviceStore {
     const key = named !== undefined ? named.relay_public_key : isRelayPublicKey(input.target) ? input.target : undefined;
     if (named === undefined && key === undefined) return { refused: "unknown" };
     const gone = this.devices.filter((d) => d === named || (key !== undefined && d.relay_public_key === key));
+    this.keepOutNodesOf(gone);
     const now = Date.now();
     const evidence = this.evidence;
     const denied = this.deny(key === undefined ? [] : [key], () => {
@@ -2898,6 +3349,9 @@ export class DeviceStore {
    */
   revokeAll(user?: string): string[] {
     this.assertWritable();
+    // every tailnet node seen so far, and every one a row's credential came from, stays out with them
+    const nodes = new Set([...this.tailnet?.seenIds() ?? [], ...this.devices.flatMap((d) => d.tailnet_nodes ?? [])]);
+    this.keepOutTailnetNodes([...nodes].map((id) => ({ id })));
     if (this.revokeAllIntent !== null) return this.revokeAllInOrder(this.revokeAllIntent, user);
     this.endAccountRows("revoke_all");
     this.tombstone(this.devices, Date.now());
@@ -2928,6 +3382,9 @@ export class DeviceStore {
   }
 
   has(id: string): boolean { return this.devices.some((device) => device.id === id) || (this.joinedRows?.row(id) ?? null) !== null; }
+
+  /** When the row `id` was added here (an account row: when it was confirmed), or undefined for none. */
+  addedAt(id: string): string | undefined { return this.anyRow(id)?.created_at; }
 
   /** Whether the device may answer a pane's prompt: paired to drive, not to watch. */
   canDrive(id: string): boolean {
@@ -3168,7 +3625,7 @@ export class DeviceStore {
     if (device) return { id: device.id, label: device.label, role: device.role };
     // an account-joined key signs its own leave, held or not (P5, S25); it signs nothing else here
     const joined = anyRole && account === this.account() ? this.joinedRows?.rowsByKey(key)[0] : undefined;
-    return joined && this.canSpeak(joined.id, true) && !this.accountRowStale(joined) ? { id: joined.id, label: joined.label, role: "drive" } : null;
+    return joined && this.canSpeak(joined.id, true) && !this.accountRowStale(joined) ? { id: joined.id, label: joined.label, role: this.joinedRole(joined) } : null;
   }
 
   accountRows(): { members: number; unlinked: string[]; own_word: string[] } {
@@ -3310,7 +3767,7 @@ export class DeviceStore {
       let added = false;
       const denied = this.deny([key], () => {
         const drop = this.account() === account ? rowDrop(this.joinedRows?.rowsByKey(key)[0], "remove") : undefined;
-        added = this.evidence!.addRemoval(key, account, { id: record.id, at: new Date(now).toISOString(), drop, ...(record.signed ? { records: [record.signed] } : {}) });
+        added = this.evidence!.addRemoval(key, account, { id: record.id, at: new Date(now).toISOString(), drop, ...(record.signed ? { records: [record.signed] } : {}), tailnetNodes: tailnetNodesOf(this.devices.filter((d) => d.relay_public_key === key)) });
         this.refreshTombstones();
       });
       this.dropWaiting([key]);
@@ -3322,6 +3779,7 @@ export class DeviceStore {
       }
       const gone = this.devices.filter((d) => d.relay_public_key === key && this.coveredByEvidence(d));
       const ids = (this.joinedRows?.rowsByKey(key) ?? []).filter((row) => this.coveredByEvidence(this.joinedAsStored(row))).map((row) => row.id);
+      this.keepOutNodesOfRecordDrop(gone);
       this.dropBeforeWrite(gone, record.by, undefined, { ids, reason: "remove" }, undefined, { key, account });
       return added || gone.length > 0 || ids.length > 0;
     }
@@ -3331,6 +3789,8 @@ export class DeviceStore {
     const newer = (d: StoredDevice) => d.relay_public_key === key && pairedHere(d) && this.later(d.created_at, record.issuedAt);
     if (this.devices.some(newer)) {
       const gone = this.devices.filter((d) => d.relay_public_key === key && !newer(d));
+      // no denial goes to disk before this drop: its nodes' block does, and one that fails drops nothing
+      this.keepOutNodesOf(gone);
       if (gone.length) this.drop(gone, record.by);
       return gone.length > 0;
     }
@@ -3573,7 +4033,7 @@ export async function handleDeviceRequest(request: Request, pathname: string, st
     // Callers without PC-level Revoke authority get their verdict for each row (T19, T20).
     const callerId = access.level === "full" ? access.device?.id ?? null : null;
     const pendingNotMe = ownWindow && drive ? store.pendingNotMeRows() : null;
-    const devices = store.list(callerId, drive)
+    const devices = [...store.list(callerId, drive), ...store.listAccountJoined(callerId)]
       .map((device) => { const connection = live.get(device.id); return connection ? { ...device, connection } : device; })
       .map((device) => pendingNotMe?.has(device.id) ? { ...device, not_me_waiting: true as const } : device)
       .map((device) => orderedRevoke ? { ...device, remote_revoke: drive ? store.remoteRevoke(callerId, device.id) : "read_only" as const } : device);

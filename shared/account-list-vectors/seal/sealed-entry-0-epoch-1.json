@@ -1,0 +1,16 @@
+{
+  "name": "sealed-entry-0-epoch-1",
+  "note": "Sealed for entry 0 under epoch 1, and the bytes are whole: the tag holds for this place and this epoch. Entry 0 opens epoch 0 and is sealed under no other, so it has not the form, for the reader as for the writer.",
+  "sealed": {
+    "list": "",
+    "seq": 0,
+    "epoch": {
+      "epoch": 1,
+      "key": "87256be080a1b4b759aa0cfab8224e619996ff958d82fe276bdc779a1e169552"
+    },
+    "bytes": "AWsXr7UqwY4MTryAFvL4wfmDxOFM9emBtABPU-MRlI-JVjA8iGDM4L0CthLodJuSn7qeHPIramvx2IRFE46p-Hs"
+  },
+  "expect": {
+    "why": "form"
+  }
+}

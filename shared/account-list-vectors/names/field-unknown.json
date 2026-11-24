@@ -1,0 +1,24 @@
+{
+  "name": "field-unknown",
+  "fields": [
+    {
+      "name": "label",
+      "value": "RGVzaw"
+    },
+    {
+      "name": "os",
+      "value": "bGludXg"
+    },
+    {
+      "name": "room",
+      "value": "YXR0aWM"
+    }
+  ],
+  "expect": {
+    "names": {
+      "label": "Desk",
+      "os": "linux"
+    },
+    "written": false
+  }
+}

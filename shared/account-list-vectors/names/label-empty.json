@@ -1,0 +1,13 @@
+{
+  "name": "label-empty",
+  "fields": [
+    {
+      "name": "label",
+      "value": ""
+    }
+  ],
+  "expect": {
+    "names": null,
+    "written": false
+  }
+}

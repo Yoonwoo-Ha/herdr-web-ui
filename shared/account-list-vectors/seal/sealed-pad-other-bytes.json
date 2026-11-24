@@ -1,0 +1,21 @@
+{
+  "name": "sealed-pad-other-bytes",
+  "note": "A `pad` that holds other bytes than zeros, in a plaintext of no multiple of 256: a reader drops `pad` whatever it holds.",
+  "sealed": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "seq": 7,
+    "epoch": {
+      "epoch": 2,
+      "key": "2fa00c28d4ee2a5999e129d3cf60c3f4c8f5af081d6da74f92a4cc6c67e66bb0"
+    },
+    "bytes": "AXwb4e9wLOyeHfewdPV0Q0sgROCh_MLS-7Bl1XxXJDh708UgjnygtR62KyqTGSYGJZWO1CAy1VeHBz-k3i3NgAMuhs-N2F6etqkHW3KEZUp3ndYFVHvo1HIrKkYH82E2y-6c7_0BMi76xQ"
+  },
+  "expect": {
+    "fields": [
+      [
+        "label",
+        "Home laptop"
+      ]
+    ]
+  }
+}

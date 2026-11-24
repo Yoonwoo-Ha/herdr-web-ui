@@ -264,4 +264,70 @@ describe("terminal output credit", () => {
     replay.append("\x1b[?1049h\x1b[?1000hhello");
     expect(replay.text()).toBe("\x1b[?1049h\x1b[?1000hhello");
   });
+
+  it("keeps no more room than its limit needs after a burst far past it", () => {
+    const replay = new ReplayBuffer(1024);
+    replay.append("x".repeat(1024 * 1024));
+    replay.append("");
+    expect(replay.recent).toBe("x".repeat(1024));
+    expect((replay as unknown as { bytes: Buffer }).bytes.length).toBeLessThanOrEqual(4 * 1024);
+  });
+
+  it("replays byte for byte what re-encoding the whole tail on every append gave", () => {
+    // the tail kept as one string, encoded and decoded whole on every append
+    class StringTail {
+      tail = "";
+      modes = new Map<string, string>();
+      keys = 0;
+      truncated = false;
+      constructor(readonly limit: number) {}
+      append(data: string): void {
+        const bytes = Buffer.from(this.tail + data);
+        let start = Math.max(0, bytes.length - this.limit);
+        while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start++;
+        const escape = start > 0 ? bytes.lastIndexOf(0x1b, start - 1) : -1;
+        if (escape >= 0 && /^\x1b(\[[\x30-\x3f]*[\x20-\x2f]*)?$/.test(bytes.subarray(escape, start).toString("latin1"))) start = escape;
+        if (start === 0) {
+          this.tail += data;
+          return;
+        }
+        this.truncated = true;
+        const cut = bytes.subarray(0, start).toString("utf8");
+        for (const [, params, state] of cut.matchAll(/\x1b\[\?([\d;]+)([hl])/g)) {
+          for (const mode of params!.split(";").filter(Boolean)) {
+            this.modes.delete(mode);
+            this.modes.set(mode, state!);
+          }
+        }
+        for (const [, resource, level, final] of cut.matchAll(/\x1b\[>(4(?:;(\d*))?)?([mn])/g)) this.keys = resource && final === "m" ? Number(level || 0) : 0;
+        this.tail = bytes.subarray(start).toString("utf8");
+      }
+      text(): string {
+        if (!this.tail) return "";
+        return [...this.modes].map(([mode, state]) => `\x1b[?${mode}${state}`).join("") + (this.keys > 0 ? `\x1b[>4;${this.keys}m` : "") + this.tail;
+      }
+    }
+    const pieces = ["a", "xyz", "한", "🙂", "\r\n", "\x1b", "[", "?", "1049", "h", "\x1b[", "\x1b[?", "\x1b[?1049h", "\x1b[?1049l", "\x1b[?1000;1006h", "\x1b[?1016l", "\x1b[>4;2m", "\x1b[>4;0m", "\x1b[>m", "\x1b[31m", "\x1b[2J"];
+    let seed = 0x5eed;
+    const random = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) >>> 0;
+      return (seed >>> 8) % n;
+    };
+    for (const limit of [1, 2, 3, 5, 8, 13, 21, 34, 64, 200]) {
+      const replay = new ReplayBuffer(limit);
+      const expected = new StringTail(limit);
+      for (let step = 0; step < 400; step++) {
+        // mostly small writes, now and then one larger than the whole limit
+        const count = random(10) === 0 ? random(limit * 2 + 20) : random(6);
+        let data = "";
+        for (let i = 0; i < count; i++) data += pieces[random(pieces.length)];
+        replay.append(data);
+        expected.append(data);
+        expect(replay.text()).toBe(expected.text());
+        expect(replay.recent).toBe(expected.tail);
+        expect(replay.truncated).toBe(expected.truncated);
+        expect(replay.alternateScreen).toBe(expected.modes.get("1049") === "h");
+      }
+    }
+  });
 });

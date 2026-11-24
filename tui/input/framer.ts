@@ -58,7 +58,7 @@ function firstContinuation(lead: number): [number, number] {
  * - An unfinished UTF-8 character waits for the next read, however late, and is never split.
  * - A bracketed paste is one event; no wait ends it. Once it passes PASTE_LIMIT_BYTES it is refused whole
  *   at once, and the rest of it is swallowed up to its end mark; if that mark never comes, `reset` ends it.
- * - A reply's shape gives a `reply` only while the start probe waits (`expectReplies`), else `unknown`.
+ * - Probe replies become `reply` while `expectReplies` waits; the screen also watches for display updates afterward.
  */
 export class Framer {
   private modes: HostModes = { mouse: false, kitty: false, eraseIsCtrlH: false };
@@ -86,6 +86,8 @@ export class Framer {
   private charAlt = false;
   private paste = emptyPaste();
 
+  constructor(private readonly displayReplies = false) {}
+
   setModes(modes: Partial<HostModes>): void {
     this.modes = { ...this.modes, ...modes };
   }
@@ -99,6 +101,11 @@ export class Framer {
     this.ground();
     this.paste = emptyPaste();
     this.pending = undefined;
+  }
+
+  /** Whether a refused paste is still being swallowed: its end mark has not come yet. */
+  discarding(): boolean {
+    return this.state === "paste" && this.paste.refused;
   }
 
   /** The start probe was sent at `now`: replies are read until its DA1 reply comes or REPLY_WAIT_MS pass. */
@@ -277,7 +284,7 @@ export class Framer {
     else if (body === "" && final === "M") this.trail("x10", X10_REPORT_BYTES);
     else if (body === "" && final === "[") this.trail("linux", 1);
     else if (body === PASTE_START && final === "~") this.beginPaste();
-    else this.finish(decodeCsi(body, final, this.replyUntil !== undefined, this.modes.kitty));
+    else this.finish(decodeCsi(body, final, this.replyUntil !== undefined, this.modes.kitty, this.displayReplies));
     return true;
   }
 
@@ -337,7 +344,7 @@ export class Framer {
 
   private finishString(terminator: number): void {
     const body = latin1(this.seq.slice(2, this.seq.length - terminator));
-    this.finish(this.cutShort ? undefined : decodeString(this.stringKind, body, this.replyUntil !== undefined));
+    this.finish(this.cutShort ? undefined : decodeString(this.stringKind, body, this.replyUntil !== undefined || this.displayReplies));
   }
 
   private finish(event: Unstamped | undefined): void {

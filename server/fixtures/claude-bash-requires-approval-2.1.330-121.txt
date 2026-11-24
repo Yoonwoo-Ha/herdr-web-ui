@@ -1,0 +1,23 @@
+❯ Read the file cmds/long-A-1-yes.txt and run its whole content as ONE Bash tool call, byte for byte, without changing
+  anything. Then reply only: done
+
+● Searching for 1 pattern, reading 1 file… (ctrl+o to expand)
+  ⎿  cmds/long-A-1-yes.txt
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+ Run the command from long-A-1-yes.txt verbatim
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ find /usr/share/doc -maxdepth 2 -type f -name '*.gz' -newer /etc/hostname -size +1k -printf '%TY-%Tm-%Td %s %p\n'
+ │ 2>/dev/null | sort -r | head -n 5 | awk '{print $1, $2, $3}'
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ This command requires approval
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and allow access to /usr/share/doc and "awk '{print $1, $2, $3}'" commands
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend

@@ -7,10 +7,14 @@ import { isShellAgentKind, startShellAgent, type ShellAgentLocator } from "./she
 import { agentStart, HerdrError, sessionSnapshot } from "./herdr/client.ts";
 import { requestFault } from "./http.ts";
 import { agentStartArgs } from "./claude-settings-file.ts";
+import type { ApprovalHub } from "./approvals/hub.ts";
+import type { CodexServers } from "./approvals/codex.ts";
 import { DSH_EFFORTS, launchArgsFault } from "../shared/launch-rules.ts";
 import { browserToolArgs, browserToolChoices, browserToolConfig, isBrowserToolAgent, withBrowserToolArgs } from "../shared/browser-tools.ts";
 import { hcMachine } from "./herdr-core/runtime.ts";
+import { capabilities } from "./runtime/capabilities.ts";
 import { userHome } from "./user-home.ts";
+import { forgetLocalRun, launchHarnessTool } from "./agent-tools/launch.ts";
 
 export type AgentPayload = { kind?: unknown; name?: unknown; args?: unknown };
 
@@ -80,6 +84,25 @@ async function startDshTui(paneId: string, args: string[], options: { locator?: 
   }
 }
 
+let approvals: { hub: ApprovalHub; version: (kind: string) => Promise<string | null>; codex: CodexServers | null } | null = null;
+
+/**
+ * What an agent this server starts asks its approvals through (server/approvals/hub.ts), and how its installed version
+ * is read, which decides whether it gets the hook; and where a Codex gets its own app server (server/approvals/codex.ts).
+ */
+export function useApprovalHub(hub: ApprovalHub | null, version: (kind: string) => Promise<string | null> = async () => null, codex: CodexServers | null = null): void {
+  approvals = hub === null ? null : { hub, version, codex };
+}
+
+/**
+ * The launcher a Codex starts through on its own app server, or undefined for one that starts as before: only where the
+ * runtime can run a launcher (herdr-core), on this PC, never on Windows, and for the versions it was measured on.
+ */
+async function codexLauncher(kind: string, paneId: string, args: string[] | undefined, platform: string): Promise<string | undefined> {
+  if (kind !== "codex" || approvals?.codex == null || !capabilities().launcher || hcMachine() !== null || platform === "win32") return undefined;
+  return approvals.codex.launch(paneId, args, await approvals.version(kind)) ?? undefined;
+}
+
 let browserTools: { read: () => unknown; dir: string } | null = null;
 
 /** Where the launch reads the shared `agentBrowserTools` setting from, and the folder its MCP config files go in. */
@@ -121,23 +144,32 @@ export function withBrowserTool(kind: string, args: string[] | undefined, platfo
 }
 
 export async function agentLaunch(paneId: string, agent: AgentPayload, launched?: (pid: number) => void, locator?: ShellAgentLocator, options: { platform?: string; settingsDir?: string; home?: string } = {}): Promise<{ agent_started: true } | { agent_started: false; error: { code: string; message: string } }> {
+  let program: string | undefined;
+  let tool: ReturnType<typeof launchHarnessTool> = null;
   try {
     const kind = agent.kind as string;
-    const args = agent.args as string[] | undefined;
-    if (isShellAgentKind(kind)) {
-      // another machine of the core: its path would be this PC's, and its start is never seen there (no pids)
-      if (hcMachine() !== null) return { agent_started: false, error: { code: "other_machine", message: `${kind} starts only on the PC that runs Ovis` } };
+    const shell = isShellAgentKind(kind);
+    // another machine of the core: its path would be this PC's, and its start is never seen there (no pids)
+    if (shell && hcMachine() !== null) return { agent_started: false, error: { code: "other_machine", message: `${kind} starts only on the PC that runs Ovis` } };
+    // an agent another machine of the core starts could not reach this PC's hub
+    const args = approvals !== null && approvals.hub.handles(kind) && hcMachine() === null
+      ? approvals.hub.launchArgs(kind, paneId, agent.args as string[] | undefined, await approvals.version(kind)) : agent.args as string[] | undefined;
+    if (shell) {
       const shellOptions = locator ? { locator } : {};
+      tool = kind === "dsh-tui" ? null : launchHarnessTool(paneId, kind, { args, platform: options.platform ?? process.platform, browsers: null });
       const pid = kind === "dsh-tui" && args !== undefined
         ? await startDshTui(paneId, args, shellOptions, options.home ?? userHome())
-        : await startShellAgent(kind, paneId, args, shellOptions);
+        : await startShellAgent(kind, paneId, tool?.args ?? args, tool ? { ...shellOptions, env: { OVIS_AGENT_SOCKET: tool.socket, OVIS_AGENT_TOKEN_FILE: tool.tokenFile } } : shellOptions);
       if (pid !== null) launched?.(pid);
+      await tool?.confirmed();
     }
     else {
       const given = typeof agent.name === "string" && agent.name.length > 0 ? agent.name : null;
       // on Windows a Claude Code's inline JSON --settings goes as a file's path (server/claude-settings-file.ts)
-      const launchArgs = withBrowserTool(kind, args, options.platform ?? process.platform);
+      tool = launchHarnessTool(paneId, kind, { args, platform: options.platform ?? process.platform, browsers: browserTools?.read() });
+      const launchArgs = tool?.args ?? withBrowserTool(kind, args, options.platform ?? process.platform);
       const startArgs = launchArgs === undefined ? undefined : agentStartArgs(kind, launchArgs, { platform: options.platform, dir: options.settingsDir });
+      program = await codexLauncher(kind, paneId, startArgs, options.platform ?? process.platform);
       // herdr refuses a name another agent holds. Two creations at once can pick the same
       // free one: the refused one picks again. It also refuses a pane whose shell is not up
       // yet (`agent_pane_busy`, herdr 0.9.3), which a pane made a moment ago can be.
@@ -149,8 +181,11 @@ export async function agentLaunch(paneId: string, agent: AgentPayload, launched?
             kind,
             paneId,
             ...(startArgs === undefined ? {} : { args: startArgs }),
+            ...(program === undefined ? {} : { program }),
+            ...(tool ? { toolDoor: { socket: tool.socket, tokenFile: tool.tokenFile } } : {}),
             timeoutMs: 60_000,
           });
+          await tool?.confirmed();
           break;
         } catch (error) {
           if (!(error instanceof HerdrError)) throw error;
@@ -163,9 +198,13 @@ export async function agentLaunch(paneId: string, agent: AgentPayload, launched?
         }
       }
     }
+    forgetLocalRun(paneId, tool?.id);
     launchedAgents.launched(paneId, kind);
     return { agent_started: true };
   } catch (error) {
+    // a launcher that never ran: its folder goes, and Ovis stops waiting for its server
+    tool?.cancel();
+    if (program !== undefined) approvals?.codex?.abandon(paneId, program);
     return {
       agent_started: false,
       error: requestFault(error, "agent_start_failed"),

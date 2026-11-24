@@ -225,6 +225,12 @@ describe("the reload a tab is offered", () => {
     expect(reloadReason(checkout, status, true, false)).toBeNull();
   });
 
+  it("never offers the app's own copy a reload for a PC on another commit: a reload brings back the same copy", () => {
+    expect(reloadReason(app, { current_revision: "b".repeat(40) }, false, false, true)).toBeNull();
+    expect(reloadReason(app, { current_revision: "b".repeat(40), served_revision: app }, false, false, true)).toBeNull();
+    expect(reloadReason(app, { current_revision: "b".repeat(40) }, false, true, true)).toBe("incomplete");
+  });
+
   it("is offered for a part of the app that failed to load, where no commit can be compared", () => {
     expect(reloadReason(app, { current_revision: null }, false, true)).toBe("incomplete");
     expect(reloadReason(app, null, false, true)).toBe("incomplete");

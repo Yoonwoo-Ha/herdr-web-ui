@@ -10,7 +10,8 @@ import type { Vouch } from "./mailbox.ts";
 
 import type { SafetyLog } from "./safety-log.ts";
 
-export type RecordRefusal = "record_invalid" | "signature_invalid" | "account_mismatch" | "signer_not_member" | "tombstoned" | "link_not_owner" | "account_unavailable" | "enrolling" | "removal_pending" | "closed" | "read_pending" | "older_device";
+/** `list_followed`: this PC lets its account's devices in by the account's signed list alone, so no record adds one. */
+export type RecordRefusal = "record_invalid" | "signature_invalid" | "account_mismatch" | "signer_not_member" | "tombstoned" | "link_not_owner" | "account_unavailable" | "enrolling" | "removal_pending" | "closed" | "read_pending" | "older_device" | "list_followed";
 
 /** What holds an `add` back on this PC (mailbox.ts `gates`, docs/account.md "Enrolling a PC"). */
 export interface AddGates {
@@ -40,6 +41,8 @@ function apply(store: DeviceStore, record: AccountRecord, serverId: string | nul
   const refused = (code: RecordRefusal): RecordOutcome => ({ id: record.id, outcome: "refused", code });
   if (record.kind === "link") return refused("link_not_owner");
   if (store.accountError !== null) return refused("account_unavailable");
+  // a PC pinned to the account's signed list takes its devices from that list: a record still removes one, and adds none
+  if (record.kind === "add" && store.listFollowed()) return refused("list_followed");
   const account = store.account();
   if (account !== null && account !== record.account) return refused("account_mismatch");
   // A lock can hide the signer as well. It is a final refusal, not a missing signer to retry.
@@ -110,6 +113,11 @@ export async function applyAccountRecords(store: DeviceStore, values: readonly u
     }
     const noted = store.gen();
     const record = await read(value);
+    if (!("refused" in record) && record.kind === "add" && store.listFollowed()) {
+      // not kept for a later read either: nothing a read brings makes this add count
+      outcomes.push({ id: record.id, outcome: "refused", code: "list_followed" });
+      continue;
+    }
     if (!("refused" in record) && record.kind === "add" && (gates?.deferAdd || store.gen() !== noted)) {
       outcomes.push(deferAdd(record, gates?.deferAdd));
       continue;
@@ -161,7 +169,8 @@ export async function applyEnrollment(store: DeviceStore, values: readonly unkno
     for (const index of adds) {
       const verified = record(index);
       const heldBack = moved || (store.opensAll() && verified.kind === "add" && (undecided.has(verified.signer) || undecided.has(verified.key)));
-      const outcome = heldBack ? deferAdd(verified) : verified.kind === "add" && store.opensAll()
+      const outcome: RecordOutcome = verified.kind === "add" && store.listFollowed() ? { id: verified.id, outcome: "refused", code: "list_followed" }
+        : heldBack ? deferAdd(verified) : verified.kind === "add" && store.opensAll()
         ? deferAdd(verified, options.wait) : apply(store, verified, serverId, now, gates);
       outcomes[index] = outcome;
       if (outcome.outcome === "refused" && outcome.code === "signer_not_member") next.push(index);
@@ -189,7 +198,8 @@ export async function stageMailboxAdds(values: readonly unknown[]) {
   return staged;
 }
 
-export type LinkRefusal = RecordRefusal | "key_in_use" | "link_required" | "unverified_device" | "pairing_ended" | "replacement_needs_app";
+/** `list_removed`: this PC's relay identity was removed from that account by its signed list. */
+export type LinkRefusal = RecordRefusal | "key_in_use" | "link_required" | "unverified_device" | "pairing_ended" | "replacement_needs_app" | "list_removed";
 
 /** What a link is held to on this PC besides its devices (server/account/routes.ts). */
 export interface LinkRules {
@@ -233,7 +243,18 @@ const SET_UP_FOR_ANOTHER_ACCOUNT_WAITING = "This PC was set up for another Ovis 
 const CODE_FOR_ANOTHER_ACCOUNT = "This PC's pairing code was made for another Ovis account than the one this device is signed in to. Sign in to that account on this device, then pair again.";
 
 /** What a device that waited to link reads when no account was named for this PC: the way on is on the PC too. */
+const ADD_AT_PC = "This PC left its Ovis account. Add it again on the PC itself: sign in there and add it to your account, or run `ovis add` there.";
 const SET_UP_FOR_NO_ACCOUNT = "This PC is not set up for an Ovis account yet. Sign in on the PC and add it to your account, or run `ovis add` there; then scan its QR code again.";
+
+/** What a device reads when it links itself on a PC that takes its account's devices from the account's signed list. */
+const LIST_FOLLOWED = "This PC lets devices of its Ovis account in by the account's signed list. This device stays paired with this PC; to add it to the account, allow it from a device or PC that is in the account.";
+/**
+ * What is read when something would bring a PC back into an account whose list removed it. The code `list_removed` is
+ * what a screen goes by: the add at the PC itself is to offer the way back as one confirmed step ("This PC was removed
+ * from this account. Add it again as a new PC?"), which resets the relay identity and adds the PC it then is. Until that
+ * screen is built these words name the two steps.
+ */
+export const LIST_REMOVED_FROM = "This PC was removed from this Ovis account. It can come back only as a new PC: on the PC, reset its relay identity, then add it again.";
 
 /** What a device reads when its account's service has no word from that account about this device. */
 const UNVERIFIED_DEVICE = "Your Ovis account did not confirm this device for this PC. Open Ovis on this device signed in to that account, then scan the PC's QR code again.";
@@ -261,6 +282,21 @@ function look(store: DeviceStore, link: LinkRecord, deviceId: string, arrival: L
   if (arrival.provisional && !waits) return { refused: "link_required" };
   const account = store.account();
   if (account !== null && account !== link.account) return { refused: "account_mismatch" };
+  // A PC pinned to its account's signed list has its members from that list alone: a link makes none, whoever vouches
+  // for it. The row keeps the pairing it has
+  if (store.listFollowed()) return { refused: "list_followed", message: LIST_FOLLOWED };
+  // A PC that the account's list removed joins that account again on no path, until its relay identity is reset
+  if (account === null && store.listRemovedFrom(link.account)) {
+    if (waits) store.turnAway(deviceId, "account_mismatch", link.account);
+    return { refused: "list_removed", message: LIST_REMOVED_FROM };
+  }
+  // A PC its account stopped listing joins one again only by an add made at the PC: its own press, a code it issued
+  // itself, or digits its own screen approved since. A device it kept paired, or a code such a device asked for,
+  // brings it into none
+  if (account === null && store.addAtPcRequired() && !(arrival.pinned !== null && store.issuedAtPc(arrival.pinned)) && !store.approvedAtPcSinceClear(deviceId)) {
+    if (waits) store.turnAway(deviceId, "account_mismatch", link.account);
+    return { refused: "account_mismatch", message: ADD_AT_PC };
+  }
   // A device that already drives this PC is held to the code made for a PC in no account that lived when its link
   // came, and to none that came since: if that is no longer the code alive (it ended, another replaced it, the PC
   // joined an account meanwhile), nothing changes for it
@@ -342,7 +378,9 @@ export async function applyLink(store: DeviceStore, value: unknown, session: { d
   if (store.isTombstoned(link.key) && !(waits && link.key === link.old_key && !store.removedByAccount(link.key))) return { refused: "tombstoned" };
   // a row moving to a key this PC holds back would let that key in without anyone approving it here
   if (link.key !== link.old_key && rules.gates?.held(link.key)) return { refused: "removal_pending" };
-  if (store.keyHeldByOther(link.key, deviceId)) return { refused: "key_in_use" };
+  // a row that waits with the key of a pairing this PC already has is that device, pairing again: its link renews it
+  const renews = waits && link.key === link.old_key && store.pairingsRenewedBy(link.key) !== null;
+  if (store.keyHeldByOther(link.key, deviceId) && !renews) return { refused: "key_in_use" };
   const takeBack = waits ? rules.barrier?.() : undefined;
   let device: PairedDevice | null = null;
   try { device = store.linkAccountKey(deviceId, link.old_key, link.key, link.account, sessionId, vouched); }

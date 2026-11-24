@@ -8,8 +8,8 @@
 import { newKey, type AccountSession, type AccountStore, type SignInKey } from "./store.ts";
 import { sameSignIn, SignedOutError, type AccountService } from "./service.ts";
 
-/** This sign-in's registered key; null when the service has no release (G5), and nothing is kept then. */
-export async function signInKey(store: AccountStore, service: AccountService, expected?: AccountSession): Promise<(SignInKey & { readonly no: number }) | null> {
+/** This sign-in's registered key, named `label`; null when the service has no release (G5), and nothing is kept then. */
+export async function signInKey(store: AccountStore, service: AccountService, expected?: AccountSession, label?: string): Promise<(SignInKey & { readonly no: number }) | null> {
   const session = await service.session();
   if (session === undefined || session.sign_in_id === undefined || (expected !== undefined && !sameSignIn(session, expected))) throw new SignedOutError();
   const ours = (kept: SignInKey | undefined): kept is SignInKey => kept !== undefined && kept.account === session.account && kept.sign_in_id === session.sign_in_id;
@@ -23,7 +23,7 @@ export async function signInKey(store: AccountStore, service: AccountService, ex
     return { ...current, signin_key: pending };
   });
   if (pending === undefined) throw new SignedOutError();
-  const registered = await service.forSignIn(session).registerDeviceKey(pending.key);
+  const registered = await service.forSignIn(session).registerDeviceKey(pending.key, label);
   if (registered === null) {
     await store.update("signin_key", (current) => ours(current) && current.no === null ? undefined : current);
     return null;

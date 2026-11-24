@@ -39,6 +39,13 @@ export interface SnapshotPorts {
    * is older here than the blocked key and not removed. Asked before the commit turn; a change it relied on raises gen.
    */
   liftAuthority(lift: DeviceLiftRecord, snapshot: AccountSnapshot): Promise<boolean>;
+  /**
+   * Whether this read may widen access: asked once every page was checked and its blocks applied, right before the
+   * commit turn. A read it refuses has still denied what its pages denied.
+   */
+  widen?(): Promise<boolean>;
+  /** What a read that may not widen still does with its whole, checked snapshot: only what narrows access. */
+  narrow?(snapshot: AccountSnapshot): void;
   /** Synchronous: journal, files and memory in one turn. Returns the number of lifts still authorized. */
   commit(stage: StagedRead): number;
   /** List admissions follow the safety writes and staged signed adds in the same synchronous turn. */
@@ -52,7 +59,7 @@ export interface SnapshotPorts {
 
 export class SnapshotWriteRefused extends Error {}
 
-export type ReadRefusal = "unbound" | typeof SNAPSHOT_GONE | "mixed_snapshot" | "scope_mismatch" | "stale" | "malformed" | "incomplete" | "page_failed" | "scope_changed" | "generation_changed" | "commit_failed";
+export type ReadRefusal = "unbound" | typeof SNAPSHOT_GONE | "mixed_snapshot" | "scope_mismatch" | "stale" | "malformed" | "incomplete" | "page_failed" | "scope_changed" | "generation_changed" | "commit_failed" | "unconfirmed";
 
 export type ReadOutcome =
   | { readonly committed: true; readonly snapshot: string; readonly denials: number; readonly liftsRefused: number }
@@ -109,6 +116,11 @@ export async function readSnapshot(
   const removed = new Set(snapshot.removed.map((row) => row.key));
   for (const lift of snapshot.lifts) if (!removed.has(lift.signer) && await ports.liftAuthority(lift, snapshot)) authorized.push(lift);
 
+  if (ports.widen !== undefined && !await ports.widen()) {
+    const still = ports.scope();
+    if (still !== null && still.account === noted.account && still.serverId === noted.serverId) ports.narrow?.(snapshot);
+    return refused("unconfirmed");
+  }
   // the commit turn: nothing below awaits, so no denial can land between these checks and the write
   const now = ports.scope();
   if (now === null || now.account !== noted.account || now.serverId !== noted.serverId || now.lock !== noted.lock) return refused("scope_changed");

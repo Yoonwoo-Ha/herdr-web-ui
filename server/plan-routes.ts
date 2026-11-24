@@ -3,6 +3,7 @@
  * `update_plan` checklist, OmO's `todo` list), read through the trackers the server core owns. The
  * dispatcher in index.ts runs the access gate first.
  */
+import { coreAcp } from "./herdr-core/runtime.ts";
 import type { HerdrPane } from "../shared/protocol.ts";
 import type { PanePlan } from "../shared/plans.ts";
 import { type ClaudeSubagentStatus, within } from "./claude-subagents.ts";
@@ -19,6 +20,11 @@ export async function handlePlanRequest(request: Request, url: URL, pathname: st
     if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
     const paneId = url.searchParams.get("pane_id");
     if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
+    const child = coreAcp()?.forPane(paneId);
+    if (child) {
+      const steps = child.client.history.plan;
+      return jsonResponse({ plan: steps ? { steps } : null, server_time: new Date().toISOString() } satisfies PanePlan);
+    }
     // Herdr may name an OmO pane `claude`: use its resolved identity before looking up a plan.
     const seen: { pane?: HerdrPane } = {};
     await within(1000, (async () => {

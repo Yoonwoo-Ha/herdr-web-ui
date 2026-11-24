@@ -1,0 +1,15 @@
+{
+  "name": "sealed-no-fields",
+  "sealed": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "seq": 7,
+    "epoch": {
+      "epoch": 2,
+      "key": "2fa00c28d4ee2a5999e129d3cf60c3f4c8f5af081d6da74f92a4cc6c67e66bb0"
+    },
+    "bytes": "Ac4UT1CMQNN8PHtOg_Zbvp08eHQm_y1zN0S9sqI08Uqzap1IZPWPSRrbA90TseE"
+  },
+  "expect": {
+    "fields": []
+  }
+}

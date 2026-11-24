@@ -1,0 +1,13 @@
+{
+  "name": "label-surrogate-bytes",
+  "fields": [
+    {
+      "name": "label",
+      "value": "7aCA"
+    }
+  ],
+  "expect": {
+    "names": null,
+    "written": false
+  }
+}

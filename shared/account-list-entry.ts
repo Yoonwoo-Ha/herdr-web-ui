@@ -90,7 +90,7 @@ export function isListHash(text: string): boolean {
 }
 
 /** The bytes a base64url text spells when it is their one spelling (no padding); null for anything else. */
-function canonicalBase64Url(text: string): Uint8Array | null {
+export function canonicalBase64Url(text: string): Uint8Array | null {
   if (!/^[A-Za-z0-9_-]+$/.test(text) || text.length % 4 === 1) return null;
   const bytes = fromBase64Url(text);
   return toBase64Url(bytes) === text ? bytes : null;

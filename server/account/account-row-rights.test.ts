@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { accountRouteAction, accountRowMay, type AccountCaller, type RowAction } from "./account-row-rights.ts";
+import { dispatchMutationRegistered } from "../dispatch-routes.ts";
+import { MACHINE_PROXY_PATH } from "../machine-api.ts";
 
 const self: AccountCaller = { rowId: "row-self", key: "k-self", state: "live", mayRevoke: id => id === "row-self" || id === "row-newer" };
 const held: AccountCaller = { ...self, state: "hold" };
@@ -66,6 +68,13 @@ describe("S2-26 what an account-joined row may do (T36, T37, T40, R3 to R10)", (
 });
 
 describe("S2-26 representative account route mappings (R1 to R10)", () => {
+  test.each(["cancel","release"])("turn/%s is an exact, registered drive action on the account and PC transports", verb => {
+    const path = `pane/turn/${verb}`;
+    expect(dispatchMutationRegistered("POST", `/api/${path}`)).toBe(true);
+    expect(accountRouteAction("POST", `/api/${path}`)).toEqual({ action: "drive" });
+    expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
+    expect(MACHINE_PROXY_PATH.test(`${path}/extra`)).toBe(false);
+  });
   test("R1 to R10: the routes map to their actions; unregistered routes have no action", () => {
     const cases: [string, string, RowAction | null][] = [
       ["PATCH", "/api/devices/aaaaaaaaaaaaaaaa", { action: "label", rowId: "aaaaaaaaaaaaaaaa" }],

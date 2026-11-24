@@ -9,11 +9,21 @@
 import { arrayBufferToBase64, base64ToArrayBuffer } from "../../../shared/vendor/paseo-e2ee/base64.ts";
 import type { RelaySocket } from "../../../shared/relay-channel.ts";
 import { isDirectCarrier } from "../../../shared/relay-mux.ts";
+import { appShell, type AppShell } from "../appShell.ts";
 import { hasNativePlugin } from "../nativeApp.ts";
 
 export const DIRECT_PLUGIN = "OvisDirect";
-/** The hosted shell's origin: the plugin answers only a main-frame page of it. */
+/** The hosted shell's origin: the plugin answers only a main-frame page of it, or of the app's own copy. */
 export const APP_ORIGIN = "https://app.ovis.sh";
+
+/**
+ * Whether this page asks the plugin at all: the hosted shell at APP_ORIGIN, or the app's own copy of the client at
+ * whatever origin its platform gives it (`capacitor://` on iOS). The plugin's own gate, which answers only the app's
+ * main frame, is the one that holds; this only spares a page it would refuse.
+ */
+export function directPageAllowed(origin: string, app: AppShell | null): boolean {
+  return app !== null || origin === APP_ORIGIN;
+}
 
 /** Whether `url` is the one address the plugin opens: a direct carrier's `/v1/ws?v=1`, nothing more. */
 export function isDirectSocketUrl(url: string): boolean {
@@ -247,7 +257,7 @@ export function nativeDirectTailnet(): () => boolean {
  * shell's (the plugin refuses those).
  */
 export function nativeDirectSocket(): ((url: string) => RelaySocket) | undefined {
-  if (typeof window === "undefined" || window.location.origin !== APP_ORIGIN || !hasNativePlugin(DIRECT_PLUGIN)) return undefined;
+  if (typeof window === "undefined" || !directPageAllowed(window.location.origin, appShell()) || !hasNativePlugin(DIRECT_PLUGIN)) return undefined;
   if (shared) return shared;
   const bridge = capacitorDirectBridge();
   if (!bridge) return undefined;

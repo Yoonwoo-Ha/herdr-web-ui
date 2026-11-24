@@ -172,8 +172,11 @@ export function mergeRegistries(own: Registry | null, other: Registry | null,
     const marks = [keptMark, otherMark].filter((mark) => mark !== undefined);
     const word = marks.findIndex((mark) => !VOUCHED.has(mark));
     const joinedBy = word >= 0 ? marks[word] : device.account !== undefined && device.account === twin.account ? marks[0] : keptMark;
+    // the tailnet nodes the same credential came from in either dir: a removal must keep every one of them out
+    const nodes = twin.token_hash === device.token_hash ? [...new Set([...device.tailnet_nodes ?? [], ...twin.tailnet_nodes ?? []])] : device.tailnet_nodes ?? [];
     devices.push({
       ...rest,
+      ...(nodes.length === 0 ? {} : { tailnet_nodes: nodes }),
       ...(rules.dropConflictingKeys && twin.held && !device.held ? { held: twin.held } : {}),
       ...(joinedBy === undefined ? {} : { joined_by: joinedBy }),
       ...(origin === undefined ? {} : { origin }),

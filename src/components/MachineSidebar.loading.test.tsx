@@ -84,3 +84,30 @@ it("counts its Settings gear as a button, and opens Settings even when the count
     renderer = undefined;
   }
 });
+
+it("draws Inbox beside the Settings gear, which opens the inbox and shows the sessions waiting as its badge", async () => {
+  for (const inbox of [{ waiting: 3 }, { waiting: 0 }, null]) {
+    const opened: string[] = [];
+    await act(async () => {
+      renderer = create(createElement(SettingsProvider, null, createElement(MachineSidebar, {
+        machines: [connectedNoRoster("local", "local", "Laptop")], selectedMachineId: "local", selectedPaneId: null, activity, actions,
+        inbox: inbox === null ? null : { waiting: inbox.waiting, open: () => opened.push("inbox") },
+        onSelect: () => {}, onNew: () => {}, onSetup: () => {}, onUsageLogin: () => {},
+      })), { createNodeMock: node });
+    });
+    const row = renderer!.root.findAll((found) => found.type === "div" && found.props.className === "sidebar-footer-row")[0]!;
+    const buttons = row.findAll((found) => found.type === "button").map((found) => String(found.props.className));
+    const entry = row.findAll((found) => found.type === "button" && String(found.props.className).includes("sidebar-footer-inbox"))[0];
+    if (inbox === null) {
+      expect(entry).toBeUndefined();
+    } else {
+      expect(buttons.findIndex((name) => name.includes("sidebar-footer-inbox"))).toBe(buttons.findIndex((name) => name.includes("sidebar-footer-settings")) + 1);
+      expect([entry!.props.type, entry!.props.title, entry!.props["aria-label"]]).toEqual(["button", "Inbox", inbox.waiting > 0 ? "Inbox · 3 waiting for you" : "Inbox"]);
+      expect(entry!.findAll((found) => found.props.className === "header-more-dot is-waiting").map((found) => found.props["data-count"])).toEqual(inbox.waiting > 0 ? ["3"] : []);
+      await act(async () => { entry!.props.onClick(); });
+      expect(opened).toEqual(["inbox"]);
+    }
+    await act(async () => renderer?.unmount());
+    renderer = undefined;
+  }
+});

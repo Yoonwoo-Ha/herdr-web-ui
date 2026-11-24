@@ -1,7 +1,7 @@
 import { type ChannelHandlers, HcConnection, HcError, type HcStreamMethod, type HcTransport } from "./connection.ts";
 import type { HcMethod, HcMethods } from "./hc-api.generated.ts";
 import { isRecord } from "./snapshot.ts";
-import { EVENT_LINE_BYTES } from "./adapter.ts";
+import { EVENT_LINE_BYTES } from "./event-stream.ts";
 
 /**
  * herdr-core seen from one of the other machines its core reaches (`hc machine add lab`), for the

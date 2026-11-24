@@ -45,6 +45,14 @@ const ANSWERS_REVIEW = {
   multi_select: false, custom_option_index: null,
 };
 const PLAN = { ...FORM, id: "demo-plan", kind: "plan", title: "Ready to code?", steps: undefined };
+/** hook-vs-screen's long command ① as its hook request carries it: one line, wider than a desktop's card */
+const LONG_COMMAND = "find /usr/share/doc -maxdepth 2 -type f -name '*.gz' -newer /etc/hostname -size +1k -printf '%TY-%Tm-%Td %s %p\\n' 2>/dev/null | sort -r | head -n 5 | awk '{print $1, $2, $3}'";
+const LONG_APPROVAL = {
+  id: "demo-long-command", agent: "claude", kind: "approval", title: "Bash command", question: "Do you want to proceed?",
+  body: `List the newest docs\n${LONG_COMMAND}`,
+  options: [{ label: "Yes", description: null }, { label: "Yes, and don't ask again for: find", description: null }, { label: "No", description: null }],
+  multi_select: false, custom_option_index: null,
+};
 const NEXT = { ...PLAN, id: "demo-next", title: "One more thing", question: "Which region should the counters live in?" };
 const OTHER = { ...PLAN, id: "demo-other", agent: "omo", title: "Proofread", question: "Which chapters should the proofread cover?" };
 const LONG_LABEL = "Approve with the changes the reviewer listed: keep the rate limit per user and report, move the counters to the shared store, and return Retry-After. ".repeat(15).slice(0, 2166);
@@ -332,6 +340,27 @@ try {
         }
       }
       console.log("PASS the approval card sits outside the transcript, directly over the input card on its column, at 1440 and 390, dark and light");
+
+      for (const size of [{ width: 1280, height: 800 }, { width: 390, height: 844, touch: true }]) {
+        const { page, errors, shot, close } = await open({ ...size, theme: "light", prompt: LONG_APPROVAL });
+        try {
+          const body = page.locator(".prompt-card-body");
+          assert.equal(await body.textContent(), LONG_APPROVAL.body);
+          // the end of the command is in the box, not pushed out past its right edge
+          const fit = await body.evaluate((node) => {
+            const box = node.getBoundingClientRect();
+            const range = document.createRange();
+            range.setStart(node.firstChild!, node.firstChild!.textContent!.length - 1);
+            range.setEnd(node.firstChild!, node.firstChild!.textContent!.length);
+            const end = range.getBoundingClientRect();
+            return { overflows: node.scrollWidth > node.clientWidth + 1, endInside: end.right <= box.right && end.left >= box.left };
+          });
+          assert.deepEqual(fit, { overflows: false, endInside: true }, `${size.width}: the long command wraps inside the card`);
+          assert.deepEqual(errors, []);
+          await shot(`approval-long-command-${size.width}-light`);
+        } catch (error) { await preserveFailure(page, error); } finally { await close(); }
+      }
+      console.log("PASS a long one-line command wraps inside the approval card to its end, at 1280 and 390");
 
       {
         const { page, errors, close } = await open({ width: 1440, height: 900 });

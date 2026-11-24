@@ -1,0 +1,25 @@
+{
+  "name": "sealed-made-in-python",
+  "note": "Made by a Python script that shares no code with the module or the list's readers (hashlib and the `cryptography` library): docs/account-list.md, \"The vectors of seal/\". Filled to 256 bytes with `pad`, as a writer seals.",
+  "sealed": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "seq": 12,
+    "epoch": {
+      "epoch": 5,
+      "key": "cb6f0f20bce5290c3db40add97a5491d8687a173892463eb94e4d654863a4cc3"
+    },
+    "bytes": "AVPgdN9AnPBlFHuUmDWKD0NXDGTsKIADMvyzNJ4PCD1Bvz_RhQGsUESc847U0sjJwcdbQL2BdwwyBP9fFgMg-X_JOtYV6_n531kTIO3_0BLZyldmquPWnIQT9KVqEAFEKpho7HJFSNZdlxzpkkOY2dNjk8Lwh5G2oCbW_G5xng8ioFgY0pNbxpiLkGoI0ZkCUySiQscHmAWUHPnl7X4okD1gVV3-rh3NOynTSQR2yF66HWcuvaWOnAMSZcUPfpWdaUr8T1NDi7iGW6lc6hIg1-Ji-lI1khAFIGWez1L1znj9KKsAI26KgDreHW9u22Rbwqt_XFyEFIJ_KRatl61HzA7Sex7hPlTbbB6BmlLfT2kxdVn9Q8Ey2NrEtnka"
+  },
+  "expect": {
+    "fields": [
+      [
+        "label",
+        "거실 맥북"
+      ],
+      [
+        "os",
+        "macos"
+      ]
+    ]
+  }
+}

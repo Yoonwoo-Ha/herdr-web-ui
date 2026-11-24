@@ -8,10 +8,19 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
-        window?.rootViewController = HerdrBridgeViewController()
+        // before anything opens: the saved PCs as this build can open them
+        PCStore.settleShell()
+        window?.rootViewController = HerdrBridgeViewController.first()
         window?.makeKeyAndVisible()
 
         SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
+    }
+
+    /// Back in front: each SSH PC listens again where iOS took its socket, and a connection that no longer answers is
+    /// made again before the page asks (OvisSsh); nothing typed is sent again.
+    func sceneWillEnterForeground(_ scene: UIScene) {
+        // a port another app took meanwhile leaves the web view's rule: the web view is built again without it
+        OvisSsh.tunnels.wakeAll(lost: { DispatchQueue.main.async { HerdrBridgeViewController.reopen() } })
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {

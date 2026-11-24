@@ -1,0 +1,1 @@
+export const detail = "The first screen shows an entry script and a style sheet. This text is loaded only when the button is pressed. The first screen and the later screen are deliberately separate, so their compressed sidecars can be checked independently.";

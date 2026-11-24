@@ -1,12 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { architectures, crateTree, expectedArchitectures, install, TREE_RELEASE, type Manifest } from "./pty-sidecar.ts";
+import { ACP_KEEPER, architectures, crateTree, expectedArchitectures, install, TREE_RELEASE, type Manifest } from "./pty-sidecar.ts";
+
+import { generateKeyPair, PTY_ASSETS, SERVER_PLATFORMS, releaseFile, DIST_ARCHIVE, signManifest, writeManifest, RELEASE_PUBLIC_KEY } from "./server-manifest.ts";
 
 const version = (JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version;
 const HOST = "#!/bin/sh\nprintf 'pty-sidecar: usage: fixture\\n' >&2\nexit 2\n";
+const KEEPER = "#!/bin/sh\nprintf 'Usage: ovis-acp-keeper ROOT -- AGENT\\n' >&2\nexit 2\n";
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 describe("install", () => {
@@ -140,30 +143,152 @@ describe("install", () => {
     files.clear();
     expect((await install({ releases, target: target(), platform: "linux-x64" })).message).toContain("HTTP 404");
     expect((await install({ releases, target: target(), platform: "win32-x64" })).message).toContain("no Rust PTY host for win32-x64");
+    expect((await install({ releases, target: target(), platform: "win32-x64", part: ACP_KEEPER })).message).toContain("no ACP keeper for win32-x64");
+  });
+
+  describe("the ACP keeper", () => {
+    const keeperSources = crateTree(undefined, ACP_KEEPER.crate);
+    const keeperTree = "tree" in keeperSources ? keeperSources.tree : "";
+    const keeper = (at: string, binary: string, manifest: Partial<Manifest> = {}) => {
+      files.set(`${at}/ovis-acp-keeper-linux-x64`, binary);
+      files.set(`${at}/ovis-acp-keeper.json`, JSON.stringify({
+        version, crate: keeperTree, assets: { "linux-x64": { file: "ovis-acp-keeper-linux-x64", sha256: sha256(KEEPER) } }, ...manifest,
+      }));
+    };
+    const keeperTarget = () => join(dir, crypto.randomUUID(), "ovis-acp-keeper");
+
+    it("installs from its own manifest, checked against its own crate tree, and a failure of either binary leaves the other's install alone", async () => {
+      files.clear();
+      publish(HOST);
+      keeper(`/v${version}`, KEEPER);
+      const [host, path] = [target(), keeperTarget()];
+      const results = await Promise.all([install({ releases, target: host, platform: "linux-x64" }), install({ releases, target: path, platform: "linux-x64", part: ACP_KEEPER })]);
+      expect(results).toEqual([{ ok: true, message: expect.stringContaining("Rust PTY host") }, { ok: true, message: expect.stringContaining("installed the ACP keeper") }]);
+      expect(readFileSync(path, "utf8")).toBe(KEEPER);
+      expect(JSON.parse(readFileSync(`${path}.json`, "utf8"))).toEqual({ crate: keeperTree, sha256: sha256(KEEPER), version });
+
+      keeper(`/v${version}`, `${KEEPER}# tampered\n`);
+      const broken = await Promise.all([install({ releases, target: target(), platform: "linux-x64" }), install({ releases, target: keeperTarget(), platform: "linux-x64", part: ACP_KEEPER })]);
+      expect(broken.map((result) => result.ok)).toEqual([true, false]);
+      expect(broken[1]!.message).toContain("does not match its SHA-256");
+
+      keeper(`/v${version}`, KEEPER);
+      publish(`${HOST}# tampered\n`);
+      const other = await Promise.all([install({ releases, target: target(), platform: "linux-x64" }), install({ releases, target: keeperTarget(), platform: "linux-x64", part: ACP_KEEPER })]);
+      expect(other.map((result) => result.ok)).toEqual([false, true]);
+    });
+
+    it("refuses a keeper that runs as the PTY host, or one built from other sources", async () => {
+      files.clear();
+      keeper(`/v${version}`, HOST, { assets: { "linux-x64": { file: "ovis-acp-keeper-linux-x64", sha256: sha256(HOST) } } });
+      expect((await install({ releases, target: keeperTarget(), platform: "linux-x64", part: ACP_KEEPER })).message).toContain("does not run on this PC");
+      keeper(`/v${version}`, KEEPER, { crate: tree });
+      expect((await install({ releases, target: keeperTarget(), platform: "linux-x64", part: ACP_KEEPER })).message).toContain("other crates/acp-keeper sources");
+    });
+
+    it("takes the keeper from the prerelease for both crate trees when the old host-only tag has another keeper", async () => {
+      files.clear();
+      keeper(`/v${version}`, KEEPER, { crate: "0".repeat(40) });
+      keeper(`/${TREE_RELEASE}${tree}`, KEEPER, { crate: "1".repeat(40) });
+      keeper(`/${TREE_RELEASE}${tree}-${keeperTree}`, KEEPER, { version: "0.0.1" });
+      const path = keeperTarget();
+      expect(await install({ releases, target: path, platform: "linux-x64", part: ACP_KEEPER })).toEqual({ ok: true, message: expect.stringContaining(`prerelease ${TREE_RELEASE}${tree.slice(0, 12)}`) });
+      expect(readFileSync(path, "utf8")).toBe(KEEPER);
+    });
+  });
+});
+
+describe.skipIf(!("tree" in crateTree()) || !("tree" in crateTree(undefined, ACP_KEEPER.crate)))("manifest", () => {
+  const MANIFEST_CLI = join(import.meta.dir, "pty-sidecar.ts");
+  function set(extra: string[] = []): string {
+    const dir = mkdtempSync(join(tmpdir(), "ovis-pty-sidecar-manifest-"));
+    for (const name of ["ovis-pty-sidecar", "ovis-acp-keeper"]) for (const asset of ["linux-x64", "linux-arm64", "darwin-universal"]) writeFileSync(join(dir, `${name}-${asset}`), `${name} ${asset}`);
+    for (const name of extra) writeFileSync(join(dir, name), "x");
+    return dir;
+  }
+
+  it("writes each binary's manifest for its own crate tree, and one SHA256SUMS over both", () => {
+    const dir = set();
+    try {
+      const run = Bun.spawnSync([process.execPath, MANIFEST_CLI, "manifest", dir], { stdout: "pipe", stderr: "pipe" });
+      expect(run.exitCode).toBe(0);
+      for (const [name, crate] of [["ovis-pty-sidecar", crateTree()], ["ovis-acp-keeper", crateTree(undefined, ACP_KEEPER.crate)]] as const) {
+        const manifest = JSON.parse(readFileSync(join(dir, `${name}.json`), "utf8")) as Manifest;
+        expect(manifest.version).toBe(version);
+        expect(manifest.crate).toBe("tree" in crate ? crate.tree : "");
+        expect(manifest.assets["darwin-arm64"]).toEqual({ file: `${name}-darwin-universal`, sha256: sha256(`${name} darwin-universal`) });
+        expect(Object.keys(manifest.assets).sort()).toEqual(["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"]);
+      }
+      const sums = readFileSync(join(dir, "SHA256SUMS"), "utf8").trim().split("\n");
+      expect(sums).toHaveLength(6);
+      expect(sums).toContain(`${sha256("ovis-acp-keeper linux-x64")}  ovis-acp-keeper-linux-x64`);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("refuses a set with a file no manifest names", () => {
+    const dir = set(["ovis-acp-keeper-win32-x64"]);
+    try {
+      const run = Bun.spawnSync([process.execPath, MANIFEST_CLI, "manifest", dir], { stdout: "pipe", stderr: "pipe" });
+      expect(run.exitCode).not.toBe(0);
+      expect(run.stderr.toString()).toContain("Unexpected files");
+      expect(existsSync(join(dir, "ovis-acp-keeper.json"))).toBe(false);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
 
 describe("pty-sidecar-attach.sh", () => {
   const ATTACH = join(import.meta.dir, "pty-sidecar-attach.sh");
-  function attach(view: string | null): { code: number; uploads: string[]; stderr: string } {
+  function attach(view: string | null, signed?: "good" | "changed"): { code: number; uploads: string[]; stderr: string } {
     const dir = mkdtempSync(join(tmpdir(), "ovis-pty-attach-"));
     try {
       const set = join(dir, "set");
       mkdirSync(set);
       writeFileSync(join(set, "ovis-pty-sidecar.json"), JSON.stringify({ version }));
-      for (const name of ["ovis-pty-sidecar-linux-x64", "SHA256SUMS"]) writeFileSync(join(set, name), "x");
+      for (const build of PTY_ASSETS) for (const prefix of ["ovis-pty-sidecar", "ovis-acp-keeper"]) writeFileSync(join(set, prefix + "-" + build), prefix + build);
+      for (const name of ["ovis-acp-keeper.json", "SHA256SUMS"]) writeFileSync(join(set, name), "metadata");
+      const docs = join(dir, "docs"); mkdirSync(docs);
+      let script = ATTACH;
+      if (signed) {
+        const key = generateKeyPair();
+        for (const build of PTY_ASSETS) for (const prefix of ["ovis-pty-sidecar", "ovis-acp-keeper"]) copyFileSync(join(set, prefix + "-" + build), join(docs, prefix + "-" + build));
+        for (const file of [...SERVER_PLATFORMS.map(releaseFile), DIST_ARCHIVE]) writeFileSync(join(docs, file), file);
+        writeManifest(docs, { version, sources: { server: "a".repeat(40), shared: "b".repeat(40) } }); signManifest(docs, key.privateKeyPem);
+        script = join(dir, "pty-sidecar-attach.sh");
+        for (const f of ["pty-sidecar-attach.sh", "verify-repair.ts", "release-assets.ts", "server-release-files.ts", "server-manifest.ts"]) copyFileSync(join(import.meta.dir, f), join(dir, f));
+        const verifier = join(dir, "server-manifest.ts"); writeFileSync(verifier, readFileSync(verifier, "utf8").replace(RELEASE_PUBLIC_KEY, key.publicKey));
+        if (signed === "changed") writeFileSync(join(set, "ovis-acp-keeper-linux-arm64"), "different build");
+      }
       const bin = join(dir, "bin");
       mkdirSync(bin);
       const log = join(dir, "gh.log");
       const assets = join(dir, "assets.txt");
       if (view !== null) writeFileSync(assets, `${view}\n`);
       const answer = view === null ? `echo "HTTP 502: Bad Gateway" >&2; exit 1` : `cat "${assets}"`;
-      writeFileSync(join(bin, "gh"), `#!/bin/sh\necho "$*" >> "${log}"\ncase "$2" in view) ${answer} ;; upload) exit 0 ;; esac\n`, { mode: 0o755 });
-      const run = Bun.spawnSync(["bash", ATTACH, `v${version}`, set], { env: { ...process.env, PATH: `${bin}:${process.env["PATH"]}` }, stdout: "pipe", stderr: "pipe" });
+      writeFileSync(join(bin, "gh"), `#!/bin/sh\necho "$*" >> "${log}"\ncase "$2" in view) ${answer} ;; download) cp "${docs}/$5" "$7" ;; upload) exit 0 ;; esac\n`, { mode: 0o755 });
+      const run = Bun.spawnSync(["bash", script, `v${version}`, set], { env: { ...process.env, PATH: `${bin}:${process.env["PATH"]}` }, stdout: "pipe", stderr: "pipe" });
       const calls = existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : [];
       return { code: run.exitCode, uploads: calls.filter((call) => call.startsWith("release upload")), stderr: run.stderr.toString() };
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
+
+  it("never uploads when the published keeper companion cannot be authenticated", () => {
+    const result = attach("ovis-acp-keeper-server.json\novis-acp-keeper-server.json.sig");
+    expect(result.code).not.toBe(0);
+    expect(result.uploads).toEqual([]);
+  });
+
+  it("refuses a rebuilt keeper that differs from the authenticated published bytes", () => {
+    const result = attach("ovis-acp-keeper-server.json", "changed");
+    expect(result.code).not.toBe(0);
+    expect(result.uploads).toEqual([]);
+  });
+
+  it("repairs only the host on releases that never signed keepers", () => {
+    const result = attach("Ovis.dmg");
+    expect(result.code).toBe(0);
+    expect(result.uploads).toHaveLength(2);
+    expect(result.uploads.join(" ")).not.toContain("ovis-acp-keeper");
+  });
 
   it("uploads nothing when the release lookup fails, so a complete set is never half replaced", () => {
     const result = attach(null);
@@ -178,12 +303,15 @@ describe("pty-sidecar-attach.sh", () => {
     expect(result.uploads).toEqual([]);
   });
 
-  it("uploads the binaries before the manifest to a release without the host", () => {
-    const result = attach("Ovis.dmg");
+  it("uploads the binaries before the manifests, and the host's last, to a release without the host", () => {
+    const result = attach("ovis-acp-keeper-server.json", "good");
     expect(result.code).toBe(0);
-    expect(result.uploads).toHaveLength(2);
+    expect(result.uploads).toHaveLength(3);
     expect(result.uploads[0]).toContain("--clobber");
-    expect(result.uploads[1]).toMatch(/ovis-pty-sidecar\.json$/);
+    expect(result.uploads[0]).toMatch(/ovis-pty-sidecar-linux-x64 .*ovis-acp-keeper-linux-x64 .*SHA256SUMS/);
+    expect(result.uploads[0]).not.toContain(".json");
+    expect(result.uploads[1]).toMatch(/ovis-acp-keeper\.json --clobber$/);
+    expect(result.uploads[2]).toMatch(/ovis-pty-sidecar\.json$/);
   });
 });
 
@@ -203,6 +331,12 @@ describe("crateTree", () => {
       git("checkout", "-q", "--", ".");
       writeFileSync(join(repo, "crates/pty-sidecar/src/extra.rs"), "");
       expect(crateTree(repo)).toEqual({ error: expect.stringContaining("not committed") });
+      expect(crateTree(repo, ACP_KEEPER.crate)).toEqual({ error: expect.stringContaining("not a git checkout") });
+      mkdirSync(join(repo, "crates/acp-keeper/src"), { recursive: true });
+      writeFileSync(join(repo, "crates/acp-keeper/src/main.rs"), "fn main() {}\n");
+      git("add", "crates/acp-keeper");
+      git("commit", "-qm", "keeper");
+      expect("tree" in crateTree(repo, ACP_KEEPER.crate)).toBe(true);
     } finally { rmSync(repo, { recursive: true, force: true }); }
   });
 });

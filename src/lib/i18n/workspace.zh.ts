@@ -5,6 +5,7 @@
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const WORKSPACE_ZH: Record<string, string> = {
+  "Open": "打开",
   "Use folder {path}": "使用文件夹 {path}",
   "{n} more recent folders": "另外 {n} 个最近的文件夹",
   "New worktree · {name}": "新建工作树 · {name}",

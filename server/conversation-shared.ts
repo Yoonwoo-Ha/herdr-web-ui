@@ -147,7 +147,7 @@ export class HistoryChanged extends Error {
 
 export type RecognizedConversation = {
   activity?: "thinking" | "working" | "idle";
-  source: "dsh-transcript" | "kiro-transcript" | "copilot-transcript" | "grok-transcript" | "agy-transcript" | "muse-transcript" | "letta-transcript" | "kimi-transcript" | "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "cmd-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "hermes-transcript";
+  source: "acp" | "dsh-transcript" | "kiro-transcript" | "copilot-transcript" | "grok-transcript" | "agy-transcript" | "muse-transcript" | "letta-transcript" | "kimi-transcript" | "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "cmd-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "hermes-transcript";
   turns: ConversationTurn[];
   metadata: ConversationMetadata;
   screen?: true;
@@ -163,7 +163,7 @@ export type RecognizedConversation = {
   version: string;
 };
 
-export type StreamSource = Exclude<RecognizedConversation["source"], "opencode-transcript" | "devin-transcript" | "hermes-transcript" | "dsh-transcript" | "kiro-transcript">;
+export type StreamSource = Exclude<RecognizedConversation["source"], "acp" | "opencode-transcript" | "devin-transcript" | "hermes-transcript" | "dsh-transcript" | "kiro-transcript">;
 
 const PROCESS_VERSION = randomUUID();
 

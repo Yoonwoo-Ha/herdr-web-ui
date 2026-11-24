@@ -5,9 +5,47 @@ import { deriveServerId } from "../../../shared/relay-server-proof.ts";
 import { importPublicKey } from "../../../shared/relay-e2ee.ts";
 import { nativeTransport, setTransport } from "../transport.ts";
 import { AddPcWaitOver, addInOnePress, ownWindowHere, keepAddPcWaiting, listOfferedPc, listThisPc, onAddPcWaiting, pagePc, pcAnswers, reopenAddWindow } from "./addThisPc.ts";
-import { AccountServiceError, type AccountService } from "./service.ts";
+import { FakeAccountService } from "../../../shared/account-service-fake.ts";
+import { readSeenPcs } from "./seenPcs.ts";
+import { AccountService, AccountServiceError } from "./service.ts";
+import { memoryAccountStore, memoryLock } from "./store.ts";
 
 afterEach(() => setTransport(nativeTransport));
+
+test("Add this PC is kept in the device's record of its PCs only from the PC's own window: one press from any other page proves nothing", async () => {
+  const savedLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+  const savedStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    for (const [hostname, kept] of [["127.0.0.1", { how: "window" }], ["desk.tailnet.ts.net", undefined]] as const) {
+      const keys = generateKeyPair();
+      const publicKey = exportPublicKey(keys.publicKey);
+      const serverId = deriveServerId(importPublicKey(publicKey));
+      const stored = new Map<string, string>();
+      Object.defineProperty(globalThis, "localStorage", { configurable: true, writable: true, value: { getItem: (name: string) => stored.get(name) ?? null, setItem: (name: string, value: string) => { stored.set(name, value); }, removeItem: (name: string) => { stored.delete(name); } } });
+      Object.defineProperty(globalThis, "location", { configurable: true, writable: true, value: { hostname, pathname: "/", origin: `http://${hostname}`, href: `http://${hostname}/`, search: "", hash: "" } });
+      const answer = async (input: RequestInfo | URL): Promise<Response> => {
+        const path = new URL(String(input), "http://localhost").pathname;
+        if (path === "/api/account/status") return Response.json({ account: null });
+        if (path === "/api/relay/link") return Response.json({ url: encodeOffer({ v: 1, server_id: serverId, server_public_key: publicKey, relay: "wss://relay.ovis.sh", name: "desk" }, "https://app.ovis.sh") });
+        return Response.json({});
+      };
+      setTransport({ ...nativeTransport, fetch: answer });
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(answer as typeof fetch);
+      const service = { listPcs: async () => [], putPc: async () => {}, deletePc: async () => {}, session: async () => ({ account: "acct_1" }), forSignIn() { return this; } } as unknown as AccountService;
+      try {
+        await listThisPc(service, { relistMs: 540_000 });
+        // the record is written behind the add, in turns of this thread: fifty of them pass before it is read
+        for (let turn = 0; turn < 50; turn += 1) await Promise.resolve();
+        expect(readSeenPcs("acct_1").pcs[Buffer.from(keys.publicKey).toString("hex")]).toEqual(kept as never);
+      } finally { fetchSpy.mockRestore(); }
+    }
+  } finally {
+    warn.mockRestore();
+    if (savedLocation) Object.defineProperty(globalThis, "location", savedLocation); else Reflect.deleteProperty(globalThis, "location");
+    if (savedStorage) Object.defineProperty(globalThis, "localStorage", savedStorage); else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});
 
 test("a failure of the relay pass setup never keeps Add this PC from its pairing wait", async () => {
   const keys = generateKeyPair();
@@ -33,6 +71,34 @@ test("a failure of the relay pass setup never keeps Add this PC from its pairing
   } finally { fetchSpy.mockRestore(); warn.mockRestore(); }
 });
 
+test("Add this PC lists it with the system this browser runs, which a device of the account shows while the listing asks", async () => {
+  const keys = generateKeyPair();
+  const publicKey = exportPublicKey(keys.publicKey);
+  const serverId = deriveServerId(importPublicKey(publicKey));
+  const answer = async (input: RequestInfo | URL): Promise<Response> => {
+    const path = new URL(String(input), "http://localhost").pathname;
+    if (path === "/api/account/status") return Response.json({ account: null });
+    if (path === "/api/relay/link") return Response.json({ url: encodeOffer({ v: 1, server_id: serverId, server_public_key: publicKey, relay: "wss://relay.ovis.sh", name: "desk" }, "https://app.ovis.sh") });
+    if (path === "/api/account/pc-proof") return Response.json({ error: { code: "not_found" } }, { status: 404 });
+    return new Response(null, { status: 204 });
+  };
+  setTransport({ ...nativeTransport, fetch: answer });
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(answer as typeof fetch);
+  const navigatorWas = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { value: { userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36", maxTouchPoints: 0 }, configurable: true });
+  const entries: unknown[] = [];
+  const service = { listPcs: async () => [], putPc: async (_id: string, entry: unknown) => { entries.push(entry); }, deletePc: async () => {}, session: async () => ({ account: "acct_1" }), forSignIn() { return this; } } as unknown as AccountService;
+  try {
+    await listThisPc(service, { relistMs: 540_000 });
+    await listOfferedPc(service, { v: 1, server_id: serverId, server_public_key: publicKey, relay: "wss://relay.ovis.sh", name: "desk", code: "123456" }, "acct_1");
+    expect(entries.map((entry) => (entry as { os?: unknown }).os)).toEqual(["linux", "linux"]);
+  } finally {
+    fetchSpy.mockRestore();
+    if (navigatorWas === undefined) Reflect.deleteProperty(globalThis, "navigator");
+    else Object.defineProperty(globalThis, "navigator", navigatorWas);
+  }
+});
+
 test("a pass setup that never answers does not hold Add this PC either", async () => {
   const keys = generateKeyPair();
   const publicKey = exportPublicKey(keys.publicKey);
@@ -43,6 +109,7 @@ test("a pass setup that never answers does not hold Add this PC either", async (
     asked.push(path);
     if (path === "/api/account/status") return Response.json({ account: null });
     if (path === "/api/relay/link") return Response.json({ url: encodeOffer({ v: 1, server_id: serverId, server_public_key: publicKey, relay: "wss://relay.ovis.sh", name: "desk" }, "https://app.ovis.sh") });
+    if (path === "/api/account/pc-proof") return Response.json({ error: { code: "not_found" } }, { status: 404 });
     return new Promise<Response>(() => {});
   };
   setTransport({ ...nativeTransport, fetch: answer });
@@ -257,10 +324,16 @@ test("one press asks nothing when the stored sign-in is not the account it was f
   } finally { f.restore(); }
 });
 
-test("a refusal of the account service (no two-step, a stale sign-in, the daily cap, an older service) leaves the PC unasked", async () => {
-  const f = onePress({ admit: () => Promise.reject(new AccountServiceError(403, "two_step_required", "Set up two-step sign-in first")) });
+test.each([
+  // signing in again as before cannot pass it: the person is told what does
+  ["two_step_required", "no-two-step"],
+  ["session_not_fresh", "sign-in-again"],
+  ["own_sign_in_required", "sign-in-again"],
+  ["pc_add_cap", "refused"],
+] as const)("a refusal of the account service (%s) leaves the PC unasked and answers %s", async (code, outcome) => {
+  const f = onePress({ admit: () => Promise.reject(new AccountServiceError(403, code, "The sign-in was refused")) });
   try {
-    expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe("sign-in-again");
+    expect<string>(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe(outcome);
     expect(f.calls).toEqual([`admit ${PC_ID} as acct_1`]);
   } finally { f.restore(); }
 });
@@ -304,5 +377,61 @@ test("one press names this PC for nobody when another tab signed in to another a
   try {
     expect(await addInOnePress(f.service, PC_ID, "acct_1", () => true, true)).toBe("refused");
     expect(f.calls).toEqual([`admit ${PC_ID} as acct_1`]);
+  } finally { f.restore(); }
+});
+
+/**
+ * The PC's own window signed in to the account with its own sign-in, made `age` ago: the real client over the account
+ * service's fake. It registers no key of its own (only the phone app and app.ovis.sh do), so an old sign-in proves nothing.
+ */
+async function ownWindowSignedIn(age: number) {
+  let now = Date.now();
+  const fake = new FakeAccountService(() => now);
+  fake.opensAll = true;
+  const store = memoryAccountStore();
+  const token = fake.issueToken("acct_1");
+  await store.set("session", { service: "https://account.example", account: "acct_1", provider: "github", access_token: token, refresh_token: "r", expires_at: now + 365 * 86_400_000, sign_in_id: "this-sign-in", signed_in_at: now });
+  now += age;
+  const service = new AccountService({ store, fetch: fake.fetch, lock: memoryLock(), now: () => now });
+  const keys = generateKeyPair();
+  const publicKey = exportPublicKey(keys.publicKey);
+  const serverId = deriveServerId(importPublicKey(publicKey));
+  const challenges = (): number => fake.requests.filter((line) => line === "POST /v1/pcs/challenge").length;
+  return { fake, service, serverId, publicKey, challenges };
+}
+
+test("Add this PC in one press from a sign-in made just now: as before, nothing is proved", async () => {
+  const signedIn = await ownWindowSignedIn(0);
+  const pcSide = async (input: RequestInfo | URL): Promise<Response> => {
+    const path = new URL(String(input instanceof Request ? input.url : input), "http://localhost").pathname;
+    if (path === "/api/account/status") return Response.json({ account: null });
+    if (path === "/api/relay/link") return Response.json({ url: encodeOffer({ v: 1, server_id: signedIn.serverId, server_public_key: signedIn.publicKey, relay: "wss://relay.ovis.sh", name: "desk" }, "https://app.ovis.sh") });
+    if (path === "/api/account/pc-proof") return Response.json({ error: { code: "not_found" } }, { status: 404 });
+    if (path === "/api/account/one-press") return Response.json({ account: "acct_1" });
+    return new Response(null, { status: 204 });
+  };
+  setTransport({ ...nativeTransport, fetch: pcSide });
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(pcSide as typeof fetch);
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const listed = await listThisPc(signedIn.service, { relistMs: 540_000 });
+    expect(await addInOnePress(signedIn.service, listed.serverId, "acct_1", () => true, true)).toBe("added");
+    expect(signedIn.challenges()).toBe(0);
+    expect(signedIn.fake.pcs("acct_1").map((pc) => [pc.server_id, pc.listed_by_device, pc.admitted_at !== null])).toEqual([[signedIn.serverId, false, true]]);
+  } finally { fetchSpy.mockRestore(); warn.mockRestore(); }
+});
+
+test("one press from a sign-in days old is refused as before: sign-in-again, after one bare admit", async () => {
+  const signedIn = await ownWindowSignedIn(3 * 86_400_000);
+  // the PC listed itself with a sign-in code of its own, as ovis add does
+  const typed = signedIn.fake.issueToken("acct_1", { device: true });
+  const put = await signedIn.fake.fetch(`https://account.example/v1/pcs/${signedIn.serverId}`, { method: "PUT", headers: { authorization: `Bearer ${typed}`, "content-type": "application/json" },
+    body: JSON.stringify({ label: "desk", public_key: Array.from(importPublicKey(signedIn.publicKey), (byte) => byte.toString(16).padStart(2, "0")).join(""), relay: "wss://relay.ovis.sh" }) });
+  expect(put.ok).toBe(true);
+  const f = onePress();
+  try {
+    expect(await addInOnePress(signedIn.service, signedIn.serverId, "acct_1", () => true, true)).toBe("sign-in-again");
+    expect(signedIn.challenges()).toBe(0);
+    expect(signedIn.fake.requests.filter((line) => line.endsWith("/admit"))).toHaveLength(1);
   } finally { f.restore(); }
 });

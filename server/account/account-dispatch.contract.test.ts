@@ -3,7 +3,7 @@ import { handleRequest, type ServerContext } from "../dispatch.ts";
 import { ACCOUNT, createListedPc } from "./listed-pc.test-helpers.ts";
 import { JOIN_HOLD_MS } from "./join-hold.ts";
 import { accountRouteAction, accountRouteGuard } from "./account-row-rights.ts";
-import { DISPATCH_MUTATIONS, RELAY_CONTROLS } from "../dispatch-routes.ts";
+import { DISPATCH_MUTATIONS, RELAY_CONTROLS, TAILSCALE_CONTROLS } from "../dispatch-routes.ts";
 import { relayConnection } from "../relay/test-helpers.ts";
 import { ask, phone } from "./pairing.test-helpers.ts";
 
@@ -93,12 +93,12 @@ test("R1-R10: every mutation registered by dispatch has an action or a proven ha
   }
 });
 
-test("R5, R6, R8: registered relay controls and introductions refuse account-joined callers at their handler guards", async () => {
+test("R5, R6, R8: registered relay controls, introductions, the confirm page and the Tailscale controls refuse account-joined callers at their handler guards", async () => {
   const { rows, device, request } = await listedDispatcher();
   const clock = spyOn(Date, "now").mockReturnValue(Date.now() + JOIN_HOLD_MS);
   try {
     expect(rows.access(device.id)).toEqual({ ok: true });
-    for (const path of [...Object.values(RELAY_CONTROLS), "/api/account/introduce"]) {
+    for (const path of [...Object.values(RELAY_CONTROLS), "/api/account/introduce", "/api/account/confirm-page", ...Object.values(TAILSCALE_CONTROLS)]) {
       const response = await request("POST", path);
       expect(response?.status, path).toBe(403);
       const code = path === RELAY_CONTROLS.pairing || path === "/api/account/introduce" ? "account_required" : "local_required";
@@ -139,7 +139,6 @@ test("P5, R7, R9: signed-in account sees refusals instead of PC catalogs, remote
       ["/api/alerts/webhook", "PUT", "member_required"],
       ["/api/alerts/webhook", "DELETE", "member_required"],
       ["/api/alerts/webhook", "POST", "member_required"],
-      ["/api/machines", "GET", "local_only"],
       ["/api/machines/events", "GET", "local_only"],
       ["/api/preferences?machine_id=other", "GET", "local_only"],
       ["/ws?machine_id=other", "GET", "local_only"],
@@ -188,6 +187,33 @@ test("R7: a listed event socket receives only this PC's roster, never its siblin
     expect(frame.type === "machine-event" && frame.event.type === "machines" && frame.event.machines.map(machine => machine.id)).toEqual(["local"]);
     expect(ws.messages.some(message => message.type === "machine-event" && message.event.type === "remote-pairings")).toBe(false);
   } finally { subscription.mockRestore(); clock.mockRestore(); }
+});
+
+test("R7: a listed device's roster read answers this PC's own row, as its event socket does, never a sibling's", async () => {
+  const { fixture, serverId, device } = await listedDispatcher();
+  const { core } = fixture.app.context.services;
+  const local = core.machines?.list().find(machine => machine.id === "local");
+  if (!core.machines || !local) throw new Error("Missing local machine");
+  const clock = spyOn(Date, "now").mockReturnValue(Date.now() + JOIN_HOLD_MS);
+  const listing = spyOn(core.machines, "list").mockReturnValue([local, { ...local, id: "other-pc", name: "Sibling" }]);
+  const proving = spyOn(core.machines, "verifySourceBoot");
+  try {
+    const link = await relayConnection(fixture, { serverId });
+    await link.auth(device);
+    for (const path of ["/api/machines", "/api/machines?compact_agents=1"]) {
+      const response = await ask(link, path);
+      const machines = (response.body as { machines?: { id: string }[] }).machines;
+      expect({ path, status: response.status, ids: machines?.map(machine => machine.id) }).toEqual({ path, status: 200, ids: ["local"] });
+    }
+    for (const path of [
+      "/api/machines?verify_source_boot=other-pc", "/api/machines?verify_source_boot=local", "/api/machines?compact_agents=1&verify_source_boot=other-pc",
+      "/api/machines?machine_id=other-pc", "/api/machines/other-pc/session", "/api/machines/local/machines",
+    ]) {
+      const response = await ask(link, path);
+      expect({ path, status: response.status, code: response.body.error?.code }).toEqual({ path, status: 403, code: "local_only" });
+    }
+    expect(proving).not.toHaveBeenCalled();
+  } finally { proving.mockRestore(); listing.mockRestore(); clock.mockRestore(); }
 });
 
 test("R7: every machine selector must name this PC before HTTP or WS dispatch", async () => {

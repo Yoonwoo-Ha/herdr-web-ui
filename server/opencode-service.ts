@@ -380,18 +380,105 @@ export function subscribeOpenCodeEvents(config: OpenCodeServiceConfig, handlers:
   };
 }
 
-export async function replyOpenCodeForm(
+/** A reply's status: 0 when none came back, so the reply may or may not have landed. */
+async function reply(config: OpenCodeServiceConfig, path: string, payload: unknown, signal?: AbortSignal): Promise<{ ok: boolean; status: number }> {
+  try {
+    const response = await openCodeRequest(config, path, signal, JSON.stringify(payload));
+    const status = response?.status ?? 0;
+    return { ok: status === 200 || status === 204, status };
+  } catch {
+    return { ok: false, status: 0 };
+  }
+}
+
+export function replyOpenCodeForm(
   config: OpenCodeServiceConfig,
   sessionID: string,
   formID: string,
   answers: Record<string, string | string[]>,
   signal?: AbortSignal,
 ): Promise<{ ok: boolean; status: number }> {
-  try {
-    const response = await openCodeRequest(config, `/api/session/${encodeURIComponent(sessionID)}/form/${encodeURIComponent(formID)}/reply`, signal, JSON.stringify({ answer: answers }));
-    const status = response?.status ?? 0;
-    return { ok: status === 200 || status === 204, status };
-  } catch {
-    return { ok: false, status: 0 };
+  return reply(config, `/api/session/${encodeURIComponent(sessionID)}/form/${encodeURIComponent(formID)}/reply`, { answer: answers }, signal);
+}
+
+/** A request OpenCode 2's permission service holds for a session's tool call, waiting on its user (Permission.Request at 2.2.2). */
+export interface OpenCodePermissionRequest {
+  id: string;
+  sessionID: string;
+  /** `shell`, `edit`, `webfetch`, `external_directory`, an MCP tool's `<server>_<tool>`, ... */
+  action: string;
+  /** what it asks for: the command, the file, the URL (`*` for an MCP tool) */
+  resources: string[];
+  /** the patterns Always allow saves for the project; absent or empty, OpenCode offers no Always allow */
+  save?: string[];
+  /** `files[].patch` for an edit, `url` for a webfetch, `input` for an MCP tool */
+  metadata?: Record<string, unknown>;
+  /** the tool call that asks: its assistant message and call id */
+  source?: { messageID: string; callID: string };
+  /** that call's input, read from its message (withShellInput) */
+  input?: Record<string, unknown>;
+}
+
+export type OpenCodePermissionDecision = "once" | "always" | "reject";
+
+/** The permission routes are experimental in OpenCode 2's OpenAPI: only a verified 2.x.y service is asked, or answered. */
+export const openCodePermissionsRead = (version: string): boolean => /^2\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version);
+
+/**
+ * GET /api/session/{id}/permission: the requests the session waits on, oldest first. The route is experimental in
+ * OpenCode's OpenAPI, so a list holding anything of another shape, or of another session, is no answer (null): those
+ * requests stay with the terminal, as before the route was read.
+ */
+export async function listPendingPermissions(config: OpenCodeServiceConfig, sessionID: string, signal?: AbortSignal): Promise<OpenCodePermissionRequest[] | null> {
+  const body = object(await getJson(config, `/api/session/${encodeURIComponent(sessionID)}/permission`, signal));
+  if (!body || !Array.isArray(body.data)) return null;
+  const strings = (value: unknown): value is string[] => Array.isArray(value) && value.length <= 64 && value.every((item) => typeof item === "string");
+  const requests: OpenCodePermissionRequest[] = [];
+  for (const item of body.data) {
+    const row = object(item);
+    if (!row || typeof row.id !== "string" || !row.id.startsWith("per") || row.sessionID !== sessionID || typeof row.action !== "string" || !row.action
+      || !strings(row.resources) || (row.save !== undefined && !strings(row.save)) || (row.metadata !== undefined && !object(row.metadata))) return null;
+    const source = object(row.source);
+    requests.push({
+      id: row.id, sessionID, action: row.action, resources: row.resources,
+      ...(row.save === undefined ? {} : { save: row.save }), ...(row.metadata === undefined ? {} : { metadata: object(row.metadata)! }),
+      ...(source?.type === "tool" && typeof source.messageID === "string" && source.messageID && typeof source.id === "string" && source.id
+        ? { source: { messageID: source.messageID, callID: source.id } } : {}),
+    });
   }
+  return requests;
+}
+
+/**
+ * GET /api/session/{id}/message/{messageID}: the input of the tool call a request names, as OpenCode's TUI reads it
+ * (`source` → the assistant message's tool part, unless its input is still streaming), or null. The message holds the
+ * turn's earlier tool output too, so it may be large.
+ */
+export async function readOpenCodeToolInput(config: OpenCodeServiceConfig, sessionID: string, { messageID, callID }: { messageID: string; callID: string }, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
+  const message = object(object(await getJson(config, `/api/session/${encodeURIComponent(sessionID)}/message/${encodeURIComponent(messageID)}`, signal, 8 * 1024 * 1024))?.data);
+  if (message?.type !== "assistant" || message.id !== messageID || !Array.isArray(message.content)) return null;
+  const call = message.content.map(object).find((part) => part?.type === "tool" && part.id === callID);
+  const state = object(call?.state);
+  return state && state.status !== "streaming" ? object(state.input) : null;
+}
+
+/**
+ * The requests with the first one's command read from its call when it is a shell request: `resources` holds what the
+ * permission rules match, pieces of the command (`a && b >> f` comes as `a` and `b`), so only the call's input says
+ * what runs. A later read of the same request, naming the same call, reuses the input: a running call's input does not
+ * change.
+ */
+export async function withShellInput(config: OpenCodeServiceConfig, requests: OpenCodePermissionRequest[] | null, known: readonly OpenCodePermissionRequest[] | null | undefined, signal?: AbortSignal): Promise<OpenCodePermissionRequest[] | null> {
+  const first = requests?.[0];
+  if (!requests || !first || first.action !== "shell" || !first.source) return requests;
+  const { messageID, callID } = first.source;
+  const input = known?.find((request) => request.id === first.id && request.sessionID === first.sessionID
+    && request.source?.messageID === messageID && request.source.callID === callID)?.input
+    ?? await readOpenCodeToolInput(config, first.sessionID, first.source, signal);
+  return input ? [{ ...first, input }, ...requests.slice(1)] : requests;
+}
+
+/** POST /api/session/{id}/permission/{requestID}/reply: 204 once OpenCode took it, 404 when it no longer holds the request. */
+export function replyOpenCodePermission(config: OpenCodeServiceConfig, sessionID: string, requestID: string, decision: OpenCodePermissionDecision, signal?: AbortSignal): Promise<{ ok: boolean; status: number }> {
+  return reply(config, `/api/session/${encodeURIComponent(sessionID)}/permission/${encodeURIComponent(requestID)}/reply`, { decision }, signal);
 }

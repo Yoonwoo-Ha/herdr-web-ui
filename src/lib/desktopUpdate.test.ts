@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { desktopUpdateBridge, readDesktopUpdate, watchDesktopUpdate, type DesktopUpdate, type DesktopUpdateBridge } from "./desktopUpdate.ts";
+import { appUpdateBridge, desktopUpdateBridge, readAppUpdate, readDesktopUpdate, watchAppUpdate, watchDesktopUpdate, type AppUpdate, type AppUpdateBridge, type DesktopUpdate, type DesktopUpdateBridge } from "./desktopUpdate.ts";
 
 function fakeBridge() {
   let answer: (update: unknown) => void = () => undefined;
@@ -96,5 +96,60 @@ describe("desktopUpdateBridge", () => {
     withWindow({ ovisUpdate: bridge }, () => expect(desktopUpdateBridge()).toBe(bridge));
     withWindow({}, () => expect(desktopUpdateBridge()).toBeNull());
     withWindow({ ovisUpdate: { current: bridge.current } }, () => expect(desktopUpdateBridge()).toBeNull());
+  });
+
+  it("has About's check only from an app that offers it: an older app has the line's bridge alone", () => {
+    const { bridge } = fakeBridge();
+    const checking: AppUpdateBridge = { ...bridge, state: async () => null, onState: () => () => {}, check: async () => {} };
+    withWindow({ ovisUpdate: checking }, () => expect(appUpdateBridge()).toBe(checking));
+    withWindow({ ovisUpdate: bridge }, () => expect(appUpdateBridge()).toBeNull());
+    withWindow({}, () => expect(appUpdateBridge()).toBeNull());
+  });
+});
+
+describe("readAppUpdate", () => {
+  const idle = { version: "0.5.8", phase: "idle", update: null, percent: null, error: null };
+
+  it("reads the app's version and phase, with what each phase carries", () => {
+    expect(readAppUpdate(idle)).toEqual(idle as AppUpdate);
+    expect(readAppUpdate({ ...idle, phase: "downloading", update: "0.5.9", percent: 42.7 })).toEqual({ ...idle, phase: "downloading", update: "0.5.9", percent: 42 } as AppUpdate);
+    expect(readAppUpdate({ ...idle, phase: "failed", error: "feed is down" })?.error).toBe("feed is down");
+  });
+
+  it("keeps a percent within 0 to 100, and drops one that is no number", () => {
+    const downloading = { ...idle, phase: "downloading", update: "0.5.9" };
+    expect(readAppUpdate({ ...downloading, percent: 140 })?.percent).toBe(100);
+    expect(readAppUpdate({ ...downloading, percent: Number.NaN })?.percent).toBeNull();
+    expect(readAppUpdate({ ...downloading, percent: "42" })?.percent).toBeNull();
+  });
+
+  it("reads anything else as no answer", () => {
+    for (const nothing of [null, undefined, "0.5.8", {}, { ...idle, version: "" }, { ...idle, phase: "installing" }, { ...idle, phase: 3 }]) expect(readAppUpdate(nothing)).toBeNull();
+    // a download or a held update with no version to name
+    for (const phase of ["downloading", "ready"]) expect(readAppUpdate({ ...idle, phase })).toBeNull();
+  });
+});
+
+describe("watchAppUpdate", () => {
+  it("listens before it asks, follows the app's check, and drops an answer that a change overtook", async () => {
+    let answer: (state: unknown) => void = () => undefined;
+    const listeners = new Set<(state: unknown) => void>();
+    const calls: string[] = [];
+    const { bridge } = fakeBridge();
+    const app: AppUpdateBridge = {
+      ...bridge,
+      state: () => { calls.push("state"); return new Promise((resolve) => { answer = resolve; }); },
+      onState: (listener) => { calls.push("onState"); listeners.add(listener); return () => { listeners.delete(listener); }; },
+      check: async () => {},
+    };
+    const told: (AppUpdate | null)[] = [];
+    const stop = watchAppUpdate(app, (state) => told.push(state));
+    expect(calls).toEqual(["onState", "state"]);
+    for (const listener of listeners) listener({ version: "0.5.8", phase: "checking" });
+    answer({ version: "0.5.8", phase: "idle" });
+    await settled();
+    expect(told.map((state) => state?.phase)).toEqual(["checking"]);
+    stop();
+    expect(listeners.size).toBe(0);
   });
 });

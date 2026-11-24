@@ -1,0 +1,28 @@
+{
+  "name": "sealed",
+  "sealed": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "seq": 7,
+    "epoch": {
+      "epoch": 2,
+      "key": "2fa00c28d4ee2a5999e129d3cf60c3f4c8f5af081d6da74f92a4cc6c67e66bb0"
+    },
+    "bytes": "ATb2oaBL9ENVPHpzm4wqCvajPEVaQ94aaI668vvET6mOTU7Rucq-xybkMjh--SPCrmiX7r2UkQILAVJheSZBjrBhOivEe2aZYzzkHHz9YbytM-LVS-gXoU25b1ViDycjcDpqOoppZ5a0JKG207JztIjMCe3D0FXsNJK8qWeAlw1QvUxh-YU"
+  },
+  "expect": {
+    "fields": [
+      [
+        "endpoint",
+        "TEST-ONLY-endpoint.example:17420"
+      ],
+      [
+        "label",
+        "Home laptop"
+      ],
+      [
+        "os",
+        "linux"
+      ]
+    ]
+  }
+}

@@ -1,6 +1,7 @@
 import { MIN_SERVER_VERSION, MuxProtocolError } from "../../../shared/relay-mux.ts";
 import type { UpdateStatus } from "../../../shared/update.ts";
 import { fetchUpdateStatus, requestUpdate } from "../api.ts";
+import { appShell, type AppShell } from "../appShell.ts";
 import { requestFreshShell } from "../shellMode.ts";
 import { setTransport } from "../transport.ts";
 import { relaySkew, reloadOnce } from "./skew.ts";
@@ -26,7 +27,9 @@ export async function reloadPage(serverId: string | null): Promise<void> {
   window.location.reload();
 }
 
+/** The hosted shell's worker is asked to fetch its copy anew; the app's own copy has no worker to ask. */
 export async function freshShellNext(serverId: string): Promise<void> {
+  if (appShell() !== null) return;
   try { await requestFreshShell(caches, serverId); } catch (error) { console.warn("Ovis: the worker was not asked for a fresh shell", error); }
 }
 
@@ -108,7 +111,7 @@ export function createUpdateFlow(shellVersion: string, view: {
   readonly reload: () => Promise<void>;
   /** The attempt goes on in this page even on a newer PC: the newer shell is loaded at a later admission instead. */
   readonly holdsReload?: (attempt: Attempt) => boolean;
-}, store: RelayDeviceStore = indexedDeviceStore) {
+}, store: RelayDeviceStore = indexedDeviceStore, app: AppShell | null = appShell()) {
   let outdated: { opened: RelayTransport; attempt: Attempt; name: string | null; version: string } | null = null;
   let updating = false;
   let generation = 0;
@@ -116,7 +119,7 @@ export function createUpdateFlow(shellVersion: string, view: {
   const admit = async (opened: RelayTransport, attempt: Attempt): Promise<void> => {
     const mine = ++generation;
     const server = opened.server ?? { version: "", relayProtocol: 0 };
-    const skew = relaySkew({ server, shellVersion });
+    const skew = relaySkew({ server, shellVersion, bundled: app !== null });
     if (skew === "protocol-mismatch") {
       opened.close();
       await failed(new MuxProtocolError("unsupported_version", `The PC speaks relay protocol ${server.relayProtocol}`), attempt);
@@ -126,8 +129,15 @@ export function createUpdateFlow(shellVersion: string, view: {
     observed = new Map(observed).set(attempt.offer.server_id, version);
     await keepVersion(store, attempt.offer.server_id, version);
     if (generation !== mine) return;
+    if (skew === "app-outdated") {
+      opened.close();
+      outdated = null;
+      show({ kind: "app-outdated", name: attempt.offer.name ?? null, platform: app?.platform ?? null });
+      return;
+    }
     const memory = tabMemory();
-    if (skew === "server-newer" && memory !== null && view.holdsReload?.(attempt) !== true && reloadOnce(memory, shellVersion, server.version)) { opened.close(); await reload(); return; }
+    // the app's own copy is the newest it has: a reload brings back the same one
+    if (skew === "server-newer" && app === null && memory !== null && view.holdsReload?.(attempt) !== true && reloadOnce(memory, shellVersion, server.version)) { opened.close(); await reload(); return; }
     if (skew !== "pc-outdated") { outdated = null; view.accepted(opened, attempt); return; }
     setTransport(opened);
     outdated = { opened, attempt, name: attempt.offer.name ?? null, version: server.version };

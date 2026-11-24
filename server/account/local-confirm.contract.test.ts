@@ -15,9 +15,9 @@ afterEach(async () => { for (const pc of pcs.splice(0)) await pc.close(); });
 
 const BRIDGE_TOKEN = "b".repeat(64);
 
-async function pc(accountOpensAll: boolean, desktop?: { input: ReadableStream<Uint8Array>; write(line: string): void }) {
+async function pc(accountOpensAll: boolean, desktop?: { input: ReadableStream<Uint8Array>; write(line: string): void }, openBrowser?: (url: string) => boolean) {
   const member = await memberRow("acct_1");
-  const made = Object.assign(await pairingPc({ rows: [member.row], server: { accountOpensAll, bridgeToken: BRIDGE_TOKEN, ...(desktop ? { desktopOwner: desktop } : {}) } }), { member });
+  const made = Object.assign(await pairingPc({ rows: [member.row], server: { accountOpensAll, bridgeToken: BRIDGE_TOKEN, ...(desktop ? { desktopOwner: desktop } : {}), ...(openBrowser ? { openBrowser } : {}) } }), { member });
   pcs.push(made);
   return made;
 }
@@ -77,6 +77,29 @@ test("R8: the local confirm listener's port is in no answer of the server's rout
   for (const path of ["/api/account/status", "/api/devices", "/api/health", "/api/relay"]) {
     expect(JSON.stringify((await made.local(path)).body)).not.toContain(String(port));
   }
+});
+
+test("R8: this PC's own window has the confirm page opened on its desktop, never told its port; no other window can, and no route answers a confirm", async () => {
+  const opened: string[] = [];
+  let desktop = true;
+  const made = await pc(true, undefined, (url) => { if (desktop) opened.push(url); return desktop; });
+  const open = (headers: Record<string, string> = {}) => made.local("/api/account/confirm-page", { method: "POST", headers: { "x-herdr-machine": "1", ...headers } });
+  const forwarded = await open({ "x-forwarded-for": "100.64.0.9" });
+  expect([forwarded.status, forwarded.body.error?.code]).toEqual([403, "local_required"]);
+  expect((await open({ "x-herdr-machine": "0" })).status).toBe(403);
+  expect(opened).toEqual([]);
+  const own = await open();
+  expect(own.status).toBe(204);
+  expect(JSON.stringify(own.body)).toBe("{}");
+  if (process.platform === "linux") {
+    const { port } = JSON.parse(readFileSync(join(made.stateDir, LOCAL_CONFIRM_FILE), "utf8")) as { port: number };
+    expect(opened).toEqual([`http://127.0.0.1:${port}/`]);
+  }
+  desktop = false;
+  const none = await open();
+  expect([none.status, none.body.error?.code]).toEqual([409, "confirm_page_unavailable"]);
+  // a key's approval stays on the page: no route of the server answers it
+  expect((await made.local("/api/devices/pending/approve", { method: "POST", headers: { "x-herdr-machine": "1" }, body: { id: "a".repeat(32) } })).status).not.toBe(200);
 });
 
 test("T47: with the release flag off there is no confirm listener, no channel and no confirm route", async () => {

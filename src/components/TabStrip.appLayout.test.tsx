@@ -9,6 +9,7 @@ import { SettingsProvider } from "../lib/settings.ts";
 import { setSidebarPins } from "../lib/sidebarPins.ts";
 import { RowMenu } from "./RowMenu.tsx";
 import { TabStrip } from "./TabStrip.tsx";
+import { paneDrag } from "../lib/paneDrag.ts";
 
 const TUI = appLayoutOf({ version: "0.9.5", protocol: 22 });
 const APP_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core" });
@@ -41,22 +42,25 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
   const stored = new Map<string, string>();
   let renderer: ReactTestRenderer | undefined;
   let media: { matches: boolean; addEventListener(): void; removeEventListener(): void };
+  let events: EventTarget;
   let requested: string[];
   let activeTab: { dataset: { tabId: string } };
 
   beforeEach(() => {
-    for (const key of ["window", "document", "navigator", "getComputedStyle", "localStorage", "HTMLElement", "CSS", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    for (const key of ["window", "document", "navigator", "getComputedStyle", "localStorage", "HTMLElement", "CSS", "IS_REACT_ACT_ENVIRONMENT", "requestAnimationFrame", "cancelAnimationFrame"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     stored.clear();
     requested = [];
     activeTab = { dataset: { tabId: "w1:t1" } };
     const storage = { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); }, removeItem: (key: string) => { stored.delete(key); } };
-    const events = new EventTarget();
+    events = new EventTarget();
     media = { matches: false, addEventListener() {}, removeEventListener() {} };
     const define = (key: string, value: unknown) => Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
     define("IS_REACT_ACT_ENVIRONMENT", true);
     define("HTMLElement", class HTMLElement {});
     define("CSS", { escape: (value: string) => value });
     define("localStorage", storage);
+    define("requestAnimationFrame", () => 1);
+    define("cancelAnimationFrame", () => {});
     define("navigator", { languages: ["en-US"], platform: "Linux" });
     define("window", { localStorage: storage, matchMedia: () => media, innerWidth: 1280, innerHeight: 800, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events), requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout, clearTimeout });
     define("document", { visibilityState: "visible", activeElement: activeTab, body: { nodeType: 1, children: [], createNodeMock: node }, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } }, querySelector: () => null, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events) });
@@ -64,6 +68,7 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
   });
 
   afterEach(async () => {
+    paneDrag.cancel();
     await act(async () => renderer?.unmount());
     renderer = undefined;
     for (const [key, descriptor] of descriptors) {
@@ -309,5 +314,241 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
 
     await act(async () => tab().props.onDoubleClick());
     expect(input().props.value).toBe(saved);
+  });
+
+  it("moves a single-pane tab dropped onto another workspace row, honors Move-to-workspace guards, and cancels on Escape", async () => {
+    const moved: Array<{ tabId: string; workspaceId: string }> = [];
+    let pointerElement: Element | null = null;
+    (globalThis.document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null }).elementFromPoint = () => pointerElement;
+
+    const fakeWorkspaceRow = (workspaceId: string): Element => {
+      const machineNode = { closest: (sel: string) => sel === ".machine-workspaces[data-machine]" ? machineNode : null, dataset: { machine: "local" } };
+      const groupNode = { closest: (sel: string) => sel === ".workspace-group[data-workspace]" ? groupNode : machineNode.closest(sel), dataset: { workspace: workspaceId } };
+      const headerNode = { closest: (sel: string) => sel === ".workspace-header" ? headerNode : groupNode.closest(sel), dataset: {} };
+      return headerNode as unknown as Element;
+    };
+
+    const drawForDrag = async (offer: LayoutOffer, { shown = snapshot, closable = true, splitDrag = true }: { shown?: SessionSnapshot; closable?: boolean; splitDrag?: boolean } = {}): Promise<void> => {
+      const tree = createElement(SettingsProvider, null, createElement(AppLayoutContext.Provider, { value: offer },
+        createElement(TabStrip, {
+          snapshot: shown,
+          workspace: shown.workspaces[0]!,
+          selectedPane: shown.panes[0]!,
+          onSelectPane: () => {},
+          onNewTab: () => {},
+          onNewTerminal: async () => {},
+          onMoveToWorkspace: async (tabId, workspaceId) => { moved.push({ tabId, workspaceId }); },
+          splitDrag,
+          closable,
+        })));
+      await act(async () => { if (renderer) renderer.update(tree); else renderer = create(tree, { createNodeMock: node }); });
+    };
+
+    const dragTabOver = async (workspaceId: string, action: "drop" | "escape"): Promise<typeof paneDrag extends { snapshot(): infer R } ? R : never> => {
+      pointerElement = fakeWorkspaceRow(workspaceId);
+      const captureTarget = { ...node(), setPointerCapture() {}, hasPointerCapture: () => true, releasePointerCapture() {} };
+      await act(async () => {
+        tab().props.onPointerDown({ pointerType: "mouse", button: 0, ctrlKey: false, isPrimary: true, pointerId: 1, clientX: 40, clientY: 5, preventDefault() {}, currentTarget: captureTarget });
+      });
+      await act(async () => {
+        tab().props.onPointerMove({ pointerId: 1, clientX: 40, clientY: 120 });
+      });
+      const hitWhileOver = paneDrag.snapshot();
+      if (action === "escape") {
+        await act(async () => {
+          const esc = new Event("keydown") as unknown as KeyboardEvent;
+          Object.assign(esc, { key: "Escape", preventDefault() {}, stopPropagation() {} });
+          events.dispatchEvent(esc);
+        });
+      }
+      await act(async () => {
+        tab().props.onPointerUp({ pointerId: 1, clientX: 40, clientY: 120 });
+      });
+      return hitWhileOver;
+    };
+
+    await drawForDrag(TUI);
+    expect((await dragTabOver("w1", "drop"))?.workspaceTarget).toBeUndefined();
+    expect(moved).toEqual([]);
+
+    expect((await dragTabOver("w2", "escape"))?.workspaceTarget).toEqual({ machineId: "local", workspaceId: "w2" });
+    expect(paneDrag.snapshot()).toBeNull();
+    expect(moved).toEqual([]);
+
+    expect((await dragTabOver("w2", "drop"))?.workspaceTarget).toEqual({ machineId: "local", workspaceId: "w2" });
+    expect(moved).toEqual([{ tabId: "w1:t1", workspaceId: "w2" }]);
+
+    moved.length = 0;
+    await drawForDrag(OVIS_CORE);
+    expect((await dragTabOver("w2", "drop"))?.workspaceTarget).toEqual({ machineId: "local", workspaceId: "w2" });
+    expect(moved).toEqual([{ tabId: "w1:t1", workspaceId: "w2" }]);
+
+    moved.length = 0;
+    await drawForDrag(APP_CORE);
+    expect((await dragTabOver("w2", "drop"))?.workspaceTarget).toBeUndefined();
+    expect(moved).toEqual([]);
+
+    await drawForDrag(TUI, { closable: false });
+    expect((await dragTabOver("w2", "drop"))?.workspaceTarget).toBeUndefined();
+    expect(moved).toEqual([]);
+
+    const splitSnapshot: SessionSnapshot = {
+      ...snapshot,
+      panes: [...snapshot.panes, { ...pane("w1", "w1:t1"), pane_id: "w1:t1:second", terminal_id: "w1:t1:second:term" }],
+    };
+    await drawForDrag(TUI, { shown: splitSnapshot });
+    expect((await dragTabOver("w2", "drop"))?.workspaceTarget).toBeUndefined();
+    expect(moved).toEqual([]);
+
+    // A second pane joining mid-drag clears the sidebar target immediately and prevents moving on drop.
+    await drawForDrag(TUI);
+    pointerElement = fakeWorkspaceRow("w2");
+    const captureTarget = { ...node(), setPointerCapture() {}, hasPointerCapture: () => true, releasePointerCapture() {} };
+    await act(async () => {
+      tab().props.onPointerDown({ pointerType: "mouse", button: 0, ctrlKey: false, isPrimary: true, pointerId: 2, clientX: 40, clientY: 5, preventDefault() {}, currentTarget: captureTarget });
+    });
+    await act(async () => {
+      tab().props.onPointerMove({ pointerId: 2, clientX: 40, clientY: 120 });
+    });
+    expect(paneDrag.snapshot()?.workspaceTarget).toEqual({ machineId: "local", workspaceId: "w2" });
+    await drawForDrag(TUI, { shown: splitSnapshot });
+    expect(paneDrag.snapshot()?.workspaceTarget).toBeUndefined();
+    await act(async () => {
+      tab().props.onPointerUp({ pointerId: 2, clientX: 40, clientY: 120 });
+    });
+    expect(moved).toEqual([]);
+
+    // Disabling splitDrag mid-drag (e.g. viewport resize below 769px) cancels the shared drag cleanly.
+    await drawForDrag(TUI);
+    await act(async () => {
+      tab().props.onPointerDown({ pointerType: "mouse", button: 0, ctrlKey: false, isPrimary: true, pointerId: 3, clientX: 40, clientY: 5, preventDefault() {}, currentTarget: captureTarget });
+    });
+    await act(async () => {
+      tab().props.onPointerMove({ pointerId: 3, clientX: 40, clientY: 120 });
+    });
+    expect(paneDrag.snapshot()?.workspaceTarget).toEqual({ machineId: "local", workspaceId: "w2" });
+    await drawForDrag(TUI, { splitDrag: false });
+    expect(paneDrag.snapshot()).toBeNull();
+    await act(async () => {
+      tab().props.onPointerUp({ pointerId: 3, clientX: 40, clientY: 120 });
+    });
+    expect(moved).toEqual([]);
+
+    // In-strip mouse drag-to-reorder still works when splitDrag is already false (e.g. below 769px).
+    await drawForDrag(TUI, { splitDrag: false });
+    await act(async () => {
+      tab().props.onPointerDown({ pointerType: "mouse", button: 0, ctrlKey: false, isPrimary: true, pointerId: 4, clientX: 40, clientY: 5, preventDefault() {}, currentTarget: captureTarget });
+    });
+    await act(async () => {
+      tab().props.onPointerMove({ pointerId: 4, clientX: 80, clientY: 5 });
+    });
+    expect(renderer!.root.findAll((el) => typeof el.props.className === "string" && el.props.className.includes("is-dragging"))).toHaveLength(1);
+    await act(async () => {
+      tab().props.onPointerUp({ pointerId: 4, clientX: 80, clientY: 5 });
+    });
+  });
+
+  it("hands phone typing to the picked pane's visible tab field, re-selects the current pane, and keeps touch long-press handoff", async () => {
+    const t1a = { ...pane("w1", "w1:t1"), pane_id: "w1:t1:a", terminal_id: "w1:t1:a:term" } as PaneInfo;
+    const t1b = { ...pane("w1", "w1:t1"), pane_id: "w1:t1:b", terminal_id: "w1:t1:b:term" } as PaneInfo;
+    const t2a = { ...pane("w1", "w1:t2"), pane_id: "w1:t2:a", terminal_id: "w1:t2:a:term" } as PaneInfo;
+    const t2b = { ...pane("w1", "w1:t2"), pane_id: "w1:t2:b", terminal_id: "w1:t2:b:term" } as PaneInfo;
+    const splitSnap = (layouts: SessionSnapshot["layouts"]): SessionSnapshot => ({
+      ...snapshot,
+      layouts,
+      tabs: snapshot.tabs.map((entry) => entry.tab_id === "w1:t1" || entry.tab_id === "w1:t2" ? { ...entry, pane_count: 2 } : entry),
+      panes: [t1a, t1b, t2a, t2b, snapshot.panes[2]!],
+    });
+    const picked: string[] = [];
+    const focused: string[] = [];
+    const frames = new Map<string, Element>();
+    const makeFrame = (paneId: string): Element => {
+      const field = { focus: () => { focused.push(paneId); } };
+      return {
+        querySelector: (selector: string) => selector === ".terminal-input textarea" ? field : null,
+      } as unknown as Element;
+    };
+    for (const id of [t1a.pane_id, t1b.pane_id, t2a.pane_id, t2b.pane_id]) frames.set(id, makeFrame(id));
+
+    const prevQuerySelector = document.querySelector;
+    const prevComputed = globalThis.getComputedStyle;
+    const prevMatchMedia = window.matchMedia;
+    const typingField = Object.assign(new HTMLElement(), {
+      closest: (selector: string) => selector === ".pane-frame" ? {} : null,
+      matches: (selector: string) => selector === "input, textarea",
+      isContentEditable: false,
+    });
+    (document as unknown as { activeElement: unknown; querySelector: (sel: string) => Element | null }).querySelector = (selector: string) => {
+      const match = /\[data-layout-pane="([^"]+)"\]/.exec(selector);
+      return match ? frames.get(match[1]!) ?? null : null;
+    };
+    globalThis.getComputedStyle = (() => ({ visibility: "visible", getPropertyValue: () => "" })) as unknown as typeof getComputedStyle;
+    window.matchMedia = (query: string) => ({ ...media, matches: query.includes("(max-width: 768px)") }) as unknown as MediaQueryList;
+
+    const drawSnap = async (shown: SessionSnapshot, selected: PaneInfo): Promise<void> => {
+      const tree = createElement(SettingsProvider, null, createElement(AppLayoutContext.Provider, { value: TUI },
+        createElement(TabStrip, {
+          snapshot: shown,
+          workspace: shown.workspaces[0]!,
+          selectedPane: selected,
+          onSelectPane: (paneId: string) => { picked.push(paneId); },
+          onNewTab: () => {},
+          onNewTerminal: async () => {},
+        })));
+      await act(async () => { if (renderer) renderer.update(tree); else renderer = create(tree, { createNodeMock: node }); });
+    };
+    const menuItems = () => (renderer!.root.findByType(RowMenu).props as { items: { id: string; run: () => void }[] }).items;
+    const pressStripWhileTyping = async (): Promise<void> => {
+      (document as unknown as { activeElement: unknown }).activeElement = typingField;
+      const target = {} as Node;
+      await act(async () => strip().props.onPointerDownCapture({ currentTarget: { contains: (candidate: Node) => candidate === target }, target }));
+    };
+
+    try {
+      // 1. Current pane pick while typing still calls onSelectPane (closing Terminal Peek / inbox) and focuses the field.
+      await drawSnap(splitSnap([]), t1a);
+      await pressStripWhileTyping();
+      await act(async () => tab().props.onClick({ currentTarget: node(), detail: 1, ctrlKey: false }));
+      await act(async () => menuItems().find((item) => item.id === `pane:${t1a.pane_id}`)!.run());
+      expect(picked).toEqual([t1a.pane_id]);
+      expect(focused).toEqual([t1a.pane_id]);
+
+      // 2. Touch long-press (contextmenu) on an inactive split tab in the default under-header row keeps typing,
+      //    and reads zoom from the picked pane's tab rather than the tab being left.
+      picked.length = 0; focused.length = 0;
+      const tab2 = () => renderer!.root.findByProps({ "data-tab-id": "w1:t2" });
+      await drawSnap(splitSnap([
+        { tab_id: "w1:t1", workspace_id: "w1", zoomed: true, focused_pane_id: t1a.pane_id, area: { x: 0, y: 0, width: 100, height: 100 }, panes: [], splits: [] },
+        { tab_id: "w1:t2", workspace_id: "w1", zoomed: true, focused_pane_id: t2b.pane_id, area: { x: 0, y: 0, width: 100, height: 100 }, panes: [], splits: [] },
+      ]), t1a);
+      await pressStripWhileTyping();
+      await act(async () => tab2().props.onContextMenu({ type: "contextmenu", currentTarget: node(), clientX: 120, clientY: 48, detail: 0, nativeEvent: { pointerType: "touch" }, preventDefault() {} }));
+      await act(async () => menuItems().find((item) => item.id === `pane:${t2a.pane_id}`)!.run());
+      expect(picked).toEqual([t2a.pane_id]);
+      expect(focused).toEqual([t2b.pane_id]);
+
+      // 3. Leaving a zoomed tab for an unzoomed inactive split tab focuses the picked pane, not the old zoomed pane.
+      picked.length = 0; focused.length = 0;
+      await drawSnap(splitSnap([
+        { tab_id: "w1:t1", workspace_id: "w1", zoomed: true, focused_pane_id: t1a.pane_id, area: { x: 0, y: 0, width: 100, height: 100 }, panes: [], splits: [] },
+      ]), t1a);
+      await pressStripWhileTyping();
+      await act(async () => tab2().props.onContextMenu({ type: "contextmenu", currentTarget: node(), clientX: 120, clientY: 48, detail: 0, nativeEvent: { pointerType: "touch" }, preventDefault() {} }));
+      await act(async () => menuItems().find((item) => item.id === `pane:${t2a.pane_id}`)!.run());
+      expect(picked).toEqual([t2a.pane_id]);
+      expect(focused).toEqual([t2a.pane_id]);
+
+      // 4. Keyboard contextmenu (0, 0, no touch pointerType) never reuses a stale pointer typing sample.
+      picked.length = 0; focused.length = 0;
+      await pressStripWhileTyping();
+      await act(async () => tab2().props.onContextMenu({ type: "contextmenu", currentTarget: node(), clientX: 0, clientY: 0, detail: 0, nativeEvent: { pointerType: "" }, preventDefault() {} }));
+      await act(async () => menuItems().find((item) => item.id === `pane:${t2a.pane_id}`)!.run());
+      expect(picked).toEqual([t2a.pane_id]);
+      expect(focused).toEqual([]);
+    } finally {
+      document.querySelector = prevQuerySelector;
+      globalThis.getComputedStyle = prevComputed;
+      window.matchMedia = prevMatchMedia;
+    }
   });
 });

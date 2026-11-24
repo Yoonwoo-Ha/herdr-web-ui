@@ -1,6 +1,6 @@
 import { NO_AGENT_MESSAGE } from "../../shared/submit-outcome.ts";
 import { resolveHerdrKeys } from "../../shared/herdr-keys.ts";
-import type { AgentIntegration, AgentStatus, CommandForm, CommandOutcome, ConversationTurn, DevicePairedEvent, DevicesRevokedAll, HealthAuth, IntegrationsResponse, Machine, MachineEvent, OmoActivity, OmoTask, PairedDevice, PairingCode, PaneBackgroundAgentDetail, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, RelayStatus, SecuritySummary, ServerMessage, SessionSnapshot, SlashCommand, TabMoved, TabMovedToWorkspace, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeInventory, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
+import type { AgentIntegration, AgentStatus, CommandForm, CommandOutcome, ConversationTurn, DevicePairedEvent, DevicePairedSeenEvent, DevicesRevokedAll, HealthAuth, IntegrationsResponse, Machine, MachineEvent, OmoActivity, OmoTask, PairedDevice, PairingCode, PaneBackgroundAgentDetail, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, RelayStatus, SecuritySummary, ServerMessage, SessionSnapshot, SlashCommand, TabMoved, TabMovedToWorkspace, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeInventory, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
 import type { PushSubscriptionStatus, RepoBranchComparison, RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRefs, RepoDiffRepository, RepoDiffScope, SessionHistoryAgent, SessionHistoryResponse, SessionResumeResponse } from "../../shared/protocol.ts";
 import { nextTabLabels, normalizeThemeChange, sharedPreferencesBody, type SharedPreferences } from "../../shared/preferences.ts";
 import type { PullRequestCheckLog, PullRequestView } from "../../shared/pull-request.ts";
@@ -17,17 +17,21 @@ import { searchPattern, searchTurns, MAX_SEARCH_QUERY, type ConversationSearchRe
 import { PANE_SUMMARY_MAX_IDS, summaryOf, type PaneSummaries } from "../../shared/pane-summary.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
 import { closeLayoutPane, moveLayoutPane, resizeLayout, setLayoutSplitRatio, splitLayout, swapLayoutPanes } from "../../src/lib/layoutTree.ts";
-import { deviceLabel } from "../../src/lib/phone.ts";
+import { thisDeviceLabel } from "../../src/lib/phone.ts";
 import { rollupStatus } from "../../src/lib/status.ts";
 import { movedTabOrder } from "../../src/lib/tabOrder.ts";
 import { agentSkillRows, CHATS, DEMO_AGENT_CATALOG, DEMO_PUSH, PROMPT, resumedSession, SESSION_HISTORY_AGENTS, sessionHistoryRows, SPECS, type DemoSpec } from "./fixtures.ts";
 import { DemoHistory } from "./history.ts";
+import { memoryRoute } from "./memory.ts";
 import { screenAgent, screenCommand, screenFrame } from "./agentScreens.ts";
 import machinesFixture from "./fixtures/machines.json";
 import agentsFixture from "./fixtures/agents.json";
 import commandsFixture from "./fixtures/commands.json";
 import panesFixture from "./fixtures/panes.json";
 import terminalFixture from "./fixtures/terminal.json";
+
+// the client reads this to know it is the demo (src/lib/demo.ts)
+Reflect.set(window, "__ovisDemo", true);
 
 const DEMO_RUNTIME_FACTS = new URLSearchParams(location.search).get("demo_runtime") === "both" ? {
   herdr_runtime: { serving: "herdr" as const, source: "detected" as const, tui: { installed: true, running: true }, app_installed: true, switch_to: "herdr-core" as const, locked: null },
@@ -1011,11 +1015,17 @@ if (PAIRING_HELD) (globalThis as { herdrDemoReleasePairing?: () => boolean }).he
   return release !== undefined;
 };
 const deviceListHeld = DEVICE_STATE === "slow" ? new Promise<void>((resolve) => { (globalThis as { herdrDemoReleaseDevices?: () => void }).herdrDemoReleaseDevices = resolve; }) : null;
-const demoDevices: PairedDevice[] = DEVICE_STATE === "empty" ? [] : [
+// `account`: no device paired here, two the PC's account let in (`through_account`): this one, and one connected through the relay
+const demoDevices: PairedDevice[] = DEVICE_STATE === "empty" ? [] : DEVICE_STATE === "account" ? [
+  { id: "7b4e1f0a9c2d5836", label: "iPhone · Safari", role: "drive", created_at: ago(24 * 60), last_seen_at: `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`,
+    current: true, via_relay: true, through_account: true, connection: { route: "relay", relay: "wss://relay.ovis.sh", rtt_ms: 31, since: ago(2) } },
+  { id: "5e2d8c1a7f3b9046", label: "Galaxy S25", role: "drive", created_at: ago(2 * 24 * 60), last_seen_at: `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`,
+    current: false, via_relay: true, through_account: true, connection: { route: "relay", relay: "wss://relay.ovis.sh", rtt_ms: 48, since: ago(6) } },
+] : [
   { id: "6f1c2a9d4b7e8503", label: "Pixel 9", role: "drive", created_at: ago(41 * 24 * 60), last_seen_at: ago(3), current: DEVICE_STATE === "watch" },
   { id: "0b8e7d6c5a493f21", label: "iPad", role: "drive", created_at: ago(12 * 24 * 60), last_seen_at: ago(26 * 60), current: false },
   { id: "c3d9e1f24a5b6078", label: "Kitchen laptop, the old one with the broken hinge", role: "drive", created_at: ago(3 * 24 * 60), last_seen_at: null, current: false },
-  ...(DEVICE_STATE === "relay" ? [{ id: "9a7e5c3b1d2f4068", label: deviceLabel(navigator.userAgent, navigator.maxTouchPoints ?? 0), role: "drive" as const, created_at: ago(5 * 24 * 60), last_seen_at: ago(40), current: false, via_relay: true as const }] : []),
+  ...(DEVICE_STATE === "relay" ? [{ id: "9a7e5c3b1d2f4068", label: thisDeviceLabel(), role: "drive" as const, created_at: ago(5 * 24 * 60), last_seen_at: ago(40), current: false, via_relay: true as const }] : []),
 ];
 const DEMO_VIA = new URLSearchParams(location.search).get("demo_via");
 const DEMO_VIA_DEVICE = DEMO_VIA === "device";
@@ -1060,7 +1070,7 @@ let demoRelayOnline = DEMO_RELAY_PARAM === "on" || DEMO_RELAY_PASS !== null;
 let demoRelayStartError: string | null = null;
 let demoRelayIdentities = 1;
 const demoRelayServerId = (): string => `${demoRelayIdentities.toString(16).padStart(4, "0")}5e1f1d0ff3ab1e0ff3ab1e5e1f1d`;
-let demoRelayDirect = true;
+let demoRelayDirect = false;
 function demoRelayPass(): RelayStatus["pass"] | undefined {
   switch (DEMO_RELAY_PASS) {
     case "grace": return { state: "no_account", relay: "missing", enforce_at: new Date(Date.now() + 30 * 86_400_000).toISOString(), refused: false };
@@ -1129,6 +1139,16 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     }
     return json(startDemoPairing(), 200, { "cache-control": "no-store" });
   }
+  if (path === "/api/devices/joins/seen") {
+    if (method !== "POST") return error("method_not_allowed", "use POST", 400);
+    if (demoAuth.role === "watch") return error("read_only", "this device can only watch", 403);
+    let body: { event_id?: unknown };
+    try { body = JSON.parse(String(init?.body ?? "{}")) as { event_id?: unknown }; } catch { return error("invalid_json", "The body is not JSON", 400); }
+    if (typeof body.event_id !== "string") return error("invalid_body", "event_id must be a join's event id", 400);
+    // seen in one window, gone from every demo window, as the PC tells its streams
+    emitSse({ type: "device-paired-seen", event_id: body.event_id } satisfies DevicePairedSeenEvent);
+    return json({ seen: true }, 200, { "cache-control": "no-store" });
+  }
   if (path === "/api/account/status" && ACCOUNT_MEMBER) return json({ account: "demo-account", unlinked: [], removals: [], adds: [], blocked: [] }, 200, { "cache-control": "no-store" });
   if (DEVICE_STATE !== null) {
     if (path === "/api/devices") {
@@ -1188,6 +1208,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/relay") return json(demoRelayStatus(), 200, { "cache-control": "no-store" });
   // the demo is this PC's own window, with no account join waiting
   if (path === "/api/relay/joins") return json({ joins: [] }, 200, { "cache-control": "no-store" });
+  // nor any Tailscale device kept out or asking to get back in (server/tailnet-nodes.ts)
+  if (path === "/api/devices/tailnet-nodes") return json({ pending: null, nodes: [] }, 200, { "cache-control": "no-store" });
   if (path === "/api/relay/start" || path === "/api/relay/stop" || path === "/api/relay/offer" || path === "/api/relay/reset-identity"
     || path === "/api/relay/link" || path === "/api/relay/link/close" || path === "/api/relay/pairing" || path === "/api/relay/code" || path === "/api/relay/code/cancel" || path === "/api/relay/direct" || path === "/api/relay/join") {
     if (method !== "POST") return error("method_not_allowed", "Use GET for status and POST for relay actions.", 405);
@@ -1223,6 +1245,9 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   }
   if (path === "/api/portal/start" || path === "/api/portal/stop" || path === "/api/portal/invite") return error("portal_unsupported", "The demo opens no public address.", 409);
   if (path === "/api/herdr-ui") return json({ copy_on_select: true, keys: resolveHerdrKeys(undefined) }, 200, { "cache-control": "no-store" });
+  // the own window's Tailscale controls: the demo serves at once, and has the app "opened" (its /api/access then says what it says)
+  if (path === "/api/access/tailscale/serve") return json({ port: 7317, platform: "darwin", relay: demoRelayStatus(), tailscale: { state: "running", dns_name: "workstation.example.ts.net", serving_url: "https://workstation.example.ts.net", serve_command: null, serve_url: null } });
+  if (path === "/api/access/tailscale/open") return new Response(null, { status: 204 });
   if (path === "/api/access") {
     const tailscale = new URLSearchParams(location.search).get("demo_tailscale");
     if (tailscale === "missing") return json({ port: 7317, relay: demoRelayStatus(), tailscale: { state: "missing", dns_name: null, serving_url: null, serve_command: null, serve_url: null } });
@@ -1316,6 +1341,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/cliproxy/login" || path === "/api/cliproxy/callback") return error("demo", "Sign in from an installed server, not the public demo.", 409);
   if (path === "/api/push" || path.startsWith("/api/push/")) return pushRoute(path, method, init);
   if (path === "/api/alerts/webhook" || path === "/api/alerts/webhook/test") return alertWebhookRoute(path, method, init);
+  if (path === "/api/memory" || path.startsWith("/api/memory/")) return memoryRoute(path, method, init);
   if (path === "/api/machines/settings") return json({ auto_update_bridges: true });
   if (path.startsWith("/api/machines/")) return error("demo", "remote PCs need a real machine", 404);
 

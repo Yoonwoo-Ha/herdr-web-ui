@@ -379,7 +379,8 @@ export function useAccountDeviceNotices({ machines, machineSessions, selectedMac
     window.addEventListener(ACCOUNT_SIGN_OUT_EVENT, signedOut);
     return () => window.removeEventListener(ACCOUNT_SIGN_OUT_EVENT, signedOut);
   }, []);
-  const readKey = results.size > 0 || shown?.notices.some((notice) => notice.kind === "admit" && notice.open) === true;
+  // read for any admission: an answer needs the key, and a notice of this sign-in's own key is never shown (below)
+  const readKey = results.size > 0 || shown?.notices.some((notice) => notice.kind === "admit") === true;
   useEffect(() => {
     if (!readKey) return;
     let live = true;
@@ -415,8 +416,10 @@ export function useAccountDeviceNotices({ machines, machineSessions, selectedMac
       if (result.fleet.retryService !== undefined || result.delivery.refused) detachedRetries.push([id, result]);
     } else if (!notices.has(result.notice.id)) notices.set(result.notice.id, result.notice);
   }
-  for (const id of notices.keys()) {
-    if (hidden.has(noticeKey(pc.id, id))) notices.delete(id);
+  // this device's own admission, told to another row it holds on that PC: the notice is for the account's other devices
+  const ownSpki = own?.key?.public_spki;
+  for (const [id, notice] of notices) {
+    if (hidden.has(noticeKey(pc.id, id)) || (ownSpki !== undefined && notice.key === ownSpki)) notices.delete(id);
   }
   const renderOutcomes = (id: string, result: BlockResult, dismissed = false) => {
     const { retryService, ...delivered } = result.fleet;

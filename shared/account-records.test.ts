@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  AccountRecordError, accountDeviceId, exportAccountKey, newRecordId, parseAccountRecord, parseSafetyRecord, readAccountRecord, recordSigningBytes, registerSigningBytes,
+  AccountRecordError, accountDeviceId, exportAccountKey, newRecordId, parseAccountRecord, parseSafetyRecord, pcAddSigningBytes, readAccountRecord, recordSigningBytes, registerSigningBytes,
   safetyRecordId, signAccountRecord, signSafetyRecord, verifyAccountRecord, verifySafetyRecord, type AccountRecord, type UnsignedAccountRecord,
 } from "./account-records.ts";
 import { fromBase64Url, toBase64Url } from "./relay-pair-sas.ts";
@@ -212,4 +212,16 @@ test("registration signing bytes match the account service's byte for byte", () 
   expect({ length: bytes.length, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex") })
     .toEqual({ length: 251, sha256: "3ad603c0126f58fcfaa1aa2ca01b5880cb560c204776ed3ea377deb5aca675dc" });
   expect(Buffer.from(bytes).toString("hex")).toBe("6f7669732d6465766963652d72656769737465722f310000000f616363745f7265675f6465766963650000007a4d466b77457759484b6f5a497a6a3043415159494b6f5a497a6a3044415163445167414541414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141410000002030313233343536373839616263646566303132333435363738396162636465660000002c5a6d3976596d46794c574e6f595778735a57356e5a5331306232746c626930784d6a4d304e5459334f446b77");
+});
+
+test("the bytes a key proof for adding a PC signs match the account service's byte for byte", () => {
+  // the layout: "ovis-pc-add/1", then purpose, account, server_id, listing_id, challenge_id and challenge, each a 4-byte
+  // big-endian length and its UTF-8 bytes; compared with the account service's own function for these inputs
+  const bytes = pcAddSigningBytes("admit", "acct_pc_add", "0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210", "00112233445566778899aabbccddeeff", "Zm9vYmFyLWNoYWxsZW5nZS10b2tlbi0xMjM0NTY3ODkw");
+  expect({ length: bytes.length, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex") })
+    .toEqual({ length: 193, sha256: "6618ebeeade597a7ee62bc72c01aadef28adf3e31a2a967db7728a43a6a3a688" });
+  expect(Buffer.from(bytes).toString("hex")).toBe("6f7669732d70632d6164642f310000000561646d69740000000b616363745f70635f6164640000002030313233343536373839616263646566303132333435363738396162636465660000002066656463626139383736353433323130666564636261393837363534333231300000002030303131323233333434353536363737383839396161626263636464656566660000002c5a6d3976596d46794c574e6f595778735a57356e5a5331306232746c626930784d6a4d304e5459334f446b77");
+  // a PC the account lists none of signs the empty listing: a zero length, and nothing after it
+  const unlisted = pcAddSigningBytes("list", "a", "b", "", "c", "d");
+  expect(Buffer.from(unlisted).toString("hex")).toBe(`${Buffer.from("ovis-pc-add/1").toString("hex")}000000046c697374${"0000000161"}${"0000000162"}00000000${"0000000163"}${"0000000164"}`);
 });

@@ -14,7 +14,7 @@ export interface Mods { shift?: boolean; ctrl?: boolean; alt?: boolean; super?: 
 type KeyAction = "press" | "repeat" | "release";
 type MouseButton = "left" | "middle" | "right" | "wheelUp" | "wheelDown" | "wheelLeft" | "wheelRight";
 /** `timeout`: the start probe's wait ran out before its DA1 reply came */
-type ReplyKind = "kittyFlags" | "mode" | "color" | "cellSize" | "deviceAttributes" | "timeout";
+type ReplyKind = "kittyFlags" | "mode" | "color" | "cellSize" | "deviceAttributes" | "scheme" | "timeout";
 
 /** Every event carries `at`: the caller's time of the read that held its first byte. */
 export type InputEvent =
@@ -263,16 +263,19 @@ function privateReply(params: string, intermediates: string, final: string): Uns
 
 /**
  * A whole CSI sequence: `body` is what lies between `ESC [` and the final byte. Undefined when nothing
- * here knows it; a reply's shape gives a reply only while a query waits (`awaitingReplies`), and a
- * `CSI u` key is read as kitty's while the host speaks kitty (`kitty`).
+ * here knows it; a reply's shape gives a reply only while a query waits (`awaitingReplies`), or for display updates when
+ * enabled (`displayReplies`), and a `CSI u` key is read as kitty's while the host speaks kitty (`kitty`).
  */
-export function decodeCsi(body: string, final: string, awaitingReplies: boolean, kitty: boolean): Unstamped | undefined {
+export function decodeCsi(body: string, final: string, awaitingReplies: boolean, kitty: boolean, displayReplies = false): Unstamped | undefined {
   const parts = /^([<=>?]?)([\d;:]*)([\x20-\x2f]*)$/.exec(body);
   if (!parts) return undefined;
   const [, prefix, params = "", intermediates] = parts;
   const fields = params === "" ? [] : params.split(";").map((field) => field.split(":"));
   if (prefix === "<") return final === "M" || final === "m" ? sgrMouse(fields, final) : undefined;
-  if (prefix === "?") return awaitingReplies ? privateReply(params, intermediates ?? "", final) : undefined;
+  if (prefix === "?") {
+    if (displayReplies && final === "n" && !intermediates && /^997;[12]$/.test(params)) return reply("scheme", params.slice(4));
+    return awaitingReplies ? privateReply(params, intermediates ?? "", final) : undefined;
+  }
   if (prefix || intermediates) return undefined;
   switch (final) {
     case "u": return kittyKey(fields, kitty);
@@ -280,7 +283,7 @@ export function decodeCsi(body: string, final: string, awaitingReplies: boolean,
     case "I": case "O": return params === "" ? { type: "focus", focused: final === "I" } : undefined;
     case "Z": return params === "" ? key("TAB", { shift: true }) : undefined;
     case "$": case "^": case "@": return rxvtKey(final, params);
-    case "t": return awaitingReplies && fields.length === 3 && num(fields[0]?.[0]) === 6 && /^6;\d+;\d+$/.test(params) ? reply("cellSize", params.slice(2)) : undefined;
+    case "t": return (awaitingReplies || displayReplies) && /^6;\d+;\d+$/.test(params) ? reply("cellSize", params.slice(2)) : undefined;
     default: return letterKey(final, fields);
   }
 }

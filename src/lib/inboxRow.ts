@@ -14,8 +14,7 @@ export function inboxAsks(group: AgentGroup): boolean {
   return group === "blocked" || group === "done";
 }
 
-export function inboxRowLine(input: { online: boolean; group: AgentGroup; words: string | null; place: string; machine: string | null; failed?: boolean }, t: Translate): string {
-  const said = !input.online ? t("Offline")
+export function inboxRowLine(input: { online: boolean; group: AgentGroup; words: string | null; place: string; failed?: boolean }, t: Translate): string {
+  return !input.online ? t("Offline")
     : input.words ?? (input.failed ? t("Turn failed") : input.group === "idle" && input.place !== "" ? input.place : inboxStateWord(input.group, t));
-  return input.machine === null ? said : `${input.machine} · ${said}`;
 }

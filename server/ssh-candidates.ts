@@ -23,6 +23,11 @@ export interface SshCandidate {
   source: "ssh_config" | "tailscale";
   /** the MagicDNS name of the PC of this PC's Tailscale login it is, when it is one (a config host may name one) */
   tailnet?: string;
+  /** the User the config sets for it: absent when it sets none (ssh then uses this account's name), null when a Match
+   * condition that cannot be weighed offline may set one */
+  user?: string | null;
+  /** the Port the config sets for it, when it sets one */
+  port?: number;
 }
 
 export interface SshCandidatesOptions {
@@ -37,6 +42,15 @@ export interface SshCandidatesOptions {
 
 const listings = new WeakMap<SshCandidatesOptions, Promise<SshCandidate[]>>();
 
+const FORGES = ["github.com", "gitlab.com", "bitbucket.org", "codeberg.org"];
+const FORGE_DOMAINS = [".github.com", ".gitlab.com"];
+
+/** A git forge's host, not a PC: a config host that reaches one (by its HostName, else its alias) is there for git alone. */
+function forgeHost(name: string): boolean {
+  const host = name.toLowerCase().replace(/\.$/, "");
+  return FORGES.includes(host) || FORGE_DOMAINS.some((domain) => host.endsWith(domain));
+}
+
 export function sshCandidates(options: SshCandidatesOptions = {}): Promise<SshCandidate[]> {
   const running = listings.get(options);
   if (running !== undefined) return running;
@@ -48,7 +62,8 @@ export function sshCandidates(options: SshCandidatesOptions = {}): Promise<SshCa
 async function listCandidates(options: SshCandidatesOptions): Promise<SshCandidate[]> {
   const sshDir = options.sshDir ?? join(homedir(), ".ssh");
   const [config, status] = await Promise.all([readCapped(join(sshDir, "config"), MAX_FILE_BYTES), (options.readStatus ?? readTailscaleStatus)()]);
-  const hosts = config === null ? [] : await sshConfigHosts(config, includer(sshDir, options.home ?? homedir()));
+  const hosts = (config === null ? [] : await sshConfigHosts(config, includer(sshDir, options.home ?? homedir())))
+    .filter(({ alias, hostname }) => !forgeHost(hostname ?? alias));
   const peers = tailnetPeers(status);
   // a config host is the Tailscale PC it reaches: its HostName when it sets one, else its alias, as ssh resolves it.
   // Then that row stands for it. An address, or the addresses a name resolves to, decide: all of them (of the
@@ -75,7 +90,10 @@ async function listCandidates(options: SshCandidatesOptions): Promise<SshCandida
   for (const host of hosts) {
     const { alias, hostname, user } = host;
     const peer = peerOf(host);
-    const claims = peer !== undefined && !claimed.has(peer.dnsName);
+    // only a host that reaches that PC the plain way stands for it: another port is another sshd there (WSL, a
+    // container), and a User a Match may set is not known, so the PC's own row stays for those
+    const plain = (host.port === undefined || host.port === 22) && host.userUnknown !== true;
+    const claims = peer !== undefined && plain && !claimed.has(peer.dnsName);
     if (!claims && fromConfig.length + peers.length - claimed.size >= MAX_HOSTS) continue;
     if (claims) claimed.add(peer.dnsName);
     fromConfig.push({
@@ -84,6 +102,8 @@ async function listCandidates(options: SshCandidatesOptions): Promise<SshCandida
       detail: hostname === null ? (user === null ? null : `${user}@${alias}`) : user === null ? hostname : `${user}@${hostname}`,
       source: "ssh_config",
       ...(peer === undefined ? {} : { tailnet: peer.dnsName }),
+      ...(user !== null ? { user } : host.userUnknown === true ? { user: null } : {}),
+      ...(host.port === undefined ? {} : { port: host.port }),
     });
   }
   const fromTailnet: SshCandidate[] = peers

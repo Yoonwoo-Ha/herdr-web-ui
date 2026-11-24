@@ -476,6 +476,14 @@
   white-space: nowrap;
 }
 
+.agent-held {
+  flex: none;
+  color: var(--status-blocked);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-tight);
+  white-space: nowrap;
+}
+
 .agent-progress {
   flex: none;
   color: var(--text-dim);

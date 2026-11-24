@@ -1,9 +1,13 @@
 /**
- * The Rust PTY host (crates/pty-sidecar) as a release ships it, on Linux and macOS:
+ * The Rust PTY host (crates/pty-sidecar) and the ACP keeper (crates/acp-keeper) as a release ships them, on Linux and macOS:
  *
- *   bun scripts/pty-sidecar.ts build <linux-x64|linux-arm64|darwin-universal> <dir>   CI: one asset into <dir>
- *   bun scripts/pty-sidecar.ts manifest <dir>   CI: ovis-pty-sidecar.json and SHA256SUMS for the assets in <dir>
- *   bun scripts/pty-sidecar.ts install [--strict]   this checkout: the release's binary into bin/ovis-pty-sidecar
+ *   bun scripts/pty-sidecar.ts build <linux-x64|linux-arm64|darwin-universal> <dir>   CI: each binary's asset into <dir>
+ *   bun scripts/pty-sidecar.ts manifest <dir>   CI: ovis-pty-sidecar.json, ovis-acp-keeper.json and SHA256SUMS for the assets in <dir>
+ *   bun scripts/pty-sidecar.ts install [--strict]   this checkout: the release's binaries into bin/ovis-pty-sidecar and bin/ovis-acp-keeper
+ *
+ * Each binary has its own crate tree, assets, manifest and record, and installs on its own: one that cannot be installed
+ * never keeps the other out. Both are published beside each other, in the release and in the beta prerelease named
+ * after both crate trees. What follows says "host"; the keeper is checked the same way.
  *
  * Linux assets are static (musl), so they run on any distribution; the macOS one is universal
  * (arm64 and x86_64) and ad-hoc signed. `install` runs at every herdr plugin install, every update
@@ -11,19 +15,15 @@
  * package.json's version, only when that release was built from this checkout's crate sources
  * (their git tree), checks its SHA-256 against the release's manifest and that it runs here, and
  * moves it into place in one rename. A checkout whose crate sources no release was built from (a beta
- * build of main, .github/workflows/beta.yml) takes the host of the `pty-sidecar-<crate tree>` prerelease
+ * build of main, .github/workflows/beta.yml) takes the host of the `pty-sidecar-<host tree>-<keeper tree>` prerelease
  * the beta workflow publishes for those sources instead, checked the same way. Without one, it says
- * why and exits 0: the server then runs the Node sidecar where the PC has Node, or mirrors its panes. `--strict` exits 1 instead.
+ * why and exits 0: the server then runs the Node sidecar where the PC has Node, or mirrors its panes, and runs no ACP keeper. `--strict` exits 1 instead.
  */
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
-const CRATE = "crates/pty-sidecar";
-export const NAME = "ovis-pty-sidecar";
-export const MANIFEST = `${NAME}.json`;
-export const INSTALLED = join(root, "bin", NAME);
 const RELEASES = "https://github.com/devswha/ovis/releases/download";
 
 export const ASSETS: Record<string, string[]> = {
@@ -37,6 +37,19 @@ export const PLATFORM_ASSET: Record<string, string> = {
   "darwin-x64": "darwin-universal",
   "darwin-arm64": "darwin-universal",
 };
+
+/** a binary a release ships from a crate of its own, how it answers when run without arguments, and what runs without it */
+export interface Part { crate: string; name: string; usage: string; label: string; without: string }
+export const PTY_HOST: Part = {
+  crate: "crates/pty-sidecar", name: "ovis-pty-sidecar", usage: "pty-sidecar: usage:", label: "Rust PTY host",
+  without: "terminals use the Node PTY sidecar where this PC has Node, or are mirrored",
+};
+export const ACP_KEEPER: Part = {
+  crate: "crates/acp-keeper", name: "ovis-acp-keeper", usage: "Usage: ovis-acp-keeper ", label: "ACP keeper",
+  without: "Ovis runs no ACP agent through a keeper of its own",
+};
+export const PARTS = [PTY_HOST, ACP_KEEPER] as const;
+const manifestOf = (part: Part): string => `${part.name}.json`;
 
 export interface Manifest {
   version: string;
@@ -57,20 +70,20 @@ function command(argv: string[], timeout = 600_000): string {
  * The crate's git tree id in this checkout, or why there is none to trust: outside a git checkout, or
  * when its sources differ from HEAD (edited, staged or untracked files; target/ is ignored).
  */
-export function crateTree(cwd = root): { tree: string } | { error: string } {
+export function crateTree(cwd = root, crate = PTY_HOST.crate): { tree: string } | { error: string } {
   // bounded: a git that hangs (a stuck fsmonitor) must not hold the plugin build or install.sh
   const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "ignore", timeout: 10_000, killSignal: "SIGKILL" });
-  const tree = git("rev-parse", `HEAD:${CRATE}`);
-  if (tree.exitCode !== 0) return { error: "not a git checkout, so the release's host cannot be matched to these sources" };
-  const status = git("status", "--porcelain", "--untracked-files=all", "--", CRATE);
-  if (status.exitCode !== 0 || status.stdout.toString().trim() !== "") return { error: `${CRATE} has changes that are not committed, so a release's host would not be built from them` };
+  const tree = git("rev-parse", `HEAD:${crate}`);
+  if (tree.exitCode !== 0) return { error: `not a git checkout with ${crate} committed, so the release's binary cannot be matched to these sources` };
+  const status = git("status", "--porcelain", "--untracked-files=all", "--", crate);
+  if (status.exitCode !== 0 || status.stdout.toString().trim() !== "") return { error: `${crate} has changes that are not committed, so a release's binary would not be built from them` };
   return { tree: tree.stdout.toString().trim() };
 }
 
-export function runsHere(path: string): boolean {
+export function runsHere(path: string, part: Part = PTY_HOST, timeout = 5000): boolean {
   try {
-    const result = Bun.spawnSync([path], { stdin: "ignore", stdout: "ignore", stderr: "pipe", timeout: 5000, killSignal: "SIGKILL" });
-    return result.exitCode === 2 && result.stderr.toString().startsWith("pty-sidecar: usage:");
+    const result = Bun.spawnSync([path], { env: { PATH: "/usr/bin:/bin" }, stdin: "ignore", stdout: "ignore", stderr: "pipe", timeout, killSignal: "SIGKILL" });
+    return result.exitCode === 2 && result.stderr.toString().startsWith(part.usage);
   } catch {
     return false;
   }
@@ -93,13 +106,17 @@ function build(asset: string, out: string): void {
   const targets = ASSETS[asset];
   if (!targets) throw new Error(`Unknown asset ${asset}; one of ${Object.keys(ASSETS).join(", ")}`);
   mkdirSync(out, { recursive: true });
+  for (const target of targets) command(["rustup", "target", "add", target]);
+  for (const part of PARTS) buildPart(part, { asset, targets, out });
+}
+
+function buildPart(part: Part, { asset, targets, out }: { asset: string; targets: string[]; out: string }): void {
   const built = targets.map((target) => {
-    command(["rustup", "target", "add", target]);
-    command(["cargo", "build", "--release", "--locked", "--target", target, "--manifest-path", join(CRATE, "Cargo.toml")]);
-    const targetDir = process.env["CARGO_TARGET_DIR"] ? resolve(process.env["CARGO_TARGET_DIR"]) : join(root, CRATE, "target");
-    return join(targetDir, target, "release", NAME);
+    command(["cargo", "build", "--release", "--locked", "--target", target, "--manifest-path", join(part.crate, "Cargo.toml")]);
+    const targetDir = process.env["CARGO_TARGET_DIR"] ? resolve(process.env["CARGO_TARGET_DIR"]) : join(root, part.crate, "target");
+    return join(targetDir, target, "release", part.name);
   });
-  const file = join(out, `${NAME}-${asset}`);
+  const file = join(out, `${part.name}-${asset}`);
   if (built.length > 1) {
     command(["lipo", "-create", "-output", file, ...built]);
     // each slice keeps the linker's ad-hoc signature; one over the whole file is what Apple silicon checks
@@ -112,28 +129,34 @@ function build(asset: string, out: string): void {
   const want = expectedArchitectures(targets);
   const have = architectures(file).sort();
   if (JSON.stringify(have) !== JSON.stringify(want)) throw new Error(`${file} is for ${have.join("+")}, not ${want.join("+")}`);
-  if (!runsHere(file)) throw new Error(`${file} does not run here as the PTY host`);
+  if (!runsHere(file, part)) throw new Error(`${file} does not run here as the ${part.label}`);
   console.log(`${file} ${have.join("+")} sha256:${sha256(readFileSync(file))}`);
 }
 
 function manifest(dir: string): void {
-  const sources = crateTree();
-  if ("error" in sources) throw new Error(sources.error);
-  const crate = sources.tree;
-  const assets: Manifest["assets"] = {};
+  const files: string[] = [];
   const sums: string[] = [];
-  for (const asset of Object.keys(ASSETS)) {
-    const file = `${NAME}-${asset}`;
-    const digest = sha256(readFileSync(join(dir, file)));
-    sums.push(`${digest}  ${file}`);
-    for (const [platform, runs] of Object.entries(PLATFORM_ASSET)) if (runs === asset) assets[platform] = { file, sha256: digest };
-  }
-  const extra = readdirSync(dir).filter((name) => name !== MANIFEST && name !== "SHA256SUMS" && !sums.some((line) => line.endsWith(`  ${name}`)));
+  const results = PARTS.map((part) => {
+    const sources = crateTree(root, part.crate);
+    if ("error" in sources) throw new Error(sources.error);
+    const assets: Manifest["assets"] = {};
+    for (const asset of Object.keys(ASSETS)) {
+      const file = `${part.name}-${asset}`;
+      const digest = sha256(readFileSync(join(dir, file)));
+      files.push(file);
+      sums.push(`${digest}  ${file}`);
+      for (const [platform, runs] of Object.entries(PLATFORM_ASSET)) if (runs === asset) assets[platform] = { file, sha256: digest };
+    }
+    return { part, manifest: { version: packageVersion(), crate: sources.tree, assets } satisfies Manifest };
+  });
+  const known = new Set([...PARTS.map(manifestOf), "SHA256SUMS", ...files]);
+  const extra = readdirSync(dir).filter((name) => !known.has(name));
   if (extra.length > 0) throw new Error(`Unexpected files in ${dir}: ${extra.join(", ")}`);
-  const result: Manifest = { version: packageVersion(), crate, assets };
-  writeFileSync(join(dir, MANIFEST), `${JSON.stringify(result, null, 2)}\n`);
+  for (const { part, manifest: result } of results) {
+    writeFileSync(join(dir, manifestOf(part)), `${JSON.stringify(result, null, 2)}\n`);
+    console.log(JSON.stringify(result, null, 2));
+  }
   writeFileSync(join(dir, "SHA256SUMS"), `${sums.join("\n")}\n`);
-  console.log(JSON.stringify(result, null, 2));
 }
 
 /** the whole install, both downloads and the checks, stays inside the updater's 120 s for the step */
@@ -169,25 +192,36 @@ function verifiedFor(target: string, crate: string): boolean {
  * When it fails, a host already in place stays only when it is the one verified
  * for these very sources; any other is removed, so the server never runs a host it would not install.
  */
-export async function install(options: { releases?: string; target?: string; platform?: string } = {}): Promise<{ ok: boolean; message: string }> {
-  const target = options.target ?? INSTALLED;
+export async function install(options: { releases?: string; target?: string; platform?: string; part?: Part } = {}): Promise<{ ok: boolean; message: string }> {
+  const part = options.part ?? PTY_HOST;
+  const target = options.target ?? join(root, "bin", part.name);
   let sources: ReturnType<typeof crateTree> = { error: "the crate sources could not be read" };
   let result: { ok: boolean; message: string; elsewhere?: boolean };
   try {
-    sources = crateTree();
+    sources = crateTree(root, part.crate);
     if ("error" in sources) result = { ok: false, message: sources.error };
     else {
       const releases = (options.releases ?? RELEASES).replace(/\/$/, "");
       const version = packageVersion();
-      result = await attempt(sources.tree, target, options, { base: `${releases}/v${version}`, name: `release v${version}`, version });
+      const local = { ...options, part };
+      result = await attempt(sources.tree, target, local, { base: `${releases}/v${version}`, name: `release v${version}`, version });
       if (!result.ok && result.elsewhere) {
-        const built = await attempt(sources.tree, target, options,
-          { base: `${releases}/${TREE_RELEASE}${sources.tree}`, name: `prerelease ${TREE_RELEASE}${sources.tree.slice(0, 12)}` });
-        result = built.ok || !built.elsewhere ? built : { ok: false, message: `${result.message}, and ${built.message}` };
+        const host = part === PTY_HOST ? sources : crateTree(root, PTY_HOST.crate);
+        const keeper = part === ACP_KEEPER ? sources : crateTree(root, ACP_KEEPER.crate);
+        if ("tree" in host) {
+          const legacy = `${TREE_RELEASE}${host.tree}`;
+          const tags = "tree" in keeper ? [`${legacy}-${keeper.tree}`, legacy] : [legacy];
+          for (const tag of tags) {
+            const built = await attempt(sources.tree, target, local,
+              { base: `${releases}/${tag}`, name: `prerelease ${tag.slice(0, TREE_RELEASE.length + 12)}` });
+            result = built.ok || !built.elsewhere ? built : { ok: false, message: `${result.message}, and ${built.message}` };
+            if (!built.elsewhere) break;
+          }
+        }
       }
     }
   } catch (error) {
-    result = { ok: false, message: `could not install the Rust PTY host (${message(error)})` };
+    result = { ok: false, message: `could not install the ${part.label} (${message(error)})` };
   }
   if (!result.ok && existsSync(target) && !("tree" in sources && verifiedFor(target, sources.tree))) {
     try {
@@ -207,30 +241,31 @@ export const TREE_RELEASE = "pty-sidecar-";
  * One place a host may come from: a release (`version`: its manifest must be that version's) or the
  * prerelease of a crate tree (any version: the crate check is what ties it to these sources).
  */
-async function attempt(crate: string, target: string, options: { platform?: string }, source: { base: string; name: string; version?: string }): Promise<{ ok: boolean; message: string; elsewhere?: boolean }> {
+async function attempt(crate: string, target: string, options: { platform?: string; part: Part }, source: { base: string; name: string; version?: string }): Promise<{ ok: boolean; message: string; elsewhere?: boolean }> {
+  const { part } = options;
   const platform = options.platform ?? `${process.platform}-${process.arch}`;
   const asset = PLATFORM_ASSET[platform];
-  if (!asset) return { ok: false, message: `no Rust PTY host for ${platform}` };
+  if (!asset) return { ok: false, message: `no ${part.label} for ${platform}` };
   const version = packageVersion();
   const { base, name } = source;
   const signal = AbortSignal.timeout(INSTALL_DEADLINE_MS);
   let found: unknown;
   try {
-    found = JSON.parse(new TextDecoder().decode(await download(`${base}/${MANIFEST}`, signal)));
+    found = JSON.parse(new TextDecoder().decode(await download(`${base}/${manifestOf(part)}`, signal)));
   } catch (error) {
-    return { ok: false, message: `${name} has no Rust PTY host (${message(error)})`, elsewhere: true };
+    return { ok: false, message: `${name} has no ${part.label} (${message(error)})`, elsewhere: true };
   }
   if (!isObject(found) || (source.version !== undefined && found["version"] !== source.version) || typeof found["crate"] !== "string" || !isObject(found["assets"])) {
-    return { ok: false, message: `${name}'s ${MANIFEST} is not a manifest for ${source.version === undefined ? "a host" : `v${source.version}`}` };
+    return { ok: false, message: `${name}'s ${manifestOf(part)} is not a manifest for ${source.version === undefined ? `a ${part.label}` : `v${source.version}`}` };
   }
-  if (found["crate"] !== crate) return { ok: false, message: `${name}'s host was built from other ${CRATE} sources than this checkout's`, elsewhere: true };
+  if (found["crate"] !== crate) return { ok: false, message: `${name}'s ${part.label} was built from other ${part.crate} sources than this checkout's`, elsewhere: true };
   const entry = found["assets"][platform];
-  if (!isObject(entry) || typeof entry["sha256"] !== "string" || !/^[0-9a-f]{64}$/.test(entry["sha256"]) || entry["file"] !== `${NAME}-${asset}`) {
-    return { ok: false, message: `${name}'s manifest names no host for ${platform}` };
+  if (!isObject(entry) || typeof entry["sha256"] !== "string" || !/^[0-9a-f]{64}$/.test(entry["sha256"]) || entry["file"] !== `${part.name}-${asset}`) {
+    return { ok: false, message: `${name}'s manifest names no ${part.label} for ${platform}` };
   }
   const expected = entry["sha256"];
   const file = entry["file"];
-  if (verifiedFor(target, crate) && sha256(readFileSync(target)) === expected && runsHere(target)) return { ok: true, message: `Rust PTY host of ${name} already installed at ${target}` };
+  if (verifiedFor(target, crate) && sha256(readFileSync(target)) === expected && runsHere(target, part)) return { ok: true, message: `${part.label} of ${name} already installed at ${target}` };
   let bytes: Uint8Array;
   try {
     bytes = await download(`${base}/${file}`, signal);
@@ -244,7 +279,7 @@ async function attempt(crate: string, target: string, options: { platform?: stri
   try {
     writeFileSync(temporary, bytes, { mode: 0o755, flag: "wx" });
     chmodSync(temporary, 0o755);
-    if (!runsHere(temporary)) return { ok: false, message: `${file} does not run on this PC; nothing was installed` };
+    if (!runsHere(temporary, part)) return { ok: false, message: `${file} does not run on this PC; nothing was installed` };
     // the record goes first: a host in place without one is removed by the next failed install, never trusted
     rmSync(recordOf(target), { force: true });
     renameSync(temporary, target);
@@ -252,7 +287,7 @@ async function attempt(crate: string, target: string, options: { platform?: stri
   } finally {
     rmSync(temporary, { force: true });
   }
-  return { ok: true, message: `installed the Rust PTY host of ${name} (sha256 ${digest}) at ${target}` };
+  return { ok: true, message: `installed the ${part.label} of ${name} (sha256 ${digest}) at ${target}` };
 }
 
 if (import.meta.main) {
@@ -260,10 +295,9 @@ if (import.meta.main) {
   if (verb === "build" && rest.length === 2) build(rest[0]!, resolve(rest[1]!));
   else if (verb === "manifest" && rest.length === 1) manifest(resolve(rest[0]!));
   else if (verb === "install" && (rest.length === 0 || (rest.length === 1 && rest[0] === "--strict"))) {
-    const result = await install();
-    if (result.ok) console.log(`Ovis: ${result.message}`);
-    else console.log(`Ovis: ${result.message}; terminals use the Node PTY sidecar where this PC has Node, or are mirrored`);
-    if (!result.ok && rest[0] === "--strict") process.exit(1);
+    const results = await Promise.all(PARTS.map((part) => install({ part })));
+    PARTS.forEach((part, i) => console.log(`Ovis: ${results[i]!.message}${results[i]!.ok ? "" : `; ${part.without}`}`));
+    if (results.some((result) => !result.ok) && rest[0] === "--strict") process.exit(1);
   } else {
     console.error("Usage: bun scripts/pty-sidecar.ts build <linux-x64|linux-arm64|darwin-universal> <dir> | manifest <dir> | install [--strict]");
     process.exit(2);

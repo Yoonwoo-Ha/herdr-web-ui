@@ -6,6 +6,7 @@ import type {
   EngineKey,
   EngineModes,
   EngineMouse,
+  EngineScreen,
   GhosttyRun,
   ScreenPoint,
   ScreenRange,
@@ -79,6 +80,8 @@ export interface Emulator {
   frameAll(draw: (y: number, runs: GhosttyRun<WrittenColor>[]) => void): EmulatorResult<void>;
   /** the cursor of the last frame; draw first */
   cursorState(): EmulatorResult<EngineCursor>;
+  /** the identity and viewport of the last frame, retained while output is held */
+  frameScreen(): EmulatorResult<EngineScreen | null>;
   modes(): EmulatorResult<EngineModes>;
   setMode(mode: number, on: boolean): EmulatorResult<void>;
   releaseHold(): EmulatorResult<void>;
@@ -94,7 +97,7 @@ export interface Emulator {
   scrollFromBottom(rowsAboveBottom: number): EmulatorResult<void>;
   history(): EmulatorResult<EngineHistory>;
   rowContinues(y: number): EmulatorResult<boolean | null>;
-  textOf(range: ScreenRange): EmulatorResult<string>;
+  textOf(range: ScreenRange, contentVersion?: number): EmulatorResult<string>;
   wordAt(point: ScreenPoint): EmulatorResult<ScreenRange | null>;
   lineAt(point: ScreenPoint): EmulatorResult<ScreenRange | null>;
   search(needle: string): EmulatorResult<ScreenRange[]>;

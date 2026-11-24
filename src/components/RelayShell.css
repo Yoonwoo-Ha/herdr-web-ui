@@ -89,9 +89,347 @@
   color: var(--text-dim);
 }
 
-/* the sign-in: the two lines over the buttons, then one quiet line and the way past it, small */
-.relay-shell-signin-hero {
-  margin-bottom: var(--space-6);
+/* the connect screens (ConnectStart.tsx: My PCs, Add a PC): the sheep, then the title centred, Back at its start and the
+   account's ⋮ menu at its end */
+.my-pcs,
+.connect-add {
+  display: flex;
+  flex-direction: column;
+}
+
+.my-pcs > .sheep-mascot,
+.connect-add > .sheep-mascot {
+  align-self: center;
+  margin-bottom: var(--space-2);
+}
+
+.connect-start-head {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+
+.connect-start-head > .relay-add-back {
+  grid-column: 1;
+  justify-self: start;
+}
+
+.connect-start-head > .connect-start-title {
+  grid-column: 2;
+  margin: 0;
+  font-size: var(--fs-display);
+}
+
+.connect-start-menu {
+  grid-column: 3;
+  justify-self: end;
+  width: var(--touch-target);
+  height: var(--touch-target);
+}
+
+/* My PCs and Add a PC under one parent that stays across the 1024 px line (RelayShell frontView): on a phone one shows and
+   the other is kept, hidden, with what it holds; on a wide screen they stand side by side */
+.connect-panes {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.my-pcs[hidden],
+.connect-add[hidden] {
+  display: none;
+}
+
+/* My PCs fills the screen, so Add PC can stay at its bottom while the list scrolls under it */
+.relay-shell-screen.relay-add-screen.my-pcs-screen {
+  place-items: stretch center;
+  padding-bottom: 0;
+}
+
+.my-pcs {
+  flex: 1;
+}
+
+/* two columns for every row (a subgrid each): the row's open link, then Forget or More ways where the row has one, in a
+   cell of its own beside the link, so a tap on the link never lands on it; a row with neither spans both. It keeps its full
+   height (its overflow clips the rounded corners, so a column with a height cap could otherwise shrink it and cut rows
+   off): the pane around it scrolls instead */
+.my-pcs-list {
+  flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+/* a PC's row (ConnectStart PcRow): its name over the way it connects and its state word, the chevron at the end of the
+   link; the name has the whole first line, so a long one is cut only when it does not fit there */
+.my-pc {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+}
+
+.my-pc + .my-pc {
+  border-top: var(--hairline) solid var(--border);
+}
+
+.my-pc > .relay-add-saved-pc {
+  grid-column: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas: "name name chevron" "meta state chevron";
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.my-pc-text { display: contents; }
+
+/* a long name keeps to one line and ends in an ellipsis, as a name does everywhere else, never broken mid-word */
+.my-pc-text > .relay-add-saved-name {
+  grid-area: name;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.my-pc > .relay-add-saved-pc > .relay-shell-pc-glyph { grid-area: chevron; }
+
+/* a row with nothing beside its link (no More ways, no Forget) keeps the whole row: the column another row's More ways
+   takes is never taken from it */
+.my-pc > .relay-add-saved-pc:only-child {
+  grid-column: 1 / -1;
+}
+
+.phone-pc-meta {
+  display: flex;
+  grid-area: meta;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.phone-pc-tag {
+  flex: none;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+/* an address is never cut: one too long beside the way tag goes under it, and breaks only when longer than the row */
+.my-pc-address {
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+/* a row of several ways: the ways tag says enough on a phone; its address is a line of its own on a wide screen */
+.my-pc-address-more {
+  display: none;
+}
+
+.my-pc-state {
+  display: inline-flex;
+  grid-area: state;
+  align-items: center;
+  gap: var(--space-1);
+  margin-inline: 0;
+}
+
+/* the PC whose More opened My PCs: the word on the accent's tint, as a selected row says it */
+.my-pc-state[data-pc-state="in-use"] {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-weight: var(--fw-semibold);
+}
+
+/* Forget PCs: a row opens nothing */
+.my-pc > .relay-add-saved-pc.is-editing {
+  cursor: default;
+}
+
+/* Forget on the PC in use asks once more, under the row */
+.my-pc-ask {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+.my-pc-ask > .relay-shell-copy {
+  flex: 1 1 100%;
+  margin: 0;
+  text-align: start;
+}
+
+/* Forget PCs on a row of several ways: each way a line of its own under the row, its tag and address, with its own
+   Forget (or why not) in the column Forget takes */
+.my-pc > .my-pc-way {
+  display: flex;
+  grid-column: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-4) var(--space-2);
+}
+
+/* Forget PCs: why a row has no Forget, in its place and as wide, in grey: an account PC, or an SSH PC */
+.my-pc > .my-pc-kept {
+  grid-column: 2;
+  margin-inline-end: var(--space-2);
+  padding-inline: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.my-pc > .phone-pc-forget {
+  grid-column: 2;
+  height: var(--touch-target);
+  margin-inline-end: var(--space-2);
+  padding-inline: var(--space-2);
+  color: var(--text-dim);
+}
+
+/* More ways on a row of several: a disclosure of its own beside the row's link, in the column Forget takes, so a tap on
+   the row still opens it by the relay; open, its glyph turns up */
+.my-pc > .my-pc-more {
+  grid-column: 2;
+  width: var(--touch-target);
+  height: var(--touch-target);
+  margin-inline-end: var(--space-2);
+  border-radius: var(--radius-pill);
+  color: var(--text-dim);
+}
+
+.my-pc > .my-pc-more > svg {
+  transition: transform var(--dur-fast) ease;
+}
+
+.my-pc > .my-pc-more[aria-expanded="true"] > svg {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .my-pc > .my-pc-more > svg {
+    transition: none;
+  }
+}
+
+/* the saved ways the row's tap does not open, one to a line under it, each its way tag and the host it opens, whole */
+.my-pc > .my-pc-others:not([hidden]) {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+.my-pc-others > .relay-add-other-way-button {
+  justify-content: flex-start;
+}
+
+.my-pcs-add {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding: var(--space-4) 0 calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+  background: var(--bg);
+}
+
+.my-pcs-add > .btn {
+  width: 100%;
+  gap: var(--space-2);
+}
+
+.my-pcs-add > .btn > svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+/* past eight PCs: a search by name, and on a wide screen the All, On and Off chips beside it */
+.my-pcs-find {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.my-pcs-search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.my-pcs-chips {
+  flex: none;
+}
+
+/* Tailscale off on the phone, over a saved Tailscale PC's tap: what to do, and Open Tailscale */
+.connect-tailscale-off {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.connect-tailscale-off > .relay-shell-copy {
+  margin: 0;
+}
+
+.my-pcs > .relay-shell-copy,
+.my-pcs > .connect-tailscale-off,
+.my-pcs > .relay-add-opening,
+.my-pcs > .account-error,
+.my-pcs > .account-notice,
+.my-pcs > .relay-shell-none-online {
+  margin: 0 0 var(--space-4);
+}
+
+.connect-start-tabs {
+  display: flex;
+  align-self: stretch;
+  margin-bottom: var(--space-5);
+}
+
+.connect-start-tabs > button {
+  flex: 1;
+}
+
+.connect-start-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  text-align: start;
+}
+
+.connect-start-panel > p {
+  margin: 0;
 }
 
 .relay-shell-first-time {
@@ -99,11 +437,6 @@
   color: var(--text-dim);
   font-size: var(--fs-md);
   text-align: center;
-}
-
-.relay-shell-no-account {
-  align-self: center;
-  margin-top: var(--space-5);
 }
 
 .relay-shell-pair-signin {
@@ -364,4 +697,72 @@
   margin: var(--space-4) 0;
 }
 
-.relay-add-manage { display: block; margin-top: var(--space-4); text-align: center; }
+
+/* Add by address on the SSH tab: a text link, its field behind it */
+.connect-start-panel .connect-address-link {
+  align-self: flex-start;
+  min-height: var(--touch-target);
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+/* a wide screen (a desktop browser): My PCs on the left, its list scrolling on its own, and Add a PC always open beside
+   it; Connect a PC alone, signed out with nothing saved, as one centred card */
+@media (min-width: 1024px) {
+  .relay-shell-screen.relay-add-screen.connect-desk-screen {
+    height: var(--app-height, 100dvh);
+    padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
+    overflow: hidden;
+  }
+
+  .connect-desk-screen > .relay-shell {
+    width: min(100%, var(--content-w));
+    min-height: 0;
+  }
+
+  .connect-panes.connect-desk {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--relay-signin-w);
+    grid-template-rows: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-8);
+  }
+
+  /* each pane scrolls on its own when it is taller than the window: a long list, a tall stack of notices, an opened
+     code field; the other pane stays where it is */
+  .connect-desk > .my-pcs,
+  .connect-desk > .connect-add-side {
+    max-height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .connect-add-side,
+  .connect-add-front {
+    padding: var(--space-5);
+    border: var(--hairline) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel);
+  }
+
+  .connect-add-side > .connect-start-head > .connect-start-title {
+    font-size: var(--fs-lg);
+  }
+
+  /* beside Add a PC the list is wide enough for the state word on the name's line */
+  .connect-desk .my-pc > .relay-add-saved-pc {
+    grid-template-areas: "name state chevron" "meta meta meta";
+  }
+
+  .connect-desk .my-pc-address-more {
+    display: block;
+    flex-basis: 100%;
+  }
+}

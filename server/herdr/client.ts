@@ -559,8 +559,12 @@ export async function tabClose(tabId: string, socketPath?: string): Promise<void
   await queueHerdrFocus(socketPath, (socket) => herdrRpc("tab.close", { tab_id: tabId }, socket));
 }
 
+/**
+ * `program`: what the pane's shell runs in place of the agent's own command, the herdr-core adapter's only (a launcher
+ * Ovis wrote, server/approvals/codex.ts); herdr itself takes none.
+ */
 export async function agentStart(
-  options: { name: string; kind: string; paneId: string; args?: string[]; timeoutMs?: number },
+  options: { name: string; kind: string; paneId: string; args?: string[]; timeoutMs?: number; program?: string; toolDoor?: { socket: string; tokenFile: string } },
   socketPath?: string,
 ): Promise<unknown> {
   return herdrRpc(
@@ -571,6 +575,9 @@ export async function agentStart(
       pane_id: options.paneId,
       ...(options.args === undefined ? {} : { args: options.args }),
       ...(options.timeoutMs === undefined ? {} : { timeout_ms: options.timeoutMs }),
+      // a field of the herdr-core adapter's own, outside herdr's schema
+      ...(options.program === undefined ? {} : { program: options.program } as unknown as Partial<AgentStartParams>),
+      ...(options.toolDoor ? { ovis_agent_socket: options.toolDoor.socket, ovis_agent_token_file: options.toolDoor.tokenFile } : {}),
     } satisfies AgentStartParams,
     socketPath,
     options.timeoutMs,
@@ -608,9 +615,11 @@ export async function workspaceClose(workspaceId: string, socketPath?: string, c
 const WORKTREE_GIT_TIMEOUT_MS = 60_000;
 
 /** `git worktree remove` of the workspace's checkout; herdr closes the workspace with it and keeps the branch. */
-export async function worktreeRemove(workspaceId: string, force: boolean, socketPath?: string): Promise<{ type: "worktree_removed"; workspace_id: string; path: string; forced: boolean }> {
-  return queueHerdrFocus(socketPath, (socket) => herdrRpc("worktree.remove", { workspace_id: workspaceId, force }, socket, WORKTREE_GIT_TIMEOUT_MS));
+export async function worktreeRemove(workspaceId: string, force: boolean, socketPath?: string, expected?: WorktreeExpectation & { expected_checkout: string; expected_git_id: string }): Promise<{ type: "worktree_removed"; workspace_id: string; path: string; forced: boolean }> {
+  return queueHerdrFocus(socketPath, (socket) => herdrRpc(expected ? "worktree.remove_checked" : "worktree.remove", { workspace_id: workspaceId, force, ...expected }, socket, WORKTREE_GIT_TIMEOUT_MS));
 }
+
+interface WorktreeExpectation { readonly expected_core: string; readonly expected_repo: string }
 
 export interface WorktreeSourceInfo {
   repo_key: string;
@@ -631,16 +640,17 @@ export interface WorktreeOpenResult {
 }
 
 export async function worktreeCreate(
-  options: { workspaceId: string; branch: string; base?: string; label?: string; path?: string },
+  options: { workspaceId: string; branch: string; base?: string; label?: string; path?: string; expected?: WorktreeExpectation },
   socketPath?: string,
 ): Promise<WorktreeOpenResult> {
-  return herdrRpc("worktree.create", {
+  return herdrRpc(options.expected ? "worktree.create_checked" : "worktree.create", {
     workspace_id: options.workspaceId,
     branch: options.branch,
     ...(options.base === undefined ? {} : { base: options.base }),
     ...(options.label === undefined ? {} : { label: options.label }),
     ...(options.path === undefined ? {} : { path: options.path }),
     focus: false,
+    ...options.expected,
   }, socketPath, WORKTREE_GIT_TIMEOUT_MS);
 }
 

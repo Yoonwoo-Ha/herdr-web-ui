@@ -59,25 +59,21 @@ try {
       const sheet = page.locator(".connect-phone-dialog");
       await sheetRisen(page, ".connect-phone-dialog");
       await sheet.locator('.connect-tabs [data-tab="relay"]').click();
-      const message = sheet.getByTestId("pc-add-source-bound");
-      await message.waitFor();
-      assert.equal(await message.locator("p").innerText(), language === "en"
-        ? "This PC is in an account. Add PCs from your account." : "이 PC는 계정에 연결돼 있어요. 계정에서 PC를 추가하세요.");
-      assert.equal(await message.getByRole("button").innerText(), language === "en" ? "Add from account" : "계정에서 추가");
-      assert.equal(await message.getByRole("button").count(), 1);
+      // signed out of a PC in an account: the sign-in alone, no line above it and never the Add from account prompt (owner, 0.5.10)
+      const signin = sheet.getByTestId("connect-signin");
+      const provider = signin.getByRole("button", { name: /GitHub/ });
+      await provider.waitFor();
+      assert.equal(await sheet.getByTestId("pc-add-source-bound").count(), 0);
+      assert.equal(await signin.locator("p.settings-description, p.settings-hint").count(), 0);
+      // one hairline between the sign-in and the phone's QR code: the QR part's own, none again on the phone part it opens with
+      const scan = sheet.locator('[data-testid="connect-account-qr"] > [data-testid="connect-phone-scan"]');
+      await scan.waitFor();
+      assert.equal(await scan.evaluate((el) => getComputedStyle(el).borderTopWidth), "0px", "no second hairline above the phone's QR code");
+      assert.equal(await provider.isEnabled(), true);
       assert.ok(!(await sheet.innerText()).includes("acct_"));
       assert.equal(await sheet.evaluate(el => el.scrollWidth <= el.clientWidth), true, "No horizontal clipping");
-      await page.screenshot({ path: join(evidence, `source-${language}-${width}-${theme}.png`) });
-      assert.deepEqual(errors, []);
-      console.log(`PASS source ${language} ${width} ${theme}`);
-      await message.getByRole("button").click();
-      const signin = sheet.getByTestId("connect-signin");
-      await signin.getByText(language === "en" ? "Sign in to this PC's account." : "이 PC의 계정으로 로그인하세요.", { exact: true }).waitFor();
-      const provider = signin.getByRole("button", { name: /GitHub/ });
-      assert.equal(await provider.isEnabled(), true);
-      assert.equal(await provider.evaluate(el => el === document.activeElement), true);
-      assert.ok(!(await sheet.innerText()).includes("acct_"));
       await page.screenshot({ path: join(evidence, `signin-${language}-${width}-${theme}.png`) });
+      assert.deepEqual(errors, []);
       console.log(`PASS signin ${language} ${width} ${theme}`);
     } finally { await context.close(); }
   }

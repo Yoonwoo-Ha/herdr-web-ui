@@ -1,0 +1,8 @@
+{
+  "android": [
+    { "version": "1.0.5", "build": 13, "live_since": "2026-11-21", "client": null }
+  ],
+  "ios": [
+    { "version": "1.0.2", "build": 11, "live_since": "2026-11-20", "client": null }
+  ]
+}

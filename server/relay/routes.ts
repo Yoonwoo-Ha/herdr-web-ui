@@ -3,6 +3,7 @@ import { MachineCodeForAccountError } from "../machine-profile.ts";
 import { errorResponse, jsonResponse, readJsonObject, setRequestRoute } from "../http.ts";
 import type { ServerContext } from "../dispatch.ts";
 import { RELAY_CONTROLS } from "../dispatch-routes.ts";
+import { accountLabel } from "../../shared/account-asker.ts";
 import { updateRequestAllowed } from "../update-api.ts";
 import { ACCOUNT_ID, AccountServiceOffError, NoAccountNamedError, ResetRegistryUnavailableError } from "./service.ts";
 
@@ -16,34 +17,67 @@ export async function handleRelayRequest(request: Request, pathname: string, con
   const fail = (code: string, message: string, status: number) => reply({ error: { code, message } }, status);
   if (pathname === "/api/relay" && request.method === "GET") {
     setRequestRoute("/api/relay");
-    return reply(service.status());
+    // this PC's ID and the account named for it go to its own window and CLI (`ovis status --json`, `ovis join`), not
+    // to every device that reads the relay's state
+    return reply(own ? { ...service.status(), server_id: service.serverId() ?? null, relay_account: service.savedRelayAccount() } : service.status());
   }
   const peer = context.peer;
   // one admission rule (docs/account.md): this PC itself, or a drive account member through the relay
   const remoteApprover = peer.kind === "relay" && context.services.devices.isAccountApproverSession(peer.device.id, peer.key) ? peer.device : null;
+  // On a PC pinned to its account's list, a device that signed in with a key the list holds decides a join into the
+  // list when the list holds it to drive with full power: what may add a device to the list may approve its join. Read
+  // from this PC's copy of the list at each call, never from the row's age or the snapshot. False: a device of the list
+  // that may not (to watch, or with bound power); null: no device of the list
+  const listAllower = (): boolean | null => peer.kind === "relay" && peer.key !== "" ? context.services.accountList?.allowsJoins(peer.key) ?? null : null;
+  const cannotAllow = () => fail("list_cannot_allow", "This device is in your account's list, but only a device that can add devices to the list may let one in.", 403);
+  const accountRequired = () => fail("account_required", "Approve pairings on this PC, or from a device linked to your account.", 403);
   if (pathname === "/api/relay/pairings" && request.method === "GET") {
     setRequestRoute("/api/relay/pairings");
-    if (peer.kind === "relay") return remoteApprover ? reply({ pairings: service.approvals.remoteList() }) : fail("account_required", "Approve pairings on this PC, or from a device linked to your account.", 403);
-    return reply({ pairings: service.approvals.list() });
+    if (peer.kind !== "relay") return reply({ pairings: service.approvals.list() });
+    if (remoteApprover) return reply({ pairings: service.approvals.remoteList() });
+    const allows = listAllower();
+    // a device of the list sees the joins the list lets in, and no pairing of this PC's own
+    return allows === true ? reply({ pairings: service.approvals.listJoins() }) : allows === false ? cannotAllow() : accountRequired();
   }
   // an account join taken outside the pairing window, listed for this PC's own window alone and never with its digits
   if (pathname === "/api/relay/joins" && request.method === "GET") {
     setRequestRoute("/api/relay/joins");
     if (!own) return fail("own_window_required", "Only this PC's own window lists account joins.", 403);
-    return reply({ joins: service.approvals.ownJoins() });
+    // a join into the list that this PC cannot sign because its Ovis is behind the list says so before anybody approves it
+    const behind = context.services.accountList?.allowRefusal() === "behind";
+    return reply({ joins: service.approvals.ownJoins().map((join) => behind && join.list === true ? { ...join, list_behind: true as const } : join) });
   }
   if (request.method !== "POST") return fail("method_not_allowed", "Use GET for status and POST for relay actions.", 405);
   if (pathname === RELAY_CONTROLS.pairing && peer.kind === "relay") {
     setRequestRoute("/api/relay/pairing");
-    if (!remoteApprover) return fail("account_required", "Approve pairings on this PC, or from a device linked to your account.", 403);
+    if (!remoteApprover) {
+      const allows = listAllower();
+      if (allows !== true) return allows === false ? cannotAllow() : accountRequired();
+    }
     const body = await readJsonObject(request);
     if (body instanceof Response) return body;
+    const pc = typeof body.proven_server_id === "string" && /^[0-9a-f]{32}$/.test(body.proven_server_id)
+      && typeof body.pc_label === "string" && body.pc_label && body.pc_label === accountLabel(body.pc_label)
+      ? { id: body.proven_server_id, label: body.pc_label } : undefined;
     if (typeof body.id !== "string" || (body.decision !== "approve" && body.decision !== "decline")
-      || (body.decision === "approve" && (typeof body.digits !== "string" || !/^[0-9]{6}$/.test(body.digits)))) {
+      || (body.decision === "approve" && !(typeof body.digits === "string" && /^[0-9]{6}$/.test(body.digits) || body.digits === undefined && pc !== undefined))) {
       return fail("invalid_relay_pairing", "Send the pairing's id, a decision of approve or decline, and the digits the new device shows.", 400);
     }
-    const outcome = service.approvals.decideRemote(body.id, body.decision === "approve", typeof body.digits === "string" ? body.digits : "", remoteApprover);
+    // asked again after the body was read: the right is the one held in the turn that decides
+    let outcome: ReturnType<typeof service.approvals.decideRemote>;
+    if (remoteApprover) {
+      if (!context.services.devices.isAccountApproverSession(peer.device.id, peer.key)) return accountRequired();
+      outcome = service.approvals.decideRemote(body.id, body.decision === "approve", typeof body.digits === "string" ? body.digits : "", remoteApprover, pc);
+    } else {
+      const allows = listAllower();
+      if (allows !== true) return allows === false ? cannotAllow() : accountRequired();
+      // a device of the list decides a join into the list, and no pairing of this PC's own: any other is not there for it
+      outcome = service.approvals.decideForList(body.id, body.decision === "approve", typeof body.digits === "string" ? body.digits : "", peer.device);
+    }
     if (outcome.outcome !== "decided") {
+      // a join into the list is approved only once the new device confirmed its digits (`confirmed` in the list of
+      // waiting joins): its approver signs the device's entry, and signs for nobody who gave up before that
+      if (outcome.outcome === "not_confirmed") return fail("not_confirmed", "That device has not confirmed its digits yet. Allow it once it has.", 409);
       return outcome.outcome === "gone"
         ? fail("relay_pairing_gone", "That device is no longer waiting: it left, was decided, or its time ran out.", 404)
         : fail("wrong_digits", "Those are not the digits the new device shows; it was not let in.", 409);
@@ -137,7 +171,7 @@ export async function handleRelayRequest(request: Request, pathname: string, con
         if (typeof body.id !== "string" || (body.decision !== "approve" && body.decision !== "decline")) {
           return fail("invalid_relay_pairing", "Send the pairing's id and a decision of approve or decline.", 400);
         }
-        if (!service.approvals.decide(body.id, body.decision === "approve")) {
+        if (!service.approvals.decide(body.id, body.decision === "approve", own)) {
           return fail("relay_pairing_gone", "That phone is no longer waiting: it left, was decided, or its time ran out.", 404);
         }
         return reply({ ok: true });
@@ -147,8 +181,15 @@ export async function handleRelayRequest(request: Request, pathname: string, con
         if (!own) return fail("own_window_required", "Approve an account join in this PC's own window.", 403);
         const body = await readJsonObject(request);
         if (body instanceof Response) return body;
+        // a first join (no member could approve it) is allowed or declined by a tap, its digits compared on this screen
+        if (typeof body.id === "string" && (body.decision === "approve" || body.decision === "decline")) {
+          const tapped = service.approvals.decideOwn(body.id, body.decision === "approve");
+          if (tapped === "gone") return fail("relay_pairing_gone", "That device is no longer waiting: it left, was decided, or its time ran out.", 404);
+          if (tapped === "typed_only") return fail("digits_required", "Type the six digits the new device shows.", 409);
+          return reply({ ok: true });
+        }
         if (typeof body.id !== "string" || typeof body.digits !== "string" || !/^[0-9]{6}$/.test(body.digits)) {
-          return fail("invalid_relay_join", "Send the join's id and the six digits the new device shows.", 400);
+          return fail("invalid_relay_join", "Send the join's id and the six digits the new device shows, or a decision of approve or decline for a first join.", 400);
         }
         const outcome = service.approvals.decideTyped(body.id, body.digits);
         if (outcome === "gone") return fail("relay_pairing_gone", "That device is no longer waiting: it left, was decided, or its time ran out.", 404);

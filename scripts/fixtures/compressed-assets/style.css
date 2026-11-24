@@ -1,0 +1,24 @@
+body {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  color: #20252b;
+  background: #f3f5f7;
+  font: 1rem system-ui, sans-serif;
+}
+
+button {
+  justify-self: start;
+  padding: 0.5rem 1rem;
+  border: 1px solid #20252b;
+  border-radius: 0.25rem;
+  color: #f3f5f7;
+  background: #20252b;
+}
+
+output {
+  padding: 0.5rem 1rem;
+  border: 1px solid #20252b;
+  border-radius: 0.25rem;
+  background: #fff;
+}

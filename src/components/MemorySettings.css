@@ -1,0 +1,334 @@
+.memory-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.memory-crumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.memory-crumb strong {
+  color: var(--text-strong);
+  font-weight: var(--fw-semibold);
+}
+
+.memory-crumb-mark {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+}
+
+.memory-inbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  padding: var(--space-2) var(--space-4);
+  background: var(--notice-tint);
+  border: var(--hairline) solid var(--notice);
+  border-radius: var(--radius-lg);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.memory-inbox-row strong {
+  color: var(--text-strong);
+  font-weight: var(--fw-semibold);
+}
+
+.memory-inbox-row span {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-dim);
+}
+
+.memory-inbox-row svg {
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
+  color: var(--text-dim);
+}
+
+.memory-project {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  padding: 0 var(--space-1);
+  font-size: var(--fs-sm);
+}
+
+.memory-project strong {
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+}
+
+.memory-project > span:last-child {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.memory-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+}
+
+.memory-note-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.memory-note-title {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-tight);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.memory-note-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.memory-note-expiry {
+  font-variant-numeric: var(--font-numeric);
+}
+
+.memory-note.is-stale .memory-note-title {
+  color: var(--text-dim);
+}
+
+.memory-note-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-1);
+}
+
+.memory-chip {
+  display: inline-flex;
+  align-items: center;
+  height: var(--chip-h);
+  padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-dim);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+}
+
+.memory-chip.is-confirmed {
+  color: var(--status-done);
+  border-color: var(--status-done);
+  background: var(--status-done-tint);
+}
+
+.memory-chip.is-warn,
+.memory-chip.is-changed {
+  color: var(--text-strong);
+  border-color: var(--notice);
+  background: var(--notice-tint);
+}
+
+.memory-add {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  padding: var(--space-2) var(--space-4);
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  text-align: left;
+  cursor: pointer;
+}
+
+.memory-add svg {
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
+}
+
+.memory-empty {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.memory-lead {
+  margin: 0;
+}
+
+.memory-failure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--danger-tint);
+  border-radius: var(--radius-md);
+  color: var(--danger-text);
+  font-size: var(--fs-sm);
+}
+
+.memory-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.memory-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  padding: 0 var(--space-1);
+}
+
+.memory-group-who {
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.memory-group-where {
+  flex: 1 1 auto;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.memory-group-drop {
+  height: var(--chip-h);
+  color: var(--status-blocked);
+  font-size: var(--fs-xs);
+}
+
+.memory-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-raised);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.memory-card-title {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+}
+
+.memory-card-body {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+}
+
+.memory-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.memory-card-turn {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.memory-card-actions,
+.memory-form-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.memory-card-actions {
+  justify-content: flex-end;
+}
+
+.memory-form {
+  gap: 0;
+}
+
+.memory-field {
+  display: grid;
+  grid-template-columns: minmax(5rem, 7rem) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+}
+
+.memory-field-label {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.memory-body-input {
+  min-height: calc(var(--control-h) * 2.5);
+  resize: vertical;
+}
+
+.memory-fact {
+  display: grid;
+  grid-template-columns: minmax(5rem, 7rem) minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--fs-sm);
+}
+
+.memory-fact > span:first-child {
+  color: var(--text-dim);
+}
+
+.memory-fact > span:last-child,
+.memory-fact-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.memory-form-gap {
+  flex: 1 1 auto;
+}
+
+@media (max-width: 640px) {
+  .memory-note-actions {
+    display: none;
+  }
+
+  .memory-field,
+  .memory-fact {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+}

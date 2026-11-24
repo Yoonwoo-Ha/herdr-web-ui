@@ -9,7 +9,8 @@ export interface MachinePane extends RecentPane { machine: Machine; pane: HerdrP
 export type MachineBranches = ReadonlyMap<string, ReadonlyMap<string, WorkspaceBranch>>;
 export const RECENT_KEY = "ovis:recent-targets";
 const LEGACY_RECENT_KEY = "ovis:recent-panes";
-const RECENT_LIMIT = 8;
+export const RECENT_SHOWN = 8;
+const RECENT_LIMIT = RECENT_SHOWN + 1;
 
 /** A tuple is unambiguous even when remote IDs contain separators or match a local pane ID. */
 export function targetKey({ machineId, paneId }: RecentPane): string { return JSON.stringify([machineId, paneId]); }

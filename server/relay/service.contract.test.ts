@@ -27,6 +27,7 @@ import { loadRelayIdentity, relayIdentityPath } from "./identity.ts";
 import { handleRelayRequest } from "./routes.ts";
 import { RelayService } from "./service.ts";
 import type { RelayServiceOptions } from "./service.ts";
+import { MIN_SUPPORTED_CLIENT_VERSION } from "./client-floor.ts";
 import { bounded, deferred, TestClock } from "./test-helpers.ts";
 import { relayClock } from "./session.ts";
 import { unitHerdrOnly } from "../../scripts/test-herdr.ts";
@@ -214,7 +215,7 @@ async function client(f: Awaited<ReturnType<typeof fixture>>, offer: RelayOffer,
   }
   const principal = (await bounded(admitted.promise)).payload;
   return {
-    device: { id: principal.device_id, keys }, error: error.promise, goaway: goaway.promise, closed: closed.promise, mux: engine,
+    device: { id: principal.device_id, keys }, welcome: greeting, error: error.promise, goaway: goaway.promise, closed: closed.promise, mux: engine,
     close: () => channel.close(),
     /** `body`: sent as the request's body, which `init.body` then says is a stream */
     async http(target: string, init: Partial<Omit<HttpRequest, "target" | "device_id">> = {}, body?: string) {
@@ -675,6 +676,15 @@ it("starts, decodes an offer, pairs, authenticates, and carries full HTTP and WS
     expect(refused.status).toBe(403);
     expect(await refused.json()).toMatchObject({ error: { code: "local_required" } });
   }
+});
+
+it("names the oldest client it supports in its WELCOME: the one floor, or the one a test gives it", async () => {
+  const f = await fixture();
+  await f.start();
+  expect((await client(f, await f.offer())).welcome.min_supported_client).toBe(MIN_SUPPORTED_CLIENT_VERSION);
+  const raised = await fixture(false, { minSupportedClient: "9.8.7" });
+  await raised.start();
+  expect((await client(raised, await raised.offer())).welcome.min_supported_client).toBe("9.8.7");
 });
 
 it("hands a phone the PC's proven warm socket, so the PC opens none for it, and keeps the next one ready", async () => {
@@ -1441,6 +1451,9 @@ it("machine profile reuses its key, saved state and paired device across a resta
 it("machine profile opens no direct listener even when the relay service is given one", async () => {
   let bound = 0;
   const f = await machineFixture({ token: "owner-token" }, { direct: { addresses: () => { bound++; return ["127.0.0.1"]; }, peerAllowed: () => true, preferredPort: 0 } });
+  // turned on, as an ordinary PC's owner could: the profile, not the default, keeps the listener closed
+  mkdirSync(join(f.stateDir, "relay"), { recursive: true });
+  writeFileSync(join(f.stateDir, "relay", "direct.json"), '{"on":true}');
   f.service.start();
   expect(f.service.directAvailable).toBe(false);
   expect(bound).toBe(0);

@@ -5,7 +5,7 @@ import { pagePolicy } from "../server/file-view.ts";
 import { CONTENT_SECURITY_POLICY, IMMUTABLE_CACHE, REVALIDATE, shellContentSecurityPolicy } from "../server/static.ts";
 import { REGIONAL_APPS } from "../shared/relay-regions.ts";
 import { injectBootstrap } from "./theme-bootstrap-build.ts";
-import { ANDROID_APP_FINGERPRINTS, APP_ID, IOS_APP_ID, MISSING_ASSET_PAGE, RENDER_PATH, SHELL_FILE_NAMES, SHELL_META, shellBuild, shellCaddyfile, shellFiles, shellHeaders, shellIndexHtml, shellManifest, shellRedirects } from "./shell-build.ts";
+import { ANDROID_APP_FINGERPRINTS, APP_ID, IOS_APP_ID, MISSING_ASSET_PAGE, RENDER_DOCUMENT, RENDER_PATH, SHELL_FILE_NAMES, SHELL_META, shellBuild, shellCaddyfile, shellFiles, shellHeaders, shellIndexHtml, shellManifest, shellRedirects } from "./shell-build.ts";
 
 const root = join(import.meta.dir, "..");
 const indexHtml = readFileSync(join(root, "index.html"), "utf8");
@@ -152,7 +152,7 @@ describe("the shell's redirects", () => {
       ["/s/:id", "/s/:id/", "301"],
       ["/s/:id/manifest.webmanifest", "/manifest.webmanifest", "200"],
       ["/s/:id/sw.js", "/sw.js", "200"],
-      [RENDER_PATH, "/render.html", "200"],
+      [RENDER_PATH, RENDER_DOCUMENT, "200"],
       ["/s/*", "/index.html", "200"],
     ]);
   });
@@ -166,8 +166,9 @@ describe("the shell's headers", () => {
     expect(shellContentSecurityPolicy(Object.values(REGIONAL_APPS))).not.toBe(CONTENT_SECURITY_POLICY);
   });
 
-  it("give the render host the page policy alone, detaching the shell's first", () => {
+  it("give the render host the page policy alone, detaching the shell's first, and render.html at its own address too", () => {
     expect(blocks.get(RENDER_PATH)).toEqual(["! Content-Security-Policy", `Content-Security-Policy: ${pagePolicy(null)}`]);
+    expect(blocks.get(RENDER_DOCUMENT)).toEqual(["! Content-Security-Policy", `Content-Security-Policy: ${pagePolicy(null)}`]);
     expect(pagePolicy(null)).not.toMatch(/'nonce-|'sha(?:256|384|512)-/);
     expect(pagePolicy(null)).toContain("sandbox allow-scripts");
   });

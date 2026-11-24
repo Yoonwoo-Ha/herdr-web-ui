@@ -78,10 +78,29 @@ public class OvisSshPlugin extends Plugin {
         SshTunnels.wakeAll();
     }
 
+    /** `user`, `host`, `port`: what the SSH tab's field held (user@host), filled in on the setup screen; each may be left out. */
     @PluginMethod
     public void add(PluginCall call) {
-        if (!fromAppPage(call)) return;
-        startActivityForResult(call, new Intent(getContext(), SshSetupActivity.class), "added");
+        // the hosted app's front page of a release before HerdrShell openSshSetup calls this itself: it gets what that
+        // gives, the setup screen over the page (MainActivity.openSshSetup). Any other PC's page is refused
+        if (getBridge().getServerUrl() != null) {
+            String target = SshPcs.target(call.getString("user"), call.getString("host"), call.getInt("port"));
+            getActivity().runOnUiThread(() -> {
+                if (target.length() > 300 || !SshPcs.setupOpener(getBridge().getWebView().getUrl(), false, BuildConfig.APP_ORIGIN)) {
+                    call.reject("Only the app's own pages manage SSH PCs.");
+                    return;
+                }
+                call.resolve();
+                ((MainActivity) getActivity()).openSshSetup(target);
+            });
+            return;
+        }
+        Intent setup = new Intent(getContext(), SshSetupActivity.class)
+            .putExtra(SshSetupActivity.EXTRA_USER, call.getString("user"))
+            .putExtra(SshSetupActivity.EXTRA_HOST, call.getString("host"));
+        Integer port = call.getInt("port");
+        if (port != null) setup.putExtra(SshSetupActivity.EXTRA_PORT, port);
+        startActivityForResult(call, setup, "added");
     }
 
     /** Sets the PC `origin` up again on the setup screen, its address kept. */
@@ -181,6 +200,30 @@ public class OvisSshPlugin extends Plugin {
         if (name.length() > 64) name = name.substring(0, 64);
         PCStore.setName(getContext(), pc.origin, name.isEmpty() ? pc.label() + " (SSH)" : name);
         call.resolve();
+    }
+
+    /** What the SSH PC `origin` knows of other PCs, as its own Ovis answers over its tunnel (SshTunnels.known). */
+    @PluginMethod
+    public void known(PluginCall call) {
+        if (!fromAppPage(call)) return;
+        SshPcs.Pc pc = SshPcs.on(getContext()).get(call.getString("origin"));
+        if (pc == null || !pc.hasHostKey()) {
+            call.reject("That SSH PC is not saved on this phone.");
+            return;
+        }
+        new Thread(() -> {
+            try {
+                org.json.JSONObject found = SshTunnels.known(getContext(), pc);
+                JSObject answer = new JSObject();
+                answer.put("candidates", found.opt("candidates"));
+                answer.put("machines", found.opt("machines"));
+                call.resolve(answer);
+            } catch (SshFailure failed) {
+                call.reject(failed.getMessage(), failed.kind);
+            } catch (IOException taken) {
+                call.reject(taken.getMessage(), "ssh-port");
+            }
+        }, "ovis-ssh-known").start();
     }
 
     /** Forgets the PC's host key on purpose: it opens again only once the setup screen confirms the key it shows then. */
@@ -285,6 +328,9 @@ public class OvisSshPlugin extends Plugin {
         if (activity == null) return;
         activity.runOnUiThread(() -> {
             if (activity.isFinishing() || activity.isDestroyed()) return;
+            // only over that PC's own page: while the person chooses another way the PC is still current, but what is
+            // on screen is the hosted screen or the app's own page, which this failure is not about
+            if (!((MainActivity) activity).showsPc(pc.origin)) return;
             String errorUrl = getBridge().getErrorUrl();
             String shown = getBridge().getWebView().getUrl();
             if (errorUrl != null && (shown == null || !shown.startsWith(errorUrl))) getBridge().getWebView().loadUrl(errorUrl);

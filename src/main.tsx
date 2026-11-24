@@ -18,6 +18,7 @@ import { SignInReturn } from "./components/SignInReturn.tsx";
 import { CALLBACK_PATH, takeReturn } from "./lib/account/ownWindow.ts";
 import { readerFromSearch, reloadWhenReaderChanges } from "./lib/fileReader.ts";
 import { pageSearch } from "./lib/pageQuery.ts";
+import { reloadRestoredAppPage } from "./lib/pageRestore.ts";
 import { bootRelayShell } from "./lib/relay/boot.ts";
 import { SettingsProvider } from "./lib/settings.ts";
 import { shellMode } from "./lib/shellMode.ts";
@@ -26,6 +27,7 @@ import "./lib/viewport.ts";
 import { watchSheetExits } from "./lib/sheets.ts";
 
 watchSheetExits();
+reloadRestoredAppPage();
 
 const container = document.getElementById("root");
 if (!container) throw new Error("#root is missing from index.html");

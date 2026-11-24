@@ -87,4 +87,8 @@ export const SETUP_ZH: Record<string, string> = {
   "Install another agent ({count})": "安装其他代理（{count}）",
   "None": "无",
   "A browser the agent can drive: Ovis adds an MCP server at a fixed version when it starts this agent. That browser uses a profile of its own, without your sign-ins, and Ovis does not watch or limit it. Applies from the next start; an agent started from a terminal is not changed.": "代理可以操作的浏览器：Ovis 启动该代理时会加上固定版本的 MCP 服务器。该浏览器使用单独的配置文件，不会用到你的登录信息，Ovis 也不会查看或限制它。从下次启动起生效；从终端直接启动的代理不受影响。",
+  "Let agents call other agents": "允许 Agent 调用其他 Agent",
+  "On this PC only. You still answer every permission request.": "仅限此 PC。每个权限请求仍由你回答。",
+  "Agents they may call": "可调用的 Agent",
+  "Not saved: this PC did not answer. Try again.": "未保存：此 PC 没有响应。请重试。",
 };

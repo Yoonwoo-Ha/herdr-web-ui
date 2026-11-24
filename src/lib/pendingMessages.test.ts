@@ -1,6 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import type { PendingMessage } from "../../shared/protocol.ts";
-import { PendingMessageStore, frameRemovals } from "./pendingMessages.ts";
+import { PendingMessageStore, frameRemovals, MAX_DISMISSED_PENDING_IDS } from "./pendingMessages.ts";
 
 const storage = () => {
   const data = new Map<string, string>();
@@ -137,6 +137,106 @@ describe("pending message ownership", () => {
     old.setItem("ovis:pending:p", JSON.stringify({ version: 1, messages: [requested("asked"), message("faulted", "held"), message("queued")] }));
     expect(new PendingMessageStore(() => old).read("p").map(({ id, state, heldByRequest }) => [id, state, heldByRequest ?? false]))
       .toEqual([["asked", "held", true], ["faulted", "uncertain", false], ["queued", "uncertain", false]]);
+  });
+  it("dismisses only the exact uncertain display ID, keeps its saved copy hidden after a reload, and shows it again to a connection that holds it", () => {
+    const port = storage(), store = new PendingMessageStore(() => port);
+    const first = message("command", "uncertain", "/thinking high");
+    const second = message("question", "uncertain", "How do I play piano?");
+    const duplicateText = message("another-question", "uncertain", second.text);
+    store.publish("p", [first, second, duplicateText], [], "scope");
+    expect(store.dismissCopy("p", first.id)).toBe(true);
+    expect(store.dismissCopy("p", second.id)).toBe(true);
+    expect(store.read("p").map(row => row.id)).toEqual(["another-question"]);
+    expect(JSON.parse(port.getItem("ovis:pending:p")!).dismissed).toEqual(["command", "question"]);
+    // Dismissal changes no native delivery state and grants no resend/withdrawal authority.
+    expect(first.state).toBe("uncertain"); expect(second.state).toBe("uncertain");
+    expect(store.begin("p", first.id)).toBe(false);
+    const reloaded = new PendingMessageStore(() => port);
+    expect(reloaded.read("p").map(row => row.id)).toEqual(["another-question"]);
+    reloaded.accept("p", first, null);
+    expect(reloaded.read("p").map(row => row.id)).toEqual(["another-question"]);
+    // a connection that lists the ID holds the bridge's record: its row stays until the bridge settles it
+    reloaded.publish("p", [first, { ...second, state: "held" }, duplicateText], [], "new");
+    expect(reloaded.read("p").map(({ id, state, serverOwned }) => [id, state, serverOwned]))
+      .toEqual([["another-question", "uncertain", true], ["command", "uncertain", true], ["question", "held", true]]);
+    reloaded.publish("other", [second], [], "other-scope");
+    expect(reloaded.read("other")[0]!.id).toBe(second.id);
+  });
+  it("merges another tab's exact display tombstones without hiding other IDs, arming delivery or taking a live row from its tab", () => {
+    const port = storage(), a = new PendingMessageStore(() => port), b = new PendingMessageStore(() => port);
+    a.publish("p", [message("a", "uncertain", "same"), message("b", "uncertain", "same")], [], "scope");
+    b.read("p");
+    expect(b.dismissCopy("p", "a")).toBe(true);
+    a.refresh("p");
+    expect(a.read("p").map(({ id, serverOwned }) => [id, serverOwned])).toEqual([["b", true], ["a", true]]);
+    a.publish("p", [message("a", "uncertain", "same"), message("c", "held", "other")], [], "scope");
+    expect(new PendingMessageStore(() => port).read("p").map(row => row.id)).toEqual(["b", "c"]);
+    expect(JSON.parse(port.getItem("ovis:pending:p")!).dismissed).toEqual(["a"]);
+  });
+  it("moves a pane's rows when the new pane's dismissal journal is full", () => {
+    const port = storage(), ids = Array.from({ length: MAX_DISMISSED_PENDING_IDS }, (_, i) => `dismissed-${i}`);
+    port.setItem("ovis:pending:to", JSON.stringify({ version: 1, dismissed: ids, messages: [] }));
+    const store = new PendingMessageStore(() => port);
+    store.accept("from", message("gone", "uncertain"), "scope");
+    expect(store.dismissCopy("from", "gone")).toBe(true);
+    store.accept("from", message("kept", "held"), "scope");
+    store.move("from", "to");
+    expect(store.read("from")).toEqual([]);
+    expect(store.read("to").map((row) => row.id)).toEqual(["kept"]);
+    expect(store.isOwned("to", "kept", "scope")).toBe(true);
+  });
+  it("carries an exact dismissed ID with its moved pane: saved copies of it stay hidden under both IDs", () => {
+    const port = storage(), store = new PendingMessageStore(() => port);
+    store.accept("from", message("a", "uncertain"), "scope");
+    store.dismissCopy("from", "a"); store.move("from", "to");
+    store.accept("from", message("a", "uncertain"), null);
+    const reloaded = new PendingMessageStore(() => port);
+    for (const id of ["a", "b"]) reloaded.accept("to", message(id, "uncertain"), null);
+    expect(store.read("from")).toEqual([]);
+    expect(reloaded.read("to").map(row => row.id)).toEqual(["b"]);
+  });
+  it("refuses a new dismissal at capacity without evicting or resurfacing any old exact ID", () => {
+    const port = storage(), ids = Array.from({ length: MAX_DISMISSED_PENDING_IDS }, (_, i) => `dismissed-${i}`);
+    port.setItem("ovis:pending:p", JSON.stringify({ version: 1, dismissed: ids, messages: [message("new", "uncertain")] }));
+    const store = new PendingMessageStore(() => port);
+    expect(store.dismissCopy("p", "new")).toBe(false);
+    expect(store.isUnsaved("p")).toBe(true);
+    expect(store.read("p").map(row => row.id)).toEqual(["new"]);
+    expect(JSON.parse(port.getItem("ovis:pending:p")!).dismissed).toEqual(ids);
+    store.accept("p", message(ids[0]!, "uncertain"), null);
+    expect(store.read("p").map(row => row.id)).toEqual(["new"]);
+  });
+  it("rejects malformed oversized dismissal journals and keeps known tombstones without dropping the display row", () => {
+    const port = storage(), store = new PendingMessageStore(() => port);
+    store.accept("p", message("known", "uncertain"), "scope"); store.dismissCopy("p", "known");
+    for (const dismissed of [["x".repeat(257)], Array(MAX_DISMISSED_PENDING_IDS + 1).fill("too-many")]) {
+      port.setItem("ovis:pending:p", JSON.stringify({ dismissed, messages: [message("new", "uncertain")] }));
+      store.refresh("p");
+      expect(store.dismissCopy("p", "new")).toBe(false);
+      expect(store.isUnsaved("p")).toBe(true);
+      expect(store.read("p").map(row => row.id)).toEqual(["new"]);
+    }
+  });
+  it("keeps the copy visible if its new dismissal tombstone cannot be persisted", () => {
+    const port = storage(), seed = new PendingMessageStore(() => port);
+    seed.accept("p", message("a", "uncertain"), "scope");
+    const store = new PendingMessageStore(() => ({ ...port, setItem: () => { throw new Error("full"); } }));
+    expect(store.dismissCopy("p", "a")).toBe(false);
+    expect(store.isUnsaved("p")).toBe(true);
+    expect(store.read("p").map(row => row.id)).toEqual(["a"]);
+    expect(new PendingMessageStore(() => port).read("p").map(row => row.id)).toEqual(["a"]);
+  });
+  it("never dismisses queued, held, sending or actively changing rows", () => {
+    const store = new PendingMessageStore(() => storage());
+    for (const state of ["queued", "held", "sending"] as const) {
+      store.accept("p", message(state, state), "scope");
+      expect(store.dismissCopy("p", state)).toBe(false);
+    }
+    store.accept("p", message("uncertain", "uncertain"), "scope");
+    store.begin("p", "uncertain");
+    expect(store.dismissCopy("p", "uncertain")).toBe(false);
+    store.end("p", "uncertain");
+    expect(store.dismissCopy("p", "uncertain")).toBe(true);
   });
   it("settles a follow-up's exact resumed receipt after reload, never a same-text or live-owned row (#2421)", () => {
     const port = storage(), before = new PendingMessageStore(() => port);

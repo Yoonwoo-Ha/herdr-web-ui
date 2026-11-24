@@ -130,7 +130,7 @@ export const ENGINE_ENUMS = {
   GhosttyResult: ["OUT_OF_SPACE", "NO_VALUE"],
   GhosttyTerminalOption: ["USERDATA", "WRITE_PTY", "BELL", "SIZE", "COLOR_FOREGROUND", "COLOR_BACKGROUND", "COLOR_CURSOR", "COLOR_PALETTE",
     "KITTY_IMAGE_STORAGE_LIMIT", "CLIPBOARD_WRITE", "SCROLLBACK_MAX_BYTES", "SCROLLBACK_MAX_LINES", "MODE_DEFAULT", "MODE", "RENDER_HOLD"],
-  GhosttyTerminalData: ["COLS", "ROWS", "ACTIVE_SCREEN", "KITTY_KEYBOARD_FLAGS", "SCROLLBAR", "SCROLLBACK_ROWS", "KITTY_GRAPHICS", "MODE"],
+  GhosttyTerminalData: ["COLS", "ROWS", "ACTIVE_SCREEN", "SCREEN_GENERATION", "KITTY_KEYBOARD_FLAGS", "SCROLLBAR", "SCROLLBACK_ROWS", "KITTY_GRAPHICS", "MODE"],
   GhosttyTerminalScreen: ["ALTERNATE"],
   GhosttyTerminalScrollViewportTag: ["BOTTOM", "DELTA"],
   GhosttyRenderStateData: ["DIRTY", "ROW_ITERATOR", "CURSOR_VISUAL_STYLE", "CURSOR_VISIBLE", "CURSOR_VIEWPORT_HAS_VALUE",
@@ -254,6 +254,11 @@ export interface EngineModes {
   altScroll: boolean;
   /** win32-input-mode (DEC 9001): the module does not keep it, so a screen's engine watches the written bytes for it; false on the browser's */
   win32Input: boolean;
+  /**
+   * Native screen switches and full resets, including a 1049 re-entry that clears the current alternate.
+   * Compare for equality to bind a selection to its screen. The browser counts only its own reset() calls.
+   */
+  screens: number;
 }
 
 export interface EngineMods { shift?: boolean; ctrl?: boolean; alt?: boolean; super?: boolean }
@@ -305,6 +310,15 @@ export interface EngineHistory {
   total: number;
   /** the screen row of the viewport's first row; scrollback when it shows the newest rows */
   viewportTop: number;
+}
+
+/** The identity and viewport captured with a render state, including a synchronized-output snapshot. */
+export interface EngineScreen {
+  readonly altScreen: boolean;
+  readonly screens: number;
+  readonly history: EngineHistory;
+  /** A text read is safe only while no content-changing call has intervened since this capture. */
+  readonly contentVersion: number;
 }
 
 export type Rgb = readonly [number, number, number];
@@ -560,9 +574,12 @@ export class GhosttyEngine {
   private size: { cols: number; rows: number; cellW: number; cellH: number };
   /** whether a synchronized-output hold is on: frames then come from the render state captured when it began */
   private held = false;
+  private renderedScreen: EngineScreen | null = null;
+  private contentVersion = 0;
   /** since the last resize the program switched its columns (DECCOLM), or the terminal was reset: the grid may not be the size the engine was given */
   private gridTouched = false;
   private win32Input = false;
+  private browserResets = 0;
   /** where the written bytes stand in a `CSI ? Pm h|l` that may name 9001, carried from one write to the next */
   private scan: "ground" | "esc" | "csi" | "private" = "ground";
   private scanParam = 0;
@@ -737,15 +754,16 @@ export class GhosttyEngine {
     if (bytes.length === 0) return;
     // the browser's loader writes in many small pieces: its engines feed the module directly, as they always did
     if (!this.events) return this.feed(bytes);
-    this.guard(() => {
-      this.feed(bytes);
-      this.followWrittenModes(bytes);
-    });
+    this.guard(() => this.feed(bytes));
   }
 
-  private feed(bytes: Uint8Array): void {
-    if (bytes.length > this.inputCap) {
-      const cap = Math.max(bytes.length, 64 * 1024);
+  private onAlternate(): boolean {
+    return this.getU32(this.e.GhosttyTerminalData.ACTIVE_SCREEN) === this.e.GhosttyTerminalScreen.ALTERNATE;
+  }
+
+  private reserveInput(length: number): void {
+    if (length > this.inputCap) {
+      const cap = Math.max(length, 64 * 1024);
       if (this.events) {
         // a screen's: allocated before the old one is freed, so a refused write keeps it
         const next = this.allocate(cap, "a write");
@@ -760,15 +778,35 @@ export class GhosttyEngine {
         this.input = this.allocate(cap, "a write");
       }
     }
+  }
+
+  private feed(bytes: Uint8Array): void {
+    this.reserveInput(bytes.length);
+    if (this.events) this.followWrittenModes(bytes);
     new Uint8Array(this.x.memory.buffer, this.input, bytes.length).set(bytes);
-    this.x.ghostty_terminal_vt_write(this.terminal, this.input, bytes.length);
+    this.changeContent(() => this.x.ghostty_terminal_vt_write(this.terminal, this.input, bytes.length));
+  }
+
+  /**
+   * A hold can capture midway through a write or resize, before that call changes more text. Mark both boundaries,
+   * also on failure: such a snapshot must never authorize a read of the terminal after the call. No parser mirror
+   * or history copy is needed. The browser does not use frame-bound reads and keeps its existing behavior.
+   */
+  private changeContent(run: () => void): void {
+    if (!this.events) return run();
+    this.contentVersion++;
+    try {
+      run();
+    } finally {
+      this.contentVersion++;
+    }
   }
 
   /**
    * Follows `CSI ? Pm h` and `CSI ? Pm l` naming 9001 (win32-input-mode), which the module parses but does not
    * keep, or 3 (DECCOLM, which changes the grid's columns), and a full reset (ESC c), across writes. Only the byte after an ESC and the inside of a `CSI ?`
    * are looked at: any other sequence is skipped to the next ESC, so plain and styled output costs one
-   * indexOf per escape sequence.
+   * indexOf per escape sequence. Screen lifetime is reported by the module, not inferred here.
    */
   private followWrittenModes(bytes: Uint8Array): void {
     for (let at = 0; at < bytes.length; at++) {
@@ -824,11 +862,11 @@ export class GhosttyEngine {
     if (mode === DECCOLM) this.gridTouched = true;
     // the browser's loader toggles 2027 around every emoji joiner: as with write, no guard on its engines
     if (!this.events) return this.setModeConfig(this.e.GhosttyTerminalOption.MODE, mode, on);
-    this.guard(() => {
+    this.guard(() => this.changeContent(() => {
       this.setModeConfig(this.e.GhosttyTerminalOption.MODE, mode, on);
       // setting the mode this way does not call back: a hold begins or ends here, as the program's own bytes would make it
       if (mode === MODE.syncOutput) this.setHeld(on);
-    });
+    }));
   }
 
   private getMode(mode: number): boolean {
@@ -866,14 +904,19 @@ export class GhosttyEngine {
       this.view().setUint8(this.scratch, 0);
       this.check(this.x.ghostty_terminal_get(this.terminal, data.KITTY_KEYBOARD_FLAGS, this.scratch), "kitty keyboard flags");
       const kittyFlags = this.view().getUint8(this.scratch);
+      let screens = this.browserResets;
+      if (this.events) {
+        this.check(this.x.ghostty_terminal_get(this.terminal, data.SCREEN_GENERATION, this.scratch), "screen generation");
+        screens = Number(this.view().getBigUint64(this.scratch, true));
+      }
       // with several on, the most capable wins: a program that sets one after another means the last, and the last is the most capable
       const mouse = on(MODE.anyMouse) ? "any" : on(MODE.buttonMouse) ? "button" : on(MODE.normalMouse) ? "normal" : on(MODE.x10Mouse) ? "x10" : "none";
       const mouseFormat = on(MODE.sgrPixelsMouse) ? "sgrPixels" : on(MODE.sgrMouse) ? "sgr" : on(MODE.urxvtMouse) ? "urxvt" : on(MODE.utf8Mouse) ? "utf8" : "x10";
       return {
-        altScreen: this.getU32(data.ACTIVE_SCREEN) === this.e.GhosttyTerminalScreen.ALTERNATE,
+        altScreen: this.onAlternate(),
         mouse, mouseFormat, bracketedPaste: on(MODE.bracketedPaste), kittyFlags, focusReports: on(MODE.focus),
         syncOutput: on(MODE.syncOutput), appCursor: on(MODE.appCursor), appKeypad: on(MODE.appKeypad), altScroll: on(MODE.altScroll),
-        win32Input: this.win32Input,
+        win32Input: this.win32Input, screens,
       };
     });
   }
@@ -901,7 +944,7 @@ export class GhosttyEngine {
     if (held === this.held) return;
     if (held) this.callback(() => {
       try {
-        this.check(this.x.ghostty_render_state_update(this.state, this.terminal), "render_state_update");
+        this.updateRenderState();
       } catch (error) {
         if (error instanceof WebAssembly.RuntimeError) this.module.trap = error;
         throw error;
@@ -914,9 +957,10 @@ export class GhosttyEngine {
   reset(): void {
     this.guard(() => {
       this.gridTouched = true;
-      this.x.ghostty_terminal_reset(this.terminal);
+      this.changeContent(() => this.x.ghostty_terminal_reset(this.terminal));
       this.placementsGeneration = -1;
       this.win32Input = false;
+      if (!this.events) this.browserResets++;
     });
   }
 
@@ -944,7 +988,7 @@ export class GhosttyEngine {
     this.guard(() => {
       const size = this.size;
       if (!this.gridTouched && size.cols === cols && size.rows === rows && size.cellW === w && size.cellH === h) return;
-      apply();
+      this.changeContent(apply);
     });
   }
 
@@ -955,7 +999,7 @@ export class GhosttyEngine {
    * has the byte limit lifted for good, so there the line count alone decides.
    */
   setScrollback(lines: number): void {
-    this.guard(() => this.setLineLimit(lines));
+    this.guard(() => this.changeContent(() => this.setLineLimit(lines)));
   }
 
   private setLineLimit(lines: number): void {
@@ -1020,11 +1064,25 @@ export class GhosttyEngine {
     this.guard(() => this.drawRows(draw as (y: number, runs: GhosttyRun<string | WrittenColor>[]) => void, true, colors === "written"));
   }
 
+  /** Read after frame/frameAll: the screen those cells came from, not the terminal behind a held snapshot. */
+  frameScreen(): EngineScreen | null {
+    return this.guard(() => this.renderedScreen);
+  }
+
+  private updateRenderState(): void {
+    this.check(this.x.ghostty_render_state_update(this.state, this.terminal), "render_state_update");
+    if (this.events) {
+      this.check(this.x.ghostty_terminal_get(this.terminal, this.e.GhosttyTerminalData.SCREEN_GENERATION, this.scratch), "screen generation");
+      const screens = Number(this.view().getBigUint64(this.scratch, true));
+      this.renderedScreen = { screens, altScreen: this.onAlternate(), history: this.readHistory(), contentVersion: this.contentVersion };
+    }
+  }
+
   private drawRows(draw: (y: number, runs: GhosttyRun<string | WrittenColor>[]) => void, all: boolean, written: boolean): boolean {
     const x = this.x;
     const rs = this.e.GhosttyRenderStateData, rowData = this.e.GhosttyRenderStateRowData, cellsData = this.e.GhosttyRenderStateRowCellsData;
     const wides = this.e.GhosttyCellWide, tags = this.e.GhosttyCellContentTag;
-    if (!this.held) this.check(x.ghostty_render_state_update(this.state, this.terminal), "render_state_update");
+    if (!this.held) this.updateRenderState();
     const c = this.readCursor();
     const cursor = `${c.visible} ${c.x} ${c.y} ${c.style}`;
     const cursorMoved = cursor !== this.lastCursor;
@@ -1343,15 +1401,17 @@ export class GhosttyEngine {
   }
 
   history(): EngineHistory {
-    return this.guard(() => {
-      const data = this.e.GhosttyTerminalData;
-      const scrollbar = this.scratch + AT.scrollbar, bar = this.f.GhosttyTerminalScrollbar;
-      this.check(this.x.ghostty_terminal_get(this.terminal, data.SCROLLBAR, scrollbar), "scrollbar");
-      const dv = this.view();
-      const total = Number(dv.getBigUint64(scrollbar + bar.total, true));
-      const viewportTop = Number(dv.getBigUint64(scrollbar + bar.offset, true));
-      return { scrollback: this.getU32(data.SCROLLBACK_ROWS), total, viewportTop };
-    });
+    return this.guard(() => this.readHistory());
+  }
+
+  private readHistory(): EngineHistory {
+    const data = this.e.GhosttyTerminalData;
+    const scrollbar = this.scratch + AT.scrollbar, bar = this.f.GhosttyTerminalScrollbar;
+    this.check(this.x.ghostty_terminal_get(this.terminal, data.SCROLLBAR, scrollbar), "scrollbar");
+    const dv = this.view();
+    const total = Number(dv.getBigUint64(scrollbar + bar.total, true));
+    const viewportTop = Number(dv.getBigUint64(scrollbar + bar.offset, true));
+    return { scrollback: this.getU32(data.SCROLLBACK_ROWS), total, viewportTop };
   }
 
   /** the grid reference of a screen point at `out`; false when the point is outside the kept rows */
@@ -1388,9 +1448,13 @@ export class GhosttyEngine {
     });
   }
 
-  /** the text of a range, a soft-wrapped line joined, each row's trailing blanks dropped, rows ended by "\n" */
-  textOf(range: ScreenRange): string {
+  /**
+   * The text of a range, soft wraps joined and trailing blanks dropped. With a captured content version, refuse
+   * instead of substituting text from a newer terminal state (including a held frame whose history was pruned).
+   */
+  textOf(range: ScreenRange, contentVersion?: number): string {
     return this.guard(() => {
+      if (contentVersion !== undefined && contentVersion !== this.contentVersion) return "";
       const x = this.x;
       const selection = this.scratch + AT.selection, s = this.f.GhosttySelection;
       if (!this.gridRef(range.start, this.scratch + AT.refStart) || !this.gridRef(range.end, this.scratch + AT.refEnd)) return "";

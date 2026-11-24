@@ -1,7 +1,8 @@
 /**
  * How this PC refuses an account-joined sign-in (Step 2, S25). The three account codes go only to an app whose hello
  * named `account-opens-all/1` on a PC with OVIS_ACCOUNT_OPENS_ALL on; an app that predates them reads a code it does
- * not know as a protocol error, so it gets today's `auth_failed` for the same refusal.
+ * not know as a protocol error, so it gets today's `auth_failed` for the same refusal. A wait for this PC's read is the
+ * exception: its key stands, and such an app forgets a key it is refused with `auth_failed`, so it gets `internal_error`.
  */
 import type { HoldState } from "../../shared/account-devices-api.ts";
 import type { SessionError } from "../../shared/relay-mux.ts";
@@ -14,9 +15,8 @@ export interface SignInRefusal {
 }
 
 export function accountSignInRefusal(answer: Exclude<AccessAnswer, { ok: true }>, holdUntil: string | null, knowsAccountCodes: boolean): SignInRefusal {
-  if (!knowsAccountCodes) return { code: "auth_failed", message: "auth_failed" };
+  if (!knowsAccountCodes) return answer.refused === "catching_up" ? { code: "internal_error", message: "internal_error" } : { code: "auth_failed", message: "auth_failed" };
   switch (answer.refused) {
-    case "catching_up": return { code: "held", message: "This PC waits for the account's list before letting this device in", hold: { reason: "catching_up" } };
     case "join_hold": return { code: "held", message: "This device waits for its join hold on this PC", hold: { reason: "join_hold", until: holdUntil } };
     case "catching_up": return { code: "held", message: "This PC waits for the account's list before letting this device in", hold: { reason: "catching_up" } };
     case "expired":

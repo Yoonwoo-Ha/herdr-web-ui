@@ -62,7 +62,8 @@ Neither command updates itself; only `bun run start` and the plugin run the upda
 `bun run check fast` runs the **Fast checks** CI job, and `bun run check full` adds the
 **Integration and browser** job, on a herdr of its own apart from the one you work in.
 
-**Fast checks** is these, one by one; none needs herdr:
+**Fast checks** is these, one by one except `typecheck`, which runs beside `build` and
+`test:unit`; none needs herdr:
 
 ```bash
 bun run generate:types --check   # herdr's and hc's generated types match scripts/*-schema.json
@@ -71,6 +72,12 @@ bun run typecheck
 bun run build
 bun run test:unit
 ```
+
+`test:unit` and `test:integration` start the files that took longest first, by
+`scripts/ci-test-timings.json` (a file it does not hold starts before all, the larger first).
+`bun scripts/ci-test-timings.ts --runs 5` refreshes it from the check logs of the newest green
+pushes to main: do it when a long file is new or has grown, or the unit step's last files end alone.
+An old table only orders the files worse; every file runs either way.
 
 **Integration and browser** needs herdr on `PATH` (or `OVIS_HERDR_BIN`) and Chrome
 (`CHROME_PATH`, default `/opt/google/chrome/chrome`):

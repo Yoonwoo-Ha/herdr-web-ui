@@ -73,8 +73,15 @@ public class OvisPushPlugin: CAPPlugin, CAPBridgedPlugin, NotificationHandlerPro
         }
     }
 
+    /// The PC whose page asks: the current one only where its own page is on screen. While the person chooses another
+    /// way the PC stays current, but the page asking is the hosted Connect a PC screen or the app's own, which get
+    /// what a page with no PC gets: no subscription to read, replace or forget.
+    private var shownPc: String? {
+        (bridge?.viewController as? HerdrBridgeViewController)?.showsPc == true ? PCStore.current : nil
+    }
+
     @objc func subscribe(_ call: CAPPluginCall) {
-        guard let origin = PCStore.current else {
+        guard let origin = shownPc else {
             call.reject("Push needs an open PC", "no_pc")
             return
         }
@@ -116,7 +123,7 @@ public class OvisPushPlugin: CAPPlugin, CAPBridgedPlugin, NotificationHandlerPro
 
     @objc func getSubscription(_ call: CAPPluginCall) {
         do {
-            guard let origin = PCStore.current, let saved = savedEndpoint(origin) else {
+            guard let origin = shownPc, let saved = savedEndpoint(origin) else {
                 call.resolve(["subscription": NSNull()])
                 return
             }
@@ -135,7 +142,7 @@ public class OvisPushPlugin: CAPPlugin, CAPBridgedPlugin, NotificationHandlerPro
     }
 
     @objc func unsubscribe(_ call: CAPPluginCall) {
-        if let origin = PCStore.current { UserDefaults.standard.removeObject(forKey: storageKey(origin)) }
+        if let origin = shownPc { UserDefaults.standard.removeObject(forKey: storageKey(origin)) }
         call.resolve()
     }
 

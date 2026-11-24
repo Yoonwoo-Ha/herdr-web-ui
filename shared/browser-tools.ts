@@ -40,31 +40,38 @@ export function browserToolChoices(value: unknown): BrowserToolChoices {
 }
 
 /** The command the agent runs for the tool. On Windows `npx` is a batch file, which an agent starts only through cmd. */
-export function browserToolCommand(tool: BrowserToolId, platform: string): string[] {
+export function browserToolCommand(tool: BrowserToolId, platform: string): [string, ...string[]] {
   const { package: name, version } = BROWSER_TOOLS[tool];
-  const npx = ["npx", "-y", `${name}@${version}`, "--isolated"];
+  const npx: [string, ...string[]] = ["npx", "-y", `${name}@${version}`, "--isolated"];
   return platform === "win32" ? ["cmd", "/c", ...npx] : npx;
 }
 
 /** The MCP config file Claude Code or Copilot reads the tool from; Codex takes it as `-c` settings instead. */
 export function browserToolConfig(agent: Exclude<BrowserToolAgent, "codex">, tool: BrowserToolId, platform: string): string {
   const [command, ...args] = browserToolCommand(tool, platform);
-  const server = agent === "claude" ? { type: "stdio", command, args } : { type: "local", command, args, tools: ["*"] };
-  return `${JSON.stringify({ mcpServers: { [BROWSER_TOOL_SERVER]: server } }, null, 2)}\n`;
+  return mcpLaunchConfig(agent, [{ name: BROWSER_TOOL_SERVER, command, args }]);
 }
 
-/** a TOML literal string: the tool's words never hold a quote, and single quotes survive Windows PowerShell's passing on */
-const literal = (text: string): string => `'${text}'`;
+interface LaunchServer { readonly name: string; readonly command: string; readonly args: readonly string[] }
+export function mcpLaunchConfig(agent: Exclude<BrowserToolAgent, "codex">, servers: readonly LaunchServer[]): string {
+  return `${JSON.stringify({ mcpServers: Object.fromEntries(servers.map(({ name, command, args }) => [name,
+    agent === "claude" ? { type: "stdio", command, args } : { type: "local", command, args, tools: ["*"] }])) }, null, 2)}\n`;
+}
+/** Preserve the literal form for PowerShell; a path containing a quote needs TOML's escaped form. */
+const literal = (text: string): string => /['\u0000-\u001f\u007f]/.test(text) ? JSON.stringify(text) : `'${text}'`;
+
+export function mcpLaunchArgs(agent: BrowserToolAgent, servers: readonly LaunchServer[], file: string): string[] {
+  if (agent === "claude") return ["--mcp-config", file];
+  if (agent === "copilot") return ["--additional-mcp-config", `@${file}`];
+  return servers.flatMap(({name, command, args}) => [
+    "-c", `mcp_servers.${name}.command=${literal(command)}`, "-c", `mcp_servers.${name}.args=[${args.map(literal).join(",")}]`,
+  ]);
+}
 
 /** The arguments that give the agent the tool, `file` being where its browserToolConfig was written (unused for Codex). */
 export function browserToolArgs(agent: BrowserToolAgent, tool: BrowserToolId, platform: string, file: string): string[] {
-  if (agent === "claude") return ["--mcp-config", file];
-  if (agent === "copilot") return ["--additional-mcp-config", `@${file}`];
   const [command, ...args] = browserToolCommand(tool, platform);
-  return [
-    "-c", `mcp_servers.${BROWSER_TOOL_SERVER}.command=${literal(command!)}`,
-    "-c", `mcp_servers.${BROWSER_TOOL_SERVER}.args=[${args.map(literal).join(",")}]`,
-  ];
+  return mcpLaunchArgs(agent, [{ name: BROWSER_TOOL_SERVER, command, args }], file);
 }
 
 /** `args` with the tool's arguments put before a `--` that ends the options (Codex's prompt follows it), else at the end */

@@ -23,7 +23,6 @@ export const SETTINGS_ACCESS_KO: Record<string, string> = {
   "The device list cannot be read, so no new device can pair. This PC, the token and Tailscale sign-in still work.": "기기 목록을 읽을\u00a0수\u00a0없어 새 기기를 페어링할\u00a0수\u00a0없습니다. 이 PC, 토큰, Tailscale 로그인은 그대로 작동합니다.",
   "Listens on": "수신 주소",
   "Loopback": "루프백",
-  "Tailscale address": "Tailscale 주소",
   "Other address": "다른 주소",
   "A network address, every interface or a host name: other devices on that network may reach it.": "네트워크 주소, 모든 인터페이스 또는 호스트 이름입니다. 그 네트워크의 다른 기기에서도 접속될\u00a0수\u00a0있습니다.",
   "The address the server listens on. A proxy on this PC can still forward other traffic to it.": "서버가 수신하는 주소입니다. 그래도 이 PC의 프록시가 다른 트래픽을 전달할\u00a0수\u00a0있습니다.",
