@@ -559,8 +559,12 @@ export async function tabClose(tabId: string, socketPath?: string): Promise<void
   await queueHerdrFocus(socketPath, (socket) => herdrRpc("tab.close", { tab_id: tabId }, socket));
 }
 
+/**
+ * `program`: what the pane's shell runs in place of the agent's own command, the herdr-core adapter's only (a launcher
+ * Ovis wrote, server/approvals/codex.ts); herdr itself takes none.
+ */
 export async function agentStart(
-  options: { name: string; kind: string; paneId: string; args?: string[]; timeoutMs?: number },
+  options: { name: string; kind: string; paneId: string; args?: string[]; timeoutMs?: number; program?: string },
   socketPath?: string,
 ): Promise<unknown> {
   return herdrRpc(
@@ -571,6 +575,8 @@ export async function agentStart(
       pane_id: options.paneId,
       ...(options.args === undefined ? {} : { args: options.args }),
       ...(options.timeoutMs === undefined ? {} : { timeout_ms: options.timeoutMs }),
+      // a field of the herdr-core adapter's own, outside herdr's schema
+      ...(options.program === undefined ? {} : { program: options.program } as unknown as Partial<AgentStartParams>),
     } satisfies AgentStartParams,
     socketPath,
     options.timeoutMs,

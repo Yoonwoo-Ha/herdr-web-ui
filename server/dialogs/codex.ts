@@ -143,6 +143,30 @@ function parseCodexAsyncQuestion(screen: string): ParsedPrompt | null {
   });
 }
 
+/** The dialogs of an approval Codex asks a client on its app server (server/approvals/codex.ts holds them), by kind. */
+const CODEX_REQUEST_DIALOGS: readonly [RegExp, string][] = [
+  [/^Would you like to run the following command\b/, "command"],
+  [/^Would you like to make the following edits\b/, "edit"],
+  [/^Would you like to grant\b/, "grant"],
+];
+
+/**
+ * The command a `Would you like to run the following command?` dialog shows after its `$ `, its lines as the pane
+ * wrapped them, or null where it may not show it whole (Codex marks a cut with `…`). Its edit and grant dialogs show
+ * no command: null, bound by their kind to a request Ovis holds (server/approvals/hub.ts), and undefined for a dialog of
+ * no request.
+ */
+function codexApproval(header: string, lines: readonly string[]): Pick<ParsedPrompt, "approvalCommand" | "approvalKind"> {
+  const kind = CODEX_REQUEST_DIALOGS.find(([pattern]) => pattern.test(header))?.[1];
+  if (kind === undefined) return {};
+  const start = kind === "command" ? lines.findIndex((line) => line.startsWith("$ ")) : -1;
+  if (start < 0) return { approvalCommand: null, approvalKind: kind };
+  const shown = lines.slice(start);
+  const end = shown.indexOf("");
+  const command = (end < 0 ? shown : shown.slice(0, end)).join("\n").slice(2);
+  return { approvalCommand: command.includes("…") ? null : command, approvalKind: kind };
+}
+
 function parseCodexApproval(screen: string): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
   const headerIndex = findLastIndex(lines, (line) => CODEX_APPROVAL_HEADER_RE.test(line) && !NUMBERED_OPTION_RE.test(line));
@@ -153,7 +177,9 @@ function parseCodexApproval(screen: string): ParsedPrompt | null {
   const header = cleanLine(lines[headerIndex]!);
   const split = header.match(/^(.*?\?)\s+(.+)$/);
   const heading = split ? split[1]! : header;
-  const body = [split?.[2] ?? "", ...lines.slice(headerIndex + 1, rows[0]!.lineIndex).map(cleanLine)].filter(Boolean).join("\n");
+  const between = lines.slice(headerIndex + 1, rows[0]!.lineIndex).map(cleanLine);
+  const body = [split?.[2] ?? "", ...between].filter(Boolean).join("\n");
+  const approval = codexApproval(header, between);
   return finishPrompt("codex", {
     kind: "approval", title: heading, question: heading, body: body || null,
     options: rows.map((row) => ({ label: row.label, description: null })), multi_select: false, custom_option_index: null,
@@ -161,6 +187,7 @@ function parseCodexApproval(screen: string): ParsedPrompt | null {
     responder: "codex-approval", menuLabels: rows.map((row) => row.label),
     selectedIndex: rows.findIndex((row) => row.selected), checkedOptionIndices: [], customMenuIndex: null,
     rejectWithEscapeIndex: rows.findIndex((row) => /^(?:No|Reject|Cancel|Deny)\b/i.test(row.label)),
+    ...approval,
   });
 }
 

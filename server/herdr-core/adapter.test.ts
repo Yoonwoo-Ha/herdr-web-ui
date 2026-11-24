@@ -1544,6 +1544,17 @@ describe("herdr-core adapter, agents", () => {
     expect(methods.lastIndexOf("terminal.get")).toBeGreaterThan(methods.indexOf("terminal.attach"));
   });
 
+  it("types a launcher Ovis wrote in place of the agent's command, and answers once the agent it starts is in front", async () => {
+    const shell = { pid: 10, name: "bash" };
+    const record = terminal("t1", { cols: 90, rows: 20, pid: 10, argv: ["/bin/bash"], foreground: shell });
+    const { socket, cores } = await posix([record], {
+      "terminal.get": () => ({ ...record, foreground: cores[0]!.typed.length > 0 ? { pid: 12, name: "codex" } : shell }),
+    });
+    await agentStart({ name: "codex-1", kind: "codex", paneId: "t1", args: ["--model", "m"], program: "/tmp/ovis-codex-x/launch" }, socket);
+    expect(cores[0]!.typed.map((write) => write.text).join("")).toBe("\u0015'/tmp/ovis-codex-x/launch'\r");
+    await expect(agentStart({ name: "codex-1", kind: "codex", paneId: "t1", program: "launch" }, socket)).rejects.toMatchObject({ code: "invalid_params" });
+  });
+
   it("counts an agent run through its interpreter as started, and a shell's command-not-found handler as a failed start", async () => {
     const shell = { pid: 10, name: "bash" };
     const sequence = (after: { pid: number; name: string; argv?: string[] }[]) => {

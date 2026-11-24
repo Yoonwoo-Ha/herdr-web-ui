@@ -875,6 +875,9 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
       // a control character could end the quoted line early and type something else
       if (args.some((arg) => /[\u0000-\u001f\u007f]/.test(arg))) throw new AdapterError("invalid_params", "an argument holds a control character");
       const command = AGENT_COMMANDS[kind] ?? kind;
+      // a launcher Ovis wrote for this start (server/approvals/codex.ts) runs in place of the command, which it starts
+      const program = params["program"];
+      if (program !== undefined && (typeof program !== "string" || !isAbsolute(program) || /[\u0000-\u001f\u007f]/.test(program))) throw new AdapterError("invalid_params", "program must be an absolute path");
       // only into the pane's own shell, once hc has seen it in front: a running program would take
       // the line as its input (agent-launch.ts retries a busy pane while a new shell comes up). The
       // pane's input turn is held for the check and the typing only, so nothing typed after waits on the start.
@@ -891,7 +894,7 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
         const front = ready.foreground;
         const frontArgv = front?.argv ?? (front ? [front.name] : []);
         if ([own[0], frontArgv[0]].some((program) => /(?:^|\/)-?fish$/u.test(program ?? "")) && args.some((arg) => arg.includes("\\"))) throw new AdapterError("invalid_params", "fish would read a backslash in an argument differently");
-        const line = startLine(shell, command, args);
+        const line = startLine(shell, program ?? command, program === undefined ? args : []);
         // and a plain shell in front now: a program it runs, or one it `exec`ed (same pid, `exec bash -c …` too), would take the line
         if (!ready.pid || front?.pid !== ready.pid || startShellOf(frontArgv, platform) === null) throw new AdapterError("agent_pane_busy", `pane ${paneId} has no idle shell in front`);
         // on Windows the shell is in front whatever it runs: what it runs is below it

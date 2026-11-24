@@ -6,9 +6,11 @@ import { dirname, join } from "node:path";
 
 import * as herdr from "./herdr/client.ts";
 import * as runtime from "./herdr-core/runtime.ts";
+import * as served from "./runtime/capabilities.ts";
 import * as shellAgent from "./shell-agent.ts";
 import { agentLaunch, dshEffortArgs, readBrowserToolSetting, useApprovalHub } from "./agent-launch.ts";
 import { ApprovalHub, type ApprovalAdapter } from "./approvals/hub.ts";
+import type { CodexServers } from "./approvals/codex.ts";
 import { launchedAgents } from "./launched-agents.ts";
 import { requestIdContext, wordHerdrFailures } from "./http.ts";
 
@@ -76,6 +78,37 @@ describe("agentLaunch", () => {
       expect(asked).toEqual(["omo", "hooked"]);
     } finally {
       shell.mockRestore();
+      useApprovalHub(null);
+      hub.stop();
+    }
+  });
+
+  it("starts a Codex through its launcher where the runtime runs one, and drops the launcher of a start that failed", async () => {
+    const launches: { paneId: string; args: readonly string[] | undefined; version: string | null }[] = [];
+    const abandoned: string[] = [];
+    const codex = {
+      launch: (paneId: string, args: readonly string[] | undefined, version: string | null) => { launches.push({ paneId, args, version }); return "/tmp/ovis-codex-x/launch"; },
+      abandon: (paneId: string, program: string) => { abandoned.push(`${paneId} ${program}`); },
+    } as unknown as CodexServers;
+    const hub = new ApprovalHub(join(dirname(settingsDir()), "h"), []);
+    useApprovalHub(hub, async () => "0.171.0", codex);
+    const runtimeHere = spyOn(served, "capabilities").mockReturnValue(served.HERDR_CORE);
+    try {
+      expect(await launch("codex", ["--model", "m"], { platform: "linux", settingsDir: settingsDir() })).toMatchObject({ kind: "codex", args: ["--model", "m"], program: "/tmp/ovis-codex-x/launch" });
+      expect(launches).toEqual([{ paneId: PANE, args: ["--model", "m"], version: "0.171.0" }]);
+      starts.length = 0;
+      expect((await launch("codex", ["--model", "m"], { platform: "win32", settingsDir: settingsDir() })).program).toBeUndefined();
+      starts.length = 0;
+      const failing = spyOn(herdr, "agentStart").mockRejectedValue(new Error("no shell"));
+      try {
+        expect(await agentLaunch(PANE, { kind: "codex", name: "codex-1", args: [] }, undefined, undefined, { platform: "linux" })).toMatchObject({ agent_started: false });
+      } finally { failing.mockRestore(); }
+      expect(abandoned).toEqual([`${PANE} /tmp/ovis-codex-x/launch`]);
+      runtimeHere.mockReturnValue(served.HERDR);
+      expect((await launch("codex", ["--model", "m"], { platform: "linux", settingsDir: settingsDir() })).program).toBeUndefined();
+      expect(launches).toHaveLength(2);
+    } finally {
+      runtimeHere.mockRestore();
       useApprovalHub(null);
       hub.stop();
     }

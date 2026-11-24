@@ -1366,7 +1366,7 @@ export interface PromptRequestOptions {
  */
 const approvalDialog = (prompt: InteractivePrompt | null): ApprovalDialog | null => {
   const parsed = prompt === null ? undefined : parsedByPublicPrompt.get(prompt);
-  return parsed?.approvalCommand !== undefined ? { command: parsed.approvalCommand } : null;
+  return parsed?.approvalCommand !== undefined ? { command: parsed.approvalCommand, ...(parsed.approvalKind === undefined ? {} : { kind: parsed.approvalKind }) } : null;
 };
 
 /**

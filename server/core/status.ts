@@ -14,6 +14,7 @@ import { busyPanes, DESKTOP_ACTIVITY_FILE, trackDesktopActivity } from "../deskt
 import { ClaudeSubagentStatus, plain } from "../claude-subagents.ts";
 import { claudeLastTurnEnd, claudeTranscriptStart, type ClaudeTurnEnd } from "../claude-transcript.ts";
 import { codexLastTurnEnd, codexOpenRollout, paneCodexHome } from "../codex.ts";
+import { servedTurnEnd } from "../approvals/codex.ts";
 import { startStatusCollector } from "../collector.ts";
 import { CompletionTracker, type OmoRest } from "../completion.ts";
 import { listHcMachines, startMachineBridge } from "../herdr-core/machine-bridge.ts";
@@ -747,6 +748,12 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   function codexRest(paneId: string, snapshot?: SessionSnapshot): Promise<void> {
     const known = codexLooked.get(paneId);
     const turn = codexTurns.get(paneId) ?? 0;
+    // a Codex Ovis started on its own app server says how its turn ended (server/approvals/codex.ts): no transcript is read
+    const served = turn === 0 ? null : servedTurnEnd(paneId);
+    if (served === "answered" || served === "failed") {
+      codexEnded(paneId, served);
+      return Promise.resolve();
+    }
     if (turn === 0 || known === null || (codexRetryAt.get(paneId) ?? 0) > Date.now()) return Promise.resolve();
     const looking = codexLooking.get(paneId);
     if (looking !== undefined) return looking;
@@ -768,30 +775,35 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       look({ path: path!, size });
       return (codexTurns.get(paneId) ?? 0) === turn ? end : null;
     })().then((end) => {
-      if (end === null || end === "running") return;
-      if (end === "answered") {
-        if (!codexFailed.has(paneId)) return;
-        codexFailed.delete(paneId); codexFailedAt.delete(paneId);
-        const status = completions.observe(paneId, "idle", "codex", "answered");
-        pending.status(paneId, queueStatus(paneId, status)); drainPending(paneId);
-        waits.status(paneId, status);
-        broadcastAll(paneStatus(paneId, status));
-        alert(paneId, status);
-        return;
-      }
-      const now = completions.current(paneId);
-      if (now === "working" || now === "blocked" || codexFailed.has(paneId)) return;
-      codexFailed.add(paneId);
-      codexFailedAt.set(paneId, codexReads);
-      const status = completions.observe(paneId, "idle", "codex", "failed");
+      // the server's word on this turn stands over a rollout read begun before it came
+      if (end !== null && end !== "running" && (codexTurns.get(paneId) ?? 0) === turn && servedTurnEnd(paneId) !== "failed") codexEnded(paneId, end);
+    }, () => undefined).finally(() => codexLooking.delete(paneId));
+    codexLooking.set(paneId, done);
+    return done;
+  }
+
+  /** What a Codex turn's end tells: a failure alerts once, and an answer after one clears it. */
+  function codexEnded(paneId: string, end: "answered" | "failed"): void {
+    if (end === "answered") {
+      if (!codexFailed.has(paneId)) return;
+      codexFailed.delete(paneId); codexFailedAt.delete(paneId);
+      const status = completions.observe(paneId, "idle", "codex", "answered");
       pending.status(paneId, queueStatus(paneId, status)); drainPending(paneId);
       waits.status(paneId, status);
       broadcastAll(paneStatus(paneId, status));
       alert(paneId, status);
-      push.onFailed(paneId).catch(logPushError);
-    }, () => undefined).finally(() => codexLooking.delete(paneId));
-    codexLooking.set(paneId, done);
-    return done;
+      return;
+    }
+    const now = completions.current(paneId);
+    if (now === "working" || now === "blocked" || codexFailed.has(paneId)) return;
+    codexFailed.add(paneId);
+    codexFailedAt.set(paneId, codexReads);
+    const status = completions.observe(paneId, "idle", "codex", "failed");
+    pending.status(paneId, queueStatus(paneId, status)); drainPending(paneId);
+    waits.status(paneId, status);
+    broadcastAll(paneStatus(paneId, status));
+    alert(paneId, status);
+    push.onFailed(paneId).catch(logPushError);
   }
 
   const shellSnapshots = new WeakSet<HerdrPane>();
