@@ -2976,8 +2976,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   Pane actions are not tab actions. Up to 768px, where a split tab shows one pane at a time, the
   tab's menu lists the tab's panes first, the open one marked current, over a hairline, each pane
   once (the pane's own actions, which carry the panes where the row counts as hidden, add no
-  second list). There a tap on the open split tab opens that menu, in the row and in the header
-  alike, and the open split tab is that pane: it wears the pane's agent mark (none for a shell) and
+  second list). A pane picked there while a pane's field held the typing (the keyboard up) takes
+  the typing, its field focused inside the tap, so the keyboard comes back on the pane now shown
+  (herdr's TUI sends the next key to the pane its focus moves to; a zoomed tab keeps the typing on
+  its zoomed pane, the one still in view).
+  There a tap on the open split tab opens that menu, in the row and in the header alike, and the
+  open split tab is that pane: it wears the pane's agent mark (none for a shell) and
   its name (the pane's agent or first-message name, else its title), unless someone named the tab,
   whose name stays, and its place among them (`1/2`, heard as "Pane 1 of 2") follows its name, in the
   row as in the header; in the row under the header that name is cut with an ellipsis at

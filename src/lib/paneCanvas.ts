@@ -23,6 +23,16 @@ export function paneContextPress(event: { button: number; ctrlKey: boolean }, ap
   return event.button === 2 || (apple && event.button === 0 && event.ctrlKey);
 }
 
+/** The field a pane's typing goes to: its secret or find field when open, else its composer (chat) or terminal input. */
+export function paneInput(frame: Pick<Element, "querySelector"> | null): HTMLElement | null {
+  if (!frame) return null;
+  return frame.querySelector<HTMLElement>(".secret-input input")
+    ?? frame.querySelector<HTMLElement>(".find-bar input")
+    ?? (frame.querySelector(".terminal-stack.is-chat:not(.is-peek)")
+      ? frame.querySelector<HTMLElement>(".composer-text")
+      : frame.querySelector<HTMLElement>(".terminal-input textarea") ?? frame.querySelector<HTMLElement>(".xterm-helper-textarea"));
+}
+
 /**
  * A right-click in a pane's own text field (the composer, the terminal's input line, the find or
  * secret field) is the browser's: its Copy, Paste and spelling menu on that field (#1180). xterm's

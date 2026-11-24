@@ -15,7 +15,7 @@ import { PaneCachedContext, PanePresentedContext, PaneShownContext, PaneSubmitCo
 import { cachedPaneCells, orderedPaneCells, visitPaneTab } from "../lib/paneTabCache.ts";
 import { routeMissing } from "../lib/api.ts";
 import { layoutCells, zoomMode } from "../lib/layoutMap.ts";
-import { CRAMPED_QUERY, layoutTopology, paneContextPress, paneFieldTarget, SOLO_PANE_QUERY, soloPane, splitPath, splitRatioAt, tabRowHidden } from "../lib/paneCanvas.ts";
+import { CRAMPED_QUERY, layoutTopology, paneContextPress, paneFieldTarget, paneInput, SOLO_PANE_QUERY, soloPane, splitPath, splitRatioAt, tabRowHidden } from "../lib/paneCanvas.ts";
 import { rosterPanes } from "../lib/dagPane.ts";
 import { useT } from "../lib/i18n.ts";
 import { useSettings } from "../lib/settings.ts";
@@ -400,12 +400,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
             if (onOpenInHalf && element?.closest(".pane-frame-head")) return;
             event.preventDefault();
             const frame = event.currentTarget;
-            const input = frame.querySelector<HTMLElement>(".secret-input input")
-              ?? frame.querySelector<HTMLElement>(".find-bar input")
-              ?? (frame.querySelector(".terminal-stack.is-chat:not(.is-peek)")
-                ? frame.querySelector<HTMLElement>(".composer-text")
-                : frame.querySelector<HTMLElement>(".terminal-input textarea") ?? frame.querySelector<HTMLElement>(".xterm-helper-textarea"));
-            input?.focus({ preventScroll: true });
+            paneInput(frame)?.focus({ preventScroll: true });
           }
         }}
         onDropCapture={() => { if (!active) onSelect(item.pane_id, false); }}
@@ -497,15 +492,6 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
       body={t("The pane's running processes will stop. Closing its last pane also closes the workspace.")}
       confirmLabel={t("Close pane")} onClose={() => setClosing(null)} onConfirm={async () => { await closePane(closing); setClosing(null); onChanged(); }} />}
   </div></PaneSubmitContext.Provider>;
-}
-
-function paneInput(frame: Pick<Element, "querySelector"> | null): HTMLElement | null {
-  if (!frame) return null;
-  return frame.querySelector<HTMLElement>(".secret-input input")
-    ?? frame.querySelector<HTMLElement>(".find-bar input")
-    ?? (frame.querySelector(".terminal-stack.is-chat:not(.is-peek)")
-      ? frame.querySelector<HTMLElement>(".composer-text")
-      : frame.querySelector<HTMLElement>(".terminal-input textarea") ?? frame.querySelector<HTMLElement>(".xterm-helper-textarea"));
 }
 
 function RenameDialog({ title, field, initial, placeholder, maxLength, required, onDraft, onClose, onCancel, onSave }: { title: string; field: string; initial: string; placeholder?: string; maxLength: number; required?: string; onDraft?: (value: string) => void; onClose: () => void; onCancel?: () => void; onSave: (label: string) => Promise<void> }) {

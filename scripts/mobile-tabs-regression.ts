@@ -114,6 +114,26 @@ async function checkPhoneRow(browser: Browser, origin: string, first: string, se
       assert.deepEqual((await paneMenu.locator('.row-sheet-item[data-item^="pane:"]').evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset["item"]))).sort(),
         [`pane:${first}`, `pane:${second}`].sort(), `${label}: a tap on the open split tab lists its two panes`);
       await cancelSheet(page, paneMenu);
+      // a pick from that list while the pane's field holds the typing (a phone's keyboard up) gives it to the picked pane's field
+      const shownPane = (): Promise<string | null> => page.locator(".pane-slot .pane-frame:not(.is-hidden)").first().getAttribute("data-layout-pane");
+      const other = (await shownPane()) === first ? second : first;
+      await page.evaluate(() => {
+        const frame = document.querySelector(".pane-slot .pane-frame:not(.is-hidden)");
+        const field = frame?.querySelector<HTMLElement>(".terminal-stack.is-chat:not(.is-peek)") ? frame.querySelector<HTMLElement>(".composer-text")
+          : frame?.querySelector<HTMLElement>(".terminal-input textarea") ?? frame?.querySelector<HTMLElement>(".xterm-helper-textarea");
+        field?.focus();
+      });
+      // the pane whose own typing field (composer, terminal input or xterm's textarea) holds the focus, not any control in its frame
+      const typingIn = (): Promise<string | null> => page.evaluate(() => {
+        const field = document.activeElement;
+        return field?.matches(".composer-text, .terminal-input textarea, .xterm-helper-textarea") ? field.closest(".pane-frame")?.getAttribute("data-layout-pane") ?? null : null;
+      });
+      assert.equal(await typingIn(), await shownPane(), `${label}: the open pane's field holds the typing`);
+      await page.locator('.pane-slot .tab-strip [role="tab"][aria-selected="true"]').tap();
+      await paneMenu.waitFor();
+      await paneMenu.locator(`.row-sheet-item[data-item=${JSON.stringify(`pane:${other}`)}]`).tap();
+      await page.locator(`.pane-slot [data-layout-pane=${JSON.stringify(other)}]`).waitFor({ state: "visible" });
+      assert.equal(await typingIn(), other, `${label}: a pick from the list, made while typing, gives the typing to the picked pane`);
       await page.locator('.pane-slot .tab-strip [role="tab"]', { hasText: "deploy" }).tap();
       await page.locator(`[data-layout-pane=${JSON.stringify(panes[2])}]`).waitFor({ state: "visible" });
       await activeTabInView(page, `${label}, after a tap on a tab further on`);
