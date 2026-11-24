@@ -378,7 +378,8 @@ describe("server entries", () => {
   };
 
   it("starts the server's own entries only through entryCommand", () => {
-    const starts = matches([...serverCode(), "scripts/plugin.ts"].filter((file) => file !== "server/entries.ts"), START_BY_PATH);
+    // a *.test-helpers.ts is test support, as a test is: it runs from a checkout, never in the compiled binary
+    const starts = matches([...serverCode(), "scripts/plugin.ts"].filter((file) => file !== "server/entries.ts" && !file.endsWith(".test-helpers.ts")), START_BY_PATH);
     fail(starts.filter((start) => !(start.file in ALLOWED)).map((start) => start.at),
       "Start the server's own code with entryCommand(name) from server/entries.ts (add the entry to ENTRIES), never with process.execPath and a .ts path: the compiled binary has no such file.");
     const users = new Set(starts.map((start) => start.file));

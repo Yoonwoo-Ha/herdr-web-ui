@@ -1,10 +1,11 @@
 {
-  "server/machine-profile.contract.test.ts": 152,
   "server/pending-input.contract.test.ts": 130,
   "server/prompt.test.ts": 97,
   "tui/testing/with-core.contract.test.ts": 85,
+  "server/machine-profile-api.contract.test.ts": 77,
   "tui/loop.test.ts": 77,
   "scripts/self-hosted-runner.test.ts": 72,
+  "server/machine-profile-lifecycle.contract.test.ts": 67,
   "scripts/plugin.test.ts": 65,
   "scripts/plugin-link.test.ts": 57,
   "server/updater.test.ts": 56,
