@@ -1,5 +1,6 @@
 import type { AgentInfo, AgentSessionInfo, AgentStatus, PaneInfo, PaneLayoutSnapshot, PaneProcessInfo, SessionSnapshot, TabInfo, WorkspaceInfo } from "../../shared/herdr-api.generated.ts";
 import { HC_OTHER_WORKSPACE_ID } from "../../shared/machines.ts";
+import { planSummary } from "../../shared/plans.ts";
 import type { HerdrPane } from "../../shared/protocol.ts";
 import type { Foreground, Status, Terminal } from "./hc-api.generated.ts";
 import { clampRatio, type Grouping, type LayoutNode, LAYOUT_AREA, parseOvisLayout, place, reconcile, sideBySide } from "./layout-doc.ts";
@@ -41,7 +42,7 @@ export type HcForeground = Pick<Foreground, "pid" | "name"> & Partial<Pick<Foreg
 /** hc's `parent` is the terminal that started it (`t3`), set once at its start. */
 export type HcTerminal = Pick<Terminal, "address" | "cols" | "rows" | "cwd" | "state"> &
   Partial<Pick<Terminal, "argv" | "pid" | "name" | "title" | "labels" | "turn" | "parent" | "records">> &
-  { status?: HcStatus | null; foreground?: HcForeground | null };
+  { acp?: { agent: string | null; status: AgentStatus; plan: import("../../shared/plans.ts").PlanStep[] | null }; status?: HcStatus | null; foreground?: HcForeground | null };
 
 /**
  * A terminal on another machine the core reaches (`hc machine add vps`): hc lists and reports it
@@ -384,19 +385,22 @@ export function reportedFacts(status: HcStatus | null | undefined): Pick<HerdrPa
 
 function paneOf(terminal: HcTerminal, workspaceId: string, tabId: string, shown: ReadonlySet<string>, host: CoreHost, firstTurn?: FirstTurn, sessionOf?: SessionOf): HerdrPane {
   const cwd = terminal.foreground?.cwd ?? terminal.cwd;
-  const session = sessionOf?.(terminal) ?? null;
+  const session = terminal.acp ? null : sessionOf?.(terminal) ?? null;
+  const plan = planSummary(terminal.acp?.plan ?? null);
   return {
     ...(session ? { agent_session: session } : {}),
+    ...(terminal.acp ? { acp_child: true as const } : {}),
     ...(terminal.parent && terminal.parent !== terminal.address && shown.has(terminal.parent) ? { parent_pane_id: terminal.parent } : {}),
     ...(terminal.labels?.[SPACE_LABEL] === workspaceId && terminal.labels?.[TAB_LABEL] === tabId ? {} : { own_tab: true as const }),
-    ...reportedFacts(terminal.status),
+    ...(terminal.acp ? (terminal.acp.status === "blocked" ? { agent_kind: "permission" } : {}) : reportedFacts(terminal.status)),
+    ...(plan ? { plan } : {}),
     pane_id: terminal.address,
     terminal_id: terminal.address,
     grid: { cols: terminal.cols, rows: terminal.rows },
     workspace_id: workspaceId,
     tab_id: tabId,
-    agent: agentOf(terminal, host),
-    agent_status: shownStatusOf(terminal.status, terminal.turn, terminal.labels, firstTurn?.(terminal)),
+    agent: terminal.acp ? terminal.acp.agent : agentOf(terminal, host),
+    agent_status: terminal.acp?.status ?? shownStatusOf(terminal.status, terminal.turn, terminal.labels, firstTurn?.(terminal)),
     cwd,
     foreground_cwd: cwd,
     title: terminal.title ?? null,

@@ -12,9 +12,10 @@ it("reserves an answer while replay is pending, without waiting for the watermar
   const socket = new Socket();
   const client = new KeeperClient("", { connect: () => socket });
   const raw = JSON.stringify({ id: "example", method: "session/request_permission", params: {
+    sessionId: "s",
     options: [{ optionId: "dismiss", name: "Dismiss", kind: "reject_once" }],
   } });
-  socket.emit("data", `${JSON.stringify({ seq: 1, dir: "from-agent", raw })}\n`);
+  socket.emit("data", `${JSON.stringify({ seq: 1, dir: "keeper", raw: JSON.stringify({ method: "_keeper/session", params: { sessionId: "s" } }) })}\n${JSON.stringify({ seq: 2, dir: "from-agent", raw })}\n`);
   const first = client.answer("example", "dismiss");
   try {
     const duplicate = client.answer("example", "dismiss");
@@ -61,6 +62,15 @@ describe.skipIf(!keeperBuilt)("KeeperClient against the real keeper and the scri
     await until(later, "the next turn's end", () => later.turn?.text === "echo bytes=11" && !later.turn.running);
     expect(later.turn?.stopReason).toBe("end_turn");
     await next;
+  });
+
+  it("refuses a chat submission after the agent closed stdin but stayed alive", async () => {
+    const { root } = await keeper();
+    const client = attach(root);
+    await client.ready();
+    await until(client, "session", () => client.session !== null);
+    expect(await prompt(client, "end-and-close-input")).toEqual({ stopReason: "end_turn" });
+    await expect(client.submit("not delivered")).rejects.toThrow("could not write");
   });
 
   it("shows a permission request with the agent's options unchanged, and the chosen option reaches the agent", async () => {

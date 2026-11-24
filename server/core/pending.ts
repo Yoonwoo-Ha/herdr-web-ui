@@ -16,6 +16,7 @@
  * process and session in front when it is queued, and what herdr says of that agent at each event of the
  * pane after, so another session or process of the same kind gets none.
  */
+import type { AcpChildren } from "../acp/children.ts";
 import { AGENT_PICKER_MESSAGE, closeBackslash, closeMention, type createSubmitText, freeAgentInput, freeClaudeBox, freeHermesInput, InputDraftError, modelSwitchText, OMP_REPORT_POLL_MS, OMP_STARTUP_MS, ompStartingUntil, pendingFault, pendingIdentity, pendingText, submitFraming, untilOmpReported } from "./composer.ts";
 import { grokEcho, grokQueue, sendGrokQueuedNow } from "./grok-queue.ts";
 import { type Client, connectionOf, send } from "./connections.ts";
@@ -133,7 +134,7 @@ const TYPED_WHILE_WAITING = { code: "typed_while_waiting", message: "Something w
 const FIRST_MESSAGE_RECEIPTS = 8;
 
 export function createPendingDelivery({ options, clients, attachments, sight, serialize, lastTyped, typedInto = () => 0, submitText, authorizeSocket, clientSnapshot, omo, queueHeld = () => false, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, TYPED_SETTLE_MS }: {
-  options: { pendingStartTimeoutMs?: number; piReceiptLimit?: number; submitDeadlineMs?: number; submitDelayMs?: number; ompReportPollMs?: number; ompStartupMs?: number; openCodeStateDir?: string;
+  options: { acp?: Pick<AcpChildren, "forPane"> | null; pendingStartTimeoutMs?: number; piReceiptLimit?: number; submitDeadlineMs?: number; submitDelayMs?: number; ompReportPollMs?: number; ompStartupMs?: number; openCodeStateDir?: string;
     herdrFailure?: HerdrFailureView };
   clients: Set<Client>;
   attachments: ReadonlyMap<string, AttachmentView>;
@@ -509,6 +510,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     held: { pid: number; started: number | null } | null }> {
     const pane = (await clientSnapshot()).panes.find((candidate) => candidate.pane_id === paneId);
     if (!pane) throw new HerdrError("pane_not_found", `pane ${paneId} not found`);
+    const child = options.acp?.forPane(paneId);
+    if (child) return { pane: { ...pane, agent: child.harness, agent_status: child.client.status }, identity: { agent: child.harness, terminalId: paneId, session: `acp:${child.id}:${child.client.session}` }, recognized: true, shellPid: null, processes: undefined, held: null };
     const base = pendingIdentity(pane);
     const pick = async (info: ProcessInfo | undefined): Promise<{ pid: number | null; held: { pid: number; started: number | null } | null }> => {
       const held = base.agent === "omo" ? await heldOmoProcess(pane, info?.foreground_processes ?? [], undefined, bound) : null;
@@ -614,7 +617,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     const unknown = (): boolean => identity?.claudeSession != null && current.claudeSession == null;
     if (unknown()) ({ pane, identity: current, processes, held: holder, recognized } = await currentIdentity(paneId, identity?.processPid ?? null));
     const lost = unknown();
-    if (identity && (!samePendingIdentity(identity, current) || lost)) {
+    if (identity && (!samePendingIdentity(identity, current) || (identity.session?.startsWith("acp:") && identity.session !== current.session) || lost)) {
       throw new HerdrError(TARGET_CHANGED.code, TARGET_CHANGED.message);
     }
     if (identity) {
@@ -623,6 +626,12 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       identity.processBirth ??= current.processBirth;
       identity.omoSession ??= current.omoSession;
       identity.claudeSession ??= current.claudeSession;
+    }
+    if (current.session?.startsWith("acp:")) {
+      authorizePending(owner, paneId, lease);
+      if (pane.agent_status === "blocked") throw new HerdrError("agent_blocked", "Answer the approval card first");
+      if (pane.agent_status === "unknown") throw new HerdrError("agent_not_ready", "The ACP agent is not ready");
+      return { pane, identity: current, working: pane.agent_status === "working", screen: "", processes, held: null, collapsed: false, agentInFront: true };
     }
     // the live screen, not the viewport: a pane scrolled into its history still draws its next
     // menu or password prompt at the bottom (server/prompt.ts liveScreen)
@@ -672,6 +681,20 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       if (typed < TYPED_SETTLE_MS) await Bun.sleep(TYPED_SETTLE_MS - typed);
       mark = pending.mark(paneId);
       let context = await pendingContext(owner, paneId, lease, identity);
+      if (context.identity.session?.startsWith("acp:")) {
+        const child = options.acp?.forPane(paneId);
+        if (!child || context.identity.session !== `acp:${child.id}:${child.client.session}`) throw new HerdrError(TARGET_CHANGED.code, TARGET_CHANGED.message);
+        const status = child.client.status;
+        if (status === "working") { pending.observe(paneId, status, mark); throw new HerdrError("pending_wait", "The ACP turn is still running"); }
+        if (status === "blocked") throw new HerdrError("agent_blocked", "Answer the approval card first");
+        if (status === "unknown") throw new HerdrError("agent_not_ready", "The ACP agent is not ready");
+        authorizePending(owner, paneId, lease);
+        if (row.withdrawn?.() || Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) throw new HerdrError("submit_timeout", "The message expired before delivery");
+        committing(false, false, mark);
+        wrote = true;
+        await child.client.submit(text);
+        return { ok: true };
+      }
       // omp draws its input box, and herdr shows it at rest, before it takes an Enter: typed then, the message stays in
       // the box and never runs while its row says sent.
       let waitedForOmp = false, endsOmpStart = false;
@@ -1389,15 +1412,19 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       }
       const arrivedAt = Date.now();
       try {
-        if (waits) {
+        const child = message.typed === true ? undefined : options.acp?.forPane(message.pane_id);
+        if (child && (message.clear_draft !== undefined || message.send_anyway)) throw new HerdrError("pending_target_changed", "The terminal draft no longer belongs to this session");
+        if (waits || (child && !message.resend_id)) {
           const book = requestBook(client);
           const fingerprint = requestFingerprint(message, agentOnly);
           const previous = book.get(message.id, fingerprint);
           const lease = previous ? null : pendingLease(client, message.pane_id);
           const reply = previous ?? book.run(message.id, fingerprint, () => serialize(message.pane_id, async (): Promise<SubmitReply> => {
+            if (child && options.acp?.forPane(message.pane_id) !== child) throw new HerdrError(TARGET_CHANGED.code, TARGET_CHANGED.message);
             const text = pendingText(message.text);
             const mark = pending.mark(message.pane_id);
             const context = await pendingContext(client, message.pane_id, lease!);
+            if (child && context.identity.session !== `acp:${child.id}:${child.client.session}`) throw new HerdrError(TARGET_CHANGED.code, TARGET_CHANGED.message);
             if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) throw new HerdrError("submit_timeout", "This pending message waited too long; nothing was typed");
             if (agentOnly && !context.agentInFront) throw new HerdrError(AGENT_NOT_READY.code, AGENT_NOT_READY.message);
             const held = queueHeld(message.pane_id, false);
@@ -1408,7 +1435,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
               // paste + Enter; agent.prompt commits its key inside herdr.
               // A held message is never typed by arriving after the turn: it waits for Send now.
               // Queued, it never clears a stopped send Claude put back in its box, as the drain does not (#2546).
-              if (message.delivery === "queue" && !pending.waiting(message.pane_id) && !typedWhileOmpStarted(message.pane_id)) {
+              if (message.delivery !== "hold" && !pending.waiting(message.pane_id) && !typedWhileOmpStarted(message.pane_id)) {
                 const sendingAt = new Date().toISOString();
                 const typed = await dispatchPendingText(client, message.pane_id, text, lease!, context.identity, false, arrivedAt,
                   (working) => pending.typedAtOnce(message.pane_id, working), false, message.id, agentOnly, true);
@@ -1469,6 +1496,14 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
             return;
           }
           if (message.typed === true && ompStarts.has(message.pane_id)) linesTyped.set(message.pane_id, (linesTyped.get(message.pane_id) ?? 0) + 1);
+          if (child) {
+            const lease = pendingLease(client, message.pane_id);
+            if (options.acp?.forPane(message.pane_id) !== child) throw new HerdrError(TARGET_CHANGED.code, TARGET_CHANGED.message);
+            const context = await pendingContext(client, message.pane_id, lease);
+            const answer = await dispatchPendingText(client, message.pane_id, framed.text, lease, context.identity, false, arrivedAt);
+            if (!answer.ok) throw new HerdrError(answer.code ?? "submit_changed", answer.message ?? "Delivery could not be confirmed");
+            return;
+          }
           const current = message.typed === true ? null : await currentIdentity(message.pane_id);
           if (agentOnly && (current === null || !agentRuns(current.identity, current.recognized))) throw new HerdrError(AGENT_NOT_READY.code, AGENT_NOT_READY.message);
           const identity = current === null || (current.identity.agent === "pi" && piRunsCommand(current.pane, framed.text)) ? null : current.identity;

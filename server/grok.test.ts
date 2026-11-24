@@ -160,6 +160,7 @@ describe("Grok native event adapter", () => {
     const part = lastTool();
     expect(part.name).toBe("edit_file");
     expect(part.output).toBe("--- fiction.txt\nbefore\n+++ fiction.txt\nafter\ncompleted");
+    expect(part.edits).toEqual([{ path: "fiction.txt", before: "before", after: "after" }]);
     const search = parseGrokTranscript(user(0) + event({ sessionUpdate: "tool_call", toolCallId: "search-1", kind: "search", rawInput: { variant: "XSearch" } }));
     expect((search[1]!.parts[0] as Tool).name).toBe("XSearch");
   });

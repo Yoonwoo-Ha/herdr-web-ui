@@ -81,6 +81,11 @@ fn main() {
             continue;
         }
         if id.is_null() {
+            if method == "session/cancel" && msg.pointer("/params/sessionId").and_then(Value::as_str) == Some(&session) {
+                for prompt in held.drain(..) {
+                    send(&mut out, &json!({"jsonrpc":"2.0","id":prompt,"result":{"stopReason":"cancelled"}}));
+                }
+            }
             continue;
         }
         let result = match method {
@@ -114,11 +119,17 @@ fn main() {
                         }
                     }
                     "helpers" => helpers(words.next().unwrap_or(".")),
-                    "ask" | "ask-and-close-input" => {
+                    "ask" | "ask-and-close-input" | "end-and-close-input" => {
                         #[cfg(unix)]
-                        if text == "ask-and-close-input" {
+                        if text.ends_with("-and-close-input") {
                             // SAFETY: this fixture owns its stdin; it stops reading after this row.
                             assert_eq!(unsafe { libc::close(libc::STDIN_FILENO) }, 0);
+                        }
+                        if text == "end-and-close-input" {
+                            send(&mut out, &end_turn(&id));
+                            loop {
+                                std::thread::park();
+                            }
                         }
                         asked = Some(id);
                         send(

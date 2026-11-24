@@ -6,13 +6,14 @@
  * last one it read. Its answer to a permission request is one of many a keeper may get: the keeper's `_keeper/resolved`
  * note names the client whose answer went to the agent.
  */
-import { readFileSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { join } from "node:path";
-import { processAlive } from "../process-start.ts";
+import { keeperRunning } from "./keeper-process.ts";
+import { AcpHistory } from "./history.ts";
+import { KeeperRequests } from "./requests.ts";
 import { KeeperAnswers, type AnswerOutcome } from "./answers.ts";
 
-import { KeeperDisconnected, KeeperRequestError, approval, parseLine, record, text, type AcpApproval, type AcpTurn, type Message, type Row } from "./messages.ts";
+import { KeeperDisconnected, approval, parseLine, record, text, type AcpApproval, type AcpTurn, type Message, type Row } from "./messages.ts";
 
 export { KeeperDisconnected, KeeperRequestError } from "./messages.ts";
 export type { AcpApproval, AcpOption, AcpTurn } from "./messages.ts";
@@ -23,24 +24,23 @@ export interface KeeperClientOptions {
   connect?: (path: string) => Socket;
 }
 
-interface InFlight { resolve: (result: unknown) => void; reject: (error: Error) => void }
 const BACKOFF_MS = [100, 250, 500, 1_000, 2_000, 5_000] as const;
 
-/** Whether the keeper `root`'s process.json names still runs. */
-export function keeperRunning(root: string): boolean {
-  let pid: unknown;
-  try {
-    pid = record(JSON.parse(readFileSync(join(root, "process.json"), "utf8")))?.["keeper"];
-  } catch {
-    return false;
-  }
-  return typeof pid === "number" && processAlive(pid);
-}
 
 export class KeeperClient {
+  readonly history: AcpHistory;
   session: string | null = null;
   turn: AcpTurn | null = null;
   agentGone = false;
+  malformedRows = 0;
+  private mode: "acp" | "terminal" | "switching" = "acp";
+
+  get terminalReady(): boolean { return this.connected && this.mode === "terminal"; }
+
+  get status(): "working" | "blocked" | "idle" | "done" | "unknown" {
+    if (!this.connected || this.agentGone || this.mode !== "acp" || !this.session) return "unknown";
+    return this.approvals.size ? "blocked" : this.turn?.running ? "working" : this.turn?.stopReason ? "done" : "idle";
+  }
   /** the keeper ended and no connection could be made again */
   keeperGone = false;
   private lastSeq = 0;
@@ -50,10 +50,9 @@ export class KeeperClient {
   private closed = false;
   private attempt = 0;
   private retry: ReturnType<typeof setTimeout> | null = null;
-  private nextId = 1;
   private readonly approvals = new Map<string, AcpApproval>();
   private readonly answers = new KeeperAnswers();
-  private readonly inFlight = new Map<number, InFlight>();
+  private readonly requests = new KeeperRequests(message => this.write(message));
   /** the keeper's ids of the `session/prompt` requests the agent has not answered yet */
   private readonly prompts = new Set<string>();
   private readonly listeners = new Set<() => void>();
@@ -61,6 +60,7 @@ export class KeeperClient {
   private readonly connectTo: (path: string) => Socket;
 
   constructor(readonly root: string, options: KeeperClientOptions = {}) {
+    this.history = new AcpHistory(root);
     this.connectTo = options.connect ?? ((path) => createConnection(path));
     this.open();
   }
@@ -99,11 +99,13 @@ export class KeeperClient {
   /** A request to the agent through the keeper. Rejects on an error answer, and when the connection ends first. */
   async request(method: string, params: unknown): Promise<unknown> {
     await this.ready();
-    const id = this.nextId++;
-    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-    this.inFlight.set(id, { resolve, reject });
-    this.write({ jsonrpc: "2.0", id, method, params });
-    return promise;
+    if (!this.connected) throw new KeeperDisconnected();
+    return this.requests.request(method, params);
+  }
+
+  async submit(text: string): Promise<void> {
+    if (!this.session || (this.status !== "idle" && this.status !== "done")) throw new KeeperDisconnected();
+    await this.requests.submit(this.session, text);
   }
 
   /** A notification to the agent through the keeper (`session/cancel`). Dropped when no connection is up. */
@@ -157,15 +159,14 @@ export class KeeperClient {
       if (this.socket !== socket) return;
       this.socket = null;
       this.dropped();
-      if (!this.closed) this.reconnect(connected);
+      if (!this.closed) { this.changed(); this.reconnect(connected); }
     });
   }
 
   /** The connection ended: this connection's requests get no answer now (the keeper answers the connection that sent them). */
   private dropped(): void {
     this.client = null;
-    for (const call of this.inFlight.values()) call.reject(new KeeperDisconnected());
-    this.inFlight.clear();
+    this.requests.dropped();
   }
 
   private reconnect(wasConnected: boolean): void {
@@ -211,15 +212,31 @@ export class KeeperClient {
     }
     if (entry.row.seq <= this.lastSeq) return false;
     this.lastSeq = entry.row.seq;
-    return this.row(entry.row, entry.message);
+    const previousStatus = this.status;
+    const previousPlan = this.history.plan;
+    const previousSession = this.history.session;
+    this.history.observe(entry, Buffer.byteLength(line) + 1);
+    if (previousSession !== this.history.session) {
+      this.approvals.clear();
+      this.answers.close();
+      this.prompts.clear();
+      this.turn = null;
+    }
+    if (entry.message === null) { this.malformedRows++; return false; }
+    const changed = this.row(entry.row, entry.message) || this.history.plan !== previousPlan;
+    // A short prompt and its stopReason can share one socket read: the queue needs both edges.
+    if (this.status !== previousStatus) this.changed();
+    return changed;
   }
 
   private row(row: Row, message: Message): boolean {
     const method = text(message.method);
     const params = record(message.params) ?? {};
+    if ((method === "session/update" || method === "session/request_permission" || method === "session/prompt")
+      && (!this.history.session || params.sessionId !== this.history.session)) return false;
     switch (row.dir) {
       case "to-client":
-        if (row.client === this.client && this.client !== null && method === null) this.answered(message);
+        if (row.client === this.client && this.client !== null && method === null) this.requests.answered(message);
         return false;
       case "to-agent":
         if (method === "session/prompt" && typeof message.id === "string") {
@@ -237,15 +254,6 @@ export class KeeperClient {
     }
   }
 
-  private answered(message: Message): void {
-    const id = typeof message.id === "number" ? message.id : null;
-    const call = id === null ? undefined : this.inFlight.get(id);
-    if (call === undefined) return;
-    this.inFlight.delete(id!);
-    const error = record(message.error);
-    if (error !== null) call.reject(new KeeperRequestError(typeof error["code"] === "number" ? error["code"] : 0, text(error["message"]) ?? "error"));
-    else call.resolve(message.result);
-  }
 
   private fromAgent(row: Row, message: Message, method: string | null, params: Record<string, unknown>): boolean {
     if (method === "session/request_permission" && typeof message.id === "string") {
@@ -269,6 +277,12 @@ export class KeeperClient {
   private note(method: string | null, params: Record<string, unknown>): boolean {
     const id = text(params["id"]);
     switch (method) {
+      case "_keeper/delivered":
+        if (this.client !== null && params.client === this.client) this.requests.delivered(params.id);
+        return false;
+      case "_keeper/mode":
+        this.mode = params.phase !== "ready" ? "switching" : params.mode === "terminal" ? "terminal" : params.mode === "acp" ? "acp" : "switching";
+        return true;
       case "_keeper/session":
         this.session = text(params["sessionId"]) || null;
         this.agentGone = false;

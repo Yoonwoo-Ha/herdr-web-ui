@@ -30,7 +30,7 @@ use crate::Opts;
 /// keeper already ended for the switch are dropped.
 pub enum Ev {
     Agent(u64, String),
-    AnswerWritten(u64, PendingAnswer),
+    Written(u64, Receipt),
     AgentWriteFailed(u64, std::io::Error),
     Client {
         conn: u64,
@@ -50,7 +50,12 @@ pub enum Ev {
 
 pub struct ToAgent {
     pub bytes: Vec<u8>,
-    pub answer: Option<PendingAnswer>,
+    pub receipt: Option<Receipt>,
+}
+
+pub enum Receipt {
+    Answer(PendingAnswer),
+    Request { conn: u64, id: Value },
 }
 
 pub struct PendingAnswer {
@@ -256,14 +261,14 @@ impl Hub {
         self.queue(raw, None);
     }
 
-    fn queue(&self, raw: &str, answer: Option<PendingAnswer>) {
+    fn queue(&self, raw: &str, receipt: Option<Receipt>) {
         if self.archive.append("to-agent", raw).is_none() {
             return;
         }
         if let Some(agent) = &self.agent {
             let mut bytes = raw.as_bytes().to_vec();
             bytes.push(b'\n');
-            let _ = agent.send(ToAgent { bytes, answer });
+            let _ = agent.send(ToAgent { bytes, receipt });
         }
     }
 
@@ -336,9 +341,12 @@ impl Hub {
                     self.on_agent(text);
                 }
             }
-            Ev::AnswerWritten(generation, answer) => {
+            Ev::Written(generation, receipt) => {
                 if generation == self.generation {
-                    self.answer_written(answer);
+                    match receipt {
+                        Receipt::Answer(answer) => self.answer_written(answer),
+                        Receipt::Request { conn, id } => self.note_row("_keeper/delivered", json!({"client": conn, "id": id})),
+                    }
                 }
             }
             Ev::AgentWriteFailed(generation, error) => {
@@ -565,6 +573,7 @@ impl Hub {
                 self.next += 1;
                 let routed = Value::String(format!("{by}-{}", self.next));
                 let key = key_of(&routed);
+                let receipt = Receipt::Request { conn, id: id.clone() };
                 let params = msg.get("params").cloned().unwrap_or(Value::Null);
                 if method == "session/prompt" && params.get("sessionId").and_then(Value::as_str) == self.model.session.as_deref() {
                     self.prompts.insert(key.clone());
@@ -579,7 +588,7 @@ impl Hub {
                     },
                 );
                 msg.insert("id".into(), routed);
-                self.forward(&Value::Object(msg).to_string());
+                self.queue(&Value::Object(msg).to_string(), Some(receipt));
             }
             (Some(_), None) if self.mode != Mode::Acp => {}
             (Some(method), None) => {
@@ -618,12 +627,12 @@ impl Hub {
         self.answering.insert(key.to_string());
         self.queue(
             &answer.to_string(),
-            Some(PendingAnswer {
+            Some(Receipt::Answer(PendingAnswer {
                 key: key.to_string(),
                 by: by.to_string(),
                 option,
                 outcome,
-            }),
+            })),
         );
     }
 

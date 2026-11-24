@@ -1,6 +1,8 @@
 import type { WebSocketHandler } from "bun";
 import type { SessionSnapshot } from "../../shared/protocol.ts";
 import type { DeviceStore } from "../devices.ts";
+import type { AcpChildren } from "../acp/children.ts";
+import { acpPrompt } from "../approvals/acp.ts";
 import { ping } from "../herdr/client.ts";
 import { capabilities } from "../runtime/capabilities.ts";
 import type { PreferenceStore } from "../preferences.ts";
@@ -21,6 +23,7 @@ import { createTerminalRegistry } from "./terminals.ts";
 
 type CoreOptions = Parameters<typeof createTerminalRegistry>[0]["options"] & Parameters<typeof createSubmitText>[0]["options"]
   & Parameters<typeof createPendingDelivery>[0]["options"] & Parameters<typeof createStatusHub>[0]["options"] & {
+    acp?: AcpChildren | null;
     terminalAttach?: boolean | (() => Promise<boolean>);
     sidecar?: boolean | (() => boolean);
     attachRetryForMs?: number;
@@ -62,7 +65,7 @@ export function createCore({ options, devices, preferences, usage, usageLogin, b
   let stopped = false;
   const { attachments, conversations, reconcileOutput, closeAttachments, paneMoved, detachClaimed, dropClaims, sight, poke, drainOutput, terminalFrames } = createTerminalRegistry({ options, clients, stopped: () => stopped, terminalAttach, holdFor, heldRetry, retryFor, relookupFor, holdPending: (owner, paneId) => holdPending(owner, paneId), holdPendingPane: (paneId, fault) => holdPendingPane(paneId, fault), attached: (client, paneId) => attached(client, paneId), transcriptChanged: (paneId) => reconcilePiDeliveries(paneId), inputReady: (paneId) => drainPending(paneId), end: (client, reason) => end(client, reason) });
 
-  const { serialize, settleAfterTyping, lastTyped, typedInto, inputFrames } = createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight, poke, terminalAttach, terminalAttachKnown: () => terminalAttachKnown, mayType: (client) => mayType(client), authorizeSocket: (client) => authorizeSocket(client) });
+  const { serialize, settleAfterTyping, lastTyped, typedInto, inputFrames } = createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, acp: options.acp, sight, poke, terminalAttach, terminalAttachKnown: () => terminalAttachKnown, mayType: (client) => mayType(client), authorizeSocket: (client) => authorizeSocket(client) });
 
   const submitText = createSubmitText({ options, lastTyped, attachments, terminalAttach, SUBMIT_DEADLINE_MS, TYPED_SETTLE_MS, DRAFT_CLEAR_WAIT_MS, DRAFT_CLEAR_POLL_MS, SUBMIT_DELAY_MS });
 
@@ -70,8 +73,14 @@ export function createCore({ options, devices, preferences, usage, usageLogin, b
 
   const watchedOpenCode = new OpenCodePromptState();
   const watchedOmp: OmpLookups = new Map();
-  const promptWatch = createPromptWatch({ clients, read: (pane, panes) => shownPromptText(pane, panes, { codexHome: options.codexHome, openCodeStateDir: options.openCodeStateDir, openCodeState: watchedOpenCode, ompLookups: watchedOmp, answers: options.openCodeState }) });
+  const promptWatch = createPromptWatch({ clients, read: async (pane, panes) => {
+    const child = options.acp?.forPane(pane.pane_id);
+    return child ? acpPrompt(child)?.id ?? null : shownPromptText(pane, panes, { codexHome: options.codexHome, openCodeStateDir: options.openCodeStateDir, openCodeState: watchedOpenCode, ompLookups: watchedOmp, answers: options.openCodeState });
+  } });
 
+  const stopAcp = options.acp?.onStatus(child => {
+    if (child.client.status === "unknown") holdPendingPane(child.terminal, { code: "input_not_ready", message: "The ACP connection changed; review the pending message before sending" });
+  });
   const { mayType, authorizeSocket, admit, setRole, watchPane, unwatchPane, killWatches, end } = createConnections({ clients, present, pending: { close: closeConnection }, devices, detachClaimed,
     dropClaims: (client) => { dropClaims(client); promptWatch.drop(client); } });
   const { push, alertWebhook, omo, gjc, letta, claudeAgents, opencodeAgents, plans, clientSnapshot, deliverySnapshot, currentHerdrLifetime, queueHeld, countVisit, machines, broadcastAll, logPushError, collector, waitTimer, hookTurn } = createStatusHub({ options, devices, preferences, clients, present, pending, drainPending, holdPendingPane, usage, usageLogin,
@@ -135,6 +144,7 @@ export function createCore({ options, devices, preferences, usage, usageLogin, b
     },
     stop(beforeTerminals: () => void): void {
       stopped = true;
+      stopAcp?.();
       conversations.stop();
       promptWatch.stop();
       clearInterval(outputTimer);

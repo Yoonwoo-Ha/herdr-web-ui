@@ -1,13 +1,10 @@
 import type { ConversationMetadata, HerdrPane, PaneContext, PlanStep, PlanSummary } from "../shared/protocol.ts";
+import { planSummary } from "../shared/plans.ts";
 import { plain } from "./claude-subagents.ts";
 import { PLAN_BUDGET, planState, readPlan, type PlanSource } from "./session-plan-reader.ts";
 export { forgetPlans, readPlan, type PlanSource } from "./session-plan-reader.ts";
 
-export function planSummary(steps: readonly PlanStep[] | null): PlanSummary | null {
-  if (steps === null || steps.length === 0) return null;
-  const current = steps.find((step) => step.status === "in_progress");
-  return { done: steps.filter((step) => step.status === "completed").length, total: steps.length, current: current ? current.active ?? current.label : null };
-}
+export { planSummary } from "../shared/plans.ts";
 
 export interface SessionPlanDeps {
   claudePath: (paneId: string) => string | null;

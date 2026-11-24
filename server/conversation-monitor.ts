@@ -3,6 +3,7 @@ import { statSync } from "node:fs";
 import type { SessionSnapshot } from "../shared/protocol.ts";
 import { ConversationNotStarted, ConversationUnavailable, paneTranscript, type NativeTranscript } from "./conversation.ts";
 import { agyDatabasePath } from "./agy.ts";
+import { coreAcp } from "./herdr-core/runtime.ts";
 import { sessionSnapshot } from "./herdr/client.ts";
 
 const STAT_INTERVAL_MS = 250;
@@ -77,6 +78,12 @@ export class ConversationMonitor {
   private read(paneId: string, state: WatchedConversation): boolean {
     const transcript = state.transcript;
     if (!transcript) return false;
+    if (transcript.source === "acp") {
+      const history = coreAcp()?.forPane(paneId)?.client.history;
+      if (!history || history.path !== transcript.path) { state.nextResolve = 0; return false; }
+      this.publish(paneId, state, `${history.path}:${history.signature}`);
+      return true;
+    }
     const identity = fileIdentity(transcript.path);
     const database = transcript.source === "devin-transcript" || transcript.source === "opencode-transcript" || transcript.source === "hermes-transcript";
     const wal = database ? fileIdentity(`${transcript.path}-wal`) : "";

@@ -10,9 +10,11 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { HcMethods } from "../herdr-core/hc-api.generated.ts";
+import { PANE_NAME_LABEL, TAB_NAME_LABEL } from "../herdr-core/snapshot.ts";
 import { coreConnection, hcMachine } from "../herdr-core/runtime.ts";
 import { capabilities } from "../runtime/capabilities.ts";
-import { KeeperClient, keeperRunning } from "./client.ts";
+import { KeeperClient } from "./client.ts";
+import { keeperRunning } from "./keeper-process.ts";
 import { acpKeeperBin } from "./keeper-bin.ts";
 
 type AcpHcMethod = "terminal.run" | "terminal.kill" | "terminal.list";
@@ -76,6 +78,21 @@ const CHILD_FILE = "child.json";
 const SOCKET_PATH_MAX = 100;
 const SOCKET_MS = 10_000;
 const SESSION_MS = 30_000;
+/** How long a stop waits for a keeper to end after its terminal was killed (it ends its agent within 1.5 s). */
+const KEEPER_END_MS = 3_000;
+
+/**
+ * Waits, bounded, for the keeper in `root` to exit. It is no child of this server, so nothing signals its end: its pid is
+ * looked at again every 20 ms.
+ */
+async function keeperEnds(root: string, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (keeperRunning(root)) {
+    if (Date.now() >= deadline) return false;
+    await Bun.sleep(20);
+  }
+  return true;
+}
 
 /** Waits, bounded, for the keeper to create its socket in `root`: a file it makes, watched rather than polled. */
 function socketAppears(root: string, ms: number): Promise<boolean> {
@@ -125,6 +142,13 @@ function harnessOf(root: string): string | null {
 }
 
 export class AcpChildren {
+  private readonly listeners = new Set<(child: AcpChild) => void>();
+
+  onStatus(listener: (child: AcpChild) => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
   private readonly children = new Map<string, AcpChild>();
 
   constructor(private readonly dir: string, private readonly options: AcpChildrenOptions = {}) {}
@@ -162,12 +186,13 @@ export class AcpChildren {
       ...(start.sessionMeta === undefined ? [] : ["--session-meta", JSON.stringify(start.sessionMeta)]),
       "--", ...start.argv,
     ];
+    const displayName = start.name?.trim();
     let terminal: string;
     try {
       ({ address: terminal } = await this.hc().call("terminal.run", {
         argv, cwd: start.cwd,
         ...(start.parentPane === undefined ? { no_parent: true } : { parent: start.parentPane }),
-        labels: { [LABEL]: id },
+        labels: { [LABEL]: id, ...(displayName ? { [PANE_NAME_LABEL]: displayName, [TAB_NAME_LABEL]: displayName } : {}) },
         ...(start.env === undefined ? {} : { env: start.env }),
       }));
     } catch (error) {
@@ -177,8 +202,8 @@ export class AcpChildren {
       });
       if (live !== null) {
         const address = live.get(id);
-        if (address !== undefined) await this.endFailedStart(address, root);
-        else rmSync(root, { recursive: true, force: true });
+        if (typeof address === "string") await this.endFailedStart(address, root);
+        else if (address === undefined) rmSync(root, { recursive: true, force: true });
       }
       throw error;
     }
@@ -195,19 +220,35 @@ export class AcpChildren {
     return this.add({ id, harness: start.harness, root, terminal, client });
   }
 
-  private async liveTerminals(): Promise<Map<string, string>> {
+  private async liveTerminals(): Promise<Map<string, string | null>> {
     const { terminals } = await this.hc().call("terminal.list", {});
-    return new Map(terminals.flatMap((terminal) => {
+    const live = new Map<string, string | null>();
+    for (const terminal of terminals) {
       const id = terminal.labels[LABEL];
-      return id !== undefined && terminal.state === "live" ? [[id, terminal.address] as const] : [];
-    }));
+      if (id === undefined || terminal.state !== "live") continue;
+      if (!live.has(id)) live.set(id, terminal.address);
+      else if (live.get(id) !== null && live.get(id) !== terminal.address) {
+        console.warn(`acp: multiple live terminals for ${id}; leaving it unbound`);
+        live.set(id, null);
+      }
+    }
+    return live;
   }
 
   private add(child: AcpChild): AcpChild {
     this.children.set(child.id, child);
+    let state = child.client.status;
+    let plan = child.client.history.plan;
+    for (const listener of this.listeners) listener(child);
     // a keeper that ended by itself (Ctrl+Q in its pane, its terminal closed) takes its child along
     const off = child.client.onChange(() => {
-      if (!child.client.keeperGone || this.children.get(child.id) !== child) return;
+      if (this.children.get(child.id) !== child) return;
+      if (state !== child.client.status || plan !== child.client.history.plan || child.client.keeperGone) {
+        state = child.client.status;
+        plan = child.client.history.plan;
+        for (const listener of this.listeners) listener(child);
+      }
+      if (!child.client.keeperGone) return;
       off();
       this.children.delete(child.id);
       if (!keeperRunning(child.root)) rmSync(child.root, { recursive: true, force: true });
@@ -221,10 +262,14 @@ export class AcpChildren {
     return undefined;
   }
 
-  /** Kills the keeper's terminal (the keeper ends its agent with it); ROOT goes once the terminal is gone. */
+  /**
+   * Kills the keeper's terminal (the keeper ends its agent with it); ROOT goes once the keeper is gone, as a keeper still
+   * ending writes its last rows there. One that outlives the wait leaves ROOT to restore().
+   */
   private async end(terminal: string, root: string): Promise<void> {
     await this.hc().call("terminal.kill", { terminal });
-    rmSync(root, { recursive: true, force: true });
+    if (await keeperEnds(root, KEEPER_END_MS)) rmSync(root, { recursive: true, force: true });
+    else console.warn(`acp: keeping ${root}: its keeper is still running after its terminal was killed`);
   }
 
   private async endFailedStart(terminal: string, root: string): Promise<void> {
@@ -260,6 +305,7 @@ export class AcpChildren {
       const harness = harnessOf(root);
       if (harness === null) continue;
       const terminal = live.get(id);
+      if (terminal === null) continue;
       if (terminal !== undefined) {
         if (!this.children.has(id)) this.add({ id, harness, root, terminal, client: new KeeperClient(root) });
       } else if (!keeperRunning(root)) {

@@ -219,6 +219,14 @@ describe("herdr-core adapter", () => {
     ]);
   });
 
+  it("refuses legacy prompts before writing to a terminal owned by an ACP keeper", async () => {
+    const { socket, cores } = await setup([terminal("t1", {
+      labels: { "ovis.acp": "child" }, status: { app: "codex", state: "idle" },
+    })], { "terminal.send": () => ({ turn: 1 }) });
+    await expect(agentPrompt("t1", "do not silently drop this", socket)).rejects.toMatchObject({ code: "acp_prompt_required" });
+    expect(cores.flatMap(core => core.calls).some(call => call.method === "terminal.send")).toBeFalse();
+  });
+
   it("tells agy's plan review at rest in its status events as in the snapshot, done on the turn that counts it with nothing new to draw, and its question blocked", async () => {
     let channel = 0;
     const working = { app: "antigravity", state: "working" };

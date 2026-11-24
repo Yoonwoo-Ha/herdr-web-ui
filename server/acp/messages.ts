@@ -27,7 +27,7 @@ export interface AcpTurn {
   error: string | null;
 }
 
-export type Row = { seq: number; dir: string; client?: number; raw: string };
+export type Row = { seq: number; dir: string; ts?: number; client?: number; raw: string };
 export type Message = { id?: unknown; method?: unknown; params?: Record<string, unknown>; result?: Record<string, unknown>; error?: { code?: unknown; message?: unknown } };
 
 export const record = (value: unknown): Record<string, unknown> | null => typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -42,7 +42,21 @@ function parseOptions(value: unknown): AcpOption[] {
   });
 }
 
-export function parseLine(line: string): { client: number } | { row: Row; message: Message } | null {
+function validMessage(body: Record<string, unknown>): boolean {
+  if ("method" in body && typeof body.method !== "string") return false;
+  if (body.method !== "session/update") return true;
+  const update = record(record(body.params)?.update);
+  if (!update || typeof update.sessionUpdate !== "string") return false;
+  const nullable = update.sessionUpdate === "tool_call_update";
+  if (["kind", "status"].some(key => key in update && !(nullable && update[key] === null) && typeof update[key] !== "string")) return false;
+  const blocks = Array.isArray(update.content) ? update.content : [update.content];
+  return blocks.every(value => {
+    const block = record(value);
+    return !block || !("type" in block) || typeof block.type === "string";
+  });
+}
+
+export function parseLine(line: string): { client: number } | { row: Row; message: Message | null } | null {
   let parsed: unknown;
   try { parsed = JSON.parse(line); } catch { return null; }
   const object = record(parsed);
@@ -50,11 +64,9 @@ export function parseLine(line: string): { client: number } | { row: Row; messag
   if (typeof object["through"] === "number" && typeof object["client"] === "number") return { client: object["client"] };
   const { seq, dir, raw } = object;
   if (typeof seq !== "number" || typeof dir !== "string" || typeof raw !== "string") return null;
-  let message: unknown;
-  try { message = JSON.parse(raw); } catch { return null; }
-  const body = record(message);
-  if (!body) return null;
-  return { row: { seq, dir, raw, ...(typeof object["client"] === "number" ? { client: object["client"] } : {}) }, message: body };
+  let body: Record<string, unknown> | null = null;
+  try { body = record(JSON.parse(raw)); } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+  return { row: { seq, dir, raw, ...(typeof object["ts"] === "number" ? { ts: object["ts"] } : {}), ...(typeof object["client"] === "number" ? { client: object["client"] } : {}) }, message: body && validMessage(body) ? body : null };
 }
 
 export function approval(row: Row, keeperId: string, params: Record<string, unknown>): AcpApproval {

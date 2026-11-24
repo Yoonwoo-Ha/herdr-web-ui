@@ -1,4 +1,5 @@
 import { type Client, connectionOf, send } from "./connections.ts";
+import type { AcpChildren } from "../acp/children.ts";
 import { ATTACH_HELD_MESSAGE } from "./terminal-process.ts";
 import { paneAgentOf } from "../pane-context.ts";
 import type { TerminalSighting } from "./terminals.ts";
@@ -17,7 +18,8 @@ const INSERT_DEADLINE_MS = 45_000;
 
 type Frame<T extends ClientMessage["type"]> = Extract<ClientMessage, { type: T }>;
 
-export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight, poke, terminalAttach, terminalAttachKnown, mayType, authorizeSocket }: {
+export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, acp, sight, poke, terminalAttach, terminalAttachKnown, mayType, authorizeSocket }: {
+  acp?: Pick<AcpChildren, "forPane"> | null;
   TYPED_SETTLE_MS: number;
   KEY_SETTLE_MS: number;
   clients: Set<Client>;
@@ -76,6 +78,21 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
         if (clients.has(client)) send(client, { type: "error", code: "input_failed", message: "Terminal input could not be confirmed. Check the terminal before typing again.", pane_id: message.pane_id });
         receipt(false, "input_failed");
       };
+      const child = message.stop === true && (message.text === "\x1b" || message.text === "\x03") ? acp?.forPane(message.pane_id) : undefined;
+      if (child && !child.client.terminalReady) {
+        const sessionId = child.client.session;
+        const roles = connectionOf(client).roles;
+        void serialize(message.pane_id, () => {
+          if (!clients.has(client)) return;
+          authorizeSocket(client);
+          if (!mayType(client) || connectionOf(client).roles !== roles || !typingGuards.queuedTyping(sighting.facts())
+            || acp?.forPane(message.pane_id) !== child || !sessionId || child.client.session !== sessionId
+            || (child.client.status !== "working" && child.client.status !== "blocked")) { inputFailed(); return; }
+          child.client.notify("session/cancel", { sessionId });
+          receipt(true);
+        }).catch(inputFailed);
+        return;
+      }
       // without a pty (Windows: no terminal, or a mirrored one) typing, the key bar's Enter,
       // Stop and arrows go through herdr itself, each in its turn behind a message in flight.
       // The turn is taken before herdr is asked what it can do: a message sent while

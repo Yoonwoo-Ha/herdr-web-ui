@@ -44,6 +44,17 @@ describe("a bash-mode command", () => {
 });
 
 describe("an agent turn's work blocks", () => {
+  it("shows a structured edit once and preserves its separate completion output", () => {
+    const edit = { path: "note.txt", before: "old note", after: "new note" };
+    const memory: ChatRowMemory = { toggles: new Map([["tool:0", true]]), outputs: new Map(), runs: new Map(), dormant: new Map() };
+    const legacy = "--- note.txt\nold note\n+++ note.txt\nnew note";
+    for (const result of ["", "\ncompleted"]) {
+      const html = render([{ kind: "tool", name: "edit", input: "", output: legacy + result, summary: "", edits: [edit] }], { live: true }, "assistant", {}, memory);
+      expect(html.match(/new note/g)).toHaveLength(1);
+      expect(html.includes("chat-tool-output")).toBe(result !== "");
+      if (result) expect(html).toContain("completed");
+    }
+  });
   it("says Working… for a running turn that has written no work or words yet", () => {
     for (const parts of [[], [text("\n\n")]]) {
       const html = render(parts, { live: true });

@@ -309,13 +309,13 @@ async fn start_acp(opts: &Opts, stderr: &File, generation: u64, tx: &UnboundedSe
     let mut stdin = agent.child.stdin.take().expect("piped stdin");
     let writes = tx.clone();
     tokio::spawn(async move {
-        while let Some(ToAgent { bytes, answer }) = agent_rx.recv().await {
+        while let Some(ToAgent { bytes, receipt }) = agent_rx.recv().await {
             if let Err(error) = stdin.write_all(&bytes).await {
                 let _ = writes.send(Ev::AgentWriteFailed(generation, error));
                 break;
             }
-            if let Some(answer) = answer {
-                let _ = writes.send(Ev::AnswerWritten(generation, answer));
+            if let Some(receipt) = receipt {
+                let _ = writes.send(Ev::Written(generation, receipt));
             }
         }
     });
@@ -718,7 +718,7 @@ async fn run(mut opts: Opts) -> i32 {
     while let Ok(ev) = rx.try_recv() {
         // a client's number is noted even when it connected just before the end, so the next keeper
         // in this ROOT numbers on past it
-        if matches!(ev, Ev::Agent(..) | Ev::AnswerWritten(..) | Ev::AgentWriteFailed(..) | Ev::Oversize { conn: None, .. } | Ev::Open(_)) {
+        if matches!(ev, Ev::Agent(..) | Ev::Written(..) | Ev::AgentWriteFailed(..) | Ev::Oversize { conn: None, .. } | Ev::Open(_)) {
             hub.handle(ev);
         }
     }

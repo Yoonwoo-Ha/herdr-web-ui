@@ -190,6 +190,9 @@ describe.skipIf(!keeperBuilt)("AcpChildren with a fake core running the real kee
     writeFileSync(join(made("bbbbbbbbbbbb"), "process.json"), JSON.stringify({ keeper: dead.pid }));
     writeFileSync(join(dir, "bbbbbbbbbbbb", "child.json"), JSON.stringify({ harness: "fake" }));
     const unmarked = made("eeeeeeeeeeee");
+    const ambiguous = made("111111111111");
+    writeFileSync(join(ambiguous, "child.json"), JSON.stringify({ harness: "fake" }));
+    const duplicates = [1, 2].map(() => fake.spawn({ argv: ["example"], labels: { "ovis.acp": "111111111111" } }).address);
     // a ROOT with no terminal whose keeper still runs: not touched
     writeFileSync(join(made("cccccccccccc"), "process.json"), JSON.stringify({ keeper: process.pid }));
     writeFileSync(join(dir, "cccccccccccc", "child.json"), JSON.stringify({ harness: "fake" }));
@@ -197,6 +200,8 @@ describe.skipIf(!keeperBuilt)("AcpChildren with a fake core running the real kee
     const foreign = fake.spawn({ argv: ["sh"], labels: { "ovis.acp": "dddddddddddd" } }).address;
 
     await children.restore();
+    expect(duplicates.map(address => children.forPane(address)?.terminal)).toEqual([undefined, undefined]);
+    expect(existsSync(ambiguous)).toBe(true);
     const restored = children.forPane(terminal);
     expect(restored).toMatchObject({ id: "aaaaaaaaaaaa", harness: "fake", root: live, terminal });
     await until(restored!.client, "the session from the replay", () => restored!.client.session !== null);
