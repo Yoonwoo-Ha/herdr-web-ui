@@ -1083,7 +1083,6 @@
   "src/lib/keyboard.test.ts": 0,
   "src/lib/keyboardControl.test.ts": 0,
   "src/lib/keys.test.ts": 0,
-  "src/lib/koreanParticle.test.ts": 0,
   "src/lib/lastViewedPane.test.ts": 0,
   "src/lib/latestRead.test.ts": 0,
   "src/lib/layoutActions.test.ts": 0,

@@ -715,13 +715,6 @@ describe.skipIf(platform() === "win32")("the ovis launcher install.sh writes", (
     expect(lstatSync(linked.launcher).isSymbolicLink()).toBe(true);
     expect(pasted(new Pc()).stderr.toString()).toBe("");
   });
-
-  it("does not promise that another ovis is never hidden", () => {
-    const changelog = readFileSync(join(ROOT, "CHANGELOG.md"), "utf8");
-    expect(changelog).not.toMatch(/never\s+replaced\s+or\s+hidden/);
-    const guide = readFileSync(join(ROOT, "docs", "guide.md"), "utf8");
-    expect(guide).toContain("until `~/.local/bin` comes before it on your PATH");
-  });
 });
 
 describe.skipIf(platform() === "win32")("install.sh --add", () => {

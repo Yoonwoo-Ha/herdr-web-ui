@@ -1,6 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { parseMarkdown, type InlineNode, type MarkdownBlock } from "../../shared/markdown.ts";
 
 const text = (nodes: InlineNode[]): string => nodes.map((node) => node.type === "text" || node.type === "code" || node.type === "math" ? node.value
@@ -8,9 +6,39 @@ const text = (nodes: InlineNode[]): string => nodes.map((node) => node.type === 
 const shown = (blocks: MarkdownBlock[]): string => JSON.stringify(blocks);
 
 describe("HTML blocks in a markdown file", () => {
-  it("reads the README's header as centered markdown, never as tag text", () => {
-    const readme = readFileSync(join(import.meta.dir, "../../README.md"), "utf8");
-    const head = readme.slice(0, readme.indexOf("\n## "));
+  it("reads a README's HTML header as centered markdown, never as tag text", () => {
+    const head = [
+      "<p align=\"center\">",
+      "  <img src=\"public/icons/icon-192.png\" alt=\"Ovis\" width=\"100\">",
+      "</p>",
+      "",
+      "<h1 align=\"center\">Ovis</h1>",
+      "",
+      "<p align=\"center\">",
+      "  <strong>A tagline.</strong>",
+      "  <br>",
+      "  A sentence under it.",
+      "</p>",
+      "",
+      "<p align=\"center\">",
+      "  <a href=\"LICENSE\"><img src=\"https://img.shields.io/badge/license-MIT-666666\" alt=\"MIT license\"></a>",
+      "  <a href=\"https://github.com/devswha/ovis/releases/latest\"><img src=\"https://img.shields.io/github/v/release/devswha/ovis\" alt=\"Latest release\"></a>",
+      "</p>",
+      "",
+      "<p align=\"center\">",
+      "  <strong>English</strong> · <a href=\"README.ko.md\">한국어</a>",
+      "  <br>",
+      "  <a href=\"https://ovis.sh/\">website</a> ·",
+      "  <a href=\"#install\">install</a> ·",
+      "  <a href=\"docs/guide.md\">docs</a>",
+      "</p>",
+      "",
+      "<p align=\"center\">",
+      "  <a href=\"https://ovis.sh/demo/\"><img src=\"docs/media/readme/desktop-and-phone.webp\" width=\"830\" alt=\"Ovis on a desktop and a phone.\"></a>",
+      "</p>",
+      "",
+      "Plain markdown after it, with a [link](docs/guide.md#install).",
+    ].join("\n");
     const blocks = parseMarkdown(head, 0, true);
     expect(shown(blocks)).not.toContain("<p");
     expect(shown(blocks)).not.toContain("<a ");
