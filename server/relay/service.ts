@@ -63,6 +63,7 @@ export interface RelayServiceOptions {
   readonly clock?: RelayLinkOptions["clock"];
   readonly random?: RelayLinkOptions["random"];
   readonly serverVersion?: RelayLinkOptions["serverVersion"];
+  readonly minSupportedClient?: RelayLinkOptions["minSupportedClient"];
   /**
    * Regional relays to measure against `relay`. Ovis's own (shared/relay-regions.ts) when neither
    * `relay` nor OVIS_RELAY_URL names a relay; none otherwise, so a self-hosted relay stays the only one.
@@ -412,7 +413,8 @@ export class RelayService {
   private startDirect(services: RequestServices, identity: RelayIdentity): void {
     if (!this.options.direct || !this.directAvailable || this.directCarrier || !this.directEnabled()) return;
     this.directCarrier = new DirectCarrier({ ...this.options.direct, identity, services, port: this.port, sessions: this.signedIn,
-      ...(this.options.clock ? { clock: this.options.clock } : {}), ...(this.options.serverVersion ? { serverVersion: this.options.serverVersion } : {}) });
+      ...(this.options.clock ? { clock: this.options.clock } : {}), ...(this.options.serverVersion ? { serverVersion: this.options.serverVersion } : {}),
+      ...(this.options.minSupportedClient ? { minSupportedClient: this.options.minSupportedClient } : {}) });
     this.directStarting = this.directCarrier.start();
   }
 
@@ -453,6 +455,7 @@ export class RelayService {
       const regional = new RelayLink({
         relay, identity, services, port: this.port, ...this.passOptions(relay, false),
         connect: this.options.connect, clock: this.options.clock, random: this.options.random, serverVersion: this.options.serverVersion,
+        minSupportedClient: this.options.minSupportedClient,
         relayHints: () => this.relayHints(), directCarriers: (tailnet) => this.directCarriers(tailnet), sessions: this.signedIn,
         onState: (phase) => { if (this.regionalLink === regional) this.regionalPhase = phase; },
       });
@@ -514,6 +517,7 @@ export class RelayService {
       const link = new RelayLink({
         relay: this.relay, identity: this.identity, services, port: this.port, ...this.passOptions(this.relay, true),
         connect: this.options.connect, clock: this.options.clock, random: this.options.random, serverVersion: this.options.serverVersion,
+        minSupportedClient: this.options.minSupportedClient,
         relayHints: () => this.relayHints(), directCarriers: (tailnet) => this.directCarriers(tailnet), sessions: this.signedIn,
         onState: (phase, error, code) => { if (this.link === link) { this.phase = phase; this.error = error; this.errorCode = code ?? null; } },
       });

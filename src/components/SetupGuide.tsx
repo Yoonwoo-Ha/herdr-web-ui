@@ -5,6 +5,7 @@ import type { AgentCatalogEntry, AgentCatalogRow } from "../../shared/agent-cata
 import type { HealthAuth, PairingCode, RemoteAccess } from "../../shared/protocol.ts";
 import type { SecurityFacts } from "../lib/useAccess.ts";
 import { ApiError, createWorkspace, fetchAgentCatalog, fetchDevices, fetchRemoteAccess, fetchUsage, startPairing } from "../lib/api.ts";
+import { STORE_PAGES } from "../lib/appShell.ts";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
 import { createRequest, newSessionLaunch } from "../lib/newSession.ts";
@@ -1012,8 +1013,8 @@ export function SetupGuideResume({ onResume }: { onResume: () => void }) {
 
 
 const STORES = {
-  "app-store": { url: "https://apps.apple.com/app/id6824664162", badge: `${import.meta.env.BASE_URL}store-badges/app-store-en.svg`, width: 120, height: 40 },
-  "google-play": { url: "https://play.google.com/store/apps/details?id=sh.ovis.app", badge: "google-play", width: 135, height: 52 },
+  "app-store": { url: STORE_PAGES.ios, badge: `${import.meta.env.BASE_URL}store-badges/app-store-en.svg`, width: 120, height: 40 },
+  "google-play": { url: STORE_PAGES.android, badge: "google-play", width: 135, height: 52 },
 } as const;
 type Store = keyof typeof STORES;
 type PhoneMethod = "relay" | "wifi" | "tailscale";

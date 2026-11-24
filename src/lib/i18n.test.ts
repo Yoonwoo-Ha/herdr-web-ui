@@ -99,6 +99,8 @@ describe.each([["Korean", KO, ["업데이트", "갱신"]], ["Japanese", JA, ["�
     const journey = [
       "Update needed",
       "Update Ovis on {name}",
+      "Update the app",
+      "{name} needs a newer version of this app.",
       "Update it from here: the PC installs the latest release and restarts Ovis, then this app reconnects.",
       "Update now",
       "Its Ovis does not update itself. On the PC, run the installer:",

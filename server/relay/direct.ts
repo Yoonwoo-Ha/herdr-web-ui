@@ -29,6 +29,7 @@ import type { RelayIdentity } from "./identity.ts";
 import { RelaySession, relayClock } from "./session.ts";
 import type { RelaySocketHandlers } from "./virtual-socket.ts";
 import { version } from "../../package.json";
+import { MIN_SUPPORTED_CLIENT_VERSION } from "./client-floor.ts";
 
 export const DIRECT_PORT = 7319;
 /** Carriers not yet signed in: per source address, and in total across every address listened on. */
@@ -108,6 +109,7 @@ export interface DirectCarrierOptions {
   readonly services: RequestServices;
   readonly port: number;
   readonly serverVersion?: string;
+  readonly minSupportedClient?: string;
   readonly clock?: MuxClock;
   /** The private addresses to listen on; this PC's own by default (rankLanAddresses). Tests name loopback. */
   readonly addresses?: () => readonly string[];
@@ -342,7 +344,7 @@ export class DirectCarrier {
       const handlers = services.core.socketHandlers;
       carrier.session = new RelaySession({
         channel, services, port: this.options.port, serverId: identity.server_id,
-        serverVersion: this.options.serverVersion ?? version, minSupportedClient: "0.4.20",
+        serverVersion: this.options.serverVersion ?? version, minSupportedClient: this.options.minSupportedClient ?? MIN_SUPPORTED_CLIENT_VERSION,
         routingOverhead: 0, maxWireMessageBytes: 64 * 1024, signInOnly: true,
         directCarriers: (tailnet) => this.advertised(tailnet),
         onAuthenticated: (deviceId) => this.authenticated(id, carrier, deviceId),

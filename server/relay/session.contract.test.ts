@@ -289,6 +289,13 @@ it("drops all forged identity headers at the Request boundary", async () => {
   }
 });
 
+it("gives every page the same origin through the relay: the hosted shell's, the iOS app's own copy's or any other", () => {
+  for (const origin of ["https://app.ovis.sh", "capacitor://app.ovis.sh", "capacitor://localhost"]) {
+    const seen = new Request(RELAY_ORIGIN + "/api/health", { headers: relayHeaders([["origin", origin]]) });
+    expect([seen.headers.get("origin"), seen.headers.get("sec-fetch-site")]).toEqual([RELAY_ORIGIN, "same-origin"]);
+  }
+});
+
 it("drops forged headers on the encrypted wire and dispatches with synthetic origin", async () => {
   const f = fixture();
   const portal = new PortalService({ stateDir: f.stateDir });

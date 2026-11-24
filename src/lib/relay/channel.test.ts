@@ -222,7 +222,7 @@ for (const pairing of [false, true]) {
     expect(channel.device.device_id).toBe((await f.store.get(f.offer.server_id))?.device_id ?? null);
     expect(channel.connectionId).toBe("ef".repeat(16));
     expect(channel.mux.limits.max_streams).toBe(2);
-    expect(channel.server).toEqual({ version: "test", relayProtocol: 1, features: [] });
+    expect(channel.server).toEqual({ version: "test", relayProtocol: 1, features: [], minSupportedClient: "0.0.0" });
     expect(f.trace.slice(0, 4)).toEqual(["client:HELLO", "server:WELCOME", `client:${pairing ? "PAIR" : "AUTH"}`, "server:AUTH_OK"]);
     console.log(`ORDER: ${f.trace.slice(0, 4).join(" -> ")}; no other client frame before AUTH_OK`);
     channel.mux.openHttp({ method: "GET", target: "/api/test", headers: [], body: "none" });
@@ -237,7 +237,7 @@ for (const pairing of [false, true]) {
     expect(f.trace.filter((entry) => entry.startsWith("client:"))).toEqual(["client:HELLO", `client:${pairing ? "PAIR" : "AUTH"}`]);
     f.allowAuth.resolve();
     const channel = await f.opening;
-    expect(channel.server).toEqual({ version: "test", relayProtocol: 1, features: [] });
+    expect(channel.server).toEqual({ version: "test", relayProtocol: 1, features: [], minSupportedClient: "0.0.0" });
     channel.mux.openHttp({ method: "GET", target: "/api/test", headers: [], body: "none" });
     expect(await f.httpSeen.promise).toBe("/api/test");
     channel.close();

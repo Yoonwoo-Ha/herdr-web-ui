@@ -36,6 +36,22 @@ describe("relaySkew", () => {
     expect(skew("0.6.0")).toBe("server-newer");
   });
 
+  it("holds the app's own copy to the oldest client the PC supports, and the hosted page to nothing new", () => {
+    const floored = (floor: string, bundled: boolean, server = "0.6.0", shell = "0.5.3") =>
+      relaySkew({ server: { version: server, relayProtocol: RELAY_PROTOCOL, minSupportedClient: floor }, shellVersion: shell, minServerVersion: "0.5.0", bundled });
+    expect(floored("0.5.4", true)).toBe("app-outdated");
+    expect(floored("0.6.0", true)).toBe("app-outdated");
+    expect(floored("0.5.4", false)).toBe("server-newer");
+    expect(floored("0.5.3", true)).toBe("server-newer");
+    expect(floored("0.4.20", true)).toBe("server-newer");
+    expect(floored("0.5.4", true, "0.5.3", "0.5.3")).toBe("app-outdated");
+    expect(floored("0.5.4", false, "0.5.3", "0.5.3")).toBe("ok");
+    expect(floored("0.5.4", true, "0.4.99")).toBe("pc-outdated");
+    for (const unread of ["", "test", "v0.6.0", "0.6"]) expect(floored(unread, true)).toBe("server-newer");
+    expect(relaySkew({ server: { version: "0.6.0", relayProtocol: RELAY_PROTOCOL }, shellVersion: "0.5.3", minServerVersion: "0.5.0", bundled: true })).toBe("server-newer");
+    expect(relaySkew({ server: { version: "0.6.0", relayProtocol: RELAY_PROTOCOL, minSupportedClient: "0.6.0" }, shellVersion: "dev", minServerVersion: "0.5.0", bundled: true })).toBe("ok");
+  });
+
   it("lets an unreleased checkout below the minimum reach its own server, and no older one", () => {
     expect(relaySkew({ server: { version: "0.4.20", relayProtocol: RELAY_PROTOCOL }, shellVersion: "0.4.20" })).toBe("ok");
     expect(relaySkew({ server: { version: "0.4.19", relayProtocol: RELAY_PROTOCOL }, shellVersion: "0.4.20" })).toBe("pc-outdated");

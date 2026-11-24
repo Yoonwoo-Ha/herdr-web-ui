@@ -1014,6 +1014,7 @@ What the app on the phone shows when a connection doesn't come up
 | This phone forgot … | **Forget this PC** on the new-identity screen removed the saved key; it pairs with nothing, so pairing again needs a new QR code from the PC itself. Forget never makes a forged link pairable: opened again, it is refused again |
 | Update needed | the PC speaks another relay protocol or mux version |
 | Update Ovis on … | the PC is older than the app supports ([Versions](#versions)) |
+| Update the app | the phone app's own copy of the client is older than the PC supports ([Versions](#versions)) |
 | This pairing link is damaged | the link's offer doesn't parse or names another PC than its path |
 
 ## Versions
@@ -1035,7 +1036,15 @@ can be apart.
   `server/relay/`; until then `bun scripts/relay-e2e-regression.ts --skew <tag>` runs that check
   by hand.
 - **Newer PC.** A PC newer than the app means the app's cached copy is out of date: the app checks
-  for a newer version of itself and reloads, once.
+  for a newer version of itself and reloads, once. The phone app's own copy of the client
+  ([native-app.md](native-app.md#the-app-carries-its-client)) never reloads: it opens the PC as it is.
+- **Oldest client.** `WELCOME`'s `min_supported_client` is the oldest client the PC supports,
+  `MIN_SUPPORTED_CLIENT_VERSION` in [`server/relay/client-floor.ts`](../server/relay/client-floor.ts),
+  now 0.4.20, on the relay and the direct carrier alike. The phone app's own copy below it stops at
+  **Update the app**, with its store's page; a hosted page reloads as for a newer PC. What it may be
+  raised to: [The phone app's client](development.md#the-phone-apps-client).
+  `bun scripts/relay-client-skew-regression.ts [<tag>]` runs an older client against this server (the browser lane
+  runs it too).
 
 ## Relay pass
 

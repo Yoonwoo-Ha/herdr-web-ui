@@ -3,8 +3,8 @@ import { describe, expect, it } from "bun:test";
 import type { ObservedIngress } from "../../shared/protocol.ts";
 import { connectionRoute } from "./connectionRoute.ts";
 
-const route = (hostname: string, page: { relay?: boolean; portal?: boolean; ingress?: ObservedIngress | null; protocol?: string } = {}) =>
-  connectionRoute({ relay: false, portal: false, ingress: null, protocol: "https:", hostname, ...page });
+const route = (hostname: string, page: { relay?: boolean; portal?: boolean; ingress?: ObservedIngress | null; demo?: boolean } = {}) =>
+  connectionRoute({ relay: false, portal: false, ingress: null, demo: false, hostname, ...page });
 
 describe("how this device reaches Ovis", () => {
   it("is the relay on the hosted shell, and Portal for a Portal sign-in, whatever the address", () => {
@@ -16,7 +16,12 @@ describe("how this device reaches Ovis", () => {
   });
 
   it("says nothing in the phone app's bundled demo, which reaches no PC", () => {
-    expect(route("localhost", { protocol: "capacitor:" })).toBeNull();
+    expect(route("localhost", { demo: true })).toBeNull();
+    expect(route("app.ovis.sh", { demo: true })).toBeNull();
+  });
+
+  it("is the relay for the iOS app's own copy of the client, which runs at capacitor://app.ovis.sh and is no demo", () => {
+    expect(route("app.ovis.sh", { relay: true })).toBe("relay");
   });
 
   it("is direct for a request the server saw come through Tailscale Funnel, though its name is a tailnet one", () => {

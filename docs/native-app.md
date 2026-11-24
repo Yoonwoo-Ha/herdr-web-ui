@@ -993,6 +993,51 @@ so the apps' `OvisDirect` plugin opens it for the hosted app (`app/ios/App/App/O
   `ACCESS_LOCAL_NETWORK`. Android has no WebSocket library, so `DirectSocket.java` is a small
   `ws://` client of its own.
 
+## The app carries its client
+
+Decided 2026-11-24: the store apps (Android and iOS) carry the whole client, the hosted shell
+(`dist-shell`), and no longer load it from `https://app.ovis.sh`, which stays for browsers and the
+installed web app. Android keeps the origin `https://app.ovis.sh`, served from its own files; iOS
+moves to one of its own. A test build that loads a preview shell from the network stays, and is
+never uploaded to a store. Store builds are cut from a release tag's verified shell.
+
+The app and the client agree on one contract:
+
+- The app sets, at document start and before any page script, on every page it serves from its own
+  files: `window.__ovisAppShell = { bundled: true, platform: "android" | "ios", appVersion: "<versionName>", build: <versionCode> }`
+  (Android `addDocumentStartJavaScript`, iOS a `WKUserScript` at document start). Only the app's own
+  origin gets it, never a PC's page (an address, Tailscale, an SSH PC's loopback origin), which runs
+  that PC's own client. A build that loads the hosted or a preview shell sets nothing.
+- [`src/lib/appShell.ts`](../src/lib/appShell.ts) is the one place that reads it. Where it is absent
+  nothing changes. Where it says `bundled: true` the client:
+  - registers no service worker, and the first time it finds the ones a hosted build left (one per
+    PC's scope, any of which would open a PC's page from the hosted copy it kept), unregisters them,
+    deletes their caches and loads a page one of them served once more; IndexedDB and web storage,
+    which hold the pairings, stay (`retireServiceWorkers` in `src/lib/shellMode.ts`, `src/pwa.ts`);
+  - never reloads for a newer copy: a PC newer than the client opens in it, and the app-updated line
+    offers no reload (`src/lib/relay/updateFlow.ts`, `src/lib/updateNotes.ts`);
+  - is held to the oldest client the PC supports, `min_supported_client` in the relay `WELCOME`:
+    below it, that PC shows **Update the app** with one button to the store page for `platform`,
+    opened outside the app, and Back to the other PCs, which still open;
+  - counts its own origin as the app's where the hosted one was compared (the direct carrier's
+    plugin call, `directPageAllowed` in `src/lib/relay/directSocket.ts`; the plugin's own gate still
+    decides).
+- The demo is the page its own build marks (`window.__ovisDemo`, set by `site/demo/transport.ts`,
+  read by `src/lib/demo.ts`), not one at a `capacitor:` address: on iOS the app's own copy is at one
+  too. Settings' Change PC calls only a marked page the demo, and the header's route mark leaves out
+  only the app's demo.
+- Only the relay and the direct carrier name the floor: both speak Ovis Mux, whose `WELCOME` carries
+  it. A PC added by address, Tailscale or SSH loads its own client from the PC, so the two never
+  differ and nothing is compared.
+- The iOS copy's fetches and sockets carry `Origin: capacitor://app.ovis.sh`. Nothing on a PC or a
+  relay accepts the hosted origin by name, so nothing accepts this one either, and nothing had to
+  change: the relay reads no `Origin`; through it the PC gives every request its own origin
+  (`relayHeaders`); the direct carrier takes only a socket that names no origin, the plugin's; a
+  PC's own HTTP and WebSocket take only their own origin. Tests pin each for both origins and
+  `capacitor://localhost`, and a PC from 0.5.9 behaves the same.
+
+What a PC supports, and when the floor may rise: [The phone app's client](development.md#the-phone-apps-client).
+
 ## Risks and open questions
 
 - App Review guideline 4.2 (a web wrapper): the native connect flow, push and the demo mode are

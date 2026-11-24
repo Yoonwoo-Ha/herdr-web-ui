@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ChevronRight, Monitor } from "lucide-react";
 
+import { STORE_PAGES } from "../lib/appShell.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { useT } from "../lib/i18n.ts";
 import { ExternalLink } from "../lib/externalLink.ts";
@@ -349,6 +350,16 @@ export function RelayShellCardContent({ props, other = null }: RelayShellCardCon
           {state.update.phase === "installing" && <div className="relay-shell-wait"><div className="boot-spinner" aria-hidden="true" /><p className="relay-shell-detail">{progress ? `${progress.step}: ${t(progress.label)}` : t("Asking the PC to update…")}</p></div>}
           {state.update.phase === "restarting" && <div className="relay-shell-wait"><div className="boot-spinner" aria-hidden="true" /><p className="relay-shell-detail">{t("Waiting for {name} to restart…", { name: pc })}</p></div>}
           {state.update.phase === "failed" && <><p className="relay-shell-copy relay-shell-more">{t("The update did not finish.")}</p>{state.update.detail !== null && <p className="relay-shell-detail"><code>{state.update.detail}</code></p>}<div className="relay-shell-actions"><button type="button" className="btn btn-primary" onClick={onUpdate}>{t("Update now")}</button>{back}</div></>}
+        </>
+      )}
+      {state.kind === "app-outdated" && (
+        <>
+          <h1 className="relay-shell-title">{t("Update the app")}</h1>
+          <p className="relay-shell-copy">{t("{name} needs a newer version of this app.", { name: pc })}</p>
+          <div className="relay-shell-actions">
+            {state.platform !== null && <ExternalLink kind="link" className="btn btn-primary" href={STORE_PAGES[state.platform]}>{t("Open the store")}</ExternalLink>}
+            {back ?? <button type="button" className="btn btn-ghost" onClick={onCancel}>{t("Back")}</button>}
+          </div>
         </>
       )}
       {state.kind === "forged" && (

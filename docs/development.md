@@ -33,6 +33,8 @@ the release is put off).
    `shared/machines.ts`, and after deploying the telemetry Worker
    ([telemetry/README.md](../telemetry/README.md#deploy)) commits `telemetry/deployed.json` written by
    `bun scripts/release-guards.ts --worker-deployed`.
+   A release that changes the HTTP or WebSocket contract in `server/` or `shared/` runs the oldest client the
+   phone apps carry against it first ([The phone app's client](#the-phone-apps-client)).
 2. Merge it after CI passes.
 3. If it raised `REMOTE_BUNDLE_VERSION` to N, push the tag `remote-vN` on the merged commit and wait
    for the **Remote PC bundles** workflow to publish it ([remote PCs](remote-pcs.md)); the Release
@@ -293,6 +295,34 @@ one is not published yet (Release only), when `telemetry/worker.ts` or `shared/t
 since the deploy recorded in `telemetry/deployed.json` ([telemetry/README.md](../telemetry/README.md#deploy)),
 or when the step 1 metadata is incomplete. In CI only the change that bumps the version is checked;
 PRs merged before the Release run pass, and the Release run checks the whole tree again.
+
+## The phone app's client
+
+The store apps carry their own copy of the client ([native-app.md](native-app.md#the-app-carries-its-client)):
+an app on a phone runs the client of the build it was installed from until the store updates it, whatever
+release its PCs run. Store builds are cut from a release tag's verified shell (the release's
+`dist-shell.tar.gz` and its SHA-256), never from a branch.
+
+- **A PC keeps working with every app build that is not below the floor.** The floor is
+  `MIN_SUPPORTED_CLIENT_VERSION` in [`server/relay/client-floor.ts`](../server/relay/client-floor.ts), sent as
+  `min_supported_client` in the relay `WELCOME` (through the relay and on the direct carrier alike). The app's own
+  copy below it shows **Update the app** for that PC, with its store's page; a hosted page reloads onto the
+  newer hosted copy as before.
+- **The HTTP and WebSocket contract in `server/` and `shared/` changes additively**: a route, field, frame or
+  feature may be added; one an app build at or above the floor uses is not removed, renamed or given another
+  meaning.
+- **The floor rises only to a client an app build carries that has been live on both stores for at least
+  14 days.** [`server/relay/store-app-versions.json`](../server/relay/store-app-versions.json) lists the builds
+  live on each store: version, build, the day it went live and the release whose client it carries (`null` for a
+  build that loads the hosted shell). Add a line when a build goes live and keep the older ones;
+  `server/relay/client-floor.test.ts` fails a floor raised beyond what it allows. Raise the floor in a PR of its
+  own, with a changelog line.
+- **A release that changes the contract runs the oldest supported client against itself**:
+  `bun scripts/relay-client-skew-regression.ts [<tag>]` builds the shell of the tag (by default the oldest client a
+  store build carries at or above the floor; while none carries one, the latest release) and opens this checkout's
+  PC through the relay in a browser: it pairs, attaches a terminal, types and reads the output. It is the reverse of
+  `relay-e2e-regression.ts --skew`, which runs this client against an older PC. The browser lane runs it on every
+  change that reaches it; a checkout without the tag fetches it from the public repository.
 
 ## Growth snapshot
 

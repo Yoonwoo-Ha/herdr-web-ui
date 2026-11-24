@@ -223,6 +223,40 @@ describe("RelayShellScreens", () => {
     }
   });
 
+  it("puts up Update the app with the store page of the app's platform, and no way into the PC", () => {
+    for (const [platform, page] of [["android", "https://play.google.com/store/apps/details?id=sh.ovis.app"], ["ios", "https://apps.apple.com/app/id6824664162"]] as const) {
+      const html = render(createElement(RelayShell, baseProps({ kind: "app-outdated", name: "Desk PC", platform })));
+      expect(html).toContain('data-relay-state="app-outdated"');
+      expect(html).toContain(">Update the app</h1>");
+      expect(html).toContain("Desk PC needs a newer version of this app.");
+      expect(html).toContain(`href="${page}"`);
+      expect(html).toContain(">Open the store</a>");
+      expect(html).toContain(">Back</button>");
+      expect(html).not.toContain("Try again");
+    }
+    const unknown = render(createElement(RelayShell, baseProps({ kind: "app-outdated", name: "Desk PC", platform: null })));
+    expect(unknown).not.toContain("Open the store");
+    expect(unknown).toContain(">Back</button>");
+  });
+
+  it("leaves Update the app for the front page by Cancel where no PC's page is open", async () => {
+    const cancelled: string[] = [];
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(createElement(SettingsProvider, { children: createElement(RelayShellCardContent, {
+          props: { ...baseProps({ kind: "app-outdated", name: "Desk PC", platform: null }), scoped: false, onCancel: () => cancelled.push("cancel"), onBack: () => cancelled.push("back") },
+        }) }));
+      });
+      const back = renderer!.root.findAll((node) => node.type === "button" && textOf(node).trim() === "Back");
+      expect(back).toHaveLength(1);
+      await act(async () => { back[0]!.props.onClick(); });
+      expect(cancelled).toEqual(["cancel"]);
+    } finally {
+      await act(async () => { renderer?.unmount(); });
+    }
+  });
+
   it("renders Copy buttons for both manual update command blocks and updates to Copied on click", async () => {
     let renderer: ReactTestRenderer | undefined;
     try {

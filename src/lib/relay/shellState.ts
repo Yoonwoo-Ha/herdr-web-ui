@@ -1,6 +1,7 @@
 import type { Root } from "react-dom/client";
 import type { HoldState } from "../../../shared/account-devices-api.ts";
 import type { PendingPushStore } from "../push.ts";
+import type { AppPlatform } from "../appShell.ts";
 import type { AccountStore } from "../account/store.ts";
 import type { EnrollmentState, ShellDeviceStore } from "./device.ts";
 import type { openRelayTransport } from "./transport.ts";
@@ -86,6 +87,8 @@ export type RelayShellState =
   /** `noneOnline`: a launch tried every PC it may open, saved or the account's, and none answered */
   | { kind: "list"; devices: RelayDevice[]; account?: AccountView | null; noneOnline?: true }
   | { kind: "outdated"; name: string | null; serverVersion: string; minVersion: string; update: PcUpdate }
+  /** the app's own copy of the client is older than the oldest this PC supports: only the store's update opens it */
+  | { kind: "app-outdated"; name: string | null; platform: AppPlatform | null }
   /**
    * `waitPc`: signed in with nothing saved here, and none of the account's PCs is on to ask: one line says to turn one on,
    * `offPc` named when the account has one

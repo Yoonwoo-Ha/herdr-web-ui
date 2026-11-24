@@ -192,6 +192,8 @@ export interface RelayServerInfo {
   readonly version: string;
   readonly relayProtocol: number;
   readonly features?: readonly string[];
+  /** WELCOME's `min_supported_client`: the oldest client this PC supports (server/relay/client-floor.ts) */
+  readonly minSupportedClient?: string;
 }
 
 /**
@@ -307,7 +309,7 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
         if (comparing && frame.payload.provisional && !passed) { passed = bytes; return; }
         // before any credential: a PC of another relay generation is an update, not a pairing
         if (frame.payload.relay_protocol !== RELAY_PROTOCOL) throw new MuxProtocolError("unsupported_version", `The PC speaks relay protocol ${frame.payload.relay_protocol}`);
-        server = { version: frame.payload.server_version, relayProtocol: frame.payload.relay_protocol, features: frame.payload.features };
+        server = { version: frame.payload.server_version, relayProtocol: frame.payload.relay_protocol, features: frame.payload.features, minSupportedClient: frame.payload.min_supported_client };
         if (frame.payload.features.some((feature) => !offered.includes(feature))) throw new MuxProtocolError("unsupported_extension", "Server selected unoffered features");
         if (options.accountOpensAll) {
           // Account AUTH is sent only after the PC's final, authenticated feature selection.
@@ -390,7 +392,7 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
       if (phase === "auth" && frame.type === FrameType.WELCOME && !frame.payload.provisional && provisionalNonce !== undefined && !answered) {
         if (frame.payload.nonce !== provisionalNonce || frame.payload.relay_protocol !== RELAY_PROTOCOL) throw new MuxProtocolError("protocol_error", "The PC's answer to HELLO changed its WELCOME");
         if (frame.payload.features.some((feature) => !offered.includes(feature))) throw new MuxProtocolError("unsupported_extension", "Server selected unoffered features");
-        server = { version: frame.payload.server_version, relayProtocol: frame.payload.relay_protocol, features: frame.payload.features };
+        server = { version: frame.payload.server_version, relayProtocol: frame.payload.relay_protocol, features: frame.payload.features, minSupportedClient: frame.payload.min_supported_client };
         answered = bytes;
         return;
       }

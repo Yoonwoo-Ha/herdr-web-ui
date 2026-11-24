@@ -2,14 +2,16 @@ import type { InstalledNotes, ReleaseHighlights, ReleaseNote, SummaryLanguage, U
 import { ApiError } from "./api.ts";
 
 export type ReloadReason = "updated" | "restart" | "incomplete";
+/** `bundled`: the app's own copy of the client (lib/appShell.ts), which a reload only brings back: no commit is compared. */
 export function reloadReason(
   appRevision: string | null,
   status: Pick<UpdateStatus, "current_revision" | "served_revision"> | null,
   busy: boolean,
   chunkFailed: boolean,
+  bundled = false,
 ): ReloadReason | null {
   if (busy) return null;
-  if (appRevision && status?.current_revision && appRevision !== status.current_revision) {
+  if (!bundled && appRevision && status?.current_revision && appRevision !== status.current_revision) {
     if (appRevision !== status.served_revision) return "updated";
     return chunkFailed ? "incomplete" : "restart";
   }

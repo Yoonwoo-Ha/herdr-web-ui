@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { directSocketFactory, directTailnetSupport, EARLY_SEND_BYTES, EARLY_SEND_MESSAGES, isDirectSocketUrl, type DirectBridge, type DirectEvent, type DirectFrame } from "./directSocket.ts";
+import { APP_ORIGIN, directPageAllowed, directSocketFactory, directTailnetSupport, EARLY_SEND_BYTES, EARLY_SEND_MESSAGES, isDirectSocketUrl, type DirectBridge, type DirectEvent, type DirectFrame } from "./directSocket.ts";
 
 const CARRIER = "ws://192.168.0.10:7319/v1/ws?v=1";
 
@@ -22,6 +22,21 @@ function fakePlugin() {
 }
 
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+describe("directPageAllowed", () => {
+  const ios = { platform: "ios" as const, appVersion: "1.1.0", build: 12 };
+  it("asks the plugin from the hosted shell's origin, as before", () => {
+    expect(directPageAllowed(APP_ORIGIN, null)).toBe(true);
+    expect(directPageAllowed("https://app-ap.ovis.sh", null)).toBe(false);
+    expect(directPageAllowed("capacitor://app.ovis.sh", null)).toBe(false);
+    expect(directPageAllowed("http://192.168.0.10:7317", null)).toBe(false);
+  });
+
+  it("asks it from the app's own copy whatever origin its platform gives it", () => {
+    expect(directPageAllowed("capacitor://app.ovis.sh", ios)).toBe(true);
+    expect(directPageAllowed(APP_ORIGIN, ios)).toBe(true);
+  });
+});
 
 describe("isDirectSocketUrl", () => {
   it("takes only a private or Tailscale IPv4 carrier's /v1/ws?v=1", () => {

@@ -3,7 +3,9 @@ import { Globe, Monitor, Network, RadioTower, Wifi, type LucideIcon } from "luci
 
 import type { ObservedIngress } from "../../shared/protocol.ts";
 import { connectionRoute } from "../lib/connectionRoute.ts";
+import { demoBuild } from "../lib/demo.ts";
 import { useT } from "../lib/i18n.ts";
+import { inNativeApp } from "../lib/nativeApp.ts";
 import { getTransport } from "../lib/transport.ts";
 import { inRelayShell } from "../lib/useRelay.ts";
 
@@ -21,7 +23,7 @@ export function ConnectionRouteMark({ portal, ingress }: { portal: boolean; ingr
   if (ingress !== null) known.current = ingress;
   const relay = inRelayShell();
   const directCarrier = useDirectCarrier(relay);
-  const route = connectionRoute({ relay, portal, ingress: known.current, protocol: window.location.protocol, hostname: window.location.hostname });
+  const route = connectionRoute({ relay, portal, ingress: known.current, demo: demoBuild() && inNativeApp(), hostname: window.location.hostname });
   if (route === null) return null;
   const shown = route !== "relay" || directCarrier === null ? route : directCarrier === "tailscale" ? "relay-tailscale" : "relay-direct";
   const [Icon, word, title]: [LucideIcon, string, string] =

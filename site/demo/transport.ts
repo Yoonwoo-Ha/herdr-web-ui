@@ -30,6 +30,9 @@ import commandsFixture from "./fixtures/commands.json";
 import panesFixture from "./fixtures/panes.json";
 import terminalFixture from "./fixtures/terminal.json";
 
+// the client reads this to know it is the demo (src/lib/demo.ts)
+Reflect.set(window, "__ovisDemo", true);
+
 const DEMO_RUNTIME_FACTS = new URLSearchParams(location.search).get("demo_runtime") === "both" ? {
   herdr_runtime: { serving: "herdr" as const, source: "detected" as const, tui: { installed: true, running: true }, app_installed: true, switch_to: "herdr-core" as const, locked: null },
   herdr_core: { version: "0.1.17", session: "default", running: true },

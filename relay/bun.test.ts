@@ -121,6 +121,21 @@ describe("relay sockets", () => {
     expect(await data.next()).toBe("after");
   });
 
+  test("reads no Origin: the hosted shell's, the iOS app's own copy's, another app's and none are each let through to the PC", async () => {
+    const id = newServer();
+    const urls = relayUrls(base, id);
+    const control = await openServer(urls.control, id);
+    await control.json("sync");
+    const clients: Peer[] = [];
+    for (const origin of ["https://app.ovis.sh", "capacitor://app.ovis.sh", "capacitor://localhost", null]) {
+      const client = new Peer(new WebSocket(urls.client, (origin === null ? {} : { headers: { origin } }) as never));
+      clients.push(client);
+      const { connection_id } = await client.json(`assigned with ${origin ?? "no"} origin`) as { connection_id: string };
+      expect(await control.json(`connected with ${origin ?? "no"} origin`)).toMatchObject({ type: "connected", connection_id });
+    }
+    for (const client of clients) client.socket.close();
+  });
+
   test("holds a client's frames until its data socket attaches, then hands them over in order", async () => {
     const id = newServer();
     const urls = relayUrls(base, id);

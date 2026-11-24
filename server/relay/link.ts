@@ -7,6 +7,7 @@ import { PAIR_APPROVAL_MS } from "../../shared/relay-pair-sas.ts";
 import { RelaySession, relayClock } from "./session.ts";
 import type { RelaySocketHandlers } from "./virtual-socket.ts";
 import { version } from "../../package.json";
+import { MIN_SUPPORTED_CLIENT_VERSION } from "./client-floor.ts";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { answerServerChallenge, PERMANENT_SERVER_PROOF_REFUSALS, SERVER_PROOF_CLOSE } from "../../shared/relay-server-proof.ts";
 import { RELAY_PASS_CLOSE, RELAY_PASS_HEADER, parseRelayPass, relayPassAdmitsNewSessions } from "../../shared/relay-pass.ts";
@@ -53,6 +54,7 @@ export interface RelayLinkOptions {
   readonly now?: () => number;
   readonly random?: () => number;
   readonly serverVersion?: string;
+  readonly minSupportedClient?: string;
   readonly onState: (phase: "connecting" | "online" | "error", error: string | null, code?: LinkErrorCode) => void;
   readonly relayHints?: () => readonly string[];
   readonly directCarriers?: (tailnet: boolean) => readonly string[];
@@ -417,7 +419,7 @@ export class RelayLink {
       const handlers = this.options.services.core.socketHandlers;
       entry.session = new RelaySession({
         channel, services: this.options.services, port: this.options.port, serverId: this.options.identity.server_id,
-        serverVersion: this.options.serverVersion ?? version, minSupportedClient: "0.4.20",
+        serverVersion: this.options.serverVersion ?? version, minSupportedClient: this.options.minSupportedClient ?? MIN_SUPPORTED_CLIENT_VERSION,
         routingOverhead: 0, maxWireMessageBytes: 64 * 1024,
         onAuthenticated: (deviceId) => this.authenticated(id, entry, deviceId),
         onChosen: () => entry.chosen?.(),
