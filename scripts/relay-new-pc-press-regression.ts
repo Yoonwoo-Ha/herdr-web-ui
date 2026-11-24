@@ -176,8 +176,12 @@ async function device(browser: Browser, site: string, size: Size, eligible: bool
   // nothing opens it, and nothing reaches it, before the press: no join, and no relay connection once the sheet is up
   // (a launch's and My PCs' checks of whether the PC is on open theirs before)
   const socketsBefore = sockets;
-  // fixed wait: what a sheet that went on by itself would have sent by then
-  await page.waitForTimeout(1_500);
+  // for as long as a sheet that went on by itself would need to send something: the first join or connection fails it
+  const quietUntil = Date.now() + 1_500;
+  while (Date.now() < quietUntil) {
+    assert.deepEqual({ joins: (await pc.joins()).length - joinsBefore, sockets: sockets - socketsBefore }, { joins: 0, sockets: 0 }, `${name}: nothing reached the PC before the press (${await where()})`);
+    await Bun.sleep(50);
+  }
   assert.equal(await page.locator('[data-add-pc-phase="confirm"]').count(), 1, `${name}: the sheet waits for its press (${await where()})`);
   assert.deepEqual({ joins: (await pc.joins()).length - joinsBefore, sockets: sockets - socketsBefore }, { joins: 0, sockets: 0 }, `${name}: nothing reached the PC before the press (${await where()})`);
   await shot(page, `${name}-sheet`);
