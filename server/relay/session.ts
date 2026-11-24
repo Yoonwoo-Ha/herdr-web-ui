@@ -413,6 +413,9 @@ export class RelaySession {
         if (frame.type === FrameType.AUTH && device === null && devices.opensAll()) {
           // Step 2 (S2-25): an account-joined row signs in with its registered key; its refusal is told only after the proof
           const joined = await devices.matchAccountRelay(frame.payload.device_id, this.nonce, frame.payload.signature, this.options.serverId);
+          // the signed list is asked the same question beside it, and only says where it differs (list-follow.ts)
+          if (joined === null || !("refused" in joined)) this.options.services.accountList?.shadowSignIn({ deviceId: frame.payload.device_id, nonce: this.nonce,
+            signature: frame.payload.signature, serverId: this.options.serverId, snapshot: joined === null ? "none" : "admitted" });
           if (joined !== null && "refused" in joined) {
             if (joined.refused.refused === "catching_up" && !await this.readComing(frame.payload.device_id)) return;
             if (!this.mux.active) return;

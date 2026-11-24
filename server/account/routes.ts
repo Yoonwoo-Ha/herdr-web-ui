@@ -60,6 +60,12 @@ export async function handleAccountRequest(request: Request, pathname: string, c
       waiting_for_add: waitingForAdd(devices),
     });
   }
+  if (pathname === "/api/account/list" && request.method === "GET") {
+    setRequestRoute(pathname);
+    // this PC's own window and CLI alone (dispatch.ts ownWindow)
+    const list = context.services.accountList;
+    return list === null ? fail("not_found", "This PC follows no list", 404) : reply(list.status());
+  }
   if (request.method !== "POST") return fail("method_not_allowed", "use POST", 405);
   if (!sameOrigin(request) || request.headers.get("x-herdr-machine") !== "1") return fail("invalid_origin", "Manage the account from this app", 403);
   const body = await readJsonObject(request);

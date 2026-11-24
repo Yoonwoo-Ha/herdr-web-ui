@@ -64,6 +64,7 @@ import type { AccountHolds } from "./account/holds.ts";
 import type { SafetyLog } from "./account/safety-log.ts";
 import type { CatchUpGate } from "./account/catch-up-gate.ts";
 import type { accountRowsFor } from "./account/account-devices.ts";
+import type { ListFollow } from "./account/list-follow.ts";
 import { accountDispatchRefusal } from "./account/dispatch-rights.ts";
 import type { AccountIntroductions } from "./account/introductions.ts";
 import type { RelayService } from "./relay/service.ts";
@@ -121,6 +122,8 @@ export interface RequestServices {
   checkAccountFreshness(): void;
   /** Step 2 (S2-25): the account-joined rows of this PC's relay identity; null with the release flag off. */
   readonly accountRows: ReturnType<typeof accountRowsFor> | null;
+  /** This PC following its account's signed list (server/account/list-follow.ts); null with the release flag off. */
+  readonly accountList: ListFollow | null;
   readonly preferences: PreferenceStore;
   readonly herdrSidebar: HerdrSidebarConfig;
   /** `loginPath`: the request states a Tailscale login, so the PC's own login must be known, not merely cached as unknown */
@@ -480,6 +483,11 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if ((pathname === "/api/account/one-press" || pathname === "/api/account/pc-proof") && !ownWindow) {
     setRequestRoute("owner-refusal");
     return jsonResponse({ error: { code: "owner_only", message: "Add this PC to your account on this PC itself." } }, 403);
+  }
+  // how this PC follows its account's signed list is for this PC's own window and CLI to read
+  if (pathname === "/api/account/list" && !ownWindow) {
+    setRequestRoute("owner-refusal");
+    return jsonResponse({ error: { code: "owner_only", message: "Read this on this PC itself." } }, 403);
   }
   // the list of waiting pairings shows their digits, so it goes only where the approval may come from
   if (access.level === "full" && (access.via === "open" || access.via === "portal") && pathname === "/api/relay/pairings") {

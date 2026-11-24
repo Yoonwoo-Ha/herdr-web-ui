@@ -558,6 +558,27 @@ after a minute. Only this PC's own window or CLI gets one (403 `owner_only` othe
 `one-press`); 503 `account_unavailable` when the service gave no challenge. The way back into an
 account after `ovis logout` is so a sign-in on the PC itself.
 
+`GET /api/account/list`: how this PC follows
+[its account's signed list](#the-accounts-signed-list-on-a-pc), for this PC's own window and CLI
+alone (403 `owner_only` otherwise); 404 with Step 2 off.
+
+```json
+{ "account": "acct_1", "list": "<list id>", "pinned": false, "standing": "in", "head": { "seq": 12, "hash": "<64 hex>" }, "devices": 3, "pcs": 2, "alarm": null, "last_read_at": "2026-11-24T01:02:03.000Z", "last_verdict": "caught_up", "differences": 0, "keys": "ready", "posted_until": null, "error": null }
+```
+
+`list` is `null` while the PC reads none. `pinned` says whether the PC lets devices in by the list,
+which is never so in this release. `standing` is where the PC itself is in the list: `waiting` until
+an entry adds it, `in`, `out` once one removed it, `stopped` at an entry this build cannot read.
+`devices` and `pcs` count who is in. `alarm` is `fork` once the PC was shown two histories that
+members signed. `last_read_at` is when its copy last held everything the service showed, and
+`last_verdict` what came of the service's last word (`caught_up`, `same` for a head it already
+holds, `none` when the service named no list, or why nothing was taken: `withheld`, `older`,
+`stuck`, `fork`, `not_my_list`, `needs_newer_client`, `refused` with the entry's refusal).
+`differences` counts what the list would have decided otherwise since this start, credentials and
+devices alike (see `account.list.differs` below). `keys` is `ready`,
+or `unreadable` for a keys file that will not read. `posted_until` is until when the account
+service holds this PC's keys for a member to add it. No answer holds a key.
+
 `POST /api/account/relay-account` `{ "account" }` (or `{ "account": null }`, over a direct connection
 only and only on a PC in no account (409 `in_account` otherwise), which forgets the one named: `ovis
 join` puts back what it found): the account this PC asks its relay pass under while it
@@ -1371,6 +1392,62 @@ Step 2 is on by default. Only the exact value `0` turns it off. An unset or empt
 - **Desktop app:** There is no in-app switch yet. If you launch Ovis yourself, set
   `OVIS_ACCOUNT_OPENS_ALL=0` in the launch environment and restart Ovis from that environment.
 
+### The account's signed list on a PC
+
+An account may have a [signed list](account-list.md) of its devices and PCs: every entry is signed by
+a member, and a member checks each one itself. The account service stores the list and decides which
+accounts have one.
+
+**In this release a PC only reads the list. It lets no device in and puts none out by it**: devices
+still get in by the snapshot the account service sends, exactly as above. The PC reads the list beside
+the snapshot so that the day it decides by the list, it has already been checked on real accounts.
+
+- With each mailbox pull a PC in an account asks the service for the list's head (`with_list`). When
+  the head is not the one it holds, it reads the log (`POST /v2/pc/list/log`) with a proof of its
+  relay key, as for its mailbox, and checks every entry: the chain, each signature, and who may sign.
+  What does not hold is not taken.
+- A PC that holds a list also reads its log by its own clock, every five minutes, whatever the
+  mailbox says: a mailbox that names no list, or does not answer, hides no entry. A PC whose account
+  never had a list asks for no log.
+- The list id is the account service's word. One of which the PC has verified no entry gives way to
+  the id the service names next; one of which it has verified an entry stays, and another id is
+  reported (`not_my_list`).
+- The copy is saved in `account-list.json` in the state folder (readable by your user only). It holds
+  the entries and what they add up to, and nothing secret. It belongs to one relay identity and one
+  joining of the account: after **Reset relay identity**, **Revoke all** or leaving the account, the
+  old copy is not read again, and a read that was on its way then writes nothing and posts nothing.
+  A restart goes on from the saved copy, which the PC holds before the service has answered
+  anything; a file that is no copy is read again from the service, and one that could not be read is
+  tried again at the next pull.
+- The copy keeps the latest hour the PC's clock showed. A decision that turned on the hour (a device
+  past its time) is saved before it is said, so a clock set back after a restart counts for no less.
+- The PC has two keys of its own for the list, in `account-list-keys.json` (readable by your user
+  only): one that signs and one that the names of the list are encrypted to. They are made for the
+  PC's relay identity and go with it: **Reset relay identity** removes them, and the PC it becomes
+  makes new ones. They are never logged and never sent. One Ovis at a time makes them (a lock file
+  beside the keys file), and every Ovis uses the pair it then reads from disk: several servers on
+  one state folder end with one pair. Keys whose making began before a reset are not written after
+  it. A keys file that will not read is not
+  replaced by itself; the PC says so in `GET /api/account/list` and reads no list until the file is
+  restored or the relay identity is reset.
+- While the list does not hold the PC, the PC posts its two public keys and its
+  [card](account-list.md#a-card) to the account service (`POST /v2/pc/list/keys`, with the same
+  proof), so that a device of the account can add it. A post lasts ten minutes and is renewed, with
+  each mailbox pull and by the PC's own clock.
+- Where the list would decide otherwise than the snapshot (a device only one of them lets in, a
+  device the list lets in only to watch or only until a time that has passed, a PC the list does not
+  hold), the PC writes one line to its log, `account.list.differs`, with what each decided and no
+  key or name. Each difference is written once per start. `of` says what differs. `credential`: a
+  key only one of the two holds. That may be one phone under two keys, since the snapshot names a
+  phone by the key of its sign-in and the list by its member key, and the PC knows no link between
+  the two; such a phone counts twice. `device`: a key both hold that the list would let in
+  otherwise, or the PC's own place in the list.
+- Nothing the account service shows of the list changes who gets in. An entry signed by a key that
+  is no member is passed over. A log that stops early, an old head, a changed byte, another
+  account's list and a second history are each a result the PC reports, and its copy keeps what it
+  held. A service that answers nothing for the list is a service that is away, never a list that is
+  gone.
+
 ### Confirmed on this PC
 
 With Step 2 on, some acts are taken only when they are confirmed on this PC's own screen
@@ -1832,5 +1909,8 @@ Seoul, South Korea", leaving out what is unknown ([Adding a PC](#adding-a-pc), "
   memory, for tests, the signed list's routes included
   ([account-list.md](account-list.md#the-list-routes-in-tests)).
 - [`shared/account-list-entry.ts`](../shared/account-list-entry.ts): the entry format of a signed
-  list ([account-list.md](account-list.md)). No released part of Ovis reads or writes it yet, and
-  nothing on this page uses it.
+  list ([account-list.md](account-list.md)).
+- [`server/account/list-follow.ts`](../server/account/list-follow.ts) and
+  [`server/account/list-keys.ts`](../server/account/list-keys.ts): the PC reading its account's
+  signed list, and the PC's own keys for it
+  ([The account's signed list on a PC](#the-accounts-signed-list-on-a-pc)).
