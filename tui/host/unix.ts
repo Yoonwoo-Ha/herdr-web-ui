@@ -1,9 +1,38 @@
+import { FFIType } from "bun:ffi";
 import { writeSync } from "node:fs";
+import { constants } from "node:os";
 import { WRITE_AGAIN_LIMIT, WRITE_AGAIN_PAUSE_MS } from "../model/deadlines.ts";
 import { guardedHost, type HostHooks } from "./guard.ts";
+import { openHold, SCREEN_HOLD } from "./hold.ts";
 import type { Host } from "./index.ts";
+import { openLibc } from "./libc.ts";
 
 type Listener = () => void;
+
+/** C's SIG_IGN, as `signal` takes it. */
+const SIG_IGN = 1;
+const openSignal = () => openLibc({ signal: { args: [FFIType.i32, FFIType.u64_fast], returns: FFIType.u64_fast } });
+
+/**
+ * Runs `restore` with SIGTTOU ignored, through `libc` (opened when the host is made, so a stop's restore takes no longer
+ * than before). When the screen's job is stopped (a shell's Ctrl+Z, a stop from outside), the shell takes the terminal
+ * back as soon as the job's first process stops, which can be before the screen has given the terminal back: the screen
+ * is then a background process, and changing the terminal's settings stops it with SIGTTOU half way. The `fg` that
+ * continues it would find it sending itself the stop it was about to send, and it would stay stopped in the foreground.
+ * Ignored, the settings are written and the stop goes on as meant.
+ */
+function ttouIgnored(libc: ReturnType<typeof openSignal>, restore: () => void): void {
+  if (libc === null) {
+    restore();
+    return;
+  }
+  const previous = libc.symbols.signal(constants.signals.SIGTTOU, SIG_IGN);
+  try {
+    restore();
+  } finally {
+    libc.symbols.signal(constants.signals.SIGTTOU, previous);
+  }
+}
 
 export interface UnixStdin {
   isTTY?: boolean;
@@ -12,6 +41,7 @@ export interface UnixStdin {
   off(event: "readable", listener: Listener): unknown;
   read(): Uint8Array | string | null;
   pause(): unknown;
+  ref?(): unknown;
   unref?(): unknown;
 }
 
@@ -61,6 +91,9 @@ export function createUnixHost(parts: Partial<UnixHostParts> = {}): Host {
   const env = parts.env ?? process.env;
   const write = parts.writeSync ?? writeSync;
   const pause = parts.pause ?? pauseSync;
+  const signalLibc = openSignal();
+  // the launcher's file, when a launcher started this screen: opened now, so that saying what is held is one write
+  const hold = env[SCREEN_HOLD] ? openHold(env[SCREEN_HOLD]) : null;
   let sink: ((bytes: Uint8Array) => void) | null = null;
 
   const readAll = () => {
@@ -72,7 +105,7 @@ export function createUnixHost(parts: Partial<UnixHostParts> = {}): Host {
   return guardedHost({
     isTerminal: stdin.isTTY === true && stdout.isTTY === true,
     colorTerm: env["COLORTERM"],
-    setRaw: (on) => { stdin.setRawMode(on); },
+    setRaw: (on) => { if (on) stdin.setRawMode(true); else ttouIgnored(signalLibc, () => stdin.setRawMode(false)); },
     write(bytes) {
       let refused = 0;
       for (let at = 0; at < bytes.length;) {
@@ -121,7 +154,13 @@ export function createUnixHost(parts: Partial<UnixHostParts> = {}): Host {
       };
     },
     exit: (code) => { proc.exit(code); },
-    // this process itself, the one stop no handler can catch
-    suspend: () => { proc.kill(proc.pid, "SIGSTOP"); },
+    // this process itself, the one stop no handler can catch. stopReading let go of the loop; it is held again first, or
+    // a screen with nothing else to wait for could end on its own the moment the continue wakes it, before the continue
+    // is heard
+    suspend: () => {
+      stdin.ref?.();
+      proc.kill(proc.pid, "SIGSTOP");
+    },
+    hold: (held) => { hold?.(held); },
   });
 }

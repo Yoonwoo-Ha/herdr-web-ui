@@ -27,7 +27,6 @@
  * It talks only to a server on this machine (a loopback address): approving a device is an act of
  * the PC itself (docs/account.md, "Who may admit a device"), and the sign-in lives in this process.
  */
-import { dlopen, FFIType } from "bun:ffi";
 import { hostname } from "node:os";
 
 import qrcode from "qrcode-generator";
@@ -62,6 +61,7 @@ export interface LinkOptions {
    * its lines come: nobody compared the digits a line of `yes | ovis add` arrives under. Unset counts as not one.
    */
   readonly terminal?: boolean;
+  /** discards what the terminal holds unread (`AnswerInput.discard`); the command passes `discardTyped` (scripts/libc.ts) */
   readonly discard?: () => boolean;
   /**
    * `out` is a terminal: the only place the QR code that adds this PC is drawn without `--print`, since whoever reads
@@ -381,31 +381,6 @@ export interface AnswerInput {
   readonly now?: () => number;
 }
 
-let flush: (() => boolean) | null = null;
-
-/**
- * Discards what the terminal on stdin holds unread, with the system's own tcflush: a line typed and not sent sits in
- * the terminal, not in this process, so nothing here can see or drop it otherwise. False where that cannot be done
- * (Windows, a system whose C library is not found, an input that is no terminal).
- */
-export function discardTyped(): boolean {
-  try {
-    if (flush === null) {
-      // TCIFLUSH, the input queue: 0 on Linux, 1 on macOS
-      const [queue, libraries] = process.platform === "linux" ? [0, ["libc.so.6", `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1`]]
-        : process.platform === "darwin" ? [1, ["libSystem.B.dylib"]] : [0, []];
-      flush = () => false;
-      for (const library of libraries) {
-        try {
-          const { symbols } = dlopen(library, { tcflush: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 } });
-          flush = () => symbols.tcflush(0, queue) === 0;
-          break;
-        } catch {}
-      }
-    }
-    return flush();
-  } catch { return false; }
-}
 
 /**
  * The one who asks about requests at a terminal, one at a time, and tells which line answers which: `ovis add` and

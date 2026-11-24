@@ -7,7 +7,7 @@
 
 import { join } from "node:path";
 import { plainSession } from "../server/herdr-core/core-socket.ts";
-import type { LoopEnd } from "./loop.ts";
+import type { LoopEnd } from "./loop-end.ts";
 
 export const USAGE = "usage: ovis tui [--session NAME] | -h | -V";
 
@@ -98,7 +98,7 @@ export function ending(end: Exclude<LoopEnd, { kind: "crashed" }>, target: { pat
         exit: EXIT_OK,
       };
     case "no_core":
-      return { leave: false, out: null, err: [[end.code, `no herdr-core answers at ${target.path} (session ${target.session}); start one with \`hc server start\`, or run \`ovis\` to be asked`]], exit: EXIT_FAILED };
+      return { leave: false, out: null, err: [[end.code, `no herdr-core answers at ${target.path} (session ${target.session}); start one with \`hc server start\`, or run \`ovis tui\` to be asked`]], exit: EXIT_FAILED };
     case "incompatible":
       return { leave: false, out: null, err: [[end.code, end.reason]], exit: EXIT_FAILED };
     case "not_a_terminal":

@@ -48,7 +48,8 @@ exit 3
 `);
     chmodSync(standIn, 0o700);
     const launchedAt = performance.now();
-    const capture = Bun.spawn([process.execPath, CAPTURE, standIn], {
+    // the hc the capture takes too is never run: the capture is stopped at herdr's first call, before it starts a core
+    const capture = Bun.spawn([process.execPath, CAPTURE, standIn, join(scratch, "hc")], {
       env: { PATH: "/usr/bin:/bin", HOME: scratch, TMPDIR: scratch }, stdin: "ignore", stdout: "pipe", stderr: "pipe",
     });
     const stdout = new Response(capture.stdout).text();

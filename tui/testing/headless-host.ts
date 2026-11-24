@@ -19,6 +19,7 @@ export interface HeadlessOptions {
 export class HeadlessHost implements Host {
   private readonly host: Host;
   private readonly entries: string[] = [];
+  private readonly held: string[] = [];
   private readonly chunks: Uint8Array[] = [];
   private readonly waiting: Uint8Array[] = [];
   private readonly timerList: { at: number; fire: () => void }[] = [];
@@ -65,6 +66,7 @@ export class HeadlessHost implements Host {
       hook: (hooks) => { this.hooks = hooks; return () => { this.hooks = null; }; },
       exit: (code) => { this.exitCode ??= code; },
       suspend: () => { this.suspends += 1; },
+      hold: (held) => { this.held.push(`${held} after ${this.entries.at(-1) ?? "nothing"}`); },
     });
   }
 
@@ -106,6 +108,10 @@ export class HeadlessHost implements Host {
     this.signal("SIGHUP");
   }
 
+  /** A stop from outside (SIGTSTP), and the continue after it (SIGCONT). */
+  stop(): void { this.hooks?.stop(); }
+  cont(): void { this.hooks?.cont(); }
+
   /** The process exits (process.exit, or an error nobody caught). */
   processExit(): void {
     this.hooks?.exit();
@@ -143,6 +149,8 @@ export class HeadlessHost implements Host {
   writeAttempts(): number { return this.attempts; }
   /** raw-mode changes and writes, in order */
   log(): string[] { return [...this.entries]; }
+  /** what the host said it holds, in order, each with the log entry it came after */
+  holds(): string[] { return [...this.held]; }
   output(): string { return new TextDecoder().decode(Buffer.concat(this.chunks)); }
   bytes(): Uint8Array { return Buffer.concat(this.chunks); }
 }

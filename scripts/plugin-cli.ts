@@ -19,7 +19,7 @@ export type Parsed =
 export interface CliContext {
   /** OVIS_ACCOUNT_OPENS_ALL is not "0": logout, recover and confirm are commands */
   readonly account: boolean;
-  /** the terminal screen can run here (an ovis-tui program, not Windows): tui is shown in the help */
+  /** the terminal screen runs here (Linux and macOS): tui is shown in the help */
   readonly tui: boolean;
 }
 
@@ -105,6 +105,7 @@ const SPECS: Readonly<Record<string, Spec>> = {
     summary: "Show herdr-core's terminals in this terminal",
     usage: "ovis tui [--session <name>]",
     flags: [["--session <name>", "Another herdr-core session"]],
+    more: "Ovis's own screen, with herdr's keys from your herdr config. With no herdr-core running it asks before it\nstarts one.",
   },
   recover: {
     command: "recover", gated: true, passThrough: true,
@@ -136,7 +137,7 @@ export function mainHelp(context: CliContext): string {
     "Ovis - herdr in your browser and on your phone",
     "",
     "Usage: ovis <command> [flags]",
-    "       ovis              (no command) the terminal screen, or this help",
+    "       ovis              (no command) this help",
   ];
   for (const [title, names] of GROUPS) {
     const shown = names.filter((name) => offered(name, context) && (name !== "tui" || context.tui));

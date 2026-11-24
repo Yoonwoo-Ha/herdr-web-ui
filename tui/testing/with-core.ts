@@ -49,7 +49,8 @@ import { answerQueries, gridText, runOnPty, screenOutput, type PtyRun } from "./
 const TIMER_MAX_MS = 2 ** 31 - 1;
 const USAGE = "usage: bun tui/testing/with-core.ts [--no-core | --core-env <file>] [--limit <seconds>] [--pty [--size COLSxROWS] [--keys <list>] [--answer y|n] [--dump]] -- [--] <command...>";
 const FIRST_FRAME_END = "\x1b[?2026l";
-const QUESTION = "[Y/n]";
+/** the launcher's question with the space after it: from that space on, a line that is typed is the answer */
+const QUESTION = "[Y/n] ";
 /** what a terminal answers to the queries a screen's start probe ends with */
 const ANSWERS: [query: string, answer: string][] = [["\x1b[c", "\x1b[?62;22c"], ["\x1b[?2026$p", "\x1b[?2026;2$y"]];
 const COMMAND_GRACE_MS = 5000;

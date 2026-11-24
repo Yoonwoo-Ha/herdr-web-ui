@@ -91,6 +91,24 @@ export async function gridText(output: string, cols: number, rows: number): Prom
   }
 }
 
+/** Ask the emulated host for its cursor position after replaying the captured display bytes. */
+export async function hostCursorReport(output: string, cols: number, rows: number): Promise<string> {
+  const module = new GhosttyModule(new WebAssembly.Instance(new WebAssembly.Module(await Bun.file(WASM).arrayBuffer()), {}));
+  const encoder = new TextEncoder();
+  let reply = "";
+  const engine = new GhosttyEngine(module, cols, rows, {
+    widths: "core", images: false, events: { onReply: (bytes) => { reply = Buffer.from(bytes).toString("latin1"); } },
+  });
+  try {
+    engine.write(encoder.encode(output));
+    reply = "";
+    engine.write(encoder.encode("\x1b[6n"));
+    return reply;
+  } finally {
+    engine.dispose();
+  }
+}
+
 const live = new Set<() => Promise<void>>();
 
 /** Ends every run still going, through each one's PTY host: for afterAll and a test's signal handlers. */

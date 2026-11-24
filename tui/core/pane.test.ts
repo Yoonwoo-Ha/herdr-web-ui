@@ -340,6 +340,14 @@ describe("the pane attach machine", () => {
     core.lose(t);
     await stage.settle();
     expect([screen.state(t), screen.attaches.length, screen.attaches[0]!.closeHeard]).toEqual(["Waiting(lost)", 1, true]);
+    // Resyncing the documents and the terminal snapshot cannot reopen a still-lost shell.
+    const docs = core.calls().filter(({ method }) => method === "doc.get").length;
+    core.missed();
+    await stage.settle();
+    expect(core.calls().filter(({ method }) => method === "doc.get").slice(docs).map(({ params }) => params["name"]))
+      .toEqual(["herdr-app", "ovis-layout"]);
+    expect([screen.state(t), screen.attaches.length]).toEqual(["Waiting(lost)", 1]);
+    expect(screen.type("b")).toMatchObject([{ sent: false, code: "lost" }]);
     core.restartTerminal(t);
     await stage.settle();
     await stage.pass();

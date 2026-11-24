@@ -17,6 +17,7 @@ export const ENTRIES = {
   "windows-launch": "server/windows-launch.ts",
   "browser-mcp": "server/browser-mcp.ts",
   "approval-hook": "server/approvals/relay.ts",
+  tui: "tui/main.ts",
 } as const;
 
 export type EntryName = keyof typeof ENTRIES;

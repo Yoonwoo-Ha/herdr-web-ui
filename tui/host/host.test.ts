@@ -36,6 +36,23 @@ describe("enter and leave", () => {
     expect(EXPORTED_LEAVE).toBe(LEAVE);
   });
 
+  it("says what it holds before it turns a mode on and once it has undone it, and at a stop just before it undoes them: enter, the colour-scheme watch, a stop, a continue and leave", () => {
+    const host = new HeadlessHost();
+    expect(host.holds()).toEqual([]);
+    host.enter();
+    host.watchDisplay();
+    host.stop();
+    host.cont();
+    host.leave();
+    expect(host.holds()).toEqual([
+      "modes after raw on",
+      `modes+watch after write ${ENTER}`,
+      `none after write ${ESC}[?2031h`,
+      "modes+watch after raw on",
+      `none after write ${ESC}[?2031l${LEAVE}`,
+    ]);
+  });
+
   it("leaves once however often it is asked, and on the process's exit after a leave does nothing more", () => {
     const host = new HeadlessHost();
     host.enter();

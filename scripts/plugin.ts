@@ -41,26 +41,22 @@ import type { RemoteAccess } from "../shared/protocol.ts";
 import { canServe, FALLBACK_PORTS, freePort, savedPort } from "./plugin-port.ts";
 import type { OwnJoin, WaitingDevice } from "./plugin-link.ts";
 import { activePluginScript } from "./plugin-runtime.ts";
-import { coreAnswers, findTui, runTui } from "./plugin-tui.ts";
+import { runTui } from "./plugin-tui.ts";
 import { mainHelp, parseCommand, shortAccount, unknownCommand, type CliContext } from "./plugin-cli.ts";
-import { coreSocket } from "../server/herdr-core/core-socket.ts";
+import { discardTyped } from "./libc.ts";
+import { ENV_FILES, ownDir, readEnvFile } from "./plugin-settings.ts";
 import { accountServiceOrigin, DEFAULT_ACCOUNT_SERVICE } from "../server/static.ts";
 import { herdrStateDir } from "./plugin-state.ts";
 import { HTTPS_PORT_VARIABLE, HTTPS_PORTS, httpsPorts, parseTailscale, parseTailscaleIp, parseTailscaleOwner, readTailscale, tailscaleBinary } from "../server/tailscale.ts";
 import { descendantProcesses, windowsArgv, windowsProcessTable } from "../server/windows-processes.ts";
 
-/**
- * Read in this order, so `.env` wins: `env` is what this plugin read first, `.env` is what herdr's
- * plugin docs suggest, and a user who edits `.env` from those docs must not be overridden by an old `env`.
- * Declared before CONFIG_DIR, whose lookup uses it.
- */
-const ENV_FILES = ["env", ".env"];
+// `ovis tui` comes first: the screen needs nothing of this install's state, so it starts before the work below reads the
+// state and config dirs, asks herdr for its config dir, or copies an old install's settings (adoptLegacyConfig). Its
+// --help is no run of it: runPlugin answers that with every other command's.
+const early = parseCommand(process.argv.slice(2), { account: false, tui: true });
+if (early.kind === "run" && early.command === "tui") process.exit(await runTui(early.args));
+
 const ROOT = resolve(process.env["HERDR_PLUGIN_ROOT"] ?? SERVER_ROOT);
-function ownDir(parent: string): string {
-  const legacy = join(parent, "herdr-web-ui");
-  const next = join(parent, "ovis");
-  return existsSync(next) || !existsSync(legacy) ? next : legacy;
-}
 const DEFAULT_STATE_DIR = ownDir(join(homedir(), ".local", "state"));
 const PLUGIN_ID = "devswha.ovis";
 const LEGACY_PLUGIN_ID = "devswha.herdr-web-ui";
@@ -139,18 +135,6 @@ function adoptLegacyConfig(dir: string): void {
     // the token is in there: keep the old file's owner-only mode
     chmodSync(join(dir, name), statSync(from).mode & 0o777);
   }
-}
-
-function readEnvFile(file: string): Record<string, string> {
-  const vars: Record<string, string> = {};
-  for (const line of readFileSync(file, "utf8").split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    vars[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
-  }
-  return vars;
 }
 
 /** the settings files in the plugin's config dir: the token lives here, not in herdr's env */
@@ -1014,7 +998,7 @@ async function pair(args: readonly string[], parts?: Awaited<ReturnType<typeof p
  * (#28), and a first join, which only this PC may let in (the first device that opens a PC added in one press).
  */
 async function approvePairings(): Promise<number> {
-  const { approveJoins, approveWaiting, discardTyped, lockRefusal } = await import("./plugin-link.ts");
+  const { approveJoins, approveWaiting, lockRefusal } = await import("./plugin-link.ts");
   if (!(await health())) return notRunning();
   const headers: Record<string, string> = { "content-type": "application/json", "x-herdr-machine": "1", "x-herdr-update": "1", origin: serverOrigin() };
   if ((env["OVIS_TOKEN"] ?? "") !== "") headers["authorization"] = `Bearer ${env["OVIS_TOKEN"]}`;
@@ -1165,7 +1149,7 @@ async function linkCommand(args: readonly string[]): Promise<number> {
   const active = activePluginScript(ROOT, port, APP_STATE_DIR);
   // Always "link", whichever name it was run by: a release from before `add` and `login` knows only that one
   if (active !== join(resolve(ROOT), "scripts", "plugin.ts") && resolve(active) !== resolve(import.meta.filename)) return await handOn(active, ["link", ...args]);
-  const { discardTyped, link: linkPc, linkSettings } = await import("./plugin-link.ts");
+  const { link: linkPc, linkSettings } = await import("./plugin-link.ts");
   if (!(await health())) return notRunning();
   const headers: Record<string, string> = {};
   if ((env["OVIS_TOKEN"] ?? "") !== "") headers["authorization"] = `Bearer ${env["OVIS_TOKEN"]}`;
@@ -1513,22 +1497,11 @@ async function confirm(): Promise<number> {
   });
 }
 
-const tuiOptions = (): Parameters<typeof runTui>[1] => ({
-  platform: platform(), where: { root: ROOT, home: homedir() }, caller: process.env, settings: env, err: (text) => process.stderr.write(text),
-  on: (signal, handler) => { process.on(signal, handler); return () => process.off(signal, handler); },
-});
+const cliContext = (): CliContext => ({ account: accountOpensAll(), tui: platform() !== "win32" });
 
-const tuiHere = (): boolean => platform() !== "win32" && findTui(env, { root: ROOT, home: homedir() }).kind === "found";
-
-const cliContext = (): CliContext => ({ account: accountOpensAll(), tui: tuiHere() });
-
-/**
- * Plain `ovis`, as claude and codex do: the terminal screen where a person sits at a terminal, the program is here and
- * herdr-core answers; at a terminal otherwise, the help. A script or a pipe gets `status`, as every release gave it.
- */
+/** Plain `ovis`: the help where a person sits at a terminal. A script or a pipe gets `status`, as every release gave it. */
 async function bare(): Promise<number> {
   if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) return await status();
-  if (tuiHere() && await coreAnswers(coreSocket().path)) return await runTui([], tuiOptions());
   process.stdout.write(mainHelp(cliContext()));
   return 0;
 }
@@ -1575,7 +1548,7 @@ export async function runPlugin(): Promise<void> {
     case "confirm": process.exit(await confirm());
     case "phone": process.exit(await phone());
     case "phone-setup": process.exit(await phoneSetup());
-    case "tui": process.exit(await runTui(args, tuiOptions()));
+    case "tui": process.exit(await runTui(args));
   }
 }
 

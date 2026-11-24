@@ -336,7 +336,11 @@ jobs:
             ./tui/core/link.live.test.ts
             ./tui/core/pane.live.test.ts
             ./tui/core/layout.live.test.ts
+            ./tui/display.live.test.ts
             ./tui/loop.live.test.ts
+            ./tui/fidelity.live.test.ts
+            ./tui/coexist.live.test.ts
+            ./tui/view/mouse.live.test.ts
           )
           while read -r version sha256; do
             [ -n "$version" ] || continue
