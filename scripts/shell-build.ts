@@ -97,9 +97,18 @@ export function appLinkFiles(): Record<string, string> {
 export const RENDER_PATH = "/s/:id/~render";
 
 /**
+ * Where Pages serves render.html from: its extensionless address. A rewrite to `/render.html` is
+ * answered with Pages' own 308 to `/render`, which leaves the render host's path and so its policy:
+ * the shell's then refused render.html's inline script, and no page drew on app.ovis.sh.
+ */
+export const RENDER_DOCUMENT = "/render";
+
+/**
  * Pages `_redirects`: a PC's scope is the shell, its manifest and its worker under its own path.
  * The first matching rule wins, so the files come before the scope's catch-all; a scope named
  * without its slash is sent to it, so the page's relative manifest resolves inside the scope.
+ * Pages ignores the catch-all itself (a rewrite of a splat to /index.html would loop through its
+ * html handling) and answers those paths with index.html as a single-page app.
  */
 export function shellRedirects(): string {
   return [
@@ -107,7 +116,7 @@ export function shellRedirects(): string {
     "/s/:id /s/:id/ 301",
     "/s/:id/manifest.webmanifest /manifest.webmanifest 200",
     "/s/:id/sw.js /sw.js 200",
-    `${RENDER_PATH} /render.html 200`,
+    `${RENDER_PATH} ${RENDER_DOCUMENT} 200`,
     "/s/* /index.html 200",
     "",
   ].join("\n");
@@ -126,10 +135,8 @@ export function shellHeaders(): string {
     "/*",
     `  Content-Security-Policy: ${shellContentSecurityPolicy(Object.values(REGIONAL_APPS))}`,
     "",
-    `${RENDER_PATH}`,
-    "  ! Content-Security-Policy",
-    `  Content-Security-Policy: ${pagePolicy(null)}`,
-    "",
+    // and render.html at its own address the same, so it never runs under the shell's policy
+    ...[RENDER_PATH, RENDER_DOCUMENT].flatMap((path) => [path, "  ! Content-Security-Policy", `  Content-Security-Policy: ${pagePolicy(null)}`, ""]),
     "/assets/*",
     `  Cache-Control: ${IMMUTABLE_CACHE}`,
     "",
